@@ -28,3 +28,13 @@
     clippy::arithmetic_side_effects,
     clippy::arbitrary_source_item_ordering
 )]
+
+mod transfer_function;
+mod math;
+mod polynomial;
+mod state_space;
+mod integrators;
+mod classical_tools;
+mod modern_tools;
+mod robust_tools;
+mod nonlinear_tools;

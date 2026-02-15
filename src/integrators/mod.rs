@@ -1,0 +1,1 @@
+//! A variety of methods to integrate [`DynamicalSystem`]s
