@@ -16,12 +16,9 @@ allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-unwrap-in-tests = true
 
-# Disallow floating point comparisons.
-allow-float-labels = false
-
 # Ensure doc comments are present for all public items.
 # Essential for certification (e.g., ISO 26262 or IEC 61508).
-missing-docs-in-private-items = true
+missing-docs-in-crate-items = true
 
 # --- Item Ordering & Architecture ---
 
