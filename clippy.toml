@@ -1,0 +1,47 @@
+# --- Complexity & Safety Limits ---
+# Lowered from 8. Large argument lists often lead to stack bloat and call-site confusion.
+too-many-arguments-threshold = 4
+
+# Drastically lowered from 256. Complex types in robotics (like nested generics for
+# hardware abstraction layers) should be aliased for readability and to prevent logic errors.
+type-complexity-threshold = 50
+
+# Limit the number of lines in a function to encourage modular, testable units.
+too-many-lines-threshold = 60
+
+# --- Safety-Critical Specifics ---
+
+# Disallow floating point comparisons. In control loops, 0.1 + 0.2 != 0.3 can
+# cause erratic actuator behavior. Force the use of epsilon checks.
+allow-float-labels = false
+
+# Ensure doc comments are present for all public items.
+# Essential for certification (e.g., ISO 26262 or IEC 61508).
+missing-docs-in-private-items = true
+
+# --- Item Ordering & Architecture ---
+
+# 1. Strict Item Grouping
+# Logical flow is prioritized: Imports -> Types -> Implementation -> Logic
+module-item-order-groupings = [
+    ["modules", ["extern_crate", "mod", "foreign_mod"]],
+    ["use", ["use"]],
+    ["macros", ["macro"]],
+    ["global_asm", ["global_asm"]],
+    ["UPPER_SNAKE_CASE", ["static", "const"]],
+    ["PascalCase", ["ty_alias", "enum", "struct", "union", "trait", "trait_alias"]],
+    ["impls", ["impl"]],
+    ["lower_snake_case", ["fn"]]
+]
+
+# 2. Sorting
+# Alphabetical sorting for imports/consts is great, but "none" for functions
+# is better for robotics so that 'init()' can stay above 'loop()'.
+module-items-ordered-within-groupings = ["use", "UPPER_SNAKE_CASE"]
+
+# 3. Scope of ordering
+source-item-ordering = ["enum", "impl", "module", "struct", "trait"]
+
+# 4. Trait Item Order
+# Constants first to define bounds/capabilities, then types, then methods.
+trait-assoc-item-kinds-order = ["const", "type", "fn"]
