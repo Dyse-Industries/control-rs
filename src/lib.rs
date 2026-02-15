@@ -28,4 +28,3 @@
     clippy::arithmetic_side_effects,
     clippy::arbitrary_source_item_ordering
 )]
-
