@@ -29,12 +29,12 @@
     clippy::arbitrary_source_item_ordering
 )]
 
-mod transfer_function;
-mod math;
-mod polynomial;
-mod state_space;
-mod integrators;
 mod classical_tools;
+mod integrators;
+mod math;
 mod modern_tools;
-mod robust_tools;
 mod nonlinear_tools;
+mod polynomial;
+mod robust_tools;
+mod state_space;
+mod transfer_function;
