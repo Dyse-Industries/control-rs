@@ -11,8 +11,12 @@ too-many-lines-threshold = 60
 
 # --- Safety-Critical Specifics ---
 
-# Disallow floating point comparisons. In control loops, 0.1 + 0.2 != 0.3 can
-# cause erratic actuator behavior. Force the use of epsilon checks.
+# Tests should always be safe to fail.
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-unwrap-in-tests = true
+
+# Disallow floating point comparisons.
 allow-float-labels = false
 
 # Ensure doc comments are present for all public items.
