@@ -81,7 +81,9 @@ pub trait One: Scalar + Mul<Output = Self> {
     /// Constant multiplicative identity element.
     const ONE: Self;
     /// Returns the multiplicative identity element.
-    fn one() -> Self { Self::ONE }
+    fn one() -> Self {
+        Self::ONE
+    }
 
     /// Returns `true` if the value equals the multiplicative identity.
     #[inline(always)]
@@ -103,7 +105,9 @@ pub trait Zero: Scalar + Add<Output = Self> + Sub<Output = Self> {
     /// Constant additive identity element.
     const ZERO: Self;
     /// Returns the additive identity element.
-    fn zero() -> Self { Self::ZERO }
+    fn zero() -> Self {
+        Self::ZERO
+    }
 
     /// Returns `true` if the value equals the additive identity.
     #[inline(always)]
@@ -509,7 +513,9 @@ impl_real!(
 impl Scalar for i8 {}
 impl Signed for i8 {
     #[inline(always)]
-    fn abs(self) -> Self { self.abs() }
+    fn abs(self) -> Self {
+        self.abs()
+    }
 }
 impl_ring!(i8, 1, 0);
 
@@ -517,7 +523,9 @@ impl_ring!(i8, 1, 0);
 impl Scalar for i16 {}
 impl Signed for i16 {
     #[inline(always)]
-    fn abs(self) -> Self { self.abs() }
+    fn abs(self) -> Self {
+        self.abs()
+    }
 }
 impl_ring!(i16, 1, 0);
 
@@ -525,7 +533,9 @@ impl_ring!(i16, 1, 0);
 impl Scalar for i32 {}
 impl Signed for i32 {
     #[inline(always)]
-    fn abs(self) -> Self { self.abs() }
+    fn abs(self) -> Self {
+        self.abs()
+    }
 }
 impl_ring!(i32, 1, 0);
 
@@ -533,7 +543,9 @@ impl_ring!(i32, 1, 0);
 impl Scalar for i64 {}
 impl Signed for i64 {
     #[inline(always)]
-    fn abs(self) -> Self { self.abs() }
+    fn abs(self) -> Self {
+        self.abs()
+    }
 }
 impl_ring!(i64, 1, 0);
 
@@ -541,7 +553,9 @@ impl_ring!(i64, 1, 0);
 impl Scalar for i128 {}
 impl Signed for i128 {
     #[inline(always)]
-    fn abs(self) -> Self { self.abs() }
+    fn abs(self) -> Self {
+        self.abs()
+    }
 }
 impl_ring!(i128, 1, 0);
 
@@ -549,7 +563,9 @@ impl_ring!(i128, 1, 0);
 impl Scalar for isize {}
 impl Signed for isize {
     #[inline(always)]
-    fn abs(self) -> Self { self.abs() }
+    fn abs(self) -> Self {
+        self.abs()
+    }
 }
 impl_ring!(isize, 1, 0);
 

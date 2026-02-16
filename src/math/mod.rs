@@ -50,20 +50,26 @@ pub type ArithmeticResult<T> = Result<T, ArithmeticError>;
 impl core::fmt::Display for ArithmeticError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::DomainViolation => write!(f, "Input is outside the mathematical domain"),
+            Self::DomainViolation => {
+                write!(f, "Input is outside the mathematical domain")
+            }
             Self::DivisionByZero => write!(f, "Division by zero"),
             Self::Overflow => write!(f, "Value overflowed representable range"),
             Self::Underflow => write!(f, "Value underflowed (subnormal)"),
-            Self::Saturation => write!(f, "Value saturated (clamped) at bounds"),
-            Self::PrecisionLoss => write!(f, "Significant precision was lost during operation"),
+            Self::Saturation => {
+                write!(f, "Value saturated (clamped) at bounds")
+            }
+            Self::PrecisionLoss => {
+                write!(f, "Significant precision was lost during operation")
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use core::fmt::{self, Write};
     use crate::math::ArithmeticError;
+    use core::fmt::{self, Write};
 
     /// A simple helper to capture format output into a stack buffer
     struct TestWriter<'a> {
@@ -117,7 +123,10 @@ mod test {
             write!(writer, "{}", err).expect("Buffer too small");
 
             // 2. Assert against the string slice
-            assert_eq!(writer.as_str(), "Input is outside the mathematical domain");
+            assert_eq!(
+                writer.as_str(),
+                "Input is outside the mathematical domain"
+            );
         }
         {
             let mut buffer = [0u8; 128]; // Stack allocated buffer
@@ -137,7 +146,10 @@ mod test {
             write!(writer, "{}", err).expect("Buffer too small");
 
             // 2. Assert against the string slice
-            assert_eq!(writer.as_str(), "Significant precision was lost during operation");
+            assert_eq!(
+                writer.as_str(),
+                "Significant precision was lost during operation"
+            );
         }
         {
             let mut buffer = [0u8; 128]; // Stack allocated buffer
@@ -147,7 +159,10 @@ mod test {
             write!(writer, "{}", err).expect("Buffer too small");
 
             // 2. Assert against the string slice
-            assert_eq!(writer.as_str(), "Significant precision was lost during operation");
+            assert_eq!(
+                writer.as_str(),
+                "Significant precision was lost during operation"
+            );
         }
         {
             let mut buffer = [0u8; 128]; // Stack allocated buffer

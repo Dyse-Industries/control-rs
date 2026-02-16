@@ -2,21 +2,38 @@
 //!
 //! These tests cover `[num_traits]` and `[num_types]`.
 
-
-use crate::math::{ArithmeticError};
-use crate::math::num_traits::{One, Real, Ring, Scalar, Signed, Zero, Field};
+use crate::math::ArithmeticError;
+use crate::math::num_traits::{Field, One, Real, Ring, Scalar, Signed, Zero};
 use crate::math::ops::{TryAdd, TryDiv, TryMul, TryNeg, TryRem, TrySub};
 
 #[cfg(feature = "std")]
 #[test]
 fn test_arithmetic_error_display() {
     // Covers src/math/mod.rs: 51-58 (Display impl)
-    assert_eq!(format!("{}", ArithmeticError::DomainViolation), "Input is outside the mathematical domain");
-    assert_eq!(format!("{}", ArithmeticError::DivisionByZero), "Division by zero");
-    assert_eq!(format!("{}", ArithmeticError::Overflow), "Value overflowed representable range");
-    assert_eq!(format!("{}", ArithmeticError::Underflow), "Value underflowed (subnormal)");
-    assert_eq!(format!("{}", ArithmeticError::Saturation), "Value saturated (clamped) at bounds");
-    assert_eq!(format!("{}", ArithmeticError::PrecisionLoss), "Significant precision was lost during operation");
+    assert_eq!(
+        format!("{}", ArithmeticError::DomainViolation),
+        "Input is outside the mathematical domain"
+    );
+    assert_eq!(
+        format!("{}", ArithmeticError::DivisionByZero),
+        "Division by zero"
+    );
+    assert_eq!(
+        format!("{}", ArithmeticError::Overflow),
+        "Value overflowed representable range"
+    );
+    assert_eq!(
+        format!("{}", ArithmeticError::Underflow),
+        "Value underflowed (subnormal)"
+    );
+    assert_eq!(
+        format!("{}", ArithmeticError::Saturation),
+        "Value saturated (clamped) at bounds"
+    );
+    assert_eq!(
+        format!("{}", ArithmeticError::PrecisionLoss),
+        "Significant precision was lost during operation"
+    );
 }
 
 #[test]
@@ -137,7 +154,11 @@ fn test_scalar_properties() {
 
 #[test]
 fn test_ring_trait_generic() {
-    fn check_ring<T: Ring + PartialEq + core::fmt::Debug + Copy>(a: T, b: T, c: T) {
+    fn check_ring<T: Ring + PartialEq + core::fmt::Debug + Copy>(
+        a: T,
+        b: T,
+        c: T,
+    ) {
         // Identity: a + 0 = a
         assert_eq!(a + T::zero(), a, "Additive identity failed");
 
@@ -164,25 +185,58 @@ fn test_ring_trait_generic() {
 }
 #[test]
 fn test_signed_trait_generic() {
-    fn check_signed<T: Signed + PartialEq + core::fmt::Debug + Copy>(pos: T, neg: T) {
+    fn check_signed<T: Signed + PartialEq + core::fmt::Debug + Copy>(
+        pos: T,
+        neg: T,
+    ) {
         // Test abs()
-        assert_eq!(<T as Signed>::abs(neg), pos, "Absolute value of negative failed");
-        assert_eq!(<T as Signed>::abs(pos), pos, "Absolute value of positive failed");
+        assert_eq!(
+            <T as Signed>::abs(neg),
+            pos,
+            "Absolute value of negative failed"
+        );
+        assert_eq!(
+            <T as Signed>::abs(pos),
+            pos,
+            "Absolute value of positive failed"
+        );
 
         // Test is_sign_negative()
-        assert!(<T as Signed>::is_sign_negative(&neg), "Negative number check failed");
-        assert!(!<T as Signed>::is_sign_negative(&pos), "Positive number check failed");
+        assert!(
+            <T as Signed>::is_sign_negative(&neg),
+            "Negative number check failed"
+        );
+        assert!(
+            !<T as Signed>::is_sign_negative(&pos),
+            "Positive number check failed"
+        );
 
         // Test is_sign_positive()
-        assert!(<T as Signed>::is_sign_positive(&pos), "Positive number check failed");
-        assert!(!<T as Signed>::is_sign_positive(&neg), "Negative number check failed");
+        assert!(
+            <T as Signed>::is_sign_positive(&pos),
+            "Positive number check failed"
+        );
+        assert!(
+            !<T as Signed>::is_sign_positive(&neg),
+            "Negative number check failed"
+        );
 
         // Test Zero behavior
         let zero = T::zero();
-        assert_eq!(<T as Signed>::abs(zero), zero, "Absolute value of zero failed");
+        assert_eq!(
+            <T as Signed>::abs(zero),
+            zero,
+            "Absolute value of zero failed"
+        );
         // By definition in your trait: zero is neither strictly positive nor negative
-        assert!(!<T as Signed>::is_sign_negative(&zero), "Zero should not be negative");
-        assert!(!<T as Signed>::is_sign_positive(&zero), "Zero should not be positive");
+        assert!(
+            !<T as Signed>::is_sign_negative(&zero),
+            "Zero should not be negative"
+        );
+        assert!(
+            !<T as Signed>::is_sign_positive(&zero),
+            "Zero should not be positive"
+        );
     }
     check_signed(10i8, -10i8);
     check_signed(10i16, -10i16);
@@ -233,8 +287,15 @@ fn test_field_trait_generic() {
         }
         // Epsilon is the difference between 1.0 and the next representable floating-point number.
         // It's not necessarily the smallest value, but it's a common property to check.
-        assert!(T::one() + T::epsilon() > T::one(), "Epsilon check failed: 1 + epsilon == 1");
-        assert_eq!(T::one() + (T::epsilon().div(T::one() + T::one())), T::one(), "Epsilon check failed: 1 + (epsilon / 2) == 1");
+        assert!(
+            T::one() + T::epsilon() > T::one(),
+            "Epsilon check failed: 1 + epsilon == 1"
+        );
+        assert_eq!(
+            T::one() + (T::epsilon().div(T::one() + T::one())),
+            T::one(),
+            "Epsilon check failed: 1 + (epsilon / 2) == 1"
+        );
     }
 
     check_field(3.0f64);

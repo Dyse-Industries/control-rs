@@ -25,8 +25,8 @@
 //! consistent API.
 
 // Re-export core arithmetic traits for unchecked operations.
-pub use core::ops::{Add, Div, Mul, Neg, Rem, Shl, Shr, Sub};
 use crate::math::{ArithmeticError, ArithmeticResult, num_traits::Zero};
+pub use core::ops::{Add, Div, Mul, Neg, Rem, Shl, Shr, Sub};
 
 // --- Fallible Traits ---
 
