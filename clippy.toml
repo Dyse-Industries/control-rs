@@ -27,7 +27,6 @@ missing-docs-in-crate-items = true
 module-item-order-groupings = [
     ["modules", ["extern_crate", "mod", "foreign_mod"]],
     ["use", ["use"]],
-    ["macros", ["macro"]],
     ["global_asm", ["global_asm"]],
     ["UPPER_SNAKE_CASE", ["static", "const"]],
     ["PascalCase", ["ty_alias", "enum", "struct", "union", "trait", "trait_alias"]],
@@ -35,14 +34,11 @@ module-item-order-groupings = [
     ["lower_snake_case", ["fn"]]
 ]
 
-# 2. Sorting
-# Alphabetical sorting for imports/consts is great, but "none" for functions
-# is better for robotics so that 'init()' can stay above 'loop()'.
-module-items-ordered-within-groupings = ["use", "UPPER_SNAKE_CASE"]
-
-# 3. Scope of ordering
+# 2. Scope of ordering
 source-item-ordering = ["enum", "impl", "module", "struct", "trait"]
 
-# 4. Trait Item Order
-# Constants first to define bounds/capabilities, then types, then methods.
+# 3. Trait Item Order
 trait-assoc-item-kinds-order = ["const", "type", "fn"]
+
+# 4. Sorting within groupings
+module-items-ordered-within-groupings = ["use", "UPPER_SNAKE_CASE", "PascalCase", "lower_snake_case"]

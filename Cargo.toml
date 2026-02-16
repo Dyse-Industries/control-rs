@@ -9,10 +9,11 @@ categories = ["embedded", "science", "no-std"]
 keywords = ["control", "robotics", "firmware", "autonomy"]
 
 [dependencies]
+libm = "0.2.16"
 
 
 [features]
-default = []
+std = []
 
 [dev-dependencies]
 

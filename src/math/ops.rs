@@ -1,6 +1,7 @@
 //! # Operations
 //!
-//! This module defines traits for `checked` and `unchecked` arithmetic operations.
+//! This module defines traits for fallible (`try_`) and infallible (`unchecked`)
+//! arithmetic operations.
 //!
 //! The primary purpose of this module is to abstract the underlying arithmetic
 //! implementations. By using these traits, algorithms can be written generically,
@@ -11,209 +12,334 @@
 //! ## Design
 //!
 //! - **Unchecked Operations**: Traits for operations that do not perform overflow
-//!   or other runtime checks. These are suitable for contexts where performance is
-//!   critical and the inputs are known to be within valid ranges.
+//!   or other runtime checks. These are the standard `core::ops` traits.
 //!
-//! - **Checked Operations**: Traits for operations that return a `Result`
+//! - **Fallible Operations**: Traits for operations that return a `Result`
 //!   to indicate whether the computation succeeded. This is essential for
 //!   _safety-critical_ applications where numerical stability and correctness must
-//!   be guaranteed.
+//!   be guaranteed. The `try_` prefix is used to indicate that these operations
+//!   can fail.
 //!
 //! By building on top of the traits in this module, the crate can support a wide
 //! range of numeric types and implementations while maintaining a clean and
 //! consistent API.
 
 // Re-export core arithmetic traits for unchecked operations.
-// These are the standard traits like `Add`, `Sub`, `Mul`, `Div`.
-pub use core::ops::{
-    Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign,
-};
+pub use core::ops::{Add, Div, Mul, Neg, Rem, Shl, Shr, Sub};
+use crate::math::{ArithmeticError, ArithmeticResult, num_traits::Zero};
 
-/// An error type for checked arithmetic operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArithmeticError {
-    /// A division by zero was attempted.
-    DivisionByZero,
-    /// An invalid argument was provided to a function.
-    ///
-    /// For example, taking the square root of a negative number.
-    InvalidArgument,
-    /// Overflow occurred during the operation.
-    Overflow,
-    /// Underflow occurred during the operation.
-    Underflow,
+// --- Fallible Traits ---
+
+/// Performs fallible addition.
+pub trait TryAdd: Sized + Add<Self, Output = Self> {
+    /// Adds two numbers, returning an error on overflow.
+    fn try_add(&self, v: &Self) -> ArithmeticResult<Self>;
 }
 
-pub type ArithmeticResult<T> = Result<T, ArithmeticError>;
-
-/// Trait for checked addition.
-pub trait CheckedAdd<RHS = Self>: Sized + Add<Output = Self> {
-    /// Performs checked addition.
-    fn checked_add(self, rhs: RHS) -> ArithmeticResult<Self::Output>;
+/// Performs fallible subtraction.
+pub trait TrySub: Sized + Sub<Self, Output = Self> {
+    /// Subtracts two numbers, returning an error on overflow/underflow.
+    fn try_sub(&self, v: &Self) -> ArithmeticResult<Self>;
 }
 
-/// Trait for checked subtraction.
-pub trait CheckedSub<RHS = Self>: Sized + Sub<Output = Self> {
-    /// Performs checked subtraction.
-    fn checked_sub(self, rhs: RHS) -> ArithmeticResult<Self::Output>;
+/// Performs fallible multiplication.
+pub trait TryMul: Sized + Mul<Self, Output = Self> {
+    /// Multiplies two numbers, returning an error on overflow/underflow.
+    fn try_mul(&self, v: &Self) -> ArithmeticResult<Self>;
 }
 
-/// Trait for checked multiplication.
-pub trait CheckedMul<RHS = Self>: Sized + Mul<Output = Self> {
-    /// Performs checked multiplication.
-    fn checked_mul(self, rhs: RHS) -> Result<Self::Output, ArithmeticError>;
+/// Performs fallible division.
+pub trait TryDiv: Sized + Div<Self, Output = Self> {
+    /// Divides two numbers, returning an error on division by zero or overflow.
+    fn try_div(&self, v: &Self) -> ArithmeticResult<Self>;
 }
 
-/// Trait for checked division.
-pub trait CheckedDiv<RHS = Self>: Sized + Div<Output = Self> {
-    /// Performs checked division.
-    ///
-    /// Returns `Err(ArithmeticError::DivisionByZero)` if `rhs` is zero.
-    fn checked_div(self, rhs: RHS) -> Result<Self::Output, ArithmeticError>;
+/// Performs fallible remainder.
+pub trait TryRem: Sized + Rem<Self, Output = Self> {
+    /// Finds the remainder of dividing two numbers, returning an error on division by zero or overflow.
+    fn try_rem(&self, v: &Self) -> ArithmeticResult<Self>;
 }
 
-/// Trait for checked remainder.
-pub trait CheckedRem<RHS = Self>: Sized + Rem<Output = Self> {
-    /// Performs checked remainder.
-    ///
-    /// Returns `Err(ArithmeticError::DivisionByZero)` if `rhs` is zero.
-    fn checked_rem(self, rhs: RHS) -> Result<Self::Output, ArithmeticError>;
+/// Performs fallible negation.
+pub trait TryNeg: Sized + Neg<Output = Self> {
+    /// Negates a number, returning an error on overflow.
+    fn try_neg(&self) -> ArithmeticResult<Self>;
 }
 
-/// Trait for checked negation.
-pub trait CheckedNeg: Sized + Neg<Output = Self> {
-    /// Performs checked negation.
-    ///
-    /// Returns `Err(ArithmeticError::Overflow)` if the negation would overflow.
-    fn checked_neg(self) -> Result<Self::Output, ArithmeticError>;
+/// Performs a fallible left shift.
+pub trait TryShl: Sized + Shl<u32, Output = Self> {
+    /// Fallible shift left. Computes `self << rhs`.
+    fn try_shl(&self, rhs: u32) -> ArithmeticResult<Self>;
 }
 
-/// Trait for checked absolute value.
-pub trait CheckedAbs: Sized {
-    /// The output of the absolute value operation.
-    type Output;
-
-    /// Performs checked absolute value.
-    ///
-    /// Returns `Err(ArithmeticError::Overflow)` if the absolute value would overflow.
-    fn checked_abs(self) -> Result<Self::Output, ArithmeticError>;
+/// Performs a fallible right shift.
+pub trait TryShr: Sized + Shr<u32, Output = Self> {
+    /// Fallible shift right. Computes `self >> rhs`.
+    fn try_shr(&self, rhs: u32) -> ArithmeticResult<Self>;
 }
 
-/// Trait for checked left shift.
-pub trait CheckedShl<RHS> {
-    /// The resulting type after performing the shift left operation.
-    type Output;
+// --- Integer Implementations ---
 
-    /// Performs checked shift left.
-    ///
-    /// Returns `Err(ArithmeticError::Overflow)` if the shift amount is too large.
-    fn checked_shl(self, rhs: RHS) -> Result<Self::Output, ArithmeticError>;
+macro_rules! try_impl_int {
+    ($trait:ident, $try_method:ident, $checked_method:ident, $($t:ty),+) => {
+        $(
+            impl $trait for $t {
+                #[inline]
+                fn $try_method(&self, v: &$t) -> ArithmeticResult<$t> {
+                    self.$checked_method(*v).ok_or(ArithmeticError::Overflow)
+                }
+            }
+        )+
+    };
 }
 
-/// Trait for checked right shift.
-pub trait CheckedShr<RHS> {
-    /// The resulting type after performing the shift right operation.
-    type Output;
+try_impl_int!(
+    TryAdd,
+    try_add,
+    checked_add,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+try_impl_int!(
+    TrySub,
+    try_sub,
+    checked_sub,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+try_impl_int!(
+    TryMul,
+    try_mul,
+    checked_mul,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
 
-    /// Performs checked shift right.
-    ///
-    /// Returns `Err(ArithmeticError::Overflow)` if the shift amount is too large.
-    fn checked_shr(self, rhs: RHS) -> Result<Self::Output, ArithmeticError>;
+macro_rules! try_div_rem_impl {
+    ($trait:ident, $try_method:ident, $checked_method:ident, $($t:ty),+) => {
+        $(
+            impl $trait for $t {
+                #[inline]
+                fn $try_method(&self, v: &$t) -> ArithmeticResult<$t> {
+                    if *v == 0 {
+                        return Err(ArithmeticError::DivisionByZero);
+                    }
+                    self.$checked_method(*v).ok_or(ArithmeticError::Overflow)
+                }
+            }
+        )+
+    };
 }
 
-/// Trait for checked exponentiation.
-pub trait CheckedPow<RHS> {
-    /// The resulting type after performing the power operation.
-    type Output;
+try_div_rem_impl!(
+    TryDiv,
+    try_div,
+    checked_div,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+try_div_rem_impl!(
+    TryRem,
+    try_rem,
+    checked_rem,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
 
-    /// Performs checked power.
-    ///
-    /// Returns `Err(ArithmeticError::Overflow)` if the power operation would overflow.
-    fn checked_pow(self, rhs: RHS) -> Result<Self::Output, ArithmeticError>;
+macro_rules! try_neg_impl {
+    ($($t:ty),+) => {
+        $(
+            impl TryNeg for $t {
+                #[inline]
+                fn try_neg(&self) -> ArithmeticResult<$t> {
+                    self.checked_neg().ok_or(ArithmeticError::Overflow)
+                }
+            }
+        )+
+    };
+}
+try_neg_impl!(i8, i16, i32, i64, i128, isize);
+
+macro_rules! try_shift_impl {
+    ($trait:ident, $try_method:ident, $checked_method:ident, $($t:ty),+) => {
+        $(
+            impl $trait for $t {
+                #[inline]
+                fn $try_method(&self, rhs: u32) -> ArithmeticResult<$t> {
+                    self.$checked_method(rhs).ok_or(ArithmeticError::Overflow)
+                }
+            }
+        )+
+    };
 }
 
-/// Trait for checked square root.
-pub trait CheckedSqrt {
-    /// The resulting type after performing the square root operation.
-    type Output;
+try_shift_impl!(
+    TryShl,
+    try_shl,
+    checked_shl,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+try_shift_impl!(
+    TryShr,
+    try_shr,
+    checked_shr,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
 
-    /// Performs checked square root.
-    ///
-    /// Returns `Err(ArithmeticError::InvalidArgument)` for negative inputs.
-    fn checked_sqrt(self) -> Result<Self::Output, ArithmeticError>;
+// --- Floating Point Implementations ---
+
+macro_rules! try_float_impl {
+    ($($t:ty),+) => {
+        $(
+            impl TryAdd for $t {
+                fn try_add(&self, v: &$t) -> ArithmeticResult<$t> {
+                    if self.is_nan() || v.is_nan() {
+                        return Err(ArithmeticError::DomainViolation);
+                    }
+                    let result = self.add(v);
+                    if result.is_infinite() {
+                        return Err(ArithmeticError::Overflow);
+                    }
+                    return Ok(result);
+                }
+            }
+
+            impl TrySub for $t {
+                fn try_sub(&self, v: &$t) -> ArithmeticResult<$t> {
+                    if self.is_nan() || v.is_nan() {
+                        return Err(ArithmeticError::DomainViolation);
+                    }
+                    let result = self.sub(v);
+                    if result.is_infinite() {
+                        return Err(ArithmeticError::Overflow);
+                    }
+                    return Ok(result);
+                }
+            }
+
+            impl TryMul for $t {
+                fn try_mul(&self, v: &$t) -> ArithmeticResult<$t> {
+                    if self.is_nan() || v.is_nan() {
+                        return Err(ArithmeticError::DomainViolation);
+                    }
+                    let result = self.mul(v);
+                    if result.is_infinite() {
+                        return Err(ArithmeticError::Overflow);
+                    }
+                    return Ok(result);
+                }
+            }
+
+            impl TryDiv for $t {
+                fn try_div(&self, v: &$t) -> ArithmeticResult<$t> {
+                    if v.is_zero() {
+                        return Err(ArithmeticError::DivisionByZero);
+                    }
+                    if self.is_nan() || v.is_nan() {
+                        return Err(ArithmeticError::DomainViolation);
+                    }
+
+                    let result = self.div(v);
+                    if result.is_infinite() {
+                        return Err(ArithmeticError::Overflow);
+                    }
+                    return Ok(result);
+                }
+            }
+
+            impl TryRem for $t {
+                fn try_rem(&self, v: &$t) -> ArithmeticResult<$t> {
+                    if v.is_zero() {
+                        return Err(ArithmeticError::DivisionByZero);
+                    }
+                    if self.is_nan() || v.is_nan() {
+                        return Err(ArithmeticError::DomainViolation);
+                    }
+                    let result = self.rem(v);
+
+                    return Ok(result);
+                }
+            }
+
+            impl TryNeg for $t {
+                fn try_neg(&self) -> ArithmeticResult<$t> {
+                    return Ok(self.neg());
+                }
+            }
+        )+
+    };
 }
 
-/// Trait for checked cube root.
-pub trait CheckedCbrt {
-    /// The resulting type after performing the cube root operation.
-    type Output;
-
-    /// Performs checked cube root.
-    fn checked_cbrt(self) -> Result<Self::Output, ArithmeticError>;
-}
-
-/// Trait for checked hypotenuse.
-pub trait CheckedHypot<RHS = Self> {
-    /// The resulting type after performing the hypotenuse operation.
-    type Output;
-
-    /// Performs checked hypotenuse.
-    ///
-    /// Returns `Err(ArithmeticError::Overflow)` if the hypotenuse operation would overflow.
-    fn checked_hypot(self, rhs: RHS) -> Result<Self::Output, ArithmeticError>;
-}
-
-/// Trait for checked logarithm.
-pub trait CheckedLog<RHS> {
-    /// The resulting type after performing the logarithm operation.
-    type Output;
-
-    /// Performs checked logarithm.
-    ///
-    /// Returns `Err(ArithmeticError::InvalidArgument)` if the base is invalid.
-    fn checked_log(self, base: RHS) -> Result<Self::Output, ArithmeticError>;
-}
-
-/// Trait for checked base-2 logarithm.
-pub trait CheckedLog2 {
-    /// The resulting type after performing the base-2 logarithm operation.
-    type Output;
-
-    /// Performs checked base-2 logarithm.
-    ///
-    /// Returns `Err(ArithmeticError::InvalidArgument)` if the input is invalid (e.g., non-positive).
-    fn checked_log2(self) -> Result<Self::Output, ArithmeticError>;
-}
-
-/// Trait for checked base-10 logarithm.
-pub trait CheckedLog10 {
-    /// The resulting type after performing the base-10 logarithm operation.
-    type Output;
-
-    /// Performs checked base-10 logarithm.
-    ///
-    /// Returns `Err(ArithmeticError::InvalidArgument)` if the input is invalid (e.g., non-positive).
-    fn checked_log10(self) -> Result<Self::Output, ArithmeticError>;
-}
-
-/// Trait for checked natural logarithm.
-pub trait CheckedLn {
-    /// The resulting type after performing the natural logarithm operation.
-    type Output;
-
-    /// Performs checked natural logarithm.
-    ///
-    /// Returns `Err(ArithmeticError::InvalidArgument)` if the input is invalid (e.g., non-positive).
-    fn checked_ln(self) -> Result<Self::Output, ArithmeticError>;
-}
-
-/// Trait for checked exponential.
-pub trait CheckedExp {
-    /// The resulting type after performing the exponential operation.
-    type Output;
-
-    /// Performs checked exponential.
-    ///
-    /// Returns `Err(ArithmeticError::Overflow)` if the exponential operation would overflow.
-    fn checked_exp(self) -> Result<Self::Output, ArithmeticError>;
-}
+try_float_impl!(f32, f64);
