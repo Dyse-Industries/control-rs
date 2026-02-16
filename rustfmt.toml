@@ -1,0 +1,31 @@
+# The edition of Rust code to be formatted.
+edition = "2021"
+# Use the latest stable formatting engine.
+#version = "Two"
+
+# --- Code Layout & Width ---
+
+# Set the maximum line width to 80 characters.
+max_width = 80
+# Wrap comments to respect the max_width.
+#wrap_comments = true
+# Format code examples in doc comments.
+#format_code_in_doc_comments = true
+
+## --- Import Organization ---
+#
+## Reorder imports to be grouped and sorted.
+#reorder_imports = true
+## How to group imports. `StdExternalCrate` separates std/core, external crates, and local modules.
+#group_imports = "StdExternalCrate"
+## Determines the granularity of imports. `Crate` groups all imports from the same crate together.
+#imports_granularity = "Crate"
+#
+## --- Idiomatic Style ---
+#
+## Enforce using struct field init shorthand where possible (e.g., `Foo { x }` instead of `Foo { x: x }`).
+#use_field_init_shorthand = true
+## Collapse wildcard suffixes (e.g., `use a::{b, c};` becomes `use a::*;`).
+#condense_wildcard_suffixes = false
+## Do not put a space before the colon in a match arm.
+#spaces_around_ranges = false
