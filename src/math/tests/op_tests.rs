@@ -3,7 +3,7 @@ use crate::math::ops::{
     TryAdd, TryDiv, TryMul, TryNeg, TryRem, TryShl, TryShr, TrySub,
 };
 
-mod add {
+mod test_add {
     use super::*;
 
     #[test]
@@ -20,41 +20,7 @@ mod add {
     }
 }
 
-mod sub {
-    use super::*;
-
-    #[test]
-    fn i32_sub() {
-        assert_eq!(2i32.try_sub(&1i32), Ok(1i32));
-        assert_eq!(i32::MIN.try_sub(&1i32), Err(ArithmeticError::Overflow));
-    }
-
-    #[test]
-    fn f32_sub() {
-        assert_eq!(2f32.try_sub(&1f32), Ok(1f32));
-        assert_eq!(f32::MIN.try_sub(&f32::MAX), Err(ArithmeticError::Overflow));
-        assert_eq!(f32::MAX.try_sub(&f32::MIN), Err(ArithmeticError::Overflow));
-    }
-}
-
-mod mul {
-    use super::*;
-
-    #[test]
-    fn i32_mul() {
-        assert_eq!(2i32.try_mul(&3i32), Ok(6i32));
-        assert_eq!(i32::MAX.try_mul(&2i32), Err(ArithmeticError::Overflow));
-    }
-
-    #[test]
-    fn f32_mul() {
-        assert_eq!(2f32.try_mul(&3f32), Ok(6f32));
-        assert_eq!(f32::MAX.try_mul(&2f32), Err(ArithmeticError::Overflow));
-        assert_eq!(f32::MAX.try_mul(&-2f32), Err(ArithmeticError::Overflow));
-    }
-}
-
-mod div {
+mod test_div {
     use super::*;
 
     #[test]
@@ -73,7 +39,40 @@ mod div {
     }
 }
 
-mod rem {
+mod test_mul {
+    use super::*;
+
+    #[test]
+    fn i32_mul() {
+        assert_eq!(2i32.try_mul(&3i32), Ok(6i32));
+        assert_eq!(i32::MAX.try_mul(&2i32), Err(ArithmeticError::Overflow));
+    }
+
+    #[test]
+    fn f32_mul() {
+        assert_eq!(2f32.try_mul(&3f32), Ok(6f32));
+        assert_eq!(f32::MAX.try_mul(&2f32), Err(ArithmeticError::Overflow));
+        assert_eq!(f32::MAX.try_mul(&-2f32), Err(ArithmeticError::Overflow));
+    }
+}
+
+mod test_neg {
+    use super::*;
+
+    #[test]
+    fn i32_neg() {
+        assert_eq!(1i32.try_neg(), Ok(-1i32));
+        assert_eq!(i32::MIN.try_neg(), Err(ArithmeticError::Overflow));
+    }
+
+    #[test]
+    fn f32_neg() {
+        assert_eq!(1f32.try_neg(), Ok(-1f32));
+        assert_eq!((-1f32).try_neg(), Ok(1f32));
+    }
+}
+
+mod test_rem {
     use super::*;
 
     #[test]
@@ -91,23 +90,7 @@ mod rem {
     }
 }
 
-mod neg {
-    use super::*;
-
-    #[test]
-    fn i32_neg() {
-        assert_eq!(1i32.try_neg(), Ok(-1i32));
-        assert_eq!(i32::MIN.try_neg(), Err(ArithmeticError::Overflow));
-    }
-
-    #[test]
-    fn f32_neg() {
-        assert_eq!(1f32.try_neg(), Ok(-1f32));
-        assert_eq!((-1f32).try_neg(), Ok(1f32));
-    }
-}
-
-mod shl {
+mod test_shl {
     use super::*;
 
     #[test]
@@ -117,12 +100,29 @@ mod shl {
     }
 }
 
-mod shr {
+mod test_shr {
     use super::*;
 
     #[test]
     fn i32_shr() {
         assert_eq!(2i32.try_shr(1), Ok(1i32));
         assert_eq!(1i32.try_shr(32), Err(ArithmeticError::Overflow));
+    }
+}
+
+mod test_sub {
+    use super::*;
+
+    #[test]
+    fn i32_sub() {
+        assert_eq!(2i32.try_sub(&1i32), Ok(1i32));
+        assert_eq!(i32::MIN.try_sub(&1i32), Err(ArithmeticError::Overflow));
+    }
+
+    #[test]
+    fn f32_sub() {
+        assert_eq!(2f32.try_sub(&1f32), Ok(1f32));
+        assert_eq!(f32::MIN.try_sub(&f32::MAX), Err(ArithmeticError::Overflow));
+        assert_eq!(f32::MAX.try_sub(&f32::MIN), Err(ArithmeticError::Overflow));
     }
 }

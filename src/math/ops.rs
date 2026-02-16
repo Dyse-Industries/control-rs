@@ -32,49 +32,100 @@ pub use core::ops::{Add, Div, Mul, Neg, Rem, Shl, Shr, Sub};
 
 /// Performs fallible addition.
 pub trait TryAdd: Sized + Add<Self, Output = Self> {
-    /// Adds two numbers, returning an error on overflow.
+    /// Adds two numbers, returning an error on failure.
+    ///
+    /// # Errors
+    ///
+    /// - `ArithmeticError::Overflow`: The result exceeded the maximum
+    ///   representable range of the type.
+    /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
+    ///   given inputs (e.g., adding to a `NaN` floating-point number).
     fn try_add(&self, v: &Self) -> ArithmeticResult<Self>;
-}
-
-/// Performs fallible subtraction.
-pub trait TrySub: Sized + Sub<Self, Output = Self> {
-    /// Subtracts two numbers, returning an error on overflow/underflow.
-    fn try_sub(&self, v: &Self) -> ArithmeticResult<Self>;
 }
 
 /// Performs fallible multiplication.
 pub trait TryMul: Sized + Mul<Self, Output = Self> {
-    /// Multiplies two numbers, returning an error on overflow/underflow.
+    /// Multiplies two numbers, returning an error on failure.
+    ///
+    /// # Errors
+    ///
+    /// - `ArithmeticError::Overflow`: The result exceeded the maximum
+    ///   representable range of the type.
+    /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
+    ///   given inputs (e.g., multiplying by a `NaN` floating-point number).
     fn try_mul(&self, v: &Self) -> ArithmeticResult<Self>;
+}
+
+/// Performs fallible subtraction.
+pub trait TrySub: Sized + Sub<Self, Output = Self> {
+    /// Subtracts two numbers, returning an error on failure.
+    ///
+    /// # Errors
+    ///
+    /// - `ArithmeticError::Overflow`: The result exceeded the maximum
+    ///   representable range of the type.
+    /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
+    ///   given inputs (e.g., subtracting a `NaN` floating-point number).
+    fn try_sub(&self, v: &Self) -> ArithmeticResult<Self>;
 }
 
 /// Performs fallible division.
 pub trait TryDiv: Sized + Div<Self, Output = Self> {
-    /// Divides two numbers, returning an error on division by zero or overflow.
+    /// Divides two numbers, returning an error on failure.
+    ///
+    /// # Errors
+    ///
+    /// - `ArithmeticError::DivisionByZero`: The divisor `v` is zero.
+    /// - `ArithmeticError::Overflow`: The result exceeded the maximum
+    ///   representable range (e.g., `i32::MIN / -1`).
+    /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
+    ///   given inputs (e.g., dividing by a `NaN` floating-point number).
     fn try_div(&self, v: &Self) -> ArithmeticResult<Self>;
-}
-
-/// Performs fallible remainder.
-pub trait TryRem: Sized + Rem<Self, Output = Self> {
-    /// Finds the remainder of dividing two numbers, returning an error on division by zero or overflow.
-    fn try_rem(&self, v: &Self) -> ArithmeticResult<Self>;
 }
 
 /// Performs fallible negation.
 pub trait TryNeg: Sized + Neg<Output = Self> {
-    /// Negates a number, returning an error on overflow.
+    /// Negates a number, returning an error on failure.
+    ///
+    /// # Errors
+    ///
+    /// - `ArithmeticError::Overflow`: The result cannot be represented (e.g., `-i32::MIN`).
     fn try_neg(&self) -> ArithmeticResult<Self>;
+}
+
+/// Performs fallible remainder.
+pub trait TryRem: Sized + Rem<Self, Output = Self> {
+    /// Finds the remainder of a division, returning an error on failure.
+    ///
+    /// # Errors
+    ///
+    /// - `ArithmeticError::DivisionByZero`: The divisor `v` is zero.
+    /// - `ArithmeticError::Overflow`: The operation overflows (e.g., `i32::MIN % -1`).
+    /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
+    ///   given inputs (e.g., involving a `NaN` floating-point number).
+    fn try_rem(&self, v: &Self) -> ArithmeticResult<Self>;
 }
 
 /// Performs a fallible left shift.
 pub trait TryShl: Sized + Shl<u32, Output = Self> {
-    /// Fallible shift left. Computes `self << rhs`.
+    /// Performs a fallible left shift (`self << rhs`).
+    ///
+    /// # Errors
+    ///
+    /// - `ArithmeticError::Overflow`: The number of bits to shift (`rhs`) is
+    ///   greater than or equal to the bit-width of the type, or the result
+    ///   of the shift overflows the type.
     fn try_shl(&self, rhs: u32) -> ArithmeticResult<Self>;
 }
 
 /// Performs a fallible right shift.
 pub trait TryShr: Sized + Shr<u32, Output = Self> {
-    /// Fallible shift right. Computes `self >> rhs`.
+    /// Performs a fallible right shift (`self >> rhs`).
+    ///
+    /// # Errors
+    ///
+    /// - `ArithmeticError::Overflow`: The number of bits to shift (`rhs`) is
+    ///   greater than or equal to the bit-width of the type.
     fn try_shr(&self, rhs: u32) -> ArithmeticResult<Self>;
 }
 
@@ -208,6 +259,7 @@ macro_rules! try_neg_impl {
         )+
     };
 }
+
 try_neg_impl!(i8, i16, i32, i64, i128, isize);
 
 macro_rules! try_shift_impl {
@@ -224,9 +276,9 @@ macro_rules! try_shift_impl {
 }
 
 try_shift_impl!(
-    TryShl,
-    try_shl,
-    checked_shl,
+    TryShr,
+    try_shr,
+    checked_shr,
     u8,
     u16,
     u32,
@@ -240,10 +292,11 @@ try_shift_impl!(
     i128,
     isize
 );
+
 try_shift_impl!(
-    TryShr,
-    try_shr,
-    checked_shr,
+    TryShl,
+    try_shl,
+    checked_shl,
     u8,
     u16,
     u32,
@@ -276,12 +329,16 @@ macro_rules! try_float_impl {
                 }
             }
 
-            impl TrySub for $t {
-                fn try_sub(&self, v: &$t) -> ArithmeticResult<$t> {
+            impl TryDiv for $t {
+                fn try_div(&self, v: &$t) -> ArithmeticResult<$t> {
+                    if v.is_zero() {
+                        return Err(ArithmeticError::DivisionByZero);
+                    }
                     if self.is_nan() || v.is_nan() {
                         return Err(ArithmeticError::DomainViolation);
                     }
-                    let result = self.sub(v);
+
+                    let result = self.div(v);
                     if result.is_infinite() {
                         return Err(ArithmeticError::Overflow);
                     }
@@ -302,20 +359,9 @@ macro_rules! try_float_impl {
                 }
             }
 
-            impl TryDiv for $t {
-                fn try_div(&self, v: &$t) -> ArithmeticResult<$t> {
-                    if v.is_zero() {
-                        return Err(ArithmeticError::DivisionByZero);
-                    }
-                    if self.is_nan() || v.is_nan() {
-                        return Err(ArithmeticError::DomainViolation);
-                    }
-
-                    let result = self.div(v);
-                    if result.is_infinite() {
-                        return Err(ArithmeticError::Overflow);
-                    }
-                    return Ok(result);
+            impl TryNeg for $t {
+                fn try_neg(&self) -> ArithmeticResult<$t> {
+                    return Ok(self.neg());
                 }
             }
 
@@ -333,9 +379,16 @@ macro_rules! try_float_impl {
                 }
             }
 
-            impl TryNeg for $t {
-                fn try_neg(&self) -> ArithmeticResult<$t> {
-                    return Ok(self.neg());
+            impl TrySub for $t {
+                fn try_sub(&self, v: &$t) -> ArithmeticResult<$t> {
+                    if self.is_nan() || v.is_nan() {
+                        return Err(ArithmeticError::DomainViolation);
+                    }
+                    let result = self.sub(v);
+                    if result.is_infinite() {
+                        return Err(ArithmeticError::Overflow);
+                    }
+                    return Ok(result);
                 }
             }
         )+

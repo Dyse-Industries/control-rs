@@ -25,13 +25,14 @@ missing-docs-in-crate-items = true
 # 1. Strict Item Grouping
 # Logical flow is prioritized: Imports -> Types -> Implementation -> Logic
 module-item-order-groupings = [
-    ["modules", ["extern_crate", "mod", "foreign_mod"]],
     ["use", ["use"]],
+    ["modules", ["extern_crate", "foreign_mod", "mod"]],
     ["global_asm", ["global_asm"]],
     ["UPPER_SNAKE_CASE", ["static", "const"]],
     ["PascalCase", ["ty_alias", "enum", "struct", "union", "trait", "trait_alias"]],
+    ["macros", ["macro"]],
     ["impls", ["impl"]],
-    ["lower_snake_case", ["fn", "macro"]]
+    ["lower_snake_case", ["fn"]]
 ]
 
 # 2. Scope of ordering
@@ -41,4 +42,4 @@ source-item-ordering = ["enum", "impl", "module", "struct", "trait"]
 trait-assoc-item-kinds-order = ["const", "type", "fn"]
 
 # 4. Sorting within groupings
-module-items-ordered-within-groupings = ["use", "UPPER_SNAKE_CASE", "PascalCase", "lower_snake_case"]
+module-items-ordered-within-groupings = ["use", "UPPER_SNAKE_CASE", "modules"]

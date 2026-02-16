@@ -8,6 +8,7 @@
 
 pub mod num_traits;
 pub mod num_types;
+#[allow(clippy::arbitrary_source_item_ordering)]
 pub mod ops;
 mod static_storage;
 pub mod subprograms;
@@ -20,28 +21,28 @@ mod tests;
 /// fixed-point specific signals (saturation/precision).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArithmeticError {
+    /// Attempted to divide by zero.
+    DivisionByZero,
+
     /// The mathematical operation is undefined for the given inputs
     /// (e.g., `sqrt(-1.0)`, `acos(2.0)`).
     DomainViolation,
-
-    /// Attempted to divide by zero.
-    DivisionByZero,
 
     /// The result exceeded the maximum representable range of the type.
     /// In fixed-point arithmetic, this implies a wrapping or undefined result.
     Overflow,
 
-    /// The result is smaller than the smallest representable positive value
-    /// (Subnormal/Denormal).
-    Underflow,
+    /// The result could not be represented exactly, resulting in quantization
+    /// or rounding errors (e.g., casting `f64` to `u32` where the float has a decimal).
+    PrecisionLoss,
 
     /// The value exceeded the range but was clamped to the maximum/minimum
     /// representable value (specific to fixed-point/DSP logic).
     Saturation,
 
-    /// The result could not be represented exactly, resulting in quantization
-    /// or rounding errors (e.g., casting `f64` to `u32` where the float has a decimal).
-    PrecisionLoss,
+    /// The result is smaller than the smallest representable positive value
+    /// (Subnormal/Denormal).
+    Underflow,
 }
 
 /// A specialized `Result` type for fallible arithmetic operations.
@@ -78,16 +79,18 @@ mod test {
     }
 
     impl<'a> TestWriter<'a> {
-        fn new(buf: &'a mut [u8]) -> Self {
-            Self { buf, len: 0 }
-        }
-
+        #[allow(clippy::indexing_slicing)]
         fn as_str(&self) -> &str {
             core::str::from_utf8(&self.buf[..self.len]).expect("Invalid UTF-8")
         }
+        fn new(buf: &'a mut [u8]) -> Self {
+            Self { buf, len: 0 }
+        }
     }
 
-    impl<'a> Write for TestWriter<'a> {
+    impl Write for TestWriter<'_> {
+        #[allow(clippy::indexing_slicing)]
+        #[allow(clippy::arithmetic_side_effects)]
         fn write_str(&mut self, s: &str) -> fmt::Result {
             let bytes = s.as_bytes();
             let remaining = self.buf.len() - self.len;
@@ -102,98 +105,68 @@ mod test {
         }
     }
 
+    /// A helper function to assert the `Display` output of an `ArithmeticError`.
+    ///
+    /// This encapsulates the buffer and writer creation, making tests for each
+    /// error variant clean and concise.
+    fn assert_error_display(err: ArithmeticError, expected_msg: &str) {
+        let mut buffer = [0u8; 128]; // Stack-allocated buffer
+        let mut writer = TestWriter::new(&mut buffer);
+
+        // Write the error's display output into the buffer
+        write!(writer, "{err}")
+            .expect("Buffer was too small for the error message");
+
+        // Assert that the written string matches the expected message
+        assert_eq!(writer.as_str(), expected_msg);
+    }
+
     #[test]
-    fn test_error_display_no_std() {
-        {
-            let mut buffer = [0u8; 128]; // Stack allocated buffer
-            let mut writer = TestWriter::new(&mut buffer);
-            // 1. Write the error into the buffer
-            let err = ArithmeticError::Overflow;
-            write!(writer, "{}", err).expect("Buffer too small");
+    fn test_display_division_by_zero() {
+        assert_error_display(
+            ArithmeticError::DivisionByZero,
+            "Division by zero",
+        );
+    }
 
-            // 2. Assert against the string slice
-            assert_eq!(writer.as_str(), "Value overflowed representable range");
-        }
+    #[test]
+    fn test_display_domain_violation() {
+        assert_error_display(
+            ArithmeticError::DomainViolation,
+            "Input is outside the mathematical domain",
+        );
+    }
 
-        {
-            let mut buffer = [0u8; 128]; // Stack allocated buffer
-            let mut writer = TestWriter::new(&mut buffer);
-            // 1. Write the error into the buffer
-            let err = ArithmeticError::DomainViolation;
-            write!(writer, "{}", err).expect("Buffer too small");
+    #[test]
+    fn test_display_overflow() {
+        assert_error_display(
+            ArithmeticError::Overflow,
+            "Value overflowed representable range",
+        );
+    }
 
-            // 2. Assert against the string slice
-            assert_eq!(
-                writer.as_str(),
-                "Input is outside the mathematical domain"
-            );
-        }
-        {
-            let mut buffer = [0u8; 128]; // Stack allocated buffer
-            let mut writer = TestWriter::new(&mut buffer);
-            // 1. Write the error into the buffer
-            let err = ArithmeticError::Saturation;
-            write!(writer, "{}", err).expect("Buffer too small");
+    #[test]
+    fn test_display_precision_loss() {
+        assert_error_display(
+            ArithmeticError::PrecisionLoss,
+            "Significant precision was lost during operation",
+        );
+    }
 
-            // 2. Assert against the string slice
-            assert_eq!(writer.as_str(), "Value saturated (clamped) at bounds");
-        }
-        {
-            let mut buffer = [0u8; 128]; // Stack allocated buffer
-            let mut writer = TestWriter::new(&mut buffer);
-            // 1. Write the error into the buffer
-            let err = ArithmeticError::PrecisionLoss;
-            write!(writer, "{}", err).expect("Buffer too small");
+    #[test]
+    fn test_display_saturation() {
+        assert_error_display(
+            ArithmeticError::Saturation,
+            "Value saturated (clamped) at bounds",
+        );
+    }
 
-            // 2. Assert against the string slice
-            assert_eq!(
-                writer.as_str(),
-                "Significant precision was lost during operation"
-            );
-        }
-        {
-            let mut buffer = [0u8; 128]; // Stack allocated buffer
-            let mut writer = TestWriter::new(&mut buffer);
-            // 1. Write the error into the buffer
-            let err = ArithmeticError::PrecisionLoss;
-            write!(writer, "{}", err).expect("Buffer too small");
-
-            // 2. Assert against the string slice
-            assert_eq!(
-                writer.as_str(),
-                "Significant precision was lost during operation"
-            );
-        }
-        {
-            let mut buffer = [0u8; 128]; // Stack allocated buffer
-            let mut writer = TestWriter::new(&mut buffer);
-            // 1. Write the error into the buffer
-            let err = ArithmeticError::DivisionByZero;
-            write!(writer, "{}", err).expect("Buffer too small");
-
-            // 2. Assert against the string slice
-            assert_eq!(writer.as_str(), "Division by zero");
-        }
-        {
-            let mut buffer = [0u8; 128]; // Stack allocated buffer
-            let mut writer = TestWriter::new(&mut buffer);
-            // 1. Write the error into the buffer
-            let err = ArithmeticError::Overflow;
-            write!(writer, "{}", err).expect("Buffer too small");
-
-            // 2. Assert against the string slice
-            assert_eq!(writer.as_str(), "Value overflowed representable range");
-        }
-        {
-            let mut buffer = [0u8; 128]; // Stack allocated buffer
-            let mut writer = TestWriter::new(&mut buffer);
-            // 1. Write the error into the buffer
-            let err = ArithmeticError::Underflow;
-            write!(writer, "{}", err).expect("Buffer too small");
-
-            // 2. Assert against the string slice
-            assert_eq!(writer.as_str(), "Value underflowed (subnormal)");
-        }
+    #[test]
+    fn test_display_underflow() {
+        assert_error_display(
+            ArithmeticError::Underflow,
+            "Value underflowed (subnormal)",
+        );
     }
 }
 

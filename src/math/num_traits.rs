@@ -80,15 +80,15 @@ pub trait Scalar: Copy + Sized + PartialEq + PartialOrd {}
 pub trait One: Scalar + Mul<Output = Self> {
     /// Constant multiplicative identity element.
     const ONE: Self;
-    /// Returns the multiplicative identity element.
-    fn one() -> Self {
-        Self::ONE
-    }
-
     /// Returns `true` if the value equals the multiplicative identity.
     #[inline(always)]
     fn is_one(&self) -> bool {
-        self.eq(&Self::one())
+        self.eq(&Self::ONE)
+    }
+    /// Returns the multiplicative identity element.
+    #[must_use]
+    fn one() -> Self {
+        Self::ONE
     }
 }
 
@@ -104,15 +104,15 @@ pub trait One: Scalar + Mul<Output = Self> {
 pub trait Zero: Scalar + Add<Output = Self> + Sub<Output = Self> {
     /// Constant additive identity element.
     const ZERO: Self;
-    /// Returns the additive identity element.
-    fn zero() -> Self {
-        Self::ZERO
-    }
-
     /// Returns `true` if the value equals the additive identity.
     #[inline(always)]
     fn is_zero(&self) -> bool {
         self.eq(&Self::ZERO)
+    }
+    /// Returns the additive identity element.
+    #[must_use]
+    fn zero() -> Self {
+        Self::ZERO
     }
 }
 
@@ -125,6 +125,9 @@ pub trait Zero: Scalar + Add<Output = Self> + Sub<Output = Self> {
 /// Floating-point implementations must follow IEEE 754 semantics.
 /// This trait does not call panic.
 pub trait Signed: Zero {
+    /// Returns the absolute value.
+    #[must_use]
+    fn abs(self) -> Self;
     /// Check if self is less than zero.
     #[inline(always)]
     fn is_sign_negative(&self) -> bool {
@@ -136,9 +139,6 @@ pub trait Signed: Zero {
     fn is_sign_positive(&self) -> bool {
         self.gt(&Self::ZERO)
     }
-
-    /// Returns the absolute value.
-    fn abs(self) -> Self;
 }
 
 /// Defines an algebraic ring, providing zero and one elements and standard arithmetic operations.
@@ -275,6 +275,28 @@ pub trait Field: Ring + Div<Output = Self> {
 /// assert_eq!(Real::sqrt(negative_val), Err(ArithmeticError::DomainViolation));
 /// ```
 pub trait Real: Field + Signed {
+    /// Calculates `e^self`.
+    #[must_use]
+    fn exp(self) -> Self;
+
+    /// Calculates the natural logarithm of a number.
+    ///
+    /// # Errors
+    /// * Return `Err(ArithmeticError::DomainViolation)` if `self <= 0`.
+    fn ln(self) -> ArithmeticResult<Self>;
+
+    /// Calculates the base-10 logarithm of a number.
+    ///
+    /// # Errors
+    /// * Return `Err(ArithmeticError::DomainViolation)` if `self <= 0`.
+    fn log10(self) -> ArithmeticResult<Self>;
+
+    /// Raises a number to a floating-point power.
+    ///
+    /// # Errors
+    /// * Return `Err(ArithmeticError::DomainViolation)` if `self` is negative.
+    fn pow(self, n: Self) -> ArithmeticResult<Self>;
+
     /// Calculates the square root of a number.
     ///
     /// # Errors
@@ -285,26 +307,6 @@ pub trait Real: Field + Signed {
     /// - `Ok(sqrt(self))` if self has a valid sqrt.
     /// - `ArithmeticError` if self does not have a valid sqrt.
     fn sqrt(self) -> ArithmeticResult<Self>;
-    /// Calculates the base-10 logarithm of a number.
-    ///
-    /// # Errors
-    /// * Return `Err(ArithmeticError::DomainViolation)` if `self <= 0`.
-    fn log10(self) -> ArithmeticResult<Self>;
-
-    /// Calculates the natural logarithm of a number.
-    ///
-    /// # Errors
-    /// * Return `Err(ArithmeticError::DomainViolation)` if `self <= 0`.
-    fn ln(self) -> ArithmeticResult<Self>;
-
-    /// Calculates `e^self`.
-    fn exp(self) -> Self;
-
-    /// Raises a number to a floating-point power.
-    ///
-    /// # Errors
-    /// * Return `Err(ArithmeticError::DomainViolation)` if `self` is negative.
-    fn pow(self, n: Self) -> ArithmeticResult<Self>;
 }
 
 /// Marker trait for unsigned types.
@@ -399,11 +401,15 @@ macro_rules! impl_real {
         }
         impl Real for $type {
             #[inline(always)]
-            fn sqrt(self) -> ArithmeticResult<Self> {
-                if self.is_sign_negative() {
+            fn exp(self) -> Self {
+                $exp(self)
+            }
+            #[inline(always)]
+            fn ln(self) -> ArithmeticResult<Self> {
+                if self <= <$type>::zero() {
                     Err(ArithmeticError::DomainViolation)
                 } else {
-                    Ok($sqrt(self))
+                    Ok($ln(self))
                 }
             }
             #[inline(always)]
@@ -415,20 +421,16 @@ macro_rules! impl_real {
                 }
             }
             #[inline(always)]
-            fn ln(self) -> ArithmeticResult<Self> {
-                if self <= <$type>::zero() {
-                    Err(ArithmeticError::DomainViolation)
-                } else {
-                    Ok($ln(self))
-                }
-            }
-            #[inline(always)]
-            fn exp(self) -> Self {
-                $exp(self)
-            }
-            #[inline(always)]
             fn pow(self, n: Self) -> ArithmeticResult<Self> {
                 Ok($pow(self, n))
+            }
+            #[inline(always)]
+            fn sqrt(self) -> ArithmeticResult<Self> {
+                if self.is_sign_negative() {
+                    Err(ArithmeticError::DomainViolation)
+                } else {
+                    Ok($sqrt(self))
+                }
             }
         }
     };
