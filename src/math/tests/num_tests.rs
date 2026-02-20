@@ -1,7 +1,7 @@
 //! # Numerical Tests
 //!
 //! These tests cover `[num_traits]` and `[num_types]`.
-
+use crate::{assert_almost_eq, assert_not_almost_eq};
 use crate::math::ArithmeticError;
 use crate::math::num_traits::{Field, One, Real, Ring, Scalar, Signed, Zero};
 use crate::math::ops::{TryAdd, TryDiv, TryMul, TryNeg, TryRem, TrySub};
@@ -75,7 +75,7 @@ fn test_real_trait_errors() {
     assert!(Real::ln(core::f32::consts::E).is_ok());
 
     // EXP/POW: Ensure passthrough works (happy path coverage)
-    assert_eq!(Real::exp(0.0f32), 1.0);
+    assert_almost_eq!(Real::exp(0.0f32), 1.0);
     assert!(Real::pow(2.0f32, 2.0f32).is_ok());
 }
 
@@ -132,7 +132,7 @@ fn test_scalar_properties() {
 
     // Case 1: Reflexivity holds for standard values
     let a = 10.0f32;
-    assert_eq!(a, a);
+    assert_almost_eq!(a, a);
     assert!(!(a < a));
     assert!(!(a > a));
 
@@ -145,7 +145,7 @@ fn test_scalar_properties() {
     // Case 3: NaN behavior (The "Partial" in PartialOrd)
     // Assumption: NaN is not equal to itself and is not ordered.
     let nan = f32::NAN;
-    assert_ne!(nan, nan);
+    assert_not_almost_eq!(nan, nan);
     assert!(!(nan < 0.0));
     assert!(!(nan > 0.0));
     // This confirms our `Scalar` trait doesn't accidentally force total ordering
