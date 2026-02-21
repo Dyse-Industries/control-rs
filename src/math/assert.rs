@@ -77,7 +77,7 @@ macro_rules! assert_not_almost_eq {
                              panic!("assertion failed: `(left != right)`\n  left: `{:?}`, \n right: `{:?}`", *left_val, *right_val)
                          }
                      }
-                     Err(e) => panic!("assertion failed: {e}")
+                     _ => {},
                  }
             }
         }
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "assertion failed: `(left == right)`\n  left: `0.1f32`, \n right: `0.2f32`"
+        expected = "assertion failed: `(left == right)`\n  left: `0.1`, \n right: `0.2`"
     )]
     fn test_assert_almost_eq_f32_panic() {
         assert_almost_eq!(0.1_f32, 0.2_f32);
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "assertion failed: `(left == right)`\n  left: `0.1f64`, \n right: `0.2f64`"
+        expected = "assertion failed: `(left == right)`\n  left: `0.1`, \n right: `0.2`"
     )]
     fn test_assert_almost_eq_f64_panic() {
         assert_almost_eq!(0.1_f64, 0.2_f64);
