@@ -1,10 +1,10 @@
 //! # Numerical Tests
 //!
 //! These tests cover `[num_traits]` and `[num_types]`.
-use crate::{assert_almost_eq, assert_not_almost_eq};
 use crate::math::ArithmeticError;
 use crate::math::num_traits::{Field, One, Real, Ring, Scalar, Signed, Zero};
 use crate::math::ops::{TryAdd, TryDiv, TryMul, TryNeg, TryRem, TrySub};
+use crate::{assert_almost_eq, assert_not_almost_eq};
 
 #[cfg(feature = "std")]
 #[test]

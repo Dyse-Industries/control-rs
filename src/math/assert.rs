@@ -1,6 +1,6 @@
 //! # Math Assertions.
 
-use super::{num_traits::Real, ops::TrySub, ArithmeticError};
+use super::{ArithmeticError, num_traits::Real, ops::TrySub};
 
 /// Asserts that two floating-point numbers are almost equal.
 ///
@@ -84,7 +84,6 @@ macro_rules! assert_not_almost_eq {
     });
 }
 
-
 /// Asserts that two floating-point numbers are almost equal.
 ///
 /// This function compares two numbers `a` and `b` of a type `T` that implements
@@ -104,7 +103,8 @@ macro_rules! assert_not_almost_eq {
 /// # Errors
 /// Return `ArithmeticError` if the subtraction operation fails.
 pub fn almost_eq<T>(a: T, b: T) -> Result<bool, ArithmeticError>
-where T: PartialOrd + PartialEq + TrySub<Output = T> + Real,
+where
+    T: PartialOrd + PartialEq + TrySub<Output = T> + Real,
 {
     if a == b {
         return Ok(true);
@@ -128,13 +128,17 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "assertion failed: `(left == right)`\n  left: `0.1f32`, \n right: `0.2f32`")]
+    #[should_panic(
+        expected = "assertion failed: `(left == right)`\n  left: `0.1f32`, \n right: `0.2f32`"
+    )]
     fn test_assert_almost_eq_f32_panic() {
         assert_almost_eq!(0.1_f32, 0.2_f32);
     }
 
     #[test]
-    #[should_panic(expected = "assertion failed: `(left == right)`\n  left: `0.1f64`, \n right: `0.2f64`")]
+    #[should_panic(
+        expected = "assertion failed: `(left == right)`\n  left: `0.1f64`, \n right: `0.2f64`"
+    )]
     fn test_assert_almost_eq_f64_panic() {
         assert_almost_eq!(0.1_f64, 0.2_f64);
     }
