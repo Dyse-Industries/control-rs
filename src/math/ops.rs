@@ -23,6 +23,7 @@
 //! By building on top of the traits in this module, the crate can support a wide
 //! range of numeric types and implementations while maintaining a clean and
 //! consistent API.
+#![allow(clippy::arbitrary_source_item_ordering)]
 
 // Re-export core arithmetic traits for unchecked operations.
 use crate::math::{ArithmeticError, ArithmeticResult, num_traits::Zero};

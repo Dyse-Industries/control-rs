@@ -1,10 +1,10 @@
 //! # Numerical Tests
 //!
 //! These tests cover `[num_traits]` and `[num_types]`.
-
 use crate::math::ArithmeticError;
 use crate::math::num_traits::{Field, One, Real, Ring, Scalar, Signed, Zero};
 use crate::math::ops::{TryAdd, TryDiv, TryMul, TryNeg, TryRem, TrySub};
+use crate::{assert_almost_eq, assert_not_almost_eq};
 
 #[cfg(feature = "std")]
 #[test]
@@ -39,21 +39,21 @@ fn test_arithmetic_error_display() {
 #[test]
 fn test_scalar_defaults() {
     // Covers src/math/num_traits.rs: default methods for Zero, One, Signed
-    let val = 0.0f32;
-    assert!(val.is_zero());
+    let val1 = 0.0f32;
+    assert!(val1.is_zero());
     assert!(!1.0f32.is_zero());
 
-    let val = 1.0f32;
-    assert!(val.is_one());
+    let val2 = 1.0f32;
+    assert!(val2.is_one());
     assert!(!0.0f32.is_one());
 
-    let val = -1.0f32;
-    assert!(val.is_sign_negative());
-    assert!(!val.is_sign_positive());
+    let val3 = -1.0f32;
+    assert!(val3.is_sign_negative());
+    assert!(!val3.is_sign_positive());
 
-    let val = 1.0f32;
-    assert!(!val.is_sign_negative());
-    assert!(val.is_sign_positive());
+    let val4 = 1.0f32;
+    assert!(!val4.is_sign_negative());
+    assert!(val4.is_sign_positive());
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn test_real_trait_errors() {
     assert!(Real::ln(core::f32::consts::E).is_ok());
 
     // EXP/POW: Ensure passthrough works (happy path coverage)
-    assert_eq!(Real::exp(0.0f32), 1.0);
+    assert_almost_eq!(Real::exp(0.0f32), 1.0);
     assert!(Real::pow(2.0f32, 2.0f32).is_ok());
 }
 
@@ -132,7 +132,7 @@ fn test_scalar_properties() {
 
     // Case 1: Reflexivity holds for standard values
     let a = 10.0f32;
-    assert_eq!(a, a);
+    assert_almost_eq!(a, a);
     assert!(!(a < a));
     assert!(!(a > a));
 
@@ -145,7 +145,7 @@ fn test_scalar_properties() {
     // Case 3: NaN behavior (The "Partial" in PartialOrd)
     // Assumption: NaN is not equal to itself and is not ordered.
     let nan = f32::NAN;
-    assert_ne!(nan, nan);
+    assert_not_almost_eq!(nan, nan);
     assert!(!(nan < 0.0));
     assert!(!(nan > 0.0));
     // This confirms our `Scalar` trait doesn't accidentally force total ordering
@@ -248,6 +248,11 @@ fn test_signed_trait_generic() {
     check_signed(5.5f64, -5.5f64);
 }
 
+// Verify Copy trait (compile-time check mainly, but runtime proof here)
+fn check_copy<T: Scalar>(x: T) -> (T, T) {
+    (x, x) // If T wasn't Copy, this would move x twice and fail to compile
+}
+
 #[test]
 fn test_scalar_trait_generic() {
     fn check_scalar_order<T: Scalar + core::fmt::Debug>(small: T, large: T) {
@@ -265,10 +270,6 @@ fn test_scalar_trait_generic() {
     check_scalar_order(-100i32, 100i32);
     check_scalar_order(0.0f32, 1.0f32);
 
-    // Verify Copy trait (compile-time check mainly, but runtime proof here)
-    fn check_copy<T: Scalar>(x: T) -> (T, T) {
-        (x, x) // If T wasn't Copy, this would move x twice and fail to compile
-    }
     let (a, b) = check_copy(42);
     assert_eq!(a, b);
 }

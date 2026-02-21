@@ -1,17 +1,18 @@
 //! # Math
 //!
-//! Core numerical primitives optimized for bare-metal execution. This module prioritizes
-//! fixed-point safety and stack-allocated matrix operations to avoid heap dependency.
+//! Core numerical primitives optimized for bare-metal execution.
 //!
 //! # References
 //! - [Numerical Recipes - The Art of Scientific Computing](https://numerical.recipes/)
 
+pub mod assert;
+
 pub mod num_traits;
 pub mod num_types;
-#[allow(clippy::arbitrary_source_item_ordering)]
 pub mod ops;
-mod static_storage;
+pub mod static_storage;
 pub mod subprograms;
+
 #[cfg(test)]
 mod tests;
 
@@ -47,6 +48,8 @@ pub enum ArithmeticError {
 
 /// A specialized `Result` type for fallible arithmetic operations.
 pub type ArithmeticResult<T> = Result<T, ArithmeticError>;
+
+impl core::error::Error for ArithmeticError {}
 
 impl core::fmt::Display for ArithmeticError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -169,6 +172,3 @@ mod test {
         );
     }
 }
-
-#[cfg(feature = "std")]
-impl std::error::Error for ArithmeticError {}
