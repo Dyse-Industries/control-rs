@@ -28,18 +28,15 @@ use super::{ArithmeticError, num_traits::Real, ops::TrySub};
 #[macro_export]
 macro_rules! assert_almost_eq {
     ($left:expr, $right:expr) => ({
-        match (&$left, &$right) {
-            (left_val, right_val) => {
-                 match $crate::math::assert::almost_eq(*left_val, *right_val) {
-                     Ok(is_almost_eq) => {
-                         if !is_almost_eq {
-                             panic!("assertion failed: `(left == right)`\n  left: `{:?}`, \n right: `{:?}`", *left_val, *right_val)
-                         }
-                     }
-                     Err(e) => panic!("assertion failed: {e}")
+        let (left_val, right_val) = (&$left, &$right);
+        match $crate::math::assert::almost_eq(left_val, right_val) {
+             Ok(is_almost_eq) => {
+                 if !is_almost_eq {
+                     panic!("assertion failed: `(left == right)`\n  left: `{:?}`, \n right: `{:?}`", left_val, right_val)
                  }
-            }
-        }
+             }
+             Err(e) => panic!("assertion failed: {e}")
+         }
     });
 }
 
@@ -69,18 +66,15 @@ macro_rules! assert_almost_eq {
 #[macro_export]
 macro_rules! assert_not_almost_eq {
     ($left:expr, $right:expr) => ({
-        match (&$left, &$right) {
-            (left_val, right_val) => {
-                 match $crate::math::assert::almost_eq(*left_val, *right_val) {
-                     Ok(is_almost_eq) => {
-                         if is_almost_eq {
-                             panic!("assertion failed: `(left != right)`\n  left: `{:?}`, \n right: `{:?}`", *left_val, *right_val)
-                         }
-                     }
-                     _ => {},
+         let (left_val, right_val) = (&$left, &$right);
+         match $crate::math::assert::almost_eq(left_val, right_val) {
+             Ok(is_almost_eq) => {
+                 if is_almost_eq {
+                     panic!("assertion failed: `(left != right)`\n  left: `{:?}`, \n right: `{:?}`", left_val, right_val)
                  }
-            }
-        }
+             }
+             _ => {},
+         }
     });
 }
 
@@ -102,14 +96,14 @@ macro_rules! assert_not_almost_eq {
 ///
 /// # Errors
 /// Return `ArithmeticError` if the subtraction operation fails.
-pub fn almost_eq<T>(a: T, b: T) -> Result<bool, ArithmeticError>
+pub fn almost_eq<T>(a: &T, b: &T) -> Result<bool, ArithmeticError>
 where
     T: PartialOrd + PartialEq + TrySub<Output = T> + Real,
 {
     if a == b {
         return Ok(true);
     }
-    a.try_sub(&b).map(|diff| T::abs(diff) < T::epsilon())
+    a.try_sub(b).map(|diff| T::abs(diff) < T::epsilon())
 }
 
 #[cfg(test)]

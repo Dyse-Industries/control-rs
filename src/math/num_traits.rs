@@ -20,9 +20,8 @@
 //! inputs gracefully, avoiding `NaN` results or panics that could compromise system stability.
 //! The use of `libm` ensures that mathematical functions are implemented correctly and
 //! consistently across platforms, a key consideration for safety-critical software.
-use crate::math::{ArithmeticError, ArithmeticResult};
-use core::ops::{Add, Div, Mul, Sub};
-use libm;
+
+use crate::math::ops::{Add, Div, Mul, Sub};
 
 /// A marker trait for types that are `Copy` and have a defined partial ordering.
 ///
@@ -66,7 +65,7 @@ use libm;
 ///     val
 /// }
 /// ```
-pub trait Scalar: Copy + Sized + PartialEq + PartialOrd {}
+pub trait Scalar: Clone + Sized + PartialEq + PartialOrd {}
 
 /// Provides access to the multiplicative identity and a one check.
 ///
@@ -272,41 +271,42 @@ pub trait Field: Ring + Div<Output = Self> {
 ///
 /// // sqrt of a negative number
 /// let negative_val = -1.0f32;
-/// assert_eq!(Real::sqrt(negative_val), Err(ArithmeticError::DomainViolation));
 /// ```
 pub trait Real: Field + Signed {
     /// Calculates `e^self`.
+    ///
+    /// # Returns
+    /// * `e^self`
     #[must_use]
     fn exp(self) -> Self;
 
     /// Calculates the natural logarithm of a number.
     ///
-    /// # Errors
-    /// * Return `Err(ArithmeticError::DomainViolation)` if `self <= 0`.
-    fn ln(self) -> ArithmeticResult<Self>;
+    /// # Returns
+    /// * Natural logarithm of `self`
+    #[must_use]
+    fn ln(self) -> Self;
 
     /// Calculates the base-10 logarithm of a number.
     ///
-    /// # Errors
-    /// * Return `Err(ArithmeticError::DomainViolation)` if `self <= 0`.
-    fn log10(self) -> ArithmeticResult<Self>;
+    /// # Returns
+    /// * log base 10 of `self`
+    #[must_use]
+    fn log10(self) -> Self;
 
     /// Raises a number to a floating-point power.
     ///
-    /// # Errors
-    /// * Return `Err(ArithmeticError::DomainViolation)` if `self` is negative.
-    fn pow(self, n: Self) -> ArithmeticResult<Self>;
+    /// # Returns
+    /// * `self` raised to the nth power.
+    #[must_use]
+    fn pow(self, n: Self) -> Self;
 
     /// Calculates the square root of a number.
     ///
-    /// # Errors
-    /// * Some numbers may not have a sqrt, these will return a [`ArithmeticError`].
-    ///
     /// # Returns
-    ///
-    /// - `Ok(sqrt(self))` if self has a valid sqrt.
-    /// - `ArithmeticError` if self does not have a valid sqrt.
-    fn sqrt(self) -> ArithmeticResult<Self>;
+    /// * `sqrt(self)`
+    #[must_use]
+    fn sqrt(self) -> Self;
 }
 
 /// Marker trait for unsigned types.
@@ -405,32 +405,20 @@ macro_rules! impl_real {
                 $exp(self)
             }
             #[inline(always)]
-            fn ln(self) -> ArithmeticResult<Self> {
-                if self <= <$type>::zero() {
-                    Err(ArithmeticError::DomainViolation)
-                } else {
-                    Ok($ln(self))
-                }
+            fn ln(self) -> Self {
+                $ln(self)
             }
             #[inline(always)]
-            fn log10(self) -> ArithmeticResult<Self> {
-                if self <= <$type>::zero() {
-                    Err(ArithmeticError::DomainViolation)
-                } else {
-                    Ok($log10(self))
-                }
+            fn log10(self) -> Self {
+                $log10(self)
             }
             #[inline(always)]
-            fn pow(self, n: Self) -> ArithmeticResult<Self> {
-                Ok($pow(self, n))
+            fn pow(self, n: Self) -> Self {
+                $pow(self, n)
             }
             #[inline(always)]
-            fn sqrt(self) -> ArithmeticResult<Self> {
-                if self.is_sign_negative() {
-                    Err(ArithmeticError::DomainViolation)
-                } else {
-                    Ok($sqrt(self))
-                }
+            fn sqrt(self) -> Self {
+                $sqrt(self)
             }
         }
     };
