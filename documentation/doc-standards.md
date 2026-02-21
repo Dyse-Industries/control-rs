@@ -73,7 +73,7 @@ The documentation for every public item should adhere to the following order:
 /// ```
 ```
 
-## 2.2. The #[safety] Section: A Contract for Critical Code
+## 2.2 The #Safety Section: A Contract for Critical Code
 
 For any function, method, or unsafe block that has safety implications, a dedicated #[safety] section is mandatory.
 This section must explicitly detail the contract the caller must uphold to ensure safe execution.
