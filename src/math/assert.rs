@@ -115,6 +115,7 @@ where
 #[cfg(test)]
 mod tests {
 
+    #[allow(unused_imports)]
     use crate::assert_almost_eq;
 
     #[test]
