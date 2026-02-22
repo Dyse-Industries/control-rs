@@ -62,11 +62,30 @@ jobs:
       - name: Run Tarpaulin Coverage
         id: coverage
         run: |
-          # Exclude the internal codegen tool from coverage metrics [cite: 397]
-          COVERAGE_OUT=$(cargo tarpaulin)
-          echo "coverage_report<<EOF" >> $GITHUB_OUTPUT
-          echo "$COVERAGE_OUT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+           # 1. Run tarpaulin and strip ANSI colors/messy characters
+           RAW_OUT=$(cargo tarpaulin --exclude-files "*codegen/*" "documentation/*" ".github/*" "target/*" | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g")
+
+           # 2. Extract Coverage Summary
+           SUMMARY=$(echo "$RAW_OUT" | grep "coverage," || echo "0% coverage")
+           PERCENT=$(echo "$SUMMARY" | grep -oP '\d+\.\d+(?=% coverage)' || echo "0.0")
+
+           # 3. Parse Uncovered Lines into a Table
+           UNCOVERED_TABLE=$(echo "$RAW_OUT" | awk '/Uncovered Lines:/ {flag=1; next} /Tested\/Total Lines:/ {flag=0} flag {print "| `"$2"` | "$3" |"}' | sed 's/: / | /')
+
+           # 4. Parse Coverage Breakdown into a Table
+           BREAKDOWN_TABLE=$(echo "$RAW_OUT" | awk '/Tested\/Total Lines:/ {flag=1; next} /^[0-9]/ {flag=0} flag && NF==3 {split($3, a, "/"); printf "| `%s` | %.1f%% | %s |\n", $2, (a[1]/a[2])*100, $3}')
+
+           # 5. Output everything to GitHub
+           {
+             echo "percent=$PERCENT"
+             echo "summary=$SUMMARY"
+             echo "uncovered_table<<EOF"
+             echo "$UNCOVERED_TABLE"
+             echo "EOF"
+             echo "breakdown_table<<EOF"
+             echo "$BREAKDOWN_TABLE"
+             echo "EOF"
+           } >> $GITHUB_OUTPUT
 
       # 4. PR Feedback Comment
       - name: Post PR Comment
@@ -88,10 +107,18 @@ jobs:
             ${{ steps.lint.outputs.lint_report || '✅ Formatting and Clippy passed!' }}
             ```
 
-            ### Tarpaulin
-            ```text
-            ${{ steps.coverage.outputs.coverage_report || '✅ Full code coverage!' }}
-            ```
+            ### Tarpaulin: ${{ steps.coverage.outputs.percent }}%
+            **Summary**: `${{ steps.coverage.outputs.summary }}`
+
+            #### 🚩 Uncovered Lines
+            | File | Line Numbers |
+            | :--- | :--- |
+            ${{ steps.coverage.outputs.uncovered_table }}
+
+            #### 📊 Breakdown
+            | File | Coverage % | Progress |
+            | :--- | :--- | :--- |
+            ${{ steps.coverage.outputs.breakdown_table }}
 
             ### Test Results
             <details>
