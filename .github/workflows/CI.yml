@@ -64,12 +64,8 @@ jobs:
         run: |
           # Exclude the internal codegen tool from coverage metrics [cite: 397]
           COVERAGE_OUT=$(cargo tarpaulin --stdout --exclude-files "codegen/*" "control-rs-codegen/*")
-
-          # Extract uncovered lines summary
-          UNCOVERED=$(echo "$COVERAGE_OUT" | grep -A 10 "Uncovered Lines:" || echo "No uncovered lines found.")
-
           echo "coverage_report<<EOF" >> $GITHUB_OUTPUT
-          echo "$UNCOVERED" >> $GITHUB_OUTPUT
+          echo "$COVERAGE_OUT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       # 4. PR Feedback Comment
@@ -87,10 +83,12 @@ jobs:
             | Lint & Format | ${{ steps.lint.outputs.lint_time }} |
             | Build & Test | ${{ steps.test.outputs.test_time }} |
 
-            ### ❌ Errors & Warnings
-            ${{ steps.lint.outputs.lint_report || '✅ Formatting and Clippy passed!' }}
+            ### Linting and Formatter
+            ```
+            ${{ steps.lint.outputs.lint_report }}
+            ```
 
-            ### 🧪 Test Results
+            ### Test Results
             <details>
             <summary>Click to expand test logs</summary>
 
@@ -99,7 +97,7 @@ jobs:
             ```
             </details>
 
-            ### 📉 Coverage Gaps (Tarpaulin)
+            ### Coverage Gaps (Tarpaulin)
             ```text
             ${{ steps.coverage.outputs.coverage_report }}
             ```
