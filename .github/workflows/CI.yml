@@ -11,38 +11,102 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
+    permissions:
+      pull-requests: write # Required to post comments
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check || (echo "Run 'cargo fmt --all' locally to fix formatting" && exit 1)
+      # 1. Formatting & Clippy (Combined for efficiency)
+      - name: Linting and Formatting
+        id: lint
+        run: |
+          START_TIME=$(date +%s)
 
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
+          FMT_OUT=$(cargo fmt --all -- --check 2>&1) || FMT_EXIT=$?
+          CLIPPY_OUT=$(cargo clippy --workspace -- -D warnings 2>&1) || CLIPPY_EXIT=$?
 
-      - name: Build
-        run: cargo build --verbose
+          echo "lint_time=$(($(date +%s) - START_TIME))s" >> $GITHUB_OUTPUT
 
-      - name: Run tests
-        run: cargo test --verbose
+          # Prepare report content
+          {
+            echo "lint_report<<EOF"
+            if [ -n "$FMT_OUT" ]; then echo "#### 🎨 Formatting Errors"; echo "\`\`\`text"; echo "$FMT_OUT"; echo "\`\`\`"; fi
+            if [ -n "$CLIPPY_OUT" ]; then echo "#### 📎 Clippy Warnings"; echo "\`\`\`text"; echo "$CLIPPY_OUT"; echo "\`\`\`"; fi
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+          if [ "${FMT_EXIT:-0}" -ne 0 ] || [ "${CLIPPY_EXIT:-0}" -ne 0 ]; then exit 1; fi
+
+      # 2. Build & Test with Timing
+      - name: Build and Test
+        id: test
+        run: |
+          START_TIME=$(date +%s)
+
+          cargo build --verbose
+          TEST_OUT=$(cargo test --verbose 2>&1) || TEST_EXIT=$?
+
+          echo "test_time=$(($(date +%s) - START_TIME))s" >> $GITHUB_OUTPUT
+          echo "test_report<<EOF" >> $GITHUB_OUTPUT
+          echo "$TEST_OUT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          if [ "${TEST_EXIT:-0}" -ne 0 ]; then exit 1; fi
+
+      # 3. Coverage with Tarpaulin
+      - name: Run Tarpaulin Coverage
+        id: coverage
+        run: |
+          # Exclude the internal codegen tool from coverage metrics [cite: 397]
+          COVERAGE_OUT=$(cargo tarpaulin --stdout --exclude-files "codegen/*" "control-rs-codegen/*")
+
+          # Extract uncovered lines summary
+          UNCOVERED=$(echo "$COVERAGE_OUT" | grep -A 10 "Uncovered Lines:" || echo "No uncovered lines found.")
+
+          echo "coverage_report<<EOF" >> $GITHUB_OUTPUT
+          echo "$UNCOVERED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # 4. PR Feedback Comment
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request' && (success() || failure())
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## CI Quality Report for `control-rs` 🛡️
+
+            ### ⏱️ Performance
+            | Task | Duration |
+            | :--- | :--- |
+            | Lint & Format | ${{ steps.lint.outputs.lint_time }} |
+            | Build & Test | ${{ steps.test.outputs.test_time }} |
+
+            ### ❌ Errors & Warnings
+            ${{ steps.lint.outputs.lint_report || '✅ Formatting and Clippy passed!' }}
+
+            ### 🧪 Test Results
+            <details>
+            <summary>Click to expand test logs</summary>
+
+            ```text
+            ${{ steps.test.outputs.test_report }}
+            ```
+            </details>
+
+            ### 📉 Coverage Gaps (Tarpaulin)
+            ```text
+            ${{ steps.coverage.outputs.coverage_report }}
+            ```
 
   publish:
     runs-on: ubuntu-latest
-    needs: build # Ensures build and test pass before publishing
-
-    # Only run this job when a new tag starting with 'v' is pushed
-    # (e.g., v1.0.0, v1.2.3-alpha)
+    needs: build
     if: startsWith(github.ref, 'refs/tags/v')
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Log in to crates.io
-        # This uses a repository secret to authenticate
         run: cargo login "${{ secrets.CRATES_IO_TOKEN }}"
-
       - name: Publish to crates.io
         run: cargo publish
