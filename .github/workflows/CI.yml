@@ -19,7 +19,7 @@ jobs:
 
       - name: Install Tools
         id: setup
-        run: cargo add tarpaulin
+        run: cargo install cargo-tarpaulin
 
       # 1. Formatting & Clippy (Combined for efficiency)
       - name: Linting and Formatting
