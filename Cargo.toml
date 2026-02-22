@@ -8,12 +8,18 @@ repository = "https://github.com/Dyse-Industries/control-rs.git"
 categories = ["embedded", "science", "no-std"]
 keywords = ["control", "robotics", "firmware", "autonomy"]
 
-[dependencies]
-libm = "0.2.16"
-
+[workspace]
+members = ["codegen"]
 
 [features]
 std = []
+
+[dependencies]
+libm = "0.2.16"
+
+[build-dependencies]
+# Point directly to the nested folder
+codegen = { path = "codegen" }
 
 [dev-dependencies]
 
