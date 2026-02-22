@@ -36,7 +36,7 @@ jobs:
           {
             echo "lint_report<<EOF"
             if [ -n "$FMT_OUT" ]; then echo "#### 🎨 Formatting Errors"; echo "\`\`\`text"; echo "$FMT_OUT"; echo "\`\`\`"; fi
-            if [ -n "$CLIPPY_OUT" ]; then echo "#### 📎 Clippy Warnings"; echo "\`\`\`text"; echo "$CLIPPY_OUT"; echo "\`\`\`"; fi
+            if [ -n "$CLIPPY_OUT" ]; then echo "#### 📎 Clippy Output"; echo "\`\`\`text"; echo "$CLIPPY_OUT"; echo "\`\`\`"; fi
             echo "EOF"
           } >> $GITHUB_OUTPUT
 
@@ -48,7 +48,6 @@ jobs:
         run: |
           START_TIME=$(date +%s)
 
-          cargo build --verbose
           TEST_OUT=$(cargo test --verbose 2>&1) || TEST_EXIT=$?
 
           echo "test_time=$(($(date +%s) - START_TIME))s" >> $GITHUB_OUTPUT
@@ -94,7 +93,7 @@ jobs:
         with:
           issue-number: ${{ github.event.pull_request.number }}
           body: |
-            ## CI Quality Report for `control-rs` 🛡️
+            ## CI Quality Report for `control-rs`
 
             ### ⏱️ Performance
             | Task | Duration |
