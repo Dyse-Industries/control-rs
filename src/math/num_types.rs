@@ -4,8 +4,6 @@
 //!
 //! This module provides traits and structs to handle both compile-time fixed dimensions
 //! and runtime dynamic dimensions, enabling flexible matrix operations.
-#![allow(clippy::all)]
-#![allow(clippy::use_self)]
 
 /// Defines the base behavior for all dimensions, both static and dynamic.
 ///

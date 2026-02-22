@@ -1,7 +1,8 @@
 [package]
-name = "codegen"
+name = "control-rs-codegen"
 version = "0.1.0"
 edition = "2024"
 publish = false # Prevents accidentally publishing your internal tool
 
 [dependencies]
+codegen = "0.3.0"

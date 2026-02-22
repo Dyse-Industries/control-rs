@@ -9,7 +9,7 @@ categories = ["embedded", "science", "no-std"]
 keywords = ["control", "robotics", "firmware", "autonomy"]
 
 [workspace]
-members = ["codegen"]
+members = ["control-rs-codegen"]
 
 [features]
 std = []
@@ -19,7 +19,7 @@ libm = "0.2.16"
 
 [build-dependencies]
 # Point directly to the nested folder
-codegen = { path = "codegen" }
+control-rs-codegen = { path = "control-rs-codegen" }
 
 [dev-dependencies]
 
