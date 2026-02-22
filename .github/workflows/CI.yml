@@ -103,14 +103,14 @@ jobs:
             | Build & Test | ${{ steps.test.outputs.test_time }} |
 
             ### Cargo fmt & Clippy
-            ```text
             ${{ steps.lint.outputs.lint_report || '✅ Formatting and Clippy passed!' }}
-            ```
 
-            ### Tarpaulin: ${{ steps.coverage.outputs.percent }}%
+            ### Tarpaulin: `${{ steps.coverage.outputs.percent }}%`
             **Summary**: `${{ steps.coverage.outputs.summary }}`
+            <details>
+            <summary>Click to expand coverage report</summary>
 
-            #### 🚩 Uncovered Lines
+            #### Uncovered Lines
             | File | Line Numbers |
             | :--- | :--- |
             ${{ steps.coverage.outputs.uncovered_table }}
@@ -119,6 +119,7 @@ jobs:
             | File | Coverage % | Progress |
             | :--- | :--- | :--- |
             ${{ steps.coverage.outputs.breakdown_table }}
+            </details>
 
             ### Test Results
             <details>
