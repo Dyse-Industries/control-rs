@@ -83,9 +83,12 @@ jobs:
             | Lint & Format | ${{ steps.lint.outputs.lint_time }} |
             | Build & Test | ${{ steps.test.outputs.test_time }} |
 
-            ### Linting and Formatter
-            ```
-            ${{ steps.lint.outputs.lint_report }}
+            ### Cargo fmt & Clippy
+            ${{ steps.lint.outputs.lint_report || '✅ Formatting and Clippy passed!' }}
+
+            ### Tarpaulin
+            ```text
+            ${{ steps.coverage.outputs.coverage_report || '✅ Full code coverage!' }}
             ```
 
             ### Test Results
@@ -96,11 +99,6 @@ jobs:
             ${{ steps.test.outputs.test_report }}
             ```
             </details>
-
-            ### Coverage Gaps (Tarpaulin)
-            ```text
-            ${{ steps.coverage.outputs.coverage_report }}
-            ```
 
   publish:
     runs-on: ubuntu-latest
