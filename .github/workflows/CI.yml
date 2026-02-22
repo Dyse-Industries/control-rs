@@ -11,38 +11,131 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
+    permissions:
+      pull-requests: write # Required to post comments
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check || (echo "Run 'cargo fmt --all' locally to fix formatting" && exit 1)
+      - name: Install Tools
+        id: setup
+        run: cargo install cargo-tarpaulin
 
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
+      # 1. Formatting & Clippy (Combined for efficiency)
+      - name: Linting and Formatting
+        id: lint
+        run: |
+          START_TIME=$(date +%s)
 
-      - name: Build
-        run: cargo build --verbose
+          FMT_OUT=$(cargo fmt --all -- --check 2>&1) || FMT_EXIT=$?
+          CLIPPY_OUT=$(cargo clippy --workspace -- -D warnings 2>&1) || CLIPPY_EXIT=$?
 
-      - name: Run tests
-        run: cargo test --verbose
+          echo "lint_time=$(($(date +%s) - START_TIME))s" >> $GITHUB_OUTPUT
+
+          # Prepare report content
+          {
+            echo "lint_report<<EOF"
+            if [ -n "$FMT_OUT" ]; then echo "#### 🎨 Formatting Errors"; echo "\`\`\`text"; echo "$FMT_OUT"; echo "\`\`\`"; fi
+            if [ -n "$CLIPPY_OUT" ]; then echo "#### 📎 Clippy Output"; echo "\`\`\`text"; echo "$CLIPPY_OUT"; echo "\`\`\`"; fi
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+          if [ "${FMT_EXIT:-0}" -ne 0 ] || [ "${CLIPPY_EXIT:-0}" -ne 0 ]; then exit 1; fi
+
+      # 2. Build & Test with Timing
+      - name: Build and Test
+        id: test
+        run: |
+          START_TIME=$(date +%s)
+
+          TEST_OUT=$(cargo test --verbose 2>&1) || TEST_EXIT=$?
+
+          echo "test_time=$(($(date +%s) - START_TIME))s" >> $GITHUB_OUTPUT
+          echo "test_report<<EOF" >> $GITHUB_OUTPUT
+          echo "$TEST_OUT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          if [ "${TEST_EXIT:-0}" -ne 0 ]; then exit 1; fi
+
+      # 3. Coverage with Tarpaulin
+      - name: Run Tarpaulin Coverage
+        id: coverage
+        run: |
+           # 1. Run tarpaulin and strip ANSI colors/messy characters
+           RAW_OUT=$(cargo tarpaulin --exclude-files "*codegen/*" "documentation/*" ".github/*" "target/*" | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g")
+
+           # 2. Extract Coverage Summary
+           SUMMARY=$(echo "$RAW_OUT" | grep "coverage," || echo "0% coverage")
+           PERCENT=$(echo "$SUMMARY" | grep -oP '\d+\.\d+(?=% coverage)' || echo "0.0")
+
+           # 3. Parse Uncovered Lines into a Table
+           UNCOVERED_TABLE=$(echo "$RAW_OUT" | awk '/Uncovered Lines:/ {flag=1; next} /Tested\/Total Lines:/ {flag=0} flag {print "| `"$2"` | "$3" |"}' | sed 's/: / | /')
+
+           # 4. Parse Coverage Breakdown into a Table
+           BREAKDOWN_TABLE=$(echo "$RAW_OUT" | awk '/Tested\/Total Lines:/ {flag=1; next} /^[0-9]/ {flag=0} flag && NF==3 {split($3, a, "/"); printf "| `%s` | %.1f%% | %s |\n", $2, (a[1]/a[2])*100, $3}')
+
+           # 5. Output everything to GitHub
+           {
+             echo "percent=$PERCENT"
+             echo "summary=$SUMMARY"
+             echo "uncovered_table<<EOF"
+             echo "$UNCOVERED_TABLE"
+             echo "EOF"
+             echo "breakdown_table<<EOF"
+             echo "$BREAKDOWN_TABLE"
+             echo "EOF"
+           } >> $GITHUB_OUTPUT
+
+      # 4. PR Feedback Comment
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request' && (success() || failure())
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## CI Quality Report for `control-rs`
+
+            ### ⏱️ Performance
+            | Task | Duration |
+            | :--- | :--- |
+            | Lint & Format | ${{ steps.lint.outputs.lint_time }} |
+            | Build & Test | ${{ steps.test.outputs.test_time }} |
+
+            ### Cargo fmt & Clippy
+            ${{ steps.lint.outputs.lint_report || '✅ Formatting and Clippy passed!' }}
+
+            ### Tarpaulin: `${{ steps.coverage.outputs.percent }}%`
+            **Summary**: `${{ steps.coverage.outputs.summary }}`
+            <details>
+            <summary>Click to expand coverage report</summary>
+
+            #### Uncovered Lines
+            | File | Line Numbers |
+            | :--- | :--- |
+            ${{ steps.coverage.outputs.uncovered_table }}
+
+            #### 📊 Breakdown
+            | File | Coverage % | Progress |
+            | :--- | :--- | :--- |
+            ${{ steps.coverage.outputs.breakdown_table }}
+            </details>
+
+            ### Test Results
+            <details>
+            <summary>Click to expand test logs</summary>
+
+            ```text
+            ${{ steps.test.outputs.test_report }}
+            ```
+            </details>
 
   publish:
     runs-on: ubuntu-latest
-    needs: build # Ensures build and test pass before publishing
-
-    # Only run this job when a new tag starting with 'v' is pushed
-    # (e.g., v1.0.0, v1.2.3-alpha)
+    needs: build
     if: startsWith(github.ref, 'refs/tags/v')
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Log in to crates.io
-        # This uses a repository secret to authenticate
         run: cargo login "${{ secrets.CRATES_IO_TOKEN }}"
-
       - name: Publish to crates.io
         run: cargo publish
