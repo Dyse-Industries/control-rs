@@ -63,7 +63,7 @@ jobs:
         id: coverage
         run: |
           # Exclude the internal codegen tool from coverage metrics [cite: 397]
-          COVERAGE_OUT=$(cargo tarpaulin --stdout --exclude-files "codegen/*" "control-rs-codegen/*")
+          COVERAGE_OUT=$(cargo tarpaulin)
           echo "coverage_report<<EOF" >> $GITHUB_OUTPUT
           echo "$COVERAGE_OUT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
