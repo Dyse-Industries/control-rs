@@ -20,6 +20,17 @@ mod tests;
 ///
 /// This structure balances high-level control flow (overflow/underflow) with
 /// fixed-point specific signals (saturation/precision).
+///
+/// # Safety
+/// This enum does not use `unsafe` code.
+///
+/// # Example
+/// ```
+/// use control_rs::math::ArithmeticError;
+///
+/// let err = ArithmeticError::DivisionByZero;
+/// assert_eq!(format!("{}", err), "Division by zero");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArithmeticError {
     /// Attempted to divide by zero.

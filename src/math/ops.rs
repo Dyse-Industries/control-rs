@@ -35,6 +35,12 @@ pub use core::ops::{Add, Div, Mul, Neg, Rem, Shl, Shr, Sub};
 pub trait TryAdd: Sized + Add<Self, Output = Self> {
     /// Adds two numbers, returning an error on failure.
     ///
+    /// # Arguments
+    /// * `v` - The value to add.
+    ///
+    /// # Returns
+    /// * `ArithmeticResult<Self>` - The result of the addition.
+    ///
     /// # Errors
     ///
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
@@ -47,6 +53,12 @@ pub trait TryAdd: Sized + Add<Self, Output = Self> {
 /// Performs fallible multiplication.
 pub trait TryMul: Sized + Mul<Self, Output = Self> {
     /// Multiplies two numbers, returning an error on failure.
+    ///
+    /// # Arguments
+    /// * `v` - The value to multiply by.
+    ///
+    /// # Returns
+    /// * `ArithmeticResult<Self>` - The result of the multiplication.
     ///
     /// # Errors
     ///
@@ -61,6 +73,12 @@ pub trait TryMul: Sized + Mul<Self, Output = Self> {
 pub trait TrySub: Sized + Sub<Self, Output = Self> {
     /// Subtracts two numbers, returning an error on failure.
     ///
+    /// # Arguments
+    /// * `v` - The value to subtract.
+    ///
+    /// # Returns
+    /// * `ArithmeticResult<Self>` - The result of the subtraction.
+    ///
     /// # Errors
     ///
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
@@ -73,6 +91,12 @@ pub trait TrySub: Sized + Sub<Self, Output = Self> {
 /// Performs fallible division.
 pub trait TryDiv: Sized + Div<Self, Output = Self> {
     /// Divides two numbers, returning an error on failure.
+    ///
+    /// # Arguments
+    /// * `v` - The divisor.
+    ///
+    /// # Returns
+    /// * `ArithmeticResult<Self>` - The result of the division.
     ///
     /// # Errors
     ///
@@ -88,6 +112,9 @@ pub trait TryDiv: Sized + Div<Self, Output = Self> {
 pub trait TryNeg: Sized + Neg<Output = Self> {
     /// Negates a number, returning an error on failure.
     ///
+    /// # Returns
+    /// * `ArithmeticResult<Self>` - The negated value.
+    ///
     /// # Errors
     ///
     /// - `ArithmeticError::Overflow`: The result cannot be represented (e.g., `-i32::MIN`).
@@ -97,6 +124,12 @@ pub trait TryNeg: Sized + Neg<Output = Self> {
 /// Performs fallible remainder.
 pub trait TryRem: Sized + Rem<Self, Output = Self> {
     /// Finds the remainder of a division, returning an error on failure.
+    ///
+    /// # Arguments
+    /// * `v` - The divisor.
+    ///
+    /// # Returns
+    /// * `ArithmeticResult<Self>` - The remainder.
     ///
     /// # Errors
     ///
@@ -111,6 +144,12 @@ pub trait TryRem: Sized + Rem<Self, Output = Self> {
 pub trait TryShl: Sized + Shl<u32, Output = Self> {
     /// Performs a fallible left shift (`self << rhs`).
     ///
+    /// # Arguments
+    /// * `rhs` - The number of bits to shift.
+    ///
+    /// # Returns
+    /// * `ArithmeticResult<Self>` - The shifted value.
+    ///
     /// # Errors
     ///
     /// - `ArithmeticError::Overflow`: The number of bits to shift (`rhs`) is
@@ -122,6 +161,12 @@ pub trait TryShl: Sized + Shl<u32, Output = Self> {
 /// Performs a fallible right shift.
 pub trait TryShr: Sized + Shr<u32, Output = Self> {
     /// Performs a fallible right shift (`self >> rhs`).
+    ///
+    /// # Arguments
+    /// * `rhs` - The number of bits to shift.
+    ///
+    /// # Returns
+    /// * `ArithmeticResult<Self>` - The shifted value.
     ///
     /// # Errors
     ///
