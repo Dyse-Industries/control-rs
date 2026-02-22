@@ -84,7 +84,9 @@ jobs:
             | Build & Test | ${{ steps.test.outputs.test_time }} |
 
             ### Cargo fmt & Clippy
+            ```text
             ${{ steps.lint.outputs.lint_report || '✅ Formatting and Clippy passed!' }}
+            ```
 
             ### Tarpaulin
             ```text
