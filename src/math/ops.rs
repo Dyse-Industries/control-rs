@@ -371,6 +371,14 @@ macro_rules! try_float_impl {
                     if result.is_infinite() {
                         return Err(ArithmeticError::Overflow);
                     }
+                    #[allow(clippy::float_cmp)]
+                    if result == *self && (*v < Self::EPSILON && *v > Self::EPSILON.neg()) {
+                        return Err(ArithmeticError::Underflow);
+                    }
+                    #[allow(clippy::float_cmp)]
+                    if result == *v && (*self < Self::EPSILON && *self > Self::EPSILON.neg()) {
+                        return Err(ArithmeticError::Underflow);
+                    }
                     return Ok(result);
                 }
             }
@@ -433,6 +441,14 @@ macro_rules! try_float_impl {
                     let result = self.sub(v);
                     if result.is_infinite() {
                         return Err(ArithmeticError::Overflow);
+                    }
+                    #[allow(clippy::float_cmp)]
+                    if result == *self && (*v < Self::EPSILON && *v > Self::EPSILON.neg()) {
+                        return Err(ArithmeticError::Underflow);
+                    }
+                    #[allow(clippy::float_cmp)]
+                    if result == *v && (*self < Self::EPSILON && *self > Self::EPSILON.neg()) {
+                        return Err(ArithmeticError::Underflow);
                     }
                     return Ok(result);
                 }

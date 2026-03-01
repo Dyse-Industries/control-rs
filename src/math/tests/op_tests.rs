@@ -17,6 +17,10 @@ mod test_add {
         assert_eq!(1f32.try_add(&1f32), Ok(2f32));
         assert_eq!(f32::MAX.try_add(&f32::MAX), Err(ArithmeticError::Overflow));
         assert_eq!(f32::MIN.try_add(&f32::MIN), Err(ArithmeticError::Overflow));
+        assert_eq!(
+            1.0e20_f32.try_add(&1.0e-20_f32),
+            Err(ArithmeticError::Underflow)
+        );
     }
 }
 
@@ -124,5 +128,9 @@ mod test_sub {
         assert_eq!(2f32.try_sub(&1f32), Ok(1f32));
         assert_eq!(f32::MIN.try_sub(&f32::MAX), Err(ArithmeticError::Overflow));
         assert_eq!(f32::MAX.try_sub(&f32::MIN), Err(ArithmeticError::Overflow));
+        assert_eq!(
+            1e25_f32.try_sub(&(f32::EPSILON / 2.0_f32)),
+            Err(ArithmeticError::Underflow)
+        );
     }
 }

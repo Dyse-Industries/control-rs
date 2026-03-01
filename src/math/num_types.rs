@@ -9,8 +9,8 @@
 
 use core::marker::PhantomData;
 
-/// Defines the base behavior for all dimensions.
-pub trait Dim: Clone + Copy + PartialEq + Eq + core::fmt::Debug {
+/// Defines the base behavior for dimensions.
+pub trait Dim: Clone + Copy + PartialEq + Eq {
     /// Returns the runtime value of the dimension.
     ///
     /// # Returns
@@ -77,7 +77,7 @@ pub struct S<N: DimName>(PhantomData<N>);
 /// Type alias for dimension size 0.
 pub type U0 = Z;
 
-/// Generates friendly `U1`, `U2`, etc. aliases to hide the `S<S<Z>>` complexity.
+/// Generates friendly `U1`, `U2`... etc. aliases to hide the `S<S<Z>>` complexity.
 macro_rules! generate_peano_aliases {
     ($prev:ident, ) => {};
     ($prev:ident, $current:ident, $($rest:ident,)*) => {
