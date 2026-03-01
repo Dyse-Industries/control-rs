@@ -26,6 +26,7 @@
 #![allow(clippy::arbitrary_source_item_ordering)]
 
 // Re-export core arithmetic traits for unchecked operations.
+use crate::math::num_traits::One;
 use crate::math::{ArithmeticError, ArithmeticResult, num_traits::Zero};
 pub use core::ops::{Add, Div, Mul, Neg, Rem, Shl, Shr, Sub};
 
@@ -400,6 +401,10 @@ macro_rules! try_float_impl {
                     let result = self.mul(v);
                     if result.is_infinite() {
                         return Err(ArithmeticError::Overflow);
+                    }
+                    #[allow(clippy::float_cmp)]
+                    if result == *self && *v < Self::ONE {
+                        return Err(ArithmeticError::Underflow);
                     }
                     return Ok(result);
                 }
