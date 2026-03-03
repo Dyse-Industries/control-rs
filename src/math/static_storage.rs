@@ -62,17 +62,13 @@ pub trait StaticStorage<T: 'static> {
 pub trait MatrixStorage<T: 'static, R: Dim, C: Dim>: StaticStorage<T> {
     /// The memory layout of the matrix.
     const LAYOUT: MatrixLayout;
-    /// The number of columns in the matrix.
-    const NUM_COLS: C;
-    /// The number of rows in the matrix.
-    const NUM_ROWS: R;
 
     /// Returns the number of columns in the matrix.
     ///
     /// # Returns
     /// * `usize` - The number of columns.
     fn cols(&self) -> usize {
-        Self::NUM_COLS.value()
+        C::DIM
     }
 
     /// Returns the memory layout as an integer compatible with CBLAS.
@@ -118,6 +114,6 @@ pub trait MatrixStorage<T: 'static, R: Dim, C: Dim>: StaticStorage<T> {
     /// # Returns
     /// * `usize` - The number of rows.
     fn rows(&self) -> usize {
-        Self::NUM_ROWS.value()
+        R::DIM
     }
 }

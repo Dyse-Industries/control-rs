@@ -10,18 +10,11 @@
 use core::marker::PhantomData;
 
 /// Defines the base behavior for all dimensions.
-pub trait Dim: Clone + Copy + PartialEq + Eq + core::fmt::Debug {
-    /// Returns the runtime value of the dimension.
-    ///
-    /// # Returns
-    /// * `usize` - The runtime value of the dimension.
-    fn value(&self) -> usize;
-}
-
-/// Defines a sub-trait exclusively for dimensions known at compile-time.
-pub trait DimName: Dim + Default {
+pub trait Dim: Clone + Copy + PartialEq + Eq {
     /// Represents the compile-time value of the dimension.
-    const VALUE: usize;
+    const DIM: usize;
+    /// Type num representation of the dimension.
+    type PeanoTypeNum;
 }
 
 // ==========================================
@@ -68,7 +61,11 @@ pub struct Z;
 
 /// Represents the Successor of N (i.e., N + 1) in type-level math.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
-pub struct S<N: DimName>(PhantomData<N>);
+pub struct S<N: Dim>(PhantomData<N>);
+
+/// Hoists literals to the type level
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct Const<const N: usize>;
 
 // ==========================================
 // Friendly Type Aliases Macro
@@ -77,42 +74,58 @@ pub struct S<N: DimName>(PhantomData<N>);
 /// Type alias for dimension size 0.
 pub type U0 = Z;
 
+impl DimAdd<Z> for Const<0> {
+    type Output = Z;
+}
+
+impl<const N: usize, M: Dim> DimAdd<S<M>> for Const<N>
+where
+    Self: DimAdd<M>,
+{
+    type Output = S<<Self as DimAdd<M>>::Output>;
+}
+
+impl<const N: usize, const M: usize> DimAdd<Const<M>> for Const<N>
+where
+    Self: Dim + DimAdd<<Const<M> as Dim>::PeanoTypeNum>,
+    Const<M>: Dim,
+{
+    type Output = <Self as DimAdd<<Const<M> as Dim>::PeanoTypeNum>>::Output;
+}
+
 /// Generates friendly `U1`, `U2`, etc. aliases to hide the `S<S<Z>>` complexity.
 macro_rules! generate_peano_aliases {
-    ($prev:ident, ) => {};
-    ($prev:ident, $current:ident, $($rest:ident,)*) => {
-        /// Generated Type alias for a specific dimension size.
+    ($count:expr, $prev:ident, ) => {};
+    ($count:expr, $prev:ident, $current:ident, $($rest:ident,)*) => {
+        /// Generated Type alias for
+        #[doc = stringify!($count)]
+        ///.
         pub type $current = S<$prev>;
-        generate_peano_aliases!($current, $($rest,)*);
+        impl Dim for Const<{$count}> {
+            const DIM: usize = $count;
+            type PeanoTypeNum = $current;
+        }
+        impl DimAdd<Z> for Const<{$count}> {
+            type Output = <Const<{$count}> as Dim>::PeanoTypeNum;
+        }
+        generate_peano_aliases!($count + 1, $current, $($rest,)*);
     };
 }
 
 generate_peano_aliases!(
-    U0, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15, U16,
-    U17, U18, U19, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U30, U31,
-    U32,
+    1, U0, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15,
+    U16, U17, U18, U19, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U30,
+    U31, U32,
 );
 
 impl Dim for Z {
-    #[inline(always)]
-    fn value(&self) -> usize {
-        0
-    }
+    const DIM: usize = 0;
+    type PeanoTypeNum = Self;
 }
 
-impl DimName for Z {
-    const VALUE: usize = 0;
-}
-
-impl<N: DimName> Dim for S<N> {
-    #[inline(always)]
-    fn value(&self) -> usize {
-        Self::VALUE
-    }
-}
-
-impl<N: DimName> DimName for S<N> {
-    const VALUE: usize = N::VALUE + 1;
+impl<N: Dim> Dim for S<N> {
+    const DIM: usize = N::DIM + 1;
+    type PeanoTypeNum = Self;
 }
 
 // --- Addition (N + M) ---
@@ -125,9 +138,9 @@ impl<M: Dim> DimAdd<M> for Z {
 // (N + 1) + M = (N + M) + 1
 impl<N, M> DimAdd<M> for S<N>
 where
-    N: DimName + DimAdd<M>,
+    N: Dim + DimAdd<M>,
     M: Dim,
-    <N as DimAdd<M>>::Output: DimName,
+    <N as DimAdd<M>>::Output: Dim,
 {
     type Output = S<<N as DimAdd<M>>::Output>;
 }
@@ -142,8 +155,8 @@ impl<N: Dim> DimSub<Z> for N {
 // (N + 1) - (M + 1) = N - M
 impl<N, M> DimSub<S<M>> for S<N>
 where
-    N: DimName + DimSub<M>,
-    M: DimName,
+    N: Dim + DimSub<M>,
+    M: Dim,
 {
     type Output = <N as DimSub<M>>::Output;
 }
@@ -158,8 +171,8 @@ impl<M: Dim> DimMul<M> for Z {
 // (N + 1) * M = M + (N * M)
 impl<N, M> DimMul<M> for S<N>
 where
-    N: DimName + DimMul<M>,
-    M: DimName + DimAdd<<N as DimMul<M>>::Output>,
+    N: Dim + DimMul<M>,
+    M: Dim + DimAdd<<N as DimMul<M>>::Output>,
 {
     type Output = <M as DimAdd<<N as DimMul<M>>::Output>>::Output;
 }
@@ -172,16 +185,16 @@ impl<M: Dim> DimMax<M> for Z {
 }
 
 // Max(N + 1, 0) = N + 1
-impl<N: DimName> DimMax<Z> for S<N> {
+impl<N: Dim> DimMax<Z> for S<N> {
     type Output = Self;
 }
 
 // Max(N + 1, M + 1) = Max(N, M) + 1
 impl<N, M> DimMax<S<M>> for S<N>
 where
-    N: DimName + DimMax<M>,
-    M: DimName,
-    <N as DimMax<M>>::Output: DimName,
+    N: Dim + DimMax<M>,
+    M: Dim,
+    <N as DimMax<M>>::Output: Dim,
 {
     type Output = S<<N as DimMax<M>>::Output>;
 }
@@ -194,16 +207,16 @@ impl<M: Dim> DimMin<M> for Z {
 }
 
 // Min(N + 1, 0) = 0
-impl<N: DimName> DimMin<Z> for S<N> {
+impl<N: Dim> DimMin<Z> for S<N> {
     type Output = Z;
 }
 
 // Min(N + 1, M + 1) = Min(N, M) + 1
 impl<N, M> DimMin<S<M>> for S<N>
 where
-    N: DimName + DimMin<M>,
-    M: DimName,
-    <N as DimMin<M>>::Output: DimName,
+    N: Dim + DimMin<M>,
+    M: Dim,
+    <N as DimMin<M>>::Output: Dim,
 {
     type Output = S<<N as DimMin<M>>::Output>;
 }

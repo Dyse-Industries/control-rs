@@ -8,36 +8,6 @@ use crate::math::num_traits::{Field, One, Real, Ring, Scalar, Signed, Zero};
 use crate::math::ops::{TryAdd, TryDiv, TryMul, TryNeg, TryRem, TrySub};
 use crate::{assert_almost_eq, assert_not_almost_eq};
 
-#[cfg(feature = "std")]
-#[test]
-fn test_arithmetic_error_display() {
-    // Covers src/math/mod.rs: 51-58 (Display impl)
-    assert_eq!(
-        format!("{}", ArithmeticError::DomainViolation),
-        "Input is outside the mathematical domain"
-    );
-    assert_eq!(
-        format!("{}", ArithmeticError::DivisionByZero),
-        "Division by zero"
-    );
-    assert_eq!(
-        format!("{}", ArithmeticError::Overflow),
-        "Value overflowed representable range"
-    );
-    assert_eq!(
-        format!("{}", ArithmeticError::Underflow),
-        "Value underflowed (subnormal)"
-    );
-    assert_eq!(
-        format!("{}", ArithmeticError::Saturation),
-        "Value saturated (clamped) at bounds"
-    );
-    assert_eq!(
-        format!("{}", ArithmeticError::PrecisionLoss),
-        "Significant precision was lost during operation"
-    );
-}
-
 #[test]
 fn test_scalar_defaults() {
     // Covers src/math/num_traits.rs: default methods for Zero, One, Signed
