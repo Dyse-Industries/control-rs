@@ -121,7 +121,10 @@ mod tests {
     fn test_assert_almost_eq_f64() {
         assert_almost_eq!(0.1_f64 + 0.2_f64, 0.3_f64);
     }
-
+    #[test]
+    fn test_assert_not_almost_eq_f64() {
+        assert_not_almost_eq!(0.1_f64 + 0.2_f64, 0.4_f64);
+    }
     #[test]
     #[should_panic(
         expected = "assertion failed: `(left == right)`\n  left: `0.1`, \n right: `0.2`"
@@ -136,5 +139,25 @@ mod tests {
     )]
     fn test_assert_almost_eq_f64_panic() {
         assert_almost_eq!(0.1_f64, 0.2_f64);
+    }
+    #[test]
+    #[should_panic(
+        expected = "assertion failed: Input is outside the mathematical domain"
+    )]
+    fn test_assert_almost_eq_domain_violation() {
+        assert_almost_eq!(f32::NAN, f32::NAN);
+    }
+
+    #[test]
+    fn test_assert_not_eq_domain_violation() {
+        assert_not_almost_eq!(f32::NAN, f32::NAN);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "assertion failed: Value underflowed (subnormal)"
+    )]
+    fn test_assert_almost_eq_underflow() {
+        assert_almost_eq!(10e20_f32, (f32::EPSILON / 2.0));
     }
 }

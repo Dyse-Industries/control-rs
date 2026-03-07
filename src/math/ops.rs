@@ -443,11 +443,7 @@ macro_rules! try_float_impl {
                         return Err(ArithmeticError::Overflow);
                     }
                     #[allow(clippy::float_cmp)]
-                    if result == *self && (*v < Self::EPSILON && *v > Self::EPSILON.neg()) {
-                        return Err(ArithmeticError::Underflow);
-                    }
-                    #[allow(clippy::float_cmp)]
-                    if result == *v && (*self < Self::EPSILON && *self > Self::EPSILON.neg()) {
+                    if result == *self {
                         return Err(ArithmeticError::Underflow);
                     }
                     return Ok(result);
