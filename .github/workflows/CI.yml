@@ -7,9 +7,6 @@ on:
   pull_request:
     branches: [ "main" ]
 
-env:
-  CARGO_TERM_COLOR: never
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,171 +19,16 @@ jobs:
         id: setup
         run: cargo install cargo-tarpaulin cargo-binutils
 
-      - name: Linting and Formatting
-        id: lint
-        run: |
-            START_TIME=$(date +%s)
-
-            # Run FMT and count errors
-            FMT_OUT=$(cargo fmt --all -- --check 2>&1) || FMT_EXIT=$?
-            FMT_ERR_COUNT=$(echo "$FMT_OUT" | grep "Diff in" | wc -l)
-            FMT_TIME=$(echo "$FMT_OUT" | grep -oP 'Finished .*?in \K[\d.]+s' | tail -n1 || echo "0s")
-
-            # Run Clippy and count warnings/errors
-            CLIPPY_OUT=$(cargo clippy --workspace -- -D warnings 2>&1) || CLIPPY_EXIT=$?
-            CLIPPY_ERR_COUNT=$(echo "$CLIPPY_OUT" | grep "error:" | wc -l)
-            CLIPPY_TIME=$(echo "$CLIPPY_OUT" | grep -oP 'Finished .*?in \K[\d.]+s' | tail -n1 || echo "0s")
-
-            echo "lint_time=$(($(date +%s) - START_TIME))s" >> $GITHUB_OUTPUT
-            echo "fmt_time=$FMT_TIME" >> $GITHUB_OUTPUT
-            echo "clippy_time=$CLIPPY_TIME" >> $GITHUB_OUTPUT
-
-            {
-              echo "lint_summary_table<<EOF"
-              echo "| Category | Issues Found |"
-              echo "| :--- | :--- |"
-              echo "| Formatting | $FMT_ERR_COUNT |"
-              echo "| Clippy | $CLIPPY_ERR_COUNT |"
-              echo "EOF"
-
-              echo "lint_report<<EOF"
-              if [ -n "$FMT_OUT" ]; then echo "#### Formatting Errors"; echo "\`\`\`text"; echo "$FMT_OUT"; echo "\`\`\`"; fi
-              if [ -n "$CLIPPY_OUT" ]; then echo "#### Clippy Output"; echo "\`\`\`text"; echo "$CLIPPY_OUT"; echo "\`\`\`"; fi
-              echo "EOF"
-            } >> $GITHUB_OUTPUT
-
-            if [ "${FMT_EXIT:-0}" -ne 0 ] || [ "${CLIPPY_EXIT:-0}" -ne 0 ]; then exit 1; fi
-
-      - name: Test and Coverage
-        id: test
-        run: |
-            # Run tarpaulin
-            RAW_OUT=$(cargo tarpaulin --verbose --exclude-files "*codegen/*" "documentation/*" ".github/*" "target/*" 2>&1 | sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g') || TEST_EXIT=$?
-
-            # Extract Build and Test Times
-            BUILD_TIME=$(echo "$RAW_OUT" | grep -oP 'Finished `test` profile.*?in \K[\d.]+s' | tail -n1 || echo "0s")
-            TEST_TIME=$(echo "$RAW_OUT" | grep "test result:" | grep -oP 'finished in \K[\d.]+s' | tail -n1 || echo "0s")
-
-            # Extract test results counts
-            PASSED=$(echo "$RAW_OUT" | grep "test result:" | grep -oP '\d+(?= passed)' | awk '{sum+=$1} END {print sum}')
-            FAILED=$(echo "$RAW_OUT" | grep "test result:" | grep -oP '\d+(?= failed)' | awk '{sum+=$1} END {print sum}')
-            ERRORED_IGNORED=$(echo "$RAW_OUT" | grep "test result:" | grep -oP '\d+(?= ignored)' | awk '{sum+=$1} END {print sum}')
-
-            {
-              echo "test_summary_table<<EOF"
-              echo "| Result | Count |"
-              echo "| :--- | :--- |"
-              echo "| Passed | ${PASSED:-0} |"
-              echo "| Failed | ${FAILED:-0} |"
-              echo "| Ignored / Errored | ${ERRORED_IGNORED:-0} |"
-              echo "EOF"
-            } >> $GITHUB_OUTPUT
-
-            # Extract Coverage Metrics
-            COVERAGE_LINE=$(echo "$RAW_OUT" | grep "% coverage," | tail -n 1 || echo "0.00% coverage, 0/0 lines covered")
-            PERCENT=$(echo "$COVERAGE_LINE" | grep -oP '\d+\.\d+(?=% coverage)' || echo "0.0")
-            COVERED_LINES=$(echo "$COVERAGE_LINE" | grep -oP '\d+(?=\/\d+ lines covered)' || echo "0")
-            TOTAL_LINES=$(echo "$COVERAGE_LINE" | grep -oP '\/\K\d+(?= lines covered)' || echo "0")
-
-            # Parse Uncovered Lines into a Table
-            UNCOVERED_TABLE=$(echo "$RAW_OUT" | awk '
-              /Uncovered Lines:/ {flag=1; next}
-              /Tested\/Total Lines:/ {flag=0}
-              flag {
-                gsub(/^[| \t]+/, "");
-                if ($0 != "") {
-                  split($0, a, ": ");
-                  if (a[1] != "") printf "| `%s` | %s |\n", a[1], a[2]
-                }
-              }')
-
-            # Parse Coverage Breakdown into a Table
-            BREAKDOWN_TABLE=$(echo "$RAW_OUT" | awk '
-              /Tested\/Total Lines:/ {flag=1; next}
-              /^\|\| *$/ || /% coverage/ {flag=0}
-              flag {
-                gsub(/^[| \t]+/, "");
-                if ($0 != "") {
-                  split($0, a, ": ");
-                  split(a[2], b, "/");
-                  if (b[2]+0 > 0) cov=(b[1]/b[2])*100; else cov=0;
-                  printf "| `%s` | %.1f%% | %s |\n", a[1], cov, a[2]
-                }
-              }')
-
-            {
-              echo "build_time=$BUILD_TIME"
-              echo "test_time=$TEST_TIME"
-              echo "percent=$PERCENT"
-              echo "covered_lines=$COVERED_LINES"
-              echo "total_lines=$TOTAL_LINES"
-              echo "test_report<<EOF"
-              echo "$RAW_OUT"
-              echo "EOF"
-              echo "uncovered_table<<EOF"
-              if [ -z "$UNCOVERED_TABLE" ]; then echo "| None | N/A |"; else echo "$UNCOVERED_TABLE"; fi
-              echo "EOF"
-              echo "breakdown_table<<EOF"
-              if [ -z "$BREAKDOWN_TABLE" ]; then echo "| None | 0.0% | 0/0 |"; else echo "$BREAKDOWN_TABLE"; fi
-              echo "EOF"
-            } >> $GITHUB_OUTPUT
-
-            if [ "${TEST_EXIT:-0}" -ne 0 ]; then exit 1; fi
-
+      - name: Run CI
+        run: cargo xtask ci
 
       - name: Post PR Comment
         if: github.event_name == 'pull_request' && (success() || failure())
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
-          body: |
-            ## `control-rs` Quality Report
+          body-path: ci-report.md
 
-            ### CI Performance
-            | Task | Duration |
-            | :--- | :--- |
-            | Lint | ${{ steps.lint.outputs.lint_time }} |
-            | Formatting | ${{ steps.lint.outputs.fmt_time }} |
-            | Clippy | ${{ steps.lint.outputs.clippy_time }} |
-            | Build | ${{ steps.test.outputs.build_time }} |
-            | Test | ${{ steps.test.outputs.test_time }} |
-
-            ### Issue Summary
-            ${{ steps.lint.outputs.lint_summary_table }}
-
-            ### Test Summary
-            ${{ steps.test.outputs.test_summary_table }}
-
-            ### Coverage Summary: `${{ steps.test.outputs.percent }}%`
-            **Lines Covered:** `${{ steps.test.outputs.covered_lines }} / ${{ steps.test.outputs.total_lines }}`
-
-            <details>
-
-            ### Cargo Clippy
-            ${{ steps.lint.outputs.lint_report }}
-
-            ### Tarpaulin
-
-            #### Breakdown
-            | File | Coverage % | Progress |
-            | :--- | :--- | :--- |
-            ${{ steps.test.outputs.breakdown_table }}
-
-            #### Uncovered Lines
-            | File | Line Numbers |
-            | :--- | :--- |
-            ${{ steps.test.outputs.uncovered_table }}
-
-            ### Tarpaulin Output Log
-            <details>
-
-            ```text
-            ${{ steps.test.outputs.test_report }}
-            ```
-
-            </details>
-
-            </details>
   publish:
     runs-on: ubuntu-latest
     needs: build
