@@ -18,7 +18,7 @@ jobs:
       - uses: cargo-bins/cargo-binstall@main
 
       - name: Install Tools
-        run: cargo binstall cargo-tarpaulin@0.35.2-y
+        run: cargo binstall cargo-tarpaulin@0.35.2 -y
 
       - name: Run CI
         run: cargo xtask ci
