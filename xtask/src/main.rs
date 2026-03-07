@@ -56,23 +56,23 @@ fn run_ci() {
         .args([
             "tarpaulin",
             "--verbose",
-            "--exclude-files",
-            "*codegen/*",
-            "documentation/*",
-            ".github/*",
-            "xtask/*",
+            "--color",
+            "never",
+            "--config",
+            "tarpaulin.toml",
         ])
         .output()
         .expect("Failed to run cargo tarpaulin");
 
+    // Now tarpaulin will have generated an xml and html file.
+    // Add the tarpaulin html report to the CI report.
+
     // Tarpaulin mixes stdout and stderr, combine them for parsing
-    let tarp_str_raw = format!(
+    let tarp_str = format!(
         "{}\n{}",
         String::from_utf8_lossy(&tarpaulin_output.stderr),
         String::from_utf8_lossy(&tarpaulin_output.stdout)
     );
-    let ansi_escape = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
-    let tarp_str = ansi_escape.replace_all(&tarp_str_raw, "").to_string();
 
     let test_time = start_test.elapsed().as_secs_f32();
 
@@ -145,7 +145,6 @@ fn run_ci() {
     report.push_str(&tarp_str);
     report.push_str("\n```\n</details>\n</details>\n");
 
-    // --- 4. Write Report ---
     fs::write("ci-report.md", report).expect("Unable to write ci-report.md");
 
     if !ci_success {
