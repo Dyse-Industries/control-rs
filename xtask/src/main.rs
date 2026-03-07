@@ -59,8 +59,6 @@ fn run_ci() {
         .args([
             "tarpaulin",
             "--verbose",
-            "--engine",
-            "llvm",
             "--color",
             "never",
         ])
