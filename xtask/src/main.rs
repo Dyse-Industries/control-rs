@@ -59,10 +59,10 @@ fn run_ci() {
         .args([
             "tarpaulin",
             "--verbose",
+            "--engine",
+            "llvm",
             "--color",
             "never",
-            "--config",
-            "tarpaulin.toml",
         ])
         .output()
         .expect("Failed to run cargo tarpaulin");
