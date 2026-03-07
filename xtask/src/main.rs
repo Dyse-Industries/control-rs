@@ -129,6 +129,8 @@ fn run_ci() {
 
     report.push_str("<details>\n<summary>Detailed Logs</summary>\n\n");
 
+    report.push_str(&collect_versions());
+
     if fmt_errors > 0 || clippy_errors > 0 {
         report.push_str("### Cargo fmt & Clippy\n```text\n");
         if fmt_errors > 0 {
@@ -143,8 +145,6 @@ fn run_ci() {
     report.push_str("### Tarpaulin Output Log\n<details>\n<summary>Click to expand test logs</summary>\n\n```text\n");
     report.push_str(&tarp_str);
     report.push_str("\n```\n</details>\n");
-
-    report.push_str(&collect_versions());
 
     report.push_str("</details>\n");
 
