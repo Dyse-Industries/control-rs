@@ -58,12 +58,9 @@ fn run_ci() {
             "--verbose",
             "--exclude-files",
             "*codegen/*",
-            "--exclude-files",
             "documentation/*",
-            "--exclude-files",
             ".github/*",
-            "--exclude-files",
-            "target/*",
+            "xtask/*",
         ])
         .output()
         .expect("Failed to run cargo tarpaulin");
