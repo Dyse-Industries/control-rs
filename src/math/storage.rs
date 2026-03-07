@@ -9,10 +9,7 @@
 //! These traits are essential for interfacing with linear algebra backends (like BLAS or LAPACK)
 //! and ensuring consistent memory management across the library.
 
-#![allow(unused_imports)]
-
-use crate::math::num_types::{Const, Dim, DimAdd, DimMul, U1, U2, U3, U5};
-use core::marker::PhantomData;
+use crate::math::num_types::Dim;
 
 /// Represents the memory layout of a matrix or tensor for BLAS operations.
 ///
