@@ -56,7 +56,14 @@ fn run_ci() {
 
     let start_test = Instant::now();
     let tarpaulin_output = Command::new("cargo")
-        .args(["tarpaulin", "--verbose", "--color", "never"])
+        .args([
+            "tarpaulin",
+            "--verbose",
+            "--color",
+            "never",
+            "--out",
+            "Html",
+        ])
         .output()
         .expect("Failed to run cargo tarpaulin");
 

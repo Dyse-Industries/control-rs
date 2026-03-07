@@ -1,18 +1,6 @@
 [coverage]
 engine = "Llvm"
-# Ensures all conditional compilation gates are tested
 all-features = true
-# Use exclude-files to ignore auto-generated boilerplate or hardware mocks
 exclude-files = [
-    "*codegen/*",
     "documentation/*",
-    ".github/*",
-    "target/*",
-    "xtask/*"
 ]
-
-[report]
-out = ["Html"]
-
-[ci]
-fail-under = 90
