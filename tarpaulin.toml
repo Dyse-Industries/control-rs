@@ -11,7 +11,7 @@ exclude-files = [
  ]
 
 [report]
-out = ["Html", "Xml"]
+out = ["Html"]
 
 [ci]
 fail-under = 90

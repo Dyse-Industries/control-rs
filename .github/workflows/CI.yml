@@ -36,7 +36,6 @@ jobs:
           name: tarpaulin-html-report
           path: tarpaulin-report.html
 
-
   publish:
     runs-on: ubuntu-latest
     needs: build
