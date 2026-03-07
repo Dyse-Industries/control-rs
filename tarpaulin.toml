@@ -1,4 +1,5 @@
 [coverage]
+engine = "llvm"
 # Ensures all conditional compilation gates are tested
 all-features = true
 # Use exclude-files to ignore auto-generated boilerplate or hardware mocks
@@ -8,7 +9,7 @@ exclude-files = [
     ".github/*",
     "target/*",
     "xtask/*"
- ]
+]
 
 [report]
 out = ["Html"]
