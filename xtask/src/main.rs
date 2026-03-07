@@ -1,0 +1,160 @@
+use regex::Regex;
+use std::env;
+use std::fs;
+use std::process::{Command, exit};
+use std::time::Instant;
+
+fn main() {
+    let task = env::args().nth(1);
+    match task.as_deref() {
+        Some("ci") => run_ci(),
+        _ => {
+            eprintln!("Usage: cargo xtask ci");
+            exit(1);
+        }
+    }
+}
+
+fn run_ci() {
+    unsafe {
+        env::set_var("RUST_BACKTRACE", "full");
+        env::set_var("CARGO_TERM_COLOR", "never");
+    }
+    let mut report = String::from("## `control-rs` Quality Report\n\n");
+    let mut ci_success = true;
+
+    let start_lint = Instant::now();
+
+    let fmt_output = Command::new("cargo")
+        .args(["fmt", "--all", "--", "--check"])
+        .output()
+        .expect("Failed to run cargo fmt");
+    let fmt_str = String::from_utf8_lossy(&fmt_output.stdout);
+    let fmt_errors = fmt_str.matches("Diff in").count();
+
+    let clippy_output = Command::new("cargo")
+        .args(["clippy", "--workspace", "--", "-D", "warnings"])
+        .output()
+        .expect("Failed to run cargo clippy");
+    let clippy_str = String::from_utf8_lossy(&clippy_output.stderr);
+    let clippy_errors = clippy_str.matches("error:").count();
+
+    let lint_time = start_lint.elapsed().as_secs_f32();
+
+    if !fmt_output.status.success() || !clippy_output.status.success() {
+        ci_success = false;
+    }
+
+    report.push_str("### Issue Summary\n");
+    report.push_str("| Category | Issues Found |\n| :--- | :--- |\n");
+    report.push_str(&format!("| Formatting | {} |\n", fmt_errors));
+    report.push_str(&format!("| Clippy Errors | {} |\n\n", clippy_errors));
+
+    // --- 2. Tarpaulin Coverage & Tests ---
+    let start_test = Instant::now();
+    let tarpaulin_output = Command::new("cargo")
+        .args([
+            "tarpaulin",
+            "--verbose",
+            "--exclude-files",
+            "*codegen/*",
+            "--exclude-files",
+            "documentation/*",
+            "--exclude-files",
+            ".github/*",
+            "--exclude-files",
+            "target/*",
+        ])
+        .output()
+        .expect("Failed to run cargo tarpaulin");
+
+    // Tarpaulin mixes stdout and stderr, combine them for parsing
+    let tarp_str_raw = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&tarpaulin_output.stderr),
+        String::from_utf8_lossy(&tarpaulin_output.stdout)
+    );
+    let ansi_escape = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+    let tarp_str = ansi_escape.replace_all(&tarp_str_raw, "").to_string();
+
+    let test_time = start_test.elapsed().as_secs_f32();
+
+    if !tarpaulin_output.status.success() {
+        ci_success = false;
+    }
+
+    // --- 3. Parsing Tarpaulin Output ---
+    let re_passed = Regex::new(r"(\d+) passed").unwrap();
+    let re_failed = Regex::new(r"(\d+) failed").unwrap();
+    let re_ignored = Regex::new(r"(\d+) ignored").unwrap();
+    let re_coverage =
+        Regex::new(r"(\d+\.\d+)% coverage, (\d+)/(\d+) lines covered").unwrap();
+
+    let passed: usize = re_passed
+        .captures_iter(&tarp_str)
+        .filter_map(|c| c[1].parse::<usize>().ok())
+        .sum();
+    let failed: usize = re_failed
+        .captures_iter(&tarp_str)
+        .filter_map(|c| c[1].parse::<usize>().ok())
+        .sum();
+    let ignored: usize = re_ignored
+        .captures_iter(&tarp_str)
+        .filter_map(|c| c[1].parse::<usize>().ok())
+        .sum();
+
+    let (percent, cov_lines, tot_lines) =
+        if let Some(caps) = re_coverage.captures(&tarp_str) {
+            (
+                caps[1].to_string(),
+                caps[2].to_string(),
+                caps[3].to_string(),
+            )
+        } else {
+            ("0.00".to_string(), "0".to_string(), "0".to_string())
+        };
+
+    report.push_str("### CI Performance\n");
+    report.push_str("| Task | Duration |\n| :--- | :--- |\n");
+    report.push_str(&format!("| Lint & Format | {:.2}s |\n", lint_time));
+    report.push_str(&format!("| Test & Coverage | {:.2}s |\n\n", test_time));
+
+    report.push_str("### Test Summary\n");
+    report.push_str("| Result | Count |\n| :--- | :--- |\n");
+    report.push_str(&format!("| Passed | {} |\n", passed));
+    report.push_str(&format!("| Failed | {} |\n", failed));
+    report.push_str(&format!("| Ignored / Errored | {} |\n\n", ignored));
+
+    report.push_str(&format!("### Coverage Summary: `{}%`\n", percent));
+    report.push_str(&format!(
+        "**Lines Covered:** `{} / {}`\n\n",
+        cov_lines, tot_lines
+    ));
+
+    report.push_str("<details>\n<summary>Detailed Logs</summary>\n\n");
+
+    if fmt_errors > 0 || clippy_errors > 0 {
+        report.push_str("### Cargo fmt & Clippy\n```text\n");
+        if fmt_errors > 0 {
+            report.push_str(&fmt_str);
+        }
+        if clippy_errors > 0 {
+            report.push_str(&clippy_str);
+        }
+        report.push_str("```\n\n");
+    }
+
+    report.push_str("### Tarpaulin Output Log\n<details>\n<summary>Click to expand test logs</summary>\n\n```text\n");
+    report.push_str(&tarp_str);
+    report.push_str("\n```\n</details>\n</details>\n");
+
+    // --- 4. Write Report ---
+    fs::write("ci-report.md", report).expect("Unable to write ci-report.md");
+
+    if !ci_success {
+        println!("CI pipeline failed. Check ci-report.md for details.");
+        exit(1);
+    } else {
+        println!("CI pipeline passed. Report written to ci-report.md.");
+    }
+}

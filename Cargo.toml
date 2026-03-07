@@ -8,6 +8,9 @@ repository = "https://github.com/Dyse-Industries/control-rs.git"
 categories = ["embedded", "science", "no-std"]
 keywords = ["control", "robotics", "firmware", "autonomy"]
 
+[workspace]
+members = [".", "xtask"]
+
 [dependencies]
 libm = "0.2.16"
 
