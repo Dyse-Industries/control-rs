@@ -83,9 +83,6 @@ pub trait StaticStorage<T> {
 /// * `R` - The dimension type representing the number of rows (must implement `Dim`).
 /// * `C` - The dimension type representing the number of columns (must implement `Dim`).
 pub trait MatrixStorage<T, R: Dim, C: Dim>: StaticStorage<T> {
-    // The memory layout of the matrix.
-    // const ;
-
     /// Returns the number of columns in the matrix.
     ///
     /// # Returns
@@ -99,14 +96,6 @@ pub trait MatrixStorage<T, R: Dim, C: Dim>: StaticStorage<T> {
     fn cols(&self) -> usize {
         C::DIM
     }
-
-    // /// Returns the memory layout as an integer compatible with CBLAS.
-    // ///
-    // /// # Returns
-    // /// * `i32` - The layout value (101 for `RowMajor`, 102 for `ColMajor`).
-    // fn layout(&self) -> i32 {
-    //     Self::LAYOUT as i32
-    // }
 
     /// Calculates the 1D flat index for a 2D matrix given a (row, col) coordinate.
     ///
@@ -188,20 +177,6 @@ pub trait MatrixStorage<T, R: Dim, C: Dim>: StaticStorage<T> {
 /// ```
 pub struct StaticArray<T, const N: usize>(pub [T; N]);
 
-// #[allow(clippy::type_complexity)]
-// pub struct Matrix<T, R: Dim, C: Dim, S: MatrixStorage<T, R, C>>{
-//     data: S,
-//     phantom: PhantomData<(T, R, C)>,
-// }
-//
-// impl<T, R: Dim, C: Dim, S: MatrixStorage<T, R, C>> Matrix<T, R, C, S> {
-//     pub const fn from_data(data: S) -> Self {
-//         Self {
-//             data,
-//             phantom: PhantomData,
-//         }
-//     }
-// }
 impl<T, const N: usize> StaticStorage<T> for StaticArray<T, N> {
     /// Returns a mutable raw pointer to the underlying array.
     ///
