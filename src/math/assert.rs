@@ -147,7 +147,13 @@ mod tests {
     fn test_assert_almost_eq_domain_violation() {
         assert_almost_eq!(f32::NAN, f32::NAN);
     }
-
+    #[test]
+    #[should_panic(
+        expected = "assertion failed: `(left != right)`\n  left: `0.1`, \n right: `0.1`"
+    )]
+    fn test_assert_not_almost_eq_f64_panic() {
+        assert_not_almost_eq!(0.1_f64, 0.1_f64);
+    }
     #[test]
     fn test_assert_not_eq_domain_violation() {
         assert_not_almost_eq!(f32::NAN, f32::NAN);
