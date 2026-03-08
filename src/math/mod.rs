@@ -50,12 +50,13 @@
 //!
 //! /// Multiplies two polynomials of length N and M.
 //! /// The resulting polynomial requires exactly (N + M) - 1 coefficients.
-//! pub fn mul_poly<const N: usize, const M: usize, Sum, Out>(
-//!     _a: &StaticPolynomial<Const<N>>,
-//!     _b: &StaticPolynomial<Const<M>>,
+//! pub fn mul_poly<N, M, Sum, Out>(
+//!     _a: &StaticPolynomial<N>,
+//!     _b: &StaticPolynomial<M>,
 //! ) -> StaticPolynomial<Out>
 //! where
-//!     Const<N>: DimAdd<Const<M>, Output = Sum>,
+//!     N: Dim + DimAdd<M, Output = Sum>,
+//!     M: Dim,
 //!     Sum: Dim + DimSub<U1, Output = Out>,
 //!     Out: Dim,
 //! {
