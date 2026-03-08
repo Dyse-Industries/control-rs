@@ -1,8 +1,6 @@
 ## Real-Time Model Tuning and Estimation via HIL: A Rust Developer's Guide
 
-Performing system identification (SysId) entirely offline has a major drawback: by the time you extract data from the
-hardware, parse it on your host machine, and calculate your new gains, the physical conditions of the system might have
-already changed.
+Performing system identification (SysId) entirely offline has a much slower turnaround time.
 
 By combining the **Adaptive Estimator** pattern with the **HIL Test Harness**, `control-rs` allows you to perform
 real-time model tuning and parameter estimation directly on the target silicon.
@@ -22,7 +20,7 @@ The standard embedded Rust workflow for HIL tuning with `control-rs` looks like 
 4. **Stream:** The target streams the converging parameters back to the host over the RTT up-channel for visualization
    or verification.
 
-### Implementing the Tuning Harness
+### Implementing the Harness
 
 Below is an example of wrapping a motor tuning routine inside the `hil_test_harness!` macro. This example emphasizes
 Rust's ability to gracefully handle mathematical divergence on bare-metal hardware using `ArithmeticResult`.

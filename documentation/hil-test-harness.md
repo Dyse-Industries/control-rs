@@ -3,7 +3,7 @@
 Verifying control algorithms on the host machine is a good start, but actual cycle counts and hardware-specific
 behaviors (like DSP intrinsics and floating-point unit quirks) can only be validated on the target silicon.
 
-`control-rs` facilitates a robust HIL benchmarking workflow using `probe-rs`. By using a custom test harness macro, you
+`control-rs` facilitates a HIL benchmarking workflow using `probe-rs`. By using a custom test harness macro, you
 can compile your unit and system tests, flash them to the target, and spin up an interactive Real-Time Transfer (RTT)
 server. This allows you to trigger, benchmark, and re-run specific tests on the live hardware without needing to
 re-flash the board.
@@ -21,7 +21,7 @@ harness.
 runner = "probe-rs run --chip STM32F401RETx"
 
 [alias]
-# Compiles the test harness and runs `probe-rs`.
+# Compiles the test harness and runs `probe-rs` with a specific target.
 hil = "run --test hil_benchmarks --release --target thumbv7em-none-eabihf"
 
 ```
@@ -131,7 +131,6 @@ Trigger the process using the alias defined earlier:
 
 ```bash
 cargo hil
-
 ```
 
 **Output:**
