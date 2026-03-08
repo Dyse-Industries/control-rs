@@ -1,9 +1,14 @@
 <component name="ProjectDictionaryState">
   <dictionary name="project">
     <words>
+      <w>blasf</w>
       <w>compensators</w>
       <w>emami</w>
+      <w>gemm</w>
+      <w>gemv</w>
       <w>horner’s</w>
+      <w>iamax</w>
+      <w>ifft</w>
       <w>naeini</w>
       <w>ulps</w>
       <w>underflowed</w>

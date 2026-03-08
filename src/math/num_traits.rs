@@ -21,7 +21,7 @@
 //! The use of `libm` ensures that mathematical functions are implemented correctly and
 //! consistently across platforms, a key consideration for safety-critical software.
 
-use crate::math::ops::{Add, Div, Mul, Sub};
+use crate::math::ops::{Add, Div, Mul, Sub, TryAdd};
 
 /// A marker trait for types that are `Copy` and have a defined partial ordering.
 ///
@@ -181,7 +181,19 @@ pub trait Signed: Zero {
 /// assert_eq!(multiply_by_three(5), 15);
 /// assert_eq!(multiply_by_three(2.0f32), 6.0f32);
 /// ```
-pub trait Ring: One + Zero {}
+pub trait Ring: One + Zero + TryAdd {
+    const TWO: Self;
+    fn sum<I: IntoIterator<Item = Self>>(iter: I) -> Self {
+        iter.into_iter().fold(Self::zero(), |acc, x| acc + x)
+    }
+
+    fn from_const<const N: usize>() -> Self {
+        Self::sum([Self::ONE; N])
+    }
+    fn try_from_usize(n: usize) -> Self {
+        (0..n).fold(Self::ZERO, |acc, _| acc.try_add(&Self::ONE).unwrap_or(acc))
+    }
+}
 
 /// Defines an algebraic field, extending a `Ring` with a division operation and a machine epsilon value.
 ///
@@ -273,6 +285,14 @@ pub trait Field: Ring + Div<Output = Self> {
 /// let negative_val = -1.0f32;
 /// ```
 pub trait Real: Field + Signed {
+    const PI: Self;
+    /// Calculates the cosine of a number (in radians).
+    ///
+    /// # Returns
+    /// * `cos(self)`
+    #[must_use]
+    fn cos(self) -> Self;
+
     /// Calculates `e^self`.
     ///
     /// # Returns
@@ -301,12 +321,23 @@ pub trait Real: Field + Signed {
     #[must_use]
     fn pow(self, n: Self) -> Self;
 
+    /// Calculates the sine of a number (in radians).
+    ///
+    /// # Returns
+    /// * `sin(self)`
+    #[must_use]
+    fn sin(self) -> Self;
+
     /// Calculates the square root of a number.
     ///
     /// # Returns
     /// * `sqrt(self)`
     #[must_use]
     fn sqrt(self) -> Self;
+
+    /// Returns the value of Pi.
+    #[must_use]
+    fn pi() -> Self { Self::PI }
 }
 
 /// Marker trait for unsigned types.
@@ -343,18 +374,20 @@ pub trait Unsigned: Sized {}
 /// ```compile_fail
 /// // This is how the macro is used to implement Ring for i32.
 /// use control_rs::math::num_traits::{Ring, ArithmeticError};
-/// control_rs::impl_ring!(i32, 1, 0);
+/// control_rs::impl_ring!(i32, 1, 0, |n| n.try_into().ok());
 /// ```
 #[macro_export]
 macro_rules! impl_ring {
-    ($type:ty, $one:expr, $zero:expr) => {
+    ($type:ty, $one:expr, $zero:expr, $from_usize:expr) => {
         impl One for $type {
             const ONE: Self = $one;
         }
         impl Zero for $type {
             const ZERO: Self = $zero;
         }
-        impl Ring for $type {}
+        impl Ring for $type {
+            const TWO: Self = $one + $one;
+        }
     };
 }
 
@@ -388,11 +421,11 @@ macro_rules! impl_ring {
 /// ```compile_fail
 /// // This is how the macro is used to implement Real for f32.
 /// use control_rs::math::num_traits::{Real, ArithmeticError};
-/// control_rs::impl_real!(f32, fabsf, sqrtf, logf, expf, powf);
+/// control_rs::impl_real!(f32, fabsf, sqrtf, logf, expf, powf, sinf, cosf);
 /// ```
 #[macro_export]
 macro_rules! impl_real {
-    ($type:ty, $abs:path, $sqrt:path, $ln:path, $log10:path, $exp:path, $pow:path) => {
+    ($type:ty, $cos:path, $abs:path, $ln:path, $log10:path, $exp:path, $pow:path, $sin:path, $sqrt:path, $pi:expr) => {
         impl Signed for $type {
             #[inline(always)]
             fn abs(self) -> Self {
@@ -400,6 +433,11 @@ macro_rules! impl_real {
             }
         }
         impl Real for $type {
+            const PI: Self = $pi;
+            #[inline(always)]
+            fn cos(self) -> Self {
+                $cos(self)
+            }
             #[inline(always)]
             fn exp(self) -> Self {
                 $exp(self)
@@ -415,6 +453,10 @@ macro_rules! impl_real {
             #[inline(always)]
             fn pow(self, n: Self) -> Self {
                 $pow(self, n)
+            }
+            #[inline(always)]
+            fn sin(self) -> Self {
+                $sin(self)
             }
             #[inline(always)]
             fn sqrt(self) -> Self {
@@ -473,30 +515,36 @@ macro_rules! impl_field {
 
 // Implementations for f32 (Embedded standard)
 impl Scalar for f32 {}
-impl_ring!(f32, 1.0, 0.0);
+impl_ring!(f32, 1.0, 0.0, |n| Some(n as f32));
 impl_field!(f32, f32::EPSILON);
 impl_real!(
     f32,
+    libm::cosf,
     libm::fabsf,
-    libm::sqrtf,
     libm::logf,
     libm::log10f,
     libm::expf,
-    libm::powf
+    libm::powf,
+    libm::sinf,
+    libm::sqrtf,
+    core::f32::consts::PI
 );
 
 // Implementations for f64
 impl Scalar for f64 {}
-impl_ring!(f64, 1.0, 0.0);
+impl_ring!(f64, 1.0, 0.0, |n| Some(n as f64));
 impl_field!(f64, f64::EPSILON); // Corrected macro call
 impl_real!(
     f64,
+    libm::cos,
     libm::fabs,
-    libm::sqrt,
     libm::log,
     libm::log10,
     libm::exp,
-    libm::pow
+    libm::pow,
+    libm::sin,
+    libm::sqrt,
+    core::f64::consts::PI
 );
 
 // Implementations for i8
@@ -507,7 +555,7 @@ impl Signed for i8 {
         self.abs()
     }
 }
-impl_ring!(i8, 1, 0);
+impl_ring!(i8, 1, 0, |n| n.try_into().ok());
 
 // Implementations for i16
 impl Scalar for i16 {}
@@ -517,7 +565,7 @@ impl Signed for i16 {
         self.abs()
     }
 }
-impl_ring!(i16, 1, 0);
+impl_ring!(i16, 1, 0, |n| n.try_into().ok());
 
 // Implementations for i32
 impl Scalar for i32 {}
@@ -527,7 +575,7 @@ impl Signed for i32 {
         self.abs()
     }
 }
-impl_ring!(i32, 1, 0);
+impl_ring!(i32, 1, 0, |n| n.try_into().ok());
 
 // Implementations for i64
 impl Scalar for i64 {}
@@ -537,7 +585,7 @@ impl Signed for i64 {
         self.abs()
     }
 }
-impl_ring!(i64, 1, 0);
+impl_ring!(i64, 1, 0, |n| n.try_into().ok());
 
 // Implementations for i128
 impl Scalar for i128 {}
@@ -547,7 +595,7 @@ impl Signed for i128 {
         self.abs()
     }
 }
-impl_ring!(i128, 1, 0);
+impl_ring!(i128, 1, 0, |n| n.try_into().ok());
 
 // Implementations for isize
 impl Scalar for isize {}
@@ -557,34 +605,34 @@ impl Signed for isize {
         self.abs()
     }
 }
-impl_ring!(isize, 1, 0);
+impl_ring!(isize, 1, 0, |n| n.try_into().ok());
 
 // Implementations for u8
 impl Scalar for u8 {}
 impl Unsigned for u8 {}
-impl_ring!(u8, 1, 0);
+impl_ring!(u8, 1, 0, |n| n.try_into().ok());
 
 // Implementations for u16
 impl Scalar for u16 {}
 impl Unsigned for u16 {}
-impl_ring!(u16, 1, 0);
+impl_ring!(u16, 1, 0, |n| n.try_into().ok());
 
 // Implementations for u32
 impl Scalar for u32 {}
 impl Unsigned for u32 {}
-impl_ring!(u32, 1, 0);
+impl_ring!(u32, 1, 0, |n| n.try_into().ok());
 
 // Implementations for u64
 impl Scalar for u64 {}
 impl Unsigned for u64 {}
-impl_ring!(u64, 1, 0);
+impl_ring!(u64, 1, 0, |n| n.try_into().ok());
 
 // Implementations for u128
 impl Scalar for u128 {}
 impl Unsigned for u128 {}
-impl_ring!(u128, 1, 0);
+impl_ring!(u128, 1, 0, |n| n.try_into().ok());
 
 // Implementations for usize
 impl Scalar for usize {}
 impl Unsigned for usize {}
-impl_ring!(usize, 1, 0);
+impl_ring!(usize, 1, 0, |n| n.try_into().ok());

@@ -62,6 +62,234 @@ use crate::math::{
     ops::{Add, Mul},
 };
 
+/// Common Digital Signal Processing Operations
+pub mod dsp {
+    use super::{Real};
+
+    use core::ops::{Neg, Mul, Div};
+    use crate::math::num_types::{Const, Dim};
+    use crate::math::storage::StaticStorage;
+
+    /// Trait for Fast Fourier Transform (FFT) operations.
+    ///
+    /// This trait defines the interface for performing FFT and Inverse FFT (IFFT).
+    /// Implementations can be backed by hardware accelerators or software libraries.
+    ///
+    /// # Generic Arguments
+    /// * `T` - The numeric type of the elements (must implement `Real`).
+    pub trait FFT<T: Real + Neg<Output=T> + Mul<Output=T> + Div<Output=T>> {
+        /// Computes the forward Fast Fourier Transform.
+        ///
+        /// # Arguments
+        /// * `input` - The input signal (time domain).
+        /// * `output` - The output buffer (frequency domain).
+        ///
+        /// # Returns
+        /// * `()` - Modifies `output` in place.
+        ///
+        /// # Panics
+        /// * Panics if input and output lengths do not match or are not powers of two.
+        ///
+        /// # Safety
+        /// This function does not use `unsafe` code.
+        #[allow(clippy::arithmetic_side_effects)]
+        fn fft<const N: usize, U: StaticStorage<Const<N>>, F: StaticStorage<Const<N>>>(input: &U, output: &mut F) {
+            debug_assert!(N.is_power_of_two(), "Length must be power of two");
+
+            let n_t = T::from_const::<N>();
+
+            for k in 0..=N / 2 {
+                let k_t = T::try_from_usize(k);
+                let mut sum_re = T::zero();
+                let mut sum_im = T::zero();
+
+                for m in 0..N {
+                    let m_t = T::try_from_usize(m);
+                    let angle = -(T::ONE + T::ONE) * T::PI * k_t.clone() * m_t / n_t.clone();
+                    let c = angle.clone().cos();
+                    let s = angle.sin();
+                    let xm = input[m].clone();
+
+                    sum_re = sum_re + xm.clone() * c;
+                    sum_im = sum_im + xm.clone() * s;
+                }
+
+                if k == 0 {
+                    output[0] = sum_re;
+                } else if k == N / 2 {
+                    output[N - 1] = sum_re;
+                } else {
+                    output[2 * k - 1] = sum_re;
+                    output[2 * k] = sum_im;
+                }
+            }
+        }
+
+        /// Computes the inverse Fast Fourier Transform.
+        ///
+        /// # Arguments
+        /// * `input` - The input signal (frequency domain).
+        /// * `output` - The output buffer (time domain).
+        ///
+        /// # Returns
+        /// * `()` - Modifies `output` in place.
+        ///
+        /// # Panics
+        /// * Panics if input and output lengths do not match or are not powers of two.
+        ///
+        /// # Safety
+        /// This function does not use `unsafe` code.
+        #[allow(clippy::arithmetic_side_effects)]
+        fn ifft(input: &[T], output: &mut [T]) {
+            let n = input.len();
+            assert_eq!(n, output.len(), "Input and output lengths must match");
+            assert!(n.is_power_of_two(), "Length must be power of two");
+
+            let pi = T::pi();
+            let two = T::one() + T::one();
+
+            let n_t = T::try_from(n).unwrap_or(T::zero());
+
+            for m in 0..n {
+                let m_t = T::try_from(m).unwrap_or(T::zero());
+                let mut sum = T::zero();
+
+                // k = 0 term
+                sum = sum + input[0].clone();
+
+                // k = N/2 term
+                if m % 2 == 0 {
+                    sum = sum + input[n - 1].clone();
+                } else {
+                    sum = sum - input[n - 1].clone();
+                }
+
+                // 0 < k < N/2 terms
+                for k in 1..n / 2 {
+                    let k_t = T::try_from(k).unwrap_or(T::zero());
+                    let angle = two.clone() * pi.clone() * k_t * m_t.clone() / n_t.clone();
+                    let c = angle.clone().cos();
+                    let s = angle.sin();
+
+                    let re = input[2 * k - 1].clone();
+                    let im = input[2 * k].clone();
+
+                    // Add 2 * (re * c - im * s)
+                    sum = sum + two.clone() * (re * c - im * s);
+                }
+
+                output[m] = sum / n_t.clone();
+            }
+        }
+    }
+
+    /// Trait for Laplace Transform operations.
+    ///
+    /// This trait defines operations related to the Laplace domain (s-domain),
+    /// typically used for continuous-time system analysis.
+    pub trait Laplace {
+        /// Evaluates the transfer function at a specific complex frequency `s`.
+        ///
+        /// # Arguments
+        /// * `s_real` - The real part of `s`.
+        /// * `s_imag` - The imaginary part of `s`.
+        ///
+        /// # Returns
+        /// * `(f32, f32)` - The real and imaginary parts of the response.
+        ///
+        /// # Safety
+        /// This function does not use `unsafe` code.
+        fn evaluate(s_real: f32, s_imag: f32) -> (f32, f32);
+    }
+
+    /// Trait for Convolution operations.
+    ///
+    /// This trait defines the interface for performing convolution between two signals.
+    ///
+    /// # Generic Arguments
+    /// * `T` - The numeric type of the elements.
+    pub trait Convolution<T: Real> {
+        /// Computes the convolution of two signals.
+        ///
+        /// # Arguments
+        /// * `input` - The input signal.
+        /// * `kernel` - The convolution kernel (impulse response).
+        /// * `output` - The output buffer.
+        ///
+        /// # Returns
+        /// * `()` - Modifies `output` in place.
+        ///
+        /// # Panics
+        /// * Panics if output length is not enough to hold the result.
+        ///
+        /// # Safety
+        /// This function does not use `unsafe` code.
+        #[allow(clippy::arithmetic_side_effects)]
+        fn convolve(input: &[T], kernel: &[T], output: &mut [T]) {
+            let n_in = input.len();
+            let n_kern = kernel.len();
+            let n_out = output.len();
+
+            assert!(n_out >= n_in + n_kern - 1, "Output buffer too small");
+
+            for i in 0..n_out {
+                output[i] = T::zero();
+            }
+
+            for n in 0..n_out {
+                let mut sum = T::zero();
+
+                let k_min = if n >= n_in { n - n_in + 1 } else { 0 };
+                let k_max = if n < n_kern { n } else { n_kern - 1 };
+
+                if k_min <= k_max {
+                    for k in k_min..=k_max {
+                        sum = sum + kernel[k].clone() * input[n - k].clone();
+                    }
+                }
+                output[n] = sum;
+            }
+        }
+    }
+
+    /// Trait for Continuous-time systems.
+    ///
+    /// This trait represents systems defined in the continuous time domain.
+    pub trait Continuous<R: Real> {
+        /// Discretizes the continuous system to a discrete system.
+        ///
+        /// # Arguments
+        /// * `dt` - The sampling interval.
+        ///
+        /// # Returns
+        /// * `()` - This is a placeholder for the discretization logic.
+        ///
+        /// # Safety
+        /// This function does not use `unsafe` code.
+        fn discretize<D: Discrete<R>>(&self, dt: f32) -> D;
+    }
+
+    /// Trait for Discrete-time systems.
+    ///
+    /// This trait represents systems defined in the discrete time domain.
+    ///
+    /// # Generic Arguments
+    /// * `T` - The numeric type of the elements.
+    pub trait Discrete<T: Real> {
+        /// The sampling frequency of the system in Hertz.
+        const SAMPLING_FREQUENCY_HZ: T;
+
+        /// Converts the discrete system back to a continuous representation (if possible).
+        ///
+        /// # Returns
+        /// * `()` - This is a placeholder for the reconstruction logic.
+        ///
+        /// # Safety
+        /// This function does not use `unsafe` code.
+        fn to_continuous<C: Continuous<T>>(&self) -> C;
+    }
+}
+
 /// Level 1 BLAS: Vector-Vector Operations
 pub mod level1 {
     use super::{Add, Mul, Real, Scalar};
@@ -513,9 +741,9 @@ pub mod level3 {
 ///
 /// # Safety
 /// This struct and its trait implementations do not use `unsafe` code.
-pub struct NaiveBlasf32;
+pub struct BasicSubProgramsF32;
 
-/// A naive implementation of the BLAS traits for `f64`.
+/// A naive implementation of the BLAS + DSP traits for `f64`.
 ///
 /// This implementation uses standard Rust loops and iterators. It does not use any
 /// hardware acceleration. It serves as a reference implementation and a fallback for targets
@@ -523,17 +751,21 @@ pub struct NaiveBlasf32;
 ///
 /// # Safety
 /// This struct and its trait implementations do not use `unsafe` code.
-pub struct NaiveBlasf64;
+pub struct BasicSubProgramsF64;
 
-impl level1::AXPY<f32> for NaiveBlasf32 {}
-impl level1::DOT<f32> for NaiveBlasf32 {}
-impl level1::NRM2<f32> for NaiveBlasf32 {}
-impl level1::IAMAX<f32> for NaiveBlasf32 {}
-impl level2::GEMV<f32> for NaiveBlasf32 {}
-impl level3::GEMM<f32> for NaiveBlasf32 {}
-impl level1::AXPY<f64> for NaiveBlasf64 {}
-impl level1::DOT<f64> for NaiveBlasf64 {}
-impl level1::NRM2<f64> for NaiveBlasf64 {}
-impl level1::IAMAX<f64> for NaiveBlasf64 {}
-impl level2::GEMV<f64> for NaiveBlasf64 {}
-impl level3::GEMM<f64> for NaiveBlasf64 {}
+impl dsp::FFT<f32> for BasicSubProgramsF32 {}
+
+impl level1::AXPY<f32> for BasicSubProgramsF32 {}
+impl level1::DOT<f32> for BasicSubProgramsF32 {}
+impl level1::NRM2<f32> for BasicSubProgramsF32 {}
+impl level1::IAMAX<f32> for BasicSubProgramsF32 {}
+impl level2::GEMV<f32> for BasicSubProgramsF32 {}
+impl level3::GEMM<f32> for BasicSubProgramsF32 {}
+
+impl dsp::FFT<f64> for BasicSubProgramsF64 {}
+impl level1::AXPY<f64> for BasicSubProgramsF64 {}
+impl level1::DOT<f64> for BasicSubProgramsF64 {}
+impl level1::NRM2<f64> for BasicSubProgramsF64 {}
+impl level1::IAMAX<f64> for BasicSubProgramsF64 {}
+impl level2::GEMV<f64> for BasicSubProgramsF64 {}
+impl level3::GEMM<f64> for BasicSubProgramsF64 {}
