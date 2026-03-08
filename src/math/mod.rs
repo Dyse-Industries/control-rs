@@ -10,7 +10,7 @@ pub mod assert;
 pub mod num_traits;
 pub mod num_types;
 pub mod ops;
-pub mod static_storage;
+pub mod storage;
 pub mod subprograms;
 
 #[cfg(test)]

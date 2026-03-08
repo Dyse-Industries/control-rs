@@ -25,18 +25,22 @@ fn run_ci() {
 
     let start_lint = Instant::now();
 
+    let ansi_escape = Regex::new(r"\x1B\[[0-9;]*[mK]").unwrap();
+
     let fmt_output = Command::new("cargo")
         .args(["fmt", "--all", "--", "--check"])
         .output()
         .expect("Failed to run cargo fmt");
     let fmt_str = String::from_utf8_lossy(&fmt_output.stdout);
+    let fmt_str = ansi_escape.replace_all(&fmt_str, "");
     let fmt_errors = fmt_str.matches("Diff in").count();
 
     let clippy_output = Command::new("cargo")
-        .args(["clippy", "--workspace", "--", "-D", "warnings"])
+        .args(["clippy", "--", "-D", "warnings"])
         .output()
         .expect("Failed to run cargo clippy");
     let clippy_str = String::from_utf8_lossy(&clippy_output.stderr);
+    let clippy_str = ansi_escape.replace_all(&clippy_str, "");
     let clippy_errors = clippy_str.matches("error:").count();
 
     let lint_time = start_lint.elapsed().as_secs_f32();
@@ -50,32 +54,25 @@ fn run_ci() {
     report.push_str(&format!("| Formatting | {} |\n", fmt_errors));
     report.push_str(&format!("| Clippy Errors | {} |\n\n", clippy_errors));
 
-    // --- 2. Tarpaulin Coverage & Tests ---
     let start_test = Instant::now();
     let tarpaulin_output = Command::new("cargo")
         .args([
             "tarpaulin",
             "--verbose",
-            "--exclude-files",
-            "*codegen/*",
-            "--exclude-files",
-            "documentation/*",
-            "--exclude-files",
-            ".github/*",
-            "--exclude-files",
-            "target/*",
+            "--color",
+            "never",
+            "--out",
+            "Html",
         ])
         .output()
         .expect("Failed to run cargo tarpaulin");
 
     // Tarpaulin mixes stdout and stderr, combine them for parsing
-    let tarp_str_raw = format!(
+    let tarp_str = format!(
         "{}\n{}",
         String::from_utf8_lossy(&tarpaulin_output.stderr),
         String::from_utf8_lossy(&tarpaulin_output.stdout)
     );
-    let ansi_escape = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
-    let tarp_str = ansi_escape.replace_all(&tarp_str_raw, "").to_string();
 
     let test_time = start_test.elapsed().as_secs_f32();
 
@@ -83,7 +80,6 @@ fn run_ci() {
         ci_success = false;
     }
 
-    // --- 3. Parsing Tarpaulin Output ---
     let re_passed = Regex::new(r"(\d+) passed").unwrap();
     let re_failed = Regex::new(r"(\d+) failed").unwrap();
     let re_ignored = Regex::new(r"(\d+) ignored").unwrap();
@@ -133,6 +129,8 @@ fn run_ci() {
 
     report.push_str("<details>\n<summary>Detailed Logs</summary>\n\n");
 
+    report.push_str(&collect_versions());
+
     if fmt_errors > 0 || clippy_errors > 0 {
         report.push_str("### Cargo fmt & Clippy\n```text\n");
         if fmt_errors > 0 {
@@ -146,9 +144,10 @@ fn run_ci() {
 
     report.push_str("### Tarpaulin Output Log\n<details>\n<summary>Click to expand test logs</summary>\n\n```text\n");
     report.push_str(&tarp_str);
-    report.push_str("\n```\n</details>\n</details>\n");
+    report.push_str("\n```\n</details>\n");
 
-    // --- 4. Write Report ---
+    report.push_str("</details>\n");
+
     fs::write("ci-report.md", report).expect("Unable to write ci-report.md");
 
     if !ci_success {
@@ -157,4 +156,51 @@ fn run_ci() {
     } else {
         println!("CI pipeline passed. Report written to ci-report.md.");
     }
+}
+
+fn collect_versions() -> String {
+    let mut section = String::from("\n### System Information\n\n");
+    section.push_str("| Component | Version |\n| :--- | :--- |\n");
+
+    let os_info = format!("{} {}", env::consts::OS, env::consts::ARCH);
+    section.push_str(&format!("| OS | {} |\n", os_info));
+
+    fn get_version(cmd: &str, args: &[&str]) -> String {
+        Command::new(cmd)
+            .args(args)
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "Not found".to_string())
+    }
+
+    section.push_str(&format!(
+        "| rustc | {} |\n",
+        get_version("rustc", &["--version"])
+    ));
+    section.push_str(&format!(
+        "| cargo | {} |\n",
+        get_version("cargo", &["--version"])
+    ));
+    section.push_str(&format!(
+        "| rustfmt | {} |\n",
+        get_version("cargo", &["fmt", "--version"])
+    ));
+    section.push_str(&format!(
+        "| clippy | {} |\n",
+        get_version("cargo", &["clippy", "--version"])
+    ));
+    section.push_str(&format!(
+        "| tarpaulin | {} |\n",
+        get_version("cargo", &["tarpaulin", "--version"])
+    ));
+
+    section.push_str(
+        "\n<details>\n<summary>Dependency Tree</summary>\n\n```text\n",
+    );
+    section.push_str(&get_version("cargo", &["tree"]));
+    section.push_str("\n```\n</details>\n");
+
+    section
 }

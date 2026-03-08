@@ -21,6 +21,10 @@ mod test_add {
             1.0e20_f32.try_add(&1.0e-20_f32),
             Err(ArithmeticError::Underflow)
         );
+        assert_eq!(
+            1.0e-20_f32.try_add(&1.0e20_f32),
+            Err(ArithmeticError::Underflow)
+        );
     }
 }
 
