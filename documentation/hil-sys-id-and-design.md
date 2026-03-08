@@ -1,5 +1,7 @@
 ## Real-Time Model Tuning and Estimation via HIL: A Rust Developer's Guide
 
+_It's recommended to read about the [hil harness](hil-test-harness.md) first_
+
 Performing system identification (SysId) entirely offline has a much slower turnaround time.
 
 By combining the **Adaptive Estimator** pattern with the **HIL Test Harness**, `control-rs` allows you to perform
