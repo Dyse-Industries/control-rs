@@ -2,6 +2,79 @@
 //!
 //! Core numerical primitives optimized for bare-metal execution.
 //!
+//! ## Usage
+//!
+//! ```rust
+//! use control_rs::math::subprograms::level1::AXPY;
+//! use control_rs::math::ArithmeticResult;
+//! use core::marker::PhantomData;
+//!
+//! pub struct Controller<B> {
+//!     _marker: PhantomData<B>,
+//! }
+//!
+//! impl<B: AXPY<f32>> Controller<B> {
+//!     // the Generic argument N provides a zero-cost safety guarantee.
+//!     // (state.size() == input.size())
+//!     pub fn update<const N: usize>(
+//!         &self,
+//!         state: &mut [f32; N],
+//!         input: &[f32; N],
+//!         gain: f32
+//!     ) -> ArithmeticResult<()>
+//!     {
+//!         B::axpy(gain, input, state);
+//!         Ok(())
+//!     }
+//! }
+//! ```
+//!
+//! By leveraging `DimAdd` and `DimSub`, we can strictly guarantee that the resulting
+//! type has the worst case number of coefficients allocated for the output.
+//!
+//! ```rust
+//! use control_rs::math::num_types::{Dim, DimAdd, DimSub, Const, U1};
+//! use core::marker::PhantomData;
+//!
+//! /// A polynomial with a statically known number of coefficients.
+//! pub struct StaticPolynomial<C: Dim> {
+//!     // The dimension type `C` represents the array length (Degree + 1)
+//!     _marker: PhantomData<C>,
+//! }
+//!
+//! impl<C: Dim> StaticPolynomial<C> {
+//!     pub fn new() -> Self {
+//!         Self { _marker: PhantomData }
+//!     }
+//! }
+//!
+//! /// Multiplies two polynomials of length N and M.
+//! /// The resulting polynomial requires exactly (N + M) - 1 coefficients.
+//! pub fn mul_poly<const N: usize, const M: usize, Sum, Out>(
+//!     _a: &StaticPolynomial<Const<N>>,
+//!     _b: &StaticPolynomial<Const<M>>,
+//! ) -> StaticPolynomial<Out>
+//! where
+//!     Const<N>: DimAdd<Const<M>, Output = Sum>,
+//!     Sum: Dim + DimSub<U1, Output = Out>,
+//!     Out: Dim,
+//! {
+//!     // The compiler enforces that `Out` is exactly N + M - 1.
+//!     // Attempting to return a polynomial of any other size fails to compile.
+//!     StaticPolynomial::<Out>::new()
+//! }
+//!
+//! // --- Usage ---
+//! // Polynomial A: Length 3 (e.g., ax^2 + bx + c)
+//! let p_a = StaticPolynomial::<Const<3>>::new();
+//!
+//! // Polynomial B: Length 2 (e.g., dx + e)
+//! let p_b = StaticPolynomial::<Const<2>>::new();
+//!
+//! // Result C: The compiler infers length 4 (3 + 2-1).
+//! // Degree 2 * Degree 1 = Degree 3 (which requires 4 coefficients).
+//! let p_c = mul_poly(&p_a, &p_b);
+//! ```
 //! # References
 //! - [Numerical Recipes - The Art of Scientific Computing](https://numerical.recipes/)
 
