@@ -1,28 +1,7 @@
 //! # Operations
 //!
-//! This module defines traits for fallible (`try_`) and infallible (`unchecked`)
+//! This module defines traits for fallible (`try_`), wrapping and saturating
 //! arithmetic operations.
-//!
-//! The primary purpose of this module is to abstract the underlying arithmetic
-//! implementations. By using these traits, algorithms can be written generically,
-//! allowing the specific numerical backend (e.g., standard floating-point,
-//! fixed-point, or hardware-accelerated DSP libraries) to be selected at compile
-//! time through Cargo features.
-//!
-//! ## Design
-//!
-//! - **Unchecked Operations**: Traits for operations that do not perform overflow
-//!   or other runtime checks. These are the standard `core::ops` traits.
-//!
-//! - **Fallible Operations**: Traits for operations that return a `Result`
-//!   to indicate whether the computation succeeded. This is essential for
-//!   _safety-critical_ applications where numerical stability and correctness must
-//!   be guaranteed. The `try_` prefix is used to indicate that these operations
-//!   can fail.
-//!
-//! By building on top of the traits in this module, the crate can support a wide
-//! range of numeric types and implementations while maintaining a clean and
-//! consistent API.
 #![allow(clippy::arbitrary_source_item_ordering)]
 
 // Re-export core arithmetic traits for unchecked operations.
@@ -42,7 +21,6 @@ pub trait TryAdd: Sized + Add<Self, Output = Self> {
     /// * `ArithmeticResult<Self>` - The result of the addition.
     ///
     /// # Errors
-    ///
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
     ///   representable range of the type.
     /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
@@ -61,7 +39,6 @@ pub trait TryMul: Sized + Mul<Self, Output = Self> {
     /// * `ArithmeticResult<Self>` - The result of the multiplication.
     ///
     /// # Errors
-    ///
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
     ///   representable range of the type.
     /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
@@ -80,7 +57,6 @@ pub trait TrySub: Sized + Sub<Self, Output = Self> {
     /// * `ArithmeticResult<Self>` - The result of the subtraction.
     ///
     /// # Errors
-    ///
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
     ///   representable range of the type.
     /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
@@ -99,7 +75,6 @@ pub trait TryDiv: Sized + Div<Self, Output = Self> {
     /// * `ArithmeticResult<Self>` - The result of the division.
     ///
     /// # Errors
-    ///
     /// - `ArithmeticError::DivisionByZero`: The divisor `v` is zero.
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
     ///   representable range (e.g., `i32::MIN / -1`).
@@ -116,7 +91,6 @@ pub trait TryNeg: Sized + Neg<Output = Self> {
     /// * `ArithmeticResult<Self>` - The negated value.
     ///
     /// # Errors
-    ///
     /// - `ArithmeticError::Overflow`: The result cannot be represented (e.g., `-i32::MIN`).
     fn try_neg(&self) -> ArithmeticResult<Self>;
 }
@@ -151,7 +125,6 @@ pub trait TryShl: Sized + Shl<u32, Output = Self> {
     /// * `ArithmeticResult<Self>` - The shifted value.
     ///
     /// # Errors
-    ///
     /// - `ArithmeticError::Overflow`: The number of bits to shift (`rhs`) is
     ///   greater than or equal to the bit-width of the type, or the result
     ///   of the shift overflows the type.
@@ -173,6 +146,52 @@ pub trait TryShr: Sized + Shr<u32, Output = Self> {
     /// - `ArithmeticError::Overflow`: The number of bits to shift (`rhs`) is
     ///   greater than or equal to the bit-width of the type.
     fn try_shr(&self, rhs: u32) -> ArithmeticResult<Self>;
+}
+
+// --- Wrapping Traits ---
+
+/// Performs wrapping addition.
+pub trait WrappingAdd: Sized + Add<Self, Output = Self> {
+    /// Adds two numbers, wrapping on overflow.
+    #[must_use]
+    fn wrapping_add(&self, v: &Self) -> Self;
+}
+
+/// Performs wrapping subtraction.
+pub trait WrappingSub: Sized + Sub<Self, Output = Self> {
+    /// Subtracts two numbers, wrapping on overflow.
+    #[must_use]
+    fn wrapping_sub(&self, v: &Self) -> Self;
+}
+
+/// Performs wrapping multiplication.
+pub trait WrappingMul: Sized + Mul<Self, Output = Self> {
+    /// Multiplies two numbers, wrapping on overflow.
+    #[must_use]
+    fn wrapping_mul(&self, v: &Self) -> Self;
+}
+
+// --- Saturating Traits ---
+
+/// Performs saturating addition.
+pub trait SaturatingAdd: Sized + Add<Self, Output = Self> {
+    /// Adds two numbers, saturating at the numeric bounds.
+    #[must_use]
+    fn saturating_add(&self, v: &Self) -> Self;
+}
+
+/// Performs saturating subtraction.
+pub trait SaturatingSub: Sized + Sub<Self, Output = Self> {
+    /// Subtracts two numbers, saturating at the numeric bounds.
+    #[must_use]
+    fn saturating_sub(&self, v: &Self) -> Self;
+}
+
+/// Performs saturating multiplication.
+pub trait SaturatingMul: Sized + Mul<Self, Output = Self> {
+    /// Multiplies two numbers, saturating at the numeric bounds.
+    #[must_use]
+    fn saturating_mul(&self, v: &Self) -> Self;
 }
 
 // --- Integer Implementations ---
@@ -357,6 +376,136 @@ try_shift_impl!(
     isize
 );
 
+macro_rules! wrapping_impl_int {
+    ($trait:ident, $method:ident, $wrapping_method:ident, $($t:ty),+) => {
+        $(
+            impl $trait for $t {
+                #[inline]
+                fn $method(&self, v: &$t) -> $t {
+                    <$t>::$wrapping_method(*self, *v)
+                }
+            }
+        )+
+    };
+}
+
+wrapping_impl_int!(
+    WrappingAdd,
+    wrapping_add,
+    wrapping_add,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+wrapping_impl_int!(
+    WrappingSub,
+    wrapping_sub,
+    wrapping_sub,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+wrapping_impl_int!(
+    WrappingMul,
+    wrapping_mul,
+    wrapping_mul,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+
+macro_rules! saturating_impl_int {
+    ($trait:ident, $method:ident, $saturating_method:ident, $($t:ty),+) => {
+        $(
+            impl $trait for $t {
+                #[inline]
+                fn $method(&self, v: &$t) -> $t {
+                    <$t>::$saturating_method(*self, *v)
+                }
+            }
+        )+
+    };
+}
+
+saturating_impl_int!(
+    SaturatingAdd,
+    saturating_add,
+    saturating_add,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+saturating_impl_int!(
+    SaturatingSub,
+    saturating_sub,
+    saturating_sub,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+saturating_impl_int!(
+    SaturatingMul,
+    saturating_mul,
+    saturating_mul,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+
 // --- Floating Point Implementations ---
 
 macro_rules! try_float_impl {
@@ -368,15 +517,15 @@ macro_rules! try_float_impl {
                         return Err(ArithmeticError::DomainViolation);
                     }
                     let result = self.add(v);
-                    if result.is_infinite() {
-                        return Err(ArithmeticError::Overflow);
+                    #[allow(clippy::float_cmp)]
+                    if result == *self && *v != <$t>::ZERO {
+                        return Err(ArithmeticError::PrecisionLoss);
                     }
                     #[allow(clippy::float_cmp)]
-                    if result == *self && (*v < Self::EPSILON && *v > Self::EPSILON.neg()) {
-                        return Err(ArithmeticError::Underflow);
+                    if result == *v && *self != <$t>::ZERO {
+                        return Err(ArithmeticError::PrecisionLoss);
                     }
-                    #[allow(clippy::float_cmp)]
-                    if result == *v && (*self < Self::EPSILON && *self > Self::EPSILON.neg()) {
+                    if result != 0.0 && result.abs() < <$t>::MIN_POSITIVE {
                         return Err(ArithmeticError::Underflow);
                     }
                     return Ok(result);
@@ -415,6 +564,9 @@ macro_rules! try_float_impl {
 
             impl TryNeg for $t {
                 fn try_neg(&self) -> ArithmeticResult<$t> {
+                    if self.is_nan() {
+                        return Err(ArithmeticError::DomainViolation);
+                    }
                     return Ok(self.neg());
                 }
             }
@@ -439,11 +591,15 @@ macro_rules! try_float_impl {
                         return Err(ArithmeticError::DomainViolation);
                     }
                     let result = self.sub(v);
-                    if result.is_infinite() {
-                        return Err(ArithmeticError::Overflow);
+                    #[allow(clippy::float_cmp)]
+                    if result == *self && *v != <$t>::ZERO {
+                        return Err(ArithmeticError::PrecisionLoss);
                     }
                     #[allow(clippy::float_cmp)]
-                    if result == *self {
+                    if result == v.neg() && *self != <$t>::ZERO {
+                        return Err(ArithmeticError::PrecisionLoss);
+                    }
+                    if result != <$t>::ZERO && result.abs() < <$t>::MIN_POSITIVE {
                         return Err(ArithmeticError::Underflow);
                     }
                     return Ok(result);
