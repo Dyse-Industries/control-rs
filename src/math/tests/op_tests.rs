@@ -17,21 +17,14 @@ mod test_float_add {
     ) {
         assert_eq!(lhs.try_add(&rhs), Ok(expected));
         assert_eq!(T::MIN.try_add(&T::MIN), Ok(T::INF.neg()));
-        assert_eq!(
-            T::MIN.try_add(&T::ONE),
-            Err(ArithmeticError::PrecisionLoss)
+        assert!(T::MIN.try_add(&T::ONE) == Err(ArithmeticError::PrecisionLoss));
+        assert!(T::ONE.try_add(&T::MAX) == Err(ArithmeticError::PrecisionLoss));
+        assert!(
+            T::NAN.try_add(&T::ONE) == Err(ArithmeticError::DomainViolation)
         );
-        assert_eq!(
-            T::ONE.try_add(&T::MAX),
-            Err(ArithmeticError::PrecisionLoss)
-        );
-        assert_eq!(
-            T::NAN.try_add(&T::ONE),
-            Err(ArithmeticError::DomainViolation)
-        );
-        assert_eq!(
-            T::ZERO.try_add(&(T::MIN_POSITIVE / T::TWO)),
-            Err(ArithmeticError::Underflow)
+        assert!(
+            T::ZERO.try_add(&(T::MIN_POSITIVE / T::TWO))
+                == Err(ArithmeticError::Underflow)
         );
     }
     #[test]

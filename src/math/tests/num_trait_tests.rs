@@ -63,21 +63,20 @@ mod ring_tests {
     };
     fn check_int_ring<T: Ring + core::fmt::Debug>(a: T, b: T, c: T) {
         // Identity: a + 0 = a
-        assert_eq!(a.clone() + T::zero(), a, "Additive identity failed");
+        assert_eq!(a.clone() + T::zero(), a);
         // Identity: a * 1 = a
-        assert_eq!(a.clone() * T::one(), a, "Multiplicative identity failed");
+        assert_eq!(a.clone() * T::one(), a);
         // Associativity: (a + b) + c = a + (b + c)
         assert_eq!(
             (a.clone() + b.clone()) + c.clone(),
-            a.clone() + (b.clone() + c.clone()),
-            "Associativity failed"
+            a.clone() + (b.clone() + c.clone())
         );
         // Distributivity: a * (b + c) = a*b + a*c
         let left = a.clone() * (b.clone() + c.clone());
         let right = (a.clone() * b) + (a * c);
         // Note: For floats, exact equality might fail due to precision,
         // but for integers (Ring) it must hold exactly.
-        assert_eq!(left, right, "Distributivity failed");
+        assert_eq!(left, right);
         assert_eq!(T::from_const::<2>(), T::TWO);
         assert_eq!(T::from_usize(2), T::ONE + T::ONE);
     }
