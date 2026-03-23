@@ -13,8 +13,6 @@ the primary technical overview and safety manual for the crate.
   Level (ASIL) the crate is designed to meet.
 * Core Concepts: An explanation of the fundamental principles and algorithms implemented in the crate.
 * Usage: A practical example demonstrating the crate's primary use case. This example must be runnable with cargo test.
-* Features: A list and explanation of all cargo features, especially those that alter functionality or introduce
-  dependencies.
 * Limitations: A clear statement of any known limitations, assumptions, or operational constraints.
 
 # 2. Public API Documentation
@@ -78,7 +76,7 @@ The documentation for every public item should adhere to the following order:
 For any function, method, or unsafe block that has safety implications, a dedicated #[safety] section is mandatory.
 This section must explicitly detail the contract the caller must uphold to ensure safe execution.
 
-The #[safety] documentation must clearly state:
+The #[safety] documentation might include:
 * Pre-conditions: The conditions that must be true before calling the function. This includes, but is not limited to,
   the state of hardware, the validity of inputs, and the expected configuration of the system.
 * Post-conditions: The state of the system after the function has executed successfully. This describes the expected
@@ -107,14 +105,6 @@ The #[safety] documentation must clearly state:
   a panic condition.
 * Examples for safety-critical functions should demonstrate both correct usage and, where possible, how incorrect usage
   is handled.
-
-# 4. Traceability
-
-To comply with safety standards, documentation must facilitate traceability between requirements, design, code, and
-tests.
-* Requirement Tags: Where applicable, include tags in the documentation to link code to specific software requirements.
-* Design Rationale: For complex or critical algorithms, include a brief explanation of the design choices and
-  references to relevant design documents.
 
 By adhering to these rigorous documentation rules, the Rust native control systems toolbox will provide the necessary
 clarity, consistency, and explicit safety information required for use in safety-critical applications.

@@ -490,13 +490,18 @@ mod test_wrapping_mul {
 
 #[allow(clippy::arbitrary_source_item_ordering)]
 mod test_int_div {
-    use crate::math::{ArithmeticError, num_traits::Ring, ops::TryDiv};
+    use crate::math::{
+        ArithmeticError,
+        num_traits::Ring,
+        ops::{Div, Neg, TryDiv},
+    };
 
     #[allow(clippy::arithmetic_side_effects)]
     fn signed_try_div_int_checks<
         T: Ring
             + TryDiv
-            + core::ops::Neg<Output = T>
+            + Div<T, Output = T>
+            + Neg<Output = T>
             + core::fmt::Debug
             + PartialEq,
     >(
@@ -510,7 +515,7 @@ mod test_int_div {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn unsigned_try_div_int_checks<
-        T: Ring + TryDiv + core::fmt::Debug + PartialEq,
+        T: Ring + Div<T, Output = T> + TryDiv + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -576,12 +581,17 @@ mod test_rem {
     use crate::math::{
         ArithmeticError,
         num_traits::{Ring, Signed},
-        ops::TryRem,
+        ops::{Rem, TryRem},
     };
 
     #[allow(clippy::arithmetic_side_effects)]
     fn signed_try_rem_int_checks<
-        T: Ring + Signed + TryRem + core::fmt::Debug + PartialEq,
+        T: Ring
+            + Signed
+            + Rem<T, Output = T>
+            + TryRem
+            + core::fmt::Debug
+            + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -594,7 +604,7 @@ mod test_rem {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn unsigned_try_rem_int_checks<
-        T: Ring + TryRem + core::fmt::Debug + PartialEq,
+        T: Ring + TryRem + Rem<T, Output = T> + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -658,11 +668,15 @@ mod test_float_rem {
 // --- NEGATION TESTS ---
 
 mod test_neg {
-    use crate::math::{ArithmeticError, num_traits::Ring, ops::TryNeg};
+    use crate::math::{
+        ArithmeticError,
+        num_traits::Ring,
+        ops::{Neg, TryNeg},
+    };
 
     #[allow(clippy::arithmetic_side_effects)]
     fn signed_try_neg_int_checks<
-        T: Ring + TryNeg + core::fmt::Debug + PartialEq + Copy,
+        T: Ring + Neg<Output = T> + TryNeg + core::fmt::Debug + PartialEq + Copy,
     >(
         val: T,
         expected: T,
@@ -702,11 +716,15 @@ mod test_neg {
 // --- SHIFT TESTS ---
 
 mod test_shl {
-    use crate::math::{ArithmeticError, num_traits::Ring, ops::TryShl};
+    use crate::math::{
+        ArithmeticError,
+        num_traits::Ring,
+        ops::{Shl, TryShl},
+    };
 
     #[allow(clippy::arithmetic_side_effects)]
     fn signed_try_shl_int_checks<
-        T: Ring + TryShl + core::fmt::Debug + PartialEq,
+        T: Ring + Shl<u32, Output = T> + TryShl + core::fmt::Debug + PartialEq,
     >(
         val: T,
         expected: T,
@@ -717,7 +735,7 @@ mod test_shl {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn unsigned_try_shl_int_checks<
-        T: Ring + TryShl + core::fmt::Debug + PartialEq,
+        T: Ring + Shl<u32, Output = T> + TryShl + core::fmt::Debug + PartialEq,
     >(
         val: T,
         expected: T,
@@ -745,11 +763,15 @@ mod test_shl {
 }
 
 mod test_shr {
-    use crate::math::{ArithmeticError, num_traits::Ring, ops::TryShr};
+    use crate::math::{
+        ArithmeticError,
+        num_traits::Ring,
+        ops::{Shr, TryShr},
+    };
 
     #[allow(clippy::arithmetic_side_effects)]
     fn signed_try_shr_int_checks<
-        T: Ring + TryShr + core::fmt::Debug + PartialEq,
+        T: Ring + Shr<u32, Output = T> + TryShr + core::fmt::Debug + PartialEq,
     >(
         val: T,
         bits: u32,
@@ -759,7 +781,7 @@ mod test_shr {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn unsigned_try_shr_int_checks<
-        T: Ring + TryShr + core::fmt::Debug + PartialEq,
+        T: Ring + Shr<u32, Output = T> + TryShr + core::fmt::Debug + PartialEq,
     >(
         val: T,
         bits: u32,

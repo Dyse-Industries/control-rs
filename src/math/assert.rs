@@ -2,7 +2,7 @@
 
 use crate::math::{
     ArithmeticResult,
-    num_traits::Real,
+    num_traits::{Field, Signed},
     ops::{TryMul, TrySub},
 };
 
@@ -18,17 +18,13 @@ use crate::math::{
 /// # use control_rs::assert_almost_eq;
 /// let a = 0.1_f64 + 0.2_f64;
 /// let b = 0.3_f64;
-///
-/// // This will not panic
 /// assert_almost_eq!(a, b);
 /// ```
 ///
 /// ```should_panic
 /// # use control_rs::assert_almost_eq;
-/// // This will panic because the values are not almost equal.
 /// assert_almost_eq!(0.1_f32, 0.2_f32);
 /// ```
-///
 #[macro_export]
 macro_rules! assert_almost_eq {
     ($left:expr, $right:expr) => ({
@@ -102,7 +98,7 @@ macro_rules! assert_not_almost_eq {
 /// Return `ArithmeticError` if the subtraction operation fails.
 pub fn almost_eq<T>(a: &T, b: &T) -> ArithmeticResult<bool>
 where
-    T: TrySub + TryMul + Real,
+    T: TrySub + TryMul + Signed + Field,
 {
     if a == b {
         return Ok(true);
@@ -116,6 +112,8 @@ where
             || abs_diff < T::epsilon()
     })
 }
+
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod tests {

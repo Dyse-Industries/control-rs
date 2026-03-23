@@ -3,7 +3,6 @@
 //! Core numerical primitives optimized for bare-metal execution.
 //!
 //! ## Usage
-//!
 //! ```rust
 //! use control_rs::math::subprograms::level1::AXPY;
 //! use control_rs::math::ArithmeticResult;
@@ -90,6 +89,31 @@ pub mod subprograms;
 #[cfg(test)]
 mod tests;
 
+/// Convenience enum representing the 2D Cartesian Plane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CartesianQuadrant2D {
+    /// Directly to the left of the origin.
+    NegativeXAxis,
+    /// Directly below the origin.
+    NegativeYAxis,
+    /// The center of the plane.
+    Origin,
+    /// Directly to the right of the origin.
+    PositiveXAxis,
+    /// Directly above the origin.
+    PositiveYAxis,
+    /// The first quadrant (+, +)
+    Q1,
+    /// The second quadrant (-, +)
+    Q2,
+    /// The third quadrant (-, -)
+    Q3,
+    /// The fourth quadrant (+, -)
+    Q4,
+    /// Undefined values do not exist on the plane.
+    Undefined,
+}
+
 /// A unified error type for arithmetic operations.
 ///
 /// This structure balances high-level control flow (overflow/underflow) with
@@ -134,7 +158,11 @@ pub enum ArithmeticError {
 /// A specialized `Result` type for fallible arithmetic operations.
 pub type ArithmeticResult<T> = Result<T, ArithmeticError>;
 
+////////////////////////////////////////////////////////////////////////////////
+
 impl core::error::Error for ArithmeticError {}
+
+////////////////////////////////////////////////////////////////////////////////
 
 impl core::fmt::Display for ArithmeticError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -154,6 +182,8 @@ impl core::fmt::Display for ArithmeticError {
         }
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod test {

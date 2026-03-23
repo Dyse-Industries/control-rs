@@ -339,6 +339,8 @@ type MaybeUninitArray<T, const N: usize> = MaybeUninit<[T; N]>;
 /// ```
 pub struct UninitStaticArray<T, const N: usize>(MaybeUninitArray<T, N>);
 
+////////////////////////////////////////////////////////////////////////////////
+
 impl<T: 'static, const N: usize> StaticStorage<T> for StaticArray<T, N> {
     /// Returns a mutable raw pointer to the underlying array.
     ///
@@ -372,6 +374,8 @@ impl<T: 'static, const N: usize> StaticStorage<T> for StaticArray<T, N> {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
 impl<T: 'static, const N: usize> UninitStaticStorage<T>
     for UninitStaticArray<T, N>
 {
@@ -397,6 +401,8 @@ impl<T: 'static, const N: usize> UninitStaticStorage<T>
         Self(MaybeUninit::uninit())
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
 
 impl<T: 'static, const R: usize, const C: usize>
     MatrixStorage<T, Const<R>, Const<C>> for StaticMatrix<T, R, C>
