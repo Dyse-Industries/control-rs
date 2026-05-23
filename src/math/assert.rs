@@ -1,6 +1,10 @@
 //! # Math Assertions.
 
-use super::{ArithmeticError, num_traits::Real, ops::TrySub};
+use crate::math::{
+    ArithmeticResult,
+    num_traits::{Field, Signed},
+    ops::{TryMul, TrySub},
+};
 
 /// Asserts that two floating-point numbers are almost equal.
 ///
@@ -14,17 +18,13 @@ use super::{ArithmeticError, num_traits::Real, ops::TrySub};
 /// # use control_rs::assert_almost_eq;
 /// let a = 0.1_f64 + 0.2_f64;
 /// let b = 0.3_f64;
-///
-/// // This will not panic
 /// assert_almost_eq!(a, b);
 /// ```
 ///
 /// ```should_panic
 /// # use control_rs::assert_almost_eq;
-/// // This will panic because the values are not almost equal.
 /// assert_almost_eq!(0.1_f32, 0.2_f32);
 /// ```
-///
 #[macro_export]
 macro_rules! assert_almost_eq {
     ($left:expr, $right:expr) => ({
@@ -96,15 +96,24 @@ macro_rules! assert_not_almost_eq {
 ///
 /// # Errors
 /// Return `ArithmeticError` if the subtraction operation fails.
-pub fn almost_eq<T>(a: &T, b: &T) -> Result<bool, ArithmeticError>
+pub fn almost_eq<T>(a: &T, b: &T) -> ArithmeticResult<bool>
 where
-    T: PartialOrd + PartialEq + TrySub<Output = T> + Real,
+    T: TrySub + TryMul + Signed + Field,
 {
     if a == b {
         return Ok(true);
     }
-    a.try_sub(b).map(|diff| T::abs(diff) < T::epsilon())
+    let abs_a = T::abs(a.clone());
+    let abs_b = T::abs(b.clone());
+    a.try_sub(b).map(|diff| {
+        let abs_diff = T::abs(diff);
+        let largest = if abs_a > abs_b { abs_a } else { abs_b };
+        abs_diff <= T::epsilon().try_mul(&largest).unwrap_or(T::ZERO)
+            || abs_diff < T::epsilon()
+    })
 }
+
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod tests {
@@ -161,7 +170,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "assertion failed: Value underflowed (subnormal)"
+        expected = "assertion failed: Significant precision was lost during operation"
     )]
     fn test_assert_almost_eq_underflow() {
         assert_almost_eq!(10e20_f32, (f32::EPSILON / 2.0));

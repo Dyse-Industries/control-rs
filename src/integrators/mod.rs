@@ -1,1 +1,3 @@
-//! A variety of methods to integrate [`DynamicalSystem`]s
+//! A variety of methods to integrate equations.
+
+pub mod runge_kutta;
