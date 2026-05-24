@@ -1,31 +1,44 @@
 ## Real-Time Model Tuning and Estimation via HIL: A Rust Developer's Guide
 
+# Out of Date (should replace)
+
 _It's recommended to read about the [hil harness](hil-test-harness.md) first_
 
-Performing system identification (SysId) entirely offline has a much slower turnaround time.
+Performing system identification (SysId) entirely offline has a much slower
+turnaround time.
 
-By combining the **Adaptive Estimator** pattern with the **HIL Test Harness**, `control-rs` allows you to perform
+By combining the **Adaptive Estimator** pattern with the **HIL Test Harness**,
+`control-rs` allows you to perform
 real-time model tuning and parameter estimation directly on the target silicon.
 
-This guide demonstrates how to build an interactive firmware server over Real-Time Transfer (RTT), enabling you to step
-a physical actuator, run an estimator and stream the converging parameters back to your host in real-time.
+This guide demonstrates how to build an interactive firmware server over
+Real-Time Transfer (RTT), enabling you to step
+a physical actuator, run an estimator and stream the converging parameters back
+to your host in real-time.
 
 ### The SysId Workflow
 
-The standard embedded Rust workflow for HIL tuning with `control-rs` looks like this:
+The standard embedded Rust workflow for HIL tuning with `control-rs` looks like
+this:
 
-1. **Trigger:** The host machine sends a tuning command (e.g., `'t'`) over the RTT down-channel.
-2. **Excite:** The microcontroller applies a known excitation signal (like a PRBS or a simple step voltage) to the
+1. **Trigger:** The host machine sends a tuning command (e.g., `'t'`) over the
+   RTT down-channel.
+2. **Excite:** The microcontroller applies a known excitation signal (like a
+   PRBS or a simple step voltage) to the
    physical hardware.
-3. **Estimate:** The target samples the sensors, feeds the data into the `RecursiveEstimator`, and securely updates the
+3. **Estimate:** The target samples the sensors, feeds the data into the
+   `RecursiveEstimator`, and securely updates the
    internal model covariance using safe, zero-allocation math.
-4. **Stream:** The target streams the converging parameters back to the host over the RTT up-channel for visualization
+4. **Stream:** The target streams the converging parameters back to the host
+   over the RTT up-channel for visualization
    or verification.
 
 ### Implementing the Harness
 
-Below is an example of wrapping a motor tuning routine inside the `hil_test_harness!` macro. This example emphasizes
-Rust's ability to gracefully handle mathematical divergence on bare-metal hardware using `ArithmeticResult`.
+Below is an example of wrapping a motor tuning routine inside the
+`hil_test_harness!` macro. This example emphasizes
+Rust's ability to gracefully handle mathematical divergence on bare-metal
+hardware using `ArithmeticResult`.
 
 ```rust
 #![no_std]
@@ -112,7 +125,8 @@ hil_test_harness! {
 
 ### The Developer Experience
 
-When you run `cargo hil` and press `'t'` in the terminal, the target immediately begins executing the physical movement
+When you run `cargo hil` and press `'t'` in the terminal, the target immediately
+begins executing the physical movement
 and streaming the data:
 
 ```text
@@ -135,13 +149,20 @@ Done.
 
 ### Why This Architecture Matters for Embedded Rust
 
-1. **Safety First, Without the Overhead:** Notice that there are no `unwrap()` calls on the estimation math.
-   Floating-point math on real-world sensor data is inherently chaotic. Rust's `match` statement forces you to handle
-   `ArithmeticError`, ensuring that a mathematically unstable model never silently crashes your firmware or sends
+1. **Safety First, Without the Overhead:** Notice that there are no `unwrap()`
+   calls on the estimation math.
+   Floating-point math on real-world sensor data is inherently chaotic. Rust's
+   `match` statement forces you to handle
+   `ArithmeticError`, ensuring that a mathematically unstable model never
+   silently crashes your firmware or sends
    unbound parameters to an active actuator.
-2. **Immediate Turnaround:** You skip the entire cycle of logging CSVs to an SD card, moving them to a PC, parsing them
-   in a Python script, and recompiling gains into firmware. The parameters converge on the hardware, using the exact
+2. **Immediate Turnaround:** You skip the entire cycle of logging CSVs to an SD
+   card, moving them to a PC, parsing them
+   in a Python script, and recompiling gains into firmware. The parameters
+   converge on the hardware, using the exact
    same arithmetic implementations that will govern them in production.
-3. **Automated MBD Integration:** Because this runs over standard `probe-rs` channels, you can write a simple host-side
-   Rust script that triggers the `'t'` command over TCP, parses the `rprintln!` output, and automatically updates a
+3. **Automated MBD Integration:** Because this runs over standard `probe-rs`
+   channels, you can write a simple host-side
+   Rust script that triggers the `'t'` command over TCP, parses the `rprintln!`
+   output, and automatically updates a
    configuration `const` in your codebase.
