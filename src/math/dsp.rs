@@ -1,10 +1,9 @@
 //! Common Digital Signal Processing Operations
 //!
 
-use crate::math::{num_traits::Real, storage::StaticStorage};
-
-use crate::math::complex_num::Complex;
-use core::ops::Neg;
+use crate::math::{
+    Bijection, Map, complex_num::Complex, num_traits::Real, ops::Neg,
+};
 
 /// Trait for Fast Fourier Transform (FFT) operations.
 ///
@@ -13,7 +12,7 @@ use core::ops::Neg;
 ///
 /// # Generic Arguments
 /// * `T` - The numeric type of the elements (must implement `Real`).
-pub trait FFT<T: 'static + Real + Neg<Output = T>> {
+pub trait FFT<T: 'static + Real + Neg<Output = T> + Default> {
     /// Computes the forward Fast Fourier Transform.
     ///
     /// # Arguments
@@ -29,18 +28,11 @@ pub trait FFT<T: 'static + Real + Neg<Output = T>> {
     /// # Safety
     /// This function does not use `unsafe` code.
     #[allow(clippy::arithmetic_side_effects)]
-    fn fft<
-        const N: usize,
-        U: StaticStorage<T>,
-        F: StaticStorage<Complex<T>>,
-    >(
-        input: &U,
-        output: &mut F,
-    ) {
+    fn fft<const N: usize>(input: &[T; N], output: &mut [Complex<T>; N]) {
         debug_assert!(N.is_power_of_two(), "FFT length must be a power of two");
 
-        let in_ptr = input.get_ptr(); // Now points to Complex<T>
-        let ptr = output.get_mut_ptr(); // Now points to Complex<T>
+        let in_ptr = input.as_ptr();
+        let ptr = output.as_mut_ptr();
         let two_pi = T::PI * T::TWO;
 
         // 1. Bit-reversal permutation
@@ -117,30 +109,27 @@ pub trait FFT<T: 'static + Real + Neg<Output = T>> {
     /// # Safety
     /// This function does not use `unsafe` code.
     #[allow(clippy::arithmetic_side_effects)]
-    fn ifft<const N: usize, U: StaticStorage<T>, F: StaticStorage<T>>(
-        input: &U,
-        output: &mut F,
-    ) {
+    fn ifft<const N: usize>(input: &[Complex<T>; N], output: &mut [T; N]) {
         debug_assert!(N.is_power_of_two(), "Length must be power of two");
 
         let n_t = T::from_const::<N>();
 
-        let in_ptr = input.get_ptr();
-        let out_ptr = output.get_mut_ptr();
+        let in_ptr = input.as_ptr();
+        let out_ptr = output.as_mut_ptr();
 
         let pi = T::PI;
         let two = T::TWO;
 
         for m in 0..N {
             let m_t = T::from_usize(m);
-            let mut sum = unsafe { in_ptr.add(m).read().clone() };
+            let mut sum = unsafe { in_ptr.add(m).read().re.clone() };
 
             // k = N/2 term
             unsafe {
                 if m % 2 == 0 {
-                    sum = sum + in_ptr.add(N - 1).read().clone();
+                    sum = sum + in_ptr.add(N - 1).read().re.clone();
                 } else {
-                    sum = sum - in_ptr.add(N - 1).read().clone();
+                    sum = sum - in_ptr.add(N - 1).read().re.clone();
                 }
             }
 
@@ -153,8 +142,8 @@ pub trait FFT<T: 'static + Real + Neg<Output = T>> {
                 let s = angle.sin();
 
                 unsafe {
-                    let re = in_ptr.add(2 * k - 1).read().clone();
-                    let im = in_ptr.add(2 * k).read().clone();
+                    let re = in_ptr.add(2 * k - 1).read().re.clone();
+                    let im = in_ptr.add(2 * k).read().re.clone();
                     // Add 2 * (re * c - im * s)
                     sum = sum + two.clone() * (re * c - im * s);
                 }
@@ -167,25 +156,6 @@ pub trait FFT<T: 'static + Real + Neg<Output = T>> {
     }
 }
 
-/// Trait for Laplace Transform operations.
-///
-/// This trait defines operations related to the Laplace domain (s-domain),
-/// typically used for continuous-time system analysis.
-pub trait Laplace {
-    /// Evaluates the transfer function at a specific complex frequency `s`.
-    ///
-    /// # Arguments
-    /// * `s_real` - The real part of `s`.
-    /// * `s_imag` - The imaginary part of `s`.
-    ///
-    /// # Returns
-    /// * `(f32, f32)` - The real and imaginary parts of the response.
-    ///
-    /// # Safety
-    /// This function does not use `unsafe` code.
-    fn evaluate(s_real: f32, s_imag: f32) -> (f32, f32);
-}
-
 /// Trait for Convolution operations.
 ///
 /// This trait defines the interface for performing convolution between two signals.
@@ -194,6 +164,15 @@ pub trait Laplace {
 /// * `T` - The numeric type of the elements.
 pub trait Convolution<T: Real> {
     /// Computes the convolution of two signals.
+    ///
+    /// * Fewer Writes: By calculating $y[n]$ directly using k_min and k_max, we write to the output
+    ///   array exactly once per index. This bypasses the need to zero out the buffer first and avoids
+    ///   repeated memory reads/writes to output[i+j].
+    /// * Bounds Safety: The indices for k (k_min and k_max) ensure that both k remains within
+    /// 0..input.len() and n - k remains within 0..kernel.len(), guaranteeing no out-of-bounds
+    ///   panics during the inner loop computation.
+    /// * Traits: This assumes T: Real implies something akin to num_traits::Real (which provides
+    ///   T::zero() and standard operator overloading).
     ///
     /// # Arguments
     /// * `input` - The input signal.
@@ -209,8 +188,36 @@ pub trait Convolution<T: Real> {
     /// # Safety
     /// This function does not use `unsafe` code.
     #[allow(clippy::arithmetic_side_effects)]
-    fn convolve_input(_input: &[T], _kernel: &[T], _output: &mut [T]) {
-        // unimplemented!("Must implement this before merging DSP traits.")
+    fn convolve_input(input: &[T], kernel: &[T], output: &mut [T]) {
+        let input_len = input.len();
+        let kernel_len = kernel.len();
+
+        if input_len == 0 || kernel_len == 0 {
+            return;
+        }
+
+        let expected_len = input_len + kernel_len - 1;
+        assert!(
+            output.len() >= expected_len,
+            "Convolution output buffer is too small. Expected at least {}, got {}",
+            expected_len,
+            output.len()
+        );
+
+        // Calculate the convolution sum: y[n] = sum(x[k] * h[n-k])
+        for n in 0..expected_len {
+            let mut sum = T::zero();
+
+            // Determine the valid range for k to ensure indices stay within bounds
+            let k_min = n.saturating_sub(kernel_len - 1);
+            let k_max = n.min(input_len - 1);
+
+            for k in k_min..=k_max {
+                sum = sum + input[k].clone() * kernel[n - k].clone();
+            }
+
+            output[n] = sum;
+        }
     }
 }
 
@@ -249,4 +256,30 @@ pub trait Discrete<T: Real> {
     /// # Safety
     /// This function does not use `unsafe` code.
     fn to_continuous<C: Continuous<T>>(&self) -> C;
+}
+
+// Blanket implementation of `Map` for anything that implements `FFT`.
+impl<T, F, const N: usize> Map<[T; N], [Complex<T>; N]> for F
+where
+    F: FFT<T>,
+    T: 'static + Copy + Real + Neg<Output = T> + Default,
+{
+    fn evaluate(&self, x: [T; N]) -> [Complex<T>; N] {
+        let mut y = [Complex::<T>::default(); N];
+        F::fft(&x, &mut y);
+        y
+    }
+}
+
+// Blanket implementation of `Bijection` for anything that implements `FFT`.
+impl<T, F, const N: usize> Bijection<[T; N], [Complex<T>; N]> for F
+where
+    F: FFT<T>,
+    T: 'static + Copy + Real + Neg<Output = T> + Default,
+{
+    fn evaluate_inverse(&self, y: [Complex<T>; N]) -> [T; N] {
+        let mut x = [T::default(); N];
+        F::ifft(&y, &mut x);
+        x
+    }
 }

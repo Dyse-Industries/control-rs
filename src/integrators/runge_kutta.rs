@@ -1,9 +1,9 @@
 //! A variety of methods to integrate systems of differential equations.
 
 use crate::math::{
+    Map,
     num_traits::Field,
     ops::{Add, Mul},
-    Map,
 };
 
 /// Integrate the system for a given time interval

@@ -4,6 +4,7 @@
 //! (addition, subtraction, multiplication, division) for complex numbers.
 
 use crate::math::{
+    ArithmeticResult,
     num_traits::{
         Exponential, Field, One, Radical, Real, Ring, Scalar, Signed, Trig,
         Zero,
@@ -12,7 +13,6 @@ use crate::math::{
         Add, Div, Mul, Neg, Sub, TryAdd, TryDiv, TryMul, TrySub, WrappingAdd,
         WrappingMul, WrappingSub,
     },
-    ArithmeticResult,
 };
 
 /// Tye alias for a complex number using single precision.

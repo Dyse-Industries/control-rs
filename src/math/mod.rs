@@ -76,11 +76,13 @@
 //! // Degree 2 * Degree 1 = Degree 3 (which requires 4 coefficients).
 //! let p_c = mul_poly(&p_a, &p_b);
 //! ```
-//! # References
+//!
+//! ## References
 //! - [Numerical Recipes - The Art of Scientific Computing](https://numerical.recipes/)
 
 pub mod assert;
 pub mod complex_num;
+pub mod dsp;
 pub mod num_traits;
 pub mod num_types;
 pub mod ops;
@@ -132,6 +134,21 @@ pub trait Map<Domain, Codomain> {
     /// # Returns
     /// * The evaluated element $y \in Y$ in the codomain.
     fn evaluate(&self, x: Domain) -> Codomain;
+}
+
+/// A bijective mathematical mapping $f: X \to Y$ with a defined inverse $f^{-1}: Y \to X$.
+///
+/// Because this represents a bijection, every element in the Domain maps to exactly
+/// one element in the Codomain, and vice versa.
+pub trait Bijection<Domain, Codomain>: Map<Domain, Codomain> {
+    /// Evaluates the inverse mapping $x = f^{-1}(y)$.
+    ///
+    /// # Arguments
+    /// * `y` - An element $y \in Y$ from the function's codomain.
+    ///
+    /// # Returns
+    /// * The recovered element $x \in X$ in the domain.
+    fn evaluate_inverse(&self, y: Codomain) -> Domain;
 }
 
 /// A state-space equation governing a dynamical system.

@@ -1,8 +1,48 @@
+//! # Num Types
+//!
+//! The tests must verify that the compiler accurately translates constant values into their
+//! corresponding Peano representations.
+//!
+//! The test suite must comprehensively cover the operations for addition, subtraction,
+//! multiplication, minimum, and maximum behaviors.
+//!
+//! A specialized testing sequence must assert that the memory footprint of these types remains
+//! strictly zero bytes, ensuring that compile-time mathematics does not inflate the compiled
+//! binary.
+//!
+//! The static tests must verify the commutative property of this trait, proving that adding
+//! dimension A to dimension B results in the exact same type representation as adding B to A.
+//!
+//! ```compile_fail
+//!  fn test_subtraction_underflow() {
+//!      let _ = <U2 as DimSub<U5>>::Output::default();
+//!  }
+//! ```
+//!
+
 use crate::math::num_types::{
-    Const, Dim, DimAdd, DimMax, DimMin, DimMul, DimSub, U0, U1, U2, U3, U4, U5,
-    U6, U10, U12, U15, U32,
+    Const, Dim, DimAdd, DimMax, DimMin, DimMul, DimSub, S, U0, U1, U2, U3, U4,
+    U5, U6, U10, U12, U15, U32, Z,
 };
 use core::marker::PhantomData;
+use core::mem;
+
+#[test]
+fn test_zero_byte_footprint() {
+    assert_eq!(mem::size_of::<Z>(), 0);
+    assert_eq!(mem::size_of::<S<Z>>(), 0);
+    assert_eq!(mem::size_of::<S<S<Z>>>(), 0);
+}
+
+#[test]
+fn test_constant_generic_hoisting() {
+    let _: <Const<5> as Dim>::PeanoTypeNum = U5::default();
+}
+
+#[test]
+fn test_addition_commutativity() {
+    let _: <U2 as DimAdd<U3>>::Output = <<U3 as DimAdd<U2>>::Output>::default();
+}
 
 #[test]
 fn test_dimension_values() {
@@ -24,6 +64,12 @@ fn test_addition() {
 }
 
 #[test]
+fn test_addition_base_cases() {
+    let _: U5 = <U5 as DimAdd<U0>>::Output::default();
+    let _: U5 = <U0 as DimAdd<U5>>::Output::default();
+}
+
+#[test]
 fn test_subtraction() {
     let _: U2 = <U5 as DimSub<U3>>::Output::default();
     let _: U0 = <U5 as DimSub<U5>>::Output::default();
@@ -42,6 +88,12 @@ fn test_multiplication() {
 }
 
 #[test]
+fn test_multiplication_recursion_depth_limit() {
+    // Test a multiplication that forces deep recursion in the trait solver
+    let _: U32 = <U32 as DimMul<U1>>::Output::default();
+}
+
+#[test]
 fn test_maximum() {
     let _: U5 = <U2 as DimMax<U5>>::Output::default();
     let _: U5 = <U5 as DimMax<U2>>::Output::default();
@@ -57,6 +109,26 @@ fn test_minimum() {
     let _: U5 = <U5 as DimMin<U5>>::Output::default();
 
     assert_eq!(<<U12 as DimMin<U4>>::Output as Dim>::DIM, 4);
+}
+
+#[test]
+fn test_dynamic_min_max_bounding() {
+    // Statically assert that type-level Min and Max traits correctly resolve bounding boxes
+    // for non-uniform tensor operations.
+    let _: U5 = <U2 as DimMax<U5>>::Output::default();
+    let _: U2 = <U2 as DimMin<U5>>::Output::default();
+    // Use an operation to confirm that Max or Min bounds a dimension
+    fn assert_bounds<A, B, Max, Min>()
+    where
+        A: DimMax<B, Output = Max> + DimMin<B, Output = Min>,
+        B: Dim,
+        Max: Dim,
+        Min: Dim,
+    {
+    }
+
+    assert_bounds::<U10, U15, U15, U10>();
+    assert_bounds::<U32, U1, U32, U1>();
 }
 
 struct TestStorage<C: Dim>(PhantomData<C>);

@@ -6,7 +6,10 @@
 
 // Re-export core arithmetic traits for unchecked operations.
 use crate::math::{ArithmeticError, ArithmeticResult, num_traits::Zero};
-pub use core::ops::{Add, Div, Mul, Neg, Rem, Shl, Shr, Sub, AddAssign, SubAssign, MulAssign, DivAssign, RemAssign, ShlAssign, ShrAssign};
+pub use core::ops::{
+    Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Shl,
+    ShlAssign, Shr, ShrAssign, Sub, SubAssign,
+};
 
 /// Performs addition.
 pub trait TryAdd<Rhs = Self>: Sized + Add<Rhs> {

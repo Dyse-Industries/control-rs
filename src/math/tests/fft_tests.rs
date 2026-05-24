@@ -1,0 +1,67 @@
+use crate::math::dsp::FFT;
+
+struct TestFFT;
+impl<
+    T: 'static
+        + crate::math::num_traits::Real
+        + crate::math::ops::Neg<Output = T>
+        + Default,
+> FFT<T> for TestFFT
+{
+}
+
+mod fft_test_suite {
+    use super::*;
+    use crate::math::complex_num::Complex;
+
+    const TOLERANCE: f64 = 1e-6;
+    const N: usize = 8;
+
+    #[test]
+    fn test_fft_impulse() {
+        let mut input = [0.0; N];
+        input[0] = 1.0;
+        let mut output = [Complex::default(); N];
+
+        TestFFT::fft(&input, &mut output);
+
+        for val in output {
+            assert!((val.re - 1.0f64).abs() < TOLERANCE);
+            assert!(val.im.abs() < TOLERANCE);
+        }
+    }
+
+    #[test]
+    fn test_fft_dc() {
+        let input = [1.0; N];
+        let mut output = [Complex::default(); N];
+
+        TestFFT::fft(&input, &mut output);
+
+        assert!((output[0].re - N as f64).abs() < TOLERANCE);
+        assert!(output[0].im.abs() < TOLERANCE);
+
+        for i in 1..N {
+            assert!(output[i].re.abs() < TOLERANCE);
+            assert!(output[i].im.abs() < TOLERANCE);
+        }
+    }
+
+    #[test]
+    fn test_fft_ifft_identity() {
+        let mut input = [0.0; N];
+        for i in 0..N {
+            input[i] = (i as f64).sin();
+        }
+
+        let mut fft_output = [Complex::default(); N];
+        TestFFT::fft(&input, &mut fft_output);
+
+        let mut ifft_output = [0.0; N];
+        TestFFT::ifft(&fft_output, &mut ifft_output);
+
+        for i in 0..N {
+            assert!((input[i] - ifft_output[i]).abs() < TOLERANCE);
+        }
+    }
+}
