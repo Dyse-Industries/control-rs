@@ -8,7 +8,7 @@
 
 This design establishes the structural requirements for suites, ensuring
 seamless integration with the distributed test discovery mechanism and the
-`hil_test` runners defined within our `xtask` architecture. Functionally, this
+`hil_suite` runners defined within our `xtask` architecture. Functionally, this
 structure acts as the adapter layer, enabling the runner to reliably parse,
 discover, and interact with each individual suite, specifically serving the
 distributed test discovery mechanism and `xtask` runners.
@@ -17,18 +17,17 @@ distributed test discovery mechanism and `xtask` runners.
 
 ### Declaring a Suite
 
-A suite is declared by annotating a module with the `#[test_suite]` or
-`#[benchmark_suite]` procedural macro. Test functions within the module are
-marked with `#[hil_test]`.
+A suite is declared by annotating a module with the `#[hil_suite]` procedural
+macro. All functions within the module will be automatically discovered and
+registered by the procedural macro.
 
 ```rust
-#[test_suite]
+#[hil_suite]
 pub mod device_connectivity_suite {
     // Configurable settings exposed to the user
     pub static CONNECTION_TIMEOUT_MS: u32 = 5000;
     pub static MAX_RETRIES: u8 = 3;
 
-    #[hil_test]
     fn test_device_discovery() {
         // ... test logic ...
     }

@@ -1,6 +1,6 @@
 # HIL Runner Design Document
 
-![Date Badge](https://img.shields.io/badge/Date-June_2,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-May_23,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Status-WIP-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -41,7 +41,8 @@ The HIL test system is split between the Host PC and the Target MCU.
 ### 3.1. Test Discovery
 
 To make tests "discoverable" by the runner, we place them in a dedicated memory
-section (e.g., `.test_suite`). A custom linker script is used to place an array
+section (e.g., `.hil_test_suites`). A custom linker script is used to place an
+array
 of `TestSuite` structs in this section. Each `TestSuite` contains a name and a
 function pointer to the test.
 
@@ -54,7 +55,7 @@ pub struct TestSuite {
     pub function: fn() -> !,
 }
 
-#[link_section = ".test_suite"]
+#[link_section = ".hil_test_suites"]
 #[used]
 pub static TEST_SUITES: [TestSuite; 2] = [
     TestSuite {
@@ -85,18 +86,19 @@ tests and send them to the host TUI.
 
 ### 3.2. Test Execution
 
-The host sends an `exec_prog` command with the index of the test to run. The
+The host sends a `RunExecutable { suite_id, test_id }` command. The
 server receives this command and uses the index to look up the corresponding
-`TestSuite` in the `.test_suite` section. It then calls the function pointer.
+`TestSuite` in the `.hil_test_suites` section. It then calls the function
+pointer.
 
 ```rust
 // Simplified server logic
 fn server_loop() {
     loop {
-        match comms::receive_command() {
-            Some(Command::ExecProg(index)) => {
+        match comms::poll_command() {
+            Some(Command::RunExecutable { suite_id, test_id }) => {
                 // Bounds check omitted for brevity
-                let test = &TEST_SUITES[index];
+                let test = &TEST_SUITES[suite_id as usize];
                 (test.function)();
             }
             // Other commands
@@ -132,15 +134,24 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
 ### 3.4. Communication
 
-Communication between the host and the target is abstracted through a
+Communications between the host and the target are abstracted through a
 `HostComms` trait. This allows the runner to be agnostic of the underlying
 physical layer. The implementation of this trait will handle the specifics of
 the hardware (e.g., setting up UART, configuring DMA).
 
 ```rust
 pub trait HostComms {
-    fn send_log(&mut self, message: &str);
-    fn receive_command(&mut self) -> Option<Command>;
+    type Error;
+
+    /// Checks for and parses any incoming command from the host.
+    /// This should be non-blocking and return `Ok(None)` if no full command is available.
+    fn poll_command(&mut self) -> Result<Option<Command>, Self::Error>;
+
+    /// Transmits a log or telemetry packet to the host.
+    fn send_telemetry(&mut self, log: &LogMessage) -> Result<(), Self::Error>;
+
+    /// Flushes any pending data out to the hardware peripheral.
+    fn flush(&mut self) -> Result<(), Self::Error>;
 }
 ```
 
@@ -157,7 +168,7 @@ graph TD
     B --> C{Start Server Loop};
     C --> D{Poll for Command};
     D -- Command Received --> E{Parse Command};
-    E -- exec_prog(i) --> F[Get test i];
+    E -- RunExecutable --> F[Get test suite];
     F --> G[Execute Test Function];
     G -- Panics --> H{Panic Handler};
     H --> I[Log Failure];

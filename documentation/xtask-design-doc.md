@@ -22,12 +22,10 @@ re-exporting the necessary tooling components so users only need a single
 dependency.
 
 * **`control-rs`**: Implementations of types, algorithms and sub-programs.
-* **`control-rs-macros`**: Procedural macros (`#[benchmark]`, `#[hil_test]`,
-  `#[hil_setup]`) for distributed test discovery. Because `control-rs` will use
-  these macros, they are separated from the HIL and CI runners, but they remain
-  closely related and are kept within the same workspace. Note that these are
-  strictly *procedural* macros, and there should be no confusion about using
-  declarative macros for this purpose.
+* **`control-rs-macros`**: Procedural macros (`#[hil_suite]`, `#[hil_setup]`) for
+  distributed test discovery. Because `control-rs` will use these macros, they
+  are separated from the HIL and CI runners, but they remain closely related
+  and are kept within the same workspace.
 * **`control-rs-xtask`**: Workspace tools and code generators.
     * **`ci`**: Tooling for automated, headless execution and metrics gathering
       for CI platforms.
@@ -42,8 +40,8 @@ flowchart TD
         direction TB
         Harness["HIL Harness"]
         
-        BuiltIn["Built-in Tests / Benchmarks"]
-        Custom["Custom Tests / Benchmarks"]
+        BuiltIn["Built-in Suites"]
+        Custom["Custom Suites"]
 
         Harness <--> BuiltIn
         Harness <--> Custom
@@ -60,30 +58,30 @@ Using custom linker sections in `no_std` embedded Rust allows tests and
 benchmarks to be discovered automatically at compile/link time. By avoiding
 standard desktop runtime registries, this pattern provides:
 
-* **Zero Boilerplate:** Developers can tag tests across multiple files without
+* **Zero Boilerplate:** Developers can declare test or benchmark suites across multiple files without
   maintaining a central registry.
-* **Zero Runtime Overhead:** The test registry is built entirely during linking.
+* **Zero Runtime Overhead:** The suite registry is built entirely during linking.
 * **ROM Efficiency:** Test descriptors are stored directly in Flash memory.
 
 #### 3.1.1. Build Script Injection and Linker Section Mechanics
 
-To facilitate this process, a `build.rs` script is used to "inject" test and
-benchmark descriptions into a known location in memory. This script parses
+To facilitate this process, a `build.rs` script is used to "inject" suite
+descriptions into a known location in memory. This script parses
 project files and generates the necessary linkable assets.
 
 Crucially, the build script generates `memory.x` linker script fragments that
-define the custom sections where the test registry is placed. These fragments
-must be included in the end-user's build via `#[link_section = "..."]`
+define the custom `.hil_test_suites` section where the test registry is placed. These fragments
+must be included in the end-user's build via `#[link_section = ".hil_test_suites"]`
 attributes (handled by the procedural macros) and the standard linker arguments.
 
 To ensure the custom test registry sections aren't silently discarded by the
 linker's garbage collection during a `--release` build, we must explicitly
 retain them. This is typically achieved by adding `--gc-keep-exported` to the
 linker flags or utilizing `KEEP()` directives in the generated linker scripts
-for the sections containing the test metadata.
+for the `.hil_test_suites` section.
 
-The tests and benchmarks will then be available to the firmware runner as a list
-of descriptors.
+The tests and benchmarks will then be available to the firmware runner as an array
+of `SuiteDescriptor`s.
 
 Furthermore, the build script supports an environment variable overriding
 feature, allowing users to dynamically modify the location in memory that
@@ -97,7 +95,7 @@ object. This manages test execution and communication:
 
 * **Settings:** Reconfigurable parameters (e.g., test durations, verbosity) that
   allow dynamic adjustments without recompiling.
-* **HostReporter:** A generic trait acting as a middleware layer for
+* **HostComms:** A generic trait acting as a middleware layer for
   firmware-to-host communications. Users implement this for their preferred
   communication peripheral (e.g., UART, USB). **Critically, this integrates with
   RTT (Real-Time Transfer) backends via `probe-rs`.** Utilizing RTT is essential
@@ -136,15 +134,15 @@ on-target tests.
    └─ gemm_50x50_f32 (hard-float)         PENDING     ---        ---
 
  ▼ math::edge_cases
-   ├─ underflow_vs_precision_loss         42          0.07µs     ± 0.0%
+   ├─ underflow_and_precision_loss        42          0.07µs     ± 0.0%
    └─ floating_point_epsilon_bounds       58          0.09µs     ± 0.0%
 -------------------------------------------------------------------------------
  [ RTT LOGS ] (Autoscroll: ON)
  > [INFO] Host connected. Target halted.
  > [INFO] Discovered 24 targets via procedural macro test registry.
- > [PASS] math::storage::contiguous_storage_alloc
- > [PASS] math::storage::noncontiguous_storage_dma
- > [EXEC] math::subprograms::level3::gemm_10x10_f32 (hard-float)...
+ > [PASS] storage::contiguous_storage_alloc
+ > [PASS] storage::noncontiguous_storage_dma
+ > [EXEC] subprograms::level3::gemm_10x10_f32 (hard-float)...
 ===============================================================================
  (f)ilter | (r)un all | (s)top | (c)lear cache | (q)uit
 ```
@@ -170,7 +168,7 @@ standard `main()` entrypoint that calls the user's setup code and launches the
 HIL server, and it also registers a custom panic handler. This ensures that any
 test or benchmark failures resulting in a panic are caught gracefully. The panic
 handler intercepts the error, serializes the panic message and location using
-the `HostReporter`, and transmits it back to the host TUI, preventing the MCU
+the `HostComms`, and transmits it back to the host TUI, preventing the MCU
 from silently locking up and allowing the host to retain the state across
 restarts.
 
@@ -206,29 +204,35 @@ runner = "cargo xtask hil --chip MIMXRT1062DVJ6A --"
 
 ```rust
 use teensy4_bsp::hal::timer::Blocking;
-use control_rs::macros::{benchmark, hil_setup};
-use control_rs::hil::{Context, Settings, HostReporter, HostTimer};
+use control_rs::macros::{hil_suite, hil_setup};
+use control_rs::hil::{Command, Context, Settings, HostComms, ClientClock, LogMessage};
 
 // A custom algorithm the user wants to benchmark alongside control-rs
-#[benchmark]
-fn my_custom_drone_math() { /* ... */ }
+#[hil_suite]
+pub mod my_drone_benchmarks {
+    use super::*;
 
-// User implements the HostReporter for their specific UART/USB or RTT backend
-struct MyReporter {
+    fn my_custom_drone_math() { /* ... */ }
+}
+
+// User implements the HostComms for their specific UART/USB or RTT backend
+struct MyComms {
     /* ... */
 }
 
-impl HostReporter for MyReporter {
-    fn write(&mut self, data: &[u8]) { /* ... */ }
-    fn read(&mut self, buffer: &mut [u8]) -> usize { 0 }
+impl HostComms for MyComms {
+    type Error = core::convert::Infallible;
+    fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> { Ok(None) }
+    fn send_telemetry(&mut self, log: &LogMessage) -> Result<(), Self::Error> { Ok(()) }
+    fn flush(&mut self) -> Result<(), Self::Error> { Ok(()) }
 }
 
-// User implements the HostTimer for their specific hardware timer
+// User implements the ClientClock for their specific hardware timer
 struct MyTimer {
     /* ... */
 }
 
-impl HostTimer for MyTimer {
+impl ClientClock for MyTimer {
     fn now(&self) -> u64 { /* ... */ }
 }
 
@@ -238,7 +242,7 @@ fn setup() -> Context {
     // ... custom clock config ...
 
     Context {
-        reporter: MyReporter { /* ... */ },
+        comms: MyComms { /* ... */ },
         timer: MyTimer { /* ... */ },
         settings: Settings { iterations: 1000, verbose: true },
     }
