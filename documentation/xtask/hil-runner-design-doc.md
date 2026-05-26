@@ -1,7 +1,10 @@
 # HIL Runner Design Document
 
+**Implementation Order:** 5
+**Estimated Time:** 3 days
+
 ![Date Badge](https://img.shields.io/badge/Date-May_23,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Status-WIP-orange)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Needs%20Review-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ## 1. Context and Objective
@@ -127,8 +130,9 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     // Log the panic info to the host via the comms channel
     hprintln!("Test failed: {}", info);
 
-    // Reset the device to return to the server loop
-    cortex_m::peripheral::SCB::sys_reset();
+    // Soft reset the device and return to the server loop
+    // ... (alternatively a full reset will clear the run history).
+    // server()
 }
 ```
 
@@ -178,3 +182,28 @@ graph TD
     K --> C;
     D -- No Command --> C;
 ```
+
+## 5. Usage
+
+### Testing
+
+The HIL runner's functionality will be validated through a series of integration
+tests that run on the target hardware. These tests ensure the core mechanics of
+the runner—discovery, execution, and error handling—are working correctly.
+
+* **Test Discovery**: An integration test will be created to verify that the
+  runner correctly discovers all test suites compiled into the firmware. The
+  host will send a command to list the available tests, and the test will assert
+  that the returned list matches the expected list of tests, including their
+  names and descriptions. This validates the linker script and the test
+  discovery mechanism.
+* **Test Execution**: A simple "pass" test will be created. The host will
+  command the runner to execute this test. The test will assert that the runner
+  reports a successful execution. This validates the basic command dispatch and
+  execution loop.
+* **Panic Handling**: A test designed to panic (e.g., with `assert!(false)`)
+  will be created. The host will command the runner to execute this test. The
+  test will assert that the runner correctly catches the panic, reports a test
+  failure to the host, and then gracefully returns to the idle server loop,
+  ready to accept new commands. This validates the custom panic handler and the
+  system's resilience to test failures.

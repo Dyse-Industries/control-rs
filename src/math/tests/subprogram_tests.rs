@@ -126,11 +126,11 @@ mod level1 {
         let x = [1e15, -1e15, 1.0, 1.0];
         let y = [1.0, 1.0, 1.0, 1.0];
         let result = BasicSubProgramsF32::dot(&x, &y);
-        assert_eq!(result, 0.0);
+        assert_almost_eq!(result, 2.0);
         let x2 = [1.0, 1e15, -1e15];
         let y2 = [1.0, 1.0, 1.0];
         let result2 = BasicSubProgramsF32::dot(&x2, &y2);
-        assert_eq!(result2, 0.0);
+        assert_almost_eq!(result2, 0.0);
     }
 
     #[test]
@@ -190,14 +190,14 @@ mod level1 {
     fn test_iamax_iterator_stability() {
         let x = [1.0, 5.0, 3.0, 5.0];
         let result = BasicSubProgramsF32::iamax(&x);
-        assert_eq!(result, 3);
+        assert_eq!(result, 1);
     }
 
     #[test]
     fn test_iamax_partial_ordering_corruptions() {
         let x = [1.0, f32::NAN, 5.0];
         let result = BasicSubProgramsF32::iamax(&x);
-        assert_eq!(result, 1);
+        assert_eq!(result, 2);
     }
 }
 

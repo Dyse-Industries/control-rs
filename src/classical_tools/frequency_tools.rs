@@ -28,12 +28,10 @@
 //! - Franklin, G. F., Powell, J. D., & Emami-Naeini, A. (2015). *Feedback Control of Dynamic Systems*.
 //! - Dorf, R. C., & Bishop, R. H. (2016). *Modern Control Systems*.
 //!
-//! ### TODO:
-//! - [ ] remove all the unwraps
-//! - [ ] move plotly to plotly helper file (or wait for a nice gui)
+//! TODO:
+//!   - [ ] remove index slicing
 
-#[cfg(feature = "std")]
-use core::ops::Neg;
+#![allow(clippy::arithmetic_side_effects)]
 
 use crate::math::{
     complex_num::Complex,
@@ -42,30 +40,33 @@ use crate::math::{
     storage::arrays_from_zipped_iterator,
 };
 
+type ComplexMatrix<T, const N: usize, const M: usize, const K: usize> =
+    [[[Complex<T>; K]; M]; N];
+type PhaseGainMatrix<T, const N: usize, const M: usize> =
+    [[PhaseGainCrossover<T>; N]; M];
+type FloatArray<T, const K: usize> = [T; K];
+type FloatTupleArray<T, const K: usize> = (FloatArray<T, K>, FloatArray<T, K>);
+type ComplexArray<T, const K: usize> = [Complex<T>; K];
+type MarginTuple<T> = (Option<T>, Option<T>);
+type CrossoverTuple = (usize, bool);
+
 /// A trait for types that can represent an angle and provide
 /// conversion from degrees to radians.
 pub trait Phase: Real {
     /// Associated const to help with generic functions
     const ONE_EIGHTY: Self;
-    /// Converts the angle from degrees to radians.
-    #[must_use]
-    #[inline]
-    fn to_radians(self) -> Self {
-        self * (Self::PI / Self::ONE_EIGHTY)
-    }
     /// Converts the angle from radians to degrees.
     #[must_use]
     #[inline]
     fn to_degrees(self) -> Self {
         self * (Self::ONE_EIGHTY / Self::PI)
     }
-}
-
-impl Phase for f32 {
-    const ONE_EIGHTY: Self = 180.0;
-}
-impl Phase for f64 {
-    const ONE_EIGHTY: Self = 180.0;
+    /// Converts the angle from degrees to radians.
+    #[must_use]
+    #[inline]
+    fn to_radians(self) -> Self {
+        self * (Self::PI / Self::ONE_EIGHTY)
+    }
 }
 
 /// A trait for types that can represent a magnitude and provide
@@ -96,16 +97,6 @@ pub trait Magnitude: Real {
     }
 }
 
-impl Magnitude for f32 {
-    const TEN: Self = 10.0;
-    const TWENTY: Self = 20.0;
-}
-
-impl Magnitude for f64 {
-    const TEN: Self = 10.0;
-    const TWENTY: Self = 20.0;
-}
-
 /// Standard interface for frequency analysis tools
 pub trait FrequencyTools<T, const N: usize, const M: usize> {
     /// Calculates the complex response from a set of input frequencies
@@ -127,7 +118,7 @@ pub trait FrequencyTools<T, const N: usize, const M: usize> {
 /// * `N` - The number of input channels.
 /// * `M` - The number of output channels.
 /// * `K` - The number of frequency points to be sampled.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrequencyResponse<T, const N: usize, const M: usize, const K: usize>
 {
     /// An array of the frequency points to sample every input and output channel.
@@ -136,7 +127,59 @@ pub struct FrequencyResponse<T, const N: usize, const M: usize, const K: usize>
     /// `[input_index][output_index][frequency_point_index]`. This means for each of the `K`
     /// frequency points, there are `MxN` complex responses, where `responses[i][j][k]`
     /// is the response from input `i` to output `j` at the `k`-th frequency point.
-    pub responses: Option<[[[Complex<T>; K]; M]; N]>,
+    #[allow(clippy::type_complexity)]
+    pub responses: Option<ComplexMatrix<T, N, M, K>>,
+}
+
+/// A structure representing frequency stability margins and their corresponding crossover
+/// frequencies.
+///
+/// This struct encapsulates key frequency domain metrics used to evaluate the stability
+/// of a control system, such as phase crossover, gain crossover, phase margin, and gain margin.
+///
+/// # Generic Arguments
+/// - `T`: Field type for the stability metrics.
+#[derive(Copy, Clone, Debug)]
+pub struct PhaseGainCrossover<T> {
+    /// The frequency at which the gain crosses 0 dB (unity gain)
+    pub gain_crossover: Option<T>,
+    /// The margin between the actual gain and 0 dB at the phase crossover frequency
+    pub gain_margin: Option<T>,
+    /// The frequency at which the phase crosses -180 degrees
+    pub phase_crossover: Option<T>,
+    /// The margin between the actual phase and -180 degrees at the gain crossover frequency
+    pub phase_margin: Option<T>,
+}
+
+/// A structure representing stability margins for every input-output channel of a system
+///
+/// This struct provides a matrix of `PhaseGainCrossover` values, where each element corresponds
+/// to the stability margins for a specific input-output channel pair.
+///
+/// # Generic Arguments
+/// - `T`: Field type for the stability metrics (e.g., `f32` or `f64`).
+/// - `N`: Dimension of the system's input.
+/// - `M`: Dimension of the system's output.
+pub struct FrequencyMargin<T, const N: usize, const M: usize>(
+    pub PhaseGainMatrix<T, N, M>,
+);
+
+impl Phase for f32 {
+    const ONE_EIGHTY: Self = 180.0;
+}
+
+impl Phase for f64 {
+    const ONE_EIGHTY: Self = 180.0;
+}
+
+impl Magnitude for f32 {
+    const TEN: Self = 10.0;
+    const TWENTY: Self = 20.0;
+}
+
+impl Magnitude for f64 {
+    const TEN: Self = 10.0;
+    const TWENTY: Self = 20.0;
 }
 
 impl<T, const N: usize, const M: usize, const K: usize>
@@ -173,21 +216,17 @@ where
     /// * `Option`
     ///     * `(mag, phase)` - magnitude and phase of the specified input/output response channel.
     ///     * `None` - There is no response data for the specified channel.
+    #[allow(clippy::type_complexity)]
     pub fn mag_phase(
         &self,
         input_channel: usize,
         output_channel: usize,
-    ) -> Option<([T; K], [T; K])> {
-        if input_channel < N
-            && output_channel < M
-            && let Some(responses) = &self.responses
-        {
-            Some(unzip_complex_array(
-                &responses[input_channel][output_channel],
-            ))
-        } else {
-            None
-        }
+    ) -> Option<FloatTupleArray<T, K>> {
+        self.responses
+            .as_ref()
+            .and_then(|responses| responses.get(input_channel))
+            .and_then(|row| row.get(output_channel))
+            .map(|response| unzip_complex_array(response))
     }
 }
 
@@ -215,26 +254,6 @@ where
     }
 }
 
-/// A structure representing frequency stability margins and their corresponding crossover
-/// frequencies.
-///
-/// This struct encapsulates key frequency domain metrics used to evaluate the stability
-/// of a control system, such as phase crossover, gain crossover, phase margin, and gain margin.
-///
-/// # Generic Arguments
-/// - `T`: Field type for the stability metrics.
-#[derive(Copy, Clone, Debug)]
-pub struct PhaseGainCrossover<T> {
-    /// The frequency at which the phase crosses -180 degrees
-    pub phase_crossover: Option<T>,
-    /// The frequency at which the gain crosses 0 dB (unity gain)
-    pub gain_crossover: Option<T>,
-    /// The margin between the actual phase and -180 degrees at the gain crossover frequency
-    pub phase_margin: Option<T>,
-    /// The margin between the actual gain and 0 dB at the phase crossover frequency
-    pub gain_margin: Option<T>,
-}
-
 impl<T: Copy + Zero + One + Real + Phase + Magnitude> PhaseGainCrossover<T> {
     /// Computes both the magnitude and phase crossover frequencies and margins of
     /// a frequency response
@@ -247,7 +266,7 @@ impl<T: Copy + Zero + One + Real + Phase + Magnitude> PhaseGainCrossover<T> {
     /// * `PhaseGainCrossover` - the margins and crossovers of the response
     pub fn new<const K: usize>(
         frequencies: &[T; K],
-        response: &[Complex<T>; K],
+        response: &ComplexArray<T, K>,
     ) -> Self {
         let (magnitudes, phases) = unzip_complex_array(response);
         let (gain_margin, phase_crossover) =
@@ -256,39 +275,27 @@ impl<T: Copy + Zero + One + Real + Phase + Magnitude> PhaseGainCrossover<T> {
             find_margin(&magnitudes, &phases, frequencies, T::one());
 
         Self {
-            phase_crossover,
             gain_crossover,
-            phase_margin: phase_margin.map(|rads| (rads + T::PI).to_degrees()),
             gain_margin: gain_margin.map(|mag| mag.to_db().neg()),
+            phase_crossover,
+            phase_margin: phase_margin.map(|rads| (rads + T::PI).to_degrees()),
         }
     }
 }
+
 impl<T> Default for PhaseGainCrossover<T> {
     /// Creates a `PhaseGainCrossover` full of None
     /// # Returns
     /// * `PhaseGainCrossover` - with all fields set to `None`
     fn default() -> Self {
         Self {
-            phase_crossover: None,
             gain_crossover: None,
-            phase_margin: None,
             gain_margin: None,
+            phase_crossover: None,
+            phase_margin: None,
         }
     }
 }
-
-/// A structure representing stability margins for every input-output channel of a system
-///
-/// This struct provides a matrix of `PhaseGainCrossover` values, where each element corresponds
-/// to the stability margins for a specific input-output channel pair.
-///
-/// # Generic Arguments
-/// - `T`: Field type for the stability metrics (e.g., `f32` or `f64`).
-/// - `N`: Dimension of the system's input.
-/// - `M`: Dimension of the system's output.
-pub struct FrequencyMargin<T, const N: usize, const M: usize>(
-    pub [[PhaseGainCrossover<T>; N]; M],
-);
 
 impl<
     T: Copy + Zero + One + Real + Magnitude + Phase,
@@ -344,8 +351,8 @@ impl<
 /// This function makes an `unsafe` call to initialize two arrays from a collection of tuples.
 /// The call is guaranteed to be safe because there are K elements that will get mapped to K tuples.
 pub fn unzip_complex_array<T: Real, const K: usize>(
-    complex_array: &[Complex<T>; K],
-) -> ([T; K], [T; K]) {
+    complex_array: &ComplexArray<T, K>,
+) -> FloatTupleArray<T, K> {
     // Safety: `complex_array` has exactly K elements, `to_polar()` converts each of those elements
     // to a tuple of (T, T) so all elements of both arrays are guaranteed to get fully initialized.
     unsafe {
@@ -375,12 +382,13 @@ pub fn unzip_complex_array<T: Real, const K: usize>(
 /// * `(Option, Option)`
 ///     * `(value_a, value_b)` - The approximate values from the second and third arrays.
 ///     * `(None, None)` - The crossover array does not cross the threshold.
+#[allow(clippy::indexing_slicing)]
 pub fn find_margin<T, const K: usize>(
     crossover: &[T; K],
     a: &[T; K],
     b: &[T; K],
     threshold: T,
-) -> (Option<T>, Option<T>)
+) -> MarginTuple<T>
 where
     T: Clone + PartialOrd + Sub<Output = T> + Mul<Output = T> + Div<Output = T>,
 {
@@ -425,10 +433,11 @@ where
 ///     * `(index, exact_crossover)` - Index of the first crossover and a bool if the crossover was
 ///       exactly at that index.
 ///     * `None` - The array never crosses the threshold.
+#[allow(clippy::indexing_slicing)]
 fn first_crossover_index<T, const K: usize>(
     array: &[T; K],
     threshold: &T,
-) -> Option<(usize, bool)>
+) -> Option<CrossoverTuple>
 where
     T: PartialOrd,
 {
@@ -467,6 +476,7 @@ where
 ///
 /// # Panics
 /// * If index == K-1, out-of-bounds access will occur.
+#[allow(clippy::indexing_slicing)]
 fn array_interpolation<T, const K: usize>(
     a: &[T; K],
     b: &[T; K],
@@ -534,174 +544,6 @@ pub fn logspace<T: Real + AddAssign, const N: usize>(a: T, b: T) -> [T; N] {
     result
 }
 
-#[cfg(feature = "std")]
-/// Renders a single magnitude and phase plot on subplots
-fn render_bode_subplot<T>(
-    plot: &mut plotly::Plot,
-    frequencies: &[T],
-    mag: &[T],
-    phase: &[T],
-    row: usize,
-    col: usize,
-    margins: &PhaseGainCrossover<T>,
-) where
-    T: 'static
-        + Copy
-        + Neg<Output = T>
-        + Zero
-        + One
-        + Magnitude
-        + Phase
-        + serde::ser::Serialize,
-{
-    use plotly::common;
-    extern crate std;
-    use std::{format, vec, vec::Vec};
-
-    let mag_db: Vec<T> = mag.iter().map(|&m| m.to_db()).collect();
-    let phase_deg: Vec<T> = phase.iter().map(|&p| p.to_degrees()).collect();
-
-    // Add magnitude plot
-    plot.add_trace(
-        plotly::Scatter::new(frequencies.to_vec(), mag_db)
-            .mode(common::Mode::Lines)
-            .name(format!("Magnitude[{row}, {col}]"))
-            // .x_axis(x_axis_mag.clone())
-            // .y_axis(y_axis_mag.clone()).color(Rgb::new(0, 0, 255))
-            .marker(common::Marker::new()),
-    );
-
-    // Add phase plot
-    plot.add_trace(
-        plotly::Scatter::new(frequencies.to_vec(), phase_deg)
-            .mode(common::Mode::Lines)
-            .name(format!("Phase[{row}, {col}]"))
-            .x_axis("x2")
-            .y_axis("y2")
-            .marker(common::Marker::new()),
-    );
-
-    // Gain margin line
-    if let (Some(wc), Some(gm)) = (margins.phase_crossover, margins.gain_margin)
-    {
-        plot.add_trace(
-            plotly::Scatter::new(vec![wc, wc], vec![-gm, T::zero()])
-                .mode(common::Mode::Lines)
-                .name(format!("Gain FrequencyMargin[{row}, {col}]"))
-                // .x_axis(x_axis_mag)
-                // .y_axis(y_axis_mag)
-                .line(
-                    common::Line::new()
-                        .dash(common::DashType::Dot)
-                        .color(plotly::color::Rgb::new(0, 0, 0)),
-                ),
-        );
-    }
-
-    // Phase margin line
-    if let (Some(wc), Some(pm)) = (margins.gain_crossover, margins.phase_margin)
-    {
-        plot.add_trace(
-            plotly::Scatter::new(
-                vec![wc, wc],
-                vec![T::ONE_EIGHTY.neg(), T::ONE_EIGHTY.neg() + pm],
-            )
-            .mode(common::Mode::Lines)
-            .name(format!("Phase FrequencyMargin[{row}, {col}]"))
-            .x_axis("x2")
-            .y_axis("y2")
-            .line(
-                common::Line::new()
-                    .dash(common::DashType::Dot)
-                    .color(plotly::color::Rgb::new(0, 0, 0)),
-            ),
-        );
-    }
-}
-
-#[cfg(feature = "std")]
-/// Renders a Bode plot for an object implementing `FrequencyTools`
-pub fn bode<T, F, const N: usize, const M: usize, const K: usize>(
-    title: &str,
-    system: &F,
-    mut response: FrequencyResponse<T, N, M, K>,
-) -> plotly::Plot
-where
-    T: Copy
-        + Neg<Output = T>
-        + Zero
-        + One
-        + Real
-        + Magnitude
-        + Phase
-        + serde::ser::Serialize,
-    F: FrequencyTools<T, N, M>,
-{
-    use plotly::Layout;
-
-    if response.responses.is_none() {
-        system.frequency_response(&mut response);
-    }
-    let margins = FrequencyMargin::new(&response);
-
-    let mut plot = plotly::Plot::new();
-    plot.set_layout(
-        Layout::new()
-            .title(plotly::common::Title::with_text(title))
-            .x_axis(
-                plotly::layout::Axis::new()
-                    .title(plotly::common::Title::with_text(
-                        "Frequency (rad/s)",
-                    ))
-                    .type_(plotly::layout::AxisType::Log),
-            )
-            .y_axis(
-                plotly::layout::Axis::new()
-                    .title(plotly::common::Title::with_text("Magnitude (dB)")),
-            )
-            .x_axis2(
-                plotly::layout::Axis::new()
-                    .title(plotly::common::Title::with_text(
-                        "Frequency (rad/s)",
-                    ))
-                    .type_(plotly::layout::AxisType::Log),
-            )
-            .y_axis2(
-                plotly::layout::Axis::new()
-                    .title(plotly::common::Title::with_text("Phase (deg)")),
-            )
-            .grid(
-                plotly::layout::LayoutGrid::new()
-                    .rows(2)
-                    .columns(1)
-                    .pattern(plotly::layout::GridPattern::Independent)
-                    .row_order(plotly::layout::RowOrder::TopToBottom),
-            ),
-    );
-
-    // extract each output mag/phase (make a helper in response soon)
-    for in_channel in 0..N {
-        for out_channel in 0..M {
-            if let Some((magnitudes, phases)) =
-                response.mag_phase(in_channel, out_channel)
-            {
-                // render the output as the response to each input
-                render_bode_subplot(
-                    &mut plot,
-                    &response.frequencies,
-                    &magnitudes,
-                    &phases,
-                    in_channel,
-                    out_channel,
-                    &margins.0[in_channel][out_channel],
-                );
-            }
-        }
-    }
-
-    plot
-}
-
 #[cfg(test)]
 mod test_log_space {
     use super::*;
@@ -712,15 +554,15 @@ mod test_log_space {
     fn basic() {
         let ls = logspace::<f32, 10>(1.0, 5.0);
         assert_almost_eq!(ls[0], 10.0);
-        assert_almost_eq!(ls[1], 30.0);
-        assert_almost_eq!(ls[2], 80.0);
-        assert_almost_eq!(ls[3], 220.0);
-        assert_almost_eq!(ls[4], 600.0);
-        assert_almost_eq!(ls[5], 1670.0);
-        assert_almost_eq!(ls[6], 4640.0);
-        assert_almost_eq!(ls[7], 12920.0);
-        assert_almost_eq!(ls[8], 35940.0);
-        assert_almost_eq!(ls[9], 100_000.0);
+        assert_almost_eq!(ls[1], 27.825594);
+        assert_almost_eq!(ls[2], 77.42636);
+        assert_almost_eq!(ls[3], 215.44342);
+        assert_almost_eq!(ls[4], 599.48413);
+        assert_almost_eq!(ls[5], 1668.1001);
+        assert_almost_eq!(ls[6], 4641.587);
+        assert_almost_eq!(ls[7], 12915.498);
+        assert_almost_eq!(ls[8], 35938.16);
+        assert_almost_eq!(ls[9], 100_000.11);
     }
 }
 

@@ -1,7 +1,10 @@
 # HostComm Design Document
 
+**Implementation Order:** 2
+**Estimated Time:** 2 days
+
 ![Date Badge](https://img.shields.io/badge/Date-May_23,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Status-WIP-orange)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Needs%20Review-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ## 1. Context and Objective
@@ -79,12 +82,11 @@ pub trait HostComms {
 The non-blocking nature of `poll_command` is essential to prevent the target MCU
 from stalling the test execution loop while waiting for host intervention.
 
+Similarly, a deferred logging queue (like `heapless::spsc`) so that messages are
+buffered during the math execution and only flushed to the host over RTT after
+the `ClientClock` has recorded the end time.
+
 ### 3.2. CMD Parsing
-
-The user may send two types of commands:
-
-* set param
-* run executable
 
 The HostComm should provide a way to construct, serialize and deserialize the
 commands. In a `#![no_std]` environment, serialization frameworks like
@@ -168,12 +170,18 @@ impl HostComms for UartComms {
 
 On the host users should not have to implement anything.
 
-The hostcomms device they used for the firmware will be reused by the TUI (this
+The host comms device they used for the firmware will be reused by the TUI (this
 means rebuilding the tui when the device changes?). The TUI acts as the
-demultiplexer (DEMUX in the architecture diagram). It listens to the designated
+demultiplexer (DEMUX in the architecture diagram). It maintains the master state
+machine and queue for all host-target communication. It listens to the designated
 interface (e.g., serial port, USB interface, probe-rs channels), parses the
 binary payloads back into `LogMessage` and `Command` representations, and
 renders them to the screen.
+
+A key design principle is that the TUI expects panics from the target to be
+treated as valid, timestamped telemetry events rather than connection-breaking
+errors. This allows the test harness to gracefully capture and report on-target
+crashes without halting the entire test session.
 
 Using `defmt-decoder` on the host side will be required if `defmt` is adopted
 for log compression.

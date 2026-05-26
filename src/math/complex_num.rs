@@ -86,6 +86,7 @@ impl<T: Real> Complex<T> {
     pub fn arg(self) -> T {
         self.im.atan2(self.re)
     }
+
     /// Creates a new complex number from polar coordinates.
     ///
     /// # Arguments
@@ -96,6 +97,13 @@ impl<T: Real> Complex<T> {
     pub fn from_polar(r: T, theta: T) -> Self {
         Self::new(r.clone() * theta.clone().cos(), r * theta.sin())
     }
+
+    /// Computes the distance from the origin to self.
+    #[inline]
+    pub fn magnitude(self) -> T {
+        self.re.hypot(self.im)
+    }
+
     /// Creates a pair of polar coordinates from self.
     ///
     /// # Returns
@@ -104,11 +112,6 @@ impl<T: Real> Complex<T> {
     #[must_use]
     pub fn to_polar(self) -> (T, T) {
         (self.clone().magnitude(), self.arg())
-    }
-    /// Computes the distance from the origin to self.
-    #[inline]
-    pub fn magnitude(self) -> T {
-        self.re.hypot(self.im)
     }
 }
 
@@ -121,22 +124,6 @@ impl<T: Add<Output = T>> Add<Self> for Complex<T> {
         Self {
             re: self.re + rhs.re,
             im: self.im + rhs.im,
-        }
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl<T: Clone + Mul<Output = T> + Add<Output = T> + Sub<Output = T>> Mul
-    for Complex<T>
-{
-    type Output = Self;
-    #[allow(clippy::arithmetic_side_effects)]
-    fn mul(self, rhs: Self) -> Self::Output {
-        Self {
-            re: (self.re.clone() * rhs.re.clone())
-                - (self.im.clone() * rhs.im.clone()),
-            im: (self.re.clone() * rhs.im.clone()) + (self.im * rhs.re),
         }
     }
 }
@@ -168,6 +155,22 @@ impl<
 
 ////////////////////////////////////////////////////////////////////////////////
 
+impl<T: Clone + Mul<Output = T> + Add<Output = T> + Sub<Output = T>> Mul
+    for Complex<T>
+{
+    type Output = Self;
+    #[allow(clippy::arithmetic_side_effects)]
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self {
+            re: (self.re.clone() * rhs.re.clone())
+                - (self.im.clone() * rhs.im.clone()),
+            im: (self.re.clone() * rhs.im.clone()) + (self.im * rhs.re),
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 impl<T: Sub<Output = T>> Sub for Complex<T> {
     type Output = Self;
     #[allow(clippy::arithmetic_side_effects)]
@@ -192,17 +195,6 @@ impl<T: WrappingAdd> WrappingAdd for Complex<T> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: WrappingSub> WrappingSub for Complex<T> {
-    fn wrapping_sub(&self, v: &Self) -> Self {
-        Self {
-            re: self.re.wrapping_sub(&v.re),
-            im: self.im.wrapping_sub(&v.im),
-        }
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
 impl<T: WrappingAdd + WrappingSub + WrappingMul + Copy> WrappingMul
     for Complex<T>
 {
@@ -221,42 +213,22 @@ impl<T: WrappingAdd + WrappingSub + WrappingMul + Copy> WrappingMul
 
 ////////////////////////////////////////////////////////////////////////////////
 
+impl<T: WrappingSub> WrappingSub for Complex<T> {
+    fn wrapping_sub(&self, v: &Self) -> Self {
+        Self {
+            re: self.re.wrapping_sub(&v.re),
+            im: self.im.wrapping_sub(&v.im),
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 impl<T: Add<T, Output = T> + TryAdd<T>> TryAdd for Complex<T> {
     fn try_add(&self, v: &Self) -> ArithmeticResult<Self::Output> {
         Ok(Self {
             re: self.re.try_add(&v.re)?,
             im: self.im.try_add(&v.im)?,
-        })
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl<T: Sub<T, Output = T> + TrySub<T, Output = T>> TrySub for Complex<T> {
-    fn try_sub(&self, v: &Self) -> ArithmeticResult<Self::Output> {
-        Ok(Self {
-            re: self.re.try_sub(&v.re)?,
-            im: self.im.try_sub(&v.im)?,
-        })
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl<
-    T: Clone
-        + Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + TryAdd<T>
-        + TrySub<T>
-        + TryMul<T>,
-> TryMul for Complex<T>
-{
-    fn try_mul(&self, v: &Self) -> ArithmeticResult<Self::Output> {
-        Ok(Self {
-            re: self.re.try_mul(&v.re)?.try_sub(&self.im.try_mul(&v.im)?)?,
-            im: self.re.try_mul(&v.im)?.try_add(&self.im.try_mul(&v.re)?)?,
         })
     }
 }
@@ -289,6 +261,37 @@ where
                 .try_mul(&v.re)?
                 .try_sub(&self.re.try_mul(&v.im)?)?
                 .try_div(&denominator)?,
+        })
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl<
+    T: Clone
+        + Add<T, Output = T>
+        + Sub<T, Output = T>
+        + Mul<T, Output = T>
+        + TryAdd<T>
+        + TrySub<T>
+        + TryMul<T>,
+> TryMul for Complex<T>
+{
+    fn try_mul(&self, v: &Self) -> ArithmeticResult<Self::Output> {
+        Ok(Self {
+            re: self.re.try_mul(&v.re)?.try_sub(&self.im.try_mul(&v.im)?)?,
+            im: self.re.try_mul(&v.im)?.try_add(&self.im.try_mul(&v.re)?)?,
+        })
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl<T: Sub<T, Output = T> + TrySub<T, Output = T>> TrySub for Complex<T> {
+    fn try_sub(&self, v: &Self) -> ArithmeticResult<Self::Output> {
+        Ok(Self {
+            re: self.re.try_sub(&v.re)?,
+            im: self.im.try_sub(&v.im)?,
         })
     }
 }

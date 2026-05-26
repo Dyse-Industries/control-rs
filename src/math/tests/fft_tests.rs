@@ -3,6 +3,7 @@ use crate::math::dsp::FFT;
 struct TestFFT;
 impl<
     T: 'static
+        + Copy
         + crate::math::num_traits::Real
         + crate::math::ops::Neg<Output = T>
         + Default,

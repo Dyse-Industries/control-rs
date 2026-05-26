@@ -1,9 +1,17 @@
 //! Common Digital Signal Processing Operations
 //!
+//! TODO:
+//!   * [ ] remove index slicing
 
 use crate::math::{
-    Bijection, Map, complex_num::Complex, num_traits::Real, ops::Neg,
+    Bijection, Map, complex_num::Complex, num_traits::Real, ops::Neg, storage,
 };
+
+type ComplexArrayMut<T, const N: usize> = [Complex<T>; N];
+type ComplexSliceMut<'a, T, const N: usize> = &'a mut [Complex<T>; N];
+type RealSlice<'a, T, const N: usize> = &'a [T; N];
+type ComplexSlice<'a, T, const N: usize> = &'a [Complex<T>; N];
+type RealSliceMut<'a, T, const N: usize> = &'a mut [T; N];
 
 /// Trait for Fast Fourier Transform (FFT) operations.
 ///
@@ -12,7 +20,7 @@ use crate::math::{
 ///
 /// # Generic Arguments
 /// * `T` - The numeric type of the elements (must implement `Real`).
-pub trait FFT<T: 'static + Real + Neg<Output = T> + Default> {
+pub trait FFT<T: 'static + Clone + Real + Neg<Output = T> + Default> {
     /// Computes the forward Fast Fourier Transform.
     ///
     /// # Arguments
@@ -28,24 +36,45 @@ pub trait FFT<T: 'static + Real + Neg<Output = T> + Default> {
     /// # Safety
     /// This function does not use `unsafe` code.
     #[allow(clippy::arithmetic_side_effects)]
-    fn fft<const N: usize>(input: &[T; N], output: &mut [Complex<T>; N]) {
+    fn fft<const N: usize>(
+        input: RealSlice<'_, T, N>,
+        output: ComplexSliceMut<'_, T, N>,
+    ) {
         debug_assert!(N.is_power_of_two(), "FFT length must be a power of two");
 
-        let in_ptr = input.as_ptr();
-        let ptr = output.as_mut_ptr();
-        let two_pi = T::PI * T::TWO;
+        for (i, val) in input.iter().enumerate() {
+            if let Some(out) = output.get_mut(i) {
+                *out = Complex::new(val.clone(), T::ZERO);
+            }
+        }
+
+        Self::fft_complex(output);
+    }
+
+    /// Computes the forward Fast Fourier Transform on a complex signal, in-place.
+    ///
+    /// # Arguments
+    /// * `data` - The complex signal to transform.
+    ///
+    /// # Returns
+    /// * `()` - Modifies `data` in place.
+    ///
+    /// # Panics
+    /// * Panics if the length of `data` is not a power of two.
+    ///
+    /// # Safety
+    /// This function uses `unsafe` code for performance reasons. It is safe because
+    /// the indices are guaranteed to be within bounds.
+    #[allow(clippy::arithmetic_side_effects)]
+    fn fft_complex<const N: usize>(data: ComplexSliceMut<'_, T, N>) {
+        debug_assert!(N.is_power_of_two(), "FFT length must be a power of two");
 
         // 1. Bit-reversal permutation
         // This reorders the input so the butterfly stages can be done in-place.
         let mut j = 0;
         for i in 0..N {
             if i < j {
-                unsafe {
-                    ptr.add(i)
-                        .write(Complex::new(in_ptr.add(j).read(), T::ZERO));
-                    ptr.add(j)
-                        .write(Complex::new(in_ptr.add(i).read(), T::ZERO));
-                }
+                data.swap(i, j);
             }
             let mut m = N >> 1;
             while m >= 1 && j >= m {
@@ -57,6 +86,8 @@ pub trait FFT<T: 'static + Real + Neg<Output = T> + Default> {
 
         // 2. Cooley-Tukey Radix-2 Butterfly
         // Processes the data in log2(N) stages.
+        let ptr = data.as_mut_ptr();
+        let two_pi = T::PI * T::TWO;
         let mut stage_len = 1;
         while stage_len < N {
             let step = stage_len << 1;
@@ -109,48 +140,23 @@ pub trait FFT<T: 'static + Real + Neg<Output = T> + Default> {
     /// # Safety
     /// This function does not use `unsafe` code.
     #[allow(clippy::arithmetic_side_effects)]
-    fn ifft<const N: usize>(input: &[Complex<T>; N], output: &mut [T; N]) {
+    fn ifft<const N: usize>(
+        input: ComplexSlice<'_, T, N>,
+        output: RealSliceMut<'_, T, N>,
+    ) {
         debug_assert!(N.is_power_of_two(), "Length must be power of two");
 
         let n_t = T::from_const::<N>();
+        // # Safety: The input iter has the same number of elements as the output.
+        let mut temp_output: ComplexArrayMut<T, N> = unsafe {
+            storage::array_from_iterator(input.iter().map(|c| c.clone().conj()))
+        };
 
-        let in_ptr = input.as_ptr();
-        let out_ptr = output.as_mut_ptr();
+        Self::fft_complex(&mut temp_output);
 
-        let pi = T::PI;
-        let two = T::TWO;
-
-        for m in 0..N {
-            let m_t = T::from_usize(m);
-            let mut sum = unsafe { in_ptr.add(m).read().re.clone() };
-
-            // k = N/2 term
-            unsafe {
-                if m % 2 == 0 {
-                    sum = sum + in_ptr.add(N - 1).read().re.clone();
-                } else {
-                    sum = sum - in_ptr.add(N - 1).read().re.clone();
-                }
-            }
-
-            // 0 < k < N/2 terms
-            for k in 1..N / 2 {
-                let k_t = T::from_usize(k);
-                let angle =
-                    two.clone() * pi.clone() * k_t * m_t.clone() / n_t.clone();
-                let c = angle.clone().cos();
-                let s = angle.sin();
-
-                unsafe {
-                    let re = in_ptr.add(2 * k - 1).read().re.clone();
-                    let im = in_ptr.add(2 * k).read().re.clone();
-                    // Add 2 * (re * c - im * s)
-                    sum = sum + two.clone() * (re * c - im * s);
-                }
-            }
-
-            unsafe {
-                out_ptr.add(m).write(sum / n_t.clone());
+        for (i, val) in temp_output.iter().enumerate() {
+            if let Some(out) = output.get_mut(i) {
+                *out = val.clone().conj().re / n_t.clone();
             }
         }
     }
@@ -165,14 +171,14 @@ pub trait FFT<T: 'static + Real + Neg<Output = T> + Default> {
 pub trait Convolution<T: Real> {
     /// Computes the convolution of two signals.
     ///
-    /// * Fewer Writes: By calculating $y[n]$ directly using k_min and k_max, we write to the output
+    /// * Fewer Writes: By calculating $y[n]$ directly using `k_min` and `k_max`, we write to the output
     ///   array exactly once per index. This bypasses the need to zero out the buffer first and avoids
     ///   repeated memory reads/writes to output[i+j].
-    /// * Bounds Safety: The indices for k (k_min and k_max) ensure that both k remains within
-    /// 0..input.len() and n - k remains within 0..kernel.len(), guaranteeing no out-of-bounds
+    /// * Bounds Safety: The indices for k (`k_min` and `k_max`) ensure that both k remains within
+    ///   `0..input.len()` and n - k remains within `0..kernel.len()`, guaranteeing no out-of-bounds
     ///   panics during the inner loop computation.
-    /// * Traits: This assumes T: Real implies something akin to num_traits::Real (which provides
-    ///   T::zero() and standard operator overloading).
+    /// * Traits: This assumes T: Real implies something akin to `num_traits::Real` (which provides
+    ///   `T::zero()` and standard operator overloading).
     ///
     /// # Arguments
     /// * `input` - The input signal.
@@ -187,7 +193,7 @@ pub trait Convolution<T: Real> {
     ///
     /// # Safety
     /// This function does not use `unsafe` code.
-    #[allow(clippy::arithmetic_side_effects)]
+    #[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
     fn convolve_input(input: &[T], kernel: &[T], output: &mut [T]) {
         let input_len = input.len();
         let kernel_len = kernel.len();

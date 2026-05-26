@@ -262,6 +262,9 @@ pub mod level1 {
                         .abs()
                         .partial_cmp(&y.1.clone().abs())
                         .unwrap_or(core::cmp::Ordering::Equal)
+                        // If values are equal, declare the smaller index as "Greater"
+                        // so max_by holds onto it instead of replacing it.
+                        .then_with(|| y.0.cmp(&x.0))
                 })
                 .map_or(x.len(), |(i, _)| i)
         }

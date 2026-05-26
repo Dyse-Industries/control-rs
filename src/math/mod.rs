@@ -92,6 +92,47 @@ pub mod subprograms;
 #[cfg(test)]
 mod tests;
 
+/// A unified error type for arithmetic operations.
+///
+/// This structure balances high-level control flow (overflow/underflow) with
+/// fixed-point specific signals (saturation/precision).
+///
+/// # Safety
+/// This enum does not use `unsafe` code.
+///
+/// # Example
+/// ```
+/// use control_rs::math::ArithmeticError;
+///
+/// let err = ArithmeticError::DivisionByZero;
+/// assert_eq!(format!("{}", err), "Division by zero");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithmeticError {
+    /// Attempted to divide by zero.
+    DivisionByZero,
+
+    /// The mathematical operation is undefined for the given inputs
+    /// (e.g., `sqrt(-1.0)`, `acos(2.0)`).
+    DomainViolation,
+
+    /// The result exceeded the maximum representable range of the type.
+    /// In fixed-point arithmetic, this implies a wrapping or undefined result.
+    Overflow,
+
+    /// The result could not be represented exactly, resulting in quantization
+    /// or rounding errors (e.g., casting `f64` to `u32` where the float has a decimal).
+    PrecisionLoss,
+
+    /// The value exceeded the range but was clamped to the maximum/minimum
+    /// representable value (specific to fixed-point/DSP logic).
+    Saturation,
+
+    /// The result is smaller than the smallest representable positive value
+    /// (Subnormal/Denormal).
+    Underflow,
+}
+
 /// Convenience enum representing the 2D Cartesian Plane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CartesianQuadrant2D {
@@ -172,6 +213,9 @@ pub trait StateEquation<State, Input, Output> {
     fn dynamics(&self, x: &State, u: &Input) -> Output;
 }
 
+/// A specialized `Result` type for fallible arithmetic operations.
+pub type ArithmeticResult<T> = Result<T, ArithmeticError>;
+
 /// Blanket implementation of `Map` for anything that implements `StateEquation`.
 /// The mathematical Domain is the Cartesian product of State and Input (X × U).
 impl<'a, T, State, Input, Output> Map<(&'a State, &'a Input), Output> for T
@@ -182,50 +226,6 @@ where
         T::dynamics(self, x, u)
     }
 }
-
-/// A unified error type for arithmetic operations.
-///
-/// This structure balances high-level control flow (overflow/underflow) with
-/// fixed-point specific signals (saturation/precision).
-///
-/// # Safety
-/// This enum does not use `unsafe` code.
-///
-/// # Example
-/// ```
-/// use control_rs::math::ArithmeticError;
-///
-/// let err = ArithmeticError::DivisionByZero;
-/// assert_eq!(format!("{}", err), "Division by zero");
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArithmeticError {
-    /// Attempted to divide by zero.
-    DivisionByZero,
-
-    /// The mathematical operation is undefined for the given inputs
-    /// (e.g., `sqrt(-1.0)`, `acos(2.0)`).
-    DomainViolation,
-
-    /// The result exceeded the maximum representable range of the type.
-    /// In fixed-point arithmetic, this implies a wrapping or undefined result.
-    Overflow,
-
-    /// The result could not be represented exactly, resulting in quantization
-    /// or rounding errors (e.g., casting `f64` to `u32` where the float has a decimal).
-    PrecisionLoss,
-
-    /// The value exceeded the range but was clamped to the maximum/minimum
-    /// representable value (specific to fixed-point/DSP logic).
-    Saturation,
-
-    /// The result is smaller than the smallest representable positive value
-    /// (Subnormal/Denormal).
-    Underflow,
-}
-
-/// A specialized `Result` type for fallible arithmetic operations.
-pub type ArithmeticResult<T> = Result<T, ArithmeticError>;
 
 ////////////////////////////////////////////////////////////////////////////////
 
