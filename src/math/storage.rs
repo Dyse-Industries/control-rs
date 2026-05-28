@@ -53,7 +53,7 @@ where
     let mut maybe_uninit_array: UninitArray<T, N> = MaybeUninit::uninit();
     let arr_ptr = maybe_uninit_array.as_mut_ptr().cast::<T>();
     let mut write_counter = 0;
-    for (i, b) in (0..N).zip(iterator.into_iter()) {
+    for (i, b) in (0..N).zip(iterator) {
         unsafe {
             arr_ptr.add(i).write(b);
         }
