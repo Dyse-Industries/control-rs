@@ -8,7 +8,6 @@
 
 use core::mem::MaybeUninit;
 
-type ZippedArray<T, const N: usize> = ([T; N], [T; N]);
 type UninitArray<T, const N: usize> = MaybeUninit<[T; N]>;
 
 /// Helper function to reverse arrays given to `Polynomial::new()`
@@ -62,50 +61,4 @@ where
     }
     debug_assert_eq!(write_counter, N);
     unsafe { maybe_uninit_array.assume_init() }
-}
-
-/// Initialize an array from an iterator.
-///
-/// # Generic Arguments
-/// * `I` - Any collection that implements [`IntoIterator<item=(T, T)>`].
-/// * `T` - Field type of the array.
-/// * `N` - Capacity of the array.
-///
-/// # Arguments
-/// * `iterator` - Collection of `(T, T)`.
-///
-/// # Returns
-/// * `initialized_array` - An array filled with elements from the iterator.
-///
-/// # Safety
-/// * The iterator must have **at least** `N` elements or this will assume an uninitialized
-///   value is initialized (resulting in UB).
-///
-/// # Panics
-/// * This function will panic in debug builds if the safety criterion is not met.
-pub(crate) unsafe fn arrays_from_zipped_iterator<I, T, const N: usize>(
-    iterator: I,
-) -> ZippedArray<T, N>
-where
-    I: IntoIterator<Item = (T, T)>,
-{
-    let mut maybe_uninit_array1: UninitArray<T, N> = MaybeUninit::uninit();
-    let mut maybe_uninit_array2: UninitArray<T, N> = MaybeUninit::uninit();
-    let arr1_ptr = maybe_uninit_array1.as_mut_ptr().cast::<T>();
-    let arr2_ptr = maybe_uninit_array2.as_mut_ptr().cast::<T>();
-    let mut write_counter = 0;
-    for (i, (a, b)) in (0..N).zip(iterator.into_iter()) {
-        unsafe {
-            arr1_ptr.add(i).write(a);
-            arr2_ptr.add(i).write(b);
-        }
-        write_counter += 1;
-    }
-    debug_assert_eq!(write_counter, N);
-    unsafe {
-        (
-            maybe_uninit_array1.assume_init(),
-            maybe_uninit_array2.assume_init(),
-        )
-    }
 }

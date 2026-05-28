@@ -13,7 +13,7 @@ impl<
 
 mod fft_test_suite {
     use super::*;
-    use crate::math::{complex_num::Complex, Bijection, Map};
+    use crate::math::{Bijection, Map, complex_num::Complex};
 
     const TOLERANCE: f64 = 1e-6;
     const N: usize = 8;
