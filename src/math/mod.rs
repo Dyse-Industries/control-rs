@@ -76,12 +76,12 @@
 //! // Degree 2 * Degree 1 = Degree 3 (which requires 4 coefficients).
 //! let p_c = mul_poly(&p_a, &p_b);
 //! ```
-//!
-//! ## References
+//! # References
 //! - [Numerical Recipes - The Art of Scientific Computing](https://numerical.recipes/)
 
 pub mod assert;
 pub mod complex_num;
+pub mod dsp;
 pub mod num_traits;
 pub mod num_types;
 pub mod ops;
