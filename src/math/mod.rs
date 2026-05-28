@@ -82,7 +82,6 @@
 
 pub mod assert;
 pub mod complex_num;
-pub mod dsp;
 pub mod num_traits;
 pub mod num_types;
 pub mod ops;
