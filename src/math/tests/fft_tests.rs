@@ -13,7 +13,7 @@ impl<
 
 mod fft_test_suite {
     use super::*;
-    use crate::math::complex_num::Complex;
+    use crate::math::{complex_num::Complex, Bijection, Map};
 
     const TOLERANCE: f64 = 1e-6;
     const N: usize = 8;
@@ -64,5 +64,17 @@ mod fft_test_suite {
         for i in 0..N {
             assert!((input[i] - ifft_output[i]).abs() < TOLERANCE);
         }
+    }
+
+    #[test]
+    fn test_map_and_bijection_traits() {
+        let time_signal = [1.0, 0.0, 0.0, 0.0];
+        // Instantiate the zero-sized struct to use the trait methods
+        let fft = TestFFT;
+        // Covers F: Map evaluate() (Lines 273-276)
+        let freq_signal = fft.evaluate(time_signal);
+        // Covers F: Bijection evaluate_inverse() (Lines 286-289)
+        let recovered: [f64; 4] = fft.evaluate_inverse(freq_signal);
+        assert!((recovered[0] - 1.0_f64).abs() < 1e-6);
     }
 }

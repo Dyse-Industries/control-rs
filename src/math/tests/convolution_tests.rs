@@ -42,4 +42,13 @@ mod convolution_test_suite {
             assert!((output[i] - expected[i]).abs() < TOLERANCE);
         }
     }
+
+    #[test]
+    #[should_panic(expected = "Convolution output buffer is too small")]
+    fn test_convolve_buffer_panic() {
+        let input = [1.0, 2.0];
+        let kernel = [1.0, 1.0];
+        let mut output = [0.0; 1]; // Too small! Expected 2 + 2 - 1 = 3
+        TestConvolution::convolve_input(&input, &kernel, &mut output);
+    }
 }

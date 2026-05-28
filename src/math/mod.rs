@@ -80,6 +80,7 @@
 //! - [Numerical Recipes - The Art of Scientific Computing](https://numerical.recipes/)
 
 pub mod assert;
+pub mod dsp;
 pub mod complex_num;
 pub mod num_traits;
 pub mod num_types;
