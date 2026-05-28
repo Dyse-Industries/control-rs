@@ -64,9 +64,10 @@ use crate::math::{
 
 /// Level 1 BLAS: Vector-Vector Operations
 pub mod level1 {
-    use super::{Add, Mul, Real, Scalar};
-
-    use core::iter::Sum;
+    use crate::math::{
+        num_traits::{Radical, Real, Ring, Scalar},
+        ops::{Add, Mul},
+    };
 
     /// Trait for the AXPY operation: `y = a*x + y`.
     ///
@@ -124,7 +125,7 @@ pub mod level1 {
     ///
     /// # Generic Arguments
     /// * `T` - The numeric type of the elements.
-    pub trait DOT<T: Scalar + Add<Output = T> + Mul<Output = T> + Sum> {
+    pub trait DOT<T: Ring + Add<Output = T> + Mul<Output = T>> {
         /// Computes the dot product of two vectors.
         ///
         /// # Generic Arguments
@@ -163,8 +164,7 @@ pub mod level1 {
             debug_assert_eq!(x.len(), y.len());
             x.iter()
                 .zip(y.iter())
-                .map(|(xi, yi)| xi.clone() * yi.clone())
-                .sum()
+                .fold(T::ZERO, |acc, (xi, yi)| acc + (xi.clone() * yi.clone()))
         }
     }
 
@@ -172,7 +172,7 @@ pub mod level1 {
     ///
     /// # Generic Arguments
     /// * `T` - The numeric type of the elements.
-    pub trait NRM2<T: Real + Mul<Output = T> + Sum> {
+    pub trait NRM2<T: Radical + Mul<Output = T>> {
         /// Computes the Euclidean norm of a vector.
         ///
         /// # Generic Arguments
@@ -211,7 +211,9 @@ pub mod level1 {
         /// ```
         #[allow(clippy::arithmetic_side_effects)]
         fn nrm2(x: &[T]) -> T {
-            x.iter().map(|xi| xi.clone() * xi.clone()).sum::<T>().sqrt()
+            x.iter()
+                .fold(T::ZERO, |acc, xi| acc + (xi.clone() * xi.clone()))
+                .sqrt()
         }
     }
 
@@ -230,15 +232,6 @@ pub mod level1 {
         ///
         /// # Returns
         /// * `usize` - The index of the element with the maximum absolute value. Returns 0 if the slice is empty.
-        ///
-        /// # Errors
-        /// This function does not return a `Result`.
-        ///
-        /// # Panics
-        /// This function does not panic.
-        ///
-        /// # Safety
-        /// This function does not use `unsafe` code.
         ///
         /// # Example
         /// ```
@@ -269,6 +262,9 @@ pub mod level1 {
                         .abs()
                         .partial_cmp(&y.1.clone().abs())
                         .unwrap_or(core::cmp::Ordering::Equal)
+                        // If values are equal, declare the smaller index as "Greater"
+                        // so max_by holds onto it instead of replacing it.
+                        .then_with(|| y.0.cmp(&x.0))
                 })
                 .map_or(x.len(), |(i, _)| i)
         }
@@ -277,15 +273,16 @@ pub mod level1 {
 
 /// Level 2 BLAS: Matrix-Vector Operations
 pub mod level2 {
-    use super::{Add, Mul, Scalar};
-
-    use core::iter::Sum;
+    use crate::math::{
+        num_traits::Ring,
+        ops::{Add, Mul},
+    };
 
     /// Trait for the GEMV operation: `y = alpha*A*x + beta*y`.
     ///
     /// # Generic Arguments
     /// * `T` - The numeric type of the elements.
-    pub trait GEMV<T: Scalar + Add<Output = T> + Mul<Output = T> + Sum> {
+    pub trait GEMV<T: Ring + Add<Output = T> + Mul<Output = T>> {
         /// Computes `y = alpha*A*x + beta*y`.
         ///
         /// Performs one of the matrix-vector operations:
@@ -303,13 +300,7 @@ pub mod level2 {
         /// * `rows` - Number of rows in matrix A.
         /// * `cols` - Number of columns in matrix A.
         ///
-        /// # Returns
-        /// * `()` - This function modifies `y` in place.
-        ///
-        /// # Errors
-        /// This function does not return a `Result`.
-        ///
-        /// # Panics
+        /// # Panics (Debug only)
         /// * Panics if `a.len() != rows * cols`.
         /// * Panics if `x.len() != cols`.
         /// * Panics if `y.len() != rows`.
@@ -376,11 +367,10 @@ pub mod level2 {
             debug_assert_eq!(y.len(), rows);
 
             for (row, yi) in a.chunks_exact(cols).zip(y.iter_mut()) {
-                let dot: T = row
-                    .iter()
-                    .zip(x.iter())
-                    .map(|(aij, xj)| aij.clone() * xj.clone())
-                    .sum();
+                let dot: T =
+                    row.iter().zip(x.iter()).fold(T::ZERO, |acc, (aij, xj)| {
+                        acc + (aij.clone() * xj.clone())
+                    });
                 *yi = alpha.clone() * dot.clone() + beta.clone() * yi.clone();
             }
         }
@@ -507,15 +497,15 @@ pub mod level3 {
 
 /// A naive implementation of the BLAS traits for `f32`.
 ///
-/// This implementation uses standard Rust loops and iterators. It does not utilize any
+/// This implementation uses standard Rust loops and iterators. It does not use any
 /// hardware acceleration (SIMD, DSP instructions, etc.). It serves as a reference implementation
 /// and a fallback for targets without specialized hardware support.
 ///
 /// # Safety
 /// This struct and its trait implementations do not use `unsafe` code.
-pub struct NaiveBlasf32;
+pub struct BasicSubProgramsF32;
 
-/// A naive implementation of the BLAS traits for `f64`.
+/// A naive implementation of the BLAS + DSP traits for `f64`.
 ///
 /// This implementation uses standard Rust loops and iterators. It does not use any
 /// hardware acceleration. It serves as a reference implementation and a fallback for targets
@@ -523,17 +513,56 @@ pub struct NaiveBlasf32;
 ///
 /// # Safety
 /// This struct and its trait implementations do not use `unsafe` code.
-pub struct NaiveBlasf64;
+pub struct BasicSubProgramsF64;
 
-impl level1::AXPY<f32> for NaiveBlasf32 {}
-impl level1::DOT<f32> for NaiveBlasf32 {}
-impl level1::NRM2<f32> for NaiveBlasf32 {}
-impl level1::IAMAX<f32> for NaiveBlasf32 {}
-impl level2::GEMV<f32> for NaiveBlasf32 {}
-impl level3::GEMM<f32> for NaiveBlasf32 {}
-impl level1::AXPY<f64> for NaiveBlasf64 {}
-impl level1::DOT<f64> for NaiveBlasf64 {}
-impl level1::NRM2<f64> for NaiveBlasf64 {}
-impl level1::IAMAX<f64> for NaiveBlasf64 {}
-impl level2::GEMV<f64> for NaiveBlasf64 {}
-impl level3::GEMM<f64> for NaiveBlasf64 {}
+////////////////////////////////////////////////////////////////////////////////
+// Basic Linear Algebra Sub-Programs for single precision floats
+////////////////////////////////////////////////////////////////////////////////
+
+impl level1::AXPY<f32> for BasicSubProgramsF32 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl level1::DOT<f32> for BasicSubProgramsF32 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl level1::NRM2<f32> for BasicSubProgramsF32 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl level1::IAMAX<f32> for BasicSubProgramsF32 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl level2::GEMV<f32> for BasicSubProgramsF32 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl level3::GEMM<f32> for BasicSubProgramsF32 {}
+
+////////////////////////////////////////////////////////////////////////////////
+// Basic Linear Algebra Sub-Programs for double precision floats
+////////////////////////////////////////////////////////////////////////////////
+
+impl level1::AXPY<f64> for BasicSubProgramsF64 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl level1::DOT<f64> for BasicSubProgramsF64 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl level1::NRM2<f64> for BasicSubProgramsF64 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl level1::IAMAX<f64> for BasicSubProgramsF64 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl level2::GEMV<f64> for BasicSubProgramsF64 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl level3::GEMM<f64> for BasicSubProgramsF64 {}
