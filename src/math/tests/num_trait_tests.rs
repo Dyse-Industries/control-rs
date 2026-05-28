@@ -239,7 +239,6 @@ mod real_tests {
         radical_property_panic_check::<f64>();
     }
 }
-
 mod custom_tests {
     use crate::math::CartesianQuadrant2D;
     use crate::math::num_traits::{
