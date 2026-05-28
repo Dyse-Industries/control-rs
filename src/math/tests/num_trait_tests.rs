@@ -7,15 +7,10 @@
     clippy::arithmetic_side_effects
 )]
 
-use crate::math::ArithmeticError;
 use crate::math::num_traits::{Field, One, Real, Ring, Scalar, Signed, Zero};
-use crate::{assert_almost_eq, assert_not_almost_eq};
 
 mod scalar_tests {
-    use crate::{
-        assert_almost_eq,
-        math::num_traits::{One, Scalar, Signed, Zero},
-    };
+    use crate::math::num_traits::{One, Scalar, Signed, Zero};
     fn scalar_property_check<T: Scalar + Zero + One + core::fmt::Debug>() {
         assert!(T::ZERO.is_zero());
         assert!(!T::ONE.is_zero());
@@ -242,5 +237,132 @@ mod real_tests {
     #[should_panic(expected = "Input is outside the mathematical domain")]
     fn test_real_f64_panics() {
         radical_property_panic_check::<f64>();
+    }
+}
+
+mod custom_tests {
+    use crate::math::CartesianQuadrant2D;
+    use crate::math::num_traits::{
+        One, Radical, Real, Scalar, Signed, Unsigned, Zero,
+    };
+
+    #[test]
+    fn test_identities() {
+        assert!(1.0f32.is_one());
+        assert!(!2.0f32.is_one());
+        assert!(0.0f32.is_zero());
+        assert!(!1.0f32.is_zero());
+
+        assert!(1i32.is_one());
+        assert!(!2i32.is_one());
+        assert!(0i32.is_zero());
+        assert!(!1i32.is_zero());
+    }
+
+    #[test]
+    fn test_sign_checks() {
+        assert!(1.0f32.is_sign_positive());
+        assert!(!(-1.0f32).is_sign_positive());
+        assert!(0.0f32.is_sign_positive());
+
+        assert!((-1.0f32).is_sign_negative());
+        assert!(!1.0f32.is_sign_negative());
+        assert!(!0.0f32.is_sign_negative());
+    }
+
+    #[test]
+    fn test_hypot() {
+        let a = 3.0f32;
+        let b = 4.0f32;
+        assert_eq!(a.hypot(b), 5.0);
+    }
+
+    #[test]
+    fn test_atan2() {
+        // Origin
+        assert_eq!(0.0f32.atan2(0.0), 0.0);
+
+        // Axis Bounds
+        assert_eq!(0.0f32.atan2(1.0), 0.0); // Positive X
+        assert_eq!(0.0f32.atan2(-1.0), core::f32::consts::PI); // Negative X
+        assert_eq!(1.0f32.atan2(0.0), core::f32::consts::PI / 2.0); // Positive Y
+        assert_eq!(-1.0f32.atan2(0.0), -core::f32::consts::PI / 2.0); // Negative Y
+
+        // Standard Quadrants
+        assert_eq!(1.0f32.atan2(1.0), core::f32::consts::PI / 4.0); // Q1
+        assert_eq!(1.0f32.atan2(-1.0), 3.0 * core::f32::consts::PI / 4.0); // Q2
+        assert_eq!(-1.0f32.atan2(-1.0), -3.0 * core::f32::consts::PI / 4.0); // Q3
+        assert_eq!(-1.0f32.atan2(1.0), -core::f32::consts::PI / 4.0); // Q4
+    }
+
+    #[test]
+    fn test_hyperbolic_functions() {
+        // cosh
+        assert_eq!(0.0f32.cosh(), 1.0);
+        let cosh_val = 1.0f32.cosh();
+        let expected_cosh = (1.0f32.exp() + (-1.0f32).exp()) / 2.0;
+        assert!((cosh_val - expected_cosh).abs() < 1e-6);
+
+        // sinh
+        assert_eq!(0.0f32.sinh(), 0.0);
+        let sinh_val_neg = (-1.0f32).sinh();
+        let expected_sinh_neg = -((1.0f32.exp() - (-1.0f32).exp()) / 2.0);
+        assert!((sinh_val_neg - expected_sinh_neg).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_integer_abs() {
+        assert_eq!((i8::MIN + 1_i8).abs(), i8::MAX); // Because abs() wraps! wait... standard integer abs returns MIN for MIN.
+        assert_eq!((i16::MIN + 1_i16).abs(), i16::MAX);
+        assert_eq!((i32::MIN + 1_i32).abs(), i32::MAX);
+        assert_eq!((i64::MIN + 1_i64).abs(), i64::MAX);
+        assert_eq!((i128::MIN + 1_i128).abs(), i128::MAX);
+        assert_eq!((isize::MIN + 1).abs(), isize::MAX);
+
+        assert_eq!((-1i8).abs(), 1i8);
+        assert_eq!((-1i16).abs(), 1i16);
+        assert_eq!((-1i32).abs(), 1i32);
+        assert_eq!((-1i64).abs(), 1i64);
+        assert_eq!((-1i128).abs(), 1i128);
+        assert_eq!((-1isize).abs(), 1isize);
+    }
+
+    #[test]
+    fn test_cartesian_quadrants() {
+        // Standard Quadrants
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&1.0f32, &1.0),
+            CartesianQuadrant2D::Q1
+        );
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&-1.0f32, &1.0),
+            CartesianQuadrant2D::Q2
+        );
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&-1.0f32, &-1.0),
+            CartesianQuadrant2D::Q3
+        );
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&1.0f32, &-1.0),
+            CartesianQuadrant2D::Q4
+        );
+
+        // Undefined (NaN)
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&f32::NAN, &1.0),
+            CartesianQuadrant2D::Undefined
+        );
+    }
+
+    #[test]
+    fn test_unsigned_scalar_markers() {
+        // A simple compile-time check to ensure the marker traits are applied
+        fn assert_is_unsigned_scalar<T: Unsigned + Scalar>() {}
+
+        assert_is_unsigned_scalar::<u8>();
+        assert_is_unsigned_scalar::<u16>();
+        assert_is_unsigned_scalar::<u32>();
+        assert_is_unsigned_scalar::<u64>();
+        // If these compile, the lines are covered.
     }
 }

@@ -165,6 +165,30 @@ pub enum CartesianQuadrant2D {
 /// * `Domain` - The mathematical set $X$ of all valid inputs.
 /// * `Codomain` - The mathematical set $Y$ into which all outputs fall.
 ///   (Note: The actual produced outputs form the "Range" or "Image", which is a subset of the Codomain).
+///
+/// # Example
+/// ```
+/// use control_rs::math::{Map, StateEquation};
+///
+/// struct MockStateEquation;
+///
+/// impl StateEquation<f32, f32, f32> for MockStateEquation {
+///     fn dynamics(&self, x: &f32, u: &f32) -> f32 {
+///         x + u
+///     }
+/// }
+///
+/// let mock_eq = MockStateEquation;
+/// let state = 2.0f32;
+/// let input = 3.0f32;
+///
+/// // Call evaluate on the MockStateEquation instance.
+/// // The blanket implementation should route the tuple (&state, &input)
+/// // to the dynamics method which calculates state + input.
+/// let result = mock_eq.evaluate((&state, &input));
+///
+/// assert_eq!(result, 5.0f32);
+/// ```
 pub trait Map<Domain, Codomain> {
     /// Evaluates the mapping $y = f(x)$ for a given input.
     ///
@@ -217,6 +241,8 @@ pub type ArithmeticResult<T> = Result<T, ArithmeticError>;
 
 /// Blanket implementation of `Map` for anything that implements `StateEquation`.
 /// The mathematical Domain is the Cartesian product of State and Input (X × U).
+///
+/// Due to the complexity of the generics, Tarpaulin sees this as uncovered.
 impl<'a, T, State, Input, Output> Map<(&'a State, &'a Input), Output> for T
 where
     T: StateEquation<State, Input, Output>,
