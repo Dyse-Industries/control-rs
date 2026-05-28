@@ -1,4 +1,4 @@
-//! # Numeric Types (Type-Level Math Alternative)
+//! # Numeric Types (Type-Level Math)
 //!
 //! Defines dimension types and bounds for matrix and tensor storage using
 //! purely compile-time type-level arithmetic (Peano axioms).

@@ -76,11 +76,12 @@
 //! // Degree 2 * Degree 1 = Degree 3 (which requires 4 coefficients).
 //! let p_c = mul_poly(&p_a, &p_b);
 //! ```
-//! # References
+//!
+//! ## References
 //! - [Numerical Recipes - The Art of Scientific Computing](https://numerical.recipes/)
 
 pub mod assert;
-
+pub mod complex_num;
 pub mod num_traits;
 pub mod num_types;
 pub mod ops;
@@ -131,10 +132,131 @@ pub enum ArithmeticError {
     Underflow,
 }
 
+/// Convenience enum representing the 2D Cartesian Plane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CartesianQuadrant2D {
+    /// Directly to the left of the origin.
+    NegativeXAxis,
+    /// Directly below the origin.
+    NegativeYAxis,
+    /// The center of the plane.
+    Origin,
+    /// Directly to the right of the origin.
+    PositiveXAxis,
+    /// Directly above the origin.
+    PositiveYAxis,
+    /// The first quadrant (+, +)
+    Q1,
+    /// The second quadrant (-, +)
+    Q2,
+    /// The third quadrant (-, -)
+    Q3,
+    /// The fourth quadrant (+, -)
+    Q4,
+    /// Undefined values do not exist on the plane.
+    Undefined,
+}
+
+/// A mathematical mapping (or function) $f: X \to Y$.
+///
+/// This trait defines a deterministic mapping from an input space to an output space.
+///
+/// # Type Parameters
+/// * `Domain` - The mathematical set $X$ of all valid inputs.
+/// * `Codomain` - The mathematical set $Y$ into which all outputs fall.
+///   (Note: The actual produced outputs form the "Range" or "Image", which is a subset of the Codomain).
+///
+/// # Example
+/// ```
+/// use control_rs::math::{Map, StateEquation};
+///
+/// struct MockStateEquation;
+///
+/// impl StateEquation<f32, f32, f32> for MockStateEquation {
+///     fn dynamics(&self, x: &f32, u: &f32) -> f32 {
+///         x + u
+///     }
+/// }
+///
+/// let mock_eq = MockStateEquation;
+/// let state = 2.0f32;
+/// let input = 3.0f32;
+///
+/// // Call evaluate on the MockStateEquation instance.
+/// // The blanket implementation should route the tuple (&state, &input)
+/// // to the dynamics method which calculates state + input.
+/// let result = mock_eq.evaluate((&state, &input));
+///
+/// assert_eq!(result, 5.0f32);
+/// ```
+pub trait Map<Domain, Codomain> {
+    /// Evaluates the mapping $y = f(x)$ for a given input.
+    ///
+    /// # Arguments
+    /// * `x` - An element $x \in X$ from the function's domain.
+    ///
+    /// # Returns
+    /// * The evaluated element $y \in Y$ in the codomain.
+    fn evaluate(&self, x: Domain) -> Codomain;
+}
+
+/// A bijective mathematical mapping $f: X \to Y$ with a defined inverse $f^{-1}: Y \to X$.
+///
+/// Because this represents a bijection, every element in the Domain maps to exactly
+/// one element in the Codomain, and vice versa.
+pub trait Bijection<Domain, Codomain>: Map<Domain, Codomain> {
+    /// Evaluates the inverse mapping $x = f^{-1}(y)$.
+    ///
+    /// # Arguments
+    /// * `y` - An element $y \in Y$ from the function's codomain.
+    ///
+    /// # Returns
+    /// * The recovered element $x \in X$ in the domain.
+    fn evaluate_inverse(&self, y: Codomain) -> Domain;
+}
+
+/// A state-space equation governing a dynamical system.
+///
+/// Mathematically, this represents a function $f: X \times U \to X$ for discrete-time systems,
+/// or $f: X \times U \to T X$ for continuous-time systems.
+///
+/// # Type Parameters
+/// * `State` - The state space $X$ of the system.
+/// * `Input` - The control input space $U$.
+/// * `Output` - The resulting state derivative or next state.
+pub trait StateEquation<State, Input, Output> {
+    /// Evaluates the system dynamics for a given state and input.
+    ///
+    /// # Arguments
+    /// * `x` - The current state of the system $x$.
+    /// * `u` - The current control input $u$.
+    ///
+    /// # Returns
+    /// * The resulting state vector or state derivative.
+    fn dynamics(&self, x: &State, u: &Input) -> Output;
+}
+
 /// A specialized `Result` type for fallible arithmetic operations.
 pub type ArithmeticResult<T> = Result<T, ArithmeticError>;
 
+/// Blanket implementation of `Map` for anything that implements `StateEquation`.
+/// The mathematical Domain is the Cartesian product of State and Input (X × U).
+///
+/// Due to the complexity of the generics, Tarpaulin sees this as uncovered.
+impl<'a, T, State, Input, Output> Map<(&'a State, &'a Input), Output> for T
+where
+    T: StateEquation<State, Input, Output>,
+{
+    fn evaluate(&self, (x, u): (&'a State, &'a Input)) -> Output {
+        T::dynamics(self, x, u)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 impl core::error::Error for ArithmeticError {}
+
+////////////////////////////////////////////////////////////////////////////////
 
 impl core::fmt::Display for ArithmeticError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -154,6 +276,8 @@ impl core::fmt::Display for ArithmeticError {
         }
     }
 }
+
+////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]
 mod test {

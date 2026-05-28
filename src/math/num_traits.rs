@@ -1,9 +1,7 @@
 //! # Numeric Traits
-//! # Numerical Traits for Control Systems
 //!
-//! This module defines a hierarchy of traits for numerical types used in control engineering.
-//! These traits provide a foundation for generic algorithms, ensuring mathematical correctness
-//! and safety, in compliance with standards like DO-178C and ISO 26262.
+//! This module defines a hierarchy of traits for numerical types.
+//! These traits provide a foundation for generic algorithms, ensuring mathematical correctness.
 //!
 //! The hierarchy is as follows:
 //! - `One`: The identity element for multiplication.
@@ -11,45 +9,26 @@
 //! - `Scalar`: Basic properties (`Copy`, `PartialEq`, `PartialOrd`).
 //! - `Ring`: Extends `Scalar` with ring operations (`+`, `-`, `*`).
 //! - `Field`: Extends `Ring` with division (`/`).
-//! - `Real`: Extends `Field` with real-number functions (sqrt, abs).
-//!
-//! ## Safety and Compliance
-//!
-//! All traits and implementations in this module are designed to be safe and panic-free
-//! where possible. For instance, `Real::sqrt` returns a `Result` to handle negative
-//! inputs gracefully, avoiding `NaN` results or panics that could compromise system stability.
-//! The use of `libm` ensures that mathematical functions are implemented correctly and
-//! consistently across platforms, a key consideration for safety-critical software.
+//! - `Exponential`: Extends `Field` with exponential and root functions.
+//! - `Logarithm`: Extends `Field` with logarithmic functions.
+//! - `Trig`: Extends `Field` with trigonometric functions.
+//! - `Real`: Extends `Field` and aggregates `Signed`, `Exponential`, `Logarithm` and `Trig`.
 
-use crate::math::ops::{Add, Div, Mul, Sub};
+use crate::math::CartesianQuadrant2D;
+use crate::math::ops::{Add, Div, Mul, Neg, Sub};
 
-/// A marker trait for types that are `Copy` and have a defined partial ordering.
+use core::cmp::Ordering;
+
+/// The base marker trait for numbers.
 ///
-/// `Scalar` is a fundamental trait that groups types suitable for numerical operations
-/// in a control systems context. It ensures that the type can be efficiently copied
-/// and compared, which are baseline requirements for most mathematical algorithms.
-/// This trait is a prerequisite for more complex numerical traits like `Ring` and `Field`.
+/// `Scalar` groups types suitable for numerical operations. It ensures the type can be cloned
+/// and compared.
 ///
 /// # Safety
-///
-/// This trait itself does not introduce any `unsafe` code. However, implementers must
-/// ensure that the implementations of `PartialEq` and `PartialOrd` are consistent and
-/// correctly represent a partial ordering. For floating-point types, this includes
-/// handling of `NaN` values as per the IEEE 754 standard, where `NaN != NaN`.
-///
-/// - **Pre-conditions**: None.
-/// - **Post-conditions**: None.
-/// - **Invariants**: The properties of `Copy`, `PartialEq`, and `PartialOrd` must hold
-///   for the lifetime of the object.
-/// - **Assumptions**: Assumes that the underlying implementations of `PartialEq` and
-///   `PartialOrd` are correct and will not cause side effects.
-///
-/// # Panics
-///
-/// No panics are directly caused by this trait.
+/// `PartialEq` and `PartialOrd` must be consistent and correct. For floating-point types,
+/// as per the IEEE 754 standard, `NaN != NaN`.
 ///
 /// # Example
-///
 /// ```
 /// use control_rs::math::num_traits::Scalar;
 ///
@@ -73,9 +52,7 @@ pub trait Scalar: Clone + Sized + PartialEq + PartialOrd {}
 /// without requiring the full semantics of a `Ring`.
 ///
 /// # Safety
-///
-/// Implementers must ensure that `one()` returns the correct unit element.
-/// This trait does not introduce panic.
+/// `ONE` must be a true multiplicative identity.
 pub trait One: Scalar + Mul<Output = Self> {
     /// Constant multiplicative identity element.
     const ONE: Self;
@@ -97,9 +74,7 @@ pub trait One: Scalar + Mul<Output = Self> {
 /// full algebraic structure of a `Ring` is unnecessary.
 ///
 /// # Safety
-///
-/// Implementers must ensure that `zero()` returns a true additive identity.
-/// This trait does not call panic.
+/// `ZERO` must be a true additive identity.
 pub trait Zero: Scalar + Add<Output = Self> + Sub<Output = Self> {
     /// Constant additive identity element.
     const ZERO: Self;
@@ -115,15 +90,14 @@ pub trait Zero: Scalar + Add<Output = Self> + Sub<Output = Self> {
     }
 }
 
-/// Marker trait for types with a mathematical sign (all signed integers,
-/// floating-point types).
+/// Defines a set with a mathematical sign (all signed integers and
+/// floating/fixed-point types).
+///
+/// This provides access to checks for sign-ness, absolute value and Neg.
 ///
 /// # Safety
-///
-/// Implementers must define sign in the usual mathematical manner.
-/// Floating-point implementations must follow IEEE 754 semantics.
-/// This trait does not call panic.
-pub trait Signed: Zero {
+/// Values that implement Neg have a well-defined sign.
+pub trait Signed: Zero + Neg<Output = Self> {
     /// Returns the absolute value.
     #[must_use]
     fn abs(self) -> Self;
@@ -132,7 +106,6 @@ pub trait Signed: Zero {
     fn is_sign_negative(&self) -> bool {
         self.lt(&Self::ZERO)
     }
-
     /// Check if self is greater than zero.
     #[inline(always)]
     fn is_sign_positive(&self) -> bool {
@@ -140,80 +113,61 @@ pub trait Signed: Zero {
     }
 }
 
-/// Defines an algebraic ring, providing zero and one elements and standard arithmetic operations.
+/// Defines an algebraic ring.
 ///
-/// The `Ring` trait abstracts over types that support addition, subtraction, multiplication,
-/// and negation, forming a mathematical ring. It requires the type to be a `Scalar` and
-/// provides associated functions to get the additive identity (`zero`) and multiplicative
-/// identity (`one`). This abstraction is crucial for writing generic algorithms that work
-/// on both integers and floating-point numbers.
+/// Abstracts over types that support addition, subtraction and multiplication
+/// forming a mathematical ring.
 ///
 /// # Safety
-///
-/// This trait does not introduce `unsafe` code. Implementers must ensure that the
-/// arithmetic operations (`Add`, `Sub`, `Mul`, `Neg`) adhere to the ring axioms
+/// Arithmetic operations (`Add`, `Sub`, `Mul`) must obey ring axioms
 /// (associativity, commutativity, distributivity).
 ///
-/// For fixed-size integer types, the arithmetic operations may overflow. In Rust,
-/// this will cause a panic in debug builds but wrap in release builds. Callers
-/// performing arithmetic on `Ring` types must be aware of and handle the possibility
-/// of overflow according to their safety requirements.
-///
-/// - **Invariants**: The `zero` and `one` elements must be true identity elements for
-///   the implemented addition and multiplication operations.
-/// - **Assumptions**: Assumes that the implementations of `Add`, `Sub`, `Mul`, and `Neg`
-///   are mathematically correct for the type.
-///
-/// # Panics
-///
-/// The trait methods themselves do not panic. However, the required arithmetic traits
-/// (`Add`, `Sub`, etc.) may panic on overflow for integer types in debug builds.
-///
 /// # Example
-///
 /// ```
 /// use control_rs::math::num_traits::Ring;
 ///
 /// fn multiply_by_three<T: Ring>(val: T) -> T {
-///     val * (T::one() + T::one() + T::one())
+///     val * (T::one() + T::TWO)
 /// }
 ///
 /// assert_eq!(multiply_by_three(5), 15);
 /// assert_eq!(multiply_by_three(2.0f32), 6.0f32);
 /// ```
-pub trait Ring: One + Zero {}
+pub trait Ring: One + Zero {
+    /// Constant representing the max.
+    const MAX: Self;
+    /// Constant representing the min.
+    const MIN: Self;
+    /// Constant representing the minimum positive value.
+    const MIN_POSITIVE: Self;
+    /// Constant representing 2.
+    const TWO: Self;
+    /// Initiate self from the given const.
+    #[must_use]
+    fn from_const<const N: usize>() -> Self {
+        Self::sum([Self::ONE; N])
+    }
+    /// Initiate self from the given usize.
+    fn from_usize(n: usize) -> Self {
+        (0..n).fold(Self::ZERO, |acc, _| acc.add(Self::ONE))
+    }
+    /// Sum the elements of an iterator.
+    #[allow(clippy::arithmetic_side_effects)]
+    fn sum<I: IntoIterator<Item = Self>>(iter: I) -> Self {
+        iter.into_iter().fold(Self::zero(), |acc, x| acc + x)
+    }
+}
 
-/// Defines an algebraic field, extending a `Ring` with a division operation and a machine epsilon value.
+/// Defines an algebraic field, extending a `Ring` with division.
 ///
-/// The `Field` trait represents a mathematical field, which is a `Ring` that also supports
-/// division. It is intended for types like floating-point numbers. The trait includes a
-/// function to get the machine `epsilon`, which represents the smallest value `x` such
-/// that `1.0 + x != 1.0`. This is essential for numerical stability analysis and
-/// floating-point comparisons.
-///
-/// # Safety
-///
-/// This trait does not introduce `unsafe` code. The division operation must be
-/// well-defined. For floating-point types, division by zero will result in `inf`,
-/// `-inf`, or `NaN` as per IEEE 754. In a safety-critical context, the caller has
-/// the responsibility to prevent division by zero or handle the resulting non-finite
-/// values, as they can propagate through calculations and lead to undefined behavior
-/// in control algorithms.
-///
-/// - **Pre-conditions**: When performing division, the divisor should be non-zero to
-///   avoid exceptional floating-point values or integer division panics.
-/// - **Post-conditions**: None.
-/// - **Invariants**: `epsilon()` must return a constant positive value for a given type.
-/// - **Assumptions**: Assumes the `Div` implementation is correct. For floating-point
-///   types, assumes IEEE 754 compliance.
+/// A `Field` is a `Ring` that also supports division. It is intended for floating-point types.
+/// The trait implies and requires the existence of a machine epsilon; `1.0 + ε != 1.0`.
 ///
 /// # Panics
-///
 /// Division by zero for integer types will panic. Floating-point division by zero does
 /// not panic but produces non-finite values (`inf` or `NaN`).
 ///
 /// # Example
-///
 /// ```
 /// use control_rs::math::num_traits::{Field, Ring};
 ///
@@ -230,34 +184,81 @@ pub trait Field: Ring + Div<Output = Self> {
     fn epsilon() -> Self;
 }
 
-/// Defines a real field with support for common analytic functions like square root and absolute value.
-///
-/// The `Real` trait extends a `Field` to include operations common for real numbers,
-/// such as `sqrt` and `abs`. It is designed for use with floating-point types in
-/// applications requiring analysis, signal processing, or control algorithms. The `sqrt`
-/// function is fallible, returning `None` for negative inputs to prevent complex numbers
-/// and ensure type safety without introducing panics.
-///
-/// # Safety
-///
-/// The functions in this trait rely on [libm] for their implementation, which is a
-/// standard, well-tested library for floating-point mathematics. The `sqrt` function
-/// is protected against invalid inputs (negative numbers) by returning an `Option`.
-/// There is no `unsafe` code.
-///
-/// - **Pre-conditions**: None. The functions are total over their input domains.
-/// - **Post-conditions**: `sqrt` will return a non-negative value inside `Some`. `abs`
-///   will always return a non-negative value.
-/// - **Invariants**: For any `x: Real` where `x >= 0`, `x.sqrt().unwrap().powi(2)`
-///   should be approximately equal to `x`. For any `x: Real`, `x.abs() >= 0`.
-/// - **Assumptions**: Assumes the underlying `libm` functions (`sqrtf`, `fabsf`, etc.)
-///   are correctly implemented and conform to mathematical definitions.
+/// Trait for types that support square root (radical functions).
 ///
 /// # Panics
-/// * this function does not call panic.
+/// Square root of a negative number must return an imaginary number or
+/// a type that indicates the domain was violated. Thus, the domain for
+/// this implementation includes all Self.
+pub trait Radical: Field {
+    /// Computes the hypotenuse of a triangle with the given side lengths.
+    #[must_use]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn hypot(self, rhs: Self) -> Self {
+        ((self.clone() * self) + (rhs.clone() * rhs)).sqrt()
+    }
+    /// Computes the square root of a number.
+    #[must_use]
+    fn sqrt(self) -> Self;
+}
+
+/// Trait for types that support exponential, power and root functions.
+///
+/// # Panics
+/// Exponential of a negative number must return an imaginary number or
+/// a type that indicates the domain was violated. Thus, the domain for
+/// this implementation includes all Self.
+pub trait Exponential: Field {
+    /// Constant representing Euler's number.
+    const E: Self;
+    /// Computes `e^self`.
+    #[must_use]
+    fn exp(self) -> Self;
+    /// Computes the natural logarithm.
+    #[must_use]
+    fn ln(self) -> Self;
+    /// Computes the base-10 logarithm.
+    #[must_use]
+    fn log10(self) -> Self;
+    /// Computes a number raised to a power.
+    #[must_use]
+    fn pow(self, n: Self) -> Self;
+}
+
+/// Trait for types that support trigonometric functions.
+///
+/// # Panics
+/// Trigonometric functions of an invalid number must return a type that
+/// indicates the domain was violated. Thus, the domain for these implementations
+/// includes all Self.
+pub trait Trig: Field {
+    /// Constant representing Pi.
+    const PI: Self;
+    /// Calculates the inverse cosine of a number (in radians).
+    #[must_use]
+    fn acos(self) -> Self;
+    /// Calculates the inverse sine of a number (in radians).
+    #[must_use]
+    fn asin(self) -> Self;
+    /// Calculates the inverse tangent of a number (in radians).
+    #[must_use]
+    fn atan(self) -> Self;
+    /// Calculates the cosine of a number (in radians).
+    #[must_use]
+    fn cos(self) -> Self;
+    /// Calculates the sine of a number (in radians).
+    #[must_use]
+    fn sin(self) -> Self;
+    /// Calculates the tangent of a number (in radians).
+    #[must_use]
+    fn tan(self) -> Self;
+}
+
+/// Defines a real field with support for common analytic functions like square root and absolute value.
+///
+/// The `Real` trait extends a `Field` to include operations common for real numbers.
 ///
 /// # Example
-///
 /// ```
 /// use control_rs::math::{num_traits::{Real, Ring}, ArithmeticError};
 ///
@@ -268,138 +269,159 @@ pub trait Field: Ring + Div<Output = Self> {
 ///
 /// assert_eq!(magnitude(3.0, 4.0), 5.0);
 /// assert_eq!(magnitude(-3.0, -4.0), 5.0);
-///
 /// // sqrt of a negative number
 /// let negative_val = -1.0f32;
 /// ```
-pub trait Real: Field + Signed {
-    /// Calculates `e^self`.
+pub trait Real: Field + Signed + Radical + Exponential + Trig {
+    /// Constant representing Infinity.
+    const INF: Self;
+    /// Constant representing NAN.
+    const NAN: Self;
+    /// Computes the four-quadrant inverse tangent of `y` and `x` in radians.
     ///
-    /// # Returns
-    /// * `e^self`
-    #[must_use]
-    fn exp(self) -> Self;
-
-    /// Calculates the natural logarithm of a number.
+    /// Unlike the standard `atan(y / x)`, this function uses the signs of both
+    /// arguments to identify the correct quadrant and handles the case where `x` is zero.
     ///
-    /// # Returns
-    /// * Natural logarithm of `self`
-    #[must_use]
-    fn ln(self) -> Self;
-
-    /// Calculates the base-10 logarithm of a number.
+    /// # Mathematical Definition
+    /// The returned value `θ` is in the range `(-π, π]` such that:
+    /// - `θ > 0` if `y > 0` (Upper half-plane)
+    /// - `θ < 0` if `y < 0` (Lower half-plane)
+    /// - `θ = 0` if `y = 0` and `x > 0`
+    /// - `θ = π` if `y = 0` and `x < 0`
     ///
-    /// # Returns
-    /// * log base 10 of `self`
-    #[must_use]
-    fn log10(self) -> Self;
-
-    /// Raises a number to a floating-point power.
+    /// # Special Cases
+    /// | Input Condition | Output Value |
+    /// |--------------------------|--------------------|
+    /// | `y = 0, x > 0` | `0` |
+    /// | `y = 0, x < 0` | `π` |
+    /// | `y > 0, x = 0` | `π / 2` |
+    /// | `y < 0, x = 0` | `-π / 2` |
+    /// | `y = 0, x = 0` | `0` (Undefined*) |
     ///
-    /// # Returns
-    /// * `self` raised to the nth power.
+    /// *Note: Many implementations return 0 for origin coordinates to avoid NaNs
+    /// in real-time control loops.*
     #[must_use]
-    fn pow(self, n: Self) -> Self;
-
-    /// Calculates the square root of a number.
+    #[allow(clippy::arithmetic_side_effects)]
+    fn atan2(self, rhs: Self) -> Self {
+        match CartesianQuadrant2D::from_coords(&self, &rhs) {
+            CartesianQuadrant2D::Origin
+            | CartesianQuadrant2D::PositiveXAxis => Self::ZERO,
+            CartesianQuadrant2D::NegativeYAxis => -Self::PI / Self::TWO,
+            CartesianQuadrant2D::NegativeXAxis => Self::PI,
+            CartesianQuadrant2D::PositiveYAxis => Self::PI / Self::TWO,
+            _ => Self::atan(self / rhs),
+        }
+    }
+    /// Computes the hyperbolic cosine of the number.
     ///
-    /// # Returns
-    /// * `sqrt(self)`
+    /// # Mathematical Definition
+    /// The hyperbolic cosine is an even function defined as the average of
+    /// the natural exponential function and its inverse:
+    /// <pre> cosh(x) = (e^x + e^-x) / 2 </pre>
+    ///
+    /// # Characteristics
+    /// - **Domain**: `(-infty, infty)`
+    /// - **Range**: `[1, infty)`
+    /// - **Symmetry**: `cosh(-x) = cosh(x)`
+    ///
+    /// # Overflow Warning
+    /// Because this implementation relies on `.exp()`, evaluating this function for
+    /// large inputs will result in rapid overflow to infinity (e.g., around `x ~ 89.4` for `f32`).
     #[must_use]
-    fn sqrt(self) -> Self;
+    #[allow(clippy::arithmetic_side_effects)]
+    fn cosh(self) -> Self {
+        (self.clone().exp() + (Self::ZERO - self).exp()) / Self::TWO
+    }
+    /// Computes the hyperbolic sine of the number.
+    ///
+    /// # Mathematical Definition
+    /// The hyperbolic sine is an odd function defined as half the difference
+    /// between the natural exponential function and its inverse:
+    /// $$ \sinh(x) = \frac{e^x - e^{-x}}{2} $$
+    ///
+    /// # Characteristics
+    /// - **Domain**: $(-\infty, \infty)$
+    /// - **Range**: $(-\infty, \infty)$
+    /// - **Symmetry**: $\sinh(-x) = -\sinh(x)$
+    ///
+    /// # Numerical Stability Note
+    /// This default trait implementation uses the standard algebraic definition.
+    /// For values of `self` very close to `0.0`, computing $e^x - e^{-x}$ can
+    /// suffer from **catastrophic cancellation**, leading to a loss of significant
+    /// digits. If your control loops require high precision near the origin,
+    /// consider overriding this default with a Taylor series expansion or an `expm1`
+    /// based approach for $|x| < 1$.
+    #[must_use]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn sinh(self) -> Self {
+        (self.clone().exp() - (Self::ZERO - self).exp()) / Self::TWO
+    }
 }
 
-/// Marker trait for unsigned types.
-///
-/// # Safety
-///
-/// There is no associated functionality; the trait only indicates that
-/// the type cannot represent negative values.
+/// Defines the set of unsigned numbers.
 pub trait Unsigned: Sized {}
 
-/// A macro to implement the `Ring` trait for a given numeric type.
+/// Implements the `Ring` trait for a given numeric type.
 ///
 /// This macro simplifies the process of implementing the `Ring` trait. It generates
 /// the implementation of `zero()` and `one()` with the provided literal values. This
 /// reduces boilerplate code and ensures consistency across different numeric types.
 ///
 /// # Arguments
-///
 /// - `$type`: The numeric type for which to implement `Ring` (e.g., `f32`, `i64`).
 /// - `$one`: The literal expression for the multiplicative identity (e.g., `1.0`, `1`).
 /// - `$zero`: The literal expression for the additive identity (e.g., `0.0`, `0`).
-///
-/// # Safety
-///
-/// This macro does not generate `unsafe` code. The correctness of the implementation
-/// depends on the user providing the correct zero and one values for the given type.
-/// An incorrect value could violate the ring axioms and lead to incorrect calculations.
-///
-/// # Panics
-/// * This macro does not call panic.
-///
-/// # Example
-///
-/// ```compile_fail
-/// // This is how the macro is used to implement Ring for i32.
-/// use control_rs::math::num_traits::{Ring, ArithmeticError};
-/// control_rs::impl_ring!(i32, 1, 0);
-/// ```
+/// - `$max`: The literal expression for the maximum value (e.g., `f32::MAX`, `usize::MAX`).
+/// - `$min`: The literal expression for the minimum value (e.g., `f32::MIN`, `isize::MIN`).
+/// - `$min_pos`: The literal expression for the minimum positive value.
 #[macro_export]
 macro_rules! impl_ring {
-    ($type:ty, $one:expr, $zero:expr) => {
+    ($type:ty, $one:expr, $zero:expr, $max:expr, $min:expr, $min_pos:expr) => {
         impl One for $type {
             const ONE: Self = $one;
         }
+
+        ////////////////////////////////////////////////////////////////////////////////
+
         impl Zero for $type {
             const ZERO: Self = $zero;
         }
-        impl Ring for $type {}
+
+        ////////////////////////////////////////////////////////////////////////////////
+
+        impl Ring for $type {
+            const MAX: Self = $max;
+            const MIN: Self = $min;
+            const MIN_POSITIVE: Self = $min_pos;
+            const TWO: Self = $one + $one;
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////
     };
 }
 
-/// A macro to implement the `Real` trait for a given floating-point type.
-///
-/// This macro implements the `Real` trait by calling functions from the `libm` library.
-/// It provides implementations for `sqrt` and `abs`. The `sqrt` implementation includes
-/// a check to ensure the input is non-negative, returning `None` if it is not. This
-/// avoids panics or the creation of `NaN` values from negative inputs, which is a
-/// critical safety feature.
+/// Implements the `Exponential` trait for a given type.
 ///
 /// # Arguments
-///
-/// - `$type`: The floating-point type for which to implement `Real` (e.g., `f32`).
-/// - `$sqrt`: The identifier of the `libm` square root function for the type (e.g., `sqrtf`).
-/// - `$abs`: The identifier of the `libm` absolute value function for the type (e.g., `fabsf`).
-///
-/// # Safety
-///
-/// This macro does not generate `unsafe` code. It relies on the `libm` crate, which
-/// is assumed to be a safe and correct implementation of standard math functions. The
-/// user must provide the correct `libm` function identifiers corresponding to the type.
-/// A mismatch (e.g., using `sqrt` for `f32`) would result in a compile-time error.
-///
-/// # Panics
-/// * This macro does not call panic.
-/// * The generated `sqrt` function explicitly avoids panics on negative inputs by returning `Option::None`.
-///
-/// # Example
-///
-/// ```compile_fail
-/// // This is how the macro is used to implement Real for f32.
-/// use control_rs::math::num_traits::{Real, ArithmeticError};
-/// control_rs::impl_real!(f32, fabsf, sqrtf, logf, expf, powf);
-/// ```
+/// - `$type`: The numeric type.
+/// - `$e:expr`: Literal or constant representing Euler's number.
+/// - `$exp:path`: The `exp` function.
+/// - `$pow:path`: The `pow` function.
+/// - `$sqrt:path`: The `sqrt` function.
 #[macro_export]
-macro_rules! impl_real {
-    ($type:ty, $abs:path, $sqrt:path, $ln:path, $log10:path, $exp:path, $pow:path) => {
-        impl Signed for $type {
+macro_rules! impl_exp {
+    ($type:ty, $e:expr, $exp:path, $ln:path, $log10:path, $pow:path, $sqrt:path) => {
+        impl Radical for $type {
             #[inline(always)]
-            fn abs(self) -> Self {
-                $abs(self)
+            fn sqrt(self) -> Self {
+                $sqrt(self)
             }
         }
-        impl Real for $type {
+
+        ////////////////////////////////////////////////////////////////////////////////
+
+        impl Exponential for $type {
+            const E: Self = $e;
             #[inline(always)]
             fn exp(self) -> Self {
                 $exp(self)
@@ -416,11 +438,86 @@ macro_rules! impl_real {
             fn pow(self, n: Self) -> Self {
                 $pow(self, n)
             }
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////
+    };
+}
+
+/// Implements the `Trig` trait for a given type.
+///
+/// # Arguments
+/// - `$type`: The numeric type.
+/// - `$pi:expr`: Literal or constant representing π.
+/// - `$sin:path`: The `sin` function.
+/// - `$cos:path`: The `cos` function.
+/// - `$tan:path`: The `tan` function.
+#[macro_export]
+macro_rules! impl_trig {
+    ($type:ty, $pi:expr, $cos:path, $sin:path, $tan:path, $acos:path, $asin:path, $atan:path) => {
+        impl Trig for $type {
+            const PI: Self = $pi;
             #[inline(always)]
-            fn sqrt(self) -> Self {
-                $sqrt(self)
+            fn acos(self) -> Self {
+                $acos(self)
+            }
+            #[inline(always)]
+            fn asin(self) -> Self {
+                $asin(self)
+            }
+            #[inline(always)]
+            fn atan(self) -> Self {
+                $atan(self)
+            }
+            #[inline(always)]
+            fn cos(self) -> Self {
+                $cos(self)
+            }
+            #[inline(always)]
+            fn sin(self) -> Self {
+                $sin(self)
+            }
+            #[inline(always)]
+            fn tan(self) -> Self {
+                $tan(self)
             }
         }
+
+        ////////////////////////////////////////////////////////////////////////////////
+    };
+}
+
+/// Implements the `Real` trait for a given type.
+///
+/// This macro implements the `Real` trait and the `Signed` trait.
+///
+/// # Arguments
+/// - `$type`: The numeric type.
+/// - `$abs:path`: The `abs` function.
+/// - `$e:expr`: Literal or constant representing Euler's number.
+/// - `$inf:expr`: Literal or constant representing infinity.
+/// - `$nan:expr`: Literal or constant representing NaN.
+#[macro_export]
+macro_rules! impl_real {
+    ($type:ty, $abs:path, $inf:expr, $nan:expr, $atan2:path) => {
+        impl Signed for $type {
+            #[inline(always)]
+            fn abs(self) -> Self {
+                $abs(self)
+            }
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////
+
+        impl Real for $type {
+            const INF: Self = $inf;
+            const NAN: Self = $nan;
+            fn atan2(self, rhs: Self) -> Self {
+                $atan2(self, rhs)
+            }
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////
     };
 }
 
@@ -431,34 +528,8 @@ macro_rules! impl_real {
 /// epsilon value.
 ///
 /// # Arguments
-///
 /// - `$type`: The numeric type for which to implement `Field` (e.g., `f32`, `f64`).
 /// - `$epsilon`: The expression for the machine epsilon value (e.g., `f32::EPSILON`).
-///
-/// # Safety
-///
-/// This macro does not generate `unsafe` code. The user is responsible for providing
-/// the correct machine epsilon value for the type. An incorrect value can lead to
-/// precision errors and faulty logic in floating-point comparisons, which could
-/// compromise the safety and correctness of numerical algorithms.
-///
-/// - **Pre-conditions**: None.
-/// - **Post-conditions**: None.
-/// - **Invariants**: The provided epsilon value must be a constant, positive value
-///   that correctly represents the machine epsilon for the given type.
-/// - **Assumptions**: Assumes the provided epsilon value is correct as per the
-///   IEEE 754 standard for floating-point types.
-///
-/// # Panics
-/// * This macro does not call panic.
-///
-/// # Example
-///
-/// ```compile_fail
-/// // This is how the macro is used to implement Field for f32.
-/// use control_rs::math::num_traits::{Field, ArithmeticError};
-/// control_rs::impl_field!(f32, f32::EPSILON);
-/// ```
 #[macro_export]
 macro_rules! impl_field {
     ($type:ty, $epsilon:expr) => {
@@ -468,123 +539,287 @@ macro_rules! impl_field {
                 $epsilon
             }
         }
+
+        ////////////////////////////////////////////////////////////////////////////////
     };
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Cartesian Quadrant Helper
+////////////////////////////////////////////////////////////////////////////////
+
+impl CartesianQuadrant2D {
+    /// Instantiate a `CartesianQuadrant2D` from 2D coordinate.
+    ///
+    /// # Generic Arguments
+    /// * `T` - Type of the coordinates.
+    ///
+    /// # Arguments
+    /// * `x` - The first coordinate value.
+    /// * `y` - The second coordinate value.
+    ///
+    /// # Returns
+    /// * `quadrant` - Variant of the `CartesianQuadrant2D` enum corresponding to the coordinates.
+    #[must_use]
+    pub fn from_coords<T: Zero + PartialOrd>(x: &T, y: &T) -> Self {
+        match (x.partial_cmp(&T::ZERO), y.partial_cmp(&T::ZERO)) {
+            (Some(Ordering::Equal), Some(Ordering::Equal)) => Self::Origin,
+
+            (Some(Ordering::Equal), Some(Ordering::Greater)) => {
+                Self::PositiveYAxis
+            }
+            (Some(Ordering::Equal), Some(Ordering::Less)) => {
+                Self::NegativeYAxis
+            }
+
+            (Some(Ordering::Greater), Some(Ordering::Equal)) => {
+                Self::PositiveXAxis
+            }
+            (Some(Ordering::Less), Some(Ordering::Equal)) => {
+                Self::NegativeXAxis
+            }
+
+            (Some(Ordering::Greater), Some(Ordering::Greater)) => Self::Q1,
+            (Some(Ordering::Less), Some(Ordering::Greater)) => Self::Q2,
+            (Some(Ordering::Less), Some(Ordering::Less)) => Self::Q3,
+            (Some(Ordering::Greater), Some(Ordering::Less)) => Self::Q4,
+
+            // Catch-all handles Cases where x or y are NaN, returning Undefined
+            _ => Self::Undefined,
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for f32 (Embedded standard)
+////////////////////////////////////////////////////////////////////////////////
+
 impl Scalar for f32 {}
-impl_ring!(f32, 1.0, 0.0);
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(f32, 1.0, 0.0, f32::MAX, f32::MIN, f32::MIN_POSITIVE);
+
 impl_field!(f32, f32::EPSILON);
-impl_real!(
+
+impl_exp!(
     f32,
-    libm::fabsf,
-    libm::sqrtf,
+    core::f32::consts::E,
+    libm::expf,
     libm::logf,
     libm::log10f,
-    libm::expf,
-    libm::powf
+    libm::powf,
+    libm::sqrtf
 );
 
+impl_trig!(
+    f32,
+    core::f32::consts::PI,
+    libm::cosf,
+    libm::sinf,
+    libm::tanf,
+    libm::acosf,
+    libm::asinf,
+    libm::atanf
+);
+
+impl_real!(f32, libm::fabsf, f32::INFINITY, f32::NAN, libm::atan2f);
+
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for f64
+////////////////////////////////////////////////////////////////////////////////
+
 impl Scalar for f64 {}
-impl_ring!(f64, 1.0, 0.0);
-impl_field!(f64, f64::EPSILON); // Corrected macro call
-impl_real!(
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(f64, 1.0, 0.0, f64::MAX, f64::MIN, f64::MIN_POSITIVE);
+
+impl_field!(f64, f64::EPSILON);
+
+impl_exp!(
     f64,
-    libm::fabs,
-    libm::sqrt,
+    core::f64::consts::E,
+    libm::exp,
     libm::log,
     libm::log10,
-    libm::exp,
-    libm::pow
+    libm::pow,
+    libm::sqrt
 );
 
+impl_trig!(
+    f64,
+    core::f64::consts::PI,
+    libm::cos,
+    libm::sin,
+    libm::tan,
+    libm::acos,
+    libm::asin,
+    libm::atan
+);
+
+impl_real!(f64, libm::fabs, f64::INFINITY, f64::NAN, libm::atan2);
+
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for i8
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for i8 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(i8, 1, 0, i8::MAX, i8::MIN, 1);
+
+////////////////////////////////////////////////////////////////////////////////
+
 impl Signed for i8 {
     #[inline(always)]
     fn abs(self) -> Self {
         self.abs()
     }
 }
-impl_ring!(i8, 1, 0);
 
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for i16
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for i16 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(i16, 1, 0, i16::MAX, i16::MIN, 1);
+
 impl Signed for i16 {
     #[inline(always)]
     fn abs(self) -> Self {
         self.abs()
     }
 }
-impl_ring!(i16, 1, 0);
 
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for i32
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for i32 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(i32, 1, 0, i32::MAX, i32::MIN, 1);
+
 impl Signed for i32 {
     #[inline(always)]
     fn abs(self) -> Self {
         self.abs()
     }
 }
-impl_ring!(i32, 1, 0);
 
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for i64
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for i64 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(i64, 1, 0, i64::MAX, i64::MIN, 1);
+
 impl Signed for i64 {
     #[inline(always)]
     fn abs(self) -> Self {
         self.abs()
     }
 }
-impl_ring!(i64, 1, 0);
 
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for i128
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for i128 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(i128, 1, 0, i128::MAX, i128::MIN, 1);
+
 impl Signed for i128 {
     #[inline(always)]
     fn abs(self) -> Self {
         self.abs()
     }
 }
-impl_ring!(i128, 1, 0);
 
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for isize
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for isize {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(isize, 1, 0, isize::MAX, isize::MIN, 1);
+
 impl Signed for isize {
     #[inline(always)]
     fn abs(self) -> Self {
         self.abs()
     }
 }
-impl_ring!(isize, 1, 0);
 
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for u8
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for u8 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(u8, 1, 0, u8::MAX, u8::MIN, 1);
+
 impl Unsigned for u8 {}
-impl_ring!(u8, 1, 0);
 
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for u16
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for u16 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(u16, 1, 0, u16::MAX, u16::MIN, 1);
+
 impl Unsigned for u16 {}
-impl_ring!(u16, 1, 0);
 
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for u32
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for u32 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(u32, 1, 0, u32::MAX, u32::MIN, 1);
+
 impl Unsigned for u32 {}
-impl_ring!(u32, 1, 0);
 
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for u64
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for u64 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(u64, 1, 0, u64::MAX, u64::MIN, 1);
+
 impl Unsigned for u64 {}
-impl_ring!(u64, 1, 0);
 
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for u128
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for u128 {}
-impl Unsigned for u128 {}
-impl_ring!(u128, 1, 0);
 
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(u128, 1, 0, u128::MAX, u128::MIN, 1);
+
+impl Unsigned for u128 {}
+
+////////////////////////////////////////////////////////////////////////////////
 // Implementations for usize
+////////////////////////////////////////////////////////////////////////////////
 impl Scalar for usize {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl_ring!(usize, 1, 0, usize::MAX, usize::MIN, 1);
+
 impl Unsigned for usize {}
-impl_ring!(usize, 1, 0);
