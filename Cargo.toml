@@ -9,7 +9,7 @@ categories = ["embedded", "science", "no-std"]
 keywords = ["control", "robotics", "firmware", "autonomy"]
 
 [workspace]
-members = [".", "xtask"]
+members = [".", "teensy4-examples", "xtask"]
 
 [dependencies]
 libm = "0.2.16"
@@ -30,3 +30,4 @@ opt-level = 3
 codegen-units = 1
 # Disable debug assertions
 debug-assertions = false
+panic = "abort"

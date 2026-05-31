@@ -39,3 +39,4 @@ pub mod nonlinear_tools;
 pub mod robust_tools;
 // pub mod state_space;
 // mod transfer_function;
+pub mod hil_test;
