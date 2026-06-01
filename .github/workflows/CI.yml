@@ -21,7 +21,7 @@ jobs:
         run: cargo binstall cargo-tarpaulin@0.35.2 -y
 
       - name: Run CI
-        run: cargo xtask ci
+        run: cargo control-rs-xtask ci
 
       - name: Post PR Comment
         if: github.event_name == 'pull_request' && (success() || failure())

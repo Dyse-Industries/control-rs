@@ -4,11 +4,11 @@
 use cortex_m_rt::entry;
 use cortex_m_semihosting::{debug, hprintln};
 
-use panic_semihosting as _;
-
-use control_rs::hil_test::{
+use control_rs_hil::hil_test::{
     AtomicU32Setting, ExecDescriptor, Setting, SuiteDescriptor,
 };
+
+use panic_semihosting as _;
 
 // --- Test Definitions ---
 
@@ -97,7 +97,7 @@ fn main() -> ! {
     }
 
     // Tell QEMU to exit cleanly with a success code.
-    // This allows your xtask CI script to detect when the run finishes.
+    // This allows your control-rs-xtask CI script to detect when the run finishes.
     debug::exit(debug::EXIT_SUCCESS);
     loop {}
 }

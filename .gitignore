@@ -6,6 +6,8 @@ Cargo.lock
 **/.DS_Store
 **/*.diff
 
+# Things the control-rs CI might generate.
+clippy.json
 ci-report.md
 cobertura.xml
 tarpaulin-report.html

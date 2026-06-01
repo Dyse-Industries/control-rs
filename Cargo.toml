@@ -9,7 +9,8 @@ categories = ["embedded", "science", "no-std"]
 keywords = ["control", "robotics", "firmware", "autonomy"]
 
 [workspace]
-members = [".", "teensy4-examples", "xtask"]
+members = [".", "control-rs-hil", "control-rs-xtask"]
+default-members = ["."]
 
 [dependencies]
 libm = "0.2.16"
@@ -30,4 +31,10 @@ opt-level = 3
 codegen-units = 1
 # Disable debug assertions
 debug-assertions = false
-panic = "abort"
+
+
+[profile.release-qemu]
+inherits = "release"
+
+[profile.release-qemu.build-override]
+opt-level = 0

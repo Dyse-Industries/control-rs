@@ -8,11 +8,61 @@ fn main() {
     let task = env::args().nth(1);
     match task.as_deref() {
         Some("ci") => run_ci(),
+        Some("qemu") => run_qemu(),
         _ => {
-            eprintln!("Usage: cargo xtask ci");
+            eprintln!("Usage: cargo control-rs-xtask <task>");
+            eprintln!("Tasks: ci, qemu");
             exit(1);
         }
     }
+}
+
+fn run_qemu() {
+    println!("Building QEMU image...");
+    let build_status = Command::new("cargo")
+        .args([
+            "build",
+            "--package",
+            "control-rs-hil",
+            "--bin",
+            "control-rs-qemu",
+            "--target",
+            "thumbv7m-none-eabi",
+            "--profile",
+            "release-qemu",
+        ])
+        .status()
+        .expect("Failed to build QEMU image");
+
+    if !build_status.success() {
+        eprintln!("Failed to build QEMU image.");
+        exit(1);
+    }
+
+    let bin_path = "target/thumbv7m-none-eabi/release-qemu/control-rs-qemu";
+
+    println!("🚀 Launching QEMU...");
+
+    let qemu_status = Command::new("qemu-system-arm")
+        .args([
+            "-cpu",
+            "cortex-m7",
+            "-machine",
+            "lm3s6965evb",
+            "-nographic",
+            "-semihosting-config",
+            "enable=on,target=native",
+            "-kernel",
+            bin_path,
+        ])
+        .status()
+        .expect("Failed to start QEMU");
+
+    if !qemu_status.success() {
+        eprintln!("QEMU exited with an error.");
+        exit(1);
+    }
+    println!("QEMU run finished successfully.");
 }
 
 fn run_ci() {

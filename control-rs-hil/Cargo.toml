@@ -1,11 +1,9 @@
 [package]
-name = "control-rs-qemu"
+name = "control-rs-hil"
 version = "0.1.0"
 edition = "2024"
-publish = false
 
 [dependencies]
-control-rs = { path = ".." }
 cortex-m-rt = "0.7"
 cortex-m-semihosting = "0.5"
 panic-semihosting = "0.6"
