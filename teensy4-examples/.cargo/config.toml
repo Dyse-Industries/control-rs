@@ -1,9 +1,0 @@
-[build]
-target = "thumbv7em-none-eabihf"
-
-[target.thumbv7em-none-eabihf]
-rustflags = [
-    "-C", "link-arg=-t4link.x",
-    "-C", "link-arg=-hil_suites.x",
-]
-runner = "true" # Don't run the binary
