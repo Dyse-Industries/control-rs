@@ -33,8 +33,11 @@ codegen-units = 1
 debug-assertions = false
 
 
-[profile.release-qemu]
+[profile.qemu]
 inherits = "release"
+strip = false
+opt-level = 0
+lto = false
 
-[profile.release-qemu.build-override]
+[profile.qemu.build-override]
 opt-level = 0

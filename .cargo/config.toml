@@ -1,4 +1,4 @@
 [alias]
-xtask = ["run", "--package", "xtask", "--"]
+xtask = ["run", "--package", "control-rs-xtask", "--"]
 ci = ["xtask", "ci"]
 clippy-json = ["clippy", "--message-format=json", "--", "-D", "warnings"]

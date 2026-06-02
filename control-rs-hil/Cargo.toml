@@ -9,6 +9,6 @@ cortex-m-semihosting = "0.5"
 panic-semihosting = "0.6"
 
 [[bin]]
-name = "control-rs-qemu"
-path = "src/main.rs"
+name = "control-rs-qemu-arm"
+path = "src/bin/control-rs-qemu-arm.rs"
 test = false

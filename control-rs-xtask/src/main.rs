@@ -1,7 +1,7 @@
 use regex::Regex;
 use std::env;
 use std::fs;
-use std::process::{Command, exit};
+use std::process::{exit, Command};
 use std::time::Instant;
 
 fn main() {
@@ -18,47 +18,43 @@ fn main() {
 }
 
 fn run_qemu() {
-    println!("Building QEMU image...");
-    let build_status = Command::new("cargo")
+    let clean_status = Command::new("cargo")
         .args([
-            "build",
+            "clean",
             "--package",
             "control-rs-hil",
-            "--bin",
-            "control-rs-qemu",
             "--target",
-            "thumbv7m-none-eabi",
+            "thumbv7em-none-eabihf",
             "--profile",
-            "release-qemu",
+            "qemu",
         ])
         .status()
-        .expect("Failed to build QEMU image");
+        .expect("Failed to clean QEMU Sil kernel.");
 
-    if !build_status.success() {
-        eprintln!("Failed to build QEMU image.");
+    if !clean_status.success() {
+        eprintln!("Failed to clean QEMU image.");
         exit(1);
     }
 
-    let bin_path = "target/thumbv7m-none-eabi/release-qemu/control-rs-qemu";
-
-    println!("🚀 Launching QEMU...");
-
-    let qemu_status = Command::new("qemu-system-arm")
+    println!("Building QEMU image...");
+    let run_status = Command::new("cargo")
+        .env("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUNNER", "qemu-system-arm -cpu cortex-m7 -machine mps2-an500 -nographic -semihosting-config enable=on,target=native -kernel")
+        .env("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS", "-C link-arg=-Tlink.x -C link-arg=-Thil_suites.x")
         .args([
-            "-cpu",
-            "cortex-m7",
-            "-machine",
-            "lm3s6965evb",
-            "-nographic",
-            "-semihosting-config",
-            "enable=on,target=native",
-            "-kernel",
-            bin_path,
+            "run",
+            "--package",
+            "control-rs-hil",
+            "--bin",
+            "control-rs-qemu-arm",
+            "--target",
+            "thumbv7em-none-eabihf",
+            "--profile",
+            "qemu",
         ])
         .status()
-        .expect("Failed to start QEMU");
+        .expect("Failed to run QEMU Sil kernel.");
 
-    if !qemu_status.success() {
+    if !run_status.success() {
         eprintln!("QEMU exited with an error.");
         exit(1);
     }
