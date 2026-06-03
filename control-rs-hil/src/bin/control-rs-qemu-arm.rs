@@ -41,13 +41,15 @@ static EXECUTABLES: &[ExecDescriptor] = &[
 
 static SETTINGS: &[&dyn Setting] = &[&CONNECTION_TIMEOUT_MS];
 
-#[unsafe(link_section = ".hil_test_suites")]
-#[used]
 static SUITE_DESCRIPTOR: SuiteDescriptor = SuiteDescriptor {
     name: "qemu_math_suite",
     executables: EXECUTABLES,
     settings: SETTINGS,
 };
+
+#[unsafe(link_section = ".hil_test_suites")]
+#[used]
+static SUITE_DESCRIPTOR_PTR: &SuiteDescriptor = &SUITE_DESCRIPTOR;
 
 unsafe extern "Rust" {
     static __hil_test_suites_start: u8;
@@ -64,15 +66,15 @@ fn main() -> ! {
 
     unsafe {
         let start =
-            &__hil_test_suites_start as *const u8 as *const SuiteDescriptor;
-        let end = &__hil_test_suites_end as *const u8 as *const SuiteDescriptor;
+            &__hil_test_suites_start as *const u8 as *const &SuiteDescriptor;
+        let end = &__hil_test_suites_end as *const u8 as *const &SuiteDescriptor;
 
         let mut current = start;
         let mut total_suites = 0;
         let mut total_tests = 0;
 
         while current < end {
-            let suite = &*current;
+            let suite = *current;
             let _ = hprintln!("--- Suite: {} ---", suite.name);
 
             for exec in suite.executables {
