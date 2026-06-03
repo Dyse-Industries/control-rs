@@ -1,7 +1,7 @@
 use regex::Regex;
 use std::env;
 use std::fs;
-use std::process::{exit, Command};
+use std::process::{Command, exit};
 use std::time::Instant;
 
 fn main() {
@@ -71,10 +71,10 @@ fn run_ci() {
 
     let start_lint = Instant::now();
 
-    let ansi_escape = Regex::new(r"\x1B\[[0-9;]*[mK]").unwrap();
+    let ansi_escape = Regex::new(r"\x1B\[[0-9;]*[mK]|\x1B\(B").unwrap();
 
     let fmt_output = Command::new("cargo")
-        .args(["fmt", "--all", "--", "--check"])
+        .args(["fmt", "--all"])
         .output()
         .expect("Failed to run cargo fmt");
     let fmt_str = String::from_utf8_lossy(&fmt_output.stdout);
@@ -178,19 +178,25 @@ fn run_ci() {
     report.push_str(&collect_versions());
 
     if fmt_errors > 0 || clippy_errors > 0 {
-        report.push_str("### Cargo fmt & Clippy\n```text\n");
+        report.push_str(
+            "\n<details>\n<summary>Fmt and Clippy logs</summary>\n\n```text\n",
+        );
         if fmt_errors > 0 {
             report.push_str(&fmt_str);
+            report.push_str("\n");
         }
         if clippy_errors > 0 {
             report.push_str(&clippy_str);
+            report.push_str("\n");
         }
-        report.push_str("```\n\n");
+        report.push_str("\n```\n\n</details>\n");
     }
 
-    report.push_str("### Tarpaulin Output Log\n<details>\n<summary>Click to expand test logs</summary>\n\n```text\n");
+    report.push_str(
+        "\n<details>\n<summary>Tarpaulin Output Log</summary>\n\n```text\n",
+    );
     report.push_str(&tarp_str);
-    report.push_str("\n```\n</details>\n");
+    report.push_str("\n```\n\n</details>\n");
 
     report.push_str("</details>\n");
 
