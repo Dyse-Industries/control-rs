@@ -1,0 +1,22 @@
+# Configuration for control-rs HIL host bridge and TUI
+# Copy or edit this file to configure connection routing.
+
+# Target type: "qemu" (emulator) or "serial" (physical board via USB/UART)
+target = "qemu"
+
+[qemu]
+cpu = "cortex-m7"
+machine = "mps2-an500"
+args = [
+    "-nographic",
+    "-serial", "none",
+    "-monitor", "none",
+    "-chardev", "stdio,id=con0",
+    "-semihosting-config", "enable=on,chardev=con0"
+]
+
+[serial]
+# Teensy 4.0 CDC USB serial port configuration
+# Set this to your local serial port (e.g., "/dev/ttyACM0" on Linux, "COM3" on Windows, etc.)
+port = "/dev/ttyACM0"
+baud = 115200

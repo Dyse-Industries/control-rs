@@ -27,7 +27,9 @@ pub struct SuiteDescriptor {
 }
 
 /// A value that can be gotten or set by the test runner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
 pub enum SettingValue {
     /// A 32-bit unsigned integer value.
     U32(u32),
@@ -36,7 +38,9 @@ pub enum SettingValue {
 }
 
 /// The type of a setting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
 pub enum SettingType {
     /// A 32-bit unsigned integer type.
     U32,

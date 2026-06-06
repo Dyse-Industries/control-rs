@@ -1,105 +1,84 @@
 #![no_std]
 #![no_main]
 
-use cortex_m_rt::entry;
-use cortex_m_semihosting::{debug, hprintln};
-
-use control_rs_hil::hil_test::{
-    AtomicU32Setting, ExecDescriptor, Setting, SuiteDescriptor,
+use control_rs_hil::comms::{
+    Command, FrameReader, HostComms, Telemetry, frame_telemetry,
 };
+use control_rs_hil::runner::Context;
+use control_rs_hil::time::DummyClock;
+use control_rs_macros::{hil_setup, hil_suite};
 
-use panic_semihosting as _;
+// --- Communication Implementation via Direct Semihosting Syscalls ---
+
+#[allow(dead_code)]
+struct SemihostingComms {
+    reader: FrameReader,
+}
+
+impl HostComms for SemihostingComms {
+    type Error = ();
+
+    fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+        let c = unsafe {
+            cortex_m_semihosting::syscall1(cortex_m_semihosting::nr::READC, 0)
+        } as u8;
+
+        if let Some(payload) = self.reader.handle_byte(c) {
+            if let Ok(cmd) = postcard::from_bytes(payload) {
+                return Ok(Some(cmd));
+            }
+        }
+        Ok(None)
+    }
+
+    fn send_telemetry(
+        &mut self,
+        telemetry: &Telemetry<'_>,
+    ) -> Result<(), Self::Error> {
+        let mut buf = [0u8; 512];
+        if let Ok(len) = frame_telemetry(telemetry, &mut buf) {
+            for &b in &buf[..len] {
+                unsafe {
+                    cortex_m_semihosting::syscall(
+                        cortex_m_semihosting::nr::WRITEC,
+                        &b,
+                    );
+                }
+            }
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
 
 // --- Test Definitions ---
 
-static CONNECTION_TIMEOUT_MS: AtomicU32Setting =
-    AtomicU32Setting::new("connection_timeout_ms", 1000);
+#[hil_suite]
+pub mod qemu_math_suite {
+    pub static CONNECTION_TIMEOUT_MS: u32 = 1000;
 
-fn math_addition_test() {
-    let _ = hprintln!("Executing math addition test...");
-    assert_eq!(2 + 2, 4);
-}
-
-fn math_subtraction_test() {
-    let _ = hprintln!("Executing math subtraction test...");
-    assert_eq!(5 - 3, 2);
-}
-
-// While defining these manually works for the demo, wrapping this boilerplate
-// in a procedural macro will ultimately provide a much cleaner developer
-// experience for the HIL test harness setup moving forward.
-static EXECUTABLES: &[ExecDescriptor] = &[
-    ExecDescriptor {
-        name: "math_addition",
-        test_fn: math_addition_test,
-    },
-    ExecDescriptor {
-        name: "math_subtraction",
-        test_fn: math_subtraction_test,
-    },
-];
-
-static SETTINGS: &[&dyn Setting] = &[&CONNECTION_TIMEOUT_MS];
-
-static SUITE_DESCRIPTOR: SuiteDescriptor = SuiteDescriptor {
-    name: "qemu_math_suite",
-    executables: EXECUTABLES,
-    settings: SETTINGS,
-};
-
-#[unsafe(link_section = ".hil_test_suites")]
-#[used]
-static SUITE_DESCRIPTOR_PTR: &SuiteDescriptor = &SUITE_DESCRIPTOR;
-
-unsafe extern "Rust" {
-    static __hil_test_suites_start: u8;
-    static __hil_test_suites_end: u8;
-}
-
-// --- Main Runner ---
-
-#[entry]
-fn main() -> ! {
-    let _ = hprintln!("===============================================");
-    let _ = hprintln!("  QEMU HIL Test Runner Started");
-    let _ = hprintln!("===============================================");
-
-    unsafe {
-        let start =
-            &__hil_test_suites_start as *const u8 as *const &SuiteDescriptor;
-        let end = &__hil_test_suites_end as *const u8 as *const &SuiteDescriptor;
-
-        let mut current = start;
-        let mut total_suites = 0;
-        let mut total_tests = 0;
-
-        while current < end {
-            let suite = *current;
-            let _ = hprintln!("--- Suite: {} ---", suite.name);
-
-            for exec in suite.executables {
-                let _ = hprintln!("  [RUNNING] {}", exec.name);
-                (exec.test_fn)();
-                let _ = hprintln!("  [PASSED]  {}", exec.name);
-                total_tests += 1;
-            }
-
-            total_suites += 1;
-            current = current.add(1);
-        }
-
-        let _ = hprintln!("===============================================");
-        let _ = hprintln!("  HIL Test Runner Completed");
-        let _ = hprintln!(
-            "  Ran {} tests across {} suites.",
-            total_tests,
-            total_suites
-        );
-        let _ = hprintln!("===============================================");
+    fn math_addition() {
+        assert_eq!(2 + 2, 4);
     }
 
-    // Tell QEMU to exit cleanly with a success code.
-    // This allows your control-rs-xtask CI script to detect when the run finishes.
-    debug::exit(debug::EXIT_SUCCESS);
-    loop {}
+    fn math_subtraction() {
+        assert_eq!(5 - 3, 2);
+    }
+}
+
+// --- Main Entrypoint ---
+
+#[hil_setup]
+#[allow(dead_code)]
+fn setup() -> Context<SemihostingComms, DummyClock> {
+    let comms = SemihostingComms {
+        reader: FrameReader::new(),
+    };
+    let timer = DummyClock;
+    Context { comms, timer }
 }

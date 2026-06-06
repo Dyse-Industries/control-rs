@@ -8,6 +8,9 @@
       <sourceFolder url="file://$MODULE_DIR$/control-rs-xtask/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/firmware_examples/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/teensy4-examples/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/control-rs-macros/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/examples/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

@@ -4,16 +4,58 @@ use std::fs;
 use std::process::{Command, exit};
 use std::time::Instant;
 
+mod bridge;
+mod tui;
+
 fn main() {
     let task = env::args().nth(1);
     match task.as_deref() {
         Some("ci") => run_ci(),
         Some("qemu") => run_qemu(),
+        Some("hil-tui") => run_hil_tui(),
         _ => {
             eprintln!("Usage: cargo control-rs-xtask <task>");
-            eprintln!("Tasks: ci, qemu");
+            eprintln!("Tasks: ci, qemu, hil-tui");
             exit(1);
         }
+    }
+}
+
+fn build_qemu_elf() -> String {
+    println!("Building QEMU target ELF...");
+    let build_status = Command::new("cargo")
+        .env(
+            "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS",
+            "-C link-arg=-Tlink.x -C link-arg=-Thil_suites.x",
+        )
+        .args([
+            "build",
+            "--package",
+            "control-rs-hil",
+            "--bin",
+            "control-rs-qemu-arm",
+            "--target",
+            "thumbv7em-none-eabihf",
+            "--profile",
+            "qemu",
+        ])
+        .status()
+        .expect("Failed to build QEMU target.");
+
+    if !build_status.success() {
+        eprintln!("Failed to compile QEMU target.");
+        exit(1);
+    }
+
+    "target/thumbv7em-none-eabihf/qemu/control-rs-qemu-arm".to_string()
+}
+
+fn run_hil_tui() {
+    let elf_path = build_qemu_elf();
+    let bridge = bridge::QemuBridge::new(&elf_path);
+    if let Err(e) = tui::run_tui(bridge) {
+        eprintln!("TUI Error: {}", e);
+        exit(1);
     }
 }
 
@@ -38,7 +80,7 @@ fn run_qemu() {
 
     println!("Building QEMU image...");
     let run_status = Command::new("cargo")
-        .env("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUNNER", "qemu-system-arm -cpu cortex-m7 -machine mps2-an500 -nographic -semihosting-config enable=on,target=native -kernel")
+        .env("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUNNER", "qemu-system-arm -cpu cortex-m7 -machine mps2-an500 -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel")
         .env("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS", "-C link-arg=-Tlink.x -C link-arg=-Thil_suites.x")
         .args([
             "run",
@@ -173,6 +215,51 @@ fn run_ci() {
         cov_lines, tot_lines
     ));
 
+    // Headless HIL Runner Execution
+    println!("Running headlessly executed QEMU HIL tests...");
+    let start_hil = Instant::now();
+    let hil_results_str = match run_headless_hil() {
+        Ok(results) => {
+            let mut s = String::from("### Headless HIL Test Results\n\n");
+            s.push_str("| Suite | Test | Result | Cycles | Time |\n| :--- | :--- | :--- | :--- | :--- |\n");
+            let mut all_passed = true;
+            for r in &results {
+                let res_str = match r.state {
+                    control_rs_hil::comms::TestState::Passed => "PASSED",
+                    _ => {
+                        all_passed = false;
+                        "FAILED"
+                    }
+                };
+                let cyc_str =
+                    r.cycles.map_or("N/A".to_string(), |c| c.to_string());
+                let time_str =
+                    r.time_us.map_or("N/A".to_string(), |t| format!("{}us", t));
+                s.push_str(&format!(
+                    "| {} | {} | {} | {} | {} |\n",
+                    r.suite_name, r.test_name, res_str, cyc_str, time_str
+                ));
+            }
+            s.push_str("\n");
+            if !all_passed {
+                ci_success = false;
+            }
+            s
+        }
+        Err(e) => {
+            ci_success = false;
+            format!(
+                "### Headless HIL Test Results\n\n**ERROR**: Failed to run HIL tests: {}\n\n",
+                e
+            )
+        }
+    };
+    report.push_str(&hil_results_str);
+    println!(
+        "Headless HIL tests completed in {:.2}s.",
+        start_hil.elapsed().as_secs_f32()
+    );
+
     report.push_str("<details>\n<summary>Detailed Logs</summary>\n\n");
 
     report.push_str(&collect_versions());
@@ -255,4 +342,239 @@ fn collect_versions() -> String {
     section.push_str("\n```\n</details>\n");
 
     section
+}
+
+struct HeadlessTestResult {
+    suite_name: String,
+    test_name: String,
+    state: control_rs_hil::comms::TestState,
+    cycles: Option<u64>,
+    time_us: Option<u64>,
+}
+
+struct TestItem {
+    name: String,
+    state: control_rs_hil::comms::TestState,
+}
+
+struct SettingItem {
+    name: String,
+    value: control_rs_hil::hil_test::SettingValue,
+}
+
+struct SuiteItem {
+    name: String,
+    tests: Vec<TestItem>,
+    settings: Vec<SettingItem>,
+}
+
+fn run_headless_hil() -> Result<Vec<HeadlessTestResult>, String> {
+    use bridge::BridgeMessage;
+    use control_rs_hil::comms::{Command, Telemetry, TestState};
+    use std::time::Duration;
+
+    let elf_path = build_qemu_elf();
+    let mut bridge = bridge::QemuBridge::new_forced_qemu(&elf_path);
+
+    // Initial discovery
+    let mut last_send = Instant::now();
+    let _ = bridge.send_command(&Command::ListSuites);
+
+    let mut suites: Vec<SuiteItem> = Vec::new();
+    let mut run_queue = Vec::new();
+    let mut results = Vec::new();
+    let mut current_running = None;
+    let mut discovery_complete = false;
+    let mut exit_loop = false;
+
+    // We set a safety timeout (e.g. 15 seconds) so CI doesn't hang forever
+    let start_time = Instant::now();
+    let timeout = Duration::from_secs(15);
+
+    while !exit_loop {
+        if start_time.elapsed() > timeout {
+            bridge.kill();
+            return Err("HIL execution timed out after 15s".to_string());
+        }
+
+        if !discovery_complete
+            && last_send.elapsed() > Duration::from_millis(500)
+        {
+            let _ = bridge.send_command(&Command::ListSuites);
+            last_send = Instant::now();
+        }
+
+        // Poll bridge messages
+        while let Ok(msg) = bridge.receiver().try_recv() {
+            match msg {
+                BridgeMessage::Telemetry(telemetry) => match telemetry {
+                    Telemetry::SuiteInfo { suite_id, name, .. } => {
+                        let id = suite_id as usize;
+                        while suites.len() <= id {
+                            suites.push(SuiteItem {
+                                name: String::new(),
+                                tests: Vec::new(),
+                                settings: Vec::new(),
+                            });
+                        }
+                        suites[id].name = name.to_string();
+                    }
+                    Telemetry::TestInfo {
+                        suite_id,
+                        test_id,
+                        name,
+                    } => {
+                        let s_id = suite_id as usize;
+                        let t_id = test_id as usize;
+                        while suites[s_id].tests.len() <= t_id {
+                            suites[s_id].tests.push(TestItem {
+                                name: String::new(),
+                                state: TestState::Pending,
+                            });
+                        }
+                        suites[s_id].tests[t_id].name = name.to_string();
+                    }
+                    Telemetry::SettingInfo {
+                        suite_id,
+                        setting_id,
+                        name,
+                        value,
+                    } => {
+                        let s_id = suite_id as usize;
+                        let set_id = setting_id as usize;
+                        while suites[s_id].settings.len() <= set_id {
+                            suites[s_id].settings.push(SettingItem {
+                                name: String::new(),
+                                value:
+                                    control_rs_hil::hil_test::SettingValue::U8(
+                                        0,
+                                    ),
+                            });
+                        }
+                        suites[s_id].settings[set_id].name = name.to_string();
+                        suites[s_id].settings[set_id].value = value;
+                    }
+                    Telemetry::DiscoveryComplete => {
+                        discovery_complete = true;
+                        // Enqueue all tests
+                        for (s_idx, suite) in suites.iter().enumerate() {
+                            for (t_idx, _) in suite.tests.iter().enumerate() {
+                                run_queue.push((s_idx as u16, t_idx as u16));
+                            }
+                        }
+                        // Start first test
+                        if !run_queue.is_empty() {
+                            let (next_s, next_t) = run_queue.remove(0);
+                            current_running = Some((next_s, next_t));
+                            let _ =
+                                bridge.send_command(&Command::RunExecutable {
+                                    suite_id: next_s,
+                                    test_id: next_t,
+                                });
+                        } else {
+                            exit_loop = true;
+                        }
+                    }
+                    Telemetry::TestStateChange {
+                        suite_id,
+                        test_id,
+                        state: new_state,
+                    } => {
+                        let s_id = suite_id as usize;
+                        let t_id = test_id as usize;
+                        suites[s_id].tests[t_id].state = new_state;
+
+                        if new_state == TestState::Failed {
+                            // Record failed test
+                            results.push(HeadlessTestResult {
+                                suite_name: suites[s_id].name.clone(),
+                                test_name: suites[s_id].tests[t_id]
+                                    .name
+                                    .clone(),
+                                state: TestState::Failed,
+                                cycles: None,
+                                time_us: None,
+                            });
+
+                            current_running = None;
+                            if !run_queue.is_empty() {
+                                let (next_s, next_t) = run_queue.remove(0);
+                                current_running = Some((next_s, next_t));
+                                let _ = bridge.send_command(
+                                    &Command::RunExecutable {
+                                        suite_id: next_s,
+                                        test_id: next_t,
+                                    },
+                                );
+                            } else {
+                                exit_loop = true;
+                            }
+                        }
+                    }
+                    Telemetry::MetricReport {
+                        suite_id,
+                        test_id,
+                        cycles,
+                        time_us,
+                    } => {
+                        let s_id = suite_id as usize;
+                        let t_id = test_id as usize;
+
+                        results.push(HeadlessTestResult {
+                            suite_name: suites[s_id].name.clone(),
+                            test_name: suites[s_id].tests[t_id].name.clone(),
+                            state: TestState::Passed,
+                            cycles: Some(cycles),
+                            time_us: Some(time_us),
+                        });
+
+                        current_running = None;
+                        if !run_queue.is_empty() {
+                            let (next_s, next_t) = run_queue.remove(0);
+                            current_running = Some((next_s, next_t));
+                            let _ =
+                                bridge.send_command(&Command::RunExecutable {
+                                    suite_id: next_s,
+                                    test_id: next_t,
+                                });
+                        } else {
+                            exit_loop = true;
+                        }
+                    }
+                    Telemetry::Log(_) => {}
+                    Telemetry::TargetPanic {
+                        message,
+                        file,
+                        line,
+                    } => {
+                        bridge.kill();
+                        return Err(format!(
+                            "Target panicked: '{}' at {}:{}",
+                            message, file, line
+                        ));
+                    }
+                },
+                BridgeMessage::RawConsole(_) => {}
+            }
+        }
+
+        if let Ok(Some(status)) = bridge.try_wait() {
+            if !discovery_complete
+                || current_running.is_some()
+                || !run_queue.is_empty()
+            {
+                bridge.kill();
+                return Err(format!(
+                    "QEMU process exited unexpectedly: {}",
+                    status
+                ));
+            }
+            exit_loop = true;
+        }
+
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    bridge.kill();
+    Ok(results)
 }
