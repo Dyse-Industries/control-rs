@@ -13,49 +13,10 @@ pub enum BridgeMessage {
     RawConsole(String),
 }
 
-/// Configuration parsed from hil.toml
-#[derive(Debug, serde::Deserialize)]
-pub struct HilConfig {
-    pub target: String,
-    pub qemu: Option<QemuConfig>,
-    pub serial: Option<SerialConfig>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct QemuConfig {
-    pub cpu: String,
-    pub machine: String,
-    pub args: Vec<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct SerialConfig {
-    pub port: String,
-    pub baud: u32,
-}
-
-impl HilConfig {
-    pub fn load() -> Self {
-        if let Ok(content) = std::fs::read_to_string("hil.toml") {
-            if let Ok(config) = toml::from_str(&content) {
-                return config;
-            }
-        }
-        // Default to QEMU configuration if hil.toml is not found or invalid
-        Self {
-            target: "qemu".to_string(),
-            qemu: Some(QemuConfig {
-                cpu: "cortex-m7".to_string(),
-                machine: "mps2-an500".to_string(),
-                args: vec![
-                    "-nographic".to_string(),
-                    "-semihosting-config".to_string(),
-                    "enable=on,target=native".to_string(),
-                ],
-            }),
-            serial: None,
-        }
-    }
+#[derive(Debug, Clone)]
+pub enum Target {
+    Qemu,
+    Serial { port: String, baud: u32 },
 }
 
 enum BridgeInner {
@@ -72,33 +33,24 @@ enum BridgeInner {
 pub struct QemuBridge {
     inner: BridgeInner,
     rx_from_target: Receiver<BridgeMessage>,
+    target_info: String,
+    link_info: String,
 }
 
 impl QemuBridge {
-    /// Spawns a new QEMU process, ignoring any configured serial target.
-    pub fn new_forced_qemu(elf_path: &str) -> Self {
-        let config = HilConfig::load();
-        let (tx, rx) = channel();
-        Self::new_qemu_inner(elf_path, &config, tx, rx)
-    }
-
     /// Spawns a new QEMU process or connects to a serial device.
-    pub fn new(elf_path: &str) -> Self {
-        let config = HilConfig::load();
+    pub fn new(elf_path: &str, target: Target) -> Self {
         let (tx, rx) = channel();
 
-        match config.target.as_str() {
-            "serial" => {
-                let serial_config = config
-                    .serial
-                    .as_ref()
-                    .expect("Missing [serial] configuration in hil.toml");
-
-                let port =
-                    serialport::new(&serial_config.port, serial_config.baud)
-                        .timeout(std::time::Duration::from_millis(10))
-                        .open()
-                        .expect("Failed to open serial port");
+        match target {
+            Target::Serial {
+                port: port_path,
+                baud,
+            } => {
+                let port = serialport::new(&port_path, baud)
+                    .timeout(std::time::Duration::from_millis(10))
+                    .open()
+                    .expect("Failed to open serial port");
 
                 let mut port_clone =
                     port.try_clone().expect("Failed to clone serial port");
@@ -166,28 +118,37 @@ impl QemuBridge {
                 Self {
                     inner: BridgeInner::Serial { port },
                     rx_from_target: rx,
+                    target_info: "Teensy 4.0 (Cortex-M7)".to_string(),
+                    link_info: format!("USB CDC ({})", port_path),
                 }
             }
-            _ => Self::new_qemu_inner(elf_path, &config, tx, rx),
+            Target::Qemu => Self::new_qemu_inner(elf_path, tx, rx),
         }
     }
 
     fn new_qemu_inner(
         elf_path: &str,
-        config: &HilConfig,
         tx: Sender<BridgeMessage>,
         rx: Receiver<BridgeMessage>,
     ) -> Self {
-        let qemu_config = config
-            .qemu
-            .as_ref()
-            .expect("Missing [qemu] configuration in hil.toml");
-
         let mut child = StdCommand::new("qemu-system-arm")
-            .args(["-cpu", &qemu_config.cpu, "-machine", &qemu_config.machine])
-            .args(&qemu_config.args)
-            .arg("-kernel")
-            .arg(elf_path)
+            .args([
+                "-cpu",
+                "cortex-m7",
+                "-machine",
+                "mps2-an500",
+                "-nographic",
+                "-serial",
+                "none",
+                "-monitor",
+                "none",
+                "-chardev",
+                "stdio,id=con0",
+                "-semihosting-config",
+                "enable=on,chardev=con0",
+                "-kernel",
+                elf_path,
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -270,7 +231,17 @@ impl QemuBridge {
         Self {
             inner: BridgeInner::Qemu { child, stdin },
             rx_from_target: rx,
+            target_info: "QEMU (cortex-m7)".to_string(),
+            link_info: "Semihosting (mps2-an500)".to_string(),
         }
+    }
+
+    pub fn target_info(&self) -> &str {
+        &self.target_info
+    }
+
+    pub fn link_info(&self) -> &str {
+        &self.link_info
     }
 
     /// Sends a command to the target using the packet framing protocol.

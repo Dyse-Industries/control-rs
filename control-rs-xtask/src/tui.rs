@@ -161,17 +161,8 @@ pub fn run_tui(
 
     let mut state = AppState::new();
 
-    // Dynamically update header based on hil.toml configuration
-    let config = crate::bridge::HilConfig::load();
-    if config.target == "serial" {
-        if let Some(serial) = &config.serial {
-            state.target_info = "Teensy 4.0 (Cortex-M7)".to_string();
-            state.link_info = format!("USB CDC ({})", serial.port);
-        }
-    } else if let Some(qemu) = &config.qemu {
-        state.target_info = format!("QEMU ({})", qemu.cpu);
-        state.link_info = format!("Semihosting ({})", qemu.machine);
-    }
+    state.target_info = bridge.target_info().to_string();
+    state.link_info = bridge.link_info().to_string();
 
     // Trigger initial test discovery
     let mut last_send = std::time::Instant::now();

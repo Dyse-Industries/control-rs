@@ -29,6 +29,10 @@ pub static mut PANIC_TELEMETRY_SENDER: Option<
     unsafe fn(*mut core::ffi::c_void, &Telemetry<'_>),
 > = None;
 
+/// Static function pointer used to flush communications during a panic.
+pub static mut PANIC_COMMS_FLUSHER: Option<unsafe fn(*mut core::ffi::c_void)> =
+    None;
+
 /// Helper function to transmit telemetry via type-erased pointer.
 unsafe fn send_telemetry_via_ptr<C: HostComms>(
     comms_ptr: *mut core::ffi::c_void,
@@ -37,6 +41,14 @@ unsafe fn send_telemetry_via_ptr<C: HostComms>(
     if !comms_ptr.is_null() {
         let comms = unsafe { &mut *(comms_ptr as *mut C) };
         let _ = comms.send_telemetry(telemetry);
+        let _ = comms.flush();
+    }
+}
+
+/// Helper function to flush communications via type-erased pointer.
+unsafe fn flush_comms_via_ptr<C: HostComms>(comms_ptr: *mut core::ffi::c_void) {
+    if !comms_ptr.is_null() {
+        let comms = unsafe { &mut *(comms_ptr as *mut C) };
         let _ = comms.flush();
     }
 }
@@ -78,6 +90,7 @@ where
             ACTIVE_COMMS_PTR =
                 &mut self.comms as *mut C as *mut core::ffi::c_void;
             PANIC_TELEMETRY_SENDER = Some(send_telemetry_via_ptr::<C>);
+            PANIC_COMMS_FLUSHER = Some(flush_comms_via_ptr::<C>);
         }
 
         let res = (|| {
@@ -106,6 +119,7 @@ where
         unsafe {
             ACTIVE_COMMS_PTR = core::ptr::null_mut();
             PANIC_TELEMETRY_SENDER = None;
+            PANIC_COMMS_FLUSHER = None;
         }
 
         res

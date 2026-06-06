@@ -2,6 +2,11 @@
 target = "thumbv7em-none-eabihf"
 
 [target.thumbv7em-none-eabihf]
+runner = [
+    "bash",
+    "-c",
+    "rust-objcopy -O ihex \"$0\" \"${0}.hex\" && teensy_loader_cli -w -v --mcu=TEENSY40 \"${0}.hex\""
+]
 rustflags = [
     "-C", "link-arg=-Tt4link.x",
 ]

@@ -116,6 +116,12 @@ impl HostComms for TeensyComms {
     }
 
     fn flush(&mut self) -> Result<(), ()> {
+        if self.configured {
+            for _ in 0..10_000 {
+                self.usb_device.poll(&mut [&mut self.usb_class]);
+                core::hint::spin_loop();
+            }
+        }
         Ok(())
     }
 }

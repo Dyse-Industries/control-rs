@@ -101,6 +101,16 @@ teensy_loader_cli -w -v --mcu=TEENSY40 teensy4-example.hex
 The status LED on Pin 13 will light up, indicating that the USB HIL server is
 active and waiting for a connection from the host.
 
+### Alternative: Run/Flash via Cargo Alias
+
+Alternatively, you can compile, convert, and flash the Teensy in one step from the workspace root:
+
+```bash
+cargo run-teensy
+```
+
+Press the program button on the Teensy 4 board when prompted to initiate flashing.
+
 ---
 
 ## Host-Side Testing & TUI Verification
@@ -115,35 +125,24 @@ Check the device path assigned by the host operating system:
 - **macOS**: `/dev/tty.usbmodem101` (or similar)
 - **Windows**: `COM3` (or check Device Manager for the virtual COM port index)
 
-### 2. Configure the HIL Bridge Routing
+### 2. Launch the TUI
 
-In the root directory of the `control-rs` workspace, edit
-the [hil.toml](file:///home/mdyson/control-rs/hil.toml) file:
-
-1. Change `target = "qemu"` to `target = "serial"`.
-2. Update the `port` field under the `[serial]` section to point to your
-   identified virtual serial port:
-   ```toml
-   target = "serial"
-
-   [serial]
-   port = "/dev/ttyACM0"   # Replace with your serial port path
-   baud = 115200
-   ```
-
-### 3. Launch the TUI
-
-Run the following cargo command at the root of the workspace to start the
-interactive console:
+Run the cargo alias from the workspace root (defaults to `/dev/ttyACM0` and `115200` baud):
 
 ```bash
-cargo run --package control-rs-xtask -- hil-tui
+cargo hil-teensy
+```
+
+If your Teensy is assigned to a different serial port path (e.g. `/dev/ttyACM1`), pass it as an argument:
+
+```bash
+cargo hil-teensy /dev/ttyACM1
 ```
 
 The TUI header will automatically update to display:
 
 - **TARGET**: `Teensy 4.0 (Cortex-M7)`
-- **LINK**: `USB CDC (/dev/ttyACM0)`
+- **LINK**: `USB CDC (/dev/ttyACM0)` (or your specified port)
 
 You can now interactively trigger test cases (by selecting them and pressing
 `Enter`), change PID parameters, and inspect the real-time console telemetry

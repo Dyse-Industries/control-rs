@@ -8,17 +8,70 @@ mod bridge;
 mod tui;
 
 fn main() {
-    let task = env::args().nth(1);
-    match task.as_deref() {
-        Some("ci") => run_ci(),
-        Some("qemu") => run_qemu(),
-        Some("hil-tui") => run_hil_tui(),
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        print_usage_and_exit();
+    }
+
+    match args[1].as_str() {
+        "ci" => {
+            let target_str = args.get(2).map(|s| s.as_str()).unwrap_or("qemu");
+            let target = match target_str {
+                "qemu" => bridge::Target::Qemu,
+                "teensy" => {
+                    let port = args
+                        .get(3)
+                        .cloned()
+                        .unwrap_or_else(|| "/dev/ttyACM0".to_string());
+                    let baud = args
+                        .get(4)
+                        .and_then(|b| b.parse().ok())
+                        .unwrap_or(115200);
+                    bridge::Target::Serial { port, baud }
+                }
+                _ => {
+                    eprintln!("Unknown target: {}", target_str);
+                    exit(1);
+                }
+            };
+            run_ci(target);
+        }
+        "qemu" => {
+            run_qemu();
+        }
+        "hil-tui" => {
+            let target_str = args.get(2).map(|s| s.as_str()).unwrap_or("qemu");
+            let target = match target_str {
+                "qemu" => bridge::Target::Qemu,
+                "teensy" => {
+                    let port = args
+                        .get(3)
+                        .cloned()
+                        .unwrap_or_else(|| "/dev/ttyACM0".to_string());
+                    let baud = args
+                        .get(4)
+                        .and_then(|b| b.parse().ok())
+                        .unwrap_or(115200);
+                    bridge::Target::Serial { port, baud }
+                }
+                _ => {
+                    eprintln!("Unknown target: {}", target_str);
+                    exit(1);
+                }
+            };
+            run_hil_tui(target);
+        }
         _ => {
-            eprintln!("Usage: cargo control-rs-xtask <task>");
-            eprintln!("Tasks: ci, qemu, hil-tui");
-            exit(1);
+            print_usage_and_exit();
         }
     }
+}
+
+fn print_usage_and_exit() -> ! {
+    eprintln!("Usage: cargo control-rs-xtask <task> [target] [port] [baud]");
+    eprintln!("Tasks: ci, qemu, hil-tui");
+    eprintln!("Targets: qemu (default), teensy");
+    exit(1);
 }
 
 fn build_qemu_elf() -> String {
@@ -50,9 +103,14 @@ fn build_qemu_elf() -> String {
     "target/thumbv7em-none-eabihf/qemu/control-rs-qemu-arm".to_string()
 }
 
-fn run_hil_tui() {
-    let elf_path = build_qemu_elf();
-    let bridge = bridge::QemuBridge::new(&elf_path);
+fn run_hil_tui(target: bridge::Target) {
+    let bridge = match &target {
+        bridge::Target::Qemu => {
+            let elf_path = build_qemu_elf();
+            bridge::QemuBridge::new(&elf_path, target)
+        }
+        bridge::Target::Serial { .. } => bridge::QemuBridge::new("", target),
+    };
     if let Err(e) = tui::run_tui(bridge) {
         eprintln!("TUI Error: {}", e);
         exit(1);
@@ -103,7 +161,7 @@ fn run_qemu() {
     println!("QEMU run finished successfully.");
 }
 
-fn run_ci() {
+fn run_ci(target: bridge::Target) {
     unsafe {
         env::set_var("RUST_BACKTRACE", "full");
         env::set_var("CARGO_TERM_COLOR", "never");
@@ -216,9 +274,9 @@ fn run_ci() {
     ));
 
     // Headless HIL Runner Execution
-    println!("Running headlessly executed QEMU HIL tests...");
+    println!("Running headlessly executed HIL tests...");
     let start_hil = Instant::now();
-    let hil_results_str = match run_headless_hil() {
+    let hil_results_str = match run_headless_hil(target) {
         Ok(results) => {
             let mut s = String::from("### Headless HIL Test Results\n\n");
             s.push_str("| Suite | Test | Result | Cycles | Time |\n| :--- | :--- | :--- | :--- | :--- |\n");
@@ -368,13 +426,20 @@ struct SuiteItem {
     settings: Vec<SettingItem>,
 }
 
-fn run_headless_hil() -> Result<Vec<HeadlessTestResult>, String> {
+fn run_headless_hil(
+    target: bridge::Target,
+) -> Result<Vec<HeadlessTestResult>, String> {
     use bridge::BridgeMessage;
     use control_rs_hil::comms::{Command, Telemetry, TestState};
     use std::time::Duration;
 
-    let elf_path = build_qemu_elf();
-    let mut bridge = bridge::QemuBridge::new_forced_qemu(&elf_path);
+    let mut bridge = match &target {
+        bridge::Target::Qemu => {
+            let elf_path = build_qemu_elf();
+            bridge::QemuBridge::new(&elf_path, target)
+        }
+        bridge::Target::Serial { .. } => bridge::QemuBridge::new("", target),
+    };
 
     // Initial discovery
     let mut last_send = Instant::now();

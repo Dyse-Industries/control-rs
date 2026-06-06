@@ -154,6 +154,7 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[cfg(target_os = "none")]
         #[panic_handler]
         fn panic(info: &::core::panic::PanicInfo) -> ! {
+            ::cortex_m::interrupt::disable();
             let suite = ::control_rs_hil::runner::CURRENT_SUITE.load(::core::sync::atomic::Ordering::SeqCst);
             let test = ::control_rs_hil::runner::CURRENT_TEST.load(::core::sync::atomic::Ordering::SeqCst);
 
@@ -210,6 +211,25 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
                                 line,
                             },
                         );
+                    }
+                }
+            }
+
+            // A delay loop that pumps the communication device to ensure
+            // all panic telemetry is physically transmitted over the USB CDC/serial line.
+            for _ in 0..10_000 {
+                unsafe {
+                    if let (Some(flusher), ptr) = (
+                        ::control_rs_hil::runner::PANIC_COMMS_FLUSHER,
+                        ::control_rs_hil::runner::ACTIVE_COMMS_PTR,
+                    ) {
+                        if !ptr.is_null() {
+                            flusher(ptr);
+                        } else {
+                            ::core::hint::spin_loop();
+                        }
+                    } else {
+                        ::core::hint::spin_loop();
                     }
                 }
             }
