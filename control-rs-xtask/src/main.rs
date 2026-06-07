@@ -1,11 +1,68 @@
+// Clippy configuration for control-rs-xtask binary.
+#![deny(
+    unused,
+    clippy::all,
+    clippy::todo,
+    clippy::style,
+    clippy::pedantic,
+    clippy::suspicious,
+    clippy::complexity,
+    clippy::unimplemented,
+    clippy::big_endian_bytes,
+    clippy::shadow_unrelated,
+    clippy::large_stack_arrays,
+    clippy::empty_structs_with_brackets
+)]
+#![warn(
+    rust_2018_idioms,
+    clippy::complexity
+)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::module_name_repetitions,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args,
+    missing_docs,
+    clippy::shadow_unrelated,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::wildcard_imports,
+    clippy::similar_names,
+    clippy::cognitive_complexity,
+    clippy::match_wildcard_for_single_variants,
+    clippy::type_complexity,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::arbitrary_source_item_ordering,
+    clippy::multiple_crate_versions,
+    clippy::equatable_if_let,
+    clippy::nursery,
+    clippy::cargo,
+    clippy::collapsible_if,
+    clippy::single_match,
+    clippy::format_push_string,
+    clippy::map_unwrap_or,
+    clippy::if_not_else,
+    clippy::unreadable_literal,
+    clippy::redundant_closure_for_method_calls,
+    clippy::single_match_else,
+    clippy::items_after_statements
+)]
+
 use regex::Regex;
 use std::env;
 use std::fs;
 use std::process::{Command, exit};
 use std::time::Instant;
 
-mod bridge;
-mod tui;
+use control_rs_xtask::{bridge, tui};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -298,7 +355,7 @@ fn run_ci(target: bridge::Target) {
                     r.suite_name, r.test_name, res_str, cyc_str, time_str
                 ));
             }
-            s.push_str("\n");
+            s.push('\n');
             if !all_passed {
                 ci_success = false;
             }
@@ -328,11 +385,11 @@ fn run_ci(target: bridge::Target) {
         );
         if fmt_errors > 0 {
             report.push_str(&fmt_str);
-            report.push_str("\n");
+            report.push('\n');
         }
         if clippy_errors > 0 {
             report.push_str(&clippy_str);
-            report.push_str("\n");
+            report.push('\n');
         }
         report.push_str("\n```\n\n</details>\n");
     }

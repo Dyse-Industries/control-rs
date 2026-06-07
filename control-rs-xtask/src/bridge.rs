@@ -67,7 +67,7 @@ impl QemuBridge {
                                 let b = byte_buf[0];
                                 if let Some(payload) = reader.handle_byte(b) {
                                     if let Ok(telemetry) =
-                                        postcard::from_bytes::<Telemetry>(
+                                        postcard::from_bytes::<Telemetry<'_>>(
                                             payload,
                                         )
                                     {
@@ -79,30 +79,29 @@ impl QemuBridge {
                                             ));
                                     }
                                     raw_line_buf.clear();
-                                } else if reader.is_idle() {
-                                    if b.is_ascii_graphic()
+                                } else if reader.is_idle()
+                                    && (b.is_ascii_graphic()
                                         || b == b' '
                                         || b == b'\n'
                                         || b == b'\r'
-                                        || b == b'\t'
-                                    {
-                                        if b == b'\n' {
-                                            if !raw_line_buf.is_empty() {
-                                                let line =
-                                                    String::from_utf8_lossy(
-                                                        &raw_line_buf,
-                                                    )
-                                                    .into_owned();
-                                                let _ = tx.send(
-                                                    BridgeMessage::RawConsole(
-                                                        line,
-                                                    ),
-                                                );
-                                                raw_line_buf.clear();
-                                            }
-                                        } else if b != b'\r' {
-                                            raw_line_buf.push(b);
+                                        || b == b'\t')
+                                {
+                                    if b == b'\n' {
+                                        if !raw_line_buf.is_empty() {
+                                            let line =
+                                                String::from_utf8_lossy(
+                                                    &raw_line_buf,
+                                                )
+                                                .into_owned();
+                                            let _ = tx.send(
+                                                BridgeMessage::RawConsole(
+                                                    line,
+                                                ),
+                                            );
+                                            raw_line_buf.clear();
                                         }
+                                    } else if b != b'\r' {
+                                        raw_line_buf.push(b);
                                     }
                                 }
                             }
@@ -167,46 +166,40 @@ impl QemuBridge {
             let mut byte_buf = [0u8; 1];
             let mut stdout = stdout;
 
-            loop {
-                match stdout.read(&mut byte_buf) {
-                    Ok(1) => {
-                        let b = byte_buf[0];
-                        if let Some(payload) = reader.handle_byte(b) {
-                            if let Ok(telemetry) =
-                                postcard::from_bytes::<Telemetry>(payload)
-                            {
-                                let owned_telemetry =
-                                    make_telemetry_owned(&telemetry);
-                                let _ = tx_stdout.send(
-                                    BridgeMessage::Telemetry(owned_telemetry),
-                                );
-                            }
-                            raw_line_buf.clear();
-                        } else if reader.is_idle() {
-                            if b.is_ascii_graphic()
-                                || b == b' '
-                                || b == b'\n'
-                                || b == b'\r'
-                                || b == b'\t'
-                            {
-                                if b == b'\n' {
-                                    if !raw_line_buf.is_empty() {
-                                        let line = String::from_utf8_lossy(
-                                            &raw_line_buf,
-                                        )
-                                        .into_owned();
-                                        let _ = tx_stdout.send(
-                                            BridgeMessage::RawConsole(line),
-                                        );
-                                        raw_line_buf.clear();
-                                    }
-                                } else if b != b'\r' {
-                                    raw_line_buf.push(b);
-                                }
-                            }
-                        }
+            while let Ok(1) = stdout.read(&mut byte_buf) {
+                let b = byte_buf[0];
+                if let Some(payload) = reader.handle_byte(b) {
+                    if let Ok(telemetry) =
+                        postcard::from_bytes::<Telemetry<'_>>(payload)
+                    {
+                        let owned_telemetry =
+                            make_telemetry_owned(&telemetry);
+                        let _ = tx_stdout.send(
+                            BridgeMessage::Telemetry(owned_telemetry),
+                        );
                     }
-                    _ => break,
+                    raw_line_buf.clear();
+                } else if reader.is_idle()
+                    && (b.is_ascii_graphic()
+                        || b == b' '
+                        || b == b'\n'
+                        || b == b'\r'
+                        || b == b'\t')
+                {
+                    if b == b'\n' {
+                        if !raw_line_buf.is_empty() {
+                            let line = String::from_utf8_lossy(
+                                &raw_line_buf,
+                            )
+                            .into_owned();
+                            let _ = tx_stdout.send(
+                                BridgeMessage::RawConsole(line),
+                            );
+                            raw_line_buf.clear();
+                        }
+                    } else if b != b'\r' {
+                        raw_line_buf.push(b);
+                    }
                 }
             }
         });
