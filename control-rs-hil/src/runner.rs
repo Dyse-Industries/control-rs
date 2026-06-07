@@ -33,6 +33,11 @@ pub static mut PANIC_TELEMETRY_SENDER: Option<
 pub static mut PANIC_COMMS_FLUSHER: Option<unsafe fn(*mut core::ffi::c_void)> =
     None;
 
+/// Static function pointer used to poll commands during a panic.
+pub static mut PANIC_CMD_POLLER: Option<
+    unsafe fn(*mut core::ffi::c_void) -> Option<Command>,
+> = None;
+
 /// Helper function to transmit telemetry via type-erased pointer.
 unsafe fn send_telemetry_via_ptr<C: HostComms>(
     comms_ptr: *mut core::ffi::c_void,
@@ -50,6 +55,18 @@ unsafe fn flush_comms_via_ptr<C: HostComms>(comms_ptr: *mut core::ffi::c_void) {
     if !comms_ptr.is_null() {
         let comms = unsafe { &mut *(comms_ptr as *mut C) };
         let _ = comms.flush();
+    }
+}
+
+/// Helper function to poll commands via type-erased pointer.
+unsafe fn poll_command_via_ptr<C: HostComms>(
+    comms_ptr: *mut core::ffi::c_void,
+) -> Option<Command> {
+    if !comms_ptr.is_null() {
+        let comms = unsafe { &mut *(comms_ptr as *mut C) };
+        comms.poll_command().ok().flatten()
+    } else {
+        None
     }
 }
 
@@ -91,6 +108,7 @@ where
                 &mut self.comms as *mut C as *mut core::ffi::c_void;
             PANIC_TELEMETRY_SENDER = Some(send_telemetry_via_ptr::<C>);
             PANIC_COMMS_FLUSHER = Some(flush_comms_via_ptr::<C>);
+            PANIC_CMD_POLLER = Some(poll_command_via_ptr::<C>);
         }
 
         let res = (|| {
@@ -110,6 +128,7 @@ where
                         } => {
                             self.set_setting(suite_id, setting_id, value)?;
                         }
+                        Command::OkToReset => {}
                     }
                 }
                 self.comms.flush()?;
@@ -120,6 +139,7 @@ where
             ACTIVE_COMMS_PTR = core::ptr::null_mut();
             PANIC_TELEMETRY_SENDER = None;
             PANIC_COMMS_FLUSHER = None;
+            PANIC_CMD_POLLER = None;
         }
 
         res
@@ -290,4 +310,383 @@ fn read_cycle_counter() -> u64 {
 #[cfg(not(all(target_arch = "arm", target_os = "none")))]
 fn read_cycle_counter() -> u64 {
     0
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+    use crate::comms::{Command, HostComms, Telemetry, TestState};
+    use crate::hil_test::{
+        AtomicU8Setting, AtomicU32Setting, ExecDescriptor, Setting,
+        SettingValue, SuiteDescriptor,
+    };
+    use crate::time::DummyClock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::vec::Vec;
+
+    struct MockComms {
+        commands: Vec<Command>,
+        payloads: Vec<Vec<u8>>,
+        flush_count: usize,
+        fail_on_poll: bool,
+    }
+
+    impl HostComms for MockComms {
+        type Error = &'static str;
+
+        fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+            if self.fail_on_poll {
+                return Err("Poll failed");
+            }
+            if self.commands.is_empty() {
+                // Return an error to break the infinite runner loop
+                return Err("Exit loop");
+            }
+            Ok(Some(self.commands.remove(0)))
+        }
+
+        fn send_telemetry(
+            &mut self,
+            telemetry: &Telemetry<'_>,
+        ) -> Result<(), Self::Error> {
+            let mut buf = [0u8; 512];
+            let size = crate::comms::frame_telemetry(telemetry, &mut buf)
+                .map_err(|_| "Failed to frame telemetry")?;
+
+            let mut reader = crate::comms::FrameReader::new();
+            let mut payload = None;
+            for &b in &buf[..size] {
+                if let Some(p) = reader.handle_byte(b) {
+                    payload = Some(p.to_vec());
+                    break;
+                }
+            }
+
+            let payload = payload.ok_or("No payload decoded")?;
+            self.payloads.push(payload);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), Self::Error> {
+            self.flush_count += 1;
+            Ok(())
+        }
+    }
+
+    static TEST_CALLED: AtomicBool = AtomicBool::new(false);
+
+    fn dummy_test_fn() {
+        TEST_CALLED.store(true, Ordering::SeqCst);
+    }
+
+    static TEST_U8_SETTING: AtomicU8Setting =
+        AtomicU8Setting::new("test_u8", 42);
+
+    static SUITE_SETTINGS: &[&dyn Setting] = &[&TEST_U8_SETTING];
+
+    static SUITE_EXECUTABLES: &[ExecDescriptor] = &[ExecDescriptor {
+        name: "dummy_test",
+        test_fn: dummy_test_fn,
+    }];
+
+    static SUITE_DESC: SuiteDescriptor = SuiteDescriptor {
+        name: "mock_suite",
+        executables: SUITE_EXECUTABLES,
+        settings: SUITE_SETTINGS,
+    };
+
+    static SUITES: &[&'static SuiteDescriptor] = &[&SUITE_DESC];
+
+    #[test]
+    fn test_server_discovery() {
+        let comms = MockComms {
+            commands: std::vec![Command::ListSuites],
+            payloads: Vec::new(),
+            flush_count: 0,
+            fail_on_poll: false,
+        };
+        let mut server = Server::new(comms, DummyClock, SUITES);
+        let res = server.run();
+        assert_eq!(res, Err("Exit loop"));
+
+        // Check telemetry sent
+        let p = &server.comms.payloads;
+        assert!(p.len() >= 4);
+
+        let t0: Telemetry<'_> = postcard::from_bytes(&p[0]).unwrap();
+        assert!(matches!(
+            t0,
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "mock_suite",
+                ..
+            }
+        ));
+
+        let t1: Telemetry<'_> = postcard::from_bytes(&p[1]).unwrap();
+        assert!(matches!(
+            t1,
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "dummy_test"
+            }
+        ));
+
+        let t2: Telemetry<'_> = postcard::from_bytes(&p[2]).unwrap();
+        assert!(matches!(
+            t2,
+            Telemetry::SettingInfo {
+                suite_id: 0,
+                setting_id: 0,
+                name: "test_u8",
+                value: SettingValue::U8(42)
+            }
+        ));
+
+        let t3: Telemetry<'_> = postcard::from_bytes(&p[3]).unwrap();
+        assert!(matches!(t3, Telemetry::DiscoveryComplete));
+    }
+
+    #[test]
+    fn test_server_run_test() {
+        TEST_CALLED.store(false, Ordering::SeqCst);
+        let comms = MockComms {
+            commands: std::vec![Command::RunExecutable {
+                suite_id: 0,
+                test_id: 0
+            }],
+            payloads: Vec::new(),
+            flush_count: 0,
+            fail_on_poll: false,
+        };
+        let mut server = Server::new(comms, DummyClock, SUITES);
+        let res = server.run();
+        assert_eq!(res, Err("Exit loop"));
+
+        assert!(TEST_CALLED.load(Ordering::SeqCst));
+
+        let p = &server.comms.payloads;
+        assert_eq!(p.len(), 3);
+
+        let t0: Telemetry<'_> = postcard::from_bytes(&p[0]).unwrap();
+        assert!(matches!(
+            t0,
+            Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Running
+            }
+        ));
+
+        let t1: Telemetry<'_> = postcard::from_bytes(&p[1]).unwrap();
+        assert!(matches!(
+            t1,
+            Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Passed
+            }
+        ));
+
+        let t2: Telemetry<'_> = postcard::from_bytes(&p[2]).unwrap();
+        assert!(matches!(
+            t2,
+            Telemetry::MetricReport {
+                suite_id: 0,
+                test_id: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_server_set_setting() {
+        let comms = MockComms {
+            commands: std::vec![Command::SetSetting {
+                suite_id: 0,
+                setting_id: 0,
+                value: SettingValue::U8(100)
+            }],
+            payloads: Vec::new(),
+            flush_count: 0,
+            fail_on_poll: false,
+        };
+        let mut server = Server::new(comms, DummyClock, SUITES);
+        let res = server.run();
+        assert_eq!(res, Err("Exit loop"));
+
+        let p = &server.comms.payloads;
+        assert_eq!(p.len(), 1);
+        let t0: Telemetry<'_> = postcard::from_bytes(&p[0]).unwrap();
+        assert!(matches!(
+            t0,
+            Telemetry::SettingInfo {
+                suite_id: 0,
+                setting_id: 0,
+                value: SettingValue::U8(100),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_server_set_setting_type_mismatch() {
+        let comms = MockComms {
+            commands: std::vec![Command::SetSetting {
+                suite_id: 0,
+                setting_id: 0,
+                value: SettingValue::U32(999)
+            }],
+            payloads: Vec::new(),
+            flush_count: 0,
+            fail_on_poll: false,
+        };
+        let mut server = Server::new(comms, DummyClock, SUITES);
+        let res = server.run();
+        assert_eq!(res, Err("Exit loop"));
+
+        let p = &server.comms.payloads;
+        assert_eq!(p.len(), 1);
+        let t0: Telemetry<'_> = postcard::from_bytes(&p[0]).unwrap();
+        if let Telemetry::SettingInfo { value, .. } = t0 {
+            assert!(matches!(value, SettingValue::U8(_)));
+        } else {
+            panic!("Expected SettingInfo");
+        }
+    }
+
+    #[test]
+    fn test_server_out_of_bounds() {
+        let comms = MockComms {
+            commands: std::vec![
+                Command::RunExecutable {
+                    suite_id: 99,
+                    test_id: 0
+                },
+                Command::RunExecutable {
+                    suite_id: 0,
+                    test_id: 99
+                },
+                Command::SetSetting {
+                    suite_id: 99,
+                    setting_id: 0,
+                    value: SettingValue::U8(0)
+                },
+                Command::SetSetting {
+                    suite_id: 0,
+                    setting_id: 99,
+                    value: SettingValue::U8(0)
+                },
+            ],
+            payloads: Vec::new(),
+            flush_count: 0,
+            fail_on_poll: false,
+        };
+        let mut server = Server::new(comms, DummyClock, SUITES);
+        let res = server.run();
+        assert_eq!(res, Err("Exit loop"));
+
+        assert!(server.comms.payloads.is_empty());
+    }
+
+    #[test]
+    fn test_server_ok_to_reset() {
+        let comms = MockComms {
+            commands: std::vec![Command::OkToReset],
+            payloads: Vec::new(),
+            flush_count: 0,
+            fail_on_poll: false,
+        };
+        let mut server = Server::new(comms, DummyClock, SUITES);
+        let res = server.run();
+        assert_eq!(res, Err("Exit loop"));
+        assert!(server.comms.payloads.is_empty());
+    }
+
+    #[test]
+    fn test_server_poll_command_error() {
+        let comms = MockComms {
+            commands: Vec::new(),
+            payloads: Vec::new(),
+            flush_count: 0,
+            fail_on_poll: true,
+        };
+        let mut server = Server::new(comms, DummyClock, SUITES);
+        let res = server.run();
+        assert_eq!(res, Err("Poll failed"));
+    }
+
+    #[test]
+    fn test_unsafe_ptr_helpers() {
+        let mut comms = MockComms {
+            commands: std::vec![Command::OkToReset],
+            payloads: Vec::new(),
+            flush_count: 0,
+            fail_on_poll: false,
+        };
+
+        unsafe {
+            send_telemetry_via_ptr::<MockComms>(
+                core::ptr::null_mut(),
+                &Telemetry::DiscoveryComplete,
+            );
+            flush_comms_via_ptr::<MockComms>(core::ptr::null_mut());
+            let cmd = poll_command_via_ptr::<MockComms>(core::ptr::null_mut());
+            assert!(cmd.is_none());
+        }
+
+        let comms_ptr = &mut comms as *mut MockComms as *mut core::ffi::c_void;
+        unsafe {
+            send_telemetry_via_ptr::<MockComms>(
+                comms_ptr,
+                &Telemetry::DiscoveryComplete,
+            );
+            assert_eq!(comms.payloads.len(), 1);
+            let t0: Telemetry<'_> =
+                postcard::from_bytes(&comms.payloads[0]).unwrap();
+            assert!(matches!(t0, Telemetry::DiscoveryComplete));
+
+            assert_eq!(comms.flush_count, 1);
+            flush_comms_via_ptr::<MockComms>(comms_ptr);
+            assert_eq!(comms.flush_count, 2);
+
+            let cmd = poll_command_via_ptr::<MockComms>(comms_ptr);
+            assert!(matches!(cmd, Some(Command::OkToReset)));
+            assert_eq!(comms.commands.len(), 0);
+        }
+    }
+
+    #[test]
+    fn test_dummy_clock() {
+        let clock = DummyClock;
+        assert_eq!(clock.now_ms(), 0);
+        assert_eq!(clock.now_us(), 0);
+    }
+
+    #[test]
+    fn test_atomic_settings() {
+        let u8_setting = AtomicU8Setting::new("u8_set", 10);
+        assert_eq!(u8_setting.name(), "u8_set");
+        assert_eq!(
+            u8_setting.expected_type(),
+            crate::hil_test::SettingType::U8
+        );
+        assert_eq!(u8_setting.get(), SettingValue::U8(10));
+        assert!(u8_setting.set(SettingValue::U8(20)).is_ok());
+        assert_eq!(u8_setting.get(), SettingValue::U8(20));
+        assert!(u8_setting.set(SettingValue::U32(20)).is_err());
+
+        let u32_setting = AtomicU32Setting::new("u32_set", 100);
+        assert_eq!(u32_setting.name(), "u32_set");
+        assert_eq!(
+            u32_setting.expected_type(),
+            crate::hil_test::SettingType::U32
+        );
+        assert_eq!(u32_setting.get(), SettingValue::U32(100));
+        assert!(u32_setting.set(SettingValue::U32(200)).is_ok());
+        assert_eq!(u32_setting.get(), SettingValue::U32(200));
+        assert!(u32_setting.set(SettingValue::U8(200)).is_err());
+    }
 }

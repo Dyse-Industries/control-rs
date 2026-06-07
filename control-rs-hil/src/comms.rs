@@ -15,6 +15,8 @@ pub enum Command {
         setting_id: u16,
         value: SettingValue,
     },
+    /// Request the target to reset.
+    OkToReset,
 }
 
 /// The state of a test executable during a test session.
@@ -259,4 +261,105 @@ pub fn frame_telemetry<'a>(
     dest[4 + payload_len] = checksum;
 
     Ok(5 + payload_len)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_frame_reader_idle() {
+        let reader = FrameReader::new();
+        assert!(reader.is_idle());
+    }
+
+    #[test]
+    fn test_frame_reader_default() {
+        let reader = FrameReader::default();
+        assert!(reader.is_idle());
+    }
+
+    #[test]
+    fn test_frame_reader_invalid_start_bytes() {
+        let mut reader = FrameReader::new();
+        // Send a byte that is not START_BYTE_1
+        assert!(reader.handle_byte(0x00).is_none());
+        assert!(reader.is_idle());
+
+        // Send START_BYTE_1 followed by not START_BYTE_2
+        assert!(reader.handle_byte(START_BYTE_1).is_none());
+        assert!(!reader.is_idle()); // now in WaitStart2
+        assert!(reader.handle_byte(0x00).is_none());
+        assert!(reader.is_idle()); // reset to WaitStart1
+    }
+
+    #[test]
+    fn test_frame_reader_invalid_lengths() {
+        let mut reader = FrameReader::new();
+        // Move to WaitLen1
+        assert!(reader.handle_byte(START_BYTE_1).is_none());
+        assert!(reader.handle_byte(START_BYTE_2).is_none());
+
+        // Send length = 0 (MSB=0, LSB=0)
+        assert!(reader.handle_byte(0x00).is_none());
+        assert!(reader.handle_byte(0x00).is_none());
+        assert!(reader.is_idle()); // should reset since len = 0 is invalid
+
+        // Send length > MAX_PAYLOAD_SIZE (e.g. 257 = MSB=1, LSB=1)
+        assert!(reader.handle_byte(START_BYTE_1).is_none());
+        assert!(reader.handle_byte(START_BYTE_2).is_none());
+        assert!(reader.handle_byte(0x01).is_none());
+        assert!(reader.handle_byte(0x01).is_none());
+        assert!(reader.is_idle()); // should reset since len > MAX_PAYLOAD_SIZE
+    }
+
+    #[test]
+    fn test_frame_reader_valid_frame() {
+        let mut reader = FrameReader::new();
+        let telemetry = Telemetry::DiscoveryComplete;
+        let mut buf = [0u8; 128];
+        let framed_len = frame_telemetry(&telemetry, &mut buf).unwrap();
+
+        // Feed all bytes except the last one (checksum)
+        for i in 0..(framed_len - 1) {
+            assert!(reader.handle_byte(buf[i]).is_none());
+        }
+        // Feed the checksum, it should complete and return the payload slice
+        let payload = reader.handle_byte(buf[framed_len - 1]).unwrap();
+
+        // Deserialize and check
+        let decoded: Telemetry = postcard::from_bytes(payload).unwrap();
+        assert!(matches!(decoded, Telemetry::DiscoveryComplete));
+        assert!(reader.is_idle());
+    }
+
+    #[test]
+    fn test_frame_reader_invalid_checksum() {
+        let mut reader = FrameReader::new();
+        let telemetry = Telemetry::DiscoveryComplete;
+        let mut buf = [0u8; 128];
+        let framed_len = frame_telemetry(&telemetry, &mut buf).unwrap();
+
+        // Feed all bytes except the checksum
+        for i in 0..(framed_len - 1) {
+            assert!(reader.handle_byte(buf[i]).is_none());
+        }
+        // Feed an invalid checksum byte
+        let bad_checksum = buf[framed_len - 1] ^ 0xFF;
+        assert!(reader.handle_byte(bad_checksum).is_none());
+        assert!(reader.is_idle()); // reset
+    }
+
+    #[test]
+    fn test_frame_telemetry_too_small_buffer() {
+        let telemetry = Telemetry::DiscoveryComplete;
+        let mut buf = [0u8; 4];
+        let res = frame_telemetry(&telemetry, &mut buf);
+        assert!(matches!(res, Err(postcard::Error::SerializeBufferFull)));
+
+        // Buffer large enough for header but too small for payload
+        let mut buf = [0u8; 5];
+        let res = frame_telemetry(&telemetry, &mut buf);
+        assert!(res.is_err());
+    }
 }

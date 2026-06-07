@@ -18,6 +18,7 @@ struct SemihostingComms {
 impl HostComms for SemihostingComms {
     type Error = ();
 
+    #[allow(clippy::collapsible_if)]
     fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
         let c = unsafe {
             cortex_m_semihosting::syscall1(cortex_m_semihosting::nr::READC, 0)
@@ -62,12 +63,18 @@ impl HostComms for SemihostingComms {
 pub mod qemu_math_suite {
     pub static CONNECTION_TIMEOUT_MS: u32 = 1000;
 
+    #[allow(clippy::eq_op)]
     fn math_addition() {
         assert_eq!(2 + 2, 4);
     }
 
+    #[allow(clippy::eq_op)]
     fn math_subtraction() {
         assert_eq!(5 - 3, 2);
+    }
+
+    fn math_intentional_panic() {
+        panic!("Intentional panic to verify reset and panic handling");
     }
 }
 

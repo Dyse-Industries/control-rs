@@ -13,10 +13,7 @@
     clippy::large_stack_arrays,
     clippy::empty_structs_with_brackets
 )]
-#![warn(
-    rust_2018_idioms,
-    clippy::complexity
-)]
+#![warn(rust_2018_idioms, clippy::complexity)]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -91,7 +88,7 @@ fn main() {
                     exit(1);
                 }
             };
-            run_ci(target);
+            run_ci(&target);
         }
         "qemu" => {
             run_qemu();
@@ -104,7 +101,7 @@ fn main() {
                     let port = args
                         .get(3)
                         .cloned()
-                        .unwrap_or_else(|| "/dev/ttyACM0".to_string());
+                        .unwrap_or_else(|| "/dev/teensy".to_string());
                     let baud = args
                         .get(4)
                         .and_then(|b| b.parse().ok())
@@ -116,7 +113,7 @@ fn main() {
                     exit(1);
                 }
             };
-            run_hil_tui(target);
+            run_hil_tui(&target);
         }
         _ => {
             print_usage_and_exit();
@@ -160,15 +157,29 @@ fn build_qemu_elf() -> String {
     "target/thumbv7em-none-eabihf/qemu/control-rs-qemu-arm".to_string()
 }
 
-fn run_hil_tui(target: bridge::Target) {
-    let bridge = match &target {
+fn run_hil_tui(target: &bridge::Target) {
+    let (bridge, elf_path) = match target {
         bridge::Target::Qemu => {
             let elf_path = build_qemu_elf();
-            bridge::QemuBridge::new(&elf_path, target)
+            match bridge::QemuBridge::new(&elf_path, target.clone()) {
+                Ok(b) => (b, elf_path),
+                Err(e) => {
+                    eprintln!("Failed to start bridge: {}", e);
+                    exit(1);
+                }
+            }
         }
-        bridge::Target::Serial { .. } => bridge::QemuBridge::new("", target),
+        bridge::Target::Serial { .. } => {
+            match bridge::QemuBridge::new("", target.clone()) {
+                Ok(b) => (b, String::new()),
+                Err(e) => {
+                    eprintln!("Failed to start bridge: {}", e);
+                    exit(1);
+                }
+            }
+        }
     };
-    if let Err(e) = tui::run_tui(bridge) {
+    if let Err(e) = tui::run_tui(bridge, target, &elf_path) {
         eprintln!("TUI Error: {}", e);
         exit(1);
     }
@@ -218,7 +229,7 @@ fn run_qemu() {
     println!("QEMU run finished successfully.");
 }
 
-fn run_ci(target: bridge::Target) {
+fn run_ci(target: &bridge::Target) {
     unsafe {
         env::set_var("RUST_BACKTRACE", "full");
         env::set_var("CARGO_TERM_COLOR", "never");
@@ -330,12 +341,12 @@ fn run_ci(target: bridge::Target) {
         cov_lines, tot_lines
     ));
 
-    // Headless HIL Runner Execution
-    println!("Running headlessly executed HIL tests...");
-    let start_hil = Instant::now();
-    let hil_results_str = match run_headless_hil(target) {
+    // Headless SIL Runner Execution
+    println!("Running headlessly executed SIL tests...");
+    let start_sil = Instant::now();
+    let sil_results_str = match run_headless_sil(target) {
         Ok(results) => {
-            let mut s = String::from("### Headless HIL Test Results\n\n");
+            let mut s = String::from("### Headless SIL Test Results\n\n");
             s.push_str("| Suite | Test | Result | Cycles | Time |\n| :--- | :--- | :--- | :--- | :--- |\n");
             let mut all_passed = true;
             for r in &results {
@@ -364,15 +375,15 @@ fn run_ci(target: bridge::Target) {
         Err(e) => {
             ci_success = false;
             format!(
-                "### Headless HIL Test Results\n\n**ERROR**: Failed to run HIL tests: {}\n\n",
+                "### Headless SIL Test Results\n\n**ERROR**: Failed to run SIL tests: {}\n\n",
                 e
             )
         }
     };
-    report.push_str(&hil_results_str);
+    report.push_str(&sil_results_str);
     println!(
-        "Headless HIL tests completed in {:.2}s.",
-        start_hil.elapsed().as_secs_f32()
+        "Headless SIL tests completed in {:.2}s.",
+        start_sil.elapsed().as_secs_f32()
     );
 
     report.push_str("<details>\n<summary>Detailed Logs</summary>\n\n");
@@ -483,19 +494,22 @@ struct SuiteItem {
     settings: Vec<SettingItem>,
 }
 
-fn run_headless_hil(
-    target: bridge::Target,
+fn run_headless_sil(
+    target: &bridge::Target,
 ) -> Result<Vec<HeadlessTestResult>, String> {
     use bridge::BridgeMessage;
     use control_rs_hil::comms::{Command, Telemetry, TestState};
     use std::time::Duration;
 
-    let mut bridge = match &target {
+    let mut elf_path = String::new();
+    let mut bridge = match target {
         bridge::Target::Qemu => {
-            let elf_path = build_qemu_elf();
-            bridge::QemuBridge::new(&elf_path, target)
+            elf_path = build_qemu_elf();
+            bridge::QemuBridge::new(&elf_path, target.clone()).map_err(|e| e.to_string())?
         }
-        bridge::Target::Serial { .. } => bridge::QemuBridge::new("", target),
+        bridge::Target::Serial { .. } => {
+            bridge::QemuBridge::new("", target.clone()).map_err(|e| e.to_string())?
+        }
     };
 
     // Initial discovery
@@ -504,7 +518,7 @@ fn run_headless_hil(
 
     let mut suites: Vec<SuiteItem> = Vec::new();
     let mut run_queue = Vec::new();
-    let mut results = Vec::new();
+    let mut results: Vec<HeadlessTestResult> = Vec::new();
     let mut current_running = None;
     let mut discovery_complete = false;
     let mut exit_loop = false;
@@ -516,7 +530,7 @@ fn run_headless_hil(
     while !exit_loop {
         if start_time.elapsed() > timeout {
             bridge.kill();
-            return Err("HIL execution timed out after 15s".to_string());
+            return Err("SIL execution timed out after 15s".to_string());
         }
 
         if !discovery_complete
@@ -578,10 +592,19 @@ fn run_headless_hil(
                     }
                     Telemetry::DiscoveryComplete => {
                         discovery_complete = true;
-                        // Enqueue all tests
+                        // Enqueue only tests that have not run yet
+                        run_queue.clear();
                         for (s_idx, suite) in suites.iter().enumerate() {
-                            for (t_idx, _) in suite.tests.iter().enumerate() {
-                                run_queue.push((s_idx as u16, t_idx as u16));
+                            for (t_idx, test) in suite.tests.iter().enumerate()
+                            {
+                                let already_run = results.iter().any(|r| {
+                                    r.suite_name == suite.name
+                                        && r.test_name == test.name
+                                });
+                                if !already_run {
+                                    run_queue
+                                        .push((s_idx as u16, t_idx as u16));
+                                }
                             }
                         }
                         // Start first test
@@ -669,11 +692,72 @@ fn run_headless_hil(
                         file,
                         line,
                     } => {
-                        bridge.kill();
-                        return Err(format!(
+                        println!(
                             "Target panicked: '{}' at {}:{}",
                             message, file, line
+                        );
+
+                        if let Some((s_id, t_id)) = current_running {
+                            let s_idx = s_id as usize;
+                            let t_idx = t_id as usize;
+                            if s_idx < suites.len()
+                                && t_idx < suites[s_idx].tests.len()
+                            {
+                                suites[s_idx].tests[t_idx].state =
+                                    TestState::Failed;
+                                results.push(HeadlessTestResult {
+                                    suite_name: suites[s_idx].name.clone(),
+                                    test_name: suites[s_idx].tests[t_idx]
+                                        .name
+                                        .clone(),
+                                    state: TestState::Failed,
+                                    cycles: None,
+                                    time_us: None,
+                                });
+                            }
+                        }
+
+                        let _ = bridge.send_command(&Command::OkToReset);
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            50,
                         ));
+                        bridge.kill();
+                        // Wait at least 1 second for the target to reset and re-establish connection
+                        std::thread::sleep(std::time::Duration::from_millis(1000));
+
+                        current_running = None;
+                        discovery_complete = false;
+
+                        // Check if there are any remaining tests in suites that haven't run
+                        let remaining_to_run = suites.iter().any(|suite| {
+                            suite.tests.iter().any(|test| {
+                                !results.iter().any(|r| {
+                                    r.suite_name == suite.name
+                                        && r.test_name == test.name
+                                })
+                            })
+                        });
+
+                        if remaining_to_run {
+                            println!(
+                                "Restarting target bridge to continue running tests..."
+                            );
+                            bridge = match &target {
+                                bridge::Target::Qemu => {
+                                    bridge::QemuBridge::new(
+                                        &elf_path,
+                                        target.clone(),
+                                    ).map_err(|e| e.to_string())?
+                                }
+                                bridge::Target::Serial { .. } => {
+                                    bridge::QemuBridge::new("", target.clone()).map_err(|e| e.to_string())?
+                                }
+                            };
+                            let _ = bridge.send_command(&Command::ListSuites);
+                            last_send = Instant::now();
+                        } else {
+                            exit_loop = true;
+                        }
                     }
                 },
                 BridgeMessage::RawConsole(_) => {}

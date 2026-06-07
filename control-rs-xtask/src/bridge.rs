@@ -1,6 +1,6 @@
 use std::io::{Read, Write as IoWrite};
 use std::process::{Child, Command as StdCommand, Stdio};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
 use control_rs_hil::comms::{Command, FrameReader, LogMessage, Telemetry};
@@ -39,7 +39,10 @@ pub struct QemuBridge {
 
 impl QemuBridge {
     /// Spawns a new QEMU process or connects to a serial device.
-    pub fn new(elf_path: &str, target: Target) -> Self {
+    pub fn new(
+        elf_path: &str,
+        target: Target,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let (tx, rx) = channel();
 
         match target {
@@ -47,13 +50,33 @@ impl QemuBridge {
                 port: port_path,
                 baud,
             } => {
-                let port = serialport::new(&port_path, baud)
-                    .timeout(std::time::Duration::from_millis(10))
-                    .open()
-                    .expect("Failed to open serial port");
+                let mut port = None;
+                let mut attempts = 0;
+                while port.is_none() {
+                    match serialport::new(&port_path, baud)
+                        .timeout(std::time::Duration::from_millis(10))
+                        .open()
+                    {
+                        Ok(p) => port = Some(p),
+                        Err(e) => {
+                            attempts += 1;
+                            if attempts >= 5 {
+                                return Err(format!(
+                                    "Failed to open serial port '{}' after 5 attempts (5 seconds): {}",
+                                    port_path, e
+                                ).into());
+                            }
+                            thread::sleep(std::time::Duration::from_millis(
+                                1000,
+                            ));
+                        }
+                    }
+                }
+                let port = port.unwrap();
 
-                let mut port_clone =
-                    port.try_clone().expect("Failed to clone serial port");
+                let mut port_clone = port.try_clone().map_err(|e| {
+                    format!("Failed to clone serial port: {}", e)
+                })?;
 
                 // Spawn serial reader thread
                 thread::spawn(move || {
@@ -88,15 +111,12 @@ impl QemuBridge {
                                 {
                                     if b == b'\n' {
                                         if !raw_line_buf.is_empty() {
-                                            let line =
-                                                String::from_utf8_lossy(
-                                                    &raw_line_buf,
-                                                )
-                                                .into_owned();
+                                            let line = String::from_utf8_lossy(
+                                                &raw_line_buf,
+                                            )
+                                            .into_owned();
                                             let _ = tx.send(
-                                                BridgeMessage::RawConsole(
-                                                    line,
-                                                ),
+                                                BridgeMessage::RawConsole(line),
                                             );
                                             raw_line_buf.clear();
                                         }
@@ -114,12 +134,12 @@ impl QemuBridge {
                     }
                 });
 
-                Self {
+                Ok(Self {
                     inner: BridgeInner::Serial { port },
                     rx_from_target: rx,
                     target_info: "Teensy 4.0 (Cortex-M7)".to_string(),
                     link_info: format!("USB CDC ({})", port_path),
-                }
+                })
             }
             Target::Qemu => Self::new_qemu_inner(elf_path, tx, rx),
         }
@@ -129,7 +149,7 @@ impl QemuBridge {
         elf_path: &str,
         tx: Sender<BridgeMessage>,
         rx: Receiver<BridgeMessage>,
-    ) -> Self {
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut child = StdCommand::new("qemu-system-arm")
             .args([
                 "-cpu",
@@ -152,11 +172,11 @@ impl QemuBridge {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("Failed to spawn QEMU process");
+            .map_err(|e| format!("Failed to spawn QEMU process: {}", e))?;
 
-        let stdin = child.stdin.take().expect("Failed to open stdin");
-        let stdout = child.stdout.take().expect("Failed to open stdout");
-        let stderr = child.stderr.take().expect("Failed to open stderr");
+        let stdin = child.stdin.take().ok_or("Failed to open stdin")?;
+        let stdout = child.stdout.take().ok_or("Failed to open stdout")?;
+        let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
 
         // Spawn stdout reader thread
         let tx_stdout = tx.clone();
@@ -172,11 +192,9 @@ impl QemuBridge {
                     if let Ok(telemetry) =
                         postcard::from_bytes::<Telemetry<'_>>(payload)
                     {
-                        let owned_telemetry =
-                            make_telemetry_owned(&telemetry);
-                        let _ = tx_stdout.send(
-                            BridgeMessage::Telemetry(owned_telemetry),
-                        );
+                        let owned_telemetry = make_telemetry_owned(&telemetry);
+                        let _ = tx_stdout
+                            .send(BridgeMessage::Telemetry(owned_telemetry));
                     }
                     raw_line_buf.clear();
                 } else if reader.is_idle()
@@ -188,13 +206,10 @@ impl QemuBridge {
                 {
                     if b == b'\n' {
                         if !raw_line_buf.is_empty() {
-                            let line = String::from_utf8_lossy(
-                                &raw_line_buf,
-                            )
-                            .into_owned();
-                            let _ = tx_stdout.send(
-                                BridgeMessage::RawConsole(line),
-                            );
+                            let line = String::from_utf8_lossy(&raw_line_buf)
+                                .into_owned();
+                            let _ =
+                                tx_stdout.send(BridgeMessage::RawConsole(line));
                             raw_line_buf.clear();
                         }
                     } else if b != b'\r' {
@@ -221,12 +236,12 @@ impl QemuBridge {
             }
         });
 
-        Self {
+        Ok(Self {
             inner: BridgeInner::Qemu { child, stdin },
             rx_from_target: rx,
             target_info: "QEMU (cortex-m7)".to_string(),
             link_info: "Semihosting (mps2-an500)".to_string(),
-        }
+        })
     }
 
     pub fn target_info(&self) -> &str {

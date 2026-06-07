@@ -15,10 +15,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
-use crate::bridge::{BridgeMessage, QemuBridge};
+use crate::bridge::{BridgeMessage, QemuBridge, Target};
 use control_rs_hil::comms::{Command, Telemetry, TestState};
 use control_rs_hil::hil_test::SettingValue;
 
@@ -241,6 +241,13 @@ impl AppState {
                     "[PANIC] Target crashed: '{}' at {}:{}",
                     message, file, line
                 ));
+                if let Some((s_id, t_id)) = self.current_running {
+                    let s_idx = s_id as usize;
+                    let t_idx = t_id as usize;
+                    if s_idx < self.suites.len() && t_idx < self.suites[s_idx].tests.len() {
+                        self.suites[s_idx].tests[t_idx].state = TestState::Failed;
+                    }
+                }
                 self.current_running = None;
                 self.run_queue.clear();
             }
@@ -254,10 +261,7 @@ impl AppState {
                 status
             ));
         } else {
-            self.add_log(format!(
-                "[Host] Target process exited: {}",
-                status
-            ));
+            self.add_log(format!("[Host] Target process exited: {}", status));
         }
         self.current_running = None;
         self.run_queue.clear();
@@ -297,7 +301,9 @@ impl AppState {
                             self.run_queue.push((s_idx as u16, t_idx as u16));
                         }
                     }
-                    if !self.run_queue.is_empty() && self.current_running.is_none() {
+                    if !self.run_queue.is_empty()
+                        && self.current_running.is_none()
+                    {
                         let (next_s, next_t) = self.run_queue.remove(0);
                         cmd_tx.push(Command::RunExecutable {
                             suite_id: next_s,
@@ -336,9 +342,7 @@ impl AppState {
                     if let Some(item) = flat_items.get(self.selected_item_idx) {
                         match item {
                             FlatItem::Test {
-                                suite_id,
-                                test_id,
-                                ..
+                                suite_id, test_id, ..
                             } => {
                                 if self.current_running.is_none() {
                                     cmd_tx.push(Command::RunExecutable {
@@ -405,7 +409,9 @@ enum FlatItem<'a> {
 
 /// Runs the interactive TUI.
 pub fn run_tui(
-    mut bridge: QemuBridge,
+    bridge: QemuBridge,
+    target: &Target,
+    elf_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout_handle = stdout();
@@ -413,6 +419,24 @@ pub fn run_tui(
     let backend = CrosstermBackend::new(stdout_handle);
     let mut terminal = Terminal::new(backend)?;
 
+    let run_result = run_tui_loop(&mut terminal, bridge, target, elf_path);
+
+    let disable_raw_ok = disable_raw_mode();
+    let leave_screen_ok = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+
+    run_result?;
+    disable_raw_ok?;
+    leave_screen_ok?;
+
+    Ok(())
+}
+
+fn run_tui_loop(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    mut bridge: QemuBridge,
+    target: &Target,
+    elf_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut state = AppState::new();
 
     state.target_info = bridge.target_info().to_string();
@@ -441,15 +465,43 @@ pub fn run_tui(
         }
 
         // Handle process & telemetry messages from bridge
+        let mut should_restart_bridge = false;
         while let Ok(msg) = bridge.receiver().try_recv() {
             match msg {
                 BridgeMessage::Telemetry(telemetry) => {
+                    if let Telemetry::TargetPanic { .. } = telemetry {
+                        should_restart_bridge = true;
+                    }
                     state.handle_telemetry(telemetry, &mut cmd_tx);
                 }
                 BridgeMessage::RawConsole(line) => {
                     state.add_log(format!("[CONSOLE] {}", line));
                 }
             }
+        }
+
+        if should_restart_bridge {
+            state.add_log("[Host] Target panic detected. Re-opening comms...".to_string());
+            cmd_tx.clear();
+
+            let _ = bridge.send_command(&Command::OkToReset);
+            bridge.kill();
+            
+            // Wait at least 1 second for the target to reset and re-establish connection
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+
+            bridge = match target {
+                Target::Qemu => {
+                    QemuBridge::new(elf_path, target.clone())?
+                }
+                Target::Serial { .. } => {
+                    QemuBridge::new("", target.clone())?
+                }
+            };
+
+            state.discovery_complete = false;
+            let _ = bridge.send_command(&Command::ListSuites);
+            last_send = std::time::Instant::now();
         }
 
         // Send any commands generated during telemetry handling
@@ -475,10 +527,10 @@ pub fn run_tui(
         }
     }
 
-    // Clean up terminal
+    // Clean up bridge
+    let _ = bridge.send_command(&Command::OkToReset);
     bridge.kill();
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
     Ok(())
 }
 
@@ -621,7 +673,11 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &AppState) {
             .borders(Borders::ALL)
             .title(" Target Console / RTT Logs "),
     );
-    f.render_widget(log_list, mid_chunks[1]);
+    let mut log_state = ListState::default();
+    if !state.console_logs.is_empty() {
+        log_state.select(Some(state.console_logs.len().saturating_sub(1)));
+    }
+    f.render_stateful_widget(log_list, mid_chunks[1], &mut log_state);
 
     // 4. Render Footer
     let footer_text = if state.is_filtering {
@@ -883,6 +939,26 @@ mod tests {
         let mut state = AppState::new();
         let mut cmd_tx = Vec::new();
 
+        // Setup suite and test first
+        state.handle_telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite_zero",
+                test_count: 1,
+                setting_count: 0,
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "test_zero",
+            },
+            &mut cmd_tx,
+        );
+        state.suites[0].tests[0].state = TestState::Running;
+
         state.run_queue = vec![(0, 1), (0, 2)];
         state.current_running = Some((0, 0));
 
@@ -897,6 +973,7 @@ mod tests {
 
         assert!(state.run_queue.is_empty());
         assert!(state.current_running.is_none());
+        assert_eq!(state.suites[0].tests[0].state, TestState::Failed);
         assert!(
             state
                 .console_logs
@@ -962,7 +1039,9 @@ mod tests {
         let flat_items = state.get_flat_items();
         assert_eq!(flat_items.len(), 2); // Header + test_apple
         match &flat_items[0] {
-            FlatItem::SuiteHeader { name, .. } => assert_eq!(name, "SuiteAlpha"),
+            FlatItem::SuiteHeader { name, .. } => {
+                assert_eq!(name, "SuiteAlpha");
+            }
             _ => panic!("Expected SuiteHeader"),
         }
         match &flat_items[1] {
@@ -1112,5 +1191,150 @@ mod tests {
                 .iter()
                 .any(|l| l.contains("exited unexpectedly"))
         );
+    }
+
+    #[test]
+    fn test_requeue_already_run_tests() {
+        let mut state = AppState::new();
+        let mut cmd_tx = Vec::new();
+
+        // 1. Discover 2 tests
+        state.handle_telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite",
+                test_count: 2,
+                setting_count: 0,
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "test0",
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 1,
+                name: "test1",
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(Telemetry::DiscoveryComplete, &mut cmd_tx);
+
+        // 2. Mark test0 as Passed and test1 as Failed (simulating they have already run)
+        state.suites[0].tests[0].state = TestState::Passed;
+        state.suites[0].tests[1].state = TestState::Failed;
+
+        // 3. Press 'r' to Run All again
+        state.handle_key(KeyCode::Char('r'), &mut cmd_tx);
+
+        // Confirm that the TUI enqueues both tests and sends a RunExecutable command for test0
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+        assert_eq!(cmd_tx.len(), 1);
+        assert!(matches!(
+            cmd_tx[0],
+            Command::RunExecutable {
+                suite_id: 0,
+                test_id: 0
+            }
+        ));
+    }
+
+    #[test]
+    fn test_send_proper_commands_after_reset() {
+        let mut state = AppState::new();
+        let mut cmd_tx = Vec::new();
+
+        // 1. Discovery
+        state.handle_telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite",
+                test_count: 1,
+                setting_count: 0,
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "test0",
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(Telemetry::DiscoveryComplete, &mut cmd_tx);
+        cmd_tx.clear();
+
+        // 2. Run the test
+        state.handle_key(KeyCode::Char('r'), &mut cmd_tx);
+        assert_eq!(cmd_tx.len(), 1);
+        assert!(matches!(
+            cmd_tx[0],
+            Command::RunExecutable {
+                suite_id: 0,
+                test_id: 0
+            }
+        ));
+        cmd_tx.clear();
+
+        // Simulate state transition to Running
+        state.handle_telemetry(
+            Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Running,
+            },
+            &mut cmd_tx,
+        );
+        assert_eq!(state.current_running, Some((0, 0)));
+
+        // 3. Target resets (simulate target exit)
+        let status = make_exit_status();
+        state.handle_target_exit(status);
+
+        // Verify that current_running and queue are cleared
+        assert!(state.current_running.is_none());
+        assert!(state.run_queue.is_empty());
+
+        // 4. Target boots back up (simulate re-discovery telemetry)
+        state.handle_telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite",
+                test_count: 1,
+                setting_count: 0,
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "test0",
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(Telemetry::DiscoveryComplete, &mut cmd_tx);
+        cmd_tx.clear();
+
+        // 5. Select test0 and run it again (Enter)
+        state.selected_item_idx = 1; // Item 0 is SuiteHeader, Item 1 is test0
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+
+        // Verify TUI sends the proper RunExecutable command
+        assert_eq!(cmd_tx.len(), 1);
+        assert!(matches!(
+            cmd_tx[0],
+            Command::RunExecutable {
+                suite_id: 0,
+                test_id: 0
+            }
+        ));
     }
 }

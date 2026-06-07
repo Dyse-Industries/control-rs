@@ -8,11 +8,14 @@ use syn::{
 
 fn is_type_name(ty: &Type, name: &str) -> bool {
     if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            return segment.ident == name;
-        }
+        type_path
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == name)
+    } else {
+        false
     }
-    false
 }
 
 /// Attribute macro for declaring a HIL test suite.
@@ -215,10 +218,20 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
 
-            // A delay loop that pumps the communication device to ensure
-            // all panic telemetry is physically transmitted over the USB CDC/serial line.
-            for _ in 0..10_000 {
+            // Wait for OkToReset command from host
+            loop {
                 unsafe {
+                    if let (Some(poller), ptr) = (
+                        ::control_rs_hil::runner::PANIC_CMD_POLLER,
+                        ::control_rs_hil::runner::ACTIVE_COMMS_PTR,
+                    ) {
+                        if !ptr.is_null() {
+                            if let Some(::control_rs_hil::comms::Command::OkToReset) = poller(ptr) {
+                                break;
+                            }
+                        }
+                    }
+
                     if let (Some(flusher), ptr) = (
                         ::control_rs_hil::runner::PANIC_COMMS_FLUSHER,
                         ::control_rs_hil::runner::ACTIVE_COMMS_PTR,
@@ -231,6 +244,10 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     } else {
                         ::core::hint::spin_loop();
                     }
+                }
+                // Small delay to prevent pegging the CPU too hard
+                for _ in 0..1000 {
+                    ::core::hint::spin_loop();
                 }
             }
 

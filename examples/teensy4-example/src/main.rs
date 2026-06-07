@@ -1,11 +1,13 @@
 #![no_std]
 #![no_main]
 
-use teensy4_bsp as bsp;
 use bsp::board;
 use bsp::hal::usbd::{BusAdapter, EndpointMemory, EndpointState, Speed};
+use teensy4_bsp as bsp;
 
-use control_rs::hil::comms::{Command, FrameReader, HostComms, Telemetry, frame_telemetry};
+use control_rs::hil::comms::{
+    frame_telemetry, Command, FrameReader, HostComms, Telemetry,
+};
 use control_rs::hil::runner::Context;
 use control_rs::hil::time::ClientClock;
 use control_rs::hil::{hil_setup, hil_suite};
@@ -13,7 +15,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use cortex_m::peripheral::syst::SystClkSource;
 
 use usb_device::bus::UsbBusAllocator;
-use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbDeviceState, UsbVidPid};
+use usb_device::device::{
+    UsbDevice, UsbDeviceBuilder, UsbDeviceState, UsbVidPid,
+};
 use usbd_serial::SerialPort;
 
 // --- Millisecond Counter & SysTick Interrupt Handler ---
@@ -164,7 +168,10 @@ pub mod teensy_pid_suite {
     }
 
     fn test_intentional_failure() {
-        assert!(false, "Intentionally failed to demonstrate TUI state retention");
+        assert!(
+            false,
+            "Intentionally failed to demonstrate TUI state retention"
+        );
     }
 }
 
@@ -178,10 +185,7 @@ fn setup() -> Context<TeensyComms, TeensyClock> {
 
     // 1. Initialize Board Resources
     let board::Resources {
-        usb,
-        pins,
-        gpio2,
-        ..
+        usb, pins, gpio2, ..
     } = board::t40(d);
 
     // 2. Set up the status LED (pin 13) to indicate HIL server status
@@ -200,14 +204,14 @@ fn setup() -> Context<TeensyComms, TeensyClock> {
 
     const SPEED: Speed = Speed::LowFull;
     let bus_adapter = BusAdapter::with_speed(usb, ep_memory, ep_state, SPEED);
-    
+
     // Disable interrupts since we are polling manually
     bus_adapter.set_interrupts(false);
 
     let usb_bus = usb_bus_opt.insert(UsbBusAllocator::new(bus_adapter));
     let usb_class = SerialPort::new(usb_bus);
 
-    const VID_PID: UsbVidPid = UsbVidPid(0x5824, 0x27dd);
+    const VID_PID: UsbVidPid = UsbVidPid(0x16c0, 0x0413);
     const PRODUCT: &str = "teensy4-bsp-example";
     let usb_device = UsbDeviceBuilder::new(usb_bus, VID_PID)
         .product(PRODUCT)
