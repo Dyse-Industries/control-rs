@@ -505,10 +505,12 @@ fn run_headless_sil(
     let mut bridge = match target {
         bridge::Target::Qemu => {
             elf_path = build_qemu_elf();
-            bridge::QemuBridge::new(&elf_path, target.clone()).map_err(|e| e.to_string())?
+            bridge::QemuBridge::new(&elf_path, target.clone())
+                .map_err(|e| e.to_string())?
         }
         bridge::Target::Serial { .. } => {
-            bridge::QemuBridge::new("", target.clone()).map_err(|e| e.to_string())?
+            bridge::QemuBridge::new("", target.clone())
+                .map_err(|e| e.to_string())?
         }
     };
 
@@ -723,7 +725,9 @@ fn run_headless_sil(
                         ));
                         bridge.kill();
                         // Wait at least 1 second for the target to reset and re-establish connection
-                        std::thread::sleep(std::time::Duration::from_millis(1000));
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            1000,
+                        ));
 
                         current_running = None;
                         discovery_complete = false;
@@ -747,10 +751,12 @@ fn run_headless_sil(
                                     bridge::QemuBridge::new(
                                         &elf_path,
                                         target.clone(),
-                                    ).map_err(|e| e.to_string())?
+                                    )
+                                    .map_err(|e| e.to_string())?
                                 }
                                 bridge::Target::Serial { .. } => {
-                                    bridge::QemuBridge::new("", target.clone()).map_err(|e| e.to_string())?
+                                    bridge::QemuBridge::new("", target.clone())
+                                        .map_err(|e| e.to_string())?
                                 }
                             };
                             let _ = bridge.send_command(&Command::ListSuites);

@@ -244,8 +244,11 @@ impl AppState {
                 if let Some((s_id, t_id)) = self.current_running {
                     let s_idx = s_id as usize;
                     let t_idx = t_id as usize;
-                    if s_idx < self.suites.len() && t_idx < self.suites[s_idx].tests.len() {
-                        self.suites[s_idx].tests[t_idx].state = TestState::Failed;
+                    if s_idx < self.suites.len()
+                        && t_idx < self.suites[s_idx].tests.len()
+                    {
+                        self.suites[s_idx].tests[t_idx].state =
+                            TestState::Failed;
                     }
                 }
                 self.current_running = None;
@@ -422,7 +425,8 @@ pub fn run_tui(
     let run_result = run_tui_loop(&mut terminal, bridge, target, elf_path);
 
     let disable_raw_ok = disable_raw_mode();
-    let leave_screen_ok = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let leave_screen_ok =
+        execute!(terminal.backend_mut(), LeaveAlternateScreen);
 
     run_result?;
     disable_raw_ok?;
@@ -464,7 +468,7 @@ fn run_tui_loop(
             last_send = std::time::Instant::now();
         }
 
-        // Handle process & telemetry messages from bridge
+        // Handle all process & telemetry messages from bridge
         let mut should_restart_bridge = false;
         while let Ok(msg) = bridge.receiver().try_recv() {
             match msg {
@@ -481,22 +485,20 @@ fn run_tui_loop(
         }
 
         if should_restart_bridge {
-            state.add_log("[Host] Target panic detected. Re-opening comms...".to_string());
+            state.add_log(
+                "[Host] Target panic detected. Re-opening comms...".to_string(),
+            );
             cmd_tx.clear();
 
             let _ = bridge.send_command(&Command::OkToReset);
             bridge.kill();
-            
+
             // Wait at least 1 second for the target to reset and re-establish connection
             std::thread::sleep(std::time::Duration::from_millis(2000));
 
             bridge = match target {
-                Target::Qemu => {
-                    QemuBridge::new(elf_path, target.clone())?
-                }
-                Target::Serial { .. } => {
-                    QemuBridge::new("", target.clone())?
-                }
+                Target::Qemu => QemuBridge::new(elf_path, target.clone())?,
+                Target::Serial { .. } => QemuBridge::new("", target.clone())?,
             };
 
             state.discovery_complete = false;
@@ -808,7 +810,7 @@ mod tests {
         let mut state = AppState::new();
         let mut cmd_tx = Vec::new();
 
-        // Setup a suite and two tests
+        // Set up a suite and two tests
         state.handle_telemetry(
             Telemetry::SuiteInfo {
                 suite_id: 0,
