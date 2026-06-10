@@ -396,7 +396,7 @@ mod tests {
         settings: SUITE_SETTINGS,
     };
 
-    static SUITES: &[&'static SuiteDescriptor] = &[&SUITE_DESC];
+    static SUITES: &[&SuiteDescriptor] = &[&SUITE_DESC];
 
     #[test]
     fn test_server_discovery() {

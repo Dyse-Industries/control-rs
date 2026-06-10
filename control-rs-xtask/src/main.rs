@@ -250,7 +250,18 @@ fn run_ci(target: &bridge::Target) {
     let fmt_errors = fmt_str.matches("Diff in").count();
 
     let clippy_output = Command::new("cargo")
-        .args(["clippy", "--", "-D", "warnings"])
+        .args([
+            "clippy",
+            "--workspace",
+            "--lib",
+            "--bins",
+            "--tests",
+            "--examples",
+            "--benches",
+            "--",
+            "-D",
+            "warnings",
+        ])
         .output()
         .expect("Failed to run cargo clippy");
     let clippy_str = String::from_utf8_lossy(&clippy_output.stderr);

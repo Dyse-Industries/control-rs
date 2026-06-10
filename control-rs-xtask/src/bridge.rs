@@ -5,7 +5,7 @@
 
 use std::io::{Read, Write as IoWrite};
 use std::process::{Child, Command as StdCommand, Stdio};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 
 use control_rs_hil::comms::{Command, FrameReader, LogMessage, Telemetry};

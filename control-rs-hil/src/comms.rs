@@ -321,8 +321,8 @@ mod tests {
         let framed_len = frame_telemetry(&telemetry, &mut buf).unwrap();
 
         // Feed all bytes except the last one (checksum)
-        for i in 0..(framed_len - 1) {
-            assert!(reader.handle_byte(buf[i]).is_none());
+        for &item in buf.iter().take(framed_len - 1) {
+            assert!(reader.handle_byte(item).is_none());
         }
         // Feed the checksum, it should complete and return the payload slice
         let payload = reader.handle_byte(buf[framed_len - 1]).unwrap();
@@ -341,8 +341,8 @@ mod tests {
         let framed_len = frame_telemetry(&telemetry, &mut buf).unwrap();
 
         // Feed all bytes except the checksum
-        for i in 0..(framed_len - 1) {
-            assert!(reader.handle_byte(buf[i]).is_none());
+        for &item in buf.iter().take(framed_len - 1) {
+            assert!(reader.handle_byte(item).is_none());
         }
         // Feed an invalid checksum byte
         let bad_checksum = buf[framed_len - 1] ^ 0xFF;
