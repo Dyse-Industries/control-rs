@@ -20,6 +20,9 @@ jobs:
       - name: Install Tools
         run: cargo binstall cargo-tarpaulin@0.35.2 -y
 
+      - name: Install libudev-dev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
       - name: Run CI
         run: cargo xtask ci
 
