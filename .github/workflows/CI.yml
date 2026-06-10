@@ -17,8 +17,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: cargo-bins/cargo-binstall@main
 
-      - name: Install Tools
+      - name: Install Tarpaulin
         run: cargo binstall cargo-tarpaulin@0.35.2 -y
+
+      - name: Install Targets
+        run: rustup target add thumbv7em-none-eabihf
 
       - name: Install libudev-dev
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
