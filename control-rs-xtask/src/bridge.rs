@@ -1,6 +1,11 @@
+//!
+//!
+//! TODO:
+//!   - remove duplicate code fragment (96:131)(196:223)
+
 use std::io::{Read, Write as IoWrite};
 use std::process::{Child, Command as StdCommand, Stdio};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
 use control_rs_hil::comms::{Command, FrameReader, LogMessage, Telemetry};
