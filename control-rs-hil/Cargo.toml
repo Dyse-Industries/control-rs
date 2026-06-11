@@ -1,0 +1,20 @@
+[package]
+name = "control-rs-hil"
+version = "0.1.0"
+edition = "2024"
+description = "Hardware in the Loop (HIL) test suite for the control-rs project."
+license = "MIT"
+repository = "https://github.com/mdyson/control-rs"
+readme = "README.md"
+keywords = ["embedded", "control-systems", "hil", "testing"]
+categories = ["embedded", "no-std"]
+
+[dependencies]
+cortex-m-rt = "0.7"
+cortex-m-semihosting = "0.5"
+panic-semihosting = "0.6"
+
+[[bin]]
+name = "control-rs-qemu-arm"
+path = "src/bin/control-rs-qemu-arm.rs"
+test = false

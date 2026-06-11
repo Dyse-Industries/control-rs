@@ -8,11 +8,57 @@ fn main() {
     let task = env::args().nth(1);
     match task.as_deref() {
         Some("ci") => run_ci(),
+        Some("qemu") => run_qemu(),
         _ => {
-            eprintln!("Usage: cargo xtask ci");
+            eprintln!("Usage: cargo control-rs-xtask <task>");
+            eprintln!("Tasks: ci, qemu");
             exit(1);
         }
     }
+}
+
+fn run_qemu() {
+    let clean_status = Command::new("cargo")
+        .args([
+            "clean",
+            "--package",
+            "control-rs-hil",
+            "--target",
+            "thumbv7em-none-eabihf",
+            "--profile",
+            "qemu",
+        ])
+        .status()
+        .expect("Failed to clean QEMU Sil kernel.");
+
+    if !clean_status.success() {
+        eprintln!("Failed to clean QEMU image.");
+        exit(1);
+    }
+
+    println!("Building QEMU image...");
+    let run_status = Command::new("cargo")
+        .env("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUNNER", "qemu-system-arm -cpu cortex-m7 -machine mps2-an500 -nographic -semihosting-config enable=on,target=native -kernel")
+        .env("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS", "-C link-arg=-Tlink.x -C link-arg=-Thil_suites.x")
+        .args([
+            "run",
+            "--package",
+            "control-rs-hil",
+            "--bin",
+            "control-rs-qemu-arm",
+            "--target",
+            "thumbv7em-none-eabihf",
+            "--profile",
+            "qemu",
+        ])
+        .status()
+        .expect("Failed to run QEMU Sil kernel.");
+
+    if !run_status.success() {
+        eprintln!("QEMU exited with an error.");
+        exit(1);
+    }
+    println!("QEMU run finished successfully.");
 }
 
 fn run_ci() {
@@ -25,10 +71,10 @@ fn run_ci() {
 
     let start_lint = Instant::now();
 
-    let ansi_escape = Regex::new(r"\x1B\[[0-9;]*[mK]").unwrap();
+    let ansi_escape = Regex::new(r"\x1B\[[0-9;]*[mK]|\x1B\(B").unwrap();
 
     let fmt_output = Command::new("cargo")
-        .args(["fmt", "--all", "--", "--check"])
+        .args(["fmt", "--all"])
         .output()
         .expect("Failed to run cargo fmt");
     let fmt_str = String::from_utf8_lossy(&fmt_output.stdout);
@@ -132,19 +178,25 @@ fn run_ci() {
     report.push_str(&collect_versions());
 
     if fmt_errors > 0 || clippy_errors > 0 {
-        report.push_str("### Cargo fmt & Clippy\n```text\n");
+        report.push_str(
+            "\n<details>\n<summary>Fmt and Clippy logs</summary>\n\n```text\n",
+        );
         if fmt_errors > 0 {
             report.push_str(&fmt_str);
+            report.push_str("\n");
         }
         if clippy_errors > 0 {
             report.push_str(&clippy_str);
+            report.push_str("\n");
         }
-        report.push_str("```\n\n");
+        report.push_str("\n```\n\n</details>\n");
     }
 
-    report.push_str("### Tarpaulin Output Log\n<details>\n<summary>Click to expand test logs</summary>\n\n```text\n");
+    report.push_str(
+        "\n<details>\n<summary>Tarpaulin Output Log</summary>\n\n```text\n",
+    );
     report.push_str(&tarp_str);
-    report.push_str("\n```\n</details>\n");
+    report.push_str("\n```\n\n</details>\n");
 
     report.push_str("</details>\n");
 

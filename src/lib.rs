@@ -1,5 +1,5 @@
 #![doc = include_str!("../README.md")]
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 // Clippy docs: https://doc.rust-lang.org/clippy/usage.html
 #![deny(
     unused,
