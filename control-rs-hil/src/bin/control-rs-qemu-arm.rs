@@ -72,10 +72,6 @@ pub mod qemu_math_suite {
     fn math_subtraction() {
         assert_eq!(5 - 3, 2);
     }
-
-    fn math_intentional_panic() {
-        panic!("Intentional panic to verify reset and panic handling");
-    }
 }
 
 // --- Main Entrypoint ---

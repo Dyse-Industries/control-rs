@@ -12,4 +12,4 @@ ratatui = "0.26"
 crossterm = "0.27"
 control-rs-hil = { path = "../control-rs-hil" }
 serialport = "4.3"
-toml = "0.8"
+serde_json = "1.0"

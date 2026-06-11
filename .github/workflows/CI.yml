@@ -27,7 +27,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
       - name: Run CI
-        run: cargo xtask ci
+        run: cargo ci
 
       - name: Post PR Comment
         if: github.event_name == 'pull_request' && (success() || failure())
