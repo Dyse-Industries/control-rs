@@ -1,3 +1,6 @@
+//! Host runner binary task entry points.
+//! Implements subcommands for CI linting, QEMU runner execution, and interactive HIL TUI.
+
 // Clippy configuration for control-rs-xtask binary.
 #![deny(
     unused,
@@ -11,7 +14,8 @@
     clippy::big_endian_bytes,
     clippy::shadow_unrelated,
     clippy::large_stack_arrays,
-    clippy::empty_structs_with_brackets
+    clippy::empty_structs_with_brackets,
+    missing_docs
 )]
 #![warn(rust_2018_idioms, clippy::complexity)]
 #![allow(
@@ -26,7 +30,6 @@
     clippy::cast_possible_truncation,
     clippy::too_many_lines,
     clippy::uninlined_format_args,
-    missing_docs,
     clippy::shadow_unrelated,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
@@ -62,6 +65,7 @@ use control_rs_xtask::bridge;
 mod tasks;
 mod utils;
 
+/// Main entrypoint. Parses arguments and routes execution to the correct task runner.
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -128,6 +132,7 @@ fn main() {
     }
 }
 
+/// Prints usage instructions to stderr and exits with error code 1.
 fn print_usage_and_exit() -> ! {
     eprintln!("Usage: cargo control-rs-xtask <task> [target] [port] [baud]");
     eprintln!("Tasks: ci, qemu, hil-tui");
@@ -135,6 +140,7 @@ fn print_usage_and_exit() -> ! {
     exit(1);
 }
 
+/// Executes the full CI validation pipeline, including formatting, clippy, test coverage, and SIL tests.
 fn run_ci(target: &bridge::Target) {
     unsafe {
         env::set_var("RUST_BACKTRACE", "full");

@@ -1,24 +1,40 @@
+//! Utility functions and structures for the `xtask` build and runner tool.
+//! Contains formatting, git information collection, and report generation helper functions.
+
 use control_rs_hil::comms::TestState;
 use std::env;
 use std::fs;
 use std::process::Command;
 
+/// Summary of cargo tarpaulin test execution and line coverage.
 #[derive(Debug, Clone)]
 pub struct TarpaulinSummary {
+    /// Number of tests passed.
     pub passed: usize,
+    /// Number of tests failed.
     pub failed: usize,
+    /// Number of tests ignored.
     pub ignored: usize,
+    /// The formatted coverage percentage (e.g., "85.20").
     pub coverage_percent: String,
+    /// Number of lines covered.
     pub covered_lines: usize,
+    /// Total number of coverable lines.
     pub total_lines: usize,
 }
 
+/// Results of a headlessly run SIL (Software-in-the-Loop) test.
 #[derive(Debug, Clone)]
 pub struct HeadlessTestResult {
+    /// The name of the test suite.
     pub suite_name: String,
+    /// The name of the test case.
     pub test_name: String,
+    /// The final execution state of the test (Passed or Failed).
     pub state: TestState,
+    /// CPU cycles consumed by the test if successful.
     pub cycles: Option<u64>,
+    /// Duration of the test in microseconds if successful.
     pub time_us: Option<u64>,
 }
 

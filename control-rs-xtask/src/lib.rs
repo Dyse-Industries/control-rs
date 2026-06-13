@@ -11,7 +11,8 @@
     clippy::big_endian_bytes,
     clippy::shadow_unrelated,
     clippy::large_stack_arrays,
-    clippy::empty_structs_with_brackets
+    clippy::empty_structs_with_brackets,
+    missing_docs
 )]
 #![warn(rust_2018_idioms, clippy::complexity)]
 #![allow(
@@ -26,7 +27,6 @@
     clippy::cast_possible_truncation,
     clippy::too_many_lines,
     clippy::uninlined_format_args,
-    missing_docs,
     clippy::shadow_unrelated,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,

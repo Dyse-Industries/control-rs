@@ -1,7 +1,5 @@
-//!
-//!
-//! TODO:
-//!   - remove duplicate code fragment (96:131)(196:223)
+//! Bridge module to interface host computer with the target device.
+//! Manages spawning and monitoring the execution environments (QEMU or Serial).
 
 use std::io::{Read, Write as IoWrite};
 use std::process::{Child, Command as StdCommand, Stdio};
@@ -18,18 +16,32 @@ pub enum BridgeMessage {
     RawConsole(String),
 }
 
+/// Target execution platform.
 #[derive(Debug, Clone)]
 pub enum Target {
+    /// QEMU emulator target.
     Qemu,
-    Serial { port: String, baud: u32 },
+    /// Serial connection target.
+    Serial {
+        /// Serial port path (e.g. `/dev/ttyACM0`).
+        port: String,
+        /// Baud rate (e.g. `115200`).
+        baud: u32,
+    },
 }
 
+/// Inner bridge enum representing active connection variant.
 enum BridgeInner {
+    /// Connection to QEMU via child process.
     Qemu {
+        /// The child process handle.
         child: Child,
+        /// Stdin of the child process.
         stdin: std::process::ChildStdin,
     },
+    /// Connection to hardware via serial port.
     Serial {
+        /// Serial port interface.
         port: Box<dyn serialport::SerialPort>,
     },
 }
@@ -91,42 +103,12 @@ impl QemuBridge {
                         match port_clone.read(&mut byte_buf) {
                             Ok(1) => {
                                 let b = byte_buf[0];
-                                if let Some(payload) = reader.handle_byte(b) {
-                                    if let Ok(telemetry) =
-                                        postcard::from_bytes::<Telemetry<'_>>(
-                                            payload,
-                                        )
-                                    {
-                                        let owned_telemetry =
-                                            make_telemetry_owned(&telemetry);
-                                        let _ =
-                                            tx.send(BridgeMessage::Telemetry(
-                                                owned_telemetry,
-                                            ));
-                                    }
-                                    raw_line_buf.clear();
-                                } else if reader.is_idle()
-                                    && (b.is_ascii_graphic()
-                                        || b == b' '
-                                        || b == b'\n'
-                                        || b == b'\r'
-                                        || b == b'\t')
-                                {
-                                    if b == b'\n' {
-                                        if !raw_line_buf.is_empty() {
-                                            let line = String::from_utf8_lossy(
-                                                &raw_line_buf,
-                                            )
-                                            .into_owned();
-                                            let _ = tx.send(
-                                                BridgeMessage::RawConsole(line),
-                                            );
-                                            raw_line_buf.clear();
-                                        }
-                                    } else if b != b'\r' {
-                                        raw_line_buf.push(b);
-                                    }
-                                }
+                                process_incoming_byte(
+                                    b,
+                                    &mut reader,
+                                    &mut raw_line_buf,
+                                    &tx,
+                                );
                             }
                             _ => {
                                 thread::sleep(
@@ -191,34 +173,12 @@ impl QemuBridge {
 
             while let Ok(1) = stdout.read(&mut byte_buf) {
                 let b = byte_buf[0];
-                if let Some(payload) = reader.handle_byte(b) {
-                    if let Ok(telemetry) =
-                        postcard::from_bytes::<Telemetry<'_>>(payload)
-                    {
-                        let owned_telemetry = make_telemetry_owned(&telemetry);
-                        let _ = tx_stdout
-                            .send(BridgeMessage::Telemetry(owned_telemetry));
-                    }
-                    raw_line_buf.clear();
-                } else if reader.is_idle()
-                    && (b.is_ascii_graphic()
-                        || b == b' '
-                        || b == b'\n'
-                        || b == b'\r'
-                        || b == b'\t')
-                {
-                    if b == b'\n' {
-                        if !raw_line_buf.is_empty() {
-                            let line = String::from_utf8_lossy(&raw_line_buf)
-                                .into_owned();
-                            let _ =
-                                tx_stdout.send(BridgeMessage::RawConsole(line));
-                            raw_line_buf.clear();
-                        }
-                    } else if b != b'\r' {
-                        raw_line_buf.push(b);
-                    }
-                }
+                process_incoming_byte(
+                    b,
+                    &mut reader,
+                    &mut raw_line_buf,
+                    &tx_stdout,
+                );
             }
         });
 
@@ -247,10 +207,12 @@ impl QemuBridge {
         })
     }
 
+    /// Gets description of the target platform.
     pub fn target_info(&self) -> &str {
         &self.target_info
     }
 
+    /// Gets description of the communication link.
     pub fn link_info(&self) -> &str {
         &self.link_info
     }
@@ -314,6 +276,42 @@ impl QemuBridge {
     }
 }
 
+/// Processes a single byte received from the target device.
+fn process_incoming_byte(
+    b: u8,
+    reader: &mut FrameReader,
+    raw_line_buf: &mut Vec<u8>,
+    tx: &Sender<BridgeMessage>,
+) {
+    if let Some(payload) = reader.handle_byte(b) {
+        if let Ok(telemetry) =
+            postcard::from_bytes::<Telemetry<'_>>(payload)
+        {
+            let owned_telemetry = make_telemetry_owned(&telemetry);
+            let _ = tx.send(BridgeMessage::Telemetry(owned_telemetry));
+        }
+        raw_line_buf.clear();
+    } else if reader.is_idle()
+        && (b.is_ascii_graphic()
+            || b == b' '
+            || b == b'\n'
+            || b == b'\r'
+            || b == b'\t')
+    {
+        if b == b'\n' {
+            if !raw_line_buf.is_empty() {
+                let line = String::from_utf8_lossy(raw_line_buf)
+                    .into_owned();
+                let _ = tx.send(BridgeMessage::RawConsole(line));
+                raw_line_buf.clear();
+            }
+        } else if b != b'\r' {
+            raw_line_buf.push(b);
+        }
+    }
+}
+
+/// Converts a Telemetry object references into static owned equivalents.
 fn make_telemetry_owned(tel: &Telemetry<'_>) -> Telemetry<'static> {
     match *tel {
         Telemetry::SuiteInfo {

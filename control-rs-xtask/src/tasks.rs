@@ -1,35 +1,57 @@
+//! Modules defining the runner and compilation tasks executed by `xtask`.
+//! Includes tasks for formatting check, clippy checks, coverage tracking with tarpaulin,
+//! and running headless/interactive tests.
+//!
+//! TODO:
+//!   - Remove duplicate code fragments (364-375)(398-401).
+
 use regex::Regex;
 use std::fs;
-use std::process::{Command, exit};
+use std::process::{exit, Command};
 use std::time::{Duration, Instant};
 
 use crate::utils::{HeadlessTestResult, TarpaulinSummary};
 use control_rs_xtask::{bridge, tui};
 
+/// Representation of a single test case under discovery.
 struct TestItem {
+    /// Name of the test case.
     name: String,
+    /// Current execution state of the test.
     state: control_rs_hil::comms::TestState,
 }
 
+/// Representation of a configuration setting in a test suite.
 struct SettingItem {
+    /// Name of the setting.
     name: String,
+    /// Current value of the setting.
     value: control_rs_hil::settings::SettingValue,
 }
 
+/// Representation of a test suite containing tests and settings.
 struct SuiteItem {
+    /// Name of the suite.
     name: String,
+    /// Collection of tests inside this suite.
     tests: Vec<TestItem>,
+    /// Collection of config settings inside this suite.
     settings: Vec<SettingItem>,
 }
 
+/// Represents individual file coverage summary from tarpaulin JSON output.
 #[derive(serde::Deserialize)]
 struct TarpaulinFile {
+    /// Number of covered lines.
     covered: usize,
+    /// Number of coverable lines.
     coverable: usize,
 }
 
+/// Represents the top-level structure of tarpaulin JSON output report.
 #[derive(serde::Deserialize)]
 struct TarpaulinReportJson {
+    /// List of file coverage statistics.
     files: Vec<TarpaulinFile>,
 }
 
@@ -471,7 +493,7 @@ pub fn run_headless_sil(
                         let _ = bridge.send_command(&CommCommand::OkToReset);
                         std::thread::sleep(Duration::from_millis(50));
                         bridge.kill();
-                        std::thread::sleep(Duration::from_millis(1000));
+                        std::thread::sleep(Duration::from_secs(1));
 
                         current_running = None;
                         discovery_complete = false;

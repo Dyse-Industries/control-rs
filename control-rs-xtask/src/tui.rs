@@ -1,3 +1,6 @@
+//! Interactive Terminal User Interface (TUI) for hardware-in-the-loop (HIL) testing.
+//! Allows running, stopping, and filtering tests, as well as modifying settings dynamically.
+
 use std::io::stdout;
 use std::time::Duration;
 
@@ -22,38 +25,62 @@ use crate::bridge::{BridgeMessage, QemuBridge, Target};
 use control_rs_hil::comms::{Command, Telemetry, TestState};
 use control_rs_hil::settings::SettingValue;
 
+/// Represents a test item in the TUI list.
 struct TestItem {
+    /// Name of the test case.
     name: String,
+    /// Current execution state of the test.
     state: TestState,
+    /// Cycles consumed by the test if it completed.
     cycles: Option<u64>,
+    /// Duration of the test in microseconds if it completed.
     time_us: Option<u64>,
 }
 
+/// Represents a configuration setting item in the TUI list.
 struct SettingItem {
+    /// Name of the setting.
     name: String,
+    /// Value of the setting.
     value: SettingValue,
 }
 
+/// Represents a test suite containing tests and settings.
 struct SuiteItem {
+    /// Name of the suite.
     name: String,
+    /// Tests inside this suite.
     tests: Vec<TestItem>,
+    /// Config settings inside this suite.
     settings: Vec<SettingItem>,
 }
 
+/// State of the interactive TUI application.
 struct AppState {
+    /// List of test suites.
     suites: Vec<SuiteItem>,
+    /// Buffer of console logs displayed in the log panel.
     console_logs: Vec<String>,
-    selected_item_idx: usize, // Index in the flattened list of tests/settings
+    /// Index in the flattened list of tests/settings for UI navigation.
+    selected_item_idx: usize,
+    /// Queue of test indices scheduled to run.
     run_queue: Vec<(u16, u16)>,
+    /// Index of the test currently being executed.
     current_running: Option<(u16, u16)>,
+    /// Active query string used to filter tests.
     filter_query: String,
+    /// Whether the user is currently typing a filter.
     is_filtering: bool,
+    /// Information string about the target platform.
     target_info: String,
+    /// Information string about the communication link.
     link_info: String,
+    /// Whether initial test discovery has finished.
     discovery_complete: bool,
 }
 
 impl AppState {
+    /// Creates a new AppState with empty suites and default values.
     fn new() -> Self {
         Self {
             suites: Vec::new(),
@@ -69,6 +96,7 @@ impl AppState {
         }
     }
 
+    /// Adds a new log entry to the console log buffer, enforcing a maximum limit.
     fn add_log(&mut self, log: String) {
         self.console_logs.push(log);
         if self.console_logs.len() > 100 {
@@ -76,8 +104,8 @@ impl AppState {
         }
     }
 
-    // Returns a flattened list of items for UI rendering and navigation
-    // (Suite headers, Tests, and Settings)
+    /// Returns a flattened list of items for UI rendering and navigation
+    /// (Suite headers, Tests, and Settings).
     fn get_flat_items(&self) -> Vec<FlatItem<'_>> {
         let mut flat = Vec::new();
         for (s_idx, suite) in self.suites.iter().enumerate() {
@@ -133,6 +161,7 @@ impl AppState {
         flat
     }
 
+    /// Handles incoming telemetry messages from the target and updates the application state.
     fn handle_telemetry(
         &mut self,
         telemetry: Telemetry<'static>,
@@ -257,6 +286,7 @@ impl AppState {
         }
     }
 
+    /// Handles the target process exit signal, logging the status and clearing the execution queues.
     fn handle_target_exit(&mut self, status: std::process::ExitStatus) {
         if self.current_running.is_some() || !self.run_queue.is_empty() {
             self.add_log(format!(
@@ -270,6 +300,7 @@ impl AppState {
         self.run_queue.clear();
     }
 
+    /// Processes keyboard inputs and returns whether the application should exit.
     fn handle_key(
         &mut self,
         key_code: KeyCode,
@@ -393,19 +424,31 @@ impl AppState {
     }
 }
 
+/// Flattened item used to represent a row in the test/setting list widget.
 enum FlatItem<'a> {
+    /// A header for a test suite.
     SuiteHeader {
+        /// Suite ID.
         _suite_id: u16,
+        /// Suite name.
         name: String,
     },
+    /// A configuration setting.
     Setting {
+        /// Parent suite ID.
         suite_id: u16,
+        /// Setting ID.
         setting_id: u16,
+        /// Reference to the setting item.
         item: &'a SettingItem,
     },
+    /// A test case.
     Test {
+        /// Parent suite ID.
         suite_id: u16,
+        /// Test ID.
         test_id: u16,
+        /// Reference to the test item.
         item: &'a TestItem,
     },
 }
@@ -435,6 +478,7 @@ pub fn run_tui(
     Ok(())
 }
 
+/// The main event loop for the TUI, handling drawing, polling messages, and input.
 fn run_tui_loop(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     mut bridge: QemuBridge,
@@ -536,6 +580,7 @@ fn run_tui_loop(
     Ok(())
 }
 
+/// Renders the entire terminal user interface layout.
 fn draw_ui(f: &mut ratatui::Frame<'_>, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
