@@ -164,15 +164,46 @@ pub fn collect_git_info() -> String {
     s.push_str(&format!("| Branch | `{}` |\n", branch));
     s.push_str(&format!("| Commit | `{}` |\n\n", commit_hash));
 
-    let git_show = Command::new("git")
-        .args(["show", &commit_hash, "--stat"])
+    let has_origin_main = Command::new("git")
+        .args(["rev-parse", "--verify", "origin/main"])
         .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "Not available".to_string());
+        .map(|o| o.status.success())
+        .unwrap_or(false);
 
-    s.push_str("<details>\n<summary>Commit Stat Summary (git show HEAD --stat)</summary>\n\n```text\n");
+    let mut git_show = String::new();
+    let mut target_used = "HEAD";
+
+    if has_origin_main {
+        if let Ok(output) = Command::new("git")
+            .args(["show", "origin/main..HEAD", "--stat"])
+            .output()
+        {
+            if output.status.success() {
+                if let Ok(stdout_str) = String::from_utf8(output.stdout) {
+                    let trimmed = stdout_str.trim().to_string();
+                    if !trimmed.is_empty() {
+                        git_show = trimmed;
+                        target_used = "origin/main..HEAD";
+                    }
+                }
+            }
+        }
+    }
+
+    if git_show.is_empty() {
+        git_show = Command::new("git")
+            .args(["show", "HEAD", "--stat"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "Not available".to_string());
+    }
+
+    s.push_str(&format!(
+        "<details>\n<summary>Commit Stat Summary (git show {} --stat)</summary>\n\n```text\n",
+        target_used
+    ));
     s.push_str(&git_show);
     s.push_str("\n```\n</details>\n\n");
     s
