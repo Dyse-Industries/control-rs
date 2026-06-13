@@ -5,17 +5,17 @@ use crossterm::{
     event::{self, Event, KeyCode},
     execute,
     terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen,
+        LeaveAlternateScreen,
     },
 };
 use ratatui::{
-    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    Terminal,
 };
 
 use crate::bridge::{BridgeMessage, QemuBridge, Target};
@@ -493,8 +493,8 @@ fn run_tui_loop(
             let _ = bridge.send_command(&Command::OkToReset);
             bridge.kill();
 
-            // Wait at least 1 second for the target to reset and re-establish connection
-            std::thread::sleep(std::time::Duration::from_millis(2000));
+            // Wait 2 seconds for the target to reset and re-establish connection
+            std::thread::sleep(std::time::Duration::from_secs(2));
 
             bridge = match target {
                 Target::Qemu => QemuBridge::new(elf_path, target.clone())?,

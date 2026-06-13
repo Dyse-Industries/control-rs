@@ -1,9 +1,9 @@
 //! # Math Assertions.
 
 use crate::math::{
-    ArithmeticResult,
     num_traits::{Field, Signed},
     ops::{TryMul, TrySub},
+    ArithmeticResult,
 };
 
 /// Asserts that two floating-point numbers are almost equal.
@@ -30,10 +30,8 @@ macro_rules! assert_almost_eq {
     ($left:expr, $right:expr) => ({
         let (left_val, right_val) = (&$left, &$right);
         match $crate::math::assert::almost_eq(left_val, right_val) {
-             Ok(is_almost_eq) => {
-                 if !is_almost_eq {
-                     panic!("assertion failed: `(left == right)`\n  left: `{:?}`, \n right: `{:?}`", left_val, right_val)
-                 }
+             Ok(False) => {
+                 panic!("assertion failed: `(left == right)`\n  left: `{:?}`, \n right: `{:?}`", left_val, right_val)
              }
              Err(e) => panic!("assertion failed: {e}")
          }
@@ -68,10 +66,8 @@ macro_rules! assert_not_almost_eq {
     ($left:expr, $right:expr) => ({
          let (left_val, right_val) = (&$left, &$right);
          match $crate::math::assert::almost_eq(left_val, right_val) {
-             Ok(is_almost_eq) => {
-                 if is_almost_eq {
-                     panic!("assertion failed: `(left != right)`\n  left: `{:?}`, \n right: `{:?}`", left_val, right_val)
-                 }
+             Ok(True) => {
+                 panic!("assertion failed: `(left != right)`\n  left: `{:?}`, \n right: `{:?}`", left_val, right_val)
              }
              _ => {},
          }
@@ -117,7 +113,6 @@ where
 
 #[cfg(test)]
 mod tests {
-
     #[allow(unused_imports)]
     use crate::assert_almost_eq;
 

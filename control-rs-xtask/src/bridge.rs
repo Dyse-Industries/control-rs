@@ -5,7 +5,7 @@
 
 use std::io::{Read, Write as IoWrite};
 use std::process::{Child, Command as StdCommand, Stdio};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
 use control_rs_hil::comms::{Command, FrameReader, LogMessage, Telemetry};
@@ -71,9 +71,7 @@ impl QemuBridge {
                                     port_path, e
                                 ).into());
                             }
-                            thread::sleep(std::time::Duration::from_millis(
-                                1000,
-                            ));
+                            thread::sleep(std::time::Duration::from_secs(1));
                         }
                     }
                 }
