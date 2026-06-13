@@ -26,7 +26,8 @@ pub static CURRENT_TEST: AtomicI16 = AtomicI16::new(-1);
 pub static mut ACTIVE_COMMS_PTR: *mut core::ffi::c_void = core::ptr::null_mut();
 
 /// Function signature for telemetry sender during a panic.
-pub type PanicTelemetrySender = unsafe fn(*mut core::ffi::c_void, &Telemetry<'_>);
+pub type PanicTelemetrySender =
+    unsafe fn(*mut core::ffi::c_void, &Telemetry<'_>);
 
 /// Function signature for communication flusher during a panic.
 pub type PanicCommsFlusher = unsafe fn(*mut core::ffi::c_void);
