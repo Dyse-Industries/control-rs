@@ -1,8 +1,9 @@
 //! On-target test runner server loop.
 
 use crate::comms::{Command, HostComms, Telemetry, TestState};
-use crate::hil_test::{SettingValue, SuiteDescriptor};
+use crate::settings::SettingValue;
 use crate::time::ClientClock;
+use crate::SuiteDescriptor;
 use core::sync::atomic::{AtomicI16, Ordering};
 
 /// Context object that encapsulates communication and timekeeper peripherals.
@@ -317,10 +318,11 @@ mod tests {
     extern crate std;
     use super::*;
     use crate::comms::{Command, HostComms, Telemetry, TestState};
-    use crate::hil_test::{
-        AtomicU8Setting, AtomicU32Setting, ExecDescriptor, Setting,
-        SettingValue, SuiteDescriptor,
+    use crate::settings::{
+        AtomicU32Setting, AtomicU8Setting, Setting,
+        SettingValue,
     };
+    use crate::{ExecDescriptor, SuiteDescriptor};
     use crate::time::DummyClock;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::vec::Vec;
@@ -671,7 +673,7 @@ mod tests {
         assert_eq!(u8_setting.name(), "u8_set");
         assert_eq!(
             u8_setting.expected_type(),
-            crate::hil_test::SettingType::U8
+            crate::settings::SettingType::U8
         );
         assert_eq!(u8_setting.get(), SettingValue::U8(10));
         assert!(u8_setting.set(SettingValue::U8(20)).is_ok());
@@ -682,7 +684,7 @@ mod tests {
         assert_eq!(u32_setting.name(), "u32_set");
         assert_eq!(
             u32_setting.expected_type(),
-            crate::hil_test::SettingType::U32
+            crate::settings::SettingType::U32
         );
         assert_eq!(u32_setting.get(), SettingValue::U32(100));
         assert!(u32_setting.set(SettingValue::U32(200)).is_ok());

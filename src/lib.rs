@@ -43,6 +43,6 @@ pub mod robust_tools;
 #[cfg(feature = "hil")]
 /// Hardware-in-the-loop (HIL) testing and benchmarking tools.
 pub mod hil {
-    pub use control_rs_hil::{comms, hil_test, runner, time};
+    pub use control_rs_hil::{comms, server, settings, time};
     pub use control_rs_macros::{hil_setup, hil_suite};
 }

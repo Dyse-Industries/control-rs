@@ -1,6 +1,6 @@
 //! Target-to-Host communication protocol and traits.
 
-use crate::hil_test::SettingValue;
+use crate::settings::SettingValue;
 
 /// Commands sent from the Host TUI to the Target MCU.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

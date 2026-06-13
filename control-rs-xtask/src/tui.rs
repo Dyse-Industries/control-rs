@@ -20,7 +20,7 @@ use ratatui::{
 
 use crate::bridge::{BridgeMessage, QemuBridge, Target};
 use control_rs_hil::comms::{Command, Telemetry, TestState};
-use control_rs_hil::hil_test::SettingValue;
+use control_rs_hil::settings::SettingValue;
 
 struct TestItem {
     name: String,

@@ -1,6 +1,6 @@
 use regex::Regex;
 use std::fs;
-use std::process::{Command, exit};
+use std::process::{exit, Command};
 use std::time::{Duration, Instant};
 
 use crate::utils::{HeadlessTestResult, TarpaulinSummary};
@@ -13,7 +13,7 @@ struct TestItem {
 
 struct SettingItem {
     name: String,
-    value: control_rs_hil::hil_test::SettingValue,
+    value: control_rs_hil::settings::SettingValue,
 }
 
 struct SuiteItem {
@@ -333,7 +333,7 @@ pub fn run_headless_sil(
                             suites[s_id].settings.push(SettingItem {
                                 name: String::new(),
                                 value:
-                                    control_rs_hil::hil_test::SettingValue::U8(
+                                    control_rs_hil::settings::SettingValue::U8(
                                         0,
                                     ),
                             });

@@ -2,29 +2,7 @@
 //!
 //! This module provides the necessary structures and traits for creating
 //! and running test suites on embedded hardware.
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
-
-/// Describes a single test executable.
-#[derive(Debug, Clone, Copy)]
-pub struct ExecDescriptor {
-    /// The name of the test executable.
-    pub name: &'static str,
-    /// A function pointer to the test executable.
-    pub test_fn: fn(),
-}
-
-/// A slice of settings for a test suite.
-pub type SettingsSlice = &'static [&'static dyn Setting];
-
-/// Describes a test suite.
-pub struct SuiteDescriptor {
-    /// A slice of test executables in this suite.
-    pub executables: &'static [ExecDescriptor],
-    /// The name of the test suite.
-    pub name: &'static str,
-    /// A slice of configurable settings for this suite.
-    pub settings: SettingsSlice,
-}
+use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 /// A value that can be gotten or set by the test runner.
 #[derive(
