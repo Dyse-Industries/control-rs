@@ -11,6 +11,7 @@
       <sourceFolder url="file://$MODULE_DIR$/control-rs-macros/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/examples" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/examples/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/examples/qemu-example/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

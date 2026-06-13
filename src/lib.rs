@@ -39,10 +39,3 @@ pub mod nonlinear_tools;
 pub mod robust_tools;
 // pub mod state_space;
 // mod transfer_function;
-
-#[cfg(feature = "hil")]
-/// Hardware-in-the-loop (HIL) testing and benchmarking tools.
-pub mod hil {
-    pub use control_rs_hil::{comms, server, settings, time};
-    pub use control_rs_macros::{hil_setup, hil_suite};
-}

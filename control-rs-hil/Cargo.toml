@@ -18,8 +18,3 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 postcard = { version = "1.0", default-features = false }
 control-rs-macros = { path = "../control-rs-macros" }
 
-
-[[bin]]
-name = "control-rs-qemu-arm"
-path = "src/bin/control-rs-qemu-arm.rs"
-test = false

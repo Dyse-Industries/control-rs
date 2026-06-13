@@ -1,12 +1,14 @@
 #![no_std]
 #![no_main]
 
+extern crate control_rs;
+
 use control_rs_hil::comms::{
     Command, FrameReader, HostComms, Telemetry, frame_telemetry,
 };
 use control_rs_hil::server::Context;
 use control_rs_hil::time::DummyClock;
-use control_rs_macros::{hil_setup, hil_suite};
+use control_rs_macros::hil_setup;
 
 // --- Communication Implementation via Direct Semihosting Syscalls ---
 
@@ -57,22 +59,18 @@ impl HostComms for SemihostingComms {
     }
 }
 
-// --- Test Definitions ---
-
-#[hil_suite]
-pub mod qemu_math_suite {
-    pub static CONNECTION_TIMEOUT_MS: u32 = 1000;
-
-    #[allow(clippy::eq_op)]
-    fn math_addition() {
-        assert_eq!(2 + 2, 4);
-    }
-
-    #[allow(clippy::eq_op)]
-    fn math_subtraction() {
-        assert_eq!(5 - 3, 2);
-    }
-}
+// Force linking of the math test suites by referencing them
+#[allow(unused_imports)]
+pub use control_rs::math::tests::complex_num_tests::{
+    test_arithmetic::SUITE_DESCRIPTOR_PTR as _,
+    test_axioms::SUITE_DESCRIPTOR_PTR as _,
+    test_basics::SUITE_DESCRIPTOR_PTR as _,
+    test_core_math::SUITE_DESCRIPTOR_PTR as _,
+    test_dsp_patterns::SUITE_DESCRIPTOR_PTR as _,
+    test_ffi_layout::SUITE_DESCRIPTOR_PTR as _,
+    test_limitations::SUITE_DESCRIPTOR_PTR as _,
+    test_transcendental::SUITE_DESCRIPTOR_PTR as _,
+};
 
 // --- Main Entrypoint ---
 

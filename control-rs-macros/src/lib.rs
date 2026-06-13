@@ -6,6 +6,7 @@ use syn::{
     Item, ItemFn, ItemMod, ItemStatic, Type, parse_macro_input, parse_quote,
 };
 
+/// Checks if the given type matches the target type name.
 fn is_type_name(ty: &Type, name: &str) -> bool {
     if let Type::Path(type_path) = ty {
         type_path
@@ -35,10 +36,12 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 Item::Static(item_static) => {
                     let name_ident = &item_static.ident;
                     let init_expr = &item_static.expr;
+                    let attrs = &item_static.attrs;
 
                     if is_type_name(&item_static.ty, "u32") {
                         settings.push(name_ident.clone());
                         let new_static: ItemStatic = parse_quote! {
+                            #(#attrs)*
                             pub static #name_ident: ::control_rs_hil::settings::AtomicU32Setting =
                                 ::control_rs_hil::settings::AtomicU32Setting::new(stringify!(#name_ident), #init_expr);
                         };
@@ -46,6 +49,7 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     } else if is_type_name(&item_static.ty, "u8") {
                         settings.push(name_ident.clone());
                         let new_static: ItemStatic = parse_quote! {
+                            #(#attrs)*
                             pub static #name_ident: ::control_rs_hil::settings::AtomicU8Setting =
                                 ::control_rs_hil::settings::AtomicU8Setting::new(stringify!(#name_ident), #init_expr);
                         };
@@ -97,9 +101,10 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
             },
             parse_quote! {
+                /// Pointer to the suite descriptor, linked into the HIL test suites section.
                 #[unsafe(link_section = ".hil_test_suites")]
                 #[used]
-                static SUITE_DESCRIPTOR_PTR: &::control_rs_hil::SuiteDescriptor = &SUITE_DESCRIPTOR;
+                pub static SUITE_DESCRIPTOR_PTR: &::control_rs_hil::SuiteDescriptor = &SUITE_DESCRIPTOR;
             },
         ];
 

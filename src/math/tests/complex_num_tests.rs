@@ -1,4 +1,8 @@
-mod test_arithmetic {
+//! Complex number mathematical HIL and unit test suite.
+#![allow(clippy::arithmetic_side_effects)]
+#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+/// Arithmetic operations tests for complex numbers.
+pub mod test_arithmetic {
     use crate::{
         assert_almost_eq,
         math::{
@@ -12,7 +16,7 @@ mod test_arithmetic {
         },
     };
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_basic_arithmetic() {
         let z1 = Complex64::new(1.0, 2.0);
         let z2 = Complex64::new(3.0, 4.0);
@@ -34,7 +38,7 @@ mod test_arithmetic {
         assert_almost_eq!(div.im, 2.0 / 25.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_wrapping_operations() {
         let z1 = Complex::<u8>::new(250, 10);
         let z2 = Complex::<u8>::new(10, 250);
@@ -54,7 +58,7 @@ mod test_arithmetic {
         assert_eq!(w_mul.im, 0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_try_operations() {
         let z1 = Complex::<u8>::new(200, 10);
         let z2 = Complex::<u8>::new(100, 10);
@@ -83,7 +87,7 @@ mod test_arithmetic {
         assert_eq!(Complex::<i8>::ONE.neg(), Complex::new(-1, 0));
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_fallible_and_traits() {
         let a = Complex::new(5.0, 3.0);
         let b = Complex::new(5.0, 1.0);
@@ -100,7 +104,7 @@ mod test_arithmetic {
         let _ = Complex::<f64>::MAX;
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_sqrt_edge_cases() {
         // Covers self.is_zero() early return
         let z = Complex::<f64>::zero();
@@ -115,7 +119,7 @@ mod test_arithmetic {
         let _ = neg_both.sqrt();
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_pow_edge_cases() {
         let zero = Complex::<f64>::zero();
         let one = Complex::<f64>::one();
@@ -126,7 +130,7 @@ mod test_arithmetic {
         assert_eq!(one.pow(two), one);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_complex_epsilon() {
         let eps = Complex::<f32>::epsilon();
         assert_almost_eq!(eps.re, f32::EPSILON);
@@ -134,11 +138,13 @@ mod test_arithmetic {
     }
 }
 
-mod test_axioms {
+#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+/// Axiomatic property tests for complex numbers (commutativity, associativity, comparisons).
+pub mod test_axioms {
     use crate::{assert_almost_eq, math::complex_num::Complex64};
 
     // Assuming you have implemented std::ops traits (Add, Mul, etc.)
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_addition_commutativity() {
         let z1 = Complex64::new(1.2, 3.4);
         let z2 = Complex64::new(-5.6, 7.8);
@@ -146,7 +152,7 @@ mod test_axioms {
         assert_almost_eq!((z1 + z2).im, (z2 + z1).im);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_multiplication_commutativity() {
         let z1 = Complex64::new(1.2, 3.4);
         let z2 = Complex64::new(-5.6, 7.8);
@@ -154,7 +160,7 @@ mod test_axioms {
         assert_almost_eq!((z1 * z2).im, (z2 * z1).im);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_distributivity() {
         let z1 = Complex64::new(1.0, 2.0);
         let z2 = Complex64::new(3.0, 4.0);
@@ -165,7 +171,7 @@ mod test_axioms {
         assert_almost_eq!(left.im, right.im);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_identities() {
         let z = Complex64::new(4.2, -1.1);
         let zero = Complex64::new(0.0, 0.0);
@@ -177,7 +183,7 @@ mod test_axioms {
         assert_almost_eq!((z * one).im, z.im);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_comparisons() {
         let z1 = crate::math::complex_num::Complex32::new(1.0, 2.0);
         let z2 = crate::math::complex_num::Complex32::new(2.0, 2.0);
@@ -193,32 +199,34 @@ mod test_axioms {
     }
 }
 
-mod test_basics {
+#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+/// Basic creation, polar conversion, and initialization tests.
+pub mod test_basics {
     use crate::assert_almost_eq;
     use crate::math::{complex_num::Complex32, num_traits::Trig};
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_new() {
         let z = Complex32::new(1.0, 2.0);
         assert_almost_eq!(z.re, 1.0_f32);
         assert_almost_eq!(z.im, 2.0_f32);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_from_real() {
         let z = Complex32::from_real(5.0);
         assert_almost_eq!(z.re, 5.0);
         assert_almost_eq!(z.im, 0.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_from_imag() {
         let z = Complex32::from_imag(5.0);
         assert_almost_eq!(z.re, 0.0);
         assert_almost_eq!(z.im, 5.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_polar_creation() {
         let r = 2.0_f32;
         let theta = f32::PI / 4.0_f32;
@@ -228,7 +236,7 @@ mod test_basics {
         assert_almost_eq!(z.im, expected);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_polar_conversion() {
         let z = crate::math::complex_num::Complex64::new(3.0, 4.0);
         let (r, theta) = z.to_polar();
@@ -240,26 +248,28 @@ mod test_basics {
     }
 }
 
-mod test_core_math {
+#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+/// Core math tests (conjugate, magnitude, phase).
+pub mod test_core_math {
     use crate::{
         assert_almost_eq,
         math::{complex_num::Complex64, num_traits::Trig},
     };
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_conjugate() {
         let z = Complex64::new(3.0, 4.0).conj();
         assert_almost_eq!(z.re, 3.0);
         assert_almost_eq!(z.im, -4.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_magnitude() {
         let z = Complex64::new(3.0, 4.0);
         assert_almost_eq!(z.magnitude(), 5.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_argument_phase() {
         let z1 = Complex64::new(1.0, 1.0);
         assert_almost_eq!(z1.arg(), f64::PI / 4.0);
@@ -278,7 +288,9 @@ mod test_core_math {
     }
 }
 
-mod test_dsp_patterns {
+#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+/// DSP pattern tests (e.g. twiddle factors).
+pub mod test_dsp_patterns {
     use crate::{
         assert_almost_eq,
         math::{
@@ -287,7 +299,7 @@ mod test_dsp_patterns {
         },
     };
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_twiddle_factors() {
         let n = 4.0;
 
@@ -305,20 +317,22 @@ mod test_dsp_patterns {
     }
 }
 
-mod test_ffi_layout {
+#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+/// FFI layout, size, and alignment verification.
+pub mod test_ffi_layout {
     use crate::{
         assert_almost_eq,
         math::{complex_num::Complex64, num_traits::Trig},
     };
     use core::mem;
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_size_and_alignment() {
         assert_eq!(mem::size_of::<Complex64>(), 16);
         assert_eq!(mem::align_of::<Complex64>(), 8);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     #[allow(clippy::transmute_undefined_repr)]
     fn test_memory_representation() {
         let z = Complex64::new(f64::PI, -2.71);
@@ -329,7 +343,9 @@ mod test_ffi_layout {
     }
 }
 
-mod test_limitations {
+#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+/// Edge-case limitations, NaN propagation, infinity, and branch cut tests.
+pub mod test_limitations {
     use crate::{
         assert_almost_eq,
         math::{
@@ -338,7 +354,7 @@ mod test_limitations {
         },
     };
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_nan_propagation() {
         let z1 = Complex64::new(1.0, 2.0);
         let z_nan = Complex64::new(f64::NAN, 0.0);
@@ -349,7 +365,7 @@ mod test_limitations {
         // but strictly speaking, the real part must be corrupted.
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_complex_infinity_magnitude() {
         let z = Complex64::new(f64::INF, 5.0);
         assert!(z.magnitude().is_infinite());
@@ -360,7 +376,7 @@ mod test_limitations {
         // You should be using f64::hypot internally to pass this.
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_sqrt_branch_cut() {
         // sqrt(-4) should be 2i, correctly handling the sign of 0.0
         let z = Complex64::new(-4.0, 0.0);
@@ -381,7 +397,9 @@ mod test_limitations {
     }
 }
 
-mod test_transcendental {
+#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+/// Transcendental (exp, ln, trigonometric, and inverse trigonometric) tests.
+pub mod test_transcendental {
     use crate::{
         assert_almost_eq,
         math::{
@@ -391,7 +409,7 @@ mod test_transcendental {
         },
     };
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_exp() {
         // e^(i * PI) = -1
         let z = Complex32::new(0.0, f32::PI);
@@ -399,7 +417,7 @@ mod test_transcendental {
         assert_almost_eq!(result, Complex32::new(-1.0, 0.0));
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_ln() {
         // ln(-1) = i * PI
         let z = Complex32::new(-1.0, 0.0);
@@ -411,7 +429,7 @@ mod test_transcendental {
         assert_almost_eq!(log10_real.im, 0.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_trig_functions() {
         // sin(0) = 0
         let zero = Complex32::new(0.0, 0.0);
@@ -428,7 +446,7 @@ mod test_transcendental {
         assert_almost_eq!(tan_z.im, 0.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_inverse_trigonometry() {
         let z = Complex64::new(0.5, 0.5);
 

@@ -5,12 +5,12 @@ use bsp::board;
 use bsp::hal::usbd::{BusAdapter, EndpointMemory, EndpointState, Speed};
 use teensy4_bsp as bsp;
 
-use control_rs::hil::comms::{
+use control_rs_hil::comms::{
     frame_telemetry, Command, FrameReader, HostComms, Telemetry,
 };
-use control_rs::hil::runner::Context;
-use control_rs::hil::time::ClientClock;
-use control_rs::hil::{hil_setup, hil_suite};
+use control_rs_hil::server::Context;
+use control_rs_hil::time::ClientClock;
+use control_rs_macros::{hil_setup, hil_suite};
 use core::sync::atomic::{AtomicU32, Ordering};
 use cortex_m::peripheral::syst::SystClkSource;
 
@@ -134,7 +134,7 @@ impl HostComms for TeensyComms {
 
 #[hil_suite]
 pub mod teensy_pid_suite {
-    use control_rs::hil::hil_test::{Setting, SettingValue};
+    use control_rs_hil::settings::{Setting, SettingValue};
 
     // Statics representing configurable controller parameters
     pub static PROPORTIONAL_GAIN: u32 = 1500;

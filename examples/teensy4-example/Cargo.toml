@@ -6,8 +6,9 @@ edition = "2021"
 [dependencies]
 rtic = { version = "2", features = ["thumbv7-backend"] }
 rtic-monotonics = { version = "1", default-features = false, features = ["cortex-m-systick"] }
-control-rs = { path = "../..", features = ["hil"] }
+control-rs = { path = "../..", default-features = false }
 control-rs-hil = { path = "../../control-rs-hil" }
+control-rs-macros = { path = "../../control-rs-macros" }
 cortex-m = "0.7"
 cortex-m-rt = "0.7"
 cortex-m-semihosting = "0.5"

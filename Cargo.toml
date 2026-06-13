@@ -9,18 +9,23 @@ categories = ["embedded", "science", "no-std"]
 keywords = ["control", "robotics", "firmware", "autonomy"]
 
 [workspace]
-members = [".", "control-rs-hil", "control-rs-xtask", "control-rs-macros"]
+members = [
+    ".",
+    "control-rs-hil",
+    "control-rs-xtask",
+    "control-rs-macros",
+]
 default-members = ["."]
+exclude = ["examples/qemu-example"]
 
 [dependencies]
 libm = "0.2.16"
-control-rs-hil = { path = "control-rs-hil", optional = true }
 control-rs-macros = { path = "control-rs-macros", optional = true }
-
+control-rs-hil = { path = "control-rs-hil", optional = true }
 
 [features]
 std = []
-hil = ["dep:control-rs-hil", "dep:control-rs-macros"]
+hil = ["dep:control-rs-macros", "dep:control-rs-hil"]
 
 [dev-dependencies]
 

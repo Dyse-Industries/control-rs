@@ -65,8 +65,8 @@ pub fn build_qemu_elf() -> String {
         )
         .args([
             "build",
-            "--package",
-            "control-rs-hil",
+            "--manifest-path",
+            "examples/qemu-example/Cargo.toml",
             "--bin",
             "control-rs-qemu-arm",
             "--target",
@@ -82,7 +82,7 @@ pub fn build_qemu_elf() -> String {
         exit(1);
     }
 
-    "target/thumbv7em-none-eabihf/qemu/control-rs-qemu-arm".to_string()
+    "examples/qemu-example/target/thumbv7em-none-eabihf/qemu/control-rs-qemu-arm".to_string()
 }
 
 /// Task to run formatting check.
@@ -576,8 +576,8 @@ pub fn run_qemu() {
     let clean_status = Command::new("cargo")
         .args([
             "clean",
-            "--package",
-            "control-rs-hil",
+            "--manifest-path",
+            "examples/qemu-example/Cargo.toml",
             "--target",
             "thumbv7em-none-eabihf",
             "--profile",
@@ -597,8 +597,8 @@ pub fn run_qemu() {
         .env("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS", "-C link-arg=-Tlink.x -C link-arg=-Thil_suites.x")
         .args([
             "run",
-            "--package",
-            "control-rs-hil",
+            "--manifest-path",
+            "examples/qemu-example/Cargo.toml",
             "--bin",
             "control-rs-qemu-arm",
             "--target",
