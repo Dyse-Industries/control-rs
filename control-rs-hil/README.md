@@ -1,30 +1,58 @@
 # control-rs-hil
 
-`control-rs-hil` is the target-side (embedded, `no_std`) core library for the Hardware-in-the-Loop (HIL) testing and benchmarking infrastructure of `control-rs`.
+`control-rs-hil` is the target-side (embedded, `no_std`) core library for the
+Hardware-in-the-Loop (HIL) testing and benchmarking infrastructure of
+`control-rs`.
 
 ## Purpose
 
-The purpose of this crate is to provide target-side abstractions, communication framing, and the interactive test server event loop. It enables control systems developers to test their algorithms directly on embedded hardware (or within emulators like QEMU) and collect real-time telemetry, panic logs, and execution cycle/time benchmarks without dynamic memory allocations (`no_std`).
+The purpose of this crate is to provide target-side abstractions, communication
+framing, and the interactive test server event loop. It enables control systems
+developers to test their algorithms directly on embedded hardware (or within
+emulators like QEMU) and collect real-time telemetry, panic logs, and execution
+cycle/time benchmarks without dynamic memory allocations (`no_std`).
 
 ## Role in the Ecosystem
 
 ```mermaid
-graph TD
-    Host[Host CLI / TUI / CI] <-->|Postcard Binary Protocol| Target[Target MCU / QEMU]
-    subgraph Target MCU
-        Runner[control-rs-hil Event Loop]
-        Macros[control-rs-macros Attributes] -.-> Runner
-    end
+---
+config:
+  layout: elk
+---
+flowchart LR
+ subgraph Target["Target MCU / QEMU (Server Architecture)"]
+    direction TB
+        CommsRx["HostComms"]
+        Runner{"control-rs-hil Server"}
+        Tests["Test Suites"]
+  end
+    CommsRx <-- Parse Command/<br>Write telemetry --> Runner
+    Tests -. Register pointers to suites .-> Runner
+    Host(("Host CLI / TUI / CI")) <-- Frames --> CommsRx
+
+     CommsRx:::serverNode
+     Runner:::eventLoop
+     Tests:::testNode
+     Host:::hostNode
+    classDef hostNode stroke:#38bdf8,fill:#f0f9ff
+    classDef serverNode stroke:#4ade80,fill:#f0fdf4
+    classDef eventLoop stroke:#a78bfa,fill:#f5f3ff
+    classDef testNode stroke:#facc15,fill:#fefce8
 ```
 
 Within the `control-rs` ecosystem, `control-rs-hil`:
-1. **Defines core abstractions** (`ClientClock` and `HostComms` traits) for hardware communication and timing.
+
+1. **Defines core abstractions** (`ClientClock` and `HostComms` traits) for
+   hardware communication and timing.
 2. **Implements packet framing** using a robust XOR-checksum binary protocol.
-3. **Hosts the server event loop** which processes incoming execution commands from the host, executes target tests, and streams back telemetry.
+3. **Hosts the server event loop** which processes incoming execution commands
+   from the host, executes target tests, and streams back telemetry.
 
 ## End-User Example
 
-Developers use `control-rs-hil` by defining a target-side transport (such as a UART interface) and a hardware timer clock, and then passing them into the runner context.
+Developers use `control-rs-hil` by defining a target-side transport (such as a
+UART interface) and a hardware timer clock, and then passing them into the
+runner context.
 
 Here is an example implementation:
 
@@ -82,7 +110,7 @@ impl ClientClock for SystemTimer {
         // Read hardware milliseconds timer
         get_hardware_ms()
     }
-    
+
     fn now_us(&self) -> u64 {
         // Read hardware microseconds timer
         get_hardware_us()
@@ -118,16 +146,23 @@ fn setup() -> Context<UartComms, SystemTimer> {
 
 ## QA / Testing
 
-To ensure that the target-side abstractions, serialization, and compilation build correctly, execute the following commands:
+To ensure that the target-side abstractions, serialization, and compilation
+build correctly, execute the following commands:
 
 ### Target Compilation Check
-Verify that the crate compiles successfully for the thumbv7em target architecture (configured in `Cargo.toml` / QEMU profile):
+
+Verify that the crate compiles successfully for the thumbv7em target
+architecture (configured in `Cargo.toml` / QEMU profile):
+
 ```bash
 cargo check --package control-rs-hil --target thumbv7em-none-eabihf
 ```
 
 ### Workspace Unit Tests
-Ensure HIL serialization/deserialization logic behaves correctly under host-side unit testing:
+
+Ensure HIL serialization/deserialization logic behaves correctly under host-side
+unit testing:
+
 ```bash
 cargo test --package control-rs-hil
 ```
