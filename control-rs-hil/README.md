@@ -17,30 +17,34 @@ cycle/time benchmarks without dynamic memory allocations (`no_std`).
 ```mermaid
 ---
 config:
-  layout: elk
+  layout: fixed
 ---
 flowchart LR
  subgraph Target["Target MCU / QEMU (Server Architecture)"]
     direction TB
         CommsRx["HostComms"]
-        Runner{"control-rs-hil Server"}
-        Tests["Test Suites"]
+        Runner{"Server"}
+        Tests["SuiteDescriptors"]
   end
-    CommsRx <-- Parse Command/<br>Write telemetry --> Runner
-    Tests -. Register pointers to suites .-> Runner
-    Host(("Host CLI / TUI / CI")) <-- Frames --> CommsRx
+    Tests -. <br> .-> Runner
+    Host(("Host CLI / TUI / CI")) <--> CommsRx
+    CommsRx <--> Runner
+    n1["ClientClock"] --> Runner
 
+    n1@{ shape: rect}
      CommsRx:::serverNode
      Runner:::eventLoop
      Tests:::testNode
      Host:::hostNode
+     n1:::serverNode
     classDef hostNode stroke:#38bdf8,fill:#f0f9ff
     classDef serverNode stroke:#4ade80,fill:#f0fdf4
     classDef eventLoop stroke:#a78bfa,fill:#f5f3ff
     classDef testNode stroke:#facc15,fill:#fefce8
+    style n1 stroke:#2962FF
 ```
 
-Within the `control-rs` ecosystem, `control-rs-hil`:
+`control-rs-hil`:
 
 1. **Defines core abstractions** (`ClientClock` and `HostComms` traits) for
    hardware communication and timing.
