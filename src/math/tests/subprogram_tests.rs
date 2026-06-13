@@ -87,7 +87,12 @@ mod fuzzing {
         assert_eq!(y[1].to_bits(), (-0.0_f32).to_bits());
     }
 
-    // Basic LCG for tests without external dependencies
+    /// Basic LCG for tests without external dependencies
+    ///
+    /// A. M. Frieze, R. Kannan, and J. C. Lagarias , "Linear congruential 
+    /// generators do not produce random sequences," in Proceedings of the 25th 
+    /// Annual Symposium on Foundations of Computer Science , IEEE Computer 
+    /// Society Press , 1984 , pp. 480–484.
     fn rand_lcg(seed: u32) -> u32 {
         seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223)
     }
