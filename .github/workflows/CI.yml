@@ -23,8 +23,8 @@ jobs:
       - name: Install Targets
         run: rustup target add thumbv7em-none-eabihf
 
-      - name: Install libudev-dev
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: Install apt packages
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system
 
       - name: Run CI
         run: cargo ci
