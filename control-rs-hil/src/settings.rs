@@ -2,7 +2,7 @@
 //!
 //! This module provides the necessary structures and traits for creating
 //! and running test suites on embedded hardware.
-use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 /// A value that can be gotten or set by the test runner.
 #[derive(

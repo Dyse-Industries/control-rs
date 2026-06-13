@@ -1,9 +1,9 @@
 //! On-target test runner server loop.
 
+use crate::SuiteDescriptor;
 use crate::comms::{Command, HostComms, Telemetry, TestState};
 use crate::settings::SettingValue;
 use crate::time::ClientClock;
-use crate::SuiteDescriptor;
 use core::sync::atomic::{AtomicI16, Ordering};
 
 /// Context object that encapsulates communication and timekeeper peripherals.
@@ -319,11 +319,10 @@ mod tests {
     use super::*;
     use crate::comms::{Command, HostComms, Telemetry, TestState};
     use crate::settings::{
-        AtomicU32Setting, AtomicU8Setting, Setting,
-        SettingValue,
+        AtomicU8Setting, AtomicU32Setting, Setting, SettingValue,
     };
-    use crate::{ExecDescriptor, SuiteDescriptor};
     use crate::time::DummyClock;
+    use crate::{ExecDescriptor, SuiteDescriptor};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::vec::Vec;
 

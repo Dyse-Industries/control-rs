@@ -39,15 +39,15 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     if is_type_name(&item_static.ty, "u32") {
                         settings.push(name_ident.clone());
                         let new_static: ItemStatic = parse_quote! {
-                            pub static #name_ident: ::control_rs_hil::hil_test::AtomicU32Setting =
-                                ::control_rs_hil::hil_test::AtomicU32Setting::new(stringify!(#name_ident), #init_expr);
+                            pub static #name_ident: ::control_rs_hil::settings::AtomicU32Setting =
+                                ::control_rs_hil::settings::AtomicU32Setting::new(stringify!(#name_ident), #init_expr);
                         };
                         *item_static = new_static;
                     } else if is_type_name(&item_static.ty, "u8") {
                         settings.push(name_ident.clone());
                         let new_static: ItemStatic = parse_quote! {
-                            pub static #name_ident: ::control_rs_hil::hil_test::AtomicU8Setting =
-                                ::control_rs_hil::hil_test::AtomicU8Setting::new(stringify!(#name_ident), #init_expr);
+                            pub static #name_ident: ::control_rs_hil::settings::AtomicU8Setting =
+                                ::control_rs_hil::settings::AtomicU8Setting::new(stringify!(#name_ident), #init_expr);
                         };
                         *item_static = new_static;
                     }
@@ -65,7 +65,7 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         let test_descriptors = tests.iter().map(|t| {
             quote! {
-                ::control_rs_hil::hil_test::ExecDescriptor {
+                ::control_rs_hil::ExecDescriptor {
                     name: stringify!(#t),
                     test_fn: #t,
                 }
@@ -80,17 +80,17 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         let suite_desc_code: [Item; 4] = [
             parse_quote! {
-                static EXECUTABLES: &[::control_rs_hil::hil_test::ExecDescriptor] = &[
+                static EXECUTABLES: &[::control_rs_hil::ExecDescriptor] = &[
                     #(#test_descriptors),*
                 ];
             },
             parse_quote! {
-                static SETTINGS: &[&dyn ::control_rs_hil::hil_test::Setting] = &[
+                static SETTINGS: &[&dyn ::control_rs_hil::Setting] = &[
                     #(#setting_ptrs),*
                 ];
             },
             parse_quote! {
-                static SUITE_DESCRIPTOR: ::control_rs_hil::hil_test::SuiteDescriptor = ::control_rs_hil::hil_test::SuiteDescriptor {
+                static SUITE_DESCRIPTOR: ::control_rs_hil::SuiteDescriptor = ::control_rs_hil::SuiteDescriptor {
                     name: #suite_name,
                     executables: EXECUTABLES,
                     settings: SETTINGS,
@@ -99,7 +99,7 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
             parse_quote! {
                 #[unsafe(link_section = ".hil_test_suites")]
                 #[used]
-                static SUITE_DESCRIPTOR_PTR: &::control_rs_hil::hil_test::SuiteDescriptor = &SUITE_DESCRIPTOR;
+                static SUITE_DESCRIPTOR_PTR: &::control_rs_hil::SuiteDescriptor = &SUITE_DESCRIPTOR;
             },
         ];
 
@@ -113,7 +113,7 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Attribute macro for setting up the HIL runner entrypoint.
+/// Attribute macro for setting up the HIL server entrypoint.
 ///
 /// Annotates the hardware setup function, generates the standard main entrypoint,
 /// and sets up the server event loop and QEMU-compatible panic handler.
@@ -135,18 +135,18 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[::cortex_m_rt::entry]
         fn main() -> ! {
             let start = unsafe {
-                &__hil_test_suites_start as *const u8 as *const &::control_rs_hil::hil_test::SuiteDescriptor
+                &__hil_test_suites_start as *const u8 as *const &::control_rs_hil::SuiteDescriptor
             };
             let end = unsafe {
-                &__hil_test_suites_end as *const u8 as *const &::control_rs_hil::hil_test::SuiteDescriptor
+                &__hil_test_suites_end as *const u8 as *const &::control_rs_hil::SuiteDescriptor
             };
 
-            let len = (end as usize - start as usize) / ::core::mem::size_of::<&::control_rs_hil::hil_test::SuiteDescriptor>();
+            let len = (end as usize - start as usize) / ::core::mem::size_of::<&::control_rs_hil::SuiteDescriptor>();
             let suites = unsafe { ::core::slice::from_raw_parts(start, len) };
 
             let context = #setup_name();
 
-            let mut server = ::control_rs_hil::runner::Server::new(context.comms, context.timer, suites);
+            let mut server = ::control_rs_hil::Server::new(context.comms, context.timer, suites);
             let _ = server.run();
 
             ::cortex_m_semihosting::debug::exit(::cortex_m_semihosting::debug::EXIT_SUCCESS);
@@ -158,8 +158,8 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #[panic_handler]
         fn panic(info: &::core::panic::PanicInfo) -> ! {
             ::cortex_m::interrupt::disable();
-            let suite = ::control_rs_hil::runner::CURRENT_SUITE.load(::core::sync::atomic::Ordering::SeqCst);
-            let test = ::control_rs_hil::runner::CURRENT_TEST.load(::core::sync::atomic::Ordering::SeqCst);
+            let suite = ::control_rs_hil::server::CURRENT_SUITE.load(::core::sync::atomic::Ordering::SeqCst);
+            let test = ::control_rs_hil::server::CURRENT_TEST.load(::core::sync::atomic::Ordering::SeqCst);
 
             struct BufWriter<'a> {
                 buf: &'a mut [u8],
@@ -192,8 +192,8 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
             unsafe {
                 if let (Some(sender), ptr) = (
-                    ::control_rs_hil::runner::PANIC_TELEMETRY_SENDER,
-                    ::control_rs_hil::runner::ACTIVE_COMMS_PTR,
+                    ::control_rs_hil::server::PANIC_TELEMETRY_SENDER,
+                    ::control_rs_hil::server::ACTIVE_COMMS_PTR,
                 ) {
                     if !ptr.is_null() {
                         if suite >= 0 && test >= 0 {
@@ -222,8 +222,8 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
             loop {
                 unsafe {
                     if let (Some(poller), ptr) = (
-                        ::control_rs_hil::runner::PANIC_CMD_POLLER,
-                        ::control_rs_hil::runner::ACTIVE_COMMS_PTR,
+                        ::control_rs_hil::server::PANIC_CMD_POLLER,
+                        ::control_rs_hil::server::ACTIVE_COMMS_PTR,
                     ) {
                         if !ptr.is_null() {
                             if let Some(::control_rs_hil::comms::Command::OkToReset) = poller(ptr) {
@@ -233,8 +233,8 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
 
                     if let (Some(flusher), ptr) = (
-                        ::control_rs_hil::runner::PANIC_COMMS_FLUSHER,
-                        ::control_rs_hil::runner::ACTIVE_COMMS_PTR,
+                        ::control_rs_hil::server::PANIC_COMMS_FLUSHER,
+                        ::control_rs_hil::server::ACTIVE_COMMS_PTR,
                     ) {
                         if !ptr.is_null() {
                             flusher(ptr);

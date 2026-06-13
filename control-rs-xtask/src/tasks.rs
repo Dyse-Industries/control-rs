@@ -1,6 +1,6 @@
 use regex::Regex;
 use std::fs;
-use std::process::{exit, Command};
+use std::process::{Command, exit};
 use std::time::{Duration, Instant};
 
 use crate::utils::{HeadlessTestResult, TarpaulinSummary};

@@ -1,11 +1,11 @@
 #![no_std]
 #![allow(clippy::type_complexity, clippy::needless_lifetimes)]
 
-use crate::settings::Setting;
-
 pub mod comms;
 pub mod settings;
+pub use settings::Setting;
 pub mod server;
+pub use server::Server;
 pub mod time;
 
 /// Describes a single test executable.
