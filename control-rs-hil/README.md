@@ -25,23 +25,23 @@ flowchart LR
         CommsRx["HostComms"]
         Runner{"Server"}
         Tests["SuiteDescriptors"]
+        Clock["ClientClock"]
   end
     Tests -. <br> .-> Runner
     Host(("Host CLI / TUI / CI")) <--> CommsRx
     CommsRx <--> Runner
-    n1["ClientClock"] --> Runner
-
-    n1@{ shape: rect}
-     CommsRx:::serverNode
-     Runner:::eventLoop
+    Clock --> Runner
+    
+     CommsRx:::commsNode
+     Runner:::serverLoop
      Tests:::testNode
      Host:::hostNode
-     n1:::serverNode
-    classDef hostNode stroke:#38bdf8,fill:#f0f9ff
-    classDef serverNode stroke:#4ade80,fill:#f0fdf4
-    classDef eventLoop stroke:#a78bfa,fill:#f5f3ff
-    classDef testNode stroke:#facc15,fill:#fefce8
-    style n1 stroke:#2962FF
+     Clock:::timeNode
+    classDef hostNode stroke:#38bdf8
+    classDef commsNode stroke:#4ade80
+    classDef serverLoop stroke:#a78bfa
+    classDef testNode stroke:#facc15
+    style timeNode stroke:#2962FF
 ```
 
 `control-rs-hil`:
