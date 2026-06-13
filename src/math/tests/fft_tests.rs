@@ -1,22 +1,11 @@
 use crate::math::dsp::FFT;
 
-struct TestFFT;
-impl<
-    T: 'static
-        + Copy
-        + crate::math::num_traits::Real
-        + crate::math::ops::Neg<Output = T>
-        + Default,
-> FFT<T> for TestFFT
-{
-}
-
 mod fft_test_suite {
     use super::*;
     use crate::math::{Bijection, Map, complex_num::Complex};
 
-    const TOLERANCE: f64 = 1e-6;
     const N: usize = 8;
+    const TOLERANCE: f64 = 1e-6;
 
     #[test]
     fn test_fft_impulse() {
@@ -39,20 +28,23 @@ mod fft_test_suite {
 
         TestFFT::fft(&input, &mut output);
 
-        assert!((output[0].re - N as f64).abs() < TOLERANCE);
+        assert!(
+            (output[0].re - f64::from(u32::try_from(N).unwrap())).abs()
+                < TOLERANCE
+        );
         assert!(output[0].im.abs() < TOLERANCE);
 
-        for i in 1..N {
-            assert!(output[i].re.abs() < TOLERANCE);
-            assert!(output[i].im.abs() < TOLERANCE);
+        for val in output.iter().take(N).skip(1) {
+            assert!(val.re.abs() < TOLERANCE);
+            assert!(val.im.abs() < TOLERANCE);
         }
     }
 
     #[test]
     fn test_fft_ifft_identity() {
         let mut input = [0.0; N];
-        for i in 0..N {
-            input[i] = (i as f64).sin();
+        for (i, val) in input.iter_mut().enumerate() {
+            *val = f64::from(u32::try_from(i).unwrap()).sin();
         }
 
         let mut fft_output = [Complex::default(); N];
@@ -61,8 +53,8 @@ mod fft_test_suite {
         let mut ifft_output = [0.0; N];
         TestFFT::ifft(&fft_output, &mut ifft_output);
 
-        for i in 0..N {
-            assert!((input[i] - ifft_output[i]).abs() < TOLERANCE);
+        for (in_val, out_val) in input.iter().zip(ifft_output.iter()) {
+            assert!((in_val - out_val).abs() < TOLERANCE);
         }
     }
 
@@ -77,4 +69,15 @@ mod fft_test_suite {
         let recovered: [f64; 4] = fft.evaluate_inverse(freq_signal);
         assert!((recovered[0] - 1.0_f64).abs() < 1e-6);
     }
+}
+
+struct TestFFT;
+impl<
+    T: 'static
+        + Copy
+        + crate::math::num_traits::Real
+        + crate::math::ops::Neg<Output = T>
+        + Default,
+> FFT<T> for TestFFT
+{
 }

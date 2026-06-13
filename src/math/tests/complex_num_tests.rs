@@ -1,3 +1,139 @@
+mod test_arithmetic {
+    use crate::{
+        assert_almost_eq,
+        math::{
+            complex_num::Complex,
+            complex_num::Complex64,
+            num_traits::{Exponential, Field, One, Radical, Ring, Zero},
+            ops::{
+                Neg, TryAdd, TryDiv, TryMul, TrySub, WrappingAdd, WrappingMul,
+                WrappingSub,
+            },
+        },
+    };
+
+    #[test]
+    fn test_basic_arithmetic() {
+        let z1 = Complex64::new(1.0, 2.0);
+        let z2 = Complex64::new(3.0, 4.0);
+
+        let sum = z1 + z2;
+        assert_almost_eq!(sum.re, 4.0);
+        assert_almost_eq!(sum.im, 6.0);
+
+        let diff = z1 - z2;
+        assert_almost_eq!(diff.re, -2.0);
+        assert_almost_eq!(diff.im, -2.0);
+
+        let prod = z1 * z2; // (1+2i)(3+4i) = 3 + 4i + 6i - 8 = -5 + 10i
+        assert_almost_eq!(prod.re, -5.0);
+        assert_almost_eq!(prod.im, 10.0);
+
+        let div = z1 / z2; // (1+2i)/(3+4i) = (1+2i)(3-4i) / 25 = (3 - 4i + 6i + 8) / 25 = 11/25 + 2/25i
+        assert_almost_eq!(div.re, 11.0 / 25.0);
+        assert_almost_eq!(div.im, 2.0 / 25.0);
+    }
+
+    #[test]
+    fn test_wrapping_operations() {
+        let z1 = Complex::<u8>::new(250, 10);
+        let z2 = Complex::<u8>::new(10, 250);
+
+        let w_add = z1.wrapping_add(&z2);
+        assert_eq!(w_add.re, 4); // 260 % 256
+        assert_eq!(w_add.im, 4); // 260 % 256
+
+        let w_sub = z1.wrapping_sub(&z2);
+        assert_eq!(w_sub.re, 240); // 250 - 10
+        assert_eq!(w_sub.im, 16); // 10 - 250 = -240 = 16 (mod 256)
+
+        let z3 = Complex::<u8>::new(16, 16);
+        let w_mul = z3.wrapping_mul(&z3);
+        // (16+16i)^2 = 256 + 256i + 256i - 256 = 512i = 0i (mod 256)
+        assert_eq!(w_mul.re, 0);
+        assert_eq!(w_mul.im, 0);
+    }
+
+    #[test]
+    fn test_try_operations() {
+        let z1 = Complex::<u8>::new(200, 10);
+        let z2 = Complex::<u8>::new(100, 10);
+
+        assert!(z1.try_add(&z2).is_err()); // Real part 300 > 255
+
+        let z3 = Complex::<u8>::new(100, 10);
+        assert!(z3.try_add(&z2).is_ok());
+        assert!(z2.try_sub(&z1).is_err()); // Real part 100 - 200 < 0
+        assert!(z1.try_sub(&z3).is_ok());
+        assert!(z1.try_mul(&z2).is_err());
+        assert_eq!(
+            Complex::<u8>::ONE.try_div(&Complex::<u8>::ONE).ok(),
+            Some(Complex::<u8>::ONE)
+        );
+
+        let z_small = Complex::<u8>::new(2, 2);
+        assert!(z_small.try_mul(&z_small).is_ok());
+
+        // Division
+        let z4 = Complex::<u8>::new(100, 100);
+        let z5 = Complex::<u8>::new(2, 2);
+        // 100^2 + 100^2 = 20000 > 255, so try_div will error on denominator calc
+        assert!(z4.try_div(&z5).is_err());
+
+        assert_eq!(Complex::<i8>::ONE.neg(), Complex::new(-1, 0));
+    }
+
+    #[test]
+    fn test_fallible_and_traits() {
+        let a = Complex::new(5.0, 3.0);
+        let b = Complex::new(5.0, 1.0);
+
+        // Covers TrySub
+        assert!(a.try_sub(&b).is_ok());
+
+        // Covers PartialOrd equal-real branch
+        assert_eq!(a.partial_cmp(&b), Some(core::cmp::Ordering::Greater));
+
+        // Covers Zero, One, Ring constants
+        let _ = Complex::<f64>::ZERO;
+        let _ = Complex::<f64>::ONE;
+        let _ = Complex::<f64>::MAX;
+    }
+
+    #[test]
+    fn test_sqrt_edge_cases() {
+        // Covers self.is_zero() early return
+        let z = Complex::<f64>::zero();
+        assert_eq!(z.sqrt(), Complex::zero());
+
+        // Covers self.re < 0 branch
+        let neg_re = Complex::new(-4.0, 3.0);
+        let _ = neg_re.sqrt();
+
+        // Covers self.re < 0 AND self.im < 0 branch
+        let neg_both = Complex::new(-4.0, -3.0);
+        let _ = neg_both.sqrt();
+    }
+
+    #[test]
+    fn test_pow_edge_cases() {
+        let zero = Complex::<f64>::zero();
+        let one = Complex::<f64>::one();
+        let two = Complex::new(2.0, 0.0);
+
+        assert_eq!(zero.pow(zero), one);
+        assert_eq!(zero.pow(two), zero);
+        assert_eq!(one.pow(two), one);
+    }
+
+    #[test]
+    fn test_complex_epsilon() {
+        let eps = Complex::<f32>::epsilon();
+        assert_almost_eq!(eps.re, f32::EPSILON);
+        assert_almost_eq!(eps.im, 0.0);
+    }
+}
+
 mod test_axioms {
     use crate::{assert_almost_eq, math::complex_num::Complex64};
 
@@ -310,141 +446,5 @@ mod test_transcendental {
         let tan_atan = atan_z.tan();
         assert_almost_eq!(tan_atan.re, z.re);
         assert_almost_eq!(tan_atan.im, z.im);
-    }
-}
-
-mod test_arithmetic {
-    use crate::{
-        assert_almost_eq,
-        math::{
-            complex_num::Complex,
-            complex_num::Complex64,
-            num_traits::{Exponential, Field, One, Radical, Ring, Zero},
-            ops::{
-                Neg, TryAdd, TryDiv, TryMul, TrySub, WrappingAdd, WrappingMul,
-                WrappingSub,
-            },
-        },
-    };
-
-    #[test]
-    fn test_basic_arithmetic() {
-        let z1 = Complex64::new(1.0, 2.0);
-        let z2 = Complex64::new(3.0, 4.0);
-
-        let sum = z1 + z2;
-        assert_almost_eq!(sum.re, 4.0);
-        assert_almost_eq!(sum.im, 6.0);
-
-        let diff = z1 - z2;
-        assert_almost_eq!(diff.re, -2.0);
-        assert_almost_eq!(diff.im, -2.0);
-
-        let prod = z1 * z2; // (1+2i)(3+4i) = 3 + 4i + 6i - 8 = -5 + 10i
-        assert_almost_eq!(prod.re, -5.0);
-        assert_almost_eq!(prod.im, 10.0);
-
-        let div = z1 / z2; // (1+2i)/(3+4i) = (1+2i)(3-4i) / 25 = (3 - 4i + 6i + 8) / 25 = 11/25 + 2/25i
-        assert_almost_eq!(div.re, 11.0 / 25.0);
-        assert_almost_eq!(div.im, 2.0 / 25.0);
-    }
-
-    #[test]
-    fn test_wrapping_operations() {
-        let z1 = Complex::<u8>::new(250, 10);
-        let z2 = Complex::<u8>::new(10, 250);
-
-        let w_add = z1.wrapping_add(&z2);
-        assert_eq!(w_add.re, 4); // 260 % 256
-        assert_eq!(w_add.im, 4); // 260 % 256
-
-        let w_sub = z1.wrapping_sub(&z2);
-        assert_eq!(w_sub.re, 240); // 250 - 10
-        assert_eq!(w_sub.im, 16); // 10 - 250 = -240 = 16 (mod 256)
-
-        let z3 = Complex::<u8>::new(16, 16);
-        let w_mul = z3.wrapping_mul(&z3);
-        // (16+16i)^2 = 256 + 256i + 256i - 256 = 512i = 0i (mod 256)
-        assert_eq!(w_mul.re, 0);
-        assert_eq!(w_mul.im, 0);
-    }
-
-    #[test]
-    fn test_try_operations() {
-        let z1 = Complex::<u8>::new(200, 10);
-        let z2 = Complex::<u8>::new(100, 10);
-
-        assert!(z1.try_add(&z2).is_err()); // Real part 300 > 255
-
-        let z3 = Complex::<u8>::new(100, 10);
-        assert!(z3.try_add(&z2).is_ok());
-        assert!(z2.try_sub(&z1).is_err()); // Real part 100 - 200 < 0
-        assert!(z1.try_sub(&z3).is_ok());
-        assert!(z1.try_mul(&z2).is_err());
-        assert_eq!(
-            Complex::<u8>::ONE.try_div(&Complex::<u8>::ONE).ok(),
-            Some(Complex::<u8>::ONE)
-        );
-
-        let z_small = Complex::<u8>::new(2, 2);
-        assert!(z_small.try_mul(&z_small).is_ok());
-
-        // Division
-        let z4 = Complex::<u8>::new(100, 100);
-        let z5 = Complex::<u8>::new(2, 2);
-        // 100^2 + 100^2 = 20000 > 255, so try_div will error on denominator calc
-        assert!(z4.try_div(&z5).is_err());
-
-        assert_eq!(Complex::<i8>::ONE.neg(), Complex::new(-1, 0))
-    }
-
-    #[test]
-    fn test_fallible_and_traits() {
-        let a = Complex::new(5.0, 3.0);
-        let b = Complex::new(5.0, 1.0);
-
-        // Covers TrySub
-        assert!(a.try_sub(&b).is_ok());
-
-        // Covers PartialOrd equal-real branch
-        assert_eq!(a.partial_cmp(&b), Some(core::cmp::Ordering::Greater));
-
-        // Covers Zero, One, Ring constants
-        let _zero = Complex::<f64>::ZERO;
-        let _one = Complex::<f64>::ONE;
-        let _max = Complex::<f64>::MAX;
-    }
-
-    #[test]
-    fn test_sqrt_edge_cases() {
-        // Covers self.is_zero() early return
-        let z = Complex::<f64>::zero();
-        assert_eq!(z.sqrt(), Complex::zero());
-
-        // Covers self.re < 0 branch
-        let neg_re = Complex::new(-4.0, 3.0);
-        let _ = neg_re.sqrt();
-
-        // Covers self.re < 0 AND self.im < 0 branch
-        let neg_both = Complex::new(-4.0, -3.0);
-        let _ = neg_both.sqrt();
-    }
-
-    #[test]
-    fn test_pow_edge_cases() {
-        let zero = Complex::<f64>::zero();
-        let one = Complex::<f64>::one();
-        let two = Complex::new(2.0, 0.0);
-
-        assert_eq!(zero.pow(zero), one);
-        assert_eq!(zero.pow(two), zero);
-        assert_eq!(one.pow(two), one);
-    }
-
-    #[test]
-    fn test_complex_epsilon() {
-        let eps = Complex::<f32>::epsilon();
-        assert_eq!(eps.re, f32::EPSILON);
-        assert_eq!(eps.im, 0.0);
     }
 }

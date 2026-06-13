@@ -139,6 +139,45 @@ pub fn collect_system_info() -> String {
     section
 }
 
+/// Helper function to collect Git information (branch and changes stat summary).
+pub fn collect_git_info() -> String {
+    let mut s = String::new();
+    s.push_str("### Git Information\n\n");
+    s.push_str("| Property | Value |\n| :--- | :--- |\n");
+
+    let branch = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    let commit_hash = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    s.push_str(&format!("| Branch | `{}` |\n", branch));
+    s.push_str(&format!("| Commit | `{}` |\n\n", commit_hash));
+
+    let git_show = Command::new("git")
+        .args(["show", &commit_hash, "--stat"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "Not available".to_string());
+
+    s.push_str("<details>\n<summary>Commit Stat Summary (git show HEAD --stat)</summary>\n\n```text\n");
+    s.push_str(&git_show);
+    s.push_str("\n```\n</details>\n\n");
+    s
+}
+
 /// Assembles the complete Markdown report from the collected task data.
 #[allow(clippy::too_many_arguments)]
 pub fn build_report(
@@ -154,6 +193,7 @@ pub fn build_report(
 ) -> String {
     let mut report = String::from("## `control-rs` Quality Report\n\n");
 
+    report.push_str(&collect_git_info());
     report.push_str(&format_issue_summary(fmt_errors, clippy_errors));
     report.push_str(&format_performance(lint_time, test_time));
     report.push_str(&format_test_summary(

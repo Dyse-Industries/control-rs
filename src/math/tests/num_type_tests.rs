@@ -27,6 +27,8 @@ use crate::math::num_types::{
 use core::marker::PhantomData;
 use core::mem;
 
+struct TestStorage<C: Dim>(PhantomData<C>);
+
 #[test]
 fn test_zero_byte_footprint() {
     assert_eq!(mem::size_of::<Z>(), 0);
@@ -113,10 +115,6 @@ fn test_minimum() {
 
 #[test]
 fn test_dynamic_min_max_bounding() {
-    // Statically assert that type-level Min and Max traits correctly resolve bounding boxes
-    // for non-uniform tensor operations.
-    let _: U5 = <U2 as DimMax<U5>>::Output::default();
-    let _: U2 = <U2 as DimMin<U5>>::Output::default();
     // Use an operation to confirm that Max or Min bounds a dimension
     fn assert_bounds<A, B, Max, Min>()
     where
@@ -127,11 +125,14 @@ fn test_dynamic_min_max_bounding() {
     {
     }
 
+    // Statically assert that type-level Min and Max traits correctly resolve bounding boxes
+    // for non-uniform tensor operations.
+    let _: U5 = <U2 as DimMax<U5>>::Output::default();
+    let _: U2 = <U2 as DimMin<U5>>::Output::default();
+
     assert_bounds::<U10, U15, U15, U10>();
     assert_bounds::<U32, U1, U32, U1>();
 }
-
-struct TestStorage<C: Dim>(PhantomData<C>);
 fn concat_static_arrays<const A: usize, const B: usize, C: Dim>(
     _: [f32; A],
     _: [f32; B],
