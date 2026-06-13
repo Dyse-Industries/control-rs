@@ -284,9 +284,7 @@ fn process_incoming_byte(
     tx: &Sender<BridgeMessage>,
 ) {
     if let Some(payload) = reader.handle_byte(b) {
-        if let Ok(telemetry) =
-            postcard::from_bytes::<Telemetry<'_>>(payload)
-        {
+        if let Ok(telemetry) = postcard::from_bytes::<Telemetry<'_>>(payload) {
             let owned_telemetry = make_telemetry_owned(&telemetry);
             let _ = tx.send(BridgeMessage::Telemetry(owned_telemetry));
         }
@@ -300,8 +298,7 @@ fn process_incoming_byte(
     {
         if b == b'\n' {
             if !raw_line_buf.is_empty() {
-                let line = String::from_utf8_lossy(raw_line_buf)
-                    .into_owned();
+                let line = String::from_utf8_lossy(raw_line_buf).into_owned();
                 let _ = tx.send(BridgeMessage::RawConsole(line));
                 raw_line_buf.clear();
             }

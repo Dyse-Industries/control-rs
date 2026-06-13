@@ -80,7 +80,7 @@ struct AppState {
 }
 
 impl AppState {
-    /// Creates a new AppState with empty suites and default values.
+    /// Creates a new `AppState` with empty suites and default values.
     fn new() -> Self {
         Self {
             suites: Vec::new(),
