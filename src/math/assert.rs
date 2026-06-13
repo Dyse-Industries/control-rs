@@ -30,7 +30,7 @@ macro_rules! assert_almost_eq {
     ($left:expr, $right:expr) => ({
         let (left_val, right_val) = (&$left, &$right);
         match $crate::math::assert::almost_eq(left_val, right_val) {
-             Ok(False) => {
+             Ok(false) => {
                  panic!("assertion failed: `(left == right)`\n  left: `{:?}`, \n right: `{:?}`", left_val, right_val)
              }
              Err(e) => panic!("assertion failed: {e}")
@@ -66,7 +66,7 @@ macro_rules! assert_not_almost_eq {
     ($left:expr, $right:expr) => ({
          let (left_val, right_val) = (&$left, &$right);
          match $crate::math::assert::almost_eq(left_val, right_val) {
-             Ok(True) => {
+             Ok(true) => {
                  panic!("assertion failed: `(left != right)`\n  left: `{:?}`, \n right: `{:?}`", left_val, right_val)
              }
              _ => {},
