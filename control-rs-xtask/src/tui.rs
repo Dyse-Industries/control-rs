@@ -544,7 +544,7 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &AppState) {
             Constraint::Min(10),   // Content (Split test list & logs)
             Constraint::Length(3), // Footer
         ])
-        .split(f.size());
+        .split(f.area());
 
     // 1. Render Header
     let target_span = Span::styled(
