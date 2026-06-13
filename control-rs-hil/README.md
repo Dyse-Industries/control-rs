@@ -41,7 +41,7 @@ flowchart LR
     classDef commsNode stroke:#4ade80
     classDef serverLoop stroke:#a78bfa
     classDef testNode stroke:#facc15
-    style timeNode stroke:#2962FF
+    classDef timeNode stroke:#2962FF
 ```
 
 `control-rs-hil`:
