@@ -1,9 +1,9 @@
 //! # Math Assertions.
 
 use crate::math::{
+    ArithmeticResult,
     num_traits::{Field, Signed},
     ops::{TryMul, TrySub},
-    ArithmeticResult,
 };
 
 /// Asserts that two floating-point numbers are almost equal.
@@ -33,6 +33,7 @@ macro_rules! assert_almost_eq {
              Ok(false) => {
                  panic!("assertion failed: `(left == right)`\n  left: `{:?}`, \n right: `{:?}`", left_val, right_val)
              }
+             Ok(true) => {}
              Err(e) => panic!("assertion failed: {e}")
          }
     });
