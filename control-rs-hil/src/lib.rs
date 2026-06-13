@@ -1,5 +1,4 @@
 #![no_std]
-#![allow(clippy::type_complexity, clippy::needless_lifetimes)]
 
 pub mod comms;
 pub mod settings;

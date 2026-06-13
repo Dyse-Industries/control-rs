@@ -25,19 +25,23 @@ pub static CURRENT_TEST: AtomicI16 = AtomicI16::new(-1);
 /// Raw pointer to the active communication device.
 pub static mut ACTIVE_COMMS_PTR: *mut core::ffi::c_void = core::ptr::null_mut();
 
+/// Function signature for telemetry sender during a panic.
+pub type PanicTelemetrySender = unsafe fn(*mut core::ffi::c_void, &Telemetry<'_>);
+
+/// Function signature for communication flusher during a panic.
+pub type PanicCommsFlusher = unsafe fn(*mut core::ffi::c_void);
+
+/// Function signature for command poller during a panic.
+pub type PanicCmdPoller = unsafe fn(*mut core::ffi::c_void) -> Option<Command>;
+
 /// Static function pointer used to transmit telemetry during a panic.
-pub static mut PANIC_TELEMETRY_SENDER: Option<
-    unsafe fn(*mut core::ffi::c_void, &Telemetry<'_>),
-> = None;
+pub static mut PANIC_TELEMETRY_SENDER: Option<PanicTelemetrySender> = None;
 
 /// Static function pointer used to flush communications during a panic.
-pub static mut PANIC_COMMS_FLUSHER: Option<unsafe fn(*mut core::ffi::c_void)> =
-    None;
+pub static mut PANIC_COMMS_FLUSHER: Option<PanicCommsFlusher> = None;
 
 /// Static function pointer used to poll commands during a panic.
-pub static mut PANIC_CMD_POLLER: Option<
-    unsafe fn(*mut core::ffi::c_void) -> Option<Command>,
-> = None;
+pub static mut PANIC_CMD_POLLER: Option<PanicCmdPoller> = None;
 
 /// Helper function to transmit telemetry via type-erased pointer.
 unsafe fn send_telemetry_via_ptr<C: HostComms>(
@@ -71,6 +75,9 @@ unsafe fn poll_command_via_ptr<C: HostComms>(
     }
 }
 
+/// Result of server operations.
+pub type ServerResult<E> = Result<(), E>;
+
 /// Interactive test runner server.
 pub struct Server<'a, C, T> {
     comms: C,
@@ -78,6 +85,7 @@ pub struct Server<'a, C, T> {
     suites: &'a [&'static SuiteDescriptor],
 }
 
+#[allow(clippy::type_complexity)]
 impl<'a, C, T> Server<'a, C, T>
 where
     C: HostComms,
@@ -103,7 +111,7 @@ where
     ///
     /// This function polls for incoming host commands, executes requested tests,
     /// and streams telemetry and metrics back to the host.
-    pub fn run(&mut self) -> Result<(), C::Error> {
+    pub fn run(&mut self) -> ServerResult<C::Error> {
         unsafe {
             ACTIVE_COMMS_PTR =
                 &mut self.comms as *mut C as *mut core::ffi::c_void;
@@ -146,7 +154,7 @@ where
         res
     }
 
-    fn stream_discovery(&mut self) -> Result<(), C::Error> {
+    fn stream_discovery(&mut self) -> ServerResult<C::Error> {
         for (suite_idx, &suite) in self.suites.iter().enumerate() {
             let suite_id = suite_idx as u16;
             self.comms.send_telemetry(&Telemetry::SuiteInfo {
@@ -183,7 +191,7 @@ where
         &mut self,
         suite_id: u16,
         test_id: u16,
-    ) -> Result<(), C::Error> {
+    ) -> ServerResult<C::Error> {
         let suite_idx = suite_id as usize;
         let test_idx = test_id as usize;
 
@@ -250,7 +258,7 @@ where
         suite_id: u16,
         setting_id: u16,
         value: SettingValue,
-    ) -> Result<(), C::Error> {
+    ) -> ServerResult<C::Error> {
         let suite_idx = suite_id as usize;
         let setting_idx = setting_id as usize;
 
@@ -326,9 +334,11 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::vec::Vec;
 
+    type RawPayloads = Vec<Vec<u8>>;
+
     struct MockComms {
         commands: Vec<Command>,
-        payloads: Vec<Vec<u8>>,
+        payloads: RawPayloads,
         flush_count: usize,
         fail_on_poll: bool,
     }
@@ -384,7 +394,9 @@ mod tests {
     static TEST_U8_SETTING: AtomicU8Setting =
         AtomicU8Setting::new("test_u8", 42);
 
-    static SUITE_SETTINGS: &[&dyn Setting] = &[&TEST_U8_SETTING];
+    type SettingsSlice = &'static [&'static dyn Setting];
+
+    static SUITE_SETTINGS: SettingsSlice = &[&TEST_U8_SETTING];
 
     static SUITE_EXECUTABLES: &[ExecDescriptor] = &[ExecDescriptor {
         name: "dummy_test",

@@ -65,7 +65,7 @@ Here is an example implementation:
 #![no_main]
 
 use control_rs_hil::comms::{Command, FrameReader, HostComms, Telemetry, frame_telemetry};
-use control_rs_hil::runner::Context;
+use control_rs_hil::server::Context;
 use control_rs_hil::time::ClientClock;
 use control_rs_macros::{hil_setup, hil_suite};
 

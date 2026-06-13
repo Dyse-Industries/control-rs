@@ -95,10 +95,17 @@ pub enum Telemetry<'a> {
     },
 }
 
+/// Result of polling a command from the host.
+pub type PollResult<E> = Result<Option<Command>, E>;
+
+/// Result of sending telemetry or flushing.
+pub type SendResult<E> = Result<(), E>;
+
 /// A trait for executing frame-based communication between target and host.
 ///
 /// Handlers of this trait bridge the parsed commands and telemetry messages
 /// onto concrete hardware peripherals (like UART, USB, or RTT).
+#[allow(clippy::type_complexity)]
 pub trait HostComms {
     /// The error type associated with transport failures.
     type Error;
@@ -109,16 +116,16 @@ pub trait HostComms {
     /// - `Ok(Some(Command))` when a full valid command frame is parsed.
     /// - `Ok(None)` if no command is ready yet.
     /// - `Err(Error)` on serial port or protocol errors.
-    fn poll_command(&mut self) -> Result<Option<Command>, Self::Error>;
+    fn poll_command(&mut self) -> PollResult<Self::Error>;
 
     /// Send a telemetry message to the host.
     fn send_telemetry(
         &mut self,
         telemetry: &Telemetry<'_>,
-    ) -> Result<(), Self::Error>;
+    ) -> SendResult<Self::Error>;
 
     /// Flush any pending buffered data out to the physical interface.
-    fn flush(&mut self) -> Result<(), Self::Error>;
+    fn flush(&mut self) -> SendResult<Self::Error>;
 }
 
 // --- Frame Reader / Writer Implementation helpers ---
@@ -136,6 +143,9 @@ enum ReaderState {
     ReadingPayload { len: usize, read: usize },
     WaitChecksum { len: usize },
 }
+
+/// The payload returned by handle_byte when a full frame is decoded.
+pub type DecodedFrame<'a> = &'a [u8];
 
 /// State machine to deframe a stream of incoming bytes into packets.
 pub struct FrameReader {
@@ -169,7 +179,7 @@ impl FrameReader {
 
     /// Process a single incoming byte. Returns `Some(&[u8])` when a complete,
     /// checksum-verified payload has been received.
-    pub fn handle_byte(&mut self, byte: u8) -> Option<&[u8]> {
+    pub fn handle_byte(&mut self, byte: u8) -> Option<DecodedFrame<'_>> {
         match self.state {
             ReaderState::WaitStart1 => {
                 if byte == START_BYTE_1 {
@@ -228,9 +238,9 @@ impl FrameReader {
 ///
 /// # Errors
 /// Returns `postcard::Error` if serialization fails.
-pub fn frame_telemetry<'a>(
+pub fn frame_telemetry(
     telemetry: &Telemetry<'_>,
-    dest: &'a mut [u8],
+    dest: &mut [u8],
 ) -> Result<usize, postcard::Error> {
     if dest.len() < 5 {
         return Err(postcard::Error::SerializeBufferFull);
