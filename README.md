@@ -1,20 +1,123 @@
 # control-rs
 
-`control-rs` is a `no_std` Rust library for numerical modeling, control synthesis and real-time execution. It targets autonomous systems and bare-metal embedded platforms.
+`control-rs` is a `no_std` Rust library for numerical modeling, control synthesis, and real-time execution. It targets autonomous systems and bare-metal embedded platforms.
 
-### Data-Driven Model-Based Design
+---
 
-`control-rs` enables a complete Model-Based Design (MBD) pipeline. System identification, controller tuning, HITL verification and production firmware development are possible with stable Cargo tooling.
+## Data-Driven Model-Based Design
 
-## Features
+`control-rs` enables a complete Model-Based Design (MBD) pipeline. By unifying hardware execution, real-time telemetry, and host-side driver tooling, the library transitions control design from offline simulation to live, on-target hardware execution.
 
-*   **Static Dimensions:** Storage dimensions are calculated at compile-time. No heap allocation; zero-cost bounds checking.
-*   **Robust Arithmetic:** Strict algebraic traits (`Scalar`, `Ring`, `Field`) and fallible operations (`try_add`, `try_mul`) prevent undefined behavior.
-*   **Backend-Agnostic BLAS:** BLAS operations are generic traits. Hardware backends (e.g., ARM NEON, CMSIS-DSP) are injected at compile-time.
+```mermaid
+graph TD
+    %% Define Styles
+    classDef host fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
+    classDef link fill:#1e293b,stroke:#94a3b8,stroke-width:2px,stroke-dasharray: 5 5,color:#cbd5e1;
+    classDef target fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff;
+    classDef loop fill:#311042,stroke:#d946ef,stroke-width:2px,color:#fdf4ff;
 
-## Verification
+    subgraph Host["Host PC & CLI/TUI/CI Driver (control-rs-xtask)"]
+        TUI["Interactive TUI<br>(Ratatui / Crossterm)"]:::host
+        CI["Automated CI Harness<br>(Local/GitHub Actions)"]:::host
+    end
 
-The project enforces strict `clippy` lints, tracks coverage with `tarpaulin` and analyzes binary size with `binutils`.
+    subgraph Link["Bidirectional Protocol (Postcard / XOR Checksum)"]
+        USB["USB CDC ACM Serial<br>(Teensy 4.0 / Physical Target)"]:::link
+        SH["Semihosting Syscalls<br>(QEMU ARM / RISC-V Emulator)"]:::link
+    end
+
+    subgraph Target["Target Silicon / Embedded Core (control-rs-hil)"]
+        Server["HIL Test Server Event Loop"]:::target
+        Profiler["Execution Profiler<br>(DWT Cycle Count & Stack Paint)"]:::target
+        
+        subgraph SysIdLoop["Live System Identification & Control Loop"]
+            Estimator["Model Parameter Estimator"]:::loop
+            Controller["Excitation & PID Controller"]:::loop
+            Plant["Physical Actuator / Hardware Plant"]:::loop
+        end
+    end
+
+    %% Flow Arrows
+    TUI <-->|"Command / Telemetry Stream"| USB
+    CI <-->|"Command / Telemetry Stream"| SH
+    USB <--> Server
+    SH <--> Server
+    Server --> Profiler
+    Server <--> Estimator
+    Estimator <--> Controller
+    Controller <--> Plant
+```
+
+### The Live SysId Loop
+
+Instead of performing offline system identification—logging data, extracting files, and playing "data archaeologist" days later—`control-rs` primes developers to run **live parameter estimation loops** directly on target silicon:
+
+1. **Initiate**: The host driver (TUI or automated script) triggers the identification run.
+2. **Stimulate**: The controller generates an excitation signal (step input, chirp, or PRBS) to stimulate the actuators.
+3. **Calculate**: The target reads sensors, executes estimation algorithms (e.g., Recursive Least Squares or Extended Kalman Filters), and fits the system parameters on-the-fly.
+4. **Stream**: Multi-channel telemetry packetizes and streams the fitted parameters back to the host machine for real-time visualization, gain tuning, and validation.
+
+---
+
+## Infrastructure Modules
+
+The project is structured into three core components working in unison:
+
+### 1. Embedded HIL Engine (`control-rs-hil`)
+Located in [control-rs-hil](file:///home/mdyson/control-rs/control-rs-hil), this `no_std` crate provides the target-side infrastructure:
+* **Interactive Test Server**: A lightweight event loop that executes test suites on request and streams results back.
+* **XOR-Checksum Framing**: Bidirectional postcard-serialized command/telemetry streaming over arbitrary transports (USB CDC ACM, UART, Semihosting).
+* **Target Profiling**: Measures execution time using hardware cycle counters (ARM DWT) and tracks memory limits using stack painting and scanning.
+
+### 2. Host Orchestration Driver (`control-rs-xtask`)
+Located in [control-rs-xtask](file:///home/mdyson/control-rs/control-rs-xtask), this package runs on the developer's PC:
+* **Interactive TUI**: A beautiful terminal dashboard built with `ratatui` to monitor live signals, trigger tests, tweak parameters, and view logs.
+* **QEMU Emulator Bridge**: Automatically handles communications with simulated targets.
+* **Headless Runner**: Automatically executes cross-compiled test suites and outputs performance metrics.
+
+### 3. Continuous Integration (`.github/workflows/CI.yml`)
+Automates the full validation pipeline:
+* **Multi-Arch Emulation**: Spins up headless QEMU instances for both **ARM Cortex-M** (`thumbv7em-none-eabihf`) and **RISC-V** (`riscv32imac-unknown-none-elf`) targets.
+* **Performance Telemetry**: Aggregates clippy status, test results, code coverage, cycle counts, and stack usage into a comprehensive PR/commit report (`ci-report.md`).
+
+---
+
+## Quickstart & Commands
+
+Helpful cargo aliases are configured in [.cargo/config.toml](file:///home/mdyson/control-rs/.cargo/config.toml) to simplify development:
+
+### 1. Interactive Testing (Host TUI)
+Launch the Ratatui control dashboard. Select tests, run them, and adjust parameters in real time.
+
+* **For QEMU Emulator (ARM):**
+  ```bash
+  cargo qemu
+  ```
+* **For Physical Teensy 4.0 Hardware:**
+  ```bash
+  cargo teensy
+  ```
+
+### 2. Continuous Integration & Verification
+Run the exact verification steps performed by the GitHub Actions pipeline locally (clippy, formatting, tarpaulin coverage, and QEMU HIL tests).
+
+* **Run all checks (ARM & RISC-V QEMU):**
+  ```bash
+  cargo ci
+  ```
+* **Run checks for specific targets:**
+  ```bash
+  cargo ci-qemu
+  cargo ci-teensy
+  ```
+
+---
+
+## Library Features
+
+* **Static Dimensions:** Storage dimensions are calculated at compile-time. No heap allocation; zero-cost bounds checking.
+* **Robust Arithmetic:** Strict algebraic traits (`Scalar`, `Ring`, `Field`) and fallible operations (`try_add`, `try_mul`) prevent undefined behavior.
+* **Backend-Agnostic BLAS:** BLAS operations are generic traits. Hardware backends (e.g., ARM NEON, CMSIS-DSP) are injected at compile-time.
 
 ## Installation
 
