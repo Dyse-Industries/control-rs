@@ -171,8 +171,10 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
             static __hil_test_suites_end: u8;
         }
 
+        // ==================== Unified Entry Point ====================
         #[cfg(target_os = "none")]
-        #[::cortex_m_rt::entry]
+        #[cfg_attr(target_arch = "arm", ::cortex_m_rt::entry)]
+        #[cfg_attr(target_arch = "riscv32", ::riscv_rt::entry)]
         fn main() -> ! {
             let start = unsafe {
                 &__hil_test_suites_start as *const u8 as *const &::control_rs_hil::SuiteDescriptor
@@ -186,42 +188,127 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
             let context = #setup_name();
 
-            let mut server = ::control_rs_hil::Server::new(context.comms, context.timer, suites);
+            let mut server = ::control_rs_hil::Server::new_with_executor(context.comms, context.timer, context.executor, suites);
             let _ = server.run();
 
+            #[cfg(target_arch = "arm")]
             ::cortex_m_semihosting::debug::exit(::cortex_m_semihosting::debug::EXIT_SUCCESS);
+
+            #[cfg(target_arch = "riscv32")]
+            ::semihosting::process::exit(0);
+
+            #[cfg(not(target_arch = "riscv32"))]
             loop {}
         }
 
-        // Generic panic handler generated automatically by #[hil_setup]
+        // ==================== Failure Formatting Helper ====================
         #[cfg(target_os = "none")]
-        #[panic_handler]
-        fn panic(info: &::core::panic::PanicInfo) -> ! {
+        struct FailureBufWriter<'a> {
+            buf: &'a mut [u8],
+            pos: usize,
+        }
+
+        #[cfg(target_os = "none")]
+        impl<'a> ::core::fmt::Write for FailureBufWriter<'a> {
+            fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
+                let bytes = s.as_bytes();
+                let len = bytes.len();
+                if self.pos + len > self.buf.len() {
+                    return Err(::core::fmt::Error);
+                }
+                self.buf[self.pos..self.pos + len].copy_from_slice(bytes);
+                self.pos += len;
+                Ok(())
+            }
+        }
+
+        // ==================== Unified Failure Implementation ====================
+        #[cfg(target_os = "none")]
+        unsafe fn handle_failure(msg: &str, file: &str, line: u32) -> ! {
+            #[cfg(target_arch = "arm")]
             ::cortex_m::interrupt::disable();
+
+            #[cfg(target_arch = "riscv32")]
+            ::riscv::interrupt::disable();
+
             let suite = ::control_rs_hil::server::CURRENT_SUITE.load(::core::sync::atomic::Ordering::SeqCst);
             let test = ::control_rs_hil::server::CURRENT_TEST.load(::core::sync::atomic::Ordering::SeqCst);
 
-            struct BufWriter<'a> {
-                buf: &'a mut [u8],
-                pos: usize,
-            }
-
-            impl<'a> ::core::fmt::Write for BufWriter<'a> {
-                fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
-                    let bytes = s.as_bytes();
-                    let len = bytes.len();
-                    if self.pos + len > self.buf.len() {
-                        return Err(::core::fmt::Error);
+            if let (Some(sender), ptr) = (
+                ::control_rs_hil::server::PANIC_TELEMETRY_SENDER,
+                ::control_rs_hil::server::ACTIVE_COMMS_PTR,
+            ) {
+                if !ptr.is_null() {
+                    if suite >= 0 && test >= 0 {
+                        sender(
+                            ptr,
+                            &::control_rs_hil::comms::Telemetry::TestStateChange {
+                                suite_id: suite as u16,
+                                test_id: test as u16,
+                                state: ::control_rs_hil::comms::TestState::Failed,
+                            },
+                        );
                     }
-                    self.buf[self.pos..self.pos + len].copy_from_slice(bytes);
-                    self.pos += len;
-                    Ok(())
+                    sender(
+                        ptr,
+                        &::control_rs_hil::comms::Telemetry::TargetPanic {
+                            message: msg,
+                            file,
+                            line,
+                        },
+                    );
                 }
             }
 
+            // Wait for OkToReset command from host
+            loop {
+                if let (Some(poller), ptr) = (
+                    ::control_rs_hil::server::PANIC_CMD_POLLER,
+                    ::control_rs_hil::server::ACTIVE_COMMS_PTR,
+                ) {
+                    if !ptr.is_null() {
+                        if let Some(::control_rs_hil::comms::Command::OkToReset) = poller(ptr) {
+                            break;
+                        }
+                    }
+                }
+
+                if let (Some(flusher), ptr) = (
+                    ::control_rs_hil::server::PANIC_COMMS_FLUSHER,
+                    ::control_rs_hil::server::ACTIVE_COMMS_PTR,
+                ) {
+                    if !ptr.is_null() {
+                        flusher(ptr);
+                    } else {
+                        ::core::hint::spin_loop();
+                    }
+                } else {
+                    ::core::hint::spin_loop();
+                }
+
+                // Small delay to prevent pegging the CPU too hard
+                for _ in 0..1000 {
+                    ::core::hint::spin_loop();
+                }
+            }
+
+            #[cfg(target_arch = "arm")]
+            ::cortex_m::peripheral::SCB::sys_reset();
+
+            #[cfg(target_arch = "riscv32")]
+            ::semihosting::process::exit(1);
+
+            #[cfg(not(any(target_arch = "arm", target_arch = "riscv32")))]
+            loop {}
+        }
+
+        // ==================== Unified Panic Handler ====================
+        #[cfg(target_os = "none")]
+        #[panic_handler]
+        fn panic(info: &::core::panic::PanicInfo) -> ! {
             let mut msg_buf = [0u8; 128];
             let pos = {
-                let mut writer = BufWriter { buf: &mut msg_buf, pos: 0 };
+                let mut writer = FailureBufWriter { buf: &mut msg_buf, pos: 0 };
                 let _ = ::core::fmt::write(&mut writer, format_args!("{}", info.message()));
                 writer.pos
             };
@@ -231,165 +318,37 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
             let line = info.location().map_or(0, |l| l.line());
 
             unsafe {
-                if let (Some(sender), ptr) = (
-                    ::control_rs_hil::server::PANIC_TELEMETRY_SENDER,
-                    ::control_rs_hil::server::ACTIVE_COMMS_PTR,
-                ) {
-                    if !ptr.is_null() {
-                        if suite >= 0 && test >= 0 {
-                            sender(
-                                ptr,
-                                &::control_rs_hil::comms::Telemetry::TestStateChange {
-                                    suite_id: suite as u16,
-                                    test_id: test as u16,
-                                    state: ::control_rs_hil::comms::TestState::Failed,
-                                },
-                            );
-                        }
-                        sender(
-                            ptr,
-                            &::control_rs_hil::comms::Telemetry::TargetPanic {
-                                message: msg,
-                                file,
-                                line,
-                            },
-                        );
-                    }
-                }
+                handle_failure(msg, file, line);
             }
-
-            // Wait for OkToReset command from host
-            loop {
-                unsafe {
-                    if let (Some(poller), ptr) = (
-                        ::control_rs_hil::server::PANIC_CMD_POLLER,
-                        ::control_rs_hil::server::ACTIVE_COMMS_PTR,
-                    ) {
-                        if !ptr.is_null() {
-                            if let Some(::control_rs_hil::comms::Command::OkToReset) = poller(ptr) {
-                                break;
-                            }
-                        }
-                    }
-
-                    if let (Some(flusher), ptr) = (
-                        ::control_rs_hil::server::PANIC_COMMS_FLUSHER,
-                        ::control_rs_hil::server::ACTIVE_COMMS_PTR,
-                    ) {
-                        if !ptr.is_null() {
-                            flusher(ptr);
-                        } else {
-                            ::core::hint::spin_loop();
-                        }
-                    } else {
-                        ::core::hint::spin_loop();
-                    }
-                }
-                // Small delay to prevent pegging the CPU too hard
-                for _ in 0..1000 {
-                    ::core::hint::spin_loop();
-                }
-            }
-
-            ::cortex_m::peripheral::SCB::sys_reset();
         }
 
-        // Generic HardFault exception handler generated automatically by #[hil_setup]
+        // ==================== Unified Exception Handler Implementation ====================
         #[cfg(target_os = "none")]
-        #[::cortex_m_rt::exception]
-        unsafe fn HardFault(ef: &::cortex_m_rt::ExceptionFrame) -> ! {
-            ::cortex_m::interrupt::disable();
-            let suite = ::control_rs_hil::server::CURRENT_SUITE.load(::core::sync::atomic::Ordering::SeqCst);
-            let test = ::control_rs_hil::server::CURRENT_TEST.load(::core::sync::atomic::Ordering::SeqCst);
-
-            struct BufWriter<'a> {
-                buf: &'a mut [u8],
-                pos: usize,
-            }
-
-            impl<'a> ::core::fmt::Write for BufWriter<'a> {
-                fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
-                    let bytes = s.as_bytes();
-                    let len = bytes.len();
-                    if self.pos + len > self.buf.len() {
-                        return Err(::core::fmt::Error);
-                    }
-                    self.buf[self.pos..self.pos + len].copy_from_slice(bytes);
-                    self.pos += len;
-                    Ok(())
-                }
-            }
-
+        unsafe fn handle_exception(pc: usize, lr_or_cause: usize) -> ! {
             let mut msg_buf = [0u8; 128];
             let pos = {
-                let mut writer = BufWriter { buf: &mut msg_buf, pos: 0 };
-                let _ = ::core::fmt::write(&mut writer, format_args!("HardFault at pc=0x{:08x}, lr=0x{:08x}", ef.pc(), ef.lr()));
+                let mut writer = FailureBufWriter { buf: &mut msg_buf, pos: 0 };
+                #[cfg(target_arch = "arm")]
+                let _ = ::core::fmt::write(&mut writer, format_args!("HardFault at pc=0x{:08x}, lr=0x{:08x}", pc, lr_or_cause));
+                #[cfg(target_arch = "riscv32")]
+                let _ = ::core::fmt::write(&mut writer, format_args!("Exception mcause=0x{:08x}, mepc=0x{:08x}", lr_or_cause, pc));
                 writer.pos
             };
-            let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("HardFault occurred");
+            let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("exception occurred");
 
-            unsafe {
-                if let (Some(sender), ptr) = (
-                    ::control_rs_hil::server::PANIC_TELEMETRY_SENDER,
-                    ::control_rs_hil::server::ACTIVE_COMMS_PTR,
-                ) {
-                    if !ptr.is_null() {
-                        if suite >= 0 && test >= 0 {
-                            sender(
-                                ptr,
-                                &::control_rs_hil::comms::Telemetry::TestStateChange {
-                                    suite_id: suite as u16,
-                                    test_id: test as u16,
-                                    state: ::control_rs_hil::comms::TestState::Failed,
-                                },
-                            );
-                        }
-                        sender(
-                            ptr,
-                            &::control_rs_hil::comms::Telemetry::TargetPanic {
-                                message: msg,
-                                file: "hardfault_handler",
-                                line: 0,
-                            },
-                        );
-                    }
-                }
-            }
+            handle_failure(msg, "exception_handler", 0);
+        }
 
-            // Wait for OkToReset command from host
-            loop {
-                unsafe {
-                    if let (Some(poller), ptr) = (
-                        ::control_rs_hil::server::PANIC_CMD_POLLER,
-                        ::control_rs_hil::server::ACTIVE_COMMS_PTR,
-                    ) {
-                        if !ptr.is_null() {
-                            if let Some(::control_rs_hil::comms::Command::OkToReset) = poller(ptr) {
-                                break;
-                            }
-                        }
-                    }
+        #[cfg(all(target_os = "none", target_arch = "arm"))]
+        #[::cortex_m_rt::exception]
+        unsafe fn HardFault(ef: &::cortex_m_rt::ExceptionFrame) -> ! {
+            handle_exception(ef.pc() as usize, ef.lr() as usize);
+        }
 
-                    if let (Some(flusher), ptr) = (
-                        ::control_rs_hil::server::PANIC_COMMS_FLUSHER,
-                        ::control_rs_hil::server::ACTIVE_COMMS_PTR,
-                    ) {
-                        if !ptr.is_null() {
-                            flusher(ptr);
-                        } else {
-                            ::core::hint::spin_loop();
-                        }
-                    } else {
-                        ::core::hint::spin_loop();
-                    }
-                }
-                // Small delay to prevent pegging the CPU too hard
-                for _ in 0..1000 {
-                    ::core::hint::spin_loop();
-                }
-            }
-
-            ::cortex_m::peripheral::SCB::sys_reset();
+        #[cfg(all(target_os = "none", target_arch = "riscv32"))]
+        #[unsafe(no_mangle)]
+        unsafe fn ExceptionHandler(_ef: &mut ::riscv_rt::TrapFrame) -> ! {
+            handle_exception(::riscv::register::mepc::read(), ::riscv::register::mcause::read().bits());
         }
     };
 

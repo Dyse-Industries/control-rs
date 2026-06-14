@@ -198,7 +198,7 @@ pub mod teensy_pid_suite {
 
 #[hil_setup]
 #[allow(dead_code)]
-fn setup() -> Context<TeensyComms, TeensyClock> {
+fn setup() -> Context<TeensyComms, TeensyClock, ::control_rs_hil::DummyExecutor> {
     let p = cortex_m::Peripherals::take().unwrap();
     let d = board::instances();
 
@@ -231,7 +231,7 @@ fn setup() -> Context<TeensyComms, TeensyClock> {
     let usb_class = SerialPort::new(usb_bus);
 
     const VID_PID: UsbVidPid = UsbVidPid(0x16c0, 0x0413);
-    const PRODUCT: &str = "teensy4-bsp-example";
+    const PRODUCT: &str = "teensy4";
     let usb_device = UsbDeviceBuilder::new(usb_bus, VID_PID)
         .product(PRODUCT)
         .device_class(usbd_serial::USB_CLASS_CDC)
@@ -253,6 +253,7 @@ fn setup() -> Context<TeensyComms, TeensyClock> {
         configured: false,
     };
     let timer = TeensyClock;
+    let executor = ::control_rs_hil::DummyExecutor;
 
-    Context { comms, timer }
+    Context { comms, timer, executor }
 }

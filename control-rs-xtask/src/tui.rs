@@ -777,7 +777,9 @@ fn run_tui_loop(
             std::thread::sleep(std::time::Duration::from_secs(2));
 
             bridge = match target {
-                Target::Qemu => QemuBridge::new(elf_path, target.clone())?,
+                Target::QemuSemihosting { .. } => {
+                    QemuBridge::new(elf_path, target.clone())?
+                }
                 Target::Serial { .. } => QemuBridge::new("", target.clone())?,
             };
 

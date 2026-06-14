@@ -1,4 +1,4 @@
-# teensy4-example
+# teensy4
 
 A demonstration crate implementing the `control-rs` Hardware-in-the-Loop (HIL)
 test server on physical **Teensy 4.0** hardware over a native USB connection.
@@ -43,7 +43,7 @@ No external USB-to-UART serial adapters or custom wiring are needed!
 2. **Device USB Profile**:
     - **Vendor ID (VID)**: `0x5824`
     - **Product ID (PID)**: `0x27dd`
-    - **Manufacturer / Product**: `teensy4-bsp-example`
+    - **Manufacturer / Product**: `teensy4`
 3. **System Clock**: We configure the ARM Cortex-M `SysTick` exception to tick
    every 1 ms. The `TeensyClock` struct uses this tick counter and the current
    SysTick register countdown to provide microsecond-accurate timekeeping (
@@ -95,7 +95,7 @@ Alternatively, you can use the official graphical Teensy Loader GUI.
 Navigate to the example directory and build the package:
 
 ```bash
-cd examples/teensy4-example
+cd examples/teensy4
 cargo build --release
 ```
 
@@ -104,7 +104,7 @@ cargo build --release
 Generate the `.hex` image file required by the Teensy bootloader:
 
 ```bash
-rust-objcopy -O ihex target/thumbv7em-none-eabihf/release/teensy4-example teensy4-example.hex
+rust-objcopy -O ihex target/thumbv7em-none-eabihf/release/teensy4 teensy4.hex
 ```
 
 ### 3. Flash to Teensy
@@ -112,7 +112,7 @@ rust-objcopy -O ihex target/thumbv7em-none-eabihf/release/teensy4-example teensy
 Press the program button on the Teensy 4 board and run:
 
 ```bash
-teensy_loader_cli -w -v --mcu=TEENSY40 teensy4-example.hex
+teensy_loader_cli -w -v --mcu=TEENSY40 teensy4.hex
 ```
 
 The status LED on Pin 13 will light up, indicating that the USB HIL server is

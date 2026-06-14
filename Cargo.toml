@@ -16,7 +16,7 @@ members = [
     "control-rs-macros",
 ]
 default-members = ["."]
-exclude = ["examples/qemu-example"]
+exclude = ["examples/qemu", "examples/teensy4"]
 
 [dependencies]
 libm = "0.2.16"
@@ -39,13 +39,3 @@ opt-level = 3
 codegen-units = 1
 # Disable debug assertions
 debug-assertions = false
-
-
-[profile.qemu]
-inherits = "release"
-strip = false
-opt-level = 0
-lto = false
-
-[profile.qemu.build-override]
-opt-level = 0

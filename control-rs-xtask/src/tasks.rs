@@ -56,21 +56,40 @@ struct TarpaulinReportJson {
 }
 
 /// Helper function to build the QEMU target ELF.
-pub fn build_qemu_elf() -> String {
-    println!("Building QEMU target ELF...");
-    let build_status = Command::new("cargo")
-        .env(
-            "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS",
-            "-C link-arg=-Tlink.x -C link-arg=-Thil_suites.x",
-        )
+pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
+    println!("\t* building QEMU target ELF for {:?}...", arch);
+    let (target_triple, bin_name, env_flags) = match arch {
+        bridge::QemuArch::Arm => (
+            "thumbv7em-none-eabihf",
+            "control-rs-qemu-arm",
+            vec![(
+                "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS",
+                "-C link-arg=-Tlink.x -C link-arg=-Thil_suites.x",
+            )],
+        ),
+        bridge::QemuArch::Riscv => (
+            "riscv32imac-unknown-none-elf",
+            "control-rs-qemu-riscv",
+            vec![(
+                "CARGO_TARGET_RISCV32IMAC_UNKNOWN_NONE_ELF_RUSTFLAGS",
+                "-C link-arg=-Tmemory.x -C link-arg=-Tlink.x -C link-arg=-Thil_suites.x",
+            )],
+        ),
+    };
+
+    let mut command = Command::new("cargo");
+    for (key, val) in env_flags {
+        command.env(key, val);
+    }
+    let build_status = command
         .args([
             "build",
             "--manifest-path",
-            "examples/qemu-example/Cargo.toml",
+            "examples/qemu/Cargo.toml",
             "--bin",
-            "control-rs-qemu-arm",
+            bin_name,
             "--target",
-            "thumbv7em-none-eabihf",
+            target_triple,
             "--profile",
             "qemu",
         ])
@@ -78,16 +97,16 @@ pub fn build_qemu_elf() -> String {
         .expect("Failed to build QEMU target.");
 
     if !build_status.success() {
-        eprintln!("Failed to compile QEMU target.");
+        eprintln!("\tFailed to compile QEMU target.");
         exit(1);
     }
 
-    "examples/qemu-example/target/thumbv7em-none-eabihf/qemu/control-rs-qemu-arm".to_string()
+    format!("examples/qemu/target/{}/qemu/{}", target_triple, bin_name)
 }
 
 /// Task to run formatting check.
 pub fn run_fmt() -> (Result<(), usize>, String) {
-    println!("Running formatting check...");
+    println!("\t* formatting check...");
     let fmt_output = Command::new("cargo")
         .args(["fmt", "--all", "--", "--check"])
         .output()
@@ -112,7 +131,7 @@ pub fn run_fmt() -> (Result<(), usize>, String) {
 
 /// Task to run clippy check with JSON output formatting.
 pub fn run_clippy() -> (Result<(), usize>, String) {
-    println!("Running clippy check...");
+    println!("\t* clippy check...");
     let clippy_output = Command::new("cargo")
         .args([
             "clippy",
@@ -173,7 +192,7 @@ pub fn run_clippy() -> (Result<(), usize>, String) {
 
 /// Task to run tarpaulin test & coverage.
 pub fn run_tarpaulin() -> (Result<TarpaulinSummary, ()>, String) {
-    println!("Running tarpaulin test & coverage...");
+    println!("\t* tarpaulin test & coverage...");
     let tarpaulin_output = Command::new("cargo")
         .args([
             "tarpaulin",
@@ -261,8 +280,8 @@ pub fn run_headless_sil(
     let mut elf_path = String::new();
 
     let mut bridge = match target {
-        bridge::Target::Qemu => {
-            elf_path = build_qemu_elf();
+        bridge::Target::QemuSemihosting { arch } => {
+            elf_path = build_qemu_elf(*arch);
             match bridge::QemuBridge::new(&elf_path, target.clone()) {
                 Ok(b) => b,
                 Err(e) => return (Err(e.to_string()), logs),
@@ -281,7 +300,7 @@ pub fn run_headless_sil(
         logs.push_str(msg);
     };
 
-    log_and_print("Running headlessly executed SIL tests...\n");
+    log_and_print("\t* headless SIL tests...\n");
 
     // Initial discovery
     let mut last_send = Instant::now();
@@ -518,7 +537,7 @@ pub fn run_headless_sil(
                                 "Restarting target bridge to continue running tests...\n",
                             );
                             bridge = match &target {
-                                bridge::Target::Qemu => {
+                                bridge::Target::QemuSemihosting { .. } => {
                                     match bridge::QemuBridge::new(
                                         &elf_path,
                                         target.clone(),
@@ -549,7 +568,9 @@ pub fn run_headless_sil(
                         }
                     }
                 },
-                BridgeMessage::RawConsole(_) => {}
+                BridgeMessage::RawConsole(line) => {
+                    log_and_print(&format!("[Target Console] {}\n", line));
+                }
             }
         }
 
@@ -577,60 +598,98 @@ pub fn run_headless_sil(
     (Ok(results), logs)
 }
 
-/// Task to clean and run the QEMU Sil kernel.
-pub fn run_qemu() {
+/// Task to compile and run the QEMU target ELF interactively.
+pub fn run_qemu(arch: bridge::QemuArch) {
     let clean_status = Command::new("cargo")
-        .args([
-            "clean",
-            "--manifest-path",
-            "examples/qemu-example/Cargo.toml",
-            "--target",
-            "thumbv7em-none-eabihf",
-            "--profile",
-            "qemu",
-        ])
+        .args(["clean", "--manifest-path", "examples/qemu/Cargo.toml"])
         .status()
         .expect("Failed to clean QEMU Sil kernel.");
 
     if !clean_status.success() {
-        eprintln!("Failed to clean QEMU image.");
+        eprintln!("\tFailed to clean QEMU image.");
         exit(1);
     }
 
-    println!("Building QEMU image...");
+    println!("\t* QEMU target for {:?}...", arch);
+    let (target_triple, bin_name, runner_args, rustflags_env, runner_env) =
+        match arch {
+            bridge::QemuArch::Arm => (
+                "thumbv7em-none-eabihf",
+                "control-rs-qemu-arm",
+                [
+                    "qemu-system-arm",
+                    "-cpu cortex-m7",
+                    "-machine mps2-an500",
+                    "-nographic",
+                    "-monitor none",
+                    "-serial none",
+                    "-semihosting-config enable=on,target=native",
+                    "-kernel",
+                ]
+                .join(" "),
+                "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS",
+                "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUNNER",
+            ),
+            bridge::QemuArch::Riscv => (
+                "riscv32imac-unknown-none-elf",
+                "control-rs-qemu-riscv",
+                [
+                    "qemu-system-riscv32",
+                    "-machine virt",
+                    "-cpu rv32",
+                    "-bios none",
+                    "-nographic",
+                    "-monitor none",
+                    "-serial none",
+                    "-semihosting-config enable=on,target=native",
+                    "-kernel",
+                ]
+                .join(" "),
+                "CARGO_TARGET_RISCV32IMAC_UNKNOWN_NONE_ELF_RUSTFLAGS",
+                "CARGO_TARGET_RISCV32IMAC_UNKNOWN_NONE_ELF_RUNNER",
+            ),
+        };
+
+    let rustflags_val = match arch {
+        bridge::QemuArch::Arm => {
+            "-C link-arg=-Tlink.x -C link-arg=-Thil_suites.x"
+        }
+        bridge::QemuArch::Riscv => {
+            "-C link-arg=-Tmemory.x -C link-arg=-Tlink.x -C link-arg=-Thil_suites.x"
+        }
+    };
+
     let run_status = Command::new("cargo")
-        .env("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUNNER", "qemu-system-arm -cpu cortex-m7 -machine mps2-an500 -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel")
-        .env("CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS", "-C link-arg=-Tlink.x -C link-arg=-Thil_suites.x")
+        .env(runner_env, runner_args)
+        .env(rustflags_env, rustflags_val)
         .args([
             "run",
             "--manifest-path",
-            "examples/qemu-example/Cargo.toml",
+            "examples/qemu/Cargo.toml",
             "--bin",
-            "control-rs-qemu-arm",
+            bin_name,
             "--target",
-            "thumbv7em-none-eabihf",
-            "--profile",
-            "qemu",
+            target_triple,
         ])
         .status()
         .expect("Failed to run QEMU Sil kernel.");
 
     if !run_status.success() {
-        eprintln!("QEMU exited with an error.");
+        eprintln!("\tQEMU exited with an error.");
         exit(1);
     }
-    println!("QEMU run finished successfully.");
+    println!("\tQEMU run finished successfully.");
 }
 
 /// Task to start the interactive HIL TUI.
 pub fn run_hil_tui(target: &bridge::Target) {
     let (bridge, elf_path) = match target {
-        bridge::Target::Qemu => {
-            let elf_path = build_qemu_elf();
+        bridge::Target::QemuSemihosting { arch } => {
+            let elf_path = build_qemu_elf(*arch);
             match bridge::QemuBridge::new(&elf_path, target.clone()) {
                 Ok(b) => (b, elf_path),
                 Err(e) => {
-                    eprintln!("Failed to start bridge: {}", e);
+                    eprintln!("\tFailed to start bridge: {}", e);
                     exit(1);
                 }
             }
@@ -639,14 +698,14 @@ pub fn run_hil_tui(target: &bridge::Target) {
             match bridge::QemuBridge::new("", target.clone()) {
                 Ok(b) => (b, String::new()),
                 Err(e) => {
-                    eprintln!("Failed to start bridge: {}", e);
+                    eprintln!("\tFailed to start bridge: {}", e);
                     exit(1);
                 }
             }
         }
     };
     if let Err(e) = tui::run_tui(bridge, target, &elf_path) {
-        eprintln!("TUI Error: {}", e);
+        eprintln!("\tTUI Error: {}", e);
         exit(1);
     }
 }

@@ -21,7 +21,7 @@ jobs:
         run: cargo binstall cargo-tarpaulin@0.35.2 -y
 
       - name: Install Targets
-        run: rustup target add thumbv7em-none-eabihf
+        run: rustup target add thumbv7em-none-eabihf riscv32imac-unknown-none-elf
 
       - name: Install apt packages
         run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system

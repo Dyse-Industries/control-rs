@@ -4,8 +4,7 @@ ci = ["xtask", "ci"]
 clippy-json = ["clippy", "--workspace", "--message-format=json", "--", "-D", "warnings"]
 
 # HIL Test Infrastructure & Target Execution Aliases
-hil-qemu = ["xtask", "hil-tui", "qemu"]
-hil-teensy = ["xtask", "hil-tui", "teensy"]
+qemu = ["xtask", "hil-tui", "qemu"]
+teensy = ["xtask", "hil-tui", "teensy"]
 ci-qemu = ["xtask", "ci", "qemu"]
 ci-teensy = ["xtask", "ci", "teensy"]
-run-qemu = ["xtask", "qemu"]

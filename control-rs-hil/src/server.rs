@@ -7,11 +7,13 @@ use crate::time::ClientClock;
 use core::sync::atomic::{AtomicI16, Ordering};
 
 /// Context object that encapsulates communication and timekeeper peripherals.
-pub struct Context<C, T> {
+pub struct Context<C, T, E = crate::executor::DummyExecutor> {
     /// Host communication channel.
     pub comms: C,
     /// Hardware timekeeper clock.
     pub timer: T,
+    /// Test execution mechanism.
+    pub executor: E,
 }
 
 /// Global tracker for the currently executing suite ID.
@@ -80,14 +82,14 @@ unsafe fn poll_command_via_ptr<C: HostComms>(
 pub type ServerResult<E> = Result<(), E>;
 
 /// Interactive test runner server.
-pub struct Server<'a, C, T> {
+pub struct Server<'a, C, T, E = crate::executor::DummyExecutor> {
     comms: C,
     clock: T,
+    executor: E,
     suites: &'a [&'static SuiteDescriptor],
 }
 
-#[allow(clippy::type_complexity)]
-impl<'a, C, T> Server<'a, C, T>
+impl<'a, C, T> Server<'a, C, T, crate::executor::DummyExecutor>
 where
     C: HostComms,
     T: ClientClock,
@@ -98,12 +100,33 @@ where
         clock: T,
         suites: &'a [&'static SuiteDescriptor],
     ) -> Self {
-        // Enable DWT cycle counter if on compatible ARM target
-        enable_dwt_cycle_counter();
-
         Self {
             comms,
             clock,
+            executor: crate::executor::DummyExecutor,
+            suites,
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+impl<'a, C, T, E> Server<'a, C, T, E>
+where
+    C: HostComms,
+    T: ClientClock,
+    E: crate::executor::TestExecutor,
+{
+    /// Creates a new `Server` instance with a target-specific test executor.
+    pub fn new_with_executor(
+        comms: C,
+        clock: T,
+        executor: E,
+        suites: &'a [&'static SuiteDescriptor],
+    ) -> Self {
+        Self {
+            comms,
+            clock,
+            executor,
             suites,
         }
     }
@@ -220,38 +243,15 @@ where
         CURRENT_SUITE.store(suite_id as i16, Ordering::SeqCst);
         CURRENT_TEST.store(test_id as i16, Ordering::SeqCst);
 
-        // Record start time before painting the stack to clean any stack footprint from the clock call
         let start_time_us = self.clock.now_us();
-
-        #[cfg(all(target_os = "none", feature = "stack-paint"))]
-        let (elapsed_cycles, elapsed_stack) = cortex_m::interrupt::free(|_| {
-            let sp_before = crate::util::get_sp();
-            unsafe {
-                crate::util::paint_stack();
-            }
-            let start_cycles = read_cycle_counter();
-            (exec.test_fn)();
-            let end_cycles = read_cycle_counter();
-            let elapsed_stack = unsafe { crate::util::scan_stack(sp_before) };
-            (end_cycles.saturating_sub(start_cycles), elapsed_stack)
-        });
-
-        #[cfg(not(all(target_os = "none", feature = "stack-paint")))]
-        let (elapsed_cycles, elapsed_stack) = {
-            let start_cycles = read_cycle_counter();
-            (exec.test_fn)();
-            let end_cycles = read_cycle_counter();
-            (end_cycles.saturating_sub(start_cycles), 0)
-        };
-
-        // Record end time after stack scanning
+        let (elapsed_cycles, elapsed_stack) =
+            self.executor.execute(exec.test_fn);
         let end_time_us = self.clock.now_us();
+        let elapsed_time_us = end_time_us.saturating_sub(start_time_us);
 
         // Clear global trackers on success
         CURRENT_SUITE.store(-1, Ordering::SeqCst);
         CURRENT_TEST.store(-1, Ordering::SeqCst);
-
-        let elapsed_time_us = end_time_us.saturating_sub(start_time_us);
 
         // Update state to Passed
         self.comms.send_telemetry(&Telemetry::TestStateChange {
@@ -305,41 +305,6 @@ where
         self.comms.flush()?;
         Ok(())
     }
-}
-
-// --- DWT Cycle Counter helpers ---
-
-#[cfg(all(target_arch = "arm", target_os = "none"))]
-fn enable_dwt_cycle_counter() {
-    unsafe {
-        let core_debug_demcr = 0xE000_EDFC as *mut u32;
-        let dwt_ctrl = 0xE000_1000 as *mut u32;
-        let dwt_cyccnt = 0xE000_1004 as *mut u32;
-
-        // Enable DWT tracing
-        core_debug_demcr
-            .write_volatile(core_debug_demcr.read_volatile() | 0x0100_0000);
-        // Reset cycle counter
-        dwt_cyccnt.write_volatile(0);
-        // Enable cycle counter in control register
-        dwt_ctrl.write_volatile(dwt_ctrl.read_volatile() | 1);
-    }
-}
-
-#[cfg(not(all(target_arch = "arm", target_os = "none")))]
-fn enable_dwt_cycle_counter() {}
-
-#[cfg(all(target_arch = "arm", target_os = "none"))]
-fn read_cycle_counter() -> u64 {
-    unsafe {
-        let dwt_cyccnt = 0xE000_1004 as *const u32;
-        core::ptr::read_volatile(dwt_cyccnt) as u64
-    }
-}
-
-#[cfg(not(all(target_arch = "arm", target_os = "none")))]
-fn read_cycle_counter() -> u64 {
-    0
 }
 
 #[cfg(test)]

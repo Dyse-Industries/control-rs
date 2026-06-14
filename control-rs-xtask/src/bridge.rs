@@ -16,11 +16,23 @@ pub enum BridgeMessage {
     RawConsole(String),
 }
 
+/// Target QEMU architecture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QemuArch {
+    /// ARM architecture.
+    Arm,
+    /// RISC-V architecture.
+    Riscv,
+}
+
 /// Target execution platform.
 #[derive(Debug, Clone)]
 pub enum Target {
     /// QEMU emulator target.
-    Qemu,
+    QemuSemihosting {
+        /// Target architecture.
+        arch: QemuArch,
+    },
     /// Serial connection target.
     Serial {
         /// Serial port path (e.g. `/dev/ttyACM0`).
@@ -126,33 +138,69 @@ impl QemuBridge {
                     link_info: format!("USB CDC ({})", port_path),
                 })
             }
-            Target::Qemu => Self::new_qemu_inner(elf_path, tx, rx),
+            Target::QemuSemihosting { arch } => {
+                Self::new_qemu_inner(elf_path, arch, tx, rx)
+            }
         }
     }
 
     fn new_qemu_inner(
         elf_path: &str,
+        arch: QemuArch,
         tx: Sender<BridgeMessage>,
         rx: Receiver<BridgeMessage>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut child = StdCommand::new("qemu-system-arm")
-            .args([
-                "-cpu",
-                "cortex-m7",
-                "-machine",
-                "mps2-an500",
-                "-nographic",
-                "-serial",
-                "none",
-                "-monitor",
-                "none",
-                "-chardev",
-                "stdio,id=con0",
-                "-semihosting-config",
-                "enable=on,chardev=con0",
-                "-kernel",
-                elf_path,
-            ])
+        let (qemu_bin, qemu_args, target_info, link_info) = match arch {
+            QemuArch::Arm => (
+                "qemu-system-arm",
+                vec![
+                    "-cpu".to_string(),
+                    "cortex-m7".to_string(),
+                    "-machine".to_string(),
+                    "mps2-an500".to_string(),
+                    "-nographic".to_string(),
+                    "-serial".to_string(),
+                    "none".to_string(),
+                    "-monitor".to_string(),
+                    "none".to_string(),
+                    "-chardev".to_string(),
+                    "stdio,id=con0".to_string(),
+                    "-semihosting-config".to_string(),
+                    "enable=on,chardev=con0".to_string(),
+                    "-kernel".to_string(),
+                    elf_path.to_string(),
+                ],
+                "QEMU (cortex-m7)".to_string(),
+                "Semihosting (mps2-an500)".to_string(),
+            ),
+            QemuArch::Riscv => (
+                "qemu-system-riscv32",
+                vec![
+                    "-machine".to_string(),
+                    "virt".to_string(),
+                    "-cpu".to_string(),
+                    "rv32".to_string(),
+                    "-bios".to_string(),
+                    "none".to_string(),
+                    "-nographic".to_string(),
+                    "-serial".to_string(),
+                    "none".to_string(),
+                    "-monitor".to_string(),
+                    "none".to_string(),
+                    "-chardev".to_string(),
+                    "stdio,id=con0".to_string(),
+                    "-semihosting-config".to_string(),
+                    "enable=on,chardev=con0".to_string(),
+                    "-kernel".to_string(),
+                    elf_path.to_string(),
+                ],
+                "QEMU (riscv32)".to_string(),
+                "Semihosting (virt)".to_string(),
+            ),
+        };
+
+        let mut child = StdCommand::new(qemu_bin)
+            .args(&qemu_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -202,8 +250,8 @@ impl QemuBridge {
         Ok(Self {
             inner: BridgeInner::Qemu { child, stdin },
             rx_from_target: rx,
-            target_info: "QEMU (cortex-m7)".to_string(),
-            link_info: "Semihosting (mps2-an500)".to_string(),
+            target_info,
+            link_info,
         })
     }
 

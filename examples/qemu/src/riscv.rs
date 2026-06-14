@@ -10,22 +10,21 @@ use control_rs_hil::server::Context;
 use control_rs_hil::time::DummyClock;
 use control_rs_macros::hil_setup;
 
-// --- Communication Implementation via Direct Semihosting Syscalls ---
+use semihosting::io::Write;
 
-#[allow(dead_code)]
-struct SemihostingComms {
+// --- Communication Implementation via Direct Semihosting ---
+
+struct RiscvSemihostingComms {
     reader: FrameReader,
 }
 
-impl HostComms for SemihostingComms {
+impl HostComms for RiscvSemihostingComms {
     type Error = ();
 
-    #[allow(clippy::collapsible_if)]
     fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
         let c = unsafe {
-            cortex_m_semihosting::syscall1(cortex_m_semihosting::nr::READC, 0)
+            riscv_semihosting::syscall1(riscv_semihosting::nr::READC, 0)
         } as u8;
-
         if let Some(payload) = self.reader.handle_byte(c) {
             if let Ok(cmd) = postcard::from_bytes(payload) {
                 return Ok(Some(cmd));
@@ -40,13 +39,8 @@ impl HostComms for SemihostingComms {
     ) -> Result<(), Self::Error> {
         let mut buf = [0u8; 512];
         if let Ok(len) = frame_telemetry(telemetry, &mut buf) {
-            for &b in &buf[..len] {
-                unsafe {
-                    cortex_m_semihosting::syscall(
-                        cortex_m_semihosting::nr::WRITEC,
-                        &b,
-                    );
-                }
+            if let Ok(mut stdout) = semihosting::io::stdout() {
+                let _ = stdout.write_all(&buf[..len]);
             }
             Ok(())
         } else {
@@ -72,14 +66,33 @@ pub use control_rs::math::tests::complex_num_tests::{
     test_transcendental::SUITE_DESCRIPTOR_PTR as _,
 };
 
+// --- Test Execution Implementation for RISC-V ---
+
+struct RiscvExecutor;
+
+impl ::control_rs_hil::executor::TestExecutor for RiscvExecutor {
+    fn execute(&self, test_fn: fn()) -> (u64, u32) {
+        // Disable interrupts for duration of the test
+        unsafe {
+            ::riscv::interrupt::disable();
+        }
+        let start_cycles = ::riscv::register::mcycle::read() as u64;
+        test_fn();
+        let end_cycles = ::riscv::register::mcycle::read() as u64;
+        let elapsed_cycles = end_cycles.saturating_sub(start_cycles);
+        (elapsed_cycles, 0)
+    }
+}
+
 // --- Main Entrypoint ---
 
 #[hil_setup]
 #[allow(dead_code)]
-fn setup() -> Context<SemihostingComms, DummyClock> {
-    let comms = SemihostingComms {
+fn setup() -> Context<RiscvSemihostingComms, DummyClock, RiscvExecutor> {
+    let comms = RiscvSemihostingComms {
         reader: FrameReader::new(),
     };
     let timer = DummyClock;
-    Context { comms, timer }
+    let executor = RiscvExecutor;
+    Context { comms, timer, executor }
 }

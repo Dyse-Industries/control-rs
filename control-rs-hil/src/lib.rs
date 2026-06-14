@@ -5,8 +5,10 @@ pub mod settings;
 pub use settings::Setting;
 pub mod server;
 pub use server::Server;
+pub mod executor;
 pub mod time;
 pub mod util;
+pub use executor::{DummyExecutor, TestExecutor};
 
 /// Describes a single test executable.
 #[derive(Debug, Clone, Copy)]
