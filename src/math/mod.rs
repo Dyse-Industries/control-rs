@@ -88,8 +88,9 @@ pub mod ops;
 pub mod storage;
 pub mod subprograms;
 
-#[cfg(test)]
-mod tests;
+#[cfg(any(test, feature = "hil"))]
+/// Core mathematical unit tests.
+pub mod tests;
 
 /// A unified error type for arithmetic operations.
 ///

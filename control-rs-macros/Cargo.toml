@@ -1,0 +1,17 @@
+[package]
+name = "control-rs-macros"
+version = "0.1.0"
+edition = "2024"
+description = "Procedural macros for the control-rs HIL test suite."
+license = "MIT"
+repository = "https://github.com/mdyson/control-rs"
+readme = "README.md"
+keywords = ["embedded", "control-systems", "hil", "testing"]
+categories = ["embedded", "no-std"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"

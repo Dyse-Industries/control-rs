@@ -10,11 +10,11 @@ keywords = ["embedded", "control-systems", "hil", "testing"]
 categories = ["embedded", "no-std"]
 
 [dependencies]
+cortex-m = "0.7"
 cortex-m-rt = "0.7"
 cortex-m-semihosting = "0.5"
 panic-semihosting = "0.6"
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+postcard = { version = "1.0", default-features = false }
+control-rs-macros = { path = "../control-rs-macros" }
 
-[[bin]]
-name = "control-rs-qemu-arm"
-path = "src/bin/control-rs-qemu-arm.rs"
-test = false

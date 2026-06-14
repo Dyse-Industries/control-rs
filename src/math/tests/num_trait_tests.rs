@@ -240,6 +240,7 @@ mod real_tests {
     }
 }
 mod custom_tests {
+    use crate::assert_almost_eq;
     use crate::math::CartesianQuadrant2D;
     use crate::math::num_traits::{
         One, Radical, Real, Scalar, Signed, Unsigned, Zero,
@@ -273,37 +274,43 @@ mod custom_tests {
     fn test_hypot() {
         let a = 3.0f32;
         let b = 4.0f32;
-        assert_eq!(a.hypot(b), 5.0);
+        assert_almost_eq!(a.hypot(b), 5.0);
     }
 
     #[test]
     fn test_atan2() {
         // Origin
-        assert_eq!(0.0f32.atan2(0.0), 0.0);
+        assert_almost_eq!(0.0f32.atan2(0.0), 0.0);
 
         // Axis Bounds
-        assert_eq!(0.0f32.atan2(1.0), 0.0); // Positive X
-        assert_eq!(0.0f32.atan2(-1.0), core::f32::consts::PI); // Negative X
-        assert_eq!(1.0f32.atan2(0.0), core::f32::consts::PI / 2.0); // Positive Y
-        assert_eq!(-1.0f32.atan2(0.0), -core::f32::consts::PI / 2.0); // Negative Y
+        assert_almost_eq!(0.0f32.atan2(1.0), 0.0); // Positive X
+        assert_almost_eq!(0.0f32.atan2(-1.0), core::f32::consts::PI); // Negative X
+        assert_almost_eq!(1.0f32.atan2(0.0), core::f32::consts::PI / 2.0); // Positive Y
+        assert_almost_eq!(-1.0f32.atan2(0.0), -core::f32::consts::PI / 2.0); // Negative Y
 
         // Standard Quadrants
-        assert_eq!(1.0f32.atan2(1.0), core::f32::consts::PI / 4.0); // Q1
-        assert_eq!(1.0f32.atan2(-1.0), 3.0 * core::f32::consts::PI / 4.0); // Q2
-        assert_eq!(-1.0f32.atan2(-1.0), -3.0 * core::f32::consts::PI / 4.0); // Q3
-        assert_eq!(-1.0f32.atan2(1.0), -core::f32::consts::PI / 4.0); // Q4
+        assert_almost_eq!(1.0f32.atan2(1.0), core::f32::consts::PI / 4.0); // Q1
+        assert_almost_eq!(
+            1.0f32.atan2(-1.0),
+            3.0 * core::f32::consts::PI / 4.0
+        ); // Q2
+        assert_almost_eq!(
+            -1.0f32.atan2(-1.0),
+            -3.0 * core::f32::consts::PI / 4.0
+        ); // Q3
+        assert_almost_eq!(-1.0f32.atan2(1.0), -core::f32::consts::PI / 4.0); // Q4
     }
 
     #[test]
     fn test_hyperbolic_functions() {
         // cosh
-        assert_eq!(0.0f32.cosh(), 1.0);
+        assert_almost_eq!(0.0f32.cosh(), 1.0);
         let cosh_val = 1.0f32.cosh();
-        let expected_cosh = (1.0f32.exp() + (-1.0f32).exp()) / 2.0;
+        let expected_cosh = f32::midpoint(1.0f32.exp(), (-1.0f32).exp());
         assert!((cosh_val - expected_cosh).abs() < 1e-6);
 
         // sinh
-        assert_eq!(0.0f32.sinh(), 0.0);
+        assert_almost_eq!(0.0f32.sinh(), 0.0);
         let sinh_val_neg = (-1.0f32).sinh();
         let expected_sinh_neg = -((1.0f32.exp() - (-1.0f32).exp()) / 2.0);
         assert!((sinh_val_neg - expected_sinh_neg).abs() < 1e-6);

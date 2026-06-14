@@ -30,7 +30,7 @@ fn test_array_from_iterator() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "assertion `left == right` failed")]
 fn test_array_from_iterator_too_few() {
     let _array: [i32; 5] = unsafe { array_from_iterator(0..3) };
 }

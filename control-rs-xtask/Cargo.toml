@@ -6,3 +6,10 @@ publish = false
 
 [dependencies]
 regex = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+postcard = { version = "1.0", features = ["alloc"] }
+ratatui = "0.30"
+crossterm = "0.29"
+control-rs-hil = { path = "../control-rs-hil" }
+serialport = "4.3"
+serde_json = "1.0"

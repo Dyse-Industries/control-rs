@@ -23,6 +23,7 @@ pub type Complex64 = Complex<f64>;
 /// A complex number consisting of a real and an imaginary part.
 #[allow(clippy::arbitrary_source_item_ordering)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(C)]
 pub struct Complex<T> {
     /// The real part of the complex number.
     pub re: T,

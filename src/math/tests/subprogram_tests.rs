@@ -8,6 +8,103 @@ use crate::math::subprograms::{
     level3::GEMM,
 };
 
+mod fuzzing {
+    use super::*;
+
+    #[test]
+    fn test_symmetric_topology_preservation() {
+        let mut rng = rand_lcg(1234);
+        for _ in 0..100 {
+            // A = A^T
+            let mut a = [0.0; 4];
+            a[0] = next_f32(&mut rng);
+            a[1] = next_f32(&mut rng);
+            a[2] = a[1];
+            a[3] = next_f32(&mut rng);
+
+            let mut c = [0.0; 4];
+            BasicSubProgramsF32::gemm(1.0, &a, &a, 0.0, &mut c, 2, 2, 2);
+            assert_almost_eq!(c[1], c[2]);
+        }
+    }
+
+    #[test]
+    fn test_distributive_variance_bounds() {
+        let mut rng = rand_lcg(5678);
+        for _ in 0..100 {
+            let m = [
+                next_f32(&mut rng),
+                next_f32(&mut rng),
+                next_f32(&mut rng),
+                next_f32(&mut rng),
+            ];
+            let v1 = [next_f32(&mut rng), next_f32(&mut rng)];
+            let v2 = [next_f32(&mut rng), next_f32(&mut rng)];
+
+            // M(v1 + v2)
+            let v_sum = [v1[0] + v2[0], v1[1] + v2[1]];
+            let mut r1 = [0.0; 2];
+            BasicSubProgramsF32::gemv(1.0, &m, &v_sum, 0.0, &mut r1, 2, 2);
+
+            // Mv1 + Mv2
+            let mut r2a = [0.0; 2];
+            let mut r2b = [0.0; 2];
+            BasicSubProgramsF32::gemv(1.0, &m, &v1, 0.0, &mut r2a, 2, 2);
+            BasicSubProgramsF32::gemv(1.0, &m, &v2, 0.0, &mut r2b, 2, 2);
+            let r2 = [r2a[0] + r2b[0], r2a[1] + r2b[1]];
+
+            let epsilon = 1e-4;
+            assert!((r1[0] - r2[0]).abs() < epsilon);
+            assert!((r1[1] - r2[1]).abs() < epsilon);
+        }
+    }
+
+    #[test]
+    fn test_denormalized_subnormal_signal_decays() {
+        let x = [1e-40_f32, 1e-42_f32];
+        let mut y = [1e-40_f32, 1e-42_f32];
+        BasicSubProgramsF32::axpy(0.5, &x, &mut y);
+        // Ensure no pipeline panics occurred and result is calculated
+        assert!(y[0] > 0.0);
+    }
+
+    #[test]
+    fn test_clone_call_performance_benchmarking() {
+        // Can't easily count clones without mocking the type, but basic f32/f64 subprograms only accept these types anyway.
+        // We will just verify it runs.
+        let a = [1.0, 2.0];
+        let mut y = [3.0, 4.0];
+        BasicSubProgramsF32::axpy(1.0, &a, &mut y);
+    }
+
+    #[test]
+    fn test_mixed_sign_zero_invariance() {
+        let x = [0.0_f32, -0.0_f32];
+        let mut y = [0.0_f32, -0.0_f32];
+        BasicSubProgramsF32::axpy(1.0, &x, &mut y);
+        // Verify bitwise sign parity
+        assert_eq!(y[0].to_bits(), 0.0_f32.to_bits());
+        assert_eq!(y[1].to_bits(), (-0.0_f32).to_bits());
+    }
+
+    /// Basic LCG for tests without external dependencies
+    ///
+    /// A. M. Frieze, R. Kannan, and J. C. Lagarias , "Linear congruential
+    /// generators do not produce random sequences," in Proceedings of the 25th
+    /// Annual Symposium on Foundations of Computer Science , IEEE Computer
+    /// Society Press , 1984 , pp. 480–484.
+    fn rand_lcg(seed: u32) -> u32 {
+        seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223)
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn next_f32(state: &mut u32) -> f32 {
+        *state = rand_lcg(*state);
+        // Simple 0 to 1 mapping
+        (*state as f32) / (u32::MAX as f32)
+    }
+}
+
 mod level1 {
     use super::*;
 
@@ -45,18 +142,22 @@ mod level1 {
     fn test_axpy_zero_scale_identity_preservation() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
-        let y_original = y.clone();
+        let y_original = y;
         BasicSubProgramsF32::axpy(0.0, &x, &mut y);
-        assert_eq!(y, y_original);
+        for (val, orig) in y.iter().zip(y_original.iter()) {
+            assert_almost_eq!(*val, *orig);
+        }
     }
 
     #[test]
     fn test_axpy_zero_vector_multiplicative_invariance() {
         let x = [0.0, 0.0, 0.0];
         let mut y = [4.0, 5.0, 6.0];
-        let y_original = y.clone();
+        let y_original = y;
         BasicSubProgramsF32::axpy(42.0, &x, &mut y);
-        assert_eq!(y, y_original);
+        for (val, orig) in y.iter().zip(y_original.iter()) {
+            assert_almost_eq!(*val, *orig);
+        }
     }
 
     #[test]
@@ -75,8 +176,8 @@ mod level1 {
         let mut y = [4.0, 5.0, 6.0];
         BasicSubProgramsF32::axpy(f32::INFINITY, &x, &mut y);
         assert!(y[0].is_nan());
-        assert_eq!(y[1], f32::INFINITY);
-        assert_eq!(y[2], f32::NEG_INFINITY);
+        assert!(y[1].is_infinite() && y[1].is_sign_positive());
+        assert!(y[2].is_infinite() && y[2].is_sign_negative());
     }
 
     #[test]
@@ -153,7 +254,7 @@ mod level1 {
         let x = [1e20_f32, 1e20_f32];
         // 1e20 * 1e20 = 1e40 which exceeds f32 max of ~3.4e38.
         let result = BasicSubProgramsF32::nrm2(&x);
-        assert_eq!(result, f32::INFINITY);
+        assert!(result.is_infinite() && result.is_sign_positive());
     }
 
     #[test]
@@ -162,7 +263,7 @@ mod level1 {
         let x = [1e-25_f32, 1e-25_f32];
         // 1e-25 * 1e-25 = 1e-50 which is smaller than f32 min subnormal (~1e-45).
         let result = BasicSubProgramsF32::nrm2(&x);
-        assert_eq!(result, 0.0);
+        assert_almost_eq!(result, 0.0);
     }
 
     #[test]
@@ -305,9 +406,11 @@ mod level2 {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [123.45, 67.89];
-        let y_original = y.clone();
+        let y_original = y;
         BasicSubProgramsF32::gemv(0.0, &a, &x, 1.0, &mut y, 2, 2);
-        assert_eq!(y, y_original);
+        for (val, orig) in y.iter().zip(y_original.iter()) {
+            assert_almost_eq!(*val, *orig);
+        }
     }
 }
 
@@ -397,96 +500,5 @@ mod level3 {
         assert!(c2[1].is_nan());
         assert!(c2[2].is_nan());
         assert!(c2[3].is_nan());
-    }
-}
-
-mod fuzzing {
-    use super::*;
-
-    #[test]
-    fn test_symmetric_topology_preservation() {
-        let mut rng = rand_lcg(1234);
-        for _ in 0..100 {
-            // A = A^T
-            let mut a = [0.0; 4];
-            a[0] = next_f32(&mut rng);
-            a[1] = next_f32(&mut rng);
-            a[2] = a[1];
-            a[3] = next_f32(&mut rng);
-
-            let mut c = [0.0; 4];
-            BasicSubProgramsF32::gemm(1.0, &a, &a, 0.0, &mut c, 2, 2, 2);
-            assert_almost_eq!(c[1], c[2]);
-        }
-    }
-
-    #[test]
-    fn test_distributive_variance_bounds() {
-        let mut rng = rand_lcg(5678);
-        for _ in 0..100 {
-            let m = [
-                next_f32(&mut rng),
-                next_f32(&mut rng),
-                next_f32(&mut rng),
-                next_f32(&mut rng),
-            ];
-            let v1 = [next_f32(&mut rng), next_f32(&mut rng)];
-            let v2 = [next_f32(&mut rng), next_f32(&mut rng)];
-
-            // M(v1 + v2)
-            let v_sum = [v1[0] + v2[0], v1[1] + v2[1]];
-            let mut r1 = [0.0; 2];
-            BasicSubProgramsF32::gemv(1.0, &m, &v_sum, 0.0, &mut r1, 2, 2);
-
-            // Mv1 + Mv2
-            let mut r2a = [0.0; 2];
-            let mut r2b = [0.0; 2];
-            BasicSubProgramsF32::gemv(1.0, &m, &v1, 0.0, &mut r2a, 2, 2);
-            BasicSubProgramsF32::gemv(1.0, &m, &v2, 0.0, &mut r2b, 2, 2);
-            let r2 = [r2a[0] + r2b[0], r2a[1] + r2b[1]];
-
-            let epsilon = 1e-4;
-            assert!((r1[0] - r2[0]).abs() < epsilon);
-            assert!((r1[1] - r2[1]).abs() < epsilon);
-        }
-    }
-
-    #[test]
-    fn test_denormalized_subnormal_signal_decays() {
-        let x = [1e-40_f32, 1e-42_f32];
-        let mut y = [1e-40_f32, 1e-42_f32];
-        BasicSubProgramsF32::axpy(0.5, &x, &mut y);
-        // Ensure no pipeline panics occurred and result is calculated
-        assert!(y[0] > 0.0);
-    }
-
-    #[test]
-    fn test_clone_call_performance_benchmarking() {
-        // Can't easily count clones without mocking the type, but basic f32/f64 subprograms only accept these types anyway.
-        // We will just verify it runs.
-        let a = [1.0, 2.0];
-        let mut y = [3.0, 4.0];
-        BasicSubProgramsF32::axpy(1.0, &a, &mut y);
-    }
-
-    #[test]
-    fn test_mixed_sign_zero_invariance() {
-        let x = [0.0_f32, -0.0_f32];
-        let mut y = [0.0_f32, -0.0_f32];
-        BasicSubProgramsF32::axpy(1.0, &x, &mut y);
-        // Verify bitwise sign parity
-        assert_eq!(y[0].to_bits(), 0.0_f32.to_bits());
-        assert_eq!(y[1].to_bits(), (-0.0_f32).to_bits());
-    }
-
-    // Basic LCG for tests without external dependencies
-    fn rand_lcg(seed: u32) -> u32 {
-        seed.wrapping_mul(1664525).wrapping_add(1013904223)
-    }
-
-    fn next_f32(state: &mut u32) -> f32 {
-        *state = rand_lcg(*state);
-        // Simple 0 to 1 mapping
-        (*state as f32) / (u32::MAX as f32)
     }
 }

@@ -1,8 +1,5 @@
 use crate::math::dsp::Convolution;
 
-struct TestConvolution;
-impl<T: crate::math::num_traits::Real> Convolution<T> for TestConvolution {}
-
 mod convolution_test_suite {
     use super::*;
 
@@ -14,8 +11,8 @@ mod convolution_test_suite {
         let kernel = [1.0];
         let mut output = [0.0f64; 3];
         TestConvolution::convolve_input(&input, &kernel, &mut output);
-        for i in 0..3 {
-            assert!((output[i] - input[i]).abs() < TOLERANCE);
+        for (out_val, in_val) in output.iter().zip(input.iter()) {
+            assert!((out_val - in_val).abs() < TOLERANCE);
         }
     }
 
@@ -26,8 +23,8 @@ mod convolution_test_suite {
         let mut output = [0.0f64; 5];
         TestConvolution::convolve_input(&input, &kernel, &mut output);
         let expected = [0.0, 1.0, 2.0, 3.0, 0.0];
-        for i in 0..5 {
-            assert!((output[i] - expected[i]).abs() < TOLERANCE);
+        for (out_val, exp_val) in output.iter().zip(expected.iter()) {
+            assert!((out_val - exp_val).abs() < TOLERANCE);
         }
     }
 
@@ -38,8 +35,8 @@ mod convolution_test_suite {
         let mut output = [0.0f64; 3];
         TestConvolution::convolve_input(&input, &kernel, &mut output);
         let expected = [1.0, 2.0, 1.0];
-        for i in 0..3 {
-            assert!((output[i] - expected[i]).abs() < TOLERANCE);
+        for (out_val, exp_val) in output.iter().zip(expected.iter()) {
+            assert!((out_val - exp_val).abs() < TOLERANCE);
         }
     }
 
@@ -52,3 +49,6 @@ mod convolution_test_suite {
         TestConvolution::convolve_input(&input, &kernel, &mut output);
     }
 }
+
+struct TestConvolution;
+impl<T: crate::math::num_traits::Real> Convolution<T> for TestConvolution {}

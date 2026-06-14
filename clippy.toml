@@ -17,7 +17,6 @@ allow-panic-in-tests = true
 allow-unwrap-in-tests = true
 
 # Ensure doc comments are present for all public items.
-# Essential for certification (e.g., ISO 26262 or IEC 61508).
 missing-docs-in-crate-items = true
 
 # --- Item Ordering & Architecture ---
