@@ -1,3 +1,7 @@
 /target
 **/*.rs.bk
 /out
+
+# Dont store binaries in the repo
+*.hex
+*.elf
