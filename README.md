@@ -47,10 +47,10 @@ graph TD
     CI <-->|"Command / Telemetry Stream"| SH
     USB <--> Server
     SH <--> Server
-    Server --> Profiler
-    Server <--> Estimator
-    Estimator <--> Controller
-    Controller <--> Plant
+    Server <-- Profiler
+    Server --> Estimator
+    Server --> Controller
+    Server --> Plant
 ```
 
 ### The Live SysId Loop
