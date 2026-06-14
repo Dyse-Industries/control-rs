@@ -37,6 +37,26 @@ macro_rules! assert_almost_eq {
              Err(e) => panic!("assertion failed: {e}")
          }
     });
+    ($left:expr, $right:expr, $epsilon:expr) => ({
+        let (left_val, right_val) = (&$left, &$right);
+        match $crate::math::assert::almost_eq_eps(left_val, right_val, &$epsilon) {
+             Ok(false) => {
+                 panic!("assertion failed: `(left == right)`\n  left: `{:?}`, \n right: `{:?}` with epsilon `{:?}`", left_val, right_val, &$epsilon)
+             }
+             Ok(true) => {}
+             Err(e) => panic!("assertion failed: {e}")
+         }
+    });
+    ($left:expr, $right:expr, $epsilon:expr, $($arg:tt)+) => ({
+        let (left_val, right_val) = (&$left, &$right);
+        match $crate::math::assert::almost_eq_eps(left_val, right_val, &$epsilon) {
+             Ok(false) => {
+                 panic!("assertion failed: `(left == right)`\n  left: `{:?}`, \n right: `{:?}` with epsilon `{:?}`: {}", left_val, right_val, &$epsilon, format_args!($($arg)+))
+             }
+             Ok(true) => {}
+             Err(e) => panic!("assertion failed: {e}: {}", format_args!($($arg)+))
+         }
+    });
 }
 
 /// Asserts that two floating-point numbers are almost equal.
@@ -73,6 +93,24 @@ macro_rules! assert_not_almost_eq {
              _ => {},
          }
     });
+    ($left:expr, $right:expr, $epsilon:expr) => ({
+         let (left_val, right_val) = (&$left, &$right);
+         match $crate::math::assert::almost_eq_eps(left_val, right_val, &$epsilon) {
+             Ok(true) => {
+                 panic!("assertion failed: `(left != right)`\n  left: `{:?}`, \n right: `{:?}` with epsilon `{:?}`", left_val, right_val, &$epsilon)
+             }
+             _ => {},
+         }
+    });
+    ($left:expr, $right:expr, $epsilon:expr, $($arg:tt)+) => ({
+         let (left_val, right_val) = (&$left, &$right);
+         match $crate::math::assert::almost_eq_eps(left_val, right_val, &$epsilon) {
+             Ok(true) => {
+                 panic!("assertion failed: `(left != right)`\n  left: `{:?}`, \n right: `{:?}` with epsilon `{:?}`: {}", left_val, right_val, &$epsilon, format_args!($($arg)+))
+             }
+             _ => {},
+         }
+    });
 }
 
 /// Asserts that two floating-point numbers are almost equal.
@@ -97,6 +135,32 @@ pub fn almost_eq<T>(a: &T, b: &T) -> ArithmeticResult<bool>
 where
     T: TrySub + TryMul + Signed + Field,
 {
+    almost_eq_eps(a, b, &T::epsilon())
+}
+
+/// Asserts that two floating-point numbers are almost equal with a custom epsilon.
+///
+/// This function compares two numbers `a` and `b` of a type `T` that implements
+/// the `Real` trait. It returns `true` if the absolute difference between `a` and `b`
+/// is less than `epsilon`.
+///
+/// # Generic Arguments
+/// - `T`: A type that implements `PartialOrd`, `PartialEq`, `TrySub<Output = T>`, and `Real`.
+///
+/// # Arguments
+/// - `a`: The first value to compare.
+/// - `b`: The second value to compare.
+/// - `epsilon`: The tolerance threshold for equality.
+///
+/// # Returns
+/// `true` if `a` and `b` are almost equal within `epsilon`, `false` otherwise.
+///
+/// # Errors
+/// Return `ArithmeticError` if the subtraction operation fails.
+pub fn almost_eq_eps<T>(a: &T, b: &T, epsilon: &T) -> ArithmeticResult<bool>
+where
+    T: TrySub + TryMul + Signed + Field,
+{
     if a == b {
         return Ok(true);
     }
@@ -105,8 +169,8 @@ where
     a.try_sub(b).map(|diff| {
         let abs_diff = T::abs(diff);
         let largest = if abs_a > abs_b { abs_a } else { abs_b };
-        abs_diff <= T::epsilon().try_mul(&largest).unwrap_or(T::ZERO)
-            || abs_diff < T::epsilon()
+        abs_diff <= epsilon.try_mul(&largest).unwrap_or(T::ZERO)
+            || abs_diff < epsilon.clone()
     })
 }
 

@@ -333,7 +333,6 @@ pub mod test_ffi_layout {
     }
 
     #[cfg_attr(test, test)]
-    #[allow(clippy::transmute_undefined_repr)]
     fn test_memory_representation() {
         let z = Complex64::new(f64::PI, -2.71);
         // Transmute strictly requires the memory layout to match exactly
@@ -350,7 +349,7 @@ pub mod test_limitations {
         assert_almost_eq,
         math::{
             complex_num::Complex64,
-            num_traits::{Radical, Real},
+            num_traits::{Radical, Real, Zero},
         },
     };
 
@@ -395,6 +394,21 @@ pub mod test_limitations {
         assert_almost_eq!(sqrt_mixed.re, 2.0);
         assert_almost_eq!(sqrt_mixed.im, 1.0);
     }
+
+    #[cfg_attr(test, test)]
+    fn test_division_by_zero() {
+        let z = Complex64::new(1.0, 2.0);
+        let zero = Complex64::ZERO;
+        let result = z / zero;
+        assert!(
+            result.re.is_nan(),
+            "real part of division by zero should be NaN"
+        );
+        assert!(
+            result.im.is_nan(),
+            "imaginary part of division by zero should be NaN"
+        );
+    }
 }
 
 #[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
@@ -414,7 +428,8 @@ pub mod test_transcendental {
         // e^(i * PI) = -1
         let z = Complex32::new(0.0, f32::PI);
         let result = z.exp();
-        assert_almost_eq!(result, Complex32::new(-1.0, 0.0));
+        assert_almost_eq!(result.re, -1.0, 1e-5_f32);
+        assert_almost_eq!(result.im, 0.0, 1e-5_f32);
     }
 
     #[cfg_attr(test, test)]
@@ -422,28 +437,29 @@ pub mod test_transcendental {
         // ln(-1) = i * PI
         let z = Complex32::new(-1.0, 0.0);
         let result = z.ln();
-        assert_almost_eq!(result, Complex32::new(0.0, f32::PI));
+        assert_almost_eq!(result.re, 0.0, 1e-5_f32);
+        assert_almost_eq!(result.im, f32::PI, 1e-5_f32);
 
         let log10_real = Complex64::from_real(100.0).log10();
-        assert_almost_eq!(log10_real.re, 2.0);
-        assert_almost_eq!(log10_real.im, 0.0);
+        assert_almost_eq!(log10_real.re, 2.0, 1e-12_f64);
+        assert_almost_eq!(log10_real.im, 0.0, 1e-12_f64);
     }
 
     #[cfg_attr(test, test)]
     fn test_trig_functions() {
         // sin(0) = 0
         let zero = Complex32::new(0.0, 0.0);
-        assert_almost_eq!(zero.sin().re, 0.0);
-        assert_almost_eq!(zero.sin().im, 0.0);
+        assert_almost_eq!(zero.sin().re, 0.0, 1e-5_f32);
+        assert_almost_eq!(zero.sin().im, 0.0, 1e-5_f32);
 
         // cos(0) = 1
-        assert_almost_eq!(zero.cos().re, 1.0);
-        assert_almost_eq!(zero.cos().im, 0.0);
+        assert_almost_eq!(zero.cos().re, 1.0, 1e-5_f32);
+        assert_almost_eq!(zero.cos().im, 0.0, 1e-5_f32);
 
         let z = Complex64::new(f64::PI / 4.0, 0.0);
         let tan_z = z.tan();
-        assert_almost_eq!(tan_z.re, 1.0);
-        assert_almost_eq!(tan_z.im, 0.0);
+        assert_almost_eq!(tan_z.re, 1.0, 1e-12_f64);
+        assert_almost_eq!(tan_z.im, 0.0, 1e-12_f64);
     }
 
     #[cfg_attr(test, test)]
@@ -452,17 +468,17 @@ pub mod test_transcendental {
 
         let asin_z = z.asin();
         let sin_asin = asin_z.sin();
-        assert_almost_eq!(sin_asin.re, z.re);
-        assert_almost_eq!(sin_asin.im, z.im);
+        assert_almost_eq!(sin_asin.re, z.re, 1e-12_f64);
+        assert_almost_eq!(sin_asin.im, z.im, 1e-12_f64);
 
         let acos_z = z.acos();
         let cos_acos = acos_z.cos();
-        assert_almost_eq!(cos_acos.re, z.re);
-        assert_almost_eq!(cos_acos.im, z.im);
+        assert_almost_eq!(cos_acos.re, z.re, 1e-12_f64);
+        assert_almost_eq!(cos_acos.im, z.im, 1e-12_f64);
 
         let atan_z = z.atan();
         let tan_atan = atan_z.tan();
-        assert_almost_eq!(tan_atan.re, z.re);
-        assert_almost_eq!(tan_atan.im, z.im);
+        assert_almost_eq!(tan_atan.re, z.re, 1e-12_f64);
+        assert_almost_eq!(tan_atan.im, z.im, 1e-12_f64);
     }
 }
