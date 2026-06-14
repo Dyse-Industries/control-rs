@@ -224,24 +224,25 @@ where
         let start_time_us = self.clock.now_us();
 
         #[cfg(target_os = "none")]
-        unsafe {
-            crate::util::paint_stack();
-        }
+        let (elapsed_cycles, elapsed_stack) = cortex_m::interrupt::free(|_| {
+            let sp_before = crate::util::get_sp();
+            unsafe {
+                crate::util::paint_stack(sp_before);
+            }
+            let start_cycles = read_cycle_counter();
+            (exec.test_fn)();
+            let end_cycles = read_cycle_counter();
+            let elapsed_stack = unsafe { crate::util::scan_stack(sp_before) };
+            (end_cycles.saturating_sub(start_cycles), elapsed_stack)
+        });
 
-        // Record start cycles immediately before the test function executes
-        let start_cycles = read_cycle_counter();
-
-        // Run the test
-        (exec.test_fn)();
-
-        // Record end cycles immediately after the test function returns
-        let end_cycles = read_cycle_counter();
-
-        // Scan stack immediately to avoid measuring subsequent runner stack usage
-        #[cfg(target_os = "none")]
-        let elapsed_stack = unsafe { crate::util::scan_stack() };
         #[cfg(not(target_os = "none"))]
-        let elapsed_stack = 0;
+        let (elapsed_cycles, elapsed_stack) = {
+            let start_cycles = read_cycle_counter();
+            (exec.test_fn)();
+            let end_cycles = read_cycle_counter();
+            (end_cycles.saturating_sub(start_cycles), 0)
+        };
 
         // Record end time after stack scanning
         let end_time_us = self.clock.now_us();
@@ -251,7 +252,6 @@ where
         CURRENT_TEST.store(-1, Ordering::SeqCst);
 
         let elapsed_time_us = end_time_us.saturating_sub(start_time_us);
-        let elapsed_cycles = end_cycles.saturating_sub(start_cycles);
 
         // Update state to Passed
         self.comms.send_telemetry(&Telemetry::TestStateChange {

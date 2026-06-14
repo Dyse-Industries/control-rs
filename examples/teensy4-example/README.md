@@ -54,6 +54,23 @@ No external USB-to-UART serial adapters or custom wiring are needed!
 
 ---
 
+```
+# UDEV Rules for Teensy boards, http://www.pjrc.com/teensy/
+#
+# The latest version of this file may be found at:
+#   http://www.pjrc.com/teensy/00-teensy.rules
+
+ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1"
+ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04[789a]*", ENV{MTP_NO_PROBE}="1"
+KERNEL=="ttyACM*", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666", RUN:="/bin/stty -F /dev/%k raw -echo", SYMLINK+="teensy"
+KERNEL=="hidraw*", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666"
+KERNEL=="hidraw*", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="013*", MODE:="0666"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="013*", MODE:="0666"
+```
+
+---
+
 ## Building and Running the Example
 
 ### Prerequisites
@@ -103,13 +120,15 @@ active and waiting for a connection from the host.
 
 ### Alternative: Run/Flash via Cargo Alias
 
-Alternatively, you can compile, convert, and flash the Teensy in one step from the workspace root:
+Alternatively, you can compile, convert, and flash the Teensy in one step from
+the workspace root:
 
 ```bash
-cargo run-teensy
+cargo run
 ```
 
-Press the program button on the Teensy 4 board when prompted to initiate flashing.
+Press the program button on the Teensy 4 board when prompted to initiate
+flashing.
 
 ---
 
@@ -127,13 +146,15 @@ Check the device path assigned by the host operating system:
 
 ### 2. Launch the TUI
 
-Run the cargo alias from the workspace root (defaults to `/dev/ttyACM0` and `115200` baud):
+Run the cargo alias from the workspace root (defaults to `/dev/ttyACM0` and
+`115200` baud):
 
 ```bash
 cargo hil-teensy
 ```
 
-If your Teensy is assigned to a different serial port path (e.g. `/dev/ttyACM1`), pass it as an argument:
+If your Teensy is assigned to a different serial port path (e.g.
+`/dev/ttyACM1`), pass it as an argument:
 
 ```bash
 cargo hil-teensy /dev/ttyACM1
