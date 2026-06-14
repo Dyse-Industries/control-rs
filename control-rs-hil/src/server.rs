@@ -220,15 +220,30 @@ where
         CURRENT_SUITE.store(suite_id as i16, Ordering::SeqCst);
         CURRENT_TEST.store(test_id as i16, Ordering::SeqCst);
 
-        // Record start metrics
+        // Record start time before painting the stack to clean any stack footprint from the clock call
         let start_time_us = self.clock.now_us();
+
+        #[cfg(target_os = "none")]
+        unsafe {
+            crate::util::paint_stack();
+        }
+
+        // Record start cycles immediately before the test function executes
         let start_cycles = read_cycle_counter();
 
         // Run the test
         (exec.test_fn)();
 
-        // Record end metrics
+        // Record end cycles immediately after the test function returns
         let end_cycles = read_cycle_counter();
+
+        // Scan stack immediately to avoid measuring subsequent runner stack usage
+        #[cfg(target_os = "none")]
+        let elapsed_stack = unsafe { crate::util::scan_stack() };
+        #[cfg(not(target_os = "none"))]
+        let elapsed_stack = 0;
+
+        // Record end time after stack scanning
         let end_time_us = self.clock.now_us();
 
         // Clear global trackers on success
@@ -251,6 +266,7 @@ where
             test_id,
             cycles: elapsed_cycles,
             time_us: elapsed_time_us,
+            stack_peak: elapsed_stack,
         })?;
 
         self.comms.flush()?;

@@ -371,11 +371,13 @@ fn make_telemetry_owned(tel: &Telemetry<'_>) -> Telemetry<'static> {
             test_id,
             cycles,
             time_us,
+            stack_peak,
         } => Telemetry::MetricReport {
             suite_id,
             test_id,
             cycles,
             time_us,
+            stack_peak,
         },
         Telemetry::Log(ref msg) => Telemetry::Log(LogMessage {
             timestamp_us: msg.timestamp_us,

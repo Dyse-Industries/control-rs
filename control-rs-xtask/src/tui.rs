@@ -42,6 +42,8 @@ struct TestItem {
     cycles: Option<u64>,
     /// Duration of the test in microseconds if it completed.
     time_us: Option<u64>,
+    /// Stack high-water mark in bytes if it completed.
+    stack_peak: Option<u32>,
 }
 
 /// Represents a configuration setting item in the TUI list.
@@ -232,6 +234,7 @@ impl AppState {
                         state: TestState::Pending,
                         cycles: None,
                         time_us: None,
+                        stack_peak: None,
                     });
                 }
                 self.suites[s_id].tests[t_id].name = name.to_string();
@@ -291,17 +294,20 @@ impl AppState {
                 test_id,
                 cycles,
                 time_us,
+                stack_peak,
             } => {
                 let s_id = suite_id as usize;
                 let t_id = test_id as usize;
                 self.suites[s_id].tests[t_id].cycles = Some(cycles);
                 self.suites[s_id].tests[t_id].time_us = Some(time_us);
+                self.suites[s_id].tests[t_id].stack_peak = Some(stack_peak);
                 self.add_log(format!(
-                    "[PASS] {}::{} ({} cycles, {}us)",
+                    "[PASS] {}::{} ({} cycles, {}us, {}B stk)",
                     self.suites[s_id].name,
                     self.suites[s_id].tests[t_id].name,
                     cycles,
-                    time_us
+                    time_us,
+                    stack_peak
                 ));
             }
             Telemetry::Log(log) => {
@@ -899,8 +905,13 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
                     ];
 
                     if let (Some(c), Some(t)) = (item.cycles, item.time_us) {
+                        let detail_str = if let Some(sp) = item.stack_peak {
+                            format!("({c} cyc, {t}us, {sp}B stk)")
+                        } else {
+                            format!("({c} cyc, {t}us)")
+                        };
                         line_spans.push(Span::styled(
-                            format!("({c} cyc, {t}us)"),
+                            detail_str,
                             Style::default().fg(Color::DarkGray),
                         ));
                     }
@@ -1022,21 +1033,40 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
         if let Some(selected_flat_item) =
             flat_items.get(state.selected_item_idx)
         {
-            let (name, type_str, description) = match selected_flat_item {
+            let description_owned: String;
+            let (name, type_str) = match selected_flat_item {
                 FlatItem::SuiteHeader { suite_id, name, .. } => {
                     let s_idx = *suite_id as usize;
-                    let desc = if s_idx < state.suites.len() {
-                        state.suites[s_idx].description.as_str()
+                    description_owned = if s_idx < state.suites.len() {
+                        state.suites[s_idx].description.clone()
                     } else {
-                        ""
+                        String::new()
                     };
-                    (name.as_str(), "Suite", desc)
+                    (name.as_str(), "Suite")
                 }
                 FlatItem::Test { item, .. } => {
-                    (item.name.as_str(), "Test", item.description.as_str())
+                    let mut desc = item.description.clone();
+                    if let (Some(c), Some(t)) = (item.cycles, item.time_us) {
+                        use std::fmt::Write;
+                        let _ = write!(
+                            &mut desc,
+                            "\n\nMetrics:\n- CPU Cycles: {}\n- Execution Time: {} us",
+                            c, t
+                        );
+                        if let Some(sp) = item.stack_peak {
+                            let _ = write!(
+                                &mut desc,
+                                "\n- Stack High-Water: {} bytes",
+                                sp
+                            );
+                        }
+                    }
+                    description_owned = desc;
+                    (item.name.as_str(), "Test")
                 }
                 FlatItem::Setting { item, .. } => {
-                    (item.name.as_str(), "Setting", item.description.as_str())
+                    description_owned = item.description.clone();
+                    (item.name.as_str(), "Setting")
                 }
             };
 
@@ -1045,10 +1075,10 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
                 .border_style(Style::default().fg(Color::Cyan))
                 .title(format!(" Description: {} ({}) ", name, type_str));
 
-            let display_desc = if description.is_empty() {
+            let display_desc = if description_owned.is_empty() {
                 "No description provided."
             } else {
-                description
+                description_owned.as_str()
             };
 
             let paragraph = Paragraph::new(display_desc)
@@ -1288,12 +1318,14 @@ mod tests {
                 test_id: 0,
                 cycles: 4200,
                 time_us: 150,
+                stack_peak: 256,
             },
             &mut cmd_tx,
         );
 
         assert_eq!(state.suites[0].tests[0].cycles, Some(4200));
         assert_eq!(state.suites[0].tests[0].time_us, Some(150));
+        assert_eq!(state.suites[0].tests[0].stack_peak, Some(256));
         assert!(state.console_logs.iter().any(|l| l.contains("[PASS]")));
 
         state.handle_telemetry(

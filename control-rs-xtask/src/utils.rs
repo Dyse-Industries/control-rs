@@ -36,6 +36,8 @@ pub struct HeadlessTestResult {
     pub cycles: Option<u64>,
     /// Duration of the test in microseconds if successful.
     pub time_us: Option<u64>,
+    /// Stack high-water mark in bytes if successful.
+    pub stack_peak: Option<u32>,
 }
 
 /// Helper function to format the issue summary section.
@@ -87,7 +89,7 @@ pub fn format_coverage_summary(
 
 fn format_sil_rows(results: &[&HeadlessTestResult]) -> String {
     let mut s = String::new();
-    s.push_str("| Suite | Test | Result | Cycles | Time |\n| :--- | :--- | :--- | :--- | :--- |\n");
+    s.push_str("| Suite | Test | Result | Cycles | Time | Stack Peak |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n");
     for r in results {
         let res_str = match r.state {
             TestState::Passed => "PASSED",
@@ -96,9 +98,12 @@ fn format_sil_rows(results: &[&HeadlessTestResult]) -> String {
         let cyc_str = r.cycles.map_or("N/A".to_string(), |c| c.to_string());
         let time_str =
             r.time_us.map_or("N/A".to_string(), |t| format!("{}us", t));
+        let stack_str = r
+            .stack_peak
+            .map_or("N/A".to_string(), |sp| format!("{}B", sp));
         s.push_str(&format!(
-            "| {} | {} | {} | {} | {} |\n",
-            r.suite_name, r.test_name, res_str, cyc_str, time_str
+            "| {} | {} | {} | {} | {} | {} |\n",
+            r.suite_name, r.test_name, res_str, cyc_str, time_str, stack_str
         ));
     }
     s
@@ -353,6 +358,7 @@ mod tests {
                 state: TestState::Passed,
                 cycles: Some(100),
                 time_us: Some(10),
+                stack_peak: Some(256),
             },
             HeadlessTestResult {
                 suite_name: "SuiteA".to_string(),
@@ -360,6 +366,7 @@ mod tests {
                 state: TestState::Failed,
                 cycles: None,
                 time_us: None,
+                stack_peak: None,
             },
         ];
         let refs: Vec<&HeadlessTestResult> = results.iter().collect();
@@ -369,6 +376,7 @@ mod tests {
         assert!(formatted.contains("PASSED"));
         assert!(formatted.contains("100"));
         assert!(formatted.contains("10us"));
+        assert!(formatted.contains("256B"));
         assert!(formatted.contains("FAILED"));
         assert!(formatted.contains("N/A"));
     }
@@ -381,6 +389,7 @@ mod tests {
             state: TestState::Passed,
             cycles: Some(100),
             time_us: Some(10),
+            stack_peak: Some(256),
         }];
         let summary = format_sil_summary(&results);
         assert!(summary.contains("### Headless SIL Test Results"));
@@ -403,6 +412,7 @@ mod tests {
                 },
                 cycles: None,
                 time_us: None,
+                stack_peak: None,
             });
         }
         let summary = format_sil_summary(&results);
@@ -418,6 +428,7 @@ mod tests {
             state: TestState::Failed,
             cycles: None,
             time_us: None,
+            stack_peak: None,
         });
         let summary2 = format_sil_summary(&results);
         assert!(summary2.contains("*Showing first 10 of 11 failing tests:*"));

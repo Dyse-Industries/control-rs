@@ -412,6 +412,7 @@ pub fn run_headless_sil(
                                 state: TestState::Failed,
                                 cycles: None,
                                 time_us: None,
+                                stack_peak: None,
                             });
 
                             current_running = None;
@@ -434,6 +435,7 @@ pub fn run_headless_sil(
                         test_id,
                         cycles,
                         time_us,
+                        stack_peak,
                     } => {
                         let s_id = suite_id as usize;
                         let t_id = test_id as usize;
@@ -444,6 +446,7 @@ pub fn run_headless_sil(
                             state: TestState::Passed,
                             cycles: Some(cycles),
                             time_us: Some(time_us),
+                            stack_peak: Some(stack_peak),
                         });
 
                         current_running = None;
@@ -488,6 +491,7 @@ pub fn run_headless_sil(
                                     state: TestState::Failed,
                                     cycles: None,
                                     time_us: None,
+                                    stack_peak: None,
                                 });
                             }
                         }

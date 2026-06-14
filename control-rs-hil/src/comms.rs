@@ -87,6 +87,7 @@ pub enum Telemetry<'a> {
         test_id: u16,
         cycles: u64,
         time_us: u64,
+        stack_peak: u32,
     },
     /// A log message.
     Log(LogMessage<'a>),

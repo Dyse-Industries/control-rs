@@ -6,6 +6,7 @@ pub use settings::Setting;
 pub mod server;
 pub use server::Server;
 pub mod time;
+pub mod util;
 
 /// Describes a single test executable.
 #[derive(Debug, Clone, Copy)]
