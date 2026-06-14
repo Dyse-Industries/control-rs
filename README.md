@@ -47,7 +47,7 @@ graph TD
     CI <-->|"Command / Telemetry Stream"| SH
     USB <--> Server
     SH <--> Server
-    Server <-- Profiler
+    Profiler --> Server
     Server --> Estimator
     Server --> Controller
     Server --> Plant
