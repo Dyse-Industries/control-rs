@@ -1,9 +1,6 @@
 //! Modules defining the runner and compilation tasks executed by `xtask`.
 //! Includes tasks for formatting check, clippy checks, coverage tracking with tarpaulin,
 //! and running headless/interactive tests.
-//!
-//! TODO:
-//!   - Remove duplicate code fragments (364-375)(398-401).
 
 use regex::Regex;
 use std::fs;
