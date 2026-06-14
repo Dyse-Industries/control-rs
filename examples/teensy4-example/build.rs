@@ -11,6 +11,8 @@ fn main() {
     hil_file
         .write_all(
             b"
+PROVIDE(_stack_end = __estack);
+
 SECTIONS
 {
   .hil_test_suites :
