@@ -14,43 +14,44 @@ library transitions control design from offline simulation to live, on-target
 hardware execution.
 
 ```mermaid
-graph TD
-    %% Define Styles
-    classDef host fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
-    classDef link fill:#1e293b,stroke:#94a3b8,stroke-width:2px,stroke-dasharray: 5 5,color:#cbd5e1;
-    classDef target fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff;
-    classDef loop fill:#311042,stroke:#d946ef,stroke-width:2px,color:#fdf4ff;
+---
+config:
+  layout: elk
+---
+flowchart LR
+ subgraph Host["Host PC & CLI/TUI/CI Driver (control-rs-xtask)"]
+        TUI["Interactive TUI<br>(Ratatui / Crossterm)"]
+        CI["Automated CI Harness<br>(Local/GitHub Actions)"]
+  end
+ subgraph Link["Bidirectional Protocol (Postcard / XOR Checksum)"]
+        USB["USB CDC ACM Serial<br>(Teensy 4.0 / Physical Target)"]
+        SH["Semihosting Syscalls<br>(QEMU ARM / RISC-V Emulator)"]
+  end
+ subgraph SysIdLoop["Custom HIL Test Functions"]
+        Estimator["Parameter Estimation"]
+        Controller["PID Controller Design"]
+        Plant["Step Response"]
+  end
+ subgraph Target["Target Silicon / Embedded Core (control-rs-hil)"]
+        Server["HIL Test Server Event Loop"]
+        SysIdLoop
+  end
+    Host <-- Command / Telemetry Stream --> Link
+    Server --> SysIdLoop
+    Link -- HostComms --> Server
 
-    subgraph Host["Host PC & CLI/TUI/CI Driver (control-rs-xtask)"]
-        TUI["Interactive TUI<br>(Ratatui / Crossterm)"]:::host
-        CI["Automated CI Harness<br>(Local/GitHub Actions)"]:::host
-    end
-
-    subgraph Link["Bidirectional Protocol (Postcard / XOR Checksum)"]
-        USB["USB CDC ACM Serial<br>(Teensy 4.0 / Physical Target)"]:::link
-        SH["Semihosting Syscalls<br>(QEMU ARM / RISC-V Emulator)"]:::link
-    end
-
-    subgraph Target["Target Silicon / Embedded Core (control-rs-hil)"]
-        Server["HIL Test Server Event Loop"]:::target
-        Profiler["Execution Profiler<br>(DWT Cycle Count & Stack Paint)"]:::target
-        
-        subgraph SysIdLoop["Live System Identification & Control Loop"]
-            Estimator["Model Parameter Estimator"]:::loop
-            Controller["PID Controller Design"]:::loop
-            Plant["Step Response"]:::loop
-        end
-    end
-
-    %% Flow Arrows
-    TUI <-->|"Command / Telemetry Stream"| USB
-    CI <-->|"Command / Telemetry Stream"| SH
-    USB <--> Server
-    SH <--> Server
-    Profiler --> Server
-    Server --> Estimator
-    Server --> Controller
-    Server --> Plant
+     TUI:::host
+     CI:::host
+     USB:::link
+     SH:::link
+     Estimator:::loop
+     Controller:::loop
+     Plant:::loop
+     Server:::target
+    classDef host fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
+    classDef link fill:#1e293b,stroke:#94a3b8,stroke-width:2px,stroke-dasharray: 5 5,color:#cbd5e1
+    classDef target fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff
+    classDef loop fill:#311042,stroke:#d946ef,stroke-width:2px,color:#fdf4ff
 ```
 
 ### The Live SysId Loop
