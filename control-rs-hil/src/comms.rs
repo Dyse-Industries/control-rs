@@ -54,6 +54,7 @@ pub enum Telemetry<'a> {
     SuiteInfo {
         suite_id: u16,
         name: &'a str,
+        description: &'a str,
         test_count: u16,
         setting_count: u16,
     },
@@ -62,12 +63,14 @@ pub enum Telemetry<'a> {
         suite_id: u16,
         test_id: u16,
         name: &'a str,
+        description: &'a str,
     },
     /// Metadata about a setting within a suite.
     SettingInfo {
         suite_id: u16,
         setting_id: u16,
         name: &'a str,
+        description: &'a str,
         value: SettingValue,
     },
     /// Notification that the target has finished sending discovery information.
@@ -132,7 +135,7 @@ pub trait HostComms {
 
 const START_BYTE_1: u8 = 0xAA;
 const START_BYTE_2: u8 = 0x55;
-const MAX_PAYLOAD_SIZE: usize = 256;
+const MAX_PAYLOAD_SIZE: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReaderState {
@@ -315,10 +318,10 @@ mod tests {
         assert!(reader.handle_byte(0x00).is_none());
         assert!(reader.is_idle()); // should reset since len = 0 is invalid
 
-        // Send length > MAX_PAYLOAD_SIZE (e.g. 257 = MSB=1, LSB=1)
+        // Send length > MAX_PAYLOAD_SIZE (e.g. 513 = MSB=2, LSB=1)
         assert!(reader.handle_byte(START_BYTE_1).is_none());
         assert!(reader.handle_byte(START_BYTE_2).is_none());
-        assert!(reader.handle_byte(0x01).is_none());
+        assert!(reader.handle_byte(0x02).is_none());
         assert!(reader.handle_byte(0x01).is_none());
         assert!(reader.is_idle()); // should reset since len > MAX_PAYLOAD_SIZE
     }

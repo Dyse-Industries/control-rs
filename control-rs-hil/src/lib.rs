@@ -12,6 +12,8 @@ pub mod time;
 pub struct ExecDescriptor {
     /// The name of the test executable.
     pub name: &'static str,
+    /// The doc comment description of the test.
+    pub description: &'static str,
     /// A function pointer to the test executable.
     pub test_fn: fn(),
 }
@@ -25,6 +27,8 @@ pub struct SuiteDescriptor {
     pub executables: &'static [ExecDescriptor],
     /// The name of the test suite.
     pub name: &'static str,
+    /// The doc comment description of the test suite.
+    pub description: &'static str,
     /// A slice of configurable settings for this suite.
     pub settings: SettingsSlice,
 }

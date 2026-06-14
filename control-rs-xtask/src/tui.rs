@@ -34,6 +34,8 @@ use control_rs_hil::settings::SettingValue;
 struct TestItem {
     /// Name of the test case.
     name: String,
+    /// Description of the test case.
+    description: String,
     /// Current execution state of the test.
     state: TestState,
     /// Cycles consumed by the test if it completed.
@@ -46,6 +48,8 @@ struct TestItem {
 struct SettingItem {
     /// Name of the setting.
     name: String,
+    /// Description of the setting.
+    description: String,
     /// Value of the setting.
     value: SettingValue,
 }
@@ -54,6 +58,8 @@ struct SettingItem {
 struct SuiteItem {
     /// Name of the suite.
     name: String,
+    /// Description of the suite.
+    description: String,
     /// Tests inside this suite.
     tests: Vec<TestItem>,
     /// Config settings inside this suite.
@@ -90,6 +96,8 @@ struct AppState {
     setting_input: String,
     /// State for the stateful test/settings list widget.
     list_state: ListState,
+    /// Whether the selected item's description details modal is open.
+    show_details_modal: bool,
 }
 
 impl AppState {
@@ -109,6 +117,7 @@ impl AppState {
             editing_setting: None,
             setting_input: String::new(),
             list_state: ListState::default(),
+            show_details_modal: false,
         }
     }
 
@@ -189,39 +198,51 @@ impl AppState {
         cmd_tx: &mut Vec<Command>,
     ) {
         match telemetry {
-            Telemetry::SuiteInfo { suite_id, name, .. } => {
+            Telemetry::SuiteInfo {
+                suite_id,
+                name,
+                description,
+                ..
+            } => {
                 let id = suite_id as usize;
                 while self.suites.len() <= id {
                     self.suites.push(SuiteItem {
                         name: String::new(),
+                        description: String::new(),
                         tests: Vec::new(),
                         settings: Vec::new(),
                         collapsed: false,
                     });
                 }
                 self.suites[id].name = name.to_string();
+                self.suites[id].description = description.to_string();
             }
             Telemetry::TestInfo {
                 suite_id,
                 test_id,
                 name,
+                description,
             } => {
                 let s_id = suite_id as usize;
                 let t_id = test_id as usize;
                 while self.suites[s_id].tests.len() <= t_id {
                     self.suites[s_id].tests.push(TestItem {
                         name: String::new(),
+                        description: String::new(),
                         state: TestState::Pending,
                         cycles: None,
                         time_us: None,
                     });
                 }
                 self.suites[s_id].tests[t_id].name = name.to_string();
+                self.suites[s_id].tests[t_id].description =
+                    description.to_string();
             }
             Telemetry::SettingInfo {
                 suite_id,
                 setting_id,
                 name,
+                description,
                 value,
             } => {
                 let s_id = suite_id as usize;
@@ -229,10 +250,13 @@ impl AppState {
                 while self.suites[s_id].settings.len() <= set_id {
                     self.suites[s_id].settings.push(SettingItem {
                         name: String::new(),
+                        description: String::new(),
                         value: SettingValue::U8(0),
                     });
                 }
                 self.suites[s_id].settings[set_id].name = name.to_string();
+                self.suites[s_id].settings[set_id].description =
+                    description.to_string();
                 self.suites[s_id].settings[set_id].value = value;
             }
             Telemetry::DiscoveryComplete => {
@@ -328,6 +352,11 @@ impl AppState {
         key_code: KeyCode,
         cmd_tx: &mut Vec<Command>,
     ) -> bool {
+        if self.show_details_modal {
+            self.show_details_modal = false;
+            return false;
+        }
+
         let old_selected_id = {
             let flat_items = self.get_flat_items();
             flat_items.get(self.selected_item_idx).map(|item| item.id())
@@ -406,6 +435,9 @@ impl AppState {
             match key_code {
                 KeyCode::Char('q') => {
                     exit_tui = true;
+                }
+                KeyCode::Char('d') => {
+                    self.show_details_modal = true;
                 }
                 KeyCode::Char('r') => {
                     // Run tests starting from current selection (or all if selection doesn't precede a test)
@@ -940,7 +972,9 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
     f.render_stateful_widget(log_list, mid_chunks[1], &mut log_state);
 
     // 4. Render Footer
-    let footer_text = if state.is_filtering {
+    let footer_text = if state.show_details_modal {
+        " Press any key to close description details modal".to_string()
+    } else if state.is_filtering {
         format!(
             " FILTER QUERY: {} | Press Enter/Esc to finish",
             state.filter_query
@@ -960,7 +994,7 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
             setting_name, state.setting_input
         )
     } else {
-        "(r)un all | (s)top execution | (f)ilter tests | (Enter) edit/run/toggle | (q)uit".to_string()
+        "(r)un all | (s)top execution | (f)ilter tests | (Enter) edit/run/toggle | (d)escription | (q)uit".to_string()
     };
     let footer = Paragraph::new(footer_text).block(
         Block::default()
@@ -968,6 +1002,63 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
             .title(" Keyboard Commands "),
     );
     f.render_widget(footer, chunks[2]);
+
+    // 5. Render details modal popup if open (anchored to bottom-left)
+    if state.show_details_modal {
+        let size = f.area();
+        let popup_width = 60.min(size.width);
+        let popup_height = 10.min(size.height);
+
+        let x = 0;
+        let y = chunks[2].y.saturating_sub(popup_height);
+        let popup_rect = ratatui::layout::Rect {
+            x,
+            y,
+            width: popup_width,
+            height: popup_height,
+        };
+
+        let flat_items = state.get_flat_items();
+        if let Some(selected_flat_item) =
+            flat_items.get(state.selected_item_idx)
+        {
+            let (name, type_str, description) = match selected_flat_item {
+                FlatItem::SuiteHeader { suite_id, name, .. } => {
+                    let s_idx = *suite_id as usize;
+                    let desc = if s_idx < state.suites.len() {
+                        state.suites[s_idx].description.as_str()
+                    } else {
+                        ""
+                    };
+                    (name.as_str(), "Suite", desc)
+                }
+                FlatItem::Test { item, .. } => {
+                    (item.name.as_str(), "Test", item.description.as_str())
+                }
+                FlatItem::Setting { item, .. } => {
+                    (item.name.as_str(), "Setting", item.description.as_str())
+                }
+            };
+
+            let modal_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(format!(" Description: {} ({}) ", name, type_str));
+
+            let display_desc = if description.is_empty() {
+                "No description provided."
+            } else {
+                description
+            };
+
+            let paragraph = Paragraph::new(display_desc)
+                .block(modal_block)
+                .wrap(ratatui::widgets::Wrap { trim: true });
+
+            f.render_widget(ratatui::widgets::Clear, popup_rect);
+            f.render_widget(paragraph, popup_rect);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1023,6 +1114,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite_zero",
+                description: "",
                 test_count: 2,
                 setting_count: 1,
             },
@@ -1035,6 +1127,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 0,
                 name: "test_zero",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1045,6 +1138,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 1,
                 name: "test_one",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1055,6 +1149,7 @@ mod tests {
                 suite_id: 0,
                 setting_id: 0,
                 name: "setting_zero",
+                description: "",
                 value: SettingValue::U8(3),
             },
             &mut cmd_tx,
@@ -1087,6 +1182,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite_zero",
+                description: "",
                 test_count: 2,
                 setting_count: 0,
             },
@@ -1097,6 +1193,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 0,
                 name: "test_zero",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1105,6 +1202,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 1,
                 name: "test_one",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1168,6 +1266,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite_zero",
+                description: "",
                 test_count: 1,
                 setting_count: 0,
             },
@@ -1178,6 +1277,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 0,
                 name: "test_zero",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1218,6 +1318,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite_zero",
+                description: "",
                 test_count: 1,
                 setting_count: 0,
             },
@@ -1228,6 +1329,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 0,
                 name: "test_zero",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1266,6 +1368,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "SuiteAlpha",
+                description: "",
                 test_count: 2,
                 setting_count: 1,
             },
@@ -1276,6 +1379,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 0,
                 name: "test_apple",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1284,6 +1388,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 1,
                 name: "test_banana",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1292,6 +1397,7 @@ mod tests {
                 suite_id: 0,
                 setting_id: 0,
                 name: "config_val",
+                description: "",
                 value: SettingValue::U8(3),
             },
             &mut cmd_tx,
@@ -1341,6 +1447,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
+                description: "",
                 test_count: 2,
                 setting_count: 0,
             },
@@ -1351,6 +1458,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 0,
                 name: "test0",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1359,6 +1467,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 1,
                 name: "test1",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1393,6 +1502,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
+                description: "",
                 test_count: 0,
                 setting_count: 2,
             },
@@ -1403,6 +1513,7 @@ mod tests {
                 suite_id: 0,
                 setting_id: 0,
                 name: "setting_u8",
+                description: "",
                 value: SettingValue::U8(3),
             },
             &mut cmd_tx,
@@ -1412,6 +1523,7 @@ mod tests {
                 suite_id: 0,
                 setting_id: 1,
                 name: "setting_u32",
+                description: "",
                 value: SettingValue::U32(1000),
             },
             &mut cmd_tx,
@@ -1483,6 +1595,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
+                description: "",
                 test_count: 2,
                 setting_count: 0,
             },
@@ -1493,6 +1606,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 0,
                 name: "test0",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1501,6 +1615,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 1,
                 name: "test1",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1539,6 +1654,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
+                description: "",
                 test_count: 3,
                 setting_count: 0,
             },
@@ -1549,6 +1665,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 0,
                 name: "test0",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1557,6 +1674,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 1,
                 name: "test1",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1565,6 +1683,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 2,
                 name: "test2",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1620,6 +1739,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
+                description: "",
                 test_count: 2,
                 setting_count: 0,
             },
@@ -1630,6 +1750,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 0,
                 name: "test0",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1638,6 +1759,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 1,
                 name: "test1",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1672,6 +1794,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
+                description: "",
                 test_count: 1,
                 setting_count: 0,
             },
@@ -1682,6 +1805,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 0,
                 name: "test0",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1724,6 +1848,7 @@ mod tests {
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
+                description: "",
                 test_count: 1,
                 setting_count: 0,
             },
@@ -1734,6 +1859,7 @@ mod tests {
                 suite_id: 0,
                 test_id: 0,
                 name: "test0",
+                description: "",
             },
             &mut cmd_tx,
         );
@@ -1753,5 +1879,55 @@ mod tests {
                 test_id: 0
             }
         ));
+    }
+
+    #[test]
+    fn test_details_modal() {
+        let mut state = AppState::new();
+        let mut cmd_tx = Vec::new();
+
+        state.handle_telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite0",
+                description: "suite0_description",
+                test_count: 1,
+                setting_count: 1,
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "test0",
+                description: "test0_description",
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(
+            Telemetry::SettingInfo {
+                suite_id: 0,
+                setting_id: 0,
+                name: "setting0",
+                description: "setting0_description",
+                value: SettingValue::U8(10),
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(Telemetry::DiscoveryComplete, &mut cmd_tx);
+
+        assert!(!state.show_details_modal);
+
+        // Press 'd' to open the details modal
+        state.handle_key(KeyCode::Char('d'), &mut cmd_tx);
+        assert!(state.show_details_modal);
+
+        // Press any key (e.g., Up) to close it.
+        // It should close, and NOT execute the normal action of that key (which is moving selection).
+        state.selected_item_idx = 1;
+        state.handle_key(KeyCode::Up, &mut cmd_tx);
+        assert!(!state.show_details_modal);
+        assert_eq!(state.selected_item_idx, 1);
     }
 }

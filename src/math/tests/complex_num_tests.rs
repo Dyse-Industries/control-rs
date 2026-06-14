@@ -1,6 +1,6 @@
 //! Complex number mathematical HIL and unit test suite.
 #![allow(clippy::arithmetic_side_effects)]
-#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 /// Arithmetic operations tests for complex numbers.
 pub mod test_arithmetic {
     use crate::{
@@ -17,6 +17,7 @@ pub mod test_arithmetic {
     };
 
     #[cfg_attr(test, test)]
+    /// Verifies basic addition, subtraction, multiplication, and division on complex floats.
     fn test_basic_arithmetic() {
         let z1 = Complex64::new(1.0, 2.0);
         let z2 = Complex64::new(3.0, 4.0);
@@ -138,7 +139,7 @@ pub mod test_arithmetic {
     }
 }
 
-#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 /// Axiomatic property tests for complex numbers (commutativity, associativity, comparisons).
 pub mod test_axioms {
     use crate::{assert_almost_eq, math::complex_num::Complex64};
@@ -199,7 +200,7 @@ pub mod test_axioms {
     }
 }
 
-#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 /// Basic creation, polar conversion, and initialization tests.
 pub mod test_basics {
     use crate::assert_almost_eq;
@@ -248,7 +249,7 @@ pub mod test_basics {
     }
 }
 
-#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 /// Core math tests (conjugate, magnitude, phase).
 pub mod test_core_math {
     use crate::{
@@ -288,7 +289,7 @@ pub mod test_core_math {
     }
 }
 
-#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 /// DSP pattern tests (e.g. twiddle factors).
 pub mod test_dsp_patterns {
     use crate::{
@@ -317,7 +318,7 @@ pub mod test_dsp_patterns {
     }
 }
 
-#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 /// FFI layout, size, and alignment verification.
 pub mod test_ffi_layout {
     use crate::{
@@ -328,8 +329,8 @@ pub mod test_ffi_layout {
 
     #[cfg_attr(test, test)]
     fn test_size_and_alignment() {
-        assert_eq!(mem::size_of::<Complex64>(), 16);
-        assert_eq!(mem::align_of::<Complex64>(), 8);
+        assert_eq!(size_of::<Complex64>(), 16);
+        assert_eq!(align_of::<Complex64>(), 8);
     }
 
     #[cfg_attr(test, test)]
@@ -342,7 +343,7 @@ pub mod test_ffi_layout {
     }
 }
 
-#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 /// Edge-case limitations, NaN propagation, infinity, and branch cut tests.
 pub mod test_limitations {
     use crate::{
@@ -411,7 +412,7 @@ pub mod test_limitations {
     }
 }
 
-#[cfg_attr(not(test), ::control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 /// Transcendental (exp, ln, trigonometric, and inverse trigonometric) tests.
 pub mod test_transcendental {
     use crate::{

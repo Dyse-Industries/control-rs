@@ -332,6 +332,7 @@ pub fn run_headless_sil(
                         suite_id,
                         test_id,
                         name,
+                        ..
                     } => {
                         let s_id = suite_id as usize;
                         let t_id = test_id as usize;
@@ -348,6 +349,7 @@ pub fn run_headless_sil(
                         setting_id,
                         name,
                         value,
+                        ..
                     } => {
                         let s_id = suite_id as usize;
                         let set_id = setting_id as usize;

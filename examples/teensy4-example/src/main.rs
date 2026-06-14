@@ -148,14 +148,18 @@ pub use control_rs::math::tests::complex_num_tests::{
 // --- Test Suite Definition ---
 
 #[hil_suite]
+/// PID controller hardware-in-the-loop test suite.
 pub mod teensy_pid_suite {
     use control_rs_hil::settings::{Setting, SettingValue};
 
-    // Statics representing configurable controller parameters
+    /// Proportional gain setting. Scales the magnitude of controller response to system error.
     pub static PROPORTIONAL_GAIN: u32 = 1500;
+    /// Integral gain setting. Minimizes steady-state tracking error over time.
     pub static INTEGRAL_GAIN: u32 = 400;
+    /// Derivative gain setting. Dampens transient response and overshoot.
     pub static DERIVATIVE_GAIN: u32 = 80;
 
+    /// Verifies that Proportional > Integral > Derivative gains constraint holds.
     fn test_gain_inequality() {
         let kp = match PROPORTIONAL_GAIN.get() {
             SettingValue::U32(v) => v,

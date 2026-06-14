@@ -161,6 +161,7 @@ where
             self.comms.send_telemetry(&Telemetry::SuiteInfo {
                 suite_id,
                 name: suite.name,
+                description: suite.description,
                 test_count: suite.executables.len() as u16,
                 setting_count: suite.settings.len() as u16,
             })?;
@@ -170,6 +171,7 @@ where
                     suite_id,
                     test_id: test_idx as u16,
                     name: exec.name,
+                    description: exec.description,
                 })?;
             }
 
@@ -178,6 +180,7 @@ where
                     suite_id,
                     setting_id: setting_idx as u16,
                     name: setting.name(),
+                    description: setting.description(),
                     value: setting.get(),
                 })?;
             }
@@ -279,6 +282,7 @@ where
             suite_id,
             setting_id,
             name: setting.name(),
+            description: setting.description(),
             value: setting.get(),
         })?;
 
@@ -393,7 +397,7 @@ mod tests {
     }
 
     static TEST_U8_SETTING: AtomicU8Setting =
-        AtomicU8Setting::new("test_u8", 42);
+        AtomicU8Setting::new("test_u8", "test_u8_desc", 42);
 
     type SettingsSlice = &'static [&'static dyn Setting];
 
@@ -401,11 +405,13 @@ mod tests {
 
     static SUITE_EXECUTABLES: &[ExecDescriptor] = &[ExecDescriptor {
         name: "dummy_test",
+        description: "dummy_desc",
         test_fn: dummy_test_fn,
     }];
 
     static SUITE_DESC: SuiteDescriptor = SuiteDescriptor {
         name: "mock_suite",
+        description: "mock_suite_desc",
         executables: SUITE_EXECUTABLES,
         settings: SUITE_SETTINGS,
     };
@@ -444,7 +450,8 @@ mod tests {
             Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 0,
-                name: "dummy_test"
+                name: "dummy_test",
+                ..
             }
         ));
 
@@ -455,7 +462,8 @@ mod tests {
                 suite_id: 0,
                 setting_id: 0,
                 name: "test_u8",
-                value: SettingValue::U8(42)
+                value: SettingValue::U8(42),
+                ..
             }
         ));
 
@@ -681,8 +689,9 @@ mod tests {
 
     #[test]
     fn test_atomic_settings() {
-        let u8_setting = AtomicU8Setting::new("u8_set", 10);
+        let u8_setting = AtomicU8Setting::new("u8_set", "u8_desc", 10);
         assert_eq!(u8_setting.name(), "u8_set");
+        assert_eq!(u8_setting.description(), "u8_desc");
         assert_eq!(
             u8_setting.expected_type(),
             crate::settings::SettingType::U8
@@ -692,8 +701,9 @@ mod tests {
         assert_eq!(u8_setting.get(), SettingValue::U8(20));
         assert!(u8_setting.set(SettingValue::U32(20)).is_err());
 
-        let u32_setting = AtomicU32Setting::new("u32_set", 100);
+        let u32_setting = AtomicU32Setting::new("u32_set", "u32_desc", 100);
         assert_eq!(u32_setting.name(), "u32_set");
+        assert_eq!(u32_setting.description(), "u32_desc");
         assert_eq!(
             u32_setting.expected_type(),
             crate::settings::SettingType::U32

@@ -284,9 +284,17 @@ fn process_incoming_byte(
     tx: &Sender<BridgeMessage>,
 ) {
     if let Some(payload) = reader.handle_byte(b) {
-        if let Ok(telemetry) = postcard::from_bytes::<Telemetry<'_>>(payload) {
-            let owned_telemetry = make_telemetry_owned(&telemetry);
-            let _ = tx.send(BridgeMessage::Telemetry(owned_telemetry));
+        match postcard::from_bytes::<Telemetry<'_>>(payload) {
+            Ok(telemetry) => {
+                let owned_telemetry = make_telemetry_owned(&telemetry);
+                let _ = tx.send(BridgeMessage::Telemetry(owned_telemetry));
+            }
+            Err(e) => {
+                let _ = tx.send(BridgeMessage::RawConsole(format!(
+                    "[Host Error] Postcard decode failed: {:?}",
+                    e
+                )));
+            }
         }
         raw_line_buf.clear();
     } else if reader.is_idle()
@@ -314,11 +322,13 @@ fn make_telemetry_owned(tel: &Telemetry<'_>) -> Telemetry<'static> {
         Telemetry::SuiteInfo {
             suite_id,
             name,
+            description,
             test_count,
             setting_count,
         } => Telemetry::SuiteInfo {
             suite_id,
             name: Box::leak(name.to_string().into_boxed_str()),
+            description: Box::leak(description.to_string().into_boxed_str()),
             test_count,
             setting_count,
         },
@@ -326,20 +336,24 @@ fn make_telemetry_owned(tel: &Telemetry<'_>) -> Telemetry<'static> {
             suite_id,
             test_id,
             name,
+            description,
         } => Telemetry::TestInfo {
             suite_id,
             test_id,
             name: Box::leak(name.to_string().into_boxed_str()),
+            description: Box::leak(description.to_string().into_boxed_str()),
         },
         Telemetry::SettingInfo {
             suite_id,
             setting_id,
             name,
+            description,
             value,
         } => Telemetry::SettingInfo {
             suite_id,
             setting_id,
             name: Box::leak(name.to_string().into_boxed_str()),
+            description: Box::leak(description.to_string().into_boxed_str()),
             value,
         },
         Telemetry::DiscoveryComplete => Telemetry::DiscoveryComplete,

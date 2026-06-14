@@ -41,6 +41,8 @@ pub trait Setting: Sync {
     fn get(&self) -> SettingValue;
     /// Returns the name of the setting.
     fn name(&self) -> &'static str;
+    /// Returns the description of the setting.
+    fn description(&self) -> &'static str;
     /// Sets the value of the setting.
     ///
     /// # Errors
@@ -51,15 +53,21 @@ pub trait Setting: Sync {
 /// A wrapper for a `u8` setting that can be safely shared between threads.
 pub struct AtomicU8Setting {
     name: &'static str,
+    description: &'static str,
     value: AtomicU8,
 }
 
 impl AtomicU8Setting {
     /// Creates a new `AtomicU8Setting`.
     #[must_use]
-    pub const fn new(name: &'static str, initial_value: u8) -> Self {
+    pub const fn new(
+        name: &'static str,
+        description: &'static str,
+        initial_value: u8,
+    ) -> Self {
         Self {
             name,
+            description,
             value: AtomicU8::new(initial_value),
         }
     }
@@ -78,6 +86,10 @@ impl Setting for AtomicU8Setting {
         self.name
     }
 
+    fn description(&self) -> &'static str {
+        self.description
+    }
+
     fn set(&self, value: SettingValue) -> SetResult {
         if let SettingValue::U8(v) = value {
             self.value.store(v, Ordering::Relaxed);
@@ -91,15 +103,21 @@ impl Setting for AtomicU8Setting {
 /// A wrapper for a `u32` setting that can be safely shared between threads.
 pub struct AtomicU32Setting {
     name: &'static str,
+    description: &'static str,
     value: AtomicU32,
 }
 
 impl AtomicU32Setting {
     /// Creates a new `AtomicU32Setting`.
     #[must_use]
-    pub const fn new(name: &'static str, initial_value: u32) -> Self {
+    pub const fn new(
+        name: &'static str,
+        description: &'static str,
+        initial_value: u32,
+    ) -> Self {
         Self {
             name,
+            description,
             value: AtomicU32::new(initial_value),
         }
     }
@@ -116,6 +134,10 @@ impl Setting for AtomicU32Setting {
 
     fn name(&self) -> &'static str {
         self.name
+    }
+
+    fn description(&self) -> &'static str {
+        self.description
     }
 
     fn set(&self, value: SettingValue) -> SetResult {

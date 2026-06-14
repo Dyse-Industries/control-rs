@@ -19,6 +19,36 @@ fn is_type_name(ty: &Type, name: &str) -> bool {
     }
 }
 
+/// Helper to extract doc comments from syn attributes, strip compiler-injected leading space,
+/// and truncate to a maximum of 160 characters (appending `...` if truncated).
+fn extract_doc_string(attrs: &[syn::Attribute]) -> String {
+    let mut docs = Vec::new();
+    for attr in attrs {
+        if attr.path().is_ident("doc")
+            && let syn::Meta::NameValue(syn::MetaNameValue {
+                value:
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(lit_str),
+                        ..
+                    }),
+                ..
+            }) = &attr.meta
+        {
+            let val = lit_str.value();
+            let trimmed = val.strip_prefix(' ').unwrap_or(&val);
+            docs.push(trimmed.to_string());
+        }
+    }
+    let full_doc = docs.join("\n");
+    let full_doc = full_doc.trim();
+    if full_doc.chars().count() > 160 {
+        let truncated: String = full_doc.chars().take(157).collect();
+        format!("{}...", truncated)
+    } else {
+        full_doc.to_string()
+    }
+}
+
 /// Attribute macro for declaring a HIL test suite.
 ///
 /// Converts statics to atomic settings and registers functions as test executables.
@@ -26,6 +56,7 @@ fn is_type_name(ty: &Type, name: &str) -> bool {
 pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut item_mod = parse_macro_input!(item as ItemMod);
     let suite_name = item_mod.ident.to_string();
+    let suite_doc = extract_doc_string(&item_mod.attrs);
 
     let mut tests = Vec::new();
     let mut settings = Vec::new();
@@ -37,13 +68,14 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     let name_ident = &item_static.ident;
                     let init_expr = &item_static.expr;
                     let attrs = &item_static.attrs;
+                    let setting_doc = extract_doc_string(attrs);
 
                     if is_type_name(&item_static.ty, "u32") {
                         settings.push(name_ident.clone());
                         let new_static: ItemStatic = parse_quote! {
                             #(#attrs)*
                             pub static #name_ident: ::control_rs_hil::settings::AtomicU32Setting =
-                                ::control_rs_hil::settings::AtomicU32Setting::new(stringify!(#name_ident), #init_expr);
+                                ::control_rs_hil::settings::AtomicU32Setting::new(stringify!(#name_ident), #setting_doc, #init_expr);
                         };
                         *item_static = new_static;
                     } else if is_type_name(&item_static.ty, "u8") {
@@ -51,7 +83,7 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         let new_static: ItemStatic = parse_quote! {
                             #(#attrs)*
                             pub static #name_ident: ::control_rs_hil::settings::AtomicU8Setting =
-                                ::control_rs_hil::settings::AtomicU8Setting::new(stringify!(#name_ident), #init_expr);
+                                ::control_rs_hil::settings::AtomicU8Setting::new(stringify!(#name_ident), #setting_doc, #init_expr);
                         };
                         *item_static = new_static;
                     }
@@ -60,17 +92,19 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     let fn_name = &item_fn.sig.ident;
                     let fn_name_str = fn_name.to_string();
                     if !fn_name_str.starts_with('_') {
-                        tests.push(fn_name.clone());
+                        let test_doc = extract_doc_string(&item_fn.attrs);
+                        tests.push((fn_name.clone(), test_doc));
                     }
                 }
                 _ => {}
             }
         }
 
-        let test_descriptors = tests.iter().map(|t| {
+        let test_descriptors = tests.iter().map(|(t, doc)| {
             quote! {
                 ::control_rs_hil::ExecDescriptor {
                     name: stringify!(#t),
+                    description: #doc,
                     test_fn: #t,
                 }
             }
@@ -96,6 +130,7 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
             parse_quote! {
                 static SUITE_DESCRIPTOR: ::control_rs_hil::SuiteDescriptor = ::control_rs_hil::SuiteDescriptor {
                     name: #suite_name,
+                    description: #suite_doc,
                     executables: EXECUTABLES,
                     settings: SETTINGS,
                 };
