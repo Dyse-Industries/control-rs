@@ -85,10 +85,8 @@ pub fn format_coverage_summary(
     s
 }
 
-/// Helper function to format the headless SIL test results.
-pub fn format_sil_results(results: &[HeadlessTestResult]) -> String {
+fn format_sil_rows(results: &[&HeadlessTestResult]) -> String {
     let mut s = String::new();
-    s.push_str("### Headless SIL Test Results\n\n");
     s.push_str("| Suite | Test | Result | Cycles | Time |\n| :--- | :--- | :--- | :--- | :--- |\n");
     for r in results {
         let res_str = match r.state {
@@ -103,8 +101,42 @@ pub fn format_sil_results(results: &[HeadlessTestResult]) -> String {
             r.suite_name, r.test_name, res_str, cyc_str, time_str
         ));
     }
-    s.push('\n');
     s
+}
+
+/// Helper function to format the high-level summary of the headless SIL test execution.
+pub fn format_sil_summary(results: &[HeadlessTestResult]) -> String {
+    let total = results.len();
+    let failed_tests: Vec<&HeadlessTestResult> = results
+        .iter()
+        .filter(|r| !matches!(r.state, TestState::Passed))
+        .collect();
+    let succeeded = total - failed_tests.len();
+
+    let mut s = String::new();
+    s.push_str("### Headless SIL Test Results\n\n");
+    s.push_str(&format!("**Tests Run:** {}\n", total));
+    s.push_str(&format!("**Succeeded:** {}\n\n", succeeded));
+
+    if !failed_tests.is_empty() {
+        s.push_str("#### Failing Tests\n\n");
+        let to_show = failed_tests.len().min(10);
+        if failed_tests.len() > 10 {
+            s.push_str(&format!(
+                "*Showing first 10 of {} failing tests:*\n\n",
+                failed_tests.len()
+            ));
+        }
+        s.push_str(&format_sil_rows(&failed_tests[..to_show]));
+        s.push('\n');
+    }
+    s
+}
+
+/// Helper function to format the headless SIL test results table.
+pub fn format_sil_results_table(results: &[HeadlessTestResult]) -> String {
+    let refs: Vec<&HeadlessTestResult> = results.iter().collect();
+    format_sil_rows(&refs)
 }
 
 /// Helper function to collect version info of build tools and cargo dependency tree.
@@ -256,7 +288,7 @@ pub fn build_report(
 
     match sil_results {
         Ok(results) => {
-            report.push_str(&format_sil_results(results));
+            report.push_str(&format_sil_summary(results));
         }
         Err(e) => {
             report.push_str(&format!(
@@ -268,6 +300,14 @@ pub fn build_report(
 
     report.push_str("<details>\n<summary>Detailed Logs</summary>\n\n");
     report.push_str(&collect_system_info());
+
+    if let Ok(results) = sil_results {
+        report.push_str(
+            "\n<details>\n<summary>SIL Test Results Log</summary>\n\n",
+        );
+        report.push_str(&format_sil_results_table(results));
+        report.push_str("\n</details>\n");
+    }
 
     if fmt_errors > 0 || clippy_errors > 0 {
         report.push_str(
@@ -297,4 +337,89 @@ pub fn build_report(
 /// Saves the report string to a file.
 pub fn save_report(path: &str, content: &str) -> std::io::Result<()> {
     fs::write(path, content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use control_rs_hil::comms::TestState;
+
+    #[test]
+    fn test_format_sil_rows_passed() {
+        let results = [
+            HeadlessTestResult {
+                suite_name: "SuiteA".to_string(),
+                test_name: "Test1".to_string(),
+                state: TestState::Passed,
+                cycles: Some(100),
+                time_us: Some(10),
+            },
+            HeadlessTestResult {
+                suite_name: "SuiteA".to_string(),
+                test_name: "Test2".to_string(),
+                state: TestState::Failed,
+                cycles: None,
+                time_us: None,
+            },
+        ];
+        let refs: Vec<&HeadlessTestResult> = results.iter().collect();
+        let formatted = format_sil_rows(&refs);
+        assert!(formatted.contains("SuiteA"));
+        assert!(formatted.contains("Test1"));
+        assert!(formatted.contains("PASSED"));
+        assert!(formatted.contains("100"));
+        assert!(formatted.contains("10us"));
+        assert!(formatted.contains("FAILED"));
+        assert!(formatted.contains("N/A"));
+    }
+
+    #[test]
+    fn test_format_sil_summary_all_passed() {
+        let results = vec![HeadlessTestResult {
+            suite_name: "SuiteA".to_string(),
+            test_name: "Test1".to_string(),
+            state: TestState::Passed,
+            cycles: Some(100),
+            time_us: Some(10),
+        }];
+        let summary = format_sil_summary(&results);
+        assert!(summary.contains("### Headless SIL Test Results"));
+        assert!(summary.contains("**Tests Run:** 1"));
+        assert!(summary.contains("**Succeeded:** 1"));
+        assert!(!summary.contains("#### Failing Tests"));
+    }
+
+    #[test]
+    fn test_format_sil_summary_some_failed() {
+        let mut results = Vec::new();
+        for i in 1..=12 {
+            results.push(HeadlessTestResult {
+                suite_name: "SuiteA".to_string(),
+                test_name: format!("Test{}", i),
+                state: if i <= 2 {
+                    TestState::Passed
+                } else {
+                    TestState::Failed
+                },
+                cycles: None,
+                time_us: None,
+            });
+        }
+        let summary = format_sil_summary(&results);
+        assert!(summary.contains("**Tests Run:** 12"));
+        assert!(summary.contains("**Succeeded:** 2"));
+        assert!(summary.contains("#### Failing Tests"));
+        assert!(!summary.contains("*Showing first 10 of 10 failing tests:*")); // Exactly 10 failed, so no truncation text
+
+        // Add one more failure to make it 11 failed
+        results.push(HeadlessTestResult {
+            suite_name: "SuiteA".to_string(),
+            test_name: "Test13".to_string(),
+            state: TestState::Failed,
+            cycles: None,
+            time_us: None,
+        });
+        let summary2 = format_sil_summary(&results);
+        assert!(summary2.contains("*Showing first 10 of 11 failing tests:*"));
+    }
 }

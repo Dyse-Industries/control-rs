@@ -1,5 +1,17 @@
 //! Interactive Terminal User Interface (TUI) for hardware-in-the-loop (HIL) testing.
 //! Allows running, stopping, and filtering tests, as well as modifying settings dynamically.
+//! 
+//! 
+//! TODO:
+//!   - The TUI does not highlight suites so the selected option disappears
+//!     when the selection is on a suite label. 
+//!     - Make the suite labels highlight when selected
+//!     - Make each suite collapsable (when the user presses enter while a 
+//!       suite is highlighted).
+//!   - The TUI does not scroll with the selection, it makes it impossible to
+//!     see which test/suite/setting is selected.
+//!   - Settings are not binary, the user should be able to enter ascii from the
+//!     TUI.
 
 use std::io::stdout;
 use std::time::Duration;
@@ -53,6 +65,8 @@ struct SuiteItem {
     tests: Vec<TestItem>,
     /// Config settings inside this suite.
     settings: Vec<SettingItem>,
+    /// Whether the suite is collapsed in the TUI view.
+    collapsed: bool,
 }
 
 /// State of the interactive TUI application.
@@ -77,6 +91,12 @@ struct AppState {
     link_info: String,
     /// Whether initial test discovery has finished.
     discovery_complete: bool,
+    /// Whether the user is currently editing a setting value.
+    editing_setting: Option<(u16, u16)>,
+    /// Input buffer for the setting value.
+    setting_input: String,
+    /// State for the stateful test/settings list widget.
+    list_state: ListState,
 }
 
 impl AppState {
@@ -93,6 +113,9 @@ impl AppState {
             target_info: "QEMU Cortex-M7 (MPS2-AN500)".to_string(),
             link_info: "Semihosting (Interactive)".to_string(),
             discovery_complete: false,
+            editing_setting: None,
+            setting_input: String::new(),
+            list_state: ListState::default(),
         }
     }
 
@@ -127,9 +150,14 @@ impl AppState {
             }
 
             flat.push(FlatItem::SuiteHeader {
-                _suite_id: s_idx as u16,
+                suite_id: s_idx as u16,
                 name: suite.name.clone(),
+                collapsed: suite.collapsed,
             });
+
+            if suite.collapsed && !self.is_filtering {
+                continue;
+            }
 
             for (t_idx, test) in suite.tests.iter().enumerate() {
                 if self.is_filtering
@@ -175,6 +203,7 @@ impl AppState {
                         name: String::new(),
                         tests: Vec::new(),
                         settings: Vec::new(),
+                        collapsed: false,
                     });
                 }
                 self.suites[id].name = name.to_string();
@@ -322,6 +351,50 @@ impl AppState {
                 }
                 _ => {}
             }
+        } else if let Some((suite_id, setting_id)) = self.editing_setting {
+            match key_code {
+                KeyCode::Char(c) => {
+                    if c.is_ascii_digit() {
+                        self.setting_input.push(c);
+                    }
+                }
+                KeyCode::Backspace => {
+                    self.setting_input.pop();
+                }
+                KeyCode::Esc => {
+                    self.editing_setting = None;
+                    self.setting_input.clear();
+                }
+                KeyCode::Enter => {
+                    let s_idx = suite_id as usize;
+                    let set_idx = setting_id as usize;
+                    if s_idx < self.suites.len() && set_idx < self.suites[s_idx].settings.len() {
+                        let setting_item = &self.suites[s_idx].settings[set_idx];
+                        let parsed = match setting_item.value {
+                            SettingValue::U32(_) => self.setting_input.parse::<u32>().map(SettingValue::U32),
+                            SettingValue::U8(_) => self.setting_input.parse::<u8>().map(SettingValue::U8),
+                        };
+                        match parsed {
+                            Ok(val) => {
+                                cmd_tx.push(Command::SetSetting {
+                                    suite_id,
+                                    setting_id,
+                                    value: val,
+                                });
+                            }
+                            Err(_) => {
+                                self.add_log(format!(
+                                    "[Host] Failed to parse value '{}' for setting '{}'",
+                                    self.setting_input, setting_item.name
+                                ));
+                            }
+                        }
+                    }
+                    self.editing_setting = None;
+                    self.setting_input.clear();
+                }
+                _ => {}
+            }
         } else {
             match key_code {
                 KeyCode::Char('q') => {
@@ -373,53 +446,51 @@ impl AppState {
                 }
                 KeyCode::Enter => {
                     let flat_items = self.get_flat_items();
-                    if let Some(item) = flat_items.get(self.selected_item_idx) {
-                        match item {
-                            FlatItem::Test {
-                                suite_id, test_id, ..
-                            } => {
-                                if self.current_running.is_none() {
-                                    cmd_tx.push(Command::RunExecutable {
-                                        suite_id: *suite_id,
-                                        test_id: *test_id,
-                                    });
-                                }
-                            }
-                            FlatItem::Setting {
-                                suite_id,
-                                setting_id,
-                                item,
-                            } => {
-                                // Simple toggler for setting values
-                                let next_val = match item.value {
-                                    SettingValue::U32(v) => {
-                                        SettingValue::U32(if v == 1000 {
-                                            5000
-                                        } else {
-                                            1000
-                                        })
-                                    }
-                                    SettingValue::U8(v) => {
-                                        SettingValue::U8(if v == 3 {
-                                            5
-                                        } else {
-                                            3
-                                        })
-                                    }
-                                };
-                                cmd_tx.push(Command::SetSetting {
-                                    suite_id: *suite_id,
-                                    setting_id: *setting_id,
-                                    value: next_val,
+                    let matched_item = flat_items.get(self.selected_item_idx).map(|item| match item {
+                        FlatItem::Test { suite_id, test_id, .. } => {
+                            (Some((*suite_id, *test_id)), None, None)
+                        }
+                        FlatItem::Setting { suite_id, setting_id, item } => {
+                            (None, Some((*suite_id, *setting_id, item.value)), None)
+                        }
+                        FlatItem::SuiteHeader { suite_id, .. } => {
+                            (None, None, Some(*suite_id))
+                        }
+                    });
+
+                    drop(flat_items);
+
+                    if let Some((run_test, edit_setting, toggle_suite)) = matched_item {
+                        if let Some((suite_id, test_id)) = run_test {
+                            if self.current_running.is_none() {
+                                cmd_tx.push(Command::RunExecutable {
+                                    suite_id,
+                                    test_id,
                                 });
                             }
-                            FlatItem::SuiteHeader { .. } => {}
+                        } else if let Some((suite_id, setting_id, value)) = edit_setting {
+                            self.editing_setting = Some((suite_id, setting_id));
+                            self.setting_input = match value {
+                                SettingValue::U32(v) => v.to_string(),
+                                SettingValue::U8(v) => v.to_string(),
+                            };
+                        } else if let Some(suite_id) = toggle_suite {
+                            let s_idx = suite_id as usize;
+                            if s_idx < self.suites.len() {
+                                self.suites[s_idx].collapsed = !self.suites[s_idx].collapsed;
+                            }
                         }
                     }
                 }
                 _ => {}
             }
         }
+
+        let flat_len = self.get_flat_items().len();
+        if flat_len > 0 && self.selected_item_idx >= flat_len {
+            self.selected_item_idx = flat_len - 1;
+        }
+
         exit_tui
     }
 }
@@ -429,9 +500,11 @@ enum FlatItem<'a> {
     /// A header for a test suite.
     SuiteHeader {
         /// Suite ID.
-        _suite_id: u16,
+        suite_id: u16,
         /// Suite name.
         name: String,
+        /// Whether the suite is collapsed.
+        collapsed: bool,
     },
     /// A configuration setting.
     Setting {
@@ -502,7 +575,7 @@ fn run_tui_loop(
 
     while !exit_tui {
         // Draw TUI
-        terminal.draw(|f| draw_ui(f, &state))?;
+        terminal.draw(|f| draw_ui(f, &mut state))?;
 
         // Periodically retry ListSuites if discovery has not completed
         if !state.discovery_complete
@@ -581,7 +654,7 @@ fn run_tui_loop(
 }
 
 /// Renders the entire terminal user interface layout.
-fn draw_ui(f: &mut ratatui::Frame<'_>, state: &AppState) {
+fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -636,14 +709,16 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &AppState) {
             };
 
             match item {
-                FlatItem::SuiteHeader { name, .. } => {
-                    let text = format!("▼ {name}");
+                FlatItem::SuiteHeader { name, collapsed, .. } => {
+                    let icon = if *collapsed { "►" } else { "▼" };
+                    let text = format!("{icon} {name}");
                     ListItem::new(Line::from(Span::styled(
                         text,
                         Style::default()
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD),
                     )))
+                    .style(style)
                 }
                 FlatItem::Test { item, .. } => {
                     let symbol = match item.state {
@@ -672,10 +747,15 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &AppState) {
                     }
                     ListItem::new(Line::from(line_spans)).style(style)
                 }
-                FlatItem::Setting { item, .. } => {
-                    let val_str = match item.value {
-                        SettingValue::U32(v) => format!("{v}"),
-                        SettingValue::U8(v) => format!("{v}"),
+                FlatItem::Setting { suite_id, setting_id, item } => {
+                    let is_editing = state.editing_setting == Some((*suite_id, *setting_id));
+                    let val_str = if is_editing {
+                        format!("{}█", state.setting_input)
+                    } else {
+                        match item.value {
+                            SettingValue::U32(v) => format!("{v}"),
+                            SettingValue::U8(v) => format!("{v}"),
+                        }
                     };
                     ListItem::new(Line::from(vec![
                         Span::raw("  ⚙  "),
@@ -696,7 +776,8 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &AppState) {
             .borders(Borders::ALL)
             .title(" Test Suites & Config Settings "),
     );
-    f.render_widget(list, mid_chunks[0]);
+    state.list_state.select(Some(state.selected_item_idx));
+    f.render_stateful_widget(list, mid_chunks[0], &mut state.list_state);
 
     // 3. Render Logs
     let log_items: Vec<ListItem<'_>> = state
@@ -732,8 +813,20 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &AppState) {
             " FILTER QUERY: {} | Press Enter/Esc to finish",
             state.filter_query
         )
+    } else if let Some((suite_id, setting_id)) = state.editing_setting {
+        let s_idx = suite_id as usize;
+        let set_idx = setting_id as usize;
+        let setting_name = if s_idx < state.suites.len() && set_idx < state.suites[s_idx].settings.len() {
+            &state.suites[s_idx].settings[set_idx].name
+        } else {
+            "Setting"
+        };
+        format!(
+            " EDIT SETTING '{}': {}█ | Press Enter to save, Esc to cancel",
+            setting_name, state.setting_input
+        )
     } else {
-        "(r)un all | (s)top execution | (f)ilter tests | (Enter) toggle/run | (q)uit".to_string()
+        "(r)un all | (s)top execution | (f)ilter tests | (Enter) edit/run/toggle | (q)uit".to_string()
     };
     let footer = Paragraph::new(footer_text).block(
         Block::default()
@@ -1158,7 +1251,7 @@ mod tests {
     }
 
     #[test]
-    fn test_setting_value_toggles() {
+    fn test_setting_value_editing() {
         let mut state = AppState::new();
         let mut cmd_tx = Vec::new();
 
@@ -1194,7 +1287,23 @@ mod tests {
         // selected_item_idx = 0 is SuiteHeader
         // selected_item_idx = 1 is setting_u8
         state.selected_item_idx = 1;
+
+        // Enter edit mode
         state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert_eq!(state.editing_setting, Some((0, 0)));
+        assert_eq!(state.setting_input, "3");
+
+        // Backspace to clear it
+        state.handle_key(KeyCode::Backspace, &mut cmd_tx);
+        assert_eq!(state.setting_input, "");
+
+        // Type '5'
+        state.handle_key(KeyCode::Char('5'), &mut cmd_tx);
+        assert_eq!(state.setting_input, "5");
+
+        // Press Enter to submit
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert_eq!(state.editing_setting, None);
         assert_eq!(cmd_tx.len(), 1);
         assert!(matches!(
             cmd_tx[0],
@@ -1208,16 +1317,83 @@ mod tests {
 
         // selected_item_idx = 2 is setting_u32
         state.selected_item_idx = 2;
+        // Enter edit mode
         state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert_eq!(state.editing_setting, Some((0, 1)));
+        assert_eq!(state.setting_input, "1000");
+
+        // Type '0' to make it '10000'
+        state.handle_key(KeyCode::Char('0'), &mut cmd_tx);
+        assert_eq!(state.setting_input, "10000");
+
+        // Press Enter to submit
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert_eq!(state.editing_setting, None);
         assert_eq!(cmd_tx.len(), 1);
         assert!(matches!(
             cmd_tx[0],
             Command::SetSetting {
                 suite_id: 0,
                 setting_id: 1,
-                value: SettingValue::U32(5000)
+                value: SettingValue::U32(10000)
             }
         ));
+    }
+
+    #[test]
+    fn test_suite_collapsible() {
+        let mut state = AppState::new();
+        let mut cmd_tx = Vec::new();
+
+        state.handle_telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite",
+                test_count: 2,
+                setting_count: 0,
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "test0",
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 1,
+                name: "test1",
+            },
+            &mut cmd_tx,
+        );
+        state.handle_telemetry(Telemetry::DiscoveryComplete, &mut cmd_tx);
+
+        // Initially 3 items: 1 header, 2 tests
+        assert_eq!(state.get_flat_items().len(), 3);
+
+        // Select suite header (idx = 0) and press Enter to collapse
+        state.selected_item_idx = 0;
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+
+        assert!(state.suites[0].collapsed);
+        // Only 1 item now: header
+        assert_eq!(state.get_flat_items().len(), 1);
+
+        // Clamping selected_item_idx when list is smaller
+        state.selected_item_idx = 2; // out of bounds now
+        state.handle_key(KeyCode::Char('f'), &mut cmd_tx); // enters filtering, should clamp
+        state.handle_key(KeyCode::Esc, &mut cmd_tx);       // exits filtering
+        assert_eq!(state.selected_item_idx, 0);
+
+        // Press Enter to expand again
+        state.selected_item_idx = 0;
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert!(!state.suites[0].collapsed);
+        assert_eq!(state.get_flat_items().len(), 3);
     }
 
     #[test]
