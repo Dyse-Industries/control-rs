@@ -1,7 +1,7 @@
 //! Utility functions for HIL testing and tracking metrics.
 #![allow(dead_code)]
 
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "stack-paint"))]
 #[inline(always)]
 pub fn get_sp() -> usize {
     let sp: usize;
@@ -12,25 +12,23 @@ pub fn get_sp() -> usize {
 }
 
 /// Paints the stack region with a sentinel byte sequence (0xCDCD_CDCD) from the bottom of the stack
-/// up to a safety margin below the specified stack pointer.
+/// up to the current stack pointer.
 ///
 /// # Safety
 /// This function directly manipulates the stack memory region and must only be called in a controlled,
 /// single-threaded context during the test setup phase.
-#[cfg(target_os = "none")]
-pub unsafe fn paint_stack(sp: usize) {
+#[cfg(all(target_os = "none", feature = "stack-paint"))]
+pub unsafe fn paint_stack() {
     unsafe extern "C" {
         static mut _stack_end: u32;
     }
 
     let stack_end_ptr = core::ptr::addr_of!(_stack_end) as usize;
+    let sp = get_sp();
 
-    // Safety margin to prevent overwriting active stack frames of the caller
-    let margin = 32;
-    if sp > stack_end_ptr + margin {
-        let paint_limit = sp - margin;
+    if sp > stack_end_ptr {
         let mut ptr = stack_end_ptr as *mut u32;
-        let limit_ptr = paint_limit as *mut u32;
+        let limit_ptr = sp as *mut u32;
 
         while ptr < limit_ptr {
             unsafe {
@@ -46,7 +44,7 @@ pub unsafe fn paint_stack(sp: usize) {
 ///
 /// # Safety
 /// This function reads raw stack memory and relies on valid linker symbol addresses.
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", feature = "stack-paint"))]
 pub unsafe fn scan_stack(sp: usize) -> u32 {
     unsafe extern "C" {
         static mut _stack_end: u32;

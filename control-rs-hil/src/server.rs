@@ -223,11 +223,11 @@ where
         // Record start time before painting the stack to clean any stack footprint from the clock call
         let start_time_us = self.clock.now_us();
 
-        #[cfg(target_os = "none")]
+        #[cfg(all(target_os = "none", feature = "stack-paint"))]
         let (elapsed_cycles, elapsed_stack) = cortex_m::interrupt::free(|_| {
             let sp_before = crate::util::get_sp();
             unsafe {
-                crate::util::paint_stack(sp_before);
+                crate::util::paint_stack();
             }
             let start_cycles = read_cycle_counter();
             (exec.test_fn)();
@@ -236,7 +236,7 @@ where
             (end_cycles.saturating_sub(start_cycles), elapsed_stack)
         });
 
-        #[cfg(not(target_os = "none"))]
+        #[cfg(not(all(target_os = "none", feature = "stack-paint")))]
         let (elapsed_cycles, elapsed_stack) = {
             let start_cycles = read_cycle_counter();
             (exec.test_fn)();
