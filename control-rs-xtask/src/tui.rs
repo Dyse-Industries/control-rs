@@ -13,17 +13,17 @@ use crossterm::{
     event::{self, Event, KeyCode},
     execute,
     terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen,
+        LeaveAlternateScreen,
     },
 };
 use ratatui::{
-    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    Terminal,
 };
 
 use crate::bridge::{BridgeMessage, QemuBridge, Target};
@@ -1477,7 +1477,7 @@ mod tests {
         state.handle_telemetry(
             Telemetry::TargetPanic {
                 message: "OOM",
-                file: "main.rs",
+                file: "arm-cortex-m.rs",
                 line: 10,
             },
             &mut cmd_tx,

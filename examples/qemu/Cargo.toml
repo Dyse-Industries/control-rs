@@ -24,12 +24,12 @@ riscv-semihosting = "0.1"
 
 [[bin]]
 name = "control-rs-qemu-arm"
-path = "src/main.rs"
+path = "src/arm-cortex-m.rs"
 test = false
 
 [[bin]]
 name = "control-rs-qemu-riscv"
-path = "src/riscv.rs"
+path = "src/risc-v.rs"
 test = false
 
 [workspace]
