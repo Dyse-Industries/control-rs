@@ -9,6 +9,9 @@ readme = "README.md"
 keywords = ["embedded", "control-systems", "hil", "testing"]
 categories = ["embedded", "no-std"]
 
+[lints]
+workspace = true
+
 [lib]
 proc-macro = true
 

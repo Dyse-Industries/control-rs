@@ -9,6 +9,9 @@ readme = "README.md"
 keywords = ["embedded", "control-systems", "hil", "testing"]
 categories = ["embedded", "no-std"]
 
+[lints]
+workspace = true
+
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 postcard = { version = "1.0", default-features = false }
@@ -17,4 +20,3 @@ control-rs-macros = { path = "../control-rs-macros" }
 [features]
 default = ["stack-paint"]
 stack-paint = []
-

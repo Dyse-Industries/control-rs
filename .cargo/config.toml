@@ -1,10 +1,18 @@
 [alias]
+
+# Development tools
 xtask = ["run", "--package", "control-rs-xtask", "--"]
+
+# Continuous Integration
 ci = ["xtask", "ci"]
-clippy-json = ["clippy", "--workspace", "--message-format=json", "--", "-D", "warnings"]
+# Interactive TUI
+tui = ["xtask", "tui"]
 
 # HIL Test Infrastructure & Target Execution Aliases
-qemu = ["xtask", "hil-tui", "qemu"]
-teensy = ["xtask", "hil-tui", "teensy"]
+qemu = ["xtask", "tui", "qemu"]
+teensy = ["xtask", "tui", "teensy"]
 ci-qemu = ["xtask", "ci", "qemu"]
 ci-teensy = ["xtask", "ci", "teensy"]
+
+# Clippy Helper
+clippy-json = ["clippy", "--workspace", "--message-format=json", "--", "-D", "warnings"]

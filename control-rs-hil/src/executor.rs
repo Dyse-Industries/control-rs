@@ -5,7 +5,7 @@
 
 /// Abstraction over hardware-specific test execution.
 pub trait TestExecutor {
-    /// Executes a test function, measuring and returning (elapsed_cycles, stack_peak_bytes).
+    /// Executes a test function, measuring and returning (`elapsed_cycles`, `stack_peak_bytes`).
     fn execute(&self, test_fn: fn()) -> (u64, u32);
 }
 

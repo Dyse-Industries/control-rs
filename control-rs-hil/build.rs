@@ -1,3 +1,8 @@
+//! Build script for control-rs-hil crate.
+//! Generates custom linker scripts for the HIL test suite execution.
+
+#![allow(clippy::unwrap_used)]
+
 use std::env;
 use std::fs::File;
 use std::io::Write;

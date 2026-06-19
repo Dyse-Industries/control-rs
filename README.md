@@ -54,9 +54,9 @@ flowchart LR
     classDef loop fill:#311042,stroke:#d946ef,stroke-width:2px,color:#fdf4ff
 ```
 
-### The Live SysId Loop
+### The Live System Identification Loop
 
-Instead of performing offline system identification—logging data, extracting
+Instead of performing offline system identification, logging data, extracting
 files, and playing "data archaeologist" days later—`control-rs` primes
 developers to run **live parameter estimation loops** directly on target
 silicon:

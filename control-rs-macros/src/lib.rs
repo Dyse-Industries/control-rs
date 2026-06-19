@@ -1,10 +1,17 @@
-extern crate proc_macro;
+//! Procedural macros for the control-rs HIL testing framework.
+//! Provides attributes like `#[hil_suite]` and `#[hil_setup]` to declare HIL test suites and setup functions.
 
+#![allow(unused_extern_crates, clippy::uninlined_format_args)]
+
+extern crate proc_macro;
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{
     Item, ItemFn, ItemMod, ItemStatic, Type, parse_macro_input, parse_quote,
 };
+
+/// Type alias for a test function's identifier and its description.
+type TestFnInfo = (syn::Ident, String);
 
 /// Checks if the given type matches the target type name.
 fn is_type_name(ty: &Type, name: &str) -> bool {
@@ -49,6 +56,122 @@ fn extract_doc_string(attrs: &[syn::Attribute]) -> String {
     }
 }
 
+/// Checks if a given `syn::Type` is a supported primitive setting.
+/// Returns the corresponding Atomic wrapper type name if matched.
+fn get_atomic_wrapper_name(ty: &syn::Type) -> Option<&'static str> {
+    let supported_types = [
+        ("u8", "AtomicU8Setting"),
+        ("u16", "AtomicU16Setting"),
+        ("u32", "AtomicU32Setting"),
+        ("u64", "AtomicU64Setting"),
+        ("i8", "AtomicI8Setting"),
+        ("i32", "AtomicI32Setting"),
+        ("bool", "AtomicBoolSetting"),
+        ("f32", "AtomicF32Setting"),
+    ];
+
+    for (prim_type, atomic_type_str) in supported_types {
+        if is_type_name(ty, prim_type) {
+            return Some(atomic_type_str);
+        }
+    }
+
+    None
+}
+
+/// If the static item matches a supported atomic setting type (u32 or u8),
+/// mutates it into the corresponding `AtomicSetting` static definition and returns its identifier.
+fn process_static_setting(item_static: &mut ItemStatic) -> Option<syn::Ident> {
+    // 1. Search phase: Delegate to the helper function
+    let atomic_type_str_option = get_atomic_wrapper_name(&item_static.ty);
+
+    // 2. Mutation phase: If matched, clone what we need and overwrite
+    if let Some(atomic_type_str) = atomic_type_str_option {
+        let name_ident = item_static.ident.clone();
+        let init_expr = item_static.expr.clone();
+        let attrs = item_static.attrs.clone();
+
+        let setting_doc = extract_doc_string(&attrs);
+        let atomic_type_ident = format_ident!("{}", atomic_type_str);
+
+        let new_static: ItemStatic = parse_quote! {
+            #(#attrs)*
+            pub static #name_ident: ::control_rs_hil::settings::#atomic_type_ident =
+                ::control_rs_hil::settings::#atomic_type_ident::new(stringify!(#name_ident), #setting_doc, #init_expr);
+        };
+
+        *item_static = new_static;
+
+        return Some(name_ident);
+    }
+
+    None
+}
+
+/// If the function is a test executable (does not start with `_`),
+/// extracts its identifier and doc comments.
+fn process_test_fn(item_fn: &ItemFn) -> Option<TestFnInfo> {
+    let fn_name = &item_fn.sig.ident;
+    let fn_name_str = fn_name.to_string();
+    if fn_name_str.starts_with('_') {
+        None
+    } else {
+        let test_doc = extract_doc_string(&item_fn.attrs);
+        Some((fn_name.clone(), test_doc))
+    }
+}
+
+/// Generates the static descriptor items to append to the module.
+fn generate_suite_descriptors(
+    suite_name: &str,
+    suite_doc: &str,
+    tests: &[TestFnInfo],
+    settings: &[syn::Ident],
+) -> [Item; 4] {
+    let test_descriptors = tests.iter().map(|(t, doc)| {
+        quote! {
+            ::control_rs_hil::ExecDescriptor {
+                name: stringify!(#t),
+                description: #doc,
+                test_fn: #t,
+            }
+        }
+    });
+
+    let setting_ptrs = settings.iter().map(|s| {
+        quote! {
+            &#s
+        }
+    });
+
+    [
+        parse_quote! {
+            static EXECUTABLES: &[::control_rs_hil::ExecDescriptor] = &[
+                #(#test_descriptors),*
+            ];
+        },
+        parse_quote! {
+            static SETTINGS: &[&dyn ::control_rs_hil::Setting] = &[
+                #(#setting_ptrs),*
+            ];
+        },
+        parse_quote! {
+            static SUITE_DESCRIPTOR: ::control_rs_hil::SuiteDescriptor = ::control_rs_hil::SuiteDescriptor {
+                name: #suite_name,
+                description: #suite_doc,
+                executables: EXECUTABLES,
+                settings: SETTINGS,
+            };
+        },
+        parse_quote! {
+            /// Pointer to the suite descriptor, linked into the HIL test suites section.
+            #[unsafe(link_section = ".hil_test_suites")]
+            #[used]
+            pub static SUITE_DESCRIPTOR_PTR: &::control_rs_hil::SuiteDescriptor = &SUITE_DESCRIPTOR;
+        },
+    ]
+}
+
 /// Attribute macro for declaring a HIL test suite.
 ///
 /// Converts statics to atomic settings and registers functions as test executables.
@@ -62,87 +185,28 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut settings = Vec::new();
 
     if let Some((_, ref mut items)) = item_mod.content {
-        for item in items.iter_mut() {
-            match item {
+        for inner_item in items.iter_mut() {
+            match inner_item {
                 Item::Static(item_static) => {
-                    let name_ident = &item_static.ident;
-                    let init_expr = &item_static.expr;
-                    let attrs = &item_static.attrs;
-                    let setting_doc = extract_doc_string(attrs);
-
-                    if is_type_name(&item_static.ty, "u32") {
-                        settings.push(name_ident.clone());
-                        let new_static: ItemStatic = parse_quote! {
-                            #(#attrs)*
-                            pub static #name_ident: ::control_rs_hil::settings::AtomicU32Setting =
-                                ::control_rs_hil::settings::AtomicU32Setting::new(stringify!(#name_ident), #setting_doc, #init_expr);
-                        };
-                        *item_static = new_static;
-                    } else if is_type_name(&item_static.ty, "u8") {
-                        settings.push(name_ident.clone());
-                        let new_static: ItemStatic = parse_quote! {
-                            #(#attrs)*
-                            pub static #name_ident: ::control_rs_hil::settings::AtomicU8Setting =
-                                ::control_rs_hil::settings::AtomicU8Setting::new(stringify!(#name_ident), #setting_doc, #init_expr);
-                        };
-                        *item_static = new_static;
+                    if let Some(setting) = process_static_setting(item_static) {
+                        settings.push(setting);
                     }
                 }
                 Item::Fn(item_fn) => {
-                    let fn_name = &item_fn.sig.ident;
-                    let fn_name_str = fn_name.to_string();
-                    if !fn_name_str.starts_with('_') {
-                        let test_doc = extract_doc_string(&item_fn.attrs);
-                        tests.push((fn_name.clone(), test_doc));
+                    if let Some(test) = process_test_fn(item_fn) {
+                        tests.push(test);
                     }
                 }
                 _ => {}
             }
         }
 
-        let test_descriptors = tests.iter().map(|(t, doc)| {
-            quote! {
-                ::control_rs_hil::ExecDescriptor {
-                    name: stringify!(#t),
-                    description: #doc,
-                    test_fn: #t,
-                }
-            }
-        });
-
-        let setting_ptrs = settings.iter().map(|s| {
-            quote! {
-                &#s
-            }
-        });
-
-        let suite_desc_code: [Item; 4] = [
-            parse_quote! {
-                static EXECUTABLES: &[::control_rs_hil::ExecDescriptor] = &[
-                    #(#test_descriptors),*
-                ];
-            },
-            parse_quote! {
-                static SETTINGS: &[&dyn ::control_rs_hil::Setting] = &[
-                    #(#setting_ptrs),*
-                ];
-            },
-            parse_quote! {
-                static SUITE_DESCRIPTOR: ::control_rs_hil::SuiteDescriptor = ::control_rs_hil::SuiteDescriptor {
-                    name: #suite_name,
-                    description: #suite_doc,
-                    executables: EXECUTABLES,
-                    settings: SETTINGS,
-                };
-            },
-            parse_quote! {
-                /// Pointer to the suite descriptor, linked into the HIL test suites section.
-                #[unsafe(link_section = ".hil_test_suites")]
-                #[used]
-                pub static SUITE_DESCRIPTOR_PTR: &::control_rs_hil::SuiteDescriptor = &SUITE_DESCRIPTOR;
-            },
-        ];
-
+        let suite_desc_code = generate_suite_descriptors(
+            &suite_name,
+            &suite_doc,
+            &tests,
+            &settings,
+        );
         items.extend(suite_desc_code);
     }
 
@@ -165,6 +229,19 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #setup_fn
 
+        ::control_rs_macros::hil_entrypoint!(#setup_name);
+        ::control_rs_macros::hil_panic!();
+        ::control_rs_macros::hil_exception!();
+    };
+
+    TokenStream::from(expanded)
+}
+
+/// Helper macro to define the unified HIL entrypoint `main`.
+#[proc_macro]
+pub fn hil_entrypoint(input: TokenStream) -> TokenStream {
+    let setup_name = parse_macro_input!(input as syn::Ident);
+    let expanded = quote! {
         #[cfg(target_os = "none")]
         unsafe extern "Rust" {
             static __hil_test_suites_start: u8;
@@ -183,8 +260,7 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 &__hil_test_suites_end as *const u8 as *const &::control_rs_hil::SuiteDescriptor
             };
 
-            let len = (end as usize - start as usize) / ::core::mem::size_of::<&::control_rs_hil::SuiteDescriptor>();
-            let suites = unsafe { ::core::slice::from_raw_parts(start, len) };
+            let suites = unsafe { ::control_rs_hil::util::get_suites(start, end) };
 
             let context = #setup_name();
 
@@ -200,115 +276,22 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
             #[cfg(not(target_arch = "riscv32"))]
             loop {}
         }
+    };
+    TokenStream::from(expanded)
+}
 
-        // ==================== Failure Formatting Helper ====================
-        #[cfg(target_os = "none")]
-        struct FailureBufWriter<'a> {
-            buf: &'a mut [u8],
-            pos: usize,
-        }
-
-        #[cfg(target_os = "none")]
-        impl<'a> ::core::fmt::Write for FailureBufWriter<'a> {
-            fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
-                let bytes = s.as_bytes();
-                let len = bytes.len();
-                if self.pos + len > self.buf.len() {
-                    return Err(::core::fmt::Error);
-                }
-                self.buf[self.pos..self.pos + len].copy_from_slice(bytes);
-                self.pos += len;
-                Ok(())
-            }
-        }
-
-        // ==================== Unified Failure Implementation ====================
-        #[cfg(target_os = "none")]
-        unsafe fn handle_failure(msg: &str, file: &str, line: u32) -> ! {
-            #[cfg(target_arch = "arm")]
-            ::cortex_m::interrupt::disable();
-
-            #[cfg(target_arch = "riscv32")]
-            ::riscv::interrupt::disable();
-
-            let suite = ::control_rs_hil::server::CURRENT_SUITE.load(::core::sync::atomic::Ordering::SeqCst);
-            let test = ::control_rs_hil::server::CURRENT_TEST.load(::core::sync::atomic::Ordering::SeqCst);
-
-            if let (Some(sender), ptr) = (
-                ::control_rs_hil::server::PANIC_TELEMETRY_SENDER,
-                ::control_rs_hil::server::ACTIVE_COMMS_PTR,
-            ) {
-                if !ptr.is_null() {
-                    if suite >= 0 && test >= 0 {
-                        sender(
-                            ptr,
-                            &::control_rs_hil::comms::Telemetry::TestStateChange {
-                                suite_id: suite as u16,
-                                test_id: test as u16,
-                                state: ::control_rs_hil::comms::TestState::Failed,
-                            },
-                        );
-                    }
-                    sender(
-                        ptr,
-                        &::control_rs_hil::comms::Telemetry::TargetPanic {
-                            message: msg,
-                            file,
-                            line,
-                        },
-                    );
-                }
-            }
-
-            // Wait for OkToReset command from host
-            loop {
-                if let (Some(poller), ptr) = (
-                    ::control_rs_hil::server::PANIC_CMD_POLLER,
-                    ::control_rs_hil::server::ACTIVE_COMMS_PTR,
-                ) {
-                    if !ptr.is_null() {
-                        if let Some(::control_rs_hil::comms::Command::OkToReset) = poller(ptr) {
-                            break;
-                        }
-                    }
-                }
-
-                if let (Some(flusher), ptr) = (
-                    ::control_rs_hil::server::PANIC_COMMS_FLUSHER,
-                    ::control_rs_hil::server::ACTIVE_COMMS_PTR,
-                ) {
-                    if !ptr.is_null() {
-                        flusher(ptr);
-                    } else {
-                        ::core::hint::spin_loop();
-                    }
-                } else {
-                    ::core::hint::spin_loop();
-                }
-
-                // Small delay to prevent pegging the CPU too hard
-                for _ in 0..1000 {
-                    ::core::hint::spin_loop();
-                }
-            }
-
-            #[cfg(target_arch = "arm")]
-            ::cortex_m::peripheral::SCB::sys_reset();
-
-            #[cfg(target_arch = "riscv32")]
-            ::semihosting::process::exit(1);
-
-            #[cfg(not(any(target_arch = "arm", target_arch = "riscv32")))]
-            loop {}
-        }
-
+/// Helper macro to define the target HIL panic handler.
+#[proc_macro]
+pub fn hil_panic(input: TokenStream) -> TokenStream {
+    let _ = input;
+    let expanded = quote! {
         // ==================== Unified Panic Handler ====================
         #[cfg(target_os = "none")]
         #[panic_handler]
         fn panic(info: &::core::panic::PanicInfo) -> ! {
             let mut msg_buf = [0u8; 128];
             let pos = {
-                let mut writer = FailureBufWriter { buf: &mut msg_buf, pos: 0 };
+                let mut writer = ::control_rs_hil::util::FailureBufWriter { buf: &mut msg_buf, pos: 0 };
                 let _ = ::core::fmt::write(&mut writer, format_args!("{}", info.message()));
                 writer.pos
             };
@@ -318,39 +301,82 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
             let line = info.location().map_or(0, |l| l.line());
 
             unsafe {
-                handle_failure(msg, file, line);
+                ::control_rs_hil::util::handle_failure(
+                    msg,
+                    file,
+                    line,
+                    || {
+                        #[cfg(target_arch = "arm")]
+                        ::cortex_m::interrupt::disable();
+                        #[cfg(target_arch = "riscv32")]
+                        ::riscv::interrupt::disable();
+                    },
+                    || {
+                        #[cfg(target_arch = "arm")]
+                        ::cortex_m::peripheral::SCB::sys_reset();
+                        #[cfg(target_arch = "riscv32")]
+                        ::semihosting::process::exit(1);
+                        #[cfg(not(any(target_arch = "arm", target_arch = "riscv32")))]
+                        loop {}
+                    }
+                );
             }
         }
+    };
+    TokenStream::from(expanded)
+}
 
+/// Helper macro to define the target HIL trap/exception handlers.
+#[proc_macro]
+pub fn hil_exception(input: TokenStream) -> TokenStream {
+    let _ = input;
+    let expanded = quote! {
         // ==================== Unified Exception Handler Implementation ====================
-        #[cfg(target_os = "none")]
-        unsafe fn handle_exception(pc: usize, lr_or_cause: usize) -> ! {
+        #[cfg(all(target_os = "none", target_arch = "arm"))]
+        #[::cortex_m_rt::exception]
+        unsafe fn HardFault(ef: &::cortex_m_rt::ExceptionFrame) -> ! {
             let mut msg_buf = [0u8; 128];
             let pos = {
-                let mut writer = FailureBufWriter { buf: &mut msg_buf, pos: 0 };
-                #[cfg(target_arch = "arm")]
-                let _ = ::core::fmt::write(&mut writer, format_args!("HardFault at pc=0x{:08x}, lr=0x{:08x}", pc, lr_or_cause));
-                #[cfg(target_arch = "riscv32")]
-                let _ = ::core::fmt::write(&mut writer, format_args!("Exception mcause=0x{:08x}, mepc=0x{:08x}", lr_or_cause, pc));
+                let mut writer = ::control_rs_hil::util::FailureBufWriter { buf: &mut msg_buf, pos: 0 };
+                let _ = ::core::fmt::write(
+                    &mut writer,
+                    format_args!("HardFault at pc=0x{:08x}, lr=0x{:08x}", ef.pc() as usize, ef.lr() as usize),
+                );
                 writer.pos
             };
             let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("exception occurred");
 
-            handle_failure(msg, "exception_handler", 0);
-        }
-
-        #[cfg(all(target_os = "none", target_arch = "arm"))]
-        #[::cortex_m_rt::exception]
-        unsafe fn HardFault(ef: &::cortex_m_rt::ExceptionFrame) -> ! {
-            handle_exception(ef.pc() as usize, ef.lr() as usize);
+            ::control_rs_hil::util::handle_exception(
+                msg,
+                || ::cortex_m::interrupt::disable(),
+                || ::cortex_m::peripheral::SCB::sys_reset(),
+            );
         }
 
         #[cfg(all(target_os = "none", target_arch = "riscv32"))]
         #[unsafe(no_mangle)]
         unsafe fn ExceptionHandler(_ef: &mut ::riscv_rt::TrapFrame) -> ! {
-            handle_exception(::riscv::register::mepc::read(), ::riscv::register::mcause::read().bits());
+            let mut msg_buf = [0u8; 128];
+            let pos = {
+                let mut writer = ::control_rs_hil::util::FailureBufWriter { buf: &mut msg_buf, pos: 0 };
+                let _ = ::core::fmt::write(
+                    &mut writer,
+                    format_args!(
+                        "Exception mcause=0x{:08x}, mepc=0x{:08x}",
+                        ::riscv::register::mcause::read().bits(),
+                        ::riscv::register::mepc::read()
+                    ),
+                );
+                writer.pos
+            };
+            let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("exception occurred");
+
+            ::control_rs_hil::util::handle_exception(
+                msg,
+                || ::riscv::interrupt::disable(),
+                || ::semihosting::process::exit(1),
+            );
         }
     };
-
     TokenStream::from(expanded)
 }

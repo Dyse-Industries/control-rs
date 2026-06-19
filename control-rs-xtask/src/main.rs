@@ -1,23 +1,7 @@
 //! Host runner binary task entry points.
 //! Implements subcommands for CI linting, QEMU runner execution, and interactive HIL TUI.
 
-// Clippy configuration for control-rs-xtask binary.
-#![deny(
-    unused,
-    clippy::all,
-    clippy::todo,
-    clippy::style,
-    clippy::pedantic,
-    clippy::suspicious,
-    clippy::complexity,
-    clippy::unimplemented,
-    clippy::big_endian_bytes,
-    clippy::shadow_unrelated,
-    clippy::large_stack_arrays,
-    clippy::empty_structs_with_brackets,
-    missing_docs
-)]
-#![warn(rust_2018_idioms, clippy::complexity)]
+#![deny(missing_docs)]
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -74,16 +58,11 @@ fn main() {
 
     match args[1].as_str() {
         "ci" => {
-            let target_str = args
-                .get(2)
-                .map(std::string::String::as_str)
-                .unwrap_or("qemu");
+            let target_str = args.get(2).map(String::as_str).unwrap_or("qemu");
             match target_str {
                 "qemu" => {
-                    let arch_str = args
-                        .get(3)
-                        .map(std::string::String::as_str)
-                        .unwrap_or("all");
+                    let arch_str =
+                        args.get(3).map(String::as_str).unwrap_or("all");
                     match arch_str {
                         "arm" => {
                             let target = bridge::Target::QemuSemihosting {
@@ -122,18 +101,7 @@ fn main() {
                 }
             }
         }
-        "qemu" => {
-            let arch_str = args
-                .get(2)
-                .map(std::string::String::as_str)
-                .unwrap_or("arm");
-            let arch = match arch_str {
-                "riscv" => bridge::QemuArch::Riscv,
-                _ => bridge::QemuArch::Arm,
-            };
-            tasks::run_qemu(arch);
-        }
-        "hil-tui" => {
+        "tui" => {
             let target_str = args
                 .get(2)
                 .map(std::string::String::as_str)
@@ -179,8 +147,8 @@ fn print_usage_and_exit() -> ! {
     eprintln!(
         "Usage: cargo control-rs-xtask <task> [target] [port/arch] [baud]"
     );
-    eprintln!("\tTasks: ci, qemu, hil-tui");
-    eprintln!("\tTargets/Archs: qemu [arm|riscv|all], teensy [port] [baud]");
+    eprintln!("\tTasks: ci, tui [qemu|teensy]");
+    eprintln!("\tTargets: qemu [arm|riscv|all], teensy [port] [baud]");
     exit(1);
 }
 
@@ -319,7 +287,7 @@ fn run_ci_all_qemu() {
     }
 
     if !ci_success {
-        println!("\tCI pipeline failed. Check ci-report.md for details.");
+        println!("CI pipeline failed. Check ci-report.md for details.");
         exit(1);
     } else {
         println!("\tCI pipeline passed. Report written to ci-report.md.");
@@ -397,7 +365,7 @@ fn run_ci_single(target: &bridge::Target) {
 
     println!("\tHeadless SIL tests completed in {sil_time:.2}s.");
 
-    // Generate markdown report
+    // Generate Markdown report
     let report_content = utils::build_report(
         fmt_errors,
         &fmt_str,

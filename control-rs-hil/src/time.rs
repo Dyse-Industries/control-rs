@@ -3,7 +3,7 @@
 /// A trait for retrieving the current time from target hardware.
 ///
 /// Implementations of this trait encapsulate the hardware-specific details of
-/// reading timers or hardware clocks (e.g. SysTick, DWT, or TIM peripherals).
+/// reading timers or hardware clocks (e.g. `SysTick`, DWT, or TIM peripherals).
 pub trait ClientClock {
     /// Returns the current time in milliseconds.
     fn now_ms(&self) -> u32;

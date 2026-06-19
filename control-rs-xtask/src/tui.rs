@@ -27,99 +27,165 @@ use ratatui::{
 };
 
 use crate::bridge::{BridgeMessage, QemuBridge, Target};
-use control_rs_hil::comms::{Command, Telemetry, TestState};
+use control_rs_hil::comms::{Command, LogMessage, Telemetry, TestState};
 use control_rs_hil::settings::SettingValue;
 
-/// Represents a test item in the TUI list.
-struct TestItem {
-    /// Name of the test case.
-    name: String,
-    /// Description of the test case.
-    description: String,
-    /// Current execution state of the test.
-    state: TestState,
-    /// Cycles consumed by the test if it completed.
-    cycles: Option<u64>,
-    /// Duration of the test in microseconds if it completed.
-    time_us: Option<u64>,
-    /// Stack high-water mark in bytes if it completed.
-    stack_peak: Option<u32>,
-}
+type TuiTerminal = Terminal<CrosstermBackend<std::io::Stdout>>;
+type TuiResult = Result<(), Box<dyn std::error::Error>>;
+type TestIndex = (u16, u16);
 
 /// Represents a configuration setting item in the TUI list.
 struct SettingItem {
-    /// Name of the setting.
-    name: String,
     /// Description of the setting.
     description: String,
+    /// Name of the setting.
+    name: String,
     /// Value of the setting.
     value: SettingValue,
 }
 
+/// Represents a test item in the TUI list.
+struct TestItem {
+    /// Cycles consumed by the test if it completed.
+    cycles: Option<u64>,
+    /// Description of the test case.
+    description: String,
+    /// Name of the test case.
+    name: String,
+    /// Stack high-water mark in bytes if it completed.
+    stack_peak: Option<u32>,
+    /// Current execution state of the test.
+    state: TestState,
+    /// Duration of the test in microseconds if it completed.
+    time_us: Option<u64>,
+}
+
 /// Represents a test suite containing tests and settings.
 struct SuiteItem {
-    /// Name of the suite.
-    name: String,
-    /// Description of the suite.
-    description: String,
-    /// Tests inside this suite.
-    tests: Vec<TestItem>,
-    /// Config settings inside this suite.
-    settings: Vec<SettingItem>,
     /// Whether the suite is collapsed in the TUI view.
     collapsed: bool,
+    /// Description of the suite.
+    description: String,
+    /// Name of the suite.
+    name: String,
+    /// Config settings inside this suite.
+    settings: Vec<SettingItem>,
+    /// Tests inside this suite.
+    tests: Vec<TestItem>,
 }
 
 /// State of the interactive TUI application.
 struct AppState {
-    /// List of test suites.
-    suites: Vec<SuiteItem>,
     /// Buffer of console logs displayed in the log panel.
     console_logs: Vec<String>,
-    /// Index in the flattened list of tests/settings for UI navigation.
-    selected_item_idx: usize,
-    /// Queue of test indices scheduled to run.
-    run_queue: Vec<(u16, u16)>,
     /// Index of the test currently being executed.
-    current_running: Option<(u16, u16)>,
+    current_running: Option<TestIndex>,
+    /// Whether initial test discovery has finished.
+    discovery_complete: bool,
+    /// Whether the user is currently editing a setting value.
+    editing_setting: Option<TestIndex>,
     /// Active query string used to filter tests.
     filter_query: String,
     /// Whether the user is currently typing a filter.
     is_filtering: bool,
-    /// Information string about the target platform.
-    target_info: String,
     /// Information string about the communication link.
     link_info: String,
-    /// Whether initial test discovery has finished.
-    discovery_complete: bool,
-    /// Whether the user is currently editing a setting value.
-    editing_setting: Option<(u16, u16)>,
-    /// Input buffer for the setting value.
-    setting_input: String,
     /// State for the stateful test/settings list widget.
     list_state: ListState,
+    /// Queue of test indices scheduled to run.
+    run_queue: Vec<TestIndex>,
+    /// Index in the flattened list of tests/settings for UI navigation.
+    selected_item_idx: usize,
+    /// Input buffer for the setting value.
+    setting_input: String,
     /// Whether the selected item's description details modal is open.
     show_details_modal: bool,
+    /// List of test suites.
+    suites: Vec<SuiteItem>,
+    /// Information string about the target platform.
+    target_info: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ItemId {
+    Setting { setting_id: u16, suite_id: u16 },
+    SuiteHeader { suite_id: u16 },
+    Test { suite_id: u16, test_id: u16 },
+}
+
+/// Flattened item used to represent a row in the test/setting list widget.
+enum FlatItem<'a> {
+    /// A configuration setting.
+    Setting {
+        /// Reference to the setting item.
+        item: &'a SettingItem,
+        /// Setting ID.
+        setting_id: u16,
+        /// Parent suite ID.
+        suite_id: u16,
+    },
+    /// A header for a test suite.
+    SuiteHeader {
+        /// Whether the suite is collapsed.
+        collapsed: bool,
+        /// Suite name.
+        name: String,
+        /// Suite ID.
+        suite_id: u16,
+    },
+    /// A test case.
+    Test {
+        /// Reference to the test item.
+        item: &'a TestItem,
+        /// Parent suite ID.
+        suite_id: u16,
+        /// Test ID.
+        test_id: u16,
+    },
 }
 
 impl AppState {
-    /// Creates a new `AppState` with empty suites and default values.
-    fn new() -> Self {
-        Self {
-            suites: Vec::new(),
-            console_logs: Vec::new(),
-            selected_item_idx: 0,
-            run_queue: Vec::new(),
-            current_running: None,
-            filter_query: String::new(),
-            is_filtering: false,
-            target_info: "QEMU Cortex-M7 (MPS2-AN500)".to_string(),
-            link_info: "Semihosting (Interactive)".to_string(),
-            discovery_complete: false,
-            editing_setting: None,
-            setting_input: String::new(),
-            list_state: ListState::default(),
-            show_details_modal: false,
+    fn activate_selected_item(&mut self, cmd_tx: &mut Vec<Command>) {
+        let flat_items = self.get_flat_items();
+        let matched_item =
+            flat_items
+                .get(self.selected_item_idx)
+                .map(|item| match item {
+                    FlatItem::Test {
+                        suite_id, test_id, ..
+                    } => (Some((*suite_id, *test_id)), None, None),
+                    FlatItem::Setting {
+                        suite_id,
+                        setting_id,
+                        item,
+                    } => {
+                        (None, Some((*suite_id, *setting_id, item.value)), None)
+                    }
+                    FlatItem::SuiteHeader { suite_id, .. } => {
+                        (None, None, Some(*suite_id))
+                    }
+                });
+
+        drop(flat_items);
+
+        if let Some((run_test, edit_setting, toggle_suite)) = matched_item {
+            if let Some((suite_id, test_id)) = run_test {
+                if self.current_running.is_none() {
+                    cmd_tx.push(Command::RunExecutable { suite_id, test_id });
+                }
+            } else if let Some((suite_id, setting_id, value)) = edit_setting {
+                self.editing_setting = Some((suite_id, setting_id));
+                self.setting_input = match value {
+                    SettingValue::U32(v) => v.to_string(),
+                    SettingValue::U8(v) => v.to_string(),
+                };
+            } else if let Some(suite_id) = toggle_suite {
+                let s_idx = suite_id as usize;
+                if s_idx < self.suites.len() {
+                    self.suites[s_idx].collapsed =
+                        !self.suites[s_idx].collapsed;
+                }
+            }
         }
     }
 
@@ -154,9 +220,9 @@ impl AppState {
             }
 
             flat.push(FlatItem::SuiteHeader {
-                suite_id: s_idx as u16,
-                name: suite.name.clone(),
                 collapsed: suite.collapsed,
+                name: suite.name.clone(),
+                suite_id: to_u16(s_idx),
             });
 
             if suite.collapsed && !self.is_filtering {
@@ -173,9 +239,9 @@ impl AppState {
                     continue;
                 }
                 flat.push(FlatItem::Test {
-                    suite_id: s_idx as u16,
-                    test_id: t_idx as u16,
                     item: test,
+                    suite_id: to_u16(s_idx),
+                    test_id: to_u16(t_idx),
                 });
             }
 
@@ -184,172 +250,13 @@ impl AppState {
                     continue; // Skip settings when filtering tests
                 }
                 flat.push(FlatItem::Setting {
-                    suite_id: s_idx as u16,
-                    setting_id: set_idx as u16,
                     item: setting,
+                    setting_id: to_u16(set_idx),
+                    suite_id: to_u16(s_idx),
                 });
             }
         }
         flat
-    }
-
-    /// Handles incoming telemetry messages from the target and updates the application state.
-    fn handle_telemetry(
-        &mut self,
-        telemetry: Telemetry<'static>,
-        cmd_tx: &mut Vec<Command>,
-    ) {
-        match telemetry {
-            Telemetry::SuiteInfo {
-                suite_id,
-                name,
-                description,
-                ..
-            } => {
-                let id = suite_id as usize;
-                while self.suites.len() <= id {
-                    self.suites.push(SuiteItem {
-                        name: String::new(),
-                        description: String::new(),
-                        tests: Vec::new(),
-                        settings: Vec::new(),
-                        collapsed: false,
-                    });
-                }
-                self.suites[id].name = name.to_string();
-                self.suites[id].description = description.to_string();
-            }
-            Telemetry::TestInfo {
-                suite_id,
-                test_id,
-                name,
-                description,
-            } => {
-                let s_id = suite_id as usize;
-                let t_id = test_id as usize;
-                while self.suites[s_id].tests.len() <= t_id {
-                    self.suites[s_id].tests.push(TestItem {
-                        name: String::new(),
-                        description: String::new(),
-                        state: TestState::Pending,
-                        cycles: None,
-                        time_us: None,
-                        stack_peak: None,
-                    });
-                }
-                self.suites[s_id].tests[t_id].name = name.to_string();
-                self.suites[s_id].tests[t_id].description =
-                    description.to_string();
-            }
-            Telemetry::SettingInfo {
-                suite_id,
-                setting_id,
-                name,
-                description,
-                value,
-            } => {
-                let s_id = suite_id as usize;
-                let set_id = setting_id as usize;
-                while self.suites[s_id].settings.len() <= set_id {
-                    self.suites[s_id].settings.push(SettingItem {
-                        name: String::new(),
-                        description: String::new(),
-                        value: SettingValue::U8(0),
-                    });
-                }
-                self.suites[s_id].settings[set_id].name = name.to_string();
-                self.suites[s_id].settings[set_id].description =
-                    description.to_string();
-                self.suites[s_id].settings[set_id].value = value;
-            }
-            Telemetry::DiscoveryComplete => {
-                self.add_log("[Host] Discovery complete.".to_string());
-                self.discovery_complete = true;
-            }
-            Telemetry::TestStateChange {
-                suite_id,
-                test_id,
-                state: new_state,
-            } => {
-                let s_id = suite_id as usize;
-                let t_id = test_id as usize;
-                self.suites[s_id].tests[t_id].state = new_state;
-
-                if new_state == TestState::Running {
-                    self.current_running = Some((suite_id, test_id));
-                } else {
-                    self.current_running = None;
-                    // Trigger next test in queue if any
-                    if !self.run_queue.is_empty() {
-                        let (next_s, next_t) = self.run_queue.remove(0);
-                        cmd_tx.push(Command::RunExecutable {
-                            suite_id: next_s,
-                            test_id: next_t,
-                        });
-                    }
-                }
-            }
-            Telemetry::MetricReport {
-                suite_id,
-                test_id,
-                cycles,
-                time_us,
-                stack_peak,
-            } => {
-                let s_id = suite_id as usize;
-                let t_id = test_id as usize;
-                self.suites[s_id].tests[t_id].cycles = Some(cycles);
-                self.suites[s_id].tests[t_id].time_us = Some(time_us);
-                self.suites[s_id].tests[t_id].stack_peak = Some(stack_peak);
-                self.add_log(format!(
-                    "[PASS] {}::{} ({} cycles, {}us, {}B stk)",
-                    self.suites[s_id].name,
-                    self.suites[s_id].tests[t_id].name,
-                    cycles,
-                    time_us,
-                    stack_peak
-                ));
-            }
-            Telemetry::Log(log) => {
-                self.add_log(format!("[LOG] {}", log.payload));
-            }
-            Telemetry::TargetPanic {
-                message,
-                file,
-                line,
-            } => {
-                self.add_log(format!(
-                    "[PANIC] Target crashed: '{}' at {}:{}",
-                    message, file, line
-                ));
-                if let Some((s_id, t_id)) = self.current_running {
-                    let s_idx = s_id as usize;
-                    let t_idx = t_id as usize;
-                    if s_idx < self.suites.len()
-                        && t_idx < self.suites[s_idx].tests.len()
-                    {
-                        self.suites[s_idx].tests[t_idx].state =
-                            TestState::Failed;
-                    }
-                }
-                self.current_running = None;
-                self.run_queue.clear();
-            }
-        }
-    }
-
-    /// Handles the target process exit signal, logging the status and clearing the execution queues.
-    fn handle_target_exit(&mut self, status: std::process::ExitStatus) {
-        if self.current_running.is_some() || !self.run_queue.is_empty() {
-            self.add_log(format!(
-                "[Host] Target process exited unexpectedly: {}",
-                status
-            ));
-        } else {
-            self.add_log(format!("[Host] Target process exited: {}", status));
-        }
-        self.current_running = None;
-        self.run_queue.clear();
     }
 
     /// Processes keyboard inputs and returns whether the application should exit.
@@ -365,460 +272,513 @@ impl AppState {
 
         let old_selected_id = {
             let flat_items = self.get_flat_items();
-            flat_items.get(self.selected_item_idx).map(|item| item.id())
+            flat_items.get(self.selected_item_idx).map(FlatItem::id)
         };
 
         let mut exit_tui = false;
         if self.is_filtering {
-            match key_code {
-                KeyCode::Char(c) => {
-                    self.filter_query.push(c);
-                    self.selected_item_idx = 0;
-                }
-                KeyCode::Backspace => {
-                    self.filter_query.pop();
-                    self.selected_item_idx = 0;
-                }
-                KeyCode::Esc | KeyCode::Enter => {
-                    self.is_filtering = false;
-                }
-                _ => {}
-            }
-        } else if let Some((suite_id, setting_id)) = self.editing_setting {
-            match key_code {
-                KeyCode::Char(c) => {
-                    if c.is_ascii_digit() {
-                        self.setting_input.push(c);
-                    }
-                }
-                KeyCode::Backspace => {
-                    self.setting_input.pop();
-                }
-                KeyCode::Esc => {
-                    self.editing_setting = None;
-                    self.setting_input.clear();
-                }
-                KeyCode::Enter => {
-                    let s_idx = suite_id as usize;
-                    let set_idx = setting_id as usize;
-                    if s_idx < self.suites.len()
-                        && set_idx < self.suites[s_idx].settings.len()
-                    {
-                        let setting_item =
-                            &self.suites[s_idx].settings[set_idx];
-                        let parsed = match setting_item.value {
-                            SettingValue::U32(_) => self
-                                .setting_input
-                                .parse::<u32>()
-                                .map(SettingValue::U32),
-                            SettingValue::U8(_) => self
-                                .setting_input
-                                .parse::<u8>()
-                                .map(SettingValue::U8),
-                        };
-                        match parsed {
-                            Ok(val) => {
-                                cmd_tx.push(Command::SetSetting {
-                                    suite_id,
-                                    setting_id,
-                                    value: val,
-                                });
-                            }
-                            Err(_) => {
-                                self.add_log(format!(
-                                    "[Host] Failed to parse value '{}' for setting '{}'",
-                                    self.setting_input, setting_item.name
-                                ));
-                            }
-                        }
-                    }
-                    self.editing_setting = None;
-                    self.setting_input.clear();
-                }
-                _ => {}
-            }
+            self.handle_key_filtering(key_code);
+        } else if let Some(editing) = self.editing_setting {
+            self.handle_key_editing(key_code, editing, cmd_tx);
         } else {
-            match key_code {
-                KeyCode::Char('q') => {
-                    exit_tui = true;
-                }
-                KeyCode::Char('d') => {
-                    self.show_details_modal = true;
-                }
-                KeyCode::Char('r') => {
-                    // Run tests starting from current selection (or all if selection doesn't precede a test)
-                    let flat_items = self.get_flat_items();
-                    let start_from = flat_items
-                        .iter()
-                        .skip(self.selected_item_idx)
-                        .find_map(|item| match item {
-                            FlatItem::Test {
-                                suite_id, test_id, ..
-                            } => Some((*suite_id, *test_id)),
-                            _ => None,
-                        });
-
-                    drop(flat_items);
-
-                    self.run_queue.clear();
-
-                    // Create the flat iterator and push ALL tests into the queue in normal order
-                    let all_tests = self.suites.iter().enumerate().flat_map(
-                        |(s_idx, suite)| {
-                            (0..suite.tests.len())
-                                .map(move |t_idx| (s_idx as u16, t_idx as u16))
-                        },
-                    );
-
-                    self.run_queue.extend(all_tests);
-
-                    // Find the starting test and rotate the queue
-                    if let Some(start) = start_from {
-                        if let Some(pos) = self
-                            .run_queue
-                            .iter()
-                            .position(|&curr| curr == start)
-                        {
-                            // `rotate_left` shifts everything left by `pos` indices.
-                            // The `pos` elements that fall off the front are moved to the back!
-                            self.run_queue.rotate_left(pos);
-                        }
-                    }
-
-                    // Kick off the next test if the runner is idle
-                    if self.current_running.is_none()
-                        && !self.run_queue.is_empty()
-                    {
-                        let (next_s, next_t) = self.run_queue.remove(0);
-
-                        cmd_tx.push(Command::RunExecutable {
-                            suite_id: next_s,
-                            test_id: next_t,
-                        });
-                    }
-                }
-                KeyCode::Char('s') => {
-                    self.run_queue.clear();
-                    self.current_running = None;
-                    self.add_log("[Host] Stopped execution queue.".to_string());
-                }
-                KeyCode::Char('f') => {
-                    self.is_filtering = true;
-                    self.filter_query.clear();
-                }
-                KeyCode::Up => {
-                    let flat_len = self.get_flat_items().len();
-                    if flat_len > 0 {
-                        if self.selected_item_idx == 0 {
-                            self.selected_item_idx = flat_len - 1;
-                        } else {
-                            self.selected_item_idx -= 1;
-                        }
-                    }
-                }
-                KeyCode::Down => {
-                    let flat_len = self.get_flat_items().len();
-                    if flat_len > 0 {
-                        self.selected_item_idx =
-                            (self.selected_item_idx + 1) % flat_len;
-                    }
-                }
-                KeyCode::Enter => {
-                    let flat_items = self.get_flat_items();
-                    let matched_item = flat_items
-                        .get(self.selected_item_idx)
-                        .map(|item| match item {
-                            FlatItem::Test {
-                                suite_id, test_id, ..
-                            } => (Some((*suite_id, *test_id)), None, None),
-                            FlatItem::Setting {
-                                suite_id,
-                                setting_id,
-                                item,
-                            } => (
-                                None,
-                                Some((*suite_id, *setting_id, item.value)),
-                                None,
-                            ),
-                            FlatItem::SuiteHeader { suite_id, .. } => {
-                                (None, None, Some(*suite_id))
-                            }
-                        });
-
-                    drop(flat_items);
-
-                    if let Some((run_test, edit_setting, toggle_suite)) =
-                        matched_item
-                    {
-                        if let Some((suite_id, test_id)) = run_test {
-                            if self.current_running.is_none() {
-                                cmd_tx.push(Command::RunExecutable {
-                                    suite_id,
-                                    test_id,
-                                });
-                            }
-                        } else if let Some((suite_id, setting_id, value)) =
-                            edit_setting
-                        {
-                            self.editing_setting = Some((suite_id, setting_id));
-                            self.setting_input = match value {
-                                SettingValue::U32(v) => v.to_string(),
-                                SettingValue::U8(v) => v.to_string(),
-                            };
-                        } else if let Some(suite_id) = toggle_suite {
-                            let s_idx = suite_id as usize;
-                            if s_idx < self.suites.len() {
-                                self.suites[s_idx].collapsed =
-                                    !self.suites[s_idx].collapsed;
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
+            exit_tui = self.handle_key_normal(key_code, cmd_tx);
         }
 
         let is_navigation = matches!(key_code, KeyCode::Up | KeyCode::Down);
 
-        if !is_navigation {
-            if let Some(id) = old_selected_id {
-                let new_flat_items = self.get_flat_items();
-                if let Some(pos) =
-                    new_flat_items.iter().position(|item| item.id() == id)
-                {
-                    self.selected_item_idx = pos;
-                } else {
-                    // Fallback: if it's a test/setting inside a collapsed suite, select the suite header
-                    let fallback_id = match id {
-                        ItemId::Test { suite_id, .. }
-                        | ItemId::Setting { suite_id, .. } => {
-                            Some(ItemId::SuiteHeader { suite_id })
-                        }
-                        _ => None,
-                    };
-                    if let Some(f_id) = fallback_id {
-                        if let Some(pos) = new_flat_items
-                            .iter()
-                            .position(|item| item.id() == f_id)
-                        {
-                            self.selected_item_idx = pos;
-                        } else {
-                            self.selected_item_idx = self
-                                .selected_item_idx
-                                .min(new_flat_items.len().saturating_sub(1));
-                        }
+        if is_navigation {
+            let flat_len = self.get_flat_items().len();
+            if flat_len > 0 && self.selected_item_idx >= flat_len {
+                self.selected_item_idx = flat_len.saturating_sub(1);
+            }
+        } else if let Some(id) = old_selected_id {
+            let new_flat_items = self.get_flat_items();
+            if let Some(pos) =
+                new_flat_items.iter().position(|item| item.id() == id)
+            {
+                self.selected_item_idx = pos;
+            } else {
+                // Fallback: if it's a test/setting inside a collapsed suite, select the suite header
+                let fallback_id = match id {
+                    ItemId::Setting { suite_id, .. }
+                    | ItemId::Test { suite_id, .. } => {
+                        Some(ItemId::SuiteHeader { suite_id })
+                    }
+                    ItemId::SuiteHeader { .. } => None,
+                };
+                if let Some(f_id) = fallback_id {
+                    if let Some(pos) =
+                        new_flat_items.iter().position(|item| item.id() == f_id)
+                    {
+                        self.selected_item_idx = pos;
                     } else {
                         self.selected_item_idx = self
                             .selected_item_idx
                             .min(new_flat_items.len().saturating_sub(1));
                     }
-                }
-            } else {
-                let flat_len = self.get_flat_items().len();
-                if flat_len > 0 && self.selected_item_idx >= flat_len {
-                    self.selected_item_idx = flat_len - 1;
+                } else {
+                    self.selected_item_idx = self
+                        .selected_item_idx
+                        .min(new_flat_items.len().saturating_sub(1));
                 }
             }
         } else {
             let flat_len = self.get_flat_items().len();
             if flat_len > 0 && self.selected_item_idx >= flat_len {
-                self.selected_item_idx = flat_len - 1;
+                self.selected_item_idx = flat_len.saturating_sub(1);
             }
         }
 
         exit_tui
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ItemId {
-    SuiteHeader { suite_id: u16 },
-    Test { suite_id: u16, test_id: u16 },
-    Setting { suite_id: u16, setting_id: u16 },
+    fn handle_key_editing(
+        &mut self,
+        key_code: KeyCode,
+        editing: TestIndex,
+        cmd_tx: &mut Vec<Command>,
+    ) {
+        let (suite_id, setting_id) = editing;
+        match key_code {
+            KeyCode::Char(c) => {
+                if c.is_ascii_digit() {
+                    self.setting_input.push(c);
+                }
+            }
+            KeyCode::Backspace => {
+                self.setting_input.pop();
+            }
+            KeyCode::Esc => {
+                self.editing_setting = None;
+                self.setting_input.clear();
+            }
+            KeyCode::Enter => {
+                let s_idx = suite_id as usize;
+                let set_idx = setting_id as usize;
+                if s_idx < self.suites.len()
+                    && set_idx < self.suites[s_idx].settings.len()
+                {
+                    let setting_item = &self.suites[s_idx].settings[set_idx];
+                    let parsed = match setting_item.value {
+                        SettingValue::U32(_) => self
+                            .setting_input
+                            .parse::<u32>()
+                            .map(SettingValue::U32),
+                        SettingValue::U8(_) => self
+                            .setting_input
+                            .parse::<u8>()
+                            .map(SettingValue::U8),
+                    };
+                    match parsed {
+                        Ok(val) => {
+                            cmd_tx.push(Command::SetSetting {
+                                suite_id,
+                                setting_id,
+                                value: val,
+                            });
+                        }
+                        Err(_) => {
+                            self.add_log(format!(
+                                "[Host] Failed to parse value '{}' for setting '{}'",
+                                self.setting_input, setting_item.name
+                            ));
+                        }
+                    }
+                }
+                self.editing_setting = None;
+                self.setting_input.clear();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_key_filtering(&mut self, key_code: KeyCode) {
+        match key_code {
+            KeyCode::Char(c) => {
+                self.filter_query.push(c);
+                self.selected_item_idx = 0;
+            }
+            KeyCode::Backspace => {
+                self.filter_query.pop();
+                self.selected_item_idx = 0;
+            }
+            KeyCode::Esc | KeyCode::Enter => {
+                self.is_filtering = false;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_key_normal(
+        &mut self,
+        key_code: KeyCode,
+        cmd_tx: &mut Vec<Command>,
+    ) -> bool {
+        let mut exit_tui = false;
+        match key_code {
+            KeyCode::Char('q') => {
+                exit_tui = true;
+            }
+            KeyCode::Char('d') => {
+                self.show_details_modal = true;
+            }
+            KeyCode::Char('r') => {
+                self.run_all_tests(cmd_tx);
+            }
+            KeyCode::Char('s') => {
+                self.run_queue.clear();
+                self.current_running = None;
+                self.add_log("[Host] Stopped execution queue.".to_string());
+            }
+            KeyCode::Char('f') => {
+                self.is_filtering = true;
+                self.filter_query.clear();
+            }
+            KeyCode::Up => {
+                let flat_len = self.get_flat_items().len();
+                if flat_len > 0 {
+                    if self.selected_item_idx == 0 {
+                        self.selected_item_idx = flat_len.saturating_sub(1);
+                    } else {
+                        self.selected_item_idx =
+                            self.selected_item_idx.saturating_sub(1);
+                    }
+                }
+            }
+            KeyCode::Down => {
+                let flat_len = self.get_flat_items().len();
+                if flat_len > 0 {
+                    self.selected_item_idx =
+                        self.selected_item_idx.saturating_add(1);
+                    if self.selected_item_idx >= flat_len {
+                        self.selected_item_idx = 0;
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                self.activate_selected_item(cmd_tx);
+            }
+            _ => {}
+        }
+        exit_tui
+    }
+
+    /// Handles the target process exit signal, logging the status and clearing the execution queues.
+    fn handle_target_exit(&mut self, status: std::process::ExitStatus) {
+        if self.current_running.is_some() || !self.run_queue.is_empty() {
+            self.add_log(format!(
+                "[Host] Target process exited unexpectedly: {status}"
+            ));
+        } else {
+            self.add_log(format!("[Host] Target process exited: {status}"));
+        }
+        self.current_running = None;
+        self.run_queue.clear();
+    }
+
+    /// Handles incoming telemetry messages from the target and updates the application state.
+    #[allow(clippy::too_many_lines)]
+    fn handle_telemetry(
+        &mut self,
+        telemetry: Telemetry<'static>,
+        cmd_tx: &mut Vec<Command>,
+    ) {
+        match telemetry {
+            Telemetry::SuiteInfo {
+                suite_id,
+                name,
+                description,
+                ..
+            } => {
+                self.handle_telemetry_suite_info(suite_id, name, description);
+            }
+            Telemetry::TestInfo {
+                suite_id,
+                test_id,
+                name,
+                description,
+            } => {
+                self.handle_telemetry_test_info(
+                    suite_id,
+                    test_id,
+                    name,
+                    description,
+                );
+            }
+            Telemetry::SettingInfo {
+                suite_id,
+                setting_id,
+                name,
+                description,
+                value,
+            } => {
+                self.handle_telemetry_setting_info(
+                    suite_id,
+                    setting_id,
+                    name,
+                    description,
+                    value,
+                );
+            }
+            Telemetry::DiscoveryComplete => {
+                self.handle_telemetry_discovery_complete();
+            }
+            Telemetry::TestStateChange {
+                suite_id,
+                test_id,
+                state: new_state,
+            } => {
+                self.handle_telemetry_test_state_change(
+                    suite_id, test_id, new_state, cmd_tx,
+                );
+            }
+            Telemetry::MetricReport {
+                suite_id,
+                test_id,
+                cycles,
+                time_us,
+                stack_peak,
+            } => {
+                self.handle_telemetry_metric_report(
+                    suite_id, test_id, cycles, time_us, stack_peak,
+                );
+            }
+            Telemetry::Log(log) => self.handle_telemetry_log(&log),
+            Telemetry::TargetPanic {
+                message,
+                file,
+                line,
+            } => {
+                self.handle_telemetry_target_panic(message, file, line);
+            }
+        }
+    }
+
+    fn handle_telemetry_discovery_complete(&mut self) {
+        self.add_log("[Host] Discovery complete.".to_string());
+        self.discovery_complete = true;
+    }
+
+    fn handle_telemetry_log(&mut self, log: &LogMessage<'static>) {
+        self.add_log(format!("[LOG] {}", log.payload));
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_telemetry_metric_report(
+        &mut self,
+        suite_id: u16,
+        test_id: u16,
+        cycles: u64,
+        time_us: u64,
+        stack_peak: u32,
+    ) {
+        let (s_id, t_id) = (suite_id as usize, test_id as usize);
+        self.suites[s_id].tests[t_id].cycles = Some(cycles);
+        self.suites[s_id].tests[t_id].time_us = Some(time_us);
+        self.suites[s_id].tests[t_id].stack_peak = Some(stack_peak);
+        self.add_log(format!(
+            "[PASS] {}::{} ({cycles} cycles, {time_us}us, {stack_peak}B stk)",
+            self.suites[s_id].name, self.suites[s_id].tests[t_id].name
+        ));
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_telemetry_setting_info(
+        &mut self,
+        suite_id: u16,
+        setting_id: u16,
+        name: &'static str,
+        description: &'static str,
+        value: SettingValue,
+    ) {
+        let (s_id, set_id) = (suite_id as usize, setting_id as usize);
+        while self.suites[s_id].settings.len() <= set_id {
+            self.suites[s_id].settings.push(SettingItem {
+                description: String::new(),
+                name: String::new(),
+                value: SettingValue::U8(0),
+            });
+        }
+        self.suites[s_id].settings[set_id].name = name.to_string();
+        self.suites[s_id].settings[set_id].description =
+            description.to_string();
+        self.suites[s_id].settings[set_id].value = value;
+    }
+
+    fn handle_telemetry_suite_info(
+        &mut self,
+        suite_id: u16,
+        name: &'static str,
+        description: &'static str,
+    ) {
+        let id = suite_id as usize;
+        while self.suites.len() <= id {
+            self.suites.push(SuiteItem {
+                collapsed: false,
+                description: String::new(),
+                name: String::new(),
+                settings: Vec::new(),
+                tests: Vec::new(),
+            });
+        }
+        self.suites[id].name = name.to_string();
+        self.suites[id].description = description.to_string();
+    }
+
+    fn handle_telemetry_target_panic(
+        &mut self,
+        message: &'static str,
+        file: &'static str,
+        line: u32,
+    ) {
+        self.add_log(format!(
+            "[PANIC] Target crashed: '{message}' at {file}:{line}"
+        ));
+        if let Some((s_id, t_id)) = self.current_running {
+            let s_idx = s_id as usize;
+            let t_idx = t_id as usize;
+            if s_idx < self.suites.len()
+                && t_idx < self.suites[s_idx].tests.len()
+            {
+                self.suites[s_idx].tests[t_idx].state = TestState::Failed;
+            }
+        }
+        self.current_running = None;
+        self.run_queue.clear();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_telemetry_test_info(
+        &mut self,
+        suite_id: u16,
+        test_id: u16,
+        name: &'static str,
+        description: &'static str,
+    ) {
+        let (s_id, t_id) = (suite_id as usize, test_id as usize);
+        while self.suites[s_id].tests.len() <= t_id {
+            self.suites[s_id].tests.push(TestItem {
+                cycles: None,
+                description: String::new(),
+                name: String::new(),
+                stack_peak: None,
+                state: TestState::Pending,
+                time_us: None,
+            });
+        }
+        self.suites[s_id].tests[t_id].name = name.to_string();
+        self.suites[s_id].tests[t_id].description = description.to_string();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn handle_telemetry_test_state_change(
+        &mut self,
+        suite_id: u16,
+        test_id: u16,
+        new_state: TestState,
+        cmd_tx: &mut Vec<Command>,
+    ) {
+        let (s_id, t_id) = (suite_id as usize, test_id as usize);
+        self.suites[s_id].tests[t_id].state = new_state;
+        if new_state == TestState::Running {
+            self.current_running = Some((suite_id, test_id));
+        } else {
+            self.current_running = None;
+            if !self.run_queue.is_empty() {
+                let (next_s, next_t) = self.run_queue.remove(0);
+                cmd_tx.push(Command::RunExecutable {
+                    suite_id: next_s,
+                    test_id: next_t,
+                });
+            }
+        }
+    }
+
+    /// Creates a new `AppState` with empty suites and default values.
+    fn new() -> Self {
+        Self {
+            console_logs: Vec::new(),
+            current_running: None,
+            discovery_complete: false,
+            editing_setting: None,
+            filter_query: String::new(),
+            is_filtering: false,
+            link_info: "Semihosting (Interactive)".to_string(),
+            list_state: ListState::default(),
+            run_queue: Vec::new(),
+            selected_item_idx: 0,
+            setting_input: String::new(),
+            show_details_modal: false,
+            suites: Vec::new(),
+            target_info: "QEMU Cortex-M7 (MPS2-AN500)".to_string(),
+        }
+    }
+
+    fn run_all_tests(&mut self, cmd_tx: &mut Vec<Command>) {
+        let flat_items = self.get_flat_items();
+        let start_from = flat_items
+            .iter()
+            .skip(self.selected_item_idx)
+            .find_map(|item| match item {
+                FlatItem::Test {
+                    suite_id, test_id, ..
+                } => Some((*suite_id, *test_id)),
+                _ => None,
+            });
+
+        drop(flat_items);
+
+        self.run_queue.clear();
+
+        let all_tests =
+            self.suites.iter().enumerate().flat_map(|(s_idx, suite)| {
+                (0..suite.tests.len())
+                    .map(move |t_idx| (to_u16(s_idx), to_u16(t_idx)))
+            });
+
+        self.run_queue.extend(all_tests);
+
+        if let Some(start) = start_from
+            && let Some(pos) =
+                self.run_queue.iter().position(|&curr| curr == start)
+        {
+            self.run_queue.rotate_left(pos);
+        }
+
+        if self.current_running.is_none() && !self.run_queue.is_empty() {
+            let (next_s, next_t) = self.run_queue.remove(0);
+
+            cmd_tx.push(Command::RunExecutable {
+                suite_id: next_s,
+                test_id: next_t,
+            });
+        }
+    }
 }
 
 impl FlatItem<'_> {
-    fn id(&self) -> ItemId {
+    const fn id(&self) -> ItemId {
         match *self {
+            FlatItem::Setting {
+                setting_id,
+                suite_id,
+                ..
+            } => ItemId::Setting {
+                setting_id,
+                suite_id,
+            },
             FlatItem::SuiteHeader { suite_id, .. } => {
                 ItemId::SuiteHeader { suite_id }
             }
             FlatItem::Test {
                 suite_id, test_id, ..
             } => ItemId::Test { suite_id, test_id },
-            FlatItem::Setting {
-                suite_id,
-                setting_id,
-                ..
-            } => ItemId::Setting {
-                suite_id,
-                setting_id,
-            },
         }
     }
-}
-
-/// Flattened item used to represent a row in the test/setting list widget.
-enum FlatItem<'a> {
-    /// A header for a test suite.
-    SuiteHeader {
-        /// Suite ID.
-        suite_id: u16,
-        /// Suite name.
-        name: String,
-        /// Whether the suite is collapsed.
-        collapsed: bool,
-    },
-    /// A configuration setting.
-    Setting {
-        /// Parent suite ID.
-        suite_id: u16,
-        /// Setting ID.
-        setting_id: u16,
-        /// Reference to the setting item.
-        item: &'a SettingItem,
-    },
-    /// A test case.
-    Test {
-        /// Parent suite ID.
-        suite_id: u16,
-        /// Test ID.
-        test_id: u16,
-        /// Reference to the test item.
-        item: &'a TestItem,
-    },
-}
-
-/// Runs the interactive TUI.
-pub fn run_tui(
-    bridge: QemuBridge,
-    target: &Target,
-    elf_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    enable_raw_mode()?;
-    let mut stdout_handle = stdout();
-    execute!(stdout_handle, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout_handle);
-    let mut terminal = Terminal::new(backend)?;
-
-    let run_result = run_tui_loop(&mut terminal, bridge, target, elf_path);
-
-    let disable_raw_ok = disable_raw_mode();
-    let leave_screen_ok =
-        execute!(terminal.backend_mut(), LeaveAlternateScreen);
-
-    run_result?;
-    disable_raw_ok?;
-    leave_screen_ok?;
-
-    Ok(())
-}
-
-/// The main event loop for the TUI, handling drawing, polling messages, and input.
-fn run_tui_loop(
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    mut bridge: QemuBridge,
-    target: &Target,
-    elf_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut state = AppState::new();
-
-    state.target_info = bridge.target_info().to_string();
-    state.link_info = bridge.link_info().to_string();
-
-    // Trigger initial test discovery
-    let mut last_send = std::time::Instant::now();
-    let _ = bridge.send_command(&Command::ListSuites);
-    state.add_log(
-        "[Host] Connected to target. Triggering discovery...".to_string(),
-    );
-
-    let mut exit_tui = false;
-    let mut cmd_tx = Vec::new();
-
-    while !exit_tui {
-        // Draw TUI
-        terminal.draw(|f| draw_ui(f, &mut state))?;
-
-        // Periodically retry ListSuites if discovery has not completed
-        if !state.discovery_complete
-            && last_send.elapsed() > Duration::from_millis(500)
-        {
-            let _ = bridge.send_command(&Command::ListSuites);
-            last_send = std::time::Instant::now();
-        }
-
-        // Handle all process & telemetry messages from bridge
-        let mut should_restart_bridge = false;
-        while let Ok(msg) = bridge.receiver().try_recv() {
-            match msg {
-                BridgeMessage::Telemetry(telemetry) => {
-                    if let Telemetry::TargetPanic { .. } = telemetry {
-                        should_restart_bridge = true;
-                    }
-                    state.handle_telemetry(telemetry, &mut cmd_tx);
-                }
-                BridgeMessage::RawConsole(line) => {
-                    state.add_log(format!("[CONSOLE] {}", line));
-                }
-            }
-        }
-
-        if should_restart_bridge {
-            state.add_log(
-                "[Host] Target panic detected. Re-opening comms...".to_string(),
-            );
-            cmd_tx.clear();
-
-            let _ = bridge.send_command(&Command::OkToReset);
-            bridge.kill();
-
-            // Wait 2 seconds for the target to reset and re-establish connection
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            bridge = match target {
-                Target::QemuSemihosting { .. } => {
-                    QemuBridge::new(elf_path, target.clone())?
-                }
-                Target::Serial { .. } => QemuBridge::new("", target.clone())?,
-            };
-
-            state.discovery_complete = false;
-            let _ = bridge.send_command(&Command::ListSuites);
-            last_send = std::time::Instant::now();
-        }
-
-        // Send any commands generated during telemetry handling
-        for cmd in cmd_tx.drain(..) {
-            let _ = bridge.send_command(&cmd);
-        }
-
-        // Check if QEMU process exited
-        if let Ok(Some(status)) = bridge.try_wait() {
-            state.handle_target_exit(status);
-        }
-
-        // Handle user keyboard inputs
-        if event::poll(Duration::from_millis(20))? {
-            if let Event::Key(key) = event::read()? {
-                exit_tui = state.handle_key(key.code, &mut cmd_tx);
-            }
-        }
-
-        // Send any commands generated during key handling
-        for cmd in cmd_tx.drain(..) {
-            let _ = bridge.send_command(&cmd);
-        }
-    }
-
-    // Clean up bridge
-    let _ = bridge.send_command(&Command::OkToReset);
-    bridge.kill();
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    Ok(())
 }
 
 /// Renders the entire terminal user interface layout.
+#[allow(clippy::too_many_lines)]
 fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -907,11 +867,10 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
                     ];
 
                     if let (Some(c), Some(t)) = (item.cycles, item.time_us) {
-                        let detail_str = if let Some(sp) = item.stack_peak {
-                            format!("({c} cyc, {t}us, {sp}B stk)")
-                        } else {
-                            format!("({c} cyc, {t}us)")
-                        };
+                        let detail_str = item.stack_peak.map_or_else(
+                            || format!("({c} cyc, {t}us)"),
+                            |sp| format!("({c} cyc, {t}us, {sp}B stk)"),
+                        );
                         line_spans.push(Span::styled(
                             detail_str,
                             Style::default().fg(Color::DarkGray),
@@ -1031,9 +990,9 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
             height: popup_height,
         };
 
-        let flat_items = state.get_flat_items();
+        let details_flat_items = state.get_flat_items();
         if let Some(selected_flat_item) =
-            flat_items.get(state.selected_item_idx)
+            details_flat_items.get(state.selected_item_idx)
         {
             let description_owned: String;
             let (name, type_str) = match selected_flat_item {
@@ -1052,14 +1011,17 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
                         use std::fmt::Write;
                         let _ = write!(
                             &mut desc,
-                            "\n\nMetrics:\n- CPU Cycles: {}\n- Execution Time: {} us",
-                            c, t
+                            "
+
+Metrics:
+- CPU Cycles: {c}
+- Execution Time: {t} us"
                         );
                         if let Some(sp) = item.stack_peak {
                             let _ = write!(
                                 &mut desc,
-                                "\n- Stack High-Water: {} bytes",
-                                sp
+                                "
+- Stack High-Water: {sp} bytes"
                             );
                         }
                     }
@@ -1075,7 +1037,7 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
             let modal_block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Cyan))
-                .title(format!(" Description: {} ({}) ", name, type_str));
+                .title(format!(" Description: {name} ({type_str}) "));
 
             let display_desc = if description_owned.is_empty() {
                 "No description provided."
@@ -1093,8 +1055,148 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
     }
 }
 
+/// Runs the interactive TUI.
+///
+/// # Errors
+///
+/// Returns an error if terminal setup fails, or if the run loop fails.
+pub fn run_tui(
+    bridge: QemuBridge,
+    target: &Target,
+    elf_path: &str,
+) -> TuiResult {
+    enable_raw_mode()?;
+    let mut stdout_handle = stdout();
+    execute!(stdout_handle, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout_handle);
+    let mut terminal = Terminal::new(backend)?;
+
+    let run_result = run_tui_loop(&mut terminal, bridge, target, elf_path);
+
+    let disable_raw_ok = disable_raw_mode();
+    let leave_screen_ok =
+        execute!(terminal.backend_mut(), LeaveAlternateScreen);
+
+    run_result?;
+    disable_raw_ok?;
+    leave_screen_ok?;
+
+    Ok(())
+}
+
+/// The main event loop for the TUI, handling drawing, polling messages, and input.
+#[allow(clippy::too_many_lines)]
+fn run_tui_loop(
+    terminal: &mut TuiTerminal,
+    mut bridge: QemuBridge,
+    target: &Target,
+    elf_path: &str,
+) -> TuiResult {
+    let mut state = AppState::new();
+
+    state.target_info = bridge.target_info().to_string();
+    state.link_info = bridge.link_info().to_string();
+
+    // Trigger initial test discovery
+    let mut last_send = std::time::Instant::now();
+    let _ = bridge.send_command(&Command::ListSuites);
+    state.add_log(
+        "[Host] Connected to target. Triggering discovery...".to_string(),
+    );
+
+    let mut exit_tui = false;
+    let mut cmd_tx = Vec::new();
+
+    while !exit_tui {
+        // Draw TUI
+        terminal.draw(|f| draw_ui(f, &mut state))?;
+
+        // Periodically retry ListSuites if discovery has not completed
+        if !state.discovery_complete
+            && last_send.elapsed() > Duration::from_millis(500)
+        {
+            let _ = bridge.send_command(&Command::ListSuites);
+            last_send = std::time::Instant::now();
+        }
+
+        // Handle all process & telemetry messages from bridge
+        let mut should_restart_bridge = false;
+        while let Ok(msg) = bridge.receiver().try_recv() {
+            match msg {
+                BridgeMessage::Telemetry(telemetry) => {
+                    if let Telemetry::TargetPanic { .. } = telemetry {
+                        should_restart_bridge = true;
+                    }
+                    state.handle_telemetry(telemetry, &mut cmd_tx);
+                }
+                BridgeMessage::RawConsole(line) => {
+                    state.add_log(format!("[CONSOLE] {line}"));
+                }
+            }
+        }
+
+        if should_restart_bridge {
+            state.add_log(
+                "[Host] Target panic detected. Re-opening comms...".to_string(),
+            );
+            cmd_tx.clear();
+
+            let _ = bridge.send_command(&Command::OkToReset);
+            bridge.kill();
+
+            // Wait 2 seconds for the target to reset and re-establish connection
+            std::thread::sleep(Duration::from_secs(2));
+
+            bridge = match target {
+                Target::QemuSemihosting { .. } => {
+                    QemuBridge::new(elf_path, target.clone())?
+                }
+                Target::Serial { .. } => QemuBridge::new("", target.clone())?,
+            };
+
+            state.discovery_complete = false;
+            let _ = bridge.send_command(&Command::ListSuites);
+            last_send = std::time::Instant::now();
+        }
+
+        // Send any commands generated during telemetry handling
+        for cmd in std::mem::take(&mut cmd_tx) {
+            let _ = bridge.send_command(&cmd);
+        }
+
+        // Check if QEMU process exited
+        if let Ok(Some(status)) = bridge.try_wait() {
+            state.handle_target_exit(status);
+        }
+
+        // Handle user keyboard inputs
+        if event::poll(Duration::from_millis(20))?
+            && let Event::Key(key) = event::read()?
+        {
+            exit_tui = state.handle_key(key.code, &mut cmd_tx);
+        }
+
+        // Send any commands generated during key handling
+        for cmd in std::mem::take(&mut cmd_tx) {
+            let _ = bridge.send_command(&cmd);
+        }
+    }
+
+    // Clean up bridge
+    let _ = bridge.send_command(&Command::OkToReset);
+    bridge.kill();
+    std::thread::sleep(Duration::from_millis(100));
+    Ok(())
+}
+
+fn to_u16(val: usize) -> u16 {
+    u16::try_from(val).unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::too_many_lines)]
+
     use super::*;
     use control_rs_hil::comms::LogMessage;
 
