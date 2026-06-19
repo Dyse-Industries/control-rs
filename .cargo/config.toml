@@ -16,3 +16,6 @@ ci-teensy = ["xtask", "ci", "teensy"]
 
 # Clippy Helper
 clippy-json = ["clippy", "--workspace", "--message-format=json", "--", "-D", "warnings"]
+
+# Coverage helper
+coverage = ["tarpaulin", "--workspace", "--verbose", "--color", "never", "--out", "Html", "--out", "Json"]

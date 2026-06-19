@@ -600,7 +600,12 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, DummyClock, SUITES);
+        let mut server = Server::new_with_executor(
+            comms,
+            DummyClock,
+            crate::executor::DummyExecutor,
+            SUITES,
+        );
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 

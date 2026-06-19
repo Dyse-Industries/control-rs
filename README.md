@@ -149,6 +149,10 @@ locally (clippy, formatting, tarpaulin coverage, and QEMU HIL tests).
   cargo ci-qemu
   cargo ci-teensy
   ```
+* **Run workspace code coverage analysis:**
+  ```bash
+  cargo coverage
+  ```
 
 ---
 

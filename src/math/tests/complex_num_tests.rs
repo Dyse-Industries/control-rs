@@ -418,9 +418,11 @@ pub mod test_transcendental {
     use crate::{
         assert_almost_eq,
         math::{
+            complex_num::Complex,
             complex_num::Complex32,
             complex_num::Complex64,
             num_traits::{Exponential, Trig},
+            ops::{TryAdd, TryDiv, TryMul, TrySub},
         },
     };
 
@@ -481,5 +483,37 @@ pub mod test_transcendental {
         let tan_atan = atan_z.tan();
         assert_almost_eq!(tan_atan.re, z.re, 1e-12_f64);
         assert_almost_eq!(tan_atan.im, z.im, 1e-12_f64);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_uncovered_methods() {
+        use crate::math::num_traits::Signed;
+        let z1 = Complex::<f64>::new(-3.0, -4.0);
+        let z2 = Complex::<f64>::new(1.0, 2.0);
+
+        // Test try_add
+        let try_add_res = z1.try_add(&z2).unwrap();
+        assert_almost_eq!(try_add_res.re, -2.0);
+        assert_almost_eq!(try_add_res.im, -2.0);
+
+        // Test try_sub
+        let try_sub_res = z1.try_sub(&z2).unwrap();
+        assert_almost_eq!(try_sub_res.re, -4.0);
+        assert_almost_eq!(try_sub_res.im, -6.0);
+
+        // Test try_mul
+        let try_mul_res = z1.try_mul(&z2).unwrap();
+        assert_almost_eq!(try_mul_res.re, 5.0);
+        assert_almost_eq!(try_mul_res.im, -10.0);
+
+        // Test try_div
+        let try_div_res = z1.try_div(&z2).unwrap();
+        assert_almost_eq!(try_div_res.re, -11.0 / 5.0);
+        assert_almost_eq!(try_div_res.im, 2.0 / 5.0);
+
+        // Test abs
+        let abs_res = z1.abs();
+        assert_almost_eq!(abs_res.re, 3.0);
+        assert_almost_eq!(abs_res.im, 4.0);
     }
 }

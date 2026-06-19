@@ -36,11 +36,11 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body-path: ci-report.md
 
-      - name: Upload HTML coverage report
+      - name: Upload JSON coverage report
         uses: actions/upload-artifact@v4
         with:
-          name: tarpaulin-html-report
-          path: tarpaulin-report.html
+          name: tarpaulin-json-report
+          path: tarpaulin-report.json
 
   publish:
     runs-on: ubuntu-latest
