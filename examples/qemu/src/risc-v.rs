@@ -78,7 +78,7 @@ fn get_sp() -> usize {
 }
 
 unsafe fn paint_stack(sp: usize) {
-    extern "C" {
+    unsafe extern "C" {
         static _stack_start: u32;
         static _hart_stack_size: u32;
     }
@@ -96,14 +96,16 @@ unsafe fn paint_stack(sp: usize) {
         let limit_ptr = limit as *mut u32;
 
         while ptr < limit_ptr {
-            core::ptr::write_volatile(ptr, 0xCDCD_CDCD);
-            ptr = ptr.add(1);
+            unsafe {
+                core::ptr::write_volatile(ptr, 0xCDCD_CDCD);
+                ptr = ptr.add(1);
+            }
         }
     }
 }
 
 unsafe fn scan_stack(sp: usize) -> u32 {
-    extern "C" {
+    unsafe extern "C" {
         static _stack_start: u32;
         static _hart_stack_size: u32;
     }
@@ -116,11 +118,13 @@ unsafe fn scan_stack(sp: usize) -> u32 {
     let limit_ptr = sp as *const u32;
 
     while ptr < limit_ptr {
-        let is_sentinel = core::ptr::read_volatile(ptr) == 0xCDCD_CDCD;
+        let is_sentinel = unsafe { core::ptr::read_volatile(ptr) == 0xCDCD_CDCD };
         if !is_sentinel {
             break;
         }
-        ptr = ptr.add(1);
+        unsafe {
+            ptr = ptr.add(1);
+        }
     }
 
     let lowest_address = ptr as usize;

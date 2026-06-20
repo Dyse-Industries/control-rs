@@ -88,14 +88,30 @@ pub fn format_coverage_summary(
     s
 }
 
+fn format_number(val: u64) -> String {
+    let s = val.to_string();
+    let bytes = s.as_bytes();
+    let mut result = String::new();
+    let len = bytes.len();
+    for (i, &b) in bytes.iter().enumerate() {
+        if i > 0 && (len - i).is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(b as char);
+    }
+    result
+}
+
 fn format_sil_rows(results: &[&HeadlessTestResult]) -> String {
     let re = Regex::new(r"^(.*) \(([^)]+)\)$").unwrap();
 
     let mut targets = Vec::new();
-    let mut test_keys = Vec::new();
+    let mut suites = Vec::new();
+    let mut suite_tests: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
     let mut grouped: std::collections::HashMap<
-        (&str, &str),
-        std::collections::HashMap<&str, &HeadlessTestResult>,
+        (&str, &str, &str),
+        &HeadlessTestResult,
     > = std::collections::HashMap::new();
 
     for r in results {
@@ -110,65 +126,135 @@ fn format_sil_rows(results: &[&HeadlessTestResult]) -> String {
             targets.push(target);
         }
 
-        let key = (base_suite, r.test_name.as_str());
-        if !test_keys.contains(&key) {
-            test_keys.push(key);
+        if !suites.contains(&base_suite) {
+            suites.push(base_suite);
         }
 
-        grouped.entry(key).or_default().insert(target, r);
+        let tests = suite_tests.entry(base_suite).or_default();
+        if !tests.contains(&r.test_name.as_str()) {
+            tests.push(r.test_name.as_str());
+        }
+
+        grouped.insert((base_suite, r.test_name.as_str(), target), r);
     }
 
     if targets.is_empty() {
         targets.push("");
     }
 
-    let mut s = String::new();
+    // Determine pruning criteria for each target
+    let mut prune_cycles = std::collections::HashMap::new();
+    let mut prune_time = std::collections::HashMap::new();
+    let mut prune_stack = std::collections::HashMap::new();
 
-    // Generate header
-    if targets.len() == 1 && targets[0].is_empty() {
-        s.push_str("| Suite | Test | Result | Cycles | Time | Stack Peak |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n");
-    } else {
-        s.push_str("| Suite | Test");
-        for t in &targets {
-            s.push_str(&format!(
-                " | {} Result | {} Cycles | {} Time | {} Stack Peak",
-                t, t, t, t
-            ));
-        }
-        s.push_str(" |\n| :--- | :---");
-        for _ in &targets {
-            s.push_str(" | :--- | :--- | :--- | :---");
-        }
-        s.push_str(" |\n");
+    for &t in &targets {
+        let target_results: Vec<&&HeadlessTestResult> = results
+            .iter()
+            .filter(|r| {
+                let target_name = if let Some(caps) = re.captures(&r.suite_name)
+                {
+                    caps.get(2).unwrap().as_str()
+                } else {
+                    ""
+                };
+                target_name == t
+            })
+            .collect();
+
+        let has_cycles = target_results
+            .iter()
+            .any(|r| r.cycles.is_some_and(|c| c > 0));
+        let has_time = target_results
+            .iter()
+            .any(|r| r.time_us.is_some_and(|time| time > 0));
+        let has_stack = target_results
+            .iter()
+            .any(|r| r.stack_peak.is_some_and(|s| s > 0));
+
+        prune_cycles.insert(t, !has_cycles);
+        prune_time.insert(t, !has_time);
+        prune_stack.insert(t, !has_stack);
     }
 
-    // Generate rows
-    for key in test_keys {
-        s.push_str(&format!("| {} | {}", key.0, key.1));
-        let test_targets = grouped.get(&key).unwrap();
+    let format_cell = |r: &HeadlessTestResult, target: &str| -> String {
+        let icon = match r.state {
+            TestState::Passed => "✅ Pass",
+            _ => "❌ Fail",
+        };
+        let mut parts = Vec::new();
+        parts.push(icon.to_string());
+        if !prune_time.get(target).copied().unwrap_or(false) {
+            parts.push(r.time_us.map_or("N/A".to_string(), |t| {
+                format!("{}us", format_number(t))
+            }));
+        }
+        if !prune_stack.get(target).copied().unwrap_or(false) {
+            parts.push(r.stack_peak.map_or("N/A".to_string(), |s| {
+                format!("{}B", format_number(u64::from(s)))
+            }));
+        }
+        if !prune_cycles.get(target).copied().unwrap_or(false) {
+            parts.push(r.cycles.map_or("N/A".to_string(), |c| {
+                format!("{}c", format_number(c))
+            }));
+        }
+        parts.join(r" \| ")
+    };
 
+    let mut s = String::new();
+
+    for suite in suites {
+        if !s.is_empty() {
+            s.push('\n');
+        }
+        s.push_str(&format!("### Suite: `{}`\n", suite));
+
+        // Generate table header
+        s.push_str("| Test");
         for t in &targets {
-            if let Some(r) = test_targets.get(t) {
-                let res_str = match r.state {
-                    TestState::Passed => "PASSED",
-                    _ => "FAILED",
-                };
-                let cyc_str =
-                    r.cycles.map_or("N/A".to_string(), |c| c.to_string());
-                let time_str =
-                    r.time_us.map_or("N/A".to_string(), |t| format!("{}us", t));
-                let stack_str = r
-                    .stack_peak
-                    .map_or("N/A".to_string(), |sp| format!("{}B", sp));
-                s.push_str(&format!(
-                    " | {} | {} | {} | {}",
-                    res_str, cyc_str, time_str, stack_str
-                ));
+            let p_cycles = prune_cycles.get(t).copied().unwrap_or(false);
+            let p_time = prune_time.get(t).copied().unwrap_or(false);
+            let p_stack = prune_stack.get(t).copied().unwrap_or(false);
+
+            let mut cols = Vec::new();
+            cols.push("Status");
+            if !p_time {
+                cols.push("Time");
+            }
+            if !p_stack {
+                cols.push("Stack");
+            }
+            if !p_cycles {
+                cols.push("Cycles");
+            }
+
+            let metrics_label = cols.join(" / ");
+            if t.is_empty() {
+                s.push_str(&format!(" | {}", metrics_label));
             } else {
-                s.push_str(" | N/A | N/A | N/A | N/A");
+                s.push_str(&format!(" | {} ({})", t, metrics_label));
             }
         }
+        s.push_str(" |\n| :---");
+        for _ in &targets {
+            s.push_str(" | :---");
+        }
         s.push_str(" |\n");
+
+        // Generate rows
+        if let Some(tests) = suite_tests.get(suite) {
+            for test in tests {
+                s.push_str(&format!("| {}", test));
+                for t in &targets {
+                    if let Some(r) = grouped.get(&(suite, *test, *t)) {
+                        s.push_str(&format!(" | {}", format_cell(r, t)));
+                    } else {
+                        s.push_str(" | N/A");
+                    }
+                }
+                s.push_str(" |\n");
+            }
+        }
     }
 
     s
@@ -438,11 +524,11 @@ mod tests {
         let formatted = format_sil_rows(&refs);
         assert!(formatted.contains("SuiteA"));
         assert!(formatted.contains("Test1"));
-        assert!(formatted.contains("PASSED"));
-        assert!(formatted.contains("100"));
+        assert!(formatted.contains("✅ Pass"));
+        assert!(formatted.contains("100c"));
         assert!(formatted.contains("10us"));
         assert!(formatted.contains("256B"));
-        assert!(formatted.contains("FAILED"));
+        assert!(formatted.contains("❌ Fail"));
         assert!(formatted.contains("N/A"));
     }
 
@@ -523,13 +609,13 @@ mod tests {
         let formatted = format_sil_rows(&refs);
         assert!(formatted.contains("SuiteA"));
         assert!(formatted.contains("Test1"));
-        assert!(formatted.contains("ARM Result"));
-        assert!(formatted.contains("RISC-V Result"));
-        assert!(formatted.contains("100"));
-        assert!(formatted.contains("200"));
+        assert!(formatted.contains("ARM (Status / Time / Stack / Cycles)"));
+        assert!(formatted.contains("RISC-V (Status / Time / Stack / Cycles)"));
+        assert!(formatted.contains("100c"));
+        assert!(formatted.contains("200c"));
         assert!(formatted.contains("256B"));
         assert!(formatted.contains("512B"));
-        let occurrences = formatted.matches("| SuiteA | Test1 ").count();
+        let occurrences = formatted.matches("| Test1 | ").count();
         assert_eq!(occurrences, 1);
     }
 }
