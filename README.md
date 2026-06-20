@@ -8,6 +8,11 @@ embedded platforms.
 
 ## Data-Driven Model-Based Design
 
+Instead of treating system identification as an offline chore, control-rs
+provides the no-std, low-level infrastructure required to embed parameter
+estimation loops directly onto target silicon within your Hardware-in-the-Loop (
+HIL) pipelines.
+
 `control-rs` enables a complete Model-Based Design (MBD) pipeline. By unifying
 hardware execution, real-time telemetry, and host-side driver tooling, the
 library transitions control design from offline simulation to live, on-target
@@ -16,67 +21,44 @@ hardware execution.
 ```mermaid
 ---
 config:
-  layout: elk
+  layout: dagre
 ---
 flowchart LR
- subgraph Host["Host PC & CLI/TUI/CI Driver (control-rs-xtask)"]
-        TUI["Interactive TUI<br>(Ratatui / Crossterm)"]
-        CI["Automated CI Harness<br>(Local/GitHub Actions)"]
+ subgraph Host["Host Environment"]
+        TUI("fa:fa-display Terminal UI (TUI)")
+        CI("fa:fa-robot CI Runner")
+        Comm{"fa:fa-code Comms Trait"}
   end
- subgraph Link["Bidirectional Protocol (Postcard / XOR Checksum)"]
-        USB["USB CDC ACM Serial<br>(Teensy 4.0 / Physical Target)"]
-        SH["Semihosting Syscalls<br>(QEMU ARM / RISC-V Emulator)"]
+ subgraph Loop["fa:fa-rotate-right Server Event Loop"]
+    direction TB
+        Comms["Handle Comms"]
+        Tasks["Run Tasks"]
+        Telem["Send Telemetry"]
   end
- subgraph SysIdLoop["Custom HIL Test Functions"]
-        Estimator["Parameter Estimation"]
-        Controller["PID Controller Design"]
-        Plant["Step Response"]
+ subgraph TargetEnv["Execution Environment (Hardware / QEMU)"]
+        Loop
   end
- subgraph Target["Target Silicon / Embedded Core (control-rs-hil)"]
-        Server["HIL Test Server Event Loop"]
-        SysIdLoop
-  end
-    Host <-- Command / Telemetry Stream --> Link
-    Server --> SysIdLoop
-    Link -- HostComms --> Server
+    Comms --> Tasks
+    Tasks --> Telem
+    Telem --> Comms
+    TUI <====> Comm
+    CI <====> Comm
+    Comm <====> Comms
 
      TUI:::host
      CI:::host
-     USB:::link
-     SH:::link
-     Estimator:::loop
-     Controller:::loop
-     Plant:::loop
-     Server:::target
+     Comm:::link
+     Comms:::target
+     Tasks:::target
+     Telem:::target
     classDef host fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
-    classDef link fill:#1e293b,stroke:#94a3b8,stroke-width:2px,stroke-dasharray: 5 5,color:#cbd5e1
+    classDef link fill:#1e293b,stroke:#94a3b8,stroke-width:2px,stroke-dasharray:5 5,color:#cbd5e1
     classDef target fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff
-    classDef loop fill:#311042,stroke:#d946ef,stroke-width:2px,color:#fdf4ff
+    style Comms fill:#1e1b4b
+    style Loop fill:#616161,stroke:#6366f1,stroke-width:2px,stroke-dasharray:5 5,color:#e0e7ff
+    style Host fill:transparent,stroke:#475569,stroke-width:1px,stroke-dasharray:3 3
+    style TargetEnv fill:transparent,stroke:#475569,stroke-width:1px,stroke-dasharray:3 3
 ```
-
-### The Live System Identification Loop
-
-Instead of performing offline system identification, logging data, extracting
-files, and playing "data archaeologist" days later—`control-rs` primes
-developers to run **live parameter estimation loops** directly on target
-silicon:
-
-1. **Initiate**: The host driver (TUI or automated script) triggers the
-   identification run.
-2. **Stimulate**: The controller generates an excitation signal (step input,
-   chirp, or PRBS) to stimulate the actuators.
-3. **Calculate**: The target reads sensors, executes estimation algorithms (
-   e.g., Recursive Least Squares or Extended Kalman Filters), and fits the
-   system parameters on-the-fly.
-4. **Stream**: Multi-channel telemetry packetizes and streams the fitted
-   parameters back to the host machine for real-time visualization, gain tuning,
-   and validation.
-
----
-
-## Infrastructure Modules
-
-The project is structured into three core components working in unison:
 
 ### 1. Embedded HIL Engine (`control-rs-hil`)
 
