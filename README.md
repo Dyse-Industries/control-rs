@@ -45,19 +45,20 @@ flowchart LR
     CI <====> Comm
     Comm <====> Comms
 
-     TUI:::host
-     CI:::host
-     Comm:::link
-     Comms:::target
-     Tasks:::target
-     Telem:::target
+    TUI:::host
+    CI:::host
+    Comm:::link
+    Comms:::target
+    Tasks:::target
+    Telem:::target
+
     classDef host fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
     classDef link fill:#1e293b,stroke:#94a3b8,stroke-width:2px,stroke-dasharray:5 5,color:#cbd5e1
     classDef target fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff
-    style Comms fill:#1e1b4b
-    style Loop fill:#616161,stroke:#6366f1,stroke-width:2px,stroke-dasharray:5 5,color:#e0e7ff
     style Host fill:transparent,stroke:#475569,stroke-width:1px,stroke-dasharray:3 3
     style TargetEnv fill:transparent,stroke:#475569,stroke-width:1px,stroke-dasharray:3 3
+    style Loop fill:transparent,stroke:#6366f1,stroke-width:2px,stroke-dasharray:5 5,color:#e0e7ff
+
 ```
 
 ### 1. Embedded HIL Engine (`control-rs-hil`)
