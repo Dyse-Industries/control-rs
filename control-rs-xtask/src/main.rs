@@ -70,7 +70,7 @@ fn main() {
                             };
                             run_ci_single(&target);
                         }
-                        "riscv" => {
+                        "riscv" | "risc-v" => {
                             let target = bridge::Target::QemuSemihosting {
                                 arch: bridge::QemuArch::Riscv,
                             };
@@ -113,7 +113,7 @@ fn main() {
                         .map(std::string::String::as_str)
                         .unwrap_or("arm");
                     let arch = match arch_str {
-                        "riscv" => bridge::QemuArch::Riscv,
+                        "riscv" | "risc-v" => bridge::QemuArch::Riscv,
                         _ => bridge::QemuArch::Arm,
                     };
                     bridge::Target::QemuSemihosting { arch }
@@ -148,7 +148,7 @@ fn print_usage_and_exit() -> ! {
         "Usage: cargo control-rs-xtask <task> [target] [port/arch] [baud]"
     );
     eprintln!("\tTasks: ci, tui [qemu|teensy]");
-    eprintln!("\tTargets: qemu [arm|riscv|all], teensy [port] [baud]");
+    eprintln!("\tTargets: qemu [arm|risc-v|all], teensy [port] [baud]");
     exit(1);
 }
 

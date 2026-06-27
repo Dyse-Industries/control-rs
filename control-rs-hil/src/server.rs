@@ -5,9 +5,8 @@ use core::sync::atomic::{AtomicI16, Ordering};
 use crate::SuiteDescriptor;
 use crate::comms::{Command, HostComms, Telemetry, TestState};
 use crate::settings::SettingValue;
-use crate::time::ClientClock;
 
-// --- Static variables (UPPER_SNAKE_CASE) ---
+// --- Static variables ---
 
 /// Raw pointer to the active communication device.
 pub static mut ACTIVE_COMMS_PTR: *mut core::ffi::c_void = core::ptr::null_mut();
@@ -31,14 +30,12 @@ pub static mut PANIC_TELEMETRY_SENDER: Option<PanicTelemetrySender> = None;
 
 // --- Type aliases and Structs (PascalCase) ---
 
-/// Context object that encapsulates communication and timekeeper peripherals.
-pub struct Context<C, T, E = crate::executor::DummyExecutor> {
+/// Context object that encapsulates communication and CPU profiling utilities.
+pub struct Context<C, P> {
     /// Host communication channel.
     pub comms: C,
-    /// Test execution mechanism.
-    pub executor: E,
-    /// Hardware timekeeper clock.
-    pub timer: T,
+    /// CPU profiling and execution utilities.
+    pub cpu_utils: P,
 }
 
 /// Function signature for command poller during a panic.
@@ -52,54 +49,30 @@ pub type PanicTelemetrySender =
     unsafe fn(*mut core::ffi::c_void, &Telemetry<'_>);
 
 /// Interactive test runner server.
-pub struct Server<'a, C, T, E = crate::executor::DummyExecutor> {
-    clock: T,
+pub struct Server<'a, C, P> {
     comms: C,
-    executor: E,
+    cpu_utils: P,
     suites: &'a [&'static SuiteDescriptor],
 }
 
 /// Result of server operations.
 pub type ServerResult<E> = Result<(), E>;
 
-impl<'a, C, T> Server<'a, C, T, crate::executor::DummyExecutor>
+#[allow(clippy::type_complexity)]
+impl<'a, C, P> Server<'a, C, P>
 where
     C: HostComms,
-    T: ClientClock,
+    P: crate::profiler::CPUProfiler,
 {
-    /// Creates a new `Server` instance.
+    /// Creates a new `Server` instance with target-specific CPU profiling utilities.
     pub const fn new(
         comms: C,
-        clock: T,
+        cpu_utils: P,
         suites: &'a [&'static SuiteDescriptor],
     ) -> Self {
         Self {
-            clock,
             comms,
-            executor: crate::executor::DummyExecutor,
-            suites,
-        }
-    }
-}
-
-#[allow(clippy::type_complexity)]
-impl<'a, C, T, E> Server<'a, C, T, E>
-where
-    C: HostComms,
-    T: ClientClock,
-    E: crate::executor::TestExecutor,
-{
-    /// Creates a new `Server` instance with a target-specific test executor.
-    pub const fn new_with_executor(
-        comms: C,
-        clock: T,
-        executor: E,
-        suites: &'a [&'static SuiteDescriptor],
-    ) -> Self {
-        Self {
-            clock,
-            comms,
-            executor,
+            cpu_utils,
             suites,
         }
     }
@@ -194,11 +167,25 @@ where
             .store(suite_id.try_into().unwrap_or(-1), Ordering::SeqCst);
         CURRENT_TEST.store(test_id.try_into().unwrap_or(-1), Ordering::SeqCst);
 
-        let start_time_us = self.clock.now_us();
-        let (elapsed_cycles, elapsed_stack) =
-            self.executor.execute(exec.test_fn);
-        let end_time_us = self.clock.now_us();
-        let elapsed_time_us = end_time_us.saturating_sub(start_time_us);
+        // Retrieve stack pointer before running the test
+        let sp = self.cpu_utils.get_sp();
+        unsafe {
+            self.cpu_utils.paint_stack(sp);
+        }
+
+        let start_cycles = self.cpu_utils.get_cycles();
+        let start_time_ns = self.cpu_utils.get_nanos();
+
+        self.cpu_utils.disable_interrupts(|| {
+            (exec.test_fn)();
+        });
+
+        let end_time_ns = self.cpu_utils.get_nanos();
+        let end_cycles = self.cpu_utils.get_cycles();
+        let elapsed_stack = unsafe { self.cpu_utils.read_stack_peak(sp) };
+
+        let elapsed_cycles = end_cycles.saturating_sub(start_cycles);
+        let elapsed_time_us = end_time_ns.saturating_sub(start_time_ns) / 1000;
 
         // Clear global trackers on success
         CURRENT_SUITE.store(-1, Ordering::SeqCst);
@@ -256,13 +243,7 @@ where
     }
 
     fn stream_discovery(&mut self) -> ServerResult<C::Error> {
-        for (suite_idx, &suite) in self.suites.iter().enumerate() {
-            let suite_id: u16 = match suite_idx.try_into() {
-                Ok(id) => id,
-                Err(_) => {
-                    return Ok(());
-                }
-            };
+        for (suite_id, &suite) in (0_u16..).zip(self.suites.iter()) {
             self.comms.send_telemetry(&Telemetry::SuiteInfo {
                 suite_id,
                 name: suite.name,
@@ -278,9 +259,7 @@ where
                     .try_into()
                     .unwrap_or(u16::MAX),
             })?;
-
-            for (test_idx, exec) in suite.executables.iter().enumerate() {
-                let test_id: u16 = test_idx.try_into().unwrap_or(u16::MAX);
+            for (test_id, exec) in (0_u16..).zip(suite.executables.iter()) {
                 self.comms.send_telemetry(&Telemetry::TestInfo {
                     suite_id,
                     test_id,
@@ -288,10 +267,7 @@ where
                     description: exec.description,
                 })?;
             }
-
-            for (setting_idx, setting) in suite.settings.iter().enumerate() {
-                let setting_id: u16 =
-                    setting_idx.try_into().unwrap_or(u16::MAX);
+            for (setting_id, setting) in (0_u16..).zip(suite.settings.iter()) {
                 self.comms.send_telemetry(&Telemetry::SettingInfo {
                     suite_id,
                     setting_id,
@@ -345,10 +321,10 @@ mod tests {
     extern crate std;
     use super::*;
     use crate::comms::{Command, HostComms, Telemetry, TestState};
+    use crate::profiler::CPUProfiler;
     use crate::settings::{
         AtomicU8Setting, AtomicU32Setting, Setting, SettingValue,
     };
-    use crate::time::DummyClock;
     use crate::{ExecDescriptor, SuiteDescriptor};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::vec::Vec;
@@ -377,14 +353,34 @@ mod tests {
         AtomicU8Setting::new("test_u8", "test_u8_desc", 42);
 
     // --- Types & Structs ---
-    type RawPayloads = Vec<Vec<u8>>;
-    type SettingsSlice = &'static [&'static dyn Setting];
+    pub struct HostCPUProfiler;
 
     struct MockComms {
         commands: Vec<Command>,
         fail_on_poll: bool,
         flush_count: usize,
         payloads: RawPayloads,
+    }
+
+    type RawPayloads = Vec<Vec<u8>>;
+    type SettingsSlice = &'static [&'static dyn Setting];
+
+    impl CPUProfiler for HostCPUProfiler {
+        fn get_cycles(&self) -> u64 {
+            0
+        }
+
+        fn get_nanos(&self) -> u64 {
+            0
+        }
+
+        fn get_sp(&self) -> usize {
+            0
+        }
+
+        fn get_stack_end(&self) -> usize {
+            0
+        }
     }
 
     impl HostComms for MockComms {
@@ -464,10 +460,11 @@ mod tests {
     }
 
     #[test]
-    fn test_dummy_clock() {
-        let clock = DummyClock;
-        assert_eq!(clock.now_ms(), 0);
-        assert_eq!(clock.now_us(), 0);
+    fn test_host_cpu_profile_utils() {
+        let utils = HostCPUProfiler;
+        assert_eq!(utils.get_cycles(), 0);
+        assert_eq!(utils.get_nanos(), 0);
+        assert_eq!(utils.get_sp(), 0);
     }
 
     #[test]
@@ -478,7 +475,7 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, DummyClock, SUITES);
+        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 
@@ -535,7 +532,7 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, DummyClock, SUITES);
+        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
         assert!(server.comms.payloads.is_empty());
@@ -568,7 +565,7 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, DummyClock, SUITES);
+        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 
@@ -583,7 +580,7 @@ mod tests {
             flush_count: 0,
             fail_on_poll: true,
         };
-        let mut server = Server::new(comms, DummyClock, SUITES);
+        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Poll failed"));
     }
@@ -600,12 +597,7 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new_with_executor(
-            comms,
-            DummyClock,
-            crate::executor::DummyExecutor,
-            SUITES,
-        );
+        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 
@@ -660,7 +652,7 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, DummyClock, SUITES);
+        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 
@@ -691,7 +683,7 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, DummyClock, SUITES);
+        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 

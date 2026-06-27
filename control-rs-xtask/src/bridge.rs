@@ -344,7 +344,7 @@ fn get_qemu_config(arch: QemuArch, elf_path: &str) -> QemuConfig {
                 "-kernel".to_string(),
                 elf_path.to_string(),
             ],
-            "QEMU (riscv32)".to_string(),
+            "QEMU (risc-v32)".to_string(),
             "Semihosting (virt)".to_string(),
         ),
     }

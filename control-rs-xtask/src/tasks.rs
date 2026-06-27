@@ -66,7 +66,7 @@ pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
         ),
         bridge::QemuArch::Riscv => (
             "riscv32imac-unknown-none-elf",
-            "control-rs-qemu-riscv",
+            "control-rs-qemu-risc-v",
             vec![(
                 "CARGO_TARGET_RISCV32IMAC_UNKNOWN_NONE_ELF_RUSTFLAGS",
                 "-C link-arg=-Tmemory.x -C link-arg=-Tlink.x -C link-arg=-Thil_suites.x",

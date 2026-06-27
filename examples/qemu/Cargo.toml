@@ -28,7 +28,7 @@ path = "src/arm-cortex-m.rs"
 test = false
 
 [[bin]]
-name = "control-rs-qemu-riscv"
+name = "control-rs-qemu-risc-v"
 path = "src/risc-v.rs"
 test = false
 

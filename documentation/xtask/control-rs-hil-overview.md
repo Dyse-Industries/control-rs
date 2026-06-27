@@ -57,10 +57,7 @@ object. This manages test execution and communication:
   for providing high-speed, zero-overhead telemetry required to prevent MCU
   stalls during complex math benchmarks without monopolizing a hardware UART
   peripheral.
-* **ClientClock:** A generic trait that allows users to configure different
-  hardware timers for the runner. The context expects a timer or clock from the
-  user's setup function to enable precise, hardware-specific performance metrics
-  and benchmarking.
+* **CPUProfileUtils:** A generic trait that allows users to configure CPU profiling utilities for the runner context. Users implement this trait to provide low-level access to CPU cycle counters, nanosecond system timers, stack pointers, stack painting/scanning, and critical sections. This enables precise, hardware-specific performance metrics and benchmarking.
 
 ### 3.2. Communication Protocol & Transport Layer
 

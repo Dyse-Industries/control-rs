@@ -177,12 +177,12 @@ fn format_sil_rows(results: &[&HeadlessTestResult]) -> String {
     }
 
     let format_cell = |r: &HeadlessTestResult, target: &str| -> String {
-        let icon = match r.state {
-            TestState::Passed => "✅ Pass",
-            _ => "❌ Fail",
+        let status = match r.state {
+            TestState::Passed => "Pass",
+            _ => "Fail",
         };
         let mut parts = Vec::new();
-        parts.push(icon.to_string());
+        parts.push(status.to_string());
         if !prune_time.get(target).copied().unwrap_or(false) {
             parts.push(r.time_us.map_or("N/A".to_string(), |t| {
                 format!("{}us", format_number(t))
@@ -198,7 +198,7 @@ fn format_sil_rows(results: &[&HeadlessTestResult]) -> String {
                 format!("{}c", format_number(c))
             }));
         }
-        parts.join(r" \| ")
+        parts.join(" / ")
     };
 
     let mut s = String::new();
@@ -524,11 +524,11 @@ mod tests {
         let formatted = format_sil_rows(&refs);
         assert!(formatted.contains("SuiteA"));
         assert!(formatted.contains("Test1"));
-        assert!(formatted.contains("✅ Pass"));
+        assert!(formatted.contains("Pass"));
         assert!(formatted.contains("100c"));
         assert!(formatted.contains("10us"));
         assert!(formatted.contains("256B"));
-        assert!(formatted.contains("❌ Fail"));
+        assert!(formatted.contains("Fail"));
         assert!(formatted.contains("N/A"));
     }
 

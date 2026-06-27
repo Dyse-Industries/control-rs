@@ -63,24 +63,22 @@ flowchart LR
 
 ### 1. Embedded HIL Engine (`control-rs-hil`)
 
-Located in [control-rs-hil](file:///home/mdyson/control-rs/control-rs-hil), this
+Located in [control-rs-hil](control-rs-hil), this
 `no_std` crate provides the target-side infrastructure:
 
 * **Interactive Test Server**: A lightweight event loop that executes test
   suites on request and streams results back.
-* **XOR-Checksum Framing**: Bidirectional postcard-serialized command/telemetry
-  streaming over arbitrary transports (USB CDC ACM, UART, Semihosting).
 * **Target Profiling**: Measures execution time using hardware cycle counters (
   ARM DWT) and tracks memory limits using stack painting and scanning.
 
 ### 2. Host Orchestration Driver (`control-rs-xtask`)
 
-Located in [control-rs-xtask](file:///home/mdyson/control-rs/control-rs-xtask),
+Located in [control-rs-xtask](control-rs-xtask),
 this package runs on the developer's PC:
 
 * **Interactive TUI**: A beautiful terminal dashboard built with `ratatui` to
   monitor live signals, trigger tests, tweak parameters, and view logs.
-* **QEMU Emulator Bridge**: Automatically handles communications with simulated
+* **QEMU Bridge**: Automatically handles communications with emulated
   targets.
 * **Headless Runner**: Automatically executes cross-compiled test suites and
   outputs performance metrics.
@@ -100,18 +98,44 @@ Automates the full validation pipeline:
 
 ## Quickstart & Commands
 
-Helpful cargo aliases are configured
-in [.cargo/config.toml](file:///home/mdyson/control-rs/.cargo/config.toml) to
-simplify development:
+Helpful cargo aliases are configured in [.cargo/config.toml](.cargo/config.toml)
+to simplify development:
 
 ### 1. Interactive Testing (Host TUI)
 
 Launch the Ratatui control dashboard. Select tests, run them, and adjust
 parameters in real time.
 
-* **For QEMU Emulator (ARM):**
+```bash
+  $> cargo tui
+  
+┌ control-rs HIL Console ─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ TARGET: QEMU (cortex-m7) | LINK: Semihosting (mps2-an500)                                                           │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Test Suites & Config Settings ────────────────────────────────┐┌ Target Console / RTT Logs ─────────────────────────┐
+│▼ test_axioms                                                  ││[Host] Connected to target. Triggering discovery... │
+│  ├─ [ ---- ] test_addition_commutativity                      ││[Host] Discovery complete.                          │
+│  ├─ [ ---- ] test_multiplication_commutativity                ││                                                    │
+│  ├─ [ ---- ] test_distributivity                              ││                                                    │
+│  ├─ [ ---- ] test_identities                                  ││                                                    │
+│  ├─ [ ---- ] test_comparisons                                 ││                                                    │
+│▼ test_basics                                                  ││                                                    │
+│  ├─ [ ---- ] test_new                                         ││                                                    │
+│  ├─ [ ---- ] test_from_real                                   ││                                                    │
+│  ├─ [ ---- ] test_from_imag                                   ││                                                    │
+│  ├─ [ ---- ] test_polar_creation                              ││                                                    │
+│  ├─ [ ---- ] test_polar_conversion                            ││                                                    │
+│▼ test_core_math                                               ││                                                    │
+└───────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘
+┌ Keyboard Commands ──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│(r)un all | (s)top execution | (f)ilter tests | (Enter) edit/run/toggle | (d)escription | (q)uit                     │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+* **QEMU Emulator (default target: cortex-m7, mps2-an500):**
   ```bash
   cargo qemu
+  cargo qemu risc-v # target: risc-v32, virt
   ```
 * **For Physical Teensy 4.0 Hardware:**
   ```bash
@@ -138,15 +162,6 @@ locally (clippy, formatting, tarpaulin coverage, and QEMU HIL tests).
   ```
 
 ---
-
-## Library Features
-
-* **Static Dimensions:** Storage dimensions are calculated at compile-time. No
-  heap allocation; zero-cost bounds checking.
-* **Robust Arithmetic:** Strict algebraic traits (`Scalar`, `Ring`, `Field`) and
-  fallible operations (`try_add`, `try_mul`) prevent undefined behavior.
-* **Backend-Agnostic BLAS:** BLAS operations are generic traits. Hardware
-  backends (e.g., ARM NEON, CMSIS-DSP) are injected at compile-time.
 
 ## Installation
 

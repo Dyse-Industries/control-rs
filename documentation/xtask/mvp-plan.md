@@ -5,7 +5,7 @@ the features described in the design documents.
 
 | Order | Document                          | Task                                                                   | Estimated Time (days) | Estimated LOC | Confidence / Difficulty |
 |-------|-----------------------------------|------------------------------------------------------------------------|-----------------------|---------------|-------------------------|
-| 1     | `client-clock-design-doc.md`      | Implement the `ClientClock` trait.                                     | 0.5                   | 50            | High / Low              |
+| 1     | `cpu-profile-utils-design-doc.md` | Implement the `CPUProfileUtils` trait.                               | 0.5                   | 50            | High / Low              |
 | 2     | `host-comm-design-doc.md`         | Implement the `HostComms` trait and command/telemetry data structures. | 2                     | 300           | Medium / Medium         |
 | 3     | `test-suite-design-doc.md`        | Define `SuiteDescriptor` and implement linker script mechanics.        | 2                     | 250           | Medium / Medium         |
 | 4     | `hil-runner-design-doc.md`        | Build the on-target HIL runner server.                                 | 3                     | 500           | Low / High              |

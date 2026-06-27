@@ -20,3 +20,9 @@ control-rs-macros = { path = "../control-rs-macros" }
 [features]
 default = ["stack-paint"]
 stack-paint = []
+
+[target.'cfg(target_arch = "arm")'.dependencies]
+cortex-m = "0.7"
+
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+riscv = "0.10"

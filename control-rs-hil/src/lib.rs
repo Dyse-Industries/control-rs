@@ -4,15 +4,18 @@
 #![no_std]
 #![allow(clippy::multiple_crate_versions)]
 
-pub use executor::{DummyExecutor, TestExecutor};
+pub use profiler::CPUProfiler;
+#[cfg(target_arch = "arm")]
+pub use profiler::CortexMProfiler;
+#[cfg(target_arch = "riscv32")]
+pub use profiler::RiscvProfiler;
 pub use server::Server;
 pub use settings::Setting;
 
 pub mod comms;
-pub mod executor;
+pub mod profiler;
 pub mod server;
 pub mod settings;
-pub mod time;
 pub mod util;
 
 /// Describes a single test executable.

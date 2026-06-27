@@ -264,7 +264,7 @@ pub fn hil_entrypoint(input: TokenStream) -> TokenStream {
 
             let context = #setup_name();
 
-            let mut server = ::control_rs_hil::Server::new_with_executor(context.comms, context.timer, context.executor, suites);
+            let mut server = ::control_rs_hil::Server::new(context.comms, context.cpu_utils, suites);
             let _ = server.run();
 
             #[cfg(target_arch = "arm")]
