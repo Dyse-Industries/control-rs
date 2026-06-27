@@ -13,6 +13,15 @@ pub trait CPUProfiler {
         f()
     }
 
+    /// Disables interrupts permanently.
+    fn disable_interrupts_permanently(&self) {}
+
+    /// Exits the application/environment using target-specific mechanisms.
+    #[allow(clippy::empty_loop)]
+    fn exit(&self) -> ! {
+        loop {}
+    }
+
     /// Get the current CPU cycle count.
     fn get_cycles(&self) -> u64;
 
@@ -75,6 +84,12 @@ pub trait CPUProfiler {
             .and_then(|diff| u32::try_from(diff).ok())
             .unwrap_or(0)
     }
+
+    /// Resets the CPU/system.
+    #[allow(clippy::empty_loop)]
+    fn reset(&self) -> ! {
+        loop {}
+    }
 }
 
 /// Target-specific implementation of `CPUProfiler` for ARM Cortex-M microcontrollers.
@@ -105,6 +120,10 @@ impl CPUProfiler for CortexMProfiler {
         F: FnOnce() -> R,
     {
         cortex_m::interrupt::free(|_| f())
+    }
+
+    fn disable_interrupts_permanently(&self) {
+        cortex_m::interrupt::disable();
     }
 
     fn get_cycles(&self) -> u64 {
@@ -138,6 +157,10 @@ impl CPUProfiler for CortexMProfiler {
         }
         core::ptr::addr_of!(_stack_end) as usize
     }
+
+    fn reset(&self) -> ! {
+        cortex_m::peripheral::SCB::sys_reset();
+    }
 }
 
 /// Target-specific implementation of `CPUProfiler` for RISC-V targets.
@@ -166,6 +189,12 @@ impl CPUProfiler for RiscvProfiler {
             riscv::interrupt::enable();
         }
         res
+    }
+
+    fn disable_interrupts_permanently(&self) {
+        unsafe {
+            riscv::interrupt::disable();
+        }
     }
 
     fn get_cycles(&self) -> u64 {

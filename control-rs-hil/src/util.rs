@@ -45,101 +45,75 @@ impl<'a> Write for FailureBufWriter<'a> {
 /// Disables interrupts, broadcasts target panic and failure telemetry, polls for host reset permission,
 /// and executes target reset.
 #[cfg(target_os = "none")]
-pub unsafe fn handle_failure(
+pub unsafe fn handle_failure<
+    C: crate::comms::HostComms,
+    P: crate::profiler::CPUProfiler,
+>(
+    context: &mut crate::server::Context<C, P>,
     msg: &str,
     file: &str,
     line: u32,
-    disable_interrupts: impl FnOnce(),
-    reset: impl FnOnce(),
+    comms_ok: bool,
 ) -> ! {
-    disable_interrupts();
+    context.cpu_utils.disable_interrupts_permanently();
 
-    let suite = crate::server::CURRENT_SUITE.load(Ordering::SeqCst);
-    let test = crate::server::CURRENT_TEST.load(Ordering::SeqCst);
+    if comms_ok {
+        let suite = crate::server::CURRENT_SUITE.load(Ordering::SeqCst);
+        let test = crate::server::CURRENT_TEST.load(Ordering::SeqCst);
 
-    unsafe {
-        if let (Some(sender), ptr) = (
-            crate::server::PANIC_TELEMETRY_SENDER,
-            crate::server::ACTIVE_COMMS_PTR,
-        ) {
-            if !ptr.is_null() {
-                if suite >= 0 && test >= 0 {
-                    sender(
-                        ptr,
-                        &crate::comms::Telemetry::TestStateChange {
-                            suite_id: suite as u16,
-                            test_id: test as u16,
-                            state: crate::comms::TestState::Failed,
-                        },
-                    );
-                }
-                sender(
-                    ptr,
-                    &crate::comms::Telemetry::TargetPanic {
-                        message: msg,
-                        file,
-                        line,
-                    },
-                );
-            }
-        }
-    }
-
-    // Wait for OkToReset command from host
-    loop {
-        let command = unsafe {
-            if let (Some(poller), ptr) = (
-                crate::server::PANIC_CMD_POLLER,
-                crate::server::ACTIVE_COMMS_PTR,
-            ) {
-                if !ptr.is_null() { poller(ptr) } else { None }
-            } else {
-                None
-            }
-        };
-
-        if let Some(crate::comms::Command::OkToReset) = command {
-            break;
+        if suite >= 0 && test >= 0 {
+            let _ = context.comms.send_telemetry(
+                &crate::comms::Telemetry::TestStateChange {
+                    suite_id: suite as u16,
+                    test_id: test as u16,
+                    state: crate::comms::TestState::Failed,
+                },
+            );
         }
 
-        unsafe {
-            if let (Some(flusher), ptr) = (
-                crate::server::PANIC_COMMS_FLUSHER,
-                crate::server::ACTIVE_COMMS_PTR,
-            ) {
-                if !ptr.is_null() {
-                    flusher(ptr);
-                } else {
-                    ::core::hint::spin_loop();
-                }
-            } else {
+        let _ = context.comms.send_telemetry(
+            &crate::comms::Telemetry::TargetPanic {
+                message: msg,
+                file,
+                line,
+            },
+        );
+        let _ = context.comms.flush();
+
+        // Wait for OkToReset command from host
+        loop {
+            let command = context.comms.poll_command().ok().flatten();
+
+            if let Some(crate::comms::Command::OkToReset) = command {
+                break;
+            }
+
+            let _ = context.comms.flush();
+
+            // Small delay to prevent pegging the CPU too hard
+            for _ in 0..1000 {
                 ::core::hint::spin_loop();
             }
         }
 
-        // Small delay to prevent pegging the CPU too hard
-        for _ in 0..1000 {
-            ::core::hint::spin_loop();
-        }
+        context.comms.close_on_failure();
     }
 
-    reset();
-
-    // Fallback loop to satisfy -> ! return type
-    loop {
-        ::core::hint::spin_loop();
-    }
+    context.cpu_utils.reset();
 }
 
 /// Target-agnostic logic for handling exceptions.
 /// Formats exception information and delegates to `handle_failure`.
 #[cfg(target_os = "none")]
-pub unsafe fn handle_exception(
+pub unsafe fn handle_exception<
+    C: crate::comms::HostComms,
+    P: crate::profiler::CPUProfiler,
+>(
+    context: &mut crate::server::Context<C, P>,
     msg: &str,
-    disable_interrupts: impl FnOnce(),
-    reset: impl FnOnce(),
+    comms_ok: bool,
 ) -> ! {
     unsafe {
-        handle_failure(msg, "exception_handler", 0, disable_interrupts, reset);
+        handle_failure(context, msg, "exception_handler", 0, comms_ok);
     }
 }

@@ -48,6 +48,14 @@ impl HostComms for RiscvSemihostingComms {
         }
     }
 
+    fn close(&mut self) {
+        semihosting::process::exit(0);
+    }
+
+    fn close_on_failure(&mut self) {
+        semihosting::process::exit(1);
+    }
+
     fn flush(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -77,5 +85,5 @@ fn setup() -> Context<RiscvSemihostingComms, RiscvProfiler> {
         reader: FrameReader::new(),
     };
     let cpu_utils = RiscvProfiler::new();
-    Context { comms, cpu_utils }
+    Context::new(comms, cpu_utils)
 }

@@ -3,13 +3,10 @@
 use core::sync::atomic::{AtomicI16, Ordering};
 
 use crate::SuiteDescriptor;
-use crate::comms::{Command, HostComms, Telemetry, TestState};
+use crate::comms::{Command, CommsLock, HostComms, Telemetry, TestState};
 use crate::settings::SettingValue;
 
 // --- Static variables ---
-
-/// Raw pointer to the active communication device.
-pub static mut ACTIVE_COMMS_PTR: *mut core::ffi::c_void = core::ptr::null_mut();
 
 /// Global tracker for the currently executing suite ID.
 /// Used by the panic handler to report test failures.
@@ -19,44 +16,109 @@ pub static CURRENT_SUITE: AtomicI16 = AtomicI16::new(-1);
 /// Used by the panic handler to report test failures.
 pub static CURRENT_TEST: AtomicI16 = AtomicI16::new(-1);
 
-/// Static function pointer used to command poller during a panic.
-pub static mut PANIC_CMD_POLLER: Option<PanicCmdPoller> = None;
-
-/// Static function pointer used to flush communications during a panic.
-pub static mut PANIC_COMMS_FLUSHER: Option<PanicCommsFlusher> = None;
-
-/// Static function pointer used to transmit telemetry during a panic.
-pub static mut PANIC_TELEMETRY_SENDER: Option<PanicTelemetrySender> = None;
-
 // --- Type aliases and Structs (PascalCase) ---
 
-/// Context object that encapsulates communication and CPU profiling utilities.
+/// Context object that encapsulates communication, CPU profiling utilities, and the communication lock.
 pub struct Context<C, P> {
     /// Host communication channel.
     pub comms: C,
+    /// Thread-safe communications lock to protect comms.
+    pub comms_lock: CommsLock,
     /// CPU profiling and execution utilities.
     pub cpu_utils: P,
 }
 
-/// Function signature for command poller during a panic.
-pub type PanicCmdPoller = unsafe fn(*mut core::ffi::c_void) -> Option<Command>;
-
-/// Function signature for communication flusher during a panic.
-pub type PanicCommsFlusher = unsafe fn(*mut core::ffi::c_void);
-
-/// Function signature for telemetry sender during a panic.
-pub type PanicTelemetrySender =
-    unsafe fn(*mut core::ffi::c_void, &Telemetry<'_>);
-
 /// Interactive test runner server.
 pub struct Server<'a, C, P> {
-    comms: C,
-    cpu_utils: P,
-    suites: &'a [&'static SuiteDescriptor],
+    /// The global context containing comms, `cpu_utils`, and the comms lock.
+    pub context: Context<C, P>,
+    /// The registered test suites.
+    pub suites: &'a [&'static SuiteDescriptor],
 }
 
 /// Result of server operations.
 pub type ServerResult<E> = Result<(), E>;
+
+#[allow(clippy::type_complexity)]
+impl<C: HostComms, P> Context<C, P> {
+    /// Flushes comms safely by acquiring the comms lock first.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error if flushing fails.
+    pub fn flush_locked(&mut self) -> Result<(), C::Error> {
+        if self.comms_lock.try_lock() {
+            let res = self.comms.flush();
+            self.comms_lock.unlock();
+            res
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Creates a new `Context`.
+    pub const fn new(comms: C, cpu_utils: P) -> Self {
+        Self {
+            comms,
+            comms_lock: CommsLock::new(),
+            cpu_utils,
+        }
+    }
+
+    /// Polls a command safely by acquiring the comms lock first.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error if polling fails.
+    pub fn poll_command_locked(&mut self) -> Result<Option<Command>, C::Error> {
+        if self.comms_lock.try_lock() {
+            let res = self.comms.poll_command();
+            self.comms_lock.unlock();
+            res
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Sends telemetry and flushes safely by acquiring the comms lock first.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error if writing or flushing fails.
+    pub fn send_telemetry_and_flush_locked(
+        &mut self,
+        telemetry: &Telemetry<'_>,
+    ) -> Result<(), C::Error> {
+        if self.comms_lock.try_lock() {
+            let res = self
+                .comms
+                .send_telemetry(telemetry)
+                .and_then(|()| self.comms.flush());
+            self.comms_lock.unlock();
+            res
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Sends telemetry safely by acquiring the comms lock first.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error if writing fails.
+    pub fn send_telemetry_locked(
+        &mut self,
+        telemetry: &Telemetry<'_>,
+    ) -> Result<(), C::Error> {
+        if self.comms_lock.try_lock() {
+            let res = self.comms.send_telemetry(telemetry);
+            self.comms_lock.unlock();
+            res
+        } else {
+            Ok(())
+        }
+    }
+}
 
 #[allow(clippy::type_complexity)]
 impl<'a, C, P> Server<'a, C, P>
@@ -64,17 +126,23 @@ where
     C: HostComms,
     P: crate::profiler::CPUProfiler,
 {
-    /// Creates a new `Server` instance with target-specific CPU profiling utilities.
+    /// Exits the server, using target-specific exit mechanisms.
+    pub fn exit(&mut self) -> ! {
+        if self.context.comms_lock.try_lock() {
+            self.context.comms.close();
+            self.context.comms_lock.unlock();
+        } else {
+            self.context.comms.close();
+        }
+        self.context.cpu_utils.exit()
+    }
+
+    /// Creates a new `Server` instance with the given context.
     pub const fn new(
-        comms: C,
-        cpu_utils: P,
+        context: Context<C, P>,
         suites: &'a [&'static SuiteDescriptor],
     ) -> Self {
-        Self {
-            comms,
-            cpu_utils,
-            suites,
-        }
+        Self { context, suites }
     }
 
     /// Runs the interactive server event loop.
@@ -84,58 +152,33 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a transport error `C::Error` propagated from the underlying communication interface if:
-    /// * `poll_command()` fails: An error occurs when reading or de-framing incoming bytes from the
-    ///   host, such as physical transport issues or serial port failures.
-    /// * `stream_discovery()` fails: Transmission of suite, test, or setting metadata fails while
-    ///   writing telemetry packets or flushing them to the transport interface during discovery.
-    /// * `run_test()` fails: An error occurs while communicating test state transitions (e.g. `Running` or
-    ///   `Passed`), sending performance metric reports, or flushing the transport buffer.
-    /// * `set_setting()` fails: Broadcasting the confirmation of the updated setting telemetry fails,
-    ///   or flushing the communication buffer fails.
-    /// * `flush()` fails: Flushing the pending buffered telemetry data at the end of the command loop
-    ///   iteration fails.
+    /// Returns a transport error `C::Error` propagated from the underlying communication interface if polling,
+    /// transmitting telemetry, or flushing fails.
     pub fn run(&mut self) -> ServerResult<C::Error> {
-        unsafe {
-            ACTIVE_COMMS_PTR =
-                core::ptr::addr_of_mut!(self.comms).cast::<core::ffi::c_void>();
-            PANIC_TELEMETRY_SENDER = Some(send_telemetry_via_ptr::<C>);
-            PANIC_COMMS_FLUSHER = Some(flush_comms_via_ptr::<C>);
-            PANIC_CMD_POLLER = Some(poll_command_via_ptr::<C>);
-        }
+        loop {
+            let cmd = self.context.poll_command_locked()?;
 
-        let res = (|| {
-            loop {
-                if let Some(cmd) = self.comms.poll_command()? {
-                    match cmd {
-                        Command::ListSuites => {
-                            self.stream_discovery()?;
-                        }
-                        Command::RunExecutable { suite_id, test_id } => {
-                            self.run_test(suite_id, test_id)?;
-                        }
-                        Command::SetSetting {
-                            suite_id,
-                            setting_id,
-                            value,
-                        } => {
-                            self.set_setting(suite_id, setting_id, value)?;
-                        }
-                        Command::OkToReset => {}
+            if let Some(cmd) = cmd {
+                match cmd {
+                    Command::ListSuites => {
+                        self.stream_discovery()?;
                     }
+                    Command::RunExecutable { suite_id, test_id } => {
+                        self.run_test(suite_id, test_id)?;
+                    }
+                    Command::SetSetting {
+                        suite_id,
+                        setting_id,
+                        value,
+                    } => {
+                        self.set_setting(suite_id, setting_id, value)?;
+                    }
+                    Command::OkToReset => {}
                 }
-                self.comms.flush()?;
             }
-        })();
 
-        unsafe {
-            ACTIVE_COMMS_PTR = core::ptr::null_mut();
-            PANIC_TELEMETRY_SENDER = None;
-            PANIC_COMMS_FLUSHER = None;
-            PANIC_CMD_POLLER = None;
+            self.context.flush_locked()?;
         }
-
-        res
     }
 
     #[allow(clippy::arithmetic_side_effects)]
@@ -155,12 +198,13 @@ where
         };
 
         // Update state to Running
-        self.comms.send_telemetry(&Telemetry::TestStateChange {
-            suite_id,
-            test_id,
-            state: TestState::Running,
-        })?;
-        self.comms.flush()?;
+        self.context.send_telemetry_and_flush_locked(
+            &Telemetry::TestStateChange {
+                suite_id,
+                test_id,
+                state: TestState::Running,
+            },
+        )?;
 
         // Track globally in case of panic during test execution
         CURRENT_SUITE
@@ -168,21 +212,22 @@ where
         CURRENT_TEST.store(test_id.try_into().unwrap_or(-1), Ordering::SeqCst);
 
         // Retrieve stack pointer before running the test
-        let sp = self.cpu_utils.get_sp();
+        let sp = self.context.cpu_utils.get_sp();
         unsafe {
-            self.cpu_utils.paint_stack(sp);
+            self.context.cpu_utils.paint_stack(sp);
         }
 
-        let start_cycles = self.cpu_utils.get_cycles();
-        let start_time_ns = self.cpu_utils.get_nanos();
+        let start_cycles = self.context.cpu_utils.get_cycles();
+        let start_time_ns = self.context.cpu_utils.get_nanos();
 
-        self.cpu_utils.disable_interrupts(|| {
+        self.context.cpu_utils.disable_interrupts(|| {
             (exec.test_fn)();
         });
 
-        let end_time_ns = self.cpu_utils.get_nanos();
-        let end_cycles = self.cpu_utils.get_cycles();
-        let elapsed_stack = unsafe { self.cpu_utils.read_stack_peak(sp) };
+        let end_time_ns = self.context.cpu_utils.get_nanos();
+        let end_cycles = self.context.cpu_utils.get_cycles();
+        let elapsed_stack =
+            unsafe { self.context.cpu_utils.read_stack_peak(sp) };
 
         let elapsed_cycles = end_cycles.saturating_sub(start_cycles);
         let elapsed_time_us = end_time_ns.saturating_sub(start_time_ns) / 1000;
@@ -191,23 +236,24 @@ where
         CURRENT_SUITE.store(-1, Ordering::SeqCst);
         CURRENT_TEST.store(-1, Ordering::SeqCst);
 
-        // Update state to Passed
-        self.comms.send_telemetry(&Telemetry::TestStateChange {
-            suite_id,
-            test_id,
-            state: TestState::Passed,
-        })?;
+        // Update state to Passed & Send metric report
+        self.context
+            .send_telemetry_locked(&Telemetry::TestStateChange {
+                suite_id,
+                test_id,
+                state: TestState::Passed,
+            })?;
 
-        // Send metric report
-        self.comms.send_telemetry(&Telemetry::MetricReport {
-            suite_id,
-            test_id,
-            cycles: elapsed_cycles,
-            time_us: elapsed_time_us,
-            stack_peak: elapsed_stack,
-        })?;
+        self.context.send_telemetry_and_flush_locked(
+            &Telemetry::MetricReport {
+                suite_id,
+                test_id,
+                cycles: elapsed_cycles,
+                time_us: elapsed_time_us,
+                stack_peak: elapsed_stack,
+            },
+        )?;
 
-        self.comms.flush()?;
         Ok(())
     }
 
@@ -230,21 +276,22 @@ where
         let _ = setting.set(value);
 
         // Stream back the updated value to confirm
-        self.comms.send_telemetry(&Telemetry::SettingInfo {
-            suite_id,
-            setting_id,
-            name: setting.name(),
-            description: setting.description(),
-            value: setting.get(),
-        })?;
+        self.context.send_telemetry_and_flush_locked(
+            &Telemetry::SettingInfo {
+                suite_id,
+                setting_id,
+                name: setting.name(),
+                description: setting.description(),
+                value: setting.get(),
+            },
+        )?;
 
-        self.comms.flush()?;
         Ok(())
     }
 
     fn stream_discovery(&mut self) -> ServerResult<C::Error> {
         for (suite_id, &suite) in (0_u16..).zip(self.suites.iter()) {
-            self.comms.send_telemetry(&Telemetry::SuiteInfo {
+            self.context.send_telemetry_locked(&Telemetry::SuiteInfo {
                 suite_id,
                 name: suite.name,
                 description: suite.description,
@@ -259,60 +306,33 @@ where
                     .try_into()
                     .unwrap_or(u16::MAX),
             })?;
+
             for (test_id, exec) in (0_u16..).zip(suite.executables.iter()) {
-                self.comms.send_telemetry(&Telemetry::TestInfo {
+                self.context.send_telemetry_locked(&Telemetry::TestInfo {
                     suite_id,
                     test_id,
                     name: exec.name,
                     description: exec.description,
                 })?;
             }
+
             for (setting_id, setting) in (0_u16..).zip(suite.settings.iter()) {
-                self.comms.send_telemetry(&Telemetry::SettingInfo {
-                    suite_id,
-                    setting_id,
-                    name: setting.name(),
-                    description: setting.description(),
-                    value: setting.get(),
-                })?;
+                self.context.send_telemetry_locked(
+                    &Telemetry::SettingInfo {
+                        suite_id,
+                        setting_id,
+                        name: setting.name(),
+                        description: setting.description(),
+                        value: setting.get(),
+                    },
+                )?;
             }
         }
 
-        self.comms.send_telemetry(&Telemetry::DiscoveryComplete)?;
-        self.comms.flush()?;
+        self.context
+            .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)?;
+
         Ok(())
-    }
-}
-
-/// Helper function to flush communications via type-erased pointer.
-unsafe fn flush_comms_via_ptr<C: HostComms>(comms_ptr: *mut core::ffi::c_void) {
-    if !comms_ptr.is_null() {
-        let comms = unsafe { &mut *comms_ptr.cast::<C>() };
-        let _ = comms.flush();
-    }
-}
-
-/// Helper function to poll commands via type-erased pointer.
-unsafe fn poll_command_via_ptr<C: HostComms>(
-    comms_ptr: *mut core::ffi::c_void,
-) -> Option<Command> {
-    if comms_ptr.is_null() {
-        None
-    } else {
-        let comms = unsafe { &mut *comms_ptr.cast::<C>() };
-        comms.poll_command().ok().flatten()
-    }
-}
-
-/// Helper function to transmit telemetry via type-erased pointer.
-unsafe fn send_telemetry_via_ptr<C: HostComms>(
-    comms_ptr: *mut core::ffi::c_void,
-    telemetry: &Telemetry<'_>,
-) {
-    if !comms_ptr.is_null() {
-        let comms = unsafe { &mut *comms_ptr.cast::<C>() };
-        let _ = comms.send_telemetry(telemetry);
-        let _ = comms.flush();
     }
 }
 
@@ -366,6 +386,10 @@ mod tests {
     type SettingsSlice = &'static [&'static dyn Setting];
 
     impl CPUProfiler for HostCPUProfiler {
+        fn exit(&self) -> ! {
+            panic!("exit called in tests");
+        }
+
         fn get_cycles(&self) -> u64 {
             0
         }
@@ -380,6 +404,10 @@ mod tests {
 
         fn get_stack_end(&self) -> usize {
             0
+        }
+
+        fn reset(&self) -> ! {
+            panic!("reset called in tests");
         }
     }
 
@@ -475,12 +503,13 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
+        let context = Context::new(comms, HostCPUProfiler);
+        let mut server = Server::new(context, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 
         // Check telemetry sent
-        let p = &server.comms.payloads;
+        let p = &server.context.comms.payloads;
         assert!(p.len() >= 4);
 
         let t0: Telemetry<'_> =
@@ -532,10 +561,11 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
+        let context = Context::new(comms, HostCPUProfiler);
+        let mut server = Server::new(context, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
-        assert!(server.comms.payloads.is_empty());
+        assert!(server.context.comms.payloads.is_empty());
     }
 
     #[test]
@@ -565,11 +595,12 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
+        let context = Context::new(comms, HostCPUProfiler);
+        let mut server = Server::new(context, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 
-        assert!(server.comms.payloads.is_empty());
+        assert!(server.context.comms.payloads.is_empty());
     }
 
     #[test]
@@ -580,7 +611,8 @@ mod tests {
             flush_count: 0,
             fail_on_poll: true,
         };
-        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
+        let context = Context::new(comms, HostCPUProfiler);
+        let mut server = Server::new(context, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Poll failed"));
     }
@@ -597,13 +629,14 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
+        let context = Context::new(comms, HostCPUProfiler);
+        let mut server = Server::new(context, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 
         assert!(TEST_CALLED.load(Ordering::SeqCst));
 
-        let p = &server.comms.payloads;
+        let p = &server.context.comms.payloads;
         assert_eq!(p.len(), 3);
 
         let t0: Telemetry<'_> =
@@ -652,11 +685,12 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
+        let context = Context::new(comms, HostCPUProfiler);
+        let mut server = Server::new(context, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 
-        let p = &server.comms.payloads;
+        let p = &server.context.comms.payloads;
         assert_eq!(p.len(), 1);
         let t0: Telemetry<'_> =
             postcard::from_bytes(p.first().unwrap()).unwrap();
@@ -683,11 +717,12 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         };
-        let mut server = Server::new(comms, HostCPUProfiler, SUITES);
+        let context = Context::new(comms, HostCPUProfiler);
+        let mut server = Server::new(context, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 
-        let p = &server.comms.payloads;
+        let p = &server.context.comms.payloads;
         assert_eq!(p.len(), 1);
         let t0: Telemetry<'_> =
             postcard::from_bytes(p.first().unwrap()).unwrap();
@@ -695,47 +730,6 @@ mod tests {
             assert!(matches!(value, SettingValue::U8(_)));
         } else {
             panic!("Expected SettingInfo");
-        }
-    }
-
-    #[test]
-    fn test_unsafe_ptr_helpers() {
-        let mut comms = MockComms {
-            commands: std::vec![Command::OkToReset],
-            payloads: Vec::new(),
-            flush_count: 0,
-            fail_on_poll: false,
-        };
-
-        unsafe {
-            send_telemetry_via_ptr::<MockComms>(
-                core::ptr::null_mut(),
-                &Telemetry::DiscoveryComplete,
-            );
-            flush_comms_via_ptr::<MockComms>(core::ptr::null_mut());
-            let cmd = poll_command_via_ptr::<MockComms>(core::ptr::null_mut());
-            assert!(cmd.is_none());
-        }
-
-        let comms_ptr =
-            core::ptr::addr_of_mut!(comms).cast::<core::ffi::c_void>();
-        unsafe {
-            send_telemetry_via_ptr::<MockComms>(
-                comms_ptr,
-                &Telemetry::DiscoveryComplete,
-            );
-            assert_eq!(comms.payloads.len(), 1);
-            let t0: Telemetry<'_> =
-                postcard::from_bytes(comms.payloads.first().unwrap()).unwrap();
-            assert!(matches!(t0, Telemetry::DiscoveryComplete));
-
-            assert_eq!(comms.flush_count, 1);
-            flush_comms_via_ptr::<MockComms>(comms_ptr);
-            assert_eq!(comms.flush_count, 2);
-
-            let cmd = poll_command_via_ptr::<MockComms>(comms_ptr);
-            assert!(matches!(cmd, Some(Command::OkToReset)));
-            assert_eq!(comms.commands.len(), 0);
         }
     }
 }

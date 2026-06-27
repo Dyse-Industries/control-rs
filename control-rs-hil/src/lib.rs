@@ -9,7 +9,7 @@ pub use profiler::CPUProfiler;
 pub use profiler::CortexMProfiler;
 #[cfg(target_arch = "riscv32")]
 pub use profiler::RiscvProfiler;
-pub use server::Server;
+pub use server::{Context, Server};
 pub use settings::Setting;
 
 pub mod comms;

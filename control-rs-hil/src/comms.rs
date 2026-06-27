@@ -1,5 +1,7 @@
 //! Target-to-Host communication protocol and traits.
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use crate::settings::SettingValue;
 
 const MAX_PAYLOAD_SIZE: usize = 512;
@@ -23,6 +25,12 @@ pub type SendResult<E> = Result<(), E>;
 pub trait HostComms {
     /// The error type associated with transport failures.
     type Error;
+
+    /// Closes the communication interface (e.g. signaling semihosting exit).
+    fn close(&mut self) {}
+
+    /// Closes the communication interface with a failure/error status.
+    fn close_on_failure(&mut self) {}
 
     /// Flush any pending buffered data out to the physical interface.
     ///
@@ -181,6 +189,11 @@ pub enum TestState {
     Running,
 }
 
+/// A thread-safe lock using an atomic boolean flag to protect communication resources.
+pub struct CommsLock {
+    locked: AtomicBool,
+}
+
 /// State machine to de-frame a stream of incoming bytes into packets.
 pub struct FrameReader {
     payload_buffer: [u8; MAX_PAYLOAD_SIZE],
@@ -199,6 +212,35 @@ pub struct LogMessage<'a> {
     pub test_id: u16,
     /// Microseconds elapsed since boot / epoch.
     pub timestamp_us: u64,
+}
+
+impl Default for CommsLock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CommsLock {
+    /// Creates a new, unlocked `CommsLock`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            locked: AtomicBool::new(false),
+        }
+    }
+
+    /// Attempts to acquire the lock. Returns `true` if successful, or `false` if already locked.
+    #[must_use]
+    pub fn try_lock(&self) -> bool {
+        self.locked
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+    }
+
+    /// Releases the lock.
+    pub fn unlock(&self) {
+        self.locked.store(false, Ordering::Release);
+    }
 }
 
 impl Default for FrameReader {

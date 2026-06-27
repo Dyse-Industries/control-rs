@@ -1,7 +1,15 @@
 //! Procedural macros for the control-rs HIL testing framework.
 //! Provides attributes like `#[hil_suite]` and `#[hil_setup]` to declare HIL test suites and setup functions.
 
-#![allow(unused_extern_crates, clippy::uninlined_format_args)]
+#![allow(
+    unused_extern_crates,
+    clippy::uninlined_format_args,
+    clippy::missing_panics_doc,
+    clippy::panic,
+    clippy::expect_used,
+    clippy::manual_let_else,
+    clippy::match_wildcard_for_single_variants
+)]
 
 extern crate proc_macro;
 use proc_macro::TokenStream;
@@ -217,6 +225,30 @@ pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
+/// Helper to extract C and P generic type arguments from a Type of form `PathSegment<C, P>`.
+#[allow(clippy::type_complexity)]
+fn extract_context_generics(ty: &syn::Type) -> Option<(syn::Type, syn::Type)> {
+    let syn::Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+    if segment.ident != "Context" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(generic_args) = &segment.arguments
+    else {
+        return None;
+    };
+    let mut args = generic_args.args.iter();
+    let syn::GenericArgument::Type(c_ty) = args.next()? else {
+        return None;
+    };
+    let syn::GenericArgument::Type(p_ty) = args.next()? else {
+        return None;
+    };
+    Some((c_ty.clone(), p_ty.clone()))
+}
+
 /// Attribute macro for setting up the HIL server entrypoint.
 ///
 /// Annotates the hardware setup function, generates the standard main entrypoint,
@@ -226,8 +258,18 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let setup_fn = parse_macro_input!(item as ItemFn);
     let setup_name = &setup_fn.sig.ident;
 
+    let return_type = match &setup_fn.sig.output {
+        syn::ReturnType::Type(_, ty) => ty,
+        _ => panic!("setup function must return a Context"),
+    };
+
+    let (c_ty, p_ty) = extract_context_generics(return_type)
+        .expect("setup function return type must be Context<C, P>");
+
     let expanded = quote! {
         #setup_fn
+
+        static mut HIL_SERVER: Option<::control_rs_hil::Server<'static, #c_ty, #p_ty>> = None;
 
         ::control_rs_macros::hil_entrypoint!(#setup_name);
         ::control_rs_macros::hil_panic!();
@@ -263,18 +305,13 @@ pub fn hil_entrypoint(input: TokenStream) -> TokenStream {
             let suites = unsafe { ::control_rs_hil::util::get_suites(start, end) };
 
             let context = #setup_name();
+            unsafe {
+                HIL_SERVER = Some(::control_rs_hil::Server::new(context, suites));
+            }
 
-            let mut server = ::control_rs_hil::Server::new(context.comms, context.cpu_utils, suites);
+            let server = unsafe { HIL_SERVER.as_mut().unwrap() };
             let _ = server.run();
-
-            #[cfg(target_arch = "arm")]
-            ::cortex_m_semihosting::debug::exit(::cortex_m_semihosting::debug::EXIT_SUCCESS);
-
-            #[cfg(target_arch = "riscv32")]
-            ::semihosting::process::exit(0);
-
-            #[cfg(not(target_arch = "riscv32"))]
-            loop {}
+            server.exit();
         }
     };
     TokenStream::from(expanded)
@@ -301,25 +338,20 @@ pub fn hil_panic(input: TokenStream) -> TokenStream {
             let line = info.location().map_or(0, |l| l.line());
 
             unsafe {
-                ::control_rs_hil::util::handle_failure(
-                    msg,
-                    file,
-                    line,
-                    || {
-                        #[cfg(target_arch = "arm")]
-                        ::cortex_m::interrupt::disable();
-                        #[cfg(target_arch = "riscv32")]
-                        ::riscv::interrupt::disable();
-                    },
-                    || {
-                        #[cfg(target_arch = "arm")]
-                        ::cortex_m::peripheral::SCB::sys_reset();
-                        #[cfg(target_arch = "riscv32")]
-                        ::semihosting::process::exit(1);
-                        #[cfg(not(any(target_arch = "arm", target_arch = "riscv32")))]
-                        loop {}
+                if let Some(server) = HIL_SERVER.as_mut() {
+                    let comms_ok = server.context.comms_lock.try_lock();
+                    ::control_rs_hil::util::handle_failure(
+                        &mut server.context,
+                        msg,
+                        file,
+                        line,
+                        comms_ok,
+                    );
+                } else {
+                    loop {
+                        ::core::hint::spin_loop();
                     }
-                );
+                }
             }
         }
     };
@@ -346,11 +378,18 @@ pub fn hil_exception(input: TokenStream) -> TokenStream {
             };
             let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("exception occurred");
 
-            ::control_rs_hil::util::handle_exception(
-                msg,
-                || ::cortex_m::interrupt::disable(),
-                || ::cortex_m::peripheral::SCB::sys_reset(),
-            );
+            if let Some(server) = HIL_SERVER.as_mut() {
+                let comms_ok = server.context.comms_lock.try_lock();
+                ::control_rs_hil::util::handle_exception(
+                    &mut server.context,
+                    msg,
+                    comms_ok,
+                );
+            } else {
+                loop {
+                    ::core::hint::spin_loop();
+                }
+            }
         }
 
         #[cfg(all(target_os = "none", target_arch = "riscv32"))]
@@ -371,11 +410,18 @@ pub fn hil_exception(input: TokenStream) -> TokenStream {
             };
             let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("exception occurred");
 
-            ::control_rs_hil::util::handle_exception(
-                msg,
-                || ::riscv::interrupt::disable(),
-                || ::semihosting::process::exit(1),
-            );
+            if let Some(server) = HIL_SERVER.as_mut() {
+                let comms_ok = server.context.comms_lock.try_lock();
+                ::control_rs_hil::util::handle_exception(
+                    &mut server.context,
+                    msg,
+                    comms_ok,
+                );
+            } else {
+                loop {
+                    ::core::hint::spin_loop();
+                }
+            }
         }
     };
     TokenStream::from(expanded)

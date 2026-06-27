@@ -10,10 +10,11 @@ use teensy4_bsp as bsp;
 use control_rs_hil::comms::{
     frame_telemetry, Command, FrameReader, HostComms, Telemetry,
 };
-use control_rs_hil::CortexMProfiler;
 use control_rs_hil::server::Context;
+use control_rs_hil::CortexMProfiler;
 use control_rs_macros::{hil_setup, hil_suite};
-use core::sync::atomic::AtomicU32;
+#[allow(unused_imports)]
+use core::sync::atomic::{AtomicU32, Ordering};
 use cortex_m::peripheral::syst::SystClkSource;
 
 use usb_device::bus::UsbBusAllocator;
@@ -255,5 +256,5 @@ fn setup() -> Context<TeensyComms, CortexMProfiler> {
         configured: false,
     };
     let cpu_utils = CortexMProfiler::new(board::ARM_FREQUENCY, &MILLISECONDS);
-    Context { comms, cpu_utils }
+    Context::new(comms, cpu_utils)
 }

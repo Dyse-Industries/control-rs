@@ -53,6 +53,10 @@ impl HostComms for SemihostingComms {
         }
     }
 
+    fn close(&mut self) {
+        cortex_m_semihosting::debug::exit(cortex_m_semihosting::debug::EXIT_SUCCESS);
+    }
+
     fn flush(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -123,5 +127,5 @@ fn setup() -> Context<SemihostingComms, CortexMProfiler> {
         reader: FrameReader::new(),
     };
     let cpu_utils = CortexMProfiler::new(25_000_000, &MILLISECONDS);
-    Context { comms, cpu_utils }
+    Context::new(comms, cpu_utils)
 }
