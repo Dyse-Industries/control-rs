@@ -19,6 +19,12 @@ pub static CURRENT_TEST: AtomicI16 = AtomicI16::new(-1);
 // --- Type aliases and Structs (PascalCase) ---
 
 /// Context object that encapsulates communication, CPU profiling utilities, and the communication lock.
+///
+/// This type coordinates accesses to low-level target hardware. To ensure thread safety and avoid race
+/// conditions (for example, between the main event loop and interrupt/exception/panic handlers that
+/// also need to send telemetry), the `Context` holds a `CommsLock`. All public telemetry and poll methods 
+/// are run via `_locked` helper methods, ensuring mutual exclusion without requiring blocking mutexes 
+/// that could cause deadlocks in interrupt-disabled contexts.
 pub struct Context<C, P> {
     /// Host communication channel.
     pub comms: C,
@@ -29,6 +35,10 @@ pub struct Context<C, P> {
 }
 
 /// Interactive test runner server.
+///
+/// The `Server` coordinates the execution of HIL tests on the target. It manages the boot discovery phase,
+/// processes settings updates, runs tests inside critical sections (interrupts disabled), and returns
+/// telemetry and cycle/stack usage metrics.
 pub struct Server<'a, C, P> {
     /// The global context containing comms, `cpu_utils`, and the comms lock.
     pub context: Context<C, P>,
@@ -42,6 +52,9 @@ pub type ServerResult<E> = Result<(), E>;
 #[allow(clippy::type_complexity)]
 impl<C: HostComms, P> Context<C, P> {
     /// Flushes comms safely by acquiring the comms lock first.
+    ///
+    /// If the lock is already held (e.g., by a panic handler or an interrupt), this method returns `Ok(())`
+    /// immediately to avoid reentrancy deadlock or state corruption.
     ///
     /// # Errors
     ///
@@ -67,6 +80,8 @@ impl<C: HostComms, P> Context<C, P> {
 
     /// Polls a command safely by acquiring the comms lock first.
     ///
+    /// If the lock is already held, this returns `Ok(None)` immediately to prevent nested/concurrent polls.
+    ///
     /// # Errors
     ///
     /// Returns a transport error if polling fails.
@@ -81,6 +96,9 @@ impl<C: HostComms, P> Context<C, P> {
     }
 
     /// Sends telemetry and flushes safely by acquiring the comms lock first.
+    ///
+    /// If the lock is already held, this returns `Ok(())` immediately. This is the primary safe interface
+    /// for regular telemetry logs.
     ///
     /// # Errors
     ///
@@ -102,6 +120,8 @@ impl<C: HostComms, P> Context<C, P> {
     }
 
     /// Sends telemetry safely by acquiring the comms lock first.
+    ///
+    /// If the lock is already held, this returns `Ok(())` immediately.
     ///
     /// # Errors
     ///
@@ -127,6 +147,8 @@ where
     P: crate::profiler::CPUProfiler,
 {
     /// Exits the server, using target-specific exit mechanisms.
+    ///
+    /// Attempts to cleanly close the communication channel before invoking the target exit routine.
     pub fn exit(&mut self) -> ! {
         if self.context.comms_lock.try_lock() {
             self.context.comms.close();
@@ -213,6 +235,9 @@ where
 
         // Retrieve stack pointer before running the test
         let sp = self.context.cpu_utils.get_sp();
+        // SAFETY: We retrieve the active stack pointer `sp` immediately before painting.
+        // The implementation of `paint_stack` handles bounds calculations and enforces a safety
+        // margin to protect active call frames.
         unsafe {
             self.context.cpu_utils.paint_stack(sp);
         }
@@ -226,6 +251,9 @@ where
 
         let end_time_ns = self.context.cpu_utils.get_nanos();
         let end_cycles = self.context.cpu_utils.get_cycles();
+        // SAFETY: We query the peak stack usage relative to the same stack pointer `sp` used
+        // to paint the stack. The stack was painted with sentinel bytes, and reading occurs within
+        // the valid boundaries calculated during the painting phase.
         let elapsed_stack =
             unsafe { self.context.cpu_utils.read_stack_peak(sp) };
 

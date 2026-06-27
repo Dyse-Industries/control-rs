@@ -33,11 +33,21 @@ fn SysTick() {
 }
 
 // --- Communication Implementation ---
+//
+// The HIL testing framework uses the `HostComms` trait to define target-to-host 
+// communication. On the Teensy 4.0, we implement this using a USB CDC virtual serial 
+// port. Telemetry is serialized using Postcard and framed with `frame_telemetry`, 
+// then transmitted over USB. Incoming bytes are passed to `FrameReader` to reassemble 
+// host commands.
 
 struct TeensyComms {
+    /// USB CDC class representing the virtual serial port.
     usb_class: SerialPort<'static, BusAdapter>,
+    /// USB device manager driving the overall USB descriptor and state.
     usb_device: UsbDevice<'static, BusAdapter>,
+    /// State machine to decode incoming byte stream into Commands.
     reader: FrameReader,
+    /// Flag indicating whether the host has configured the USB connection.
     configured: bool,
 }
 
@@ -176,7 +186,11 @@ pub mod teensy_pid_suite {
     }
 }
 
-// --- Test Execution Implementation for ARM Cortex-M ---
+// --- Profiler Implementation for ARM Cortex-M ---
+//
+// We use the HIL crate's built-in `CortexMProfiler` to implement the target-agnostic 
+// `CPUProfiler` trait. It reads clock cycles from the ARM DWT cycle counter and tracks 
+// real-time duration using the ARM SysTick timer. It also paints/profiles stack space.
 
 fn enable_dwt_cycle_counter() {
     unsafe {

@@ -9,10 +9,20 @@ use control_rs_hil::comms::{
 use control_rs_hil::server::Context;
 use control_rs_macros::hil_setup;
 // --- Communication Implementation via Direct Semihosting Syscalls ---
+//
+// The HIL testing framework uses the `HostComms` trait to define how the target MCU 
+// exchanges bytes with the host test runner/TUI.
+// Here we implement `HostComms` using ARM Semihosting, which allows the QEMU-emulated 
+// target to make syscalls directly to the host machine for standard input/output.
+//
+// We use a `FrameReader` state machine (from the HIL crate) to decode raw incoming bytes 
+// from the host into parsed `Command` packets (like "run test X" or "list suites").
+
 use core::sync::atomic::Ordering;
 
 #[allow(dead_code)]
 struct SemihostingComms {
+    /// Helper state machine to reassemble packets from incoming byte stream.
     reader: FrameReader,
 }
 
@@ -21,6 +31,7 @@ impl HostComms for SemihostingComms {
 
     #[allow(clippy::collapsible_if)]
     fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+        // Read a single character from host terminal using semihosting READC syscall.
         let c = unsafe {
             cortex_m_semihosting::syscall1(cortex_m_semihosting::nr::READC, 0)
         } as u8;
@@ -74,6 +85,15 @@ pub use control_rs::math::tests::complex_num_tests::{
     test_limitations::SUITE_DESCRIPTOR_PTR as _,
     test_transcendental::SUITE_DESCRIPTOR_PTR as _,
 };
+
+// --- Profiler Implementation for ARM Cortex-M ---
+//
+// The HIL testing framework uses the `CPUProfiler` trait to fetch hardware metrics 
+// in a target-agnostic manner. 
+// We use the HIL crate's built-in `CortexMProfiler` to track CPU cycles consumed during 
+// tests (via the Data Watchpoint and Trace (DWT) peripheral) and elapsed time (using 
+// the SysTick timer, which fires an interrupt incrementing our atomic millisecond counter).
+// It also provides a way to read and paint the stack memory to measure peak stack usage.
 
 use control_rs_hil::CortexMProfiler;
 use core::sync::atomic::AtomicU32;

@@ -6,15 +6,19 @@ extern crate control_rs;
 use control_rs_hil::comms::{
     frame_telemetry, Command, FrameReader, HostComms, Telemetry,
 };
-use control_rs_hil::RiscvProfiler;
 use control_rs_hil::server::Context;
+use control_rs_hil::RiscvProfiler;
 use control_rs_macros::hil_setup;
 
 use semihosting::io::Write;
 
-// --- Communication Implementation via Direct Semihosting ---
+// The HIL testing framework uses the `HostComms` trait to define target-to-host
+// communication. On RISC-V QEMU, we implement it using RISC-V Semihosting, which allows
+// the emulator to pass standard stream data directly to the host process.
+// We decode incoming host data into `Command`s using the HIL `FrameReader` utility.
 
 struct RiscvSemihostingComms {
+    /// State machine to decode incoming byte stream into Commands.
     reader: FrameReader,
 }
 
@@ -22,6 +26,7 @@ impl HostComms for RiscvSemihostingComms {
     type Error = ();
 
     fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+        // Read a single character from the host terminal via RISC-V semihosting syscall.
         let c = unsafe {
             riscv_semihosting::syscall1(riscv_semihosting::nr::READC, 0)
         } as u8;
@@ -74,7 +79,12 @@ pub use control_rs::math::tests::complex_num_tests::{
     test_transcendental::SUITE_DESCRIPTOR_PTR as _,
 };
 
-// --- Test Execution Implementation for RISC-V ---
+// --- Profiler Implementation for RISC-V ---
+//
+// We use the HIL crate's built-in `RiscvProfiler` to implement the `CPUProfiler` trait.
+// This wraps target-specific instructions and CSR registers to read performance counter
+// registers like `mcycle` for clock cycles and `time` for nanoseconds, enabling
+// target-agnostic HIL testing.
 
 // --- Main Entrypoint ---
 

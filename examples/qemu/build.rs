@@ -1,3 +1,14 @@
+//! Build script for the QEMU HIL example.
+//!
+//! This script plays a crucial role in preparing the target firmware for HIL testing:
+//! 1. **Target Memory Mapping**: It dynamically generates a `memory.x` linker script 
+//!    specifying the flash and RAM boundaries depending on the target architecture (ARM Cortex-M vs RISC-V).
+//! 2. **HIL Test Suite Registry**: It generates a custom linker script `hil_suites.x` containing
+//!    the `.hil_test_suites` section. Test suites registered via `#[hil_suite]` place their
+//!    `SuiteDescriptor` pointers in this section, enabling the server to discover and execute them at runtime.
+//! 3. **Linker Configuration**: It registers the search directory for these generated scripts
+//!    and instructs cargo/rustc to pass them to the linker.
+
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -7,7 +18,7 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let target = env::var("TARGET").unwrap();
 
-    // Generate memory.x depending on the target architecture
+    // Generate memory.x depending on the target architecture to define hardware boundaries.
     if target.starts_with("thumbv") {
         let mut memory_file = File::create(out.join("memory.x")).unwrap();
         memory_file
@@ -54,7 +65,11 @@ SECTIONS
             .unwrap();
     }
 
-    // Generate the linker script containing our HIL test suites custom section
+    // Generate the linker script containing our HIL test suites custom section.
+    // This defines the symbols `__hil_test_suites_start` and `__hil_test_suites_end`
+    // surrounding the `.hil_test_suites` section in flash memory.
+    // The target-side HIL runner reads between these boundaries to dynamically discover
+    // all test suites registered across the application.
     let mut hil_file = File::create(out.join("hil_suites.x")).unwrap();
     hil_file
         .write_all(
@@ -74,8 +89,10 @@ SECTIONS
         )
         .unwrap();
 
-    // Advertise search directory and tell the linker to use hil_suites.x
+    // Advertise search directory containing memory.x and hil_suites.x
     println!("cargo:rustc-link-search={}", out.display());
+    // Direct the linker to use the generated hil_suites.x script
     println!("cargo:rustc-link-arg=-Thil_suites.x");
+    // Ensure build.rs is re-run if this script changes
     println!("cargo:rerun-if-changed=build.rs");
 }
