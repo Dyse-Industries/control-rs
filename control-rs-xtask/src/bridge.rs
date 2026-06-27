@@ -64,14 +64,14 @@ pub enum Target {
 }
 
 /// Host bridge to manage the target execution environment (QEMU or Serial).
-pub struct QemuBridge {
+pub struct ServerBridge {
     inner: BridgeInner,
     link_info: String,
     rx_from_target: Receiver<BridgeMessage>,
     target_info: String,
 }
 
-impl QemuBridge {
+impl ServerBridge {
     /// Terminate QEMU (no-op for serial).
     pub fn kill(&mut self) {
         match &mut self.inner {
@@ -97,7 +97,8 @@ impl QemuBridge {
     /// # Panics
     ///
     /// Panics if the serial port reference is unexpectedly missing after loop execution.
-    pub fn new(elf_path: &str, target: Target) -> BridgeResult<Self> {
+    #[allow(clippy::too_many_lines)]
+    pub fn new(target: Target, elf_path: Option<&str>) -> BridgeResult<Self> {
         let (tx, rx) = channel();
 
         match target {
@@ -161,11 +162,12 @@ impl QemuBridge {
                 })
             }
             Target::QemuSemihosting { arch } => {
-                Self::new_qemu_inner(elf_path, arch, tx, rx)
+                let elf =
+                    elf_path.ok_or("ELF path is required for QEMU target")?;
+                Self::new_qemu_inner(elf, arch, tx, rx)
             }
         }
     }
-
     fn new_qemu_inner(
         elf_path: &str,
         arch: QemuArch,
@@ -296,6 +298,72 @@ impl QemuBridge {
             BridgeInner::Qemu { child, .. } => child.try_wait(),
             BridgeInner::Serial { .. } => Ok(None),
         }
+    }
+}
+
+impl Target {
+    /// Parses target parameters from CLI arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target string is unknown or the QEMU architecture is unknown.
+    #[allow(clippy::type_complexity)]
+    pub fn parse(
+        args: &[String],
+        default_qemu_arch: &str,
+        default_teensy_port: &str,
+    ) -> Result<Option<Self>, String> {
+        let target_str = args.get(2).map_or("qemu", String::as_str);
+        let arch_or_port = args.get(3).map(String::as_str);
+        let baud_str = args.get(4).map(String::as_str);
+
+        match target_str {
+            "qemu" => {
+                let arch = arch_or_port.unwrap_or(default_qemu_arch);
+                match arch {
+                    "arm" => Ok(Some(Self::QemuSemihosting {
+                        arch: QemuArch::Arm,
+                    })),
+                    "riscv" | "risc-v" => Ok(Some(Self::QemuSemihosting {
+                        arch: QemuArch::Riscv,
+                    })),
+                    "all" => Ok(None),
+                    _ => Err(format!("Unknown QEMU architecture: {arch}")),
+                }
+            }
+            "teensy" => {
+                let port = arch_or_port.map_or_else(
+                    || default_teensy_port.to_string(),
+                    String::from,
+                );
+                let baud =
+                    baud_str.and_then(|b| b.parse().ok()).unwrap_or(115_200);
+                Ok(Some(Self::Serial { port, baud }))
+            }
+            _ => Err(format!("Unknown target: {target_str}")),
+        }
+    }
+
+    /// Helper to create a QEMU ARM target.
+    #[must_use]
+    pub const fn qemu_arm() -> Self {
+        Self::QemuSemihosting {
+            arch: QemuArch::Arm,
+        }
+    }
+
+    /// Helper to create a QEMU RISC-V target.
+    #[must_use]
+    pub const fn qemu_riscv() -> Self {
+        Self::QemuSemihosting {
+            arch: QemuArch::Riscv,
+        }
+    }
+
+    /// Helper to create a Serial target.
+    #[must_use]
+    pub const fn serial(port: String, baud: u32) -> Self {
+        Self::Serial { port, baud }
     }
 }
 

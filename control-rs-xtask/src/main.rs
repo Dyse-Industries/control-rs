@@ -57,85 +57,25 @@ fn main() {
     }
 
     match args[1].as_str() {
-        "ci" => {
-            let target_str = args.get(2).map(String::as_str).unwrap_or("qemu");
-            match target_str {
-                "qemu" => {
-                    let arch_str =
-                        args.get(3).map(String::as_str).unwrap_or("all");
-                    match arch_str {
-                        "arm" => {
-                            let target = bridge::Target::QemuSemihosting {
-                                arch: bridge::QemuArch::Arm,
-                            };
-                            run_ci_single(&target);
-                        }
-                        "riscv" | "risc-v" => {
-                            let target = bridge::Target::QemuSemihosting {
-                                arch: bridge::QemuArch::Riscv,
-                            };
-                            run_ci_single(&target);
-                        }
-                        _ => {
-                            run_ci_all_qemu();
-                        }
-                    }
-                }
-                "teensy" => {
-                    let port = args
-                        .get(3)
-                        .cloned()
-                        .unwrap_or_else(|| "/dev/ttyACM0".to_string());
-                    let baud = args
-                        .get(4)
-                        .and_then(|b| b.parse().ok())
-                        .unwrap_or(115200);
-                    let target = bridge::Target::Serial { port, baud };
-                    run_ci_single(&target);
-                }
-                _ => {
-                    eprintln!(
-                        "\tUnknown target: {target_str}, (choose from `teensy`, `qemu`)"
-                    );
-                    exit(1);
-                }
+        "ci" => match bridge::Target::parse(&args, "all", "/dev/ttyACM0") {
+            Ok(Some(target)) => run_ci_single(&target),
+            Ok(None) => run_ci_all_qemu(),
+            Err(e) => {
+                eprintln!("\t{e}");
+                exit(1);
             }
-        }
-        "tui" => {
-            let target_str = args
-                .get(2)
-                .map(std::string::String::as_str)
-                .unwrap_or("qemu");
-            let target = match target_str {
-                "qemu" => {
-                    let arch_str = args
-                        .get(3)
-                        .map(std::string::String::as_str)
-                        .unwrap_or("arm");
-                    let arch = match arch_str {
-                        "riscv" | "risc-v" => bridge::QemuArch::Riscv,
-                        _ => bridge::QemuArch::Arm,
-                    };
-                    bridge::Target::QemuSemihosting { arch }
-                }
-                "teensy" => {
-                    let port = args
-                        .get(3)
-                        .cloned()
-                        .unwrap_or_else(|| "/dev/teensy".to_string());
-                    let baud = args
-                        .get(4)
-                        .and_then(|b| b.parse().ok())
-                        .unwrap_or(115200);
-                    bridge::Target::Serial { port, baud }
-                }
-                _ => {
-                    eprintln!("\tUnknown target: {target_str}");
-                    exit(1);
-                }
-            };
-            tasks::run_hil_tui(&target);
-        }
+        },
+        "tui" => match bridge::Target::parse(&args, "arm", "/dev/teensy") {
+            Ok(Some(target)) => tasks::run_hil_tui(&target),
+            Ok(None) => {
+                eprintln!("\tQEMU architecture 'all' is not supported for TUI");
+                exit(1);
+            }
+            Err(e) => {
+                eprintln!("\t{e}");
+                exit(1);
+            }
+        },
         _ => {
             print_usage_and_exit();
         }
@@ -206,9 +146,7 @@ fn run_ci_all_qemu() {
     let mut sil_errors = Vec::new();
 
     // 1. Run ARM SIL tests
-    let arm_target = bridge::Target::QemuSemihosting {
-        arch: bridge::QemuArch::Arm,
-    };
+    let arm_target = bridge::Target::qemu_arm();
     let start_arm = Instant::now();
     let (arm_sil_res, _arm_logs) = tasks::run_headless_sil(&arm_target);
     let arm_sil_time = start_arm.elapsed().as_secs_f32();
@@ -234,9 +172,7 @@ fn run_ci_all_qemu() {
     }
 
     // 2. Run RISC-V SIL tests
-    let riscv_target = bridge::Target::QemuSemihosting {
-        arch: bridge::QemuArch::Riscv,
-    };
+    let riscv_target = bridge::Target::qemu_riscv();
     let start_riscv = Instant::now();
     let (riscv_sil_res, _riscv_logs) = tasks::run_headless_sil(&riscv_target);
     let riscv_sil_time = start_riscv.elapsed().as_secs_f32();

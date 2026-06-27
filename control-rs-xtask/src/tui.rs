@@ -26,7 +26,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
-use crate::bridge::{BridgeMessage, QemuBridge, Target};
+use crate::bridge::{BridgeMessage, ServerBridge, Target};
 use control_rs_hil::comms::{Command, LogMessage, Telemetry, TestState};
 use control_rs_hil::settings::SettingValue;
 
@@ -1061,7 +1061,7 @@ Metrics:
 ///
 /// Returns an error if terminal setup fails, or if the run loop fails.
 pub fn run_tui(
-    bridge: QemuBridge,
+    bridge: ServerBridge,
     target: &Target,
     elf_path: &str,
 ) -> TuiResult {
@@ -1088,7 +1088,7 @@ pub fn run_tui(
 #[allow(clippy::too_many_lines)]
 fn run_tui_loop(
     terminal: &mut TuiTerminal,
-    mut bridge: QemuBridge,
+    mut bridge: ServerBridge,
     target: &Target,
     elf_path: &str,
 ) -> TuiResult {
@@ -1149,9 +1149,11 @@ fn run_tui_loop(
 
             bridge = match target {
                 Target::QemuSemihosting { .. } => {
-                    QemuBridge::new(elf_path, target.clone())?
+                    ServerBridge::new(target.clone(), Some(elf_path))?
                 }
-                Target::Serial { .. } => QemuBridge::new("", target.clone())?,
+                Target::Serial { .. } => {
+                    ServerBridge::new(target.clone(), None)?
+                }
             };
 
             state.discovery_complete = false;

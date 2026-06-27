@@ -276,19 +276,18 @@ pub fn run_headless_sil(
     let mut logs = String::new();
     let mut elf_path = String::new();
 
-    let mut bridge = match target {
-        bridge::Target::QemuSemihosting { arch } => {
+    let mut bridge = {
+        if let bridge::Target::QemuSemihosting { arch } = target {
             elf_path = build_qemu_elf(*arch);
-            match bridge::QemuBridge::new(&elf_path, target.clone()) {
-                Ok(b) => b,
-                Err(e) => return (Err(e.to_string()), logs),
-            }
         }
-        bridge::Target::Serial { .. } => {
-            match bridge::QemuBridge::new("", target.clone()) {
-                Ok(b) => b,
-                Err(e) => return (Err(e.to_string()), logs),
-            }
+        let elf_opt = if elf_path.is_empty() {
+            None
+        } else {
+            Some(elf_path.as_str())
+        };
+        match bridge::ServerBridge::new(target.clone(), elf_opt) {
+            Ok(b) => b,
+            Err(e) => return (Err(e.to_string()), logs),
         }
     };
 
@@ -533,29 +532,17 @@ pub fn run_headless_sil(
                             log_and_print(
                                 "Restarting target bridge to continue running tests...\n",
                             );
-                            bridge = match &target {
-                                bridge::Target::QemuSemihosting { .. } => {
-                                    match bridge::QemuBridge::new(
-                                        &elf_path,
-                                        target.clone(),
-                                    ) {
-                                        Ok(b) => b,
-                                        Err(e) => {
-                                            return (Err(e.to_string()), logs);
-                                        }
-                                    }
-                                }
-                                bridge::Target::Serial { .. } => {
-                                    match bridge::QemuBridge::new(
-                                        "",
-                                        target.clone(),
-                                    ) {
-                                        Ok(b) => b,
-                                        Err(e) => {
-                                            return (Err(e.to_string()), logs);
-                                        }
-                                    }
-                                }
+                            let elf_opt = if elf_path.is_empty() {
+                                None
+                            } else {
+                                Some(elf_path.as_str())
+                            };
+                            bridge = match bridge::ServerBridge::new(
+                                target.clone(),
+                                elf_opt,
+                            ) {
+                                Ok(b) => b,
+                                Err(e) => return (Err(e.to_string()), logs),
                             };
                             let _ =
                                 bridge.send_command(&CommCommand::ListSuites);
@@ -597,25 +584,20 @@ pub fn run_headless_sil(
 
 /// Task to start the interactive HIL TUI.
 pub fn run_hil_tui(target: &bridge::Target) {
-    let (bridge, elf_path) = match target {
-        bridge::Target::QemuSemihosting { arch } => {
-            let elf_path = build_qemu_elf(*arch);
-            match bridge::QemuBridge::new(&elf_path, target.clone()) {
-                Ok(b) => (b, elf_path),
-                Err(e) => {
-                    eprintln!("\tFailed to start bridge: {}", e);
-                    exit(1);
-                }
-            }
-        }
-        bridge::Target::Serial { .. } => {
-            match bridge::QemuBridge::new("", target.clone()) {
-                Ok(b) => (b, String::new()),
-                Err(e) => {
-                    eprintln!("\tFailed to start bridge: {}", e);
-                    exit(1);
-                }
-            }
+    let elf_path = match target {
+        bridge::Target::QemuSemihosting { arch } => build_qemu_elf(*arch),
+        bridge::Target::Serial { .. } => String::new(),
+    };
+    let elf_opt = if elf_path.is_empty() {
+        None
+    } else {
+        Some(elf_path.as_str())
+    };
+    let bridge = match bridge::ServerBridge::new(target.clone(), elf_opt) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("\tFailed to start bridge: {}", e);
+            exit(1);
         }
     };
     if let Err(e) = tui::run_tui(bridge, target, &elf_path) {
