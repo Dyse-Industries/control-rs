@@ -1,4 +1,7 @@
 //! Target-to-Host communication protocol and traits.
+//!
+//! > L. L. Peterson and B. S. Davie, "2.3 Framing," in Computer Networks: A Systems Approach, 2024.
+//! >   [Online]. Available: [URL]. [Accessed: [Date of Access, e.g., June 27, 2026]].
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -67,8 +70,6 @@ pub trait HostComms {
 pub enum Command {
     /// Request the target to stream the list of all suites, tests, and settings.
     ListSuites,
-    /// Request the target to reset.
-    TryReset,
     /// Request execution of a specific test.
     RunExecutable {
         /// The ID of the test suite to execute.
@@ -85,6 +86,8 @@ pub enum Command {
         /// The new value of the setting.
         value: SettingValue,
     },
+    /// Request the target to reset.
+    TryReset,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -297,7 +300,8 @@ impl FrameReader {
             ReaderState::WaitChecksum2 { len, crc1 } => {
                 let crc_value = (u16::from(crc1) << 8) | u16::from(byte);
                 let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
-                let calculated = crc.checksum(self.payload_buffer.get(..len).unwrap_or(&[]));
+                let calculated =
+                    crc.checksum(self.payload_buffer.get(..len).unwrap_or(&[]));
 
                 self.state = ReaderState::WaitStart1;
                 if calculated == crc_value {
@@ -466,9 +470,11 @@ mod tests {
         let bad_checksum = buf.get(framed_len - 2).copied().unwrap() ^ 0xFF;
         assert!(reader.handle_byte(bad_checksum).is_none());
         // Feed the second checksum byte
-        assert!(reader
-            .handle_byte(buf.get(framed_len - 1).copied().unwrap())
-            .is_none());
+        assert!(
+            reader
+                .handle_byte(buf.get(framed_len - 1).copied().unwrap())
+                .is_none()
+        );
         assert!(reader.is_idle()); // reset
     }
 

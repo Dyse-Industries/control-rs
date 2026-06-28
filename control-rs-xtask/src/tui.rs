@@ -13,17 +13,17 @@ use crossterm::{
     event::{self, Event, KeyCode},
     execute,
     terminal::{
-        disable_raw_mode, enable_raw_mode, EnterAlternateScreen,
-        LeaveAlternateScreen,
+        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
     },
 };
 use ratatui::{
+    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
-    Terminal,
 };
 
 use crate::bridge::{BridgeMessage, ServerBridge, Target};
@@ -178,6 +178,12 @@ impl AppState {
                 self.setting_input = match value {
                     SettingValue::U32(v) => v.to_string(),
                     SettingValue::U8(v) => v.to_string(),
+                    SettingValue::U16(v) => v.to_string(),
+                    SettingValue::U64(v) => v.to_string(),
+                    SettingValue::I8(v) => v.to_string(),
+                    SettingValue::I32(v) => v.to_string(),
+                    SettingValue::Bool(v) => v.to_string(),
+                    SettingValue::F32(v) => v.to_string(),
                 };
             } else if let Some(suite_id) = toggle_suite {
                 let s_idx = suite_id as usize;
@@ -332,6 +338,7 @@ impl AppState {
         exit_tui
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle_key_editing(
         &mut self,
         key_code: KeyCode,
@@ -363,11 +370,43 @@ impl AppState {
                         SettingValue::U32(_) => self
                             .setting_input
                             .parse::<u32>()
-                            .map(SettingValue::U32),
+                            .map(SettingValue::U32)
+                            .map_err(|_| ()),
                         SettingValue::U8(_) => self
                             .setting_input
                             .parse::<u8>()
-                            .map(SettingValue::U8),
+                            .map(SettingValue::U8)
+                            .map_err(|_| ()),
+                        SettingValue::U16(_) => self
+                            .setting_input
+                            .parse::<u16>()
+                            .map(SettingValue::U16)
+                            .map_err(|_| ()),
+                        SettingValue::U64(_) => self
+                            .setting_input
+                            .parse::<u64>()
+                            .map(SettingValue::U64)
+                            .map_err(|_| ()),
+                        SettingValue::I8(_) => self
+                            .setting_input
+                            .parse::<i8>()
+                            .map(SettingValue::I8)
+                            .map_err(|_| ()),
+                        SettingValue::I32(_) => self
+                            .setting_input
+                            .parse::<i32>()
+                            .map(SettingValue::I32)
+                            .map_err(|_| ()),
+                        SettingValue::Bool(_) => self
+                            .setting_input
+                            .parse::<bool>()
+                            .map(SettingValue::Bool)
+                            .map_err(|_| ()),
+                        SettingValue::F32(_) => self
+                            .setting_input
+                            .parse::<f32>()
+                            .map(SettingValue::F32)
+                            .map_err(|_| ()),
                     };
                     match parsed {
                         Ok(val) => {
@@ -377,7 +416,7 @@ impl AppState {
                                 value: val,
                             });
                         }
-                        Err(_) => {
+                        Err(()) => {
                             self.add_log(format!(
                                 "[Host] Failed to parse value '{}' for setting '{}'",
                                 self.setting_input, setting_item.name
@@ -891,6 +930,12 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
                         match item.value {
                             SettingValue::U32(v) => format!("{v}"),
                             SettingValue::U8(v) => format!("{v}"),
+                            SettingValue::U16(v) => format!("{v}"),
+                            SettingValue::U64(v) => format!("{v}"),
+                            SettingValue::I8(v) => format!("{v}"),
+                            SettingValue::I32(v) => format!("{v}"),
+                            SettingValue::Bool(v) => format!("{v}"),
+                            SettingValue::F32(v) => format!("{v}"),
                         }
                     };
                     ListItem::new(Line::from(vec![

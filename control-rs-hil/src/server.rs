@@ -2,9 +2,9 @@
 
 use core::sync::atomic::{AtomicI16, Ordering};
 
+use crate::SuiteDescriptor;
 use crate::comms::{Command, CommsLock, HostComms, Telemetry, TestState};
 use crate::settings::SettingValue;
-use crate::SuiteDescriptor;
 
 // --- Static variables ---
 
@@ -371,7 +371,7 @@ mod tests {
     use crate::comms::{Command, HostComms, Telemetry, TestState};
     use crate::profiler::CPUProfiler;
     use crate::settings::{
-        AtomicU32Setting, AtomicU8Setting, Setting, SettingValue,
+        AtomicU8Setting, AtomicU32Setting, Setting, SettingValue,
     };
     use crate::{ExecDescriptor, SuiteDescriptor};
     use std::sync::atomic::{AtomicBool, Ordering};
