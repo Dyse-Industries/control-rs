@@ -90,8 +90,8 @@ impl Write for FailureBufWriter<'_> {
 /// This function is unsafe because it constructs a static slice from raw pointers.
 /// The caller MUST ensure the following conditions are met:
 ///
-/// * Both `start` and `end` point to valid, aligned references of [SuiteDescriptor] located within
-///     the same contiguous read-only memory allocation.
+/// * Both `start` and `end` point to valid, aligned references of [`SuiteDescriptor`] located within
+///   the same contiguous read-only memory allocation.
 /// * `start` is less than or equal to `end`.
 /// * The returned slice refers to valid, initialized, and static memory.
 /// * The memory range `[start, end)` must remain immutable and valid for the entire `'static` lifetime.
@@ -138,8 +138,8 @@ pub unsafe fn get_suites(
 /// and executes target reset.
 ///
 /// # Generic Arguments
-/// * `C` - Host communication channel type implementing [HostComms](crate::comms::HostComms).
-/// * `P` - CPU Profiler type implementing [CPUProfiler](crate::profiler::CPUProfiler).
+/// * `C` - Host communication channel type implementing [`HostComms`](crate::comms::HostComms).
+/// * `P` - CPU Profiler type implementing [`CPUProfiler`](crate::profiler::CPUProfiler).
 ///
 /// # Arguments
 /// * `context` - Mutable reference to the server execution context.
@@ -198,7 +198,7 @@ pub unsafe fn get_suites(
 pub unsafe fn handle_failure<
     C: crate::comms::HostComms,
     P: crate::profiler::CPUProfiler,
- >(
+>(
     context: &mut crate::server::Context<C, P>,
     msg: &str,
     file: &str,
@@ -260,8 +260,8 @@ pub unsafe fn handle_failure<
 /// Formats exception information and delegates to `handle_failure`.
 ///
 /// # Generic Arguments
-/// * `C` - Host communication channel type implementing [HostComms](crate::comms::HostComms).
-/// * `P` - CPU Profiler type implementing [CPUProfiler](crate::profiler::CPUProfiler).
+/// * `C` - Host communication channel type implementing [`HostComms`](crate::comms::HostComms).
+/// * `P` - CPU Profiler type implementing [`CPUProfiler`](crate::profiler::CPUProfiler).
 ///
 /// # Arguments
 /// * `context` - Mutable reference to the server execution context.
@@ -270,7 +270,7 @@ pub unsafe fn handle_failure<
 ///
 /// # Safety
 ///
-/// This function operates in an exception handler context (e.g., HardFault, PageFault) where the target state is highly unstable.
+/// This function operates in an exception handler context (e.g., `HardFault`, `PageFault`) where the target state is highly unstable.
 /// The caller MUST ensure the following conditions are met:
 ///
 /// * The processor is in an exception state, and it is safe to permanently disable interrupts.

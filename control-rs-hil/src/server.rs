@@ -538,7 +538,7 @@ impl TestIndexIndicator {
     /// Creates a new indicator in the Idle state.
     ///
     /// # Returns
-    /// * `Self` - An idle TestIndexIndicator.
+    /// * `Self` - An idle `TestIndexIndicator`.
     #[must_use]
     pub const fn new() -> Self {
         Self {

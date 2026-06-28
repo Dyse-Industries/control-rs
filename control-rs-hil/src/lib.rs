@@ -55,7 +55,7 @@
 //!
 //! - **Single Threaded Execution**: The HIL runner executes tests sequentially in a single-threaded
 //!   environment with global interrupts disabled.
-//! - **Hardware Dependency**: Access to low-level registers (SysTick, DWT, CSRs) assumes exclusive control
+//! - **Hardware Dependency**: Access to low-level registers (`SysTick`, `DWT`, `CSRs`) assumes exclusive control
 //!   over target-specific profiling hardware.
 //! - **No dynamic allocation**: Designed for `no-std` contexts without a heap allocator.
 

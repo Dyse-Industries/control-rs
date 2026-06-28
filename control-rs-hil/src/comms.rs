@@ -8,10 +8,10 @@
 //!
 //! # Core Concepts
 //!
-//! - **HostComms Trait**: Target-agnostic interface that serial-comms or USB-comms handlers implement.
+//! - **`HostComms` Trait**: Target-agnostic interface that serial-comms or USB-comms handlers implement.
 //! - **Framed Reader**: `FrameReader` parses incoming stream bytes statefully into verified frame slices.
 //! - **Command/Telemetry Enums**: Defines the protocol message schemas for control instructions and test reporting.
-//! - **CommsLock**: An atomic flag lock preventing multiple execution paths from concurrently writing telemetry frames.
+//! - **`CommsLock`**: An atomic flag lock preventing multiple execution paths from concurrently writing telemetry frames.
 //!
 //! # Usage
 //!
@@ -351,7 +351,7 @@ impl CommsLock {
     /// Creates a new, unlocked `CommsLock`.
     ///
     /// # Returns
-    /// * `Self` - An unlocked CommsLock instance.
+    /// * `Self` - An unlocked `CommsLock` instance.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -461,7 +461,7 @@ impl FrameReader {
     /// Creates a new `FrameReader`.
     ///
     /// # Returns
-    /// * `Self` - Initialized FrameReader instance.
+    /// * `Self` - Initialized `FrameReader` instance.
     #[must_use]
     pub const fn new() -> Self {
         Self {
