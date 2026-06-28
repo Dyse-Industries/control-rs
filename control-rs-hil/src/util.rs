@@ -1,15 +1,50 @@
 //! Utility module for target-agnostic server operations.
-//! Includes functions for test suite discovery and panic/exception handlers.
+//!
+//! # Description
+//!
+//! This module provides auxiliary structures and functions to support HIL server diagnostics,
+//! error reporting, and hardware exception management. It includes a custom formatting writer
+//! for panic state telemetry construction, a suite table retriever, and low-level failure/exception
+//! panic handlers.
+//!
+//! # Core Concepts
+//!
+//! - **Panic Buffering**: `FailureBufWriter` formats dynamic panic messages into a statically allocated
+//!   byte buffer safely, preventing stack/heap corruption during critical failures.
+//! - **Boundary Retrieval**: `get_suites` extracts registered HIL test suites compiled in custom linker sections.
+//! - **Divergent Error Handlers**: `handle_failure` and `handle_exception` isolate and report terminal target
+//!   crashes over the communication link before hard-resetting the CPU.
 
-#[cfg(any(target_os = "none", test))]
-use {crate::SuiteDescriptor, core::fmt::Write, core::str};
+use crate::SuiteDescriptor;
+use core::fmt::Write;
+use core::str;
 
 /// Buffer writer that implements `core::fmt::Write` to format failure and panic messages into a static buffer.
 ///
 /// To prevent unsafe operations like buffer overflows during formatting of panic telemetry, this helper
 /// performs explicit bounds checks on every write operation, returning a formatting error instead of
 /// writing past the end of the buffer.
-#[cfg(any(target_os = "none", test))]
+///
+/// # Safety
+/// This struct does not use `unsafe` code.
+///
+/// # Panics
+/// Writing to this buffer writer does not panic, returning a formatting error if the buffer is full.
+///
+/// # Example
+/// ```
+/// use control_rs_hil::util::FailureBufWriter;
+/// use core::fmt::Write;
+///
+/// let mut buf = [0u8; 12];
+/// let mut writer = FailureBufWriter {
+///     buf: &mut buf,
+///     pos: 0,
+/// };
+/// write!(writer, "Hello").unwrap();
+/// assert_eq!(writer.pos, 5);
+/// assert_eq!(&writer.buf[..5], b"Hello");
+/// ```
 pub struct FailureBufWriter<'a> {
     /// Reference to the mutable backing byte slice.
     pub buf: &'a mut [u8],
@@ -17,7 +52,6 @@ pub struct FailureBufWriter<'a> {
     pub pos: usize,
 }
 
-#[cfg(any(target_os = "none", test))]
 impl Write for FailureBufWriter<'_> {
     #[allow(clippy::arithmetic_side_effects)]
     fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
@@ -41,15 +75,49 @@ impl Write for FailureBufWriter<'_> {
 ///
 /// This safely aggregates all registered suites compiled into the `.hil_test_suites` custom ELF/binary section.
 ///
+/// # Generic Arguments
+/// This function does not have generic arguments.
+///
+/// # Arguments
+/// * `start` - A raw pointer to the beginning of the test suite descriptor list.
+/// * `end` - A raw pointer to the end of the test suite descriptor list.
+///
+/// # Returns
+/// * `&'static [&'static SuiteDescriptor]` - A static slice of references to all discovered test suites.
+///
 /// # Safety
 ///
-/// The caller must ensure that:
-/// 1. Both `start` and `end` point to valid, aligned references of `SuiteDescriptor` located within the same
-///    contiguous read-only memory allocation.
-/// 2. `start` is less than or equal to `end`.
-/// 3. The memory range `[start, end)` is populated with valid, initialized static references to `SuiteDescriptor`s,
-///    and no other writes or modifications occur within this region.
-#[cfg(any(target_os = "none", test))]
+/// This function is unsafe because it constructs a static slice from raw pointers.
+/// The caller MUST ensure the following conditions are met:
+///
+/// * Both `start` and `end` point to valid, aligned references of [SuiteDescriptor] located within
+///     the same contiguous read-only memory allocation.
+/// * `start` is less than or equal to `end`.
+/// * The returned slice refers to valid, initialized, and static memory.
+/// * The memory range `[start, end)` must remain immutable and valid for the entire `'static` lifetime.
+/// * No other thread or process will modify the custom ELF/binary section memory while constructing or accessing this slice.
+///
+/// # Panics
+/// This function does not panic.
+///
+/// # Example
+/// ```
+/// use control_rs_hil::util::get_suites;
+/// use control_rs_hil::SuiteDescriptor;
+///
+/// static S1: SuiteDescriptor = SuiteDescriptor {
+///     name: "s1",
+///     description: "d1",
+///     executables: &[],
+///     settings: &[],
+/// };
+/// static SUITES_ARR: &[&SuiteDescriptor] = &[&S1];
+/// let start = SUITES_ARR.as_ptr();
+/// let end = unsafe { start.add(1) };
+/// let suites = unsafe { get_suites(start, end) };
+/// assert_eq!(suites.len(), 1);
+/// assert_eq!(suites[0].name, "s1");
+/// ```
 #[must_use]
 #[allow(clippy::arithmetic_side_effects)]
 pub unsafe fn get_suites(
@@ -65,24 +133,72 @@ pub unsafe fn get_suites(
 }
 
 /// Target-agnostic logic for handling server failure or panics.
+///
 /// Disables interrupts, broadcasts target panic and failure telemetry, polls for host reset permission,
 /// and executes target reset.
 ///
+/// # Generic Arguments
+/// * `C` - Host communication channel type implementing [HostComms](crate::comms::HostComms).
+/// * `P` - CPU Profiler type implementing [CPUProfiler](crate::profiler::CPUProfiler).
+///
+/// # Arguments
+/// * `context` - Mutable reference to the server execution context.
+/// * `msg` - The panic description or error message string.
+/// * `file` - Static filename where the failure occurred.
+/// * `line` - Source line number.
+/// * `comms_ok` - A boolean flag indicating if the communication link is functional.
+///
 /// # Safety
 ///
-/// This function is unsafe because:
-/// 1. It operates during a failure/panic state where the target hardware/software state might be corrupted.
-/// 2. It bypasses regular context locking/concurrency controls, permanently disabling processor interrupts
-///    and directly driving raw peripheral I/O to broadcast panic reports.
-/// 3. It triggers a hardware CPU reset at completion, causing sudden stack and state termination.
+/// This function directly manipulates hardware registers and resets the CPU. The caller MUST ensure the following conditions are met:
 ///
-/// The caller must ensure that `context` is a valid, reference-stable reference to the HIL server context.
-#[cfg(any(target_os = "none", test))]
+/// * The system is in a controlled failure or panic state where terminating normal execution is safe.
+/// * `context` is a valid, reference-stable reference to the HIL server context.
+/// * Global interrupts are permanently disabled.
+/// * A target reset is performed at the end of the function (diverging control flow).
+/// * The system's hardware configurations required to send telemetry (e.g. UART clock) must remain stable until telemetry is sent.
+/// * The Host TUI is listening and capable of receiving the panic telemetry and responding to/sending the `TryReset` command if `comms_ok` is `true`.
+///
+/// # Panics
+/// This function does not return, resetting the hardware CPU.
+///
+/// # Example
+/// ```should_panic
+/// # fn main() {
+/// use control_rs_hil::util::handle_failure;
+/// use control_rs_hil::server::Context;
+/// # use control_rs_hil::profiler::CPUProfiler;
+/// # use control_rs_hil::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+///
+/// # struct MockComms;
+/// # impl HostComms for MockComms {
+/// #     type Error = &'static str;
+/// #     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
+/// #     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
+/// #     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
+/// # }
+/// # struct MockProfiler;
+/// # impl CPUProfiler for MockProfiler {
+/// #     fn get_cycles(&self) -> u64 { 0 }
+/// #     fn get_nanos(&self) -> u64 { 0 }
+/// #     fn get_sp(&self) -> usize { 0 }
+/// #     fn get_stack_end(&self) -> usize { 0 }
+/// #     fn reset(&self) -> ! { panic!("System Reset Triggered!") }
+/// #     fn disable_interrupts_permanently(&self) {}
+/// # }
+///
+/// let mut ctx = Context::new(MockComms, MockProfiler);
+/// // This will trigger a panic in the mock profiler reset implementation
+/// unsafe {
+///     handle_failure(&mut ctx, "Failure message", "main.rs", 10, false);
+/// }
+/// # }
+/// ```
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub unsafe fn handle_failure<
     C: crate::comms::HostComms,
     P: crate::profiler::CPUProfiler,
->(
+ >(
     context: &mut crate::server::Context<C, P>,
     msg: &str,
     file: &str,
@@ -140,13 +256,64 @@ pub unsafe fn handle_failure<
 }
 
 /// Target-agnostic logic for handling exceptions.
+///
 /// Formats exception information and delegates to `handle_failure`.
+///
+/// # Generic Arguments
+/// * `C` - Host communication channel type implementing [HostComms](crate::comms::HostComms).
+/// * `P` - CPU Profiler type implementing [CPUProfiler](crate::profiler::CPUProfiler).
+///
+/// # Arguments
+/// * `context` - Mutable reference to the server execution context.
+/// * `msg` - The exception reason description.
+/// * `comms_ok` - A boolean flag indicating if the communication link is functional.
 ///
 /// # Safety
 ///
-/// This inherits all safety requirements of `handle_failure`. It operates in an exception handler
-/// context (e.g. `HardFault`, `PageFault`, etc.) where execution registers and hardware state are unstable.
-#[cfg(any(target_os = "none", test))]
+/// This function operates in an exception handler context (e.g., HardFault, PageFault) where the target state is highly unstable.
+/// The caller MUST ensure the following conditions are met:
+///
+/// * The processor is in an exception state, and it is safe to permanently disable interrupts.
+/// * `context` is a valid, reference-stable reference to the HIL server context.
+/// * Global interrupts are permanently disabled, and the target is reset.
+/// * The communication channel configuration must remain intact to allow sending exception reports.
+/// * The exception handler will not be preempted by an even higher priority non-maskable interrupt (NMI).
+///
+/// # Panics
+/// This function does not return, resetting the hardware CPU.
+///
+/// # Example
+/// ```should_panic
+/// # fn main() {
+/// use control_rs_hil::util::handle_exception;
+/// use control_rs_hil::server::Context;
+/// # use control_rs_hil::profiler::CPUProfiler;
+/// # use control_rs_hil::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+///
+/// # struct MockComms;
+/// # impl HostComms for MockComms {
+/// #     type Error = &'static str;
+/// #     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
+/// #     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
+/// #     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
+/// # }
+/// # struct MockProfiler;
+/// # impl CPUProfiler for MockProfiler {
+/// #     fn get_cycles(&self) -> u64 { 0 }
+/// #     fn get_nanos(&self) -> u64 { 0 }
+/// #     fn get_sp(&self) -> usize { 0 }
+/// #     fn get_stack_end(&self) -> usize { 0 }
+/// #     fn reset(&self) -> ! { panic!("System Reset Triggered!") }
+/// #     fn disable_interrupts_permanently(&self) {}
+/// # }
+///
+/// let mut ctx = Context::new(MockComms, MockProfiler);
+/// // This will trigger a panic in the mock profiler reset implementation
+/// unsafe {
+///     handle_exception(&mut ctx, "HardFault Exception", false);
+/// }
+/// # }
+/// ```
 #[allow(clippy::type_complexity)]
 pub unsafe fn handle_exception<
     C: crate::comms::HostComms,

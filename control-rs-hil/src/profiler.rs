@@ -1,7 +1,17 @@
 //! Hardware execution abstraction and CPU profiling for HIL tests.
 //!
-//! Provides traits to measure hardware performance metrics (like clock cycles, execution time,
-//! and stack space consumption) in a hardware-agnostic manner.
+//! # Description
+//!
+//! This module provides the `CPUProfiler` trait and architecture-specific implementations
+//! to measure hardware performance metrics (such as clock cycles, timing, and stack consumption)
+//! during HIL tests.
+//!
+//! # Core Concepts
+//!
+//! - **CPU Profiler Trait**: A target-agnostic interface to retrieve low-level system performance metrics.
+//! - **Stack Tracking**: Functions (`paint_stack` and `read_stack_peak`) paint the unused stack area
+//!   with sentinel bytes to compute high-water-mark stack usage safely.
+//! - **Platform Implementations**: Cortex-M DWT-based and RISC-V CSR-based profiling structures.
 
 /// Target-specific utilities for CPU profiling, stack tracking, and interrupt management during HIL tests.
 ///
@@ -9,11 +19,45 @@
 /// HIL test runner to execute test functions in a controlled environment, gather cycle counts, and
 /// safely measure stack usage. By encapsulating architecture-specific inline assembly and memory-mapped
 /// I/O operations, this trait helps prevent safety issues in the test runner's core logic.
+///
+/// # Safety
+/// Implementors must ensure that architecture-specific profiling operations (like reading CSRs or memory mapped registers)
+/// do not cause undefined behavior or violate memory safety.
+///
+/// # Panics
+/// Implementations of this trait do not panic under normal usage, except when resetting or exiting the system.
+///
+/// # Example
+/// ```
+/// use control_rs_hil::profiler::CPUProfiler;
+///
+/// struct MockProfiler;
+/// impl CPUProfiler for MockProfiler {
+///     fn get_cycles(&self) -> u64 { 100 }
+///     fn get_nanos(&self) -> u64 { 1000 }
+///     fn get_sp(&self) -> usize { 0 }
+///     fn get_stack_end(&self) -> usize { 0 }
+/// }
+///
+/// let profiler = MockProfiler;
+/// assert_eq!(profiler.get_cycles(), 100);
+/// assert_eq!(profiler.get_nanos(), 1000);
+/// ```
 pub trait CPUProfiler {
     /// Disables interrupts and runs the given closure, returning its result.
     ///
     /// This ensures that the test function is executed without interruption, preventing context
     /// switches or interrupt service routines (ISRs) from corrupting the timing/cycle measurements.
+    ///
+    /// # Generic Arguments
+    /// * `F` - A closure with no arguments.
+    /// * `R` - Return type of the closure.
+    ///
+    /// # Arguments
+    /// * `f` - The execution closure.
+    ///
+    /// # Returns
+    /// * `R` - The value returned by the execution closure.
     fn disable_interrupts<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -30,6 +74,9 @@ pub trait CPUProfiler {
     /// Exits the application/environment using target-specific mechanisms.
     ///
     /// Useful for virtualized targets (like QEMU) to signal termination back to the host machine.
+    ///
+    /// # Returns
+    /// * `!` - This function never returns.
     #[allow(clippy::empty_loop)]
     fn exit(&self) -> ! {
         loop {}
@@ -38,21 +85,33 @@ pub trait CPUProfiler {
     /// Get the current CPU cycle count.
     ///
     /// Used by the test runner to calculate the clock cycles spent running a test.
+    ///
+    /// # Returns
+    /// * `u64` - The current clock cycle count.
     fn get_cycles(&self) -> u64;
 
     /// Get the current time in nanoseconds.
     ///
     /// Used to compute elapsed wall-clock execution time of tests.
+    ///
+    /// # Returns
+    /// * `u64` - The current timestamp in nanoseconds.
     fn get_nanos(&self) -> u64;
 
     /// Get the current stack pointer.
     ///
     /// Used as a reference point for painting and reading stack usage.
+    ///
+    /// # Returns
+    /// * `usize` - The memory address representing the stack pointer.
     fn get_sp(&self) -> usize;
 
     /// Get the end of the current stack.
     ///
     /// Returns the address of the bottom (end) of the stack area.
+    ///
+    /// # Returns
+    /// * `usize` - The memory address representing the bottom of the stack area.
     fn get_stack_end(&self) -> usize;
 
     /// Paints the stack below the given stack pointer.
@@ -60,13 +119,19 @@ pub trait CPUProfiler {
     /// Writes a sentinel value (`0xCDCD_CDCD`) to unused stack space from the bottom (end) of the stack
     /// up to a safety threshold below the current stack pointer.
     ///
+    /// # Arguments
+    /// * `sp` - The active stack pointer.
+    ///
     /// # Safety
     ///
-    /// This function writes directly to the memory range representing the stack. The caller must ensure:
-    /// 1. The provided stack pointer `sp` is valid and represents the active stack pointer.
-    /// 2. The stack limits returned by `get_stack_end()` are accurate and map to a valid memory region allocated for the stack.
-    /// 3. The safety margin (currently 32 bytes below `sp`) is sufficient to prevent overwriting any active
-    ///    stack frames of callers or local variables.
+    /// This function writes directly to the stack memory range. The caller MUST ensure the following conditions are met:
+    ///
+    /// * The stack pointer `sp` is valid and represents the active stack pointer.
+    /// * The stack bounds returned by `get_stack_end()` map to a valid memory region allocated for the stack.
+    /// * The safety margin is sufficient to prevent overwriting active frames.
+    /// * The stack memory below `sp` (down to the stack end) is painted with the sentinel value `0xCDCD_CDCD`.
+    /// * Current CPU register states and active stack frames remain unmodified.
+    /// * The memory range is mutable and can be safely written to using volatile writes without triggering memory faults.
     #[inline(never)] // Crucial for predictable stack frame analysis
     unsafe fn paint_stack(&self, sp: usize) {
         let stack_end_ptr = self.get_stack_end();
@@ -95,12 +160,21 @@ pub trait CPUProfiler {
     /// Scans the stack space from the bottom (end) upward, looking for the first memory address that no longer
     /// contains the sentinel value (`0xCDCD_CDCD`). The difference between `sp` and this address is returned.
     ///
+    /// # Arguments
+    /// * `sp` - The active stack pointer.
+    ///
+    /// # Returns
+    /// * `u32` - The peak stack usage in bytes.
+    ///
     /// # Safety
     ///
-    /// This function reads directly from the stack memory range. The caller must ensure:
-    /// 1. The stack has been previously painted with the `paint_stack` function.
-    /// 2. The stack pointer `sp` matches the original reference point when the stack was painted.
-    /// 3. The stack bounds returned by `get_stack_end()` remain valid.
+    /// This function reads directly from the stack memory range. The caller MUST ensure the following conditions are met:
+    ///
+    /// * The stack has been previously painted with the `paint_stack` function.
+    /// * The stack pointer `sp` matches the original reference point when the stack was painted.
+    /// * The stack bounds returned by `get_stack_end()` remain valid.
+    /// * Stack contents are unchanged by reading.
+    /// * The painted memory is not corrupted or overwritten by other unrelated operations in the meantime.
     #[inline(never)] // Crucial for predictable stack frame analysis
     unsafe fn read_stack_peak(&self, sp: usize) -> u32 {
         let stack_end_ptr = self.get_stack_end();
@@ -129,6 +203,9 @@ pub trait CPUProfiler {
     }
 
     /// Resets the CPU/system.
+    ///
+    /// # Returns
+    /// * `!` - This function never returns.
     #[allow(clippy::empty_loop)]
     fn reset(&self) -> ! {
         loop {}
@@ -139,6 +216,12 @@ pub trait CPUProfiler {
 ///
 /// This structure tracks execution cycles using the ARM DWT (Data Watchpoint and Trace) cycle
 /// counter, measures elapsed time using the SysTick timer, and inspects the stack using linker symbols.
+///
+/// # Safety
+/// This struct does not introduce unsafe safe APIs, but directly executes target specific low level register accesses.
+///
+/// # Panics
+/// Instantiating or accessing this struct does not panic.
 #[cfg(target_arch = "arm")]
 pub struct CortexMProfiler {
     clock_frequency: u32,
@@ -149,9 +232,12 @@ pub struct CortexMProfiler {
 impl CortexMProfiler {
     /// Creates a new `CortexMProfiler` instance.
     ///
-    /// # Parameters
+    /// # Arguments
     /// * `clock_frequency` - CPU core clock frequency in Hz.
     /// * `ticks` - A static reference to an atomic millisecond counter updated by SysTick.
+    ///
+    /// # Returns
+    /// * `Self` - The Cortex-M profiler instance.
     pub const fn new(
         clock_frequency: u32,
         ticks: &'static core::sync::atomic::AtomicU32,
@@ -226,12 +312,21 @@ impl CPUProfiler for CortexMProfiler {
 ///
 /// This structure tracks execution cycles using the RISC-V `mcycle` CSR register,
 /// measures elapsed time using the `time` CSR register, and calculates stack limits using linker-defined variables.
+///
+/// # Safety
+/// This struct does not introduce unsafe safe APIs, but directly executes target specific low level register accesses.
+///
+/// # Panics
+/// Instantiating or accessing this struct does not panic.
 #[cfg(target_arch = "riscv32")]
 pub struct RiscvProfiler;
 
 #[cfg(target_arch = "riscv32")]
 impl RiscvProfiler {
     /// Creates a new `RiscvProfiler` instance.
+    ///
+    /// # Returns
+    /// * `Self` - RISC-V profiler instance.
     pub const fn new() -> Self {
         Self
     }

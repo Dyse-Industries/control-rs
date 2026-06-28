@@ -111,7 +111,7 @@ dedicated #[safety] section is mandatory.
 This section must explicitly detail the contract the caller must uphold to
 ensure safe execution.
 
-The #[safety] documentation must clearly state:
+The #[safety] documentation must clearly state any applicable items in a list:
 
 * Pre-conditions: The conditions that must be true before calling the function.
   This includes, but is not limited to,

@@ -1,4 +1,4 @@
-#![doc = include_str!("../README.md")]
+//! # Control-rs 
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub mod classical_tools;

@@ -1,4 +1,19 @@
 //! On-target test runner server loop.
+//!
+//! # Description
+//!
+//! This module implements the interactive test runner server, coordination contexts,
+//! and global run state indicators. The server processes incoming commands from the host,
+//! dynamically edits settings, executes target test routines, and profiles their cycles/memory.
+//!
+//! # Core Concepts
+//!
+//! - **HIL Server**: The central coordinator (`Server`) executing suites, managing settings updates,
+//!   and reporting telemetry outcomes back to the host machine.
+//! - **Execution Context**: `Context` wraps host communication mechanisms and CPU profiling metrics
+//!   using thread-safe mutex-free locking (`CommsLock`).
+//! - **Test Index Indicator**: Thread-safe atomic indicator (`TestIndexIndicator`) tracking the active suite
+//!   and test indexes to let exception/panic handlers report where a crash happened.
 
 use core::sync::atomic::{AtomicIsize, Ordering};
 
@@ -10,10 +25,16 @@ use crate::settings::SettingValue;
 
 /// Global tracker for the currently executing suite ID.
 /// Used by the panic handler to report test failures.
+///
+/// # Safety
+/// Accessing or updating this indicator is thread-safe and atomic.
 pub static CURRENT_SUITE: TestIndexIndicator = TestIndexIndicator::new();
 
 /// Global tracker for the currently executing test ID.
 /// Used by the panic handler to report test failures.
+///
+/// # Safety
+/// Accessing or updating this indicator is thread-safe and atomic.
 pub static CURRENT_TEST: TestIndexIndicator = TestIndexIndicator::new();
 
 // --- Type definitions ---
@@ -25,6 +46,38 @@ pub static CURRENT_TEST: TestIndexIndicator = TestIndexIndicator::new();
 /// also need to send telemetry), the `Context` holds a `CommsLock`. All public telemetry and poll methods
 /// are run via `_locked` helper methods, ensuring mutual exclusion without requiring blocking mutexes
 /// that could cause deadlocks in interrupt-disabled contexts.
+///
+/// # Safety
+/// Access to the underlying communication interface is protected by the internal `CommsLock`.
+/// This struct does not use `unsafe` code directly.
+///
+/// # Panics
+/// Context operations do not panic.
+///
+/// # Example
+/// ```
+/// use control_rs_hil::server::Context;
+/// # use control_rs_hil::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// # use control_rs_hil::profiler::CPUProfiler;
+///
+/// # struct MockComms;
+/// # impl HostComms for MockComms {
+/// #     type Error = &'static str;
+/// #     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
+/// #     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
+/// #     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
+/// # }
+/// # struct MockProfiler;
+/// # impl CPUProfiler for MockProfiler {
+/// #     fn get_cycles(&self) -> u64 { 0 }
+/// #     fn get_nanos(&self) -> u64 { 0 }
+/// #     fn get_sp(&self) -> usize { 0 }
+/// #     fn get_stack_end(&self) -> usize { 0 }
+/// # }
+///
+/// let mut ctx = Context::new(MockComms, MockProfiler);
+/// assert!(ctx.flush_locked().is_ok());
+/// ```
 pub struct Context<C, P> {
     /// Host communication channel.
     pub comms: C,
@@ -39,6 +92,38 @@ pub struct Context<C, P> {
 /// The `Server` coordinates the execution of HIL tests on the target. It manages the boot discovery phase,
 /// processes settings updates, runs tests inside critical sections (interrupts disabled), and returns
 /// telemetry and cycle/stack usage metrics.
+///
+/// # Safety
+/// This structure does not use `unsafe` code.
+///
+/// # Panics
+/// Server loop functions do not panic under normal operations.
+///
+/// # Example
+/// ```
+/// use control_rs_hil::server::{Server, Context};
+/// # use control_rs_hil::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// # use control_rs_hil::profiler::CPUProfiler;
+///
+/// # struct MockComms;
+/// # impl HostComms for MockComms {
+/// #     type Error = &'static str;
+/// #     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
+/// #     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
+/// #     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
+/// # }
+/// # struct MockProfiler;
+/// # impl CPUProfiler for MockProfiler {
+/// #     fn get_cycles(&self) -> u64 { 0 }
+/// #     fn get_nanos(&self) -> u64 { 0 }
+/// #     fn get_sp(&self) -> usize { 0 }
+/// #     fn get_stack_end(&self) -> usize { 0 }
+/// # }
+///
+/// let ctx = Context::new(MockComms, MockProfiler);
+/// let server = Server::new(ctx, &[]);
+/// assert_eq!(server.suites.len(), 0);
+/// ```
 pub struct Server<'a, C, P> {
     /// The global context containing comms, `cpu_utils`, and the comms lock.
     pub context: Context<C, P>,
@@ -47,9 +132,31 @@ pub struct Server<'a, C, P> {
 }
 
 /// Result of server operations.
+///
+/// Indicates success or contains transport error `E`.
 pub type ServerResult<E> = Result<(), E>;
 
 /// Represents the active state of a test runner indicator.
+///
+/// Tracks execution indexes or flags idle state via atomic operations.
+///
+/// # Safety
+/// This struct does not use `unsafe` code.
+///
+/// # Panics
+/// Operations do not panic.
+///
+/// # Example
+/// ```
+/// use control_rs_hil::server::TestIndexIndicator;
+///
+/// let indicator = TestIndexIndicator::new();
+/// assert!(indicator.get().is_none());
+/// indicator.set_active(5);
+/// assert_eq!(indicator.get(), Some(5));
+/// indicator.set_idle();
+/// assert!(indicator.get().is_none());
+/// ```
 pub struct TestIndexIndicator {
     /// Holds the active test index (>= 0), or `IDLE_STATE` (< 0).
     state: AtomicIsize,
@@ -62,8 +169,10 @@ impl<C: HostComms, P> Context<C, P> {
     /// If the lock is already held (e.g., by a panic handler or an interrupt), this method returns `Ok(())`
     /// immediately to avoid reentrancy deadlock or state corruption.
     ///
-    /// # Errors
+    /// # Returns
+    /// * `Result<(), C::Error>` - Success or transport error status.
     ///
+    /// # Errors
     /// Returns a transport error if flushing fails.
     pub fn flush_locked(&mut self) -> Result<(), C::Error> {
         if self.comms_lock.try_lock() {
@@ -76,6 +185,13 @@ impl<C: HostComms, P> Context<C, P> {
     }
 
     /// Creates a new `Context`.
+    ///
+    /// # Arguments
+    /// * `comms` - Communication peripheral channel.
+    /// * `cpu_utils` - CPU execution/profiler.
+    ///
+    /// # Returns
+    /// * `Self` - Context instance.
     pub const fn new(comms: C, cpu_utils: P) -> Self {
         Self {
             comms,
@@ -88,8 +204,10 @@ impl<C: HostComms, P> Context<C, P> {
     ///
     /// If the lock is already held, this returns `Ok(None)` immediately to prevent nested/concurrent polls.
     ///
-    /// # Errors
+    /// # Returns
+    /// * `PollResult<C::Error>` - Success (optionally wrapped command) or transport error status.
     ///
+    /// # Errors
     /// Returns a transport error if polling fails.
     pub fn poll_command_locked(&mut self) -> Result<Option<Command>, C::Error> {
         if self.comms_lock.try_lock() {
@@ -106,8 +224,13 @@ impl<C: HostComms, P> Context<C, P> {
     /// If the lock is already held, this returns `Ok(())` immediately. This is the primary safe interface
     /// for regular telemetry logs.
     ///
-    /// # Errors
+    /// # Arguments
+    /// * `telemetry` - Reference to the telemetry data structure.
     ///
+    /// # Returns
+    /// * `Result<(), C::Error>` - Success or transport error status.
+    ///
+    /// # Errors
     /// Returns a transport error if writing or flushing fails.
     pub fn send_telemetry_and_flush_locked(
         &mut self,
@@ -129,8 +252,13 @@ impl<C: HostComms, P> Context<C, P> {
     ///
     /// If the lock is already held, this returns `Ok(())` immediately.
     ///
-    /// # Errors
+    /// # Arguments
+    /// * `telemetry` - Reference to the telemetry data structure.
     ///
+    /// # Returns
+    /// * `Result<(), C::Error>` - Success or transport error status.
+    ///
+    /// # Errors
     /// Returns a transport error if writing fails.
     pub fn send_telemetry_locked(
         &mut self,
@@ -155,6 +283,9 @@ where
     /// Exits the server, using target-specific exit mechanisms.
     ///
     /// Attempts to cleanly close the communication channel before invoking the target exit routine.
+    ///
+    /// # Returns
+    /// * `!` - This function never returns.
     pub fn exit(&mut self) -> ! {
         if self.context.comms_lock.try_lock() {
             self.context.comms.close();
@@ -166,6 +297,13 @@ where
     }
 
     /// Creates a new `Server` instance with the given context.
+    ///
+    /// # Arguments
+    /// * `context` - Communication and hardware environment context.
+    /// * `suites` - Slice of static test suite references.
+    ///
+    /// # Returns
+    /// * `Self` - Server instance.
     pub const fn new(
         context: Context<C, P>,
         suites: &'a [&'static SuiteDescriptor],
@@ -178,8 +316,10 @@ where
     /// This function polls for incoming host commands, executes requested tests,
     /// and streams telemetry and metrics back to the host.
     ///
-    /// # Errors
+    /// # Returns
+    /// * `ServerResult<C::Error>` - Success or transport error status.
     ///
+    /// # Errors
     /// Returns a transport error `C::Error` propagated from the underlying communication interface if polling,
     /// transmitting telemetry, or flushing fails.
     pub fn run(&mut self) -> ServerResult<C::Error> {
@@ -380,6 +520,11 @@ impl TestIndexIndicator {
     const IDLE_STATE: isize = -1;
 
     /// Retrieves the current state, returning it as a safe Option.
+    ///
+    /// # Returns
+    /// * `Option<usize>`
+    ///     * `Some(idx)` - The active suite or test index.
+    ///     * `None` - If currently idle.
     pub fn get(&self) -> Option<usize> {
         let current_state = self.state.load(Ordering::Acquire);
 
@@ -391,6 +536,9 @@ impl TestIndexIndicator {
     }
 
     /// Creates a new indicator in the Idle state.
+    ///
+    /// # Returns
+    /// * `Self` - An idle TestIndexIndicator.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -399,6 +547,9 @@ impl TestIndexIndicator {
     }
 
     /// Sets the indicator to a specific active test index.
+    ///
+    /// # Arguments
+    /// * `index` - The active execution index.
     pub fn set_active(&self, index: usize) {
         // Explicitly pattern match on the Result
         let safe_index = isize::try_from(index)

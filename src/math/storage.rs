@@ -1,16 +1,15 @@
 //! Utilities to help initialize static arrays.
 //!
-//! This is inspired by [array-init](https://github.com/Manishearth/array-init/) and [nalgebra].
-//! This is meant to eventually become a `static_storage` trait that can provide the same tools
-//! for sparse and dense arrays.
-
-#![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+//! This is inspired by [array-init](https://github.com/Manishearth/array-init/) and
+//! [nalgebra](https://docs.rs/nalgebra/latest/nalgebra/). This is meant to eventually become a
+//! `static_storage` trait that can provide the same tools for sparse and dense arrays.
 
 use core::mem::MaybeUninit;
 
 type UninitArray<T, const N: usize> = MaybeUninit<[T; N]>;
 
 /// Helper function to reverse arrays given to `Polynomial::new()`
+#[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 #[inline]
 pub const fn reverse_array<T: Copy, const N: usize>(input: [T; N]) -> [T; N] {
     let mut output = input;

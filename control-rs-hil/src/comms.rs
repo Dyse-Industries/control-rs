@@ -1,7 +1,49 @@
 //! Target-to-Host communication protocol and traits.
 //!
+//! # Description
+//!
+//! This module defines the framing reader, serialization utilities, and target-to-host messaging traits
+//! used to exchange HIL test suite information, run tests, report performance metrics, and handle telemetry logs.
+//! The transport layer uses a robust packet framing scheme with CRC-16-IBM-SDLC checksum protection.
+//!
+//! # Core Concepts
+//!
+//! - **HostComms Trait**: Target-agnostic interface that serial-comms or USB-comms handlers implement.
+//! - **Framed Reader**: `FrameReader` parses incoming stream bytes statefully into verified frame slices.
+//! - **Command/Telemetry Enums**: Defines the protocol message schemas for control instructions and test reporting.
+//! - **CommsLock**: An atomic flag lock preventing multiple execution paths from concurrently writing telemetry frames.
+//!
+//! # Usage
+//!
+//! ```
+//! use control_rs_hil::comms::{FrameReader, Telemetry, frame_telemetry};
+//!
+//! let mut reader = FrameReader::new();
+//! assert!(reader.is_idle());
+//!
+//! let mut buf = [0u8; 128];
+//! let size = frame_telemetry(&Telemetry::DiscoveryComplete, &mut buf).unwrap();
+//!
+//! let mut decoded = false;
+//! for &b in &buf[..size] {
+//!     if reader.handle_byte(b).is_some() {
+//!         decoded = true;
+//!         break;
+//!     }
+//! }
+//! assert!(decoded);
+//! ```
+//!
+//! # Features
+//!
+//! - **Checksum Verification**: Integrates CRC-16 to check frame data integrity automatically.
+//!
+//! # Limitations
+//!
+//! - **Max Payload Size**: Individual payload lengths are limited to 512 bytes.
+//!
 //! > L. L. Peterson and B. S. Davie, "2.3 Framing," in Computer Networks: A Systems Approach, 2024.
-//! >   [Online]. Available: [URL]. [Accessed: [Date of Access, e.g., June 27, 2026]].
+//! >   \[Online\]. Available: <https://book.systemsapproach.org/>. [Accessed: [Date of Access, e.g., June 27, 2026]].
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -12,18 +54,47 @@ const START_BYTE_1: u8 = 0xAA;
 const START_BYTE_2: u8 = 0x55;
 
 /// The payload returned by `handle_byte` when a full frame is decoded.
+///
+/// Refers to the decoded raw byte slice inside the reader's internal buffer.
 pub type DecodedFrame<'a> = &'a [u8];
 
 /// Result of polling a command from the host.
+///
+/// Returns a command if successfully decoded, or transport error `E`.
 pub type PollResult<E> = Result<Option<Command>, E>;
 
 /// Result of sending telemetry or flushing.
+///
+/// Returns `Ok(())` or transport error `E`.
 pub type SendResult<E> = Result<(), E>;
 
 /// A trait for executing frame-based communication between target and host.
 ///
 /// Handlers of this trait bridge the parsed commands and telemetry messages
 /// onto concrete hardware peripherals (like UART, USB, or RTT).
+///
+/// # Safety
+/// Implementations must guarantee safe register/hardware access during transfer and framing.
+/// This trait does not use `unsafe` code.
+///
+/// # Panics
+/// Trait operations do not panic.
+///
+/// # Example
+/// ```
+/// use control_rs_hil::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+///
+/// struct MyComms;
+/// impl HostComms for MyComms {
+///     type Error = &'static str;
+///     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
+///     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
+///     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
+/// }
+///
+/// let mut comms = MyComms;
+/// assert!(comms.flush().is_ok());
+/// ```
 #[allow(clippy::type_complexity)]
 pub trait HostComms {
     /// The error type associated with transport failures.
@@ -37,27 +108,36 @@ pub trait HostComms {
 
     /// Flush any pending buffered data out to the physical interface.
     ///
-    /// # Errors
+    /// # Returns
+    /// * `SendResult<Self::Error>` - Success or transport error status.
     ///
+    /// # Errors
     /// Returns a transport error if flushing the buffer to the physical interface fails.
     fn flush(&mut self) -> SendResult<Self::Error>;
 
     /// Read incoming bytes and try to parse a Command.
     ///
-    /// This should be non-blocking. It returns:
-    /// - `Ok(Some(Command))` when a full valid command frame is parsed.
-    /// - `Ok(None)` if no command is ready yet.
-    /// - `Err(Error)` on serial port or protocol errors.
+    /// This should be non-blocking.
+    ///
+    /// # Returns
+    /// * `PollResult<Self::Error>`
+    ///     * `Ok(Some(Command))` when a full valid command frame is parsed.
+    ///     * `Ok(None)` if no command is ready yet.
+    ///     * `Err(Error)` on serial port or protocol errors.
     ///
     /// # Errors
-    ///
     /// Returns a serial port or protocol error if reading or de-framing fails.
     fn poll_command(&mut self) -> PollResult<Self::Error>;
 
     /// Send a telemetry message to the host.
     ///
-    /// # Errors
+    /// # Arguments
+    /// * `telemetry` - Reference to the telemetry variant schema.
     ///
+    /// # Returns
+    /// * `SendResult<Self::Error>` - Success or transport error status.
+    ///
+    /// # Errors
     /// Returns a transport error if serialization or writing to the physical interface fails.
     fn send_telemetry(
         &mut self,
@@ -66,6 +146,8 @@ pub trait HostComms {
 }
 
 /// Commands sent from the Host TUI to the Target MCU.
+///
+/// Encapsulates all executable remote operations that can be instructed by the host.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Command {
     /// Request the target to stream the list of all suites, tests, and settings.
@@ -102,6 +184,8 @@ enum ReaderState {
 }
 
 /// Telemetry and logs sent from the Target MCU to the Host TUI.
+///
+/// Encapsulates all data updates, performance metrics, log outputs, and crash reports.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Telemetry<'a> {
     /// Notification that the target has finished sending discovery information.
@@ -194,11 +278,48 @@ pub enum TestState {
 }
 
 /// A thread-safe lock using an atomic boolean flag to protect communication resources.
+///
+/// Prevents concurrent execution threads (such as main event loops and exception handlers)
+/// from writing overlapping byte telemetry frames to the shared physical peripheral.
+///
+/// # Safety
+/// This struct does not use `unsafe` code.
+///
+/// # Panics
+/// Locking operations do not panic.
+///
+/// # Example
+/// ```
+/// use control_rs_hil::comms::CommsLock;
+///
+/// let lock = CommsLock::new();
+/// assert!(lock.try_lock());
+/// assert!(!lock.try_lock());
+/// lock.unlock();
+/// assert!(lock.try_lock());
+/// ```
 pub struct CommsLock {
     locked: AtomicBool,
 }
 
 /// State machine to de-frame a stream of incoming bytes into packets.
+///
+/// Statefully processes serial stream input byte-by-byte and performs
+/// payload verification via CRC-16 checks.
+///
+/// # Safety
+/// This struct does not use `unsafe` code.
+///
+/// # Panics
+/// Byte handling operations do not panic.
+///
+/// # Example
+/// ```
+/// use control_rs_hil::comms::FrameReader;
+///
+/// let mut reader = FrameReader::new();
+/// assert!(reader.is_idle());
+/// ```
 pub struct FrameReader {
     payload_buffer: [u8; MAX_PAYLOAD_SIZE],
     state: ReaderState,
@@ -206,6 +327,8 @@ pub struct FrameReader {
 }
 
 /// A log message produced by a test executable or the runner itself.
+///
+/// Bundles message payload text and HIL metadata tags together.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LogMessage<'a> {
     /// The log text payload.
@@ -226,6 +349,9 @@ impl Default for CommsLock {
 
 impl CommsLock {
     /// Creates a new, unlocked `CommsLock`.
+    ///
+    /// # Returns
+    /// * `Self` - An unlocked CommsLock instance.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -234,6 +360,9 @@ impl CommsLock {
     }
 
     /// Attempts to acquire the lock. Returns `true` if successful, or `false` if already locked.
+    ///
+    /// # Returns
+    /// * `bool` - `true` if lock was acquired successfully, `false` otherwise.
     #[must_use]
     pub fn try_lock(&self) -> bool {
         self.locked
@@ -256,6 +385,14 @@ impl Default for FrameReader {
 impl FrameReader {
     /// Process a single incoming byte. Returns `Some(&[u8])` when a complete,
     /// checksum-verified payload has been received.
+    ///
+    /// # Arguments
+    /// * `byte` - Incoming serial stream byte.
+    ///
+    /// # Returns
+    /// * `Option<DecodedFrame<'_>>`
+    ///     * `Some(frame_payload)` - A byte slice reference to the verified frame payload buffer.
+    ///     * `None` - If the frame is still incomplete or the CRC check failed.
     #[allow(clippy::arithmetic_side_effects)]
     pub fn handle_byte(&mut self, byte: u8) -> Option<DecodedFrame<'_>> {
         match self.state {
@@ -313,12 +450,18 @@ impl FrameReader {
     }
 
     /// Returns true if the reader is currently idle (waiting for a new frame start).
+    ///
+    /// # Returns
+    /// * `bool` - `true` if the frame reader state is in wait-for-start mode.
     #[must_use]
     pub const fn is_idle(&self) -> bool {
         matches!(self.state, ReaderState::WaitStart1)
     }
 
     /// Creates a new `FrameReader`.
+    ///
+    /// # Returns
+    /// * `Self` - Initialized FrameReader instance.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -332,8 +475,15 @@ impl FrameReader {
 /// Helper to serialize and frame a telemetry message into a destination buffer.
 /// Returns the number of bytes written.
 ///
+/// # Arguments
+/// * `telemetry` - Reference to the telemetry message data.
+/// * `dest` - Target byte buffer destination.
+///
+/// # Returns
+/// * `Result<usize, postcard::Error>` - The count of bytes written on success, or serialization error.
+///
 /// # Errors
-/// Returns `postcard::Error` if serialization fails.
+/// Returns `postcard::Error` if serialization fails or `dest` is too small.
 #[allow(clippy::arithmetic_side_effects)]
 pub fn frame_telemetry(
     telemetry: &Telemetry<'_>,
