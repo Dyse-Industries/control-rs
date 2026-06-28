@@ -14,25 +14,10 @@
 extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{
-    Item, ItemFn, ItemMod, ItemStatic, Type, parse_macro_input, parse_quote,
-};
+use syn::{Item, ItemFn, ItemMod, ItemStatic, parse_macro_input, parse_quote};
 
 /// Type alias for a test function's identifier and its description.
 type TestFnInfo = (syn::Ident, String);
-
-/// Checks if the given type matches the target type name.
-fn is_type_name(ty: &Type, name: &str) -> bool {
-    if let Type::Path(type_path) = ty {
-        type_path
-            .path
-            .segments
-            .last()
-            .is_some_and(|segment| segment.ident == name)
-    } else {
-        false
-    }
-}
 
 /// Helper to extract doc comments from syn attributes, strip compiler-injected leading space,
 /// and truncate to a maximum of 160 characters (appending `...` if truncated).
@@ -69,7 +54,9 @@ fn extract_doc_string(attrs: &[syn::Attribute]) -> String {
 fn get_atomic_wrapper_name(ty: &syn::Type) -> Option<&'static str> {
     // Ensure the type is a standard path (e.g., `u8` or `std::primitive::u8`)
     let path = match ty {
-        syn::Type::Path(type_path) if type_path.qself.is_none() => &type_path.path,
+        syn::Type::Path(type_path) if type_path.qself.is_none() => {
+            &type_path.path
+        }
         _ => return None,
     };
 
@@ -78,15 +65,15 @@ fn get_atomic_wrapper_name(ty: &syn::Type) -> Option<&'static str> {
 
     // Convert to string and match in O(1)
     match ident.to_string().as_str() {
-        "u8"   => Some("AtomicU8Setting"),
-        "u16"  => Some("AtomicU16Setting"),
-        "u32"  => Some("AtomicU32Setting"),
-        "u64"  => Some("AtomicU64Setting"),
-        "i8"   => Some("AtomicI8Setting"),
-        "i32"  => Some("AtomicI32Setting"),
+        "u8" => Some("AtomicU8Setting"),
+        "u16" => Some("AtomicU16Setting"),
+        "u32" => Some("AtomicU32Setting"),
+        "u64" => Some("AtomicU64Setting"),
+        "i8" => Some("AtomicI8Setting"),
+        "i32" => Some("AtomicI32Setting"),
         "bool" => Some("AtomicBoolSetting"),
-        "f32"  => Some("AtomicF32Setting"),
-        _      => None,
+        "f32" => Some("AtomicF32Setting"),
+        _ => None,
     }
 }
 
