@@ -85,6 +85,7 @@ fn process_static_setting(item_static: &mut ItemStatic) -> Option<syn::Ident> {
 
     // 2. Mutation phase: If matched, clone what we need and overwrite
     if let Some(atomic_type_str) = atomic_type_str_option {
+        let vis = item_static.vis.clone();
         let name_ident = item_static.ident.clone();
         let init_expr = item_static.expr.clone();
         let attrs = item_static.attrs.clone();
@@ -94,7 +95,7 @@ fn process_static_setting(item_static: &mut ItemStatic) -> Option<syn::Ident> {
 
         let new_static: ItemStatic = parse_quote! {
             #(#attrs)*
-            pub static #name_ident: ::control_rs_hil::settings::#atomic_type_ident =
+            #vis static #name_ident: ::control_rs_hil::settings::#atomic_type_ident =
                 ::control_rs_hil::settings::#atomic_type_ident::new(stringify!(#name_ident), #setting_doc, #init_expr);
         };
 
@@ -176,6 +177,15 @@ fn generate_suite_descriptors(
 #[proc_macro_attribute]
 pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut item_mod = parse_macro_input!(item as ItemMod);
+    if item_mod.content.is_none() {
+        return TokenStream::from(
+            syn::Error::new_spanned(
+                &item_mod,
+                "#[hil_suite] attribute is only supported on inline modules (e.g., mod foo { ... })"
+            )
+            .to_compile_error()
+        );
+    }
     let suite_name = item_mod.ident.to_string();
     let suite_doc = extract_doc_string(&item_mod.attrs);
 
@@ -259,7 +269,8 @@ pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #setup_fn
 
-        static mut HIL_SERVER: Option<::control_rs_hil::Server<'static, #c_ty, #p_ty>> = None;
+        static HIL_SERVER: ::core::sync::atomic::AtomicPtr<::control_rs_hil::Server<'static, #c_ty, #p_ty>> =
+            ::core::sync::atomic::AtomicPtr::new(::core::ptr::null_mut());
 
         ::control_rs_macros::hil_entrypoint!(#setup_name);
         ::control_rs_macros::hil_panic!();
@@ -295,11 +306,9 @@ pub fn hil_entrypoint(input: TokenStream) -> TokenStream {
             let suites = unsafe { ::control_rs_hil::util::get_suites(start, end) };
 
             let context = #setup_name();
-            unsafe {
-                HIL_SERVER = Some(::control_rs_hil::Server::new(context, suites));
-            }
+            let mut server = ::control_rs_hil::Server::new(context, suites);
+            HIL_SERVER.store(&mut server as *mut _, ::core::sync::atomic::Ordering::Release);
 
-            let server = unsafe { HIL_SERVER.as_mut().unwrap() };
             let _ = server.run();
             server.exit();
         }
@@ -327,8 +336,10 @@ pub fn hil_panic(input: TokenStream) -> TokenStream {
             let file = info.location().map_or("unknown", |l| l.file());
             let line = info.location().map_or(0, |l| l.line());
 
+            let server_ptr = HIL_SERVER.load(::core::sync::atomic::Ordering::Acquire);
             unsafe {
-                if let Some(server) = HIL_SERVER.as_mut() {
+                if !server_ptr.is_null() {
+                    let server = &mut *server_ptr;
                     let comms_ok = server.context.comms_lock.try_lock();
                     ::control_rs_hil::util::handle_failure(
                         &mut server.context,
@@ -350,6 +361,7 @@ pub fn hil_panic(input: TokenStream) -> TokenStream {
 
 /// Helper macro to define the target HIL trap/exception handlers.
 #[proc_macro]
+#[allow(clippy::too_many_lines)]
 pub fn hil_exception(input: TokenStream) -> TokenStream {
     let _ = input;
     let expanded = quote! {
@@ -368,7 +380,9 @@ pub fn hil_exception(input: TokenStream) -> TokenStream {
             };
             let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("exception occurred");
 
-            if let Some(server) = HIL_SERVER.as_mut() {
+            let server_ptr = HIL_SERVER.load(::core::sync::atomic::Ordering::Acquire);
+            if !server_ptr.is_null() {
+                let server = unsafe { &mut *server_ptr };
                 let comms_ok = server.context.comms_lock.try_lock();
                 ::control_rs_hil::util::handle_exception(
                     &mut server.context,
@@ -400,7 +414,9 @@ pub fn hil_exception(input: TokenStream) -> TokenStream {
             };
             let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("exception occurred");
 
-            if let Some(server) = HIL_SERVER.as_mut() {
+            let server_ptr = HIL_SERVER.load(::core::sync::atomic::Ordering::Acquire);
+            if !server_ptr.is_null() {
+                let server = unsafe { &mut *server_ptr };
                 let comms_ok = server.context.comms_lock.try_lock();
                 ::control_rs_hil::util::handle_exception(
                     &mut server.context,

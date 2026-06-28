@@ -216,12 +216,6 @@ pub trait CPUProfiler {
 ///
 /// This structure tracks execution cycles using the ARM DWT (Data Watchpoint and Trace) cycle
 /// counter, measures elapsed time using the SysTick timer, and inspects the stack using linker symbols.
-///
-/// # Safety
-/// This struct does not introduce unsafe safe APIs, but directly executes target specific low level register accesses.
-///
-/// # Panics
-/// Instantiating or accessing this struct does not panic.
 #[cfg(target_arch = "arm")]
 pub struct CortexMProfiler {
     clock_frequency: u32,
@@ -238,6 +232,7 @@ impl CortexMProfiler {
     ///
     /// # Returns
     /// * `Self` - The Cortex-M profiler instance.
+    #[must_use]
     pub const fn new(
         clock_frequency: u32,
         ticks: &'static core::sync::atomic::AtomicU32,
@@ -263,23 +258,36 @@ impl CPUProfiler for CortexMProfiler {
     }
 
     fn get_cycles(&self) -> u64 {
-        // SAFETY: 0xE000_1004 is the address of the DWT CYCCNT (Cycle Count) register on Cortex-M
-        // processors. Reading this address is safe and has no side effects, provided DWT has been
-        // enabled in the core debug control registers (which is handled by `enable_dwt_cycle_counter`).
-        unsafe {
-            let dwt_cyccnt = 0xE000_1004 as *const u32;
-            core::ptr::read_volatile(dwt_cyccnt) as u64
-        }
+        cortex_m::peripheral::DWT::cycle_count() as u64
     }
 
     fn get_nanos(&self) -> u64 {
-        let ms = self.ticks.load(core::sync::atomic::Ordering::Relaxed) as u64;
-        let current = cortex_m::peripheral::SYST::get_current();
-        let reload = self.clock_frequency / 1000 - 1;
-        let cycles = reload.saturating_sub(current);
-        let us = ms * 1000
-            + (cycles as u64) / (self.clock_frequency as u64 / 1_000_000);
-        us * 1000
+        loop {
+            let ms1 =
+                self.ticks.load(core::sync::atomic::Ordering::Relaxed) as u64;
+            let current = cortex_m::peripheral::SYST::get_current();
+            let icsr =
+                unsafe { core::ptr::read_volatile(0xE000_ED04 as *const u32) };
+            let ms2 =
+                self.ticks.load(core::sync::atomic::Ordering::Relaxed) as u64;
+
+            if ms1 == ms2 {
+                let reload = self.clock_frequency / 1000 - 1;
+                let pending = (icsr & (1 << 26)) != 0;
+                // If SysTick is pending, it means the timer has wrapped. If current is large (not about to wrap/just wrapped),
+                // the wrap happened before we read current.
+                let adjusted_ms = if pending && current > 200 {
+                    ms1 + 1
+                } else {
+                    ms1
+                };
+                let cycles = reload.saturating_sub(current);
+                let us = adjusted_ms * 1000
+                    + (cycles as u64)
+                        / (self.clock_frequency as u64 / 1_000_000);
+                return us * 1000;
+            }
+        }
     }
 
     fn get_sp(&self) -> usize {
@@ -312,23 +320,23 @@ impl CPUProfiler for CortexMProfiler {
 ///
 /// This structure tracks execution cycles using the RISC-V `mcycle` CSR register,
 /// measures elapsed time using the `time` CSR register, and calculates stack limits using linker-defined variables.
-///
-/// # Safety
-/// This struct does not introduce unsafe safe APIs, but directly executes target specific low level register accesses.
-///
-/// # Panics
-/// Instantiating or accessing this struct does not panic.
 #[cfg(target_arch = "riscv32")]
-pub struct RiscvProfiler;
+pub struct RiscvProfiler {
+    clock_frequency: u32,
+}
 
 #[cfg(target_arch = "riscv32")]
 impl RiscvProfiler {
     /// Creates a new `RiscvProfiler` instance.
     ///
+    /// # Arguments
+    /// * `clock_frequency` - Timer/CSR ticking frequency in Hz.
+    ///
     /// # Returns
     /// * `Self` - RISC-V profiler instance.
-    pub const fn new() -> Self {
-        Self
+    #[must_use]
+    pub const fn new(clock_frequency: u32) -> Self {
+        Self { clock_frequency }
     }
 }
 
@@ -361,12 +369,15 @@ impl CPUProfiler for RiscvProfiler {
     }
 
     fn get_cycles(&self) -> u64 {
+        // NOTE: On rv32, mcycle is a 32-bit register and can wrap every few seconds.
+        // For typical short HIL tests, this is a non-issue.
         riscv::register::mcycle::read() as u64
     }
 
     fn get_nanos(&self) -> u64 {
         let ticks = riscv::register::time::read64();
-        ticks * 100
+        (ticks as u64).saturating_mul(1_000_000_000)
+            / (self.clock_frequency as u64)
     }
 
     fn get_sp(&self) -> usize {

@@ -94,6 +94,6 @@ fn setup() -> Context<RiscvSemihostingComms, RiscvProfiler> {
     let comms = RiscvSemihostingComms {
         reader: FrameReader::new(),
     };
-    let cpu_utils = RiscvProfiler::new();
+    let cpu_utils = RiscvProfiler::new(10_000_000);
     Context::new(comms, cpu_utils)
 }

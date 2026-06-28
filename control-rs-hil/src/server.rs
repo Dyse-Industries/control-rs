@@ -136,6 +136,16 @@ pub struct Server<'a, C, P> {
 /// Indicates success or contains transport error `E`.
 pub type ServerResult<E> = Result<(), E>;
 
+/// Performance metrics measured during a test execution.
+pub struct TestMetrics {
+    /// Number of elapsed CPU cycles.
+    pub cycles: u64,
+    /// Peak stack usage in bytes.
+    pub stack_peak: u32,
+    /// Elapsed wall-clock time in microseconds.
+    pub time_us: u64,
+}
+
 /// Represents the active state of a test runner indicator.
 ///
 /// Tracks execution indexes or flags idle state via atomic operations.
@@ -166,21 +176,21 @@ pub struct TestIndexIndicator {
 impl<C: HostComms, P> Context<C, P> {
     /// Flushes comms safely by acquiring the comms lock first.
     ///
-    /// If the lock is already held (e.g., by a panic handler or an interrupt), this method returns `Ok(())`
+    /// If the lock is already held (e.g., by a panic handler or an interrupt), this method returns `Ok(false)`
     /// immediately to avoid reentrancy deadlock or state corruption.
     ///
     /// # Returns
-    /// * `Result<(), C::Error>` - Success or transport error status.
+    /// * `Result<bool, C::Error>` - Success flag (true if locked and flushed, false if lock was busy) or transport error status.
     ///
     /// # Errors
     /// Returns a transport error if flushing fails.
-    pub fn flush_locked(&mut self) -> Result<(), C::Error> {
+    pub fn flush_locked(&mut self) -> Result<bool, C::Error> {
         if self.comms_lock.try_lock() {
             let res = self.comms.flush();
             self.comms_lock.unlock();
-            res
+            res.map(|()| true)
         } else {
-            Ok(())
+            Ok(false)
         }
     }
 
@@ -221,56 +231,157 @@ impl<C: HostComms, P> Context<C, P> {
 
     /// Sends telemetry and flushes safely by acquiring the comms lock first.
     ///
-    /// If the lock is already held, this returns `Ok(())` immediately. This is the primary safe interface
+    /// If the lock is already held, this returns `Ok(false)` immediately. This is the primary safe interface
     /// for regular telemetry logs.
     ///
     /// # Arguments
     /// * `telemetry` - Reference to the telemetry data structure.
     ///
     /// # Returns
-    /// * `Result<(), C::Error>` - Success or transport error status.
+    /// * `Result<bool, C::Error>` - Success flag (true if locked and sent, false if lock was busy) or transport error status.
     ///
     /// # Errors
     /// Returns a transport error if writing or flushing fails.
     pub fn send_telemetry_and_flush_locked(
         &mut self,
         telemetry: &Telemetry<'_>,
-    ) -> Result<(), C::Error> {
+    ) -> Result<bool, C::Error> {
         if self.comms_lock.try_lock() {
             let res = self
                 .comms
                 .send_telemetry(telemetry)
                 .and_then(|()| self.comms.flush());
             self.comms_lock.unlock();
-            res
+            res.map(|()| true)
         } else {
-            Ok(())
+            Ok(false)
         }
     }
 
     /// Sends telemetry safely by acquiring the comms lock first.
     ///
-    /// If the lock is already held, this returns `Ok(())` immediately.
+    /// If the lock is already held, this returns `Ok(false)` immediately.
     ///
     /// # Arguments
     /// * `telemetry` - Reference to the telemetry data structure.
     ///
     /// # Returns
-    /// * `Result<(), C::Error>` - Success or transport error status.
+    /// * `Result<bool, C::Error>` - Success flag (true if locked and sent, false if lock was busy) or transport error status.
     ///
     /// # Errors
     /// Returns a transport error if writing fails.
     pub fn send_telemetry_locked(
         &mut self,
         telemetry: &Telemetry<'_>,
-    ) -> Result<(), C::Error> {
+    ) -> Result<bool, C::Error> {
         if self.comms_lock.try_lock() {
             let res = self.comms.send_telemetry(telemetry);
             self.comms_lock.unlock();
-            res
+            res.map(|()| true)
         } else {
-            Ok(())
+            Ok(false)
         }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
+    /// Profile the execution of a test function, measuring cycles, stack, and time.
+    pub fn profile_test<F>(&self, test_fn: F) -> TestMetrics
+    where
+        F: FnOnce(),
+    {
+        let sp = self.cpu_utils.get_sp();
+        // SAFETY: We retrieve the active stack pointer `sp` immediately before painting.
+        // The implementation of `paint_stack` handles bounds calculations and enforces a safety
+        // margin to protect active call frames.
+        unsafe {
+            self.cpu_utils.paint_stack(sp);
+        }
+
+        let mut start_cycles = 0;
+        let mut start_time_ns = 0;
+        let mut end_cycles = 0;
+        let mut end_time_ns = 0;
+
+        self.cpu_utils.disable_interrupts(|| {
+            start_cycles = self.cpu_utils.get_cycles();
+            start_time_ns = self.cpu_utils.get_nanos();
+            test_fn();
+            end_time_ns = self.cpu_utils.get_nanos();
+            end_cycles = self.cpu_utils.get_cycles();
+        });
+
+        // SAFETY: We query the peak stack usage relative to the same stack pointer `sp` used
+        // to paint the stack. The stack was painted with sentinel bytes, and reading occurs within
+        // the valid boundaries calculated during the painting phase.
+        let elapsed_stack = unsafe { self.cpu_utils.read_stack_peak(sp) };
+        let elapsed_cycles = end_cycles.saturating_sub(start_cycles);
+        let elapsed_time_us = end_time_ns.saturating_sub(start_time_ns) / 1000;
+
+        TestMetrics {
+            cycles: elapsed_cycles,
+            stack_peak: elapsed_stack,
+            time_us: elapsed_time_us,
+        }
+    }
+
+    /// Reports an error message via Log telemetry.
+    ///
+    /// # Errors
+    /// Returns a transport error if writing or flushing fails.
+    pub fn report_error_log(
+        &mut self,
+        suite_id: u16,
+        test_id: u16,
+        msg: &'static str,
+    ) -> ServerResult<C::Error> {
+        let timestamp_us = self.cpu_utils.get_nanos() / 1000;
+        let _ = self.send_telemetry_and_flush_locked(&Telemetry::Log(
+            crate::comms::LogMessage {
+                payload: msg,
+                suite_id,
+                test_id,
+                timestamp_us,
+            },
+        ))?;
+        Ok(())
+    }
+
+    /// Reports a setting set failure via Log telemetry.
+    ///
+    /// # Errors
+    /// Returns a transport error if sending fails.
+    pub fn report_setting_error(
+        &mut self,
+        suite_id: u16,
+        setting_name: &str,
+        err: &'static str,
+    ) -> ServerResult<C::Error> {
+        let timestamp_us = self.cpu_utils.get_nanos() / 1000;
+        let mut err_buf = [0u8; 128];
+        let pos = {
+            let mut writer = crate::util::FailureBufWriter {
+                buf: &mut err_buf,
+                pos: 0,
+            };
+            let _ = core::fmt::write(
+                &mut writer,
+                format_args!("Failed to set setting '{setting_name}': {err}"),
+            );
+            writer.pos
+        };
+        if let Some(Ok(msg)) = err_buf.get(..pos).map(core::str::from_utf8) {
+            let _ = self.send_telemetry_locked(&Telemetry::Log(
+                crate::comms::LogMessage {
+                    payload: msg,
+                    suite_id,
+                    test_id: 0,
+                    timestamp_us,
+                },
+            ))?;
+        }
+        Ok(())
     }
 }
 
@@ -345,7 +456,7 @@ where
                 }
             }
 
-            self.context.flush_locked()?;
+            let _ = self.context.flush_locked()?;
         }
     }
 
@@ -359,14 +470,24 @@ where
         let test_idx = test_id as usize;
 
         let Some(&suite) = self.suites.get(suite_idx) else {
+            self.context.report_error_log(
+                suite_id,
+                test_id,
+                "Error: RunExecutable suite_id out of range",
+            )?;
             return Ok(());
         };
         let Some(exec) = suite.executables.get(test_idx) else {
+            self.context.report_error_log(
+                suite_id,
+                test_id,
+                "Error: RunExecutable test_id out of range",
+            )?;
             return Ok(());
         };
 
         // Update state to Running
-        self.context.send_telemetry_and_flush_locked(
+        let _ = self.context.send_telemetry_and_flush_locked(
             &Telemetry::TestStateChange {
                 suite_id,
                 test_id,
@@ -378,52 +499,29 @@ where
         CURRENT_SUITE.set_active(suite_id as usize);
         CURRENT_TEST.set_active(test_id as usize);
 
-        // Retrieve stack pointer before running the test
-        let sp = self.context.cpu_utils.get_sp();
-        // SAFETY: We retrieve the active stack pointer `sp` immediately before painting.
-        // The implementation of `paint_stack` handles bounds calculations and enforces a safety
-        // margin to protect active call frames.
-        unsafe {
-            self.context.cpu_utils.paint_stack(sp);
-        }
-
-        let start_cycles = self.context.cpu_utils.get_cycles();
-        let start_time_ns = self.context.cpu_utils.get_nanos();
-
-        self.context.cpu_utils.disable_interrupts(|| {
-            (exec.test_fn)();
-        });
-
-        let end_time_ns = self.context.cpu_utils.get_nanos();
-        let end_cycles = self.context.cpu_utils.get_cycles();
-        // SAFETY: We query the peak stack usage relative to the same stack pointer `sp` used
-        // to paint the stack. The stack was painted with sentinel bytes, and reading occurs within
-        // the valid boundaries calculated during the painting phase.
-        let elapsed_stack =
-            unsafe { self.context.cpu_utils.read_stack_peak(sp) };
-
-        let elapsed_cycles = end_cycles.saturating_sub(start_cycles);
-        let elapsed_time_us = end_time_ns.saturating_sub(start_time_ns) / 1000;
+        // Profile the test
+        let metrics = self.context.profile_test(exec.test_fn);
 
         // Clear global trackers on success
         CURRENT_SUITE.set_idle();
         CURRENT_TEST.set_idle();
 
         // Update state to Passed & Send metric report
-        self.context
-            .send_telemetry_locked(&Telemetry::TestStateChange {
+        let _ = self.context.send_telemetry_locked(
+            &Telemetry::TestStateChange {
                 suite_id,
                 test_id,
                 state: TestState::Passed,
-            })?;
+            },
+        )?;
 
-        self.context.send_telemetry_and_flush_locked(
+        let _ = self.context.send_telemetry_and_flush_locked(
             &Telemetry::MetricReport {
                 suite_id,
                 test_id,
-                cycles: elapsed_cycles,
-                time_us: elapsed_time_us,
-                stack_peak: elapsed_stack,
+                cycles: metrics.cycles,
+                time_us: metrics.time_us,
+                stack_peak: metrics.stack_peak,
             },
         )?;
 
@@ -440,16 +538,29 @@ where
         let setting_idx = setting_id as usize;
 
         let Some(&suite) = self.suites.get(suite_idx) else {
+            self.context.report_error_log(
+                suite_id,
+                0,
+                "Error: SetSetting suite_id out of range",
+            )?;
             return Ok(());
         };
         let Some(&setting) = suite.settings.get(setting_idx) else {
+            self.context.report_error_log(
+                suite_id,
+                0,
+                "Error: SetSetting setting_id out of range",
+            )?;
             return Ok(());
         };
 
-        let _ = setting.set(value);
+        if let Err(err) = setting.set(value) {
+            self.context
+                .report_setting_error(suite_id, setting.name(), err)?;
+        }
 
         // Stream back the updated value to confirm
-        self.context.send_telemetry_and_flush_locked(
+        let _ = self.context.send_telemetry_and_flush_locked(
             &Telemetry::SettingInfo {
                 suite_id,
                 setting_id,
@@ -464,33 +575,36 @@ where
 
     fn stream_discovery(&mut self) -> ServerResult<C::Error> {
         for (suite_id, &suite) in (0_u16..).zip(self.suites.iter()) {
-            self.context.send_telemetry_locked(&Telemetry::SuiteInfo {
-                suite_id,
-                name: suite.name,
-                description: suite.description,
-                test_count: suite
-                    .executables
-                    .len()
-                    .try_into()
-                    .unwrap_or(u16::MAX),
-                setting_count: suite
-                    .settings
-                    .len()
-                    .try_into()
-                    .unwrap_or(u16::MAX),
-            })?;
+            let _ =
+                self.context.send_telemetry_locked(&Telemetry::SuiteInfo {
+                    suite_id,
+                    name: suite.name,
+                    description: suite.description,
+                    test_count: suite
+                        .executables
+                        .len()
+                        .try_into()
+                        .unwrap_or(u16::MAX),
+                    setting_count: suite
+                        .settings
+                        .len()
+                        .try_into()
+                        .unwrap_or(u16::MAX),
+                })?;
 
             for (test_id, exec) in (0_u16..).zip(suite.executables.iter()) {
-                self.context.send_telemetry_locked(&Telemetry::TestInfo {
-                    suite_id,
-                    test_id,
-                    name: exec.name,
-                    description: exec.description,
-                })?;
+                let _ = self.context.send_telemetry_locked(
+                    &Telemetry::TestInfo {
+                        suite_id,
+                        test_id,
+                        name: exec.name,
+                        description: exec.description,
+                    },
+                )?;
             }
 
             for (setting_id, setting) in (0_u16..).zip(suite.settings.iter()) {
-                self.context.send_telemetry_locked(
+                let _ = self.context.send_telemetry_locked(
                     &Telemetry::SettingInfo {
                         suite_id,
                         setting_id,
@@ -502,7 +616,8 @@ where
             }
         }
 
-        self.context
+        let _ = self
+            .context
             .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)?;
 
         Ok(())
@@ -807,17 +922,17 @@ mod tests {
         let mut context = Context::new(comms, HostCPUProfiler);
         assert!(context.comms_lock.try_lock());
 
-        assert!(context.flush_locked().is_ok());
+        assert!(!context.flush_locked().unwrap());
         assert!(context.poll_command_locked().unwrap().is_none());
         assert!(
-            context
+            !context
                 .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)
-                .is_ok()
+                .unwrap()
         );
         assert!(
-            context
+            !context
                 .send_telemetry_locked(&Telemetry::DiscoveryComplete)
-                .is_ok()
+                .unwrap()
         );
 
         assert!(context.comms.payloads.is_empty());
@@ -827,7 +942,7 @@ mod tests {
         assert!(
             context
                 .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)
-                .is_ok()
+                .unwrap()
         );
         assert_eq!(context.comms.payloads.len(), 1);
         assert_eq!(context.comms.flush_count, 1);
@@ -1001,7 +1116,12 @@ mod tests {
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 
-        assert!(server.context.comms.payloads.is_empty());
+        let p = &server.context.comms.payloads;
+        assert_eq!(p.len(), 4);
+        for item in p {
+            let t: Telemetry<'_> = postcard::from_bytes(item).unwrap();
+            assert!(matches!(t, Telemetry::Log(_)));
+        }
     }
 
     #[test]
@@ -1124,10 +1244,14 @@ mod tests {
         assert_eq!(res, Err("Exit loop"));
 
         let p = &server.context.comms.payloads;
-        assert_eq!(p.len(), 1);
+        assert_eq!(p.len(), 2);
         let t0: Telemetry<'_> =
             postcard::from_bytes(p.first().unwrap()).unwrap();
-        if let Telemetry::SettingInfo { value, .. } = t0 {
+        assert!(matches!(t0, Telemetry::Log(_)));
+
+        let t1: Telemetry<'_> =
+            postcard::from_bytes(p.get(1).unwrap()).unwrap();
+        if let Telemetry::SettingInfo { value, .. } = t1 {
             assert!(matches!(value, SettingValue::U8(_)));
         } else {
             panic!("Expected SettingInfo");

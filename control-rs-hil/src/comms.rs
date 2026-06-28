@@ -43,7 +43,7 @@
 //! - **Max Payload Size**: Individual payload lengths are limited to 512 bytes.
 //!
 //! > L. L. Peterson and B. S. Davie, "2.3 Framing," in Computer Networks: A Systems Approach, 2024.
-//! >   \[Online\]. Available: <https://book.systemsapproach.org/>. [Accessed: [Date of Access, e.g., June 27, 2026]].
+//! >   \[Online\]. Available: <https://book.systemsapproach.org/>. [Accessed: June 27, 2026].
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -514,7 +514,8 @@ pub fn frame_telemetry(
     };
 
     // Write length (big-endian)
-    let len_u16 = u16::try_from(payload_len).unwrap_or(0);
+    let len_u16 = u16::try_from(payload_len)
+        .map_err(|_| postcard::Error::SerializeBufferFull)?;
     if let Some(slot) = dest.get_mut(2) {
         *slot = (len_u16 >> 8) as u8;
     }

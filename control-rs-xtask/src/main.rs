@@ -226,7 +226,7 @@ fn run_ci_all_qemu() {
         println!("CI pipeline failed. Check ci-report.md for details.");
         exit(1);
     } else {
-        println!("\tCI pipeline passed. Report written to ci-report.md.");
+        println!("CI pipeline passed. Report written to ci-report.md.");
     }
 }
 
