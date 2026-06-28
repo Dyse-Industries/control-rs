@@ -42,7 +42,7 @@ flowchart LR
      Tasks:::target
      Telem:::target
     classDef host fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
-    classDef target fill:transparent,stroke:#818cf8,stroke-width:2px,color:#e0e7ff
+    classDef target fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff
     style Loop fill:#616161,stroke:#6366f1,stroke-width:2px,stroke-dasharray:5 5,color:#e0e7ff
     style Host fill:transparent,stroke:#475569,stroke-width:1px,stroke-dasharray:3 3
     style TargetEnv fill:transparent,stroke:#475569,stroke-width:1px,stroke-dasharray:3 3
