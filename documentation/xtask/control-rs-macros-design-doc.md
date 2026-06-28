@@ -88,10 +88,7 @@ object. This manages test execution and communication:
   allow dynamic adjustments without recompiling.
 * **HostComms:** A generic trait acting as a middleware layer for
   firmware-to-host communications.
-* **ClientClock:** A generic trait that allows users to configure different
-  hardware timers for the runner. The context expects a timer or clock from the
-  user's setup function to enable precise, hardware-specific performance metrics
-  and benchmarking.
+* **CPUProfileUtils:** A generic trait that allows users to configure CPU profiling utilities for the runner context. The context expects this implementation to enable precise, hardware-specific performance metrics (such as clock cycles, system timer, and stack usage) and benchmarking.
 
 ### 3.1. Panic Handling and Entrypoint Generation
 
@@ -109,7 +106,7 @@ restarts.
 ```rust
 use teensy4_bsp::hal::timer::Blocking;
 use control_rs::macros::{hil_suite, hil_setup};
-use control_rs::hil::{Command, Context, Settings, HostComms, ClientClock, LogMessage};
+use control_rs::hil::{Command, Context, HostComms, CPUProfileUtils};
 
 // A custom algorithm the user wants to benchmark alongside control-rs
 #[hil_suite]
@@ -120,14 +117,13 @@ pub mod my_drone_benchmarks {
 }
 
 #[hil_setup]
-fn setup() -> Context {
+fn setup() -> Context<MyComms, MyCPUUtils> {
     let board = teensy4_bsp::board::t41();
-    // ... custom clock config ...
+    // ... custom hardware config ...
 
     Context {
         comms: MyComms { /* ... */ },
-        timer: MyTimer { /* ... */ },
-        settings: Settings { iterations: 1000, verbose: true },
+        cpu_utils: MyCPUUtils { /* ... */ },
     }
 }
 ```

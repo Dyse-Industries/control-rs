@@ -9,12 +9,24 @@ readme = "README.md"
 keywords = ["embedded", "control-systems", "hil", "testing"]
 categories = ["embedded", "no-std"]
 
+[lints]
+workspace = true
+
 [dependencies]
-cortex-m = "0.7"
-cortex-m-rt = "0.7"
-cortex-m-semihosting = "0.5"
-panic-semihosting = "0.6"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 postcard = { version = "1.0", default-features = false }
 control-rs-macros = { path = "../control-rs-macros" }
+crc = { version = "3.4.0", default-features = false }
 
+[dev-dependencies]
+postcard = { version = "1.0", default-features = false, features = ["alloc"] }
+
+[features]
+default = ["stack-paint"]
+stack-paint = []
+
+[target.'cfg(target_arch = "arm")'.dependencies]
+cortex-m = "0.7"
+
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+riscv = "0.10"

@@ -2,6 +2,7 @@
 //! Contains formatting, git information collection, and report generation helper functions.
 
 use control_rs_hil::comms::TestState;
+use regex::Regex;
 use std::env;
 use std::fs;
 use std::process::Command;
@@ -36,6 +37,8 @@ pub struct HeadlessTestResult {
     pub cycles: Option<u64>,
     /// Duration of the test in microseconds if successful.
     pub time_us: Option<u64>,
+    /// Stack high-water mark in bytes if successful.
+    pub stack_peak: Option<u32>,
 }
 
 /// Helper function to format the issue summary section.
@@ -85,22 +88,175 @@ pub fn format_coverage_summary(
     s
 }
 
-fn format_sil_rows(results: &[&HeadlessTestResult]) -> String {
-    let mut s = String::new();
-    s.push_str("| Suite | Test | Result | Cycles | Time |\n| :--- | :--- | :--- | :--- | :--- |\n");
-    for r in results {
-        let res_str = match r.state {
-            TestState::Passed => "PASSED",
-            _ => "FAILED",
-        };
-        let cyc_str = r.cycles.map_or("N/A".to_string(), |c| c.to_string());
-        let time_str =
-            r.time_us.map_or("N/A".to_string(), |t| format!("{}us", t));
-        s.push_str(&format!(
-            "| {} | {} | {} | {} | {} |\n",
-            r.suite_name, r.test_name, res_str, cyc_str, time_str
-        ));
+fn format_number(val: u64) -> String {
+    let s = val.to_string();
+    let bytes = s.as_bytes();
+    let mut result = String::new();
+    let len = bytes.len();
+    for (i, &b) in bytes.iter().enumerate() {
+        if i > 0 && (len - i).is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(b as char);
     }
+    result
+}
+
+fn format_sil_rows(results: &[&HeadlessTestResult]) -> String {
+    let re = Regex::new(r"^(.*) \(([^)]+)\)$").unwrap();
+
+    let mut targets = Vec::new();
+    let mut suites = Vec::new();
+    let mut suite_tests: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
+    let mut grouped: std::collections::HashMap<
+        (&str, &str, &str),
+        &HeadlessTestResult,
+    > = std::collections::HashMap::new();
+
+    for r in results {
+        let (base_suite, target) =
+            if let Some(caps) = re.captures(&r.suite_name) {
+                (caps.get(1).unwrap().as_str(), caps.get(2).unwrap().as_str())
+            } else {
+                (r.suite_name.as_str(), "")
+            };
+
+        if !target.is_empty() && !targets.contains(&target) {
+            targets.push(target);
+        }
+
+        if !suites.contains(&base_suite) {
+            suites.push(base_suite);
+        }
+
+        let tests = suite_tests.entry(base_suite).or_default();
+        if !tests.contains(&r.test_name.as_str()) {
+            tests.push(r.test_name.as_str());
+        }
+
+        grouped.insert((base_suite, r.test_name.as_str(), target), r);
+    }
+
+    if targets.is_empty() {
+        targets.push("");
+    }
+
+    // Determine pruning criteria for each target
+    let mut prune_cycles = std::collections::HashMap::new();
+    let mut prune_time = std::collections::HashMap::new();
+    let mut prune_stack = std::collections::HashMap::new();
+
+    for &t in &targets {
+        let target_results: Vec<&&HeadlessTestResult> = results
+            .iter()
+            .filter(|r| {
+                let target_name = if let Some(caps) = re.captures(&r.suite_name)
+                {
+                    caps.get(2).unwrap().as_str()
+                } else {
+                    ""
+                };
+                target_name == t
+            })
+            .collect();
+
+        let has_cycles = target_results
+            .iter()
+            .any(|r| r.cycles.is_some_and(|c| c > 0));
+        let has_time = target_results
+            .iter()
+            .any(|r| r.time_us.is_some_and(|time| time > 0));
+        let has_stack = target_results
+            .iter()
+            .any(|r| r.stack_peak.is_some_and(|s| s > 0));
+
+        prune_cycles.insert(t, !has_cycles);
+        prune_time.insert(t, !has_time);
+        prune_stack.insert(t, !has_stack);
+    }
+
+    let format_cell = |r: &HeadlessTestResult, target: &str| -> String {
+        let status = match r.state {
+            TestState::Passed => "Pass",
+            _ => "Fail",
+        };
+        let mut parts = Vec::new();
+        parts.push(status.to_string());
+        if !prune_time.get(target).copied().unwrap_or(false) {
+            parts.push(r.time_us.map_or("N/A".to_string(), |t| {
+                format!("{}us", format_number(t))
+            }));
+        }
+        if !prune_stack.get(target).copied().unwrap_or(false) {
+            parts.push(r.stack_peak.map_or("N/A".to_string(), |s| {
+                format!("{}B", format_number(u64::from(s)))
+            }));
+        }
+        if !prune_cycles.get(target).copied().unwrap_or(false) {
+            parts.push(r.cycles.map_or("N/A".to_string(), |c| {
+                format!("{}c", format_number(c))
+            }));
+        }
+        parts.join(" / ")
+    };
+
+    let mut s = String::new();
+
+    for suite in suites {
+        if !s.is_empty() {
+            s.push('\n');
+        }
+        s.push_str(&format!("### Suite: `{}`\n", suite));
+
+        // Generate table header
+        s.push_str("| Test");
+        for t in &targets {
+            let p_cycles = prune_cycles.get(t).copied().unwrap_or(false);
+            let p_time = prune_time.get(t).copied().unwrap_or(false);
+            let p_stack = prune_stack.get(t).copied().unwrap_or(false);
+
+            let mut cols = Vec::new();
+            cols.push("Status");
+            if !p_time {
+                cols.push("Time");
+            }
+            if !p_stack {
+                cols.push("Stack");
+            }
+            if !p_cycles {
+                cols.push("Cycles");
+            }
+
+            let metrics_label = cols.join(" / ");
+            if t.is_empty() {
+                s.push_str(&format!(" | {}", metrics_label));
+            } else {
+                s.push_str(&format!(" | {} ({})", t, metrics_label));
+            }
+        }
+        s.push_str(" |\n| :---");
+        for _ in &targets {
+            s.push_str(" | :---");
+        }
+        s.push_str(" |\n");
+
+        // Generate rows
+        if let Some(tests) = suite_tests.get(suite) {
+            for test in tests {
+                s.push_str(&format!("| {}", test));
+                for t in &targets {
+                    if let Some(r) = grouped.get(&(suite, *test, *t)) {
+                        s.push_str(&format!(" | {}", format_cell(r, t)));
+                    } else {
+                        s.push_str(" | N/A");
+                    }
+                }
+                s.push_str(" |\n");
+            }
+        }
+    }
+
     s
 }
 
@@ -153,7 +309,7 @@ pub fn collect_system_info() -> String {
             .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
+            .map(|s| s.lines().next().unwrap_or("").trim().to_string())
             .unwrap_or_else(|| "Not found".to_string())
     }
 
@@ -176,6 +332,14 @@ pub fn collect_system_info() -> String {
     section.push_str(&format!(
         "| tarpaulin | {} |\n",
         get_version("cargo", &["tarpaulin", "--version"])
+    ));
+    section.push_str(&format!(
+        "| qemu-system-arm | {} |\n",
+        get_version("qemu-system-arm", &["--version"])
+    ));
+    section.push_str(&format!(
+        "| qemu-system-riscv32 | {} |\n",
+        get_version("qemu-system-riscv32", &["--version"])
     ));
 
     section.push_str(
@@ -353,6 +517,7 @@ mod tests {
                 state: TestState::Passed,
                 cycles: Some(100),
                 time_us: Some(10),
+                stack_peak: Some(256),
             },
             HeadlessTestResult {
                 suite_name: "SuiteA".to_string(),
@@ -360,16 +525,18 @@ mod tests {
                 state: TestState::Failed,
                 cycles: None,
                 time_us: None,
+                stack_peak: None,
             },
         ];
         let refs: Vec<&HeadlessTestResult> = results.iter().collect();
         let formatted = format_sil_rows(&refs);
         assert!(formatted.contains("SuiteA"));
         assert!(formatted.contains("Test1"));
-        assert!(formatted.contains("PASSED"));
-        assert!(formatted.contains("100"));
+        assert!(formatted.contains("Pass"));
+        assert!(formatted.contains("100c"));
         assert!(formatted.contains("10us"));
-        assert!(formatted.contains("FAILED"));
+        assert!(formatted.contains("256B"));
+        assert!(formatted.contains("Fail"));
         assert!(formatted.contains("N/A"));
     }
 
@@ -381,6 +548,7 @@ mod tests {
             state: TestState::Passed,
             cycles: Some(100),
             time_us: Some(10),
+            stack_peak: Some(256),
         }];
         let summary = format_sil_summary(&results);
         assert!(summary.contains("### Headless SIL Test Results"));
@@ -403,6 +571,7 @@ mod tests {
                 },
                 cycles: None,
                 time_us: None,
+                stack_peak: None,
             });
         }
         let summary = format_sil_summary(&results);
@@ -418,8 +587,123 @@ mod tests {
             state: TestState::Failed,
             cycles: None,
             time_us: None,
+            stack_peak: None,
         });
         let summary2 = format_sil_summary(&results);
         assert!(summary2.contains("*Showing first 10 of 11 failing tests:*"));
+    }
+
+    #[test]
+    fn test_format_sil_rows_multiple_targets() {
+        let results = [
+            HeadlessTestResult {
+                suite_name: "SuiteA (ARM)".to_string(),
+                test_name: "Test1".to_string(),
+                state: TestState::Passed,
+                cycles: Some(100),
+                time_us: Some(10),
+                stack_peak: Some(256),
+            },
+            HeadlessTestResult {
+                suite_name: "SuiteA (RISC-V)".to_string(),
+                test_name: "Test1".to_string(),
+                state: TestState::Passed,
+                cycles: Some(200),
+                time_us: Some(20),
+                stack_peak: Some(512),
+            },
+        ];
+        let refs: Vec<&HeadlessTestResult> = results.iter().collect();
+        let formatted = format_sil_rows(&refs);
+        assert!(formatted.contains("SuiteA"));
+        assert!(formatted.contains("Test1"));
+        assert!(formatted.contains("ARM (Status / Time / Stack / Cycles)"));
+        assert!(formatted.contains("RISC-V (Status / Time / Stack / Cycles)"));
+        assert!(formatted.contains("100c"));
+        assert!(formatted.contains("200c"));
+        assert!(formatted.contains("256B"));
+        assert!(formatted.contains("512B"));
+        let occurrences = formatted.matches("| Test1 | ").count();
+        assert_eq!(occurrences, 1);
+    }
+
+    #[test]
+    fn test_formatting_helpers() {
+        let issue_sum = format_issue_summary(1, 2);
+        assert!(issue_sum.contains("### Issue Summary"));
+        assert!(issue_sum.contains('1'));
+        assert!(issue_sum.contains('2'));
+
+        let perf = format_performance(1.23, 4.56);
+        assert!(perf.contains("### CI Performance"));
+        assert!(perf.contains("1.23s"));
+        assert!(perf.contains("4.56s"));
+
+        let test_sum = format_test_summary(10, 0, 1);
+        assert!(test_sum.contains("### Test Summary"));
+        assert!(test_sum.contains("10"));
+        assert!(test_sum.contains('0'));
+        assert!(test_sum.contains('1'));
+
+        let cov_sum = format_coverage_summary("85.20", 852, 1000);
+        assert!(cov_sum.contains("### Coverage Summary: `85.20%`"));
+        assert!(cov_sum.contains("852 / 1000"));
+
+        let number = format_number(1234567);
+        assert_eq!(number, "1,234,567");
+    }
+
+    #[test]
+    fn test_collect_info_helpers() {
+        let sys_info = collect_system_info();
+        assert!(sys_info.contains("### System Information"));
+        assert!(sys_info.contains("rustc"));
+
+        let git_info = collect_git_info();
+        assert!(git_info.contains("### Git Information"));
+        assert!(git_info.contains("Branch"));
+        assert!(git_info.contains("Commit"));
+    }
+
+    #[test]
+    fn test_build_report_and_save() {
+        let tarp_summary = TarpaulinSummary {
+            passed: 5,
+            failed: 0,
+            ignored: 0,
+            coverage_percent: "75.00".to_string(),
+            covered_lines: 75,
+            total_lines: 100,
+        };
+        let sil_results = Ok(std::vec![HeadlessTestResult {
+            suite_name: "SuiteB".to_string(),
+            test_name: "TestB".to_string(),
+            state: TestState::Passed,
+            cycles: Some(100),
+            time_us: Some(10),
+            stack_peak: Some(256),
+        }]);
+
+        let report = build_report(
+            0,
+            "",
+            0,
+            "",
+            &tarp_summary,
+            "tarpaulin logs",
+            &sil_results,
+            1.0,
+            2.0,
+        );
+        assert!(report.contains("## `control-rs` Quality Report"));
+        assert!(report.contains("### CI Performance"));
+        assert!(report.contains("tarpaulin logs"));
+
+        let path = "temp_test_report.md";
+        let save_res = save_report(path, &report);
+        assert!(save_res.is_ok());
+        let read_res = std::fs::read_to_string(path).unwrap();
+        assert_eq!(read_res, report);
+        let _ = std::fs::remove_file(path);
     }
 }

@@ -303,7 +303,7 @@ pub trait Real: Field + Signed + Radical + Exponential + Trig {
     #[must_use]
     #[allow(clippy::arithmetic_side_effects)]
     fn atan2(self, rhs: Self) -> Self {
-        match CartesianQuadrant2D::from_coords(&self, &rhs) {
+        match CartesianQuadrant2D::from_coords(&rhs, &self) {
             CartesianQuadrant2D::Origin
             | CartesianQuadrant2D::PositiveXAxis => Self::ZERO,
             CartesianQuadrant2D::NegativeYAxis => -Self::PI / Self::TWO,

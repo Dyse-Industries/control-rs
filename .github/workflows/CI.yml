@@ -21,10 +21,23 @@ jobs:
         run: cargo binstall cargo-tarpaulin@0.35.2 -y
 
       - name: Install Targets
-        run: rustup target add thumbv7em-none-eabihf
+        run: rustup target add thumbv7em-none-eabihf riscv32imac-unknown-none-elf
 
       - name: Install apt packages
         run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system
+
+      - name: Download Tarpaulin Coverage Report
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p target/tarpaulin && \
+          gh run download \
+          --name tarpaulin-baseline \
+          --dir target/tarpaulin \
+          --repo ${{ github.repository }} \
+          --branch main \
+          || echo "No baseline coverage report found. Proceeding without diff."
 
       - name: Run CI
         run: cargo ci
@@ -36,11 +49,12 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body-path: ci-report.md
 
-      - name: Upload HTML coverage report
+      - name: Upload Tarpaulin Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: tarpaulin-html-report
-          path: tarpaulin-report.html
+          name: tarpaulin-baseline
+          path: target/tarpaulin/*coverage.json
+          retention-days: 30
 
   publish:
     runs-on: ubuntu-latest

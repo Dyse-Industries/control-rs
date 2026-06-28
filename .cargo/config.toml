@@ -1,11 +1,30 @@
 [alias]
+
+# Development tools
 xtask = ["run", "--package", "control-rs-xtask", "--"]
+
+# Continuous Integration
 ci = ["xtask", "ci"]
-clippy-json = ["clippy", "--workspace", "--message-format=json", "--", "-D", "warnings"]
+# Interactive TUI
+tui = ["xtask", "tui"]
 
 # HIL Test Infrastructure & Target Execution Aliases
-hil-qemu = ["xtask", "hil-tui", "qemu"]
-hil-teensy = ["xtask", "hil-tui", "teensy"]
-ci-qemu = ["xtask", "ci", "qemu"]
-ci-teensy = ["xtask", "ci", "teensy"]
-run-qemu = ["xtask", "qemu"]
+qemu = ["tui", "qemu"]
+teensy = ["tui", "teensy"]
+
+# SIL Test Infrastructure & Target Execution Aliases
+qemu-ci = ["ci", "qemu"]
+teensy-ci = ["ci", "teensy"]
+
+# Format check helper
+fmt-check = ["fmt", "--all", "--", "--check"]
+fmt-all = ["fmt", "--all"]
+
+# Clippy Helper
+lint = ["clippy", "--workspace", "--lib", "--bins", "--tests", "--examples", "--benches", ]
+clippy-json = ["lint", "--message-format=json"]
+clippy-ci = ["clippy-json", "--", "-D", "warnings"]
+
+# Coverage helper
+coverage = ["tarpaulin", "--verbose", "--workspace"]
+coverage-ci = ["coverage", "--color", "never", "--out", "Html", "--out", "Json"]

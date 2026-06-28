@@ -5,7 +5,7 @@
 ## Purpose
 
 The purpose of this crate is to provide CLI and GUI tools to interact with, monitor, build, and test embedded binaries. It hosts:
-1. **The QEMU Bridge** (`bridge.rs`) which communicates with the target binary using the Postcard binary framing protocol.
+1. **The Server Bridge** (`bridge.rs`) which communicates with the target binary using the Postcard binary framing protocol.
 2. **The Terminal User Interface** (`tui.rs`), built on `ratatui` and `crossterm`, which allows developers to run tests, inspect cycle counters, tweak controller settings, and read logs interactively.
 3. **The headless CI test harness** (`main.rs`) which automatically spins up QEMU, runs the target's entire suite of tests, generates performance telemetry, and appends the result to `ci-report.md`.
 
@@ -15,8 +15,8 @@ The purpose of this crate is to provide CLI and GUI tools to interact with, moni
 graph TD
     User[Developer] -->|cargo xtask hil-tui| TUI[Ratatui UI]
     CI[GitHub Actions] -->|cargo xtask ci| CIHarness[Headless CI Harness]
-    TUI <-->|QemuBridge| QEMU[qemu-system-arm]
-    CIHarness <-->|QemuBridge| QEMU
+    TUI <-->|ServerBridge| QEMU[qemu-system-arm]
+    CIHarness <-->|ServerBridge| QEMU
 ```
 
 Within the `control-rs` ecosystem, `control-rs-xtask` represents the "host driver":

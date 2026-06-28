@@ -171,9 +171,9 @@ pub trait FFT<T: 'static + Clone + Real + Neg<Output = T> + Default> {
 pub trait Convolution<T: Real> {
     /// Computes the convolution of two signals.
     ///
-    /// * Fewer Writes: By calculating $y[n]$ directly using `k_min` and `k_max`, we write to the output
+    /// * Fewer Writes: By calculating `y\[n\]` directly using `k_min` and `k_max`, we write to the output
     ///   array exactly once per index. This bypasses the need to zero out the buffer first and avoids
-    ///   repeated memory reads/writes to output[i+j].
+    ///   repeated memory reads/writes to `output\[i+j\]`.
     /// * Bounds Safety: The indices for k (`k_min` and `k_max`) ensure that both k remains within
     ///   `0..input.len()` and n - k remains within `0..kernel.len()`, guaranteeing no out-of-bounds
     ///   panics during the inner loop computation.

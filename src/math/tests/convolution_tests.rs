@@ -48,6 +48,19 @@ mod convolution_test_suite {
         let mut output = [0.0; 1]; // Too small! Expected 2 + 2 - 1 = 3
         TestConvolution::convolve_input(&input, &kernel, &mut output);
     }
+
+    #[test]
+    fn test_convolution_empty() {
+        let input = [];
+        let kernel = [1.0];
+        let mut output = [];
+        TestConvolution::convolve_input(&input, &kernel, &mut output);
+
+        let input2 = [1.0];
+        let kernel2 = [];
+        let mut output2 = [];
+        TestConvolution::convolve_input(&input2, &kernel2, &mut output2);
+    }
 }
 
 struct TestConvolution;

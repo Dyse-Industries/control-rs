@@ -25,37 +25,37 @@ flowchart LR
         CommsRx["HostComms"]
         Runner{"Server"}
         Tests["SuiteDescriptors"]
-        Clock["ClientClock"]
+        CPUUtils["CPUProfileUtils"]
   end
     Tests -. <br> .-> Runner
     Host(("Host CLI / TUI / CI")) <--> CommsRx
     CommsRx <--> Runner
-    Clock --> Runner
+    CPUUtils --> Runner
     
      CommsRx:::commsNode
      Runner:::serverLoop
      Tests:::testNode
      Host:::hostNode
-     Clock:::timeNode
+     CPUUtils:::cpuNode
     classDef hostNode stroke:#38bdf8
     classDef commsNode stroke:#4ade80
     classDef serverLoop stroke:#a78bfa
     classDef testNode stroke:#facc15
-    classDef timeNode stroke:#2962FF
+    classDef cpuNode stroke:#2962FF
 ```
 
 `control-rs-hil`:
 
-1. **Defines core abstractions** (`ClientClock` and `HostComms` traits) for
-   hardware communication and timing.
-2. **Implements packet framing** using a robust XOR-checksum binary protocol.
+1. **Defines core abstractions** (`CPUProfileUtils` and `HostComms` traits) for
+   hardware communication, timing, and CPU profiling.
+2. **Implements packet framing** using a robust CRC-16 checksum binary protocol.
 3. **Hosts the server event loop** which processes incoming execution commands
    from the host, executes target tests, and streams back telemetry.
 
 ## End-User Example
 
 Developers use `control-rs-hil` by defining a target-side transport (such as a
-UART interface) and a hardware timer clock, and then passing them into the
+UART interface) and CPU profiling utilities, and then passing them into the
 runner context.
 
 Here is an example implementation:
@@ -66,7 +66,7 @@ Here is an example implementation:
 
 use control_rs_hil::comms::{Command, FrameReader, HostComms, Telemetry, frame_telemetry};
 use control_rs_hil::server::Context;
-use control_rs_hil::time::ClientClock;
+use control_rs_hil::executor::CPUProfileUtils;
 use control_rs_macros::{hil_setup, hil_suite};
 
 // 1. Define target-side communication channel (e.g., UART or Semihosting)
@@ -106,26 +106,38 @@ impl HostComms for UartComms {
     }
 }
 
-// 2. Define target-side hardware clock
-struct SystemTimer;
+// 2. Define target-side CPU profiling utilities
+struct SystemCPUUtils;
 
-impl ClientClock for SystemTimer {
-    fn now_ms(&self) -> u32 {
-        // Read hardware milliseconds timer
-        get_hardware_ms()
+impl CPUProfileUtils for SystemCPUUtils {
+    fn get_cycles(&self) -> u64 {
+        get_cycles()
     }
 
-    fn now_us(&self) -> u64 {
-        // Read hardware microseconds timer
-        get_hardware_us()
+    fn get_nanos(&self) -> u64 {
+        get_nanoseconds()
+    }
+
+    fn get_sp(&self) -> usize {
+        get_sp()
+    }
+
+    unsafe fn paint_stack(&self, sp: usize) {
+        // Hardware stack painting logic
+    }
+
+    unsafe fn read_stack_peak(&self, sp: usize) -> u32 {
+        // Hardware stack peak scanning logic
+        0
     }
 }
 
 // Helper stub functions
 fn read_uart_byte() -> Option<u8> { None }
 fn write_uart_byte(_b: u8) {}
-fn get_hardware_ms() -> u32 { 0 }
-fn get_hardware_us() -> u64 { 0 }
+fn get_cycles() -> u64 { 0 }
+fn get_nanoseconds() -> u64 { 0 }
+fn get_sp() -> usize { 0 }
 
 // 3. Declare a test suite
 #[hil_suite]
@@ -140,10 +152,10 @@ pub mod pid_control_suite {
 
 // 4. Initialize HIL runner server
 #[hil_setup]
-fn setup() -> Context<UartComms, SystemTimer> {
+fn setup() -> Context<UartComms, SystemCPUUtils> {
     Context {
         comms: UartComms { reader: FrameReader::new() },
-        timer: SystemTimer,
+        cpu_utils: SystemCPUUtils,
     }
 }
 ```

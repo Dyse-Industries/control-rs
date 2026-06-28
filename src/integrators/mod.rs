@@ -1,1 +1,1 @@
-//! A variety of methods to integrate [`DynamicalSystem`]s
+//! A variety of methods to integrate numerical models

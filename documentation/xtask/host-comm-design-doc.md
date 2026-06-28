@@ -84,7 +84,7 @@ from stalling the test execution loop while waiting for host intervention.
 
 Similarly, a deferred logging queue (like `heapless::spsc`) so that messages are
 buffered during the math execution and only flushed to the host over RTT after
-the `ClientClock` has recorded the end time.
+the `CPUProfileUtils` has recorded the metrics.
 
 ### 3.2. CMD Parsing
 

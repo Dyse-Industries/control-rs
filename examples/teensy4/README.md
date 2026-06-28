@@ -1,4 +1,4 @@
-# teensy4-example
+# teensy4
 
 A demonstration crate implementing the `control-rs` Hardware-in-the-Loop (HIL)
 test server on physical **Teensy 4.0** hardware over a native USB connection.
@@ -43,7 +43,7 @@ No external USB-to-UART serial adapters or custom wiring are needed!
 2. **Device USB Profile**:
     - **Vendor ID (VID)**: `0x5824`
     - **Product ID (PID)**: `0x27dd`
-    - **Manufacturer / Product**: `teensy4-bsp-example`
+    - **Manufacturer / Product**: `teensy4`
 3. **System Clock**: We configure the ARM Cortex-M `SysTick` exception to tick
    every 1 ms. The `TeensyClock` struct uses this tick counter and the current
    SysTick register countdown to provide microsecond-accurate timekeeping (
@@ -51,6 +51,23 @@ No external USB-to-UART serial adapters or custom wiring are needed!
 4. **Status Indicator**: The onboard LED on **Pin 13** turns on solid when the
    HIL server is successfully initialized and ready to communicate with the
    host.
+
+---
+
+```
+# UDEV Rules for Teensy boards, http://www.pjrc.com/teensy/
+#
+# The latest version of this file may be found at:
+#   http://www.pjrc.com/teensy/00-teensy.rules
+
+ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1"
+ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04[789a]*", ENV{MTP_NO_PROBE}="1"
+KERNEL=="ttyACM*", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666", RUN:="/bin/stty -F /dev/%k raw -echo", SYMLINK+="teensy"
+KERNEL=="hidraw*", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666"
+KERNEL=="hidraw*", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="013*", MODE:="0666"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="013*", MODE:="0666"
+```
 
 ---
 
@@ -78,7 +95,7 @@ Alternatively, you can use the official graphical Teensy Loader GUI.
 Navigate to the example directory and build the package:
 
 ```bash
-cd examples/teensy4-example
+cd examples/teensy4
 cargo build --release
 ```
 
@@ -87,7 +104,7 @@ cargo build --release
 Generate the `.hex` image file required by the Teensy bootloader:
 
 ```bash
-rust-objcopy -O ihex target/thumbv7em-none-eabihf/release/teensy4-example teensy4-example.hex
+rust-objcopy -O ihex target/thumbv7em-none-eabihf/release/teensy4 teensy4.hex
 ```
 
 ### 3. Flash to Teensy
@@ -95,7 +112,7 @@ rust-objcopy -O ihex target/thumbv7em-none-eabihf/release/teensy4-example teensy
 Press the program button on the Teensy 4 board and run:
 
 ```bash
-teensy_loader_cli -w -v --mcu=TEENSY40 teensy4-example.hex
+teensy_loader_cli -w -v --mcu=TEENSY40 teensy4.hex
 ```
 
 The status LED on Pin 13 will light up, indicating that the USB HIL server is
@@ -103,13 +120,15 @@ active and waiting for a connection from the host.
 
 ### Alternative: Run/Flash via Cargo Alias
 
-Alternatively, you can compile, convert, and flash the Teensy in one step from the workspace root:
+Alternatively, you can compile, convert, and flash the Teensy in one step from
+the workspace root:
 
 ```bash
-cargo run-teensy
+cargo run
 ```
 
-Press the program button on the Teensy 4 board when prompted to initiate flashing.
+Press the program button on the Teensy 4 board when prompted to initiate
+flashing.
 
 ---
 
@@ -127,13 +146,15 @@ Check the device path assigned by the host operating system:
 
 ### 2. Launch the TUI
 
-Run the cargo alias from the workspace root (defaults to `/dev/ttyACM0` and `115200` baud):
+Run the cargo alias from the workspace root (defaults to `/dev/ttyACM0` and
+`115200` baud):
 
 ```bash
 cargo hil-teensy
 ```
 
-If your Teensy is assigned to a different serial port path (e.g. `/dev/ttyACM1`), pass it as an argument:
+If your Teensy is assigned to a different serial port path (e.g.
+`/dev/ttyACM1`), pass it as an argument:
 
 ```bash
 cargo hil-teensy /dev/ttyACM1

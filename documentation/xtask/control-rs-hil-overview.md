@@ -57,17 +57,14 @@ object. This manages test execution and communication:
   for providing high-speed, zero-overhead telemetry required to prevent MCU
   stalls during complex math benchmarks without monopolizing a hardware UART
   peripheral.
-* **ClientClock:** A generic trait that allows users to configure different
-  hardware timers for the runner. The context expects a timer or clock from the
-  user's setup function to enable precise, hardware-specific performance metrics
-  and benchmarking.
+* **CPUProfileUtils:** A generic trait that allows users to configure CPU profiling utilities for the runner context. Users implement this trait to provide low-level access to CPU cycle counters, nanosecond system timers, stack pointers, stack painting/scanning, and critical sections. This enables precise, hardware-specific performance metrics and benchmarking.
 
 ### 3.2. Communication Protocol & Transport Layer
 
 The communication protocol used between the runner on the MCU and the host TUI
 is a simple frame-based binary packet structure. Each message includes a header
 detailing the message type (e.g., metric report, log, state change, or command),
-payload length, and a checksum. This ensures the host TUI can parse continuous
+payload length, and a 16-bit CRC checksum. This ensures the host TUI can parse continuous
 telemetry streams from the target efficiently without stalling test execution.
 
 ## 4. Usage

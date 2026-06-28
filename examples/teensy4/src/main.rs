@@ -11,8 +11,9 @@ use control_rs_hil::comms::{
     frame_telemetry, Command, FrameReader, HostComms, Telemetry,
 };
 use control_rs_hil::server::Context;
-use control_rs_hil::time::ClientClock;
+use control_rs_hil::CortexMProfiler;
 use control_rs_macros::{hil_setup, hil_suite};
+#[allow(unused_imports)]
 use core::sync::atomic::{AtomicU32, Ordering};
 use cortex_m::peripheral::syst::SystClkSource;
 
@@ -31,31 +32,22 @@ fn SysTick() {
     MILLISECONDS.fetch_add(1, Ordering::Relaxed);
 }
 
-// --- Timing Implementation ---
-
-struct TeensyClock;
-
-impl ClientClock for TeensyClock {
-    fn now_ms(&self) -> u32 {
-        MILLISECONDS.load(Ordering::Relaxed)
-    }
-
-    fn now_us(&self) -> u64 {
-        let ms = MILLISECONDS.load(Ordering::Relaxed) as u64;
-        // SysTick counts down from reload to 0
-        let current = cortex_m::peripheral::SYST::get_current();
-        let reload = board::ARM_FREQUENCY / 1000 - 1;
-        let cycles = reload.saturating_sub(current);
-        ms * 1000 + (cycles as u64) / (board::ARM_FREQUENCY as u64 / 1_000_000)
-    }
-}
-
 // --- Communication Implementation ---
+//
+// The HIL testing framework uses the `HostComms` trait to define target-to-host 
+// communication. On the Teensy 4.0, we implement this using a USB CDC virtual serial 
+// port. Telemetry is serialized using Postcard and framed with `frame_telemetry`, 
+// then transmitted over USB. Incoming bytes are passed to `FrameReader` to reassemble 
+// host commands.
 
 struct TeensyComms {
+    /// USB CDC class representing the virtual serial port.
     usb_class: SerialPort<'static, BusAdapter>,
+    /// USB device manager driving the overall USB descriptor and state.
     usb_device: UsbDevice<'static, BusAdapter>,
+    /// State machine to decode incoming byte stream into Commands.
     reader: FrameReader,
+    /// Flag indicating whether the host has configured the USB connection.
     configured: bool,
 }
 
@@ -194,13 +186,38 @@ pub mod teensy_pid_suite {
     }
 }
 
+// --- Profiler Implementation for ARM Cortex-M ---
+//
+// We use the HIL crate's built-in `CortexMProfiler` to implement the target-agnostic 
+// `CPUProfiler` trait. It reads clock cycles from the ARM DWT cycle counter and tracks 
+// real-time duration using the ARM SysTick timer. It also paints/profiles stack space.
+
+fn enable_dwt_cycle_counter() {
+    unsafe {
+        let core_debug_demcr = 0xE000_EDFC as *mut u32;
+        let dwt_ctrl = 0xE000_1000 as *mut u32;
+        let dwt_cyccnt = 0xE000_1004 as *mut u32;
+
+        // Enable DWT tracing
+        core_debug_demcr
+            .write_volatile(core_debug_demcr.read_volatile() | 0x0100_0000);
+        // Reset cycle counter
+        dwt_cyccnt.write_volatile(0);
+        // Enable cycle counter in control register
+        dwt_ctrl.write_volatile(dwt_ctrl.read_volatile() | 1);
+    }
+}
+
 // --- Main Setup Entrypoint ---
 
 #[hil_setup]
 #[allow(dead_code)]
-fn setup() -> Context<TeensyComms, TeensyClock> {
+fn setup() -> Context<TeensyComms, CortexMProfiler> {
     let p = cortex_m::Peripherals::take().unwrap();
     let d = board::instances();
+
+    // Enable DWT cycle counter
+    enable_dwt_cycle_counter();
 
     // 1. Initialize Board Resources
     let board::Resources {
@@ -231,7 +248,7 @@ fn setup() -> Context<TeensyComms, TeensyClock> {
     let usb_class = SerialPort::new(usb_bus);
 
     const VID_PID: UsbVidPid = UsbVidPid(0x16c0, 0x0413);
-    const PRODUCT: &str = "teensy4-bsp-example";
+    const PRODUCT: &str = "teensy4";
     let usb_device = UsbDeviceBuilder::new(usb_bus, VID_PID)
         .product(PRODUCT)
         .device_class(usbd_serial::USB_CLASS_CDC)
@@ -252,7 +269,6 @@ fn setup() -> Context<TeensyComms, TeensyClock> {
         reader: FrameReader::new(),
         configured: false,
     };
-    let timer = TeensyClock;
-
-    Context { comms, timer }
+    let cpu_utils = CortexMProfiler::new(board::ARM_FREQUENCY, &MILLISECONDS);
+    Context::new(comms, cpu_utils)
 }

@@ -381,4 +381,21 @@ mod test {
             "Value underflowed (subnormal)",
         );
     }
+
+    #[test]
+    fn test_state_equation_blanket_map() {
+        use crate::math::{Map, StateEquation};
+
+        struct TestEq;
+        impl StateEquation<i32, i32, i32> for TestEq {
+            fn dynamics(&self, x: &i32, u: &i32) -> i32 {
+                x + u
+            }
+        }
+
+        let eq = TestEq;
+        let x = 2;
+        let u = 3;
+        assert_eq!(eq.evaluate((&x, &u)), 5);
+    }
 }

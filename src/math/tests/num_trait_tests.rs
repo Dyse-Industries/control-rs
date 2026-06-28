@@ -243,7 +243,8 @@ mod custom_tests {
     use crate::assert_almost_eq;
     use crate::math::CartesianQuadrant2D;
     use crate::math::num_traits::{
-        One, Radical, Real, Scalar, Signed, Unsigned, Zero,
+        Exponential, Field, One, Radical, Real, Ring, Scalar, Signed, Trig,
+        Unsigned, Zero,
     };
 
     #[test]
@@ -370,5 +371,194 @@ mod custom_tests {
         assert_is_unsigned_scalar::<u32>();
         assert_is_unsigned_scalar::<u64>();
         // If these compile, the lines are covered.
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+    struct TestReal(f32);
+
+    impl core::ops::Add for TestReal {
+        type Output = Self;
+        fn add(self, other: Self) -> Self {
+            Self(self.0 + other.0)
+        }
+    }
+    impl core::ops::Sub for TestReal {
+        type Output = Self;
+        fn sub(self, other: Self) -> Self {
+            Self(self.0 - other.0)
+        }
+    }
+    impl core::ops::Mul for TestReal {
+        type Output = Self;
+        fn mul(self, other: Self) -> Self {
+            Self(self.0 * other.0)
+        }
+    }
+    impl core::ops::Div for TestReal {
+        type Output = Self;
+        fn div(self, other: Self) -> Self {
+            Self(self.0 / other.0)
+        }
+    }
+    impl core::ops::Neg for TestReal {
+        type Output = Self;
+        fn neg(self) -> Self {
+            Self(-self.0)
+        }
+    }
+    impl Scalar for TestReal {}
+    impl One for TestReal {
+        const ONE: Self = Self(1.0);
+    }
+    impl Zero for TestReal {
+        const ZERO: Self = Self(0.0);
+    }
+    impl Ring for TestReal {
+        const MAX: Self = Self(f32::MAX);
+        const MIN: Self = Self(f32::MIN);
+        const MIN_POSITIVE: Self = Self(f32::MIN_POSITIVE);
+        const TWO: Self = Self(2.0);
+    }
+    impl Field for TestReal {
+        fn epsilon() -> Self {
+            Self(f32::EPSILON)
+        }
+    }
+    impl Signed for TestReal {
+        fn abs(self) -> Self {
+            Self(self.0.abs())
+        }
+    }
+    impl Radical for TestReal {
+        fn sqrt(self) -> Self {
+            Self(libm::sqrtf(self.0))
+        }
+    }
+    impl Exponential for TestReal {
+        const E: Self = Self(core::f32::consts::E);
+        fn exp(self) -> Self {
+            Self(libm::expf(self.0))
+        }
+        fn ln(self) -> Self {
+            Self(libm::logf(self.0))
+        }
+        fn log10(self) -> Self {
+            Self(libm::log10f(self.0))
+        }
+        fn pow(self, n: Self) -> Self {
+            Self(libm::powf(self.0, n.0))
+        }
+    }
+    impl Trig for TestReal {
+        const PI: Self = Self(core::f32::consts::PI);
+        fn acos(self) -> Self {
+            Self(libm::acosf(self.0))
+        }
+        fn asin(self) -> Self {
+            Self(libm::asinf(self.0))
+        }
+        fn atan(self) -> Self {
+            Self(libm::atanf(self.0))
+        }
+        fn cos(self) -> Self {
+            Self(libm::cosf(self.0))
+        }
+        fn sin(self) -> Self {
+            Self(libm::sinf(self.0))
+        }
+        fn tan(self) -> Self {
+            Self(libm::tanf(self.0))
+        }
+    }
+    impl Real for TestReal {
+        const INF: Self = Self(f32::INFINITY);
+        const NAN: Self = Self(f32::NAN);
+    }
+
+    #[test]
+    fn test_default_atan2() {
+        // 1. Origin
+        assert_eq!(TestReal(0.0).atan2(TestReal(0.0)), TestReal(0.0));
+        // 2. Positive X
+        assert_eq!(TestReal(0.0).atan2(TestReal(1.0)), TestReal(0.0));
+        // 3. Negative Y
+        assert_eq!(
+            TestReal(-1.0).atan2(TestReal(0.0)),
+            -TestReal::PI / TestReal::TWO
+        );
+        // 4. Negative X
+        assert_eq!(TestReal(0.0).atan2(TestReal(-1.0)), TestReal::PI);
+        // 5. Positive Y
+        assert_eq!(
+            TestReal(1.0).atan2(TestReal(0.0)),
+            TestReal::PI / TestReal::TWO
+        );
+        // 6. General case (e.g. Q1)
+        assert_eq!(TestReal(1.0).atan2(TestReal(1.0)), TestReal(1.0).atan());
+    }
+
+    #[test]
+    fn test_axis_coords_compilation_coverage() {
+        // Test f32 axis combinations explicitly
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&0.0f32, &1.0f32),
+            CartesianQuadrant2D::PositiveYAxis
+        );
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&0.0f32, &-1.0f32),
+            CartesianQuadrant2D::NegativeYAxis
+        );
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&1.0f32, &0.0f32),
+            CartesianQuadrant2D::PositiveXAxis
+        );
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&-1.0f32, &0.0f32),
+            CartesianQuadrant2D::NegativeXAxis
+        );
+
+        // Test f64 axis combinations explicitly
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&0.0f64, &1.0f64),
+            CartesianQuadrant2D::PositiveYAxis
+        );
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&0.0f64, &-1.0f64),
+            CartesianQuadrant2D::NegativeYAxis
+        );
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&1.0f64, &0.0f64),
+            CartesianQuadrant2D::PositiveXAxis
+        );
+        assert_eq!(
+            CartesianQuadrant2D::from_coords(&-1.0f64, &0.0f64),
+            CartesianQuadrant2D::NegativeXAxis
+        );
+    }
+
+    #[test]
+    fn test_complex_try_ops_and_ordering() {
+        use crate::math::complex_num::Complex;
+        use crate::math::ops::{TryAdd, TryDiv, TryMul, TrySub};
+
+        let c1 = Complex::new(4.0f32, 2.0f32);
+        let c2 = Complex::new(2.0f32, 1.0f32);
+
+        let sum = c1.try_add(&c2).unwrap();
+        assert_eq!(sum, Complex::new(6.0, 3.0));
+
+        let diff = c1.try_sub(&c2).unwrap();
+        assert_eq!(diff, Complex::new(2.0, 1.0));
+
+        let prod = c1.try_mul(&c2).unwrap();
+        assert_eq!(prod, Complex::new(6.0, 8.0));
+
+        let quot = c1.try_div(&c2).unwrap();
+        assert_eq!(quot, Complex::new(2.0, 0.0));
+
+        let c3 = Complex::new(4.0f32, 3.0f32);
+        assert!(c3 > c1);
+        assert!(c1 < c3);
+        assert_eq!(c1.partial_cmp(&c1), Some(core::cmp::Ordering::Equal));
     }
 }
