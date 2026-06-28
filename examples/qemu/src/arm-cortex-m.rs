@@ -86,6 +86,16 @@ pub use control_rs::math::tests::complex_num_tests::{
     test_transcendental::SUITE_DESCRIPTOR_PTR as _,
 };
 
+#[allow(unused_imports)]
+pub use control_rs::polynomial::test::test_polynomial::SUITE_DESCRIPTOR_PTR as _;
+#[allow(unused_imports)]
+pub use control_rs::transfer_function::test::test_transfer_function::SUITE_DESCRIPTOR_PTR as _;
+#[allow(unused_imports)]
+pub use control_rs::state_space::test::test_state_space::SUITE_DESCRIPTOR_PTR as _;
+#[allow(unused_imports)]
+pub use control_rs::integrators::test::test_integrators::SUITE_DESCRIPTOR_PTR as _;
+
+
 // --- Profiler Implementation for ARM Cortex-M ---
 //
 // The HIL testing framework uses the `CPUProfiler` trait to fetch hardware metrics 
