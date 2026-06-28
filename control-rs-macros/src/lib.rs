@@ -67,27 +67,30 @@ fn extract_doc_string(attrs: &[syn::Attribute]) -> String {
 /// Checks if a given `syn::Type` is a supported primitive setting.
 /// Returns the corresponding Atomic wrapper type name if matched.
 fn get_atomic_wrapper_name(ty: &syn::Type) -> Option<&'static str> {
-    let supported_types = [
-        ("u8", "AtomicU8Setting"),
-        ("u16", "AtomicU16Setting"),
-        ("u32", "AtomicU32Setting"),
-        ("u64", "AtomicU64Setting"),
-        ("i8", "AtomicI8Setting"),
-        ("i32", "AtomicI32Setting"),
-        ("bool", "AtomicBoolSetting"),
-        ("f32", "AtomicF32Setting"),
-    ];
+    // Ensure the type is a standard path (e.g., `u8` or `std::primitive::u8`)
+    let path = match ty {
+        syn::Type::Path(type_path) if type_path.qself.is_none() => &type_path.path,
+        _ => return None,
+    };
 
-    for (prim_type, atomic_type_str) in supported_types {
-        if is_type_name(ty, prim_type) {
-            return Some(atomic_type_str);
-        }
+    // Extract the last segment (the actual type name)
+    let ident = &path.segments.last()?.ident;
+
+    // Convert to string and match in O(1)
+    match ident.to_string().as_str() {
+        "u8"   => Some("AtomicU8Setting"),
+        "u16"  => Some("AtomicU16Setting"),
+        "u32"  => Some("AtomicU32Setting"),
+        "u64"  => Some("AtomicU64Setting"),
+        "i8"   => Some("AtomicI8Setting"),
+        "i32"  => Some("AtomicI32Setting"),
+        "bool" => Some("AtomicBoolSetting"),
+        "f32"  => Some("AtomicF32Setting"),
+        _      => None,
     }
-
-    None
 }
 
-/// If the static item matches a supported atomic setting type (u32 or u8),
+/// If the static item matches a supported atomic setting type,
 /// mutates it into the corresponding `AtomicSetting` static definition and returns its identifier.
 fn process_static_setting(item_static: &mut ItemStatic) -> Option<syn::Ident> {
     // 1. Search phase: Delegate to the helper function
