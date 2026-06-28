@@ -298,3 +298,61 @@ impl CPUProfiler for RiscvProfiler {
         stack_start_ptr.saturating_sub(stack_size)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestProfiler {
+        stack: [u32; 64],
+    }
+
+    impl TestProfiler {
+        fn new() -> Self {
+            Self { stack: [0; 64] }
+        }
+        fn write_stack(&mut self, index: usize, val: u32) {
+            if let Some(slot) = self.stack.get_mut(index) {
+                *slot = val;
+            }
+        }
+    }
+
+    impl CPUProfiler for TestProfiler {
+        fn get_cycles(&self) -> u64 {
+            0
+        }
+        fn get_nanos(&self) -> u64 {
+            0
+        }
+        fn get_sp(&self) -> usize {
+            core::ptr::addr_of!(self.stack[48]) as usize
+        }
+        fn get_stack_end(&self) -> usize {
+            core::ptr::addr_of!(self.stack[0]) as usize
+        }
+    }
+
+    #[test]
+    fn test_default_profiler_methods() {
+        let mut profiler = TestProfiler::new();
+
+        let val = profiler.disable_interrupts(|| 42);
+        assert_eq!(val, 42);
+
+        profiler.disable_interrupts_permanently();
+
+        let sp = profiler.get_sp();
+        unsafe {
+            profiler.paint_stack(sp);
+        }
+
+        let peak = unsafe { profiler.read_stack_peak(sp) };
+        assert_eq!(peak, 32);
+
+        profiler.write_stack(20, 0);
+
+        let peak2 = unsafe { profiler.read_stack_peak(sp) };
+        assert_eq!(peak2, 112);
+    }
+}

@@ -535,4 +535,30 @@ mod custom_tests {
             CartesianQuadrant2D::NegativeXAxis
         );
     }
+
+    #[test]
+    fn test_complex_try_ops_and_ordering() {
+        use crate::math::complex_num::Complex;
+        use crate::math::ops::{TryAdd, TryDiv, TryMul, TrySub};
+
+        let c1 = Complex::new(4.0f32, 2.0f32);
+        let c2 = Complex::new(2.0f32, 1.0f32);
+
+        let sum = c1.try_add(&c2).unwrap();
+        assert_eq!(sum, Complex::new(6.0, 3.0));
+
+        let diff = c1.try_sub(&c2).unwrap();
+        assert_eq!(diff, Complex::new(2.0, 1.0));
+
+        let prod = c1.try_mul(&c2).unwrap();
+        assert_eq!(prod, Complex::new(6.0, 8.0));
+
+        let quot = c1.try_div(&c2).unwrap();
+        assert_eq!(quot, Complex::new(2.0, 0.0));
+
+        let c3 = Complex::new(4.0f32, 3.0f32);
+        assert!(c3 > c1);
+        assert!(c1 < c3);
+        assert_eq!(c1.partial_cmp(&c1), Some(core::cmp::Ordering::Equal));
+    }
 }

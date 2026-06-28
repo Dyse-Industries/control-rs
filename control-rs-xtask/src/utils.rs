@@ -626,4 +626,84 @@ mod tests {
         let occurrences = formatted.matches("| Test1 | ").count();
         assert_eq!(occurrences, 1);
     }
+
+    #[test]
+    fn test_formatting_helpers() {
+        let issue_sum = format_issue_summary(1, 2);
+        assert!(issue_sum.contains("### Issue Summary"));
+        assert!(issue_sum.contains('1'));
+        assert!(issue_sum.contains('2'));
+
+        let perf = format_performance(1.23, 4.56);
+        assert!(perf.contains("### CI Performance"));
+        assert!(perf.contains("1.23s"));
+        assert!(perf.contains("4.56s"));
+
+        let test_sum = format_test_summary(10, 0, 1);
+        assert!(test_sum.contains("### Test Summary"));
+        assert!(test_sum.contains("10"));
+        assert!(test_sum.contains('0'));
+        assert!(test_sum.contains('1'));
+
+        let cov_sum = format_coverage_summary("85.20", 852, 1000);
+        assert!(cov_sum.contains("### Coverage Summary: `85.20%`"));
+        assert!(cov_sum.contains("852 / 1000"));
+
+        let number = format_number(1234567);
+        assert_eq!(number, "1,234,567");
+    }
+
+    #[test]
+    fn test_collect_info_helpers() {
+        let sys_info = collect_system_info();
+        assert!(sys_info.contains("### System Information"));
+        assert!(sys_info.contains("rustc"));
+
+        let git_info = collect_git_info();
+        assert!(git_info.contains("### Git Information"));
+        assert!(git_info.contains("Branch"));
+        assert!(git_info.contains("Commit"));
+    }
+
+    #[test]
+    fn test_build_report_and_save() {
+        let tarp_summary = TarpaulinSummary {
+            passed: 5,
+            failed: 0,
+            ignored: 0,
+            coverage_percent: "75.00".to_string(),
+            covered_lines: 75,
+            total_lines: 100,
+        };
+        let sil_results = Ok(std::vec![HeadlessTestResult {
+            suite_name: "SuiteB".to_string(),
+            test_name: "TestB".to_string(),
+            state: TestState::Passed,
+            cycles: Some(100),
+            time_us: Some(10),
+            stack_peak: Some(256),
+        }]);
+
+        let report = build_report(
+            0,
+            "",
+            0,
+            "",
+            &tarp_summary,
+            "tarpaulin logs",
+            &sil_results,
+            1.0,
+            2.0,
+        );
+        assert!(report.contains("## `control-rs` Quality Report"));
+        assert!(report.contains("### CI Performance"));
+        assert!(report.contains("tarpaulin logs"));
+
+        let path = "temp_test_report.md";
+        let save_res = save_report(path, &report);
+        assert!(save_res.is_ok());
+        let read_res = std::fs::read_to_string(path).unwrap();
+        assert_eq!(read_res, report);
+        let _ = std::fs::remove_file(path);
+    }
 }

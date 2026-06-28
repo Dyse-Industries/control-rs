@@ -494,4 +494,33 @@ mod tests {
             assert!(res.is_err());
         }
     }
+
+    #[test]
+    fn test_comms_lock_default() {
+        let lock = CommsLock::default();
+        assert!(lock.try_lock());
+    }
+
+    #[test]
+    fn test_host_comms_defaults() {
+        struct TestComms;
+        impl HostComms for TestComms {
+            type Error = ();
+            fn flush(&mut self) -> Result<(), Self::Error> {
+                Ok(())
+            }
+            fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+                Ok(None)
+            }
+            fn send_telemetry(
+                &mut self,
+                _telemetry: &Telemetry<'_>,
+            ) -> Result<(), Self::Error> {
+                Ok(())
+            }
+        }
+        let mut comms = TestComms;
+        comms.close();
+        comms.close_on_failure();
+    }
 }

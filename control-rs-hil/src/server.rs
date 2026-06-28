@@ -1,6 +1,6 @@
 //! On-target test runner server loop.
 
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicIsize, Ordering};
 
 use crate::SuiteDescriptor;
 use crate::comms::{Command, CommsLock, HostComms, Telemetry, TestState};
@@ -10,22 +10,13 @@ use crate::settings::SettingValue;
 
 /// Global tracker for the currently executing suite ID.
 /// Used by the panic handler to report test failures.
-pub static CURRENT_SUITE: AtomicIndicator =
-    AtomicIndicator::new(TestIndicator::Idle);
+pub static CURRENT_SUITE: TestIndexIndicator = TestIndexIndicator::new();
 
 /// Global tracker for the currently executing test ID.
 /// Used by the panic handler to report test failures.
-pub static CURRENT_TEST: AtomicIndicator =
-    AtomicIndicator::new(TestIndicator::Idle);
+pub static CURRENT_TEST: TestIndexIndicator = TestIndexIndicator::new();
 
-// --- Type definitions (PascalCase, sorted alphabetically) ---
-
-/// A thread-safe atomic test indicator wrapping an `AtomicUsize`.
-///
-/// Under the hood, `usize::MAX` represents `TestIndicator::Idle`.
-pub struct AtomicIndicator {
-    inner: AtomicUsize,
-}
+// --- Type definitions ---
 
 /// Context object that encapsulates communication, CPU profiling utilities, and the communication lock.
 ///
@@ -59,73 +50,9 @@ pub struct Server<'a, C, P> {
 pub type ServerResult<E> = Result<(), E>;
 
 /// Represents the active state of a test runner indicator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TestIndicator {
-    /// The runner is currently executing the item with the given index.
-    Active(usize),
-    /// The runner is idle (no suite/test is active).
-    Idle,
-}
-
-// --- Implementations ---
-
-impl AtomicIndicator {
-    /// Loads a value from the atomic indicator.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use control_rs_hil::server::{AtomicIndicator, TestIndicator};
-    /// # use core::sync::atomic::Ordering;
-    /// let opt = AtomicIndicator::new(TestIndicator::Active(42));
-    /// assert_eq!(opt.load(Ordering::SeqCst), TestIndicator::Active(42));
-    /// ```
-    #[must_use]
-    pub fn load(&self, order: Ordering) -> TestIndicator {
-        let raw = self.inner.load(order);
-        if raw == usize::MAX {
-            TestIndicator::Idle
-        } else {
-            TestIndicator::Active(raw)
-        }
-    }
-
-    /// Creates a new `AtomicIndicator` with the given value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use control_rs_hil::server::{AtomicIndicator, TestIndicator};
-    /// let opt = AtomicIndicator::new(TestIndicator::Active(42));
-    /// ```
-    #[must_use]
-    pub const fn new(val: TestIndicator) -> Self {
-        let raw = match val {
-            TestIndicator::Active(v) => v,
-            TestIndicator::Idle => usize::MAX,
-        };
-        Self {
-            inner: AtomicUsize::new(raw),
-        }
-    }
-
-    /// Stores a value into the atomic indicator.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use control_rs_hil::server::{AtomicIndicator, TestIndicator};
-    /// # use core::sync::atomic::Ordering;
-    /// let opt = AtomicIndicator::new(TestIndicator::Idle);
-    /// opt.store(TestIndicator::Active(42), Ordering::SeqCst);
-    /// ```
-    pub fn store(&self, val: TestIndicator, order: Ordering) {
-        let raw = match val {
-            TestIndicator::Active(v) => v,
-            TestIndicator::Idle => usize::MAX,
-        };
-        self.inner.store(raw, order);
-    }
+pub struct TestIndexIndicator {
+    /// Holds the active test index (>= 0), or `IDLE_STATE` (< 0).
+    state: AtomicIsize,
 }
 
 #[allow(clippy::type_complexity)]
@@ -308,10 +235,8 @@ where
         )?;
 
         // Track globally in case of panic during test execution
-        CURRENT_SUITE
-            .store(TestIndicator::Active(suite_id as usize), Ordering::SeqCst);
-        CURRENT_TEST
-            .store(TestIndicator::Active(test_id as usize), Ordering::SeqCst);
+        CURRENT_SUITE.set_active(suite_id as usize);
+        CURRENT_TEST.set_active(test_id as usize);
 
         // Retrieve stack pointer before running the test
         let sp = self.context.cpu_utils.get_sp();
@@ -341,8 +266,8 @@ where
         let elapsed_time_us = end_time_ns.saturating_sub(start_time_ns) / 1000;
 
         // Clear global trackers on success
-        CURRENT_SUITE.store(TestIndicator::Idle, Ordering::SeqCst);
-        CURRENT_TEST.store(TestIndicator::Idle, Ordering::SeqCst);
+        CURRENT_SUITE.set_idle();
+        CURRENT_TEST.set_idle();
 
         // Update state to Passed & Send metric report
         self.context
@@ -441,6 +366,50 @@ where
             .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)?;
 
         Ok(())
+    }
+}
+
+impl Default for TestIndexIndicator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TestIndexIndicator {
+    /// Sentinel value representing the Idle state.
+    const IDLE_STATE: isize = -1;
+
+    /// Retrieves the current state, returning it as a safe Option.
+    pub fn get(&self) -> Option<usize> {
+        let current_state = self.state.load(Ordering::Acquire);
+
+        if current_state < 0 {
+            None
+        } else {
+            usize::try_from(current_state).ok()
+        }
+    }
+
+    /// Creates a new indicator in the Idle state.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            state: AtomicIsize::new(Self::IDLE_STATE),
+        }
+    }
+
+    /// Sets the indicator to a specific active test index.
+    pub fn set_active(&self, index: usize) {
+        // Explicitly pattern match on the Result
+        let safe_index = isize::try_from(index)
+            .map_or(Self::IDLE_STATE, |valid_index| valid_index);
+
+        self.state.store(safe_index, Ordering::Release);
+    }
+
+    /// Sets the indicator back to Idle.
+    pub fn set_idle(&self) {
+        self.state.store(Self::IDLE_STATE, Ordering::Release);
     }
 }
 
@@ -569,7 +538,7 @@ mod tests {
 
     // --- Tests ---
     #[test]
-    fn test_atomic_settings() {
+    fn test_atomic_settings_u8_u32() {
         let u8_setting = AtomicU8Setting::new("u8_set", "u8_desc", 10);
         assert_eq!(u8_setting.name(), "u8_set");
         assert_eq!(u8_setting.description(), "u8_desc");
@@ -593,6 +562,179 @@ mod tests {
         assert!(u32_setting.set(SettingValue::U32(200)).is_ok());
         assert_eq!(u32_setting.get(), SettingValue::U32(200));
         assert!(u32_setting.set(SettingValue::U8(200)).is_err());
+    }
+
+    #[test]
+    fn test_atomic_settings_other() {
+        use crate::settings::{
+            AtomicBoolSetting, AtomicF32Setting, AtomicI8Setting,
+            AtomicI32Setting, AtomicU16Setting, SettingType,
+        };
+
+        let bool_set = AtomicBoolSetting::new("bool_set", "bool_desc", true);
+        assert_eq!(bool_set.expected_type(), SettingType::Bool);
+        assert_eq!(bool_set.get(), SettingValue::Bool(true));
+        assert!(bool_set.set(SettingValue::Bool(false)).is_ok());
+        assert_eq!(bool_set.get(), SettingValue::Bool(false));
+        assert!(bool_set.set(SettingValue::U8(0)).is_err());
+
+        let f32_set = AtomicF32Setting::new("f32_set", "f32_desc", 1.5);
+        assert_eq!(f32_set.expected_type(), SettingType::F32);
+        assert_eq!(f32_set.get(), SettingValue::F32(1.5));
+        assert!(f32_set.set(SettingValue::F32(-2.5)).is_ok());
+        assert_eq!(f32_set.get(), SettingValue::F32(-2.5));
+        assert!(f32_set.set(SettingValue::Bool(true)).is_err());
+
+        let i32_set = AtomicI32Setting::new("i32_set", "i32_desc", -10);
+        assert_eq!(i32_set.expected_type(), SettingType::I32);
+        assert!(i32_set.set(SettingValue::I32(10)).is_ok());
+        assert_eq!(i32_set.get(), SettingValue::I32(10));
+        assert!(i32_set.set(SettingValue::Bool(true)).is_err());
+
+        let i8_set = AtomicI8Setting::new("i8_set", "i8_desc", -5);
+        assert_eq!(i8_set.expected_type(), SettingType::I8);
+        assert!(i8_set.set(SettingValue::I8(5)).is_ok());
+        assert_eq!(i8_set.get(), SettingValue::I8(5));
+        assert!(i8_set.set(SettingValue::Bool(true)).is_err());
+
+        let u16_set = AtomicU16Setting::new("u16_set", "u16_desc", 20);
+        assert_eq!(u16_set.expected_type(), SettingType::U16);
+        assert!(u16_set.set(SettingValue::U16(40)).is_ok());
+        assert_eq!(u16_set.get(), SettingValue::U16(40));
+        assert!(u16_set.set(SettingValue::Bool(true)).is_err());
+
+        #[cfg(target_has_atomic = "64")]
+        {
+            use crate::settings::AtomicU64Setting;
+            let u64_set = AtomicU64Setting::new("u64_set", "u64_desc", 100);
+            assert_eq!(u64_set.expected_type(), SettingType::U64);
+            assert!(u64_set.set(SettingValue::U64(200)).is_ok());
+            assert_eq!(u64_set.get(), SettingValue::U64(200));
+            assert!(u64_set.set(SettingValue::Bool(true)).is_err());
+        }
+    }
+
+    #[test]
+    fn test_setting_value_partial_eq() {
+        assert_eq!(SettingValue::Bool(true), SettingValue::Bool(true));
+        assert_ne!(SettingValue::Bool(true), SettingValue::Bool(false));
+
+        assert_eq!(SettingValue::F32(1.5), SettingValue::F32(1.5));
+        assert_ne!(SettingValue::F32(1.5), SettingValue::F32(2.5));
+
+        assert_eq!(SettingValue::I32(-10), SettingValue::I32(-10));
+        assert_ne!(SettingValue::I32(-10), SettingValue::I32(10));
+
+        assert_eq!(SettingValue::I8(-5), SettingValue::I8(-5));
+        assert_ne!(SettingValue::I8(-5), SettingValue::I8(5));
+
+        assert_eq!(SettingValue::U16(20), SettingValue::U16(20));
+        assert_ne!(SettingValue::U16(20), SettingValue::U16(40));
+
+        assert_eq!(SettingValue::U32(100), SettingValue::U32(100));
+        assert_ne!(SettingValue::U32(100), SettingValue::U32(200));
+
+        assert_eq!(SettingValue::U64(1000), SettingValue::U64(1000));
+        assert_ne!(SettingValue::U64(1000), SettingValue::U64(2000));
+
+        assert_eq!(SettingValue::U8(42), SettingValue::U8(42));
+        assert_ne!(SettingValue::U8(42), SettingValue::U8(24));
+
+        // Mismatched types
+        assert_ne!(SettingValue::Bool(true), SettingValue::U8(1));
+        assert_ne!(SettingValue::F32(1.0), SettingValue::I32(1));
+    }
+
+    #[test]
+    fn test_context_locked_noop() {
+        let comms = MockComms {
+            commands: Vec::new(),
+            payloads: Vec::new(),
+            flush_count: 0,
+            fail_on_poll: false,
+        };
+        let mut context = Context::new(comms, HostCPUProfiler);
+        assert!(context.comms_lock.try_lock());
+
+        assert!(context.flush_locked().is_ok());
+        assert!(context.poll_command_locked().unwrap().is_none());
+        assert!(
+            context
+                .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)
+                .is_ok()
+        );
+        assert!(
+            context
+                .send_telemetry_locked(&Telemetry::DiscoveryComplete)
+                .is_ok()
+        );
+
+        assert!(context.comms.payloads.is_empty());
+        assert_eq!(context.comms.flush_count, 0);
+
+        context.comms_lock.unlock();
+        assert!(
+            context
+                .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)
+                .is_ok()
+        );
+        assert_eq!(context.comms.payloads.len(), 1);
+        assert_eq!(context.comms.flush_count, 1);
+    }
+
+    #[test]
+    fn test_server_exit() {
+        let res =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut s = Server::new(
+                    Context::new(
+                        MockComms {
+                            commands: Vec::new(),
+                            payloads: Vec::new(),
+                            flush_count: 0,
+                            fail_on_poll: false,
+                        },
+                        HostCPUProfiler,
+                    ),
+                    SUITES,
+                );
+                s.exit();
+            }));
+        assert!(res.is_err());
+
+        let res2 =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut s = Server::new(
+                    Context::new(
+                        MockComms {
+                            commands: Vec::new(),
+                            payloads: Vec::new(),
+                            flush_count: 0,
+                            fail_on_poll: false,
+                        },
+                        HostCPUProfiler,
+                    ),
+                    SUITES,
+                );
+                assert!(s.context.comms_lock.try_lock());
+                s.exit();
+            }));
+        assert!(res2.is_err());
+    }
+
+    #[test]
+    fn test_index_indicator() {
+        let indicator = TestIndexIndicator::new();
+        assert!(indicator.get().is_none());
+
+        indicator.set_active(5);
+        assert_eq!(indicator.get(), Some(5));
+
+        indicator.set_idle();
+        assert!(indicator.get().is_none());
+
+        let default_indicator = TestIndexIndicator::default();
+        assert!(default_indicator.get().is_none());
     }
 
     #[test]

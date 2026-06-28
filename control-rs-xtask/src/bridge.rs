@@ -577,3 +577,296 @@ fn process_incoming_byte(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_qemu_arch_details() {
+        let arm_details = QemuArch::Arm.details();
+        assert_eq!(arm_details.binary_name, "control-rs-qemu-arm");
+        let riscv_details = QemuArch::Riscv.details();
+        assert_eq!(riscv_details.binary_name, "control-rs-qemu-risc-v");
+    }
+
+    #[test]
+    fn test_target_parse_none() {
+        let t1 = Target::parse(
+            &["bin".to_string(), "ci".to_string()],
+            "all",
+            "/dev/ttyACM0",
+        )
+        .unwrap();
+        assert!(t1.is_none());
+    }
+
+    #[test]
+    fn test_target_parse_qemu() {
+        let t2 = Target::parse(
+            &[
+                "bin".to_string(),
+                "ci".to_string(),
+                "qemu".to_string(),
+                "arm".to_string(),
+            ],
+            "arm",
+            "/dev/ttyACM0",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            t2,
+            Target::QemuSemihosting {
+                arch: QemuArch::Arm
+            }
+        ));
+    }
+
+    #[test]
+    fn test_target_parse_teensy() {
+        let t3 = Target::parse(
+            &[
+                "bin".to_string(),
+                "ci".to_string(),
+                "teensy".to_string(),
+                "/dev/ttyUSB0".to_string(),
+                "9600".to_string(),
+            ],
+            "arm",
+            "/dev/ttyACM0",
+        )
+        .unwrap()
+        .unwrap();
+        if let Target::Serial { port, baud } = t3 {
+            assert_eq!(port, "/dev/ttyUSB0");
+            assert_eq!(baud, 9600);
+        } else {
+            panic!("Expected Target::Serial");
+        }
+    }
+
+    #[test]
+    fn test_target_parse_invalid() {
+        assert!(
+            Target::parse(
+                &[
+                    "bin".to_string(),
+                    "ci".to_string(),
+                    "qemu".to_string(),
+                    "invalid_arch".to_string()
+                ],
+                "arm",
+                "/dev/ttyACM0"
+            )
+            .is_err()
+        );
+        assert!(
+            Target::parse(
+                &[
+                    "bin".to_string(),
+                    "ci".to_string(),
+                    "invalid_target".to_string()
+                ],
+                "arm",
+                "/dev/ttyACM0"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_make_telemetry_owned_metadata() {
+        let s = Telemetry::SuiteInfo {
+            suite_id: 1,
+            name: "suite1",
+            description: "desc1",
+            test_count: 5,
+            setting_count: 2,
+        };
+        let owned = make_telemetry_owned(&s);
+        if let Telemetry::SuiteInfo {
+            suite_id,
+            name,
+            description,
+            test_count,
+            setting_count,
+        } = owned
+        {
+            assert_eq!(suite_id, 1);
+            assert_eq!(name, "suite1");
+            assert_eq!(description, "desc1");
+            assert_eq!(test_count, 5);
+            assert_eq!(setting_count, 2);
+        } else {
+            panic!("Expected SuiteInfo");
+        }
+
+        let t = Telemetry::TestInfo {
+            suite_id: 1,
+            test_id: 2,
+            name: "test1",
+            description: "tdesc",
+        };
+        let owned_t = make_telemetry_owned(&t);
+        if let Telemetry::TestInfo {
+            suite_id,
+            test_id,
+            name,
+            description,
+        } = owned_t
+        {
+            assert_eq!(suite_id, 1);
+            assert_eq!(test_id, 2);
+            assert_eq!(name, "test1");
+            assert_eq!(description, "tdesc");
+        } else {
+            panic!("Expected TestInfo");
+        }
+    }
+
+    #[test]
+    fn test_make_telemetry_owned_setting_info() {
+        let set = Telemetry::SettingInfo {
+            suite_id: 1,
+            setting_id: 3,
+            name: "set1",
+            description: "sdesc",
+            value: SettingValue::U8(10),
+        };
+        let owned_set = make_telemetry_owned(&set);
+        if let Telemetry::SettingInfo {
+            suite_id,
+            setting_id,
+            name,
+            description,
+            value,
+        } = owned_set
+        {
+            assert_eq!(suite_id, 1);
+            assert_eq!(setting_id, 3);
+            assert_eq!(name, "set1");
+            assert_eq!(description, "sdesc");
+            assert!(matches!(value, SettingValue::U8(10)));
+        } else {
+            panic!("Expected SettingInfo");
+        }
+    }
+
+    #[test]
+    fn test_make_telemetry_owned_simple() {
+        assert!(matches!(
+            make_telemetry_owned(&Telemetry::DiscoveryComplete),
+            Telemetry::DiscoveryComplete
+        ));
+        assert!(matches!(
+            make_telemetry_owned(&Telemetry::TestStateChange {
+                suite_id: 1,
+                test_id: 2,
+                state: control_rs_hil::comms::TestState::Passed
+            }),
+            Telemetry::TestStateChange {
+                suite_id: 1,
+                test_id: 2,
+                state: control_rs_hil::comms::TestState::Passed
+            }
+        ));
+        assert!(matches!(
+            make_telemetry_owned(&Telemetry::MetricReport {
+                suite_id: 1,
+                test_id: 2,
+                cycles: 10,
+                time_us: 20,
+                stack_peak: 30
+            }),
+            Telemetry::MetricReport {
+                suite_id: 1,
+                test_id: 2,
+                cycles: 10,
+                time_us: 20,
+                stack_peak: 30
+            }
+        ));
+    }
+
+    #[test]
+    fn test_make_telemetry_owned_log() {
+        let log = Telemetry::Log(LogMessage {
+            timestamp_us: 100,
+            suite_id: 1,
+            test_id: 2,
+            payload: "hello",
+        });
+        let owned_log = make_telemetry_owned(&log);
+        if let Telemetry::Log(LogMessage {
+            timestamp_us,
+            suite_id,
+            test_id,
+            payload,
+        }) = owned_log
+        {
+            assert_eq!(timestamp_us, 100);
+            assert_eq!(suite_id, 1);
+            assert_eq!(test_id, 2);
+            assert_eq!(payload, "hello");
+        } else {
+            panic!("Expected Log");
+        }
+    }
+
+    #[test]
+    fn test_make_telemetry_owned_panic() {
+        let panic_tel = Telemetry::TargetPanic {
+            message: "panic message",
+            file: "main.rs",
+            line: 5,
+        };
+        let owned_panic = make_telemetry_owned(&panic_tel);
+        if let Telemetry::TargetPanic {
+            message,
+            file,
+            line,
+        } = owned_panic
+        {
+            assert_eq!(message, "panic message");
+            assert_eq!(file, "main.rs");
+            assert_eq!(line, 5);
+        } else {
+            panic!("Expected TargetPanic");
+        }
+    }
+
+    #[test]
+    fn test_process_incoming_byte() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut reader = FrameReader::new();
+        let mut raw_line_buf = Vec::new();
+
+        process_incoming_byte(b'h', &mut reader, &mut raw_line_buf, &tx);
+        process_incoming_byte(b'i', &mut reader, &mut raw_line_buf, &tx);
+        process_incoming_byte(b'\n', &mut reader, &mut raw_line_buf, &tx);
+
+        let msg = rx.try_recv().unwrap();
+        if let BridgeMessage::RawConsole(s) = msg {
+            assert_eq!(s, "hi");
+        } else {
+            panic!("Expected RawConsole");
+        }
+
+        let mut buf = [0u8; 128];
+        let size = control_rs_hil::comms::frame_telemetry(
+            &Telemetry::DiscoveryComplete,
+            &mut buf,
+        )
+        .unwrap();
+        for &b in buf.get(..size).unwrap() {
+            process_incoming_byte(b, &mut reader, &mut raw_line_buf, &tx);
+        }
+
+        let msg2 = rx.try_recv().unwrap();
+        assert!(matches!(
+            msg2,
+            BridgeMessage::Telemetry(Telemetry::DiscoveryComplete)
+        ));
+    }
+}
