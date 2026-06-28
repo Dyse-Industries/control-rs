@@ -64,7 +64,7 @@ object. This manages test execution and communication:
 The communication protocol used between the runner on the MCU and the host TUI
 is a simple frame-based binary packet structure. Each message includes a header
 detailing the message type (e.g., metric report, log, state change, or command),
-payload length, and a checksum. This ensures the host TUI can parse continuous
+payload length, and a 16-bit CRC checksum. This ensures the host TUI can parse continuous
 telemetry streams from the target efficiently without stalling test execution.
 
 ## 4. Usage

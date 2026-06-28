@@ -68,7 +68,7 @@ pub enum Command {
     /// Request the target to stream the list of all suites, tests, and settings.
     ListSuites,
     /// Request the target to reset.
-    OkToReset,
+    TryReset,
     /// Request execution of a specific test.
     RunExecutable {
         /// The ID of the test suite to execute.
@@ -90,7 +90,8 @@ pub enum Command {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReaderState {
     ReadingPayload { len: usize, read: usize },
-    WaitChecksum { len: usize },
+    WaitChecksum1 { len: usize },
+    WaitChecksum2 { len: usize, crc1: u8 },
     WaitLen1,
     WaitLen2,
     WaitStart1,
@@ -287,19 +288,19 @@ impl FrameReader {
                 }
                 *read += 1;
                 if *read == len {
-                    self.state = ReaderState::WaitChecksum { len };
+                    self.state = ReaderState::WaitChecksum1 { len };
                 }
             }
-            ReaderState::WaitChecksum { len } => {
-                // Calculate simple XOR checksum over the payload using iterator
-                // to avoid any indexing bounds checks
-                let mut checksum: u8 = 0;
-                for &b in self.payload_buffer.iter().take(len) {
-                    checksum ^= b;
-                }
+            ReaderState::WaitChecksum1 { len } => {
+                self.state = ReaderState::WaitChecksum2 { len, crc1: byte };
+            }
+            ReaderState::WaitChecksum2 { len, crc1 } => {
+                let crc_value = (u16::from(crc1) << 8) | u16::from(byte);
+                let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+                let calculated = crc.checksum(self.payload_buffer.get(..len).unwrap_or(&[]));
 
                 self.state = ReaderState::WaitStart1;
-                if checksum == byte {
+                if calculated == crc_value {
                     return self.payload_buffer.get(..len);
                 }
             }
@@ -334,7 +335,7 @@ pub fn frame_telemetry(
     telemetry: &Telemetry<'_>,
     dest: &mut [u8],
 ) -> Result<usize, postcard::Error> {
-    if dest.len() < 5 {
+    if dest.len() < 6 {
         return Err(postcard::Error::SerializeBufferFull);
     }
 
@@ -347,17 +348,15 @@ pub fn frame_telemetry(
     }
 
     let dest_len = dest.len();
-    // Serialize payload into the dest starting at index 4 (leaving space for length)
-    let (payload_len, checksum) = {
+    // Serialize payload into the dest starting at index 4 (leaving space for length and leaving 2 bytes at the end for CRC-16)
+    let (payload_len, crc_value) = {
         let slice = dest
-            .get_mut(4..dest_len - 1)
+            .get_mut(4..dest_len - 2)
             .ok_or(postcard::Error::SerializeBufferFull)?;
         let payload_slice = postcard::to_slice(telemetry, slice)?;
-        let mut sum = 0u8;
-        for &b in payload_slice.iter() {
-            sum ^= b;
-        }
-        (payload_slice.len(), sum)
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+        let crc_value = crc.checksum(payload_slice);
+        (payload_slice.len(), crc_value)
     };
 
     // Write length (big-endian)
@@ -369,12 +368,15 @@ pub fn frame_telemetry(
         *slot = (len_u16 & 0xFF) as u8;
     }
 
-    // Write checksum
+    // Write checksum (2 bytes, big-endian)
     if let Some(slot) = dest.get_mut(4 + payload_len) {
-        *slot = checksum;
+        *slot = (crc_value >> 8) as u8;
+    }
+    if let Some(slot) = dest.get_mut(4 + payload_len + 1) {
+        *slot = (crc_value & 0xFF) as u8;
     }
 
-    Ok(5 + payload_len)
+    Ok(6 + payload_len)
 }
 
 #[cfg(test)]
@@ -456,13 +458,17 @@ mod tests {
         let mut buf = [0u8; 128];
         let framed_len = frame_telemetry(&telemetry, &mut buf).unwrap();
 
-        // Feed all bytes except the checksum
-        for &item in buf.iter().take(framed_len - 1) {
+        // Feed all bytes except the 2 checksum bytes
+        for &item in buf.iter().take(framed_len - 2) {
             assert!(reader.handle_byte(item).is_none());
         }
-        // Feed an invalid checksum byte
-        let bad_checksum = buf.get(framed_len - 1).copied().unwrap() ^ 0xFF;
+        // Feed an invalid first checksum byte
+        let bad_checksum = buf.get(framed_len - 2).copied().unwrap() ^ 0xFF;
         assert!(reader.handle_byte(bad_checksum).is_none());
+        // Feed the second checksum byte
+        assert!(reader
+            .handle_byte(buf.get(framed_len - 1).copied().unwrap())
+            .is_none());
         assert!(reader.is_idle()); // reset
     }
 
@@ -470,14 +476,14 @@ mod tests {
     fn test_frame_telemetry_too_small_buffer() {
         let telemetry = Telemetry::DiscoveryComplete;
         {
-            let mut buf = [0u8; 4];
+            let mut buf = [0u8; 5];
             let res = frame_telemetry(&telemetry, &mut buf);
             assert!(matches!(res, Err(postcard::Error::SerializeBufferFull)));
         }
 
         // Buffer large enough for header but too small for payload
         {
-            let mut buf = [0u8; 5];
+            let mut buf = [0u8; 6];
             let res = frame_telemetry(&telemetry, &mut buf);
             assert!(res.is_err());
         }

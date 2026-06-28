@@ -2,9 +2,9 @@
 
 use core::sync::atomic::{AtomicI16, Ordering};
 
-use crate::SuiteDescriptor;
 use crate::comms::{Command, CommsLock, HostComms, Telemetry, TestState};
 use crate::settings::SettingValue;
+use crate::SuiteDescriptor;
 
 // --- Static variables ---
 
@@ -195,7 +195,7 @@ where
                     } => {
                         self.set_setting(suite_id, setting_id, value)?;
                     }
-                    Command::OkToReset => {}
+                    Command::TryReset => {}
                 }
             }
 
@@ -371,7 +371,7 @@ mod tests {
     use crate::comms::{Command, HostComms, Telemetry, TestState};
     use crate::profiler::CPUProfiler;
     use crate::settings::{
-        AtomicU8Setting, AtomicU32Setting, Setting, SettingValue,
+        AtomicU32Setting, AtomicU8Setting, Setting, SettingValue,
     };
     use crate::{ExecDescriptor, SuiteDescriptor};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -584,7 +584,7 @@ mod tests {
     #[test]
     fn test_server_ok_to_reset() {
         let comms = MockComms {
-            commands: std::vec![Command::OkToReset],
+            commands: std::vec![Command::TryReset],
             payloads: Vec::new(),
             flush_count: 0,
             fail_on_poll: false,

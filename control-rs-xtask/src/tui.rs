@@ -13,17 +13,17 @@ use crossterm::{
     event::{self, Event, KeyCode},
     execute,
     terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
-        enable_raw_mode,
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen,
+        LeaveAlternateScreen,
     },
 };
 use ratatui::{
-    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    Terminal,
 };
 
 use crate::bridge::{BridgeMessage, ServerBridge, Target};
@@ -1141,7 +1141,7 @@ fn run_tui_loop(
             );
             cmd_tx.clear();
 
-            let _ = bridge.send_command(&Command::OkToReset);
+            let _ = bridge.send_command(&Command::TryReset);
             bridge.kill();
 
             // Wait 2 seconds for the target to reset and re-establish connection
@@ -1185,7 +1185,7 @@ fn run_tui_loop(
     }
 
     // Clean up bridge
-    let _ = bridge.send_command(&Command::OkToReset);
+    let _ = bridge.send_command(&Command::TryReset);
     bridge.kill();
     std::thread::sleep(Duration::from_millis(100));
     Ok(())

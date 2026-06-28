@@ -4,7 +4,7 @@
 
 use regex::Regex;
 use std::fs;
-use std::process::{Command, exit};
+use std::process::{exit, Command};
 use std::time::{Duration, Instant};
 
 use crate::utils::{HeadlessTestResult, TarpaulinSummary};
@@ -478,7 +478,7 @@ pub fn run_headless_sil(
                             }
                         }
 
-                        let _ = bridge.send_command(&CommCommand::OkToReset);
+                        let _ = bridge.send_command(&CommCommand::TryReset);
                         std::thread::sleep(Duration::from_millis(50));
                         bridge.kill();
                         std::thread::sleep(Duration::from_secs(1));

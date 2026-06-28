@@ -179,6 +179,12 @@ locally (clippy, formatting, tarpaulin coverage, and QEMU HIL tests).
 control-rs = { git = "https://github.com/Dyse-Industries/control-rs.git" }
 ```
 
+The crate's tooling requires multiple toolchains be installed:
+
+```bash
+rustup target add thumbv7em-none-eabihf riscv32imac-unknown-none-elf
+```
+
 ## License
 
 Licensed under the MIT license.

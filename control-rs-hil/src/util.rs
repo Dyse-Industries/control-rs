@@ -109,11 +109,11 @@ pub unsafe fn handle_failure<
         );
         let _ = context.comms.flush();
 
-        // Wait for OkToReset command from host
+        // Wait for TryReset command from host
         loop {
             let command = context.comms.poll_command().ok().flatten();
 
-            if let Some(crate::comms::Command::OkToReset) = command {
+            if let Some(crate::comms::Command::TryReset) = command {
                 break;
             }
 

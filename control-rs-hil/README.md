@@ -48,7 +48,7 @@ flowchart LR
 
 1. **Defines core abstractions** (`CPUProfileUtils` and `HostComms` traits) for
    hardware communication, timing, and CPU profiling.
-2. **Implements packet framing** using a robust XOR-checksum binary protocol.
+2. **Implements packet framing** using a robust CRC-16 checksum binary protocol.
 3. **Hosts the server event loop** which processes incoming execution commands
    from the host, executes target tests, and streams back telemetry.
 

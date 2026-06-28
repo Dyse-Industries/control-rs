@@ -301,12 +301,11 @@ impl ServerBridge {
         frame.push((len >> 8) as u8);
         frame.push((len & 0xFF) as u8);
 
-        let mut checksum = 0u8;
-        for &b in &payload {
-            checksum ^= b;
-        }
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+        let crc_value = crc.checksum(&payload);
         frame.append(&mut payload);
-        frame.push(checksum);
+        frame.push((crc_value >> 8) as u8);
+        frame.push((crc_value & 0xFF) as u8);
 
         match &mut self.inner {
             BridgeInner::Qemu { stdin, .. } => {

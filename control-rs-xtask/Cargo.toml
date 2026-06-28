@@ -16,3 +16,4 @@ crossterm = "0.29"
 control-rs-hil = { path = "../control-rs-hil" }
 serde_json = "1.0"
 serial2 = "0.2.37"
+crc = "3.4.0"
