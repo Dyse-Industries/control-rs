@@ -15,3 +15,7 @@ rustflags = [
     "-C", "link-arg=-Tlink.x",
     "-C", "link-arg=-Thil_suites.x",
 ]
+
+[alias]
+arm = ["run", "--bin", "control-rs-qemu-arm", "--release"]
+riscv = ["run", "--bin", "control-rs-qemu-risc-v", "--target", "riscv32imac-unknown-none-elf", "--release"]

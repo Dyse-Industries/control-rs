@@ -55,40 +55,25 @@ struct TarpaulinReportJson {
 /// Helper function to build the QEMU target ELF.
 pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
     println!("\t* building QEMU target ELF for {:?}...", arch);
-    let (target_triple, bin_name, env_flags) = match arch {
-        bridge::QemuArch::Arm => (
-            "thumbv7em-none-eabihf",
-            "control-rs-qemu-arm",
-            vec![(
-                "CARGO_TARGET_THUMBV7EM_NONE_EABIHF_RUSTFLAGS",
-                "-C link-arg=-Tlink.x -C link-arg=-Thil_suites.x",
-            )],
-        ),
-        bridge::QemuArch::Riscv => (
-            "riscv32imac-unknown-none-elf",
-            "control-rs-qemu-risc-v",
-            vec![(
-                "CARGO_TARGET_RISCV32IMAC_UNKNOWN_NONE_ELF_RUSTFLAGS",
-                "-C link-arg=-Tmemory.x -C link-arg=-Tlink.x -C link-arg=-Thil_suites.x",
-            )],
-        ),
+    let (target_triple, bin_name) = match arch {
+        bridge::QemuArch::Arm => {
+            ("thumbv7em-none-eabihf", "control-rs-qemu-arm")
+        }
+        bridge::QemuArch::Riscv => {
+            ("riscv32imac-unknown-none-elf", "control-rs-qemu-risc-v")
+        }
     };
 
     let mut command = Command::new("cargo");
-    for (key, val) in env_flags {
-        command.env(key, val);
-    }
+    command.current_dir("examples/qemu");
     let build_status = command
         .args([
             "build",
-            "--manifest-path",
-            "examples/qemu/Cargo.toml",
             "--bin",
             bin_name,
             "--target",
             target_triple,
-            "--profile",
-            "qemu",
+            "--release",
         ])
         .status()
         .expect("Failed to build QEMU target.");
@@ -98,7 +83,10 @@ pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
         exit(1);
     }
 
-    format!("examples/qemu/target/{}/qemu/{}", target_triple, bin_name)
+    format!(
+        "examples/qemu/target/{}/release/{}",
+        target_triple, bin_name
+    )
 }
 
 /// Task to run formatting check.

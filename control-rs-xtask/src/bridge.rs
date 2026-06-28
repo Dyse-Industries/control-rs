@@ -10,7 +10,6 @@ use control_rs_hil::comms::{Command, FrameReader, LogMessage, Telemetry};
 use control_rs_hil::settings::SettingValue;
 
 type BridgeResult<T> = Result<T, Box<dyn std::error::Error>>;
-type QemuConfig = (&'static str, Vec<String>, String, String);
 type WaitResult = Result<Option<std::process::ExitStatus>, std::io::Error>;
 
 /// Inner bridge enum representing active connection variant.
@@ -46,6 +45,18 @@ pub enum QemuArch {
     Riscv,
 }
 
+/// Target details for QEMU.
+pub struct QemuTargetDetails {
+    /// Binary name of the example.
+    pub binary_name: &'static str,
+    /// Human readable description of the target.
+    pub description: &'static str,
+    /// Human readable description of the execution environment.
+    pub execution_env: &'static str,
+    /// Target triple used by rustc/cargo.
+    pub target_triple: &'static str,
+}
+
 /// Target execution platform.
 #[derive(Debug, Clone)]
 pub enum Target {
@@ -69,6 +80,27 @@ pub struct ServerBridge {
     link_info: String,
     rx_from_target: Receiver<BridgeMessage>,
     target_info: String,
+}
+
+impl QemuArch {
+    /// Gets the configuration and target details for this architecture.
+    #[must_use]
+    pub const fn details(&self) -> QemuTargetDetails {
+        match self {
+            Self::Arm => QemuTargetDetails {
+                binary_name: "control-rs-qemu-arm",
+                description: "QEMU (cortex-m7)",
+                execution_env: "Semihosting (mps2-an500)",
+                target_triple: "thumbv7em-none-eabihf",
+            },
+            Self::Riscv => QemuTargetDetails {
+                binary_name: "control-rs-qemu-risc-v",
+                description: "QEMU (risc-v32)",
+                execution_env: "Semihosting (virt)",
+                target_triple: "riscv32imac-unknown-none-elf",
+            },
+        }
+    }
 }
 
 impl ServerBridge {
@@ -169,21 +201,28 @@ impl ServerBridge {
         }
     }
     fn new_qemu_inner(
-        elf_path: &str,
+        _elf_path: &str,
         arch: QemuArch,
         tx: Sender<BridgeMessage>,
         rx: Receiver<BridgeMessage>,
     ) -> BridgeResult<Self> {
-        let (qemu_bin, qemu_args, target_info, link_info) =
-            get_qemu_config(arch, elf_path);
+        let details = arch.details();
 
-        let mut child = StdCommand::new(qemu_bin)
-            .args(&qemu_args)
+        let mut child = StdCommand::new("cargo")
+            .current_dir("examples/qemu")
+            .args([
+                "run",
+                "--bin",
+                details.binary_name,
+                "--target",
+                details.target_triple,
+                "--release",
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to spawn QEMU process: {e}"))?;
+            .map_err(|e| format!("Failed to spawn cargo run process: {e}"))?;
 
         let stdin = child.stdin.take().ok_or("Failed to open stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to open stdout")?;
@@ -228,8 +267,8 @@ impl ServerBridge {
         Ok(Self {
             inner: BridgeInner::Qemu { child, stdin },
             rx_from_target: rx,
-            target_info,
-            link_info,
+            target_info: details.description.to_string(),
+            link_info: details.execution_env.to_string(),
         })
     }
 
@@ -364,57 +403,6 @@ impl Target {
     #[must_use]
     pub const fn serial(port: String, baud: u32) -> Self {
         Self::Serial { port, baud }
-    }
-}
-
-fn get_qemu_config(arch: QemuArch, elf_path: &str) -> QemuConfig {
-    match arch {
-        QemuArch::Arm => (
-            "qemu-system-arm",
-            vec![
-                "-cpu".to_string(),
-                "cortex-m7".to_string(),
-                "-machine".to_string(),
-                "mps2-an500".to_string(),
-                "-nographic".to_string(),
-                "-serial".to_string(),
-                "none".to_string(),
-                "-monitor".to_string(),
-                "none".to_string(),
-                "-chardev".to_string(),
-                "stdio,id=con0".to_string(),
-                "-semihosting-config".to_string(),
-                "enable=on,chardev=con0".to_string(),
-                "-kernel".to_string(),
-                elf_path.to_string(),
-            ],
-            "QEMU (cortex-m7)".to_string(),
-            "Semihosting (mps2-an500)".to_string(),
-        ),
-        QemuArch::Riscv => (
-            "qemu-system-riscv32",
-            vec![
-                "-machine".to_string(),
-                "virt".to_string(),
-                "-cpu".to_string(),
-                "rv32".to_string(),
-                "-bios".to_string(),
-                "none".to_string(),
-                "-nographic".to_string(),
-                "-serial".to_string(),
-                "none".to_string(),
-                "-monitor".to_string(),
-                "none".to_string(),
-                "-chardev".to_string(),
-                "stdio,id=con0".to_string(),
-                "-semihosting-config".to_string(),
-                "enable=on,chardev=con0".to_string(),
-                "-kernel".to_string(),
-                elf_path.to_string(),
-            ],
-            "QEMU (risc-v32)".to_string(),
-            "Semihosting (virt)".to_string(),
-        ),
     }
 }
 

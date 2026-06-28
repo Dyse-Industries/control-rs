@@ -34,12 +34,5 @@ test = false
 
 [workspace]
 
-[profile.qemu]
-inherits = "release"
-strip = false
-opt-level = 0
-lto = false
+[profile.release]
 panic = "abort"
-
-[profile.qemu.build-override]
-opt-level = 0

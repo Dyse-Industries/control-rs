@@ -309,7 +309,7 @@ pub fn collect_system_info() -> String {
             .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| s.trim().to_string())
+            .map(|s| s.lines().next().unwrap_or("").trim().to_string())
             .unwrap_or_else(|| "Not found".to_string())
     }
 
@@ -332,6 +332,14 @@ pub fn collect_system_info() -> String {
     section.push_str(&format!(
         "| tarpaulin | {} |\n",
         get_version("cargo", &["tarpaulin", "--version"])
+    ));
+    section.push_str(&format!(
+        "| qemu-system-arm | {} |\n",
+        get_version("qemu-system-arm", &["--version"])
+    ));
+    section.push_str(&format!(
+        "| qemu-system-riscv32 | {} |\n",
+        get_version("qemu-system-riscv32", &["--version"])
     ));
 
     section.push_str(
