@@ -22,8 +22,8 @@ pub static CURRENT_TEST: AtomicI16 = AtomicI16::new(-1);
 ///
 /// This type coordinates accesses to low-level target hardware. To ensure thread safety and avoid race
 /// conditions (for example, between the main event loop and interrupt/exception/panic handlers that
-/// also need to send telemetry), the `Context` holds a `CommsLock`. All public telemetry and poll methods 
-/// are run via `_locked` helper methods, ensuring mutual exclusion without requiring blocking mutexes 
+/// also need to send telemetry), the `Context` holds a `CommsLock`. All public telemetry and poll methods
+/// are run via `_locked` helper methods, ensuring mutual exclusion without requiring blocking mutexes
 /// that could cause deadlocks in interrupt-disabled contexts.
 pub struct Context<C, P> {
     /// Host communication channel.

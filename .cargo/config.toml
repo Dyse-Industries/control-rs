@@ -9,13 +9,22 @@ ci = ["xtask", "ci"]
 tui = ["xtask", "tui"]
 
 # HIL Test Infrastructure & Target Execution Aliases
-qemu = ["xtask", "tui", "qemu"]
-teensy = ["xtask", "tui", "teensy"]
-ci-qemu = ["xtask", "ci", "qemu"]
-ci-teensy = ["xtask", "ci", "teensy"]
+qemu = ["tui", "qemu"]
+teensy = ["tui", "teensy"]
+
+# SIL Test Infrastructure & Target Execution Aliases
+qemu-ci = ["ci", "qemu"]
+teensy-ci = ["ci", "teensy"]
+
+# Format check helper
+fmt-check = ["fmt", "--all", "--", "--check"]
+fmt-all = ["fmt", "--all"]
 
 # Clippy Helper
-clippy-json = ["clippy", "--workspace", "--message-format=json", "--", "-D", "warnings"]
+lint = ["clippy", "--workspace", "--lib", "--bins", "--tests", "--examples", "--benches", ]
+clippy-json = ["lint", "--message-format=json"]
+clippy-ci = ["clippy-json", "--", "-D", "warnings"]
 
 # Coverage helper
-coverage = ["tarpaulin", "--workspace", "--verbose", "--color", "never", "--out", "Html", "--out", "Json"]
+coverage = ["tarpaulin", "--verbose", "--workspace"]
+coverage-ci = ["coverage", "--color", "never", "--out", "Html", "--out", "Json"]

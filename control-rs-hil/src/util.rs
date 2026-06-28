@@ -77,7 +77,7 @@ impl<'a> Write for FailureBufWriter<'a> {
 pub unsafe fn handle_failure<
     C: crate::comms::HostComms,
     P: crate::profiler::CPUProfiler,
-    >(
+>(
     context: &mut crate::server::Context<C, P>,
     msg: &str,
     file: &str,
@@ -142,7 +142,7 @@ pub unsafe fn handle_failure<
 pub unsafe fn handle_exception<
     C: crate::comms::HostComms,
     P: crate::profiler::CPUProfiler,
-    >(
+>(
     context: &mut crate::server::Context<C, P>,
     msg: &str,
     comms_ok: bool,

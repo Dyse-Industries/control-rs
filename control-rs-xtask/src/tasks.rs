@@ -105,9 +105,9 @@ pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
 pub fn run_fmt() -> (Result<(), usize>, String) {
     println!("\t* formatting check...");
     let fmt_output = Command::new("cargo")
-        .args(["fmt", "--all", "--", "--check"])
+        .args(["fmt-check"])
         .output()
-        .expect("Failed to run cargo fmt");
+        .expect("Failed to run cargo fmt-check");
 
     let stdout_str = String::from_utf8_lossy(&fmt_output.stdout);
     let stderr_str = String::from_utf8_lossy(&fmt_output.stderr);
@@ -130,21 +130,9 @@ pub fn run_fmt() -> (Result<(), usize>, String) {
 pub fn run_clippy() -> (Result<(), usize>, String) {
     println!("\t* clippy check...");
     let clippy_output = Command::new("cargo")
-        .args([
-            "clippy",
-            "--workspace",
-            "--lib",
-            "--bins",
-            "--tests",
-            "--examples",
-            "--benches",
-            "--message-format=json",
-            "--",
-            "-D",
-            "warnings",
-        ])
+        .args(["clippy-ci"])
         .output()
-        .expect("Failed to run cargo clippy");
+        .expect("Failed to run cargo clippy-json");
 
     let stdout_str = String::from_utf8_lossy(&clippy_output.stdout);
     let stderr_str = String::from_utf8_lossy(&clippy_output.stderr);
@@ -191,18 +179,9 @@ pub fn run_clippy() -> (Result<(), usize>, String) {
 pub fn run_tarpaulin() -> (Result<TarpaulinSummary, ()>, String) {
     println!("\t* tarpaulin test & coverage...");
     let tarpaulin_output = Command::new("cargo")
-        .args([
-            "tarpaulin",
-            "--verbose",
-            "--color",
-            "never",
-            "--out",
-            "Html",
-            "--out",
-            "Json",
-        ])
+        .args(["coverage-ci"])
         .output()
-        .expect("Failed to run cargo tarpaulin");
+        .expect("Failed to run cargo coverage");
 
     let tarp_str = format!(
         "{}\n{}",
