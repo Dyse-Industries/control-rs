@@ -6,17 +6,7 @@ embedded platforms.
 
 ---
 
-## Data-Driven Model-Based Design
-
-Instead of treating system identification as an offline chore, control-rs
-provides the no-std, low-level infrastructure required to embed parameter
-estimation loops directly onto target silicon within your Hardware-in-the-Loop (
-HIL) pipelines.
-
-`control-rs` enables a complete Model-Based Design (MBD) pipeline. By unifying
-hardware execution, real-time telemetry, and host-side driver tooling, the
-library transitions control design from offline simulation to live, on-target
-hardware execution.
+## Infrastructure Overview
 
 ```mermaid
 ---
@@ -24,14 +14,14 @@ config:
   layout: dagre
 ---
 flowchart LR
- subgraph Host["Host Environment"]
+ subgraph Host["💻 Host Environment"]
         TUI("fa:fa-display Terminal UI (TUI)")
         CI("fa:fa-robot CI Runner")
-        Comm{"fa:fa-code Comms Trait"}
+        Comm{"fa:fa-code ServerBridge"}
   end
  subgraph Loop["fa:fa-rotate-right Server Event Loop"]
     direction TB
-        Comms["Handle Comms"]
+        Comms["HostComms"]
         Tasks["Run Tasks"]
         Telem["Send Telemetry"]
   end
@@ -45,20 +35,19 @@ flowchart LR
     CI <====> Comm
     Comm <====> Comms
 
-    TUI:::host
-    CI:::host
-    Comm:::link
-    Comms:::target
-    Tasks:::target
-    Telem:::target
-
+     TUI:::host
+     CI:::host
+     Comm:::link
+     Comms:::target
+     Tasks:::target
+     Telem:::target
     classDef host fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
     classDef link fill:#1e293b,stroke:#94a3b8,stroke-width:2px,stroke-dasharray:5 5,color:#cbd5e1
     classDef target fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff
+    style Comms fill:#1e1b4b
+    style Loop fill:#616161,stroke:#6366f1,stroke-width:2px,stroke-dasharray:5 5,color:#e0e7ff
     style Host fill:transparent,stroke:#475569,stroke-width:1px,stroke-dasharray:3 3
     style TargetEnv fill:transparent,stroke:#475569,stroke-width:1px,stroke-dasharray:3 3
-    style Loop fill:transparent,stroke:#6366f1,stroke-width:2px,stroke-dasharray:5 5,color:#e0e7ff
-
 ```
 
 ### 1. Embedded HIL Engine (`control-rs-hil`)
@@ -99,7 +88,26 @@ Automates the full validation pipeline:
 ## Quickstart & Commands
 
 Helpful cargo aliases are configured in [.cargo/config.toml](.cargo/config.toml)
-to simplify development:
+to simplify development, testing, formatting, linting, and coverage reporting:
+
+### Cargo Aliases Reference Table
+
+| Category                               | Alias               | Underlying Command                                             | Description                                                         |
+|:---------------------------------------|:--------------------|:---------------------------------------------------------------|:--------------------------------------------------------------------|
+| **Development & UI**                   | `cargo xtask`       | `run --package control-rs-xtask --`                            | Runs the workspace's auxiliary build/test tasks.                    |
+|                                        | `cargo tui`         | `cargo xtask tui`                                              | Launches the interactive TUI console dashboard.                     |
+|                                        | `cargo ci`          | `cargo xtask ci`                                               | Runs the continuous integration suite locally.                      |
+| **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | Launches the interactive TUI console targeting QEMU emulation.      |
+|                                        | `cargo teensy`      | `cargo tui teensy`                                             | Launches the interactive TUI console targeting Teensy 4.0 hardware. |
+| **Target Execution (CI/Headless)**     | `cargo qemu-ci`     | `cargo ci qemu`                                                | Performs headless CI verification targeting QEMU emulation.         |
+|                                        | `cargo teensy-ci`   | `cargo ci teensy`                                              | Performs headless CI verification targeting Teensy 4.0 hardware.    |
+| **Formatting**                         | `cargo fmt-all`     | `fmt --all`                                                    | Automatically formats all Rust files in the workspace.              |
+|                                        | `cargo fmt-check`   | `fmt --all -- --check`                                         | Checks that all files conform to formatting rules.                  |
+| **Linting**                            | `cargo lint`        | `clippy --workspace --lib --bins --tests --examples --benches` | Runs Clippy lints across all packages and targets.                  |
+|                                        | `cargo clippy-json` | `cargo lint --message-format=json`                             | Runs Clippy lints and outputs findings in JSON format.              |
+|                                        | `cargo clippy-ci`   | `cargo clippy-json -- -D warnings`                             | Runs Clippy CI lints, treating all warnings as compiler errors.     |
+| **Coverage**                           | `cargo coverage`    | `tarpaulin --verbose --workspace`                              | Measures test code coverage via `cargo-tarpaulin`.                  |
+|                                        | `cargo coverage-ci` | `cargo coverage --color never --out Html --out Json`           | Runs coverage in CI mode, exporting reports in HTML and JSON.       |
 
 ### 1. Interactive Testing (Host TUI)
 
@@ -132,12 +140,12 @@ parameters in real time.
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-* **QEMU Emulator (default target: cortex-m7, mps2-an500):**
+* **Launch TUI for QEMU Emulator (default target: cortex-m7, mps2-an500):**
   ```bash
-  cargo qemu
-  cargo qemu risc-v # target: risc-v32, virt
+  cargo qemu # target: arm-none-eabihf, semihosting
+  cargo tui qemu risc-v # target: risc-v32, virt
   ```
-* **For Physical Teensy 4.0 Hardware:**
+* **Launch TUI for Physical Teensy 4.0 Hardware:**
   ```bash
   cargo teensy
   ```
@@ -153,12 +161,13 @@ locally (clippy, formatting, tarpaulin coverage, and QEMU HIL tests).
   ```
 * **Run checks for specific targets:**
   ```bash
-  cargo ci-qemu
-  cargo ci-teensy
+  cargo qemu-ci
+  cargo teensy-ci
   ```
 * **Run workspace code coverage analysis:**
   ```bash
-  cargo coverage
+  cargo coverage      # Detailed console coverage
+  cargo coverage-ci   # Export HTML and JSON reports (headless CI style)
   ```
 
 ---
