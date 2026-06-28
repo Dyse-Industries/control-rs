@@ -90,14 +90,22 @@ pub unsafe fn handle_failure<
         let suite = crate::server::CURRENT_SUITE.load(Ordering::SeqCst);
         let test = crate::server::CURRENT_TEST.load(Ordering::SeqCst);
 
-        if suite >= 0 && test >= 0 {
-            let _ = context.comms.send_telemetry(
-                &crate::comms::Telemetry::TestStateChange {
-                    suite_id: suite as u16,
-                    test_id: test as u16,
-                    state: crate::comms::TestState::Failed,
-                },
-            );
+        if let (
+            crate::server::TestIndicator::Active(suite_val),
+            crate::server::TestIndicator::Active(test_val),
+        ) = (suite, test)
+        {
+            if let (Ok(suite_id), Ok(test_id)) =
+                (u16::try_from(suite_val), u16::try_from(test_val))
+            {
+                let _ = context.comms.send_telemetry(
+                    &crate::comms::Telemetry::TestStateChange {
+                        suite_id,
+                        test_id,
+                        state: crate::comms::TestState::Failed,
+                    },
+                );
+            }
         }
 
         let _ = context.comms.send_telemetry(

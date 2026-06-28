@@ -1,6 +1,6 @@
 //! On-target test runner server loop.
 
-use core::sync::atomic::{AtomicI16, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::SuiteDescriptor;
 use crate::comms::{Command, CommsLock, HostComms, Telemetry, TestState};
@@ -10,13 +10,22 @@ use crate::settings::SettingValue;
 
 /// Global tracker for the currently executing suite ID.
 /// Used by the panic handler to report test failures.
-pub static CURRENT_SUITE: AtomicI16 = AtomicI16::new(-1);
+pub static CURRENT_SUITE: AtomicIndicator =
+    AtomicIndicator::new(TestIndicator::Idle);
 
 /// Global tracker for the currently executing test ID.
 /// Used by the panic handler to report test failures.
-pub static CURRENT_TEST: AtomicI16 = AtomicI16::new(-1);
+pub static CURRENT_TEST: AtomicIndicator =
+    AtomicIndicator::new(TestIndicator::Idle);
 
-// --- Type aliases and Structs (PascalCase) ---
+// --- Type definitions (PascalCase, sorted alphabetically) ---
+
+/// A thread-safe atomic test indicator wrapping an `AtomicUsize`.
+///
+/// Under the hood, `usize::MAX` represents `TestIndicator::Idle`.
+pub struct AtomicIndicator {
+    inner: AtomicUsize,
+}
 
 /// Context object that encapsulates communication, CPU profiling utilities, and the communication lock.
 ///
@@ -48,6 +57,76 @@ pub struct Server<'a, C, P> {
 
 /// Result of server operations.
 pub type ServerResult<E> = Result<(), E>;
+
+/// Represents the active state of a test runner indicator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestIndicator {
+    /// The runner is currently executing the item with the given index.
+    Active(usize),
+    /// The runner is idle (no suite/test is active).
+    Idle,
+}
+
+// --- Implementations ---
+
+impl AtomicIndicator {
+    /// Loads a value from the atomic indicator.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use control_rs_hil::server::{AtomicIndicator, TestIndicator};
+    /// # use core::sync::atomic::Ordering;
+    /// let opt = AtomicIndicator::new(TestIndicator::Active(42));
+    /// assert_eq!(opt.load(Ordering::SeqCst), TestIndicator::Active(42));
+    /// ```
+    #[must_use]
+    pub fn load(&self, order: Ordering) -> TestIndicator {
+        let raw = self.inner.load(order);
+        if raw == usize::MAX {
+            TestIndicator::Idle
+        } else {
+            TestIndicator::Active(raw)
+        }
+    }
+
+    /// Creates a new `AtomicIndicator` with the given value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use control_rs_hil::server::{AtomicIndicator, TestIndicator};
+    /// let opt = AtomicIndicator::new(TestIndicator::Active(42));
+    /// ```
+    #[must_use]
+    pub const fn new(val: TestIndicator) -> Self {
+        let raw = match val {
+            TestIndicator::Active(v) => v,
+            TestIndicator::Idle => usize::MAX,
+        };
+        Self {
+            inner: AtomicUsize::new(raw),
+        }
+    }
+
+    /// Stores a value into the atomic indicator.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use control_rs_hil::server::{AtomicIndicator, TestIndicator};
+    /// # use core::sync::atomic::Ordering;
+    /// let opt = AtomicIndicator::new(TestIndicator::Idle);
+    /// opt.store(TestIndicator::Active(42), Ordering::SeqCst);
+    /// ```
+    pub fn store(&self, val: TestIndicator, order: Ordering) {
+        let raw = match val {
+            TestIndicator::Active(v) => v,
+            TestIndicator::Idle => usize::MAX,
+        };
+        self.inner.store(raw, order);
+    }
+}
 
 #[allow(clippy::type_complexity)]
 impl<C: HostComms, P> Context<C, P> {
@@ -230,8 +309,9 @@ where
 
         // Track globally in case of panic during test execution
         CURRENT_SUITE
-            .store(suite_id.try_into().unwrap_or(-1), Ordering::SeqCst);
-        CURRENT_TEST.store(test_id.try_into().unwrap_or(-1), Ordering::SeqCst);
+            .store(TestIndicator::Active(suite_id as usize), Ordering::SeqCst);
+        CURRENT_TEST
+            .store(TestIndicator::Active(test_id as usize), Ordering::SeqCst);
 
         // Retrieve stack pointer before running the test
         let sp = self.context.cpu_utils.get_sp();
@@ -261,8 +341,8 @@ where
         let elapsed_time_us = end_time_ns.saturating_sub(start_time_ns) / 1000;
 
         // Clear global trackers on success
-        CURRENT_SUITE.store(-1, Ordering::SeqCst);
-        CURRENT_TEST.store(-1, Ordering::SeqCst);
+        CURRENT_SUITE.store(TestIndicator::Idle, Ordering::SeqCst);
+        CURRENT_TEST.store(TestIndicator::Idle, Ordering::SeqCst);
 
         // Update state to Passed & Send metric report
         self.context
