@@ -58,7 +58,7 @@ Located in [control-rs-hil](control-rs-hil), this
 * **Target Profiling**: Measures execution time using hardware cycle counters (
   ARM DWT) and tracks memory limits using stack painting and scanning.
 
-### 2. Host Orchestration Driver (`control-rs-xtask`)
+### 2. Host-Side Orchestration (`control-rs-xtask`)
 
 Located in [control-rs-xtask](control-rs-xtask),
 this package runs on the developer's PC:
@@ -77,9 +77,9 @@ Automates the full validation pipeline:
 * **Multi-Arch Emulation**: Spins up headless QEMU instances for both **ARM
   Cortex-M** (`thumbv7em-none-eabihf`) and **RISC-V** (
   `riscv32imac-unknown-none-elf`) targets.
-* **Performance Telemetry**: Aggregates clippy status, test results, code
-  coverage, cycle counts, and stack usage into a comprehensive PR/commit
-  report (`ci-report.md`).
+* **Code Quality Reporting**: Parses stdout/stderr from the available
+  cargo tooling (`fmt`, `clippy`, `test`, `tarpaulin`, `qemu`) and generates
+  a report (`ci-report.md`).
 
 ---
 
