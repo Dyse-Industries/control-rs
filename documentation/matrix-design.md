@@ -1,23 +1,32 @@
 # Matrix Type & Specializations
 
 **Implementation Order:** 1  
-**Status:** Approved  
-**Author:** @MitchellDScott  
-**Date:** July 4, 2026
+![Date Badge](https://img.shields.io/badge/Date-July_5,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Needs%20Review-yellow)
+![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+
 
 ---
 
 ## 1. Context & Objective
 
-The objective of the `Matrix` struct is to wrap the underlying `MatrixStorage` traits and provide an ergonomic, type-safe, and zero-cost API for mathematical operations and specialized matrix forms (e.g., vectors, square matrices, and symmetric/triangular representations).
+The objective of the `Matrix` struct is to wrap the underlying `MatrixStorage`
+traits and provide an ergonomic, type-safe, and zero-cost API for mathematical
+operations and specialized matrix forms (e.g., vectors, square matrices, and
+symmetric/triangular representations).
 
-Because the storage layer is separated from mathematical operations, the `Matrix` type acts as a thin wrapper boundary. It forwards memory access to the storage backend while exposing safe algebraic interfaces to the user, eliminating runtime overhead like virtual dispatch and redundant bounds checks.
+Because the storage layer is separated from mathematical operations, the
+`Matrix` type acts as a thin wrapper boundary. It forwards memory access to the
+storage backend while exposing safe algebraic interfaces to the user,
+eliminating runtime overhead like virtual dispatch and redundant bounds checks.
 
 ---
 
 ## 2. The Matrix Struct & Aliases
 
-By using an associated type `type Element` on the `MatrixStorage` trait, we avoid carrying redundant generic parameters and `PhantomData` fields. The primary `Matrix` struct is defined as:
+By using an associated type `type Element` on the `MatrixStorage` trait, we
+avoid carrying redundant generic parameters and `PhantomData` fields. The
+primary `Matrix` struct is defined as:
 
 ```rust
 use crate::math::storage::{MatrixStorage, MatrixStorageMut};
@@ -93,7 +102,9 @@ pub type MatrixViewMut<'a, T> = Matrix<ViewStorageMut<'a, T>>;
 
 ## 3. Structural Specializations (Triangular & Symmetric)
 
-To enforce mathematical structures at compile-time and enable specialized math paths (e.g., Cholesky decomposition), we wrap matrices in invariant-bearing types.
+To enforce mathematical structures at compile-time and enable specialized math
+paths (e.g., Cholesky decomposition), we wrap matrices in invariant-bearing
+types.
 
 ```rust
 use crate::math::ArithmeticError;
@@ -110,7 +121,8 @@ pub struct Symmetric<S: MatrixStorage>(Matrix<S>);
 
 ### 3.1. Construction and Invariant Enforcement
 
-Specialized wrappers require the underlying storage to be square. Construction validates this invariant:
+Specialized wrappers require the underlying storage to be square. Construction
+validates this invariant:
 
 ```rust
 impl<S: MatrixStorage> UpperTriangular<S> {
@@ -151,7 +163,8 @@ impl<S: MatrixStorage> Symmetric<S> {
 
 To preserve structural invariants, mutation must be restricted:
 
-* **Triangular Matrices**: Mutable access (`get_mut`) is only allowed on elements within the active triangle.
+* **Triangular Matrices**: Mutable access (`get_mut`) is only allowed on
+  elements within the active triangle.
   ```rust
   impl<S: MatrixStorageMut> UpperTriangular<S> {
       /// Mutably accesses an element in the upper triangle.
@@ -166,7 +179,10 @@ To preserve structural invariants, mutation must be restricted:
       }
   }
   ```
-* **Symmetric Matrices**: Exposing a direct `&mut T` reference to a single element allows a user to break symmetry. Instead, `Symmetric` does not implement standard mutable indexing. It exposes a safe write method that updates both mirror elements:
+* **Symmetric Matrices**: Exposing a direct `&mut T` reference to a single
+  element allows a user to break symmetry. Instead, `Symmetric` does not
+  implement standard mutable indexing. It exposes a safe write method that
+  updates both mirror elements:
   ```rust
   impl<S: MatrixStorageMut> Symmetric<S>
   where
@@ -191,7 +207,8 @@ To preserve structural invariants, mutation must be restricted:
 
 ## 4. Mathematical Operations
 
-All operations are designed for `no_std` environments, avoiding any dynamic memory allocation.
+All operations are designed for `no_std` environments, avoiding any dynamic
+memory allocation.
 
 ### 4.1. In-place Addition (`AddAssign`)
 
@@ -201,7 +218,7 @@ Element-wise addition is implemented generically using row and column loops:
 impl<S1, S2> core::ops::AddAssign<&Matrix<S2>> for Matrix<S1>
 where
     S1: MatrixStorageMut,
-    S2: MatrixStorage<Element = S1::Element>,
+    S2: MatrixStorage<Element=S1::Element>,
     S1::Element: core::ops::AddAssign<S2::Element> + Copy,
 {
     fn add_assign(&mut self, rhs: &Matrix<S2>) {
@@ -221,7 +238,9 @@ where
 
 ### 4.2. Contiguous Fast-Path Optimization
 
-If both operands are contiguous, algorithms can bypass double-loop coordinate math and operate directly on flat slices to leverage SIMD or compiler loop vectorization:
+If both operands are contiguous, algorithms can bypass double-loop coordinate
+math and operate directly on flat slices to leverage SIMD or compiler loop
+vectorization:
 
 ```rust
 use crate::math::storage::{ContiguousStorage, ContiguousStorageMut};
@@ -230,7 +249,7 @@ use crate::math::storage::{ContiguousStorage, ContiguousStorageMut};
 pub fn add_contiguous<S1, S2>(lhs: &mut Matrix<S1>, rhs: &Matrix<S2>)
 where
     S1: ContiguousStorageMut,
-    S2: ContiguousStorage<Element = S1::Element>,
+    S2: ContiguousStorage<Element=S1::Element>,
     S1::Element: core::ops::AddAssign<S2::Element> + Copy,
 {
     assert_eq!(lhs.rows(), rhs.rows());
@@ -252,23 +271,33 @@ where
 ### 5.1. Test Strategy
 
 1. **Unit Testing**:
-   - Verify index offsets, strides, and dimensional bounds.
-   - Assert compiler errors (via compile-fail tests) when trying to write to invalid regions of specialized wrappers.
+    - Verify index offsets, strides, and dimensional bounds.
+    - Assert compiler errors (via compile-fail tests) when trying to write to
+      invalid regions of specialized wrappers.
 2. **Invariant Testing**:
-   - Confirm that `UpperTriangular` and `LowerTriangular` restrict mutable access to their valid boundaries.
-   - Confirm that `Symmetric` updates both mirror elements upon mutation.
+    - Confirm that `UpperTriangular` and `LowerTriangular` restrict mutable
+      access to their valid boundaries.
+    - Confirm that `Symmetric` updates both mirror elements upon mutation.
 3. **Property Testing**:
-   - Compare calculations (e.g., matrix-vector multiplication) across different backends (owned static matrix vs. strided sub-views) and assert identical outputs.
+    - Compare calculations (e.g., matrix-vector multiplication) across different
+      backends (owned static matrix vs. strided sub-views) and assert identical
+      outputs.
 4. **Hardware Benchmarks**:
-   - Execute test suites on Teensty 4.1 hardware to measure execution speed and stack bounds.
+    - Execute test suites on Teensty 4.1 hardware to measure execution speed and
+      stack bounds.
 
 ### 5.2. Numeric Guarantees
 
-* **Integers and Deterministic Transforms**: Operations must match bit-for-bit identical results regardless of the storage backend.
-* **Floating-Point Operations**: Checked using tolerance-based comparisons to account for floating-point non-associativity:
+* **Integers and Deterministic Transforms**: Operations must match bit-for-bit
+  identical results regardless of the storage backend.
+* **Floating-Point Operations**: Checked using tolerance-based comparisons to
+  account for floating-point non-associativity:
   $$\|A - B\|_{\infty} \le \epsilon$$
 
 ### 5.3. Bare-Metal Performance Targets
 
-* **Zero-Overhead Abstraction**: The abstraction boundary must incur no measurable runtime latency compared to manual flat-array implementations.
-* **Verification Method**: Inspect compiler-generated assembly to ensure bounds checking is fully optimized out in loop bodies, and compile-time generic monomorphization has eliminated all virtual dispatch symbols.
+* **Zero-Overhead Abstraction**: The abstraction boundary must incur no
+  measurable runtime latency compared to manual flat-array implementations.
+* **Verification Method**: Inspect compiler-generated assembly to ensure bounds
+  checking is fully optimized out in loop bodies, and compile-time generic
+  monomorphization has eliminated all virtual dispatch symbols.
