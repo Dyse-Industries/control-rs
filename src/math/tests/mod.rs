@@ -5,6 +5,8 @@ mod convolution_tests;
 #[cfg(test)]
 mod fft_tests;
 #[cfg(test)]
+mod matrix_tests;
+#[cfg(test)]
 mod num_trait_tests;
 #[cfg(test)]
 mod num_type_tests;
@@ -14,3 +16,5 @@ mod op_tests;
 mod storage_tests;
 #[cfg(test)]
 mod subprogram_tests;
+#[cfg(test)]
+mod tensor_tests;

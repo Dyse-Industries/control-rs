@@ -57,6 +57,11 @@ std = []
 hil = ["dep:control-rs-macros", "dep:control-rs-hil"]
 
 [dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "matrix_benchmarks"
+harness = false
 
 
 [profile.release]

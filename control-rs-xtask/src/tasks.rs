@@ -520,7 +520,7 @@ pub fn run_headless_sil(
                     }
                 },
                 BridgeMessage::RawConsole(line) => {
-                    log_and_print(&format!("[Target Console] {}\n", line));
+                    log_and_print(&format!("[HIL Bridge] {}\n", line));
                 }
             }
         }

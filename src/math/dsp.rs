@@ -2,9 +2,15 @@
 //!
 //! TODO:
 //!   * [ ] remove index slicing
+#![allow(clippy::arbitrary_source_item_ordering)]
 
 use crate::math::{
-    Bijection, Map, complex_num::Complex, num_traits::Real, ops::Neg, storage,
+    Bijection, Map,
+    complex_num::Complex,
+    num_traits::Real,
+    num_types::{Const, Dim, DimAdd, DimSub, U1},
+    ops::Neg,
+    storage,
 };
 
 type ComplexArrayMut<T, const N: usize> = [Complex<T>; N];
@@ -227,6 +233,12 @@ pub trait Convolution<T: Real> {
     }
 }
 
+/// Default CPU-based convolution implementation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CpuConvolution;
+
+impl<T: Real> Convolution<T> for CpuConvolution {}
+
 /// Trait for Continuous-time systems.
 ///
 /// This trait represents systems defined in the continuous time domain.
@@ -288,4 +300,40 @@ where
         F::ifft(&y, &mut x);
         x
     }
+}
+
+/// Performs a statically checked convolution on two arrays.
+///
+/// # Generics
+/// * `C` - The convolution implementation.
+/// * `T` - Numeric real field.
+/// * `N` - Input array size.
+/// * `M` - Kernel array size.
+/// * `OUT` - Output array size.
+/// * `Sum` - Intermediate type-level sum.
+#[inline]
+pub fn convolve_static<
+    C,
+    T,
+    const N: usize,
+    const M: usize,
+    const OUT: usize,
+    Sum,
+>(
+    input: &[T; N],
+    kernel: &[T; M],
+) -> [T; OUT]
+where
+    C: Convolution<T>,
+    T: Real,
+    Const<N>: Dim,
+    Const<M>: Dim,
+    Const<OUT>: Dim,
+    <Const<N> as Dim>::PeanoTypeNum:
+        DimAdd<<Const<M> as Dim>::PeanoTypeNum, Output = Sum>,
+    Sum: Dim + DimSub<U1, Output = <Const<OUT> as Dim>::PeanoTypeNum>,
+{
+    let mut output = [T::ZERO; OUT];
+    C::convolve_input(input, kernel, &mut output);
+    output
 }
