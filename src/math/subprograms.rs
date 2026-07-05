@@ -269,6 +269,24 @@ pub mod level1 {
                 .map_or(x.len(), |(i, _)| i)
         }
     }
+
+    /// Trait for POLYEVAL: evaluate a polynomial at a point x using Horner's method.
+    pub trait POLYEVAL<
+        T: crate::math::num_traits::Zero
+            + Add<Output = T>
+            + Mul<Output = T>
+            + Copy,
+    >
+    {
+        /// Evaluates a polynomial with coefficients `coeffs` (in ascending order) at `x`.
+        #[allow(clippy::arithmetic_side_effects)]
+        #[inline]
+        fn polyeval(coeffs: &[T], x: T) -> T {
+            let mut iter = coeffs.iter().rev();
+            let first = *iter.next().unwrap_or(&T::ZERO);
+            iter.fold(first, |acc, &coeff| acc * x + coeff)
+        }
+    }
 }
 
 /// Level 2 BLAS: Matrix-Vector Operations
@@ -495,74 +513,29 @@ pub mod level3 {
     }
 }
 
-/// A naive implementation of the BLAS traits for `f32`.
+/// A generic naive implementation of the BLAS + DSP subprograms.
 ///
-/// This implementation uses standard Rust loops and iterators. It does not use any
-/// hardware acceleration (SIMD, DSP instructions, etc.). It serves as a reference implementation
+/// This implementation uses standard Rust loops and iterators. It serves as a reference implementation
 /// and a fallback for targets without specialized hardware support.
 ///
 /// # Safety
 /// This struct and its trait implementations do not use `unsafe` code.
-pub struct BasicSubProgramsF32;
+pub struct BasicSubPrograms;
 
-/// A naive implementation of the BLAS + DSP traits for `f64`.
-///
-/// This implementation uses standard Rust loops and iterators. It does not use any
-/// hardware acceleration. It serves as a reference implementation and a fallback for targets
-/// without specialized hardware support.
-///
-/// # Safety
-/// This struct and its trait implementations do not use `unsafe` code.
-pub struct BasicSubProgramsF64;
-
-////////////////////////////////////////////////////////////////////////////////
-// Basic Linear Algebra Sub-Programs for single precision floats
-////////////////////////////////////////////////////////////////////////////////
-
-impl level1::AXPY<f32> for BasicSubProgramsF32 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl level1::DOT<f32> for BasicSubProgramsF32 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl level1::NRM2<f32> for BasicSubProgramsF32 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl level1::IAMAX<f32> for BasicSubProgramsF32 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl level2::GEMV<f32> for BasicSubProgramsF32 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl level3::GEMM<f32> for BasicSubProgramsF32 {}
-
-////////////////////////////////////////////////////////////////////////////////
-// Basic Linear Algebra Sub-Programs for double precision floats
-////////////////////////////////////////////////////////////////////////////////
-
-impl level1::AXPY<f64> for BasicSubProgramsF64 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl level1::DOT<f64> for BasicSubProgramsF64 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl level1::NRM2<f64> for BasicSubProgramsF64 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl level1::IAMAX<f64> for BasicSubProgramsF64 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl level2::GEMV<f64> for BasicSubProgramsF64 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl level3::GEMM<f64> for BasicSubProgramsF64 {}
+impl<T: crate::math::num_traits::Ring> level1::AXPY<T> for BasicSubPrograms {}
+impl<T: crate::math::num_traits::Ring> level1::DOT<T> for BasicSubPrograms {}
+impl<T: crate::math::num_traits::Radical + core::ops::Mul<Output = T>>
+    level1::NRM2<T> for BasicSubPrograms
+{
+}
+impl<T: crate::math::num_traits::Real> level1::IAMAX<T> for BasicSubPrograms {}
+impl<T: crate::math::num_traits::Ring> level2::GEMV<T> for BasicSubPrograms {}
+impl<T: crate::math::num_traits::Ring> level3::GEMM<T> for BasicSubPrograms {}
+impl<
+    T: crate::math::num_traits::Zero
+        + core::ops::Add<Output = T>
+        + core::ops::Mul<Output = T>
+        + Copy,
+> level1::POLYEVAL<T> for BasicSubPrograms
+{
+}

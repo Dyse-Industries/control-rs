@@ -1,12 +1,50 @@
-#![allow(clippy::arbitrary_source_item_ordering, clippy::type_complexity)]
+//! # Matrix
+//!
+//! A module providing a stack-allocated, column-major `Matrix` implementation
+//! and structural specializations like `UpperTriangular`, `LowerTriangular`, and `Symmetric`.
 
 use crate::math::ArithmeticError;
 
 /// A column-major M x N static `Matrix` allocated on the stack.
 /// Inner array layout: C elements of type [T; R] (column-major).
+///
+/// # Clippy Allow explanation
+/// We allow `clippy::type_complexity` because nested arrays are the most direct, zero-cost representation
+/// of stack-allocated column-major matrices in a no-std context.
+#[allow(clippy::type_complexity)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Matrix<T, const R: usize, const C: usize> {
     pub(crate) data: [[T; R]; C],
+}
+
+/// General M x N static matrix allocated on the stack.
+pub type MatrixMN<T, const R: usize, const C: usize> = Matrix<T, R, C>;
+
+/// Square static matrix allocated on the stack.
+pub type SquareMatrix<T, const D: usize> = Matrix<T, D, D>;
+
+/// Column Vector (D x 1) allocated on the stack.
+pub type Vector<T, const D: usize> = Matrix<T, D, 1>;
+
+/// Row Vector (1 x D) allocated on the stack.
+pub type RowVector<T, const D: usize> = Matrix<T, 1, D>;
+
+/// Upper triangular matrix wrapper (elements below the diagonal are logically zero).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpperTriangular<T, const D: usize> {
+    pub(crate) matrix: Matrix<T, D, D>,
+}
+
+/// Lower triangular matrix wrapper (elements above the diagonal are logically zero).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LowerTriangular<T, const D: usize> {
+    pub(crate) matrix: Matrix<T, D, D>,
+}
+
+/// Symmetric matrix wrapper (elements satisfy A[i, j] == A[j, i]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Symmetric<T, const D: usize> {
+    pub(crate) matrix: Matrix<T, D, D>,
 }
 
 impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
@@ -31,6 +69,10 @@ impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
     }
 
     /// Create a new `Matrix` wrapper around a nested column-major array.
+    ///
+    /// # Clippy Allow explanation
+    /// Allowed locally because column-major nesting represents the matrix layout precisely.
+    #[allow(clippy::type_complexity)]
     #[inline(always)]
     pub const fn new(data: [[T; R]; C]) -> Self {
         Self { data }
@@ -43,34 +85,18 @@ impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
     }
 }
 
-// --- Dimensional & View Aliases ---
-
-/// General M x N static matrix allocated on the stack.
-pub type MatrixMN<T, const R: usize, const C: usize> = Matrix<T, R, C>;
-
-/// Square static matrix allocated on the stack.
-pub type SquareMatrix<T, const D: usize> = Matrix<T, D, D>;
-
-/// Column Vector (D x 1) allocated on the stack.
-pub type Vector<T, const D: usize> = Matrix<T, D, 1>;
-
-/// Row Vector (1 x D) allocated on the stack.
-pub type RowVector<T, const D: usize> = Matrix<T, 1, D>;
-
-// --- Mathematical Operations ---
-
 impl<T, const R: usize, const C: usize> core::ops::AddAssign<&Self>
     for Matrix<T, R, C>
 where
-    T: core::ops::AddAssign<T> + Copy,
+    T: crate::math::num_traits::Ring,
 {
-    #[allow(clippy::arithmetic_side_effects)]
+    /// Performs element-wise matrix addition in place using standard BLAS AXPY subprograms.
     #[inline]
     fn add_assign(&mut self, rhs: &Self) {
+        use crate::math::subprograms::BasicSubPrograms;
+        use crate::math::subprograms::level1::AXPY;
         for (dst_col, src_col) in self.data.iter_mut().zip(rhs.data.iter()) {
-            for (d, s) in dst_col.iter_mut().zip(src_col.iter()) {
-                *d += *s;
-            }
+            BasicSubPrograms::axpy(T::ONE, src_col, dst_col);
         }
     }
 }
@@ -78,37 +104,22 @@ where
 impl<T, const R: usize, const C: usize> core::ops::SubAssign<&Self>
     for Matrix<T, R, C>
 where
-    T: core::ops::SubAssign<T> + Copy,
+    T: crate::math::num_traits::Ring + crate::math::ops::Neg<Output = T>,
 {
+    /// Performs element-wise matrix subtraction in place using standard BLAS AXPY subprograms.
+    ///
+    /// # Clippy Allow explanation
+    /// We allow `clippy::arithmetic_side_effects` here because negating `T::ONE` to pass to `axpy`
+    /// is a standard algebraic representation of negation/subtraction.
     #[allow(clippy::arithmetic_side_effects)]
     #[inline]
     fn sub_assign(&mut self, rhs: &Self) {
+        use crate::math::subprograms::BasicSubPrograms;
+        use crate::math::subprograms::level1::AXPY;
         for (dst_col, src_col) in self.data.iter_mut().zip(rhs.data.iter()) {
-            for (d, s) in dst_col.iter_mut().zip(src_col.iter()) {
-                *d -= *s;
-            }
+            BasicSubPrograms::axpy(-T::ONE, src_col, dst_col);
         }
     }
-}
-
-// --- Structural Specializations ---
-
-/// Upper triangular matrix wrapper (elements below the diagonal are logically zero).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UpperTriangular<T, const D: usize> {
-    pub(crate) matrix: Matrix<T, D, D>,
-}
-
-/// Lower triangular matrix wrapper (elements above the diagonal are logically zero).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LowerTriangular<T, const D: usize> {
-    pub(crate) matrix: Matrix<T, D, D>,
-}
-
-/// Symmetric matrix wrapper (elements satisfy A[i, j] == A[j, i]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Symmetric<T, const D: usize> {
-    pub(crate) matrix: Matrix<T, D, D>,
 }
 
 impl<T, const D: usize> UpperTriangular<T, D> {
@@ -249,3 +260,6 @@ impl<T: Copy, const D: usize> Symmetric<T, D> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

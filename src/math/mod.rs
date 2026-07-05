@@ -82,15 +82,11 @@
 pub mod assert;
 pub mod complex_num;
 pub mod dsp;
-/// Matrix type and specialized structural wrappers.
-pub mod matrix;
 pub mod num_traits;
 pub mod num_types;
 pub mod ops;
 pub mod storage;
 pub mod subprograms;
-/// Tensor type and compile-time shape traits.
-pub mod tensor;
 
 #[cfg(any(test, feature = "hil"))]
 /// Core mathematical unit tests.

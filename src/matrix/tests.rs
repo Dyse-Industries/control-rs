@@ -1,8 +1,8 @@
-use crate::math::ArithmeticError;
-use crate::math::matrix::{
+use super::{
     LowerTriangular, Matrix, MatrixMN, RowVector, SquareMatrix, Symmetric,
     UpperTriangular, Vector,
 };
+use crate::math::ArithmeticError;
 
 #[test]
 fn test_matrix_construction_and_getters() {

@@ -63,6 +63,14 @@ criterion = "0.5.1"
 name = "matrix_benchmarks"
 harness = false
 
+[[bench]]
+name = "tensor_benchmarks"
+harness = false
+
+[[bench]]
+name = "polynomial_benchmarks"
+harness = false
+
 
 [profile.release]
 # Enable Link Time Optimization (LTO)

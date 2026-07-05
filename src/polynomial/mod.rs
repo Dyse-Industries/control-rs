@@ -24,9 +24,23 @@
 //!
 //! For polynomial evaluation and efficient algorithms like Horner’s method:
 //! - [Numerical Recipes – Polynomial Evaluation](https://numerical.recipes/)
-#![allow(clippy::arbitrary_source_item_ordering)]
-
 use crate::math::ops::{Add, Mul};
+pub use aliases::{Constant, Line};
+pub use polynomial::StaticPolynomial;
+
+/// Type aliases for polynomials.
+pub mod aliases;
+
+/// Concrete static implementations of polynomials.
+///
+/// # Clippy Allow explanation
+/// We allow `clippy::module_inception` because the user requested that the inner file
+/// containing the main polynomial logic be named `polynomial.rs`.
+#[allow(clippy::module_inception)]
+pub mod polynomial;
+
+#[cfg(test)]
+mod tests;
 
 /// A trait for representing general polynomial behaviors.
 pub trait Polynomial<T>
@@ -51,11 +65,3 @@ where
     /// Returns a mutable reference to the leading coefficient.
     fn leading_coefficient_mut(&mut self) -> Option<&mut T>;
 }
-
-/// Concrete static implementations of polynomials.
-pub mod poly;
-
-pub use poly::{Constant, Line, StaticPolynomial};
-
-#[cfg(test)]
-mod tests;

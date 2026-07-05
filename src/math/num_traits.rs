@@ -148,6 +148,10 @@ pub trait Ring: One + Zero {
         Self::sum([Self::ONE; N])
     }
     /// Initiate self from the given usize.
+    ///
+    /// # Safety / Fallibility
+    /// This conversion is not guaranteed to be safe for all types. Converting a large `usize`
+    /// to a type with a smaller range (like `u8` or fixed-point representations) can overflow or lose precision.
     fn from_usize(n: usize) -> Self {
         (0..n).fold(Self::ZERO, |acc, _| acc.add(Self::ONE))
     }
@@ -272,6 +276,9 @@ pub trait Trig: Field {
 /// // sqrt of a negative number
 /// let negative_val = -1.0f32;
 /// ```
+/// # Warnings
+/// Conversions like `T::from_usize` inherited from `Field` can be fallible or overflow
+/// depending on target constraints (e.g. converting to a type of smaller bounds like `u8`).
 pub trait Real: Field + Signed + Radical + Exponential + Trig {
     /// Constant representing Infinity.
     const INF: Self;

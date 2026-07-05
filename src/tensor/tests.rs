@@ -1,25 +1,22 @@
-#![allow(clippy::items_after_statements)]
-
-use crate::math::{
-    num_types::Const,
-    tensor::{Tensor, TensorLayout},
-};
+use super::{Tensor, TensorLayout};
+use crate::math::num_types::Const;
 
 #[test]
 fn test_tensor_dims_traits() {
+    type Shape2D = (Const<2>, Const<3>);
+    type Shape3D = (Const<2>, Const<2>, Const<2>);
+
     // 1D shape Const<3>
     assert_eq!(<Const<3> as TensorLayout>::RANK, 1);
     assert_eq!(<Const<3> as TensorLayout>::SIZE, 3);
     assert_eq!(<Const<3> as TensorLayout>::dims(), &[3]);
 
     // 2D shape (Const<2>, Const<3>)
-    type Shape2D = (Const<2>, Const<3>);
     assert_eq!(Shape2D::RANK, 2);
     assert_eq!(Shape2D::SIZE, 6);
     assert_eq!(Shape2D::dims(), &[2, 3]);
 
     // 3D shape (Const<2>, Const<2>, Const<2>)
-    type Shape3D = (Const<2>, Const<2>, Const<2>);
     assert_eq!(Shape3D::RANK, 3);
     assert_eq!(Shape3D::SIZE, 8);
     assert_eq!(Shape3D::dims(), &[2, 2, 2]);
@@ -92,4 +89,21 @@ fn test_tensor_scaling() {
     // DivAssign
     tensor /= 2.0;
     assert_eq!(tensor.as_slice(), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+}
+
+#[test]
+fn test_tensor_empty_and_compile_fail() {
+    // A 0-sized tensor is statically rejected because Const<0> does not implement Dim.
+    //
+    // // Case: 0-sized tensor fails to compile
+    // let _empty_tensor = Tensor::<f32, 0, Const<0>>::new([]);
+
+    // The following cases fail to compile due to shape/size mismatches,
+    // which statically enforces type safety via the trait bounds.
+    //
+    // // Case 1: Mismatched size generic N (5) vs Const layout size (3)
+    // let _mismatched: Tensor<f32, 5, Const<3>> = Tensor::new([1.0, 2.0, 3.0, 4.0, 5.0]);
+    //
+    // // Case 2: Mismatched size generic N (4) vs 2D tuple layout size (6)
+    // let _mismatched_2d: Tensor<f32, 4, (Const<2>, Const<3>)> = Tensor::new([1.0, 2.0, 3.0, 4.0]);
 }

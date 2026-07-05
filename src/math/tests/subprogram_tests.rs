@@ -2,7 +2,7 @@
 
 use crate::assert_almost_eq;
 use crate::math::subprograms::{
-    BasicSubProgramsF32, BasicSubProgramsF64,
+    BasicSubPrograms,
     level1::{AXPY, DOT, IAMAX, NRM2},
     level2::GEMV,
     level3::GEMM,
@@ -23,7 +23,7 @@ mod fuzzing {
             a[3] = next_f32(&mut rng);
 
             let mut c = [0.0; 4];
-            BasicSubProgramsF32::gemm(1.0, &a, &a, 0.0, &mut c, 2, 2, 2);
+            BasicSubPrograms::gemm(1.0, &a, &a, 0.0, &mut c, 2, 2, 2);
             assert_almost_eq!(c[1], c[2]);
         }
     }
@@ -44,13 +44,13 @@ mod fuzzing {
             // M(v1 + v2)
             let v_sum = [v1[0] + v2[0], v1[1] + v2[1]];
             let mut r1 = [0.0; 2];
-            BasicSubProgramsF32::gemv(1.0, &m, &v_sum, 0.0, &mut r1, 2, 2);
+            BasicSubPrograms::gemv(1.0, &m, &v_sum, 0.0, &mut r1, 2, 2);
 
             // Mv1 + Mv2
             let mut r2a = [0.0; 2];
             let mut r2b = [0.0; 2];
-            BasicSubProgramsF32::gemv(1.0, &m, &v1, 0.0, &mut r2a, 2, 2);
-            BasicSubProgramsF32::gemv(1.0, &m, &v2, 0.0, &mut r2b, 2, 2);
+            BasicSubPrograms::gemv(1.0, &m, &v1, 0.0, &mut r2a, 2, 2);
+            BasicSubPrograms::gemv(1.0, &m, &v2, 0.0, &mut r2b, 2, 2);
             let r2 = [r2a[0] + r2b[0], r2a[1] + r2b[1]];
 
             let epsilon = 1e-4;
@@ -63,7 +63,7 @@ mod fuzzing {
     fn test_denormalized_subnormal_signal_decays() {
         let x = [1e-40_f32, 1e-42_f32];
         let mut y = [1e-40_f32, 1e-42_f32];
-        BasicSubProgramsF32::axpy(0.5, &x, &mut y);
+        BasicSubPrograms::axpy(0.5, &x, &mut y);
         // Ensure no pipeline panics occurred and result is calculated
         assert!(y[0] > 0.0);
     }
@@ -74,14 +74,14 @@ mod fuzzing {
         // We will just verify it runs.
         let a = [1.0, 2.0];
         let mut y = [3.0, 4.0];
-        BasicSubProgramsF32::axpy(1.0, &a, &mut y);
+        BasicSubPrograms::axpy(1.0, &a, &mut y);
     }
 
     #[test]
     fn test_mixed_sign_zero_invariance() {
         let x = [0.0_f32, -0.0_f32];
         let mut y = [0.0_f32, -0.0_f32];
-        BasicSubProgramsF32::axpy(1.0, &x, &mut y);
+        BasicSubPrograms::axpy(1.0, &x, &mut y);
         // Verify bitwise sign parity
         assert_eq!(y[0].to_bits(), 0.0_f32.to_bits());
         assert_eq!(y[1].to_bits(), (-0.0_f32).to_bits());
@@ -112,7 +112,7 @@ mod level1 {
     fn test_axpy_f32() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
-        BasicSubProgramsF32::axpy(2.0, &x, &mut y);
+        BasicSubPrograms::axpy(2.0, &x, &mut y);
         assert_almost_eq!(y[0], 6.0);
         assert_almost_eq!(y[1], 9.0);
         assert_almost_eq!(y[2], 12.0);
@@ -122,7 +122,7 @@ mod level1 {
     fn test_axpy_f64() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
-        BasicSubProgramsF64::axpy(2.0, &x, &mut y);
+        BasicSubPrograms::axpy(2.0, &x, &mut y);
         assert_almost_eq!(y[0], 6.0);
         assert_almost_eq!(y[1], 9.0);
         assert_almost_eq!(y[2], 12.0);
@@ -135,7 +135,7 @@ mod level1 {
     fn test_axpy_panic_length_mismatch() {
         let x = [1.0, 2.0];
         let mut y = [4.0, 5.0, 6.0];
-        BasicSubProgramsF32::axpy(2.0, &x, &mut y);
+        BasicSubPrograms::axpy(2.0, &x, &mut y);
     }
 
     #[test]
@@ -143,7 +143,7 @@ mod level1 {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
         let y_original = y;
-        BasicSubProgramsF32::axpy(0.0, &x, &mut y);
+        BasicSubPrograms::axpy(0.0, &x, &mut y);
         for (val, orig) in y.iter().zip(y_original.iter()) {
             assert_almost_eq!(*val, *orig);
         }
@@ -154,7 +154,7 @@ mod level1 {
         let x = [0.0, 0.0, 0.0];
         let mut y = [4.0, 5.0, 6.0];
         let y_original = y;
-        BasicSubProgramsF32::axpy(42.0, &x, &mut y);
+        BasicSubPrograms::axpy(42.0, &x, &mut y);
         for (val, orig) in y.iter().zip(y_original.iter()) {
             assert_almost_eq!(*val, *orig);
         }
@@ -164,7 +164,7 @@ mod level1 {
     fn test_axpy_nan_poisoning_propagation() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
-        BasicSubProgramsF32::axpy(f32::NAN, &x, &mut y);
+        BasicSubPrograms::axpy(f32::NAN, &x, &mut y);
         assert!(y[0].is_nan());
         assert!(y[1].is_nan());
         assert!(y[2].is_nan());
@@ -174,7 +174,7 @@ mod level1 {
     fn test_axpy_infinity_multiplicative_edge_cases() {
         let x = [0.0, 2.0, -3.0];
         let mut y = [4.0, 5.0, 6.0];
-        BasicSubProgramsF32::axpy(f32::INFINITY, &x, &mut y);
+        BasicSubPrograms::axpy(f32::INFINITY, &x, &mut y);
         assert!(y[0].is_nan());
         assert!(y[1].is_infinite() && y[1].is_sign_positive());
         assert!(y[2].is_infinite() && y[2].is_sign_negative());
@@ -184,7 +184,7 @@ mod level1 {
     fn test_dot_f32() {
         let x = [1.0, 2.0, 3.0];
         let y = [4.0, 5.0, 6.0];
-        let result = BasicSubProgramsF32::dot(&x, &y);
+        let result = BasicSubPrograms::dot(&x, &y);
         assert_almost_eq!(result, 32.0);
     }
 
@@ -192,7 +192,7 @@ mod level1 {
     fn test_dot_f64() {
         let x = [1.0, 2.0, 3.0];
         let y = [4.0, 5.0, 6.0];
-        let result = BasicSubProgramsF64::dot(&x, &y);
+        let result = BasicSubPrograms::dot(&x, &y);
         assert_almost_eq!(result, 32.0);
     }
 
@@ -201,22 +201,22 @@ mod level1 {
     fn test_dot_panic_length_mismatch() {
         let x = [1.0, 2.0];
         let y = [4.0, 5.0, 6.0];
-        BasicSubProgramsF32::dot(&x, &y);
+        BasicSubPrograms::dot(&x, &y);
     }
 
     #[test]
     fn test_dot_geometric_orthogonality_verification() {
         let x = [1.0, 0.0];
         let y = [0.0, 1.0];
-        let result = BasicSubProgramsF32::dot(&x, &y);
+        let result = BasicSubPrograms::dot(&x, &y);
         assert_almost_eq!(result, 0.0);
     }
 
     #[test]
     fn test_dot_euclidean_norm_identity() {
         let x = [3.0, 4.0];
-        let dot_result = BasicSubProgramsF32::dot(&x, &x);
-        let nrm2_result = BasicSubProgramsF32::nrm2(&x);
+        let dot_result = BasicSubPrograms::dot(&x, &x);
+        let nrm2_result = BasicSubPrograms::nrm2(&x);
         assert_almost_eq!(dot_result, nrm2_result * nrm2_result);
     }
 
@@ -224,27 +224,27 @@ mod level1 {
     fn test_dot_catastrophic_cancellation_tracking() {
         // Construct a specialized vector pair interleaving massive and minuscule magnitudes
         // We expect precision loss derived from left-fold iterators here
-        let x = [1e15, -1e15, 1.0, 1.0];
-        let y = [1.0, 1.0, 1.0, 1.0];
-        let result = BasicSubProgramsF32::dot(&x, &y);
-        assert_almost_eq!(result, 2.0);
-        let x2 = [1.0, 1e15, -1e15];
-        let y2 = [1.0, 1.0, 1.0];
-        let result2 = BasicSubProgramsF32::dot(&x2, &y2);
-        assert_almost_eq!(result2, 0.0);
+        let x = [1e15_f32, -1e15_f32, 1.0_f32, 1.0_f32];
+        let y = [1.0_f32, 1.0_f32, 1.0_f32, 1.0_f32];
+        let result = BasicSubPrograms::dot(&x, &y);
+        assert_almost_eq!(result, 2.0_f32);
+        let x2 = [1.0_f32, 1e15_f32, -1e15_f32];
+        let y2 = [1.0_f32, 1.0_f32, 1.0_f32];
+        let result2 = BasicSubPrograms::dot(&x2, &y2);
+        assert_almost_eq!(result2, 0.0_f32);
     }
 
     #[test]
     fn test_nrm2_f32() {
         let x = [3.0, 4.0];
-        let result = BasicSubProgramsF32::nrm2(&x);
+        let result = BasicSubPrograms::nrm2(&x);
         assert_almost_eq!(result, 5.0);
     }
 
     #[test]
     fn test_nrm2_f64() {
         let x = [3.0, 4.0];
-        let result = BasicSubProgramsF64::nrm2(&x);
+        let result = BasicSubPrograms::nrm2(&x);
         assert_almost_eq!(result, 5.0);
     }
 
@@ -253,7 +253,7 @@ mod level1 {
         // Construct vectors composed of large, normal floats whose squares exceed representational limits
         let x = [1e20_f32, 1e20_f32];
         // 1e20 * 1e20 = 1e40 which exceeds f32 max of ~3.4e38.
-        let result = BasicSubProgramsF32::nrm2(&x);
+        let result = BasicSubPrograms::nrm2(&x);
         assert!(result.is_infinite() && result.is_sign_positive());
     }
 
@@ -262,42 +262,42 @@ mod level1 {
         // Construct vectors composed of extremely small floats whose squares underflow
         let x = [1e-25_f32, 1e-25_f32];
         // 1e-25 * 1e-25 = 1e-50 which is smaller than f32 min subnormal (~1e-45).
-        let result = BasicSubProgramsF32::nrm2(&x);
+        let result = BasicSubPrograms::nrm2(&x);
         assert_almost_eq!(result, 0.0);
     }
 
     #[test]
     fn test_iamax_f32() {
         let x = [1.0, -5.0, 3.0];
-        let result = BasicSubProgramsF32::iamax(&x);
+        let result = BasicSubPrograms::iamax(&x);
         assert_eq!(result, 1);
     }
 
     #[test]
     fn test_iamax_f64() {
         let x = [1.0, -5.0, 3.0];
-        let result = BasicSubProgramsF64::iamax(&x);
+        let result = BasicSubPrograms::iamax(&x);
         assert_eq!(result, 1);
     }
 
     #[test]
     fn test_iamax_empty() {
         let x: [f32; 0] = [];
-        let result = BasicSubProgramsF32::iamax(&x);
+        let result = BasicSubPrograms::iamax(&x);
         assert_eq!(result, 0);
     }
 
     #[test]
     fn test_iamax_iterator_stability() {
         let x = [1.0, 5.0, 3.0, 5.0];
-        let result = BasicSubProgramsF32::iamax(&x);
+        let result = BasicSubPrograms::iamax(&x);
         assert_eq!(result, 1);
     }
 
     #[test]
     fn test_iamax_partial_ordering_corruptions() {
         let x = [1.0, f32::NAN, 5.0];
-        let result = BasicSubProgramsF32::iamax(&x);
+        let result = BasicSubPrograms::iamax(&x);
         assert_eq!(result, 2);
     }
 }
@@ -313,7 +313,7 @@ mod level2 {
         // y = 1.0 * A * x + 0.0 * y
         // y[0] = 1*1 + 2*1 = 3
         // y[1] = 3*1 + 4*1 = 7
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
     }
@@ -323,7 +323,7 @@ mod level2 {
         let a = [1.0, 2.0, 3.0, 4.0]; // 2x2 matrix
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0];
-        BasicSubProgramsF64::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
     }
@@ -336,7 +336,7 @@ mod level2 {
         let a = [1.0, 2.0, 3.0]; // Not 2x2
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0];
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
     }
 
     #[test]
@@ -347,7 +347,7 @@ mod level2 {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0]; // Too short
         let mut y = [0.0, 0.0];
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
     }
 
     #[test]
@@ -358,7 +358,7 @@ mod level2 {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [0.0]; // Too short
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
     }
 
     #[test]
@@ -371,7 +371,7 @@ mod level2 {
         // y[0] = 1*1 + 2*1 = 3
         // y[1] = 3*1 + 4*1 = 7
         // y[2] = 5*1 + 6*1 = 11
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 3, 2);
+        BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 3, 2);
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
         assert_almost_eq!(y[2], 11.0);
@@ -386,7 +386,7 @@ mod level2 {
         // y = 1 * A * x + 0 * y
         // y[0] = 1*1 + 2*1 + 3*1 = 6
         // y[1] = 4*1 + 5*1 + 6*1 = 15
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 3);
+        BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 3);
         assert_almost_eq!(y[0], 6.0);
         assert_almost_eq!(y[1], 15.0);
     }
@@ -396,7 +396,7 @@ mod level2 {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [123.45, 67.89]; // High-entropy randomized data
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
     }
@@ -407,7 +407,7 @@ mod level2 {
         let x = [1.0, 1.0];
         let mut y = [123.45, 67.89];
         let y_original = y;
-        BasicSubProgramsF32::gemv(0.0, &a, &x, 1.0, &mut y, 2, 2);
+        BasicSubPrograms::gemv(0.0, &a, &x, 1.0, &mut y, 2, 2);
         for (val, orig) in y.iter().zip(y_original.iter()) {
             assert_almost_eq!(*val, *orig);
         }
@@ -423,7 +423,7 @@ mod level3 {
         let b = [1.0, 0.0, 0.0, 1.0]; // 2x2 identity
         let mut c = [0.0; 4];
         // C = 1.0 * A * I + 0.0 * C = A
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
         assert_almost_eq!(c[0], 1.0);
         assert_almost_eq!(c[1], 2.0);
         assert_almost_eq!(c[2], 3.0);
@@ -435,7 +435,7 @@ mod level3 {
         let a = [1.0, 2.0, 3.0, 4.0]; // 2x2
         let b = [1.0, 0.0, 0.0, 1.0]; // 2x2 identity
         let mut c = [0.0; 4];
-        BasicSubProgramsF64::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
         assert_almost_eq!(c[0], 1.0);
         assert_almost_eq!(c[1], 2.0);
         assert_almost_eq!(c[2], 3.0);
@@ -450,7 +450,7 @@ mod level3 {
         let a = [1.0, 2.0, 3.0];
         let b = [1.0, 0.0, 0.0, 1.0];
         let mut c = [0.0; 4];
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
     }
 
     #[test]
@@ -461,7 +461,7 @@ mod level3 {
         let a = [1.0, 2.0, 3.0, 4.0];
         let b = [1.0, 0.0, 0.0];
         let mut c = [0.0; 4];
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
     }
 
     #[test]
@@ -472,7 +472,7 @@ mod level3 {
         let a = [1.0, 2.0, 3.0, 4.0];
         let b = [1.0, 0.0, 0.0, 1.0];
         let mut c = [0.0; 3];
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
     }
 
     #[test]
@@ -481,7 +481,7 @@ mod level3 {
         let a = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         let b = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         let mut c = [0.0; 4];
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 3);
+        BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 3);
         // Each element of C should be the dot product of a row of A and a col of B.
         // Row of A is [1,1,1]. Col of B is [1,1,1]. Dot product is 3.
         assert_almost_eq!(c[0], 3.0);
@@ -495,7 +495,7 @@ mod level3 {
         let a = [1.0, 2.0, 3.0, 4.0];
         let b = [1.0, 1.0, 1.0, 1.0];
         let mut c2 = [f32::NAN; 4];
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c2, 2, 2, 2);
+        BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c2, 2, 2, 2);
         assert!(c2[0].is_nan());
         assert!(c2[1].is_nan());
         assert!(c2[2].is_nan());
