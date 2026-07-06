@@ -136,6 +136,12 @@ pub use control_rs::math::tests::complex_num_tests::{
     test_limitations::SUITE_DESCRIPTOR_PTR as _,
     test_transcendental::SUITE_DESCRIPTOR_PTR as _,
 };
+#[allow(unused_imports)]
+pub use control_rs::polynomial::tests::polynomial_tests::SUITE_DESCRIPTOR_PTR as _;
+#[allow(unused_imports)]
+pub use control_rs::matrix::tests::matrix_tests::SUITE_DESCRIPTOR_PTR as _;
+#[allow(unused_imports)]
+pub use control_rs::tensor::tests::tensor_tests::SUITE_DESCRIPTOR_PTR as _;
 
 // --- Test Suite Definition ---
 

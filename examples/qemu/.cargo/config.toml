@@ -2,14 +2,14 @@
 target = "thumbv7em-none-eabihf"
 
 [target.thumbv7em-none-eabihf]
-runner = "qemu-system-arm -cpu cortex-m7 -machine mps2-an500 -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
+runner = "qemu-system-arm -cpu cortex-m7 -machine mps2-an500 -icount shift=0,align=off -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
 rustflags = [
     "-C", "link-arg=-Tlink.x",
     "-C", "link-arg=-Thil_suites.x",
 ]
 
 [target.riscv32imac-unknown-none-elf]
-runner = "qemu-system-riscv32 -machine virt -cpu rv32 -bios none -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
+runner = "qemu-system-riscv32 -machine virt -cpu rv32 -bios none -icount shift=0,align=off -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
 rustflags = [
     "-C", "link-arg=-Tmemory.x",
     "-C", "link-arg=-Tlink.x",

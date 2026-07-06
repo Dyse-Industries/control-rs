@@ -287,6 +287,24 @@ pub mod level1 {
             iter.fold(first, |acc, &coeff| acc * x + coeff)
         }
     }
+
+    /// Trait for the SCAL operation: `x = a*x`.
+    ///
+    /// # Generic Arguments
+    /// * `T` - The numeric type of the elements.
+    pub trait SCAL<T: Scalar + Mul<Output = T>> {
+        /// Scales a vector `x` by a scalar `a` in-place.
+        ///
+        /// # Arguments
+        /// * `a` - The scalar scaling factor.
+        /// * `x` - The vector to scale (mutable slice).
+        #[allow(clippy::arithmetic_side_effects)]
+        fn scal(a: T, x: &mut [T]) {
+            for xi in x.iter_mut() {
+                *xi = a.clone() * xi.clone();
+            }
+        }
+    }
 }
 
 /// Level 2 BLAS: Matrix-Vector Operations
@@ -537,5 +555,9 @@ impl<
         + core::ops::Mul<Output = T>
         + Copy,
 > level1::POLYEVAL<T> for BasicSubPrograms
+{
+}
+impl<T: crate::math::num_traits::Scalar + core::ops::Mul<Output = T>>
+    level1::SCAL<T> for BasicSubPrograms
 {
 }

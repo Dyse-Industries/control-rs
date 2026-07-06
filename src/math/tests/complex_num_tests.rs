@@ -1,6 +1,8 @@
 //! Complex number mathematical HIL and unit test suite.
 #![allow(clippy::arithmetic_side_effects)]
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#![allow(dead_code)]
+#![allow(clippy::unwrap_used)]
+#[cfg_attr(all(not(test), not(feature = "std")), control_rs_macros::hil_suite)]
 /// Arithmetic operations tests for complex numbers.
 pub mod test_arithmetic {
     use crate::{
@@ -139,7 +141,7 @@ pub mod test_arithmetic {
     }
 }
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(all(not(test), not(feature = "std")), control_rs_macros::hil_suite)]
 /// Axiomatic property tests for complex numbers (commutativity, associativity, comparisons).
 pub mod test_axioms {
     use crate::{assert_almost_eq, math::complex_num::Complex64};
@@ -200,7 +202,7 @@ pub mod test_axioms {
     }
 }
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(all(not(test), not(feature = "std")), control_rs_macros::hil_suite)]
 /// Basic creation, polar conversion, and initialization tests.
 pub mod test_basics {
     use crate::assert_almost_eq;
@@ -249,7 +251,7 @@ pub mod test_basics {
     }
 }
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(all(not(test), not(feature = "std")), control_rs_macros::hil_suite)]
 /// Core math tests (conjugate, magnitude, phase).
 pub mod test_core_math {
     use crate::{
@@ -289,7 +291,7 @@ pub mod test_core_math {
     }
 }
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(all(not(test), not(feature = "std")), control_rs_macros::hil_suite)]
 /// DSP pattern tests (e.g. twiddle factors).
 pub mod test_dsp_patterns {
     use crate::{
@@ -318,7 +320,7 @@ pub mod test_dsp_patterns {
     }
 }
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(all(not(test), not(feature = "std")), control_rs_macros::hil_suite)]
 /// FFI layout, size, and alignment verification.
 pub mod test_ffi_layout {
     use crate::{
@@ -343,7 +345,7 @@ pub mod test_ffi_layout {
     }
 }
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(all(not(test), not(feature = "std")), control_rs_macros::hil_suite)]
 /// Edge-case limitations, NaN propagation, infinity, and branch cut tests.
 pub mod test_limitations {
     use crate::{
@@ -412,7 +414,7 @@ pub mod test_limitations {
     }
 }
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(all(not(test), not(feature = "std")), control_rs_macros::hil_suite)]
 /// Transcendental (exp, ln, trigonometric, and inverse trigonometric) tests.
 pub mod test_transcendental {
     use crate::{

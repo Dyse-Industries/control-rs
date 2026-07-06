@@ -6,6 +6,10 @@ use crate::math::num_types::{Const, Dim, DimMul};
 use core::marker::PhantomData;
 use core::ops::{AddAssign, DivAssign, MulAssign, SubAssign};
 
+/// Unit and HIL test suites for tensors.
+#[cfg(any(test, feature = "hil"))]
+pub mod tests;
+
 // ==========================================
 // Types and Structs (PascalCase)
 // ==========================================
@@ -264,41 +268,123 @@ where
 
 impl<T, const N: usize, Dims> MulAssign<T> for Tensor<T, N, Dims>
 where
-    T: MulAssign<T> + Copy,
+    T: crate::math::num_traits::Ring,
     Const<N>: Dim,
     Dims: TensorLayout<Size = <Const<N> as Dim>::PeanoTypeNum>,
 {
-    /// Scales all elements of the tensor by a factor.
-    ///
-    /// # Clippy Allow explanation
-    /// Allowed at method level because this wraps primitive multiplication where behavior is defined by `T`.
-    #[allow(clippy::arithmetic_side_effects)]
+    /// Scales all elements of the tensor by a factor using standard BLAS SCAL subprograms.
     #[inline]
     fn mul_assign(&mut self, rhs: T) {
-        for val in &mut self.data {
-            *val *= rhs;
-        }
+        use crate::math::subprograms::BasicSubPrograms;
+        use crate::math::subprograms::level1::SCAL;
+        BasicSubPrograms::scal(rhs, &mut self.data);
     }
 }
 
 impl<T, const N: usize, Dims> DivAssign<T> for Tensor<T, N, Dims>
 where
-    T: DivAssign<T> + Copy,
+    T: crate::math::num_traits::Field,
     Const<N>: Dim,
     Dims: TensorLayout<Size = <Const<N> as Dim>::PeanoTypeNum>,
 {
-    /// Scales all elements of the tensor by a divisor.
-    ///
-    /// # Clippy Allow explanation
-    /// Allowed at method level because this wraps primitive division where behavior is defined by `T`.
+    /// Scales all elements of the tensor by a divisor using standard BLAS SCAL subprograms with reciprocal.
     #[allow(clippy::arithmetic_side_effects)]
     #[inline]
     fn div_assign(&mut self, rhs: T) {
-        for val in &mut self.data {
-            *val /= rhs;
-        }
+        use crate::math::subprograms::BasicSubPrograms;
+        use crate::math::subprograms::level1::SCAL;
+        BasicSubPrograms::scal(T::one() / rhs, &mut self.data);
     }
 }
 
-#[cfg(test)]
-mod tests;
+impl<T, const N: usize, Dims> core::ops::Add<Self> for Tensor<T, N, Dims>
+where
+    T: crate::math::num_traits::Ring,
+    Const<N>: Dim,
+    Dims: TensorLayout<Size = <Const<N> as Dim>::PeanoTypeNum>,
+{
+    type Output = Self;
+
+    #[inline]
+    fn add(mut self, rhs: Self) -> Self::Output {
+        self.add_assign(&rhs);
+        self
+    }
+}
+
+impl<T, const N: usize, Dims> core::ops::Add<&Self> for Tensor<T, N, Dims>
+where
+    T: crate::math::num_traits::Ring,
+    Const<N>: Dim,
+    Dims: TensorLayout<Size = <Const<N> as Dim>::PeanoTypeNum>,
+{
+    type Output = Self;
+
+    #[inline]
+    fn add(mut self, rhs: &Self) -> Self::Output {
+        self.add_assign(rhs);
+        self
+    }
+}
+
+impl<T, const N: usize, Dims> core::ops::Sub<Self> for Tensor<T, N, Dims>
+where
+    T: crate::math::num_traits::Ring + crate::math::ops::Neg<Output = T>,
+    Const<N>: Dim,
+    Dims: TensorLayout<Size = <Const<N> as Dim>::PeanoTypeNum>,
+{
+    type Output = Self;
+
+    #[inline]
+    fn sub(mut self, rhs: Self) -> Self::Output {
+        self.sub_assign(&rhs);
+        self
+    }
+}
+
+impl<T, const N: usize, Dims> core::ops::Sub<&Self> for Tensor<T, N, Dims>
+where
+    T: crate::math::num_traits::Ring + crate::math::ops::Neg<Output = T>,
+    Const<N>: Dim,
+    Dims: TensorLayout<Size = <Const<N> as Dim>::PeanoTypeNum>,
+{
+    type Output = Self;
+
+    #[inline]
+    fn sub(mut self, rhs: &Self) -> Self::Output {
+        self.sub_assign(rhs);
+        self
+    }
+}
+
+impl<T, const N: usize, Dims> core::ops::Mul<T> for Tensor<T, N, Dims>
+where
+    T: crate::math::num_traits::Ring,
+    Const<N>: Dim,
+    Dims: TensorLayout<Size = <Const<N> as Dim>::PeanoTypeNum>,
+{
+    type Output = Self;
+
+    #[allow(clippy::arithmetic_side_effects)]
+    #[inline]
+    fn mul(mut self, rhs: T) -> Self::Output {
+        self *= rhs;
+        self
+    }
+}
+
+impl<T, const N: usize, Dims> core::ops::Div<T> for Tensor<T, N, Dims>
+where
+    T: crate::math::num_traits::Field,
+    Const<N>: Dim,
+    Dims: TensorLayout<Size = <Const<N> as Dim>::PeanoTypeNum>,
+{
+    type Output = Self;
+
+    #[allow(clippy::arithmetic_side_effects)]
+    #[inline]
+    fn div(mut self, rhs: T) -> Self::Output {
+        self /= rhs;
+        self
+    }
+}

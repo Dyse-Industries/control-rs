@@ -37,12 +37,12 @@
 //! use core::marker::PhantomData;
 //!
 //! /// A polynomial with a statically known number of coefficients.
-//! pub struct StaticPolynomial<C: Dim> {
+//! pub struct Polynomial<C: Dim> {
 //!     // The dimension type `C` represents the array length (Degree + 1)
 //!     _marker: PhantomData<C>,
 //! }
 //!
-//! impl<C: Dim> StaticPolynomial<C> {
+//! impl<C: Dim> Polynomial<C> {
 //!     pub fn new() -> Self {
 //!         Self { _marker: PhantomData }
 //!     }
@@ -51,9 +51,9 @@
 //! /// Multiplies two polynomials of length N and M.
 //! /// The resulting polynomial requires exactly (N + M) - 1 coefficients.
 //! pub fn mul_poly<N, M, Sum, Out>(
-//!     _a: &StaticPolynomial<N>,
-//!     _b: &StaticPolynomial<M>,
-//! ) -> StaticPolynomial<Out>
+//!     _a: &Polynomial<N>,
+//!     _b: &Polynomial<M>,
+//! ) -> Polynomial<Out>
 //! where
 //!     N: Dim + DimAdd<M, Output = Sum>,
 //!     M: Dim,
@@ -62,15 +62,15 @@
 //! {
 //!     // The compiler enforces that `Out` is exactly N + M - 1.
 //!     // Attempting to return a polynomial of any other size fails to compile.
-//!     StaticPolynomial::<Out>::new()
+//!     Polynomial::<Out>::new()
 //! }
 //!
 //! // --- Usage ---
 //! // Polynomial A: Length 3 (e.g., ax^2 + bx + c)
-//! let p_a = StaticPolynomial::<Const<3>>::new();
+//! let p_a = Polynomial::<Const<3>>::new();
 //!
 //! // Polynomial B: Length 2 (e.g., dx + e)
-//! let p_b = StaticPolynomial::<Const<2>>::new();
+//! let p_b = Polynomial::<Const<2>>::new();
 //!
 //! // Result C: The compiler infers length 4 (3 + 2-1).
 //! // Degree 2 * Degree 1 = Degree 3 (which requires 4 coefficients).

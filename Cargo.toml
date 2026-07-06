@@ -14,6 +14,7 @@ members = [
     "control-rs-hil",
     "control-rs-xtask",
     "control-rs-macros",
+    "examples/numerical_methods",
 ]
 default-members = ["."]
 
@@ -55,22 +56,6 @@ control-rs-hil = { path = "control-rs-hil", optional = true }
 [features]
 std = []
 hil = ["dep:control-rs-macros", "dep:control-rs-hil"]
-
-[dev-dependencies]
-criterion = "0.5.1"
-
-[[bench]]
-name = "matrix_benchmarks"
-harness = false
-
-[[bench]]
-name = "tensor_benchmarks"
-harness = false
-
-[[bench]]
-name = "polynomial_benchmarks"
-harness = false
-
 
 [profile.release]
 # Enable Link Time Optimization (LTO)

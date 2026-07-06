@@ -3,7 +3,7 @@
 use crate::assert_almost_eq;
 use crate::math::subprograms::{
     BasicSubPrograms,
-    level1::{AXPY, DOT, IAMAX, NRM2},
+    level1::{AXPY, DOT, IAMAX, NRM2, SCAL},
     level2::GEMV,
     level3::GEMM,
 };
@@ -107,6 +107,15 @@ mod fuzzing {
 
 mod level1 {
     use super::*;
+
+    #[test]
+    fn test_scal_f32() {
+        let mut x = [1.0, 2.0, 3.0];
+        BasicSubPrograms::scal(2.0, &mut x);
+        assert_almost_eq!(x[0], 2.0);
+        assert_almost_eq!(x[1], 4.0);
+        assert_almost_eq!(x[2], 6.0);
+    }
 
     #[test]
     fn test_axpy_f32() {

@@ -4,6 +4,11 @@
 //! and structural specializations like `UpperTriangular`, `LowerTriangular`, and `Symmetric`.
 
 use crate::math::ArithmeticError;
+use core::ops::{AddAssign, SubAssign};
+
+/// Unit and HIL test suites for matrices.
+#[cfg(any(test, feature = "hil"))]
+pub mod tests;
 
 /// A column-major M x N static `Matrix` allocated on the stack.
 /// Inner array layout: C elements of type [T; R] (column-major).
@@ -48,6 +53,29 @@ pub struct Symmetric<T, const D: usize> {
 }
 
 impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
+    /// Returns a flat mutable slice of the matrix data in column-major order.
+    #[allow(clippy::arithmetic_side_effects)]
+    #[inline]
+    pub const fn as_mut_slice(&mut self) -> &mut [T] {
+        // SAFETY: `[[T; R]; C]` has the exact same memory layout and size as `[T; R * C]`.
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                self.data.as_mut_ptr().cast::<T>(),
+                R * C,
+            )
+        }
+    }
+
+    /// Returns a flat read-only slice of the matrix data in column-major order.
+    #[allow(clippy::arithmetic_side_effects)]
+    #[inline]
+    pub const fn as_slice(&self) -> &[T] {
+        // SAFETY: `[[T; R]; C]` has the exact same memory layout and size as `[T; R * C]`.
+        unsafe {
+            core::slice::from_raw_parts(self.data.as_ptr().cast::<T>(), R * C)
+        }
+    }
+
     /// Returns the number of columns.
     #[inline(always)]
     pub const fn cols(&self) -> usize {
@@ -95,9 +123,19 @@ where
     fn add_assign(&mut self, rhs: &Self) {
         use crate::math::subprograms::BasicSubPrograms;
         use crate::math::subprograms::level1::AXPY;
-        for (dst_col, src_col) in self.data.iter_mut().zip(rhs.data.iter()) {
-            BasicSubPrograms::axpy(T::ONE, src_col, dst_col);
-        }
+        BasicSubPrograms::axpy(T::ONE, rhs.as_slice(), self.as_mut_slice());
+    }
+}
+
+impl<T, const R: usize, const C: usize> core::ops::AddAssign<Self>
+    for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Ring,
+{
+    /// Performs element-wise matrix addition in place using standard BLAS AXPY subprograms.
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        self.add_assign(&rhs);
     }
 }
 
@@ -116,9 +154,174 @@ where
     fn sub_assign(&mut self, rhs: &Self) {
         use crate::math::subprograms::BasicSubPrograms;
         use crate::math::subprograms::level1::AXPY;
-        for (dst_col, src_col) in self.data.iter_mut().zip(rhs.data.iter()) {
-            BasicSubPrograms::axpy(-T::ONE, src_col, dst_col);
-        }
+        BasicSubPrograms::axpy(-T::ONE, rhs.as_slice(), self.as_mut_slice());
+    }
+}
+
+impl<T, const R: usize, const C: usize> core::ops::SubAssign<Self>
+    for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Ring + crate::math::ops::Neg<Output = T>,
+{
+    /// Performs element-wise matrix subtraction in place using standard BLAS AXPY subprograms.
+    #[inline]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.sub_assign(&rhs);
+    }
+}
+
+impl<T, const R: usize, const C: usize> core::ops::Add<Self> for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Ring,
+{
+    type Output = Self;
+
+    #[inline]
+    fn add(mut self, rhs: Self) -> Self::Output {
+        self.add_assign(&rhs);
+        self
+    }
+}
+
+impl<T, const R: usize, const C: usize> core::ops::Add<&Self>
+    for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Ring,
+{
+    type Output = Self;
+
+    #[inline]
+    fn add(mut self, rhs: &Self) -> Self::Output {
+        self.add_assign(rhs);
+        self
+    }
+}
+
+impl<T, const R: usize, const C: usize> core::ops::Sub<Self> for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Ring + crate::math::ops::Neg<Output = T>,
+{
+    type Output = Self;
+
+    #[inline]
+    fn sub(mut self, rhs: Self) -> Self::Output {
+        self.sub_assign(&rhs);
+        self
+    }
+}
+
+impl<T, const R: usize, const C: usize> core::ops::Sub<&Self>
+    for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Ring + crate::math::ops::Neg<Output = T>,
+{
+    type Output = Self;
+
+    #[inline]
+    fn sub(mut self, rhs: &Self) -> Self::Output {
+        self.sub_assign(rhs);
+        self
+    }
+}
+
+impl<T, const R: usize, const C: usize> core::ops::MulAssign<T>
+    for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Ring,
+{
+    /// Scales the matrix by a scalar in-place using standard BLAS SCAL subprograms.
+    #[inline]
+    fn mul_assign(&mut self, rhs: T) {
+        use crate::math::subprograms::BasicSubPrograms;
+        use crate::math::subprograms::level1::SCAL;
+        BasicSubPrograms::scal(rhs, self.as_mut_slice());
+    }
+}
+
+impl<T, const R: usize, const C: usize> core::ops::Mul<T> for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Ring,
+{
+    type Output = Self;
+
+    /// Scales the matrix by a scalar.
+    #[allow(clippy::arithmetic_side_effects)]
+    #[inline]
+    fn mul(mut self, rhs: T) -> Self::Output {
+        self *= rhs;
+        self
+    }
+}
+
+impl<T, const R: usize, const C: usize> core::ops::DivAssign<T>
+    for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Field,
+{
+    /// Divides the matrix by a scalar in-place using standard BLAS SCAL subprograms with reciprocal.
+    #[allow(clippy::arithmetic_side_effects)]
+    #[inline]
+    fn div_assign(&mut self, rhs: T) {
+        use crate::math::subprograms::BasicSubPrograms;
+        use crate::math::subprograms::level1::SCAL;
+        BasicSubPrograms::scal(T::one() / rhs, self.as_mut_slice());
+    }
+}
+
+impl<T, const R: usize, const C: usize> core::ops::Div<T> for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Field,
+{
+    type Output = Self;
+
+    /// Divides the matrix by a scalar.
+    #[allow(clippy::arithmetic_side_effects)]
+    #[inline]
+    fn div(mut self, rhs: T) -> Self::Output {
+        self /= rhs;
+        self
+    }
+}
+
+impl<T, const R: usize, const C: usize, const C2: usize>
+    core::ops::Mul<&Matrix<T, C, C2>> for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Ring + Copy,
+{
+    type Output = Matrix<T, R, C2>;
+
+    /// Multiplies two matrices using standard BLAS GEMM subprograms.
+    #[inline]
+    fn mul(self, rhs: &Matrix<T, C, C2>) -> Self::Output {
+        use crate::math::subprograms::BasicSubPrograms;
+        use crate::math::subprograms::level3::GEMM;
+        let mut out = Matrix::new([[T::ZERO; R]; C2]);
+        BasicSubPrograms::gemm(
+            T::ONE,
+            rhs.as_slice(),
+            self.as_slice(),
+            T::ZERO,
+            out.as_mut_slice(),
+            C2,
+            R,
+            C,
+        );
+        out
+    }
+}
+
+impl<T, const R: usize, const C: usize, const C2: usize>
+    core::ops::Mul<Matrix<T, C, C2>> for Matrix<T, R, C>
+where
+    T: crate::math::num_traits::Ring + Copy,
+{
+    type Output = Matrix<T, R, C2>;
+
+    /// Multiplies two matrices using standard BLAS GEMM subprograms.
+    #[allow(clippy::arithmetic_side_effects)]
+    #[inline]
+    fn mul(self, rhs: Matrix<T, C, C2>) -> Self::Output {
+        self * &rhs
     }
 }
 
@@ -260,6 +463,3 @@ impl<T: Copy, const D: usize> Symmetric<T, D> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
