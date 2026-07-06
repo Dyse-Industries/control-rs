@@ -142,6 +142,16 @@ pub use control_rs::polynomial::tests::polynomial_tests::SUITE_DESCRIPTOR_PTR as
 pub use control_rs::matrix::tests::matrix_tests::SUITE_DESCRIPTOR_PTR as _;
 #[allow(unused_imports)]
 pub use control_rs::tensor::tests::tensor_tests::SUITE_DESCRIPTOR_PTR as _;
+#[allow(unused_imports)]
+pub use control_rs::math::tests::{
+    convolution_tests::convolution_tests::SUITE_DESCRIPTOR_PTR as _,
+    fft_tests::fft_tests::SUITE_DESCRIPTOR_PTR as _,
+    num_trait_tests::num_trait_tests::SUITE_DESCRIPTOR_PTR as _,
+    num_type_tests::num_type_tests::SUITE_DESCRIPTOR_PTR as _,
+    op_tests::op_tests::SUITE_DESCRIPTOR_PTR as _,
+    storage_tests::storage_tests::SUITE_DESCRIPTOR_PTR as _,
+    subprogram_tests::subprogram_tests::SUITE_DESCRIPTOR_PTR as _,
+};
 
 // --- Test Suite Definition ---
 

@@ -1,26 +1,49 @@
-#![allow(unused_imports)]
+//! Basic Linear Algebra Subprograms HIL and unit test suite.
+#![allow(
+    unused_imports,
+    clippy::float_cmp,
+    clippy::arithmetic_side_effects,
+    clippy::unwrap_used,
+    clippy::cast_precision_loss,
+    clippy::used_underscore_items,
+    clippy::missing_const_for_fn,
+    clippy::module_inception,
+    dead_code
+)]
 
-use crate::assert_almost_eq;
-use crate::math::subprograms::{
-    BasicSubPrograms,
-    level1::{AXPY, DOT, IAMAX, NRM2, SCAL},
-    level2::GEMV,
-    level3::GEMM,
-};
+#[cfg_attr(all(not(test), not(feature = "std")), control_rs_macros::hil_suite)]
+/// HIL and unit test suite for basic linear algebra subprograms.
+pub mod subprogram_tests {
+    use crate::assert_almost_eq;
+    use crate::math::subprograms::{
+        BasicSubPrograms,
+        level1::{AXPY, DOT, IAMAX, NRM2, SCAL},
+        level2::GEMV,
+        level3::GEMM,
+    };
 
-mod fuzzing {
-    use super::*;
+    /// Basic LCG for tests without external dependencies
+    fn _rand_lcg(seed: u32) -> u32 {
+        seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223)
+    }
 
-    #[test]
+    fn _next_f32(state: &mut u32) -> f32 {
+        *state = _rand_lcg(*state);
+        // Simple 0 to 1 mapping
+        (*state as f32) / (u32::MAX as f32)
+    }
+
+    // --- Fuzzing Tests ---
+
+    #[cfg_attr(test, test)]
     fn test_symmetric_topology_preservation() {
-        let mut rng = rand_lcg(1234);
+        let mut rng = 1234;
         for _ in 0..100 {
-            // A = A^T
             let mut a = [0.0; 4];
-            a[0] = next_f32(&mut rng);
-            a[1] = next_f32(&mut rng);
+            a[0] = _next_f32(&mut rng);
+            a[1] = _next_f32(&mut rng);
             a[2] = a[1];
-            a[3] = next_f32(&mut rng);
+            a[3] = _next_f32(&mut rng);
 
             let mut c = [0.0; 4];
             BasicSubPrograms::gemm(1.0, &a, &a, 0.0, &mut c, 2, 2, 2);
@@ -28,25 +51,23 @@ mod fuzzing {
         }
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_distributive_variance_bounds() {
-        let mut rng = rand_lcg(5678);
+        let mut rng = 5678;
         for _ in 0..100 {
             let m = [
-                next_f32(&mut rng),
-                next_f32(&mut rng),
-                next_f32(&mut rng),
-                next_f32(&mut rng),
+                _next_f32(&mut rng),
+                _next_f32(&mut rng),
+                _next_f32(&mut rng),
+                _next_f32(&mut rng),
             ];
-            let v1 = [next_f32(&mut rng), next_f32(&mut rng)];
-            let v2 = [next_f32(&mut rng), next_f32(&mut rng)];
+            let v1 = [_next_f32(&mut rng), _next_f32(&mut rng)];
+            let v2 = [_next_f32(&mut rng), _next_f32(&mut rng)];
 
-            // M(v1 + v2)
             let v_sum = [v1[0] + v2[0], v1[1] + v2[1]];
             let mut r1 = [0.0; 2];
             BasicSubPrograms::gemv(1.0, &m, &v_sum, 0.0, &mut r1, 2, 2);
 
-            // Mv1 + Mv2
             let mut r2a = [0.0; 2];
             let mut r2b = [0.0; 2];
             BasicSubPrograms::gemv(1.0, &m, &v1, 0.0, &mut r2a, 2, 2);
@@ -59,56 +80,33 @@ mod fuzzing {
         }
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_denormalized_subnormal_signal_decays() {
         let x = [1e-40_f32, 1e-42_f32];
         let mut y = [1e-40_f32, 1e-42_f32];
         BasicSubPrograms::axpy(0.5, &x, &mut y);
-        // Ensure no pipeline panics occurred and result is calculated
         assert!(y[0] > 0.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_clone_call_performance_benchmarking() {
-        // Can't easily count clones without mocking the type, but basic f32/f64 subprograms only accept these types anyway.
-        // We will just verify it runs.
         let a = [1.0, 2.0];
         let mut y = [3.0, 4.0];
         BasicSubPrograms::axpy(1.0, &a, &mut y);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_mixed_sign_zero_invariance() {
         let x = [0.0_f32, -0.0_f32];
         let mut y = [0.0_f32, -0.0_f32];
         BasicSubPrograms::axpy(1.0, &x, &mut y);
-        // Verify bitwise sign parity
         assert_eq!(y[0].to_bits(), 0.0_f32.to_bits());
         assert_eq!(y[1].to_bits(), (-0.0_f32).to_bits());
     }
 
-    /// Basic LCG for tests without external dependencies
-    ///
-    /// A. M. Frieze, R. Kannan, and J. C. Lagarias , "Linear congruential
-    /// generators do not produce random sequences," in Proceedings of the 25th
-    /// Annual Symposium on Foundations of Computer Science , IEEE Computer
-    /// Society Press , 1984 , pp. 480–484.
-    fn rand_lcg(seed: u32) -> u32 {
-        seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223)
-    }
+    // --- Level 1 Tests ---
 
-    #[allow(clippy::cast_precision_loss)]
-    fn next_f32(state: &mut u32) -> f32 {
-        *state = rand_lcg(*state);
-        // Simple 0 to 1 mapping
-        (*state as f32) / (u32::MAX as f32)
-    }
-}
-
-mod level1 {
-    use super::*;
-
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_scal_f32() {
         let mut x = [1.0, 2.0, 3.0];
         BasicSubPrograms::scal(2.0, &mut x);
@@ -117,7 +115,7 @@ mod level1 {
         assert_almost_eq!(x[2], 6.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_axpy_f32() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
@@ -127,7 +125,7 @@ mod level1 {
         assert_almost_eq!(y[2], 12.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_axpy_f64() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
@@ -137,17 +135,22 @@ mod level1 {
         assert_almost_eq!(y[2], 12.0);
     }
 
-    #[test]
-    #[should_panic(
-        expected = "assertion `left == right` failed\n  left: 2\n right: 3"
-    )]
-    fn test_axpy_panic_length_mismatch() {
-        let x = [1.0, 2.0];
-        let mut y = [4.0, 5.0, 6.0];
-        BasicSubPrograms::axpy(2.0, &x, &mut y);
+    #[cfg(test)]
+    mod panic_tests_axpy {
+        use super::*;
+
+        #[test]
+        #[should_panic(
+            expected = "assertion `left == right` failed\n  left: 2\n right: 3"
+        )]
+        fn test_axpy_panic_length_mismatch() {
+            let x = [1.0, 2.0];
+            let mut y = [4.0, 5.0, 6.0];
+            BasicSubPrograms::axpy(2.0, &x, &mut y);
+        }
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_axpy_zero_scale_identity_preservation() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
@@ -158,7 +161,7 @@ mod level1 {
         }
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_axpy_zero_vector_multiplicative_invariance() {
         let x = [0.0, 0.0, 0.0];
         let mut y = [4.0, 5.0, 6.0];
@@ -169,7 +172,7 @@ mod level1 {
         }
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_axpy_nan_poisoning_propagation() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
@@ -179,7 +182,7 @@ mod level1 {
         assert!(y[2].is_nan());
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_axpy_infinity_multiplicative_edge_cases() {
         let x = [0.0, 2.0, -3.0];
         let mut y = [4.0, 5.0, 6.0];
@@ -189,7 +192,7 @@ mod level1 {
         assert!(y[2].is_infinite() && y[2].is_sign_negative());
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_dot_f32() {
         let x = [1.0, 2.0, 3.0];
         let y = [4.0, 5.0, 6.0];
@@ -197,7 +200,7 @@ mod level1 {
         assert_almost_eq!(result, 32.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_dot_f64() {
         let x = [1.0, 2.0, 3.0];
         let y = [4.0, 5.0, 6.0];
@@ -205,15 +208,20 @@ mod level1 {
         assert_almost_eq!(result, 32.0);
     }
 
-    #[test]
-    #[should_panic(expected = "")]
-    fn test_dot_panic_length_mismatch() {
-        let x = [1.0, 2.0];
-        let y = [4.0, 5.0, 6.0];
-        BasicSubPrograms::dot(&x, &y);
+    #[cfg(test)]
+    mod panic_tests_dot {
+        use super::*;
+
+        #[test]
+        #[should_panic(expected = "")]
+        fn test_dot_panic_length_mismatch() {
+            let x = [1.0, 2.0];
+            let y = [4.0, 5.0, 6.0];
+            BasicSubPrograms::dot(&x, &y);
+        }
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_dot_geometric_orthogonality_verification() {
         let x = [1.0, 0.0];
         let y = [0.0, 1.0];
@@ -221,7 +229,7 @@ mod level1 {
         assert_almost_eq!(result, 0.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_dot_euclidean_norm_identity() {
         let x = [3.0, 4.0];
         let dot_result = BasicSubPrograms::dot(&x, &x);
@@ -229,10 +237,8 @@ mod level1 {
         assert_almost_eq!(dot_result, nrm2_result * nrm2_result);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_dot_catastrophic_cancellation_tracking() {
-        // Construct a specialized vector pair interleaving massive and minuscule magnitudes
-        // We expect precision loss derived from left-fold iterators here
         let x = [1e15_f32, -1e15_f32, 1.0_f32, 1.0_f32];
         let y = [1.0_f32, 1.0_f32, 1.0_f32, 1.0_f32];
         let result = BasicSubPrograms::dot(&x, &y);
@@ -243,93 +249,84 @@ mod level1 {
         assert_almost_eq!(result2, 0.0_f32);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_nrm2_f32() {
         let x = [3.0, 4.0];
         let result = BasicSubPrograms::nrm2(&x);
         assert_almost_eq!(result, 5.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_nrm2_f64() {
         let x = [3.0, 4.0];
         let result = BasicSubPrograms::nrm2(&x);
         assert_almost_eq!(result, 5.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_nrm2_premature_domain_overflow() {
-        // Construct vectors composed of large, normal floats whose squares exceed representational limits
         let x = [1e20_f32, 1e20_f32];
-        // 1e20 * 1e20 = 1e40 which exceeds f32 max of ~3.4e38.
         let result = BasicSubPrograms::nrm2(&x);
         assert!(result.is_infinite() && result.is_sign_positive());
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_nrm2_premature_domain_underflow() {
-        // Construct vectors composed of extremely small floats whose squares underflow
         let x = [1e-25_f32, 1e-25_f32];
-        // 1e-25 * 1e-25 = 1e-50 which is smaller than f32 min subnormal (~1e-45).
         let result = BasicSubPrograms::nrm2(&x);
         assert_almost_eq!(result, 0.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_iamax_f32() {
         let x = [1.0, -5.0, 3.0];
         let result = BasicSubPrograms::iamax(&x);
         assert_eq!(result, 1);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_iamax_f64() {
         let x = [1.0, -5.0, 3.0];
         let result = BasicSubPrograms::iamax(&x);
         assert_eq!(result, 1);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_iamax_empty() {
         let x: [f32; 0] = [];
         let result = BasicSubPrograms::iamax(&x);
         assert_eq!(result, 0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_iamax_iterator_stability() {
         let x = [1.0, 5.0, 3.0, 5.0];
         let result = BasicSubPrograms::iamax(&x);
         assert_eq!(result, 1);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_iamax_partial_ordering_corruptions() {
         let x = [1.0, f32::NAN, 5.0];
         let result = BasicSubPrograms::iamax(&x);
         assert_eq!(result, 2);
     }
-}
 
-mod level2 {
-    use super::*;
+    // --- Level 2 Tests ---
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_gemv_f32() {
-        let a = [1.0, 2.0, 3.0, 4.0]; // 2x2 matrix
+        let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0];
-        // y = 1.0 * A * x + 0.0 * y
-        // y[0] = 1*1 + 2*1 = 3
-        // y[1] = 3*1 + 4*1 = 7
         BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_gemv_f64() {
-        let a = [1.0, 2.0, 3.0, 4.0]; // 2x2 matrix
+        let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0];
         BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
@@ -337,80 +334,76 @@ mod level2 {
         assert_almost_eq!(y[1], 7.0);
     }
 
-    #[test]
-    #[should_panic(
-        expected = "assertion `left == right` failed\n  left: 3\n right: 4"
-    )]
-    fn test_gemv_panic_a_len() {
-        let a = [1.0, 2.0, 3.0]; // Not 2x2
-        let x = [1.0, 1.0];
-        let mut y = [0.0, 0.0];
-        BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+    #[cfg(test)]
+    mod panic_tests_gemv {
+        use super::*;
+
+        #[test]
+        #[should_panic(
+            expected = "assertion `left == right` failed\n  left: 3\n right: 4"
+        )]
+        fn test_gemv_panic_a_len() {
+            let a = [1.0, 2.0, 3.0];
+            let x = [1.0, 1.0];
+            let mut y = [0.0, 0.0];
+            BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "assertion `left == right` failed\n  left: 1\n right: 2"
+        )]
+        fn test_gemv_panic_x_len() {
+            let a = [1.0, 2.0, 3.0, 4.0];
+            let x = [1.0];
+            let mut y = [0.0, 0.0];
+            BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "assertion `left == right` failed\n  left: 1\n right: 2"
+        )]
+        fn test_gemv_panic_y_len() {
+            let a = [1.0, 2.0, 3.0, 4.0];
+            let x = [1.0, 1.0];
+            let mut y = [0.0];
+            BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        }
     }
 
-    #[test]
-    #[should_panic(
-        expected = "assertion `left == right` failed\n  left: 1\n right: 2"
-    )]
-    fn test_gemv_panic_x_len() {
-        let a = [1.0, 2.0, 3.0, 4.0];
-        let x = [1.0]; // Too short
-        let mut y = [0.0, 0.0];
-        BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "assertion `left == right` failed\n  left: 1\n right: 2"
-    )]
-    fn test_gemv_panic_y_len() {
-        let a = [1.0, 2.0, 3.0, 4.0];
-        let x = [1.0, 1.0];
-        let mut y = [0.0]; // Too short
-        BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
-    }
-
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_gemv_asymmetric_rectangular_tall_processing() {
-        // 3x2 matrix (tall)
         let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0, 0.0];
-        // y = 1 * A * x + 0 * y
-        // y[0] = 1*1 + 2*1 = 3
-        // y[1] = 3*1 + 4*1 = 7
-        // y[2] = 5*1 + 6*1 = 11
         BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 3, 2);
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
         assert_almost_eq!(y[2], 11.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_gemv_asymmetric_rectangular_wide_processing() {
-        // 2x3 matrix (wide)
         let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let x = [1.0, 1.0, 1.0];
         let mut y = [0.0, 0.0];
-        // y = 1 * A * x + 0 * y
-        // y[0] = 1*1 + 2*1 + 3*1 = 6
-        // y[1] = 4*1 + 5*1 + 6*1 = 15
         BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 3);
         assert_almost_eq!(y[0], 6.0);
         assert_almost_eq!(y[1], 15.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_gemv_destination_overwrite_identity() {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
-        let mut y = [123.45, 67.89]; // High-entropy randomized data
+        let mut y = [123.45, 67.89];
         BasicSubPrograms::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_gemv_destination_suppression_identity() {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
@@ -421,17 +414,14 @@ mod level2 {
             assert_almost_eq!(*val, *orig);
         }
     }
-}
 
-mod level3 {
-    use super::*;
+    // --- Level 3 Tests ---
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_gemm_f32() {
-        let a = [1.0, 2.0, 3.0, 4.0]; // 2x2
-        let b = [1.0, 0.0, 0.0, 1.0]; // 2x2 identity
+        let a = [1.0, 2.0, 3.0, 4.0];
+        let b = [1.0, 0.0, 0.0, 1.0];
         let mut c = [0.0; 4];
-        // C = 1.0 * A * I + 0.0 * C = A
         BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
         assert_almost_eq!(c[0], 1.0);
         assert_almost_eq!(c[1], 2.0);
@@ -439,10 +429,10 @@ mod level3 {
         assert_almost_eq!(c[3], 4.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_gemm_f64() {
-        let a = [1.0, 2.0, 3.0, 4.0]; // 2x2
-        let b = [1.0, 0.0, 0.0, 1.0]; // 2x2 identity
+        let a = [1.0, 2.0, 3.0, 4.0];
+        let b = [1.0, 0.0, 0.0, 1.0];
         let mut c = [0.0; 4];
         BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
         assert_almost_eq!(c[0], 1.0);
@@ -451,55 +441,57 @@ mod level3 {
         assert_almost_eq!(c[3], 4.0);
     }
 
-    #[test]
-    #[should_panic(
-        expected = "assertion `left == right` failed\n  left: 3\n right: 4"
-    )]
-    fn test_gemm_panic_a_len() {
-        let a = [1.0, 2.0, 3.0];
-        let b = [1.0, 0.0, 0.0, 1.0];
-        let mut c = [0.0; 4];
-        BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+    #[cfg(test)]
+    mod panic_tests_gemm {
+        use super::*;
+
+        #[test]
+        #[should_panic(
+            expected = "assertion `left == right` failed\n  left: 3\n right: 4"
+        )]
+        fn test_gemm_panic_a_len() {
+            let a = [1.0, 2.0, 3.0];
+            let b = [1.0, 0.0, 0.0, 1.0];
+            let mut c = [0.0; 4];
+            BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "assertion `left == right` failed\n  left: 3\n right: 4"
+        )]
+        fn test_gemm_panic_b_len() {
+            let a = [1.0, 2.0, 3.0, 4.0];
+            let b = [1.0, 0.0, 0.0];
+            let mut c = [0.0; 4];
+            BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "assertion `left == right` failed\n  left: 3\n right: 4"
+        )]
+        fn test_gemm_panic_c_len() {
+            let a = [1.0, 2.0, 3.0, 4.0];
+            let b = [1.0, 0.0, 0.0, 1.0];
+            let mut c = [0.0; 3];
+            BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        }
     }
 
-    #[test]
-    #[should_panic(
-        expected = "assertion `left == right` failed\n  left: 3\n right: 4"
-    )]
-    fn test_gemm_panic_b_len() {
-        let a = [1.0, 2.0, 3.0, 4.0];
-        let b = [1.0, 0.0, 0.0];
-        let mut c = [0.0; 4];
-        BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
-    }
-
-    #[test]
-    #[should_panic(
-        expected = "assertion `left == right` failed\n  left: 3\n right: 4"
-    )]
-    fn test_gemm_panic_c_len() {
-        let a = [1.0, 2.0, 3.0, 4.0];
-        let b = [1.0, 0.0, 0.0, 1.0];
-        let mut c = [0.0; 3];
-        BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
-    }
-
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_gemm_asymmetric_shared_axis_bounds() {
-        // A is 2x3, B is 3x2. C is 2x2. Shared axis is 3.
         let a = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         let b = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         let mut c = [0.0; 4];
         BasicSubPrograms::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 3);
-        // Each element of C should be the dot product of a row of A and a col of B.
-        // Row of A is [1,1,1]. Col of B is [1,1,1]. Dot product is 3.
         assert_almost_eq!(c[0], 3.0);
         assert_almost_eq!(c[1], 3.0);
         assert_almost_eq!(c[2], 3.0);
         assert_almost_eq!(c[3], 3.0);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_gemm_tainted_state_nullification_failure() {
         let a = [1.0, 2.0, 3.0, 4.0];
         let b = [1.0, 1.0, 1.0, 1.0];
