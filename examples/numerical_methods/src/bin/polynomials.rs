@@ -1,69 +1,105 @@
 //! Demonstration of the generic compile-time Polynomial struct.
+//!
+//! This example models a classical closed-loop control system where a DC motor (plant)
+//! is controlled by a PI controller. The open-loop and closed-loop transfer functions
+//! are calculated algebraically using polynomial arithmetic, evaluation, derivatives, and division.
+
 use control_rs::polynomial::{Constant, Line, Polynomial};
 
 fn main() {
-    println!("=== Polynomial Demonstration ===");
+    println!("=== Polynomial Demonstration (Classical Control) ===");
 
-    // 1. Creation from coefficients
-    // Coefficients are stored in ascending order: p(x) = c0 + c1*x + c2*x^2 + ...
-    // p1(x) = 1 + 2x + 3x^2
-    let p1 = Polynomial::from_coefficients([1.0, 2.0, 3.0]);
-    println!("p1(x) coefficients (ascending): {:?}", p1.coefficients());
-    println!("p1(x) degree: {:?}", p1.degree());
-    println!("p1(x) leading coefficient: {:?}", p1.leading_coefficient());
+    // 1. Model the Plant: G(s) = 3 / (0.5s + 1)
+    // In control-rs, polynomials are defined with coefficients in ascending order:
+    // P(s) = c0 + c1*s + c2*s^2 + ...
+    // Numerator: N_g(s) = 3.0 (degree 0)
+    let n_g = Polynomial::from_coefficients([3.0]);
+    // Denominator: D_g(s) = 1.0 + 0.5s (degree 1)
+    let d_g = Polynomial::from_coefficients([1.0, 0.5]);
 
-    // Creation from descending order (standard mathematical notation: ax^2 + bx + c)
-    // p2(x) = 3x^2 + 2x + 1
-    let p2 = Polynomial::from_descending([3.0, 2.0, 1.0]);
-    println!("p2(x) coefficients (ascending): {:?}", p2.coefficients());
+    println!(
+        "Plant Numerator N_g(s) coefficients: {:?}",
+        n_g.coefficients()
+    );
+    println!(
+        "Plant Denominator D_g(s) coefficients: {:?}",
+        d_g.coefficients()
+    );
 
-    // 2. Polynomial Evaluation
-    // Evaluates p1(x) at x = 2.0: 1.0 + 2.0*(2.0) + 3.0*(4.0) = 17.0
-    let x_val = 2.0;
-    println!("p1({}) = {}", x_val, p1.evaluate(x_val));
+    // 2. Model the PI Controller: C(s) = K_p + K_i/s = (K_p * s + K_i) / s
+    // Let's set K_p = 2.0 and K_i = 1.0.
+    // Numerator: N_c(s) = 1.0 + 2.0s (degree 1)
+    let n_c = Polynomial::from_coefficients([1.0, 2.0]);
+    // Denominator: D_c(s) = 0.0 + 1.0s (degree 1)
+    let d_c = Polynomial::from_coefficients([0.0, 1.0]);
 
-    // 3. Aliases: Constant and Line
-    let c = Constant::new(5.0); // p(x) = 5
-    let l = Line::new(2.0, 3.0); // p(x) = 2x + 3
-    println!("Constant polynomial evaluation c(10): {}", c.evaluate(10.0));
-    println!("Linear polynomial evaluation l(4): {}", l.evaluate(4.0));
+    // 3. Compute Open-loop Transfer Function: G_ol(s) = C(s) * G(s) = N_ol(s) / D_ol(s)
+    // N_ol(s) = N_c(s) * N_g(s) -> (1.0 + 2.0s) * 3.0 = 3.0 + 6.0s
+    // D_ol(s) = D_c(s) * D_g(s) -> s * (1.0 + 0.5s) = 0.0 + 1.0s + 0.5s^2
+    // Polynomial multiplication returns a new polynomial of size OUT = N + M - 1.
+    let n_ol: Polynomial<f64, 2> = n_c.mul_poly(&n_g);
+    let d_ol: Polynomial<f64, 3> = d_c.mul_poly(&d_g);
 
-    // 4. Arithmetic (Addition / Subtraction / Scaling)
-    let p_sum = p1 + p2;
-    println!("(p1 + p2)(x) coefficients: {:?}", p_sum.coefficients());
+    println!("\nOpen-loop System Polynomials:");
+    println!("  N_ol(s) = {:?}", n_ol.coefficients()); // Expected: [3.0, 6.0]
+    println!("  D_ol(s) = {:?}", d_ol.coefficients()); // Expected: [0.0, 1.0, 0.5]
 
-    let p_diff = p1 - p2;
-    println!("(p1 - p2)(x) coefficients: {:?}", p_diff.coefficients());
+    // 4. Compute Closed-loop Characteristic Denominator: D_cl(s) = D_ol(s) + N_ol(s)
+    // To add polynomials in control-rs, they must be of the same static size.
+    // We pad N_ol(s) with a trailing zero to make it size 3: 3.0 + 6.0s + 0.0s^2
+    let n_ol_padded = Polynomial::from_coefficients([3.0, 6.0, 0.0]);
+    let d_cl: Polynomial<f64, 3> = d_ol + n_ol_padded;
 
-    let p_scaled = p1 * 2.5;
-    println!("(p1 * 2.5)(x) coefficients: {:?}", p_scaled.coefficients());
+    println!("\nClosed-loop Characteristic Denominator D_cl(s) (D_ol + N_ol):");
+    println!("  D_cl(s) = {:?}", d_cl.coefficients()); // Expected: [3.0, 7.0, 0.5]
+    println!("  D_cl(s) degree: {:?}", d_cl.degree()); // Expected: Some(2)
 
-    // 5. Polynomial Multiplication
-    // Uses the underlying DSP convolution to compute multiplication.
-    // p_a(x) = 1 + 2x (length 2)
-    // p_b(x) = 4 + 3x (length 2)
-    // p_prod(x) = (1 + 2x)(4 + 3x) = 4 + 11x + 6x^2 (length 3)
-    let p_a = Polynomial::from_coefficients([1.0, 2.0]);
-    let p_b = Polynomial::from_coefficients([4.0, 3.0]);
-    let p_prod: Polynomial<f64, 3> = p_a.mul_poly(&p_b);
-    println!("(p_a * p_b)(x) coefficients: {:?}", p_prod.coefficients());
+    // 5. Evaluate steady-state response at s = 0 (DC Gain)
+    // Steady-state tracking gain: T(0) = N_ol(0) / D_cl(0)
+    let n_ol_at_0 = n_ol.evaluate(0.0);
+    let d_cl_at_0 = d_cl.evaluate(0.0);
+    let dc_gain = n_ol_at_0 / d_cl_at_0;
+    println!("\nSteady-State Evaluation at s = 0:");
+    println!("  N_ol(0) = {}", n_ol_at_0);
+    println!("  D_cl(0) = {}", d_cl_at_0);
+    println!("  Closed-loop DC Gain T(0) = {}", dc_gain); // Expected: 1.0 (perfect tracking)
 
-    // 6. Polynomial Derivative
-    let dp1 = p1.derivative(); // 2 + 6x
-    println!("Derivative of p1(x) coefficients: {:?}", dp1.coefficients());
+    // 6. Polynomial Aliases: Constant and Line
+    // Handy wrappers for simple low-degree polynomials
+    let c = Constant::new(5.0); // P(s) = 5
+    let l = Line::new(2.0, 3.0); // P(s) = 2s + 3
+    println!("\nEvaluating static polynomial aliases:");
+    println!("  Constant c(10): {}", c.evaluate(10.0));
+    println!("  Linear line l(4): {}", l.evaluate(4.0));
 
-    // 7. Polynomial Long Division
-    // divides A(x) = 3x^2 + 5x + 6 by B(x) = x + 2
-    // A(x) = (3x - 1)*(x + 2) + 8
-    // Quotient = 3x - 1 (coefficients [-1.0, 3.0])
-    // Remainder = 8 (coefficients [8.0])
-    let a = Polynomial::from_coefficients([6.0, 5.0, 3.0]);
-    let b = Polynomial::from_coefficients([2.0, 1.0]);
+    // 7. Polynomial Derivative
+    // Differentiate the characteristic polynomial to compute the rate of change
+    // of the system's sensitivity dynamics.
+    // D_cl(s) = 3.0 + 7.0s + 0.5s^2 -> D_cl'(s) = 7.0 + 1.0s
+    let d_cl_prime = d_cl.derivative();
+    println!("\nDerivative of Characteristic Polynomial:");
+    println!("  D_cl'(s) coefficients: {:?}", d_cl_prime.coefficients());
+
+    // 8. Polynomial Long Division (Proper fraction decomposition)
+    // Suppose we have an improper transfer function H(s) = (3s^2 + 5s + 6) / (s + 2).
+    // In control design, we decompose this into a direct transmission (quotient)
+    // and a strictly proper part (remainder / denominator).
+    // H(s) = (3s - 1) + 8 / (s + 2)
+    let dividend = Polynomial::from_coefficients([6.0, 5.0, 3.0]); // 3s^2 + 5s + 6
+    let divisor = Polynomial::from_coefficients([2.0, 1.0]); // s + 2
     #[allow(clippy::type_complexity)]
-    let (q, r): (Polynomial<f64, 2>, Polynomial<f64, 1>) = a.div_rem(&b);
-    println!("Polynomial Long Division:");
-    println!("  Dividend: 3x^2 + 5x + 6");
-    println!("  Divisor: x + 2");
-    println!("  Quotient coefficients: {:?}", q.coefficients());
-    println!("  Remainder coefficients: {:?}", r.coefficients());
+    let (q, r): (Polynomial<f64, 2>, Polynomial<f64, 1>) =
+        dividend.div_rem(&divisor);
+
+    println!("\nImproper Transfer Function Division:");
+    println!("  Dividend H_num(s): 3s^2 + 5s + 6");
+    println!("  Divisor H_den(s):  s + 2");
+    println!(
+        "  Quotient (Direct feedthrough terms):   {:?}",
+        q.coefficients()
+    ); // Expected: [-1.0, 3.0] -> 3s - 1
+    println!(
+        "  Remainder (Strictly proper numerator): {:?}",
+        r.coefficients()
+    ); // Expected: [8.0] -> 8
 }

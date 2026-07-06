@@ -1,4 +1,7 @@
 //! Demonstration of the generic compile-time Matrix struct and specialized structures.
+//!
+//! This example simulates a discretized physical mass-spring-damper system using state-space equations:
+//! x_{k+1} = (A - B * K) * x_k + B * (k_r * r)
 
 use control_rs::matrix::{
     LowerTriangular, Matrix, RowVector, SquareMatrix, Symmetric,
@@ -6,68 +9,92 @@ use control_rs::matrix::{
 };
 
 fn main() {
-    println!("=== Matrix Demonstration ===");
+    println!("=== Matrix Demonstration (State-Space Simulation) ===");
 
-    // 1. Creation and layout
-    // Matrix::new takes an array of arrays representing columns (column-major order).
-    // Matrix A: 2 rows, 3 columns:
-    // [ 1.0, 3.0, 5.0 ]
-    // [ 2.0, 4.0, 6.0 ]
-    let mut a = Matrix::new([
-        [1.0, 2.0], // Column 0
-        [3.0, 4.0], // Column 1
-        [5.0, 6.0], // Column 2
+    // 1. Define physical system matrices
+    // Let's assume a discretized mass-spring-damper system with sample time dt = 0.1s.
+    // State vector: x = [position, velocity]^T
+    // State transition matrix A (2x2):
+    // [ 1.0,   0.1 ]
+    // [ -0.2,  0.9 ]
+    // (Note: Matrix::new takes an array of columns (column-major order))
+    let a: SquareMatrix<f64, 2> = Matrix::new([
+        [1.0, -0.2], // Column 0
+        [0.1, 0.9],  // Column 1
     ]);
 
-    println!("Matrix A dimensions: {}x{}", a.rows(), a.cols());
-    println!("Element A[0, 1] (row 0, col 1): {:?}", a.get(0, 1)); // Should be 3.0
-    println!("Element A[1, 2] (row 1, col 2): {:?}", a.get(1, 2)); // Should be 6.0
+    // Input coupling matrix B (2x1 column vector):
+    // [ 0.0 ]
+    // [ 0.1 ]
+    let b: Vector<f64, 2> = Matrix::new([
+        [0.0, 0.1], // Column 0
+    ]);
 
-    // Mutation
-    if let Some(val) = a.get_mut(1, 2) {
-        *val = 60.0;
+    println!("System Matrix A (dimensions: {}x{}):", a.rows(), a.cols());
+    println!("  A[0, 0] = {:?}", a.get(0, 0));
+    println!("  A[1, 0] = {:?}", a.get(1, 0));
+    println!("Input Matrix B (dimensions: {}x{}):", b.rows(), b.cols());
+    println!("  B[0, 0] = {:?}", b.get(0, 0));
+    println!("  B[1, 0] = {:?}", b.get(1, 0));
+
+    // 2. Define Controller Parameters
+    // State feedback gain matrix K (1x2 row vector):
+    // [ 2.0, 0.5 ]
+    let k: RowVector<f64, 2> = Matrix::new([
+        [2.0], // Column 0
+        [0.5], // Column 1
+    ]);
+
+    // Feedforward scaling factor (scalar)
+    let k_r = 2.0;
+
+    // Reference signal (step input of 1.0)
+    let r = 1.0;
+
+    // 3. Compute Closed-loop system dynamics: A_cl = A - B * K
+    // Multiplication of B (2x1) and K (1x2) yields a (2x2) matrix.
+    let bk = b * k;
+    let a_cl = a - bk;
+
+    println!("\nClosed-loop system matrix A_cl = A - B * K:");
+    println!("  A_cl[0, 0] = {:?}", a_cl.get(0, 0)); // Expected: 1.0
+    println!("  A_cl[1, 0] = {:?}", a_cl.get(1, 0)); // Expected: -0.4 (since -0.2 - 0.1 * 2.0)
+    println!("  A_cl[0, 1] = {:?}", a_cl.get(0, 1)); // Expected: 0.1
+    println!("  A_cl[1, 1] = {:?}", a_cl.get(1, 1)); // Expected: 0.85 (since 0.9 - 0.1 * 0.5)
+
+    // Pre-calculate scaled input term: B_scaled = B * (k_r * r)
+    let b_scaled = b * (k_r * r);
+
+    // 4. Run State-space Simulation
+    // Initial state x_0 = [0.0, 0.0]^T (at rest)
+    let mut x: Vector<f64, 2> = Matrix::new([
+        [0.0, 0.0], // Column 0
+    ]);
+
+    println!("\nSimulating closed-loop response to step input:");
+    for step in 0..11 {
+        // Calculate control input: u_k = -K * x_k + k_r * r
+        // k * x yields a 1x1 matrix.
+        let kx_mat = k * x;
+        let kx = kx_mat.get(0, 0).copied().unwrap_or(0.0);
+        let u = -kx + (k_r * r);
+
+        println!(
+            "Step {:2}: Position = {:8.4}, Velocity = {:8.4}, Control Input (u) = {:8.4}",
+            step,
+            x.get(0, 0).copied().unwrap_or(0.0),
+            x.get(1, 0).copied().unwrap_or(0.0),
+            u
+        );
+
+        // State update: x_{k+1} = A_cl * x_k + B_scaled
+        x = a_cl * x + b_scaled;
     }
-    println!("Mutated element A[1, 2]: {:?}", a.get(1, 2));
 
-    // 2. Types Aliases
-    let _sq: SquareMatrix<f64, 3> =
-        Matrix::new([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]);
-    let _vec: Vector<f64, 3> = Matrix::new([[1.0, 2.0, 3.0]]); // 3x1 Column Vector
-    let _row: RowVector<f64, 3> = Matrix::new([[1.0], [2.0], [3.0]]); // 1x3 Row Vector
-
-    // 3. Matrix Arithmetic (Addition / Subtraction / Scaling)
-    let m1 = Matrix::new([[1.0, 2.0], [3.0, 4.0]]);
-    let m2 = Matrix::new([[10.0, 20.0], [30.0, 40.0]]);
-
-    let m_sum = m1 + m2;
-    println!("(m1 + m2) columns: {:?}", m_sum);
-
-    let m_scaled = m1 * 2.0;
-    println!("(m1 * 2.0) columns: {:?}", m_scaled);
-
-    // 4. Matrix-Matrix Multiplication (GEMM)
-    // A: 2x3, B: 3x2. Multiplication yields C: 2x2.
-    // Memory layout and calculations are handled via standard Level 3 BLAS GEMM.
-    let mat_a = Matrix::new([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]); // 2x3
-    let mat_b = Matrix::new([[7.0, 8.0, 1.0], [9.0, 10.0, 2.0]]); // 3x2
-
-    let mat_c = mat_a * mat_b; // 2x2
-    println!("Matrix Multiplication A * B = C:");
-    println!("  C rows: {}, cols: {}", mat_c.rows(), mat_c.cols());
-    println!("  C[0, 0]: {:?}", mat_c.get(0, 0)); // Should be 36.0
-    println!("  C[1, 1]: {:?}", mat_c.get(1, 1)); // Should be 70.0
-
-    // 5. Matrix-Vector Multiplication
-    // Vector is just a 3x1 Matrix.
-    let mat_v: Vector<f64, 3> = Matrix::new([[2.0, 1.0, -1.0]]);
-    let mat_y = mat_a * mat_v; // 2x1 Column Vector
-    println!("Matrix-Vector Multiplication A * v = y:");
-    println!("  y dimensions: {}x{}", mat_y.rows(), mat_y.cols());
-    println!("  y[0, 0]: {:?}", mat_y.get(0, 0)); // 1*2 + 3*1 + 5*(-1) = 0.0
-    println!("  y[1, 0]: {:?}", mat_y.get(1, 0)); // 2*2 + 4*1 + 6*(-1) = 2.0
-
-    // 6. Specialized wrappers (Upper, Lower, Symmetric)
-    println!("Specialized Matrix Wrappers:");
+    // 5. Specialized wrappers (Upper, Lower, Symmetric)
+    // In control systems, covariance matrices (Kalman filters) or cost matrices (LQR)
+    // are symmetric. Triangular matrices are common in numerical matrix decompositions (Cholesky).
+    println!("\n=== Specialized Matrix Wrappers ===");
     let raw = Matrix::new([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]);
 
     let ut = UpperTriangular::new(raw).unwrap();
