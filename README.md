@@ -60,19 +60,12 @@ Located in [control-rs-hil](control-rs-hil), this
 
 ### 2. Host-Side Orchestration (`control-rs-xtask`)
 
-Located in [control-rs-xtask](control-rs-xtask),
-this package runs on the developer's PC:
-
-* **Interactive TUI**: A beautiful terminal dashboard built with `ratatui` to
-  monitor live signals, trigger tests, tweak parameters, and view logs.
-* **QEMU Bridge**: Automatically handles communications with emulated
-  targets.
-* **Headless Runner**: Automatically executes cross-compiled test suites and
-  outputs performance metrics.
+* **Terminal User Interface (TUI)**: A terminal dashboard built with
+  `ratatui` to trigger live tests, tweak parameters, and view logs.
+* **HIL Bridge**: Handles communication and telemetry between the TUI and
+  the hil server.
 
 ### 3. Continuous Integration (`.github/workflows/CI.yml`)
-
-Automates the full validation pipeline:
 
 * **Multi-Arch Emulation**: Spins up headless QEMU instances for both **ARM
   Cortex-M** (`thumbv7em-none-eabihf`) and **RISC-V** (

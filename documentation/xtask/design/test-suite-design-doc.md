@@ -1,8 +1,5 @@
 # Exportable Test Suites
 
-**Implementation Order:** 3
-**Estimated Time:** 2 days
-
 ![Date Badge](https://img.shields.io/badge/Date-May_23,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Needs%20Review-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
@@ -11,7 +8,7 @@
 
 This design establishes the structural requirements for suites, ensuring
 seamless integration with the distributed test discovery mechanism and the
-`hil_suite` runners defined within our `xtask` architecture. Functionally, this
+`hil_suite` runners defined within the `xtask` architecture. Functionally, this
 structure acts as the adapter layer, enabling the runner to reliably parse,
 discover, and interact with each individual suite, specifically serving the
 distributed test discovery mechanism and `xtask` runners.
@@ -34,9 +31,9 @@ To facilitate this process, a `build.rs` script is used to "inject" suite
 descriptions into a known location in memory. This script parses
 project files and generates the necessary linkable assets.
 
-Crucially, the build script generates `memory.x` linker script fragments that
-define the custom `.hil_test_suites` section where the test registry is placed.
-These fragments must be included in the end-user's build via
+The build script generates `memory.x` linker script fragments that define the
+custom `.hil_test_suites` section where the test registry is placed. These
+fragments must be included in the end-user's build via
 `#[link_section = ".hil_test_suites"]`.
 
 To ensure the custom test registry sections aren't silently discarded by the
