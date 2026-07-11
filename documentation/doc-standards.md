@@ -96,22 +96,22 @@ the user can search the docs for.
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Implementation of A for type.
-// implementations for item A
+impl A for MyType {}
 
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Implementation of B for type.
-// implementations for item B
+impl B for MyType {}
 ```
 
 ## 2.2 The #Safety Section: A Contract for Critical Code
 
 For any function, method, or unsafe block that has safety implications, a
-dedicated #[safety] section is mandatory.
-This section must explicitly detail the contract the caller must uphold to
-ensure safe execution.
+dedicated `#safety` section is mandatory. This section must explicitly detail
+the contract the caller must uphold to ensure safe execution.
 
-The #[safety] documentation must clearly state any applicable items in a list:
+The `#safety` documentation must clearly state any applicable items from the
+list below:
 
 * Pre-conditions: The conditions that must be true before calling the function.
   This includes, but is not limited to,
@@ -124,9 +124,6 @@ The #[safety] documentation must clearly state any applicable items in a list:
   execution of the function.
 * Assumptions: Any assumptions made about the environment or other parts of the
   system.
-* Rationale for unsafe: For any unsafe block, a clear justification for its use
-  and a detailed explanation of how its
-  safety is guaranteed by the surrounding safe code.
 
 ### Example of #[safety] documentation:
 
@@ -149,26 +146,6 @@ The #[safety] documentation must clearly state any applicable items in a list:
 * Examples should use the ? operator for error handling and avoid unwrap(),
   expect(), or panic!() unless demonstrating
   a panic condition.
-* Examples for safety-critical functions should demonstrate both correct usage
-  and, where possible, how incorrect usage
-  is handled.
-
-# 4. Traceability
-
-To comply with safety standards, documentation must facilitate traceability
-between requirements, design, code, and
-tests.
-
-* Requirement Tags: Where applicable, include tags in the documentation to link
-  code to specific software requirements.
-* Design Rationale: For complex or critical algorithms, include a brief
-  explanation of the design choices and
-  references to relevant design documents.
-
-By adhering to these rigorous documentation rules, the Rust native control
-systems toolbox will provide the necessary
-clarity, consistency, and explicit safety information required for use in
-safety-critical applications.
 
 # Resources
 
