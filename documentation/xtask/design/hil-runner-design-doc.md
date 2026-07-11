@@ -1,8 +1,5 @@
 # HIL Runner Design Document
 
-**Implementation Order:** 5
-**Estimated Time:** 3 days
-
 ![Date Badge](https://img.shields.io/badge/Date-May_23,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Needs%20Review-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
@@ -43,11 +40,10 @@ The HIL test system is split between the Host PC and the Target MCU.
 
 ### 3.1. Test Discovery
 
-To make tests "discoverable" by the runner, we place them in a dedicated memory
-section (e.g., `.hil_test_suites`). A custom linker script is used to place an
-array
-of `TestSuite` structs in this section. Each `TestSuite` contains a name and a
-function pointer to the test.
+To make tests "discoverable" by the runner, they are placed in a dedicated
+section of memory (e.g., `.hil_test_suites`). A custom linker script is used to
+place an array of `TestSuite` structs in this section. Each `TestSuite` contains
+a name and a function pointer to the test.
 
 ```rust
 // In the firmware
@@ -120,7 +116,7 @@ A custom panic handler is essential for a robust test harness. When a test
 function panics (e.g., due to an assertion failure), the panic handler takes
 over. It logs the panic information, sends a failure message to the host, and
 then resets the system to return to the idle server loop, ready for the next
-command. This prevents the entire MCU from halting on a single test failure.
+command.
 
 ```rust
 use panic_handler as _; // Custom panic handler crate
