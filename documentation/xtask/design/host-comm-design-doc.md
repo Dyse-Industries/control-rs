@@ -1,8 +1,5 @@
 # HostComm Design Document
 
-**Implementation Order:** 2
-**Estimated Time:** 2 days
-
 ![Date Badge](https://img.shields.io/badge/Date-May_23,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Needs%20Review-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
@@ -10,14 +7,14 @@
 ## 1. Context and Objective
 
 The HIL harness will require a communication interface. The type of
-communication peripherals available on each mcu are different; The interface
-should also not depend on a specific hardware bus/device.
+communication peripherals available on each mcu are different; the interface
+should not depend on a specific hardware bus/device.
 
-To achieve this, the system relies on a common abstraction over the transport
-layer. This allows the core test runner logic to be oblivious to whether it's
-communicating over Segger RTT, a UART serial port, or Ethernet. In an embedded
-context (`#![no_std]`), this interface must be deterministic, non-blocking, and
-allocation-free.
+To remain agnostic, the system relies on a common abstraction over the
+transport layer. This allows the core test runner logic to be oblivious to
+whether it's communicating over Segger RTT, a UART serial port, or Ethernet.
+In an embedded context (`#![no_std]`), this interface must be deterministic,
+non-blocking, and allocation-free.
 
 ## 2. Architectural Overview
 
@@ -78,13 +75,6 @@ pub trait HostComms {
     fn flush(&mut self) -> Result<(), Self::Error>;
 }
 ```
-
-The non-blocking nature of `poll_command` is essential to prevent the target MCU
-from stalling the test execution loop while waiting for host intervention.
-
-Similarly, a deferred logging queue (like `heapless::spsc`) so that messages are
-buffered during the math execution and only flushed to the host over RTT after
-the `CPUProfileUtils` has recorded the metrics.
 
 ### 3.2. CMD Parsing
 
@@ -173,7 +163,8 @@ On the host users should not have to implement anything.
 The host comms device they used for the firmware will be reused by the TUI (this
 means rebuilding the tui when the device changes?). The TUI acts as the
 demultiplexer (DEMUX in the architecture diagram). It maintains the master state
-machine and queue for all host-target communication. It listens to the designated
+machine and queue for all host-target communication. It listens to the
+designated
 interface (e.g., serial port, USB interface, probe-rs channels), parses the
 binary payloads back into `LogMessage` and `Command` representations, and
 renders them to the screen.

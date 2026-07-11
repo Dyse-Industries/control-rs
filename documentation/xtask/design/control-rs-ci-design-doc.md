@@ -1,8 +1,5 @@
 # CI
 
-**Implementation Order:** 8
-**Estimated Time:** 2 days
-
 ![Date Badge](https://img.shields.io/badge/Date-May_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Needs%20Review-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)

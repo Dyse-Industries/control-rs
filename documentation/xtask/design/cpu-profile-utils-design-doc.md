@@ -1,21 +1,32 @@
 # CPUProfileUtils Design Document
 
-**Implementation Order:** 1
-**Estimated Time:** 0.5 days
+![Date Badge](https://img.shields.io/badge/Date-May_23,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Needs%20Review-yellow)
+![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ## 1. Context and Objective
 
-The HIL test harness requires target-specific hooks to measure performance metrics (clock cycles, elapsed execution time, and stack usage). 
+The HIL test harness requires target-specific hooks to measure performance
+metrics (clock cycles, elapsed execution time, and stack usage).
 
-Previously, this was split into two interfaces: `ClientClock` (system clock abstraction) and `TestExecutor` (orchestrating the full execution lifecycle of a test). However, implementing the full execution logic in `TestExecutor` on the target side was verbose, repetitive, and error-prone.
+Previously, this was split into two interfaces: `ClientClock` (system clock
+abstraction) and `TestExecutor` (orchestrating the full execution lifecycle of a
+test). However, implementing the full execution logic in `TestExecutor` on the
+target side was verbose, repetitive, and error-prone.
 
-To simplify target-side integration, we consolidate these hooks into a single trait: `CPUProfileUtils`. Users only implement primitive hardware hooks (retrieving cycle counts, reading time, getting the stack pointer, painting the stack, and checking stack usage). The core HIL `Server` implements the generic execution wrapper, timing calculations, and metric telemetry reporting in a platform-agnostic manner.
+To simplify target-side integration, these hooks were consolidated into a single
+trait: `CPUProfileUtils`. Users only implement primitive hardware hooks (
+retrieving cycle counts, reading time, getting the stack pointer, painting the
+stack, and checking stack usage). The core HIL `Server` implements the generic
+execution wrapper, timing calculations, and metric telemetry reporting in a
+platform-agnostic manner.
 
 ## 2. Core Mechanics
 
 ### 2.1. The CPUProfileUtils Trait
 
-The core of the abstraction is the `CPUProfileUtils` trait, defined in `control-rs-hil::executor`:
+The core of the abstraction is the `CPUProfileUtils` trait, defined in
+`control-rs-hil::profiler`:
 
 ```rust
 pub trait CPUProfileUtils {
@@ -51,7 +62,9 @@ pub trait CPUProfileUtils {
 
 ### 2.2. Standard Default Implementation
 
-A standard default implementation, `DefaultCPUProfileUtils`, is provided for platforms without profiling capabilities. It returns zeroed metrics and implements `CPUProfileUtils`:
+A standard default implementation, `DefaultCPUProfileUtils`, is provided for
+platforms without profiling capabilities. It returns zeroed metrics and
+implements `CPUProfileUtils`:
 
 ```rust
 pub struct DefaultCPUProfileUtils;
@@ -69,7 +82,8 @@ impl CPUProfileUtils for DefaultCPUProfileUtils {
 
 ### 3.1. Client side (Target MCU)
 
-The developer implements `CPUProfileUtils` on their target platform. For example, on an ARM Cortex-M architecture:
+The developer implements `CPUProfileUtils` on their target platform. For
+example, on an ARM Cortex-M architecture:
 
 ```rust
 struct CortexMProfileUtils;

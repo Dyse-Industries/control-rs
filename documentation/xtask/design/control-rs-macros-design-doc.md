@@ -1,8 +1,5 @@
 # Macros Design Document
 
-**Implementation Order:** 4
-**Estimated Time:** 3 days
-
 ![Date Badge](https://img.shields.io/badge/Date-May_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Needs%20Review-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
@@ -40,10 +37,6 @@ pub mod device_connectivity_suite {
 
 The tests and benchmarks will then be automatically aggregated into
 `SuiteDescriptor`s.
-
-Furthermore, the build script supports an environment variable overriding
-feature, allowing users to dynamically modify the location in memory that
-descriptors will be stored.
 
 ### Configurable Settings Translation
 
@@ -88,18 +81,20 @@ object. This manages test execution and communication:
   allow dynamic adjustments without recompiling.
 * **HostComms:** A generic trait acting as a middleware layer for
   firmware-to-host communications.
-* **CPUProfileUtils:** A generic trait that allows users to configure CPU profiling utilities for the runner context. The context expects this implementation to enable precise, hardware-specific performance metrics (such as clock cycles, system timer, and stack usage) and benchmarking.
+* **CPUProfileUtils:** A generic trait that allows users to configure CPU
+  profiling utilities for the runner context. The context expects this
+  implementation to enable precise, hardware-specific performance metrics (such
+  as clock cycles, system timer, and stack usage) and benchmarking.
 
 ### 3.1. Panic Handling and Entrypoint Generation
 
 The `#[hil_setup]` macro serves a dual purpose: it automatically creates the
-standard `main()` entrypoint that calls the user's setup code and launches the
-HIL server, and it also registers a custom panic handler. This ensures that any
-test or benchmark failures resulting in a panic are caught gracefully. The panic
-handler intercepts the error, serializes the panic message and location using
-the `HostComms`, and transmits it back to the host TUI, preventing the MCU
-from silently locking up and allowing the host to retain the state across
-restarts.
+standard `main()` entrypoint that calls the user's setup code and it also
+registers a custom panic handler. This ensures that any test or benchmark
+failures resulting in a panic are caught gracefully. The panic handler
+intercepts the error, serializes the panic message and location using the
+`HostComms` and transmits it back to the host TUI, preventing the MCU from
+silently locking up and allowing the host to retain the state across restarts.
 
 ## 4. Usage Example
 
