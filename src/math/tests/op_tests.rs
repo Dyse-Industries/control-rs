@@ -1,6 +1,7 @@
 #![allow(clippy::arbitrary_source_item_ordering)]
 
-mod test_float_add {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_float_add {
     use crate::math::{
         ArithmeticError,
         num_traits::Real,
@@ -8,7 +9,7 @@ mod test_float_add {
     };
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn try_add_float_checks<
+    fn _try_add_float_checks<
         T: Real + TryAdd + Neg<Output = T> + core::fmt::Debug,
     >(
         rhs: T,
@@ -34,21 +35,22 @@ mod test_float_add {
             Err(ArithmeticError::Underflow)
         );
     }
-    #[test]
+    #[cfg_attr(test, test)]
     fn f32_addition() {
-        try_add_float_checks(1.0_f32, 2.0_f32, 3.0_f32);
+        _try_add_float_checks(1.0_f32, 2.0_f32, 3.0_f32);
     }
-    #[test]
+    #[cfg_attr(test, test)]
     fn f64_addition() {
-        try_add_float_checks(1.0_f64, 2.0_f64, 3.0_f64);
+        _try_add_float_checks(1.0_f64, 2.0_f64, 3.0_f64);
     }
 }
 
-mod test_saturating_add {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_saturating_add {
     use crate::math::num_traits::Ring;
     use crate::math::ops::{Neg, SaturatingAdd};
     #[allow(clippy::arithmetic_side_effects)]
-    fn signed_saturating_add_int_checks<
+    fn _signed_saturating_add_int_checks<
         T: Ring + SaturatingAdd + Neg<Output = T> + core::fmt::Debug,
     >(
         rhs: T,
@@ -56,10 +58,10 @@ mod test_saturating_add {
         expected: T,
     ) {
         assert_eq!(T::MIN.saturating_add(&(-T::ONE)), T::MIN);
-        unsigned_saturating_add_int_checks(rhs, lhs, expected);
+        _unsigned_saturating_add_int_checks(rhs, lhs, expected);
     }
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_saturating_add_int_checks<
+    fn _unsigned_saturating_add_int_checks<
         T: Ring + SaturatingAdd + core::fmt::Debug,
     >(
         rhs: T,
@@ -71,29 +73,30 @@ mod test_saturating_add {
         assert_eq!(T::MAX.saturating_add(&T::MAX), T::MAX);
         assert_eq!(T::MIN.saturating_add(&T::MIN), T::MIN);
     }
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_saturating_add_int_checks(1_i8, 2_i8, 3_i8);
-        signed_saturating_add_int_checks(3_i16, 4_i16, 7_i16);
-        signed_saturating_add_int_checks(5_i32, 6_i32, 11_i32);
-        signed_saturating_add_int_checks(7_isize, 8_isize, 15_isize);
+        _signed_saturating_add_int_checks(1_i8, 2_i8, 3_i8);
+        _signed_saturating_add_int_checks(3_i16, 4_i16, 7_i16);
+        _signed_saturating_add_int_checks(5_i32, 6_i32, 11_i32);
+        _signed_saturating_add_int_checks(7_isize, 8_isize, 15_isize);
     }
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_saturating_add_int_checks(1_u8, 2_u8, 3_u8);
-        unsigned_saturating_add_int_checks(3_u16, 4_u16, 7_u16);
-        unsigned_saturating_add_int_checks(5_u32, 6_u32, 11_u32);
-        unsigned_saturating_add_int_checks(7_usize, 8_usize, 15_usize);
+        _unsigned_saturating_add_int_checks(1_u8, 2_u8, 3_u8);
+        _unsigned_saturating_add_int_checks(3_u16, 4_u16, 7_u16);
+        _unsigned_saturating_add_int_checks(5_u32, 6_u32, 11_u32);
+        _unsigned_saturating_add_int_checks(7_usize, 8_usize, 15_usize);
     }
 }
 
-mod test_wrapping_add {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_wrapping_add {
     use crate::math::{
         num_traits::{Ring, Signed},
         ops::WrappingAdd,
     };
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn signed_wrapping_add_int_checks<
+    fn _signed_wrapping_add_int_checks<
         T: Ring + Signed + WrappingAdd + core::fmt::Debug,
     >(
         rhs: T,
@@ -108,7 +111,7 @@ mod test_wrapping_add {
         assert_eq!(lhs.wrapping_add(&rhs), expected);
     }
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_wrapping_add_int_checks<
+    fn _unsigned_wrapping_add_int_checks<
         T: Ring + WrappingAdd + core::fmt::Debug,
     >(
         rhs: T,
@@ -121,29 +124,30 @@ mod test_wrapping_add {
         assert_eq!(T::MIN.wrapping_add(&T::MIN), T::ZERO);
         assert_eq!(lhs.wrapping_add(&rhs), expected);
     }
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_wrapping_add_int_checks(1_i8, 2_i8, 3_i8);
-        signed_wrapping_add_int_checks(1_i16, 2_i16, 3_i16);
-        signed_wrapping_add_int_checks(1_i32, 2_i32, 3_i32);
-        signed_wrapping_add_int_checks(1_isize, 2_isize, 3_isize);
+        _signed_wrapping_add_int_checks(1_i8, 2_i8, 3_i8);
+        _signed_wrapping_add_int_checks(1_i16, 2_i16, 3_i16);
+        _signed_wrapping_add_int_checks(1_i32, 2_i32, 3_i32);
+        _signed_wrapping_add_int_checks(1_isize, 2_isize, 3_isize);
     }
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_wrapping_add_int_checks(1_u8, 2_u8, 3_u8);
-        unsigned_wrapping_add_int_checks(1_u16, 2_u16, 3_u16);
-        unsigned_wrapping_add_int_checks(1_u32, 2_u32, 3_u32);
-        unsigned_wrapping_add_int_checks(1_usize, 2_usize, 3_usize);
+        _unsigned_wrapping_add_int_checks(1_u8, 2_u8, 3_u8);
+        _unsigned_wrapping_add_int_checks(1_u16, 2_u16, 3_u16);
+        _unsigned_wrapping_add_int_checks(1_u32, 2_u32, 3_u32);
+        _unsigned_wrapping_add_int_checks(1_usize, 2_usize, 3_usize);
     }
 }
 
 // --- SUBTRACTION TESTS ---
 
-mod test_sub {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_sub {
     use crate::math::{ArithmeticError, num_traits::Ring, ops::TrySub};
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn signed_try_sub_int_checks<
+    fn _signed_try_sub_int_checks<
         T: Ring + TrySub + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
@@ -155,7 +159,7 @@ mod test_sub {
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_try_sub_int_checks<
+    fn _unsigned_try_sub_int_checks<
         T: Ring + TrySub + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
@@ -166,27 +170,28 @@ mod test_sub {
         assert_eq!(T::MIN.try_sub(&T::ONE), Err(ArithmeticError::Overflow));
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_try_sub_int_checks(1_i8, 2_i8, 1_i8);
-        signed_try_sub_int_checks(1_i16, 2_i16, 1_i16);
-        signed_try_sub_int_checks(1_i32, 2_i32, 1_i32);
-        signed_try_sub_int_checks(1_isize, 2_isize, 1_isize);
+        _signed_try_sub_int_checks(1_i8, 2_i8, 1_i8);
+        _signed_try_sub_int_checks(1_i16, 2_i16, 1_i16);
+        _signed_try_sub_int_checks(1_i32, 2_i32, 1_i32);
+        _signed_try_sub_int_checks(1_isize, 2_isize, 1_isize);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_try_sub_int_checks(1_u8, 2_u8, 1_u8);
-        unsigned_try_sub_int_checks(1_u16, 2_u16, 1_u16);
-        unsigned_try_sub_int_checks(1_u32, 2_u32, 1_u32);
-        unsigned_try_sub_int_checks(1_usize, 2_usize, 1_usize);
+        _unsigned_try_sub_int_checks(1_u8, 2_u8, 1_u8);
+        _unsigned_try_sub_int_checks(1_u16, 2_u16, 1_u16);
+        _unsigned_try_sub_int_checks(1_u32, 2_u32, 1_u32);
+        _unsigned_try_sub_int_checks(1_usize, 2_usize, 1_usize);
     }
 }
 
-mod test_float_sub {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_float_sub {
     use crate::math::{ArithmeticError, ops::TrySub};
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn f32_checks() {
         assert_eq!(2.0_f32.try_sub(&1.0), Ok(1.0));
         assert_eq!(f32::MIN.try_sub(&f32::MAX), Ok(-f32::INFINITY));
@@ -210,7 +215,7 @@ mod test_float_sub {
         );
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn f64_checks() {
         assert_eq!(2.0_f64.try_sub(&1.0), Ok(1.0));
         assert_eq!(f64::MIN.try_sub(&f64::MAX), Ok(-f64::INFINITY));
@@ -231,14 +236,15 @@ mod test_float_sub {
     }
 }
 
-mod test_saturating_sub {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_saturating_sub {
     use crate::math::{
         num_traits::{Ring, Signed},
         ops::SaturatingSub,
     };
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn signed_saturating_sub_int_checks<
+    fn _signed_saturating_sub_int_checks<
         T: Ring
             + Signed
             + SaturatingSub
@@ -250,11 +256,11 @@ mod test_saturating_sub {
         expected: T,
     ) {
         assert_eq!(T::MAX.saturating_sub(&(-T::ONE)), T::MAX);
-        unsigned_saturating_sub_int_checks(rhs, lhs, expected);
+        _unsigned_saturating_sub_int_checks(rhs, lhs, expected);
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_saturating_sub_int_checks<
+    fn _unsigned_saturating_sub_int_checks<
         T: Ring + SaturatingSub + core::fmt::Debug,
     >(
         rhs: T,
@@ -265,28 +271,29 @@ mod test_saturating_sub {
         assert_eq!(T::MIN.saturating_sub(&T::ONE), T::MIN);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_saturating_sub_int_checks(1_i8, 2_i8, 1_i8);
-        signed_saturating_sub_int_checks(1_i16, 2_i16, 1_i16);
-        signed_saturating_sub_int_checks(1_i32, 2_i32, 1_i32);
-        signed_saturating_sub_int_checks(1_isize, 2_isize, 1_isize);
+        _signed_saturating_sub_int_checks(1_i8, 2_i8, 1_i8);
+        _signed_saturating_sub_int_checks(1_i16, 2_i16, 1_i16);
+        _signed_saturating_sub_int_checks(1_i32, 2_i32, 1_i32);
+        _signed_saturating_sub_int_checks(1_isize, 2_isize, 1_isize);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_saturating_sub_int_checks(1_u8, 2_u8, 1_u8);
-        unsigned_saturating_sub_int_checks(1_u16, 2_u16, 1_u16);
-        unsigned_saturating_sub_int_checks(1_u32, 2_u32, 1_u32);
-        unsigned_saturating_sub_int_checks(1_usize, 2_usize, 1_usize);
+        _unsigned_saturating_sub_int_checks(1_u8, 2_u8, 1_u8);
+        _unsigned_saturating_sub_int_checks(1_u16, 2_u16, 1_u16);
+        _unsigned_saturating_sub_int_checks(1_u32, 2_u32, 1_u32);
+        _unsigned_saturating_sub_int_checks(1_usize, 2_usize, 1_usize);
     }
 }
 
-mod test_wrapping_sub {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_wrapping_sub {
     use crate::math::{num_traits::Ring, ops::WrappingSub};
 
     #[allow(clippy::arithmetic_side_effects)]
-    fn signed_wrapping_sub_int_checks<
+    fn _signed_wrapping_sub_int_checks<
         T: Ring + WrappingSub + core::ops::Neg<Output = T> + core::fmt::Debug,
     >(
         rhs: T,
@@ -294,11 +301,11 @@ mod test_wrapping_sub {
         expected: T,
     ) {
         assert_eq!(T::MAX.wrapping_sub(&(-T::ONE)), T::MIN);
-        unsigned_wrapping_sub_int_checks(rhs, lhs, expected);
+        _unsigned_wrapping_sub_int_checks(rhs, lhs, expected);
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_wrapping_sub_int_checks<
+    fn _unsigned_wrapping_sub_int_checks<
         T: Ring + WrappingSub + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
@@ -309,42 +316,43 @@ mod test_wrapping_sub {
         assert_eq!(T::MIN.wrapping_sub(&T::ONE), T::MAX);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_wrapping_sub_int_checks(1_i8, 2_i8, 1_i8);
-        signed_wrapping_sub_int_checks(1_i16, 2_i16, 1_i16);
-        signed_wrapping_sub_int_checks(1_i32, 2_i32, 1_i32);
-        signed_wrapping_sub_int_checks(1_isize, 2_isize, 1_isize);
+        _signed_wrapping_sub_int_checks(1_i8, 2_i8, 1_i8);
+        _signed_wrapping_sub_int_checks(1_i16, 2_i16, 1_i16);
+        _signed_wrapping_sub_int_checks(1_i32, 2_i32, 1_i32);
+        _signed_wrapping_sub_int_checks(1_isize, 2_isize, 1_isize);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_wrapping_sub_int_checks(1_u8, 2_u8, 1_u8);
-        unsigned_wrapping_sub_int_checks(1_u16, 2_u16, 1_u16);
-        unsigned_wrapping_sub_int_checks(1_u32, 2_u32, 1_u32);
-        unsigned_wrapping_sub_int_checks(1_usize, 2_usize, 1_usize);
+        _unsigned_wrapping_sub_int_checks(1_u8, 2_u8, 1_u8);
+        _unsigned_wrapping_sub_int_checks(1_u16, 2_u16, 1_u16);
+        _unsigned_wrapping_sub_int_checks(1_u32, 2_u32, 1_u32);
+        _unsigned_wrapping_sub_int_checks(1_usize, 2_usize, 1_usize);
     }
 }
 
 // --- MULTIPLICATION TESTS ---
 
 #[allow(clippy::arbitrary_source_item_ordering)]
-mod test_int_mul {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_int_mul {
     use crate::math::{ArithmeticError, num_traits::Ring, ops::TryMul};
 
     #[allow(clippy::arithmetic_side_effects)]
-    fn signed_try_mul_int_checks<
+    fn _signed_try_mul_int_checks<
         T: Ring + TryMul + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
         expected: T,
     ) {
-        unsigned_try_mul_int_checks(rhs, lhs, expected);
+        _unsigned_try_mul_int_checks(rhs, lhs, expected);
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_try_mul_int_checks<
+    fn _unsigned_try_mul_int_checks<
         T: Ring + TryMul + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
@@ -355,28 +363,29 @@ mod test_int_mul {
         assert_eq!(T::MAX.try_mul(&T::TWO), Err(ArithmeticError::Overflow));
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_try_mul_int_checks(3_i8, 2_i8, 6_i8);
-        signed_try_mul_int_checks(3_i16, 2_i16, 6_i16);
-        signed_try_mul_int_checks(3_i32, 2_i32, 6_i32);
-        signed_try_mul_int_checks(3_isize, 2_isize, 6_isize);
+        _signed_try_mul_int_checks(3_i8, 2_i8, 6_i8);
+        _signed_try_mul_int_checks(3_i16, 2_i16, 6_i16);
+        _signed_try_mul_int_checks(3_i32, 2_i32, 6_i32);
+        _signed_try_mul_int_checks(3_isize, 2_isize, 6_isize);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_try_mul_int_checks(3_u8, 2_u8, 6_u8);
-        unsigned_try_mul_int_checks(3_u16, 2_u16, 6_u16);
-        unsigned_try_mul_int_checks(3_u32, 2_u32, 6_u32);
-        unsigned_try_mul_int_checks(3_usize, 2_usize, 6_usize);
+        _unsigned_try_mul_int_checks(3_u8, 2_u8, 6_u8);
+        _unsigned_try_mul_int_checks(3_u16, 2_u16, 6_u16);
+        _unsigned_try_mul_int_checks(3_u32, 2_u32, 6_u32);
+        _unsigned_try_mul_int_checks(3_usize, 2_usize, 6_usize);
     }
 }
 
 #[allow(clippy::arbitrary_source_item_ordering)]
-mod test_float_mul {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_float_mul {
     use crate::math::{ArithmeticError, ops::TryMul};
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn f32_checks() {
         assert_eq!(2.0_f32.try_mul(&3.0), Ok(6.0));
         assert_eq!(f32::MAX.try_mul(&2.0), Err(ArithmeticError::Overflow));
@@ -387,7 +396,7 @@ mod test_float_mul {
         assert_eq!(f32::MAX.try_mul(&-2.0), Err(ArithmeticError::Overflow));
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn f64_checks() {
         assert_eq!(2.0_f64.try_mul(&3.0), Ok(6.0));
         assert_eq!(f64::MAX.try_mul(&2.0), Err(ArithmeticError::Overflow));
@@ -399,14 +408,15 @@ mod test_float_mul {
     }
 }
 
-mod test_saturating_mul {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_saturating_mul {
     use crate::math::{
         num_traits::{Ring, Signed},
         ops::SaturatingMul,
     };
 
     #[allow(clippy::arithmetic_side_effects)]
-    fn signed_saturating_mul_int_checks<
+    fn _signed_saturating_mul_int_checks<
         T: Ring + Signed + SaturatingMul + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
@@ -414,11 +424,11 @@ mod test_saturating_mul {
         expected: T,
     ) {
         assert_eq!(T::MIN.saturating_mul(&T::TWO), T::MIN);
-        unsigned_saturating_mul_int_checks(rhs, lhs, expected);
+        _unsigned_saturating_mul_int_checks(rhs, lhs, expected);
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_saturating_mul_int_checks<
+    fn _unsigned_saturating_mul_int_checks<
         T: Ring + SaturatingMul + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
@@ -429,28 +439,29 @@ mod test_saturating_mul {
         assert_eq!(T::MAX.saturating_mul(&T::TWO), T::MAX);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_saturating_mul_int_checks(3_i8, 2_i8, 6_i8);
-        signed_saturating_mul_int_checks(3_i16, 2_i16, 6_i16);
-        signed_saturating_mul_int_checks(3_i32, 2_i32, 6_i32);
-        signed_saturating_mul_int_checks(3_isize, 2_isize, 6_isize);
+        _signed_saturating_mul_int_checks(3_i8, 2_i8, 6_i8);
+        _signed_saturating_mul_int_checks(3_i16, 2_i16, 6_i16);
+        _signed_saturating_mul_int_checks(3_i32, 2_i32, 6_i32);
+        _signed_saturating_mul_int_checks(3_isize, 2_isize, 6_isize);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_saturating_mul_int_checks(3_u8, 2_u8, 6_u8);
-        unsigned_saturating_mul_int_checks(3_u16, 2_u16, 6_u16);
-        unsigned_saturating_mul_int_checks(3_u32, 2_u32, 6_u32);
-        unsigned_saturating_mul_int_checks(3_usize, 2_usize, 6_usize);
+        _unsigned_saturating_mul_int_checks(3_u8, 2_u8, 6_u8);
+        _unsigned_saturating_mul_int_checks(3_u16, 2_u16, 6_u16);
+        _unsigned_saturating_mul_int_checks(3_u32, 2_u32, 6_u32);
+        _unsigned_saturating_mul_int_checks(3_usize, 2_usize, 6_usize);
     }
 }
 
-mod test_wrapping_mul {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_wrapping_mul {
     use crate::math::{num_traits::Ring, ops::WrappingMul};
 
     #[allow(clippy::arithmetic_side_effects)]
-    fn signed_wrapping_mul_int_checks<
+    fn _signed_wrapping_mul_int_checks<
         T: Ring
             + WrappingMul
             + core::ops::Neg<Output = T>
@@ -462,11 +473,11 @@ mod test_wrapping_mul {
         expected: T,
     ) {
         assert_eq!(T::MAX.wrapping_mul(&T::TWO), -T::TWO);
-        unsigned_wrapping_mul_int_checks(rhs, lhs, expected);
+        _unsigned_wrapping_mul_int_checks(rhs, lhs, expected);
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_wrapping_mul_int_checks<
+    fn _unsigned_wrapping_mul_int_checks<
         T: Ring + WrappingMul + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
@@ -476,27 +487,28 @@ mod test_wrapping_mul {
         assert_eq!(lhs.wrapping_mul(&rhs), expected);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_wrapping_mul_int_checks(3_i8, 2_i8, 6_i8);
-        signed_wrapping_mul_int_checks(3_i16, 2_i16, 6_i16);
-        signed_wrapping_mul_int_checks(3_i32, 2_i32, 6_i32);
-        signed_wrapping_mul_int_checks(3_isize, 2_isize, 6_isize);
+        _signed_wrapping_mul_int_checks(3_i8, 2_i8, 6_i8);
+        _signed_wrapping_mul_int_checks(3_i16, 2_i16, 6_i16);
+        _signed_wrapping_mul_int_checks(3_i32, 2_i32, 6_i32);
+        _signed_wrapping_mul_int_checks(3_isize, 2_isize, 6_isize);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_wrapping_mul_int_checks(3_u8, 2_u8, 6_u8);
-        unsigned_wrapping_mul_int_checks(3_u16, 2_u16, 6_u16);
-        unsigned_wrapping_mul_int_checks(3_u32, 2_u32, 6_u32);
-        unsigned_wrapping_mul_int_checks(3_usize, 2_usize, 6_usize);
+        _unsigned_wrapping_mul_int_checks(3_u8, 2_u8, 6_u8);
+        _unsigned_wrapping_mul_int_checks(3_u16, 2_u16, 6_u16);
+        _unsigned_wrapping_mul_int_checks(3_u32, 2_u32, 6_u32);
+        _unsigned_wrapping_mul_int_checks(3_usize, 2_usize, 6_usize);
     }
 }
 
 // --- DIVISION TESTS ---
 
 #[allow(clippy::arbitrary_source_item_ordering)]
-mod test_int_div {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_int_div {
     use crate::math::{
         ArithmeticError,
         num_traits::Ring,
@@ -504,7 +516,7 @@ mod test_int_div {
     };
 
     #[allow(clippy::arithmetic_side_effects)]
-    fn signed_try_div_int_checks<
+    fn _signed_try_div_int_checks<
         T: Ring
             + TryDiv
             + Div<T, Output = T>
@@ -517,11 +529,11 @@ mod test_int_div {
         expected: T,
     ) {
         assert_eq!(T::MIN.try_div(&(-T::ONE)), Err(ArithmeticError::Overflow));
-        unsigned_try_div_int_checks(rhs, lhs, expected);
+        _unsigned_try_div_int_checks(rhs, lhs, expected);
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_try_div_int_checks<
+    fn _unsigned_try_div_int_checks<
         T: Ring + Div<T, Output = T> + TryDiv + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
@@ -535,28 +547,29 @@ mod test_int_div {
         assert_eq!(T::MAX.try_div(&T::ONE), Ok(T::MAX));
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_try_div_int_checks(3_i8, 6_i8, 2_i8);
-        signed_try_div_int_checks(3_i16, 6_i16, 2_i16);
-        signed_try_div_int_checks(3_i32, 6_i32, 2_i32);
-        signed_try_div_int_checks(3_isize, 6_isize, 2_isize);
+        _signed_try_div_int_checks(3_i8, 6_i8, 2_i8);
+        _signed_try_div_int_checks(3_i16, 6_i16, 2_i16);
+        _signed_try_div_int_checks(3_i32, 6_i32, 2_i32);
+        _signed_try_div_int_checks(3_isize, 6_isize, 2_isize);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_try_div_int_checks(3_u8, 6_u8, 2_u8);
-        unsigned_try_div_int_checks(3_u16, 6_u16, 2_u16);
-        unsigned_try_div_int_checks(3_u32, 6_u32, 2_u32);
-        unsigned_try_div_int_checks(3_usize, 6_usize, 2_usize);
+        _unsigned_try_div_int_checks(3_u8, 6_u8, 2_u8);
+        _unsigned_try_div_int_checks(3_u16, 6_u16, 2_u16);
+        _unsigned_try_div_int_checks(3_u32, 6_u32, 2_u32);
+        _unsigned_try_div_int_checks(3_usize, 6_usize, 2_usize);
     }
 }
 
 #[allow(clippy::arbitrary_source_item_ordering)]
-mod test_float_div {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_float_div {
     use crate::math::{ArithmeticError, ops::TryDiv};
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn f32_checks() {
         assert_eq!(6.0_f32.try_div(&3.0), Ok(2.0));
         assert_eq!(1.0_f32.try_div(&0.0), Err(ArithmeticError::DivisionByZero));
@@ -568,7 +581,7 @@ mod test_float_div {
         assert_eq!(f32::MAX.try_div(&0.1), Err(ArithmeticError::Overflow));
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn f64_checks() {
         assert_eq!(6.0_f64.try_div(&3.0), Ok(2.0));
         assert_eq!(1.0_f64.try_div(&0.0), Err(ArithmeticError::DivisionByZero));
@@ -584,7 +597,8 @@ mod test_float_div {
 // --- REMAINDER TESTS ---
 
 #[allow(clippy::arbitrary_source_item_ordering)]
-mod test_rem {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_rem {
     use crate::math::{
         ArithmeticError,
         num_traits::{Ring, Signed},
@@ -592,7 +606,7 @@ mod test_rem {
     };
 
     #[allow(clippy::arithmetic_side_effects)]
-    fn signed_try_rem_int_checks<
+    fn _signed_try_rem_int_checks<
         T: Ring
             + Signed
             + Rem<T, Output = T>
@@ -606,11 +620,11 @@ mod test_rem {
     ) {
         assert_eq!(T::MIN.try_rem(&T::ONE), Ok(T::ZERO));
         assert_eq!(T::ONE.try_rem(&T::MIN), Ok(T::ONE));
-        unsigned_try_rem_int_checks(rhs, lhs, expected);
+        _unsigned_try_rem_int_checks(rhs, lhs, expected);
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_try_rem_int_checks<
+    fn _unsigned_try_rem_int_checks<
         T: Ring + TryRem + Rem<T, Output = T> + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
@@ -623,27 +637,28 @@ mod test_rem {
         assert!(result); // macros are hard on tarpaulin
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_try_rem_int_checks(3_i8, 7_i8, 1_i8);
-        signed_try_rem_int_checks(3_i16, 7_i16, 1_i16);
-        signed_try_rem_int_checks(3_i32, 7_i32, 1_i32);
-        signed_try_rem_int_checks(3_isize, 7_isize, 1_isize);
+        _signed_try_rem_int_checks(3_i8, 7_i8, 1_i8);
+        _signed_try_rem_int_checks(3_i16, 7_i16, 1_i16);
+        _signed_try_rem_int_checks(3_i32, 7_i32, 1_i32);
+        _signed_try_rem_int_checks(3_isize, 7_isize, 1_isize);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_try_rem_int_checks(3_u8, 7_u8, 1_u8);
-        unsigned_try_rem_int_checks(3_u16, 7_u16, 1_u16);
-        unsigned_try_rem_int_checks(3_u32, 7_u32, 1_u32);
-        unsigned_try_rem_int_checks(3_usize, 7_usize, 1_usize);
+        _unsigned_try_rem_int_checks(3_u8, 7_u8, 1_u8);
+        _unsigned_try_rem_int_checks(3_u16, 7_u16, 1_u16);
+        _unsigned_try_rem_int_checks(3_u32, 7_u32, 1_u32);
+        _unsigned_try_rem_int_checks(3_usize, 7_usize, 1_usize);
     }
 }
 
-mod test_float_rem {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_float_rem {
     use crate::math::{ArithmeticError, ops::TryRem};
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn f32_checks() {
         assert_eq!(7.0_f32.try_rem(&3.0), Ok(1.0));
         assert_eq!(1.0_f32.try_rem(&0.0), Err(ArithmeticError::DivisionByZero));
@@ -657,7 +672,7 @@ mod test_float_rem {
         }
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn f64_checks() {
         assert_eq!(7.0_f64.try_rem(&3.0), Ok(1.0));
         assert_eq!(1.0_f64.try_rem(&0.0), Err(ArithmeticError::DivisionByZero));
@@ -674,7 +689,8 @@ mod test_float_rem {
 
 // --- NEGATION TESTS ---
 
-mod test_neg {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_neg {
     use crate::math::{
         ArithmeticError,
         num_traits::Ring,
@@ -682,7 +698,7 @@ mod test_neg {
     };
 
     #[allow(clippy::arithmetic_side_effects)]
-    fn signed_try_neg_int_checks<
+    fn _signed_try_neg_int_checks<
         T: Ring + Neg<Output = T> + TryNeg + core::fmt::Debug + PartialEq + Copy,
     >(
         val: T,
@@ -693,15 +709,15 @@ mod test_neg {
         assert_eq!(T::MIN.try_neg(), Err(ArithmeticError::Overflow));
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_try_neg_int_checks(1_i8, -1_i8);
-        signed_try_neg_int_checks(1_i16, -1_i16);
-        signed_try_neg_int_checks(1_i32, -1_i32);
-        signed_try_neg_int_checks(1_isize, -1_isize);
+        _signed_try_neg_int_checks(1_i8, -1_i8);
+        _signed_try_neg_int_checks(1_i16, -1_i16);
+        _signed_try_neg_int_checks(1_i32, -1_i32);
+        _signed_try_neg_int_checks(1_isize, -1_isize);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn f32_checks() {
         assert_eq!(1.0_f32.try_neg(), Ok(-1.0));
         assert_eq!((-1.0_f32).try_neg(), Ok(1.0));
@@ -710,7 +726,7 @@ mod test_neg {
         assert_eq!(0.0_f32.try_neg(), Ok(0.0));
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn f64_checks() {
         assert_eq!(1.0_f64.try_neg(), Ok(-1.0));
         assert_eq!((-1.0_f64).try_neg(), Ok(1.0));
@@ -722,7 +738,8 @@ mod test_neg {
 
 // --- SHIFT TESTS ---
 
-mod test_shl {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_shl {
     use crate::math::{
         ArithmeticError,
         num_traits::Ring,
@@ -730,18 +747,18 @@ mod test_shl {
     };
 
     #[allow(clippy::arithmetic_side_effects)]
-    fn signed_try_shl_int_checks<
+    fn _signed_try_shl_int_checks<
         T: Ring + Shl<u32, Output = T> + TryShl + core::fmt::Debug + PartialEq,
     >(
         val: T,
         expected: T,
         bits: u32,
     ) {
-        unsigned_try_shl_int_checks(val, expected, bits);
+        _unsigned_try_shl_int_checks(val, expected, bits);
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_try_shl_int_checks<
+    fn _unsigned_try_shl_int_checks<
         T: Ring + Shl<u32, Output = T> + TryShl + core::fmt::Debug + PartialEq,
     >(
         val: T,
@@ -752,24 +769,25 @@ mod test_shl {
         assert_eq!(val.try_shl(bits), Err(ArithmeticError::Overflow));
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_try_shl_int_checks(1_i8, 2_i8, 8);
-        signed_try_shl_int_checks(1_i16, 2_i16, 16);
-        signed_try_shl_int_checks(1_i32, 2_i32, 32);
-        signed_try_shl_int_checks(1_isize, 2_isize, isize::BITS);
+        _signed_try_shl_int_checks(1_i8, 2_i8, 8);
+        _signed_try_shl_int_checks(1_i16, 2_i16, 16);
+        _signed_try_shl_int_checks(1_i32, 2_i32, 32);
+        _signed_try_shl_int_checks(1_isize, 2_isize, isize::BITS);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_try_shl_int_checks(1_u8, 2_u8, 8);
-        unsigned_try_shl_int_checks(1_u16, 2_u16, 16);
-        unsigned_try_shl_int_checks(1_u32, 2_u32, 32);
-        unsigned_try_shl_int_checks(1_usize, 2_usize, usize::BITS);
+        _unsigned_try_shl_int_checks(1_u8, 2_u8, 8);
+        _unsigned_try_shl_int_checks(1_u16, 2_u16, 16);
+        _unsigned_try_shl_int_checks(1_u32, 2_u32, 32);
+        _unsigned_try_shl_int_checks(1_usize, 2_usize, usize::BITS);
     }
 }
 
-mod test_shr {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod test_shr {
     use crate::math::{
         ArithmeticError,
         num_traits::Ring,
@@ -777,17 +795,17 @@ mod test_shr {
     };
 
     #[allow(clippy::arithmetic_side_effects)]
-    fn signed_try_shr_int_checks<
+    fn _signed_try_shr_int_checks<
         T: Ring + Shr<u32, Output = T> + TryShr + core::fmt::Debug + PartialEq,
     >(
         val: T,
         bits: u32,
     ) {
-        unsigned_try_shr_int_checks(val, bits);
+        _unsigned_try_shr_int_checks(val, bits);
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn unsigned_try_shr_int_checks<
+    fn _unsigned_try_shr_int_checks<
         T: Ring + Shr<u32, Output = T> + TryShr + core::fmt::Debug + PartialEq,
     >(
         val: T,
@@ -800,19 +818,19 @@ mod test_shr {
         assert_eq!(val.try_shr(bits), Err(ArithmeticError::Overflow));
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn signed_integers() {
-        signed_try_shr_int_checks(16_i8, 8);
-        signed_try_shr_int_checks(16_i16, 16);
-        signed_try_shr_int_checks(32_i32, 32);
-        signed_try_shr_int_checks(64_isize, isize::BITS);
+        _signed_try_shr_int_checks(16_i8, 8);
+        _signed_try_shr_int_checks(16_i16, 16);
+        _signed_try_shr_int_checks(32_i32, 32);
+        _signed_try_shr_int_checks(64_isize, isize::BITS);
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn unsigned_integers() {
-        unsigned_try_shr_int_checks(16_u8, 8);
-        unsigned_try_shr_int_checks(16_u16, 16);
-        unsigned_try_shr_int_checks(32_u32, 32);
-        unsigned_try_shr_int_checks(64_usize, usize::BITS);
+        _unsigned_try_shr_int_checks(16_u8, 8);
+        _unsigned_try_shr_int_checks(16_u16, 16);
+        _unsigned_try_shr_int_checks(32_u32, 32);
+        _unsigned_try_shr_int_checks(64_usize, usize::BITS);
     }
 }

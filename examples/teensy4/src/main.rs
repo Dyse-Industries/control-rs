@@ -126,16 +126,7 @@ impl HostComms for TeensyComms {
 
 // Force linking of the math test suites by referencing them
 #[allow(unused_imports)]
-pub use control_rs::math::tests::complex_num_tests::{
-    test_arithmetic::SUITE_DESCRIPTOR_PTR as _,
-    test_axioms::SUITE_DESCRIPTOR_PTR as _,
-    test_basics::SUITE_DESCRIPTOR_PTR as _,
-    test_core_math::SUITE_DESCRIPTOR_PTR as _,
-    test_dsp_patterns::SUITE_DESCRIPTOR_PTR as _,
-    test_ffi_layout::SUITE_DESCRIPTOR_PTR as _,
-    test_limitations::SUITE_DESCRIPTOR_PTR as _,
-    test_transcendental::SUITE_DESCRIPTOR_PTR as _,
-};
+pub use control_rs::math::tests::suites::*;
 
 // --- Test Suite Definition ---
 
