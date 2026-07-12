@@ -14,14 +14,14 @@ config:
   layout: dagre
 ---
 flowchart LR
- subgraph Host["💻 Host Environment"]
+ subgraph Host["Host Environment"]
         TUI("fa:fa-display Terminal UI (TUI)")
         CI("fa:fa-robot CI Runner")
         Comm{"fa:fa-code ServerBridge"}
   end
  subgraph Loop["fa:fa-rotate-right Server Event Loop"]
     direction TB
-        Comms["HostComms"]
+        Comms["Read Comms"]
         Tasks["Run Tasks"]
         Telem["Send Telemetry"]
   end
