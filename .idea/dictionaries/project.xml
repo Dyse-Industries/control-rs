@@ -2,6 +2,8 @@
   <dictionary name="project">
     <words>
       <w>Cholesky</w>
+      <w>Ratatui</w>
+      <w>Telem</w>
       <w>cdot</w>
       <w>compensators</w>
       <w>eabihf</w>
@@ -10,9 +12,11 @@
       <w>horner’s</w>
       <w>naeini</w>
       <w>rtic</w>
+      <w>semihosting</w>
       <w>thumbv</w>
       <w>ulps</w>
       <w>underflowed</w>
+      <w>virt</w>
       <w>xtask</w>
     </words>
   </dictionary>

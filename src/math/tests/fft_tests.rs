@@ -1,15 +1,17 @@
 use crate::math::dsp::FFT;
 
-mod fft_test_suite {
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+pub mod fft_test_suite {
+    #![allow(unused_imports)]
     use super::*;
-    use crate::math::{Bijection, Map, complex_num::Complex};
+    use crate::math::{Bijection, Map, complex_num::Complex, num_traits::Trig};
 
     const N: usize = 8;
     const TOLERANCE: f64 = 1e-6;
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_fft_impulse() {
-        let mut input = [0.0; N];
+        let mut input = [0.0f64; N];
         input[0] = 1.0;
         let mut output = [Complex::default(); N];
 
@@ -21,7 +23,7 @@ mod fft_test_suite {
         }
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_fft_dc() {
         let input = [1.0; N];
         let mut output = [Complex::default(); N];
@@ -40,9 +42,9 @@ mod fft_test_suite {
         }
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_fft_ifft_identity() {
-        let mut input = [0.0; N];
+        let mut input = [0.0f64; N];
         for (i, val) in input.iter_mut().enumerate() {
             *val = f64::from(u32::try_from(i).unwrap()).sin();
         }
@@ -50,7 +52,7 @@ mod fft_test_suite {
         let mut fft_output = [Complex::default(); N];
         TestFFT::fft(&input, &mut fft_output);
 
-        let mut ifft_output = [0.0; N];
+        let mut ifft_output = [0.0f64; N];
         TestFFT::ifft(&fft_output, &mut ifft_output);
 
         for (in_val, out_val) in input.iter().zip(ifft_output.iter()) {
@@ -58,7 +60,7 @@ mod fft_test_suite {
         }
     }
 
-    #[test]
+    #[cfg_attr(test, test)]
     fn test_map_and_bijection_traits() {
         let time_signal = [1.0, 0.0, 0.0, 0.0];
         // Instantiate the zero-sized struct to use the trait methods
