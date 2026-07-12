@@ -1,6 +1,6 @@
 # Polynomial Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-July_11,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-July_12,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -8,45 +8,46 @@
 
 ### **1. Introduction**
 
-The `Polynomial` type in `control-rs` provides a high-performance,
-stack-allocated, single-variable representation of polynomials. Designed
-specifically for classical control systems engineering, this type facilitates
-frequency-domain analyses, coefficient representations, and trajectory models
-without relying on dynamic memory allocations. To support safety-critical
-applications, the implementation strictly adheres to`#![no_std]` targets,
-ensuring deterministic execution time and memory footprint.
+The `Polynomial` type in `control-rs` provides a statically sized,
+stack-allocated, single-variable representation of polynomials. Designed for
+classical frequency-domain control engineering and signal processing, this type
+enables algebraic manipulations (cascade, parallel, feedback) and discretization
+routines without heap allocation.
+
 
 ---
 
-### **2. Motivation**
+### **2. Motivation & Target Constraints**
 
-Polynomials are fundamental mathematical structures in classical control
-engineering. In continuous-time frequency-domain and discrete-time z-domain
-analysis, linear time-invariant (LTI) systems are represented as rational
-transfer functions:
+#### **2.1 Environmental Limitations**
 
-$$H(s) = \frac{B(s)}{A(s)} = \frac{b_m s^m + b_{m-1} s^{m-1} + \dots + b_1 s + b_0}{a_n s^n + a_{n-1} s^{n-1} + \dots + a_1 s + a_0}$$
+Embedded control loop platforms require deterministic memory footprints. A
+dynamic allocator cannot be used, meaning polynomials must have compile-time
+bounded sizes to avoid runtime stack overflows in real-time execution kernels.
 
-Unlike matrices or vectors, polynomial types are not commonly provided by
-general-purpose linear algebra libraries. Therefore, `control-rs` must establish
-its own robust, type-safe polynomial engine.
+#### **2.2 Target Applications**
 
-The primary motivation is to represent and manipulate transfer function
-equations—such as series cascade connection (polynomial multiplication),
-parallel connection (polynomial addition), feedback loops, and discretization
-routines—entirely at compile-time and stack-space limits. This guarantees that
-classical control models can be evaluated inside sub-millisecond,
-safety-critical loops without risking runtime panics or heap-allocation delays.
+- **LTI System Transfer Functions**: Series, parallel, and feedback connections
+  of rational functions $ H(s) = B(s)/A(s) $.
+- **Discretization Algorithms**: Bilinear (Tustin) transform and ZOH mapping of
+  continuous s-domain models to discrete z-domain equivalents.
+- **Trajectory Generation**: Generating smooth motion paths via cubic or quintic
+  splines.
+
+#### **2.3 Safety & Static Verification**
+
+To prevent runtime sizing bugs in control loops, polynomial capacities are bound
+directly in the type system. Operations like polynomial multiplication yield a
+result whose type-level capacity is statically verified to fit the product
+degree, catching capacity overflows at compile time.
 
 ---
 
-### **3. Core Architecture and Memory Layout**
+### **3. Core Architecture & Memory Layout**
 
-#### **3.1 Generics Foundation**
+#### **3.1 Generics Foundation & Sizing**
 
-To avoid heap allocations while supporting polynomials of varying degrees, the
-design models polynomial bounds directly in the type system using Rust's
-generics:
+The `Polynomial` structure is declared as:
 
 ```rust
 pub struct Polynomial<T, N: Dim> {
@@ -54,186 +55,311 @@ pub struct Polynomial<T, N: Dim> {
 }
 ```
 
-Here, `N` represents the maximum capacity of the polynomial (the number of
-coefficients, equivalent to the maximum degree $N - 1$). This structure enforces
-static size limits, allowing the compiler to determine the exact stack space
-required at compile-time.
+Here, `N` represents the capacity (number of coefficients, meaning the maximum
+possible polynomial degree is $ N - 1 $). Dimension sizing is verified using
+the type-level Peano traits defined
+in [num_types.rs](../../src/math/num_types.rs).
 
-#### **3.2 Internal Storage Strategy**
+#### **3.2 Memory Layout & Storage Strategy**
 
-Coefficients are stored in a contiguous array in **ascending order of powers**:
+Coefficients are stored in a contiguous flat array in **ascending order of
+powers**:
+$$ p(x) = c_0 + c_1 x + c_2 x^2 + \dots + c_{N-1} x^{N-1} $$
+where `data[i]` contains the coefficient for the exponent $ x^i $.
 
-$$p(x) = c_0 + c_1 x + c_2 x^2 + \dots + c_{N-1} x^{N-1}$$
+- **Ascending Power Storage Rationale**:
+    - Direct index-to-exponent mapping: `data[i]` corresponds exactly to the
+      power $ x^i $, avoiding index arithmetic offsets.
+    - Zero-cost padding: When adding polynomials of differing sizes, aligning
+      coefficients is trivial (coefficients for matching indices are added
+      directly) without shifting elements.
+- **Alternative Considered (Descending Power Storage)**: Descending order (where
+  `data[0]` is the coefficient for $ x^{N-1} $, as used in MATLAB) requires
+  index shifting when capacities change, introducing runtime overhead.
 
-where `data[i]` corresponds to the coefficient $c_i$ of $x^i$.
+#### **3.3 Memory Representation & Slicing**
 
-1. **Direct Index-to-Exponent Mapping**: Storing coefficients in ascending order
-   creates a 1-to-1 mapping between the array index and the exponent of $x$,
-   simplifying indexing logic.
-2. **Zero-Cost Padding**: When performing operations on polynomials of different
-   capacities (e.g. adding a degree-2 polynomial to a degree-5 polynomial),
-   lower-order coefficients remain at identical index offsets. Alignment is
-   trivial and does not require shifting elements.
+To ensure zero-cost layout mapping, the struct uses the transparent
+representation:
 
-*Alternative Considered (Descending Power Storage)*: This is common in computer
-algebra systems and MATLAB (e.g. `data[0]` is the coefficient for $x^{N-1}$).
-However, descending storage introduces index-mapping overhead ($c_j$
-corresponding to power $N - 1 - j$) and complicates operations when changing
-capacities, as all coefficients must be shifted.
+```rust
+#[repr(transparent)]
+pub struct Polynomial<T, N: Dim> {
+    data: [T; N::DIM],
+}
+```
+
+This layout allows exposing safe flat slice interfaces:
+
+```rust
+impl<T, N: Dim> Polynomial<T, N> {
+    pub const fn as_slice(&self) -> &[T] {
+        &self.data
+    }
+
+    pub const fn as_mut_slice(&mut self) -> &mut [T] {
+        &mut self.data
+    }
+}
+```
+
+---
 
 ### **4. API Specification**
 
-#### **4.1 Instantiation**
+#### **4.1 Instantiation & Constructors**
 
-The API provides constructors for static and runtime initialization:
-
-* **Constant Polynomial**: `pub const fn constant(val: T) -> Polynomial<T, U1>`
-* **Linear Polynomial**: `pub const fn line(c0: T, c1: T) -> Polynomial<T, U2>`
-* **From Coefficients Array**:
-  `pub const fn from_coefficients(data: [T; N::DIM]) -> Self`
-* **Functional Generation**:
-  `pub fn from_fn<F>(f: F) -> Self where F: FnMut(usize) -> T`
+- `pub const fn constant(val: T) -> Polynomial<T, U1>`: Constructs a degree-0
+  polynomial.
+- `pub const fn line(c0: T, c1: T) -> Polynomial<T, U2>`: Constructs a degree-1
+  polynomial.
+- `pub const fn from_coefficients(data: [T; N::DIM]) -> Self`: Direct array
+  initialization.
+- `pub fn from_fn<F>(f: F) -> Self where F: FnMut(usize) -> T`: Constructs
+  coefficients from a mapping function.
 
 #### **4.2 Operator Overloading**
 
-Arithmetic operators are overloaded by implementing `core::ops` traits:
+Overloads standard traits (`Add`, `Sub`). Multiplication features two
+interfaces:
 
-* **Addition and Subtraction**: `Add` and `Sub` are implemented for matching
-  capacities.
-* **Multiplication**: Implemented via convolution of the coefficient vectors:
-  $$(p \cdot q)_k = \sum_{i} p_i \cdot q_{k-i}$$
-  We support two multiplication interfaces:
-    1. `mul_poly`: Direct static multiplication returning a product of combined
-       Peano capacity bounds:
-       ```rust
-       impl<T, N:Dim> Polynomial<T, N> {
-         pub fn mul_poly<M: Dim>(&self, other: &Polynomial<T, M>) -> 
-       Polynomial<T, <<N as DimAdd<M>>::Output as DimSub<U1>>::Output>
-         where
-           N: DimAdd<M>,
-           <N as DimAdd<M>>::Output: DimSub<U1>, { /* ... */ }
-       }
-       ```
-    2. `mul_with_conv`: Accepts a generic implementation of the `Convolution<T>`
-       trait (already implemented). This decouples the polynomial representation
-       from specific DSP
-       algorithms, allowing the user to pass hardware-accelerated DSP
-       convolution (e.g., utilizing circular buffers or circular FFT).
+1. `mul_poly`: Static multiplication returning a combined capacity bound:
+   ```rust
+   impl<T, N: Dim> Polynomial<T, N> {
+     pub fn mul_poly<M: Dim>(&self, other: &Polynomial<T, M>) -> 
+       Polynomial<T,<<N as DimAdd<M>>::Output as DimSub<U1>>::Output>
+     where
+         N: DimAdd<M>,
+         <N as DimAdd<M>>::Output: DimSub<U1> { /* .. */}
+   }
+   ```
+2. `mul_with_conv`: Decouples arithmetic from the representation by accepting an
+   implementor of the `Convolution<T>` trait, facilitating the use of
+   hardware-optimized DSP convolution libraries.
 
 #### **4.3 Core Operations**
 
-* **Evaluation via Horner's Method**:
-  $$p(x) = c_0 + x(c_1 + x(c_2 + \dots))$$
-  Horner's method is mathematically optimal, requiring exactly $N-1$
-  multiplications and additions, and offers superior numerical stability.
-* **Long Division (`div_rem`)**: Computes the quotient $q(x)$ and
-  remainder $r(x)$ such that $p(x) = d(x) \cdot q(x) + r(x)$. Output capacities
-  must be specified as type-level dimensions, returning a `Result` to handle
-  division-by-zero or capacity mismatch:
+- **Evaluation via Horner's Method**:
+  Evaluates the polynomial using the recurrence relation:
+  $$ p(x) = c_0 + x(c_1 + x(c_2 + \dots)) $$
+  Horner's method minimizes floating-point rounding error
+  accumulation and requires only $ N-1 $ additions and multiplications.
+  Detailed error bounds are described
+  in [Rounding Error of Polynomial Evaluation](https://www.sciencedirect.com/science/article/pii/0771050X79900020).
+- **Long Division (`div_rem`)**:
+  Calculates the quotient and remainder:
   ```rust
   impl<T, N: Dim> Polynomial<T, N> {
-    pub fn div_rem<M: Dim, Q: Dim, R: Dim>(
-      &self,
-      divisor: &Polynomial<T, M>,
-    ) -> Result<(Polynomial<T, Q>, Polynomial<T, R>), DivisionError> { /* ... */ }
+      pub fn div_rem<M: Dim, Q: Dim, R: Dim>(&self, divisor: &Polynomial<T, 
+  M>) -> Result<(Polynomial<T, Q>, Polynomial<T, R>), DivisionError> 
+    { /* ... */} 
   }
-
   ```
-* **Differentiation & Integration**: Returns the analytical derivative or
-  integral, bounded using type-level Peano math traits:
+  [Fast in-place algorithms for polynomial operations: division, evaluation, interpolation](https://dl.acm.org/doi/abs/10.1145/3373207.3404061)
+- **Interpolation**: Compute the optimal polynomial for a set of points.
+  [Fast in-place algorithms for polynomial operations: division, evaluation, interpolation](https://dl.acm.org/doi/abs/10.1145/3373207.3404061)
+- **Calculus Operations**: Analytical derivative and integral functions return
+  statically resized polynomial bounds:
   ```rust
   impl<T, N: Dim> Polynomial<T, N> {
-    pub fn derivative(&self) -> Polynomial<T, <N as DimSub<U1>>::Output>
-    where
-      N: DimSub<U1> { /* ... */ }
-
-    pub fn integral(&self, constant: T) -> Polynomial<T, <N as DimAdd<U1>>::Output>
-    where
-      N: DimAdd<U1> { /* ... */ }
+    pub fn derivative(&self) -> Polynomial<T, <N as DimSub<U1>>::Output> 
+  where N: DimSub<U1> { /* .. */ }
+    pub fn integral(&self, constant: T) -> Polynomial<T, <N as 
+  DimAdd<U1>>::Output> where N: DimAdd<U1> { /* .. */ }
   }
   ```
+
+#### **4.4 Interoperability & Conversions**
+
+##### **4.4.1 Conversion to Matrix**
+
+A monic polynomial of degree $ n = N - 1 $ converts to its $ n \times n $
+companion matrix in Controllable Canonical Form.
+
+- **Type Signature**:
+  ```rust
+  impl<T, N: Dim> TryFrom<Polynomial<T, N>> for Matrix<T, <N as DimSub<U1>>::Output, <N as DimSub<U1>>::Output>
+  where
+      N: DimSub<U1>,
+      <N as DimSub<U1>>::Output: Dim,
+      T: Copy + Default + Neg<Output = T> + From<i32>, { /* .. */ }
+  ```
+- **Behavior**: Instantiates the companion matrix. The superdiagonal is
+  populated with ones, and the bottom row contains the negative polynomial
+  coefficients.
+
+##### **4.4.2 Conversion to Tensor**
+
+Converts a polynomial to a 1D `Tensor<T, Layout>`.
+
+- **Type Signature**:
+  ```rust
+  impl<T, N: Dim, Layout: TensorLayout> TryFrom<Polynomial<T, N>> for Tensor<T, Layout>
+  where
+      Layout: TensorLayout<Size = N>, { /* .. */ }
+  ```
+- **Behavior**: Constructs a rank-1 tensor using the flat coefficient data.
 
 ---
 
 ### **5. Error Handling & State Management**
 
-#### **5.1 Compile-Time Validation**
+#### **5.1 Compile-Time Constraints**
 
-Operations that are mathematically constrained (such as the degree change in
-multiplication and differentiation) resolve their capacities at compile-time.
-Rust's type checker prevents compiling code with mismatched polynomial sizes.
+Incompatible polynomial additions (different static capacities) or overflow
+multiplications fail at compile time, preventing indexing bugs in target
+execution loops.
 
 #### **5.2 Runtime Fallbacks**
 
-When division is performed, the divisor's effective degree might be zero (
-division by zero) or the allocated quotient/remainder capacities ($Q$ and $R$)
-might be mathematically insufficient. Instead of raising a panic, `div_rem`
-returns a `Result<(Polynomial<T, Q>, Polynomial<T, R>), DivisionError>`, letting
-the caller handle edge cases gracefully without halting the control loop.
+- Division by zero or capacity overflow during polynomial division returns a
+  `Result<..., DivisionError>` instead of panicking.
+- Bounds access checks return `Option<&T>` via `get()` methods.
 
 ---
 
-### **6. Testing and Validation Framework**
+### **6. Testing & Validation Framework**
 
-#### **6.1 Standard Test Harness (CI & Coverage)**
+#### **6.1 Host/Target Test Integration**
 
-Although the target environment is `#![no_std]`, the test suite is compiled and
-run on the host using the standard `std` test harness. This enables tools like
-`tarpaulin` to run coverage assessments, ensuring that all coefficient
-arithmetic, division boundaries, and evaluation paths are fully verified.
+Host-side testing using standard coverage tools ensures the accuracy of algebra
+routines. Cross-compiled QEMU runs verify no-std execution compatibility.
 
-#### **6.2 Unit Testing in `no_std`**
+#### **6.2 Property-Based Testing**
 
-We run target-specific tests using a minimal custom test harness on QEMU or
-microcontrollers (e.g., ARM Cortex-M4) to guarantee compatibility with
-bare-metal target behavior.
+Uses `proptest` to check:
 
-#### **6.3 Property-Based Testing**
+- Commutativity: $ P + Q = Q + P $
+- Distributivity: $ P \cdot (Q + R) = P \cdot Q + P \cdot R $
+- Division consistency: $ P = Q \cdot D + R $
 
-Integration with `proptest` automatically validates algebraic identities:
+#### **6.3 Benchmarks and Quality Reporting**
 
-* Commutativity: $P + Q = Q + P$
-* Distributivity: $P \cdot (Q + R) = P \cdot Q + P \cdot R$
-* Division verification: $P = Q \cdot D + R$ (evaluating equality across a
-  random range of input variables).
+Horner evaluation cycle counts are profiled. Target binary sizes are monitored
+to prevent compilation bloat.
 
 ---
 
-### **7. Performance and Resource Considerations**
+### **7. Performance & Resource Considerations**
 
-#### **7.1 Examples and Bloat Testing**
+#### **7.1 Stack Overflow Prevention & Memory Safety**
 
-To ensure that the polynomial type introduces no hidden code bloat or
-compiler-injected heap dependencies, we compile mathematical examples located in
-`examples/numerical_methods`. These binaries are analyzed with bloat checking
-tools to ensure minimal flash footprint and deterministic stack frame sizes on
-embedded targets.
+To guarantee safety on thin microcontrollers, polynomial array capacities are
+capped at $ 128 $ elements. This limits stack allocation overhead while
+supporting high-degree models.
 
-#### **7.2 Stack Memory limits**
+#### **7.2 Code Bloat & Binary Size Validation**
 
-Large polynomials allocated on the stack risk overflows. The library enforces
-sensible maximum sizes (e.g., restricting polynomial arrays to a maximum of 64
-or 128 elements under common settings) to guarantee safety on thin
-microcontrollers.
+Compilation artifacts are monitored via `examples/numerical_methods` to ensure
+compiler dead-code elimination successfully removes unused polynomial variants.
 
-#### **7.3 Compiler Optimizations**
+#### **7.3 Compiler Optimizations & Hardware Acceleration**
 
-Horner's method is implemented in `BasicSubPrograms::polyeval` using flat-slice
-iteration to encourage compiler auto-vectorization and loop unrolling, bypassing
-unnecessary index checks.
+Evaluation iterates over flat slices, allowing compiler auto-vectorization (
+SIMD) and loop unrolling to optimize the multiplication-addition steps.
 
 ---
 
-### **8. Development Plan**
+### **8. Structural Specializations & Extensions**
 
-Below is the estimated implementation timeline and effort breakdown for the
-`Polynomial` type:
+Future extensions include new-type wrappers for orthogonal representations (
+e.g., Chebyshev polynomials for function approximation) and sparse polynomial
+layouts for high-degree models with few coefficients.
 
-| Task / Feature                         | Description                                                                                                                    | Estimated Effort |
-|:---------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Phase 1: Basic Storage & Types**     | Define `Polynomial` struct, ascending coefficient storage, basic const constructors (`constant`, `line`, `from_coefficients`). | 1.0 Day          |
-| **Phase 2: Basic Arithmetic & Horner** | Implement `Add` and `Sub` traits, Horner's evaluation method, and degree utility methods.                                      | 1.5 Days         |
-| **Phase 3: Calculus Operations**       | Implement analytical differentiation and integration traits.                                                                   | 1.0 Day          |
-| **Phase 4: Multiplication & Division** | Implement CPU-based convolution (`mul_poly`) and long division (`div_rem`) returning `Result`.                                 | 2.0 Days         |
-| **Phase 5: Testing & Bloat Analysis**  | Set up `proptest` property suites, std/no_std test runs, and verify binary size in `examples/numerical_methods`.               | 1.5 Days         |
+---
 
+### **9. Classical Control Design Examples**
+
+#### **9.1 Closed-Loop Transfer Function Synthesis**
+
+Computing the closed-loop system numerator and denominator:
+$$ G_{cl}(s) = \frac{G_p(s)}{1 + G_p(s)G_c(s)} $$
+where $ G_p(s) = \frac{N_p(s)}{D_p(s)} $ and $ G_c(s) = \frac{N_c(s)}{D_c(
+s)} $.
+This yields:
+$$ G_{cl}(s) = \frac{N_p(s) D_c(s)}{D_p(s) D_c(s) + N_p(s) N_c(s)} $$
+
+```rust
+use control_rs::math::polynomial::{Polynomial, Dim};
+
+pub fn compute_closed_loop<T, Np: Dim, Dp: Dim, Nc: Dim, Dc: Dim>(
+    num_p: &Polynomial<T, Np>,
+    den_p: &Polynomial<T, Dp>,
+    num_c: &Polynomial<T, Nc>,
+    den_c: &Polynomial<T, Dc>,
+) -> (
+    Polynomial<T, <<Np as DimAdd<Dc>>::Output as DimSub<U1>>::Output>,
+    Polynomial<T, <<Dp as DimAdd<Dc>>::Output as DimSub<U1>>::Output>,
+)
+where
+    T: Copy + Default + Add<Output=T> + Mul<Output=T>,
+    Np: DimAdd<Dc>,
+    <Np as DimAdd<Dc>>::Output: DimSub<U1>,
+    Dp: DimAdd<Dc>,
+    <Dp as DimAdd<Dc>>::Output: DimSub<U1>,
+    Np: DimAdd<Nc>,
+    <Np as DimAdd<Nc>>::Output: DimSub<U1>,
+// Verify that denominator product and numerator product have matching capacities for addition
+    <<Dp as DimAdd<Dc>>::Output as DimSub<U1>>::Output: Dim,
+{
+    // Closed-loop numerator: N_p * D_c
+    let cl_num = num_p.mul_poly(den_c);
+
+    // Denominator term 1: D_p * D_c
+    let den_term1 = den_p.mul_poly(den_c);
+
+    // Denominator term 2: N_p * N_c
+    let den_term2 = num_p.mul_poly(num_c);
+
+    // Closed-loop denominator: D_p * D_c + N_p * N_c
+    let cl_den = den_term1 + den_term2;
+
+    (cl_num, cl_den)
+}
+```
+
+#### **9.2 Continuous-to-Discrete Bilinear (Tustin) Transform**
+
+Applying the Tustin transform to discretize a continuous-time denominator. The
+Tustin transform maps continuous variables using the approximation:
+$$ s \approx \frac{2}{T_s} \frac{z - 1}{z + 1} $$
+For a first-order denominator $ A(s) = a_1 s + a_0 $, substituting $ s $
+yields the discrete polynomial coefficients described
+in [Bilinear/Tustin Transform (S-to-Z)](https://dergipark.org.tr/en/download/article-file/2005762):
+$$ A(z) = \left( a_0 + \frac{2 a_1}{T_s} \right) z + \left( a_0 - \frac{2
+a_1}{T_s} \right) $$
+
+```rust
+use control_rs::math::polynomial::{Polynomial, U2};
+
+pub fn tustin_discretize_first_order<T>(
+    den_s: &Polynomial<T, U2>, // a_1 * s + a_0 -> [a_0, a_1]
+    t_s: T,
+) -> Polynomial<T, U2>
+where
+    T: Copy + Default + Add<Output=T> + Sub<Output=T> + Mul<Output=T> + Div<Output=T> + From<i32>,
+{
+    let a_0 = den_s.as_slice()[0];
+    let a_1 = den_s.as_slice()[1];
+
+    let two = T::from(2);
+    let ratio = (two * a_1) / t_s;
+
+    let z_1 = a_0 + ratio; // Coefficient of z^1
+    let z_0 = a_0 - ratio; // Coefficient of z^0
+
+    Polynomial::from_coefficients([z_0, z_1])
+}
+```
+
+---
+
+### **10. Development Plan & Roadmap**
+
+| Task / Feature             | Description                                                  | Estimated Effort |
+|:---------------------------|:-------------------------------------------------------------|:-----------------|
+| **Phase 1: Basic Storage** | Ascending storage arrays and constructors.                   | 1.0 Day          |
+| **Phase 2: Horner Eval**   | Implement Horner's evaluation method and standard operators. | 1.5 Days         |
+| **Phase 3: Calculus**      | Differentiation and integration routines.                    | 1.0 Day          |
+| **Phase 4: Div & Conv**    | Polynomial convolution and division.                         | 2.0 Days         |
+| **Phase 5: Verification**  | Property tests and binary size audits.                       | 1.5 Days         |
