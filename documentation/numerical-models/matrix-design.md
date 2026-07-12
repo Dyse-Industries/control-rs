@@ -44,10 +44,27 @@ checked at compile-time, halting compilation if a dimension mismatch occurs.
 
 #### **2.4 In-House Math & Stable Const Generics Rationale (Reuse Trade Study)**
 
-Rather than building on external libraries like `nalgebra`'s `no_std` static-storage mode, `control-rs` implements its own custom math module in-house. This design choice is driven by two critical factors:
+Rather than building on external libraries like `nalgebra`'s `no_std`
+static-storage mode, `control-rs` implements its own custom math module
+in-house. This design choice is driven by two critical factors:
 
-1. **Generic `const fn` Support on Stable Rust**: To guarantee deterministic start-up and minimize RAM utilization, static matrices must be placed directly in read-only flash memory. This requires matrix constructors to be `const fn`. Since standard library traits (like `Default`) do not allow calling their methods in `const fn` on stable Rust, `control-rs` provides custom `Zero` and `One` traits in `crate::math::num_traits`. These traits expose associated constants (`T::ZERO` and `T::ONE`) instead of methods, allowing the compiler to resolve generic `const fn` constructors at compile time.
-2. **Audit Footprint & Certification**: In safety-critical environments (e.g., ISO 26262, DO-178C), every line of dependency code must be audited and certified. `nalgebra` is a powerful, general-purpose library with a massive API surface and a deep dependency chain. Building on it would drastically expand the codebase's audit surface. In contrast, our in-house math module provides a minimal audit surface, optimized precisely for our safety invariants, and enables unified coordinate mapping and layout conversions across `Matrix`, `Polynomial`, and `Tensor` types.
+1. **Generic `const fn` Support on Stable Rust**: To guarantee deterministic
+   start-up and minimize RAM utilization, static matrices must be placed
+   directly in read-only flash memory. This requires matrix constructors to be
+   `const fn`. Since standard library traits (like `Default`) do not allow
+   calling their methods in `const fn` on stable Rust, `control-rs` provides
+   custom `Zero` and `One` traits in `crate::math::num_traits`. These traits
+   expose associated constants (`T::ZERO` and `T::ONE`) instead of methods,
+   allowing the compiler to resolve generic `const fn` constructors at compile
+   time.
+2. **Audit Footprint & Certification**: In safety-critical environments (e.g.,
+   ISO 26262, DO-178C), every line of dependency code must be audited and
+   certified. `nalgebra` is a powerful, general-purpose library with a massive
+   API surface and a deep dependency chain. Building on it would drastically
+   expand the codebase's audit surface. In contrast, our in-house math module
+   provides a minimal audit surface, optimized precisely for our safety
+   invariants, and enables unified coordinate mapping and layout conversions
+   across `Matrix`, `Polynomial`, and `Tensor` types.
 
 ---
 
@@ -114,12 +131,24 @@ impl<T, R: Dim, C: Dim> Matrix<T, R, C> {
 
 #### **4.1 Instantiation & Constructors**
 
-- `pub const fn zero() -> Self where T: Zero + Copy`: Instantiates an all-zero matrix using `T::ZERO` as the constant initialization value.
-- `pub const fn identity() -> Self where T: Zero + One + Copy`: Instantiates an identity matrix (restricted to square shapes) by initializing elements to `T::ZERO` and filling the main diagonal with `T::ONE` via a const-evaluated loop.
-- `pub const fn diagonal(val: [T; D::DIM]) -> Matrix<T, D, D> where T: Zero + Copy`: Constructs a diagonal matrix using the provided array of diagonal values and filling off-diagonal elements with `T::ZERO`.
-- `pub fn from_fn<F>(mut f: F) -> Self where F: FnMut(usize, usize) -> T`: Generates a matrix using a coordinate-based mapping function at runtime.
+- `pub const fn zero() -> Self where T: Zero + Copy`: Instantiates an all-zero
+  matrix using `T::ZERO` as the constant initialization value.
+- `pub const fn identity() -> Self where T: Zero + One + Copy`: Instantiates an
+  identity matrix (restricted to square shapes) by initializing elements to
+  `T::ZERO` and filling the main diagonal with `T::ONE` via a const-evaluated
+  loop.
+-
+`pub const fn diagonal(val: [T; D::DIM]) -> Matrix<T, D, D> where T: Zero + Copy`:
+Constructs a diagonal matrix using the provided array of diagonal values and
+filling off-diagonal elements with `T::ZERO`.
+- `pub fn from_fn<F>(mut f: F) -> Self where F: FnMut(usize, usize) -> T`:
+  Generates a matrix using a coordinate-based mapping function at runtime.
 
-*Implementation Note*: To support generic `const fn` initialization on stable Rust, the scalar type `T` must implement the `Zero` and `One` traits from `crate::math::num_traits`. These traits expose the associated constants `T::ZERO` and `T::ONE`. All static constructors are marked `const fn` to allow placing static matrices directly in read-only flash memory.
+*Implementation Note*: To support generic `const fn` initialization on stable
+Rust, the scalar type `T` must implement the `Zero` and `One` traits from
+`crate::math::num_traits`. These traits expose the associated constants
+`T::ZERO` and `T::ONE`. All static constructors are marked `const fn` to allow
+placing static matrices directly in read-only flash memory.
 
 #### **4.2 Operator Overloading**
 
@@ -166,7 +195,9 @@ A square matrix `Matrix<T, D, D>` converts to its characteristic polynomial
   in [Faddeev-LeVerrier Algorithm](https://arxiv.org/pdf/2008.04247)). This
   algorithm is heap-allocation-free and division-free except for division by
   integer iteration steps, making it highly suitable for embedded targets.
-- **Failure Condition**: Returns `ConversionError::DimensionMismatch` if the scalar type cannot perform integer division, if numerical overflow occurs, or if capacity is insufficient.
+- **Failure Condition**: Returns `ConversionError::DimensionMismatch` if the
+  scalar type cannot perform integer division, if numerical overflow occurs, or
+  if capacity is insufficient.
 
 ##### **4.4.2 Conversion to Tensor**
 
@@ -184,7 +215,8 @@ Converts a 2D matrix to a rank-2 `Tensor<T, Layout>`.
   ```
 - **Behavior**: Maps nested column-major arrays into the flat array
   representation of the `Tensor`.
-- **Failure Condition**: Returns `ConversionError::LayoutMismatch` if `Layout::RANK != 2` or if the layout's dimensions do not match $ R \times C $.
+- **Failure Condition**: Returns `ConversionError::LayoutMismatch` if
+  `Layout::RANK != 2` or if the layout's dimensions do not match $ R \times C $.
 
 ---
 
@@ -198,7 +230,9 @@ compiling invalid math.
 
 #### **5.2 Runtime Error Taxonomy**
 
-To supplement the crate's generic `ArithmeticError`, `control-rs` defines dedicated error enums in the `math` module to represent linear algebra and conversion failures:
+To supplement the crate's generic `ArithmeticError`, `control-rs` defines
+dedicated error enums in the `math` module to represent linear algebra and
+conversion failures:
 
 ```rust
 /// Unified linear algebra errors supplementing ArithmeticError.
@@ -250,7 +284,12 @@ randomized matrices:
 - Transpose of product: $ (AB)^T = B^T A^T $
 - Distributivity: $ A(B + C) = AB + AC $
 
-To verify the safety and numerical stability of our algorithms, the proptest corpus is explicitly populated with deliberately ill-conditioned matrices (e.g., Hilbert matrices, matrices with high condition numbers, and near-singular matrices with components close to `T::epsilon()`). This ensures that the tolerance-based singularity checks correctly catch numerical instability without crashing.
+To verify the safety and numerical stability of our algorithms, the proptest
+corpus is explicitly populated with deliberately ill-conditioned matrices (e.g.,
+Hilbert matrices, matrices with high condition numbers, and near-singular
+matrices with components close to `T::epsilon()`). This ensures that the
+tolerance-based singularity checks correctly catch numerical instability without
+crashing.
 
 #### **6.3 Benchmarks and Quality Reporting**
 
@@ -376,12 +415,12 @@ where
 
 ### **10. Development Plan & Roadmap**
 
-| Task / Feature               | Description                                                            | Estimated Effort |
-|:-----------------------------|:-----------------------------------------------------------------------|:-----------------|
-| **Phase 1: Core Layout**     | Define `Matrix` struct, column-major storage, and slice casting.       | 1.0 Day          |
-| **Phase 2: Operators**       | Implement `Add`, `Sub`, `Mul` traits with compile-time checks.         | 1.5 Days         |
-| **Phase 3: Solvers**         | Implement LU decomposition, determinants, and matrix inversion.        | 2.0 Days         |
-| **Phase 4: Specializations** | Create `UpperTriangular`, `LowerTriangular`, and `Symmetric` wrappers. | 1.0 Day          |
-| **Phase 5: Factorizations**  | Implement Cholesky ($ L L^T $) and QR solvers.                         | 2.0 Days         |
-| **Phase 6: Verification**    | Set up `proptest` suites and target clock cycle benchmarks.            | 1.5 Days         |
-| **Phase 7: Interoperability**| Implement `TryFrom` conversions between `Matrix`, `Polynomial` (Faddeev-LeVerrier), and `Tensor`. Depends on Matrix Phase 1 & 2, Tensor Phase 1 & 3, and Polynomial Phase 1. | 2.0 Days |
+| Task / Feature                | Description                                                                                                                                                                  | Estimated Effort |
+|:------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Phase 1: Core Layout**      | Define `Matrix` struct, column-major storage, and slice casting.                                                                                                             | 1.0 Day          |
+| **Phase 2: Operators**        | Implement `Add`, `Sub`, `Mul` traits with compile-time checks.                                                                                                               | 1.5 Days         |
+| **Phase 3: Solvers**          | Implement LU decomposition, determinants, and matrix inversion.                                                                                                              | 2.0 Days         |
+| **Phase 4: Specializations**  | Create `UpperTriangular`, `LowerTriangular`, and `Symmetric` wrappers.                                                                                                       | 1.0 Day          |
+| **Phase 5: Factorizations**   | Implement Cholesky ($ L L^T $) and QR solvers.                                                                                                                               | 2.0 Days         |
+| **Phase 6: Verification**     | Set up `proptest` suites and target clock cycle benchmarks.                                                                                                                  | 1.5 Days         |
+| **Phase 7: Interoperability** | Implement `TryFrom` conversions between `Matrix`, `Polynomial` (Faddeev-LeVerrier), and `Tensor`. Depends on Matrix Phase 1 & 2, Tensor Phase 1 & 3, and Polynomial Phase 1. | 2.0 Days         |
