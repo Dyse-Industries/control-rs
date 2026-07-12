@@ -109,14 +109,12 @@ impl<T, N: Dim> Polynomial<T, N> {
 
 #### **4.1 Instantiation & Constructors**
 
-- `pub const fn constant(val: T) -> Polynomial<T, U1>`: Constructs a degree-0
-  polynomial.
-- `pub const fn line(c0: T, c1: T) -> Polynomial<T, U2>`: Constructs a degree-1
-  polynomial.
-- `pub const fn from_coefficients(data: [T; N::DIM]) -> Self`: Direct array
-  initialization.
-- `pub fn from_fn<F>(f: F) -> Self where F: FnMut(usize) -> T`: Constructs
-  coefficients from a mapping function.
+- `pub const fn constant(val: T) -> Polynomial<T, U1> where T: Copy`: Constructs a degree-0 polynomial containing a single coefficient.
+- `pub const fn line(c0: T, c1: T) -> Polynomial<T, U2> where T: Copy`: Constructs a degree-1 polynomial $[c_0, c_1]$ (representing $c_0 + c_1 x$).
+- `pub const fn from_coefficients(data: [T; N::DIM]) -> Self`: Direct array initialization.
+- `pub fn from_fn<F>(f: F) -> Self where F: FnMut(usize) -> T`: Constructs coefficients from a mapping function at runtime.
+
+*Implementation Note*: To support generic `const fn` initialization on stable Rust, the scalar type `T` must implement the `Zero` and `One` traits from `crate::math::num_traits`. These traits expose the associated constants `T::ZERO` and `T::ONE`.
 
 #### **4.2 Operator Overloading**
 
@@ -182,11 +180,16 @@ companion matrix in Controllable Canonical Form.
   where
       N: DimSub<U1>,
       <N as DimSub<U1>>::Output: Dim,
-      T: Copy + Default + Neg<Output = T> + From<i32>, { /* .. */ }
+      T: Ring + Copy + Neg<Output = T>,
+  {
+      type Error = ConversionError;
+      // ...
+  }
   ```
 - **Behavior**: Instantiates the companion matrix. The superdiagonal is
-  populated with ones, and the bottom row contains the negative polynomial
+  populated with ones (`T::ONE`), and the bottom row contains the negative polynomial
   coefficients.
+- **Failure Condition**: Returns `ConversionError::NonMonicPolynomial` if the leading coefficient is not `T::ONE` (or if it is `T::ZERO`), or `ConversionError::DimensionMismatch` if the polynomial's capacity is less than 2 ($N < 2$, meaning degree $< 1$).
 
 ##### **4.4.2 Conversion to Tensor**
 
@@ -196,9 +199,14 @@ Converts a polynomial to a 1D `Tensor<T, Layout>`.
   ```rust
   impl<T, N: Dim, Layout: TensorLayout> TryFrom<Polynomial<T, N>> for Tensor<T, Layout>
   where
-      Layout: TensorLayout<Size = N>, { /* .. */ }
+      Layout: TensorLayout<Size = N>,
+  {
+      type Error = ConversionError;
+      // ...
+  }
   ```
 - **Behavior**: Constructs a rank-1 tensor using the flat coefficient data.
+- **Failure Condition**: Returns `ConversionError::LayoutMismatch` if `Layout::RANK != 1` or if the target tensor layout's size does not match the polynomial's capacity $N$.
 
 ---
 
@@ -363,3 +371,4 @@ where
 | **Phase 3: Calculus**      | Differentiation and integration routines.                    | 1.0 Day          |
 | **Phase 4: Div & Conv**    | Polynomial convolution and division.                         | 2.0 Days         |
 | **Phase 5: Verification**  | Property tests and binary size audits.                       | 1.5 Days         |
+| **Phase 6: Interoperability**| Implement `TryFrom` conversions between `Polynomial`, `Matrix` (Companion Matrix), and `Tensor`. Depends on Polynomial Phase 1, Matrix Phase 1 & 2, and Tensor Phase 1 & 3. | 2.0 Days |

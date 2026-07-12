@@ -120,11 +120,11 @@ This representation facilitates casting elements to contiguous flat slices (
 
 #### **4.1 Instantiation & Constructors**
 
-- `pub const fn zero() -> Self`: Instantiates an all-zero tensor.
-- `pub const fn from_raw(data: [T; N]) -> Self`: Directly initializes from a
-  flat array.
-- `pub fn from_fn<F>(f: F) -> Self where F: FnMut(&[usize]) -> T`: Generates
-  values using a coordinate mapping function.
+- `pub const fn zero() -> Self where T: Zero + Copy`: Instantiates an all-zero tensor using `T::ZERO`.
+- `pub const fn from_raw(data: [T; Layout::Size::DIM]) -> Self`: Directly initializes from a flat array of matching capacity.
+- `pub fn from_fn<F>(f: F) -> Self where F: FnMut(&[usize]) -> T`: Generates values using a coordinate mapping function at runtime.
+
+*Implementation Note*: To support generic `const fn` initialization on stable Rust, the scalar type `T` must implement the `Zero` and `One` traits from `crate::math::num_traits`. These traits expose the associated constants `T::ZERO` and `T::ONE`.
 
 #### **4.2 Operator Overloading**
 
@@ -144,6 +144,15 @@ mapping.
 - `slice_inplace`: Writes a sub-tensor in-place into the target layout.
 - `contract_into`: Contracts axes with another tensor (Einstein summation) into
   a pre-allocated result tensor.
+  ```rust
+  pub fn contract_into<OtherLayout, ResultLayout>(
+      &self,
+      axis_self: usize,
+      other: &Tensor<T, OtherLayout>,
+      axis_other: usize,
+      result: &mut Tensor<T, ResultLayout>,
+  )
+  ```
 - `permute`: Permutes the axes via stride transformations.
 
 #### **4.4 Interoperability & Conversions**
@@ -157,10 +166,15 @@ matches dimensions.
   ```rust
   impl<T, Layout, R: Dim, C: Dim> TryFrom<Tensor<T, Layout>> for Matrix<T, R, C>
   where
-      Layout: TensorLayout<Size = <R as DimMul<C>>::Output>, { /* .. */ }
+      Layout: TensorLayout<Size = <R as DimMul<C>>::Output>,
+  {
+      type Error = ConversionError;
+      // ...
+  }
   ```
 - **Behavior**: Copy-maps elements from the flat column-major storage to the
   nested column-major array structure.
+- **Failure Condition**: Returns `ConversionError::LayoutMismatch` if `Layout::RANK != 2` or if the layout's dimensions do not match the matrix's rows and columns ($ R \times C $).
 
 ##### **4.4.2 Conversion to Polynomial**
 
@@ -171,10 +185,15 @@ matching size.
   ```rust
   impl<T, Layout, N: Dim> TryFrom<Tensor<T, Layout>> for Polynomial<T, N>
   where
-      Layout: TensorLayout<Size = N>, { /* .. */ }
+      Layout: TensorLayout<Size = N>,
+  {
+      type Error = ConversionError;
+      // ...
+  }
   ```
 - **Behavior**: Copies flat tensor data to construct ascending polynomial
   coefficients.
+- **Failure Condition**: Returns `ConversionError::LayoutMismatch` if `Layout::RANK != 1` or if the layout's size does not match the polynomial's capacity $N$.
 
 ---
 
@@ -276,11 +295,12 @@ where
 Contracting a 3D state tensor $ X $ (spatial grid over time) with a 2D
 transition tensor $ A $ to evaluate the next time step. The contraction along
 the spatial index $ j $ is defined as:
-$$ Y_{i, k} = \sum_{j} A_{i, j} X_{j, k} $$
+$$ Y_{i, k, l} = \sum_{j} A_{i, j} X_{j, k, l} $$
 
 ```rust
 use control_rs::math::tensor::{Tensor, TensorLayout, Shape3D, Shape2D};
 use control_rs::math::num_types::{U4, U2};
+use control_rs::math::num_traits::Ring;
 
 pub fn contract_state_transition<T>(
     a: &Tensor<T, Shape2D<U4, U4>>, // 4 x 4 transition matrix (2D tensor)
@@ -288,12 +308,12 @@ pub fn contract_state_transition<T>(
     y: &mut Tensor<T, Shape3D<U4, U2, U2>>, // Destination tensor for transition output
 )
 where
-    T: Copy + Default + Add<Output=T> + Mul<Output=T>,
+    T: Ring + Copy,
 {
     // Contract A and X along axis 1 of A and axis 0 of X:
     // Computes directly into the pre-allocated Y tensor to prevent stack 
     // allocation.
-    a.contract_into(x, y);
+    a.contract_into(1, x, 0, y);
 }
 ```
 
@@ -309,3 +329,4 @@ where
 | **Phase 4: Element Ops**       | Implement addition, subtraction, and scaling. | 1.0 Day          |
 | **Phase 5: Contractions**      | Implement tensor contraction and permutation. | 2.5 Days         |
 | **Phase 6: Verification**      | Implement `proptest` suites and size audits.  | 1.5 Days         |
+| **Phase 7: Interoperability**  | Implement `TryFrom` conversions between `Tensor`, `Matrix`, and `Polynomial`. Depends on Tensor Phase 1, 2, & 3, Matrix Phase 1 & 2, and Polynomial Phase 1. | 2.0 Days |
