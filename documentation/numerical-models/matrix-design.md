@@ -10,9 +10,9 @@
 
 The `Matrix` type in `control-rs` provides a high-performance, statically
 verified 2-dimensional storage representation for numerical types. To support
-safety-critical systems and bare-metal targets, the library is strictly
-constrained to `#![no_std]` environments, relying entirely on stack memory
-allocations and compile-time guarantees.
+bare-metal targets, the library is strictly constrained to `#![no_std]`
+environments, relying entirely on stack memory allocations and compile-time
+guarantees.
 
 ---
 
@@ -67,14 +67,7 @@ in [num_types.rs](../../src/math/num_types.rs).
 
 #### **3.2 Internal Storage Strategy**
 
-We evaluate two contiguous memory representations for a matrix of
-size $R \times C$:
-
-1. **1D Array Backing:** `[T; R * C]`
-2. **Nested Column-Major Arrays:** `[[T; R]; C]` representing $C$ columns, each
-   containing $R$ rows.
-
-**Decision:** We choose nested column-major arrays (`[[T; R]; C]`).
+**Column-major arrays** (`[[T; R]; C]`).
 
 * **BLAS and LAPACK Compatibility:** Column-major ordering is standard in
   legacy, high-performance linear algebra packages.
@@ -88,29 +81,13 @@ size $R \times C$:
 * **Flat Slice Interoperability:** To support low-level arithmetic kernels, the
   struct exposes:
   ```rust
-  impl<T, const R: usize, const C: usize> Matrix<T, R, C> {
-      pub const fn as_slice(&self) -> &[T];
-      pub const fn as_mut_slice(&mut self) -> &mut [T];
+  impl<T, R: Dim, C: Dim> Matrix<T, R, C> {
+      pub const fn as_slice(&self) -> &[T] { /* ... */ }
+      pub const fn as_mut_slice(&mut self) -> &mut [T] { /* ... */ }
   }
   ```
   Rust guarantees that nested arrays are laid out contiguously in memory,
   enabling zero-copy pointer casting to flat slices.
-
-#### **3.3 Data Alignment**
-
-To optimize memory access and enable SIMD (Single Instruction, Multiple Data)
-auto-vectorization, the struct enforces layout stability and alignment:
-
-```rust
-#[repr(C)]
-#[repr(align(16))]
-pub struct Matrix<T, const R: usize, const C: usize> {
-    data: [[T; R]; C],
-}
-```
-
-Aligning the arrays facilitates aligned SSE/AVX or ARM NEON vector instructions,
-avoiding penalties associated with misaligned memory access.
 
 ---
 
@@ -123,7 +100,8 @@ The API provides constructors for static and runtime initialization:
 * **Zero Matrix:** `pub const fn zero() -> Self` (if `T` supports a
   zero-representation).
 * **Identity Matrix:** `pub const fn identity() -> Self` (for square matrices).
-* **Diagonal Matrix:** `pub const fn diagonal(val: [T; D]) -> Matrix<T, D, D>`.
+* **Diagonal Matrix:**
+  `pub const fn diagonal(val: [T; D::DIM]) -> Matrix<T, D, D>`.
 * **Functional Generation:**
   `pub fn from_fn<F>(mut f: F) -> Self where F: FnMut(usize, usize) -> T`.
 * **Compile-Time Safety:** All constructors are marked `const fn` where possible
@@ -155,13 +133,17 @@ Arithmetic operators are overloaded by implementing `core::ops` traits:
 
 * **Transposition:** Returns a transposed matrix type-safely.
   ```rust
-  pub fn transpose(self) -> Matrix<T, C, R>
+  impl<T, R: Dim, C: Dim> Matrix<T, R, C> {
+    pub fn transpose(self) -> Matrix<T, C, R> { /* ... */ }
+  }
   ```
-* **Determinant & Inversion:** Inversion returns an `Option<Self>` to handle
-  singular matrices.
+* **Determinant & Inversion:** Inversion returns a
+  `Result<Self, SingularMatrixError>` to handle singular matrices.
   ```rust
-  pub fn determinant(&self) -> T;
-  pub fn invert(self) -> Option<Self>;
+  impl<T, R: Dim, C: Dim> Matrix<T, R, C> {
+    pub fn determinant(&self) -> T { /* ... */ }
+    pub fn invert(self) -> Result<Self, SingularMatrixError> { /* ... */ }
+  }
   ```
 * **Vector Operations:** Dot and cross products are implemented specifically for
   vector dimensions ($N \times 1$ and $1 \times N$ shapes).
@@ -174,7 +156,7 @@ Arithmetic operators are overloaded by implementing `core::ops` traits:
 
 Because dimension incompatibilities are verified during compilation, the
 generated binary does not contain size-checking branches or panic code for
-arithmetic operations, providing zero runtime overhead.
+arithmetic operations.
 
 #### **5.2 Runtime Fallbacks**
 
@@ -183,19 +165,21 @@ indexing) bypass panics by using soft failure paths:
 
 * Out-of-bounds indexing returns `Option<&T>` or `Option<&mut T>` via get
   methods.
-* Matrix inversion returns `Result<Matrix<T, D, D>>`, allowing the control loop
-  to fall back to a safe state or raise a soft warning rather than halting
-  execution.
+* Matrix inversion returns `Result<Matrix<T, D, D>, SingularMatrixError>`,
+  allowing the control loop to fall back to a safe state or raise a soft warning
+  rather than halting execution.
 
 ---
 
 ### **6. Testing and Validation Framework**
 
-#### **6.1 Unit Testing in `no_std`**
+#### **6.1 Unit Testing and std/no_std Integration**
 
-To validate mathematical correctness without `std::test`, we run unit tests
-using a minimal custom test harness targeting QEMU and actual bare-metal
-hardware.
+Host-side validation utilizing the standard test harness (`std::test`) is
+acceptable for verifying complex mathematical invariants (and is necessary for
+code coverage tools). Target-specific correctness is validated in a `#![no_std]`
+environment using a custom lightweight testing runner run under QEMU or target
+hardware to ensure target compatibility.
 
 #### **6.2 Property-Based Testing**
 
@@ -218,8 +202,30 @@ The numerical methods examples will allow bloat testing and final binary
 size checking.
 
 ```rust
+/// Solves the normal equations: A^T * A * x = A^T * b
+pub fn solve_least_squares<T, M: Dim, N: Dim>(
+    a: &Matrix<T, M, N>,
+    b: &Matrix<T, M, U1>,
+) -> Result<Matrix<T, N, U1>, LinAlgError>
+where
+    T: Copy + Default + core::ops::Add<Output=T> + core::ops::Sub<Output=T> + core::ops::Mul<Output=T> + core::ops::Div<Output=T> + PartialOrd,
+    M: Dim,
+    N: Dim,
+    N: DimMul<N>,
+    N: DimMul<U1>,
+    M: DimMul<N>,
+    M: DimMul<U1>,
+{
+    let a_t = a.transpose();
+    let a_t_a = &a_t * a; // Resulting in N x N
+    let a_t_b = &a_t * b; // Resulting in N x 1
 
-// least squares fit example
+    // Invert the square normal matrix A^T * A
+    let a_t_a_inv = a_t_a.invert()?;
+
+    // Solve for x: x = (A^T * A)^-1 * A^T * b
+    Ok(&a_t_a_inv * &a_t_b)
+}
 ```
 
 ---
@@ -256,14 +262,25 @@ module:
 #### **8.1 Specializations**
 
 Structural specializations enforce specific mathematical structures and
-invariants at compile-time:
+invariants at compile-time. Rather than using bare type aliases (which cannot
+enforce invariants or support distinct method implementations), the library
+defines new-type wrapper structs:
 
 ```rust
-pub type UpperTriangular<T, const D: usize> = Matrix<T, D, D>;
-pub type LowerTriangular<T, const D: usize> = Matrix<T, D, D>;
-pub type Symmetric<T, const D: usize> = Matrix<T, D, D>;
+pub struct UpperTriangular<T, D: Dim>(Matrix<T, D, D>);
+pub struct LowerTriangular<T, D: Dim>(Matrix<T, D, D>);
+pub struct Symmetric<T, D: Dim>(Matrix<T, D, D>);
 ```
 
+* **Safety and Performance Dispatch:** Defining these as distinct types allows
+  enforcing
+  structural properties (such as symmetry or triangularity) at creation time via
+  checked
+  constructors. This type safety enables dispatching optimized algorithms (like
+  Cholesky
+  factorization only on a `Symmetric` matrix, or forward/backward substitution
+  on triangular
+  matrices) without checking invariants at runtime.
 * **Memory vs. Performance Trade-off:** Packing triangular matrices requires
   complex index mapping equations (e.g., $i \cdot (i+1)/2 + j$) at runtime,
   which prevents contiguous slicing and degrades cache performance. Wrapping a
@@ -275,6 +292,23 @@ pub type Symmetric<T, const D: usize> = Matrix<T, D, D>;
 Implement stack-allocated decompositions tailored for control systems:
 
 * **LU Decomposition** with partial pivoting.
-* **Cholesky Decomposition** ($L L^T$) for covariance matrices.
+* **Cholesky Decomposition** ($L L^T$) for covariance matrices (specifically
+  operating on the `Symmetric` new-type wrapper).
 * **QR Decomposition** using Householder reflections for stable least-squares
   solvers.
+
+---
+
+### **8.3 Development Plan & Roadmap**
+
+| Task / Feature                       | Description                                                                                     | Estimated Effort |
+|:-------------------------------------|:------------------------------------------------------------------------------------------------|:-----------------|
+| **Phase 1: Core Struct & Layout**    | Define `Matrix` struct, column-major storage, flat slice conversion, and constructors.          | 1.0 Day          |
+| **Phase 2: Basic Operations**        | Implement addition, subtraction, transposition, and matrix multiplication with dimension check. | 1.5 Days         |
+| **Phase 3: Linear Solvers**          | Implement determinant, inversion, LU decomposition, and least squares solver.                   | 2.0 Days         |
+| **Phase 4: Specializations**         | Implement `UpperTriangular`, `LowerTriangular`, and `Symmetric` wrappers.                       | 1.0 Day          |
+| **Phase 5: Advanced Factorizations** | Implement Cholesky ($L L^T$) and QR decompositions.                                             | 2.0 Days         |
+| **Phase 6: Testing & Benchmarks**    | Implement target hardware cycle benchmarks and `proptest` suites.                               | 1.5 Days         |
+
+*Status: Currently in design phase. Core definitions and type-level signatures
+are being aligned with [num_types.rs](../../src/math/num_types.rs).*
