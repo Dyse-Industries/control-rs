@@ -394,16 +394,13 @@ impl CPUProfiler for RiscvProfiler {
     }
 
     fn get_stack_end(&self) -> usize {
-        // SAFETY: The external symbols `_stack_start` and `_hart_stack_size` are provided by the RISC-V linker
-        // configuration. It is safe to take the addresses of these static symbols to perform pointer arithmetic
-        // because we treat them strictly as numeric boundaries, not as dereferenced values.
+        // SAFETY: The external symbol `_profiler_stack_start` is provided by the RISC-V linker
+        // configuration. It is safe to take the address of this static symbol to perform pointer arithmetic
+        // because we treat it strictly as a numeric boundary, not as a dereferenced value.
         unsafe extern "C" {
-            static _stack_start: u32;
-            static _hart_stack_size: u32;
+            static _profiler_stack_start: u32;
         }
-        let stack_start_ptr = core::ptr::addr_of!(_stack_start) as usize;
-        let stack_size = core::ptr::addr_of!(_hart_stack_size) as usize;
-        stack_start_ptr.saturating_sub(stack_size)
+        core::ptr::addr_of!(_profiler_stack_start) as usize
     }
 }
 

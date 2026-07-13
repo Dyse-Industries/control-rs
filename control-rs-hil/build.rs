@@ -27,6 +27,9 @@ SECTIONS
     PROVIDE_HIDDEN (__hil_test_suites_end = .);
   } > FLASH
 }
+
+/* Calculate the absolute RAM address of the stack start */
+PROVIDE(_profiler_stack_start = _stack_start - _hart_stack_size);
 ",
         )
         .unwrap();
