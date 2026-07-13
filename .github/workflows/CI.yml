@@ -21,6 +21,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
       - uses: cargo-bins/cargo-binstall@main
 
       - name: Install Tarpaulin
