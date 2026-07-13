@@ -294,7 +294,7 @@ pub fn hil_entrypoint(input: TokenStream) -> TokenStream {
         // ==================== Unified Entry Point ====================
         #[cfg(target_os = "none")]
         #[cfg_attr(target_arch = "arm", ::cortex_m_rt::entry)]
-        #[cfg_attr(target_arch = "riscv32", ::riscv_rt::entry)]
+        #[cfg_attr(any(target_arch = "riscv32", target_arch = "riscv64"), ::riscv_rt::entry)]
         fn main() -> ! {
             let start = unsafe {
                 &__hil_test_suites_start as *const u8 as *const &::control_rs_hil::SuiteDescriptor
@@ -396,7 +396,7 @@ pub fn hil_exception(input: TokenStream) -> TokenStream {
             }
         }
 
-        #[cfg(all(target_os = "none", target_arch = "riscv32"))]
+        #[cfg(all(target_os = "none", any(target_arch = "riscv32", target_arch = "riscv64")))]
         #[unsafe(no_mangle)]
         unsafe fn ExceptionHandler(_ef: &mut ::riscv_rt::TrapFrame) -> ! {
             let mut msg_buf = [0u8; 128];

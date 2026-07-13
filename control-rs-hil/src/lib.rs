@@ -65,7 +65,7 @@
 pub use profiler::CPUProfiler;
 #[cfg(target_arch = "arm")]
 pub use profiler::CortexMProfiler;
-#[cfg(target_arch = "riscv32")]
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub use profiler::RiscvProfiler;
 pub use server::{Context, Server};
 pub use settings::Setting;

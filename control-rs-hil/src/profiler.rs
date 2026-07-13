@@ -320,12 +320,12 @@ impl CPUProfiler for CortexMProfiler {
 ///
 /// This structure tracks execution cycles using the RISC-V `mcycle` CSR register,
 /// measures elapsed time using the `time` CSR register, and calculates stack limits using linker-defined variables.
-#[cfg(target_arch = "riscv32")]
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub struct RiscvProfiler {
     clock_frequency: u32,
 }
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 impl RiscvProfiler {
     /// Creates a new `RiscvProfiler` instance.
     ///
@@ -340,7 +340,7 @@ impl RiscvProfiler {
     }
 }
 
-#[cfg(target_arch = "riscv32")]
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 impl CPUProfiler for RiscvProfiler {
     fn disable_interrupts<F, R>(&self, f: F) -> R
     where
@@ -369,13 +369,15 @@ impl CPUProfiler for RiscvProfiler {
     }
 
     fn get_cycles(&self) -> u64 {
-        // NOTE: On rv32, mcycle is a 32-bit register and can wrap every few seconds.
-        // For typical short HIL tests, this is a non-issue.
         riscv::register::mcycle::read() as u64
     }
 
     fn get_nanos(&self) -> u64 {
+        #[cfg(target_arch = "riscv32")]
         let ticks = riscv::register::time::read64();
+        #[cfg(target_arch = "riscv64")]
+        let ticks = riscv::register::time::read() as u64;
+
         (ticks as u64).saturating_mul(1_000_000_000)
             / (self.clock_frequency as u64)
     }

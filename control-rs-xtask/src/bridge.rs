@@ -39,17 +39,21 @@ pub enum BridgeMessage {
 /// Target QEMU architecture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QemuArch {
-    /// ARM architecture.
-    Arm,
-    /// RISC-V architecture.
-    Riscv,
+    /// RISC-V 32-bit architecture.
+    Riscv32imacUnknownNoneElf,
+    /// RISC-V 64-bit architecture.
+    Riscv64gcUnknownNoneElf,
+    /// ARM Soft-Float architecture.
+    Thumbv7emNoneEabi,
+    /// ARM Hard-Float architecture.
+    Thumbv7emNoneEabihf,
 }
 
 /// Target details for QEMU.
 pub struct QemuTargetDetails {
     /// Binary name of the example.
     pub binary_name: &'static str,
-    /// Human readable description of the target.
+    /// Human-readable description of the target.
     pub description: &'static str,
     /// Human readable description of the execution environment.
     pub execution_env: &'static str,
@@ -87,17 +91,29 @@ impl QemuArch {
     #[must_use]
     pub const fn details(&self) -> QemuTargetDetails {
         match self {
-            Self::Arm => QemuTargetDetails {
-                binary_name: "control-rs-qemu-arm",
-                description: "QEMU (cortex-m7)",
-                execution_env: "Semihosting (mps2-an500)",
-                target_triple: "thumbv7em-none-eabihf",
-            },
-            Self::Riscv => QemuTargetDetails {
-                binary_name: "control-rs-qemu-risc-v",
+            Self::Riscv32imacUnknownNoneElf => QemuTargetDetails {
+                binary_name: "control-rs-qemu-riscv32imac-unknown-none-elf",
                 description: "QEMU (risc-v32)",
                 execution_env: "Semihosting (virt)",
                 target_triple: "riscv32imac-unknown-none-elf",
+            },
+            Self::Riscv64gcUnknownNoneElf => QemuTargetDetails {
+                binary_name: "control-rs-qemu-riscv64gc-unknown-none-elf",
+                description: "QEMU (risc-v64)",
+                execution_env: "Semihosting (virt)",
+                target_triple: "riscv64gc-unknown-none-elf",
+            },
+            Self::Thumbv7emNoneEabi => QemuTargetDetails {
+                binary_name: "control-rs-qemu-thumbv7em-none-eabi",
+                description: "QEMU (cortex-m7 soft-float)",
+                execution_env: "Semihosting (mps2-an500)",
+                target_triple: "thumbv7em-none-eabi",
+            },
+            Self::Thumbv7emNoneEabihf => QemuTargetDetails {
+                binary_name: "control-rs-qemu-thumbv7em-none-eabihf",
+                description: "QEMU (cortex-m7 hard-float)",
+                execution_env: "Semihosting (mps2-an500)",
+                target_triple: "thumbv7em-none-eabihf",
             },
         }
     }
@@ -359,12 +375,27 @@ impl Target {
             "qemu" => {
                 let arch = arch_or_port.unwrap_or(default_qemu_arch);
                 match arch {
-                    "arm" => Ok(Some(Self::QemuSemihosting {
-                        arch: QemuArch::Arm,
+                    "thumbv7em-none-eabihf" | "arm" | "arm-hf" => {
+                        Ok(Some(Self::QemuSemihosting {
+                            arch: QemuArch::Thumbv7emNoneEabihf,
+                        }))
+                    }
+                    "thumbv7em-none-eabi" | "arm-soft" | "arm-sf" => {
+                        Ok(Some(Self::QemuSemihosting {
+                            arch: QemuArch::Thumbv7emNoneEabi,
+                        }))
+                    }
+                    "riscv32imac-unknown-none-elf"
+                    | "riscv"
+                    | "riscv32"
+                    | "risc-v" => Ok(Some(Self::QemuSemihosting {
+                        arch: QemuArch::Riscv32imacUnknownNoneElf,
                     })),
-                    "riscv" | "risc-v" => Ok(Some(Self::QemuSemihosting {
-                        arch: QemuArch::Riscv,
-                    })),
+                    "riscv64gc-unknown-none-elf" | "riscv64" | "risc-v64" => {
+                        Ok(Some(Self::QemuSemihosting {
+                            arch: QemuArch::Riscv64gcUnknownNoneElf,
+                        }))
+                    }
                     "all" => Ok(None),
                     _ => Err(format!("Unknown QEMU architecture: {arch}")),
                 }
@@ -382,19 +413,35 @@ impl Target {
         }
     }
 
-    /// Helper to create a QEMU ARM target.
+    /// Helper to create a QEMU ARM Hard-Float target.
     #[must_use]
     pub const fn qemu_arm() -> Self {
         Self::QemuSemihosting {
-            arch: QemuArch::Arm,
+            arch: QemuArch::Thumbv7emNoneEabihf,
         }
     }
 
-    /// Helper to create a QEMU RISC-V target.
+    /// Helper to create a QEMU ARM Soft-Float target.
+    #[must_use]
+    pub const fn qemu_arm_soft() -> Self {
+        Self::QemuSemihosting {
+            arch: QemuArch::Thumbv7emNoneEabi,
+        }
+    }
+
+    /// Helper to create a QEMU RISC-V 32-bit target.
     #[must_use]
     pub const fn qemu_riscv() -> Self {
         Self::QemuSemihosting {
-            arch: QemuArch::Riscv,
+            arch: QemuArch::Riscv32imacUnknownNoneElf,
+        }
+    }
+
+    /// Helper to create a QEMU RISC-V 64-bit target.
+    #[must_use]
+    pub const fn qemu_riscv64() -> Self {
+        Self::QemuSemihosting {
+            arch: QemuArch::Riscv64gcUnknownNoneElf,
         }
     }
 
@@ -584,10 +631,16 @@ mod tests {
 
     #[test]
     fn test_qemu_arch_details() {
-        let arm_details = QemuArch::Arm.details();
-        assert_eq!(arm_details.binary_name, "control-rs-qemu-arm");
-        let riscv_details = QemuArch::Riscv.details();
-        assert_eq!(riscv_details.binary_name, "control-rs-qemu-risc-v");
+        let arm_details = QemuArch::Thumbv7emNoneEabihf.details();
+        assert_eq!(
+            arm_details.binary_name,
+            "control-rs-qemu-thumbv7em-none-eabihf"
+        );
+        let riscv_details = QemuArch::Riscv32imacUnknownNoneElf.details();
+        assert_eq!(
+            riscv_details.binary_name,
+            "control-rs-qemu-riscv32imac-unknown-none-elf"
+        );
     }
 
     #[test]
@@ -618,7 +671,7 @@ mod tests {
         assert!(matches!(
             t2,
             Target::QemuSemihosting {
-                arch: QemuArch::Arm
+                arch: QemuArch::Thumbv7emNoneEabihf
             }
         ));
     }

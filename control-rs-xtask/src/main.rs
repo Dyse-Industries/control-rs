@@ -145,17 +145,18 @@ fn run_ci_all_qemu() {
     let mut combined_sil_results = Vec::new();
     let mut sil_errors = Vec::new();
 
-    // 1. Run ARM SIL tests
-    let arm_target = bridge::Target::qemu_arm();
-    let start_arm = Instant::now();
-    let (arm_sil_res, _arm_logs) = tasks::run_headless_sil(&arm_target);
-    let arm_sil_time = start_arm.elapsed().as_secs_f32();
-    println!("\t* ARM SIL tests completed in {arm_sil_time:.2}s.");
+    // 1. Run ARM HF SIL tests
+    let arm_hf_target = bridge::Target::qemu_arm();
+    let start_arm_hf = Instant::now();
+    let (arm_hf_sil_res, _arm_hf_logs) =
+        tasks::run_headless_sil(&arm_hf_target);
+    let arm_hf_sil_time = start_arm_hf.elapsed().as_secs_f32();
+    println!("\t* ARM HF SIL tests completed in {arm_hf_sil_time:.2}s.");
 
-    match arm_sil_res {
+    match arm_hf_sil_res {
         Ok(mut results) => {
             for r in &mut results {
-                r.suite_name = format!("{} (ARM)", r.suite_name);
+                r.suite_name = format!("{} (ARM HF)", r.suite_name);
             }
             let all_passed = results.iter().all(|r| {
                 matches!(r.state, control_rs_hil::comms::TestState::Passed)
@@ -167,21 +168,22 @@ fn run_ci_all_qemu() {
         }
         Err(e) => {
             ci_success = false;
-            sil_errors.push(format!("ARM failure: {e}"));
+            sil_errors.push(format!("ARM HF failure: {e}"));
         }
     }
 
-    // 2. Run RISC-V SIL tests
-    let riscv_target = bridge::Target::qemu_riscv();
-    let start_riscv = Instant::now();
-    let (riscv_sil_res, _riscv_logs) = tasks::run_headless_sil(&riscv_target);
-    let riscv_sil_time = start_riscv.elapsed().as_secs_f32();
-    println!("\t* RISC-V SIL tests completed in {riscv_sil_time:.2}s.");
+    // 2. Run ARM SF SIL tests
+    let arm_sf_target = bridge::Target::qemu_arm_soft();
+    let start_arm_sf = Instant::now();
+    let (arm_sf_sil_res, _arm_sf_logs) =
+        tasks::run_headless_sil(&arm_sf_target);
+    let arm_sf_sil_time = start_arm_sf.elapsed().as_secs_f32();
+    println!("\t* ARM SF SIL tests completed in {arm_sf_sil_time:.2}s.");
 
-    match riscv_sil_res {
+    match arm_sf_sil_res {
         Ok(mut results) => {
             for r in &mut results {
-                r.suite_name = format!("{} (RISC-V)", r.suite_name);
+                r.suite_name = format!("{} (ARM SF)", r.suite_name);
             }
             let all_passed = results.iter().all(|r| {
                 matches!(r.state, control_rs_hil::comms::TestState::Passed)
@@ -193,7 +195,61 @@ fn run_ci_all_qemu() {
         }
         Err(e) => {
             ci_success = false;
-            sil_errors.push(format!("RISC-V failure: {e}"));
+            sil_errors.push(format!("ARM SF failure: {e}"));
+        }
+    }
+
+    // 3. Run RISC-V 32 SIL tests
+    let riscv32_target = bridge::Target::qemu_riscv();
+    let start_riscv32 = Instant::now();
+    let (riscv32_sil_res, _riscv32_logs) =
+        tasks::run_headless_sil(&riscv32_target);
+    let riscv32_sil_time = start_riscv32.elapsed().as_secs_f32();
+    println!("\t* RISC-V 32 SIL tests completed in {riscv32_sil_time:.2}s.");
+
+    match riscv32_sil_res {
+        Ok(mut results) => {
+            for r in &mut results {
+                r.suite_name = format!("{} (RISC-V 32)", r.suite_name);
+            }
+            let all_passed = results.iter().all(|r| {
+                matches!(r.state, control_rs_hil::comms::TestState::Passed)
+            });
+            if !all_passed {
+                ci_success = false;
+            }
+            combined_sil_results.extend(results);
+        }
+        Err(e) => {
+            ci_success = false;
+            sil_errors.push(format!("RISC-V 32 failure: {e}"));
+        }
+    }
+
+    // 4. Run RISC-V 64 SIL tests
+    let riscv64_target = bridge::Target::qemu_riscv64();
+    let start_riscv64 = Instant::now();
+    let (riscv64_sil_res, _riscv64_logs) =
+        tasks::run_headless_sil(&riscv64_target);
+    let riscv64_sil_time = start_riscv64.elapsed().as_secs_f32();
+    println!("\t* RISC-V 64 SIL tests completed in {riscv64_sil_time:.2}s.");
+
+    match riscv64_sil_res {
+        Ok(mut results) => {
+            for r in &mut results {
+                r.suite_name = format!("{} (RISC-V 64)", r.suite_name);
+            }
+            let all_passed = results.iter().all(|r| {
+                matches!(r.state, control_rs_hil::comms::TestState::Passed)
+            });
+            if !all_passed {
+                ci_success = false;
+            }
+            combined_sil_results.extend(results);
+        }
+        Err(e) => {
+            ci_success = false;
+            sil_errors.push(format!("RISC-V 64 failure: {e}"));
         }
     }
 
@@ -220,6 +276,18 @@ fn run_ci_all_qemu() {
     if let Err(e) = utils::save_report("ci-report.md", &report_content) {
         eprintln!("\tFailed to write ci-report.md: {e}");
         exit(1);
+    }
+
+    // Save sil-results.json if execution succeeded
+    if let Ok(ref results) = sil_res {
+        if let Ok(json_content) = serde_json::to_string_pretty(results) {
+            if let Err(e) =
+                utils::save_report("sil-results.json", &json_content)
+            {
+                eprintln!("\tFailed to write sil-results.json: {e}");
+                exit(1);
+            }
+        }
     }
 
     if !ci_success {
