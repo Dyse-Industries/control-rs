@@ -48,11 +48,11 @@ pub mod fuzzing {
             BasicSubProgramsF32::gemv(1.0, &m, &v_sum, 0.0, &mut r1, 2, 2);
 
             // Mv1 + Mv2
-            let mut r2a = [0.0; 2];
-            let mut r2b = [0.0; 2];
-            BasicSubProgramsF32::gemv(1.0, &m, &v1, 0.0, &mut r2a, 2, 2);
-            BasicSubProgramsF32::gemv(1.0, &m, &v2, 0.0, &mut r2b, 2, 2);
-            let r2 = [r2a[0] + r2b[0], r2a[1] + r2b[1]];
+            let mut term_a = [0.0; 2];
+            let mut term_b = [0.0; 2];
+            BasicSubProgramsF32::gemv(1.0, &m, &v1, 0.0, &mut term_a, 2, 2);
+            BasicSubProgramsF32::gemv(1.0, &m, &v2, 0.0, &mut term_b, 2, 2);
+            let r2 = [term_a[0] + term_b[0], term_a[1] + term_b[1]];
 
             let epsilon = 1e-4;
             assert!((r1[0] - r2[0]).abs() < epsilon);
