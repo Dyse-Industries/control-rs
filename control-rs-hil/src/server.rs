@@ -667,8 +667,7 @@ impl TestIndexIndicator {
     /// * `index` - The active execution index.
     pub fn set_active(&self, index: usize) {
         // Explicitly pattern match on the Result
-        let safe_index = isize::try_from(index)
-            .map_or(Self::IDLE_STATE, |valid_index| valid_index);
+        let safe_index = isize::try_from(index).unwrap_or(Self::IDLE_STATE);
 
         self.state.store(safe_index, Ordering::Release);
     }
@@ -831,10 +830,9 @@ mod tests {
     }
 
     #[test]
-    fn test_atomic_settings_other() {
+    fn test_atomic_settings_bool_f32() {
         use crate::settings::{
-            AtomicBoolSetting, AtomicF32Setting, AtomicI8Setting,
-            AtomicI32Setting, AtomicU16Setting, SettingType,
+            AtomicBoolSetting, AtomicF32Setting, SettingType,
         };
 
         let bool_set = AtomicBoolSetting::new("bool_set", "bool_desc", true);
@@ -850,6 +848,13 @@ mod tests {
         assert!(f32_set.set(SettingValue::F32(-2.5)).is_ok());
         assert_eq!(f32_set.get(), SettingValue::F32(-2.5));
         assert!(f32_set.set(SettingValue::Bool(true)).is_err());
+    }
+
+    #[test]
+    fn test_atomic_settings_ints() {
+        use crate::settings::{
+            AtomicI8Setting, AtomicI32Setting, AtomicU16Setting, SettingType,
+        };
 
         let i32_set = AtomicI32Setting::new("i32_set", "i32_desc", -10);
         assert_eq!(i32_set.expected_type(), SettingType::I32);
@@ -868,16 +873,18 @@ mod tests {
         assert!(u16_set.set(SettingValue::U16(40)).is_ok());
         assert_eq!(u16_set.get(), SettingValue::U16(40));
         assert!(u16_set.set(SettingValue::Bool(true)).is_err());
+    }
 
-        #[cfg(target_has_atomic = "64")]
-        {
-            use crate::settings::AtomicU64Setting;
-            let u64_set = AtomicU64Setting::new("u64_set", "u64_desc", 100);
-            assert_eq!(u64_set.expected_type(), SettingType::U64);
-            assert!(u64_set.set(SettingValue::U64(200)).is_ok());
-            assert_eq!(u64_set.get(), SettingValue::U64(200));
-            assert!(u64_set.set(SettingValue::Bool(true)).is_err());
-        }
+    #[test]
+    #[cfg(target_has_atomic = "64")]
+    fn test_atomic_settings_u64() {
+        use crate::settings::{AtomicU64Setting, SettingType};
+
+        let u64_set = AtomicU64Setting::new("u64_set", "u64_desc", 100);
+        assert_eq!(u64_set.expected_type(), SettingType::U64);
+        assert!(u64_set.set(SettingValue::U64(200)).is_ok());
+        assert_eq!(u64_set.get(), SettingValue::U64(200));
+        assert!(u64_set.set(SettingValue::Bool(true)).is_err());
     }
 
     #[test]

@@ -10,6 +10,7 @@ Cargo.lock
 clippy.json
 ci-report.md
 cobertura.xml
+sil-results.json
 tarpaulin-report.*
 
 

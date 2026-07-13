@@ -347,10 +347,8 @@ impl AppState {
     ) {
         let (suite_id, setting_id) = editing;
         match key_code {
-            KeyCode::Char(c) => {
-                if c.is_ascii_digit() {
-                    self.setting_input.push(c);
-                }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                self.setting_input.push(c);
             }
             KeyCode::Backspace => {
                 self.setting_input.pop();

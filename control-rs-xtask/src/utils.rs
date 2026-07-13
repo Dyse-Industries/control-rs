@@ -25,7 +25,7 @@ pub struct TarpaulinSummary {
 }
 
 /// Results of a headlessly run SIL (Software-in-the-Loop) test.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct HeadlessTestResult {
     /// The name of the test suite.
     pub suite_name: String,
@@ -453,6 +453,19 @@ pub fn build_report(
     match sil_results {
         Ok(results) => {
             report.push_str(&format_sil_summary(results));
+
+            let artifact_link = if let (Ok(repo), Ok(run_id)) = (
+                std::env::var("GITHUB_REPOSITORY"),
+                std::env::var("GITHUB_RUN_ID"),
+            ) {
+                format!(
+                    "Detailed SIL test results are available in the [sil-results.json](https://github.com/{}/actions/runs/{}) artifact.\n\n",
+                    repo, run_id
+                )
+            } else {
+                "Detailed SIL test results have been written to `sil-results.json`.\n\n".to_string()
+            };
+            report.push_str(&artifact_link);
         }
         Err(e) => {
             report.push_str(&format!(

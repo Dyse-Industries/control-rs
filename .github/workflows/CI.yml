@@ -10,18 +10,25 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [ "1.88.0", "stable", "beta", "nightly" ]
     permissions:
       pull-requests: write # Required to post comments
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
       - uses: cargo-bins/cargo-binstall@main
 
       - name: Install Tarpaulin
         run: cargo binstall cargo-tarpaulin@0.35.2 -y
 
       - name: Install Targets
-        run: rustup target add thumbv7em-none-eabihf riscv32imac-unknown-none-elf
+        run: rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
 
       - name: Install apt packages
         run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system
@@ -42,18 +49,44 @@ jobs:
       - name: Run CI
         run: cargo ci
 
+      - name: Build Documentation
+        run: cargo doc --no-deps --workspace
+
+      - name: Upload Documentation Artifact
+        if: github.ref == 'refs/heads/main' && matrix.rust == 'stable'
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation
+          path: target/doc
+          retention-days: 30
+
       - name: Post PR Comment
-        if: github.event_name == 'pull_request' && (success() || failure())
+        if: github.event_name == 'pull_request' && matrix.rust == 'stable' && (success() || failure())
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
           body-path: ci-report.md
 
+      - name: Upload to Step Summary
+        if: always()
+        run: |
+          if [ -f ci-report.md ]; then
+            cat ci-report.md >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Upload Tarpaulin Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: tarpaulin-baseline
+          name: tarpaulin-baseline-${{ matrix.rust }}
           path: target/tarpaulin/*coverage.json
+          retention-days: 30
+
+      - name: Upload SIL Results Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sil-results-${{ matrix.rust }}
+          path: sil-results.json
           retention-days: 30
 
   publish:

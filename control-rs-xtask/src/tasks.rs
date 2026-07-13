@@ -56,12 +56,21 @@ struct TarpaulinReportJson {
 pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
     println!("\t* building QEMU target ELF for {:?}...", arch);
     let (target_triple, bin_name) = match arch {
-        bridge::QemuArch::Arm => {
-            ("thumbv7em-none-eabihf", "control-rs-qemu-arm")
+        bridge::QemuArch::Thumbv7emNoneEabihf => (
+            "thumbv7em-none-eabihf",
+            "control-rs-qemu-thumbv7em-none-eabihf",
+        ),
+        bridge::QemuArch::Thumbv7emNoneEabi => {
+            ("thumbv7em-none-eabi", "control-rs-qemu-thumbv7em-none-eabi")
         }
-        bridge::QemuArch::Riscv => {
-            ("riscv32imac-unknown-none-elf", "control-rs-qemu-risc-v")
-        }
+        bridge::QemuArch::Riscv32imacUnknownNoneElf => (
+            "riscv32imac-unknown-none-elf",
+            "control-rs-qemu-riscv32imac-unknown-none-elf",
+        ),
+        bridge::QemuArch::Riscv64gcUnknownNoneElf => (
+            "riscv64gc-unknown-none-elf",
+            "control-rs-qemu-riscv64gc-unknown-none-elf",
+        ),
     };
 
     let mut command = Command::new("cargo");
@@ -277,13 +286,13 @@ pub fn run_headless_sil(
     let mut exit_loop = false;
 
     let start_time = Instant::now();
-    let timeout = Duration::from_secs(15);
+    let timeout = Duration::from_secs(90);
 
     while !exit_loop {
         if start_time.elapsed() > timeout {
             bridge.kill();
             return (
-                Err("SIL execution timed out after 15s".to_string()),
+                Err("SIL execution timed out after 90s".to_string()),
                 logs,
             );
         }

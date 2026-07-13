@@ -8,6 +8,13 @@ rustflags = [
     "-C", "link-arg=-Thil_suites.x",
 ]
 
+[target.thumbv7em-none-eabi]
+runner = "qemu-system-arm -cpu cortex-m7 -machine mps2-an500 -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
+rustflags = [
+    "-C", "link-arg=-Tlink.x",
+    "-C", "link-arg=-Thil_suites.x",
+]
+
 [target.riscv32imac-unknown-none-elf]
 runner = "qemu-system-riscv32 -machine virt -cpu rv32 -bios none -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
 rustflags = [
@@ -16,6 +23,16 @@ rustflags = [
     "-C", "link-arg=-Thil_suites.x",
 ]
 
+[target.riscv64gc-unknown-none-elf]
+runner = "qemu-system-riscv64 -machine virt -cpu rv64 -bios none -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
+rustflags = [
+    "-C", "link-arg=-Tmemory.x",
+    "-C", "link-arg=-Tlink.x",
+    "-C", "link-arg=-Thil_suites.x",
+]
+
 [alias]
-arm = ["run", "--bin", "control-rs-qemu-arm", "--release"]
-riscv = ["run", "--bin", "control-rs-qemu-risc-v", "--target", "riscv32imac-unknown-none-elf", "--release"]
+arm-hf = ["run", "--bin", "control-rs-qemu-thumbv7em-none-eabihf", "--release"]
+arm-sf = ["run", "--bin", "control-rs-qemu-thumbv7em-none-eabi", "--target", "thumbv7em-none-eabi", "--release"]
+riscv32 = ["run", "--bin", "control-rs-qemu-riscv32imac-unknown-none-elf", "--target", "riscv32imac-unknown-none-elf", "--release"]
+riscv64 = ["run", "--bin", "control-rs-qemu-riscv64gc-unknown-none-elf", "--target", "riscv64gc-unknown-none-elf", "--release"]

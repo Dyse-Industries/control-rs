@@ -1,7 +1,7 @@
 //! Build script for the QEMU HIL example.
 //!
 //! This script plays a crucial role in preparing the target firmware for HIL testing:
-//! 1. **Target Memory Mapping**: It dynamically generates a `memory.x` linker script 
+//! 1. **Target Memory Mapping**: It dynamically generates a `memory.x` linker script
 //!    specifying the flash and RAM boundaries depending on the target architecture (ARM Cortex-M vs RISC-V).
 //! 2. **HIL Test Suite Registry**: It generates a custom linker script `hil_suites.x` containing
 //!    the `.hil_test_suites` section. Test suites registered via `#[hil_suite]` place their
@@ -32,7 +32,7 @@ MEMORY
 ",
             )
             .unwrap();
-    } else if target.starts_with("riscv32") {
+    } else if target.starts_with("risc") {
         let mut memory_file = File::create(out.join("memory.x")).unwrap();
         memory_file
             .write_all(
@@ -85,6 +85,10 @@ SECTIONS
     PROVIDE_HIDDEN (__hil_test_suites_end = .);
   } > FLASH
 }
+
+/* Calculate the absolute RAM address of the stack start */
+PROVIDE(_profiler_stack_start = _stack_start - _hart_stack_size);
+
 ",
         )
         .unwrap();
