@@ -9,14 +9,14 @@ rustflags = [
 ]
 
 [target.thumbv7em-none-eabi]
-runner = "qemu-system-arm -cpu cortex-m7 -machine mps2-an500 -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
+runner = "qemu-system-arm -cpu cortex-m7 -machine mps2-an500 -nographic -serial none -monitor none -icount shift=0,align=off -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
 rustflags = [
     "-C", "link-arg=-Tlink.x",
     "-C", "link-arg=-Thil_suites.x",
 ]
 
 [target.riscv32imac-unknown-none-elf]
-runner = "qemu-system-riscv32 -machine virt -cpu rv32 -bios none -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
+runner = "qemu-system-riscv32 -machine virt -cpu rv32 -bios none -nographic -serial none -monitor none -icount shift=0,align=off -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
 rustflags = [
     "-C", "link-arg=-Tmemory.x",
     "-C", "link-arg=-Tlink.x",
@@ -24,7 +24,7 @@ rustflags = [
 ]
 
 [target.riscv64gc-unknown-none-elf]
-runner = "qemu-system-riscv64 -machine virt -cpu rv64 -bios none -nographic -serial none -monitor none -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
+runner = "qemu-system-riscv64 -machine virt -cpu rv64 -bios none -nographic -serial none -monitor none -icount shift=0,align=off -chardev stdio,id=con0 -semihosting-config enable=on,chardev=con0 -kernel"
 rustflags = [
     "-C", "link-arg=-Tmemory.x",
     "-C", "link-arg=-Tlink.x",
