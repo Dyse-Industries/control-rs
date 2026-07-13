@@ -293,9 +293,8 @@ fn run_ci_all_qemu() {
     if !ci_success {
         println!("CI pipeline failed. Check ci-report.md for details.");
         exit(1);
-    } else {
-        println!("CI pipeline passed. Report written to ci-report.md.");
     }
+    println!("CI pipeline passed. Report written to ci-report.md.");
 }
 
 /// Executes the full CI validation pipeline for a single target, including formatting, clippy, test coverage, and SIL tests.
