@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [ "1.88.0", "stable", "beta", "nightly" ]
+        rust: [ "1.90.0", "stable", "beta", "nightly" ]
     permissions:
       pull-requests: write # Required to post comments
     steps:
