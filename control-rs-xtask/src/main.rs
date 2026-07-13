@@ -391,7 +391,6 @@ fn run_ci_single(target: &bridge::Target) {
     if !ci_success {
         println!("CI pipeline failed. Check ci-report.md for details.");
         exit(1);
-    } else {
-        println!("CI pipeline passed. Report written to ci-report.md.");
     }
+    println!("CI pipeline passed. Results written to ci-report.md.");
 }
