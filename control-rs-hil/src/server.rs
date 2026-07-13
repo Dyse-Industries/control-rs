@@ -667,8 +667,7 @@ impl TestIndexIndicator {
     /// * `index` - The active execution index.
     pub fn set_active(&self, index: usize) {
         // Explicitly pattern match on the Result
-        let safe_index = isize::try_from(index)
-            .map_or(Self::IDLE_STATE, |valid_index| valid_index);
+        let safe_index = isize::try_from(index).unwrap_or(Self::IDLE_STATE);
 
         self.state.store(safe_index, Ordering::Release);
     }
