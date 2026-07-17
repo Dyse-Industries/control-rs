@@ -8,36 +8,35 @@
 
 ### **1. Introduction**
 
-Background information on what inspired the project's development. Focus
-strictly on system level usage and goals. This should not include
+Background information on what inspired the project's development.
+
+---
+
+### **2. Motivation**
+
+Focus strictly on system level usage and goals. This should not include
 technical details.
 
 ---
 
-### **2. Requirements**
+### **3. Requirements**
 
-Use the examples and scenarios, from the introduction, to formally define
-(quantify) features and behaviors needed to meet the goal.
-
----
-
-### **3. Technical Overview**
-
-A brief explanation of the project's scope and the expertise it will require.
+Use the motivation and introduction to formally define features and behaviors
+needed to meet the goal.
 
 ---
 
-### **4. Core Architecture**
+### **4. Technical Overview**
+
+A brief explanation of the project's scope. If the next section were the
+treasure, this would be the chest.
+
+---
+
+### **5. Core Architecture**
 
 Describe the implementation in detail, start from a broad scope then focus in
 on the specifics.
-
----
-
-### **5. Alternatives**
-
-Describe any architecture/implementation details that were considered but
-not chosen.
 
 ---
 
@@ -58,13 +57,7 @@ practical nature of the implementation.
 
 ---
 
-### **8. Risks & Open Questions**
-
-Acknowledge any unspecified details or partial thoughts here.
-
----
-
-### **9. Development Plan**
+### **8. Development Plan**
 
 Include the required implementation tasks:
 
@@ -73,5 +66,3 @@ Include the required implementation tasks:
 | **Step 1: [...]** | [...]       | [...]            |
 
 ---
-
-### **10. Revision History**
