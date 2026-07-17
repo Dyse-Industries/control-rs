@@ -8,65 +8,70 @@
 
 ### **1. Introduction**
 
-Provide a high-level description of the module or type, its core mathematical
-representation, and its role in the overall system.
+Background information on what inspired the project's development. Focus
+strictly on system level usage and goals. This should not include
+technical details.
 
 ---
 
-### **2. Motivation & Constraints**
+### **2. Requirements**
 
-*Focus strictly on internal decisions and target constraints. Do not explain
-standard Rust properties or generic concepts unless directly related to design
-decisions.*
----
-
-### **3. Core Architecture & Memory Layout**
+Use the examples and scenarios, from the introduction, to formally define
+(quantify) features and behaviors needed to meet the goal.
 
 ---
 
-### **4. API Specification**
+### **3. Technical Overview**
+
+A brief explanation of the project's scope and the expertise it will require.
 
 ---
 
-### **5. Error Handling & State Management**
+### **4. Core Architecture**
+
+Describe the implementation in detail, start from a broad scope then focus in
+on the specifics.
 
 ---
 
-### **6. Testing & Validation Framework**
+### **5. Alternatives**
+
+Describe any architecture/implementation details that were considered but
+not chosen.
+
+---
+
+### **6. Verification & Validation**
+
+1. Define the required steps to verify an implementation (unit tests,
+   integration tests, hil tests, CI tests).
+
+2. Define the required steps to validate an implementation (examples, external
+   projects, user demos).
 
 ---
 
 ### **7. Performance & Resource Considerations**
 
----
-
-### **8. Structural Specializations & Extensions**
-
-Detail any structural specializations (e.g., symmetric/triangular matrices,
-sparse representations, Chebyshev polynomials) or future roadmap extensions.
+(optional) - This section is used to describe any requirements based on the
+practical nature of the implementation.
 
 ---
 
-### **9. Development Plan & Roadmap**
+### **8. Risks & Open Questions**
 
-Include a markdown table representing implementation tasks:
-
-| Task / Feature     | Description | Estimated Effort |
-|:-------------------|:------------|:-----------------|
-| **Phase 1: [...]** | [...]       | [...]            |
+Acknowledge any unspecified details or partial thoughts here.
 
 ---
 
-## Document Style Rules
+### **9. Development Plan**
 
-1. **Mathematical Notation**:
-    - Use standard LaTeX notation: `\( ... \)` for inline expressions, and
-      `\[ ... \]` or `$$ ... $$` for display equations.
-2. **Code Snippets**:
-    - Code blocks must have syntax highlighting (e.g., ` ```rust `).
-3. **Internal Decisions**:
-    - Do NOT include generic educational content. Focus on describing design
-      choices, invariants, performance trade-offs, and design alternatives.
-4. **Reference Format**:
-    - Cite external papers, books, or standards at the point of reference with
-      URLs.
+Include the required implementation tasks:
+
+| Task / Feature    | Description | Estimated Effort |
+|:------------------|:------------|:-----------------|
+| **Step 1: [...]** | [...]       | [...]            |
+
+---
+
+### **10. Revision History**
