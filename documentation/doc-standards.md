@@ -3,7 +3,17 @@
 These rules establish a rigorous and consistent documentation standard for a
 Rust native control systems toolbox intended for safety-critical applications.
 
-# 1. Crate level documentation
+# 1. General Etiquette
+
+To maintain a clean, readable, and highly maintainable codebase, all documentation must adhere to the following rules:
+
+* **Module-level Documentation**: Module-level documentation must be written using inner doc comments (`//!` or `/*!`) placed at the very top of the file. Do not use outer doc comments (`///` or `/**`) placed directly above module declarations (e.g., `pub mod my_module;`). Placing module-level docs at the top of the file keeps the module definition clean and ensures the rustdoc output is correctly associated with the module content.
+* **Language and Tone**: Write in clear, concise, and professional English. Avoid marketing jargon, colloquialisms, and excessive formalities. Focus on providing precise technical information.
+* **Formatting and Code Blocks**:
+  * All code examples in documentation should compile and pass formatting checks.
+  * Prefer using the question mark operator `?` for propagating errors in examples instead of panic-inducing methods like `.unwrap()` or `.expect()` (unless the example is explicitly demonstrating a panic scenario).
+
+# 2. Crate level documentation
 
 Every crate must provide comprehensive crate-level documentation at the root of
 the crate. This documentation serves as the primary technical overview and
@@ -21,13 +31,13 @@ safety manual for the crate.
 * **Limitations**: A clear statement of any known limitations, assumptions, or
   operational constraints.
 
-# 2. Public API Documentation
+# 3. Public API Documentation
 
 All public items (modules, structs, enums, functions, traits, and macros) must
 be thoroughly documented using ///. The
 documentation for each item must follow a consistent and explicit structure.
 
-## 2.1. General Structure
+## 3.1. General Structure
 
 The documentation for every public item should adhere to the following order:
 
@@ -104,7 +114,7 @@ impl A for MyType {}
 impl B for MyType {}
 ```
 
-## 2.2 The #Safety Section: A Contract for Critical Code
+## 3.2 The #Safety Section: A Contract for Critical Code
 
 For any function, method, or unsafe block that has safety implications, a
 dedicated `#safety` section is mandatory. This section must explicitly detail
@@ -140,7 +150,45 @@ list below:
 /// Failure to adhere to these conditions will result in undefined behavior.
 ```
 
-# 3. Examples and Testing
+# 4. HIL Test Suite Documentation
+
+Hardware-in-the-Loop (HIL) test suites are target-side verification suites meant to run on embedded hardware or emulators. They are internal test utilities and not part of the public-facing API. Therefore, they are subject to a much more lightweight and concise documentation standard.
+
+The goal is to provide the minimum information needed to understand the test logic and the settings it uses.
+
+## 4.1. Structuring HIL Docs
+
+* **Omit Formalities**: Do not include `# Safety`, `# Panics`, or `# Example` sections in HIL documentation.
+* **Suite-Level Docs**: Provide a brief one-sentence or two-sentence description using outer doc comments (`///`) directly above the `#[hil_suite]` macro or the module definition (since these are typically defined within a main runner file or test module).
+* **Setting Docs**: For each settings static, write a brief, single-sentence description of what the setting controls and its units or limits.
+* **Test Functions**: Use a single line/sentence summary description of what behavior or condition the test validates.
+
+### Example of HIL suite docs
+
+```rust
+/// PID controller hardware-in-the-loop test suite.
+#[hil_suite]
+pub mod teensy_pid_suite {
+    use control_rs_hil::settings::{Setting, SettingValue};
+
+    /// Proportional gain setting (dimensionless, scaled by 1000). Controls system error response.
+    pub static PROPORTIONAL_GAIN: u32 = 1500;
+    /// Integral gain setting (dimensionless, scaled by 1000). Minimizes steady-state tracking error.
+    pub static INTEGRAL_GAIN: u32 = 400;
+
+    /// Verifies that Proportional gain strictly exceeds Integral gain.
+    fn test_gain_inequality() {
+        // ...
+    }
+
+    /// Verifies the system response settles within the target error bound under step input.
+    fn test_step_response() {
+        // ...
+    }
+}
+```
+
+# 5. Examples and Testing
 
 * All examples must be runnable via cargo test.
 * Examples should use the ? operator for error handling and avoid unwrap(),
