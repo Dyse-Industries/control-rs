@@ -22,10 +22,10 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
+          
       - uses: cargo-bins/cargo-binstall@main
-
       - name: Install Tarpaulin
-        run: cargo binstall cargo-tarpaulin@0.35.2 -y
+        run: cargo binstall cargo-tarpaulin -y
 
       - name: Install Targets
         run: rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
