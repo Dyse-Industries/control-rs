@@ -76,6 +76,9 @@ fn main() {
                 exit(1);
             }
         },
+        "install-hooks" => {
+            tasks::install_hooks();
+        }
         _ => {
             print_usage_and_exit();
         }
@@ -87,7 +90,7 @@ fn print_usage_and_exit() -> ! {
     eprintln!(
         "Usage: cargo control-rs-xtask <task> [target] [port/arch] [baud]"
     );
-    eprintln!("\tTasks: ci, tui [qemu|teensy]");
+    eprintln!("\tTasks: ci, tui [qemu|teensy], install-hooks");
     eprintln!("\tTargets: qemu [arm|risc-v|all], teensy [port] [baud]");
     exit(1);
 }
