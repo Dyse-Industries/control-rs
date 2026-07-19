@@ -32,25 +32,29 @@ pub mod num_type_test_suite {
     struct TestStorage<C: Dim>(PhantomData<C>);
 
     #[cfg_attr(test, test)]
-    fn test_zero_byte_footprint() {
+    /// Verifies that Peano representation structs compile down to a zero-byte memory footprint.
+    fn test_num_type_zero_byte_footprint() {
         assert_eq!(mem::size_of::<Z>(), 0);
         assert_eq!(mem::size_of::<S<Z>>(), 0);
         assert_eq!(mem::size_of::<S<S<Z>>>(), 0);
     }
 
     #[cfg_attr(test, test)]
-    fn test_constant_generic_hoisting() {
+    /// Verifies compile-time translation from standard const-generic values into Peano types.
+    fn test_num_type_constant_generic_hoisting() {
         let _: <Const<5> as Dim>::PeanoTypeNum = U5::default();
     }
 
     #[cfg_attr(test, test)]
-    fn test_addition_commutativity() {
+    /// Verifies commutativity of type-level addition (A + B == B + A).
+    fn test_num_type_addition_commutativity() {
         let _: <U2 as DimAdd<U3>>::Output =
             <<U3 as DimAdd<U2>>::Output>::default();
     }
 
     #[cfg_attr(test, test)]
-    fn test_dimension_values() {
+    /// Verifies static dimension constants equal their runtime values.
+    fn test_num_type_dimension_values() {
         assert_eq!(U0::DIM, 0);
         assert_eq!(U1::DIM, 1);
         assert_eq!(U15::DIM, 15);
@@ -58,7 +62,8 @@ pub mod num_type_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    fn test_addition() {
+    /// Verifies type-level addition arithmetic at compile-time and runtime.
+    fn test_num_type_addition() {
         // Compile-time type structure assertions
         let _: U5 = <U2 as DimAdd<U3>>::Output::default();
         let _: U3 = <U0 as DimAdd<U3>>::Output::default();
@@ -69,13 +74,15 @@ pub mod num_type_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    fn test_addition_base_cases() {
+    /// Verifies base cases for type-level addition involving zero.
+    fn test_num_type_addition_base_cases() {
         let _: U5 = <U5 as DimAdd<U0>>::Output::default();
         let _: U5 = <U0 as DimAdd<U5>>::Output::default();
     }
 
     #[cfg_attr(test, test)]
-    fn test_subtraction() {
+    /// Verifies type-level subtraction arithmetic.
+    fn test_num_type_subtraction() {
         let _: U2 = <U5 as DimSub<U3>>::Output::default();
         let _: U0 = <U5 as DimSub<U5>>::Output::default();
         let _: U5 = <U5 as DimSub<U0>>::Output::default();
@@ -84,7 +91,8 @@ pub mod num_type_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    fn test_multiplication() {
+    /// Verifies type-level multiplication arithmetic.
+    fn test_num_type_multiplication() {
         let _: U6 = <U2 as DimMul<U3>>::Output::default();
         let _: U0 = <U5 as DimMul<U0>>::Output::default();
         let _: U0 = <U0 as DimMul<U5>>::Output::default();
@@ -93,13 +101,15 @@ pub mod num_type_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    fn test_multiplication_recursion_depth_limit() {
+    /// Verifies that type-level multiplication recursion limits are respected by the compiler.
+    fn test_num_type_multiplication_recursion_limit() {
         // Test a multiplication that forces deep recursion in the trait solver
         let _: U32 = <U32 as DimMul<U1>>::Output::default();
     }
 
     #[cfg_attr(test, test)]
-    fn test_maximum() {
+    /// Verifies type-level maximum resolution.
+    fn test_num_type_maximum() {
         let _: U5 = <U2 as DimMax<U5>>::Output::default();
         let _: U5 = <U5 as DimMax<U2>>::Output::default();
         let _: U5 = <U5 as DimMax<U5>>::Output::default();
@@ -108,7 +118,8 @@ pub mod num_type_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    fn test_minimum() {
+    /// Verifies type-level minimum resolution.
+    fn test_num_type_minimum() {
         let _: U2 = <U2 as DimMin<U5>>::Output::default();
         let _: U2 = <U5 as DimMin<U2>>::Output::default();
         let _: U5 = <U5 as DimMin<U5>>::Output::default();
@@ -117,7 +128,8 @@ pub mod num_type_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    fn test_dynamic_min_max_bounding() {
+    /// Verifies compile-time minimum and maximum bounds resolution on non-uniform dimensions.
+    fn test_num_type_dynamic_min_max_bounding() {
         // Use an operation to confirm that Max or Min bounds a dimension
         fn assert_bounds<A, B, Max, Min>()
         where
@@ -160,7 +172,8 @@ pub mod num_type_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    fn test_concat_static() {
+    /// Verifies static dimension concatenation matching for arrays and custom storage wrappers.
+    fn test_num_type_concat_static() {
         let l1: TestStorage<U1> = TestStorage(PhantomData);
         let l2: TestStorage<U2> = TestStorage(PhantomData);
         let l3: TestStorage<U3> = TestStorage(PhantomData);
