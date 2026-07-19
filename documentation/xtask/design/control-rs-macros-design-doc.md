@@ -16,9 +16,9 @@ and generating the underlying test registry metadata.
 This design document establishes the architecture for `control-rs-macros`, a
 procedural macro library containing `#[hil_suite]` and `#[hil_setup]`. These
 macros enable developers to declare hardware-in-the-loop (HIL) tests and
-benchmarks directly in their modules with zero boilerplates. The macro generates
+benchmarks directly in their modules with zero boilerplate. The macro generates
 all registration hooks and places them in custom linker sections, permitting
-automated discovery without a centralized registry file.
+automated discovery without a centralized registry.
 
 ---
 
@@ -29,7 +29,7 @@ automated discovery without a centralized registry file.
 * **Distributed Module Annotation**: Developers must be able to declare a suite
   simply by tagging a module with `#[hil_suite]`.
 * **Automatic Registration**: The macro must automatically identify all
-  functions within the module and generate test descriptors.
+  functions within the module, that do not begin with an underscore and generate test descriptors.
 * **Type-Safe Settings Translation**: Any static variable declared inside the
   `#[hil_suite]` module must be translated into a thread-safe atomic setting
   structure.
@@ -55,8 +55,7 @@ automated discovery without a centralized registry file.
 * **Strict `#![no_std]` Compatibility**: The code emitted by the macros must
   compile on bare-metal targets without standard library support.
 * **Target Independency**: The macros must emit target-agnostic Rust code that
-  resolves to standard hardware/link-time features on ARM Cortex-M or RISC-V
-  platforms.
+  that delegates hardware specifics to the user defined profiler.
 
 ---
 
