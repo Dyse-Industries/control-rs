@@ -4,7 +4,7 @@
 //!   * [ ] remove index slicing
 
 use crate::math::{
-    complex_num::Complex, num_traits::Real, ops::Neg, storage, Bijection, Map,
+    Bijection, Map, complex_num::Complex, num_traits::Real, ops::Neg, storage,
 };
 
 type ComplexArrayMut<T, const N: usize> = [Complex<T>; N];
