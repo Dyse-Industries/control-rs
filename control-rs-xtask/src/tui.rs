@@ -4,7 +4,7 @@
 //!
 //! TODO:
 //!   - When the user enters (r)un, the runner should begin with the current
-//!     selection. This will allow users to "skip" failing tests.
+//!     selection. This allows users to "skip" failing tests.
 
 use std::io::stdout;
 use std::time::Duration;

@@ -72,13 +72,13 @@ macro_rules! assert_almost_eq {
 /// let a = 0.1_f64 + 0.2_f64;
 /// let b = 0.3_f64;
 ///
-/// // This will not panic
+/// // Does not panic
 /// assert_almost_eq!(a, b);
 /// ```
 ///
 /// ```should_panic
 /// # use control_rs::assert_almost_eq;
-/// // This will panic because the values are not almost equal.
+/// // Panics because the values are not almost equal.
 /// assert_almost_eq!(0.1_f32, 0.2_f32);
 /// ```
 ///

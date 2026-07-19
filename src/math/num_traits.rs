@@ -164,7 +164,7 @@ pub trait Ring: One + Zero {
 /// The trait implies and requires the existence of a machine epsilon; `1.0 + ε != 1.0`.
 ///
 /// # Panics
-/// Division by zero for integer types will panic. Floating-point division by zero does
+/// Division by zero for integer types panics. Floating-point division by zero does
 /// not panic but produces non-finite values (`inf` or `NaN`).
 ///
 /// # Example
@@ -326,7 +326,7 @@ pub trait Real: Field + Signed + Radical + Exponential + Trig {
     ///
     /// # Overflow Warning
     /// Because this implementation relies on `.exp()`, evaluating this function for
-    /// large inputs will result in rapid overflow to infinity (e.g., around `x ~ 89.4` for `f32`).
+    /// large inputs results in rapid overflow to infinity (e.g., around `x ~ 89.4` for `f32`).
     #[must_use]
     #[allow(clippy::arithmetic_side_effects)]
     fn cosh(self) -> Self {
@@ -348,7 +348,7 @@ pub trait Real: Field + Signed + Radical + Exponential + Trig {
     /// This default trait implementation uses the standard algebraic definition.
     /// For values of `self` very close to `0.0`, computing $e^x - e^{-x}$ can
     /// suffer from **catastrophic cancellation**, leading to a loss of significant
-    /// digits. If your control loops require high precision near the origin,
+    /// digits. For control loops requiring high precision near the origin,
     /// consider overriding this default with a Taylor series expansion or an `expm1`
     /// based approach for $|x| < 1$.
     #[must_use]

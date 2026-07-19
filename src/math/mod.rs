@@ -29,7 +29,7 @@
 //! }
 //! ```
 //!
-//! By leveraging `DimAdd` and `DimSub`, we can strictly guarantee that the resulting
+//! Leveraging `DimAdd` and `DimSub` strictly guarantees that the resulting
 //! type has the worst case number of coefficients allocated for the output.
 //!
 //! ```rust
@@ -184,8 +184,8 @@ pub enum CartesianQuadrant2D {
 /// let input = 3.0f32;
 ///
 /// // Call evaluate on the MockStateEquation instance.
-/// // The blanket implementation should route the tuple (&state, &input)
-/// // to the dynamics method which calculates state + input.
+/// // The blanket implementation routes the tuple (&state, &input)
+/// // to the dynamics method, which calculates state + input.
 /// let result = mock_eq.evaluate((&state, &input));
 ///
 /// assert_eq!(result, 5.0f32);

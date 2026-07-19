@@ -38,11 +38,11 @@ pub const fn reverse_array<T: Copy, const N: usize>(input: [T; N]) -> [T; N] {
 /// * `initialized_array` - An array filled with elements from the iterator.
 ///
 /// # Safety
-/// * The iterator must have **at least** `N` elements or this will assume an uninitialized
-///   value is initialized (resulting in UB).
+/// * The iterator must have **at least** `N` elements, or this assumes an uninitialized
+///   value is initialized (resulting in undefined behavior).
 ///
 /// # Panics
-/// * This function will panic in debug builds if the safety criterion is not met.
+/// * This function panics in debug builds if the safety criterion is not met.
 #[allow(clippy::arithmetic_side_effects)]
 pub(crate) unsafe fn array_from_iterator<I, T, const N: usize>(
     iterator: I,

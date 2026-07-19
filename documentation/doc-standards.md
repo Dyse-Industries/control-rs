@@ -5,13 +5,28 @@ Rust native control systems toolbox intended for safety-critical applications.
 
 # 1. General Etiquette
 
-To maintain a clean, readable, and highly maintainable codebase, all documentation must adhere to the following rules:
+To maintain a clean, readable, and highly maintainable codebase, all
+documentation must adhere to the following rules:
 
-* **Module-level Documentation**: Module-level documentation must be written using inner doc comments (`//!` or `/*!`) placed at the very top of the file. Do not use outer doc comments (`///` or `/**`) placed directly above module declarations (e.g., `pub mod my_module;`). Placing module-level docs at the top of the file keeps the module definition clean and ensures the rustdoc output is correctly associated with the module content.
-* **Language and Tone**: Write in clear, concise, and professional English. Avoid marketing jargon, colloquialisms, and excessive formalities. Focus on providing precise technical information.
+* **Module-level Documentation**: Module-level documentation must be written
+  using inner doc comments (`//!` or `/*!`) placed at the very top of the file.
+  Do not use outer doc comments (`///` or `/**`) placed directly above module
+  declarations (e.g., `pub mod my_module;`). Placing module-level docs at the
+  top of the file keeps the module definition clean and ensures the rustdoc
+  output is correctly associated with the module content.
+* **Language and Tone**: Write in clear, concise, and professional English.
+  Avoid marketing jargon, colloquialisms, and excessive formalities. Focus on
+  providing precise technical information.
 * **Formatting and Code Blocks**:
-  * All code examples in documentation should compile and pass formatting checks.
-  * Prefer using the question mark operator `?` for propagating errors in examples instead of panic-inducing methods like `.unwrap()` or `.expect()` (unless the example is explicitly demonstrating a panic scenario).
+    * All code examples in documentation should compile and pass formatting
+      checks.
+    * Prefer using the question mark operator `?` for propagating errors in
+      examples instead of panic-inducing methods like `.unwrap()` or
+      `.expect()` (unless the example is explicitly demonstrating a panic
+      scenario).
+
+> Always use present tense, the second-person imperative for procedural
+> steps and the objective third-person for concepts.
 
 # 2. Crate level documentation
 
@@ -152,16 +167,26 @@ list below:
 
 # 4. HIL Test Suite Documentation
 
-Hardware-in-the-Loop (HIL) test suites are target-side verification suites meant to run on embedded hardware or emulators. They are internal test utilities and not part of the public-facing API. Therefore, they are subject to a much more lightweight and concise documentation standard.
+Hardware-in-the-Loop (HIL) test suites are target-side verification suites meant
+to run on embedded hardware or emulators. They are internal test utilities and
+not part of the public-facing API. Therefore, they are subject to a much more
+lightweight and concise documentation standard.
 
-The goal is to provide the minimum information needed to understand the test logic and the settings it uses.
+The goal is to provide the minimum information needed to understand the test
+logic and the settings it uses.
 
 ## 4.1. Structuring HIL Docs
 
-* **Omit Formalities**: Do not include `# Safety`, `# Panics`, or `# Example` sections in HIL documentation.
-* **Suite-Level Docs**: Provide a brief one-sentence or two-sentence description using outer doc comments (`///`) directly above the `#[hil_suite]` macro or the module definition (since these are typically defined within a main runner file or test module).
-* **Setting Docs**: For each settings static, write a brief, single-sentence description of what the setting controls and its units or limits.
-* **Test Functions**: Use a single line/sentence summary description of what behavior or condition the test validates.
+* **Omit Formalities**: Do not include `# Safety`, `# Panics`, or `# Example`
+  sections in HIL documentation.
+* **Suite-Level Docs**: Provide a brief one-sentence or two-sentence description
+  using outer doc comments (`///`) directly above the `#[hil_suite]` macro or
+  the module definition (since these are typically defined within a main runner
+  file or test module).
+* **Setting Docs**: For each settings static, write a brief, single-sentence
+  description of what the setting controls and its units or limits.
+* **Test Functions**: Use a single line/sentence summary description of what
+  behavior or condition the test validates.
 
 ### Example of HIL suite docs
 
