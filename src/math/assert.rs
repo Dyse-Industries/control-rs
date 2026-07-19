@@ -105,7 +105,9 @@ macro_rules! assert_not_almost_eq {
     ($left:expr, $right:expr, $epsilon:expr, $($arg:tt)+) => ({
          let (left_val, right_val) = (&$left, &$right);
          match $crate::math::assert::almost_eq_eps(left_val, right_val, &$epsilon) {
-             Ok(true) => {panic!("assertion failed: `(left != right)`\n  left: `{:?}`, \n right: `{:?}` with epsilon `{:?}`: {}", left_val, right_val, &$epsilon, format_args!($($arg)+)) }
+             Ok(true) => {
+                 panic!("assertion failed: `(left != right)`\n  left: `{:?}`, \n right: `{:?}` with epsilon `{:?}`: {}", left_val, right_val, &$epsilon, format_args!($($arg)+))
+             }
              _ => {},
          }
     });
