@@ -49,7 +49,7 @@
 //!
 //! By default, the crate compiles with the following cargo features:
 //! - `stack-paint`: Enables painting the stack memory space with sentinel bytes (`0xCDCD_CDCD`)
-//!   to perform high-water-mark peak stack depth tracking. If disabled, stack profiling reads will report 0.
+//!   to perform stack depth tracking. If disabled, stack profiling reads report 0.
 //!
 //! # Limitations
 //!

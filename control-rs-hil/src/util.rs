@@ -95,7 +95,7 @@ impl Write for FailureBufWriter<'_> {
 /// * `start` is less than or equal to `end`.
 /// * The returned slice refers to valid, initialized, and static memory.
 /// * The memory range `[start, end)` must remain immutable and valid for the entire `'static` lifetime.
-/// * No other thread or process will modify the custom ELF/binary section memory while constructing or accessing this slice.
+/// * No other thread or process modifies the custom ELF/binary section memory while constructing or accessing this slice.
 ///
 /// # Panics
 /// This function does not panic.
@@ -188,7 +188,7 @@ pub unsafe fn get_suites(
 /// # }
 ///
 /// let mut ctx = Context::new(MockComms, MockProfiler);
-/// // This will trigger a panic in the mock profiler reset implementation
+/// // This triggers a panic in the mock profiler reset implementation
 /// unsafe {
 ///     handle_failure(&mut ctx, "Failure message", "main.rs", 10, false);
 /// }
@@ -277,7 +277,7 @@ pub unsafe fn handle_failure<
 /// * `context` is a valid, reference-stable reference to the HIL server context.
 /// * Global interrupts are permanently disabled, and the target is reset.
 /// * The communication channel configuration must remain intact to allow sending exception reports.
-/// * The exception handler will not be preempted by an even higher priority non-maskable interrupt (NMI).
+/// * The exception handler is not preempted by an even higher priority non-maskable interrupt (NMI).
 ///
 /// # Panics
 /// This function does not return, resetting the hardware CPU.
@@ -308,7 +308,7 @@ pub unsafe fn handle_failure<
 /// # }
 ///
 /// let mut ctx = Context::new(MockComms, MockProfiler);
-/// // This will trigger a panic in the mock profiler reset implementation
+/// // This triggers a panic in the mock profiler reset implementation
 /// unsafe {
 ///     handle_exception(&mut ctx, "HardFault Exception", false);
 /// }

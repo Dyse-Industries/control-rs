@@ -105,8 +105,8 @@ pub trait FFT<T: 'static + Clone + Real + Neg<Output = T> + Default> {
 
                     unsafe {
                         // Butterfly calculation:
-                        // Even = Even + W * Odd
-                        // Odd  = Even - W * Odd
+                        // `Even = Even + W * Odd`
+                        // `Odd  = Even - W * Odd`
                         let even = ptr.add(even_idx).read();
                         let odd = ptr.add(odd_idx).read();
 
@@ -171,11 +171,10 @@ pub trait FFT<T: 'static + Clone + Real + Neg<Output = T> + Default> {
 pub trait Convolution<T: Real> {
     /// Computes the convolution of two signals.
     ///
-    /// * Fewer Writes: By calculating `y\[n\]` directly using `k_min` and `k_max`, we write to the output
-    ///   array exactly once per index. This bypasses the need to zero out the buffer first and avoids
-    ///   repeated memory reads/writes to `output\[i+j\]`.
+    /// * Fewer Writes: By calculating `y\[n\]` directly using `k_min` and `k_max`, the method writes to the output
+    ///   array exactly `input_len + kernel_len - 1` times. Remaining indices are untouched.
     /// * Bounds Safety: The indices for k (`k_min` and `k_max`) ensure that both k remains within
-    ///   `0..input.len()` and n - k remains within `0..kernel.len()`, guaranteeing no out-of-bounds
+    ///   `[0, input.len()]` and n - k remains within `[0, kernel.len()]`, guaranteeing no out-of-bounds
     ///   panics during the inner loop computation.
     /// * Traits: This assumes T: Real implies something akin to `num_traits::Real` (which provides
     ///   `T::zero()` and standard operator overloading).

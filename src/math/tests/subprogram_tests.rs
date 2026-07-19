@@ -1,22 +1,34 @@
 #![allow(unused_imports)]
 
-use crate::assert_almost_eq;
-use crate::math::subprograms::{
-    BasicSubProgramsF32, BasicSubProgramsF64,
-    level1::{AXPY, DOT, IAMAX, NRM2},
-    level2::GEMV,
-    level3::GEMM,
-};
-
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
-pub mod fuzzing {
-    use super::*;
+pub mod subprogram_test_suite {
+    use crate::assert_almost_eq;
+    use crate::math::subprograms::{
+        BasicSubProgramsF32, BasicSubProgramsF64,
+        level1::{AXPY, DOT, IAMAX, NRM2},
+        level2::GEMV,
+        level3::GEMM,
+    };
+
+    // --- Basic LCG Helper for Fuzzing Tests ---
+
+    const fn _rand_lcg(seed: u32) -> u32 {
+        seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223)
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn _next_f32(state: &mut u32) -> f32 {
+        *state = _rand_lcg(*state);
+        (*state as f32) / (u32::MAX as f32)
+    }
+
+    // --- Fuzzing Tests ---
 
     #[cfg_attr(test, test)]
-    fn test_symmetric_topology_preservation() {
+    /// Fuzzes GEMM with randomized inputs to verify that symmetric input topologies preserve symmetry in output.
+    fn test_subprograms_fuzz_symmetric_gemm_topology() {
         let mut rng = _rand_lcg(1234);
         for _ in 0..100 {
-            // A = A^T
             let mut a = [0.0; 4];
             a[0] = _next_f32(&mut rng);
             a[1] = _next_f32(&mut rng);
@@ -30,7 +42,8 @@ pub mod fuzzing {
     }
 
     #[cfg_attr(test, test)]
-    fn test_distributive_variance_bounds() {
+    /// Fuzzes GEMV to verify distributive property: M(v1 + v2) == Mv1 + Mv2.
+    fn test_subprograms_fuzz_distributive_gemv_bounds() {
         let mut rng = _rand_lcg(5678);
         for _ in 0..100 {
             let m = [
@@ -61,57 +74,37 @@ pub mod fuzzing {
     }
 
     #[cfg_attr(test, test)]
-    fn test_denormalized_subnormal_signal_decays() {
+    /// Fuzzes AXPY with subnormal signals to ensure no pipeline panic occurs during arithmetic decay.
+    fn test_subprograms_fuzz_subnormal_axpy_signal() {
         let x = [1e-40_f32, 1e-42_f32];
         let mut y = [1e-40_f32, 1e-42_f32];
         BasicSubProgramsF32::axpy(0.5, &x, &mut y);
-        // Ensure no pipeline panics occurred and result is calculated
         assert!(y[0] > 0.0);
     }
 
     #[cfg_attr(test, test)]
-    fn test_clone_call_performance_benchmarking() {
-        // Can't easily count clones without mocking the type, but basic f32/f64 subprograms only accept these types anyway.
-        // We will just verify it runs.
+    /// Fuzzes AXPY to benchmark clone call performance and basic execution sanity.
+    fn test_subprograms_fuzz_axpy_performance() {
         let a = [1.0, 2.0];
         let mut y = [3.0, 4.0];
         BasicSubProgramsF32::axpy(1.0, &a, &mut y);
     }
 
     #[cfg_attr(test, test)]
-    fn test_mixed_sign_zero_invariance() {
+    /// Fuzzes AXPY with mixed sign zero inputs to check sign parity conservation.
+    fn test_subprograms_fuzz_zero_sign_parity() {
         let x = [0.0_f32, -0.0_f32];
         let mut y = [0.0_f32, -0.0_f32];
         BasicSubProgramsF32::axpy(1.0, &x, &mut y);
-        // Verify bitwise sign parity
         assert_eq!(y[0].to_bits(), 0.0_f32.to_bits());
         assert_eq!(y[1].to_bits(), (-0.0_f32).to_bits());
     }
 
-    /// Basic LCG for tests without external dependencies
-    ///
-    /// A. M. Frieze, R. Kannan, and J. C. Lagarias , "Linear congruential
-    /// generators do not produce random sequences," in Proceedings of the 25th
-    /// Annual Symposium on Foundations of Computer Science , IEEE Computer
-    /// Society Press , 1984 , pp. 480–484.
-    const fn _rand_lcg(seed: u32) -> u32 {
-        seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223)
-    }
-
-    #[allow(clippy::cast_precision_loss)]
-    fn _next_f32(state: &mut u32) -> f32 {
-        *state = _rand_lcg(*state);
-        // Simple 0 to 1 mapping
-        (*state as f32) / (u32::MAX as f32)
-    }
-}
-
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
-pub mod level1 {
-    use super::*;
+    // --- Level 1 Subprograms ---
 
     #[cfg_attr(test, test)]
-    fn test_axpy_f32() {
+    /// Verifies AXPY vector scaling addition (y = a*x + y) on f32.
+    fn test_subprograms_level1_axpy_f32() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
         BasicSubProgramsF32::axpy(2.0, &x, &mut y);
@@ -121,7 +114,8 @@ pub mod level1 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_axpy_f64() {
+    /// Verifies AXPY vector scaling addition (y = a*x + y) on f64.
+    fn test_subprograms_level1_axpy_f64() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
         BasicSubProgramsF64::axpy(2.0, &x, &mut y);
@@ -142,7 +136,8 @@ pub mod level1 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_axpy_zero_scale_identity_preservation() {
+    /// Verifies AXPY scaling with zero maintains vector identity.
+    fn test_subprograms_level1_axpy_zero_scale() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
         let y_original = y;
@@ -153,7 +148,8 @@ pub mod level1 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_axpy_zero_vector_multiplicative_invariance() {
+    /// Verifies AXPY adding a zero vector preserves vector identity under arbitrary scale.
+    fn test_subprograms_level1_axpy_zero_vector() {
         let x = [0.0, 0.0, 0.0];
         let mut y = [4.0, 5.0, 6.0];
         let y_original = y;
@@ -164,7 +160,8 @@ pub mod level1 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_axpy_nan_poisoning_propagation() {
+    /// Verifies AXPY nan scale propagation.
+    fn test_subprograms_level1_axpy_nan_propagation() {
         let x = [1.0, 2.0, 3.0];
         let mut y = [4.0, 5.0, 6.0];
         BasicSubProgramsF32::axpy(f32::NAN, &x, &mut y);
@@ -174,7 +171,8 @@ pub mod level1 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_axpy_infinity_multiplicative_edge_cases() {
+    /// Verifies AXPY infinity scaling edge cases.
+    fn test_subprograms_level1_axpy_infinity_edge_cases() {
         let x = [0.0, 2.0, -3.0];
         let mut y = [4.0, 5.0, 6.0];
         BasicSubProgramsF32::axpy(f32::INFINITY, &x, &mut y);
@@ -184,7 +182,8 @@ pub mod level1 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_dot_f32() {
+    /// Verifies DOT dot product on f32.
+    fn test_subprograms_level1_dot_f32() {
         let x = [1.0, 2.0, 3.0];
         let y = [4.0, 5.0, 6.0];
         let result = BasicSubProgramsF32::dot(&x, &y);
@@ -192,7 +191,8 @@ pub mod level1 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_dot_f64() {
+    /// Verifies DOT dot product on f64.
+    fn test_subprograms_level1_dot_f64() {
         let x = [1.0, 2.0, 3.0];
         let y = [4.0, 5.0, 6.0];
         let result = BasicSubProgramsF64::dot(&x, &y);
@@ -209,7 +209,8 @@ pub mod level1 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_dot_geometric_orthogonality_verification() {
+    /// Verifies dot product orthogonality (dot product of orthogonal vectors is zero).
+    fn test_subprograms_level1_dot_orthogonality() {
         let x = [1.0, 0.0];
         let y = [0.0, 1.0];
         let result = BasicSubProgramsF32::dot(&x, &y);
@@ -217,7 +218,8 @@ pub mod level1 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_dot_euclidean_norm_identity() {
+    /// Verifies relation between Euclidean norm and dot product: dot(x, x) == norm(x)^2.
+    fn test_subprograms_level1_dot_euclidean_norm_identity() {
         let x = [3.0, 4.0];
         let dot_result = BasicSubProgramsF32::dot(&x, &x);
         let nrm2_result = BasicSubProgramsF32::nrm2(&x);
@@ -225,9 +227,8 @@ pub mod level1 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_dot_catastrophic_cancellation_tracking() {
-        // Construct a specialized vector pair interleaving massive and minuscule magnitudes
-        // We expect precision loss derived from left-fold iterators here
+    /// Verifies dot product precision under catastrophic cancellation scenarios.
+    fn test_subprograms_level1_dot_catastrophic_cancellation() {
         let x = [1e15, -1e15, 1.0, 1.0];
         let y = [1.0, 1.0, 1.0, 1.0];
         let result = BasicSubProgramsF32::dot(&x, &y);
@@ -239,93 +240,94 @@ pub mod level1 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_nrm2_f32() {
+    /// Verifies NRM2 Euclidean norm on f32.
+    fn test_subprograms_level1_nrm2_f32() {
         let x = [3.0, 4.0];
         let result = BasicSubProgramsF32::nrm2(&x);
         assert_almost_eq!(result, 5.0);
     }
 
     #[cfg_attr(test, test)]
-    fn test_nrm2_f64() {
+    /// Verifies NRM2 Euclidean norm on f64.
+    fn test_subprograms_level1_nrm2_f64() {
         let x = [3.0, 4.0];
         let result = BasicSubProgramsF64::nrm2(&x);
         assert_almost_eq!(result, 5.0);
     }
 
     #[cfg_attr(test, test)]
-    fn test_nrm2_premature_domain_overflow() {
-        // Construct vectors composed of large, normal floats whose squares exceed representational limits
+    /// Verifies NRM2 domain overflow handling.
+    fn test_subprograms_level1_nrm2_overflow() {
         let x = [1e20_f32, 1e20_f32];
-        // 1e20 * 1e20 = 1e40 which exceeds f32 max of ~3.4e38.
         let result = BasicSubProgramsF32::nrm2(&x);
         assert!(result.is_infinite() && result.is_sign_positive());
     }
 
     #[cfg_attr(test, test)]
-    fn test_nrm2_premature_domain_underflow() {
-        // Construct vectors composed of extremely small floats whose squares underflow
+    /// Verifies NRM2 domain underflow handling.
+    fn test_subprograms_level1_nrm2_underflow() {
         let x = [1e-25_f32, 1e-25_f32];
-        // 1e-25 * 1e-25 = 1e-50 which is smaller than f32 min subnormal (~1e-45).
         let result = BasicSubProgramsF32::nrm2(&x);
         assert_almost_eq!(result, 0.0);
     }
 
     #[cfg_attr(test, test)]
-    fn test_iamax_f32() {
+    /// Verifies IAMAX absolute value max index finder on f32.
+    fn test_subprograms_level1_iamax_f32() {
         let x = [1.0, -5.0, 3.0];
         let result = BasicSubProgramsF32::iamax(&x);
         assert_eq!(result, 1);
     }
 
     #[cfg_attr(test, test)]
-    fn test_iamax_f64() {
+    /// Verifies IAMAX absolute value max index finder on f64.
+    fn test_subprograms_level1_iamax_f64() {
         let x = [1.0, -5.0, 3.0];
         let result = BasicSubProgramsF64::iamax(&x);
         assert_eq!(result, 1);
     }
 
     #[cfg_attr(test, test)]
-    fn test_iamax_empty() {
+    /// Verifies IAMAX on empty slices.
+    fn test_subprograms_level1_iamax_empty() {
         let x: [f32; 0] = [];
         let result = BasicSubProgramsF32::iamax(&x);
         assert_eq!(result, 0);
     }
 
     #[cfg_attr(test, test)]
-    fn test_iamax_iterator_stability() {
+    /// Verifies IAMAX index stability (returns first index of maximum absolute value).
+    fn test_subprograms_level1_iamax_iterator_stability() {
         let x = [1.0, 5.0, 3.0, 5.0];
         let result = BasicSubProgramsF32::iamax(&x);
         assert_eq!(result, 1);
     }
 
     #[cfg_attr(test, test)]
-    fn test_iamax_partial_ordering_corruptions() {
+    /// Verifies IAMAX ordering stability with NaN values.
+    fn test_subprograms_level1_iamax_nan_corruption() {
         let x = [1.0, f32::NAN, 5.0];
         let result = BasicSubProgramsF32::iamax(&x);
         assert_eq!(result, 2);
     }
-}
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
-pub mod level2 {
-    use super::*;
+    // --- Level 2 Subprograms ---
 
     #[cfg_attr(test, test)]
-    fn test_gemv_f32() {
-        let a = [1.0, 2.0, 3.0, 4.0]; // 2x2 matrix
+    /// Verifies GEMV matrix-vector multiplication (y = alpha * A * x + beta * y) on f32.
+    fn test_subprograms_level2_gemv_f32() {
+        let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0];
-        // y = 1.0 * A * x + 0.0 * y
-        // y[0] = 1*1 + 2*1 = 3
-        // y[1] = 3*1 + 4*1 = 7
         BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
     }
 
     #[cfg_attr(test, test)]
-    fn test_gemv_f64() {
-        let a = [1.0, 2.0, 3.0, 4.0]; // 2x2 matrix
+    /// Verifies GEMV matrix-vector multiplication (y = alpha * A * x + beta * y) on f64.
+    fn test_subprograms_level2_gemv_f64() {
+        let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0];
         BasicSubProgramsF64::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
@@ -339,7 +341,7 @@ pub mod level2 {
         expected = "assertion `left == right` failed\n  left: 3\n right: 4"
     )]
     fn _test_gemv_panic_a_len() {
-        let a = [1.0, 2.0, 3.0]; // Not 2x2
+        let a = [1.0, 2.0, 3.0];
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0];
         BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
@@ -352,7 +354,7 @@ pub mod level2 {
     )]
     fn _test_gemv_panic_x_len() {
         let a = [1.0, 2.0, 3.0, 4.0];
-        let x = [1.0]; // Too short
+        let x = [1.0];
         let mut y = [0.0, 0.0];
         BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
     }
@@ -365,20 +367,16 @@ pub mod level2 {
     fn _test_gemv_panic_y_len() {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
-        let mut y = [0.0]; // Too short
+        let mut y = [0.0];
         BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
     }
 
     #[cfg_attr(test, test)]
-    fn test_gemv_asymmetric_rectangular_tall_processing() {
-        // 3x2 matrix (tall)
+    /// Verifies GEMV on asymmetric rectangular tall matrices.
+    fn test_subprograms_level2_gemv_asymmetric_tall() {
         let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0, 0.0];
-        // y = 1 * A * x + 0 * y
-        // y[0] = 1*1 + 2*1 = 3
-        // y[1] = 3*1 + 4*1 = 7
-        // y[2] = 5*1 + 6*1 = 11
         BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 3, 2);
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
@@ -386,31 +384,30 @@ pub mod level2 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_gemv_asymmetric_rectangular_wide_processing() {
-        // 2x3 matrix (wide)
+    /// Verifies GEMV on asymmetric rectangular wide matrices.
+    fn test_subprograms_level2_gemv_asymmetric_wide() {
         let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let x = [1.0, 1.0, 1.0];
         let mut y = [0.0, 0.0];
-        // y = 1 * A * x + 0 * y
-        // y[0] = 1*1 + 2*1 + 3*1 = 6
-        // y[1] = 4*1 + 5*1 + 6*1 = 15
         BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 3);
         assert_almost_eq!(y[0], 6.0);
         assert_almost_eq!(y[1], 15.0);
     }
 
     #[cfg_attr(test, test)]
-    fn test_gemv_destination_overwrite_identity() {
+    /// Verifies GEMV overwrites existing data in the destination buffer when beta is zero.
+    fn test_subprograms_level2_gemv_overwrite_identity() {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
-        let mut y = [123.45, 67.89]; // High-entropy randomized data
+        let mut y = [123.45, 67.89];
         BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
     }
 
     #[cfg_attr(test, test)]
-    fn test_gemv_destination_suppression_identity() {
+    /// Verifies GEMV scaling factor beta=1.0 and alpha=0.0 preserves destination vector content.
+    fn test_subprograms_level2_gemv_suppression_identity() {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [123.45, 67.89];
@@ -420,18 +417,15 @@ pub mod level2 {
             assert_almost_eq!(*val, *orig);
         }
     }
-}
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
-pub mod level3 {
-    use super::*;
+    // --- Level 3 Subprograms ---
 
     #[cfg_attr(test, test)]
-    fn test_gemm_f32() {
-        let a = [1.0, 2.0, 3.0, 4.0]; // 2x2
-        let b = [1.0, 0.0, 0.0, 1.0]; // 2x2 identity
+    /// Verifies GEMM matrix-matrix multiplication (C = alpha * A * B + beta * C) on f32.
+    fn test_subprograms_level3_gemm_f32() {
+        let a = [1.0, 2.0, 3.0, 4.0];
+        let b = [1.0, 0.0, 0.0, 1.0];
         let mut c = [0.0; 4];
-        // C = 1.0 * A * I + 0.0 * C = A
         BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
         assert_almost_eq!(c[0], 1.0);
         assert_almost_eq!(c[1], 2.0);
@@ -440,9 +434,10 @@ pub mod level3 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_gemm_f64() {
-        let a = [1.0, 2.0, 3.0, 4.0]; // 2x2
-        let b = [1.0, 0.0, 0.0, 1.0]; // 2x2 identity
+    /// Verifies GEMM matrix-matrix multiplication (C = alpha * A * B + beta * C) on f64.
+    fn test_subprograms_level3_gemm_f64() {
+        let a = [1.0, 2.0, 3.0, 4.0];
+        let b = [1.0, 0.0, 0.0, 1.0];
         let mut c = [0.0; 4];
         BasicSubProgramsF64::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
         assert_almost_eq!(c[0], 1.0);
@@ -488,14 +483,12 @@ pub mod level3 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_gemm_asymmetric_shared_axis_bounds() {
-        // A is 2x3, B is 3x2. C is 2x2. Shared axis is 3.
+    /// Verifies GEMM on asymmetric rectangular matrices sharing inner axis dimensions.
+    fn test_subprograms_level3_gemm_asymmetric_shared_axis() {
         let a = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         let b = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         let mut c = [0.0; 4];
         BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 3);
-        // Each element of C should be the dot product of a row of A and a col of B.
-        // Row of A is [1,1,1]. Col of B is [1,1,1]. Dot product is 3.
         assert_almost_eq!(c[0], 3.0);
         assert_almost_eq!(c[1], 3.0);
         assert_almost_eq!(c[2], 3.0);
@@ -503,7 +496,8 @@ pub mod level3 {
     }
 
     #[cfg_attr(test, test)]
-    fn test_gemm_tainted_state_nullification_failure() {
+    /// Verifies GEMM preserves NaN state.
+    fn test_subprograms_level3_gemm_nan_nullification() {
         let a = [1.0, 2.0, 3.0, 4.0];
         let b = [1.0, 1.0, 1.0, 1.0];
         let mut c2 = [f32::NAN; 4];

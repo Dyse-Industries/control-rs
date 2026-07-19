@@ -40,7 +40,7 @@
 //!
 //! impl AXPY<f32> for ArmNeonBackend {
 //!     fn axpy(a: f32, x: &[f32], y: &mut [f32]) {
-//!         // Real implementation would use NEON intrinsics here
+//!         // A real implementation uses NEON intrinsics here
 //!         for (xi, yi) in x.iter().zip(y.iter_mut()) {
 //!             *yi += a * *xi;
 //!         }

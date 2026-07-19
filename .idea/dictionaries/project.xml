@@ -5,14 +5,16 @@
       <w>Rapita</w>
       <w>Ratatui</w>
       <w>Telem</w>
+      <w>Tukey</w>
       <w>Varints</w>
       <w>cdot</w>
       <w>compensators</w>
       <w>eabihf</w>
       <w>emami</w>
       <w>horner's</w>
-      <w>horner’s</w>
+      <w>ifft</w>
       <w>naeini</w>
+      <w>roundtrip</w>
       <w>rtic</w>
       <w>semihosting</w>
       <w>serde</w>

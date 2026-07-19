@@ -1,11 +1,5 @@
 //! Interactive Terminal User Interface (TUI) for hardware-in-the-loop (HIL) testing.
 //! Allows running, stopping, and filtering tests, as well as modifying settings dynamically.
-//!
-//!
-//! TODO:
-//!   - When the user enters (r)un, the runner should begin with the current
-//!     selection. This will allow users to "skip" failing tests.
-
 use std::io::stdout;
 use std::time::Duration;
 
@@ -848,7 +842,7 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
     );
     f.render_widget(header, chunks[0]);
 
-    // Split mid panel
+    // Split mid-panel
     let mid_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
