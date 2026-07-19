@@ -99,7 +99,6 @@ The documentation for every public item should adhere to the following order:
 ///
 /// # Safety
 /// This function does not use `unsafe` code.
-///
 /// # Example
 /// ```
 /// use control_rs::polynomial::utils::largest_nonzero_index;
@@ -177,7 +176,7 @@ logic and the settings it uses.
 
 ## 4.1. Structuring HIL Docs
 
-* **Omit Formalities**: Do not include `# Safety`, `# Panics`, or `# Example`
+* **Omit Formalities**: Do not include `# Detailed Summary`, `# Generic Args`, `# Returns`, or `# Example`
   sections in HIL documentation.
 * **Suite-Level Docs**: Provide a brief one-sentence or two-sentence description
   using outer doc comments (`///`) directly above the `#[hil_suite]` macro or
