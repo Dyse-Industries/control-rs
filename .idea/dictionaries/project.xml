@@ -2,8 +2,10 @@
   <dictionary name="project">
     <words>
       <w>Cholesky</w>
+      <w>Rapita</w>
       <w>Ratatui</w>
       <w>Telem</w>
+      <w>Varints</w>
       <w>cdot</w>
       <w>compensators</w>
       <w>eabihf</w>
@@ -13,6 +15,7 @@
       <w>naeini</w>
       <w>rtic</w>
       <w>semihosting</w>
+      <w>serde</w>
       <w>thumbv</w>
       <w>ulps</w>
       <w>underflowed</w>

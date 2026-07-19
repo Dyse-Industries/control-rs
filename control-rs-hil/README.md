@@ -25,7 +25,7 @@ flowchart LR
         CommsRx["HostComms"]
         Runner{"Server"}
         Tests["SuiteDescriptors"]
-        CPUUtils["CPUProfileUtils"]
+        CPUUtils["CPUProfiler"]
   end
     Tests -. <br> .-> Runner
     Host(("Host CLI / TUI / CI")) <--> CommsRx
@@ -46,7 +46,7 @@ flowchart LR
 
 `control-rs-hil`:
 
-1. **Defines core abstractions** (`CPUProfileUtils` and `HostComms` traits) for
+1. **Defines core abstractions** (`CPUProfiler` and `HostComms` traits) for
    hardware communication, timing, and CPU profiling.
 2. **Implements packet framing** using a robust CRC-16 checksum binary protocol.
 3. **Hosts the server event loop** which processes incoming execution commands
@@ -66,7 +66,7 @@ Here is an example implementation:
 
 use control_rs_hil::comms::{Command, FrameReader, HostComms, Telemetry, frame_telemetry};
 use control_rs_hil::server::Context;
-use control_rs_hil::executor::CPUProfileUtils;
+use control_rs_hil::CPUProfiler;
 use control_rs_macros::{hil_setup, hil_suite};
 
 // 1. Define target-side communication channel (e.g., UART or Semihosting)
@@ -109,7 +109,7 @@ impl HostComms for UartComms {
 // 2. Define target-side CPU profiling utilities
 struct SystemCPUUtils;
 
-impl CPUProfileUtils for SystemCPUUtils {
+impl CPUProfiler for SystemCPUUtils {
     fn get_cycles(&self) -> u64 {
         get_cycles()
     }
@@ -153,10 +153,10 @@ pub mod pid_control_suite {
 // 4. Initialize HIL runner server
 #[hil_setup]
 fn setup() -> Context<UartComms, SystemCPUUtils> {
-    Context {
-        comms: UartComms { reader: FrameReader::new() },
-        cpu_utils: SystemCPUUtils,
-    }
+    Context::new(
+        UartComms { reader: FrameReader::new() },
+        SystemCPUUtils,
+    )
 }
 ```
 
