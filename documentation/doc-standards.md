@@ -14,9 +14,11 @@ documentation must adhere to the following rules:
   declarations (e.g., `pub mod my_module;`). Placing module-level docs at the
   top of the file keeps the module definition clean and ensures the rustdoc
   output is correctly associated with the module content.
-* **Language and Tone**: Write in clear, concise, and professional English.
-  Avoid marketing jargon, colloquialisms, and excessive formalities. Focus on
-  providing precise technical information.
+* **Language, Tone and Tense**: Write in clear, concise, and professional
+  English. Avoid marketing jargon, colloquialisms, and excessive formalities.
+  Focus on providing precise technical information. Always use present tense,
+  the second-person imperative for procedural steps and the objective
+  third-person for concepts.
 * **Formatting and Code Blocks**:
     * All code examples in documentation should compile and pass formatting
       checks.
@@ -24,9 +26,6 @@ documentation must adhere to the following rules:
       examples instead of panic-inducing methods like `.unwrap()` or
       `.expect()` (unless the example is explicitly demonstrating a panic
       scenario).
-
-> Always use present tense, the second-person imperative for procedural
-> steps and the objective third-person for concepts.
 
 # 2. Crate level documentation
 
@@ -176,7 +175,8 @@ logic and the settings it uses.
 
 ## 4.1. Structuring HIL Docs
 
-* **Omit Formalities**: Do not include `# Detailed Summary`, `# Generic Args`, `# Returns`, or `# Example`
+* **Omit Formalities**: Do not include `# Detailed Summary`, `# Generic Args`,
+  `# Returns`, or `# Example`
   sections in HIL documentation.
 * **Suite-Level Docs**: Provide a brief one-sentence or two-sentence description
   using outer doc comments (`///`) directly above the `#[hil_suite]` macro or
