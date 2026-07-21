@@ -37,8 +37,14 @@ specializations for various matrix shapes.
 
 #### **2.2. Non-Functional Requirements**
 
-- **Numerical Stability**: Ensure linear algebra algorithms maintain acceptable
-  precision when operating on ill-conditioned or near-singular systems.
+- **Deterministic Execution Bounds**: Matrix operations—especially determinant
+  calculation and inversion—must execute within predictable, deterministic
+  timeframes.
+- **Compile-Time Evaluation Overhead**: The extensive use of `const fn` for
+  static constructors and dimension enforcement must not cause unreasonable
+  compile-time degradation or binary bloat.
+- **Specialization Optimization**: The triangular specializations should run
+  in about half the operations of a regular matrix multiplication.
 
 #### **2.3. Constraints**
 
@@ -561,6 +567,34 @@ For computing $\det(A)$, two primary methods were analyzed:
 
 ### **6. Verification & Validation**
 
+For a standard matrix multiplication where $C = A \times B$ with
+dimensions $(n \times m)$ and $(m \times k)$, the total execution time $T$ in
+seconds can be modeled mathematically
+as: $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text
+{overhead}}}{f}$$
+
+**Variable Breakdown**:
+
+- $n, m, k$: The matrix dimensions. The core mathematical operation (a
+  Multiply-Accumulate, or MAC) is executed exactly $n \cdot m \cdot k$
+  times.
+- $f$: The processor clock frequency in Hertz (Hz).
+- $c_{\text{inner}}$: The number of clock cycles required to execute
+  one iteration of the innermost loop. This includes loading two f32
+  values, performing the multiplication and addition, and incrementing
+  pointers.
+- On an ARM Cortex-M processor with a hardware Floating Point Unit (
+  FPU), a highly optimized inner loop typically costs 4 to 8
+  cycles.
+- If the target architecture lacks a hardware FPU (relying on
+  software floating-point emulation), this cost jumps drastically to
+  50 to 150 cycles.
+- $c_{\text{overhead}}$: The fixed cycle cost of function calls, stack
+  setup, and outer loop branching. For larger matrices, this is
+  negligible, but for highly constrained
+  matrices (e.g., $3 \times 3$), this overhead can represent a
+  measurable percentage of the total execution time.
+
 #### **6.1. Verification**
 
 1. **Unit Testing**: Run unit tests on the host system via `cargo test` to
@@ -568,19 +602,15 @@ For computing $\det(A)$, two primary methods were analyzed:
 2. **Property-Based Testing**: Use the `proptest` framework to verify
    mathematical identities (e.g., $(AB)^T = B^T A^T$ and
    distributivity $A(B + C) = AB + AC$) across thousands of randomized matrices.
-   Deliberately populate the proptest corpus with ill-conditioned,
+   Deliberately populate the `proptest` corpus with ill-conditioned,
    near-singular, and Hilbert matrices to verify that singularity checks catch
    numerical instability without crashing.
-3. **HIL Testing**: Compile and run target-specific test suites in a
-   `#![no_std]` environment using QEMU emulation.
-4. **Cycle-Accurate Profiling**: Track target execution time using the ARM Data
-   Watchpoint and Trace (DWT) cycle counter (`DWT_CYCCNT` register at
-   `0xE0001004` by enabling `TRCENA` in the `DEMCR` register). This method
-   isolates cycle counts from RTOS task scheduling and interrupt overhead.
-5. **Cache Miss Profiling**: Run Cachegrind to monitor L1 instruction/data cache
+3. **HIL Testing**: Compile and run target-specific test suites on real
+   hardware.
+4. **Cache Miss Profiling**: Run Cachegrind to monitor L1 instruction/data cache
    misses (`I1mr`/`D1mr`) and last-level cache misses (`LLd`), optimizing tile
    sizes ($k_c \times n_R$) to fit cache limits.
-6. **Continuous Integration**: Execute clippy and formatting checks
+5. **Continuous Integration**: Execute clippy and formatting checks
    automatically in the CI pipeline.
 
 #### **6.2. Validation**
