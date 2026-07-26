@@ -19,7 +19,7 @@ and traits to enable compile-time specializations for various matrix shapes.
 #### 2.1. Functional Requirements
 
 - **Compile-Time Sizing**: Enforce dimensions of arguments at compile time
-  using [math::num_types](../../src/math/num_types.rs).
+  using [num_types](../../src/math/num_types.rs).
 - **Static Constructors**: Provide compile-time evaluated constructors for zero
   matrices, identity matrices, and diagonal matrices.
 - **Core Arithmetic**: Implement standard operator overloading for matrix
@@ -165,8 +165,8 @@ performance (Anderson et al., 1999):
   `y = a*x + y` trait defined
   in [subprograms.rs](../../src/math/subprograms.rs)), where addition uses
   `a = T::ONE` and subtraction uses `a = -T::ONE`.
-- **Matrix Negation (`Neg`)**: Maps to BLAS Level 1 **`AXPY`** with
-  `a = -T::ONE` and `y = 0`, or element-wise scaling.
+- **Matrix Negation (`Neg`)**: Maps to BLAS Level 1 **`SCAL`** with
+  `a = -T::ONE`.
 - **Matrix-Matrix Multiplication (`Mul<Matrix>`)**: Statically enforces
   dimension matching (e.g. $(M \times N) \times (N \times P) \to (M \times P)$).
   It maps to the BLAS Level 3 **`GEMM`** subprogram (`C = alpha*A*B + beta*C`
@@ -190,9 +190,10 @@ where
 #### 4.6. Core Operations
 
 - `pub fn transpose(&self) -> Matrix<T, C, R>`:
-  Evaluates transposition. For memory layout compatibility, transposition swaps
-  indices from column-major `(col, row)` to `(row, col)`.
-- `pub fn invert(&self) -> Result<Self, LinAlgError>`:
+  Evaluates transposition. For memory layout compatibility, transpose iterates
+  the source in column-major order and writes each element to its transposed
+  position.
+- `pub fn invert(&mut self) -> Result<Self, LinAlgError>`:
   Inverts a square matrix.
     - **Symmetric Matrices**: Uses **$LDL^T$ Decomposition** (factorizing the
       matrix into $L D L^T$ where $L$ is unit lower-triangular and $D$ is
@@ -203,7 +204,7 @@ where
       lower-triangular, and $U$ is upper-triangular) followed by
       forward/backward substitution against the columns of the identity matrix (
       Golub & Van Loan, 2013).
-- `pub fn determinant(&mut self) -> T`:
+- `pub fn determinant(&self) -> T`:
   Calculates the determinant.
     - **Symmetric Matrices**: Computed from the $LDL^T$ decomposition as the
       product of the diagonal elements of $D$ ($\det(A) = \prod D_{ii}$).
@@ -357,9 +358,18 @@ For polynomial root-finding, the coefficients are mapped to a companion matrix
 in upper Hessenberg form (strict zeros beneath the first lower subdiagonal).
 Instead of using a general $O(N^3)$ QR algorithm, the solver exploits the
 unitary-plus-rank-one structure (Bini et al., 2010). This reduces storage
-requirements to $O(N)$ and
-computational complexity to $O(N^2)$ flops. Applying a sequence of planar
-rotators guarantees normwise backward stability.
+requirements to $O(N)$ and computational complexity to $O(N^2)$ flops. Applying
+a sequence of planar rotators guarantees normwise backward stability.
+
+```bibtex
+@article{aurentz2014fast,
+    title = {Fast and backward stable computation of roots of polynomials},
+    author = {Aurentz, Jared L and Mach, Thomas and Vandebril, Raf and Watkins, David S},
+    journal = {TW Reports},
+    year = {2014},
+    publisher = {Department of Computer Science, KU Leuven; Leuven, Belgium}
+}
+```
 
 ##### 4.9.3. Kalman Filter State Update Example
 
