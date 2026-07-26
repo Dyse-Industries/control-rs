@@ -6,21 +6,20 @@
 
 ---
 
-### **1. Introduction**
+### 1. Introduction
 
-This module provides a type-safe wrapper for DSP and subprogram traits to
-support the matrix operations required by advanced control and state estimation.
-Like `nalgebra`, it utilizes generics and traits to enable compile-time
-specializations for various matrix shapes.
+This module supports the matrix operations required by advanced control and
+state estimation. Like `nalgebra`, it utilizes generics and traits to enable
+compile-time specializations for various matrix shapes.
 
 ---
 
-### **2. Requirements**
+### 2. Requirements
 
-#### **2.1. Functional Requirements**
+#### 2.1. Functional Requirements
 
 - **Compile-Time Sizing**: Enforce dimensions of arguments at compile time
-  using [math::num_types](../../src/math/num_types.rs)
+  using [math::num_types](../../src/math/num_types.rs).
 - **Static Constructors**: Provide compile-time evaluated constructors for zero
   matrices, identity matrices, and diagonal matrices.
 - **Core Arithmetic**: Implement standard operator overloading for matrix
@@ -30,23 +29,25 @@ specializations for various matrix shapes.
 - **Specializations**: Support specialized structures (Upper Triangular, Lower
   Triangular, and Symmetric) to dispatch optimized mathematical routines.
 - **Coordinate-Based Instantiation**: Expose coordinate-based mapping functions
-  to initialize elements at runtime.
+  to initialize elements by index.
+- **Matrix Concatenation**: Implement a method to combine matrices and lists of
+  matrics both vertically and horizontally.
 - **Type Conversions**: Support conversions between `Matrix`, `Polynomial`, and
   `Tensor` representations (e.g., computing a characteristic polynomial from a
   square matrix, or mapping a 2D matrix to a rank-2 tensor).
 
-#### **2.2. Non-Functional Requirements**
+#### 2.2. Non-Functional Requirements
 
-- **Deterministic Execution Bounds**: Matrix operations—especially determinant
+- **Deterministic Execution**: Matrix operations—especially determinant
   calculation and inversion—must execute within predictable, deterministic
   timeframes.
-- **Compile-Time Evaluation Overhead**: The extensive use of `const fn` for
-  static constructors and dimension enforcement must not cause unreasonable
-  compile-time degradation or binary bloat.
-- **Specialization Optimization**: The triangular specializations should run
+- **No Excessive Compile-Time Overhead**: The use of `const fn` for static
+  constructors and dimension enforcement must not cause excessive compile-time
+  increase or binary bloat.
+- **Specialization Optimization**: The structural specializations should run
   in about half the operations of a regular matrix multiplication.
 
-#### **2.3. Constraints**
+#### 2.3. Constraints
 
 - **No-Std Environment**: The code must compile and run in `#![no_std]`
   environments without the Rust standard library.
@@ -58,17 +59,19 @@ specializations for various matrix shapes.
 
 ---
 
-### **3. Technical Overview**
+### 3. Technical Overview
 
-The scope of this module includes the data structures, traits, constructors,
-operator implementations, and numerical solvers required for two-dimensional
-linear algebra.
+`Matrix` is a type-safe wrapper that provides compile time dimension and type
+bounds to guarantee that unsafe subprograms are not misused.
+
+There is only a single `Matrix` type so higher level algorithms can specify
+custom specializations and optimizations without losing the core functionality.
 
 ---
 
-### **4. Core Architecture**
+### 4. Core Architecture
 
-#### **4.1. Generics Foundation & Sizing**
+#### 4.1. Generics Foundation & Sizing
 
 The core `Matrix` structure is defined as:
 
@@ -78,12 +81,12 @@ pub struct Matrix<T, R: Dim, C: Dim> {
 }
 ```
 
-Dimensions are bound at the type level using the `Dim` trait and Peano number
+Dimensions are bounded at the type level using the `Dim` trait and Peano number
 representations defined in [num_types.rs](../../src/math/num_types.rs). This
 allows performing type-level arithmetic (e.g., dimension addition or
 multiplication) to statically verify shape changes during matrix operations.
 
-#### **4.2. Memory Layout & Storage Strategy**
+#### 4.2. Memory Layout & Storage Strategy
 
 The design utilizes a **column-major array representation** (`[[T; R]; C]`).
 
@@ -93,10 +96,10 @@ The design utilizes a **column-major array representation** (`[[T; R]; C]`).
   of legacy BLAS/LAPACK and embedded DSP libraries (e.g., ARM CMSIS-DSP),
   allowing zero-copy routing to hardware-accelerated kernels.
 
-#### **4.3. Memory Representation & Slicing**
+#### 4.3. Memory Representation & Slicing
 
 To ensure stable memory layout and compatibility with C-based hardware
-libraries:
+libraries the matrix owns a contiguous array marked as `#[repr(C)]`:
 
 ```rust
 #[repr(C)]
@@ -108,19 +111,29 @@ pub struct Matrix<T, R: Dim, C: Dim> {
 Contiguous internal memory allows exposing zero-copy flat slice interfaces:
 
 ```rust
-impl<T, R: Dim, C: Dim> Matrix<T, R, C> {
+impl<T, R: Dim, C: Dim, N: Dim> Matrix<T, R, C>
+where
+    R: DimMul<C, Output=N>,
+
+{
     pub const fn as_slice(&self) -> &[T] {
         // Safe cast as nested arrays are guaranteed to be laid out contiguously
-        unsafe { core::slice::from_raw_parts(self.data.as_ptr() as *const T, R::DIM * C::DIM) }
+        unsafe {
+            core::slice::from_raw_parts(self.data.as_ptr() as
+                                            *const T, N::DIM)
+        }
     }
 
     pub const fn as_mut_slice(&mut self) -> &mut [T] {
-        unsafe { core::slice::from_raw_parts_mut(self.data.as_mut_ptr() as *mut T, R::DIM * C::DIM) }
+        unsafe {
+            core::slice::from_raw_parts_mut(self.data.as_mut_ptr() as
+                                                *mut T, N::DIM)
+        }
     }
 }
 ```
 
-#### **4.4. Instantiation & Constructors**
+#### 4.4. Instantiation & Constructors
 
 - `pub const fn zero() -> Self where T: Zero + Copy`: Instantiates an all-zero
   matrix using `T::ZERO` as the constant initialization value.
@@ -142,7 +155,7 @@ Rust, the scalar type `T` must implement the `Zero` and `One` traits from
 `T::ZERO` and `T::ONE`. All static constructors are marked `const fn` to allow
 placing static matrices directly in read-only flash memory.
 
-#### **4.5. Operator Overloading**
+#### 4.5. Operator Overloading
 
 Overloads `Add`, `Sub`, and `Mul` from `core::ops`. Dimension rules are
 statically enforced at compile-time. Under the hood, these high-level operator
@@ -169,14 +182,14 @@ performance:
 ```rust
 impl<T, M: Dim, N: Dim, P: Dim> Mul<Matrix<T, N, P>> for Matrix<T, M, N>
 where
-    T: Copy + Default + Add<Output=T> + Mul<Output=T>,
+    T: Copy + Zero + Add<Output=T> + Mul<Output=T>,
 {
     type Output = Matrix<T, M, P>;
     // ...
 }
 ```
 
-#### **4.6. Core Operations**
+#### 4.6. Core Operations
 
 - `pub fn transpose(self) -> Matrix<T, C, R>`:
   Evaluates transposition. For memory layout compatibility, transposition swaps
@@ -187,8 +200,8 @@ where
       matrix into $L D L^T$ where $L$ is unit lower-triangular and $D$ is
       diagonal) followed by forward substitution and backward substitution to
       solve for the inverted columns.
-    - **General Square Matrices**: Uses **LU Decomposition with Partial Pivoting
-      ** ($P A = L U$, where $P$ is a permutation matrix, $L$ is unit
+    - **General Square Matrices**: Uses **LU Decomposition with Partial
+      Pivoting** ($P A = L U$, where $P$ is a permutation matrix, $L$ is unit
       lower-triangular, and $U$ is upper-triangular) followed by
       forward/backward substitution against the columns of the identity matrix.
 - `pub fn determinant(&self) -> T`:
@@ -199,9 +212,9 @@ where
       as $(-1)^p \prod U_{ii}$, where $p$ is the number of row exchanges
       performed during pivoting.
 
-#### **4.7. Interoperability & Conversions**
+#### 4.7. Interoperability & Conversions
 
-##### **4.7.1. Conversion to Polynomial**
+##### 4.7.1. Conversion to Polynomial
 
 A square matrix `Matrix<T, D, D>` converts to its characteristic polynomial
 `Polynomial<T, <D as DimAdd<U1>>::Output>`.
@@ -245,15 +258,15 @@ Converts a 2D matrix to a rank-2 `Tensor<T, Layout>`.
 - **Failure Condition**: Returns `ConversionError::LayoutMismatch` if
   `Layout::RANK != 2` or if the layout's dimensions do not match $ R \times C $.
 
-#### **4.8. Error Handling & State Management**
+#### 4.8. Error Handling & State Management
 
-##### **4.8.1. Compile-Time Constraints**
+##### 4.8.1. Compile-Time Constraints
 
 Dimension mismatches (e.g., adding matrices of different sizes or multiplying
 incompatible dimensions) fail at compile-time. Rust's type checker prevents
 compiling invalid math.
 
-##### **4.8.2. Runtime Error Taxonomy**
+##### 4.8.2. Runtime Error Taxonomy
 
 To supplement the crate's generic `ArithmeticError`, `control-rs` defines
 dedicated error enums in the `math` module to represent linear algebra and
@@ -281,7 +294,7 @@ pub enum ConversionError {
 }
 ```
 
-##### **4.8.3. Runtime Fallbacks**
+##### 4.8.3. Runtime Fallbacks
 
 Dynamic operations that cannot be validated statically use soft failure paths:
 
@@ -290,7 +303,7 @@ Dynamic operations that cannot be validated statically use soft failure paths:
   degraded state by returning `Err(LinAlgError::SingularMatrix)`).
 - Boundary access returns `Option<&T>` via safe `get` methods.
 
-#### **4.9. Structural Specializations & Extensions**
+#### 4.9. Structural Specializations & Extensions
 
 Specialized matrices are implemented as new-type wrappers around `Matrix` to
 enforce mathematical invariants and dispatch optimized routines:
@@ -306,7 +319,7 @@ non-linear index mapping and prevents flat slicing), we wrap a full square
 matrix. This trades memory space for cache friendliness and compatibility with
 slice-based BLAS kernels.
 
-##### **4.9.1. Forward and Backward Substitution Examples**
+##### 4.9.1. Forward and Backward Substitution Examples
 
 ```rust
 /// Solves L * x = b for a lower triangular matrix where L is L::DIM x L::DIM and x, b are L::DIM x 1.
@@ -338,7 +351,7 @@ where
 }
 ```
 
-##### **4.9.2. Companion Matrix Root-Finding**
+##### 4.9.2. Companion Matrix Root-Finding
 
 For polynomial root-finding, the coefficients are mapped to a companion matrix
 in upper Hessenberg form (strict zeros beneath the first lower subdiagonal).
@@ -347,7 +360,7 @@ unitary-plus-rank-one structure. This reduces storage requirements to $O(N)$ and
 computational complexity to $O(N^2)$ flops. Applying a sequence of planar
 rotators guarantees normwise backward stability.
 
-##### **4.9.3. Kalman Filter State Update Example**
+##### 4.9.3. Kalman Filter State Update Example
 
 The following example demonstrates the proposed `Matrix` API when computing the
 covariance update in a Kalman filter loop:
@@ -383,13 +396,13 @@ where
 }
 ```
 
-##### **4.10. Safety Architecture & Unsafe Boundaries**
+##### 4.10. Safety Architecture & Unsafe Boundaries
 
 Because `control-rs` targets high-integrity, safety-critical embedded
 systems, memory safety and predictability are paramount. The `Matrix` type acts
 as a secure boundary wrapping several underlying `unsafe` operations:
 
-###### **4.10.1. Flat Slice Coercion (`as_slice` and `as_mut_slice`)**
+###### 4.10.1. Flat Slice Coercion (`as_slice` and `as_mut_slice`)
 
 To allow zero-copy interoperability with slice-based algorithms and external DSP
 routines, `Matrix` exposes flat slice interfaces:
@@ -411,7 +424,7 @@ routines, `Matrix` exposes flat slice interfaces:
       array, there is zero risk of buffer overflow or out-of-bounds pointer
       offsets during construction of the slice.
 
-###### **4.10.2. Abstracting Target-Specific DSP / BLAS FFI**
+###### 4.10.2. Abstracting Target-Specific DSP / BLAS FFI
 
 When hardware acceleration (e.g., CMSIS-DSP, ARM NEON, or vendor-specific
 DSPLib) is enabled, the underlying BLAS traits dispatch calls to FFI functions.
@@ -426,7 +439,7 @@ DSPLib) is enabled, the underlying BLAS traits dispatch calls to FFI functions.
       buffers passed to FFI calls have the precise size expected by the hardware
       kernels, preventing memory corruption or CPU faults.
 
-###### **4.10.3. Prevention of Unsafe Layout Transmutations**
+###### 4.10.3. Prevention of Unsafe Layout Transmutations
 
 Specialized structures like `Symmetric`, `UpperTriangular`, and
 `LowerTriangular` wrap the standard `Matrix` type to dispatch optimized
@@ -446,9 +459,9 @@ routines (e.g., substitution solvers).
 
 ---
 
-### **5. Alternatives**
+### 5. Alternatives
 
-#### **5.1. External Libraries (e.g., `nalgebra`)**
+#### 5.1. External Libraries (e.g., `nalgebra`)
 
 Using an external library like `nalgebra` in its static-storage, `no_std` mode
 was considered. However, `control-rs` implements its own custom math module for
@@ -465,7 +478,7 @@ two key reasons:
    increasing the audit surface. The custom in-house module limits the audit
    surface to safety-critical invariants.
 
-#### **5.2. Memory Layout Alternatives**
+#### 5.2. Memory Layout Alternatives
 
 - **Row-Major Layout**: Row-major layouts provide spatial locality when
   accessing rows.
@@ -475,7 +488,7 @@ two key reasons:
   index arithmetic. It prevents exposing zero-copy flat slice APIs (`&[T]`)
   without allocation, which conflicts with safe API requirements.
 
-#### **5.3. Factorization & Inversion Algorithms**
+#### 5.3. Factorization & Inversion Algorithms
 
 For solving linear systems and matrix inversion, the following factorization
 algorithms were analyzed with their trade-offs for embedded deployment:
@@ -517,7 +530,7 @@ algorithms were analyzed with their trade-offs for embedded deployment:
       the matrix ($\kappa(A^T A) = \kappa(A)^2$), which halves the number of
       valid decimal digits in calculations and leads to severe precision loss.
 
-#### **5.4. Matrix Multiplication Algorithms**
+#### 5.4. Matrix Multiplication Algorithms
 
 To evaluate $C = A B$, several multiplication approaches were compared:
 
@@ -544,7 +557,7 @@ To evaluate $C = A B$, several multiplication approaches were compared:
       functions. It is highly hardware-specific and requires fallback
       implementations for targets lacking SIMD engines.
 
-#### **5.5. Determinant Calculation Algorithms**
+#### 5.5. Determinant Calculation Algorithms
 
 For computing $\det(A)$, two primary methods were analyzed:
 
@@ -565,7 +578,7 @@ For computing $\det(A)$, two primary methods were analyzed:
 
 ---
 
-### **6. Verification & Validation**
+### 6. Verification & Validation
 
 For a standard matrix multiplication where $C = A \times B$ with
 dimensions $(n \times m)$ and $(m \times k)$, the total execution time $T$ in
@@ -595,7 +608,7 @@ as: $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text
   matrices (e.g., $3 \times 3$), this overhead can represent a
   measurable percentage of the total execution time.
 
-#### **6.1. Verification**
+#### 6.1. Verification
 
 1. **Unit Testing**: Run unit tests on the host system via `cargo test` to
    verify constructors, operators, boundaries, and triangular solvers.
@@ -613,7 +626,7 @@ as: $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text
 5. **Continuous Integration**: Execute clippy and formatting checks
    automatically in the CI pipeline.
 
-#### **6.2. Validation**
+#### 6.2. Validation
 
 1. **Kalman Filter Covariance Update**: Implement the covariance
    update ($P_{k|k} = (I - K_k H_k) P_{k|k-1}$) as a direct validation scenario.
@@ -624,7 +637,7 @@ as: $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text
 
 ---
 
-### **7. Performance & Resource Considerations**
+### 7. Performance & Resource Considerations
 
 - **Stack Overflow Prevention**: Limit maximum matrix dimensions
   to $32 \times 32$ elements to ensure a single matrix instance never exceeds
@@ -655,7 +668,7 @@ as: $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text
 
 ---
 
-### **8. Risks & Open Questions**
+### 8. Risks & Open Questions
 
 - **Const Generics Complexity**: Stabilized const generics are still limited.
   Custom trait bounds (like `DimAdd`, `DimMul`) might increase compile times and
@@ -667,7 +680,7 @@ as: $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text
 
 ---
 
-### **9. Development Plan**
+### 9. Development Plan
 
 | Task / Feature               | Description                                                                             | Estimated Effort |
 |:-----------------------------|:----------------------------------------------------------------------------------------|:-----------------|
@@ -681,7 +694,7 @@ as: $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text
 
 ---
 
-### **10. Revision History**
+### 10. Revision History
 
 | Revision | Date          | Author          | Description of Changes                                                         |
 |:---------|:--------------|:----------------|:-------------------------------------------------------------------------------|
