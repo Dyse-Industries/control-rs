@@ -13,6 +13,100 @@ bare-metal embedded platforms.
 - **SIL/HIL Testing**: The library includes a built-in
   Hardware-in-the-Loop engine for users to verify custom software.
 
+By leveraging Rust's uncompromising ownership model, zero-cost abstractions, and
+explicit memory layout control, `control-rs` guarantees memory safety, execution
+determinism, and predictable cache locality for resource-constrained
+microcontrollers.
+
+---
+
+## Key Features
+
+* **Absolute Memory Control:** Zero implicit heap allocation. All structures are
+  statically allocated, stack-bound, or managed via fixed-size allocators with
+  strict memory caps (e.g., 4KB limits) to prevent stack overflows.
+* **Decoupled Storage Architecture:** Algorithms are entirely agnostic to
+  hardware memory layouts. Mathematical structures can seamlessly reside on the
+  execution stack, in caller-owned scratch spaces, or within memory-mapped DMA
+  peripheral registers.
+* **Compile-Time Verification:** Utilizes Peano arithmetic to enforce strict
+  dimensional compatibility (e.g., matrix multiplication bounds) at compile
+  time, eliminating the risk of runtime panics.
+* **C-ABI Interoperability:** Enforces contiguous memory and `#[repr(C)]`
+  layouts, ensuring zero-copy, safe integration with legacy C-based DSP
+  libraries and hardware accelerators.
+* **Deterministic Factorization:** Matrix inversions and decompositions mandate
+  caller-provided scratch buffers (`PivotStorage`), eliminating recursive memory
+  consumption and unbounded execution times.
+
+---
+
+## Mathematical Models
+
+`control-rs` is built around three core mathematical models, each tailored for
+specific control theory applications and rigidly bounded to respect embedded
+hardware constraints.
+
+| Model          | Capacity Limit        | Primary Applications                                   | Key Algorithms & Mechanics                                                  |
+|----------------|-----------------------|--------------------------------------------------------|-----------------------------------------------------------------------------|
+| **Polynomial** | 128 elements          | Transfer functions, signal filtering, discretization.  | Horner's Method (FMA optimized), Tustin transform.                          |
+| **Matrix**     | 32x32 (1024 elements) | State-space modeling, observability, MIMO systems.     | Type-level dimensions, division-free Faddeev-LeVerrier `$p(x)=\det(xI-A)$`. |
+| **Tensor**     | 1024 elements total   | Spatial grid modeling, Edge AI, multi-dimensional LTI. | Column-major sequencing, in-place contraction (`contract_into`).            |
+
+---
+
+## Architecture & Dependency Structure
+
+The framework decouples mathematical operations from physical memory through the
+central `Storage` trait, ensuring geometric algorithms remain entirely
+hardware-agnostic.
+
+```mermaid
+---
+config:
+  layout: dagre
+---
+flowchart TB
+    subgraph Math
+        subgraph Primitives
+            NumTypes:::external
+            NumTraits:::external
+            ...:::external
+            Subprograms:::external
+        end
+
+        subgraph Storage ["Storage Trait & Implementors"]
+            direction TB
+            ArrayStorage["ArrayStorage<br>(Stack)"]:::storage
+            MatrixView["MatrixView<br>(Slice)"]:::storage
+            Extend1["..."]:::storage
+            DMAPool["DMA Pool<br>(Memory-Mapped)"]:::storage
+        end
+    end
+
+    subgraph Models ["Mathematical Models"]
+        direction TB
+        Matrix:::core
+        Polynomial:::core
+        Extend2["..."]:::core
+        Tensor:::core
+    end
+
+%% Cleaned up structural flow
+    Storage --> Models
+    NumTypes -.-> Models
+    NumTraits -.-> Models
+    Subprograms -.-> Models
+%% Styling
+    classDef core fill: #0f172a, stroke: #38bdf8, stroke-width: 2px, color: #f8fafc
+    classDef storage fill: #042f2e, stroke: #2dd4bf, stroke-width: 2px, color: #ccfbf1
+    classDef external fill: #312e81, stroke: #a78bfa, stroke-width: 2px, color: #f5f3ff
+    style Models fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
+    style Math fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
+    style Primitives fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
+    style Storage fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
+```
+
 ---
 
 ## Models

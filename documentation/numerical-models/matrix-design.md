@@ -54,7 +54,7 @@ and traits to enable compile-time specializations for various matrix shapes.
   memory allocations must be static or stack-based.
 - **Memory Footprint**: Limit maximum matrix dimensions to $32 \times 32$
   elements to guarantee that a single matrix instance never exceeds 4KB of stack
-  space (when using 32-bit floats). *See [num_types::PeanoTypeNum](
+  space (when using 32-bit floats). *See [PeanoTypeNum](
   ../../src/math/num_types.rs) implementations for more details.*
 
 ---
@@ -70,18 +70,21 @@ bounds to guarantee that unsafe subprograms are not misused.
 
 #### 4.1. Generics Foundation & Sizing
 
-The core `Matrix` structure is defined as:
+The core `Matrix` structure decouples mathematical dimensions from physical
+storage using the `Storage<T, R, C>` trait hierarchy:
 
 ```rust
-pub struct Matrix<T, R: Dim, C: Dim> {
-    data: [[T; R::DIM]; C::DIM],
+pub struct Matrix<T, R: Dim, C: Dim, S: Storage<T, R, C> = ArrayStorage<T, R, C>> {
+    storage: S,
+    _marker: core::marker::PhantomData<(R, C)>,
 }
 ```
 
-Dimensions are bounded at the type level using the `Dim` trait and Peano number
-representations defined in [num_types.rs](../../src/math/num_types.rs). This
-allows performing type-level arithmetic (e.g., dimension addition or
-multiplication) to statically verify shape changes during matrix operations.
+The `Dim` trait and Peano number representations defined in
+[num_types](../../src/math/num_types.rs) perform type-level
+arithmetic (e.g., dimension addition or multiplication) to statically verify
+shape changes at compile time, while `S` determines where and how elements are
+physically stored in memory.
 
 #### 4.2. Memory Layout & Storage Strategy
 
@@ -94,42 +97,63 @@ The design utilizes a **column-major array representation** (`[[T; R]; C]`).
   allowing zero-copy routing to hardware-accelerated kernels (Anderson et al.,
   1999).
 
-#### 4.3. Memory Representation & Slicing
+#### 4.3. Memory Representation, Slicing & Views
 
 To ensure stable memory layout and compatibility with C-based hardware
-libraries the matrix owns a contiguous array marked as `#[repr(C)]`:
+libraries the matrix owns a contiguous array marked as `#[repr(C)]`.
+
+Flat slice interfaces are safely gated behind the `ContiguousStorage` sub-traits
+to prevent leaking padded or strided memory as valid contiguous slices:
 
 ```rust
-#[repr(C)]
-pub struct Matrix<T, R: Dim, C: Dim> {
-    data: [[T; R::DIM]; C::DIM],
-}
-```
-
-Contiguous internal memory allows exposing zero-copy flat slice interfaces:
-
-```rust
-impl<T, R: Dim, C: Dim, N: Dim> Matrix<T, R, C>
+impl<T, R: Dim, C: Dim, S> Matrix<T, R, C, S>
 where
-    R: DimMul<C, Output=N>,
-
+    S: ContiguousStorage<T, R, C>,
 {
-    pub const fn as_slice(&self) -> &[T] {
-        // Safe cast as nested arrays are guaranteed to be laid out contiguously
-        unsafe {
-            core::slice::from_raw_parts(self.data.as_ptr() as
-                                            *const T, N::DIM)
-        }
+    /// Exposes a safe contiguous slice view of matrix memory.
+    pub fn as_slice(&self) -> &[T] {
+        self.storage.as_slice()
     }
+}
 
-    pub const fn as_mut_slice(&mut self) -> &mut [T] {
-        unsafe {
-            core::slice::from_raw_parts_mut(self.data.as_mut_ptr() as
-                                                *mut T, N::DIM)
-        }
+impl<T, R: Dim, C: Dim, S> Matrix<T, R, C, S>
+where
+    S: ContiguousStorageMut<T, R, C>,
+{
+    /// Exposes a safe mutable contiguous slice view of matrix memory.
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        self.storage.as_mut_slice()
     }
 }
 ```
+
+##### 4.3.1. Zero-Copy Non-Destructive Views (`MatrixView` & `MatrixViewMut`)
+
+To support zero-copy operations (such as non-destructive transposition) without
+requiring memory copies or stack allocations, `control-rs` provides
+reference-holding view types:
+
+```rust
+pub struct MatrixView<'a, T, R: Dim, C: Dim> {
+    data: &'a [T],
+    stride: usize,
+    _marker: core::marker::PhantomData<(R, C)>,
+}
+
+pub struct MatrixViewMut<'a, T, R: Dim, C: Dim> {
+    data: &'a mut [T],
+    stride: usize,
+    _marker: core::marker::PhantomData<(R, C)>,
+}
+```
+
+- **Non-Destructive Transposed Views**:
+  `pub fn transpose_view(&self) -> MatrixView<'_, T, C, R>` creates a
+  transposed $C \times R$ view over the original matrix data with swapped
+  striding rules, incurring zero allocation or byte copying.
+- **In-Place Transposition**: For square matrices ($R = C$), in-place element
+  swapping (`pub fn transpose_mut(&mut self)`) mutates elements directly within
+  the existing memory layout.
 
 #### 4.4. Instantiation & Constructors
 
@@ -189,28 +213,121 @@ where
 
 #### 4.6. Core Operations
 
-- `pub fn transpose(&self) -> Matrix<T, C, R>`:
-  Evaluates transposition. For memory layout compatibility, transpose iterates
-  the source in column-major order and writes each element to its transposed
-  position.
-- `pub fn invert(&mut self) -> Result<Self, LinAlgError>`:
-  Inverts a square matrix.
-    - **Symmetric Matrices**: Uses **$LDL^T$ Decomposition** (factorizing the
-      matrix into $L D L^T$ where $L$ is unit lower-triangular and $D$ is
-      diagonal) followed by forward substitution and backward substitution to
-      solve for the inverted columns (Higham, 2002).
-    - **General Square Matrices**: Uses **LU Decomposition with Partial
-      Pivoting** ($P A = L U$, where $P$ is a permutation matrix, $L$ is unit
-      lower-triangular, and $U$ is upper-triangular) followed by
-      forward/backward substitution against the columns of the identity matrix (
-      Golub & Van Loan, 2013).
-- `pub fn determinant(&self) -> T`:
-  Calculates the determinant.
-    - **Symmetric Matrices**: Computed from the $LDL^T$ decomposition as the
-      product of the diagonal elements of $D$ ($\det(A) = \prod D_{ii}$).
-    - **General Square Matrices**: Computed from the LU decomposition
-      as $(-1)^p \prod U_{ii}$, where $p$ is the number of row exchanges
-      performed during pivoting.
+- **Transposition**:
+    - `pub fn transpose_view(&self) -> MatrixView<'_, T, C, R>`: Creates a
+      zero-copy, non-destructive transposed view over the original matrix
+      without allocations or memory copies.
+    - `pub fn transpose_into(&self, dest: &mut Matrix<T, C, R>)`: Writes the
+      transposed matrix into a caller-provided destination buffer, avoiding
+      stack returns.
+    - `pub fn transpose_mut(&mut self)`: Performs an in-place transposition for
+      square matrices ($R = C$).
+    - `pub fn transpose(&self) -> Matrix<T, C, R>`: Consumes/borrows the matrix
+      and returns a new transposed matrix on the stack (convenience API for
+      small matrix shapes).
+- **Matrix Inversion & System Solving**:
+    - *Explicit Decomposition Design*: Convenient signatures that mask
+      heavy $O(N^3)$ operations behind stack-allocating value returns (such as
+      `invert(&self) -> Result<Matrix<T, D, D>, LinAlgError>`) are explicitly
+      rejected to prevent unexpected stack bloat in embedded runtimes.
+    -
+    `pub fn invert_mut(&mut self, pivots: &mut [usize]) -> Result<(), LinAlgError>`:
+    Inverts a square matrix purely in-place using caller-provided pivot scratch
+    space.
+    -
+    `pub fn invert_into(&self, dest: &mut Matrix<T, D, D, S2>, pivots: &mut [usize]) -> Result<(), LinAlgError>`:
+    Computes the matrix inverse into a caller-provided destination matrix
+    buffer.
+    - **Symmetric Matrices**: Factorized via **$LDL^T$ Decomposition
+      ** ($A = L D L^T$).
+    - **General Square Matrices**: Factorized via **LU Decomposition with
+      Partial Pivoting** ($P A = L U$).
+- **Determinant Calculation**:
+    - `pub fn determinant(&self) -> T`: Computes $\det(A)$ in $O(N)$ time
+      directly from the diagonal factors of an already-computed
+      `LuDecomposition` or `LdltDecomposition` object.
+
+#### 4.7. Matrix Decomposition Objects
+
+Similar to structural specializations, matrix factorizations are exposed as
+dedicated **Decomposition Objects**. These types encapsulate matrix factors
+alongside statically bounded auxiliary state (e.g. permutation indices for
+pivoting) without heap allocation (`no_alloc`).
+
+```rust
+/// LU Factorization with partial pivoting (PA = LU)
+pub struct LuDecomposition<T, D: Dim, S = ArrayStorage<T, D, D>, P = PivotStorage<D>> {
+    data: Matrix<T, D, D, S>,
+    pivots: P, // Statically bounded pivot array (decoupled via storage trait)
+    row_exchanges: usize,
+}
+
+/// LDL^T Factorization for symmetric indefinite/positive-definite matrices (A = L D L^T)
+pub struct LdltDecomposition<T, D: Dim, S = ArrayStorage<T, D, D>> {
+    data: Matrix<T, D, D, S>,
+}
+
+/// Cholesky Factorization for symmetric positive-definite matrices (A = L L^T)
+pub struct CholeskyDecomposition<T, D: Dim, S = ArrayStorage<T, D, D>> {
+    l: LowerTriangular<T, D, S>,
+}
+
+/// QR Factorization (A = Q R)
+pub struct QrDecomposition<T, R: Dim, C: Dim, SQ = ArrayStorage<T, R, R>, SR = ArrayStorage<T, R, C>> {
+    q: Matrix<T, R, R, SQ>,
+    r: UpperTriangular<T, R, SR>, // Restricted to top R x C triangular factor
+}
+```
+
+##### 4.7.1. In-Place Factorization & Scratch Space API
+
+To prevent stack bloat and avoid dynamic allocations, decomposition algorithms
+provide in-place mutation methods where caller-provided scratch buffers or
+mutable references act as the working state:
+
+```rust
+impl<T, D: Dim, S> Matrix<T, D, D, S>
+where
+    S: Storage<T, D, D>,
+{
+    /// Performs LU decomposition purely in-place on the matrix data.
+    /// Overwrites self with L and U factors and populates the caller-provided pivot scratch array.
+    pub fn lu_decompose_mut(&mut self, pivots: &mut [usize]) -> Result<usize, LinAlgError> {
+        assert_eq!(pivots.len(), D::DIM, "Pivot scratch buffer size mismatch");
+        let mut row_exchanges = 0;
+        // Low-level LAPACK/BLAS GETRF kernel execution on slice pointers...
+        Ok(row_exchanges)
+    }
+
+    /// Consumes the matrix to construct a stack-allocated LuDecomposition wrapper.
+    pub fn into_lu(mut self) -> Result<LuDecomposition<T, D>, LinAlgError> {
+        let mut pivots = PivotStorage::<D>::default();
+        let row_exchanges = self.lu_decompose_mut(pivots.as_mut_slice())?;
+        Ok(LuDecomposition {
+            data: self,
+            pivots,
+            row_exchanges,
+        })
+    }
+}
+```
+
+##### 4.7.2. Linear System Solving via Decompositions
+
+Decomposition objects expose specialized linear solver methods ($A x = b$)
+utilizing forward and backward substitution over factor matrices:
+
+```rust
+impl<T, D: Dim, S, P> LuDecomposition<T, D, S, P> {
+    /// Solves A * x = b in-place by mutating the right-hand side vector b into the solution x.
+    pub fn solve_mut<const COLS: usize>(&self, b: &mut Matrix<T, D, Const<COLS>>) -> Result<(), LinAlgError> {
+        // 1. Permute rows of b according to self.pivots
+        // 2. Solve L * y = P * b using forward substitution
+        // 3. Solve U * x = y using backward substitution
+        Ok(())
+    }
+}
+```
 
 #### 4.7. Interoperability & Conversions
 
@@ -407,11 +524,25 @@ where
 }
 ```
 
-##### 4.10. Safety Architecture & Unsafe Boundaries
+##### 4.10. Safety Architecture & Layered Integration
 
 Because `control-rs` targets high-integrity, safety-critical embedded
-systems, memory safety and predictability are paramount. The `Matrix` type acts
-as a secure boundary wrapping several underlying `unsafe` operations:
+systems, memory safety and predictability are paramount. Architecture is
+strictly layered:
+
+1. **Low-Level Execution Kernels (`subprograms` & `dsp` modules)**:
+   The underlying numerical operations are implemented in
+   `crate::math::subprograms` (BLAS Level 1, 2, and 3 routines) and
+   `crate::math::dsp`. These low-level modules perform flat slice and raw
+   pointer arithmetic under `unsafe` blocks, assuming all input memory is
+   contiguous and initialized.
+2. **High-Level Abstraction Guard (`Matrix`, `MatrixView`, & Decomposition
+   Objects)**:
+   The high-level `Matrix` module acts as a safe, compile-time verified wrapper
+   around those low-level subprograms. By enforcing Peano-typed static dimension
+   bounds (`R: Dim, C: Dim`) and requiring statically sized inputs across all
+   public function signatures, the `Matrix` API guarantees that invalid pointer
+   arithmetic or length mismatches cannot occur at runtime.
 
 ###### 4.10.1. Flat Slice Coercion (`as_slice` and `as_mut_slice`)
 
@@ -422,23 +553,22 @@ routines, `Matrix` exposes flat slice interfaces:
   `core::slice::from_raw_parts_mut`.
 - **Safety Preconditions & Invariants**:
     - **Memory Layout Contiguity**: The `Matrix` struct is annotated with
-      `#[repr(C)]`. This guarantees that the nested array representation
-      `[[T; R::DIM]; C::DIM]` is laid out contiguously in memory without any
-      padding between columns or rows, matching a flat array of
-      size $R \times C$.
+      `#[repr(C)]`. This guarantees that internal storage is laid out
+      contiguously in memory without any padding between columns or rows,
+      matching a flat array of size $R \times C$.
     - **Lifetime Binding**: The returned slices `&[T]` and `&mut [T]` are bound
       directly to the lifetime of the borrow on the parent `Matrix` instance.
       This prevents use-after-free, dangling references, or slice invalidation.
     - **Bounds Verification**: The number of elements passed to `from_raw_parts`
-      is exactly `R::DIM * C::DIM`. Since the dimensions `R` and `C` are
-      statically typed constants representing the physical dimensions of the
-      array, there is zero risk of buffer overflow or out-of-bounds pointer
-      offsets during construction of the slice.
+      is exactly `R::DIM * C::DIM`. Since dimensions `R` and `C` are
+      statically typed constants representing physical array dimensions, there
+      is zero risk of buffer overflow or out-of-bounds pointer offsets during
+      slice construction.
 
 ###### 4.10.2. Abstracting Target-Specific DSP / BLAS FFI
 
 When hardware acceleration (e.g., CMSIS-DSP, ARM NEON, or vendor-specific
-DSPLib) is enabled, the underlying BLAS traits dispatch calls to FFI functions.
+DSPLib) is enabled, underlying BLAS traits dispatch calls to FFI functions.
 
 - **Wrapped Unsafe Functions**: External foreign function interfaces (FFI)
   accepting raw pointers.
@@ -452,8 +582,9 @@ DSPLib) is enabled, the underlying BLAS traits dispatch calls to FFI functions.
 
 ###### 4.10.3. Prevention of Unsafe Layout Transmutations
 
-Specialized structures like `Symmetric`, `UpperTriangular`, and
-`LowerTriangular` wrap the standard `Matrix` type to dispatch optimized
+Specialized structures (`Symmetric`, `UpperTriangular`, `LowerTriangular`) and
+Decomposition Objects (`LuDecomposition`, `LdltDecomposition`,
+`QrDecomposition`) wrap the standard `Matrix` type to dispatch optimized
 routines (e.g., substitution solvers).
 
 - **Wrapped Unsafe Functions**: Bypasses `core::mem::transmute` or unsafe
@@ -465,31 +596,76 @@ routines (e.g., substitution solvers).
       `pub struct Symmetric<T, D>(Matrix<T, D, D>)`).
     - Mathematical properties (such as symmetry or zero-elements) are enforced
       through safe API boundaries (e.g. only exposing getters/setters that
-      preserve the structural invariants), ensuring compile-time safety without
+      preserve structural invariants), ensuring compile-time safety without
       resorting to unsafe casts.
 
 ---
 
 ### 5. Alternatives
 
-#### 5.1. External Libraries (e.g., `nalgebra`)
+#### 5.1. Convenience Methods vs. Explicit Decompositions
 
-Using an external library like `nalgebra` in its static-storage, `no_std` mode
-was considered. However, `control-rs` implements its own custom math module for
-two key reasons:
+We evaluated exposing convenient, immutable linear algebra signatures like
+`invert(&self) -> Matrix<T, D, D>`. We explicitly rejected this pattern because:
 
-1. **Generic `const fn` Support on Stable Rust**: Placing static matrices in
-   read-only Flash memory requires `const fn` constructors. Traits like
-   `Default` cannot be called inside `const fn` on stable Rust. The custom
-   `Zero` and `One` traits in `crate::math::num_traits` expose associated
-   constants (`T::ZERO`/`T::ONE`), allowing compile-time evaluation.
-2. **Audit Footprint & Certification**: Standards such as ISO 26262 and DO-178C
-   require auditing and certifying every line of dependency code. `nalgebra`
-   contains a massive API surface and a deep dependency chain, significantly
-   increasing the audit surface. The custom in-house module limits the audit
-   surface to safety-critical invariants.
+- **Hidden Stack Allocations**: Returning new matrix structures from
+  heavy $O(N^3)$ operations masks large internal stack allocations, risking
+  unpredictable hard faults on stack-constrained embedded targets.
+- **Redundant Factorization Computation**: Hiding factorizations behind
+  convenience methods forces subsequent operations (e.g., calculating
+  determinants or solving multiple right-hand side vectors) to recompute
+  factorizations from scratch.
+- **Explicit `no_alloc` Alternative**: Linear algebra operations require
+  explicit decomposition objects (`LuDecomposition`, `LdltDecomposition`) or
+  in-place mutation methods (`invert_mut`, `solve_mut`) using caller-provided
+  scratch space.
 
-#### 5.2. Memory Layout Alternatives
+#### 5.2. Const Generics vs. Type-Level Traits (`Dim`)
+
+We evaluated using raw const generics (`[[T; R]; C]`) as the primary matrix
+interface versus type-level dimension traits (`Dim`).
+
+- **Raw Const Generics Limitations**: Stable Rust currently limits const generic
+  arithmetic in public trait bounds (e.g., expressing that
+  multiplying $M \times N$ by $N \times P$ yields $M \times P$).
+- **Selected `Dim` + Decoupled Storage Architecture**: Combining the `Dim` trait
+  system with the decoupled `Storage<T, R, C>` trait enables complex
+  compile-time matrix arithmetic bounds while keeping storage backends
+  completely pluggable.
+
+#### 5.3. External Libraries (`nalgebra`)
+
+Using external crates like `nalgebra` in `no_std` mode was considered and
+bypassed for two primary reasons:
+
+1. **Generic `const fn` Support on Stable Rust**: Baking static matrices into
+   read-only Flash memory requires `const fn` constructors. `nalgebra` relies on
+   traits like `Default` which cannot be evaluated inside `const fn` on stable
+   Rust. The custom `Zero` and `One` traits in `crate::math::num_traits` expose
+   associated constants (`T::ZERO`/`T::ONE`), enabling compile-time matrix
+   initialization into ROM.
+2. **Safety-Critical Audit Footprint**: Certification standards (ISO 26262,
+   DO-178C) require complete auditing of dependency source code. Bypassing
+   external libraries keeps the audit footprint minimal and strictly focused on
+   safety invariants.
+
+#### 5.4. Decoupled Storage Architecture
+
+The physical memory layout is abstracted from mathematical dimensions via the
+`Storage<T, R, C>` trait hierarchy (`Storage`, `StorageMut`,
+`ContiguousStorage`, `ContiguousStorageMut`).
+
+- **Base `Storage<T, R, C>`**: Encapsulates raw pointer access (`ptr`,
+  `ptr_mut`), offset calculation (`offset`), and unchecked indexing (
+  `get_unchecked`).
+- **Marker `ContiguousStorage<T, R, C>`**: Restricts slice coercion (`as_slice`)
+  strictly to contiguous memory backends (`ArrayStorage`, `MatrixView`),
+  protecting strided or padded memory layouts from slice-based data corruption.
+- **Custom Backends**: Enables user-defined backends including read-only Flash
+  wrappers, DMA memory pools, and borrowed `MatrixView`/`MatrixViewMut`
+  wrappers.
+
+#### 5.3. Memory Layout Alternatives
 
 - **Row-Major Layout**: Row-major layouts provide spatial locality when
   accessing rows.
@@ -499,7 +675,7 @@ two key reasons:
   index arithmetic. It prevents exposing zero-copy flat slice APIs (`&[T]`)
   without allocation, which conflicts with safe API requirements.
 
-#### 5.3. Factorization & Inversion Algorithms
+#### 5.4. Factorization & Inversion Algorithms
 
 For solving linear systems and matrix inversion, the following factorization
 algorithms were analyzed with their trade-offs for embedded deployment:
@@ -543,7 +719,7 @@ algorithms were analyzed with their trade-offs for embedded deployment:
       the matrix ($\kappa(A^T A) = \kappa(A)^2$), which halves the number of
       valid decimal digits in calculations and leads to severe precision loss.
 
-#### 5.4. Matrix Multiplication Algorithms
+#### 5.5. Matrix Multiplication Algorithms
 
 To evaluate $C = A B$, several multiplication approaches were compared:
 
@@ -570,7 +746,7 @@ To evaluate $C = A B$, several multiplication approaches were compared:
       functions. It is highly hardware-specific and requires fallback
       implementations for targets lacking SIMD engines.
 
-#### 5.5. Determinant Calculation Algorithms
+#### 5.6. Determinant Calculation Algorithms
 
 For computing $\det(A)$, two primary methods were analyzed:
 
@@ -593,60 +769,51 @@ For computing $\det(A)$, two primary methods were analyzed:
 
 ### 6. Verification & Validation
 
-For a standard matrix multiplication where $C = A \times B$ with
-dimensions $(n \times m)$ and $(m \times k)$, the total execution time $T$ in
-seconds can be modeled mathematically
-as: $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text
-{overhead}}}{f}$$
+The matrix implementation is verified and validated across four structured
+pillars to guarantee mathematical correctness, embedded safety, and real-time
+execution predictability.
 
-**Variable Breakdown**:
+#### 6.1. Verification Strategy
 
-- $n, m, k$: The matrix dimensions. The core mathematical operation (a
-  Multiply-Accumulate, or MAC) is executed exactly $n \cdot m \cdot k$
-  times.
-- $f$: The processor clock frequency in Hertz (Hz).
-- $c_{\text{inner}}$: The number of clock cycles required to execute
-  one iteration of the innermost loop. This includes loading two f32
-  values, performing the multiplication and addition, and incrementing
-  pointers.
-- On an ARM Cortex-M processor with a hardware Floating Point Unit (
-  FPU), a highly optimized inner loop typically costs 4 to 8
-  cycles.
-- If the target architecture lacks a hardware FPU (relying on
-  software floating-point emulation), this cost jumps drastically to
-  50 to 150 cycles.
-- $c_{\text{overhead}}$: The fixed cycle cost of function calls, stack
-  setup, and outer loop branching. For larger matrices, this is
-  negligible, but for highly constrained
-  matrices (e.g., $3 \times 3$), this overhead can represent a
-  measurable percentage of the total execution time.
+1. **Compile-Time Verification**:
+    - Matrix dimension matching ($M \times N \times N \times P \to M \times P$)
+      is strictly enforced by the Rust type system using Peano types (`Dim`),
+      completely eliminating runtime dimension checks and preventing invalid
+      pointer arithmetic at compile time.
+2. **Property & Unit Testing**:
+    - Host-based unit tests execute via `cargo test` to verify constructors,
+      operators, triangular solvers, and slice bounds.
+    - Property-based testing via `proptest` mathematically proves algebraic
+      matrix identities (e.g., $(AB)^T = B^T A^T$, $A(B+C) = AB + AC$) over
+      thousands of generated inputs.
+    - Ill-conditioned, near-singular, and Hilbert matrices are tested to confirm
+      safe, panic-free error degradation (`Err(LinAlgError::SingularMatrix)`).
+3. **Hardware-in-the-Loop (HIL) & Cache Profiling**:
+    - Cross-compiled binaries run on physical target microcontrollers (e.g., ARM
+      Cortex-M4/M7) to profile L1 data/instruction cache misses (`I1mr`/`D1mr`),
+      FPU cycle counts ($c_{\text{inner}}$), and hardware pipeline stall
+      dependencies.
+    - Cycle time for matrix multiplication is validated against the execution
+      model:
+      $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text{overhead}}}{f}$$
+4. **Stack Bounds Verification**:
+    - Inline stack-allocated matrix capacities are strictly capped
+      at $32 \times 32$ elements ($R::DIM \times C::DIM \le 1024$),
+      mathematically guaranteeing that a single float matrix instance never
+      exceeds 4KB of stack
+      space ($1024 \times 4\text{ bytes} = 4096\text{ bytes}$). This guarantees
+      immunity from stack-overflow hard-faults on embedded controllers.
 
-#### 6.1. Verification
+#### 6.2. Validation Strategy
 
-1. **Unit Testing**: Run unit tests on the host system via `cargo test` to
-   verify constructors, operators, boundaries, and triangular solvers.
-2. **Property-Based Testing**: Use the `proptest` framework to verify
-   mathematical identities (e.g., $(AB)^T = B^T A^T$ and
-   distributivity $A(B + C) = AB + AC$) across thousands of randomized matrices.
-   Deliberately populate the `proptest` corpus with ill-conditioned,
-   near-singular, and Hilbert matrices to verify that singularity checks catch
-   numerical instability without crashing.
-3. **HIL Testing**: Compile and run target-specific test suites on real
-   hardware.
-4. **Cache Miss Profiling**: Run Cachegrind to monitor L1 instruction/data cache
-   misses (`I1mr`/`D1mr`) and last-level cache misses (`LLd`), optimizing tile
-   sizes ($k_c \times n_R$) to fit cache limits.
-5. **Continuous Integration**: Execute clippy and formatting checks
-   automatically in the CI pipeline.
-
-#### 6.2. Validation
-
-1. **Kalman Filter Covariance Update**: Implement the covariance
-   update ($P_{k|k} = (I - K_k H_k) P_{k|k-1}$) as a direct validation scenario.
-2. **External Integration**: Validate layout compatibility by passing slice
-   views directly to CMSIS-DSP or vendor-specific BLAS libraries.
-3. **User Demos**: Provide step-response simulations and closed-loop control
-   system examples in the `examples/` directory.
+1. **Kalman Filter Covariance Update**: Validate end-to-end numeric integrity
+   using the discrete Kalman filter covariance
+   update ($P_{k|k} = (I - K_k H_k) P_{k|k-1}$).
+2. **External Integration**: Pass contiguous slice views (`as_slice()`) directly
+   to hardware vendor libraries (ARM CMSIS-DSP, MCUXpresso DSPLib) without
+   copying data.
+3. **Control System Demos**: Execute step-response simulations and closed-loop
+   state-space control loops in `examples/`.
 
 ---
 
@@ -725,8 +892,10 @@ as: $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text
 
 ### 11. Revision History
 
-| Revision | Date          | Author          | Description of Changes                                                         |
-|:---------|:--------------|:----------------|:-------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026 | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                 |
-| 2.0      | July 19, 2026 | @MitchellDScott | Restructured to new template; added embedded performance/verification details. |
-| 3.0      | July 25, 2026 | @Antigravity    | Added supporting bibliography and inline citations.                            |
+| Revision | Date          | Author          | Description of Changes                                                                                                                                                          |
+|:---------|:--------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 12, 2026 | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                                                                                  |
+| 2.0      | July 19, 2026 | @MitchellDScott | Restructured to new template; added embedded performance/verification details.                                                                                                  |
+| 3.0      | July 25, 2026 | @MitchellDScott | Added supporting bibliography and inline citations.                                                                                                                             |
+| 4.0      | July 26, 2026 | @Antigravity    | Added Decomposition Objects, zero-copy MatrixView wrappers, decoupled Storage trait model, and no_alloc scratch space patterns.                                                 |
+| 5.0      | July 26, 2026 | @Antigravity    | Harmonized matrix design with storage trait design doc; updated Matrix<T, R, C, S> definition, contiguous bounds, explicit decomposition rules, alternatives, and 4-pillar V&V. |
