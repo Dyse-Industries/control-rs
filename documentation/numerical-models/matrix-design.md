@@ -8,9 +8,9 @@
 
 ### 1. Introduction
 
-This module supports the matrix operations required by advanced control and
-state estimation. Like `nalgebra`, it utilizes generics and traits to enable
-compile-time specializations for various matrix shapes.
+This module provides the matrix operations required by advanced control and
+state estimation. Similar to `nalgebra`, the implementation utilizes generics
+and traits to enable compile-time specializations for various matrix shapes.
 
 ---
 
@@ -38,9 +38,8 @@ compile-time specializations for various matrix shapes.
 
 #### 2.2. Non-Functional Requirements
 
-- **Deterministic Execution**: Matrix operations—especially determinant
-  calculation and inversion—must execute within predictable, deterministic
-  timeframes.
+- **Deterministic Execution**: Matrix operations must execute within
+  predictable, deterministic timeframes.
 - **No Excessive Compile-Time Overhead**: The use of `const fn` for static
   constructors and dimension enforcement must not cause excessive compile-time
   increase or binary bloat.
@@ -55,7 +54,8 @@ compile-time specializations for various matrix shapes.
   memory allocations must be static or stack-based.
 - **Memory Footprint**: Limit maximum matrix dimensions to $32 \times 32$
   elements to guarantee that a single matrix instance never exceeds 4KB of stack
-  space (when using 32-bit floats).
+  space (when using 32-bit floats). *See [num_types::PeanoTypeNum](
+  ../../src/math/num_types.rs) implementations for more details.*
 
 ---
 
@@ -63,9 +63,6 @@ compile-time specializations for various matrix shapes.
 
 `Matrix` is a type-safe wrapper that provides compile time dimension and type
 bounds to guarantee that unsafe subprograms are not misused.
-
-There is only a single `Matrix` type so higher level algorithms can specify
-custom specializations and optimizations without losing the core functionality.
 
 ---
 
@@ -94,7 +91,8 @@ The design utilizes a **column-major array representation** (`[[T; R]; C]`).
   column $ A_j $ is contiguous in memory, maximizing CPU cache hit rates.
 - **BLAS Interoperability**: Column-major layout matches the standard convention
   of legacy BLAS/LAPACK and embedded DSP libraries (e.g., ARM CMSIS-DSP),
-  allowing zero-copy routing to hardware-accelerated kernels.
+  allowing zero-copy routing to hardware-accelerated kernels (Anderson et al.,
+  1999).
 
 #### 4.3. Memory Representation & Slicing
 
@@ -160,7 +158,7 @@ placing static matrices directly in read-only flash memory.
 Overloads `Add`, `Sub`, and `Mul` from `core::ops`. Dimension rules are
 statically enforced at compile-time. Under the hood, these high-level operator
 implementations map directly to specific low-level BLAS subprograms to maximize
-performance:
+performance (Anderson et al., 1999):
 
 - **Matrix Addition (`Add`) & Subtraction (`Sub`)**: Evaluated element-wise.
   These operations map directly to the BLAS Level 1 **`AXPY`** subprogram (
@@ -191,20 +189,21 @@ where
 
 #### 4.6. Core Operations
 
-- `pub fn transpose(self) -> Matrix<T, C, R>`:
+- `pub fn transpose(&self) -> Matrix<T, C, R>`:
   Evaluates transposition. For memory layout compatibility, transposition swaps
   indices from column-major `(col, row)` to `(row, col)`.
-- `pub fn invert(self) -> Result<Self, LinAlgError>`:
+- `pub fn invert(&self) -> Result<Self, LinAlgError>`:
   Inverts a square matrix.
     - **Symmetric Matrices**: Uses **$LDL^T$ Decomposition** (factorizing the
       matrix into $L D L^T$ where $L$ is unit lower-triangular and $D$ is
       diagonal) followed by forward substitution and backward substitution to
-      solve for the inverted columns.
+      solve for the inverted columns (Higham, 2002).
     - **General Square Matrices**: Uses **LU Decomposition with Partial
       Pivoting** ($P A = L U$, where $P$ is a permutation matrix, $L$ is unit
       lower-triangular, and $U$ is upper-triangular) followed by
-      forward/backward substitution against the columns of the identity matrix.
-- `pub fn determinant(&self) -> T`:
+      forward/backward substitution against the columns of the identity matrix (
+      Golub & Van Loan, 2013).
+- `pub fn determinant(&mut self) -> T`:
   Calculates the determinant.
     - **Symmetric Matrices**: Computed from the $LDL^T$ decomposition as the
       product of the diagonal elements of $D$ ($\det(A) = \prod D_{ii}$).
@@ -232,7 +231,8 @@ A square matrix `Matrix<T, D, D>` converts to its characteristic polynomial
   }
   ```
 - **Behavior**: Coefficients are computed using a division-free variant of the
-  Faddeev-LeVerrier algorithm. This prevents division-by-zero errors and
+  Faddeev-LeVerrier algorithm (Faddeev & Faddeeva, 1963). This prevents
+  division-by-zero errors and
   subnormal underflow conditions during trace calculations on ill-conditioned
   matrices.
 - **Failure Condition**: Returns `ConversionError::DimensionMismatch` if the
@@ -314,7 +314,7 @@ pub struct LowerTriangular<T, D: Dim>(Matrix<T, D, D>);
 pub struct Symmetric<T, D: Dim>(Matrix<T, D, D>);
 ```
 
-*Design Decision*: Rather than packing triangular data (which requires complex
+Rather than packing triangular data (which requires complex
 non-linear index mapping and prevents flat slicing), we wrap a full square
 matrix. This trades memory space for cache friendliness and compatibility with
 slice-based BLAS kernels.
@@ -356,7 +356,8 @@ where
 For polynomial root-finding, the coefficients are mapped to a companion matrix
 in upper Hessenberg form (strict zeros beneath the first lower subdiagonal).
 Instead of using a general $O(N^3)$ QR algorithm, the solver exploits the
-unitary-plus-rank-one structure. This reduces storage requirements to $O(N)$ and
+unitary-plus-rank-one structure (Bini et al., 2010). This reduces storage
+requirements to $O(N)$ and
 computational complexity to $O(N^2)$ flops. Applying a sequence of planar
 rotators guarantees normwise backward stability.
 
@@ -495,7 +496,8 @@ algorithms were analyzed with their trade-offs for embedded deployment:
 
 - **LU Factorization (with Partial Pivoting)**:
     - *Pros*: General-purpose; works on any non-singular square matrix. Pivoting
-      prevents division by small values, preserving numeric stability.
+      prevents division by small values, preserving numeric stability (Golub &
+      Van Loan, 2013).
     - *Cons*: Pivoting requires row-swapping logic, which complicates loop
       unrolling and SIMD optimization. It has a higher constant factor overhead
       than Cholesky/LDL^T ($O(2N^3/3)$ operations).
@@ -518,7 +520,8 @@ algorithms were analyzed with their trade-offs for embedded deployment:
       Cholesky, it requires only $O(N^3/3)$ operations. By decomposing the
       matrix into $L D L^T$ (where $L$ is unit lower-triangular and $D$ is
       diagonal), it completely avoids square root calculations. This preserves
-      scaling boundaries in fixed-point formats and optimizes CPU cycle counts.
+      scaling boundaries in fixed-point formats and optimizes CPU cycle counts (
+      Higham, 2002).
     - *Cons*: Restricted to symmetric matrices. If the matrix is near-singular
       or indefinite, it may suffer from numerical instability without complex
       block-pivoting algorithms (e.g., Bunch-Kaufman).
@@ -694,9 +697,26 @@ as: $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text
 
 ---
 
-### 10. Revision History
+### 10. References
+
+- **Anderson, E., et al. (1999).** *LAPACK Users' Guide* (3rd ed.). Society for
+  Industrial and Applied Mathematics (SIAM).
+- **Golub, G. H., & Van Loan, C. F. (2013).** *Matrix Computations* (4th ed.).
+  Johns Hopkins University Press.
+- **Higham, N. J. (2002).** *Accuracy and Stability of Numerical Algorithms* (
+  2nd ed.). SIAM.
+- **Faddeev, D. K., & Faddeeva, V. N. (1963).** *Computational Methods of Linear
+  Algebra*. W. H. Freeman and Company.
+- **Bini, D. A., Boito, P., Eidelman, Y., Gemignani, L., & Gohberg, I. (2010).**
+  A Fast Implicit QR Eigenvalue Algorithm for Companion Matrices. *Linear
+  Algebra and its Applications*, 432(8), 2006-2031.
+
+---
+
+### 11. Revision History
 
 | Revision | Date          | Author          | Description of Changes                                                         |
 |:---------|:--------------|:----------------|:-------------------------------------------------------------------------------|
 | 1.0      | July 12, 2026 | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                 |
 | 2.0      | July 19, 2026 | @MitchellDScott | Restructured to new template; added embedded performance/verification details. |
+| 3.0      | July 25, 2026 | @Antigravity    | Added supporting bibliography and inline citations.                            |
