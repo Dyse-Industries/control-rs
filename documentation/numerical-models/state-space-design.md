@@ -63,16 +63,16 @@ The `StateSpace` type must accept four independent storage backends for
 matrices $A, B, C, D$:
 
 ```rust
-StateSpace<
-T,
-NX: Dim,
-NU: Dim,
-NY: Dim,
-Sa: Storage<T, NX, NX>,
-Sb: Storage<T, NX, NU>,
-Sc: Storage<T, NY, NX>,
-Sd: Storage<T, NY, NU>,
->
+pub struct StateSpace<
+    T,
+    NX: Dim,
+    NU: Dim,
+    NY: Dim,
+    Sa: Storage<T, NX, NX>,
+    Sb: Storage<T, NX, NU>,
+    Sc: Storage<T, NY, NX>,
+    Sd: Storage<T, NY, NU>,
+> {}
 ```
 
 ##### FR-2: Domain Encoding (Continuous vs. Discrete)
