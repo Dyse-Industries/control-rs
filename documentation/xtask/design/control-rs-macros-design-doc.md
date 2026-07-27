@@ -6,7 +6,7 @@
 
 ---
 
-### **1. Introduction**
+### 1. Introduction
 
 Bare-metal embedded systems lack traditional operating system loaders, making
 dynamic test discovery and runtime test registration difficult. Procedural
@@ -22,9 +22,9 @@ automated discovery without a centralized registry.
 
 ---
 
-### **2. Requirements**
+### 2. Requirements
 
-#### **Functional Requirements**
+#### Functional Requirements
 
 * **Distributed Module Annotation**: Developers must be able to declare a suite
   simply by tagging a module with `#[hil_suite]`.
@@ -40,7 +40,7 @@ automated discovery without a centralized registry.
   custom panic handler that intercepts test panics and routes them through the
   host communications layer.
 
-#### **Non-Functional Requirements**
+#### Non-Functional Requirements
 
 * **Zero Runtime Allocation**: All generated code, setup contexts, and panic
   handlers must operate strictly without a heap.
@@ -50,7 +50,7 @@ automated discovery without a centralized registry.
   deprecated `static mut` usage, using type-safe atomic wrappers and interior
   mutability instead.
 
-#### **Constraints**
+#### Constraints
 
 * **Strict `#![no_std]` Compatibility**: The code emitted by the macros must
   compile on bare-metal targets without standard library support.
@@ -59,7 +59,7 @@ automated discovery without a centralized registry.
 
 ---
 
-### **3. Technical Overview**
+### 3. Technical Overview
 
 The procedural macros are contained within the `control-rs-macros` library. This
 library depends on standard compiler crates (`proc-macro`, `syn`, `quote`) and
@@ -85,9 +85,9 @@ flowchart TD
 
 ---
 
-### **4. Core Architecture**
+### 4. Core Architecture
 
-#### **4.1. `#[hil_suite]` Module Parsing and Code Generation**
+#### 4.1. `#[hil_suite]` Module Parsing and Code Generation
 
 When the compiler encounters `#[hil_suite]` on a module, the macro performs the
 following transformations:
@@ -121,7 +121,7 @@ following transformations:
     pub static SUITE_DESCRIPTOR_PTR: &::control_rs_hil::SuiteDescriptor = &SUITE_DESCRIPTOR;
     ```
 
-#### **4.2. Linker Garbage Collection Mitigation**
+#### 4.2. Linker Garbage Collection Mitigation
 
 A critical issue in bare-metal Rust is that LLD linker passes the
 `--gc-sections` flag by default. Because the application logic does not directly
@@ -142,7 +142,7 @@ To prevent this, the workspace employs a multi-tiered retention architecture:
    This prevents end-users from needing to manually manage linker configuration
    files.
 
-#### **4.3. `#[hil_setup]` Entrypoint and Panic Handling**
+#### 4.3. `#[hil_setup]` Entrypoint and Panic Handling
 
 The `#[hil_setup]` macro is applied to the user's hardware initialization
 function. It replaces the function with the primary entrypoint:
@@ -195,7 +195,7 @@ function. It replaces the function with the primary entrypoint:
 
 ---
 
-### **5. Alternatives**
+### 5. Alternatives
 
 * **Manual Registration Array**: Developers could manually declare a global
   array of function pointers. This is rejected due to high maintenance overhead,
@@ -212,16 +212,16 @@ function. It replaces the function with the primary entrypoint:
 
 ---
 
-### **6. Verification & Validation**
+### 6. Verification & Validation
 
-#### **6.1. Verification Plan**
+#### 6.1. Verification Plan
 
 - **Procedural Macro Tests**: Implement compiler tests using `trybuild` to
   verify that the macro correctly handles valid code structures and rejects
   invalid constructs (e.g. non-static variable declarations inside a suite
   module) with clean error messages.
 
-#### **6.2. Validation Plan**
+#### 6.2. Validation Plan
 
 - **Hardware Integration Test**: Compile the `teensy4` board tests using the
   macros and execute them using the host-side runner to validate that all tests
@@ -229,7 +229,7 @@ function. It replaces the function with the primary entrypoint:
 
 ---
 
-### **7. Performance & Resource Considerations**
+### 7. Performance & Resource Considerations
 
 * **Static Flash Storage**: Since the macro places all descriptors in
   `.hil_test_suites` marked as read-only, they reside entirely in Flash (ROM)
@@ -239,7 +239,7 @@ function. It replaces the function with the primary entrypoint:
 
 ---
 
-### **8. Risks & Open Questions**
+### 8. Risks & Open Questions
 
 * **Linker Target Differences**: Different targets (e.g., MSP430 or custom
   architectures) might require variations of the linker script arguments. The
@@ -251,7 +251,7 @@ function. It replaces the function with the primary entrypoint:
 
 ---
 
-### **9. Development Plan**
+### 9. Development Plan
 
 | Task / Feature                        | Description                                                                                    | Estimated Effort |
 |:--------------------------------------|:-----------------------------------------------------------------------------------------------|:-----------------|
@@ -262,7 +262,7 @@ function. It replaces the function with the primary entrypoint:
 
 ---
 
-### **10. Revision History**
+### 10. Revision History
 
 | Revision | Date          | Description                                                                                                                                                                                | Author          |
 |:---------|:--------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|

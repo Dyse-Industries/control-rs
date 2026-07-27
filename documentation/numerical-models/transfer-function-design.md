@@ -264,7 +264,8 @@ $$\frac{H_1(s)}{1 + H_1(s) H_2(s)} = \frac{B_1 A_2}{A_1 A_2 + B_1 B_2}$$
 #### 5.4 Discretization (Continuous-to-Discrete)
 
 Converts a continuous $H(s)$ to discrete $H(z)$ via Bilinear (Tustin)
-transformation:
+transformation with optional pre-warping (Ogata, 2010; Franklin et al., 1998) or
+zero-order hold (Moler & Van Loan, 2003):
 $$s \approx \frac{2}{T_s} \frac{z - 1}{z + 1}$$
 
 ```rust
@@ -305,16 +306,20 @@ $$\mathbf{C} = \begin{bmatrix} b_0 & b_1 & \dots & b_{n-1} \end{bmatrix}, \quad 
 
 ### 7. Verification & Validation
 
-1. **Unit Tests**: Test frequency response evaluations against known analytic
+1. **Unit Tests**: Test frequency response evaluations ($H(j\omega)$) against
+   known analytic
    transfer functions (e.g. 1st order low-pass filter, 2nd order
-   mass-spring-damper).
+   mass-spring-damper) using complex arithmetic bounds (Henrici, 1974;
+   Oppenheim & Schafer, 2009).
 2. **Property-Based Testing**: Validate algebraic identities using `proptest` (
-   e.g. $H_1 \cdot H_2 = H_2 \cdot H_1$, feedback stability bounds).
+   e.g. $H_1 \cdot H_2 = H_2 \cdot H_1$, feedback stability bounds) following
+   QuickCheck methodology (Claessen & Hughes, 2000).
 3. **Cross-Validation**: Compare discretization (Tustin) and canonical
    state-space matrices against MATLAB `tf` and Python `control` package
    reference outputs.
 4. **HIL Verification**: Execute cross-compiled continuous-to-discrete filter
-   loops on hardware target runners.
+   loops on hardware target runners under real-time safety standards (ISO 26262,
+   DO-178C).
 
 ---
 
@@ -342,8 +347,48 @@ $$\mathbf{C} = \begin{bmatrix} b_0 & b_1 & \dots & b_{n-1} \end{bmatrix}, \quad 
 
 ---
 
-### 10. Revision History
+### 10. References
+
+#### 10.1. Practical
+
+1. **Franklin, G. F., Powell, J. D., & Workman, M. L. (1998).** *Digital Control
+   of Dynamic Systems* (3rd ed.). Addison-Wesley. — Implementation-oriented
+   treatment of discretization and digital filter realization on embedded
+   microcontrollers.
+2. **Moler, C., & Van Loan, C. (2003).** Nineteen Dubious Ways to Compute the
+   Exponential of a Matrix, Twenty-Five Years Later. *SIAM Review*, 45(1),
+   3–49. — Rationale for ZOH discretization via matrix exponential.
+
+#### 10.2. Theoretical
+
+3. **Oppenheim, A. V., & Schafer, R. W. (2009).** *Discrete-Time Signal
+   Processing* (3rd ed.). Pearson. — FIR/IIR filter representation, transfer
+   function stability, and frequency-response $H(e^{j\omega})$ theory.
+4. **Ogata, K. (2010).** *Modern Control Engineering* (5th ed.). Prentice
+   Hall. — Continuous transfer functions, bilinear (Tustin) transformation, and
+   frequency pre-warping derivations.
+5. **Henrici, P. (1974).** *Applied and Computational Complex Analysis, Volume
+   1*. Wiley. — Complex-arithmetic numerical stability foundations
+   for $H(j\omega)$ evaluation.
+
+#### 10.3. Standards, Safety and Verification
+
+6. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool for
+   Random Testing of Haskell Programs. *ACM SIGPLAN Notices*, 35(9), 268–279. —
+   Property-based testing principles for algebraic invariants.
+7. **Rust Project Developers. (2024).** *The Rustonomicon: The Dark Arts of
+   Advanced and Unsafe Rust Programming*. — Memory-aliasing rules for
+   pointer-backed views.
+8. **ISO. (2018).** *ISO 26262-6:2018 Road vehicles — Functional safety — Part
+   6: Product development at the software level*.
+9. **RTCA / EUROCAE. (2011).** *DO-178C: Software Considerations in Airborne
+   Systems and Equipment Certification*.
+
+---
+
+### 11. Revision History
 
 | Date          | Author          | Description                                                                                                                                     |
 |:--------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------|
 | July 26, 2026 | @MitchellDScott | Initial draft establishing `TransferFunction` as a standalone peer storage wrapper interacting directly with Peano, DSP, and subprogram traits. |
+| July 26, 2026 | @MitchellDScott | Added inline academic citations and 3-tiered references section.                                                                                |

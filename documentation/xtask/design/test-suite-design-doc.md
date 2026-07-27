@@ -6,7 +6,7 @@
 
 ---
 
-### **1. Introduction**
+### 1. Introduction
 
 The standard Rust testing harness (`cargo test`) implicitly relies on the
 standard library (`std`), which triggers compilation errors in bare-metal
@@ -22,9 +22,9 @@ compiled directly onto target microcontrollers.
 
 ---
 
-### **2. Requirements**
+### 2. Requirements
 
-#### **Functional Requirements**
+#### Functional Requirements
 
 * **Distributed Test Discovery**: Developers must be able to declare test or
   benchmark suites across multiple files without maintaining a central registry
@@ -36,7 +36,7 @@ compiled directly onto target microcontrollers.
 * **Standard Attribute Support**: The runner must support test attributes such
   as `#[should_panic]`, `#[ignore]`, and `#[timeout]`.
 
-#### **Non-Functional Requirements**
+#### Non-Functional Requirements
 
 * **Zero Runtime Registration Overhead**: The test registry must be constructed
   entirely during the linking phase, requiring no pre-main initialization or
@@ -53,7 +53,7 @@ compiled directly onto target microcontrollers.
   packet delivery to maintain smooth host-side rendering (under 16ms frame
   updates).
 
-#### **Constraints**
+#### Constraints
 
 * **Strict `#![no_std]` Execution**: The target-side framework must compile
   under `#![no_std]` and operate with zero dynamic heap allocation.
@@ -66,7 +66,7 @@ compiled directly onto target microcontrollers.
 
 ---
 
-### **3. Technical Overview**
+### 3. Technical Overview
 
 The Exportable Test Suites framework consists of three main components:
 
@@ -113,9 +113,9 @@ Implementing and deploying this component requires expertise in:
 
 ---
 
-### **4. Core Architecture**
+### 4. Core Architecture
 
-#### **4.1. Linker-Based Distributed Test Discovery**
+#### 4.1. Linker-Based Distributed Test Discovery
 
 Instead of building a dynamic test registry at runtime (which requires heap
 allocation), the framework utilizes a linker-based distributed slice mechanism.
@@ -144,7 +144,7 @@ This forces the linker to aggregate all `SuiteDescriptor` static structures
 contiguously inside Flash memory (ROM) bounded by the hidden start and end
 symbols.
 
-#### **4.2. Linker Garbage Collection Mitigation**
+#### 4.2. Linker Garbage Collection Mitigation
 
 Embedded compilers invoke the linker with optimization flags like
 `--gc-sections` to perform dead code elimination. Since the target firmware does
@@ -166,7 +166,7 @@ To prevent this, the crate implements a multi-tiered retention strategy:
 4. **Undefined Symbol Forcing (`-u`)**: Forces the linker to treat specific
    symbols as undefined, compelling their inclusion from library archives.
 
-#### **4.3. Concurrency & State Management (Eradicating `static mut`)**
+#### 4.3. Concurrency & State Management (Eradicating `static mut`)
 
 To comply with Rust 2024/2027 and prevent undefined behavior from unsynchronized
 interrupt preemption, all global state variables are protected via thread-safe
@@ -183,7 +183,7 @@ interior mutability.
    not suitable, `core::cell::SyncUnsafeCell` is used to manage raw pointers (
    `*mut T`), isolating unsafe blocks strictly to the points of dereference.
 
-#### **4.4. Core Trait & Struct Definitions**
+#### 4.4. Core Trait & Struct Definitions
 
 The core implementation in `control-rs-hil` defines the `SuiteDescriptor` and
 `ExecDescriptor` structures, along with the `Setting` trait:
@@ -275,7 +275,7 @@ impl Setting for AtomicU32Setting {
 }
 ```
 
-#### **4.5. Telemetry & Execution Lifecycle**
+#### 4.5. Telemetry & Execution Lifecycle
 
 Interactive testing sessions follow a strict state-machine flow:
 
@@ -294,7 +294,7 @@ Interactive testing sessions follow a strict state-machine flow:
 
 ---
 
-### **5. Alternatives**
+### 5. Alternatives
 
 * **Standard `cargo test` harness (libtest)**: Rejected. It implicitly requires
   standard OS allocations (heap, dynamic threads, standard input/output), which
@@ -320,9 +320,9 @@ Interactive testing sessions follow a strict state-machine flow:
 
 ---
 
-### **6. Verification & Validation**
+### 6. Verification & Validation
 
-#### **6.1. Verification Plan**
+#### 6.1. Verification Plan
 
 - **Unit Tests**: Test the atomic wrappers (`AtomicU32Setting`,
   `AtomicU8Setting`, etc.) and ensure that get/set operations execute correctly.
@@ -336,7 +336,7 @@ Interactive testing sessions follow a strict state-machine flow:
 - **CI Verification**: Integrate the test runner compilation and static ELF
   parsing checks into the workspace's GitHub Actions pipeline.
 
-#### **6.2. Validation Plan**
+#### 6.2. Validation Plan
 
 - **Hardware-in-the-Loop Validation**: Flash and execute the compiled test suite
   on a physical microcontroller board (e.g., Teensy 4.0/4.1) using the `xtask`
@@ -344,7 +344,7 @@ Interactive testing sessions follow a strict state-machine flow:
 
 ---
 
-### **7. Performance & Resource Considerations**
+### 7. Performance & Resource Considerations
 
 * **ROM/RAM Overhead**: To operate within the 32 KB Flash and 8 KB RAM budget,
   the target runner utilizes zero heap allocations and avoids unnecessary string
@@ -359,7 +359,7 @@ Interactive testing sessions follow a strict state-machine flow:
 
 ---
 
-### **8. Risks & Open Questions**
+### 8. Risks & Open Questions
 
 * **Linker Compatibility**: Older GNU ld or LLVM lld versions may not respect
   the `SHF_GNU_RETAIN` flag. Forcing symbol retention must rely heavily on the
@@ -367,7 +367,7 @@ Interactive testing sessions follow a strict state-machine flow:
 
 ---
 
-### **9. Development Plan**
+### 9. Development Plan
 
 | Task / Feature                              | Description                                                                                                | Estimated Effort |
 |:--------------------------------------------|:-----------------------------------------------------------------------------------------------------------|:-----------------|
@@ -378,7 +378,7 @@ Interactive testing sessions follow a strict state-machine flow:
 
 ---
 
-### **10. Revision History**
+### 10. Revision History
 
 | Revision | Date          | Description                                                                                                                                                                                                        | Author          |
 |:---------|:--------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|

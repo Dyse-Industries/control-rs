@@ -6,7 +6,7 @@
 
 ---
 
-### **1. Introduction**
+### 1. Introduction
 
 In Hardware-in-the-Loop (HIL) testing of safety-critical embedded systems,
 verifying real-time firmware execution against a simulated continuous physical
@@ -22,9 +22,9 @@ test runner logic.
 
 ---
 
-### **2. Requirements**
+### 2. Requirements
 
-#### **Functional Requirements**
+#### Functional Requirements
 
 * **Unified Abstraction**: The target firmware must expose a hardware-agnostic
   API to poll commands, transmit telemetry, and flush data.
@@ -35,7 +35,7 @@ test runner logic.
   exceptions, format them with timestamps and backtraces, and transmit them as
   prioritized telemetry to the host before halting or rebooting.
 
-#### **Non-Functional Requirements**
+#### Non-Functional Requirements
 
 * **Low Latency & Determinism**: Telemetry and logging operations must execute
   within microsecond-level budgets to avoid violating real-time plant simulation
@@ -51,7 +51,7 @@ test runner logic.
   from transmission noise and packet boundary desynchronization on continuous
   serial lines.
 
-#### **Constraints**
+#### Constraints
 
 * **Strict `#![no_std]` target execution**: The firmware environment does not
   possess a standard library or heap allocator.
@@ -63,7 +63,7 @@ test runner logic.
 
 ---
 
-### **3. Technical Overview**
+### 3. Technical Overview
 
 The `HostComms` trait spans two distinct execution environments:
 
@@ -121,9 +121,9 @@ graph TD
 
 ---
 
-### **4. Core Architecture**
+### 4. Core Architecture
 
-#### **4.1. Middleware Trait**
+#### 4.1. Middleware Trait
 
 The core of the abstraction is the `HostComms` trait. Implementations of this
 trait encapsulate the hardware-specific details of reading and writing bytes.
@@ -159,7 +159,7 @@ The associated type `Error` allows concrete drivers to bubble up
 hardware-specific failures (e.g., framing errors, overflow flags, socket
 disconnects) to the calling test runner loop.
 
-#### **4.2. Command Schema & Binary Serialization**
+#### 4.2. Command Schema & Binary Serialization
 
 Commands originating from the host are defined by a strict, shared Rust schema
 to ensure structural alignment:
@@ -205,7 +205,7 @@ Postcard achieves a minimal wire footprint through:
   buffers (such as `heapless::Vec`) or streaming writers to mitigate stack
   overflow risks on low-resource targets.
 
-#### **4.3. Log Formatting & Compression (`defmt`)**
+#### 4.3. Log Formatting & Compression (`defmt`)
 
 Standard string formatting on a microcontroller is computationally and
 space-expensive, bloating target flash memory with static templates and
@@ -227,7 +227,7 @@ pub struct LogMessage<'a> {
 }
 ```
 
-##### **Deferred Formatting Mechanics**
+##### Deferred Formatting Mechanics
 
 1. **Compile-Time Extraction**: A procedural compiler macro extracts all log
    string templates (e.g., `"Sensor timeout: {} ms"`) and assigns each a unique,
@@ -243,7 +243,7 @@ pub struct LogMessage<'a> {
    variables, loads the matching ELF file using `defmt-decoder`, and
    reconstructs the human-readable text on the host CPU.
 
-#### **4.4. Packet Framing & Consistency**
+#### 4.4. Packet Framing & Consistency
 
 Serial channels like UART operate as continuous byte streams without packet
 boundaries. To segment individual commands and telemetry logs, the system utilizes a custom framed binary packet structure with Sync Headers and CRC-16 integrity validation:
@@ -254,7 +254,7 @@ boundaries. To segment individual commands and telemetry logs, the system utiliz
 * **Integrity Check**: A 2-byte (big-endian) CRC-16 checksum (calculated using `CRC_16_IBM_SDLC`) appended at the end of the frame payload.
 * **Single-Pass Decoding**: The host `FrameReader` processes incoming streams statefully byte-by-byte, checking for the sync header, validating lengths, and confirming the CRC-16 checksum before deserializing.
 
-#### **4.5. Target-Side Driver Implementations**
+#### 4.5. Target-Side Driver Implementations
 
 Users are responsible for implementing the `HostComms` trait for their target
 board. The primary driver styles are:
@@ -303,13 +303,13 @@ impl HostComms for UartComms {
 }
 ```
 
-#### **4.7. Host-Side Tooling & Portability**
+#### 4.7. Host-Side Tooling & Portability
 
 On the host side, standard environments utilize the **`probe-rs`** debugging
 library to flash binaries, control execution, and poll target RTT buffers over
 SWD/JTAG.
 
-##### **Remote HIL Server Architecture**
+##### Remote HIL Server Architecture
 
 To isolate high-voltage or hazardous HIL rigs from developer laptops, a remote
 server-client model is supported:
@@ -324,7 +324,7 @@ server-client model is supported:
 * Low-power remote nodes can run pre-compiled static binaries cross-compiled
   using Docker-based `cross` toolchains.
 
-##### **Hardware Portability & Non-probe-rs Environments**
+##### Hardware Portability & Non-probe-rs Environments
 
 > [!IMPORTANT]
 > Because `probe-rs` does not support all microcontroller boards or
@@ -343,7 +343,7 @@ server-client model is supported:
 
 ---
 
-### **5. Alternatives**
+### 5. Alternatives
 
 * **Text-Based Serialization (JSON, XML)**: Considered for ease of debugging but
   rejected. Verbose text formats consume excessive bandwidth and require
@@ -364,9 +364,9 @@ server-client model is supported:
 
 ---
 
-### **6. Verification & Validation**
+### 6. Verification & Validation
 
-#### **Automated Verification**
+#### Automated Verification
 
 * **Serialization Unit Tests**: Run unit tests on the host to verify that
   `Command` and `LogMessage` payloads are correctly serialized, framed,
@@ -378,7 +378,7 @@ server-client model is supported:
   code for all supported architectures (`thumbv7em-none-eabihf`, etc.) and
   compile the host TUI tool natively.
 
-#### **Manual Validation**
+#### Manual Validation
 
 * **Fault Injection Simulation**: Simulate on-target panics, hard faults, and
   brownouts to validate that `panic-probe` and `panic-persist` reliably transmit
@@ -391,7 +391,7 @@ server-client model is supported:
 
 ---
 
-### **7. Performance & Resource Considerations**
+### 7. Performance & Resource Considerations
 
 * **Solver Timing Budget**: HIL solvers operate on strict millisecond steps. The
   entire target execution block—including controls, sensor reads, and telemetry
@@ -410,7 +410,7 @@ server-client model is supported:
 
 ---
 
-### **8. Risks & Open Questions**
+### 8. Risks & Open Questions
 
 * **ELF Synchronization Risk**: Since `defmt` strips string templates from the
   binary, the host must use the exact matching ELF file to decode log indices.
@@ -427,7 +427,7 @@ server-client model is supported:
 
 ---
 
-### **9. Development Plan**
+### 9. Development Plan
 
 | Task / Feature                           | Description                                                                                                                                | Estimated Effort |
 |:-----------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
@@ -439,7 +439,7 @@ server-client model is supported:
 
 ---
 
-### **10. Revision History**
+### 10. Revision History
 
 | Date          | Version | Description                                                                                                                                                                          | Author          |
 |:--------------|:--------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|

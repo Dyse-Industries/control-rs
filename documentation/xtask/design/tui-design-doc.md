@@ -6,7 +6,7 @@
 
 ---
 
-### **1. Introduction**
+### 1. Introduction
 
 This design document establishes the architecture for the `control-rs-xtask`
 Host Console Menu, a Terminal User Interface (TUI) designed to control and
@@ -17,9 +17,9 @@ facilitating rapid hardware-in-the-loop iteration.
 
 ---
 
-### **2. Requirements**
+### 2. Requirements
 
-#### **Functional Requirements**
+#### Functional Requirements
 
 * **Target Metadata Display**: The TUI must query and display target board
   details, core clock frequency, Floating Point Unit (FPU) status, and debug
@@ -37,7 +37,7 @@ facilitating rapid hardware-in-the-loop iteration.
     - `s` (Stop execution)
     - `q` (Quit TUI)
 
-#### **Non-Functional Requirements**
+#### Non-Functional Requirements
 
 * **Low-Latency Rendering**: The screen rendering engine must repaint within
   16ms (60 FPS) to maintain a highly responsive feel.
@@ -48,7 +48,7 @@ facilitating rapid hardware-in-the-loop iteration.
 
 ---
 
-### **3. Technical Overview**
+### 3. Technical Overview
 
 The TUI is implemented as a subcomponent of `control-rs-xtask`. It runs on the
 developer's host machine and interfaces with physical microcontrollers
@@ -71,9 +71,9 @@ flowchart LR
 
 ---
 
-### **4. Core Architecture**
+### 4. Core Architecture
 
-#### **4.1. User Interface Layout**
+#### 4.1. User Interface Layout
 
 The TUI layout is partitioned into three main panels designed to maximize
 developer situational awareness:
@@ -110,7 +110,7 @@ developer situational awareness:
 3. **Logs Panel**: A live log terminal streaming output from the target.
 4. **Footer Action Bar**: Displays available key shortcuts.
 
-#### **4.2. Host-Target ServerBridge Integration**
+#### 4.2. Host-Target ServerBridge Integration
 
 The host-side TUI communicates with target environments via the
 `ServerBridge` abstraction (defined
@@ -125,7 +125,7 @@ rendering from target-specific transport APIs, supporting two execution targets:
   4.0 board) over a USB CDC virtual serial port at a configured baud rate (
   defaulting to 115200) using the `serial2` crate.
 
-#### **4.3. Bidirectional Serialization & Packet Framing**
+#### 4.3. Bidirectional Serialization & Packet Framing
 
 To enforce data integrity over noisy virtual and physical communication links,
 the bridge employs a custom binary framing protocol:
@@ -148,7 +148,7 @@ the bridge employs a custom binary framing protocol:
     - Another thread reads standard error or raw console lines, emitting them as
       `BridgeMessage::RawConsole` to be displayed in the TUI's logs panel.
 
-#### **4.4. Target Panic Detection & Re-Connection Lifecycle**
+#### 4.4. Target Panic Detection & Re-Connection Lifecycle
 
 In bare-metal control applications, a target crash or panic must not stall the
 host-side developer flow. The TUI manages connection lifecycles dynamically:
@@ -167,7 +167,7 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 
 ---
 
-### **5. Alternatives**
+### 5. Alternatives
 
 * **ARM Semihosting**: Rejected. Semihosting relies on triggering target
   software interrupts that halt the CPU core. This introduces millisecond-level
@@ -184,9 +184,9 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 
 ---
 
-### **6. Verification & Validation**
+### 6. Verification & Validation
 
-#### **6.1. Verification Plan**
+#### 6.1. Verification Plan
 
 - **Mock Stream Tests**: Implement a host-side test suite that feeds a mock
   stream generator into the TUI component, verifying that the tree
@@ -195,14 +195,14 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 - **Key Binding Validation**: Verify that keyboard event handlers translate
   keystrokes into correct command byte vectors.
 
-#### **6.2. Validation Plan**
+#### 6.2. Validation Plan
 
 - **Hardware Integration Run**: Flash a benchmark binary containing the
   mathematical subprograms onto physical target hardware.
 
 ---
 
-### **7. Performance & Resource Considerations**
+### 7. Performance & Resource Considerations
 
 * **Host CPU Loading**: The TUI repaints the screen only when new telemetry
   packets arrive or when user input occurs, rather than polling in a hot loop,
@@ -210,7 +210,7 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 
 ---
 
-### **8. Risks & Open Questions**
+### 8. Risks & Open Questions
 
 * **Scalability**: This TUI will be mostly written by AI and will likely be
   hard to maintain. The mitigation strategy is to keep the functionality as
@@ -219,7 +219,7 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 
 ---
 
-### **9. Development Plan**
+### 9. Development Plan
 
 | Task / Feature                         | Description                                                                             | Estimated Effort |
 |:---------------------------------------|:----------------------------------------------------------------------------------------|:-----------------|
@@ -229,7 +229,7 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 
 ---
 
-### **10. Revision History**
+### 10. Revision History
 
 | Revision | Date          | Description                                                                                                                                                                             | Author          |
 |:---------|:--------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|

@@ -166,8 +166,9 @@ It integrates cleanly with existing `control-rs` modules:
   `DimMul`, `U1`, etc.) for compile-time shape verification.
 - **`crate::math::storage`**: Storage traits (`Storage`, `StorageMut`,
   `ContiguousStorage`, `ContiguousStorageMut`).
-- **`crate::math::matrix`**: `Matrix<T, R, C, S>`, `MatrixView<'a, T, R, C, S>`,
-  and `MatrixViewMut<'a, T, R, C, S>` for safe, high-level matrix operations.
+- **`crate::math::matrix`**: `Matrix<T, R, C, S>`, `MatrixView<'a, T, R, C>`,
+  `MatrixViewMut<'a, T, R, C>`, `MatrixSlice<'a, T, R, C>`, and
+  `MatrixSliceMut<'a, T, R, C>` for safe, high-level matrix operations.
 - **`crate::math::subprograms`**: BLAS Level 1/2/3 kernels (`GEMV`, `GEMM`,
   `AXPY`, `TRSM`).
 
@@ -261,23 +262,23 @@ where
     Sd: Storage<T, NY, NU>,
 {
     /// Exposes system matrix A as a high-level Matrix view.
-    pub fn a_matrix(&self) -> MatrixView<'_, T, NX, NX, Sa> {
-        MatrixView::from_storage(&self.a_storage)
+    pub fn a_matrix(&self) -> MatrixSlice<'_, T, NX, NX> {
+        MatrixSlice::from_view(MatrixView::from_storage(&self.a_storage))
     }
 
     /// Exposes input matrix B as a high-level Matrix view.
-    pub fn b_matrix(&self) -> MatrixView<'_, T, NX, NU, Sb> {
-        MatrixView::from_storage(&self.b_storage)
+    pub fn b_matrix(&self) -> MatrixSlice<'_, T, NX, NU> {
+        MatrixSlice::from_view(MatrixView::from_storage(&self.b_storage))
     }
 
     /// Exposes output matrix C as a high-level Matrix view.
-    pub fn c_matrix(&self) -> MatrixView<'_, T, NY, NX, Sc> {
-        MatrixView::from_storage(&self.c_storage)
+    pub fn c_matrix(&self) -> MatrixSlice<'_, T, NY, NX> {
+        MatrixSlice::from_view(MatrixView::from_storage(&self.c_storage))
     }
 
     /// Exposes feedforward matrix D as a high-level Matrix view.
-    pub fn d_matrix(&self) -> MatrixView<'_, T, NY, NU, Sd> {
-        MatrixView::from_storage(&self.d_storage)
+    pub fn d_matrix(&self) -> MatrixSlice<'_, T, NY, NU> {
+        MatrixSlice::from_view(MatrixView::from_storage(&self.d_storage))
     }
 }
 ```
@@ -364,21 +365,26 @@ Converts a continuous `StateSpace` model ($T_s = \text{None}$) into a discrete
 - **ZOH Discretization**: Form augmented
   matrix $M = \begin{bmatrix} A & B \\ 0 & 0 \end{bmatrix} \in \mathbb{R}^{(N_x + N_u) \times (N_x + N_u)}$
   and compute matrix
-  exponential $e^{M T_s} = \begin{bmatrix} A_d & B_d \\ 0 & I \end{bmatrix}$.
+  exponential $e^{M T_s} = \begin{bmatrix} A_d & B_d \\ 0 & I \end{bmatrix}$ via
+  scaling-and-squaring with Padé approximation (Moler & Van Loan, 2003).
 - **Tustin Discretization**: Uses matrix inversion / triangular solver
-  for $(I - \frac{T_s}{2} A)^{-1}$.
+  for $(I - \frac{T_s}{2} A)^{-1}$ (Ogata, 2010).
 
 #### 5.5 Canonical Transformations & Transfer Function Equivalences
 
 - **Similarity Transformation**: Given state transformation
-  matrix $T \in \mathbb{R}^{N_x \times N_x}$:
+  matrix $T \in \mathbb{R}^{N_x \times N_x}$ (Åström & Murray, 2021):
   $$A' = T A T^{-1}, \quad B' = T B, \quad C' = C T^{-1}, \quad D' = D$$
 - **Controllability Matrix**:
   $$\mathcal{C} = \begin{bmatrix} B & AB & A^2B & \dots & A^{N_x-1}B \end{bmatrix}$$
+  Determines system controllability (Kailath, 1980).
 - **Observability Matrix**:
   $$\mathcal{O} = \begin{bmatrix} C \\ CA \\ CA^2 \\ \vdots \\ CA^{N_x-1} \end{bmatrix}$$
+  Determines system observability (Kailath, 1980).
 - **Transfer Function Conversion**:
   $$H(s) = C (s I - A)^{-1} B + D = \frac{C \text{adj}(sI - A) B + D \det(sI - A)}{\det(sI - A)}$$
+  Evaluated using Hessenberg reduction and triangular solves rather than
+  explicit inversion to preserve numerical stability (Golub & Van Loan, 2013).
 
 ---
 
@@ -394,6 +400,8 @@ Converts a continuous `StateSpace` model ($T_s = \text{None}$) into a discrete
 
 ### 7. Verification & Validation
 
+#### 7.1. Verification Strategy
+
 1. **Unit Testing (`src/state_space/tests/`)**:
     - Verify step response of known continuous and discrete systems against
       analytical solutions.
@@ -401,13 +409,53 @@ Converts a continuous `StateSpace` model ($T_s = \text{None}$) into a discrete
       response $H(j\omega)$.
 2. **Property-Based Testing (`proptest`)**:
     - Verify series and parallel interconnections maintain algebraic identity
-      equivalence.
+      equivalence using QuickCheck random generator principles (Claessen &
+      Hughes, 2000).
     - Verify discretization followed by continuous approximation converges
       as $T_s \to 0$.
 3. **HIL Verification (`control-rs-hil`)**:
     - Test real-time execution of discrete state
       propagation $x[k+1] = A x[k] + B u[k]$ on microcontroller targets (
-      Cortex-M) within deterministic deadline bounds.
+      Cortex-M) within deterministic deadline bounds (DO-178C, ISO 26262).
+
+#### 7.2. Validation Strategy
+
+- **Kinematic Object Tracking**:
+  A practical use of a discrete `StateSpace` model is predicting the future
+  position and velocity of an object given its acceleration. This models the
+  kinematic system $x[k+1] = A x[k] + B u[k]$ where $x$ contains position and
+  velocity, and $u$ is the acceleration input.
+
+  ```rust
+  use control_rs::state_space::{StateSpace, ArrayStateSpace};
+  use control_rs::math::num_types::{U2, U1};
+  use control_rs::math::matrix::{Matrix, ArrayMatrix};
+
+  /// Instantiates a 1D kinematic tracking model (Position, Velocity) and predicts the next state.
+  pub fn predict_next_kinematic_state(
+      current_state: &Matrix<f32, U2, U1>, 
+      acceleration: f32,
+      dt: f32
+  ) -> ArrayMatrix<f32, U2, U1> {
+      // 1. Define the kinematic matrices for a given time step `dt`
+      // A = [1, dt; 0, 1], B = [0.5 * dt^2; dt], C = [1, 0], D = [0]
+      let sys: ArrayStateSpace<f32, U2, U1, U1> = StateSpace::from_arrays(
+          [1.0, 0.0, dt, 1.0],         // A matrix (Column-major layout)
+          [0.5 * dt * dt, dt],         // B matrix
+          [1.0, 0.0],                  // C matrix (Extracts position)
+          [0.0],                       // D matrix
+          Some(dt)                     // Discrete system
+      );
+
+      // 2. Format the input vector u[k]
+      let mut u_k = Matrix::<f32, U1, U1>::zero();
+      u_k.as_mut_slice()[0] = acceleration;
+
+      // 3. Propagate the state forward one step
+      let (x_next, _y) = sys.step(current_state, &u_k);
+      x_next
+  }
+  ```
 
 ---
 
@@ -418,7 +466,8 @@ Converts a continuous `StateSpace` model ($T_s = \text{None}$) into a discrete
   enables static buffer placement (`StaticStorage`) or borrowed heap views (
   `HeapStorage` when `alloc` enabled), preventing embedded stack overflow.
 - **Matrix Exponential Performance**: ZOH discretization of $A$ uses
-  scaling-and-squaring Padé approximation using BLAS level 3 `GEMM` kernels.
+  scaling-and-squaring Padé approximation using BLAS level 3 `GEMM` kernels (
+  Moler & Van Loan, 2003).
 
 ---
 
@@ -427,21 +476,64 @@ Converts a continuous `StateSpace` model ($T_s = \text{None}$) into a discrete
 > [!IMPORTANT]
 > **Matrix Inversion & Numerical Stability**
 > Explicit matrix inversion for transfer function
-> conversion ($C(sI-A)^{-1}B + D$) or Tustin transformation can be ill-conditioned
+> conversion ($C(sI-A)^{-1}B + D$) or Tustin transformation can be
+> ill-conditioned
 > for high state dimensions ($N_x > 10$). Implementation should prefer QR /
 > Hessenberg decomposition or LU triangular solvers (`TRSM`) over direct matrix
-> inversion.
+> inversion (Golub & Van Loan, 2013).
 
 > [!NOTE]
 > **Sparse and Structured Storage Optimization**
 > Many real-world systems have sparse $A$ matrices (e.g., companion form or
-> tridiagonal systems) or zero $D$ matrices. The `Storage` trait parameterization
+> tridiagonal systems) or zero $D$ matrices. The `Storage` trait
+> parameterization
 > allows introducing `ZeroStorage` or `SparseStorage` backends in the future
 > without changing the `StateSpace` type signature.
 
 ---
 
-### 10. Development Plan
+### 10. References
+
+#### 10.1. Practical
+
+1. **Moler, C., & Van Loan, C. (2003).** Nineteen Dubious Ways to Compute the
+   Exponential of a Matrix, Twenty-Five Years Later. *SIAM Review*, 45(1),
+   3–49. — Comparative complexity and accuracy analysis justifying
+   scaling-and-squaring + Padé approximation over the augmented block matrix.
+2. **Golub, G. H., & Van Loan, C. F. (2013).** *Matrix Computations* (4th ed.).
+   Johns Hopkins University Press. — Complexity basis for using triangular
+   solves and Hessenberg reduction instead of direct matrix inversion when
+   evaluating $H(s)=C(sI-A)^{-1}B+D$.
+
+#### 10.2. Theoretical
+
+3. **Kailath, T. (1980).** *Linear Systems*. Prentice-Hall. — Definitional
+   source for controllability/observability matrices and canonical realizations.
+4. **Ogata, K. (2010).** *Modern Control Engineering* (5th ed.). Prentice
+   Hall. — LTI state-space formulation and block-diagram interconnection
+   algebra.
+5. **Åström, K. J., & Murray, R. M. (2021).** *Feedback Systems: An Introduction
+   for Scientists and Engineers* (2nd ed.). Princeton University Press. —
+   Similarity transformations and closed-loop feedback derivations.
+
+#### 10.3. Standards, Safety and Verification
+
+6. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool for
+   Random Testing of Haskell Programs. *ACM SIGPLAN Notices*, 35(9), 268–279. —
+   Property-based testing methodology driving `proptest` suites.
+7. **Rust Project Developers. (2024).** *The Rustonomicon: The Dark Arts of
+   Advanced and Unsafe Rust Programming*. — Memory safety and pointer aliasing
+   guarantees underpinning generic storage wrappers.
+8. **ISO. (2018).** *ISO 26262-6:2018 Road vehicles — Functional safety — Part
+   6: Product development at the software level*.
+9. **RTCA / EUROCAE. (2011).** *DO-178C: Software Considerations in Airborne
+   Systems and Equipment Certification*.
+10. **IEEE Computer Society. (2008).** *IEEE Standard for Software and System
+    Test Documentation* (IEEE Std 829-2008).
+
+---
+
+### 11. Development Plan
 
 | Task / Feature                                | Description                                                                                                                         | Estimated Effort |
 |:----------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
@@ -454,7 +546,9 @@ Converts a continuous `StateSpace` model ($T_s = \text{None}$) into a discrete
 
 ---
 
-### 11. Revision History
+### 12. Revision History
 
 - **July 26, 2026**: Initial draft outline of the `StateSpace` model design
   document.
+- **July 26, 2026**: Added inline academic citations and 3-tiered references
+  section (@MitchellDScott).

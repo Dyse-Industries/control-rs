@@ -12,7 +12,7 @@
 microcontrollers. Every data structure that holds numerical arrays —
 polynomials,
 state-space models, transfer functions, and the eventual matrix type — must
-decide *where* that data lives in memory. Today, the codebase has three
+decide _where_ that data lives in memory. Today, the codebase has three
 incompatible answers to this question:
 
 | Module                     | Storage Mechanism          | Dimension Encoding       |
@@ -41,7 +41,7 @@ Kalman filter requires 80 kB of `f64` storage — far exceeding the 2–8 kB
 stack typical of Cortex-M0/M3 targets. Attempting to stack-allocate it causes
 an immediate hard fault.
 
-The `Storage` trait provides a single abstraction over *where* data lives while
+The `Storage` trait provides a single abstraction over _where_ data lives while
 preserving the library's compile-time dimension guarantees. By parameterizing
 data containers over a storage backend, all mathematical implementations become
 agnostic to the allocation strategy — inline arrays, static buffers, or
@@ -58,7 +58,7 @@ borrowed slices — without any changes to the algorithms themselves.
 The base `Storage<T, R, C>` trait defines the minimal interface that **every**
 backend must implement — including non-contiguous layouts (strided, padded,
 transposed views, DMA buffers). It contains only the methods that are valid
-for *any* memory arrangement:
+for _any_ memory arrangement:
 
 - `ptr(&self) -> *const T` — raw pointer to the first element of the
   backing allocation. Required for DMA and FFI.
@@ -96,7 +96,7 @@ The following methods are explicitly **excluded** from the base trait:
   contiguous memory. Exposing slices from a padded or strided backend would
   leak padding bytes as valid matrix elements, causing silent data corruption.
   These belong on the `ContiguousStorage` sub-trait (FR-4).
-- **`get(i, j)` / `get_mut(i, j)`** — bounds checking is a *logical*
+- **`get(i, j)` / `get_mut(i, j)`** — bounds checking is a _logical_
   operation against the matrix dimensions `R` and `C`, not a property of
   the storage layout. The `Matrix<T, R, C, S>` wrapper implements these by
   checking `i < R::DIM && j < C::DIM` and delegating to
@@ -161,7 +161,7 @@ Decomposition algorithms (LU, QR, Cholesky) require auxiliary bookkeeping
 arrays (e.g., permutation indices for pivoting). The module **must** provide
 statically bounded scratch types such as `PivotStorage<D: Dim>` that hold
 this auxiliary data on the stack without triggering dynamic heap allocations.
-These types are *not* general-purpose matrix storage — they do not implement
+These types are _not_ general-purpose matrix storage — they do not implement
 the full `Storage` trait — but they share the same `Dim`-parameterized,
 `no_alloc` design philosophy.
 
@@ -328,7 +328,7 @@ project's `doc-standards.md` (§3.2).
 ##### NFR-5: Minimal Trait Bounds on `T`
 
 The `Storage` trait itself **must not** require `T: Default`, `T: Clone`,
-`T: Copy`, or any arithmetic trait. Only specific *constructors* (e.g.,
+`T: Copy`, or any arithmetic trait. Only specific _constructors_ (e.g.,
 `zeros()`) add bounds as needed. This ensures the storage layer works with:
 
 - Primitive floats (`f32`, `f64`)
@@ -379,7 +379,7 @@ The implementation must pass the workspace Clippy configuration. Of particular
 relevance:
 
 - `clippy::large_stack_arrays = "deny"` — inline backends for large dimensions
-  must *not* trigger this lint. The `clippy.toml` does not override the default
+  must _not_ trigger this lint. The `clippy.toml` does not override the default
   threshold (512 KiB), so `Inline` is safe for all dimensions where
   `R::DIM * C::DIM * size_of::<T>() < 524_288`. In practice the Peano ceiling
   (C-2) is the binding constraint, not this lint.
@@ -490,9 +490,15 @@ from mathematical dimension verification through a trait-based storage layer.
   and $N \times P$ matrix multiplication bounds) on stable Rust edition 2024.
 - **External Libraries (`nalgebra`):** Bypassing external dependencies like
   `nalgebra` (even in `no_std` mode) minimizes the safety-critical audit
-  footprint
-  under standards such as ISO 26262 / DO-178C, and guarantees `const fn`
+  footprint under standards such as ISO 26262 / DO-178C, and guarantees
+  `const fn`
   constructors required for baking static matrices directly into ROM/Flash.
+  However, the custom storage trait design here is a direct, `#![no_std]`
+  adaptation
+  of the decoupled storage architecture from `nalgebra` (BSD-3-Clause, by
+  Sébastien Crozet),
+  adopting its core layout patterns, trait structures (`Storage`, `StorageMut`),
+  and slice coercion interfaces.
 
 ---
 
@@ -591,6 +597,5 @@ embedded control systems:
 
 | Date       | Author          | Description                                                                                  |
 |:-----------|:----------------|:---------------------------------------------------------------------------------------------|
-| 2026-07-26 | @mitchelldscott | Initial draft                                                                                |
-| 2026-07-26 | @mitchelldscott | Expanded Core Architecture, Alternatives, and 4-pillar V&V sections to align with matrix doc |
-
+| 2026-07-26 | @MitchellDScott | Initial draft                                                                                |
+| 2026-07-26 | @MitchellDScott | Expanded Core Architecture, Alternatives, and 4-pillar V&V sections to align with matrix doc |
