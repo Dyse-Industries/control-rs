@@ -4,24 +4,18 @@
 synthesis, and real-time execution, targeting autonomous systems and
 bare-metal embedded platforms.
 
-It uses Rust's ownership model, zero-cost abstractions, and explicit memory
-layout control to provide memory safety and deterministic execution timing
-without a heap allocator.
+Unlike traditional design-then-generate pipelines (such as Simulink Embedded Coder) or workstation-class control libraries (such as ETH Zurich's Control Toolbox), `control-rs` allows you to write control laws directly in target-native Rust with compile-time correctness guarantees and zero heap allocation.
 
----
+The landscape is categorized into three patterns:
 
-## Key Features
+1. **High-Level GUI-Based Design with Code Exporting**: Graphical simulation tools (e.g., Simulink Embedded Coder) that export target-agnostic code. This keeps algorithms independent of the hardware target, but introduces high toolchain complexity and development overhead.
+2. **Hardcoded Application Controls**: System-specific, hand-written control laws compiled directly within the flight stack or application (e.g., the C++ core of PX4 or ArduPilot). This yields optimized performance for a specific target, but results in a non-reusable implementation.
+3. **Generic Controls Tools Library**: A modular, reusable math library (such as ETH Zurich's Control Toolbox or `control-rs` itself) that defines generic primitives natively for the target. While highly flexible and reusable, this approach requires rigorous verification and validation (such as compile-time constraints or simulation pipelines) to ensure safety on real-time hardware.
 
-* **Decoupled Storage Architecture:** Algorithms are entirely agnostic to
-  hardware memory layouts. Mathematical structures can seamlessly reside on the
-  execution stack, in caller-owned scratch spaces, or within memory-mapped DMA
-  peripheral registers.
-* **Compile-Time Verification:** Utilizes Peano arithmetic to enforce strict
-  dimensional compatibility (e.g., matrix multiplication bounds) at compile
-  time, eliminating the risk of runtime panics.
-* **C-ABI Interoperability:** Enforces contiguous memory and `#[repr(C)]`
-  layouts, ensuring zero-copy, safe integration with legacy C-based DSP
-  libraries and hardware accelerators.
+`control-rs` resolves this V&V gap through two mechanisms:
+
+- **Compile-Time Structural Verification**: Type-level Peano arithmetic enforces matrix/vector dimensional compatibility.
+- **Continuous Target-Side HIL Testing**: The library includes a built-in Hardware-in-the-Loop engine for users to verify custom software.
 
 ---
 
@@ -37,19 +31,19 @@ to add representations for more complex or nonlinear systems later without
 changing the core API.
 
 | Model                | Capacity Limit        | Primary Applications                                               | Key Algorithms & Mechanics                                                  |
-|----------------------|------------------------|---------------------------------------------------------------------|------------------------------------------------------------------------------|
-| **Polynomial**       | 128 elements           | Signal filtering, trajectory generation, discretization.             | Horner's Method (FMA optimized), Tustin transform.                          |
-| **Matrix**           | 32x32 (1024 elements)  | State-space modeling, observability, MIMO systems.                   | Type-level dimensions, division-free Faddeev-LeVerrier `$p(x)=\det(xI-A)$`. |
-| **Tensor**           | 1024 elements total    | Spatial grid modeling, Edge AI, multi-dimensional LTI.                | Column-major sequencing, in-place contraction (`contract_into`).            |
-| **TransferFunction** | `Polynomial`-bound     | SISO/MIMO rational transfer functions $H(s)$, $H(z)$.                | Direct storage-backed Horner evaluation, series/parallel/feedback algebra.  |
-| **StateSpace**       | `Matrix`-bound         | Continuous/discrete LTI state-space models, Kalman filtering, LQR.    | Zero-copy `MatrixView` composition, ZOH/Tustin discretization.              |
+| -------------------- | --------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| **Polynomial**       | 128 elements          | Signal filtering, trajectory generation, discretization.           | Horner's Method (FMA optimized), Tustin transform.                          |
+| **Matrix**           | 32x32 (1024 elements) | State-space modeling, observability, MIMO systems.                 | Type-level dimensions, division-free Faddeev-LeVerrier `$p(x)=\det(xI-A)$`. |
+| **Tensor**           | 1024 elements total   | Spatial grid modeling, Edge AI, multi-dimensional LTI.             | Column-major sequencing, in-place contraction (`contract_into`).            |
+| **TransferFunction** | `Polynomial`-bound    | SISO/MIMO rational transfer functions $H(s)$, $H(z)$.              | Direct storage-backed Horner evaluation, series/parallel/feedback algebra.  |
+| **StateSpace**       | `Matrix`-bound        | Continuous/discrete LTI state-space models, Kalman filtering, LQR. | Zero-copy `MatrixView` composition, ZOH/Tustin discretization.              |
 
 ---
 
 ## Architecture & Dependency Structure
 
 Hardware-agnosticism comes from two things working together: the `Storage`
-trait, which abstracts *how* elements are read and written, and a set of
+trait, which abstracts _how_ elements are read and written, and a set of
 storage backends targeting different memory (stack arrays, borrowed views,
 DMA-mapped peripheral registers). Decoupling storage from the math alone
 doesn't make an algorithm hardware-agnostic — it's what makes it possible for
@@ -150,24 +144,24 @@ flowchart LR
 Located in [control-rs-hil](control-rs-hil), this
 `no_std` crate provides the target-side infrastructure:
 
-* **Interactive Test Server**: A lightweight event loop that executes test
+- **Interactive Test Server**: A lightweight event loop that executes test
   suites on request and streams results back.
-* **Target Profiling**: Measures execution time using hardware cycle counters (
+- **Target Profiling**: Measures execution time using hardware cycle counters (
   ARM DWT) and tracks memory limits using stack painting and scanning.
 
 ### 2. Host-Side Orchestration (`control-rs-xtask`)
 
-* **Terminal User Interface (TUI)**: A terminal dashboard built with
+- **Terminal User Interface (TUI)**: A terminal dashboard built with
   `ratatui` to trigger live tests, tweak parameters, and view logs.
-* **HIL Bridge**: Handles communication and telemetry between the TUI and
+- **HIL Bridge**: Handles communication and telemetry between the TUI and
   the hil server.
 
 ### 3. Continuous Integration (`.github/workflows/CI.yml`)
 
-* **Multi-Arch Emulation**: Spins up headless QEMU instances for both **ARM
+- **Multi-Arch Emulation**: Spins up headless QEMU instances for both **ARM
   Cortex-M** (`thumbv7em-none-eabihf`) and **RISC-V** (
   `riscv32imac-unknown-none-elf`) targets.
-* **Code Quality Reporting**: Parses stdout/stderr from the available
+- **Code Quality Reporting**: Parses stdout/stderr from the available
   cargo tooling (`fmt`, `clippy`, `test`, `tarpaulin`, `qemu`) and generates
   a report (`ci-report.md`).
 
@@ -181,7 +175,7 @@ to simplify development, testing, formatting, linting, and coverage reporting:
 ### Cargo Aliases Reference Table
 
 | Category                               | Alias               | Underlying Command                                             | Description                                                         |
-|:---------------------------------------|:--------------------|:---------------------------------------------------------------|:--------------------------------------------------------------------|
+| :------------------------------------- | :------------------ | :------------------------------------------------------------- | :------------------------------------------------------------------ |
 | **Development & UI**                   | `cargo xtask`       | `run --package control-rs-xtask --`                            | Runs the workspace's auxiliary build/test tasks.                    |
 |                                        | `cargo tui`         | `cargo xtask tui`                                              | Launches the interactive TUI console dashboard.                     |
 |                                        | `cargo ci`          | `cargo xtask ci`                                               | Runs the continuous integration suite locally.                      |
@@ -204,7 +198,7 @@ parameters in real time.
 
 ```bash
   $> cargo tui
-  
+
 ┌ control-rs HIL Console ─────────────────────────────────────────────────────────────────────────────────────────────┐
 │ TARGET: QEMU (cortex-m7) | LINK: Semihosting (mps2-an500)                                                           │
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -228,12 +222,12 @@ parameters in real time.
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-* **Launch TUI for QEMU Emulator (default target: cortex-m7, mps2-an500):**
+- **Launch TUI for QEMU Emulator (default target: cortex-m7, mps2-an500):**
   ```bash
   cargo qemu # target: arm-none-eabihf, semihosting
   cargo tui qemu risc-v # target: risc-v32, virt
   ```
-* **Launch TUI for Physical Teensy 4.0 Hardware:**
+- **Launch TUI for Physical Teensy 4.0 Hardware:**
   ```bash
   cargo teensy
   ```
@@ -243,16 +237,16 @@ parameters in real time.
 Run the exact verification steps performed by the GitHub Actions pipeline
 locally (clippy, formatting, tarpaulin coverage, and QEMU HIL tests).
 
-* **Run all checks (ARM & RISC-V QEMU):**
+- **Run all checks (ARM & RISC-V QEMU):**
   ```bash
   cargo ci
   ```
-* **Run checks for specific targets:**
+- **Run checks for specific targets:**
   ```bash
   cargo qemu-ci
   cargo teensy-ci
   ```
-* **Run workspace code coverage analysis:**
+- **Run workspace code coverage analysis:**
   ```bash
   cargo coverage      # Detailed console coverage
   cargo coverage-ci   # Export HTML and JSON reports (headless CI style)
