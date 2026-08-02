@@ -1,7 +1,7 @@
 # Numeric Trait Hierarchy (`math::num_traits`) (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_2,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Date Badge](https://img.shields.io/badge/Date-August_1,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@mitchelldscott-blueviolet)
 
 ---
@@ -12,25 +12,20 @@ All numerical algorithms within the crate require a foundational numeric
 abstraction layer.
 
 The `math::num_traits` module provides this abstraction by defining a numeric
-trait hierarchy. This hierarchy is designed around **hardware behavior** rather
-than abstract mathematical theory. It enables control algorithms to run generic
-code over primitive integers (`i8`..`i128`, `u8`..`u128`, `isize`, `usize`),
-floating-point numbers (`f32`, `f64`), and composite numbers (`Complex<T>`),
-while giving developers exact compile-time boundaries on overflow behavior (
-wrapping vs. saturating).
+trait hierarchy. It enables mathematical components to operate generically over
+primitive floating-point numbers (`f32`, `f64`), signed and unsigned integers (
+`i8`..`i128`, `u8`..`u128`, `isize`, `usize`), and composite numbers (
+`Complex<T>`).
 
 The system-level goals of the numeric trait hierarchy are:
 
-1. **Hardware Realism**: Reflect physical ALU/FPU overflow boundaries (wrapping
-   vs. saturating) and execution realities rather than abstract algebraic rings
-   and fields.
-2. **Type-State Safety**: Leverage zero-cost validation wrappers (such as
-   `NonZero<T>`) to enforce validation of sensor boundaries prior to executing
-   arithmetic in the main control loop.
-3. **`no_std` & Bare-Metal Compatibility**: Operate strictly within `core`,
+1. **Algebraic Safety**: Express mathematical properties (identities, closure
+   under operations, total vs. partial operations) accurately through the Rust
+   type system.
+2. **`no_std` & Bare-Metal Compatibility**: Operate strictly within `core`,
    requiring zero dynamic memory allocation or OS-level runtime support.
-4. **Zero-Cost Abstraction**: Resolve all associated constants and trait methods
-   at compile time via static monomorphization.
+3. **Zero-Cost Abstraction**: The traits provide access to constants so
+   algorithms can access these values for any type with very little overhead.
 
 ---
 
@@ -38,213 +33,222 @@ The system-level goals of the numeric trait hierarchy are:
 
 #### 2.1 Functional Requirements
 
-##### FR-1: Granular Hardware Traits
+##### FR-1: Core Scalar and Identity Abstractions
 
-The trait hierarchy shall break down basic numerical behaviors into small,
-granular traits representing specific hardware capabilities.
-`Clone + PartialEq + PartialOrd` is declared directly on these traits rather
-than through a separate base-marker trait (the previous
-`Scalar: Clone + PartialEq + PartialOrd` marker is retired; see FR-3).
+The hierarchy shall provide base scalar traits exposing equality, partial
+ordering, and elemental identities:
 
-- `Zero`: Additive identity constant (`ZERO`) and `Add` operator. Does not
-  require `Sub`.
-- `One`: Multiplicative identity constant (`ONE`) and `Mul` operator.
-- `AdditiveGroup`: `Zero + Sub<Output = Self>`. The single explicit opt-in for
-  types whose subtraction is total and non-panicking (signed integer primitives,
-  floats, `Complex<T>` where `T: AdditiveGroup`). Unsigned primitives do not
-  implement it, since `u8 - 1` is not closed.
-- `Signed`: `AdditiveGroup + Neg + PartialOrd`, adding `abs()`,
-  `is_sign_positive()`, and `is_sign_negative()`.
-- `Unsigned`: Marker trait for unsigned types.
-- `Radical`: Square root (`sqrt()`) and hypotenuse (`hypot()`).
-- `Exponential`: Natural exponential (`exp()`), natural logarithm (`ln()`),
-  base-10 logarithm (`log10()`), and power (`pow()`).
-- `Trig`: Trigonometric and hyperbolic functions (`sin()`, `cos()`, `tan()`,
-  `asin()`, `acos()`, `atan()`, `PI`).
+- `Scalar`: Base trait requiring `Clone + PartialEq + PartialOrd`.
+- `Zero`: Represents types with an additive identity constant (`ZERO`) and an
+  addition operation (`Add<Output = Self>`). `Zero` does not mandate a
+  subtraction operation.
+- `One`: Represents types with a multiplicative identity constant (`ONE`) and a
+  multiplication operation (`Mul<Output = Self>`).
 
-##### FR-2: Flat Functional Containers
+##### FR-2: Explicit Total Subtraction (`AdditiveGroup`)
 
-Granular traits shall be grouped into flat categories that represent the exact
-behavior of hardware execution units:
+The hierarchy shall provide an explicit trait,
+`AdditiveGroup: Zero + Sub<Output = Self>`, representing types whose subtraction
+operation is total (defined and non-panicking over the full domain of the type).
 
-- `Integer`: Flat category for integer types that wrap on overflow. Inherits
-  `Zero + One + WrappingAdd + WrappingSub + WrappingMul`, and exposes constants
-  like `MAX`, `MIN`, `MIN_POSITIVE`, and `TWO`. Implemented by **all** integer
-  primitives, signed and unsigned alike — wrapping is a plain-ALU behavior
-  available to both (`ADD`/`MUL` wrap regardless of signedness on every target
-  this crate supports).
-- `SaturatingInteger`: Flat category for integer types that saturate on
-  overflow (essential for anti-windup in controllers). Inherits
-  `Zero + One + SaturatingAdd + SaturatingSub + SaturatingMul`, and exposes the
-  same constants. Also implemented by **all** integer primitives: Cortex-M's
-  `SSAT`/`USAT` saturate signed and unsigned ranges equally, so wrap-vs-saturate
-  is a choice of which trait bound an algorithm names, not a property of the
-  type's signedness.
-- `Float`: Flat category for floating-point types. Inherits
-  `Clone + PartialEq + PartialOrd + Signed + Radical + Exponential + Trig + Div<Output = Self>`,
-  and exposes hardware float constants (`INF`, `NAN`, `EPSILON`, `MAX`, `MIN`,
-  `MIN_POSITIVE`, `TWO`), `epsilon()`, and checks/functions (`is_nan()`,
-  `is_sign_positive()`, `is_sign_negative()`, `atan2()`, `sinh()`, `cosh()`).
-  `Div` and `epsilon()` are scoped to `Float` specifically: IEEE-754 division
-  never panics (it produces `inf`/`NaN` instead), so it is hardware-realistic
-  here in a way it is not for integers (see FR-3).
+- Must be implemented explicitly for `f32`, `f64`, signed integer primitives (
+  `i8`..`i128`, `isize`), and `Complex<T>` where `T: AdditiveGroup`.
+- Must **not** be implemented for unsigned integer primitives (`u8`..`u128`,
+  `usize`), as unsigned subtraction can underflow.
 
-##### FR-3: The Unified Target (`Scalar`)
+##### FR-3: Signed and Unsigned Domain Markers
 
-The hierarchy shall expose a single, flat trait `Scalar` representing signed
-control scalars. This replaces the previous lightweight
-`Scalar: Clone + PartialEq + PartialOrd` marker entirely — there is one `Scalar`
-trait in this design, not two.
+The hierarchy shall distinguish signed and unsigned domains:
 
-- It inherits `AdditiveGroup + Signed + Mul<Output = Self>`.
-- It defines essential control-loop utilities: `clamp()` and `signum()`.
-- It does **not** require `Div` or `epsilon()`. Baking total division into every
-  `Scalar` implementor would force plain signed integers to expose a panicking
-  operation (`/0`, `i32::MIN / -1`), which contradicts the "hardware realism, no
-  panics" goal in §1. Division and machine epsilon remain scoped to `Float` (
-  FR-2); integer and fixed-point division continue to go through the existing
-  `TryDiv` (`math::ops`) or a future `NonZero<T>`-gated `SafeDiv`, not through
-  `Scalar` itself.
-- Implemented independently by `f32`/`f64` and by signed integer primitives
-  `i8..i128`/`isize` — both satisfy `AdditiveGroup + Signed + Mul`, but `Float`
-  does not declare `Scalar` as a supertrait, so float types carry both
-  implementations explicitly rather than deriving one from the other. Unsigned
-  types do not implement `Scalar`, because control math requires negation and
-  total subtraction; they implement `Integer`, `SaturatingInteger`, and
-  `Unsigned` instead.
-- **Migration note**: `subprograms.rs`'s `AXPY`/`GEMM` (`Scalar + Add + Mul`)
-  and `Complex<T>`'s `impl<T: Scalar> Scalar for Complex<T>` currently bound
-  against the lightweight marker being retired here. Since the new `Scalar` is
-  strictly heavier (`AdditiveGroup + Signed + Mul`, not just
-  `Clone + PartialEq + PartialOrd`), these call sites need their bounds
-  revisited as part of implementation — see §9.
+- `Signed: AdditiveGroup + Neg<Output = Self>`: Provides absolute value
+  calculation (`abs()`) and sign checks (`is_sign_positive()`,
+  `is_sign_negative()`). Requires `AdditiveGroup` to guarantee closed negation
+  and subtraction.
+- `Unsigned: Scalar`: Marker trait for unsigned numeric types.
+
+##### FR-4: Algebraic Ring Abstraction
+
+The hierarchy shall provide a `Ring: One + Zero` trait representing structures
+with both additive and multiplicative identities.
+
+- Associated constants: `ZERO`, `ONE`, `TWO`, `MAX`, `MIN`, `MIN_POSITIVE`.
+- Supported by both signed and unsigned numeric primitives, as `Ring` requires
+  addition and multiplication but does not demand subtraction closure.
+
+##### FR-5: Closed Ring Abstraction
+
+The hierarchy shall provide a convenience trait,
+`ClosedRing: Ring + AdditiveGroup`, with a blanket implementation:
+
+```rust
+impl<T: Ring + AdditiveGroup> ClosedRing for T {}
+```
+
+This enables generic algorithms requiring closed subtraction over ring
+operations to specify a single concise bound (`T: ClosedRing`).
+
+##### FR-6: Algebraic Field Abstraction
+
+The hierarchy shall provide a `Field: Ring + AdditiveGroup + Div<Output = Self>`
+trait representing algebraic fields.
+
+- Requires `AdditiveGroup` to enforce total subtraction alongside division.
+- Exposes `epsilon()` to supply machine epsilon for convergence and stability
+  checks.
+
+##### FR-7: Transcendental and Real Number Capabilities
+
+The hierarchy shall provide specialized traits for advanced mathematical
+operations:
+
+- `Radical`: Square root (`sqrt()`).
+- `Exponential`: Natural exponential (`exp()`) and natural logarithm (`ln()`).
+- `Trig`: Trigonometric and hyperbolic functions (`sin`, `cos`, `tan`, `asin`,
+  `acos`, `atan`, `sinh`, `cosh`, `tanh`).
+- `Real: Field + Signed + Radical + Exponential + Trig`: Full mathematical real
+  number abstraction, carrying physical constants (`PI`, `E`, `INF`, `NAN`).
+
+##### FR-8: Primitive and Composite Implementations
+
+The trait hierarchy must be fully implemented for:
+
+- Primitive floats: `f32`, `f64`.
+- Primitive signed integers: `i8`, `i16`, `i32`, `i64`, `i128`, `isize`.
+- Primitive unsigned integers: `u8`, `u16`, `u32`, `u64`, `u128`, `usize`.
+- Composite complex numbers: `Complex<T>`, conditionally delegating trait
+  capabilities based on `T`.
+
+#### 2.2 Non-Functional Requirements
+
+##### NFR-1: `no_std` Compatibility
+
+The entire module must depend exclusively on `core`. It must not require `std`
+or `alloc`.
+
+##### NFR-2: Zero Runtime Overhead
+
+All traits, identity constants, and blanket implementations must resolve at
+compile time via static monomorphization. Marker traits (`AdditiveGroup`,
+`ClosedRing`, `Unsigned`) must carry no fields or vtables.
+
+##### NFR-3: Code Quality and Lint Compliance
+
+All public traits, methods, constants, and implementations must strictly satisfy
+workspace lints (`missing_docs = "deny"` and `arbitrary_source_item_ordering 
+= "deny"`), adhering to crate documentation standards (
+`documentation/doc-standards.md`).
+
+#### 2.3 Constraints
+
+##### C-1: Stable Rust Compatibility
+
+All associated constants and trait bounds must be supported by current stable
+Rust, avoiding nightly-only features such as `const_trait_impl`.
+
+##### C-2: Dependency Isolation
+
+The module must have no external crate dependencies beyond Rust `core`.
 
 ---
 
 ### 3. Technical Overview
 
-This effort touches a single, self-contained module (`src/math/num_traits.rs`)
-plus its generated `impl_*!` macros. The scope is the trait definitions
-themselves, the primitive implementations, and `Complex<T>`'s delegating
-implementations — it does not add new files or new consumers. It requires
-familiarity with the target hardware's ALU/FPU overflow behavior (wrapping vs.
-saturating instructions; see the research note's CMSIS-DSP/`SSAT`/`USAT`
-findings) rather than abstract-algebra theory.
+The `math::num_traits` module acts as the core interface contract between raw
+scalar types and high-level control systems mathematics. The scope encompasses
+trait definitions, compile-time associated constants, macro-based
+implementations for primitive types, and generic delegates for `Complex<T>`.
 
 ---
 
 ### 4. Core Architecture
 
+The core architecture organizes numerical capabilities into a strictly layered
+super-trait hierarchy.
+
 #### 4.1 Trait Hierarchy Diagram
 
 ```mermaid
 graph TD
-    Zero["Zero<br/>(Add + ZERO)"]
-    One["One<br/>(Mul + ONE)"]
+    Scalar["Scalar<br/>(Clone + PartialEq + PartialOrd)"] --> Zero["Zero<br/>(Add + ZERO)"]
+    Scalar --> One["One<br/>(Mul + ONE)"]
     Zero --> AdditiveGroup["AdditiveGroup<br/>(Zero + Sub)"]
+    Zero --> Ring["Ring<br/>(Zero + One + Consts)"]
+    One --> Ring
+    Ring --> ClosedRing["ClosedRing<br/>(Ring + AdditiveGroup)"]
+    AdditiveGroup --> ClosedRing
     AdditiveGroup --> Signed["Signed<br/>(AdditiveGroup + Neg)"]
-    Zero --> Integer["Integer<br/>(Zero + One + Wrapping*)"]
-    One --> Integer
-    Zero --> SaturatingInteger["SaturatingInteger<br/>(Zero + One + Saturating*)"]
-    One --> SaturatingInteger
-    Signed --> Float["Float<br/>(Signed + Radical + Exponential + Trig + Div)"]
-    Signed --> Scalar["Scalar<br/>(AdditiveGroup + Signed + Mul + clamp/signum)"]
+    Ring --> Field["Field<br/>(Ring + AdditiveGroup + Div)"]
+    AdditiveGroup --> Field
+    Field --> Radical["Radical<br/>(sqrt)"]
+    Field --> Exponential["Exponential<br/>(exp, ln)"]
+    Field --> Trig["Trig<br/>(trig & hyperbolic)"]
+    Radical --> Real["Real<br/>(Field + Signed + Transcendental)"]
+    Exponential --> Real
+    Trig --> Real
+    Signed --> Real
 ```
-
-`Unsigned` (marker) and `Integer`/`SaturatingInteger` are the only traits
-implemented by unsigned primitives; unsigned types do not appear in the
-`AdditiveGroup`/`Signed`/`Scalar`/`Float` branch above.
 
 #### 4.2 Architectural Layers
 
-1. **Identity Tier (`Zero`, `One`)**:
+1. **Identity & Monoid Tier (`Scalar`, `Zero`, `One`)**:
     - `Zero` requires `Add<Output = Self>` and associated constant `ZERO`. It
       does not require `Sub`.
     - `One` requires `Mul<Output = Self>` and associated constant `ONE`.
 2. **Subtraction Tier (`AdditiveGroup`)**:
-    - Opt-in trait binding `Zero` and `Sub<Output = Self>`.
-    - The single explicit grant of subtraction for types where `a - b` is
-      total and non-panicking (signed integers, floats, `Complex<T>`).
-      Unsigned primitives never implement it.
-3. **Hardware Integer Tier (`Integer`, `SaturatingInteger`, `Unsigned`)**:
-    - `Integer` and `SaturatingInteger` expose the wrap and saturate ALU
-      behaviors respectively, plus range constants (`MAX`, `MIN`,
-      `MIN_POSITIVE`, `TWO`). Both are implemented by every integer
-      primitive, signed and unsigned — see FR-2's rationale.
-    - `Unsigned` remains a `Sized`-only marker distinguishing unsigned
-      primitives from `Scalar`-eligible signed types.
-4. **Signed & Analytic Tier (`Signed`, `Float`, `Scalar`, `Radical`,
-   `Exponential`, `Trig`)**:
+    - Opt-in marker trait binding `Zero` and `Sub<Output = Self>`.
+    - Serves as the single explicit grant of subtraction for types where `a - b`
+      is mathematically closed and non-panicking.
+3. **Ring & Group Tier (`Ring`, `ClosedRing`, `Signed`, `Unsigned`)**:
+    - `Ring` combines `Zero` and `One`, exposing range constants (`MAX`, `MIN`,
+      `MIN_POSITIVE`, `TWO`). Implemented by all integer and float primitives.
+    - `ClosedRing` blanket-implements `Ring + AdditiveGroup` for types
+      supporting total subtraction.
     - `Signed` extends `AdditiveGroup` with `Neg<Output = Self>`, providing
       `abs()` and sign predicates.
-    - `Float` requires `Signed + Radical + Exponential + Trig +
-     Div<Output = Self>` plus `epsilon()`, scoping division and machine
-      epsilon to floating-point types only (FR-2, FR-3).
-    - `Scalar` requires `AdditiveGroup + Signed + Mul<Output = Self>` and adds
-      `clamp()`/`signum()`, without `Div` — see FR-3's rationale. Implemented
-      by signed integers and (transitively, via `Float`) `f32`/`f64`.
+4. **Field & Analytic Tier (`Field`, `Radical`, `Exponential`, `Trig`, `Real`)
+   **:
+    - `Field` requires `Ring + AdditiveGroup + Div<Output = Self>` and
+      `epsilon()`.
+    - `Real` unplugs full transcendental math (`sin`, `cos`, `exp`, `log`,
+      `sqrt`) and mathematical constants (`PI`, `E`, `INF`, `NAN`) for
+      floating-point scalars.
 
 #### 4.3 Macro Code Generation
 
 To prevent boilerplate duplication across primitive types, implementation blocks
 are generated using internal declarative macros:
 
-- `impl_int!`: Emits `Zero`, `One`, `Integer`, and `SaturatingInteger`
-  implementations for all integer primitives (signed and unsigned).
-- `impl_additive_group!`: Emits `AdditiveGroup` and `Signed` implementations
-  for signed integer primitives and `f32`/`f64`.
-- `impl_scalar!`: Emits `Scalar` implementations for signed integer
-  primitives and `f32`/`f64`.
-- `impl_float!`: Emits `Float`, `Radical`, `Exponential`, and `Trig`
-  implementations for `f32` and `f64`.
+- `impl_ring!`: Emits `Zero`, `One`, and `Ring` implementations for integer and
+  floating-point types.
+- `impl_field!`: Emits `Field` implementations for `f32` and `f64`.
+- `impl_real!`: Emits `AdditiveGroup`, `Signed`, `Radical`, `Exponential`,
+  `Trig`, and `Real` implementations for `f32` and `f64`.
 
 ---
 
 ### 5. Alternatives
 
-1. **Retaining the Previously Approved `Ring`/`Field`/`AdditiveGroup`/
-   `ClosedRing`/`Real` Hierarchy (2026-08-01)**:
-    - _Considered_: Keeping the abstract-algebra tower this same document
-      previously approved, and only adding the granular wrapping/saturating
-      traits alongside it.
-    - _Rejected_: Saturating arithmetic is mathematically non-associative, so
-      folding it into a `Ring`-shaped trait misrepresents the operation to
-      both readers and the compiler. The prior hierarchy also never resolved
-      unsigned types being forced into `Ring`/`Zero` bounds implying total
-      subtraction they cannot honor. A hardware-aligned hierarchy resolves
-      both directly instead of patching them onto an algebraic frame.
-2. **Full Abstract Algebra
+1. **Full Abstract Algebra
    Taxonomy (`Magma` → `Monoid` → `Group` → `AbelianGroup`...)**:
-    - _Considered_: Implementing a granular algebraic hierarchy matching formal
+    - *Considered*: Implementing a granular algebraic hierarchy matching formal
       abstract algebra.
-    - _Rejected_: Too complex for practical control systems engineering. Rust's
+    - *Rejected*: Too complex for practical control systems engineering. Rust's
       trait solver overhead and complex bound signatures outweigh the benefits.
-      The pragmatic tiering (`Zero`, `AdditiveGroup`, `Integer`,
-      `SaturatingInteger`, `Float`, `Scalar`) provides the exact boundaries
-      required by numerical algorithms.
-3. **Unconditional `Sub` Requirement on `Zero`**:
-    - _Considered_: Requiring `Sub<Output = Self>` directly on `Zero`, as an
-      earlier draft of this document did.
-    - _Rejected_: Forces unsigned primitives (`u8`..`u128`) to expose
-      subtraction through `Zero`, despite `0u8 - 1u8` underflowing and
-      panicking in debug mode. Decoupling `Sub` into `AdditiveGroup` restores
-      hardware honesty: unsigned types get wrapping/saturating subtraction via
-      `Integer`/`SaturatingInteger` instead, which are total by construction.
-4. **Blanket Derivation of `AdditiveGroup` from `Zero + Sub`**:
-    - _Considered_: Adding
+      The pragmatic tiering (`Zero`, `AdditiveGroup`, `Ring`, `Field`, `Real`)
+      provides the exact boundaries required by numerical algorithms.
+2. **Unconditional `Sub` Requirement on `Zero`**:
+    - *Considered*: Requiring `Sub<Output = Self>` directly on `Zero`.
+    - *Rejected*: Forced unsigned primitives (`u8`..`u128`) to expose
+      subtraction through `Ring`, despite `0u8 - 1u8` underflowing and panicking
+      in debug mode. Decoupling `Sub` into `AdditiveGroup` restores algebraic
+      honesty.
+3. **Blanket Derivation of `AdditiveGroup` from `Zero + Sub`**:
+    - *Considered*: Adding
       `impl<T: Zero + Sub<Output = Self>> AdditiveGroup for T {}`.
-    - _Rejected_: Standard library unsigned integers already implement
+    - *Rejected*: Standard library unsigned integers already implement
       `core::ops::Sub`. A blanket implementation would automatically grant
       `AdditiveGroup` to unsigned types, defeating the safety goal. Explicit
       per-type opt-in is required.
-5. **Requiring `Div` on the Unified `Scalar` Trait**:
-    - _Considered_: Giving `Scalar` a `Div<Output = Self>` bound directly, so
-      one trait covers every arithmetic operator a control loop might need.
-    - _Rejected_: Integer division is not total (`/0` panics, `i32::MIN / -1`
-      overflows), so requiring it on every `Scalar` implementor — including
-      plain signed integers — reintroduces exactly the panic surface this
-      hierarchy exists to remove. Division stays on `Float`, where IEEE-754
-      semantics make it genuinely total (`inf`/`NaN` instead of a panic).
 
 ---
 
@@ -255,18 +259,15 @@ are generated using internal declarative macros:
 Verification ensures structural correctness and trait compliance across all
 target environments:
 
-1. **Unit Testing & Hardware-Boundary Verification**:
-    - Test suites (`num_trait_tests.rs`) validate identity elements, wrapping
-      behavior at `MAX`/`MIN`, and saturation behavior at `MAX`/`MIN` across
-      primitive types and `Complex<T>`.
-    - Regression tests verify that unsigned `Integer::wrapping_sub`/
-      `SaturatingInteger::saturating_sub` behave as expected at `0u8`, and that
-      `core::ops::Sub` remains inaccessible on unsigned types through this
-      hierarchy (no `AdditiveGroup` impl).
+1. **Unit Testing & Algebraic Axiom Verification**:
+    - Test suites (`num_trait_tests.rs`) validate algebraic properties (identity
+      elements, associativity, commutativity, distributivity) across primitive
+      types and `Complex<T>`.
+    - Regression tests verify that unsigned subtraction underflow (`0u8 - 1u8`)
+      behaves as expected when explicitly invoked via `Sub`.
 2. **Compile-Time Marker Assertions**:
-    - Marker tests verify at compile time that `AdditiveGroup` and `Scalar` are
-      implemented for signed integer types and floats, and withheld from
-      unsigned types.
+    - Marker tests verify at compile time that `AdditiveGroup` and `ClosedRing`
+      are implemented for signed types/floats and withheld from unsigned types.
 3. **SIL/HIL Test Suite Integration**:
     - Unit tests within `num_traits` are wrapped with the `#[hil_suite]` proc
       macro infrastructure. This allows unit test logic to be compiled and
@@ -280,10 +281,10 @@ Validation confirms that high-level toolbox components integrate seamlessly with
 the trait hierarchy:
 
 - **Numerical Assertion Integration**: `assert_almost_eq!` and
-  `assert_not_almost_eq!` macros operate seamlessly over `T: Float`.
+  `assert_not_almost_eq!` macros operate seamlessly over `T: Field`.
 - **DSP & Linear Algebra Integration**: Signal processing modules (FFT in
   `dsp.rs`) and BLAS subprograms (`subprograms.rs`) validate performance and
-  compile-time ergonomics over generic `Float` and `Complex<T>` scalars.
+  compile-time ergonomics over generic `Real` and `Complex<T>` scalars.
 
 ---
 
@@ -294,8 +295,8 @@ and **zero memory footprint**:
 
 - **Static Monomorphization**: All trait method calls and constant accesses are
   resolved statically by the Rust compiler.
-- **Zero Memory Allocation**: Marker traits (`AdditiveGroup`, `Unsigned`)
-  carry no fields or dynamic dispatch tables.
+- **Zero Memory Allocation**: Marker traits (`AdditiveGroup`, `ClosedRing`,
+  `Unsigned`) carry no fields or dynamic dispatch tables.
 - **Stack & Bare-Metal Friendly**: Operations execute inline without stack frame
   expansion or heap interaction, adhering to strict bare-metal constraints (2–8
   kB stack limits).
@@ -304,26 +305,16 @@ and **zero memory footprint**:
 
 ### 8. Risks & Open Questions
 
-1. **Ordering Semantics on `Complex<T>`**: `Signed` (and transitively `Scalar`)
-   requires `PartialOrd`. `Complex<T>` implements `PartialOrd` via a
-   lexicographic order. While convenient for comparison utilities,
-   lexicographic ordering is not algebraically compatible with field
-   multiplication. This boundary is documented in doc comments.
-2. **`Scalar` Retirement Is a Breaking Change for Existing Bounds**:
-   `subprograms.rs`'s `AXPY`/`GEMM` and `Complex<T>`'s `Scalar` impl currently
-   rely on the lightweight `Clone + PartialEq + PartialOrd` marker being
-   retired in this design. Implementation must re-bound each existing call
-   site (widen to the new `Scalar`, or narrow to a more specific granular
-   trait such as `Zero`/`One` where the algorithm doesn't actually need
-   negation or subtraction) rather than assume the rename is transparent.
-3. **`SafeDiv`/`NonZero<T>` Is Not Yet Specified**: This design confines `Div`
-   to `Float` and defers integer/fixed-point division entirely to the
-   existing `TryDiv` (`math::ops`). A future `NonZero<T>`-gated `SafeDiv` for
-   validate-once/divide-many hot loops (per the research note's §4.4/§3.5) is
-   out of scope for this revision and needs its own design pass, including
-   how it handles `core::num::NonZero<T>`'s sealed `ZeroablePrimitive` trait
-   not covering custom scalar types.
-4. **Evolution of `const fn` Traits**: When Rust stabilizes `const_trait_impl`,
+1. **Ordering Semantics on `Complex<T>`**: `Scalar` requires `PartialOrd`.
+   `Complex<T>` implements `PartialOrd` via a lexicographic order. While
+   convenient for comparison utilities, lexicographic ordering is not
+   algebraically compatible with field multiplication. This boundary is
+   documented in doc comments.
+2. **Expansion of Operational Traits on `Unsigned`**: Currently, `Unsigned` is a
+   marker trait. As integer-based DSP algorithms expand, dedicated
+   wrapping/saturating operational traits may be integrated into the unsigned
+   hierarchy.
+3. **Evolution of `const fn` Traits**: When Rust stabilizes `const_trait_impl`,
    associated trait functions (e.g., `is_zero()`) can be made `const fn`,
    expanding compile-time evaluation capabilities.
 
@@ -331,18 +322,16 @@ and **zero memory footprint**:
 
 ### 9. Development Plan
 
-| Phase / Feature                                    | Description                                                                                                                                         | Estimated Effort |
-|:---------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Phase 1: Core Trait Hierarchy & Boundaries**     | Implement `Zero`, `One`, `AdditiveGroup`, `Signed`, `Integer`, `SaturatingInteger`, `Float`, `Scalar` with full doc comments                        | Medium           |
-| **Phase 2: Primitive & Composite Implementations** | Write `impl_int!`, `impl_additive_group!`, `impl_scalar!`, `impl_float!` macros; update `Complex<T>` trait bridges                                  | Medium           |
-| **Phase 3: Existing Call-Site Migration**          | Re-bound `AXPY`/`GEMV`/`GEMM`/`DOT`/`NRM2`/`IAMAX` (`subprograms.rs`), `FFT`/`Convolution`/`Discrete` (`dsp.rs`), and `assert.rs` to the new traits | Medium           |
-| **Phase 4: Verification & Test Suite Integration** | Implement wrap/saturate boundary tests, compile-time marker assertions, and `#[hil_suite]` SIL/HIL runner test wrappers                             | Medium           |
+| Phase / Feature                                    | Description                                                                                                       | Estimated Effort |
+|:---------------------------------------------------|:------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Phase 1: Core Trait Hierarchy & Boundaries**     | Refine `Zero`, `One`, `Signed`, `Field` traits; implement `AdditiveGroup` and `ClosedRing` with full doc comments | Medium           |
+| **Phase 2: Primitive & Composite Implementations** | Update `impl_real!` macro, signed integer impls, and `Complex<T>` trait bridges                                   | Medium           |
+| **Phase 3: Verification & Test Suite Integration** | Implement ring axiom tests, compile-time marker assertions, and `#[hil_suite]` SIL/HIL runner test wrappers       | Medium           |
 
 ---
 
 ### 10. Revision History
 
-| Date       | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-|:-----------|:----------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 2026-08-01 | @mitchelldscott | Comprehensive design specification for `math::num_traits` hierarchy refinement, introducing `AdditiveGroup` and `ClosedRing`, updating Mermaid architectural diagrams, and integrating HIL/SIL verification suite standards.                                                                                                                                                                                                                                                                                                            |
-| 2026-08-02 | @mitchelldscott | Superseded `Ring`/`Field`/`ClosedRing`/`Real` with the hardware-aligned `Zero`/`One`/`AdditiveGroup`/`Integer`/`SaturatingInteger`/`Float`/`Scalar` hierarchy (`ControlScalar` research pivot). Reverted status to Draft pending re-approval. |
+| Date       | Author          | Description                                                                                                                                                                                                                  |
+|:-----------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 2026-08-01 | @mitchelldscott | Comprehensive design specification for `math::num_traits` hierarchy refinement, introducing `AdditiveGroup` and `ClosedRing`, updating Mermaid architectural diagrams, and integrating HIL/SIL verification suite standards. |
