@@ -1,6 +1,6 @@
 # Storage Trait (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-July_26,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_1,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@mitchelldscott-blueviolet)
 
@@ -350,10 +350,11 @@ any layout. The default `ArrayStorage::offset()` returns
 to provide transposed (row-major) access without copying data.
 
 > **Note:** The existing `GEMV`/`GEMM` implementations in `subprograms.rs`
-> currently use row-major access patterns (`chunks_exact(cols)`). These must
-> be updated to column-major conventions as part of the storage trait
-> migration, or provided as layout-aware wrappers that read `offset()` to
-> determine access order.
+> currently use row-major access patterns (`chunks_exact(cols)`). The
+> migration path is to rewrite these subprograms directly to column-major
+> access, not to introduce layout-aware dispatch wrappers — keeping the BLAS
+> layer's access pattern in sync with `ArrayStorage`'s fixed layout avoids a
+> permanent dual-path maintenance burden.
 
 ---
 
@@ -371,7 +372,9 @@ The current `Dim` type system defines aliases up to `U32`. The storage trait
 inherits this limit: inline-backed matrices are restricted to dimensions where
 `R::DIM * C::DIM ≤ 1024` (32×32). Borrowed-slice backends (`SliceMut`,
 `SliceRef`) are not subject to this limit since they do not use the dimension
-in a const-generic array context.
+in a const-generic array context. This ceiling also keeps `DimMul`'s recursive
+trait resolution (`S<N> * M = M + (N * M)`) well within the compiler's default
+recursion limit, so a `Const<N>`-based reimplementation is unnecessary.
 
 ##### C-3: Clippy Compliance
 
@@ -424,50 +427,35 @@ and above the raw BLAS subprograms. The primary expertise required is:
 
 ### 4. Core Architecture
 
-The core architecture decouples the physical memory layout of linear algebra
-data
-from mathematical dimension verification through a trait-based storage layer.
+The storage layer decouples _where_ matrix data lives in memory from _how_
+mathematical dimensions are verified, via a trait hierarchy parameterized over
+the existing `Dim` system.
 
-- **Explicit Decomposition Pattern:** Heavy mathematical operations are
-  separated
-  from matrix factorizations (e.g., `LuDecomposition`, `LdltDecomposition`).
-  This
-  eliminates hidden heap/stack allocations during linear algebra routines and
-  enables $O(n)$ determinant queries once factorizations are computed.
-- **In-Place `no_alloc` Execution:** Dynamic allocations are completely
-  eliminated
-  by leveraging in-place mutation and caller-provided scratch buffers (e.g.,
-  passing
-  mutable slices for permutation/pivoting state).
-- **Decoupled Storage Trait:** Memory allocation and arrangement are abstracted
-  from
-  mathematical dimensions using the `Storage<T, R, C>` trait hierarchy. Core
-  algorithms
-  interact strictly with storage interfaces, keeping numerical routines agnostic
-  to
-  hardware-specific layout quirks.
-- **Trait Boundaries:** Raw memory traversal (`ptr`, `ptr_mut`, `offset`,
-  `get_unchecked`, `get_unchecked_mut`) belongs strictly in the base `Storage`
-  trait.
-  Slice coercion (`as_slice`, `as_mut_slice`) is restricted to the
-  `ContiguousStorage`
-  and `ContiguousStorageMut` sub-traits to safely accommodate strided, padded,
-  or
-  non-contiguous memory without data corruption.
-- **Supported Storage Backends:** The architecture natively supports:
-    - **Stack-based arrays (`ArrayStorage`)**: Owned, column-major `#[repr(C)]`
-      arrays.
-    - **Zero-copy views (`MatrixView`, `MatrixViewMut`)**: Borrowed slice
-      references
-      supporting non-destructive transposition.
-    - **Auxiliary scratch space (`PivotStorage`)**: Statically bounded arrays
-      for
-      factorization bookkeeping without dynamic allocation.
-    - **Read-only Flash wrappers**: `const fn`-constructible storage for baking
-      static
-      matrices directly into ROM.
-    - **DMA-safe memory pools**: Custom-aligned buffers for zero-tearing DMA
-      transfers.
+```text
+                    Storage<T, R, C>
+                   /                \
+     StorageMut<T, R, C>    ContiguousStorage<T, R, C>
+                   \                /
+              ContiguousStorageMut<T, R, C>
+```
+
+- **`offset()` as the single layout control point:** every backend implements
+  `ptr()` / `ptr_mut()` plus `offset(i, j) -> isize`, mapping a logical
+  `(row, col)` index to a pointer displacement. Row-major, column-major,
+  reversed, and strided/padded layouts are all expressed by swapping this one
+  method; no other code changes.
+- **Mutability and contiguity as orthogonal bounds:** `StorageMut` gates write
+  access; `ContiguousStorage` / `ContiguousStorageMut` gate `as_slice()` /
+  `as_mut_slice()` behind a compile-time guarantee of gap-free memory. This
+  keeps padded or strided backends from leaking uninitialized bytes through a
+  safe slice API, and lets `Matrix<T, R, C, S>` conditionally expose
+  slice-based methods based on which bounds `S` satisfies.
+- **Backend catalog:** `ArrayStorage` (owned, column-major, `#[repr(C)]`),
+  `MatrixView` / `MatrixViewMut` (borrowed, zero-copy, support
+  non-destructive transposition via `offset()`), and `PivotStorage` (bounded
+  scratch space for decomposition bookkeeping — not a full `Storage`
+  implementor). Flash/ROM and DMA-pool backends are supported extension
+  points (FR-3d) rather than shipped types.
 
 ---
 
@@ -519,9 +507,11 @@ embedded control systems:
    e.g., $(AB)^T = B^T A^T$)
    and verify safe, panic-free degradation for ill-conditioned or singular
    matrices.
-3. **Hardware-in-the-Loop (HIL):** Cross-compiled code is executed on actual
-   target hardware
-   to profile L1 cache misses, FPU cycle counts, and pipeline dependencies.
+3. **Hardware-in-the-Loop (HIL):** Deferred until a hardware-specific backend
+   (Flash, DMA) ships. Not applicable to the initial `ArrayStorage` / view /
+   scratch backends, which are fully verified on host. Once a target-specific
+   backend lands, cross-compiled code will be profiled on actual hardware for
+   L1 cache misses, FPU cycle counts, and pipeline dependencies.
 4. **Stack Bounds Verification:** Matrix capacities are strictly capped
    at $32 \times 32$
    elements to mathematically guarantee that a single matrix instance never
@@ -548,48 +538,23 @@ embedded control systems:
 
 ### 8. Risks & Open Questions
 
-1. **`Const<N>` vs Peano for `DimMul`**: The current Peano `DimMul`
-   implementation uses recursive trait solving (`S<N> * M = M + (N * M)`).
-   For large dimensions (e.g., 32×32 = 1024), this may hit the trait
-   recursion limit. Should `DimMul` be implemented directly for `Const<N>`
-   using const evaluation instead? No, Dim does not support large enough
-   values for this to be a problem.
-
-2. **`clippy::large_stack_arrays` threshold**: The `clippy.toml` does not
-   override the default (512 KiB), and the Peano ceiling (U32) is the
-   binding constraint. Should this be explicitly documented as a hard
-   limit, or should `ArrayStorage` enforce a compile-time size assertion?
-   the Peano type limit is sufficient for now.
-
-3. **Lifetime ergonomics for `MatrixViewMut`**: Borrowed backends carry a
-   lifetime `'a`, which propagates into any type that contains them (e.g.,
-   `Matrix<f32, U100, U100, MatrixViewMut<'_, f32, U100, U100>>`). This can
-   make type signatures verbose. Is a type alias strategy (e.g.,
-   `type MatSliceMut<'a, T, R, C> = Matrix<T, R, C, MatrixViewMut<'a, T, R, C>>`)
-   sufficient, or does this warrant a different approach? Not atm.
-
-4. **Existing BLAS migration**: The current `GEMV`/`GEMM` implementations
-   use row-major access patterns (`chunks_exact(cols)`). The `ArrayStorage`
-   backend is column-major. What is the preferred migration path: rewrite
-   the subprograms to column-major, or provide layout-aware wrappers that
-   dispatch based on the storage's `offset()` implementation? Yes.
+**Lifetime ergonomics for borrowed backends:** `MatrixViewMut` carries a
+lifetime `'a`, which propagates into any containing type (e.g.,
+`Matrix<f32, U100, U100, MatrixViewMut<'_, f32, U100, U100>>`). A type-alias
+convenience layer (e.g., `type MatSliceMut<'a, T, R, C> = Matrix<T, R, C,
+MatrixViewMut<'a, T, R, C>>`) is deferred until real call sites show the
+verbosity is a practical problem rather than a cosmetic one.
 
 ---
 
 ### 9. Development Plan
 
-| Task / Feature                       | Description                                                                 | Estimated Effort |
-|:-------------------------------------|:----------------------------------------------------------------------------|:-----------------|
-| Step 1: Trait definition             | Define `Storage`, `StorageMut`, `ContiguousStorage`, `ContiguousStorageMut` | S                |
-| Step 2: `ArrayStorage` backend       | Implement `ArrayStorage<T, R, C>` backed by `[[T; R]; C]`                   | M                |
-| Step 3: `MatrixView` backend         | Implement `MatrixView<'a, T, R, C>` over `&'a [T]`                          | S                |
-| Step 4: `MatrixViewMut` backend      | Implement `MatrixViewMut<'a, T, R, C>` over `&'a mut [T]`                   | S                |
-| Step 5: `PivotStorage` scratch type  | Implement `PivotStorage<D>` for decomposition bookkeeping                   | S                |
-| Step 6: Initialization constructors  | `from_fn`, `from_element`, `zero`, `identity`, `diagonal`                   | M                |
-| Step 7: BLAS integration smoke tests | Verify `as_slice()` works with `GEMV`, `GEMM` traits                        | S                |
-| Step 8: `Matrix<T, R, C, S>` type    | Introduce the generic matrix wrapper consuming `Storage`                    | L                |
-| Step 9: Polynomial migration         | Retrofit `Polynomial` to use `ArrayStorage` internally                      | M                |
-| Step 10: StateSpace migration        | Retrofit `StateSpace` to use `Storage` backends                             | L                |
+| Task / Feature                              | Description                                                                                                                | Estimated Effort |
+|:---------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| Phase 1: Trait Hierarchy & Core Backend     | Define `Storage`, `StorageMut`, `ContiguousStorage`, `ContiguousStorageMut`; implement `ArrayStorage<T, R, C>`             | M                 |
+| Phase 2: View & Scratch Storage             | Implement `MatrixView`, `MatrixViewMut`, and `PivotStorage<D>`                                                              | M                 |
+| Phase 3: Initialization & BLAS Integration  | Add `from_fn`, `from_element`, `zeros`, `identity`, `diagonal` constructors; verify `as_slice()` interop with `GEMV`/`GEMM` | M                 |
+| Phase 4: `Matrix` Wrapper & Retrofit        | Introduce `Matrix<T, R, C, S>`; migrate `Polynomial` and `StateSpace` onto storage backends                                 | L                 |
 
 ---
 
@@ -599,3 +564,4 @@ embedded control systems:
 |:-----------|:----------------|:---------------------------------------------------------------------------------------------|
 | 2026-07-26 | @MitchellDScott | Initial draft                                                                                |
 | 2026-07-26 | @MitchellDScott | Expanded Core Architecture, Alternatives, and 4-pillar V&V sections to align with matrix doc |
+| 2026-08-01 | @MitchellDScott | Rewrote Core Architecture to remove decomposition-scope drift and duplicate FR text; folded resolved Risks items into Requirements; collapsed Development Plan into 4 phases; caveated HIL applicability |

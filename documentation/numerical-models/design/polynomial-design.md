@@ -9,42 +9,67 @@
 ### 1. Introduction
 
 The `Polynomial` type in `control-rs` provides a statically sized,
-single-variable representation of polynomials parameterized over a memory
-storage backend (`Storage<T, N, U1>`). Designed for classical control
-engineering, signal processing, trajectory generation, and numerical algebra,
-this type enables algebraic operations and discretization routines without
-mandatory heap allocation or forced stack ownership.
+single-variable polynomial, generic over a `Storage<T, N, U1>` backend of
+capacity `N` (maximum representable degree `N - 1`). It backs four concrete
+use cases: FIR/IIR filter coefficient representation and evaluation,
+Tustin/ZOH discretization of continuous models, cubic/quintic trajectory
+generation, and companion-matrix root finding for characteristic polynomials
+produced by `Matrix`.
 
+Requiring no heap allocation and no forced stack ownership is a crate-wide
+guarantee (see [README](../../README.md)), not something specific to
+`Polynomial`. What is specific to this module is the ascending-power
+coefficient layout and the degree-aware capacity arithmetic described in the
+sections below.
 
 ---
 
-### 2. Motivation & Target Constraints
+### 2. Requirements
 
-#### 2.1 Environmental Limitations
+#### 2.1 Functional Requirements
 
-Embedded control loop platforms require deterministic memory footprints. Dynamic
-allocation is prohibited in real-time execution kernels, meaning polynomial
-capacity must be compile-time bounded or backed by caller-provided borrowed
-buffers (`&[T]`) to eliminate stack overflow risks on memory-constrained
-targets.
+- **Compile-Time Sizing**: Enforce polynomial capacity/degree bounds at
+  compile time using [num_types](../../src/math/num_types.rs) (`Dim`).
+- **Constructors**: Provide `const fn` constructors for common low-degree
+  cases (`constant`, `line`) and general capacity (`from_coefficients`), plus
+  runtime constructors over borrowed memory (`from_slice`, `from_fn`).
+- **Core Arithmetic**: Implement operator overloading for polynomial
+  addition, subtraction, and negation (`Add`, `Sub`, `Neg`).
+- **Multiplication**: Provide two multiplication paths — `mul_poly` for
+  statically-sized, capacity-bound multiplication, and `mul_with_conv` for
+  DSP-kernel-backed convolution via the `Convolution<T>` trait.
+- **Evaluation**: Evaluate $p(x)$ using Horner's method in exactly $N-1$
+  multiply-adds.
+- **Division**: Implement `div_rem` to compute quotient and remainder
+  polynomials with statically resized capacity bounds.
+- **Calculus Operations**: Implement analytical derivative and integral
+  methods returning statically resized polynomial bounds.
+- **Type Conversions**: Support conversion to a companion `Matrix` (for
+  root-finding) and to a rank-1 `Tensor`.
 
-#### 2.2 Target Applications
+#### 2.2 Non-Functional Requirements
 
-- **Signal Processing & Filter Synthesis**: FIR/IIR digital filter
-  representations and polynomial evaluation.
-- **Discretization Algorithms**: Bilinear (Tustin) transform and ZOH mapping of
-  continuous models to discrete equivalents.
-- **Trajectory Generation**: Generating smooth motion paths via cubic or quintic
-  splines.
-- **Companion Matrices & Root Finding**: Canonical matrix transformations for
-  characteristic polynomial analysis.
+- **Deterministic Execution**: Horner evaluation and `div_rem` must execute in
+  a fixed, data-independent number of operations for a given capacity `N`.
+- **Zero-Cost Storage Abstraction**: The `Storage<T, N, U1>` abstraction must
+  monomorphize and inline without vtables or dynamic dispatch.
+- **Vectorization-Friendly Layout**: Contiguous storage backends must allow
+  compiler SIMD auto-vectorization over coefficient slices.
 
-#### 2.3 Safety & Static Verification
+#### 2.3 Constraints
 
-Polynomial capacities are bound directly in the type system via Peano numbers (
-`Dim`). Operations such as polynomial multiplication yield a result whose
-type-level capacity is statically verified to fit the product degree, catching
-capacity mismatches at compile time.
+- **No-Std Environment**: The code must compile and run in `#![no_std]`
+  environments without the Rust standard library (crate-wide rule, see
+  [README](../../README.md)).
+- **No Dynamic Allocation**: The module must not use a heap allocator; all
+  memory allocations must be static or stack-based (crate-wide rule).
+- **Coefficient Ordering**: Coefficients are stored in **ascending order of
+  powers** (see §3.3 for the full layout rationale). This is the canonical
+  statement of the convention; other numerical models that share it (e.g.
+  `transfer-function-design.md`) reference this section rather than restating
+  it.
+- **Capacity Bound**: Maximum polynomial capacity is limited to 128 elements
+  (see the crate-level capacity table in [README](../../README.md)).
 
 ---
 
@@ -329,3 +354,4 @@ via Peano type constraints.
 | July 12, 2026 | @MitchellDScott | Initial draft with static array layout.                                                             |
 | July 26, 2026 | @MitchellDScott | Integrated `Storage<T, N, U1>` trait hierarchy to support borrowed zero-copy views and ROM storage. |
 | July 26, 2026 | @MitchellDScott | Added inline academic citations and 3-tiered references section.                                    |
+| August 1, 2026 | @MitchellDScott | Restructured section 2 to match the crate-wide Requirements template (Functional/Non-Functional/Constraints), rewrote the introduction with concrete use cases, and made the coefficient-ordering constraint the canonical statement for cross-referencing from other models. |

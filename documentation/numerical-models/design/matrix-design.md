@@ -9,32 +9,23 @@
 ### 1. Introduction
 
 This module provides the matrix operations required by advanced control and
-state estimation. The design is essentially a `#![no_std]` adaptation of the
-`nalgebra` linear algebra crate (licensed under BSD-3-Clause, by Sébastien
+state estimation. Its architecture is directly modeled on
+the `nalgebra` linear algebra crate (licensed under BSD-3-Clause, by Sébastien
 Crozet).
-We gratefully acknowledge the `nalgebra` library as the primary architectural
-source for this module's design.
 
 The following elements of `nalgebra` are directly mirrored or adapted in our
 architecture:
 
 - **Matrix Signature**: `Matrix<T, R: Dim, C: Dim, S: Storage<T, R, C>>` is
-  identical to `nalgebra`'s signature, decoupling dimensions from data storage.
-- **Storage Trait Hierarchy**: The `Storage`, `StorageMut`, `ContiguousStorage`,
-  and `ContiguousStorageMut` traits, defining how data is retrieved, mutated,
-  and sliced.
+  identical to `nalgebra`'s.
+- **Storage Trait Hierarchy**: `control-rs` extends this with its own
+  `ContiguousStorage`/`ContiguousStorageMut` traits (see below).
 - **ArrayStorage Structure**: `ArrayStorage<T, R, C>` wrapping `[[T; R]; C]`
   with `#[repr(transparent)]` (or `#[repr(C)]` on storage types) for contiguous
   stack storage.
 - **Matrix Views**: `MatrixView` and `MatrixViewMut` providing zero-copy
   non-destructive window slices over memory, equivalent to `ViewStorage` and
   `ViewStorageMut`.
-- **Dimension Arithmetic**: The `Dim` trait accompanied by compile-time
-  arithmetic operations (`DimAdd`, `DimSub`, `DimMul`).
-- **Column-Major Representation**: Storage elements laid out contiguously in
-  column-major order to align with cache locality and legacy FFI.
-- **Slice Coercion**: Gating `as_slice()` and `as_mut_slice()` access safely
-  behind the `ContiguousStorage` trait to avoid invalid slice bounds or strides.
 
 ---
 
@@ -87,7 +78,9 @@ architecture:
 ### 3. Technical Overview
 
 `Matrix` is a type-safe wrapper that provides compile time dimension and type
-bounds to guarantee that unsafe subprograms are not misused.
+bounds to guarantee that unsafe subprograms are not misused. Beyond safety,
+the API is also designed to make expressing and solving linear systems —
+factorization, inversion, and substitution — convenient for callers.
 
 ---
 
@@ -110,6 +103,12 @@ The `Dim` trait and Peano number representations defined in
 arithmetic (e.g., dimension addition or multiplication) to statically verify
 shape changes at compile time, while `S` determines where and how elements are
 physically stored in memory.
+
+This is the actual point of decoupling storage from the matrix: one
+`Matrix<T, R, C, S>` implementation — one set of arithmetic, factorization,
+and conversion routines — operates unmodified over any conforming storage
+backend (stack array, borrowed view, or memory-mapped DMA register), instead
+of requiring a separate implementation per backend.
 
 #### 4.2. Memory Layout & Storage Strategy
 
@@ -277,13 +276,13 @@ where
       `invert(&self) -> Result<Matrix<T, D, D>, LinAlgError>`) are explicitly
       rejected to prevent unexpected stack bloat in embedded runtimes.
     -
-    `pub fn invert_mut(&mut self, pivots: &mut [usize]) -> Result<(), LinAlgError>`:
-    Inverts a square matrix purely in-place using caller-provided pivot scratch
-    space.
+  `pub fn invert_mut(&mut self, pivots: &mut [usize]) -> Result<(), LinAlgError>`:
+  Inverts a square matrix purely in-place using caller-provided pivot scratch
+  space.
     -
-    `pub fn invert_into(&self, dest: &mut Matrix<T, D, D, S2>, pivots: &mut [usize]) -> Result<(), LinAlgError>`:
-    Computes the matrix inverse into a caller-provided destination matrix
-    buffer.
+  `pub fn invert_into(&self, dest: &mut Matrix<T, D, D, S2>, pivots: &mut [usize]) -> Result<(), LinAlgError>`:
+  Computes the matrix inverse into a caller-provided destination matrix
+  buffer.
     - **Symmetric Matrices**: Factorized via **$LDL^T$ Decomposition
       ** ($A = L D L^T$).
     - **General Square Matrices**: Factorized via **LU Decomposition with
@@ -852,8 +851,6 @@ execution predictability.
 
 ### 9. References
 
-#### 9.1. Practical
-
 1. **Golub, G. H., & Van Loan, C. F. (2013).** _Matrix Computations_ (4th ed.).
    Johns Hopkins University Press. — Flop-count basis for in-place
    factorizations ($O(N^3/3)$ Cholesky/$LDL^T$, $O(2N^3/3)$ LU, $O(4N^3/3)$ QR).
@@ -882,15 +879,9 @@ execution predictability.
 8. **Demmel, J. W. (1997).** _Applied Numerical Linear Algebra_. SIAM. —
    Reference textbook for standard numerical linear algebra algorithms and
    conventional BLAS/LAPACK routine mapping.
-
-#### 9.2. Theoretical
-
 9. **Faddeev, D. K., & Faddeeva, V. N. (1963).** _Computational Methods of
    Linear Algebra_. W. H. Freeman and Company. — Classical derivation behind the
    division-free Faddeev–LeVerrier matrix characteristic polynomial formulation.
-
-#### 9.3. Standards, Safety and Verification
-
 10. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool for
     Random Testing of Haskell Programs. _ACM SIGPLAN Notices_, 35(9), 268–279. —
     Random generation and shrinking methodology behind property-based test
@@ -913,11 +904,12 @@ execution predictability.
 
 ### 10. Revision History
 
-| Revision | Date          | Author          | Description of Changes                                                                                                                                                          |
-|:---------|:--------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026 | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                                                                                  |
-| 2.0      | July 19, 2026 | @MitchellDScott | Restructured to new template; added embedded performance/verification details.                                                                                                  |
-| 3.0      | July 25, 2026 | @MitchellDScott | Added supporting bibliography and inline citations.                                                                                                                             |
-| 4.0      | July 26, 2026 | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, decoupled Storage trait model, and no_alloc scratch space patterns.                                                 |
-| 5.0      | July 26, 2026 | @MitchellDScott | Harmonized matrix design with storage trait design doc; updated Matrix<T, R, C, S> definition, contiguous bounds, explicit decomposition rules, alternatives, and 4-pillar V&V. |
-| 6.0      | July 26, 2026 | @MitchellDScott | Added comprehensive 3-tiered bibliography (Practical/Analytical, Theoretical, Cross-Cutting Standards & Safety) and inline citations across core architectural sections.        |
+| Revision | Date           | Author          | Description of Changes                                                                                                                                                                                                             |
+|:---------|:---------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 12, 2026  | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                                                                                                                                     |
+| 2.0      | July 19, 2026  | @MitchellDScott | Restructured to new template; added embedded performance/verification details.                                                                                                                                                     |
+| 3.0      | July 25, 2026  | @MitchellDScott | Added supporting bibliography and inline citations.                                                                                                                                                                                |
+| 4.0      | July 26, 2026  | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, decoupled Storage trait model, and no_alloc scratch space patterns.                                                                                                    |
+| 5.0      | July 26, 2026  | @MitchellDScott | Harmonized matrix design with storage trait design doc; updated Matrix<T, R, C, S> definition, contiguous bounds, explicit decomposition rules, alternatives, and 4-pillar V&V.                                                    |
+| 6.0      | July 26, 2026  | @MitchellDScott | Added comprehensive 3-tiered bibliography (Practical/Analytical, Theoretical, Cross-Cutting Standards & Safety) and inline citations across core architectural sections.                                                           |
+| 7.0      | August 1, 2026 | @MitchellDScott | Corrected `nalgebra` comparison claims (no_std support, nonexistent `ContiguousStorage` trait), clarified the actual benefit of decoupling storage from `Matrix`, and added a system-solving convenience note per review feedback. |

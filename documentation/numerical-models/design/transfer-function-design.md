@@ -93,11 +93,12 @@ if the underlying storage backends implement `ContiguousStorage`.
 
 #### 2.3 Constraints
 
-- Coefficients are stored in **ascending order of powers**:
-  $$ B(s) = b_0 + b_1 s + \dots + b_{N-1} s^{N-1} $$
-  $$ A(s) = a_0 + a_1 s + \dots + a_{D-1} s^{D-1} $$
-- Denominator capacity $D$ must satisfy $D \ge 1$ and non-zero leading
-  coefficient ($a_{D-1} \neq 0$).
+- **Coefficient Ordering**: Ascending order of powers for both numerator and
+  denominator, following the same convention as `Polynomial` (see
+  [polynomial-design.md §2.3](polynomial-design.md#23-constraints)):
+  $$ B(s) = b_0 + b_1 s + \dots + b_{N-1} s^{N-1}, \quad A(s) = a_0 + a_1 s + \dots + a_{D-1} s^{D-1} $$
+- **Denominator Validity**: Denominator capacity $D$ must satisfy $D \ge 1$
+  and a non-zero leading coefficient ($a_{D-1} \neq 0$).
 
 ---
 
@@ -392,3 +393,4 @@ $$\mathbf{C} = \begin{bmatrix} b_0 & b_1 & \dots & b_{n-1} \end{bmatrix}, \quad 
 |:--------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------|
 | July 26, 2026 | @MitchellDScott | Initial draft establishing `TransferFunction` as a standalone peer storage wrapper interacting directly with Peano, DSP, and subprogram traits. |
 | July 26, 2026 | @MitchellDScott | Added inline academic citations and 3-tiered references section.                                                                                |
+| August 1, 2026 | @MitchellDScott | Deduplicated the coefficient-ordering constraint by cross-referencing `polynomial-design.md`'s canonical statement instead of restating it. |

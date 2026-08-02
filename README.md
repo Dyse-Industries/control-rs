@@ -1,21 +1,17 @@
 # control-rs
 
 `control-rs` is a `no_std` Rust library for numerical modeling, control
-synthesis, and real-time execution. It targets autonomous systems and bare-metal
-embedded platforms.
+synthesis, and real-time execution, targeting autonomous systems and
+bare-metal embedded platforms.
 
-By leveraging Rust's uncompromising ownership model, zero-cost abstractions, and
-explicit memory layout control, `control-rs` guarantees memory safety, execution
-determinism, and predictable cache locality for resource-constrained
-microcontrollers.
+It uses Rust's ownership model, zero-cost abstractions, and explicit memory
+layout control to provide memory safety and deterministic execution timing
+without a heap allocator.
 
 ---
 
 ## Key Features
 
-* **Absolute Memory Control:** Zero implicit heap allocation. All structures are
-  statically allocated, stack-bound, or managed via fixed-size allocators with
-  strict memory caps (e.g., 4KB limits) to prevent stack overflows.
 * **Decoupled Storage Architecture:** Algorithms are entirely agnostic to
   hardware memory layouts. Mathematical structures can seamlessly reside on the
   execution stack, in caller-owned scratch spaces, or within memory-mapped DMA
@@ -26,31 +22,39 @@ microcontrollers.
 * **C-ABI Interoperability:** Enforces contiguous memory and `#[repr(C)]`
   layouts, ensuring zero-copy, safe integration with legacy C-based DSP
   libraries and hardware accelerators.
-* **Deterministic Factorization:** Matrix inversions and decompositions mandate
-  caller-provided scratch buffers (`PivotStorage`), eliminating recursive memory
-  consumption and unbounded execution times.
 
 ---
 
 ## Mathematical Models
 
-`control-rs` is built around three core mathematical models, each tailored for
-specific control theory applications and rigidly bounded to respect embedded
-hardware constraints.
+`control-rs` is built around three core numerical primitives — `Polynomial`,
+`Matrix`, and `Tensor` — each rigidly bounded to respect embedded hardware
+constraints. `TransferFunction` and `StateSpace` are built on top of these
+primitives to represent LTI control systems directly (rational transfer
+functions and state-space realizations, respectively). All five types share
+the same `Storage` trait abstraction; that trait boundary is what leaves room
+to add representations for more complex or nonlinear systems later without
+changing the core API.
 
-| Model          | Capacity Limit        | Primary Applications                                   | Key Algorithms & Mechanics                                                  |
-|----------------|-----------------------|--------------------------------------------------------|-----------------------------------------------------------------------------|
-| **Polynomial** | 128 elements          | Transfer functions, signal filtering, discretization.  | Horner's Method (FMA optimized), Tustin transform.                          |
-| **Matrix**     | 32x32 (1024 elements) | State-space modeling, observability, MIMO systems.     | Type-level dimensions, division-free Faddeev-LeVerrier `$p(x)=\det(xI-A)$`. |
-| **Tensor**     | 1024 elements total   | Spatial grid modeling, Edge AI, multi-dimensional LTI. | Column-major sequencing, in-place contraction (`contract_into`).            |
+| Model                | Capacity Limit        | Primary Applications                                               | Key Algorithms & Mechanics                                                  |
+|----------------------|------------------------|---------------------------------------------------------------------|------------------------------------------------------------------------------|
+| **Polynomial**       | 128 elements           | Signal filtering, trajectory generation, discretization.             | Horner's Method (FMA optimized), Tustin transform.                          |
+| **Matrix**           | 32x32 (1024 elements)  | State-space modeling, observability, MIMO systems.                   | Type-level dimensions, division-free Faddeev-LeVerrier `$p(x)=\det(xI-A)$`. |
+| **Tensor**           | 1024 elements total    | Spatial grid modeling, Edge AI, multi-dimensional LTI.                | Column-major sequencing, in-place contraction (`contract_into`).            |
+| **TransferFunction** | `Polynomial`-bound     | SISO/MIMO rational transfer functions $H(s)$, $H(z)$.                | Direct storage-backed Horner evaluation, series/parallel/feedback algebra.  |
+| **StateSpace**       | `Matrix`-bound         | Continuous/discrete LTI state-space models, Kalman filtering, LQR.    | Zero-copy `MatrixView` composition, ZOH/Tustin discretization.              |
 
 ---
 
 ## Architecture & Dependency Structure
 
-The framework decouples mathematical operations from physical memory through the
-central `Storage` trait, ensuring geometric algorithms remain entirely
-hardware-agnostic.
+Hardware-agnosticism comes from two things working together: the `Storage`
+trait, which abstracts *how* elements are read and written, and a set of
+storage backends targeting different memory (stack arrays, borrowed views,
+DMA-mapped peripheral registers). Decoupling storage from the math alone
+doesn't make an algorithm hardware-agnostic — it's what makes it possible for
+the same `Matrix`/`Polynomial`/`Tensor` implementation to run unmodified over
+whichever backend a given target requires.
 
 ```mermaid
 ---

@@ -30,12 +30,18 @@ and $(N_y \times N_u)$ respectively.
 Following the design philosophy established by `TransferFunction` and `Matrix`,
 `StateSpace` is a **standalone, generic container** built directly on top of
 four generic storage backends (`Sa`, `Sb`, `Sc`, `Sd`) implementing the
-`Storage` trait. Rather than requiring heap allocations (`Vec`) or rigid matrix
-types, `StateSpace` stores system matrices in decoupled storage containers. It
-leverages the high-level `Matrix` type and zero-copy `MatrixView` wrappers to
-execute linear algebra operations safely and conveniently, while retaining
-direct access to lower-level Peano dimension traits (`Dim`), storage traits, and
-BLAS kernels.
+`Storage` trait, rather than storing four `Matrix<T, R, C, S>` fields
+directly. Avoiding heap allocation is the crate-wide `no_alloc` rule (see
+[README](../../README.md)), not a `StateSpace`-specific decision; what is
+specific here is *why* raw storage backends are used instead of full `Matrix`
+wrappers: it avoids redundant type-wrapper parameters on every field, and it
+lets each matrix ($A$, $B$, $C$, $D$) opt into a different storage strategy
+independently — for example a stack-allocated $A$ alongside a
+zero/identity-view $D$ — without changing the `StateSpace` signature (see §6,
+Alternative C). `StateSpace` still leverages the high-level `Matrix` type and
+zero-copy `MatrixView` wrappers to execute linear algebra operations safely
+and conveniently, while retaining direct access to lower-level Peano
+dimension traits (`Dim`), storage traits, and BLAS kernels.
 
 This architecture achieves:
 
@@ -552,3 +558,6 @@ Converts a continuous `StateSpace` model ($T_s = \text{None}$) into a discrete
   document.
 - **July 26, 2026**: Added inline academic citations and 3-tiered references
   section (@MitchellDScott).
+- **August 1, 2026**: Separated the crate-wide `no_alloc` rule from the
+  `StateSpace`-specific justification for using raw storage backends instead
+  of wrapping `Matrix` fields directly (@MitchellDScott).
