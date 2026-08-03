@@ -155,6 +155,17 @@ in `offset()` without allocating new memory or copying any bytes. A
 transposed view simply returns `(j * R::DIM + i)` instead of
 `(i * C::DIM + j)`, reinterpreting the same underlying buffer.
 
+**This document is the sole owner of the `MatrixView`/`MatrixViewMut`
+struct definitions** (fields, `offset()` implementation, transposition
+mechanics). Consuming documents (`matrix-design.md` and any future
+`tensor-design.md`/`polynomial-design.md` revision) reference these types
+by name and define only their own wrapper aliases on top
+(`Matrix<T, R, C, MatrixView<'a, T, R, C>>`, etc.) — they must not restate
+or re-derive the struct's field layout. `matrix-design.md` previously
+carried its own competing struct sketch for these two types; that
+duplication is removed as of `matrix-design.md`'s current revision (see
+that document's revision history) specifically to close this gap.
+
 **FR-3c: Auxiliary / Scratch Storage**
 
 Decomposition algorithms (LU, QR, Cholesky) require auxiliary bookkeeping
@@ -211,6 +222,11 @@ mutability (read-only vs. read-write) and contiguity (strided vs. contiguous).
       contiguity.
       Backends like `ArrayStorage` and `MatrixView` implement this. Strided,
       padded, or DMA-aligned backends do **not**.
+    - `const ORDER: MatrixLayout` — declares which physical layout the flat
+      slice from `as_slice()` represents (`MatrixLayout::RowMajor` or
+      `MatrixLayout::ColMajor`). This is the mechanism that lets FR-6's BLAS
+      interop work for *any* contiguous backend, not just column-major ones —
+      see FR-6 and NFR-6.
 - **`ContiguousStorageMut<T, R, C>: StorageMut + ContiguousStorage`** —
   combines mutability and contiguity. Provides:
     - `as_mut_slice(&mut self) -> &mut [T]`
@@ -244,9 +260,31 @@ BLAS subprogram traits (`AXPY`, `DOT`, `GEMV`, `GEMM`) via its `as_slice()` /
 `ContiguousStorage` sub-trait's slice views are the bridge between
 type-checked matrix code and raw-slice BLAS kernels.
 
+**Layout genericity is a hard requirement, not an implementation detail**:
+a caller must be able to swap a backend's physical layout (row-major vs.
+column-major) — or introduce a second `ArrayStorage`-like backend with the
+opposite layout — without changing a single line of `Matrix`'s arithmetic
+implementations. This is achieved by threading `ContiguousStorage::ORDER`
+(FR-4) through to the BLAS call as an explicit parameter, the same role
+CBLAS's `Order` argument (`CblasRowMajor`/`CblasColMajor`) plays ahead of
+every `cblas_*gemm`/`*gemv` call: `Matrix`'s operator implementations read
+`S::ORDER` off their own storage backend and pass it straight through, and
+never branch on layout themselves. Concretely, `GEMV`/`GEMM`/`AXPY` gain an
+`order: MatrixLayout` parameter (alongside the existing `rows`/`cols`
+parameters, which already serve the role CBLAS splits across `lda`/`ldb`/
+`ldc` for a densely-packed contiguous backend); a single implementation
+branches on `order` internally rather than requiring one dispatch-wrapper
+per storage type. This is the direct fix for the mismatch recorded in NFR-6.
+
 Non-contiguous backends (strided, padded) interact with BLAS only through
 element-wise access or by copying into a contiguous temporary — this is an
 explicit, visible cost rather than a silent abstraction leak.
+
+> **Citation gap**: the CBLAS `Order`-parameter convention itself is not yet
+> backed by a source in `research/results/matrix.json` (that file's BLAS
+> citations cover accumulator width and LAPACK/BLASFEO layout trade-offs, not
+> the `Order`-as-argument mechanism specifically). Treat the mechanism above
+> as architecturally decided but the citation as open — see §8.
 
 ##### FR-7: Retrofit Existing Types
 
@@ -338,23 +376,37 @@ The `Storage` trait itself **must not** require `T: Default`, `T: Clone`,
 
 ##### NFR-6: Memory Layout Guarantees
 
-`ArrayStorage<T, R, C>` uses column-major (Fortran-order) layout via
-`[[T; R]; C]` annotated with `#[repr(C)]`. Element `(i, j)` of an `R × C`
-matrix is at linear index `j * R::DIM + i`. This is the standard convention
-for BLAS/LAPACK and enables column `j` to be accessed as a single
-contiguous `[T; R]` slice.
+`ArrayStorage<T, R, C>`'s *default* choice is column-major (Fortran-order)
+layout via `[[T; R]; C]` annotated with `#[repr(C)]`. Element `(i, j)` of an
+`R × C` matrix is at linear index `j * R::DIM + i`. This is the standard
+convention for BLAS/LAPACK and enables column `j` to be accessed as a single
+contiguous `[T; R]` slice. It is a default, not a hard-coded assumption
+baked into `Matrix`: per FR-4/FR-6, `ArrayStorage` declares
+`ContiguousStorage::ORDER = MatrixLayout::ColMajor`, and every downstream
+consumer (BLAS subprogram calls, `Matrix`'s own arithmetic) reads that
+constant rather than assuming it.
 
 The `offset()` abstraction (FR-1) allows individual backends to implement
 any layout. The default `ArrayStorage::offset()` returns
 `(j * R::DIM + i) as isize` (column-major). View types can override this
 to provide transposed (row-major) access without copying data.
 
-> **Note:** The existing `GEMV`/`GEMM` implementations in `subprograms.rs`
-> currently use row-major access patterns (`chunks_exact(cols)`). The
-> migration path is to rewrite these subprograms directly to column-major
-> access, not to introduce layout-aware dispatch wrappers — keeping the BLAS
-> layer's access pattern in sync with `ArrayStorage`'s fixed layout avoids a
-> permanent dual-path maintenance burden.
+> **Resolved (supersedes the prior note in this section)**: The existing
+> `GEMV`/`GEMM` implementations in `subprograms.rs` currently use row-major
+> access patterns (`chunks_exact(cols)`), which do not match
+> `ArrayStorage`'s column-major default — a real, currently-live mismatch
+> between the two modules. An earlier revision of this document proposed
+> resolving it by rewriting the subprograms to hard-code column-major
+> access. That approach was rejected: it would re-introduce exactly the kind
+> of hard-coded-layout assumption this trait hierarchy exists to eliminate,
+> and it would make a future row-major backend (e.g. a DMA buffer populated
+> by a peripheral that only produces row-major data) impossible to support
+> without a parallel set of subprogram implementations. FR-6's
+> `ContiguousStorage::ORDER`-as-parameter mechanism is the adopted fix
+> instead: one `GEMV`/`GEMM`/`AXPY` implementation, parameterized by
+> `order`, serves every contiguous layout. This is a `subprograms.rs`
+> change, deferred to implementation — not made in this revision, which is
+> documentation-only.
 
 ---
 
@@ -450,12 +502,20 @@ the existing `Dim` system.
   keeps padded or strided backends from leaking uninitialized bytes through a
   safe slice API, and lets `Matrix<T, R, C, S>` conditionally expose
   slice-based methods based on which bounds `S` satisfies.
-- **Backend catalog:** `ArrayStorage` (owned, column-major, `#[repr(C)]`),
-  `MatrixView` / `MatrixViewMut` (borrowed, zero-copy, support
+- **Backend catalog:** `ArrayStorage` (owned, column-major by default,
+  `#[repr(C)]`), `MatrixView` / `MatrixViewMut` (borrowed, zero-copy, support
   non-destructive transposition via `offset()`), and `PivotStorage` (bounded
   scratch space for decomposition bookkeeping — not a full `Storage`
   implementor). Flash/ROM and DMA-pool backends are supported extension
   points (FR-3d) rather than shipped types.
+- **Layout as data, not assumption:** `MatrixLayout` (`RowMajor` /
+  `ColMajor`) is a plain two-variant enum. Every `ContiguousStorage`
+  backend declares its layout via the `ORDER` associated const (FR-4);
+  BLAS-facing subprogram traits accept `order: MatrixLayout` as a
+  parameter (FR-6) instead of assuming one. `Matrix`'s own code reads
+  `S::ORDER` and forwards it — it never hard-codes either layout, which is
+  what makes swapping `ArrayStorage`'s default column-major choice for a
+  row-major (or other) backend a zero-`Matrix`-code-change operation.
 
 ---
 
@@ -545,6 +605,17 @@ convenience layer (e.g., `type MatSliceMut<'a, T, R, C> = Matrix<T, R, C,
 MatrixViewMut<'a, T, R, C>>`) is deferred until real call sites show the
 verbosity is a practical problem rather than a cosmetic one.
 
+**CBLAS `Order`-parameter citation is open:** FR-6's layout-genericity
+mechanism (`ContiguousStorage::ORDER` threaded through to `GEMV`/`GEMM`/
+`AXPY` as an explicit parameter) is architecturally decided but not yet
+backed by a source in `research/results/matrix.json` — that file's existing
+BLAS citations (Anderson et al. 1999; BLASFEO) cover accumulator width and
+panel-vs-column-major layout trade-offs, not the `Order`-as-argument
+convention itself. A `/cr-research` pass adding a citation for the CBLAS
+`Order` parameter (or an equivalent embedded-DSP precedent, e.g. how
+CMSIS-DSP's matrix functions handle layout) should run before this section
+is treated as final.
+
 ---
 
 ### 9. Development Plan
@@ -565,3 +636,4 @@ verbosity is a practical problem rather than a cosmetic one.
 | 2026-07-26 | @MitchellDScott | Initial draft                                                                                |
 | 2026-07-26 | @MitchellDScott | Expanded Core Architecture, Alternatives, and 4-pillar V&V sections to align with matrix doc |
 | 2026-08-01 | @MitchellDScott | Rewrote Core Architecture to remove decomposition-scope drift and duplicate FR text; folded resolved Risks items into Requirements; collapsed Development Plan into 4 phases; caveated HIL applicability |
+| 2026-08-02 | @MitchellDScott | Made this document the sole owner of `MatrixView`/`MatrixViewMut` struct definitions (`matrix-design.md` no longer redefines them); added `ContiguousStorage::ORDER` (FR-4) and reworked FR-6/NFR-6 so BLAS interop takes an explicit layout parameter instead of assuming `ArrayStorage`'s column-major default, superseding the prior "rewrite subprograms to column-major" note; added a Risks entry for the still-open CBLAS `Order`-parameter citation. |
