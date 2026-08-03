@@ -4,34 +4,26 @@
 synthesis, and real-time execution, targeting autonomous systems and
 bare-metal embedded platforms.
 
-Unlike traditional design-then-generate pipelines (such as Simulink Embedded Coder) or workstation-class control libraries (such as ETH Zurich's Control Toolbox), `control-rs` allows you to write control laws directly in target-native Rust with compile-time correctness guarantees and zero heap allocation.
+`control-rs` approaches V&V in a few ways:
 
-The landscape is categorized into three patterns:
-
-1. **High-Level GUI-Based Design with Code Exporting**: Graphical simulation tools (e.g., Simulink Embedded Coder) that export target-agnostic code. This keeps algorithms independent of the hardware target, but introduces high toolchain complexity and development overhead.
-2. **Hardcoded Application Controls**: System-specific, hand-written control laws compiled directly within the flight stack or application (e.g., the C++ core of PX4 or ArduPilot). This yields optimized performance for a specific target, but results in a non-reusable implementation.
-3. **Generic Controls Tools Library**: A modular, reusable math library (such as ETH Zurich's Control Toolbox or `control-rs` itself) that defines generic primitives natively for the target. While highly flexible and reusable, this approach requires rigorous verification and validation (such as compile-time constraints or simulation pipelines) to ensure safety on real-time hardware.
-
-`control-rs` resolves this V&V gap through two mechanisms:
-
-- **Compile-Time Structural Verification**: Type-level Peano arithmetic enforces matrix/vector dimensional compatibility.
-- **Continuous Target-Side HIL Testing**: The library includes a built-in Hardware-in-the-Loop engine for users to verify custom software.
+- **Compile-Time Structural Verification**: Type-level Peano arithmetic enforces
+  matrix/vector dimensional compatibility.
+- **High Unit Test Coverage**: Each submodule is responsible for
+  implementing unit tests and docs, these are linked to a runner through macros.
+- **SIL/HIL Testing**: The library includes a built-in
+  Hardware-in-the-Loop engine for users to verify custom software.
 
 ---
 
-## Mathematical Models
+## Models
 
 `control-rs` is built around three core numerical primitives — `Polynomial`,
 `Matrix`, and `Tensor` — each rigidly bounded to respect embedded hardware
 constraints. `TransferFunction` and `StateSpace` are built on top of these
-primitives to represent LTI control systems directly (rational transfer
-functions and state-space realizations, respectively). All five types share
-the same `Storage` trait abstraction; that trait boundary is what leaves room
-to add representations for more complex or nonlinear systems later without
-changing the core API.
+primitives to represent LTI control systems directly.
 
 | Model                | Capacity Limit        | Primary Applications                                               | Key Algorithms & Mechanics                                                  |
-| -------------------- | --------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+|----------------------|-----------------------|--------------------------------------------------------------------|-----------------------------------------------------------------------------|
 | **Polynomial**       | 128 elements          | Signal filtering, trajectory generation, discretization.           | Horner's Method (FMA optimized), Tustin transform.                          |
 | **Matrix**           | 32x32 (1024 elements) | State-space modeling, observability, MIMO systems.                 | Type-level dimensions, division-free Faddeev-LeVerrier `$p(x)=\det(xI-A)$`. |
 | **Tensor**           | 1024 elements total   | Spatial grid modeling, Edge AI, multi-dimensional LTI.             | Column-major sequencing, in-place contraction (`contract_into`).            |
@@ -40,15 +32,7 @@ changing the core API.
 
 ---
 
-## Architecture & Dependency Structure
-
-Hardware-agnosticism comes from two things working together: the `Storage`
-trait, which abstracts _how_ elements are read and written, and a set of
-storage backends targeting different memory (stack arrays, borrowed views,
-DMA-mapped peripheral registers). Decoupling storage from the math alone
-doesn't make an algorithm hardware-agnostic — it's what makes it possible for
-the same `Matrix`/`Polynomial`/`Tensor` implementation to run unmodified over
-whichever backend a given target requires.
+## Architecture
 
 ```mermaid
 ---
@@ -69,7 +53,6 @@ flowchart TB
             ArrayStorage["ArrayStorage<br>(Stack)"]:::storage
             MatrixView["MatrixView<br>(Slice)"]:::storage
             Extend1["..."]:::storage
-            DMAPool["DMA Pool<br>(Memory-Mapped)"]:::storage
         end
     end
 
@@ -98,7 +81,7 @@ flowchart TB
 
 ---
 
-## Infrastructure Overview
+## Infrastructure
 
 ```mermaid
 ---
@@ -139,7 +122,7 @@ flowchart LR
     style TargetEnv fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
 ```
 
-### 1. Embedded HIL Engine (`control-rs-hil`)
+### 1. Hardware-In-The-Loop (`control-rs-hil`)
 
 Located in [control-rs-hil](control-rs-hil), this
 `no_std` crate provides the target-side infrastructure:
@@ -149,7 +132,7 @@ Located in [control-rs-hil](control-rs-hil), this
 - **Target Profiling**: Measures execution time using hardware cycle counters (
   ARM DWT) and tracks memory limits using stack painting and scanning.
 
-### 2. Host-Side Orchestration (`control-rs-xtask`)
+### 2. Host-Side (`control-rs-xtask`)
 
 - **Terminal User Interface (TUI)**: A terminal dashboard built with
   `ratatui` to trigger live tests, tweak parameters, and view logs.
@@ -175,7 +158,7 @@ to simplify development, testing, formatting, linting, and coverage reporting:
 ### Cargo Aliases Reference Table
 
 | Category                               | Alias               | Underlying Command                                             | Description                                                         |
-| :------------------------------------- | :------------------ | :------------------------------------------------------------- | :------------------------------------------------------------------ |
+|:---------------------------------------|:--------------------|:---------------------------------------------------------------|:--------------------------------------------------------------------|
 | **Development & UI**                   | `cargo xtask`       | `run --package control-rs-xtask --`                            | Runs the workspace's auxiliary build/test tasks.                    |
 |                                        | `cargo tui`         | `cargo xtask tui`                                              | Launches the interactive TUI console dashboard.                     |
 |                                        | `cargo ci`          | `cargo xtask ci`                                               | Runs the continuous integration suite locally.                      |

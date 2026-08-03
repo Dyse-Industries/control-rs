@@ -184,6 +184,7 @@ pub type MatrixSlice<'a, T, R, C> = Matrix<T, R, C, MatrixView<'a, T, R, C>>;
 
 /// A high-level Matrix wrapper around a mutable MatrixViewMut storage backend.
 pub type MatrixSliceMut<'a, T, R, C> = Matrix<T, R, C, MatrixViewMut<'a, T, R, C>>;
+
 ```
 
 - **Non-Destructive Transposed Views**:
