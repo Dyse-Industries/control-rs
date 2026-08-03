@@ -64,10 +64,13 @@ sections below.
 - **No Dynamic Allocation**: The module must not use a heap allocator; all
   memory allocations must be static or stack-based (crate-wide rule).
 - **Coefficient Ordering**: Coefficients are stored in **ascending order of
-  powers** (see §3.3 for the full layout rationale). This is the canonical
-  statement of the convention; other numerical models that share it (e.g.
-  `transfer-function-design.md`) reference this section rather than restating
-  it.
+  powers** (see §3.3 for the full layout rationale). This is a *logical*
+  indexing rule — index `i` maps to the coefficient of $x^i$ — independent of
+  the underlying `Storage` backend's physical memory layout (row-major,
+  column-major, strided; see [storage-trait-design.md](../../math/design/storage-trait-design.md)
+  FR-1/FR-6). This is the canonical statement of the convention; other
+  numerical models that share it (e.g. `transfer-function-design.md`)
+  reference this section rather than restating it.
 - **Capacity Bound**: Maximum polynomial capacity is limited to 128 elements
   (see the crate-level capacity table in [README](../../README.md)).
 
@@ -112,7 +115,9 @@ pub type PolynomialViewMut<'a, T, N> = Polynomial<T, N, MatrixViewMut<'a, T, N, 
 
 Coefficients are stored in **ascending order of powers**:
 $$ p(x) = c_0 + c_1 x + c_2 x^2 + \dots + c_{N-1} x^{N-1} $$
-where index `i` maps to the coefficient of $x^i$.
+where index `i` maps to the coefficient of $x^i$. This is a logical
+convention (`index = degree of term`) that `Polynomial` itself defines and
+fully resolves — it says nothing about physical memory layout.
 
 - **Ascending Power Storage Rationale**:
     - Direct index-to-exponent mapping: element at index `i` corresponds
@@ -126,6 +131,19 @@ where index `i` maps to the coefficient of $x^i$.
       non-exhaustive sample, not a claim that every polynomial crate in the
       ecosystem does the same; it supports "idiomatic, not crate-specific"
       without overstating the survey's coverage.
+
+**Physical layout is a separate, already-solved concern.** `Polynomial`
+addresses coefficients only through `Storage`'s logical `(i, 0)` interface
+(`Storage::get_unchecked`, never a raw offset), so it is agnostic to whichever
+concrete backend it is instantiated over — `ArrayStorage`, `MatrixView`/
+`MatrixViewMut`, or a custom row-major, column-major, or ROM-backed
+implementor all swap in without changing `Polynomial`'s arithmetic. This is
+the same `Storage`-level layout genericity `storage-trait-design.md` FR-6/FR-7
+specifies for `Matrix`, applied here without modification. Row-major and
+column-major degenerate to the same addressing scheme for a `C = U1`
+container, so the distinction that matters in practice is narrower than for
+`Matrix` — but the underlying `Storage` abstraction still permits mixing and
+matching backends under `Polynomial` to that extent.
 
 #### 3.4 Memory Representation & Slicing
 
@@ -520,3 +538,4 @@ via Peano type constraints.
 | August 1, 2026 | @MitchellDScott | Restructured §2 to the crate-wide Requirements template (Functional/Non-Functional/Constraints); made coefficient ordering the canonical cross-referenced statement. |
 | August 2, 2026 | @MitchellDScott | Added Aurentz et al. (2018) and Higham (2002) citations; clarified Controllable-Canonical-Form conditioning (§4.4.1); documented `div_rem` conditioning caveats (§5.2); added §7 Alternatives, §9 Risks, §10 Development Plan. |
 | August 2, 2026 | @MitchellDScott | Propagated the `num-traits-design.md` pivot to the companion-matrix bound (`Zero + One + Copy + Neg + PartialEq` → `Zero + One + Signed + Copy`, §4.4.1); condensed §4.4.1's "two conditioning subtleties" framing into direct implementer guidance; relocated `ConversionError` to `error-design.md`; flagged `Convolution<T: Real>` (§4.2) as a reference to shipped, pre-pivot code pending its own migration, and corrected a factual error conflating `mul_poly`'s (broader) bound with `Convolution<T>`'s `Real`-only bound (§7); documented `Convolution::convolve_input`'s pre-existing `assert!` panic as a required, not-yet-applied `/cr-implement`-time fix (§5.2, §9); softened the "every established Rust polynomial crate" claim to name its actual (four-crate) survey scope (§3.3). |
+| August 2, 2026 | @MitchellDScott | Separated §3.3's logical coefficient-ordering convention from physical `Storage` layout, which it does not need to resolve; cross-referenced `storage-trait-design.md` FR-1/FR-6/FR-7 instead of restating the layout-genericity mechanism (§2.3, §3.3). |

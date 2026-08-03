@@ -97,6 +97,11 @@ if the underlying storage backends implement `ContiguousStorage`.
   denominator, following the same convention as `Polynomial` (see
   [polynomial-design.md §2.3](polynomial-design.md#23-constraints)):
   $$ B(s) = b_0 + b_1 s + \dots + b_{N-1} s^{N-1}, \quad A(s) = a_0 + a_1 s + \dots + a_{D-1} s^{D-1} $$
+  This is a logical convention independent of `Sn`/`Sd`'s physical layout,
+  for the same reason it is orthogonal for `Polynomial`
+  (`polynomial-design.md` §3.3). It diverges from MATLAB/`python-control`'s
+  descending-power ordering, which the cross-validation harness must account
+  for explicitly (§7, Cross-Validation).
 - **Denominator Validity**: Denominator capacity $D$ must satisfy $D \ge 1$
   and a non-zero leading coefficient ($a_{D-1} \neq 0$).
 
@@ -623,3 +628,4 @@ than implemented in the initial revision.
 | August 1, 2026 | @MitchellDScott | Deduplicated the coefficient-ordering constraint by cross-referencing `polynomial-design.md`'s canonical statement instead of restating it. |
 | August 2, 2026 | @MitchellDScott | Documented near-pole Horner conditioning (§5.2); derived `DimMax`-based capacity bounds and the non-minimal-result guarantee for parallel/feedback (§5.3); split ZOH into a chosen transfer-function-direct path and a rejected state-space-mediated path (§5.4); added a canonical-form conditioning caveat (§5.5), Error Handling (§4.5), SOS cascade alternative (§6), and Risks & Open Questions (§9). |
 | August 2, 2026 | @MitchellDScott | Propagated the `num-traits-design.md` pivot to `to_discrete_tustin`'s bound (`T: Real` → `T: Float`, §5.4); added a Risks entry for that dependency's still-pre-research status and for `Convolution<T>`'s shipped, unmigrated `T: Real` bound; revised Phase 4/6 development-plan estimates upward (partial-fraction ZOH and dual-reference-implementation cross-validation were under-scoped). |
+| August 2, 2026 | @MitchellDScott | Noted in §2.3 that coefficient ordering is independent of `Sn`/`Sd` physical layout and surfaced the MATLAB/`python-control` descending-order divergence (previously only in §7) alongside the Constraints statement. |
