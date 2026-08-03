@@ -299,6 +299,14 @@ public API. This means the trait must be general enough that:
 This is a migration path, not an immediate requirement — existing code
 continues to compile during the transition.
 
+FR-6's layout-genericity mechanism (`ContiguousStorage::ORDER` read and
+forwarded by the consumer, never assumed) is a property of `Storage` itself,
+not something `Matrix` alone benefits from. `Polynomial<T, N>` — and any
+future `Storage`-backed model — is equally agnostic to which concrete
+backend it is instantiated over; retrofitting `Polynomial` onto
+`ArrayStorage<T, N, U1>` requires no change to `Polynomial`'s arithmetic
+regardless of that backend's layout.
+
 ---
 
 #### 2.2 Non-Functional Requirements
@@ -637,3 +645,4 @@ is treated as final.
 | 2026-07-26 | @MitchellDScott | Expanded Core Architecture, Alternatives, and 4-pillar V&V sections to align with matrix doc |
 | 2026-08-01 | @MitchellDScott | Rewrote Core Architecture to remove decomposition-scope drift and duplicate FR text; folded resolved Risks items into Requirements; collapsed Development Plan into 4 phases; caveated HIL applicability |
 | 2026-08-02 | @MitchellDScott | Made this document the sole owner of `MatrixView`/`MatrixViewMut` struct definitions (`matrix-design.md` no longer redefines them); added `ContiguousStorage::ORDER` (FR-4) and reworked FR-6/NFR-6 so BLAS interop takes an explicit layout parameter instead of assuming `ArrayStorage`'s column-major default, superseding the prior "rewrite subprograms to column-major" note; added a Risks entry for the still-open CBLAS `Order`-parameter citation. |
+| 2026-08-02 | @MitchellDScott | Clarified in FR-7 that FR-6's layout-genericity mechanism is a property of `Storage` itself, not Matrix-specific, and applies uniformly to `Polynomial` and future `Storage`-backed models. |
