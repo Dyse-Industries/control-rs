@@ -1,7 +1,7 @@
 # CPUProfiler Design Document
 
 ![Date Badge](https://img.shields.io/badge/Date-July_18,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ## 1. Introduction
@@ -16,16 +16,31 @@ hooks to the end-user or silicon vendor.
 
 ## 2. Requirements
 
-**Profiling**:
+#### Functional Requirements
 
-1. Cycle count
-2. Timer
-3. Stack pointer read
-4. Stack painting/scanning
-5. Interrupt control
+1. **Cycle Count**: Read a monotonically increasing CPU cycle count
+   (`get_cycles`), robust to hardware counter wraparound.
+2. **Timer**: Report elapsed time in nanoseconds (`get_nanos`).
+3. **Stack Pointer Read**: Read the active stack pointer (`get_sp`) and the
+   stack boundary (`get_stack_end`).
+4. **Stack Painting/Scanning**: Paint the stack with a sentinel pattern and
+   scan for the peak-usage high-water mark.
+5. **Interrupt Control**: Run a closure with interrupts disabled and disable
+   interrupts permanently.
+6. **Default Implementations**: Provide defaults for targets that do not
+   support these features.
 
-The profiler must also provide default implementations for targets that do
-not support these features.
+#### Non-Functional Requirements
+
+* **Deterministic Low Overhead**: Cycle and timer hooks must execute within a
+  few clock cycles so measurements do not perturb the code under test.
+
+#### Constraints
+
+* **Strict `#![no_std]`, Zero Heap**: Consistent with the rest of
+  `control-rs-hil`.
+* **Target Architectures**: ARM Cortex-M (ARMv6/7/8-M) and RISC-V (RV32/RV64).
+  Note that ARMv6-M (Cortex-M0/M0+) has no DWT cycle counter; see §8.
 
 ---
 
@@ -74,16 +89,9 @@ pub trait CPUProfiler {
     fn get_stack_end(&self) -> usize;
 
     /// Paints the stack below the given stack pointer.
-    ///
-    /// # Safety
-    /// This function writes directly to the stack memory range. The caller MUST ensure the active stack pointer is valid
-    /// and stack bounds are safe.
     unsafe fn paint_stack(&self, sp: usize);
 
     /// Reads the peak stack usage (in bytes) since the stack was painted, relative to the given stack pointer.
-    ///
-    /// # Safety
-    /// This function reads directly from the stack memory range. The caller MUST ensure stack has been painted.
     unsafe fn read_stack_peak(&self, sp: usize) -> u32;
 
     /// Resets the CPU/system.
@@ -97,7 +105,9 @@ pub trait CPUProfiler {
 
 ### 4.2. Implementations and Mock Profilers
 
-Rather than exposing a default stub struct, target platforms implement `CPUProfiler` directly. For host-side testing, the codebase provides mock profilers (e.g. `HostCPUProfiler` in tests) that return zeroed/dummy metrics:
+Rather than exposing a default stub struct, target platforms implement
+`CPUProfiler` directly. For host-side testing, the codebase provides mock
+profilers that return zeroed/dummy metrics:
 
 ```rust
 pub struct HostCPUProfiler;
@@ -160,6 +170,11 @@ impl CPUProfiler for CortexMProfiler {
 }
 ```
 
+`reset()` performs a host-commanded warm reboot (e.g. `Command::TryReset`).
+Crash recovery does not use it: the HIL Server's panic path relies on watchdog
+starvation for a hard reset, since a soft `SCB` reset leaves peripherals and
+active DMA running (see `hil-server-design-doc.md` §4.4).
+
 ---
 
 ## 5. Alternatives
@@ -172,7 +187,8 @@ target side was verbose, repetitive, and error-prone.
 
 To simplify target-side integration, these hooks were consolidated into a single
 trait: `CPUProfiler`. Users only implement primitive hardware hooks (
-retrieving cycle counts, reading time, getting the stack pointer, and identifying stack boundaries). The core HIL `Server` implements the generic
+retrieving cycle counts, reading time, getting the stack pointer, and
+identifying stack boundaries). The core HIL `Server` implements the generic
 execution wrapper, timing calculations, and metric telemetry reporting in a
 platform-agnostic manner.
 
@@ -183,22 +199,39 @@ applicable to the targets.
 synchronization metrics.
 
 **Existing Crates**:
-[embedded-profiling](https://github.com/TDHolmes/embedded-profiling) Uses a very
-similar pattern to accomplish the same thing (with built-in logging). This
-crate was not used because it provides a small amount of code, does not meet
-this crates test and format standards (it also has not been updated for 4
-years). Implementing the profile trait in-house allows it to be tightly
-coupled with the server.
+[embedded-profiling](https://github.com/TDHolmes/embedded-profiling) is the
+only surveyed complete profiling crate in this niche
+(`documentation/xtask/research/results/cpu-profiling-utils.json`). Its
+`EmbeddedProfiler` trait covers roughly one-fifth of the required surface —
+elapsed time via `read_clock()`/snapshots only, with no cycle counting, stack
+introspection, or interrupt control — and its last release (0.3.0) was
+published 2021-12-25. Rejected; implementing the trait in-house allows it to
+be tightly coupled with the server.
+
+**`critical-section` for Interrupt Control**: `critical_section::with(|cs| ...)`
+is structurally identical to `disable_interrupts<F, R>`, and
+`CortexMProfiler` already delegates to `cortex_m::interrupt::free`, one of its
+backends. Depending on the crate directly (it is already a transitive
+dependency) would reduce the interrupt-control surface to a thin wrapper
+across Cortex-M and RISC-V instead of per-architecture logic.
 
 **Provided GPIO Implementation**: Implement a profiler that automatically
-toggles an output pin when a test starts and stops.
+toggles an output pin when a test starts and stops. Then read this test pin
+from the host (or another controller).
 
-**Rapita Systems**:
-[profiling tools](https://www.rapitasystems.com/blog/how-measure-stack-usage-through-stack-painting-rapitest)
+**Stack Painting**: The paint-then-scan technique matches
+[Rapita RapiTest](https://www.rapitasystems.com/blog/how-measure-stack-usage-through-stack-painting-rapitest),
+Zephyr's `k_thread_stack_space_get()`, and the FreeRTOS high-water mark — a
+recognized industry technique, not an ad hoc invention.
 
-**Static Stack Usage Analysis**: Tools like cargo-call-stack evaluate LLVM-IR to
-mathematically prove maximum stack allocation during compile-time. This
-will be implemented as part of the CI.
+**Static Stack Usage Analysis**: Tools like `cargo-call-stack` evaluate LLVM-IR
+to bound maximum stack allocation at compile time. This is complementary to
+runtime painting, not a substitute. The lighter-weight `stack-sizes` crate
+(per-function numbers, same unstable `-Z emit-stack-sizes` flag) is a narrower
+alternative.
+[flip-link](https://github.com/knurling-rs/flip-link) addresses a third,
+distinct failure mode — link-time overflow protection via a flipped RAM
+layout — and is a candidate on Cortex-M (no RISC-V support per its README).
 
 ---
 
@@ -213,8 +246,8 @@ on-target testing. Ideally these will be available to end users.
   calculated by `get_nanos()` based on the configured core clock frequency.
 * **Memory Bounds**: Validate that the `paint_stack` and
   `read_stack_peak` implementations respect the physical RAM boundaries defined
-  by the compiler's linker script (specifically `_stack_start` and _
-  `stack_end`).
+  by the compiler's linker script (specifically `_stack_start` and
+  `_stack_end`).
 * **Interrupt Latency**: Measure the overhead introduced by the
   generic wrapper and the disable_interrupts closure. Quantify the execution
   overhead introduced by the concurrency wrapper to ensure it does not induce
@@ -239,14 +272,49 @@ on-target testing. Ideally these will be available to end users.
 
 ## 8. Risks and Open Questions
 
-* **Register Overflows**: Cycle counters and timers are usually integers,
-  these will overflow eventually.
+* **Register Overflows**: `CortexMProfiler::get_cycles()` casts the 32-bit DWT
+  counter to `u64` with no wraparound handling; at typical core clocks it
+  wraps within seconds to tens of seconds. `dwt-systick-monotonic`'s `extend`
+  technique (compare against last reading, track the high 32 bits, driven by a
+  periodic interrupt) is a proven reference implementation; verify against
+  `rtic-monotonics` (its actively maintained successor) before committing,
+  since `dwt-systick-monotonic` last released in 2022. Open question whether
+  the HIL Server's polling cadence is frequent enough to observe every
+  wraparound without a dedicated interrupt. On RISC-V, RV32's `mcycle` is also
+  32 bits (with a separate `mcycleh` CSR) — whether `RiscvProfiler` combines
+  them into a full 64-bit value is unverified.
+* **ARMv6-M Support**: `cortex-m` gates `DWT::cycle_count()` behind
+  `#[cfg(not(armv6m))]` — Cortex-M0/M0+ have no DWT cycle counter, so
+  `CortexMProfiler` as written fails to compile on those cores. Open question
+  whether ARMv6-M is in scope: if so, a SysTick-derived fallback (the
+  `rtic-monotonics` pattern, lower resolution) is required; if not, record the
+  restriction as an explicit non-goal.
 * **Stack Bounds Calculation**: How will the user implementation safely
   determine the absolute bottom of the stack. It should be available through
   the linker, but this is a complex integration task.
 * **Clock Skew / Power Saving**: If the user needs to run tests in a reduced
   power or low compute state the profiler may become less accurate.
 * **Unsafe Code Proliferation**: Users must implement unsafe functions for
-  their profiler to work.
+  their profiler to work. Link-time protection (`flip-link`) can complement,
+  but not remove, the unsafe paint/scan implementations.
 
 ---
+
+## 9. Development Plan
+
+| Task / Feature                           | Description                                                                                                     | Status / Effort |
+|:-----------------------------------------|:----------------------------------------------------------------------------------------------------------------|:----------------|
+| **Step 1: Trait & Target Impls**         | Define `CPUProfiler` and implement `CortexMProfiler`/`RiscvProfiler` in `control-rs-hil::profiler`.             | Shipped         |
+| **Step 2: Overflow-Safe Cycle Counting** | Add DWT wraparound handling (extend technique) and verify RV32 `mcycle`/`mcycleh` combination.                  | 0.5 day         |
+| **Step 3: ARMv6-M Decision**             | Either add a SysTick-only fallback for Cortex-M0/M0+ or document the restriction as a non-goal.                 | 0.5 day         |
+| **Step 4: CI Static Analysis**           | Integrate `cargo-call-stack` with explicit scoping of its SysTick/inline-asm blind spots; evaluate `flip-link`. | 1.0 day         |
+
+---
+
+## 10. Revision History
+
+| Revision | Date           | Description                                                                                                                                                                                                                                             | Author          |
+|:---------|:---------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
+| 1.0      | July 18, 2026  | Initial design of the `CPUProfiler` trait, consolidating `ClientClock` and `TestExecutor`.                                                                                                                                                              | @MitchellDScott |
+| 1.1      | August 6, 2026 | Incorporated build-vs-adopt research: evidence-backed `embedded-profiling` rejection, DWT overflow and ARMv6-M gaps, `critical-section` reuse candidate, static-analysis scoping. Added Requirements structure, Development Plan, and Revision History. | @MitchellDScott |
+| 1.2      | August 9, 2026 | Review and minor updates.                                                                                                                                                                                                                               | @MitchellDScott |

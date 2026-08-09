@@ -1,24 +1,18 @@
 # HostComms (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-July_18,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
 
 ### 1. Introduction
 
-In Hardware-in-the-Loop (HIL) testing of safety-critical embedded systems,
-verifying real-time firmware execution against a simulated continuous physical
-environment (the plant) requires a robust, low-latency, and highly deterministic
-communication channel between the target Microcontroller Unit (MCU) and the host
-machine.
-
 The `HostComms` trait is designed to provide a unified, hardware-agnostic
 communication abstraction for applications operating in resource-constrained
-environments. This allows the server to separate physical transport mechanics
-(such as serial ports, network sockets, or hardware debug probes) from the core
-test runner logic.
+environments. This allows the Server to separate physical transport mechanics
+(such as serial ports, network sockets, or hardware debug probes) from its
+core logic.
 
 ---
 
@@ -47,9 +41,6 @@ test runner logic.
 * **High Bandwidth Efficiency**: The protocol must minimize the transport
   payload footprint, shifting string formatting, deserialization, and UI state
   management onto the computationally superior host machine.
-* **Data Integrity**: The communication framing must protect binary payloads
-  from transmission noise and packet boundary desynchronization on continuous
-  serial lines.
 
 #### Constraints
 
@@ -79,7 +70,7 @@ Implementing and deploying the system requires expertise in:
 * Advanced embedded Rust development, including asynchronous executors (
   `embassy`) and direct hardware memory access (DMA).
 * High-efficiency binary serialization format design and bitwise framing
-  algorithms (`postcard`, COBS, CRC).
+  algorithms (`postcard`, sync-byte framing, CRC).
 * Compiler-level instrumentation and string table mapping (deferred formatting
   with `defmt`).
 * Core debugging protocol drivers and memory polling systems (SWD/JTAG,
@@ -111,9 +102,9 @@ graph TD
     UART <-->|Serial Port / USB| DEMUX
     ETH <-->|Socket / LAN| DEMUX
 
-    subgraph "Host PC (TUI Client)"
-        DEMUX[HIL Server Bridge]
-        UI[Terminal UI]
+    subgraph "Host PC (control-rs-xtask)"
+        DEMUX[ServerBridge]
+        UI[TUI]
         DEMUX -->|Parsed JSON & Logs| UI
         UI -->|Serialized Commands| DEMUX
     end
@@ -157,7 +148,7 @@ pub trait HostComms {
 
 The associated type `Error` allows concrete drivers to bubble up
 hardware-specific failures (e.g., framing errors, overflow flags, socket
-disconnects) to the calling test runner loop.
+disconnects) to the calling Server loop.
 
 #### 4.2. Command Schema & Binary Serialization
 
@@ -166,7 +157,6 @@ to ensure structural alignment:
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Command {
     /// Request the target to stream the list of all suites, tests, and settings.
     ListSuites,
@@ -210,7 +200,9 @@ Postcard achieves a minimal wire footprint through:
 Standard string formatting on a microcontroller is computationally and
 space-expensive, bloating target flash memory with static templates and
 consuming excessive CPU cycles to interpolate values. The HostComms architecture
-implements deferred formatting via the **`defmt`** crate:
+plans deferred formatting via the **`defmt`** crate; this is not yet
+implemented — shipped telemetry is postcard enums with no on-target string
+formatting (see `hil-server-design-doc.md` §7):
 
 ```rust
 #[derive(Debug, Clone)]
@@ -227,54 +219,29 @@ pub struct LogMessage<'a> {
 }
 ```
 
-##### Deferred Formatting Mechanics
-
-1. **Compile-Time Extraction**: A procedural compiler macro extracts all log
-   string templates (e.g., `"Sensor timeout: {} ms"`) and assigns each a unique,
-   mathematically generated integer index.
-2. **Flash Compression**: The string templates are stripped from the target
-   microcontroller's binary, reducing flash utilization. The mapping of indices
-   to templates is stored in a custom section of the Executable and Linkable
-   Format (ELF) file on the host.
-3. **Runtime Transmission**: When logging, the microcontroller transmits only
-   the compressed integer index and the raw binary variables (e.g., the 32-bit
-   millisecond timestamp).
-4. **Host Reconstruction**: The host-side demultiplexer reads the indices and
-   variables, loads the matching ELF file using `defmt-decoder`, and
-   reconstructs the human-readable text on the host CPU.
-
 #### 4.4. Packet Framing & Consistency
 
 Serial channels like UART operate as continuous byte streams without packet
-boundaries. To segment individual commands and telemetry logs, the system utilizes a custom framed binary packet structure with Sync Headers and CRC-16 integrity validation:
+boundaries. To segment individual commands and telemetry logs, the system
+utilizes a custom framed binary packet structure with Sync Headers and CRC-16
+integrity validation:
 
-* **Sync Header**: 2 bytes (`0xAA 0x55`) used to identify the beginning of a frame.
-* **Payload Length**: 2 bytes (big-endian) defining the size of the serialized postcard payload.
-* **Postcard Payload**: The serialized data block (limited to a maximum of 512 bytes).
-* **Integrity Check**: A 2-byte (big-endian) CRC-16 checksum (calculated using `CRC_16_IBM_SDLC`) appended at the end of the frame payload.
-* **Single-Pass Decoding**: The host `FrameReader` processes incoming streams statefully byte-by-byte, checking for the sync header, validating lengths, and confirming the CRC-16 checksum before deserializing.
+* **Sync Header**: 2 bytes (`0xAA 0x55`) used to identify the beginning of a
+  frame.
+* **Payload Length**: 2 bytes (big-endian) defining the size of the serialized
+  postcard payload.
+* **Postcard Payload**: The serialized data block (limited to a maximum of 512
+  bytes).
+* **Integrity Check**: A 2-byte (big-endian) CRC-16 checksum (calculated using
+  `CRC_16_IBM_SDLC`) appended at the end of the frame payload.
+* **Single-Pass Decoding**: The host `FrameReader` processes incoming streams
+  statefully byte-by-byte, checking for the sync header, validating lengths, and
+  confirming the CRC-16 checksum before deserializing.
 
 #### 4.5. Target-Side Driver Implementations
 
 Users are responsible for implementing the `HostComms` trait for their target
-board. The primary driver styles are:
-
-* **Embassy UART with DMA**: Direct Memory Access (DMA) acts as an independent
-  hardware coprocessor, writing incoming bytes to RAM and reading outgoing
-  bytes without CPU intervention. Under the Embassy asynchronous executor, UART
-  transfers yield execution back to the executor, waking the task via a hardware
-  interrupt only upon completion. This keeps serial communications entirely
-  non-blocking.
-* **Ethernet (`smoltcp`)**: High bandwidth, long-distance isolation. Uses
-  network socket primitives but introduces a high CPU and RAM footprint to
-  process TCP/IP, ARP, and IP checksum calculations. Jitter is managed using
-  round-trip time (RTT) latency metrics.
-* **SEGGER RTT**: Minimal overhead. Telemetry is written directly to a
-  contiguous ring buffer in target RAM ("Up" channel). An external hardware
-  debug probe (such as J-Link or Raspberry Pi Debug Probe) polls the memory over
-  JTAG/SWD background memory cycles without stealing CPU cycles. The target
-  operates in non-blocking mode, discarding overflow packets to protect
-  real-time execution timing.
+board.
 
 ```rust
 // Example skeleton for a target UART implementation
@@ -303,30 +270,14 @@ impl HostComms for UartComms {
 }
 ```
 
-#### 4.7. Host-Side Tooling & Portability
+#### 4.6. Host-Side Tooling & Portability
 
 On the host side, standard environments utilize the **`probe-rs`** debugging
 library to flash binaries, control execution, and poll target RTT buffers over
 SWD/JTAG.
 
-##### Remote HIL Server Architecture
-
-To isolate high-voltage or hazardous HIL rigs from developer laptops, a remote
-server-client model is supported:
-
-* A remote server (e.g., Raspberry Pi) is physically tethered to the debug
-  probe.
-* The client connects via WebSockets (`ws://` / `wss://`) and issues commands
-  using `postcard-rpc`.
-* The server uses asynchronous Tokio channels (`WireTx` / `WireRx`), executing
-  blocking operations (such as target erasing/flashing) inside `spawn_blocking`
-  to keep the main event loop responsive.
-* Low-power remote nodes can run pre-compiled static binaries cross-compiled
-  using Docker-based `cross` toolchains.
-
 ##### Hardware Portability & Non-probe-rs Environments
 
-> [!IMPORTANT]
 > Because `probe-rs` does not support all microcontroller boards or
 > architectures, the HostComms design enforces a strict separation between
 > debug-probe dependency and the host demultiplexer.
@@ -334,8 +285,8 @@ server-client model is supported:
 > For boards lacking `probe-rs` compatibility, the host-side DEMUX can bypass
 > debug probes entirely:
 > * **Standard Serial Port Input**: The DEMUX engine can interface directly with
-    standard serial (COM) ports using native host library utilities (e.g., the
-    `serialport` crate).
+    standard serial (COM) ports using native host library utilities (the
+    `serial2` crate, already a `control-rs-xtask` dependency).
 > * **Standard Socket Input**: For networked targets, the DEMUX engine can
     connect to the target via standard TCP/UDP stream sockets.
 > * This ensures the HIL test harness remains fully portable to any hardware
@@ -371,7 +322,7 @@ server-client model is supported:
 * **Serialization Unit Tests**: Run unit tests on the host to verify that
   `Command` and `LogMessage` payloads are correctly serialized, framed,
   and reconstructed with 100% fidelity.
-* **Timing Checks**: Implement regression tests in the HIL runner to measure
+* **Timing Checks**: Implement regression tests in the HIL Server to measure
   target execution jitter and confirm that telemetry operations do not violate
   real-time solver timing budgets.
 * **CI Integration**: Automated build verification testing to compile target
@@ -383,7 +334,7 @@ server-client model is supported:
 * **Fault Injection Simulation**: Simulate on-target panics, hard faults, and
   brownouts to validate that `panic-probe` and `panic-persist` reliably transmit
   crash details to the host TUI.
-* **Hardware Portability Test**: Deploy the exact same test runner logic over
+* **Hardware Portability Test**: Deploy the exact same Server logic over
   UART DMA, SEGGER RTT, and Ethernet physical interfaces to confirm transport
   independence.
 * **Remote WebSocket Demo**: Validate remote flashing, control, and telemetry
@@ -429,19 +380,21 @@ server-client model is supported:
 
 ### 9. Development Plan
 
-| Task / Feature                           | Description                                                                                                                                | Estimated Effort |
-|:-----------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Core Serialization & Framing** | Define common postcard schemas, implement sync-header framing/deframing, and add CRC-16 verification tests. | 1 week           |
-| **Step 2: Target Trait & Drivers**       | Implement the `HostComms` trait on the target, writing drivers for Embassy UART DMA, SEGGER RTT buffers, and smoltcp Ethernet.             | 2 weeks          |
-| **Step 3: Target Crash Handlers**        | Integrate `panic-probe` and `panic-persist` handlers to write backtrace logs to active buffers and persistent RAM regions.                 | 1 week           |
-| **Step 4: Host-Side DEMUX & Decoder**    | Build the TUI state machine and integrate the `defmt-decoder` using ELF files, supporting direct inputs from serial ports and TCP sockets. | 2 weeks          |
-| **Step 5: Remote HIL Infrastructure**    | Set up the WebSocket-based `probe-rs` remote server, implement `postcard-rpc` commands, and configure Docker cross-compilers.              | 2 weeks          |
+| Task / Feature                                       | Description                                                                                                                                | Estimated Effort |
+|:-----------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Step 1: Core Serialization & Framing** — *Shipped* | Postcard schemas, sync-header framing/deframing, and CRC-16 verification, implemented in `control-rs-hil/src/comms.rs`.                    | Complete         |
+| **Step 2: Target Trait & Drivers**                   | Implement the `HostComms` trait on the target, writing drivers for Embassy UART DMA, SEGGER RTT buffers, and smoltcp Ethernet.             | 2 weeks          |
+| **Step 3: Target Crash Handlers**                    | Integrate `panic-probe` and `panic-persist` handlers to write backtrace logs to active buffers and persistent RAM regions.                 | 1 week           |
+| **Step 4: Host-Side DEMUX & Decoder**                | Build the TUI state machine and integrate the `defmt-decoder` using ELF files, supporting direct inputs from serial ports and TCP sockets. | 2 weeks          |
+| **Step 5: Remote HIL Infrastructure**                | Set up the WebSocket-based `probe-rs` remote server, implement `postcard-rpc` commands, and configure Docker cross-compilers.              | 2 weeks          |
 
 ---
 
 ### 10. Revision History
 
-| Date          | Version | Description                                                                                                                                                                          | Author          |
-|:--------------|:--------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
-| May 23, 2026  | v0.1    | Initial draft outlining HostComm middleware trait.                                                                                                                                   | @MitchellDScott |
-| July 18, 2026 | v1.0    | Restructured to template; incorporated comprehensive HIL, serialization, framing, defmt, panic handling, remote tooling, and non-probe-rs portability updates based on research report. | @MitchellDScott |
+| Date           | Version | Description                                                                                                                                                                                                                       | Author          |
+|:---------------|:--------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
+| May 23, 2026   | v0.1    | Initial draft outlining HostComm middleware trait.                                                                                                                                                                                | @MitchellDScott |
+| July 18, 2026  | v1.0    | Restructured to template; incorporated comprehensive HIL, serialization, framing, defmt, panic handling, remote tooling, and non-probe-rs portability updates based on research report.                                           | @MitchellDScott |
+| August 6, 2026 | v1.1    | Consistency pass: removed leftover COBS-as-chosen language, marked deferred formatting (`defmt`) as planned rather than shipped, standardized on the `serial2` host serial crate, fixed section numbering, marked Step 1 shipped. | @MitchellDScott |
+| August 9, 2026 | v1.1    | Review and corrections.                                                                                                                                                                                                           | @MitchellDScott |

@@ -1,4 +1,5 @@
-//! Host testing and interactive TUI runner suite for HIL (Hardware-in-the-Loop).
+//! Host testing and interactive TUI tooling for HIL (Hardware-in-the-Loop),
+//! built as an `xtask`-style task runner.
 #![allow(
     clippy::panic,
     clippy::unwrap_used,

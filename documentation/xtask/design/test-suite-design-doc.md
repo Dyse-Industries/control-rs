@@ -1,7 +1,7 @@
 # Exportable Test Suites (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-July_18,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -17,8 +17,7 @@ mechanism to automatically discover, execute, or report tests.
 This design document establishes the architecture for "Exportable Test Suites"
 designed natively for bare-metal embedded Rust. It enables developers to declare
 test or benchmark suites across multiple files without maintaining a central
-registry, requiring zero boilerplate and zero runtime overhead. These suites are
-compiled directly onto target microcontrollers.
+registry, requiring zero boilerplate and little runtime overhead.
 
 ---
 
@@ -26,29 +25,19 @@ compiled directly onto target microcontrollers.
 
 #### Functional Requirements
 
-* **Distributed Test Discovery**: Developers must be able to declare test or
-  benchmark suites across multiple files without maintaining a central registry
-  file.
-* **Auto-Discovery**: The framework must support compile-time and link-time
-  discovery of all defined suites directly from the compiled ELF binary.
-* **Dynamic Parameter Configuration**: The framework must support configuring
-  settings dynamically on the target from the host runner before a test starts.
-* **Standard Attribute Support**: The runner must support test attributes such
-  as `#[should_panic]`, `#[ignore]`, and `#[timeout]`.
+* **Suite-Discovery**: The suites must be discoverable at runtime.
+* **Dynamic Parameter Configuration**: Settings dynamically on the target
+  should be adjustable from the host (`xtask`).
+* **Embedded metadata**: test suites must include doc-strings.
 
 #### Non-Functional Requirements
 
 * **Zero Runtime Registration Overhead**: The test registry must be constructed
-  entirely during the linking phase, requiring no pre-main initialization or
-  runtime traversal logic.
+  during the linking phase.
 * **High ROM/RAM Efficiency**: Test descriptors must reside directly in Flash
-  memory (ROM) to conserve RAM exclusively for the operational execution of
-  firmware.
-* **Target Footprint Limits**: The compiled target-side test harness (excluding
-  user-defined tests) must consume less than 32 KB of Flash and 8 KB of RAM.
+  memory (ROM) to conserve RAM.
 * **Low-Overhead Execution**: Running an empty test function must cause the
-  target runner to consume less than 50 clock cycles and use no more than 32
-  bytes of stack.
+  target Server to return immediately, only costing a few cycles.
 * **Real-Time Telemetry updates**: Telemetry streams must support low-latency
   packet delivery to maintain smooth host-side rendering (under 16ms frame
   updates).
@@ -70,11 +59,11 @@ compiled directly onto target microcontrollers.
 
 The Exportable Test Suites framework consists of three main components:
 
-1. **Target-side Harness (`control-rs-hil`)**: The on-target interactive runner
-   server that manages target execution, dynamic settings configuration, and CPU
+1. **Target-side Harness (`control-rs-hil`)**: The on-target interactive Server
+   that manages target execution, dynamic settings configuration, and CPU
    profiling.
 2. **Procedural Macros (`control-rs-macros`)**: Attributes (`#[hil_suite]` and
-   `#[hil_setup]`) that abstract the boilerplates of creating descriptors and
+   `#[hil_setup]`) that abstract the boilerplate of creating descriptors and
    wrapping test main functions.
 3. **Host-side Orchestrator (`control-rs-xtask`)**: Standard Rust automation
    scripts that cross-compile the firmware, parse ELF files to discover test
@@ -82,34 +71,26 @@ The Exportable Test Suites framework consists of three main components:
 
 ```mermaid
 flowchart TD
-    Host["Host xtask Runner & TUI"]
+    Host <==>|UART or RTT| MCU
+
+    subgraph Host ["Host PC (control-rs-xtask)"]
+        direction TB
+        TUI["TUI"]
+        Bridge["ServerBridge"]
+        TUI <--> Bridge
+    end
 
     subgraph MCU ["Target Microcontroller (control-rs-hil)"]
         direction TB
-        Server["HIL Server Loop"]
+        Server["Server"]
         Suites[".hil_test_suites"]
         Settings["Atomic Settings Cache"]
-        Tests["fn()"]
+        Tests["fn() "]
         Server --> Suites
         Suites --> Settings
         Suites --> Tests
     end
-
-    Host <==>|RTT or Semihosting| MCU
 ```
-
-Implementing and deploying this component requires expertise in:
-
-* Bare-metal embedded Rust development, startup runtimes (`cortex-m-rt`), and
-  linker script manipulation (`memory.x`/`link.x`).
-* Compiler attributes, custom ELF memory sections, and linker dead code
-  elimination (garbage collection).
-* Embedded concurrency primitives, atomic memory ordering, and software
-  polyfills for architectures lacking hardware CAS.
-* Host-target interfaces, including Semihosting breakpoint traps and SEGGER
-  Real-Time Transfer (RTT).
-* Static ELF binary analysis and host automation scripting (the `xtask`
-  pattern).
 
 ---
 
@@ -117,10 +98,10 @@ Implementing and deploying this component requires expertise in:
 
 #### 4.1. Linker-Based Distributed Test Discovery
 
-Instead of building a dynamic test registry at runtime (which requires heap
-allocation), the framework utilizes a linker-based distributed slice mechanism.
-Procedural macros generate `SuiteDescriptor` instances for each suite and place
-them in a custom ELF memory section named `.hil_test_suites`.
+Instead of building a dynamic test registry at runtime, the framework utilizes a
+linker-based distributed slice mechanism. Procedural macros generate
+`SuiteDescriptor` instances for each suite and place them in a custom ELF memory
+section named `.hil_test_suites`.
 
 During compilation, the `control-rs-hil` build script (`build.rs`) generates a
 linker script fragment named `hil_suites.x` containing the following section
@@ -154,7 +135,7 @@ them.
 
 To prevent this, the crate implements a multi-tiered retention strategy:
 
-1. **`#[used(linker)]` Attribute**: Annotating static descriptors tells the
+1. **`#[used]` Attribute**: Annotating static descriptors tells the
    compiler and linker to retain the symbol. On ELF targets, this generates the
    `SHF_GNU_RETAIN` flag.
 2. **`KEEP` Linker Directive**: Wrapping the section wildcard as
@@ -165,6 +146,12 @@ To prevent this, the crate implements a multi-tiered retention strategy:
    tools to resolve them by name.
 4. **Undefined Symbol Forcing (`-u`)**: Forces the linker to treat specific
    symbols as undefined, compelling their inclusion from library archives.
+
+This multi-tiered strategy also hedges against
+[rust-lang/rust#67209](https://github.com/rust-lang/rust/issues/67209), an
+open compiler defect in which `#[used]` + `#[link_section]` statics defined in
+dependency (non-root) crates are silently discarded even when a `KEEP`
+directive is present.
 
 #### 4.3. Concurrency & State Management (Eradicating `static mut`)
 
@@ -279,8 +266,9 @@ impl Setting for AtomicU32Setting {
 
 Interactive testing sessions follow a strict state-machine flow:
 
-1. **Flashing & Reset**: The host-side runner flashes the firmware to the target
-   and triggers a hardware reset to ensure execution isolation.
+1. **Flashing & Reset**: The host-side `xtask`/`ServerBridge` flashes the
+   firmware to the target and triggers a hardware reset to ensure execution
+   isolation.
 2. **State Tracking**: Test execution status is evaluated via start and end
    timestamps recorded on the target:
     - **Pending**: No start timestamp recorded.
@@ -307,16 +295,28 @@ Interactive testing sessions follow a strict state-machine flow:
   These rely on `.init_array` or `.text.startup` compiler hooks to construct
   linked lists before `main()`. In embedded systems, executing code before
   board-specific hardware is initialized can result in undefined behavior or
-  hardware crashes.
+  hardware crashes. Additionally, `inventory` documents an explicit OS-hosted
+  platform allowlist and states that on any other platform submissions
+  silently register nothing — silent, undetectable suite loss on exactly this
+  design's target architectures. Its own README recommends `linkme` for use
+  cases that must avoid life-before-main.
+* **`linkme::DistributedSlice`**: Rejected for the container. It is a mature
+  near-fit for flat, homogeneous slices; adopting it would force splitting
+  `SuiteDescriptor` into two independently-registered slices (tests, settings)
+  joined at consumption time. It also inherits the cross-crate discard risk of
+  rust-lang/rust#67209
+  ([linkme#36](https://github.com/dtolnay/linkme/issues/36)) with no in-crate
+  workaround, whereas the hand-rolled section/`KEEP`/`-u` strategy is the
+  explicit hedge against that defect.
+* **Adopting an Existing Settings Registry**: Not possible. No surveyed
+  `no_std` crate implements a type-erased, statically-declared,
+  dynamically-mutable settings registry with typed get/set.
 * **`static mut` for State Tracking**: Rejected. The use of `static mut`
   violates Rust's strict aliasing rules, making code highly susceptible to data
   races and compiler optimization bugs. Furthermore, it is deprecated in Rust
   2024 and will result in compilation errors in Rust 2027.
-* **Semihosting-Only Telemetry**: Rejected. Although easy to set up, semihosting
-  halts the CPU pipeline during I/O operations, introducing millisecond-level
-  latencies. This degrades the determinism of real-time control loops and can
-  hide driver-level timing bugs. Real-Time Transfer (RTT) was chosen as the
-  primary telemetry channel.
+* **Semihosting-Only Telemetry**: Rejected. Heavily restricts the supported
+  hardware.
 
 ---
 
@@ -333,7 +333,7 @@ Interactive testing sessions follow a strict state-machine flow:
 - **Toolchain Tests**: Build on both `thumbv6m-none-eabi` (using software CAS
   polyfills) and `thumbv7m-none-eabi` targets to verify compiling correctness
   without warnings or errors.
-- **CI Verification**: Integrate the test runner compilation and static ELF
+- **CI Verification**: Integrate the Server compilation and static ELF
   parsing checks into the workspace's GitHub Actions pipeline.
 
 #### 6.2. Validation Plan
@@ -347,7 +347,7 @@ Interactive testing sessions follow a strict state-machine flow:
 ### 7. Performance & Resource Considerations
 
 * **ROM/RAM Overhead**: To operate within the 32 KB Flash and 8 KB RAM budget,
-  the target runner utilizes zero heap allocations and avoids unnecessary string
+  the target Server utilizes zero heap allocations and avoids unnecessary string
   formatting on-device. All descriptors reside strictly in Flash.
 * **Atomic Ordering**: Setting telemetry uses `Ordering::Relaxed` to completely
   bypass ARM memory barrier instructions (`DMB`/`DSB`), which can take multiple
@@ -363,24 +363,43 @@ Interactive testing sessions follow a strict state-machine flow:
 
 * **Linker Compatibility**: Older GNU ld or LLVM lld versions may not respect
   the `SHF_GNU_RETAIN` flag. Forcing symbol retention must rely heavily on the
-  `KEEP` directive inside generated `memory.x` scripts as a fail-safe.
+  `KEEP` directive inside the generated `hil_suites.x` script as a fail-safe.
+* **Cross-Crate Discovery (`rust-lang/rust#67209`)**: The open upstream defect
+  drops `#[used]` + `#[link_section]` statics defined in dependency crates
+  even with `KEEP`. Open question: must suites be declarable in separate
+  crates, or only separate modules within one crate? Multi-module discovery is
+  unaffected; multi-crate discovery requires the retention strategy in §4.2 as
+  a hedge and must be validated per target.
+* **`ExecDescriptor` Metadata Completeness**: The functional requirements list
+  `#[should_panic]`, `#[ignore]`, and `#[timeout]`, but `ExecDescriptor` (§4.4)
+  carries only `description`, `name`, and `test_fn`. Prior art does not supply
+  a copyable struct shape — `embedded-test` encodes these attributes as
+  macro-generated ELF metadata, not struct fields. Open question: plain fields
+  (bitflags, `Option<Duration>`) versus macro-time metadata, chosen under the
+  zero-heap, Flash-resident constraint.
+* **Settings Registry Generalization**: The `Setting` registry fills a genuine
+  ecosystem gap. Open question whether it should eventually be generalized
+  into a small standalone crate rather than remaining internal to
+  `control-rs-hil`.
 
 ---
 
 ### 9. Development Plan
 
-| Task / Feature                              | Description                                                                                                | Estimated Effort |
-|:--------------------------------------------|:-----------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Core Structs & Traits**           | Define `SuiteDescriptor`, `Setting` trait, and type-safe atomic settings wrappers.                         | 0.5 days         |
-| **Step 2: Linker Script & Injection**       | Develop the `build.rs` script to generate custom `memory.x` script fragments containing `KEEP` directives. | 0.5 days         |
-| **Step 3: Target Runner State Machine**     | Implement the on-target state-machine runner, timestamp-based lifecycle tracking, and panic handlers.      | 0.5 days         |
-| **Step 4: Host-Side `xtask` ELF Discovery** | Implement ELF section parsing (using `goblin`/`elf`) inside the `xtask` tool to auto-discover suites.      | 0.5 days         |
+| Task / Feature                              | Description                                                                                                       | Estimated Effort |
+|:--------------------------------------------|:------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Step 1: Core Structs & Traits**           | Define `SuiteDescriptor`, `Setting` trait, and type-safe atomic settings wrappers.                                | 0.5 days         |
+| **Step 2: Linker Script & Injection**       | Develop the `build.rs` script to generate the custom `hil_suites.x` script fragment containing `KEEP` directives. | 0.5 days         |
+| **Step 3: Target Server State Machine**     | Implement the on-target Server's state machine, timestamp-based lifecycle tracking, and panic handlers.           | 0.5 days         |
+| **Step 4: Host-Side `xtask` ELF Discovery** | Implement ELF section parsing (using `goblin`/`elf`) inside the `xtask` tool to auto-discover suites.             | 0.5 days         |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date          | Description                                                                                                                                                                                                        | Author          |
-|:---------|:--------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
-| 1.0      | May 23, 2026  | Initial design of exportable test suites.                                                                                                                                                                          | @MitchellDScott |
-| 1.1      | July 18, 2026 | Updated to the latest design document template; incorporated research findings on linker GC mitigation, ARMv6-M atomics constraints, and RTT/Semihosting. Verified alignment with `control-rs-hil` implementation. | @MitchellDScott |
+| Revision | Date           | Description                                                                                                                                                                                                                        | Author          |
+|:---------|:---------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
+| 1.0      | May 23, 2026   | Initial design of exportable test suites.                                                                                                                                                                                          | @MitchellDScott |
+| 1.1      | July 18, 2026  | Updated to the latest design document template; incorporated research findings on linker GC mitigation, ARMv6-M atomics constraints, and RTT/Semihosting. Verified alignment with `control-rs-hil` implementation.                 | @MitchellDScott |
+| 1.2      | August 6, 2026 | rust-lang/rust#67209 citation in GC mitigation and Risks, evidence-backed `inventory`/`linkme` rejections, settings-registry ecosystem gap, `ExecDescriptor` metadata open question. Unified linker script name to `hil_suites.x`. | @MitchellDScott |
+| 1.3      | August 9, 2026 | Review and corrections.                                                                                                                                                                                                            | @MitchellDScott |

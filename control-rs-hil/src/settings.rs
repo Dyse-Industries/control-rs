@@ -53,7 +53,7 @@ use core::sync::atomic::AtomicU64;
 
 /// A trait for a configurable setting.
 ///
-/// This trait allows the test runner to interact with settings of different
+/// This trait allows the Server to interact with settings of different
 /// types in a uniform way.
 /// `Sync` is required so the implementors can be placed in `static` memory.
 ///
@@ -136,7 +136,7 @@ pub enum SettingType {
     U8,
 }
 
-/// A value that can be gotten or set by the test runner.
+/// A value that can be gotten or set by the Server.
 ///
 /// Encapsulates the actual setting value payload corresponding to a `SettingType`.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]

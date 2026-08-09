@@ -326,7 +326,7 @@ pub struct FrameReader {
     temp_len: u16,
 }
 
-/// A log message produced by a test executable or the runner itself.
+/// A log message produced by a test executable or the Server itself.
 ///
 /// Bundles message payload text and HIL metadata tags together.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

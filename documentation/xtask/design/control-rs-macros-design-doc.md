@@ -1,7 +1,7 @@
 # Procedural Macros for Distributed Test Discovery (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-July_18,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -29,7 +29,8 @@ automated discovery without a centralized registry.
 * **Distributed Module Annotation**: Developers must be able to declare a suite
   simply by tagging a module with `#[hil_suite]`.
 * **Automatic Registration**: The macro must automatically identify all
-  functions within the module, that do not begin with an underscore and generate test descriptors.
+  functions within the module, that do not begin with an underscore and generate
+  test descriptors.
 * **Type-Safe Settings Translation**: Any static variable declared inside the
   `#[hil_suite]` module must be translated into a thread-safe atomic setting
   structure.
@@ -75,7 +76,7 @@ flowchart TD
     subgraph Target ["Target Codebase"]
         UserCode["User Module + #[hil_suite]"]
         HIL["control-rs-hil (SuiteDescriptor)"]
-        LinkerScript["embedded-test.x (KEEP Section)"]
+        LinkerScript["hil_suites.x (KEEP Section)"]
     end
 
     Macros -->|Parses & Generates| UserCode
@@ -130,12 +131,17 @@ and strips them during compilation.
 
 To prevent this, the workspace employs a multi-tiered retention architecture:
 
-1. **`#[used(linker)]` or `#[used]`**: Generated static variables use attributes directing LLVM to keep the symbol in the object file.
-2. **Linker Script KEEP Directive**: The `control-rs-hil` crate packages a custom linker script snippet (`hil_suites.x`) that includes a `KEEP` directive for the `.hil_test_suites` section:
+1. **`#[used]`**: Generated static variables use attributes directing LLVM to
+   keep the symbol in the object file.
+2. **Linker Script KEEP Directive**: The `control-rs-hil` crate packages a
+   custom linker script snippet (`hil_suites.x`) that includes a `KEEP`
+   directive for the `.hil_test_suites` section:
    ```ld
    KEEP(*(.hil_test_suites))
    ```
-3. **Build Script Linker Argument Injection**: Target binary examples (like QEMU and Teensy 4) include a `build.rs` or `.cargo/config.toml` that injects the script to the linker command line:
+3. **Build Script Linker Argument Injection**: Target binary examples (like QEMU
+   and Teensy 4) include a `build.rs` or `.cargo/config.toml` that injects the
+   script to the linker command line:
    ```rust
    println!("cargo:rustc-link-arg=-Thil_suites.x");
    ```
@@ -200,6 +206,18 @@ function. It replaces the function with the primary entrypoint:
 * **Manual Registration Array**: Developers could manually declare a global
   array of function pointers. This is rejected due to high maintenance overhead,
   boilerplate, and the risk of developer error when adding new tests.
+* **`linkme::distributed_slice`**: Rejected. The mechanism is architecturally
+  identical to the hand-rolled section scheme, but official platform support
+  covers OS-hosted targets only (Linux, macOS, Windows, FreeBSD, OpenBSD,
+  illumos); bare-metal Cortex-M/RISC-V support is uncorroborated by any primary
+  source. Adoption would also surrender project-owned control of the
+  `.hil_test_suites` section name and the `hil_suites.x`/`build.rs` linker
+  coordination.
+* **`inventory` (ctor-based registration)**: Rejected. Registration relies on
+  life-before-main constructors invoked by an OS loader (ELF `.init_array`,
+  Mach-O `mod_init_func`, PE TLS callbacks), which do not exist on a
+  loader-less bare-metal target. Unsupported platforms silently register
+  nothing rather than failing to compile.
 * **Nightly `custom_test_frameworks`**: Rejected. This requires unstable
   compiler flags and nightly toolchains, which violates the strict reliability
   and safety-certification goals of `control-rs`.
@@ -219,13 +237,17 @@ function. It replaces the function with the primary entrypoint:
 - **Procedural Macro Tests**: Implement compiler tests using `trybuild` to
   verify that the macro correctly handles valid code structures and rejects
   invalid constructs (e.g. non-static variable declarations inside a suite
-  module) with clean error messages.
+  module) with clean error messages. Compile-fail cases must cover
+  `#[hil_setup]`
+  misuse (wrong return type, missing `Context` generics) and assert spanned
+  `syn::Error` diagnostics rather than opaque proc-macro panics.
 
 #### 6.2. Validation Plan
 
 - **Hardware Integration Test**: Compile the `teensy4` board tests using the
-  macros and execute them using the host-side runner to validate that all tests
-  are discovered and that settings can be modified dynamically at runtime.
+  macros and execute them using the host-side `xtask`/`ServerBridge` to
+  validate that all tests are discovered and that settings can be modified
+  dynamically at runtime.
 
 ---
 
@@ -247,24 +269,50 @@ function. It replaces the function with the primary entrypoint:
   accordingly.
 * **Rust compiler updates**: Shifts in compiler syntax/AST structure in future
   Rust editions could disrupt the syn-based parser. Pinning dependencies in
-  Cargo.toml mitigates this.
+  Cargo.toml mitigates this, supplemented by periodic dependency-tree audits:
+  the workspace lockfile already carries syn 1.x (via TUI dependencies) and
+  syn 2.x side by side, so version fragmentation is a live condition rather
+  than a hypothetical.
+* **`#[hil_setup]` Error Diagnostics**: The return-type and generic-extraction
+  checks currently abort via `panic!`/`.expect()`, which surface as an opaque
+  "proc-macro panicked" diagnostic. They must be migrated to the
+  `syn::Error::new_spanned(...).to_compile_error()` pattern already used by
+  `#[hil_suite]`.
+* **Per-Test Opt-Out**: Test exclusion is limited to underscore-prefixed
+  function names. `defmt-test` and `embedded-test` demonstrate attribute-based
+  `#[ignore]`/`#[cfg]` opt-out in the same whole-module-rewrite macro shape;
+  open question whether to add an equivalent attribute to the functional
+  requirements.
+* **syn Feature Scope**: The `extra-traits` feature only adds Debug/Eq/Hash
+  impls that the transformation logic does not appear to use. A feature audit
+  should confirm whether it can be dropped to narrow the proc-macro2/syn API
+  surface.
+* **`linkme` Re-Evaluation**: Ruling `linkme` in or out definitively requires
+  exercising it against a real bare-metal target (QEMU or Teensy 4), since its
+  official platform list conflicts with unofficial claims of embedded support.
 
 ---
 
 ### 9. Development Plan
 
-| Task / Feature                        | Description                                                                                    | Estimated Effort |
-|:--------------------------------------|:-----------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: syn Parser Implementation** | Implement parsing logic for `#[hil_suite]` modules and `#[hil_setup]` functions.               | 1.0 day          |
-| **Step 2: AST Code Generation**       | Develop codegen templates for `SuiteDescriptor` outputs and atomic settings translations.      | 1.0 day          |
-| **Step 3: Linker Integration**        | Write the `build.rs` layout injection code and build the `embedded-test.x` linker script file. | 0.5 day          |
-| **Step 4: Panic Handler Codegen**     | Implement code generation for the custom bare-metal panic handler in `#[hil_setup]`.           | 0.5 day          |
+Steps 1–4 are implemented in `control-rs-macros/src/lib.rs`; discovery via
+`.hil_test_suites` is exercised by the HIL Server (see
+`hil-server-design-doc.md`). Step 5 covers remaining hardening.
+
+| Task / Feature                                 | Description                                                                                                                      | Status / Effort |
+|:-----------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------|:----------------|
+| **Step 1: syn Parser Implementation**          | Implement parsing logic for `#[hil_suite]` modules and `#[hil_setup]` functions.                                                 | Shipped         |
+| **Step 2: AST Code Generation**                | Develop codegen templates for `SuiteDescriptor` outputs and atomic settings translations.                                        | Shipped         |
+| **Step 3: Linker Integration**                 | Write the `build.rs` layout injection code and build the `hil_suites.x` linker script file.                                      | Shipped         |
+| **Step 4: Panic Handler Codegen**              | Implement code generation for the custom bare-metal panic handler in `#[hil_setup]`.                                             | Shipped         |
+| **Step 5: Diagnostics & Ergonomics Hardening** | Migrate `#[hil_setup]` panics to spanned `syn::Error`s, audit the `extra-traits` feature, evaluate a per-test opt-out attribute. | 1.0 day         |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date          | Description                                                                                                                                                                                | Author          |
-|:---------|:--------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
-| 1.0      | May 24, 2026  | Initial design of procedural macros for test discovery.                                                                                                                                    | @MitchellDScott |
-| 1.1      | July 18, 2026 | Restructured to design-template standard. Incorporated findings on linker GC mitigation (`KEEP` directives, build.rs injection), atomic settings conversion, and custom panic redirection. | @MitchellDScott |
+| Revision | Date           | Description                                                                                                                                                                                                                                                                                             | Author          |
+|:---------|:---------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
+| 1.0      | May 24, 2026   | Initial design of procedural macros for test discovery.                                                                                                                                                                                                                                                 | @MitchellDScott |
+| 1.1      | July 18, 2026  | Restructured to design-template standard. Incorporated findings on linker GC mitigation (`KEEP` directives, build.rs injection), atomic settings conversion, and custom panic redirection.                                                                                                              | @MitchellDScott |
+| 1.2      | August 6, 2026 | Incorporated build-vs-adopt research (`documentation/xtask/research/results/control-rs-macros.json`): evidence-backed `linkme`/`inventory` rejections, `#[hil_setup]` diagnostics gap, per-test opt-out gap, syn feature audit. Marked Steps 1–4 shipped; unified linker script name to `hil_suites.x`. | @MitchellDScott |

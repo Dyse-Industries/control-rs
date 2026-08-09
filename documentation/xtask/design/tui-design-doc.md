@@ -118,9 +118,10 @@ in [bridge.rs](../../../control-rs-xtask/src/bridge.rs)). This isolative layer
 decouples terminal UI
 rendering from target-specific transport APIs, supporting two execution targets:
 
-* **QEMU Semihosting Emulator**: Spawn a local QEMU virtual machine in a
+* **QEMU Emulator (stdio pipe)**: Spawn a local QEMU virtual machine in a
   background child process by running `cargo run --bin ...` inside
-  `examples/qemu`, piping stdin, stdout, and stderr.
+  `examples/qemu`, piping stdin, stdout, and stderr. (Semihosting is not used
+  for data transport; see §5.)
 * **Physical Serial Device**: Opens a connection to hardware (such as the Teensy
   4.0 board) over a USB CDC virtual serial port at a configured baud rate (
   defaulting to 115200) using the `serial2` crate.
@@ -131,7 +132,7 @@ To enforce data integrity over noisy virtual and physical communication links,
 the bridge employs a custom binary framing protocol:
 
 * **Downlink (Host to Target)**: High-level commands (e.g., `ListSuites`,
-  `RunTest`, `UpdateSetting`) are serialized using the `postcard` crate. The
+  `RunExecutable`, `SetSetting`) are serialized using the `postcard` crate. The
   bridge wraps the serialized bytes in a structured frame:
     - **Sync Header**: 2 bytes (`0xAA 0x55`)
     - **Payload Length**: 2 bytes (big-endian)
@@ -224,7 +225,7 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 | Task / Feature                         | Description                                                                             | Estimated Effort |
 |:---------------------------------------|:----------------------------------------------------------------------------------------|:-----------------|
 | **Step 1: Ratatui Interface Skeleton** | Build the terminal UI layout panels using `ratatui` (Header, Tree Table, Logs, Footer). | 1.0 day          |
-| **Step 2: probe-rs RTT Connection**    | Integrate polling channels into the TUI event loop.                                     | 1.0 day          |
+| **Step 2: ServerBridge Connection**    | Integrate `ServerBridge` polling channels (QEMU stdio / `serial2`) into the TUI event loop. | 1.0 day          |
 | **Step 3: Bidirectional Controls**     | Implement keystroke handlers and write command packets to the target down-buffer.       | 0.5 day          |
 
 ---
@@ -236,3 +237,4 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 | 1.0      | May 24, 2026  | Initial design outline of TUI host menu.                                                                                                                                                | @MitchellDScott |
 | 1.1      | July 18, 2026 | Restructured to design-template standard. Replaced semihosting references with RTT details, integrated Teensy 4.1 bootloader debug workarounds, and defined metrics cache architecture. | @MitchellDScott |
 | 1.2      | July 18, 2026 | Documented host-target ServerBridge architecture, postcard serialization/packet framing protocol, and target panic re-connection lifecycle based on `control-rs-xtask` source code.     | @MitchellDScott |
+| 1.3      | August 6, 2026 | Consistency pass: aligned command names with the shipped `Command` enum (`RunExecutable`/`SetSetting`), removed the semihosting label from the QEMU stdio transport, replaced the probe-rs RTT development step with the `ServerBridge` connection matching the architecture. | @MitchellDScott |

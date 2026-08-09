@@ -9,7 +9,7 @@
 //!
 //! # Core Concepts
 //!
-//! 1. **Test Runner Server**: A loop that listens for framed commands from a host TUI, executes
+//! 1. **Server**: A loop that listens for framed commands from a host TUI, executes
 //!    targeted test functions in critical sections (with interrupts disabled), and reports status.
 //! 2. **Settings Registry**: Test suites declare dynamic settings (represented by the `Setting` trait)
 //!    which the host can query and update in real-time.
@@ -53,7 +53,7 @@
 //!
 //! # Limitations
 //!
-//! - **Single Threaded Execution**: The HIL runner executes tests sequentially in a single-threaded
+//! - **Single Threaded Execution**: The HIL Server executes tests sequentially in a single-threaded
 //!   environment with global interrupts disabled.
 //! - **Hardware Dependency**: Access to low-level registers (`SysTick`, `DWT`, `CSRs`) assumes exclusive control
 //!   over target-specific profiling hardware.
