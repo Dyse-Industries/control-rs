@@ -51,6 +51,24 @@ pub mod num_type_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// Verifies `Const::from_i8` accepts both signs, matching on magnitude.
+    fn test_num_type_const_from_i8() {
+        let _: Const<5> = Const::from_i8(5);
+        let _: Const<5> = Const::from_i8(-5);
+        let _: Const<0> = Const::from_i8(0);
+        // `i8::MIN.abs()` overflows; `saturating_abs()` clamps to `i8::MAX`.
+        let _: Const<127> = Const::from_i8(i8::MIN);
+    }
+
+    #[cfg(debug_assertions)]
+    #[cfg(test)]
+    #[test]
+    #[should_panic(expected = "n.saturating_abs() as usize == N")]
+    fn _test_num_type_const_from_i8_magnitude_mismatch() {
+        let _: Const<5> = Const::from_i8(4);
+    }
+
+    #[cfg_attr(test, test)]
     /// Verifies commutativity of type-level addition (A + B == B + A).
     fn test_num_type_addition_commutativity() {
         let _: <U2 as DimAdd<U3>>::Output =

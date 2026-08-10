@@ -105,6 +105,25 @@ pub struct S<N: Dim>(PhantomData<N>);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct Const<const N: usize>;
 
+impl<const N: usize> Const<N> {
+    /// Constructs `Self` from a runtime `i8`, validating that its magnitude
+    /// matches `N`.
+    ///
+    /// Uses `saturating_abs()` rather than `abs()` so the magnitude is well
+    /// defined for every `i8`: `i8::MIN`'s magnitude (128) does not fit in
+    /// an `i8` (`abs()` panics on that overflow), so it saturates to
+    /// `i8::MAX` (127) — the `Dim` ceiling (see module docs) `Const<N>` can
+    /// represent anyway.
+    ///
+    /// # Panics
+    /// Panics in debug builds if `n.saturating_abs() as usize != N`.
+    #[must_use]
+    pub const fn from_i8(n: i8) -> Self {
+        debug_assert!(n.saturating_abs() as usize == N);
+        Self
+    }
+}
+
 // ==========================================
 // Friendly Type Aliases Macro
 // ==========================================
