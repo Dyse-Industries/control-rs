@@ -11,9 +11,8 @@
 Every numerical model in the crate (matrices, polynomials, state-space
 systems, tensors, transfer functions) is parameterized over fixed dimensions
 that must be known and checked before the program runs. Catching a dimension
-mismatch — multiplying a 3×4 matrix by a 5×2 matrix — at compile time rather
-than as a runtime panic is a correctness goal shared across every consumer of
-these types.
+mismatch (i.e. multiplying a 3×4 matrix by a 5×2 matrix) at compile time rather
+than as a runtime panic.
 
 ---
 

@@ -1,6 +1,6 @@
 # Numeric Trait Hierarchy (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_2,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_10,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@mitchelldscott-blueviolet)
 
@@ -37,9 +37,13 @@ The system-level goals of the numeric trait hierarchy are:
   matching hardware execution units: `Integer` (wrapping), `SaturatingInteger` (
   saturating), and `Float` (with `Div`/`epsilon()` scoped here only).
 - **FR-3 — The Unified Target (`Scalar`)**: Expose a single flat `Scalar`
-  trait (`AdditiveGroup + Signed + Mul<Output = Self>`) with `clamp()`/
-  `signum()`, excluding `Div`/`epsilon()` (FR-2), implemented independently by
-  floats and signed integers.
+  trait (`Zero + One + Sub<Output = Self> + Mul<Output = Self>`) with
+  `clamp()`/`signum()`, excluding `Div`/`epsilon()` (FR-2). Implemented by
+  every integer and float primitive — signed and unsigned — so BLAS-style
+  loops (`AXPY`/`GEMV`/`GEMM`) can monomorphize over `u*` widths without a
+  parallel trait. `AdditiveGroup`/`Signed` remain withheld from unsigned
+  types: `Scalar`'s `Sub` bound is the operator requirement, not a claim that
+  unsigned subtraction is underflow-free.
 
 ---
 
@@ -66,13 +70,16 @@ graph TD
     One --> Integer
     Zero --> SaturatingInteger["SaturatingInteger<br/>(Zero + One + Saturating*)"]
     One --> SaturatingInteger
+    Zero --> Scalar["Scalar<br/>(Zero + One + Sub + Mul + clamp/signum)"]
+    One --> Scalar
     Signed --> Float["Float<br/>(Signed + Radical + Exponential + Trig + Div)"]
-    Signed --> Scalar["Scalar<br/>(AdditiveGroup + Signed + Mul + clamp/signum)"]
+    Unsigned["Unsigned<br/>(Sized marker)"]
 ```
 
-`Unsigned` (marker) and `Integer`/`SaturatingInteger` are the only traits
-implemented by unsigned primitives; unsigned types do not appear in the
-`AdditiveGroup`/`Signed`/`Scalar`/`Float` branch above.
+`Integer`/`SaturatingInteger`/`Scalar` cover every integer primitive (signed
+and unsigned) plus floats for `Scalar`. `Unsigned` is a `Sized`-only marker
+on unsigned primitives. `AdditiveGroup`/`Signed`/`Float` remain signed-only
+(floats for `Float`); unsigned types never enter that branch.
 
 #### 4.2 Architectural Layers
 
@@ -81,16 +88,15 @@ implemented by unsigned primitives; unsigned types do not appear in the
     - `One` requires `Mul<Output = Self>` and associated constant `ONE`.
 2. **Subtraction Tier (`AdditiveGroup`)**:
     - Opt-in trait binding `Zero` and `Sub<Output = Self>`.
-    - The single explicit grant of subtraction for types where `a - b` is
-      total and non-panicking (signed integers, floats, `Complex<T>`).
-      Unsigned primitives never implement it.
+    - Marks types where `a - b` is underflow-free for ordinary values (
+      signed integers, floats, `Complex<T>`).
 3. **Hardware Integer Tier (`Integer`, `SaturatingInteger`, `Unsigned`)**:
     - `Integer` and `SaturatingInteger` expose the wrap and saturate ALU
       behaviors respectively, plus range constants (`MAX`, `MIN`,
       `MIN_POSITIVE`, `TWO`). Both are implemented by every integer
       primitive, signed and unsigned.
     - `Unsigned` remains a `Sized`-only marker distinguishing unsigned
-      primitives from `Scalar`-eligible signed types.
+      primitives from the `AdditiveGroup`/`Signed`/`Float` branch.
 4. **Signed & Analytic Tier (`Signed`, `Float`, `Scalar`, `Radical`,
    `Exponential`, `Trig`)**:
     - `Signed` extends `AdditiveGroup` with `Neg<Output = Self>`, providing
@@ -98,9 +104,10 @@ implemented by unsigned primitives; unsigned types do not appear in the
     - `Float` requires `Signed + Radical + Exponential + Trig +
      Div<Output = Self>` plus `epsilon()`, scoping division and machine
       epsilon to floating-point types only (FR-2, FR-3).
-    - `Scalar` requires `AdditiveGroup + Signed + Mul<Output = Self>` and adds
-      `clamp()`/`signum()`, without `Div` — see FR-3's rationale. Implemented
-      by signed integers and (transitively, via `Float`) `f32`/`f64`.
+    - `Scalar` requires `Zero + One + Sub + Mul` and adds `clamp()`/
+      `signum()`, without `Div` — see FR-3. Implemented by every integer
+      primitive (signed and unsigned) and by `f32`/`f64`. `signum()`'s
+      negative branch is unreachable for unsigned types.
 
 #### 4.3 Macro Code Generation
 
@@ -111,8 +118,8 @@ are generated using internal declarative macros:
   implementations for all integer primitives (signed and unsigned).
 - `impl_additive_group!`: Emits `AdditiveGroup` and `Signed` implementations
   for signed integer primitives and `f32`/`f64`.
-- `impl_scalar!`: Emits `Scalar` implementations for signed integer
-  primitives and `f32`/`f64`.
+- `impl_scalar!`: Emits `Scalar` implementations for every integer
+  primitive (signed and unsigned) and for `f32`/`f64`.
 - `impl_float!`: Emits `Float`, `Radical`, `Exponential`, and `Trig`
   implementations for `f32` and `f64`.
 
@@ -121,7 +128,7 @@ are generated using internal declarative macros:
 ### 5. Alternatives
 
 1. **Full Abstract Algebra
-   Taxonomy (`Magma` → `Monoid` → `Group` → `AbelianGroup`...)**:
+   Taxonomy **:
     - _Considered_: Implementing a granular algebraic hierarchy matching formal
       abstract algebra, of the kind the `noether` crate ships (`Magma`,
       `Semigroup`, `Monoid`, `Group`, `Ring`, `Field`) (warlock-labs, 2025).
@@ -174,9 +181,13 @@ target environments:
       behavior at `MAX`/`MIN`, and saturation behavior at `MAX`/`MIN` across
       primitive types and `Complex<T>`.
 2. **Compile-Time Marker Assertions**:
-    - Marker tests verify at compile time that `AdditiveGroup` and `Scalar` are
-      implemented for signed integer types and floats, and withheld from
-      unsigned types.
+    - Marker tests verify at compile time that `Scalar` is implemented for
+      every integer and float primitive (signed and unsigned), that
+      `Unsigned + Integer + SaturatingInteger` hold on unsigned primitives,
+      and that `AdditiveGroup`/`Signed` are withheld from unsigned types (
+      positive checks in `num_trait_tests.rs`; the negative
+      `AdditiveGroup` bound is a `compile_fail` doctest on `num_traits`'s
+      module docs).
 3. **SIL/HIL Test Suite Integration**:
     - Unit tests within `num_traits` are wrapped with the `#[hil_suite]` proc
       macro infrastructure.
@@ -211,8 +222,8 @@ and **zero memory footprint**:
 
 ### 8. Risks & Open Questions
 
-1. **Ordering Semantics on `Complex<T>`**: `Signed` (and transitively `Scalar`)
-   requires `PartialOrd`. `Complex<T>` implements `PartialOrd` via a
+1. **Ordering Semantics on `Complex<T>`**: `Zero`/`One`/`Scalar` (and
+   `Signed`) require `PartialOrd`. `Complex<T>` implements `PartialOrd` via a
    lexicographic order. While convenient for comparison utilities,
    lexicographic ordering is not algebraically compatible with field
    multiplication. This boundary is documented in doc comments.
@@ -320,3 +331,4 @@ and **zero memory footprint**:
 | 1.1      | August 2, 2026 | @MitchellDScott | Superseded `Ring`/`Field`/`Real` with the hardware-aligned `Zero`/`One`/`Integer`/`Float`/`Scalar` hierarchy; reverted status to Draft.   |
 | 1.2      | August 8, 2026 | @MitchellDScott | Updated citations to the author-year standard; added inline citations and a References section; renumbered Revision History.              |
 | 1.3      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                                                   |
+| 1.4      | August 10, 2026 | @MitchellDScott | Aligned FR-3, hierarchy diagram, §4 layers, and §6.1 markers with shipped `Scalar` (`Zero + One + Sub + Mul`, including unsigned).       |
