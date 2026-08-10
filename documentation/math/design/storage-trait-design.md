@@ -29,22 +29,21 @@ level code accesses data.
   borrowed-immutable, and borrowed-mutable backends plus a scratch-data
   category, and support user-defined hardware-specific backends as extension
   points.
-- **FR-3a — Stack-Based Array Storage**: Provide a default, owning backend
-  storing elements inline on the stack with a contiguous, BLAS-interop-suitable
-  layout and mutable/immutable access.
-- **FR-3b — Zero-Copy View Storage**: Provide non-owning immutable and mutable
-  backends that borrow existing memory and support layout-changing operations
-  like transposition without copying.
+    - **FR-3a — Stack-Based Array Storage**: Provide a default, owning backend
+      storing elements inline on the stack with a contiguous,
+      BLAS-interop-suitable
+      layout and mutable/immutable access.
+    - **FR-3b — Zero-Copy View Storage**: Provide non-owning immutable and
+      mutable
+      backends that borrow existing memory and support layout-changing
+      operations
+      like transposition without copying.
 - **FR-4 — Trait Hierarchy**: The trait hierarchy must distinguish two
   independent capabilities: mutable access and guaranteed contiguity.
 - **FR-5 — Initialization Strategies**: Every backend must support safe
   initialization from a repeated value, zero-fill, and identity construction.
 - **FR-6 — BLAS Interoperability**: Any contiguous-guaranteeing backend must be
-  directly usable by existing BLAS subprogram traits, with layout genericity a
-  hard requirement rather than an implementation detail.
-- **FR-7 — Retrofit Existing Types**: `Polynomial<T, N>` and
-  `StateSpace<T, NX, NU, NY>` must be expressible in terms of the new storage
-  trait without changing their public API.
+  directly usable by existing BLAS subprogram traits.
 
 #### 2.2 Non-Functional Requirements
 

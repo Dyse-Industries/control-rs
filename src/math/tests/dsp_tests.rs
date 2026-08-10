@@ -1,4 +1,7 @@
 //! Digital Signal Processing (DSP) mathematical HIL and unit test suite.
+//!
+//! `dsp.rs` has no dedicated design doc, so no functional-requirement
+//! citations apply here.
 
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod dsp_test_suite {

@@ -1,4 +1,10 @@
 //! Complex number mathematical HIL and unit test suite.
+//!
+//! `complex_num.rs` has no dedicated design doc, so tests here are not
+//! cited against per-test functional requirements. `Complex<T>: Scalar`
+//! (and the fallible-arithmetic tests below) do transitively exercise
+//! `num-traits-design.md`'s **FR-3** — see `num_trait_tests.rs` for the
+//! primary `Scalar` coverage.
 #![allow(clippy::arithmetic_side_effects)]
 
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
@@ -202,9 +208,11 @@ pub mod complex_num_test_suite {
         assert!(z1 < z2); // Real part differs
         assert!(z1 < z3); // Imaginary part differs
         assert!(z1 < z4); // Both differ
+        assert!(z2 > z3); // lexicographic ordering https://doc.rust-lang.org/std/cmp/trait.PartialOrd.html
         assert!(z2 > z1);
         assert!(z3 > z1);
         assert!(z4 > z1);
+        assert!(z3 < z2);
     }
 
     #[cfg_attr(test, test)]

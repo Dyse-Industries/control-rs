@@ -1,3 +1,11 @@
+//! Fallible/wrapping/saturating arithmetic operator (`ops.rs`) test suite.
+//!
+//! `ops.rs` has no dedicated design doc, so tests here are not cited
+//! against per-test functional requirements. Every `ArithmeticError`
+//! variant asserted below is, however, coverage of `error-design.md`'s
+//! **FR-1** (single shared error type consumed by more than one module) —
+//! `storage_tests.rs` independently exercises the same enum via
+//! `ConversionError`.
 #![allow(clippy::arbitrary_source_item_ordering)]
 
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]

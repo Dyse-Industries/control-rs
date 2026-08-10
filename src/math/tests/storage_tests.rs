@@ -1,4 +1,24 @@
 //! # Static Storage Tests
+//!
+//! ## Functional Requirement Coverage (`storage-trait-design.md`)
+//!
+//! - **FR-1** (core storage trait — ptr access, index mapping, unchecked
+//!   access): `ArrayStorage`/`StorageView` layout and bounds-check tests,
+//!   plus the property-based index-mapping suite below.
+//! - **FR-2** (type-level dimension encoding): the `Const<_>`/`U2`/`U3`
+//!   parameterization throughout, and `test_storage_view_length_mismatch`
+//!   for the runtime-length assertion.
+//! - **FR-3** (owned/borrowed/scratch backend categories): `ArrayStorage`
+//!   (owned), `StorageView`/`StorageViewMut` (borrowed), `PivotStorage`
+//!   (scratch).
+//! - **FR-3a** (stack array storage): `test_array_storage_*`.
+//! - **FR-3b** (zero-copy view storage): `test_storage_view_*`.
+//! - **FR-4** (mutable vs. contiguous as independent capabilities):
+//!   `test_array_storage_bounds_checked_access` and the `ORDER` assertions
+//!   in the layout tests.
+//! - **FR-5** (safe initialization strategies): `test_array_storage_init_strategies`,
+//!   `test_pivot_storage_identity_and_swap`.
+//! - **FR-6** (BLAS interoperability): `test_storage_gemv_contiguous_storage_interop`.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
@@ -10,12 +30,13 @@
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod storage_test_suite {
     use crate::math::ConversionError;
-    use crate::math::num_types::{Const, U2, U3};
+    use crate::math::num_types::{Const, U1, U2, U3};
     use crate::math::storage::{
         ArrayStorage, ColMajor, ContiguousStorage, ContiguousStorageMut,
         MatrixLayout, PivotStorage, RowMajor, Storage, StorageInit, StorageMut,
         StorageView, StorageViewMut, array_from_iterator, reverse_array,
     };
+    use crate::math::subprograms::{BasicSubProgramsF32, level2::GEMV};
 
     #[cfg_attr(test, test)]
     /// Verifies reversing an odd-length static array.
@@ -66,7 +87,8 @@ pub mod storage_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies `ArrayStorage::from_array` lays elements out column-major,
-    /// matching `ContiguousStorage::ORDER` and `Storage::offset`.
+    /// matching `ContiguousStorage::ORDER` and `Storage::offset` (FR-1 +
+    /// FR-3a of `storage-trait-design.md`).
     fn test_array_storage_column_major_layout() {
         // 2 rows x 3 cols: columns are [1,2], [3,4], [5,6]
         let storage = ArrayStorage::from_array([[1, 2], [3, 4], [5, 6]]);
@@ -99,7 +121,8 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies `get`/`get_mut` return `None` outside `[0, rows) x [0, cols)`.
+    /// Verifies `get`/`get_mut` return `None` outside `[0, rows) x [0, cols)`
+    /// (FR-1 + FR-4 of `storage-trait-design.md`).
     fn test_array_storage_bounds_checked_access() {
         let mut storage: ArrayStorage<i32, 2, 2> =
             ArrayStorage::from_array([[1, 2], [3, 4]]);
@@ -126,7 +149,8 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies `StorageInit`'s four safe construction strategies.
+    /// Verifies `StorageInit`'s four safe construction strategies (FR-5 of
+    /// `storage-trait-design.md`).
     fn test_array_storage_init_strategies() {
         let from_fn: ArrayStorage<i32, 2, 2> =
             StorageInit::<i32, Const<2>, Const<2>>::from_fn(|i, j| {
@@ -149,7 +173,8 @@ pub mod storage_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies `as_mut_slice` observes writes made through `get_mut`, and
-    /// vice versa (both paths address the same backing memory).
+    /// vice versa (both paths address the same backing memory) (FR-3a of
+    /// `storage-trait-design.md`).
     fn test_array_storage_mutation_round_trip() {
         let mut storage: ArrayStorage<i32, 2, 2> =
             StorageInit::<i32, Const<2>, Const<2>>::zeros();
@@ -164,7 +189,8 @@ pub mod storage_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies `StorageView` reproduces both row-major and column-major
-    /// index mappings over the same backing slice without copying.
+    /// index mappings over the same backing slice without copying (FR-2 +
+    /// FR-3b of `storage-trait-design.md`).
     fn test_storage_view_layout_selection() {
         let data = [1, 2, 3, 4, 5, 6];
 
@@ -196,7 +222,7 @@ pub mod storage_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies both view constructors reject a backing slice whose length
-    /// does not match `R::DIM * C::DIM`.
+    /// does not match `R::DIM * C::DIM` (FR-2 of `storage-trait-design.md`).
     fn test_storage_view_length_mismatch() {
         let data = [1, 2, 3];
         assert!(matches!(
@@ -213,7 +239,8 @@ pub mod storage_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies `StorageViewMut` writes are visible through the original
-    /// borrowed slice once the view is dropped.
+    /// borrowed slice once the view is dropped (FR-3b of
+    /// `storage-trait-design.md`).
     fn test_storage_view_mut_writes_through() {
         let mut data = [0; 4];
         {
@@ -228,10 +255,54 @@ pub mod storage_test_suite {
         assert_eq!(data, [0, 0, 0, 5]);
     }
 
+    // --- BLAS Interoperability (FR-6) ---
+
+    #[cfg_attr(test, test)]
+    /// Verifies a `ContiguousStorage` backend's `as_slice()`/`as_mut_slice()`
+    /// feed directly into a BLAS subprogram trait (`GEMV`) with no
+    /// intermediate copy, and that `ORDER` matches the layout `GEMV`'s
+    /// default implementation assumes (row-major: `a.chunks_exact(cols)`)
+    /// (FR-6 of `storage-trait-design.md`).
+    fn test_storage_gemv_contiguous_storage_interop() {
+        // A = [[1, 2], [3, 4]], row-major.
+        let a_data = [1.0f32, 2.0, 3.0, 4.0];
+        let a: StorageView<'_, f32, U2, U2, RowMajor> =
+            StorageView::new(&a_data).unwrap();
+        assert_eq!(
+            <StorageView<'_, f32, U2, U2, RowMajor> as ContiguousStorage<
+                f32,
+                U2,
+                U2,
+            >>::ORDER,
+            MatrixLayout::RowMajor
+        );
+
+        let x = [1.0f32, 1.0];
+        let mut y_data = [0.0f32; 2];
+        let mut y: StorageViewMut<'_, f32, U2, U1, RowMajor> =
+            StorageViewMut::new(&mut y_data).unwrap();
+
+        // y = 1.0 * A * x + 0.0 * y
+        BasicSubProgramsF32::gemv(
+            1.0,
+            a.as_slice(),
+            &x,
+            0.0,
+            y.as_mut_slice(),
+            2,
+            2,
+        );
+
+        crate::assert_almost_eq!(y_data[0], 3.0);
+        crate::assert_almost_eq!(y_data[1], 7.0);
+    }
+
     // --- PivotStorage ---
 
     #[cfg_attr(test, test)]
-    /// Verifies `PivotStorage::identity` and `swap` maintain a permutation.
+    /// Verifies `PivotStorage::identity` and `swap` maintain a permutation
+    /// (FR-3 + FR-5 of `storage-trait-design.md`, the scratch-data backend
+    /// category and its identity initialization).
     fn test_pivot_storage_identity_and_swap() {
         let mut pivots: PivotStorage<4> = PivotStorage::identity();
         assert_eq!(pivots.as_slice(), &[0, 1, 2, 3]);
@@ -242,8 +313,8 @@ pub mod storage_test_suite {
 }
 
 // Property-based coverage of `ArrayStorage`/`StorageView` index-mapping
-// invariants (`storage-trait-design.md` §6.1 item 2). Kept outside the
-// `#[hil_suite]`-wrapped module above: `proptest` is a host-only
+// invariants (FR-1 of `storage-trait-design.md`, §6.1 item 2). Kept outside
+// the `#[hil_suite]`-wrapped module above: `proptest` is a host-only
 // dev-dependency, unavailable to the `no_std`/on-target `hil` feature build.
 #[cfg(test)]
 mod storage_property_tests {

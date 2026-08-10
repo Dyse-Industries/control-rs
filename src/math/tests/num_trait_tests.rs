@@ -1,6 +1,23 @@
 //! # Numerical Tests
 //!
 //! These tests cover `[num_traits]`.
+//!
+//! ## Functional Requirement Coverage (`num-traits-design.md`)
+//!
+//! - **FR-1** (granular trait hierarchy: `Zero`/`One`/`AdditiveGroup`/
+//!   `Signed`/`Unsigned`/`Radical`/`Exponential`/`Trig`): per-trait axiom
+//!   and identity checks, plus the `Unsigned`/`Integer`/`SaturatingInteger`
+//!   marker test.
+//! - **FR-2** (functional containers `Integer`/`SaturatingInteger`/`Float`):
+//!   `test_num_trait_integer_axioms`, `test_num_trait_float_axioms`, and
+//!   (in `op_tests.rs`) the saturating add/sub/mul suites.
+//! - **FR-3** (unified `Scalar`): `test_num_trait_scalar_properties` and
+//!   `test_num_trait_scalar_markers`; also exercised transitively via
+//!   `Complex<T>: Scalar` in `complex_num_tests.rs`.
+//!
+//! `CartesianQuadrant2D`, hyperbolic functions, and the custom-`atan2`
+//! fallback tests exercise implementation details of FR-1's `Trig`/`Float`
+//! traits rather than a separately numbered requirement.
 #![allow(
     unused_imports,
     clippy::arbitrary_source_item_ordering,
@@ -172,7 +189,8 @@ pub mod num_trait_test_suite {
     // --- Test Executables ---
 
     #[cfg_attr(test, test)]
-    /// Verifies properties of the Scalar trait across all supported primitive types.
+    /// Verifies properties of the Scalar trait across all supported
+    /// primitive types (FR-3 of `num-traits-design.md`).
     fn test_num_trait_scalar_properties() {
         _signed_property_check::<f32>();
         _signed_property_check::<f64>();
@@ -195,7 +213,8 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies commutative, associative, distributive, and identity axioms of the Integer trait.
+    /// Verifies commutative, associative, distributive, and identity axioms
+    /// of the Integer trait (FR-2 of `num-traits-design.md`).
     fn test_num_trait_integer_axioms() {
         _check_integer_axioms(3_i8, 4_i8, 5_i8);
         _check_integer_axioms(0_i16, 10_i16, 5_i16);
@@ -203,7 +222,8 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies commutative, associative, distributive, and identity axioms of the Float trait.
+    /// Verifies commutative, associative, distributive, and identity axioms
+    /// of the Float trait (FR-2 of `num-traits-design.md`).
     fn test_num_trait_float_axioms() {
         _check_float_axioms(2.0f32, 3.0f32, 4.0f32);
         _check_float_axioms(2.0f64, 3.0f64, 4.0f64);
@@ -212,7 +232,8 @@ pub mod num_trait_test_suite {
     #[cfg_attr(test, test)]
     /// Verifies the `AdditiveGroup` opt-in (identity and inverse) for signed
     /// integers, floats, and `Complex<T>`, none of which are exercised by
-    /// the Integer/Float axiom checks above.
+    /// the Integer/Float axiom checks above (FR-1 of
+    /// `num-traits-design.md`).
     fn test_num_trait_additive_group_axioms() {
         _check_additive_group_axioms(&3_i32);
         _check_additive_group_axioms(&3.0f32);
@@ -261,7 +282,9 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies general Float trait properties including NAN/INF behavior and epsilons.
+    /// Verifies general Float trait properties including NAN/INF behavior
+    /// and epsilons, and drives the `Radical`/`Exponential`/`Trig` property
+    /// checks (FR-1 + FR-2 of `num-traits-design.md`).
     fn test_num_trait_float_properties() {
         _float_property_check::<f32>();
         _float_property_check::<f64>();
@@ -282,7 +305,8 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies standard identities (one/zero) for floating point and integer types.
+    /// Verifies standard identities (one/zero) for floating point and
+    /// integer types (FR-1 of `num-traits-design.md`).
     fn test_num_trait_identities_zero_one() {
         assert!(1.0f32.is_one());
         assert!(!2.0f32.is_one());
@@ -296,7 +320,8 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies sign-checking methods (positive/negative) for floating point types.
+    /// Verifies sign-checking methods (positive/negative) for floating
+    /// point types (FR-1 of `num-traits-design.md`, `Signed`).
     fn test_num_trait_sign_positive_negative() {
         assert!(1.0f32.is_sign_positive());
         assert!(!(-1.0f32).is_sign_positive());
@@ -357,7 +382,8 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies absolute value behavior of standard integers (including wrapping boundary checks).
+    /// Verifies absolute value behavior of standard integers (including
+    /// wrapping boundary checks) (FR-1 of `num-traits-design.md`, `Signed`).
     fn test_num_trait_integer_absolute_value() {
         assert_eq!((i8::MIN + 1_i8).abs(), i8::MAX);
         assert_eq!((i16::MIN + 1_i16).abs(), i16::MAX);
@@ -404,7 +430,8 @@ pub mod num_trait_test_suite {
 
     #[cfg_attr(test, test)]
     /// Statically verifies the compile-time presence of `Unsigned`,
-    /// `Integer`, and `SaturatingInteger` on every unsigned primitive.
+    /// `Integer`, and `SaturatingInteger` on every unsigned primitive
+    /// (FR-1 + FR-2 of `num-traits-design.md`).
     /// `AdditiveGroup`/`Signed` being withheld from these same types is a
     /// negative compile-time property, verified separately by the
     /// `compile_fail` doctest on `num_traits`'s module documentation
@@ -424,7 +451,8 @@ pub mod num_trait_test_suite {
 
     #[cfg_attr(test, test)]
     /// Statically verifies the compile-time presence of `Scalar` on every
-    /// integer and float primitive, signed and unsigned.
+    /// integer and float primitive, signed and unsigned (FR-3 of
+    /// `num-traits-design.md`).
     fn test_num_trait_scalar_markers() {
         fn assert_is_scalar<T: Scalar>() {}
 
@@ -503,7 +531,9 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies fallible math operations (TryAdd/Sub/Mul/Div) and comparison operators on complex numbers.
+    /// Verifies fallible math operations (TryAdd/Sub/Mul/Div) and
+    /// comparison operators on complex numbers, transitively exercising
+    /// `Complex<T>: Scalar` (FR-3 of `num-traits-design.md`).
     fn test_num_trait_complex_try_ops_and_ordering() {
         let c1 = Complex::new(4.0f32, 2.0f32);
         let c2 = Complex::new(2.0f32, 1.0f32);

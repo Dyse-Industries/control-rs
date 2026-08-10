@@ -1,3 +1,10 @@
+//! BLAS-style subprogram (`subprograms.rs`, levels 1-3) test suite.
+//!
+//! `subprograms.rs` has no dedicated design doc, so no functional-requirement
+//! citations apply here. `storage_tests.rs::test_storage_gemv_contiguous_storage_interop`
+//! covers the bridge from a `ContiguousStorage` backend into these traits
+//! (`storage-trait-design.md` FR-6); these tests exercise the subprograms
+//! themselves against plain slices.
 #![allow(unused_imports)]
 
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
