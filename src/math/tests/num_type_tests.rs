@@ -19,6 +19,11 @@
 //!  }
 //! ```
 //!
+//! See `num_types`'s own module documentation for the regression
+//! characterizing arithmetic past the `U32` ceiling (this suite lives behind
+//! `#[cfg(any(test, feature = "hil"))]`, which `rustdoc`'s doctest extraction
+//! does not set, so `compile_fail` examples placed here never actually run).
+//!
 
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod num_type_test_suite {

@@ -11,8 +11,7 @@ pub mod complex_num_test_suite {
             complex_num::Complex32,
             complex_num::Complex64,
             num_traits::{
-                Exponential, Field, One, Radical, Real, Ring, Signed, Trig,
-                Zero,
+                Exponential, Float, One, Radical, Signed, Trig, Zero,
             },
             ops::{
                 Neg, TryAdd, TryDiv, TryMul, TrySub, WrappingAdd, WrappingMul,
@@ -97,7 +96,7 @@ pub mod complex_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies `TrySub`, `PartialOrd`, and Ring constants traits for complex numbers.
+    /// Verifies `TrySub`, `PartialOrd`, and identity constants for complex numbers.
     fn test_complex_fallible_sub_and_ord_traits() {
         let a = Complex::new(5.0, 3.0);
         let b = Complex::new(5.0, 1.0);
@@ -108,10 +107,9 @@ pub mod complex_num_test_suite {
         // Covers PartialOrd equal-real branch
         assert_eq!(a.partial_cmp(&b), Some(core::cmp::Ordering::Greater));
 
-        // Covers Zero, One, Ring constants
+        // Covers Zero, One constants
         let _ = Complex::<f64>::ZERO;
         let _ = Complex::<f64>::ONE;
-        let _ = Complex::<f64>::MAX;
     }
 
     #[cfg_attr(test, test)]
@@ -337,10 +335,10 @@ pub mod complex_num_test_suite {
     #[cfg_attr(test, test)]
     /// Verifies that extreme magnitude calculations involving infinity do not overflow to NaN.
     fn test_complex_infinity_magnitude() {
-        let z = Complex64::new(f64::INF, 5.0);
+        let z = Complex64::new(f64::INFINITY, 5.0);
         assert!(z.magnitude().is_infinite());
 
-        let z2 = Complex64::new(f64::INF, f64::INF);
+        let z2 = Complex64::new(f64::INFINITY, f64::INFINITY);
         assert!(z2.magnitude().is_infinite());
     }
 

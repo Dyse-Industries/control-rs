@@ -6,7 +6,7 @@
 use crate::math::{
     ArithmeticResult,
     num_traits::{
-        Exponential, Field, One, Radical, Real, Ring, Scalar, Signed, Trig,
+        AdditiveGroup, Exponential, Float, One, Radical, Scalar, Signed, Trig,
         Zero,
     },
     ops::{
@@ -81,7 +81,7 @@ impl<T: Zero> Complex<T> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Real> Complex<T> {
+impl<T: Float> Complex<T> {
     /// Computes the principal Arg of self.
     #[inline]
     pub fn arg(self) -> T {
@@ -316,7 +316,7 @@ impl<T: PartialOrd> PartialOrd for Complex<T> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: One + Zero> One for Complex<T> {
+impl<T: One + Zero + Sub<Output = T>> One for Complex<T> {
     const ONE: Self = Self {
         re: T::ONE,
         im: T::ZERO,
@@ -334,36 +334,11 @@ impl<T: Zero> Zero for Complex<T> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Ring> Ring for Complex<T> {
-    const MAX: Self = Self {
-        re: T::MAX,
-        im: T::MAX,
-    };
-    const MIN: Self = Self {
-        re: T::MIN,
-        im: T::MIN,
-    };
-    const MIN_POSITIVE: Self = Self {
-        re: T::MIN_POSITIVE,
-        im: T::ZERO,
-    };
-    const TWO: Self = Self {
-        re: T::TWO,
-        im: T::ZERO,
-    };
-}
+impl<T: AdditiveGroup> AdditiveGroup for Complex<T> {}
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T> Field for Complex<T>
-where
-    T: Field
-        + Mul<Output = T>
-        + Add<Output = T>
-        + Sub<Output = T>
-        + Div<Output = T>
-        + Clone,
-{
+impl<T: Float> Float for Complex<T> {
     fn epsilon() -> Self {
         Self::from_real(T::epsilon())
     }
@@ -392,23 +367,16 @@ where
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T> Radical for Complex<T>
-where
-    T: Real
-        + Mul<Output = T>
-        + Add<Output = T>
-        + Sub<Output = T>
-        + Div<Output = T>
-        + Clone,
-{
+impl<T: Float> Radical for Complex<T> {
     #[allow(clippy::arithmetic_side_effects)]
     fn sqrt(self) -> Self {
         if self.is_zero() {
             return Self::zero();
         }
+        let two = T::ONE + T::ONE;
         let r = self.clone().magnitude();
-        let re = ((r + self.re.clone().abs()) / T::TWO).sqrt();
-        let im = self.im.clone().abs() / (T::TWO * re.clone());
+        let re = ((r + self.re.clone().abs()) / two.clone()).sqrt();
+        let im = self.im.clone().abs() / (two * re.clone());
 
         if self.re >= T::ZERO {
             Self::new(re, if self.im >= T::ZERO { im } else { T::ZERO - im })
@@ -425,22 +393,15 @@ where
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T> Trig for Complex<T>
-where
-    T: Real
-        + Mul<Output = T>
-        + Add<Output = T>
-        + Sub<Output = T>
-        + Div<Output = T>
-        + Clone,
-{
+impl<T: Float> Trig for Complex<T> {
     const PI: Self = Self {
         re: T::PI,
         im: T::ZERO,
     };
     #[allow(clippy::arithmetic_side_effects)]
     fn acos(self) -> Self {
-        Self::from_real(T::PI / T::TWO) - self.asin()
+        let two = T::ONE + T::ONE;
+        Self::from_real(T::PI / two) - self.asin()
     }
     #[allow(clippy::arithmetic_side_effects)]
     fn asin(self) -> Self {
@@ -454,19 +415,16 @@ where
     #[allow(clippy::arithmetic_side_effects)]
     fn atan(self) -> Self {
         // atan(z) = i/2 * ln((i+z)/(i-z))
+        let two = T::ONE + T::ONE;
         let i = Self::from_imag(T::ONE);
-        let half_i = Self::from_imag(T::ONE / T::TWO);
+        let half_i = Self::from_imag(T::ONE / two);
         half_i * ((i.clone() + self.clone()) / (i - self)).ln()
     }
     #[allow(clippy::arithmetic_side_effects)]
     fn cos(self) -> Self {
         // cos(z) = cos(x)cosh(y) - i sin(x)sinh(y)
         let (x, y) = (self.re, self.im);
-        let (sinh_y, cosh_y) = {
-            let ey = y.clone().exp();
-            let eny = (T::ZERO - y).exp();
-            ((ey.clone() - eny.clone()) / T::TWO, (ey + eny) / T::TWO)
-        };
+        let (sinh_y, cosh_y) = (y.clone().sinh(), y.cosh());
         Self::new(x.clone().cos() * cosh_y, T::ZERO - (x.sin() * sinh_y))
     }
     #[allow(clippy::arithmetic_side_effects)]
@@ -485,15 +443,7 @@ where
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Real> Exponential for Complex<T>
-where
-    T: Field
-        + Mul<Output = T>
-        + Add<Output = T>
-        + Sub<Output = T>
-        + Div<Output = T>
-        + Clone,
-{
+impl<T: Float> Exponential for Complex<T> {
     const E: Self = Self {
         re: T::E,
         im: T::ZERO,

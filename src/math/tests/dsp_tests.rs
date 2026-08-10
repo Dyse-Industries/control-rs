@@ -13,12 +13,12 @@ pub mod dsp_test_suite {
     struct TestConvolution;
     struct TestFFT;
 
-    impl<T: crate::math::num_traits::Real> Convolution<T> for TestConvolution {}
+    impl<T: crate::math::num_traits::Float> Convolution<T> for TestConvolution {}
 
     impl<
         T: 'static
             + Copy
-            + crate::math::num_traits::Real
+            + crate::math::num_traits::Float
             + crate::math::ops::Neg<Output = T>
             + Default,
     > FFT<T> for TestFFT

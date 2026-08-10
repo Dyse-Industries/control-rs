@@ -58,14 +58,14 @@
 
 #[allow(unused_imports)]
 use crate::math::{
-    num_traits::{Real, Scalar},
+    num_traits::{Float, Scalar},
     ops::{Add, Mul},
 };
 
 /// Level 1 BLAS: Vector-Vector Operations
 pub mod level1 {
     use crate::math::{
-        num_traits::{Radical, Real, Ring, Scalar},
+        num_traits::{Float, Radical, Scalar, Zero},
         ops::{Add, Mul},
     };
 
@@ -125,7 +125,7 @@ pub mod level1 {
     ///
     /// # Generic Arguments
     /// * `T` - The numeric type of the elements.
-    pub trait DOT<T: Ring + Add<Output = T> + Mul<Output = T>> {
+    pub trait DOT<T: Scalar + Add<Output = T> + Mul<Output = T>> {
         /// Computes the dot product of two vectors.
         ///
         /// # Generic Arguments
@@ -172,7 +172,7 @@ pub mod level1 {
     ///
     /// # Generic Arguments
     /// * `T` - The numeric type of the elements.
-    pub trait NRM2<T: Radical + Mul<Output = T>> {
+    pub trait NRM2<T: Radical + Zero + Mul<Output = T>> {
         /// Computes the Euclidean norm of a vector.
         ///
         /// # Generic Arguments
@@ -221,7 +221,7 @@ pub mod level1 {
     ///
     /// # Generic Arguments
     /// * `T` - The numeric type of the elements.
-    pub trait IAMAX<T: Real> {
+    pub trait IAMAX<T: Float> {
         /// Finds the index of the element with the maximum absolute value.
         ///
         /// # Generic Arguments
@@ -274,7 +274,7 @@ pub mod level1 {
 /// Level 2 BLAS: Matrix-Vector Operations
 pub mod level2 {
     use crate::math::{
-        num_traits::Ring,
+        num_traits::Scalar,
         ops::{Add, Mul},
     };
 
@@ -282,7 +282,7 @@ pub mod level2 {
     ///
     /// # Generic Arguments
     /// * `T` - The numeric type of the elements.
-    pub trait GEMV<T: Ring + Add<Output = T> + Mul<Output = T>> {
+    pub trait GEMV<T: Scalar + Add<Output = T> + Mul<Output = T>> {
         /// Computes `y = alpha*A*x + beta*y`.
         ///
         /// Performs one of the matrix-vector operations:

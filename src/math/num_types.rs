@@ -5,6 +5,21 @@
 //!
 //! This implementation avoids heavy code generation by forcing the Rust
 //! compiler's trait solver to calculate matrix dimensions during compilation.
+//!
+//! # Ceiling
+//!
+//! Friendly aliases stop at `U32`, because the unary Peano representation
+//! requires trait-solver recursion proportional to dimension size. Beyond
+//! it, arithmetic whose Peano depth exceeds the compiler's default
+//! trait-solver recursion limit (128) fails to compile with an "overflow
+//! evaluating the requirement" error rather than miscompiling silently,
+//! e.g. `U32 * U32` (depth 1024):
+//!
+//! ```compile_fail
+//! use control_rs::math::num_types::{DimMul, U32};
+//!
+//! let _: <U32 as DimMul<U32>>::Output = Default::default();
+//! ```
 #![allow(clippy::arbitrary_source_item_ordering)]
 
 use core::marker::PhantomData;

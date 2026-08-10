@@ -1,7 +1,7 @@
 # Storage Trait (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-August_1,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@mitchelldscott-blueviolet)
 
 ---

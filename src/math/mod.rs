@@ -133,6 +133,35 @@ pub enum ArithmeticError {
     Underflow,
 }
 
+/// Representation and layout conversion errors, shared across `Matrix`,
+/// `Polynomial`, and `Tensor` conversions.
+///
+/// # Safety
+/// This enum does not use `unsafe` code.
+///
+/// # Example
+/// ```
+/// use control_rs::math::ConversionError;
+///
+/// let err = ConversionError::NonMonicPolynomial;
+/// assert_eq!(format!("{}", err), "Polynomial is not monic");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversionError {
+    /// Dimension or capacity overflow/underflow during calculations.
+    DimensionMismatch,
+
+    /// Rank or coordinate dimensions do not align between Matrix/Tensor.
+    LayoutMismatch,
+
+    /// The polynomial is not monic (leading coefficient is not ONE),
+    /// preventing companion matrix construction.
+    NonMonicPolynomial,
+}
+
+/// A specialized `Result` type for fallible representation/layout conversions.
+pub type ConversionResult<T> = Result<T, ConversionError>;
+
 /// Convenience enum representing the 2D Cartesian Plane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CartesianQuadrant2D {
@@ -280,9 +309,31 @@ impl core::fmt::Display for ArithmeticError {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+impl core::error::Error for ConversionError {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl core::fmt::Display for ConversionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::LayoutMismatch => {
+                write!(f, "Rank or coordinate dimensions do not align")
+            }
+            Self::NonMonicPolynomial => {
+                write!(f, "Polynomial is not monic")
+            }
+            Self::DimensionMismatch => {
+                write!(f, "Dimension or capacity overflow/underflow")
+            }
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 #[cfg(test)]
 mod test {
-    use crate::math::ArithmeticError;
+    use crate::math::{ArithmeticError, ConversionError};
     use core::fmt::{self, Write};
 
     /// A simple helper to capture format output into a stack buffer
@@ -334,6 +385,20 @@ mod test {
         assert_eq!(writer.as_str(), expected_msg);
     }
 
+    /// A helper function to assert the `Display` output of a `ConversionError`.
+    fn assert_conversion_error_display(
+        err: ConversionError,
+        expected_msg: &str,
+    ) {
+        let mut buffer = [0u8; 128]; // Stack-allocated buffer
+        let mut writer = TestWriter::new(&mut buffer);
+
+        write!(writer, "{err}")
+            .expect("Buffer was too small for the error message");
+
+        assert_eq!(writer.as_str(), expected_msg);
+    }
+
     #[test]
     fn test_display_division_by_zero() {
         assert_error_display(
@@ -379,6 +444,30 @@ mod test {
         assert_error_display(
             ArithmeticError::Underflow,
             "Value underflowed (subnormal)",
+        );
+    }
+
+    #[test]
+    fn test_display_layout_mismatch() {
+        assert_conversion_error_display(
+            ConversionError::LayoutMismatch,
+            "Rank or coordinate dimensions do not align",
+        );
+    }
+
+    #[test]
+    fn test_display_non_monic_polynomial() {
+        assert_conversion_error_display(
+            ConversionError::NonMonicPolynomial,
+            "Polynomial is not monic",
+        );
+    }
+
+    #[test]
+    fn test_display_dimension_mismatch() {
+        assert_conversion_error_display(
+            ConversionError::DimensionMismatch,
+            "Dimension or capacity overflow/underflow",
         );
     }
 
