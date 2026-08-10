@@ -13,7 +13,7 @@ pub mod storage_test_suite {
     use crate::math::storage::{
         ArrayStorage, ContiguousStorage, ContiguousStorageMut, MatrixLayout,
         PivotStorage, Storage, StorageInit, StorageMut, StorageView,
-        StorageViewMut, array_from_iterator, reverse_array,
+        array_from_iterator, reverse_array,
     };
 
     #[cfg_attr(test, test)]
@@ -68,8 +68,7 @@ pub mod storage_test_suite {
     /// matching `ContiguousStorage::ORDER` and `Storage::offset`.
     fn test_array_storage_column_major_layout() {
         // 2 rows x 3 cols: columns are [1,2], [3,4], [5,6]
-        let storage: ArrayStorage<i32, 2, 3> =
-            ArrayStorage::from_array([[1, 2], [3, 4], [5, 6]]);
+        let storage = ArrayStorage::from_array([[1, 2], [3, 4], [5, 6]]);
 
         assert_eq!(
             <ArrayStorage<i32, 2, 3> as ContiguousStorage<
@@ -176,23 +175,6 @@ pub mod storage_test_suite {
             StorageView::new(&data, MatrixLayout::RowMajor);
         assert_eq!(Storage::<i32, U2, U3>::get(&row_major, 1, 2), Some(&6));
         assert_eq!(Storage::<i32, U2, U3>::get(&row_major, 0, 1), Some(&2));
-    }
-
-    #[cfg_attr(test, test)]
-    /// Verifies `StorageViewMut` writes are visible through the original
-    /// borrowed slice once the view is dropped.
-    fn test_storage_view_mut_writes_through() {
-        let mut data = [0; 4];
-        {
-            let mut view: StorageViewMut<'_, i32, U2, U2> =
-                StorageViewMut::new(&mut data, MatrixLayout::ColMajor);
-            if let Some(elem) =
-                StorageMut::<i32, U2, U2>::get_mut(&mut view, 1, 1)
-            {
-                *elem = 5;
-            }
-        }
-        assert_eq!(data, [0, 0, 0, 5]);
     }
 
     // --- PivotStorage ---

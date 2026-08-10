@@ -429,23 +429,6 @@ pub struct StorageViewMut<'a, T, R: Dim, C: Dim> {
     _marker: PhantomData<(R, C)>,
 }
 
-impl<'a, T, R: Dim, C: Dim> StorageViewMut<'a, T, R, C> {
-    /// Wraps `data` as a mutable `R x C` view with the given layout.
-    ///
-    /// # Panics
-    /// Panics (debug builds only) if `data.len() != R::DIM * C::DIM`.
-    #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn new(data: &'a mut [T], order: MatrixLayout) -> Self {
-        debug_assert_eq!(data.len(), R::DIM * C::DIM);
-        Self {
-            data,
-            order,
-            _marker: PhantomData,
-        }
-    }
-}
-
 // Safety: see `StorageView`'s `Storage` impl — the mapping and bounds
 // argument are identical, only mutability differs.
 unsafe impl<T, R: Dim, C: Dim> Storage<T, R, C>
