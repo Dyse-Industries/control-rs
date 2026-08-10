@@ -12,9 +12,9 @@ pub mod storage_test_suite {
     use crate::math::ConversionError;
     use crate::math::num_types::{Const, U2, U3};
     use crate::math::storage::{
-        ArrayStorage, ContiguousStorage, ContiguousStorageMut, MatrixLayout,
-        PivotStorage, Storage, StorageInit, StorageMut, StorageView,
-        StorageViewMut, array_from_iterator, reverse_array,
+        ArrayStorage, ColMajor, ContiguousStorage, ContiguousStorageMut,
+        MatrixLayout, PivotStorage, RowMajor, Storage, StorageInit, StorageMut,
+        StorageView, StorageViewMut, array_from_iterator, reverse_array,
     };
 
     #[cfg_attr(test, test)]
@@ -168,14 +168,30 @@ pub mod storage_test_suite {
     fn test_storage_view_layout_selection() {
         let data = [1, 2, 3, 4, 5, 6];
 
-        let col_major: StorageView<'_, i32, U2, U3> =
-            StorageView::new(&data, MatrixLayout::ColMajor).unwrap();
+        let col_major: StorageView<'_, i32, U2, U3, ColMajor> =
+            StorageView::new(&data).unwrap();
         assert_eq!(Storage::<i32, U2, U3>::get(&col_major, 1, 2), Some(&6));
+        assert_eq!(
+            <StorageView<'_, i32, U2, U3, ColMajor> as ContiguousStorage<
+                i32,
+                U2,
+                U3,
+            >>::ORDER,
+            MatrixLayout::ColMajor
+        );
 
-        let row_major: StorageView<'_, i32, U2, U3> =
-            StorageView::new(&data, MatrixLayout::RowMajor).unwrap();
+        let row_major: StorageView<'_, i32, U2, U3, RowMajor> =
+            StorageView::new(&data).unwrap();
         assert_eq!(Storage::<i32, U2, U3>::get(&row_major, 1, 2), Some(&6));
         assert_eq!(Storage::<i32, U2, U3>::get(&row_major, 0, 1), Some(&2));
+        assert_eq!(
+            <StorageView<'_, i32, U2, U3, RowMajor> as ContiguousStorage<
+                i32,
+                U2,
+                U3,
+            >>::ORDER,
+            MatrixLayout::RowMajor
+        );
     }
 
     #[cfg_attr(test, test)]
@@ -184,16 +200,13 @@ pub mod storage_test_suite {
     fn test_storage_view_length_mismatch() {
         let data = [1, 2, 3];
         assert!(matches!(
-            StorageView::<'_, i32, U2, U3>::new(&data, MatrixLayout::ColMajor),
+            StorageView::<'_, i32, U2, U3, ColMajor>::new(&data),
             Err(ConversionError::DimensionMismatch)
         ));
 
         let mut data_mut = [1, 2, 3];
         assert!(matches!(
-            StorageViewMut::<'_, i32, U2, U3>::new(
-                &mut data_mut,
-                MatrixLayout::ColMajor
-            ),
+            StorageViewMut::<'_, i32, U2, U3, ColMajor>::new(&mut data_mut),
             Err(ConversionError::DimensionMismatch)
         ));
     }
@@ -204,8 +217,8 @@ pub mod storage_test_suite {
     fn test_storage_view_mut_writes_through() {
         let mut data = [0; 4];
         {
-            let mut view: StorageViewMut<'_, i32, U2, U2> =
-                StorageViewMut::new(&mut data, MatrixLayout::ColMajor).unwrap();
+            let mut view: StorageViewMut<'_, i32, U2, U2, ColMajor> =
+                StorageViewMut::new(&mut data).unwrap();
             if let Some(elem) =
                 StorageMut::<i32, U2, U2>::get_mut(&mut view, 1, 1)
             {
@@ -236,7 +249,7 @@ pub mod storage_test_suite {
 mod storage_property_tests {
     use crate::math::num_types::Const;
     use crate::math::storage::{
-        ArrayStorage, MatrixLayout, Storage, StorageInit, StorageView,
+        ArrayStorage, ColMajor, Storage, StorageInit, StorageView,
     };
     use proptest::prelude::*;
 
@@ -273,8 +286,8 @@ mod storage_property_tests {
         ) {
             let array: ArrayStorage<i32, 2, 3> =
                 StorageInit::<i32, Const<2>, Const<3>>::from_fn(|i, j| vals[j * 2 + i]);
-            let view: StorageView<'_, i32, Const<2>, Const<3>> =
-                StorageView::new(&vals, MatrixLayout::ColMajor).unwrap();
+            let view: StorageView<'_, i32, Const<2>, Const<3>, ColMajor> =
+                StorageView::new(&vals).unwrap();
 
             for j in 0..3 {
                 for i in 0..2 {

@@ -92,6 +92,44 @@ pub enum MatrixLayout {
     ColMajor,
 }
 
+/// Zero-sized type-level tag for a contiguous backend's memory layout.
+///
+/// Ties [`ContiguousStorage::ORDER`] to the backend's own generic parameters
+/// rather than a runtime field, so `ORDER` cannot drift from the `offset()`
+/// formula a backend was actually constructed with: the two are the same
+/// monomorphization.
+pub trait LayoutMarker: 'static {
+    /// The [`MatrixLayout`] this marker represents.
+    const ORDER: MatrixLayout;
+    /// Maps a logical `(i, j)` index into an `R x C` grid to a physical
+    /// element offset under this layout.
+    fn offset(rows: usize, cols: usize, i: usize, j: usize) -> isize;
+}
+
+/// [`LayoutMarker`] tag: elements of a column are contiguous in memory.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ColMajor;
+
+impl LayoutMarker for ColMajor {
+    const ORDER: MatrixLayout = MatrixLayout::ColMajor;
+    #[allow(clippy::arithmetic_side_effects)]
+    fn offset(rows: usize, _cols: usize, i: usize, j: usize) -> isize {
+        (j * rows + i).cast_signed()
+    }
+}
+
+/// [`LayoutMarker`] tag: elements of a row are contiguous in memory.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RowMajor;
+
+impl LayoutMarker for RowMajor {
+    const ORDER: MatrixLayout = MatrixLayout::RowMajor;
+    #[allow(clippy::arithmetic_side_effects)]
+    fn offset(_rows: usize, cols: usize, i: usize, j: usize) -> isize {
+        (i * cols + j).cast_signed()
+    }
+}
+
 /// Read access to an `R x C` grid of `T`, decoupled from where the data
 /// physically lives.
 ///
@@ -363,26 +401,26 @@ where
 /// existing memory.
 ///
 /// Generic over any `Dim` (not just `Const<N>`), since it borrows rather
-/// than owns its backing array.
+/// than owns its backing array. The layout `O` is a type parameter, not a
+/// runtime field, so [`ContiguousStorage::ORDER`] is guaranteed to match the
+/// `offset()` formula this view was actually constructed with.
 #[derive(Debug)]
-pub struct StorageView<'a, T, R: Dim, C: Dim> {
+pub struct StorageView<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
     data: &'a [T],
-    order: MatrixLayout,
     #[allow(clippy::type_complexity)]
-    _marker: PhantomData<(R, C)>,
+    _marker: PhantomData<(R, C, O)>,
 }
 
-impl<'a, T, R: Dim, C: Dim> StorageView<'a, T, R, C> {
-    /// Wraps `data` as an `R x C` view with the given layout.
+impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StorageView<'a, T, R, C, O> {
+    /// Wraps `data` as an `R x C` view with layout `O`.
     ///
     /// # Errors
     /// Returns [`ConversionError::DimensionMismatch`] if
     /// `data.len() != R::DIM * C::DIM`.
-    pub fn new(data: &'a [T], order: MatrixLayout) -> ConversionResult<Self> {
+    pub fn new(data: &'a [T]) -> ConversionResult<Self> {
         if R::DIM.checked_mul(C::DIM) == Some(data.len()) {
             Ok(Self {
                 data,
-                order,
                 _marker: PhantomData,
             })
         } else {
@@ -393,16 +431,14 @@ impl<'a, T, R: Dim, C: Dim> StorageView<'a, T, R, C> {
 
 // Safety: `offset` maps every in-bounds `(i, j)` to a distinct index within
 // `data`, whose length was checked against `R::DIM * C::DIM` at construction.
-unsafe impl<T, R: Dim, C: Dim> Storage<T, R, C> for StorageView<'_, T, R, C> {
+unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> Storage<T, R, C>
+    for StorageView<'_, T, R, C, O>
+{
     fn ptr(&self) -> *const T {
         self.data.as_ptr()
     }
-    #[allow(clippy::arithmetic_side_effects)]
     fn offset(&self, i: usize, j: usize) -> isize {
-        match self.order {
-            MatrixLayout::ColMajor => (j * R::DIM + i).cast_signed(),
-            MatrixLayout::RowMajor => (i * C::DIM + j).cast_signed(),
-        }
+        O::offset(R::DIM, C::DIM, i, j)
     }
     unsafe fn get_unchecked(&self, i: usize, j: usize) -> &T {
         let offset = self.offset(i, j);
@@ -413,10 +449,10 @@ unsafe impl<T, R: Dim, C: Dim> Storage<T, R, C> for StorageView<'_, T, R, C> {
 
 // Safety: `data` covers exactly `R::DIM * C::DIM` contiguous elements
 // (checked at construction), ordered consistently with `offset`.
-unsafe impl<T, R: Dim, C: Dim> ContiguousStorage<T, R, C>
-    for StorageView<'_, T, R, C>
+unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorage<T, R, C>
+    for StorageView<'_, T, R, C, O>
 {
-    const ORDER: MatrixLayout = MatrixLayout::ColMajor;
+    const ORDER: MatrixLayout = O::ORDER;
     fn as_slice(&self) -> &[T] {
         self.data
     }
@@ -424,28 +460,26 @@ unsafe impl<T, R: Dim, C: Dim> ContiguousStorage<T, R, C>
 
 /// A zero-copy, non-owning, mutable view over an `R x C` grid backed by
 /// existing memory.
+///
+/// The layout `O` is a type parameter, not a runtime field — see
+/// [`StorageView`].
 #[derive(Debug)]
-pub struct StorageViewMut<'a, T, R: Dim, C: Dim> {
+pub struct StorageViewMut<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
     data: &'a mut [T],
-    order: MatrixLayout,
     #[allow(clippy::type_complexity)]
-    _marker: PhantomData<(R, C)>,
+    _marker: PhantomData<(R, C, O)>,
 }
 
-impl<'a, T, R: Dim, C: Dim> StorageViewMut<'a, T, R, C> {
-    /// Wraps `data` as a mutable `R x C` view with the given layout.
+impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StorageViewMut<'a, T, R, C, O> {
+    /// Wraps `data` as a mutable `R x C` view with layout `O`.
     ///
     /// # Errors
     /// Returns [`ConversionError::DimensionMismatch`] if
     /// `data.len() != R::DIM * C::DIM`.
-    pub fn new(
-        data: &'a mut [T],
-        order: MatrixLayout,
-    ) -> ConversionResult<Self> {
+    pub fn new(data: &'a mut [T]) -> ConversionResult<Self> {
         if R::DIM.checked_mul(C::DIM) == Some(data.len()) {
             Ok(Self {
                 data,
-                order,
                 _marker: PhantomData,
             })
         } else {
@@ -456,18 +490,14 @@ impl<'a, T, R: Dim, C: Dim> StorageViewMut<'a, T, R, C> {
 
 // Safety: see `StorageView`'s `Storage` impl — the mapping and bounds
 // argument are identical, only mutability differs.
-unsafe impl<T, R: Dim, C: Dim> Storage<T, R, C>
-    for StorageViewMut<'_, T, R, C>
+unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> Storage<T, R, C>
+    for StorageViewMut<'_, T, R, C, O>
 {
     fn ptr(&self) -> *const T {
         self.data.as_ptr()
     }
-    #[allow(clippy::arithmetic_side_effects)]
     fn offset(&self, i: usize, j: usize) -> isize {
-        match self.order {
-            MatrixLayout::ColMajor => (j * R::DIM + i).cast_signed(),
-            MatrixLayout::RowMajor => (i * C::DIM + j).cast_signed(),
-        }
+        O::offset(R::DIM, C::DIM, i, j)
     }
     unsafe fn get_unchecked(&self, i: usize, j: usize) -> &T {
         let offset = self.offset(i, j);
@@ -478,8 +508,8 @@ unsafe impl<T, R: Dim, C: Dim> Storage<T, R, C>
 
 // Safety: `ptr_mut` addresses the same `data` slice `ptr` does, with
 // exclusive access for the duration of the `&mut self` borrow.
-unsafe impl<T, R: Dim, C: Dim> StorageMut<T, R, C>
-    for StorageViewMut<'_, T, R, C>
+unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> StorageMut<T, R, C>
+    for StorageViewMut<'_, T, R, C, O>
 {
     fn ptr_mut(&mut self) -> *mut T {
         self.data.as_mut_ptr()
@@ -493,17 +523,17 @@ unsafe impl<T, R: Dim, C: Dim> StorageMut<T, R, C>
 
 // Safety: `data` covers exactly `R::DIM * C::DIM` contiguous elements
 // (checked at construction), ordered consistently with `offset`.
-unsafe impl<T, R: Dim, C: Dim> ContiguousStorage<T, R, C>
-    for StorageViewMut<'_, T, R, C>
+unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorage<T, R, C>
+    for StorageViewMut<'_, T, R, C, O>
 {
-    const ORDER: MatrixLayout = MatrixLayout::ColMajor;
+    const ORDER: MatrixLayout = O::ORDER;
     fn as_slice(&self) -> &[T] {
         self.data
     }
 }
 
-unsafe impl<T, R: Dim, C: Dim> ContiguousStorageMut<T, R, C>
-    for StorageViewMut<'_, T, R, C>
+unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorageMut<T, R, C>
+    for StorageViewMut<'_, T, R, C, O>
 {
     fn as_mut_slice(&mut self) -> &mut [T] {
         self.data

@@ -1257,11 +1257,11 @@ mod tests {
     fn test_initial_state() {
         let state = AppState::new();
         assert!(state.suites.is_empty());
-        assert!(state.console_logs.is_empty());
+        assert_eq!(state.console_logs, [] as [String; 0]);
         assert_eq!(state.selected_item_idx, 0);
-        assert!(state.run_queue.is_empty());
+        assert_eq!(state.run_queue, [] as [(u16, u16); 0]);
         assert!(state.current_running.is_none());
-        assert!(state.filter_query.is_empty());
+        assert_eq!(state.filter_query, "");
         assert!(!state.is_filtering);
         assert!(!state.discovery_complete);
     }
@@ -1522,7 +1522,7 @@ mod tests {
             &mut cmd_tx,
         );
 
-        assert!(state.run_queue.is_empty());
+        assert_eq!(state.run_queue, [] as [(u16, u16); 0]);
         assert!(state.current_running.is_none());
         assert_eq!(state.suites[0].tests[0].state, TestState::Failed);
         assert!(
@@ -1582,7 +1582,7 @@ mod tests {
         // Transition to filtering mode
         state.handle_key(KeyCode::Char('f'), &mut cmd_tx);
         assert!(state.is_filtering);
-        assert!(state.filter_query.is_empty());
+        assert_eq!(state.filter_query, "");
 
         // Type 'ap'
         state.handle_key(KeyCode::Char('a'), &mut cmd_tx);
@@ -1895,7 +1895,7 @@ mod tests {
         state.handle_target_exit(status);
 
         assert!(state.current_running.is_none());
-        assert!(state.run_queue.is_empty());
+        assert_eq!(state.run_queue, [] as [(u16, u16); 0]);
         assert!(
             state
                 .console_logs
@@ -2016,7 +2016,7 @@ mod tests {
 
         // Verify that current_running and queue are cleared
         assert!(state.current_running.is_none());
-        assert!(state.run_queue.is_empty());
+        assert_eq!(state.run_queue, [] as [(u16, u16); 0]);
 
         // 4. Target boots back up (simulate re-discovery telemetry)
         state.handle_telemetry(
