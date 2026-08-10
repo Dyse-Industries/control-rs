@@ -60,8 +60,7 @@ level code accesses data.
 #### 2.3 Constraints
 
 - **C-1 — Peano Dimension Ceiling**: The `Dim` system defines aliases up to
-  `U32`; inline-backed matrices are restricted to `R::DIM * C::DIM ≤ 1024` (
-  32×32).
+  `U127`; inline-backed matrices are restricted to `R::DIM * C::DIM ≤ 16,129`.
 - **C-2 — Clippy Compliance**: The implementation must pass the workspace Clippy
   configuration, including `large_stack_arrays` and `indexing_slicing`
   deny-lints.
