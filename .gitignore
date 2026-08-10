@@ -37,6 +37,7 @@ tarpaulin-report.*
 /target
 
 
+**/.claude
 **/CLAUDE.md
-**/copilot-instructions.md
+
 documentation/**/research/*
