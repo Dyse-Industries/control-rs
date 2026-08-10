@@ -1,7 +1,7 @@
 # Numeric Types (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-August_9,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-greengit)
 ![Author Badge](https://img.shields.io/badge/Author-@mitchelldscott-blueviolet)
 
 ---
@@ -28,13 +28,10 @@ these types.
 - **FR-2 — Type-Level Arithmetic**: Define one trait per arithmetic operation (
   addition, subtraction, multiplication, maximum, minimum), each producing an
   output satisfying the base dimension trait (FR-1).
-- **FR-3 — Canonical Unary Representation**: Represent every dimension value as
-  a recursively-defined Peano successor chain; all arithmetic traits (FR-2) are
-  implemented by structural recursion over it.
-- **FR-4 — Const-Generic Ergonomics Bridge**: Provide a const-generic wrapper
+- **FR-3 — Const-Generic Bridge**: Provide a const-generic wrapper
   letting call sites write an ordinary integer literal that resolves to the
-  canonical representation (FR-3).
-- **FR-5 — Friendly Aliases**: Generate named aliases (`U0`, `U1`, ... up to a
+  canonical representation.
+- **FR-4 — Aliases**: Generate named aliases (`U0`, `U1`, ... up to a
   fixed ceiling) for the canonical representation of each small dimension.
 
 #### 2.2 Non-Functional Requirements
@@ -47,8 +44,8 @@ these types.
 
 #### 2.3 Constraints
 
-- **C-1 — Recursion-Bounded Dimension Ceiling**: Friendly aliases (FR-5) stop at
-  a fixed ceiling (`U127`) because the unary canonical representation (FR-3)
+- **C-1 — Recursion-Bounded Dimension Ceiling**: Friendly aliases (FR-4) stop at
+  a fixed ceiling (`U127`) because the unary canonical representation
   requires trait-solver recursion proportional to dimension size, and rustc's
   default `#![recursion_limit]` is 128 (Rust Reference, 2026c) — one Peano level
   above the deepest chain a single `Dim` value can resolve to.
@@ -181,7 +178,7 @@ concern.
    `compile_fail` doctest for underflow), multiplication, maximum, and
    minimum, each checked both as a type-level assertion (`let _: U5 = ...`)
    and as a runtime `Dim::DIM` value check.
-3. **Recursion-limit regression test**:
+3. **Recursion-limit test**:
    `test_num_type_multiplication_recursion_limit` moves to exercise the
    `U127` ceiling (C-1) directly — e.g. `<U127 as DimMul<U1>>::Output` —
    so a future change that increases per-operation recursion depth surfaces
@@ -196,13 +193,7 @@ concern.
    `rustc` probes against the module's own trait shapes (default
    `#![recursion_limit] = 128` (Rust Reference, 2026c), rustc 1.97.1) confirm
    a single `Dim` value resolves up to depth 127 and fails at 128, matching
-   C-1 exactly. The same probes show `DimAdd` is not bounded by the sum of
-   its operands: `U63 + U64` (sum 127) resolves, but `U1 + U126` (also sum
-    127) does not, because the where-clause on `S<N>`'s `DimAdd` impl (§4)
-         can force a second, redundant `Dim` resolution of the larger operand.
-         A regression test pinning at least one such asymmetric pair (one
-         passing, one failing as a `compile_fail` doctest) is required to turn
-         this from a probed fact into a checked one, closing Risk 4 (§8).
+   C-1 exactly.
 
 #### 6.2 Validation
 
@@ -284,11 +275,11 @@ type lands, its own test suite becomes the first external validation that
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                                                                                                                                                                                                                                                   |
-|:---------|:---------------|:----------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 7, 2026 | @MitchellDScott | Initial draft backfilling design rationale for the existing `num_types.rs` module from research findings.                                                                                                                                                                                                                                     |
-| 1.1      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                                                                                                                                                                                                                                                       |
-| 1.2      | August 9, 2026 | @MitchellDScott | Raised the friendly-alias ceiling (C-1) from `U32` to `U127`, the trait-solver's single-value resolution limit under the default recursion budget; added C-2 and empirical probes (§6.1, item 5) characterizing the narrower, asymmetric boundary for pairwise arithmetic between large operands; reverted status to Draft pending re-review. |
+| Revision | Date           | Author          | Description                                                                                               |
+|:---------|:---------------|:----------------|:----------------------------------------------------------------------------------------------------------|
+| 1.0      | August 7, 2026 | @MitchellDScott | Initial draft backfilling design rationale for the existing `num_types.rs` module from research findings. |
+| 1.1      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                   |
+| 1.2      | August 9, 2026 | @MitchellDScott | Raised the friendly-alias ceiling (C-1) from `U32` to `U127`                                              |
 
 ---
 

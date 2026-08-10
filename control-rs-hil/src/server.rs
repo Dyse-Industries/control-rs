@@ -942,7 +942,7 @@ mod tests {
                 .unwrap()
         );
 
-        assert!(context.comms.payloads.is_empty());
+        assert_eq!(context.comms.payloads, Vec::<Vec<u8>>::new());
         assert_eq!(context.comms.flush_count, 0);
 
         context.comms_lock.unlock();
@@ -1088,7 +1088,7 @@ mod tests {
         let mut server = Server::new(context, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
-        assert!(server.context.comms.payloads.is_empty());
+        assert_eq!(server.context.comms.payloads, Vec::<Vec<u8>>::new());
     }
 
     #[test]

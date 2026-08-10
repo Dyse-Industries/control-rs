@@ -20,7 +20,7 @@
 //! ```
 //!
 //! See `num_types`'s own module documentation for the regression
-//! characterizing arithmetic past the `U32` ceiling (this suite lives behind
+//! characterizing arithmetic past the `U127` ceiling (this suite lives behind
 //! `#[cfg(any(test, feature = "hil"))]`, which `rustdoc`'s doctest extraction
 //! does not set, so `compile_fail` examples placed here never actually run).
 //!
@@ -29,7 +29,7 @@
 pub mod num_type_test_suite {
     use crate::math::num_types::{
         Const, Dim, DimAdd, DimMax, DimMin, DimMul, DimSub, S, U0, U1, U2, U3,
-        U4, U5, U6, U10, U12, U15, U32, Z,
+        U4, U5, U6, U10, U12, U15, U32, U125, U127, Z,
     };
     use core::marker::PhantomData;
     use core::mem;
@@ -63,7 +63,7 @@ pub mod num_type_test_suite {
         assert_eq!(U0::DIM, 0);
         assert_eq!(U1::DIM, 1);
         assert_eq!(U15::DIM, 15);
-        assert_eq!(U32::DIM, 32);
+        assert_eq!(U127::DIM, 127);
     }
 
     #[cfg_attr(test, test)]
@@ -108,8 +108,12 @@ pub mod num_type_test_suite {
     #[cfg_attr(test, test)]
     /// Verifies that type-level multiplication recursion limits are respected by the compiler.
     fn test_num_type_multiplication_recursion_limit() {
-        // Test a multiplication that forces deep recursion in the trait solver
-        let _: U32 = <U32 as DimMul<U1>>::Output::default();
+        // `DimMul`'s per-pair envelope is narrower than the U127 single-value
+        // ceiling (C-1): each recursive step re-resolves `Dim` on the
+        // multiplier, so `DimMul<U1>` overflows the trait solver's recursion
+        // limit above U125, not U127 (see C-2). U125 is the largest operand
+        // pinned here as a regression against that boundary shrinking further.
+        let _: U125 = <U125 as DimMul<U1>>::Output::default();
     }
 
     #[cfg_attr(test, test)]
