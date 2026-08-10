@@ -14,6 +14,7 @@
 
 use crate::math::num_traits::{One, Zero};
 use crate::math::num_types::{Const, Dim};
+use crate::math::{ConversionError, ConversionResult};
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
@@ -374,16 +375,18 @@ pub struct StorageView<'a, T, R: Dim, C: Dim> {
 impl<'a, T, R: Dim, C: Dim> StorageView<'a, T, R, C> {
     /// Wraps `data` as an `R x C` view with the given layout.
     ///
-    /// # Panics
-    /// Panics (debug builds only) if `data.len() != R::DIM * C::DIM`.
-    #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn new(data: &'a [T], order: MatrixLayout) -> Self {
-        debug_assert_eq!(data.len(), R::DIM * C::DIM);
-        Self {
-            data,
-            order,
-            _marker: PhantomData,
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if
+    /// `data.len() != R::DIM * C::DIM`.
+    pub fn new(data: &'a [T], order: MatrixLayout) -> ConversionResult<Self> {
+        if R::DIM.checked_mul(C::DIM) == Some(data.len()) {
+            Ok(Self {
+                data,
+                order,
+                _marker: PhantomData,
+            })
+        } else {
+            Err(ConversionError::DimensionMismatch)
         }
     }
 }
@@ -427,6 +430,28 @@ pub struct StorageViewMut<'a, T, R: Dim, C: Dim> {
     order: MatrixLayout,
     #[allow(clippy::type_complexity)]
     _marker: PhantomData<(R, C)>,
+}
+
+impl<'a, T, R: Dim, C: Dim> StorageViewMut<'a, T, R, C> {
+    /// Wraps `data` as a mutable `R x C` view with the given layout.
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if
+    /// `data.len() != R::DIM * C::DIM`.
+    pub fn new(
+        data: &'a mut [T],
+        order: MatrixLayout,
+    ) -> ConversionResult<Self> {
+        if R::DIM.checked_mul(C::DIM) == Some(data.len()) {
+            Ok(Self {
+                data,
+                order,
+                _marker: PhantomData,
+            })
+        } else {
+            Err(ConversionError::DimensionMismatch)
+        }
+    }
 }
 
 // Safety: see `StorageView`'s `Storage` impl — the mapping and bounds
@@ -503,7 +528,6 @@ pub struct PivotStorage<const N: usize> {
 impl<const N: usize> PivotStorage<N> {
     /// Builds the identity permutation `[0, 1, ..., N - 1]`.
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
     pub const fn identity() -> Self {
         let mut indices = [0usize; N];

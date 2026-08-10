@@ -468,9 +468,9 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(try_div_res.re, -11.0 / 5.0);
         assert_almost_eq!(try_div_res.im, 2.0 / 5.0);
 
-        // Test abs
+        // Test abs (the complex absolute value: `|z|` as a real number)
         let abs_res = z1.abs();
-        assert_almost_eq!(abs_res.re, 3.0);
-        assert_almost_eq!(abs_res.im, 4.0);
+        assert_almost_eq!(abs_res.re, 5.0);
+        assert_almost_eq!(abs_res.im, 0.0);
     }
 }

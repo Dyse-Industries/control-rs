@@ -358,10 +358,12 @@ impl<T: Neg<Output = T>> Neg for Complex<T> {
 
 impl<T> Signed for Complex<T>
 where
-    T: Signed,
+    T: Float,
 {
+    /// The complex absolute value: `|z|` as a purely real number, computed
+    /// via [`Complex::magnitude`] rather than element-wise.
     fn abs(self) -> Self {
-        Self::new(self.re.abs(), self.im.abs())
+        Self::from_real(self.magnitude())
     }
 }
 

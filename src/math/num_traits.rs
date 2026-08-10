@@ -8,10 +8,12 @@
 //!
 //! The hierarchy is as follows:
 //! - `Zero` / `One`: Additive and multiplicative identity elements.
-//! - `AdditiveGroup`: Opt-in subtraction, granted only where `a - b` is total
-//!   and non-panicking (signed integers, floats, `Complex<T>`).
+//! - `AdditiveGroup`: Opt-in marker for underflow-free subtraction, granted
+//!   where the domain is closed under negation (signed integers, floats,
+//!   `Complex<T>`).
 //! - `Integer` / `SaturatingInteger`: Hardware wrap/saturate ALU behavior,
-//!   implemented by every integer primitive (signed and unsigned).
+//!   implemented by every integer primitive (signed and unsigned); `Integer`
+//!   carries the representation-bound constants (`MAX`/`MIN`/etc.).
 //! - `Unsigned`: A `Sized`-only marker distinguishing unsigned primitives.
 //! - `Signed`: Sign predicates and absolute value.
 //! - `Radical` / `Exponential` / `Trig`: Granular analytic capabilities.
@@ -19,20 +21,20 @@
 //!   (`Signed + Radical + Exponential + Trig + Div`), the only tier where
 //!   division and machine epsilon live.
 //! - `Scalar`: The unified target for control-loop arithmetic
-//!   (`AdditiveGroup + Signed + Mul`), implemented by signed integers and
-//!   floats, deliberately excluding `Div` (integer division is not total).
+//!   (`Zero + One + Sub + Mul`), implemented by every integer and float
+//!   primitive, deliberately excluding `Div` (integer division is not total).
 //!
 //! # Compile-Time Marker Boundary
 //!
-//! `AdditiveGroup` and `Scalar` are withheld from unsigned primitives —
-//! `core::ops::Sub` is total for them, but the *semantic* guarantee
-//! `AdditiveGroup` makes (`a - b` never underflows) is not:
+//! `AdditiveGroup` and `Signed` are withheld from unsigned primitives —
+//! for them `a - b` underflows whenever `a < b`, an ordinary-value failure
+//! rather than a representation-edge one:
 //!
 //! ```compile_fail
-//! use control_rs::math::num_traits::Scalar;
+//! use control_rs::math::num_traits::AdditiveGroup;
 //!
-//! fn assert_scalar<T: Scalar>() {}
-//! assert_scalar::<u32>(); // u32 does not implement Scalar
+//! fn assert_additive_group<T: AdditiveGroup>() {}
+//! assert_additive_group::<u32>(); // u32 does not implement AdditiveGroup
 //! ```
 
 use crate::math::CartesianQuadrant2D;
@@ -105,16 +107,20 @@ pub trait One: Clone + PartialEq + PartialOrd + Mul<Output = Self> {
 // Subtraction Tier
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Opt-in trait binding `Zero` and total, non-panicking subtraction.
+/// Opt-in marker binding `Zero` and underflow-free subtraction.
 ///
-/// This is the single explicit grant of subtraction for types where
-/// `a - b` is total (signed integers, floats, `Complex<T>`). Unsigned
-/// primitives never implement it, unlike `core::ops::Sub`, which they do
-/// implement but which panics/wraps on underflow.
+/// Granted where the domain is closed under negation (signed integers,
+/// floats, `Complex<T>`), so `a - b` cannot underflow for ordinary values.
+/// Unsigned primitives never implement it: their subtraction underflows
+/// whenever `a < b`, not just at the representation edge. Signed integers
+/// do implement it, but still overflow at the representation limits
+/// (e.g. `i32::MIN - 1`, a debug panic / release wrap) — the marker
+/// guarantees underflow-free semantics away from those limits, not full
+/// mathematical totality.
 ///
 /// # Safety
-/// Implementors must guarantee `a - b` never panics and is well-defined for
-/// all representable `a`, `b`.
+/// Implementors must guarantee `a - b` is well-defined for all `a`, `b`
+/// whose difference is representable in the type.
 pub trait AdditiveGroup: Zero + Sub<Output = Self> {}
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -165,23 +171,14 @@ pub trait Integer:
 pub trait SaturatingInteger:
     Zero + One + SaturatingAdd + SaturatingSub + SaturatingMul
 {
-    /// Constant representing the max representable value.
-    const MAX: Self;
-    /// Constant representing the min representable value.
-    const MIN: Self;
-    /// Constant representing the minimum positive value.
-    const MIN_POSITIVE: Self;
-    /// Constant representing 2.
-    const TWO: Self;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Defines the set of unsigned numbers.
 ///
-/// A `Sized`-only marker distinguishing unsigned primitives from
-/// `Scalar`-eligible signed types; unsigned primitives never implement
-/// `AdditiveGroup`/`Signed`/`Scalar`.
+/// A `Sized`-only marker distinguishing unsigned primitives from signed
+/// types; unsigned primitives never implement `AdditiveGroup`/`Signed`.
 pub trait Unsigned: Sized {}
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -213,10 +210,9 @@ pub trait Signed: AdditiveGroup + Neg<Output = Self> {
 
 /// Trait for types that support square root (radical functions).
 ///
-/// # Panics
-/// Square root of a negative number must return an imaginary number or
-/// a type that indicates the domain was violated. Thus, the domain for
-/// this implementation includes all Self.
+/// The square root of a negative number must return an imaginary number or
+/// a domain-violation value (e.g. `NaN`) rather than panicking, so the
+/// domain covers all of `Self`.
 pub trait Radical:
     Clone + PartialEq + PartialOrd + Add<Output = Self> + Mul<Output = Self>
 {
@@ -235,10 +231,9 @@ pub trait Radical:
 
 /// Trait for types that support exponential, power and root functions.
 ///
-/// # Panics
-/// Exponential of a negative number must return an imaginary number or
-/// a type that indicates the domain was violated. Thus, the domain for
-/// this implementation includes all Self.
+/// Out-of-domain inputs (e.g. the logarithm of a negative number) must
+/// return a domain-violation value (e.g. `NaN`) rather than panicking, so
+/// the domain covers all of `Self`.
 pub trait Exponential: Clone + PartialEq + PartialOrd {
     /// Constant representing Euler's number.
     const E: Self;
@@ -260,10 +255,9 @@ pub trait Exponential: Clone + PartialEq + PartialOrd {
 
 /// Trait for types that support trigonometric functions.
 ///
-/// # Panics
-/// Trigonometric functions of an invalid number must return a type that
-/// indicates the domain was violated. Thus, the domain for these implementations
-/// includes all Self.
+/// Out-of-domain inputs (e.g. `acos` of a value outside `[-1, 1]`) must
+/// return a domain-violation value (e.g. `NaN`) rather than panicking, so
+/// the domain covers all of `Self`.
 pub trait Trig: Clone + PartialEq + PartialOrd {
     /// Constant representing Pi.
     const PI: Self;
@@ -293,11 +287,8 @@ pub trait Trig: Clone + PartialEq + PartialOrd {
 /// plus division and machine epsilon, scoped to floating-point types only.
 ///
 /// The trait implies and requires the existence of a machine epsilon;
-/// `1.0 + ε != 1.0`.
-///
-/// # Panics
-/// Floating-point division by zero does not panic but produces non-finite
-/// values (`inf` or `NaN`).
+/// `1.0 + ε != 1.0`. Division by zero follows IEEE-754 and produces
+/// non-finite values (`inf` or `NaN`) rather than panicking.
 ///
 /// # Example
 /// ```
@@ -419,24 +410,25 @@ pub trait Float:
 
 /// The unified target for control-loop arithmetic.
 ///
-/// `AdditiveGroup + Signed + Mul`, implemented independently by signed
-/// integers and floats. Deliberately excludes `Div`: integer division is
-/// not total (`/0` panics, `i32::MIN / -1` overflows), so requiring it here
-/// would reintroduce the panic surface this hierarchy exists to remove.
-/// Division stays on `Float`, where IEEE-754 semantics make it total.
+/// `Zero + One + Sub + Mul`, implemented by every integer and float
+/// primitive, signed and unsigned. Deliberately excludes `Div`: integer
+/// division is not total (`/0` panics, `i32::MIN / -1` overflows), so
+/// requiring it here would reintroduce the panic surface this hierarchy
+/// exists to remove. Division stays on `Float`, where IEEE-754 semantics
+/// make it total.
 ///
 /// # Example
 /// ```
 /// use control_rs::math::num_traits::Scalar;
 ///
 /// fn clamp_to_unit<T: Scalar>(val: T) -> T {
-///     val.clamp(-T::ONE, T::ONE)
+///     val.clamp(T::ZERO, T::ONE)
 /// }
 ///
-/// assert_eq!(clamp_to_unit(5), 1);
-/// assert_eq!(clamp_to_unit(-5), -1);
+/// assert_eq!(clamp_to_unit(5i32), 1);
+/// assert_eq!(clamp_to_unit(5u32), 1);
 /// ```
-pub trait Scalar: AdditiveGroup + One + Signed + Mul<Output = Self> {
+pub trait Scalar: Zero + One + Sub<Output = Self> + Mul<Output = Self> {
     /// Restricts a value to a certain interval.
     #[must_use]
     fn clamp(self, min: Self, max: Self) -> Self {
@@ -448,13 +440,14 @@ pub trait Scalar: AdditiveGroup + One + Signed + Mul<Output = Self> {
             self
         }
     }
-    /// Returns a number that represents the sign of self.
+    /// Returns a number that represents the sign of self (`-ONE`, `ZERO`,
+    /// or `ONE`); for unsigned types the negative branch is unreachable.
     #[must_use]
     #[allow(clippy::arithmetic_side_effects)]
     fn signum(self) -> Self {
         if self.is_zero() {
             Self::ZERO
-        } else if self.is_sign_negative() {
+        } else if self.lt(&Self::ZERO) {
             Self::ZERO - Self::ONE
         } else {
             Self::ONE
@@ -504,12 +497,7 @@ macro_rules! impl_int {
 
         ////////////////////////////////////////////////////////////////////////////////
 
-        impl SaturatingInteger for $type {
-            const MAX: Self = $max;
-            const MIN: Self = $min;
-            const MIN_POSITIVE: Self = $min_pos;
-            const TWO: Self = $one + $one;
-        }
+        impl SaturatingInteger for $type {}
 
         ////////////////////////////////////////////////////////////////////////////////
     };
@@ -541,7 +529,7 @@ macro_rules! impl_additive_group {
 /// Implements the `Scalar` marker trait for a given type.
 ///
 /// # Arguments
-/// - `$type`: The numeric type; must already implement `AdditiveGroup + One + Signed`.
+/// - `$type`: The numeric type; must already implement `Zero + One + Sub + Mul`.
 #[macro_export]
 macro_rules! impl_scalar {
     ($type:ty) => {
@@ -835,6 +823,7 @@ impl_scalar!(isize);
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(u8, 1, 0, u8::MAX, u8::MIN, 1);
+impl_scalar!(u8);
 impl Unsigned for u8 {}
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -842,6 +831,7 @@ impl Unsigned for u8 {}
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(u16, 1, 0, u16::MAX, u16::MIN, 1);
+impl_scalar!(u16);
 impl Unsigned for u16 {}
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -849,6 +839,7 @@ impl Unsigned for u16 {}
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(u32, 1, 0, u32::MAX, u32::MIN, 1);
+impl_scalar!(u32);
 impl Unsigned for u32 {}
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -856,6 +847,7 @@ impl Unsigned for u32 {}
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(u64, 1, 0, u64::MAX, u64::MIN, 1);
+impl_scalar!(u64);
 impl Unsigned for u64 {}
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -863,6 +855,7 @@ impl Unsigned for u64 {}
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(u128, 1, 0, u128::MAX, u128::MIN, 1);
+impl_scalar!(u128);
 impl Unsigned for u128 {}
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -870,4 +863,5 @@ impl Unsigned for u128 {}
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(usize, 1, 0, usize::MAX, usize::MIN, 1);
+impl_scalar!(usize);
 impl Unsigned for usize {}

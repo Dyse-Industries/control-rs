@@ -16,7 +16,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_saturating_add_int_checks<
-        T: SaturatingInteger + Signed + SaturatingAdd + core::fmt::Debug,
+        T: Integer + SaturatingInteger + Signed + SaturatingAdd + core::fmt::Debug,
     >(
         rhs: T,
         lhs: T,
@@ -28,7 +28,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_saturating_add_int_checks<
-        T: SaturatingInteger + SaturatingAdd + core::fmt::Debug,
+        T: Integer + SaturatingInteger + SaturatingAdd + core::fmt::Debug,
     >(
         rhs: T,
         lhs: T,
@@ -97,7 +97,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _signed_saturating_sub_int_checks<
-        T: SaturatingInteger + Signed + SaturatingSub + core::fmt::Debug,
+        T: Integer + SaturatingInteger + Signed + SaturatingSub + core::fmt::Debug,
     >(
         rhs: T,
         lhs: T,
@@ -109,7 +109,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_saturating_sub_int_checks<
-        T: SaturatingInteger + SaturatingSub + core::fmt::Debug,
+        T: Integer + SaturatingInteger + SaturatingSub + core::fmt::Debug,
     >(
         rhs: T,
         lhs: T,
@@ -168,7 +168,8 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_saturating_mul_int_checks<
-        T: SaturatingInteger
+        T: Integer
+            + SaturatingInteger
             + Signed
             + SaturatingMul
             + core::fmt::Debug
@@ -184,7 +185,11 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_saturating_mul_int_checks<
-        T: SaturatingInteger + SaturatingMul + core::fmt::Debug + PartialEq,
+        T: Integer
+            + SaturatingInteger
+            + SaturatingMul
+            + core::fmt::Debug
+            + PartialEq,
     >(
         rhs: T,
         lhs: T,

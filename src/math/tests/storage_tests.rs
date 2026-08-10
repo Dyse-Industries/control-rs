@@ -9,11 +9,12 @@
 
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod storage_test_suite {
+    use crate::math::ConversionError;
     use crate::math::num_types::{Const, U2, U3};
     use crate::math::storage::{
         ArrayStorage, ContiguousStorage, ContiguousStorageMut, MatrixLayout,
         PivotStorage, Storage, StorageInit, StorageMut, StorageView,
-        array_from_iterator, reverse_array,
+        StorageViewMut, array_from_iterator, reverse_array,
     };
 
     #[cfg_attr(test, test)]
@@ -168,13 +169,50 @@ pub mod storage_test_suite {
         let data = [1, 2, 3, 4, 5, 6];
 
         let col_major: StorageView<'_, i32, U2, U3> =
-            StorageView::new(&data, MatrixLayout::ColMajor);
+            StorageView::new(&data, MatrixLayout::ColMajor).unwrap();
         assert_eq!(Storage::<i32, U2, U3>::get(&col_major, 1, 2), Some(&6));
 
         let row_major: StorageView<'_, i32, U2, U3> =
-            StorageView::new(&data, MatrixLayout::RowMajor);
+            StorageView::new(&data, MatrixLayout::RowMajor).unwrap();
         assert_eq!(Storage::<i32, U2, U3>::get(&row_major, 1, 2), Some(&6));
         assert_eq!(Storage::<i32, U2, U3>::get(&row_major, 0, 1), Some(&2));
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies both view constructors reject a backing slice whose length
+    /// does not match `R::DIM * C::DIM`.
+    fn test_storage_view_length_mismatch() {
+        let data = [1, 2, 3];
+        assert!(matches!(
+            StorageView::<'_, i32, U2, U3>::new(&data, MatrixLayout::ColMajor),
+            Err(ConversionError::DimensionMismatch)
+        ));
+
+        let mut data_mut = [1, 2, 3];
+        assert!(matches!(
+            StorageViewMut::<'_, i32, U2, U3>::new(
+                &mut data_mut,
+                MatrixLayout::ColMajor
+            ),
+            Err(ConversionError::DimensionMismatch)
+        ));
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies `StorageViewMut` writes are visible through the original
+    /// borrowed slice once the view is dropped.
+    fn test_storage_view_mut_writes_through() {
+        let mut data = [0; 4];
+        {
+            let mut view: StorageViewMut<'_, i32, U2, U2> =
+                StorageViewMut::new(&mut data, MatrixLayout::ColMajor).unwrap();
+            if let Some(elem) =
+                StorageMut::<i32, U2, U2>::get_mut(&mut view, 1, 1)
+            {
+                *elem = 5;
+            }
+        }
+        assert_eq!(data, [0, 0, 0, 5]);
     }
 
     // --- PivotStorage ---
@@ -236,7 +274,7 @@ mod storage_property_tests {
             let array: ArrayStorage<i32, 2, 3> =
                 StorageInit::<i32, Const<2>, Const<3>>::from_fn(|i, j| vals[j * 2 + i]);
             let view: StorageView<'_, i32, Const<2>, Const<3>> =
-                StorageView::new(&vals, MatrixLayout::ColMajor);
+                StorageView::new(&vals, MatrixLayout::ColMajor).unwrap();
 
             for j in 0..3 {
                 for i in 0..2 {

@@ -27,7 +27,7 @@ pub mod num_trait_test_suite {
         assert!(T::ONE.is_one());
     }
 
-    fn _signed_property_check<T: Scalar + core::fmt::Debug>() {
+    fn _signed_property_check<T: Scalar + Signed + core::fmt::Debug>() {
         assert!(T::ONE.is_sign_positive());
         assert!(!T::ONE.is_sign_negative());
         assert!(!T::ZERO.is_sign_positive());
@@ -182,6 +182,16 @@ pub mod num_trait_test_suite {
         _signed_property_check::<i64>();
         _signed_property_check::<i128>();
         _signed_property_check::<isize>();
+
+        // Unsigned scalars: no Signed methods, but identity and signum
+        // properties still hold (the negative branch is unreachable).
+        _scalar_property_check::<u8>();
+        _scalar_property_check::<u32>();
+        _scalar_property_check::<usize>();
+        assert_eq!(5_u32.signum(), 1);
+        assert_eq!(0_u32.signum(), 0);
+        // Qualified: `Ord::clamp` also exists for integer primitives.
+        assert_eq!(Scalar::clamp(7_u8, 0, 3), 3);
     }
 
     #[cfg_attr(test, test)]
@@ -395,7 +405,7 @@ pub mod num_trait_test_suite {
     #[cfg_attr(test, test)]
     /// Statically verifies the compile-time presence of `Unsigned`,
     /// `Integer`, and `SaturatingInteger` on every unsigned primitive.
-    /// `AdditiveGroup`/`Scalar` being withheld from these same types is a
+    /// `AdditiveGroup`/`Signed` being withheld from these same types is a
     /// negative compile-time property, verified separately by the
     /// `compile_fail` doctest on `num_traits`'s module documentation
     /// (this suite lives behind `#[cfg(any(test, feature = "hil"))]`,
@@ -413,8 +423,8 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Statically verifies the compile-time presence of `Scalar` on signed
-    /// integers and floats.
+    /// Statically verifies the compile-time presence of `Scalar` on every
+    /// integer and float primitive, signed and unsigned.
     fn test_num_trait_scalar_markers() {
         fn assert_is_scalar<T: Scalar>() {}
 
@@ -424,6 +434,12 @@ pub mod num_trait_test_suite {
         assert_is_scalar::<i64>();
         assert_is_scalar::<i128>();
         assert_is_scalar::<isize>();
+        assert_is_scalar::<u8>();
+        assert_is_scalar::<u16>();
+        assert_is_scalar::<u32>();
+        assert_is_scalar::<u64>();
+        assert_is_scalar::<u128>();
+        assert_is_scalar::<usize>();
         assert_is_scalar::<f32>();
         assert_is_scalar::<f64>();
     }
