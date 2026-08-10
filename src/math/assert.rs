@@ -2,7 +2,7 @@
 
 use crate::math::{
     ArithmeticResult,
-    num_traits::{Field, Signed},
+    num_traits::{Float, Signed},
     ops::{TryMul, TrySub},
 };
 
@@ -133,7 +133,7 @@ macro_rules! assert_not_almost_eq {
 /// Return `ArithmeticError` if the subtraction operation fails.
 pub fn almost_eq<T>(a: &T, b: &T) -> ArithmeticResult<bool>
 where
-    T: TrySub + TryMul + Signed + Field,
+    T: TrySub + TryMul + Signed + Float,
 {
     almost_eq_eps(a, b, &T::epsilon())
 }
@@ -159,7 +159,7 @@ where
 /// Return `ArithmeticError` if the subtraction operation fails.
 pub fn almost_eq_eps<T>(a: &T, b: &T, epsilon: &T) -> ArithmeticResult<bool>
 where
-    T: TrySub + TryMul + Signed + Field,
+    T: TrySub + TryMul + Signed + Float,
 {
     if a == b {
         return Ok(true);

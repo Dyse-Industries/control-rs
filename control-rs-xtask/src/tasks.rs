@@ -1,4 +1,4 @@
-//! Modules defining the runner and compilation tasks executed by `xtask`.
+//! Modules defining the test-execution and compilation tasks executed by `xtask`.
 //! Includes tasks for formatting check, clippy checks, coverage tracking with tarpaulin,
 //! and running headless/interactive tests.
 

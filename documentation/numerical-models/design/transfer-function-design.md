@@ -30,80 +30,41 @@ Flash ROM tables).
 
 #### 2.1 Functional Requirements
 
-##### FR-1: Direct Storage Parameterization
-
-The `TransferFunction` type must accept independent storage backends for the
-numerator ($N$ coefficients) and denominator ($D$ coefficients):
-`TransferFunction<T, N: Dim, D: Dim, Sn: Storage<T, N, U1>, Sd: Storage<T, D, U1>>`
-
-##### FR-2: Domain Encoding (Continuous vs. Discrete)
-
-The type must encode domain information (continuous $s$-domain vs. discrete $z$
--domain) and hold an optional sampling period $T_s$.
-
-##### FR-3: Direct Interoperability with Math & DSP Traits
-
-All mathematical operations—frequency response
-evaluation ($H(j\omega)$ / $H(e^{j\omega T_s})$), system algebra (
-cascade/series, parallel, feedback), discretization, and canonical
-transformations—must interact directly with Peano dimension traits (`Dim`,
-`DimAdd`, `DimSub`), DSP subprogram traits (e.g. `Convolution<T>`, Horner
-evaluation), and BLAS kernels without delegating to high-level `Polynomial`
-wrappers.
-
-##### FR-4: System Interconnections
-
-The module must provide static capacity computation for algebraic connections:
-
-- **Series (Cascade)**: $H_1(s) \cdot H_2(s) = \frac{B_1 B_2}{A_1 A_2}$
-- **Parallel**: $H_1(s) + H_2(s) = \frac{B_1 A_2 + B_2 A_1}{A_1 A_2}$
-- **Feedback (Closed-Loop)
-  **: $\frac{H_1(s)}{1 + H_1(s) H_2(s)} = \frac{B_1 A_2}{A_1 A_2 + B_1 B_2}$
-
-##### FR-5: Discretization Algorithms
-
-The module must support continuous-to-discrete transformations:
-
-- **Bilinear (Tustin) Transform**: $s \approx \frac{2}{T_s} \frac{z - 1}{z + 1}$
-  with optional frequency pre-warping.
-- **Zero-Order Hold (ZOH)**: Exact step-invariant discretization.
-
-##### FR-6: State-Space Canonical Conversions
-
-The module must support bidirectional conversions between transfer functions and
-state-space systems (`StateSpace<T, NX, NU, NY>`) in Controllable Canonical Form
-and Observable Canonical Form.
+- **FR-1 — Direct Storage Parameterization**: `TransferFunction` must accept
+  independent storage backends for numerator and denominator coefficients (
+  `Sn: Storage<T, N, U1>`, `Sd: Storage<T, D, U1>`).
+- **FR-2 — Domain Encoding**: The type must encode continuous vs. discrete
+  domain and hold an optional sampling period $T_s$.
+- **FR-3 — Direct Interoperability with Math & DSP Traits**: All operations (
+  frequency response, system algebra, discretization, canonical transforms) must
+  interact directly with Peano, DSP, and BLAS traits without delegating to
+  `Polynomial` wrappers.
+- **FR-4 — System Interconnections**: Provide static capacity computation for
+  series, parallel, and feedback (closed-loop) algebraic connections.
+- **FR-5 — Discretization Algorithms**: Support bilinear (Tustin) transform with
+  optional pre-warping and exact Zero-Order Hold discretization.
+- **FR-6 — State-Space Canonical Conversions**: Support bidirectional conversion
+  between transfer functions and `StateSpace` in Controllable and Observable
+  Canonical Form.
 
 #### 2.2 Non-Functional Requirements
 
-##### NFR-1: Zero Dynamic Allocation (`#![no_std]`, `no_alloc`)
-
-All operations must execute deterministically without relying on heap
-allocation (`Vec`, `Box`).
-
-##### NFR-2: Zero-Cost Abstraction
-
-Storage abstraction and Peano dimension bounds must monomorphize completely,
-matching hand-optimized raw array operations.
-
-##### NFR-3: Contiguity-Gated Slice Views
-
-Safe slice accessors (`num_slice()`, `den_slice()`) must be exposed if and only
-if the underlying storage backends implement `ContiguousStorage`.
+- **NFR-1 — Zero Dynamic Allocation**: All operations must execute
+  deterministically without heap allocation (`Vec`, `Box`).
+- **NFR-2 — Zero-Cost Abstraction**: Storage abstraction and Peano dimension
+  bounds must monomorphize completely, matching hand-optimized raw array
+  operations.
+- **NFR-3 — Contiguity-Gated Slice Views**: Safe slice accessors (`num_slice()`,
+  `den_slice()`) are exposed only if the backend implements `ContiguousStorage`.
 
 #### 2.3 Constraints
 
-- **Coefficient Ordering**: Ascending order of powers for both numerator and
-  denominator, following the same convention as `Polynomial` (see
-  [polynomial-design.md §2.3](polynomial-design.md#23-constraints)):
-  $$ B(s) = b_0 + b_1 s + \dots + b_{N-1} s^{N-1}, \quad A(s) = a_0 + a_1 s + \dots + a_{D-1} s^{D-1} $$
-  This is a logical convention independent of `Sn`/`Sd`'s physical layout,
-  for the same reason it is orthogonal for `Polynomial`
-  (`polynomial-design.md` §3.3). It diverges from MATLAB/`python-control`'s
-  descending-power ordering, which the cross-validation harness must account
-  for explicitly (§7, Cross-Validation).
-- **Denominator Validity**: Denominator capacity $D$ must satisfy $D \ge 1$
-  and a non-zero leading coefficient ($a_{D-1} \neq 0$).
+- **C-1 — Coefficient Ordering**: Ascending order of powers for numerator and
+  denominator, matching `Polynomial`'s
+  convention ([polynomial-design.md §2.3](polynomial-design.md#23-constraints));
+  diverges from MATLAB/`python-control`'s descending order (§7).
+- **C-2 — Denominator Validity**: Denominator capacity $D$ must
+  satisfy $D \ge 1$ with a non-zero leading coefficient ($a_{D-1} \neq 0$).
 
 ---
 
@@ -456,11 +417,11 @@ than implemented in the initial revision.
 
 ### 6. Alternatives
 
-| Architecture Option                     | Advantages                                                                                                            | Disadvantages                                                                                                                                                                     | Decision     |
-|:-----------------------------------------|:----------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------|
-| **Wrapping `Polynomial`**               | Reuses existing polynomial methods.                                                                                   | Breaks container peer model; adds artificial coupling; forces extra abstraction layers — the same rationale `state-space-design.md` uses to reject wrapping `Matrix` fields directly. | **Rejected** |
-| **Second-Order-Sections (SOS) Cascade** | Standard embedded-DSP answer to coefficient sensitivity growing with filter order (ARM CMSIS-DSP `BiquadCascadeDF2T`; Rust `biquad` crate); bounds conditioning per-stage rather than across the full polynomial. | Cannot represent an arbitrary rational transfer function, only designed filters reducible to cascaded biquads; would require a structurally different type from this general $N/D$ container. | **Rejected** |
-| **Direct Storage Wrapper (Chosen)**     | Symmetric with `Matrix` and `Polynomial`; zero cost; direct access to Peano/DSP/BLAS; supports views and ROM storage. | Requires implementing evaluation and convolution calls against storage directly; flat coefficient representation inherits the coefficient-sensitivity growth SOS is designed to avoid, at high order. | **Selected** |
+| Architecture Option                     | Advantages                                                                                                                                                                                                        | Disadvantages                                                                                                                                                                                         | Decision     |
+|:----------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------|
+| **Wrapping `Polynomial`**               | Reuses existing polynomial methods.                                                                                                                                                                               | Breaks container peer model; adds artificial coupling; forces extra abstraction layers — the same rationale `state-space-design.md` uses to reject wrapping `Matrix` fields directly.                 | **Rejected** |
+| **Second-Order-Sections (SOS) Cascade** | Standard embedded-DSP answer to coefficient sensitivity growing with filter order (ARM CMSIS-DSP `BiquadCascadeDF2T`; Rust `biquad` crate); bounds conditioning per-stage rather than across the full polynomial. | Cannot represent an arbitrary rational transfer function, only designed filters reducible to cascaded biquads; would require a structurally different type from this general $N/D$ container.         | **Rejected** |
+| **Direct Storage Wrapper (Chosen)**     | Symmetric with `Matrix` and `Polynomial`; zero cost; direct access to Peano/DSP/BLAS; supports views and ROM storage.                                                                                             | Requires implementing evaluation and convolution calls against storage directly; flat coefficient representation inherits the coefficient-sensitivity growth SOS is designed to avoid, at high order. | **Selected** |
 
 ---
 
@@ -538,14 +499,14 @@ than implemented in the initial revision.
 
 ### 10. Development Plan & Roadmap
 
-| Task / Feature                              | Description                                                                        | Estimated Effort |
-|:--------------------------------------------|:-----------------------------------------------------------------------------------|:-----------------|
-| **Phase 1: Storage Wrapper & Constructors** | Base `TransferFunction` struct, storage traits, slice accessors, and error type.    | 1.0 Day          |
-| **Phase 2: Frequency Evaluation**           | Direct Horner evaluation over storage for $H(j\omega)$ and Bode calculations.      | 1.0 Day          |
-| **Phase 3: Algebra & DSP Convolution**      | Implement series, parallel, and feedback connections using direct DSP convolution. | 1.5 Days         |
+| Task / Feature                              | Description                                                                                                                                                                                                       | Estimated Effort |
+|:--------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Phase 1: Storage Wrapper & Constructors** | Base `TransferFunction` struct, storage traits, slice accessors, and error type.                                                                                                                                  | 1.0 Day          |
+| **Phase 2: Frequency Evaluation**           | Direct Horner evaluation over storage for $H(j\omega)$ and Bode calculations.                                                                                                                                     | 1.0 Day          |
+| **Phase 3: Algebra & DSP Convolution**      | Implement series, parallel, and feedback connections using direct DSP convolution.                                                                                                                                | 1.5 Days         |
 | **Phase 4: Discretization**                 | Bilinear (Tustin, with pre-warping) transform and transfer-function-direct ZOH, including partial-fraction decomposition (§9's closely-spaced/repeated-pole conditioning risk must be bounded, not assumed away). | 2.5 Days         |
-| **Phase 5: State-Space Conversion**         | Controllable and Observable Canonical Form conversions.                            | 1.5 Days         |
-| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites, and cross-validation against two external reference implementations (MATLAB, `python-control`).       | 2.0 Days          |
+| **Phase 5: State-Space Conversion**         | Controllable and Observable Canonical Form conversions.                                                                                                                                                           | 1.5 Days         |
+| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites, and cross-validation against two external reference implementations (MATLAB, `python-control`).                                                                                    | 2.0 Days         |
 
 ---
 
@@ -621,11 +582,11 @@ than implemented in the initial revision.
 
 ### 12. Revision History
 
-| Date          | Author          | Description                                                                                                                                     |
-|:--------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------|
-| July 26, 2026 | @MitchellDScott | Initial draft establishing `TransferFunction` as a standalone peer storage wrapper interacting directly with Peano, DSP, and subprogram traits. |
-| July 26, 2026 | @MitchellDScott | Added inline academic citations and 3-tiered references section.                                                                                |
-| August 1, 2026 | @MitchellDScott | Deduplicated the coefficient-ordering constraint by cross-referencing `polynomial-design.md`'s canonical statement instead of restating it. |
-| August 2, 2026 | @MitchellDScott | Documented near-pole Horner conditioning (§5.2); derived `DimMax`-based capacity bounds and the non-minimal-result guarantee for parallel/feedback (§5.3); split ZOH into a chosen transfer-function-direct path and a rejected state-space-mediated path (§5.4); added a canonical-form conditioning caveat (§5.5), Error Handling (§4.5), SOS cascade alternative (§6), and Risks & Open Questions (§9). |
-| August 2, 2026 | @MitchellDScott | Propagated the `num-traits-design.md` pivot to `to_discrete_tustin`'s bound (`T: Real` → `T: Float`, §5.4); added a Risks entry for that dependency's still-pre-research status and for `Convolution<T>`'s shipped, unmigrated `T: Real` bound; revised Phase 4/6 development-plan estimates upward (partial-fraction ZOH and dual-reference-implementation cross-validation were under-scoped). |
-| August 2, 2026 | @MitchellDScott | Noted in §2.3 that coefficient ordering is independent of `Sn`/`Sd` physical layout and surfaced the MATLAB/`python-control` descending-order divergence (previously only in §7) alongside the Constraints statement. |
+| Revision | Date           | Author          | Description                                                                                                                   |
+|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 26, 2026  | @MitchellDScott | Initial draft establishing `TransferFunction` as a standalone peer storage wrapper.                                           |
+| 1.1      | July 26, 2026  | @MitchellDScott | Added inline academic citations and 3-tiered references section.                                                              |
+| 1.2      | August 1, 2026 | @MitchellDScott | Deduplicated coefficient-ordering constraint via cross-reference to `polynomial-design.md`'s canonical statement.             |
+| 1.3      | August 2, 2026 | @MitchellDScott | Documented Horner conditioning and capacity bounds; split ZOH into direct and rejected paths; added Error Handling and Risks. |
+| 1.4      | August 2, 2026 | @MitchellDScott | Propagated `num-traits-design.md` pivot to Tustin's bound; revised development-plan estimates upward.                         |
+| 1.5      | August 2, 2026 | @MitchellDScott | Noted coefficient ordering is independent of physical layout; surfaced MATLAB/`python-control` ordering divergence.           |

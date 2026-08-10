@@ -1,4 +1,7 @@
 //! Digital Signal Processing (DSP) mathematical HIL and unit test suite.
+//!
+//! `dsp.rs` has no dedicated design doc, so no functional-requirement
+//! citations apply here.
 
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod dsp_test_suite {
@@ -13,12 +16,12 @@ pub mod dsp_test_suite {
     struct TestConvolution;
     struct TestFFT;
 
-    impl<T: crate::math::num_traits::Real> Convolution<T> for TestConvolution {}
+    impl<T: crate::math::num_traits::Float> Convolution<T> for TestConvolution {}
 
     impl<
         T: 'static
             + Copy
-            + crate::math::num_traits::Real
+            + crate::math::num_traits::Float
             + crate::math::ops::Neg<Output = T>
             + Default,
     > FFT<T> for TestFFT

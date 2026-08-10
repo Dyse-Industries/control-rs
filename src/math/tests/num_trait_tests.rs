@@ -1,6 +1,23 @@
 //! # Numerical Tests
 //!
 //! These tests cover `[num_traits]`.
+//!
+//! ## Functional Requirement Coverage (`num-traits-design.md`)
+//!
+//! - **FR-1** (granular trait hierarchy: `Zero`/`One`/`AdditiveGroup`/
+//!   `Signed`/`Unsigned`/`Radical`/`Exponential`/`Trig`): per-trait axiom
+//!   and identity checks, plus the `Unsigned`/`Integer`/`SaturatingInteger`
+//!   marker test.
+//! - **FR-2** (functional containers `Integer`/`SaturatingInteger`/`Float`):
+//!   `test_num_trait_integer_axioms`, `test_num_trait_float_axioms`, and
+//!   (in `op_tests.rs`) the saturating add/sub/mul suites.
+//! - **FR-3** (unified `Scalar`): `test_num_trait_scalar_properties` and
+//!   `test_num_trait_scalar_markers`; also exercised transitively via
+//!   `Complex<T>: Scalar` in `complex_num_tests.rs`.
+//!
+//! `CartesianQuadrant2D`, hyperbolic functions, and the custom-`atan2`
+//! fallback tests exercise implementation details of FR-1's `Trig`/`Float`
+//! traits rather than a separately numbered requirement.
 #![allow(
     unused_imports,
     clippy::arbitrary_source_item_ordering,
@@ -13,8 +30,8 @@ pub mod num_trait_test_suite {
     use crate::math::CartesianQuadrant2D;
     use crate::math::complex_num::Complex;
     use crate::math::num_traits::{
-        Exponential, Field, One, Radical, Real, Ring, Scalar, Signed, Trig,
-        Unsigned, Zero,
+        AdditiveGroup, Exponential, Float, Integer, One, Radical,
+        SaturatingInteger, Scalar, Signed, Trig, Unsigned, Zero,
     };
     use crate::math::ops::{TryAdd, TryDiv, TryMul, TrySub};
 
@@ -27,7 +44,7 @@ pub mod num_trait_test_suite {
         assert!(T::ONE.is_one());
     }
 
-    fn _signed_property_check<T: Signed + Zero + One + core::fmt::Debug>() {
+    fn _signed_property_check<T: Scalar + Signed + core::fmt::Debug>() {
         assert!(T::ONE.is_sign_positive());
         assert!(!T::ONE.is_sign_negative());
         assert!(!T::ZERO.is_sign_positive());
@@ -40,7 +57,16 @@ pub mod num_trait_test_suite {
         _scalar_property_check::<T>();
     }
 
-    fn _check_int_ring<T: Ring + core::fmt::Debug>(a: T, b: T, c: T) {
+    fn _check_additive_group_axioms<T: AdditiveGroup + core::fmt::Debug>(
+        a: &T,
+    ) {
+        // Identity: a + 0 = a
+        assert_eq!(a.clone() + T::zero(), *a);
+        // Inverse: a - a = 0
+        assert_eq!(a.clone() - a.clone(), T::ZERO);
+    }
+
+    fn _check_integer_axioms<T: Integer + core::fmt::Debug>(a: T, b: T, c: T) {
         // Identity: a + 0 = a
         assert_eq!(a.clone() + T::zero(), a);
         // Identity: a * 1 = a
@@ -54,11 +80,10 @@ pub mod num_trait_test_suite {
         let left = a.clone() * (b.clone() + c.clone());
         let right = (a.clone() * b) + (a * c);
         assert_eq!(left, right);
-        assert_eq!(T::from_const::<2>(), T::TWO);
-        assert_eq!(T::from_usize(2), T::ONE + T::ONE);
+        assert_eq!(T::ONE + T::ONE, T::TWO);
     }
 
-    fn _check_float_ring<T: Real + TrySub + TryMul + core::fmt::Debug>(
+    fn _check_float_axioms<T: Float + TrySub + TryMul + core::fmt::Debug>(
         a: T,
         b: T,
         c: T,
@@ -76,25 +101,32 @@ pub mod num_trait_test_suite {
         let left = a.clone() * (b.clone() + c.clone());
         let right = (a.clone() * b) + (a * c);
         assert_almost_eq!(left, right);
-        assert_almost_eq!(T::from_const::<2>(), T::TWO);
-        assert_almost_eq!(T::from_usize(2), T::ONE + T::ONE);
+        let two = T::ONE + T::ONE;
+        assert_almost_eq!(T::from_const::<2>(), two);
+        assert_almost_eq!(T::from_usize(2), two);
     }
 
     fn _radical_property_check<
-        T: Radical + Real + Zero + One + TrySub + TryMul + core::fmt::Debug,
+        T: Radical + Float + TrySub + TryMul + core::fmt::Debug,
     >() {
-        assert_almost_eq!(T::sqrt(T::TWO + T::TWO), T::TWO);
+        let two = T::ONE + T::ONE;
+        assert_almost_eq!(T::sqrt(two.clone() + two.clone()), two);
     }
 
+    #[allow(clippy::eq_op)]
     fn _radical_property_panic_check<
-        T: Radical + Real + Zero + One + TrySub + TryMul + core::fmt::Debug,
+        T: Radical + Float + TrySub + TryMul + core::fmt::Debug,
     >() {
-        assert_almost_eq!(T::sqrt(T::ONE.neg()), T::NAN);
+        // NaN is produced generically via 0/0, matching the IEEE-754 total
+        // division `Float` relies on rather than a dedicated NAN constant.
+        let nan = T::ZERO / T::ZERO;
+        assert_almost_eq!(T::sqrt(T::ONE.neg()), nan);
     }
 
     fn _exponential_property_check<
-        T: Exponential + Real + Zero + One + TrySub + TryMul + core::fmt::Debug,
+        T: Exponential + Float + TrySub + TryMul + core::fmt::Debug,
     >() {
+        let two = T::ONE + T::ONE;
         assert_almost_eq!(<T as Exponential>::exp(T::ONE), T::E);
         assert_almost_eq!(<T as Exponential>::ln(T::E), T::ONE);
         assert_almost_eq!(
@@ -102,41 +134,52 @@ pub mod num_trait_test_suite {
             T::ONE
         );
         assert_almost_eq!(
-            <T as Exponential>::pow(T::TWO, T::TWO),
-            T::TWO + T::TWO
+            <T as Exponential>::pow(two.clone(), two.clone()),
+            two.clone() + two
         );
     }
 
     fn _trig_property_check<
-        T: Trig + Real + Signed + Zero + One + TrySub + TryMul + core::fmt::Debug,
+        T: Trig + Float + TrySub + TryMul + core::fmt::Debug,
     >() {
+        let two = T::ONE + T::ONE;
         assert_almost_eq!(<T as Trig>::cos(T::PI), T::ONE.neg());
         assert_almost_eq!(<T as Trig>::sin(T::PI), T::ZERO);
         assert_almost_eq!(<T as Trig>::tan(T::ZERO), T::ZERO);
-        assert_almost_eq!(<T as Trig>::acos(T::ZERO), T::PI / T::TWO);
+        assert_almost_eq!(<T as Trig>::acos(T::ZERO), T::PI / two.clone());
         assert_almost_eq!(<T as Trig>::asin(T::ZERO), T::ZERO);
-        assert_almost_eq!(<T as Trig>::atan(T::ONE), T::PI / (T::TWO + T::TWO));
-        assert_almost_eq!(<T as Real>::atan2(T::ZERO, T::ZERO), T::ZERO);
-        assert_almost_eq!(<T as Real>::atan2(T::ZERO, T::ONE), T::ZERO);
-        assert_almost_eq!(<T as Real>::atan2(T::ZERO, T::ONE.neg()), T::PI);
         assert_almost_eq!(
-            <T as Real>::atan2(T::ONE, T::ONE),
-            T::PI / (T::TWO + T::TWO)
+            <T as Trig>::atan(T::ONE),
+            T::PI / (two.clone() + two.clone())
         );
-        assert_almost_eq!(<T as Real>::atan2(T::ONE, T::ZERO), T::PI / T::TWO);
+        assert_almost_eq!(<T as Float>::atan2(T::ZERO, T::ZERO), T::ZERO);
+        assert_almost_eq!(<T as Float>::atan2(T::ZERO, T::ONE), T::ZERO);
+        assert_almost_eq!(<T as Float>::atan2(T::ZERO, T::ONE.neg()), T::PI);
         assert_almost_eq!(
-            <T as Real>::atan2(T::ONE.neg(), T::ZERO),
-            T::PI.neg() / T::TWO
+            <T as Float>::atan2(T::ONE, T::ONE),
+            T::PI / (two.clone() + two.clone())
+        );
+        assert_almost_eq!(
+            <T as Float>::atan2(T::ONE, T::ZERO),
+            T::PI / two.clone()
+        );
+        assert_almost_eq!(
+            <T as Float>::atan2(T::ONE.neg(), T::ZERO),
+            T::PI.neg() / two
         );
     }
 
     #[allow(clippy::eq_op)]
-    fn _real_property_check<
-        T: Real + Signed + Zero + One + TrySub + TryMul + core::fmt::Debug,
-    >() {
-        assert_ne!(T::NAN, T::NAN);
-        assert_eq!(T::INF, T::INF);
-        assert_almost_eq!(T::epsilon() / T::TWO, T::ZERO);
+    fn _float_property_check<T: Float + TrySub + TryMul + core::fmt::Debug>() {
+        // NaN/Infinity are produced generically via total IEEE-754 division
+        // (0/0, 1/0) rather than dedicated NAN/INF constants (`Float`
+        // deliberately carries neither — see `num-traits-design.md`).
+        let nan = T::ZERO / T::ZERO;
+        let inf = T::ONE / T::ZERO;
+        assert_ne!(nan.clone(), nan);
+        assert_eq!(inf.clone(), inf);
+        let two = T::ONE + T::ONE;
+        assert_almost_eq!(T::epsilon() / two, T::ZERO);
 
         _radical_property_check::<T>();
         _exponential_property_check::<T>();
@@ -146,7 +189,8 @@ pub mod num_trait_test_suite {
     // --- Test Executables ---
 
     #[cfg_attr(test, test)]
-    /// Verifies properties of the Scalar trait across all supported primitive types.
+    /// Verifies properties of the Scalar trait across all supported
+    /// primitive types (FR-3 of `num-traits-design.md`).
     fn test_num_trait_scalar_properties() {
         _signed_property_check::<f32>();
         _signed_property_check::<f64>();
@@ -156,21 +200,44 @@ pub mod num_trait_test_suite {
         _signed_property_check::<i64>();
         _signed_property_check::<i128>();
         _signed_property_check::<isize>();
+
+        // Unsigned scalars: no Signed methods, but identity and signum
+        // properties still hold (the negative branch is unreachable).
         _scalar_property_check::<u8>();
-        _scalar_property_check::<u16>();
         _scalar_property_check::<u32>();
-        _scalar_property_check::<u64>();
-        _scalar_property_check::<u128>();
         _scalar_property_check::<usize>();
+        assert_eq!(5_u32.signum(), 1);
+        assert_eq!(0_u32.signum(), 0);
+        // Qualified: `Ord::clamp` also exists for integer primitives.
+        assert_eq!(Scalar::clamp(7_u8, 0, 3), 3);
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies commutative, associative, distributive, and identity axioms of the Ring trait.
-    fn test_num_trait_ring_axioms() {
-        _check_int_ring(3_i8, 4_i8, 5_i8);
-        _check_int_ring(0_i16, 10_i16, -5_i16);
-        _check_float_ring(2.0f32, 3.0f32, 4.0f32);
-        _check_float_ring(2.0f64, 3.0f64, 4.0f64);
+    /// Verifies commutative, associative, distributive, and identity axioms
+    /// of the Integer trait (FR-2 of `num-traits-design.md`).
+    fn test_num_trait_integer_axioms() {
+        _check_integer_axioms(3_i8, 4_i8, 5_i8);
+        _check_integer_axioms(0_i16, 10_i16, 5_i16);
+        _check_integer_axioms(3_u8, 4_u8, 5_u8);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies commutative, associative, distributive, and identity axioms
+    /// of the Float trait (FR-2 of `num-traits-design.md`).
+    fn test_num_trait_float_axioms() {
+        _check_float_axioms(2.0f32, 3.0f32, 4.0f32);
+        _check_float_axioms(2.0f64, 3.0f64, 4.0f64);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies the `AdditiveGroup` opt-in (identity and inverse) for signed
+    /// integers, floats, and `Complex<T>`, none of which are exercised by
+    /// the Integer/Float axiom checks above (FR-1 of
+    /// `num-traits-design.md`).
+    fn test_num_trait_additive_group_axioms() {
+        _check_additive_group_axioms(&3_i32);
+        _check_additive_group_axioms(&3.0f32);
+        _check_additive_group_axioms(&Complex::new(1.0f32, 2.0f32));
     }
 
     #[cfg_attr(test, test)]
@@ -215,28 +282,31 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies general Real trait properties including NAN/INF behavior and epsilons.
-    fn test_num_trait_real_properties() {
-        _real_property_check::<f32>();
-        _real_property_check::<f64>();
+    /// Verifies general Float trait properties including NAN/INF behavior
+    /// and epsilons, and drives the `Radical`/`Exponential`/`Trig` property
+    /// checks (FR-1 + FR-2 of `num-traits-design.md`).
+    fn test_num_trait_float_properties() {
+        _float_property_check::<f32>();
+        _float_property_check::<f64>();
     }
 
     #[cfg(test)]
     #[test]
     #[should_panic(expected = "Input is outside the mathematical domain")]
-    fn _test_real_f32_panics() {
+    fn _test_float_f32_panics() {
         _radical_property_panic_check::<f32>();
     }
 
     #[cfg(test)]
     #[test]
     #[should_panic(expected = "Input is outside the mathematical domain")]
-    fn _test_real_f64_panics() {
+    fn _test_float_f64_panics() {
         _radical_property_panic_check::<f64>();
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies standard identities (one/zero) for floating point and integer types.
+    /// Verifies standard identities (one/zero) for floating point and
+    /// integer types (FR-1 of `num-traits-design.md`).
     fn test_num_trait_identities_zero_one() {
         assert!(1.0f32.is_one());
         assert!(!2.0f32.is_one());
@@ -250,7 +320,8 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies sign-checking methods (positive/negative) for floating point types.
+    /// Verifies sign-checking methods (positive/negative) for floating
+    /// point types (FR-1 of `num-traits-design.md`, `Signed`).
     fn test_num_trait_sign_positive_negative() {
         assert!(1.0f32.is_sign_positive());
         assert!(!(-1.0f32).is_sign_positive());
@@ -311,7 +382,8 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies absolute value behavior of standard integers (including wrapping boundary checks).
+    /// Verifies absolute value behavior of standard integers (including
+    /// wrapping boundary checks) (FR-1 of `num-traits-design.md`, `Signed`).
     fn test_num_trait_integer_absolute_value() {
         assert_eq!((i8::MIN + 1_i8).abs(), i8::MAX);
         assert_eq!((i16::MIN + 1_i16).abs(), i16::MAX);
@@ -357,37 +429,65 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Statically verifies the compile-time presence of Unsigned and Scalar traits.
-    fn test_num_trait_unsigned_scalar_markers() {
-        fn assert_is_unsigned_scalar<T: Unsigned + Scalar>() {}
+    /// Statically verifies the compile-time presence of `Unsigned`,
+    /// `Integer`, and `SaturatingInteger` on every unsigned primitive
+    /// (FR-1 + FR-2 of `num-traits-design.md`).
+    /// `AdditiveGroup`/`Signed` being withheld from these same types is a
+    /// negative compile-time property, verified separately by the
+    /// `compile_fail` doctest on `num_traits`'s module documentation
+    /// (this suite lives behind `#[cfg(any(test, feature = "hil"))]`,
+    /// which `rustdoc` doctest extraction does not set).
+    fn test_num_trait_unsigned_integer_markers() {
+        fn assert_is_unsigned_integer<
+            T: Unsigned + Integer + SaturatingInteger,
+        >() {
+        }
 
-        assert_is_unsigned_scalar::<u8>();
-        assert_is_unsigned_scalar::<u16>();
-        assert_is_unsigned_scalar::<u32>();
-        assert_is_unsigned_scalar::<u64>();
+        assert_is_unsigned_integer::<u8>();
+        assert_is_unsigned_integer::<u16>();
+        assert_is_unsigned_integer::<u32>();
+        assert_is_unsigned_integer::<u64>();
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies the default atan2 implementation fallback branches on custom `TestReal` type.
+    /// Statically verifies the compile-time presence of `Scalar` on every
+    /// integer and float primitive, signed and unsigned (FR-3 of
+    /// `num-traits-design.md`).
+    fn test_num_trait_scalar_markers() {
+        fn assert_is_scalar<T: Scalar>() {}
+
+        assert_is_scalar::<i8>();
+        assert_is_scalar::<i16>();
+        assert_is_scalar::<i32>();
+        assert_is_scalar::<i64>();
+        assert_is_scalar::<i128>();
+        assert_is_scalar::<isize>();
+        assert_is_scalar::<u8>();
+        assert_is_scalar::<u16>();
+        assert_is_scalar::<u32>();
+        assert_is_scalar::<u64>();
+        assert_is_scalar::<u128>();
+        assert_is_scalar::<usize>();
+        assert_is_scalar::<f32>();
+        assert_is_scalar::<f64>();
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies the default atan2 implementation fallback branches on custom `TestFloat` type.
     fn test_num_trait_default_atan2_fallbacks() {
+        let two = TestFloat(2.0);
         // 1. Origin
-        assert_eq!(TestReal(0.0).atan2(TestReal(0.0)), TestReal(0.0));
+        assert_eq!(TestFloat(0.0).atan2(TestFloat(0.0)), TestFloat(0.0));
         // 2. Positive X
-        assert_eq!(TestReal(0.0).atan2(TestReal(1.0)), TestReal(0.0));
+        assert_eq!(TestFloat(0.0).atan2(TestFloat(1.0)), TestFloat(0.0));
         // 3. Negative Y
-        assert_eq!(
-            TestReal(-1.0).atan2(TestReal(0.0)),
-            -TestReal::PI / TestReal::TWO
-        );
+        assert_eq!(TestFloat(-1.0).atan2(TestFloat(0.0)), -TestFloat::PI / two);
         // 4. Negative X
-        assert_eq!(TestReal(0.0).atan2(TestReal(-1.0)), TestReal::PI);
+        assert_eq!(TestFloat(0.0).atan2(TestFloat(-1.0)), TestFloat::PI);
         // 5. Positive Y
-        assert_eq!(
-            TestReal(1.0).atan2(TestReal(0.0)),
-            TestReal::PI / TestReal::TWO
-        );
+        assert_eq!(TestFloat(1.0).atan2(TestFloat(0.0)), TestFloat::PI / two);
         // 6. General case (e.g. Q1)
-        assert_eq!(TestReal(1.0).atan2(TestReal(1.0)), TestReal(1.0).atan());
+        assert_eq!(TestFloat(1.0).atan2(TestFloat(1.0)), TestFloat(1.0).atan());
     }
 
     #[cfg_attr(test, test)]
@@ -431,7 +531,9 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies fallible math operations (TryAdd/Sub/Mul/Div) and comparison operators on complex numbers.
+    /// Verifies fallible math operations (TryAdd/Sub/Mul/Div) and
+    /// comparison operators on complex numbers, transitively exercising
+    /// `Complex<T>: Scalar` (FR-3 of `num-traits-design.md`).
     fn test_num_trait_complex_try_ops_and_ordering() {
         let c1 = Complex::new(4.0f32, 2.0f32);
         let c2 = Complex::new(2.0f32, 1.0f32);
@@ -454,70 +556,60 @@ pub mod num_trait_test_suite {
         assert_eq!(c1.partial_cmp(&c1), Some(core::cmp::Ordering::Equal));
     }
 
-    // --- Custom implementation for TestReal to verify default atan2 logic ---
+    // --- Custom implementation for TestFloat to verify default atan2 logic ---
 
     #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
-    struct TestReal(f32);
+    struct TestFloat(f32);
 
-    impl core::ops::Add for TestReal {
+    impl core::ops::Add for TestFloat {
         type Output = Self;
         fn add(self, other: Self) -> Self {
             Self(self.0 + other.0)
         }
     }
-    impl core::ops::Sub for TestReal {
+    impl core::ops::Sub for TestFloat {
         type Output = Self;
         fn sub(self, other: Self) -> Self {
             Self(self.0 - other.0)
         }
     }
-    impl core::ops::Mul for TestReal {
+    impl core::ops::Mul for TestFloat {
         type Output = Self;
         fn mul(self, other: Self) -> Self {
             Self(self.0 * other.0)
         }
     }
-    impl core::ops::Div for TestReal {
+    impl core::ops::Div for TestFloat {
         type Output = Self;
         fn div(self, other: Self) -> Self {
             Self(self.0 / other.0)
         }
     }
-    impl core::ops::Neg for TestReal {
+    impl core::ops::Neg for TestFloat {
         type Output = Self;
         fn neg(self) -> Self {
             Self(-self.0)
         }
     }
-    impl Scalar for TestReal {}
-    impl One for TestReal {
+    impl One for TestFloat {
         const ONE: Self = Self(1.0);
     }
-    impl Zero for TestReal {
+    impl Zero for TestFloat {
         const ZERO: Self = Self(0.0);
     }
-    impl Ring for TestReal {
-        const MAX: Self = Self(f32::MAX);
-        const MIN: Self = Self(f32::MIN);
-        const MIN_POSITIVE: Self = Self(f32::MIN_POSITIVE);
-        const TWO: Self = Self(2.0);
-    }
-    impl Field for TestReal {
-        fn epsilon() -> Self {
-            Self(f32::EPSILON)
-        }
-    }
-    impl Signed for TestReal {
+    impl AdditiveGroup for TestFloat {}
+    impl Scalar for TestFloat {}
+    impl Signed for TestFloat {
         fn abs(self) -> Self {
             Self(self.0.abs())
         }
     }
-    impl Radical for TestReal {
+    impl Radical for TestFloat {
         fn sqrt(self) -> Self {
             Self(libm::sqrtf(self.0))
         }
     }
-    impl Exponential for TestReal {
+    impl Exponential for TestFloat {
         const E: Self = Self(core::f32::consts::E);
         fn exp(self) -> Self {
             Self(libm::expf(self.0))
@@ -532,7 +624,7 @@ pub mod num_trait_test_suite {
             Self(libm::powf(self.0, n.0))
         }
     }
-    impl Trig for TestReal {
+    impl Trig for TestFloat {
         const PI: Self = Self(core::f32::consts::PI);
         fn acos(self) -> Self {
             Self(libm::acosf(self.0))
@@ -553,8 +645,9 @@ pub mod num_trait_test_suite {
             Self(libm::tanf(self.0))
         }
     }
-    impl Real for TestReal {
-        const INF: Self = Self(f32::INFINITY);
-        const NAN: Self = Self(f32::NAN);
+    impl Float for TestFloat {
+        fn epsilon() -> Self {
+            Self(f32::EPSILON)
+        }
     }
 }

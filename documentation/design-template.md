@@ -28,7 +28,7 @@ A brief explanation of the project's scope and the expertise it will require.
 
 ---
 
-### 4. Core Architecture
+### 4. Architecture
 
 Describe the implementation in detail, start from a broad scope then focus in
 on the specifics.

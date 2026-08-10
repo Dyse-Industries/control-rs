@@ -1,5 +1,5 @@
-//! Host runner binary task entry points.
-//! Implements subcommands for CI linting, QEMU runner execution, and interactive HIL TUI.
+//! Entry points for the `xtask` host binary (a `cargo-xtask`-style task runner).
+//! Implements subcommands for CI linting, QEMU execution, and interactive HIL TUI.
 
 #![deny(missing_docs)]
 #![allow(
@@ -49,7 +49,7 @@ use control_rs_xtask::bridge;
 mod tasks;
 mod utils;
 
-/// Main entrypoint. Parses arguments and routes execution to the correct task runner.
+/// Main entrypoint. Parses arguments and routes execution to the correct subcommand handler.
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {

@@ -1,81 +1,65 @@
 //! # Numeric Traits
 //!
-//! This module defines a hierarchy of traits for numerical types.
-//! These traits provide a foundation for generic algorithms, ensuring mathematical correctness.
+//! This module defines a hierarchy of traits for numerical types, organized
+//! around **hardware behavior** rather than abstract algebra. Each tier
+//! reflects a physical ALU/FPU capability, giving generic control algorithms
+//! exact compile-time boundaries on overflow behavior (wrapping vs.
+//! saturating) instead of an abstract ring/field taxonomy.
 //!
 //! The hierarchy is as follows:
-//! - `One`: The identity element for multiplication.
-//! - `Zero`: The identity element for addition.
-//! - `Scalar`: Basic properties (`Copy`, `PartialEq`, `PartialOrd`).
-//! - `Ring`: Extends `Scalar` with ring operations (`+`, `-`, `*`).
-//! - `Field`: Extends `Ring` with division (`/`).
-//! - `Exponential`: Extends `Field` with exponential and root functions.
-//! - `Logarithm`: Extends `Field` with logarithmic functions.
-//! - `Trig`: Extends `Field` with trigonometric functions.
-//! - `Real`: Extends `Field` and aggregates `Signed`, `Exponential`, `Logarithm` and `Trig`.
+//! - `Zero` / `One`: Additive and multiplicative identity elements.
+//! - `AdditiveGroup`: Opt-in marker for underflow-free subtraction, granted
+//!   where the domain is closed under negation (signed integers, floats,
+//!   `Complex<T>`).
+//! - `Integer` / `SaturatingInteger`: Hardware wrap/saturate ALU behavior,
+//!   implemented by every integer primitive (signed and unsigned); `Integer`
+//!   carries the representation-bound constants (`MAX`/`MIN`/etc.).
+//! - `Unsigned`: A `Sized`-only marker distinguishing unsigned primitives.
+//! - `Signed`: Sign predicates and absolute value.
+//! - `Radical` / `Exponential` / `Trig`: Granular analytic capabilities.
+//! - `Float`: The floating-point aggregate
+//!   (`Signed + Radical + Exponential + Trig + Div`), the only tier where
+//!   division and machine epsilon live.
+//! - `Scalar`: The unified target for control-loop arithmetic
+//!   (`Zero + One + Sub + Mul`), implemented by every integer and float
+//!   primitive, deliberately excluding `Div` (integer division is not total).
+//!
+//! # Compile-Time Marker Boundary
+//!
+//! `AdditiveGroup` and `Signed` are withheld from unsigned primitives —
+//! for them `a - b` underflows whenever `a < b`, an ordinary-value failure
+//! rather than a representation-edge one:
+//!
+//! ```compile_fail
+//! use control_rs::math::num_traits::AdditiveGroup;
+//!
+//! fn assert_additive_group<T: AdditiveGroup>() {}
+//! assert_additive_group::<u32>(); // u32 does not implement AdditiveGroup
+//! ```
 
 use crate::math::CartesianQuadrant2D;
-use crate::math::ops::{Add, Div, Mul, Neg, Sub};
+use crate::math::ops::{
+    Add, Div, Mul, Neg, SaturatingAdd, SaturatingMul, SaturatingSub, Sub,
+    WrappingAdd, WrappingMul, WrappingSub,
+};
 
-use core::cmp::Ordering;
-
-/// The base marker trait for numbers.
-///
-/// `Scalar` groups types suitable for numerical operations. It ensures the type can be cloned
-/// and compared.
-///
-/// # Safety
-/// `PartialEq` and `PartialOrd` must be consistent and correct. For floating-point types,
-/// as per the IEEE 754 standard, `NaN != NaN`.
-///
-/// # Example
-/// ```
-/// use control_rs::math::num_traits::Scalar;
-///
-/// #[derive(Clone, Copy, PartialEq, PartialOrd)]
-/// struct MyScalar(f32);
-///
-/// impl Scalar for MyScalar {}
-///
-/// fn process_scalar<T: Scalar>(val: T) -> T {
-///     if val > val {
-///         // This branch is unreachable for non-NaN values
-///     }
-///     val
-/// }
-/// ```
-pub trait Scalar: Clone + Sized + PartialEq + PartialOrd {}
-
-/// Provides access to the multiplicative identity and a one check.
-///
-/// This trait abstracts the unit element of a multiplicative structure
-/// without requiring the full semantics of a `Ring`.
-///
-/// # Safety
-/// `ONE` must be a true multiplicative identity.
-pub trait One: Scalar + Mul<Output = Self> {
-    /// Constant multiplicative identity element.
-    const ONE: Self;
-    /// Returns `true` if the value equals the multiplicative identity.
-    #[inline(always)]
-    fn is_one(&self) -> bool {
-        self.eq(&Self::ONE)
-    }
-    /// Returns the multiplicative identity element.
-    #[must_use]
-    fn one() -> Self {
-        Self::ONE
-    }
-}
+////////////////////////////////////////////////////////////////////////////////
+// Identity Tier
+////////////////////////////////////////////////////////////////////////////////
 
 /// Provides access to the additive identity and a zero check.
 ///
-/// This trait is useful where the identity element is required, but the
-/// full algebraic structure of a `Ring` is unnecessary.
-///
 /// # Safety
 /// `ZERO` must be a true additive identity.
-pub trait Zero: Scalar + Add<Output = Self> + Sub<Output = Self> {
+///
+/// # Example
+/// ```
+/// use control_rs::math::num_traits::Zero;
+///
+/// assert!(0i32.is_zero());
+/// assert!(!1i32.is_zero());
+/// ```
+pub trait Zero: Clone + PartialEq + PartialOrd + Add<Output = Self> {
     /// Constant additive identity element.
     const ZERO: Self;
     /// Returns `true` if the value equals the additive identity.
@@ -90,14 +74,123 @@ pub trait Zero: Scalar + Add<Output = Self> + Sub<Output = Self> {
     }
 }
 
-/// Defines a set with a mathematical sign (all signed integers and
-/// floating/fixed-point types).
-///
-/// This provides access to checks for sign-ness, absolute value and Neg.
+////////////////////////////////////////////////////////////////////////////////
+
+/// Provides access to the multiplicative identity and a one check.
 ///
 /// # Safety
-/// Values that implement Neg have a well-defined sign.
-pub trait Signed: Zero + Neg<Output = Self> {
+/// `ONE` must be a true multiplicative identity.
+///
+/// # Example
+/// ```
+/// use control_rs::math::num_traits::One;
+///
+/// assert!(1i32.is_one());
+/// assert!(!0i32.is_one());
+/// ```
+pub trait One: Clone + PartialEq + PartialOrd + Mul<Output = Self> {
+    /// Constant multiplicative identity element.
+    const ONE: Self;
+    /// Returns `true` if the value equals the multiplicative identity.
+    #[inline(always)]
+    fn is_one(&self) -> bool {
+        self.eq(&Self::ONE)
+    }
+    /// Returns the multiplicative identity element.
+    #[must_use]
+    fn one() -> Self {
+        Self::ONE
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Subtraction Tier
+////////////////////////////////////////////////////////////////////////////////
+
+/// Opt-in marker binding `Zero` and underflow-free subtraction.
+///
+/// Granted where the domain is closed under negation (signed integers,
+/// floats, `Complex<T>`), so `a - b` cannot underflow for ordinary values.
+/// Unsigned primitives never implement it: their subtraction underflows
+/// whenever `a < b`, not just at the representation edge. Signed integers
+/// do implement it, but still overflow at the representation limits
+/// (e.g. `i32::MIN - 1`, a debug panic / release wrap) — the marker
+/// guarantees underflow-free semantics away from those limits, not full
+/// mathematical totality.
+///
+/// # Safety
+/// Implementors must guarantee `a - b` is well-defined for all `a`, `b`
+/// whose difference is representable in the type.
+pub trait AdditiveGroup: Zero + Sub<Output = Self> {}
+
+////////////////////////////////////////////////////////////////////////////////
+// Hardware Integer Tier
+////////////////////////////////////////////////////////////////////////////////
+
+/// Hardware wrapping-ALU integer behavior.
+///
+/// Implemented by every integer primitive, signed and unsigned.
+///
+/// # Example
+/// ```
+/// use control_rs::math::num_traits::Integer;
+/// use control_rs::math::ops::WrappingAdd;
+///
+/// // Explicit trait syntax: `u8` also has an inherent `wrapping_add`
+/// // (by-value), which dot-call syntax would prefer over this trait method.
+/// assert_eq!(WrappingAdd::wrapping_add(&u8::MAX, &1), 0);
+/// ```
+pub trait Integer:
+    Zero + One + WrappingAdd + WrappingSub + WrappingMul
+{
+    /// Constant representing the max representable value.
+    const MAX: Self;
+    /// Constant representing the min representable value.
+    const MIN: Self;
+    /// Constant representing the minimum positive value.
+    const MIN_POSITIVE: Self;
+    /// Constant representing 2.
+    const TWO: Self;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+/// Hardware saturating-ALU integer behavior.
+///
+/// Implemented by every integer primitive, signed and unsigned.
+///
+/// # Example
+/// ```
+/// use control_rs::math::num_traits::SaturatingInteger;
+/// use control_rs::math::ops::SaturatingAdd;
+///
+/// // Explicit trait syntax: `u8` also has an inherent `saturating_add`
+/// // (by-value), which dot-call syntax would prefer over this trait method.
+/// assert_eq!(SaturatingAdd::saturating_add(&u8::MAX, &1), u8::MAX);
+/// ```
+pub trait SaturatingInteger:
+    Zero + One + SaturatingAdd + SaturatingSub + SaturatingMul
+{
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+/// Defines the set of unsigned numbers.
+///
+/// A `Sized`-only marker distinguishing unsigned primitives from signed
+/// types; unsigned primitives never implement `AdditiveGroup`/`Signed`.
+pub trait Unsigned: Sized {}
+
+////////////////////////////////////////////////////////////////////////////////
+// Signed & Analytic Tier
+////////////////////////////////////////////////////////////////////////////////
+
+/// Defines a set with a mathematical sign (signed integers and
+/// floating/fixed-point types).
+///
+/// # Safety
+/// Values that implement `Neg` have a well-defined sign.
+pub trait Signed: AdditiveGroup + Neg<Output = Self> {
     /// Returns the absolute value.
     #[must_use]
     fn abs(self) -> Self;
@@ -113,84 +206,16 @@ pub trait Signed: Zero + Neg<Output = Self> {
     }
 }
 
-/// Defines an algebraic ring.
-///
-/// Abstracts over types that support addition, subtraction and multiplication
-/// forming a mathematical ring.
-///
-/// # Safety
-/// Arithmetic operations (`Add`, `Sub`, `Mul`) must obey ring axioms
-/// (associativity, commutativity, distributivity).
-///
-/// # Example
-/// ```
-/// use control_rs::math::num_traits::Ring;
-///
-/// fn multiply_by_three<T: Ring>(val: T) -> T {
-///     val * (T::one() + T::TWO)
-/// }
-///
-/// assert_eq!(multiply_by_three(5), 15);
-/// assert_eq!(multiply_by_three(2.0f32), 6.0f32);
-/// ```
-pub trait Ring: One + Zero {
-    /// Constant representing the max.
-    const MAX: Self;
-    /// Constant representing the min.
-    const MIN: Self;
-    /// Constant representing the minimum positive value.
-    const MIN_POSITIVE: Self;
-    /// Constant representing 2.
-    const TWO: Self;
-    /// Initiate self from the given const.
-    #[must_use]
-    fn from_const<const N: usize>() -> Self {
-        Self::sum([Self::ONE; N])
-    }
-    /// Initiate self from the given usize.
-    fn from_usize(n: usize) -> Self {
-        (0..n).fold(Self::ZERO, |acc, _| acc.add(Self::ONE))
-    }
-    /// Sum the elements of an iterator.
-    #[allow(clippy::arithmetic_side_effects)]
-    fn sum<I: IntoIterator<Item = Self>>(iter: I) -> Self {
-        iter.into_iter().fold(Self::zero(), |acc, x| acc + x)
-    }
-}
-
-/// Defines an algebraic field, extending a `Ring` with division.
-///
-/// A `Field` is a `Ring` that also supports division. It is intended for floating-point types.
-/// The trait implies and requires the existence of a machine epsilon; `1.0 + ε != 1.0`.
-///
-/// # Panics
-/// Division by zero for integer types panics. Floating-point division by zero does
-/// not panic but produces non-finite values (`inf` or `NaN`).
-///
-/// # Example
-/// ```
-/// use control_rs::math::num_traits::{Field, Ring};
-///
-/// fn is_significantly_different<T: Field>(a: T, b: T) -> bool {
-///     let diff = if a > b { a - b } else { b - a };
-///     diff > T::epsilon()
-/// }
-///
-/// assert!(is_significantly_different(1.001f32, 1.0f32));
-/// assert!(!is_significantly_different(1.00000001f32, 1.0f32));
-/// ```
-pub trait Field: Ring + Div<Output = Self> {
-    /// Returns the machine epsilon value for the type.
-    fn epsilon() -> Self;
-}
+////////////////////////////////////////////////////////////////////////////////
 
 /// Trait for types that support square root (radical functions).
 ///
-/// # Panics
-/// Square root of a negative number must return an imaginary number or
-/// a type that indicates the domain was violated. Thus, the domain for
-/// this implementation includes all Self.
-pub trait Radical: Field {
+/// The square root of a negative number must return an imaginary number or
+/// a domain-violation value (e.g. `NaN`) rather than panicking, so the
+/// domain covers all of `Self`.
+pub trait Radical:
+    Clone + PartialEq + PartialOrd + Add<Output = Self> + Mul<Output = Self>
+{
     /// Computes the hypotenuse of a triangle with the given side lengths.
     #[must_use]
     #[allow(clippy::arithmetic_side_effects)]
@@ -202,13 +227,14 @@ pub trait Radical: Field {
     fn sqrt(self) -> Self;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
 /// Trait for types that support exponential, power and root functions.
 ///
-/// # Panics
-/// Exponential of a negative number must return an imaginary number or
-/// a type that indicates the domain was violated. Thus, the domain for
-/// this implementation includes all Self.
-pub trait Exponential: Field {
+/// Out-of-domain inputs (e.g. the logarithm of a negative number) must
+/// return a domain-violation value (e.g. `NaN`) rather than panicking, so
+/// the domain covers all of `Self`.
+pub trait Exponential: Clone + PartialEq + PartialOrd {
     /// Constant representing Euler's number.
     const E: Self;
     /// Computes `e^self`.
@@ -225,13 +251,14 @@ pub trait Exponential: Field {
     fn pow(self, n: Self) -> Self;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
 /// Trait for types that support trigonometric functions.
 ///
-/// # Panics
-/// Trigonometric functions of an invalid number must return a type that
-/// indicates the domain was violated. Thus, the domain for these implementations
-/// includes all Self.
-pub trait Trig: Field {
+/// Out-of-domain inputs (e.g. `acos` of a value outside `[-1, 1]`) must
+/// return a domain-violation value (e.g. `NaN`) rather than panicking, so
+/// the domain covers all of `Self`.
+pub trait Trig: Clone + PartialEq + PartialOrd {
     /// Constant representing Pi.
     const PI: Self;
     /// Calculates the inverse cosine of a number (in radians).
@@ -254,29 +281,30 @@ pub trait Trig: Field {
     fn tan(self) -> Self;
 }
 
-/// Defines a real field with support for common analytic functions like square root and absolute value.
+////////////////////////////////////////////////////////////////////////////////
+
+/// The floating-point aggregate: `Signed + Radical + Exponential + Trig`
+/// plus division and machine epsilon, scoped to floating-point types only.
 ///
-/// The `Real` trait extends a `Field` to include operations common for real numbers.
+/// The trait implies and requires the existence of a machine epsilon;
+/// `1.0 + ε != 1.0`. Division by zero follows IEEE-754 and produces
+/// non-finite values (`inf` or `NaN`) rather than panicking.
 ///
 /// # Example
 /// ```
-/// use control_rs::math::{num_traits::{Real, Ring}, ArithmeticError};
+/// use control_rs::math::num_traits::Float;
 ///
-/// fn magnitude(x: f32, y: f32) -> f32 {
-///     let sum_sq = x*x + y*y;
-///     sum_sq.sqrt()
+/// fn is_significantly_different<T: Float>(a: T, b: T) -> bool {
+///     let diff = if a > b { a - b } else { b - a };
+///     diff > T::epsilon()
 /// }
 ///
-/// assert_eq!(magnitude(3.0, 4.0), 5.0);
-/// assert_eq!(magnitude(-3.0, -4.0), 5.0);
-/// // sqrt of a negative number
-/// let negative_val = -1.0f32;
+/// assert!(is_significantly_different(1.001f32, 1.0f32));
+/// assert!(!is_significantly_different(1.00000001f32, 1.0f32));
 /// ```
-pub trait Real: Field + Signed + Radical + Exponential + Trig {
-    /// Constant representing Infinity.
-    const INF: Self;
-    /// Constant representing NAN.
-    const NAN: Self;
+pub trait Float:
+    Signed + One + Radical + Exponential + Trig + Div<Output = Self>
+{
     /// Computes the four-quadrant inverse tangent of `y` and `x` in radians.
     ///
     /// Unlike the standard `atan(y / x)`, this function uses the signs of both
@@ -303,12 +331,13 @@ pub trait Real: Field + Signed + Radical + Exponential + Trig {
     #[must_use]
     #[allow(clippy::arithmetic_side_effects)]
     fn atan2(self, rhs: Self) -> Self {
+        let two = Self::ONE + Self::ONE;
         match CartesianQuadrant2D::from_coords(&rhs, &self) {
             CartesianQuadrant2D::Origin
             | CartesianQuadrant2D::PositiveXAxis => Self::ZERO,
-            CartesianQuadrant2D::NegativeYAxis => -Self::PI / Self::TWO,
+            CartesianQuadrant2D::NegativeYAxis => -(Self::PI / two),
             CartesianQuadrant2D::NegativeXAxis => Self::PI,
-            CartesianQuadrant2D::PositiveYAxis => Self::PI / Self::TWO,
+            CartesianQuadrant2D::PositiveYAxis => Self::PI / two,
             _ => Self::atan(self / rhs),
         }
     }
@@ -330,7 +359,20 @@ pub trait Real: Field + Signed + Radical + Exponential + Trig {
     #[must_use]
     #[allow(clippy::arithmetic_side_effects)]
     fn cosh(self) -> Self {
-        (self.clone().exp() + (Self::ZERO - self).exp()) / Self::TWO
+        let two = Self::ONE + Self::ONE;
+        (self.clone().exp() + (Self::ZERO - self).exp()) / two
+    }
+    /// Returns the machine epsilon value for the type.
+    fn epsilon() -> Self;
+    /// Initiate self from the given const.
+    #[must_use]
+    fn from_const<const N: usize>() -> Self {
+        Self::sum([Self::ONE; N])
+    }
+    /// Initiate self from the given usize.
+    #[allow(clippy::arithmetic_side_effects)]
+    fn from_usize(n: usize) -> Self {
+        (0..n).fold(Self::ZERO, |acc, _| acc.add(Self::ONE))
     }
     /// Computes the hyperbolic sine of the number.
     ///
@@ -354,42 +396,99 @@ pub trait Real: Field + Signed + Radical + Exponential + Trig {
     #[must_use]
     #[allow(clippy::arithmetic_side_effects)]
     fn sinh(self) -> Self {
-        (self.clone().exp() - (Self::ZERO - self).exp()) / Self::TWO
+        let two = Self::ONE + Self::ONE;
+        (self.clone().exp() - (Self::ZERO - self).exp()) / two
+    }
+    /// Sum the elements of an iterator.
+    #[allow(clippy::arithmetic_side_effects)]
+    fn sum<I: IntoIterator<Item = Self>>(iter: I) -> Self {
+        iter.into_iter().fold(Self::ZERO, |acc, x| acc + x)
     }
 }
 
-/// Defines the set of unsigned numbers.
-pub trait Unsigned: Sized {}
+////////////////////////////////////////////////////////////////////////////////
 
-/// Implements the `Ring` trait for a given numeric type.
+/// The unified target for control-loop arithmetic.
 ///
-/// This macro simplifies the process of implementing the `Ring` trait. It generates
-/// the implementation of `zero()` and `one()` with the provided literal values. This
-/// reduces boilerplate code and ensures consistency across different numeric types.
+/// `Zero + One + Sub + Mul`, implemented by every integer and float
+/// primitive, signed and unsigned. Deliberately excludes `Div`: integer
+/// division is not total (`/0` panics, `i32::MIN / -1` overflows), so
+/// requiring it here would reintroduce the panic surface this hierarchy
+/// exists to remove. Division stays on `Float`, where IEEE-754 semantics
+/// make it total.
+///
+/// # Example
+/// ```
+/// use control_rs::math::num_traits::Scalar;
+///
+/// fn clamp_to_unit<T: Scalar>(val: T) -> T {
+///     val.clamp(T::ZERO, T::ONE)
+/// }
+///
+/// assert_eq!(clamp_to_unit(5i32), 1);
+/// assert_eq!(clamp_to_unit(5u32), 1);
+/// ```
+pub trait Scalar: Zero + One + Sub<Output = Self> + Mul<Output = Self> {
+    /// Restricts a value to a certain interval.
+    #[must_use]
+    fn clamp(self, min: Self, max: Self) -> Self {
+        if self < min {
+            min
+        } else if self > max {
+            max
+        } else {
+            self
+        }
+    }
+    /// Returns a number that represents the sign of self (`-ONE`, `ZERO`,
+    /// or `ONE`); for unsigned types the negative branch is unreachable.
+    #[must_use]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn signum(self) -> Self {
+        if self.is_zero() {
+            Self::ZERO
+        } else if self.lt(&Self::ZERO) {
+            Self::ZERO - Self::ONE
+        } else {
+            Self::ONE
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Macro Code Generation
+////////////////////////////////////////////////////////////////////////////////
+
+/// Implements `Zero`, `One`, `Integer`, and `SaturatingInteger` for a given
+/// integer primitive (signed or unsigned).
+///
+/// Relies on `ops.rs`'s existing `WrappingAdd`/`WrappingSub`/`WrappingMul`
+/// and `SaturatingAdd`/`SaturatingSub`/`SaturatingMul` implementations,
+/// already provided for every integer primitive.
 ///
 /// # Arguments
-/// - `$type`: The numeric type for which to implement `Ring` (e.g., `f32`, `i64`).
-/// - `$one`: The literal expression for the multiplicative identity (e.g., `1.0`, `1`).
-/// - `$zero`: The literal expression for the additive identity (e.g., `0.0`, `0`).
-/// - `$max`: The literal expression for the maximum value (e.g., `f32::MAX`, `usize::MAX`).
-/// - `$min`: The literal expression for the minimum value (e.g., `f32::MIN`, `isize::MIN`).
+/// - `$type`: The numeric type for which to implement the tier (e.g., `i64`, `u32`).
+/// - `$one`: The literal expression for the multiplicative identity.
+/// - `$zero`: The literal expression for the additive identity.
+/// - `$max`: The literal expression for the maximum value.
+/// - `$min`: The literal expression for the minimum value.
 /// - `$min_pos`: The literal expression for the minimum positive value.
 #[macro_export]
-macro_rules! impl_ring {
+macro_rules! impl_int {
     ($type:ty, $one:expr, $zero:expr, $max:expr, $min:expr, $min_pos:expr) => {
-        impl One for $type {
-            const ONE: Self = $one;
-        }
-
-        ////////////////////////////////////////////////////////////////////////////////
-
         impl Zero for $type {
             const ZERO: Self = $zero;
         }
 
         ////////////////////////////////////////////////////////////////////////////////
 
-        impl Ring for $type {
+        impl One for $type {
+            const ONE: Self = $one;
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////
+
+        impl Integer for $type {
             const MAX: Self = $max;
             const MIN: Self = $min;
             const MIN_POSITIVE: Self = $min_pos;
@@ -397,20 +496,81 @@ macro_rules! impl_ring {
         }
 
         ////////////////////////////////////////////////////////////////////////////////
+
+        impl SaturatingInteger for $type {}
+
+        ////////////////////////////////////////////////////////////////////////////////
     };
 }
 
-/// Implements the `Exponential` trait for a given type.
+/// Implements `AdditiveGroup` and `Signed` for a given type.
 ///
 /// # Arguments
 /// - `$type`: The numeric type.
-/// - `$e:expr`: Literal or constant representing Euler's number.
-/// - `$exp:path`: The `exp` function.
-/// - `$pow:path`: The `pow` function.
-/// - `$sqrt:path`: The `sqrt` function.
+/// - `$abs`: Path to the type's `abs` function (e.g., `i32::abs`, `libm::fabsf`).
 #[macro_export]
-macro_rules! impl_exp {
-    ($type:ty, $e:expr, $exp:path, $ln:path, $log10:path, $pow:path, $sqrt:path) => {
+macro_rules! impl_additive_group {
+    ($type:ty, $abs:path) => {
+        impl AdditiveGroup for $type {}
+
+        ////////////////////////////////////////////////////////////////////////////////
+
+        impl Signed for $type {
+            #[inline(always)]
+            fn abs(self) -> Self {
+                $abs(self)
+            }
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////
+    };
+}
+
+/// Implements the `Scalar` marker trait for a given type.
+///
+/// # Arguments
+/// - `$type`: The numeric type; must already implement `Zero + One + Sub + Mul`.
+#[macro_export]
+macro_rules! impl_scalar {
+    ($type:ty) => {
+        impl Scalar for $type {}
+
+        ////////////////////////////////////////////////////////////////////////////////
+    };
+}
+
+/// Implements `Zero`, `One`, `Radical`, `Exponential`, `Trig`, and `Float`
+/// for a given floating-point type.
+///
+/// # Arguments
+/// - `$type`: The numeric type.
+/// - `$one`/`$zero`: Literal identity elements.
+/// - `$epsilon`: The machine epsilon value.
+/// - `$e`/`$pi`: Constants for Euler's number and Pi.
+/// - `$sqrt`/`$exp`/`$ln`/`$log10`/`$pow`: Analytic function paths.
+/// - `$cos`/`$sin`/`$tan`/`$acos`/`$asin`/`$atan`: Trigonometric function paths.
+/// - `$atan2`: Path to the type's native two-argument arctangent, overriding
+///   `Float::atan2`'s quadrant-table default with the hardware/libm form.
+#[macro_export]
+macro_rules! impl_float {
+    (
+        $type:ty, $one:expr, $zero:expr, $epsilon:expr, $e:expr, $pi:expr,
+        $sqrt:path, $exp:path, $ln:path, $log10:path, $pow:path,
+        $cos:path, $sin:path, $tan:path, $acos:path, $asin:path, $atan:path,
+        $atan2:path
+    ) => {
+        impl Zero for $type {
+            const ZERO: Self = $zero;
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////
+
+        impl One for $type {
+            const ONE: Self = $one;
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////
+
         impl Radical for $type {
             #[inline(always)]
             fn sqrt(self) -> Self {
@@ -441,20 +601,7 @@ macro_rules! impl_exp {
         }
 
         ////////////////////////////////////////////////////////////////////////////////
-    };
-}
 
-/// Implements the `Trig` trait for a given type.
-///
-/// # Arguments
-/// - `$type`: The numeric type.
-/// - `$pi:expr`: Literal or constant representing π.
-/// - `$sin:path`: The `sin` function.
-/// - `$cos:path`: The `cos` function.
-/// - `$tan:path`: The `tan` function.
-#[macro_export]
-macro_rules! impl_trig {
-    ($type:ty, $pi:expr, $cos:path, $sin:path, $tan:path, $acos:path, $asin:path, $atan:path) => {
         impl Trig for $type {
             const PI: Self = $pi;
             #[inline(always)]
@@ -484,56 +631,12 @@ macro_rules! impl_trig {
         }
 
         ////////////////////////////////////////////////////////////////////////////////
-    };
-}
 
-/// Implements the `Real` trait for a given type.
-///
-/// This macro implements the `Real` trait and the `Signed` trait.
-///
-/// # Arguments
-/// - `$type`: The numeric type.
-/// - `$abs:path`: The `abs` function.
-/// - `$e:expr`: Literal or constant representing Euler's number.
-/// - `$inf:expr`: Literal or constant representing infinity.
-/// - `$nan:expr`: Literal or constant representing NaN.
-#[macro_export]
-macro_rules! impl_real {
-    ($type:ty, $abs:path, $inf:expr, $nan:expr, $atan2:path) => {
-        impl Signed for $type {
+        impl Float for $type {
             #[inline(always)]
-            fn abs(self) -> Self {
-                $abs(self)
-            }
-        }
-
-        ////////////////////////////////////////////////////////////////////////////////
-
-        impl Real for $type {
-            const INF: Self = $inf;
-            const NAN: Self = $nan;
             fn atan2(self, rhs: Self) -> Self {
                 $atan2(self, rhs)
             }
-        }
-
-        ////////////////////////////////////////////////////////////////////////////////
-    };
-}
-
-/// A macro to implement the `Field` trait for a given numeric type.
-///
-/// This macro simplifies implementing the `Field` trait by generating the `epsilon`
-/// function. It is designed for floating-point types that have a defined machine
-/// epsilon value.
-///
-/// # Arguments
-/// - `$type`: The numeric type for which to implement `Field` (e.g., `f32`, `f64`).
-/// - `$epsilon`: The expression for the machine epsilon value (e.g., `f32::EPSILON`).
-#[macro_export]
-macro_rules! impl_field {
-    ($type:ty, $epsilon:expr) => {
-        impl Field for $type {
             #[inline(always)]
             fn epsilon() -> Self {
                 $epsilon
@@ -561,28 +664,47 @@ impl CartesianQuadrant2D {
     /// # Returns
     /// * `quadrant` - Variant of the `CartesianQuadrant2D` enum corresponding to the coordinates.
     #[must_use]
-    pub fn from_coords<T: Zero + PartialOrd>(x: &T, y: &T) -> Self {
+    pub fn from_coords<T: Zero>(x: &T, y: &T) -> Self {
         match (x.partial_cmp(&T::ZERO), y.partial_cmp(&T::ZERO)) {
-            (Some(Ordering::Equal), Some(Ordering::Equal)) => Self::Origin,
+            (
+                Some(core::cmp::Ordering::Equal),
+                Some(core::cmp::Ordering::Equal),
+            ) => Self::Origin,
 
-            (Some(Ordering::Equal), Some(Ordering::Greater)) => {
-                Self::PositiveYAxis
-            }
-            (Some(Ordering::Equal), Some(Ordering::Less)) => {
-                Self::NegativeYAxis
-            }
+            (
+                Some(core::cmp::Ordering::Equal),
+                Some(core::cmp::Ordering::Greater),
+            ) => Self::PositiveYAxis,
+            (
+                Some(core::cmp::Ordering::Equal),
+                Some(core::cmp::Ordering::Less),
+            ) => Self::NegativeYAxis,
 
-            (Some(Ordering::Greater), Some(Ordering::Equal)) => {
-                Self::PositiveXAxis
-            }
-            (Some(Ordering::Less), Some(Ordering::Equal)) => {
-                Self::NegativeXAxis
-            }
+            (
+                Some(core::cmp::Ordering::Greater),
+                Some(core::cmp::Ordering::Equal),
+            ) => Self::PositiveXAxis,
+            (
+                Some(core::cmp::Ordering::Less),
+                Some(core::cmp::Ordering::Equal),
+            ) => Self::NegativeXAxis,
 
-            (Some(Ordering::Greater), Some(Ordering::Greater)) => Self::Q1,
-            (Some(Ordering::Less), Some(Ordering::Greater)) => Self::Q2,
-            (Some(Ordering::Less), Some(Ordering::Less)) => Self::Q3,
-            (Some(Ordering::Greater), Some(Ordering::Less)) => Self::Q4,
+            (
+                Some(core::cmp::Ordering::Greater),
+                Some(core::cmp::Ordering::Greater),
+            ) => Self::Q1,
+            (
+                Some(core::cmp::Ordering::Less),
+                Some(core::cmp::Ordering::Greater),
+            ) => Self::Q2,
+            (
+                Some(core::cmp::Ordering::Less),
+                Some(core::cmp::Ordering::Less),
+            ) => Self::Q3,
+            (
+                Some(core::cmp::Ordering::Greater),
+                Some(core::cmp::Ordering::Less),
+            ) => Self::Q4,
 
             // Catch-all handles Cases where x or y are NaN, returning Undefined
             _ => Self::Undefined,
@@ -594,232 +716,152 @@ impl CartesianQuadrant2D {
 // Implementations for f32 (Embedded standard)
 ////////////////////////////////////////////////////////////////////////////////
 
-impl Scalar for f32 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(f32, 1.0, 0.0, f32::MAX, f32::MIN, f32::MIN_POSITIVE);
-
-impl_field!(f32, f32::EPSILON);
-
-impl_exp!(
+impl_float!(
     f32,
+    1.0,
+    0.0,
+    f32::EPSILON,
     core::f32::consts::E,
+    core::f32::consts::PI,
+    libm::sqrtf,
     libm::expf,
     libm::logf,
     libm::log10f,
     libm::powf,
-    libm::sqrtf
-);
-
-impl_trig!(
-    f32,
-    core::f32::consts::PI,
     libm::cosf,
     libm::sinf,
     libm::tanf,
     libm::acosf,
     libm::asinf,
-    libm::atanf
+    libm::atanf,
+    libm::atan2f
 );
 
-impl_real!(f32, libm::fabsf, f32::INFINITY, f32::NAN, libm::atan2f);
+impl_additive_group!(f32, libm::fabsf);
+
+impl_scalar!(f32);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for f64
 ////////////////////////////////////////////////////////////////////////////////
 
-impl Scalar for f64 {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(f64, 1.0, 0.0, f64::MAX, f64::MIN, f64::MIN_POSITIVE);
-
-impl_field!(f64, f64::EPSILON);
-
-impl_exp!(
+impl_float!(
     f64,
+    1.0,
+    0.0,
+    f64::EPSILON,
     core::f64::consts::E,
+    core::f64::consts::PI,
+    libm::sqrt,
     libm::exp,
     libm::log,
     libm::log10,
     libm::pow,
-    libm::sqrt
-);
-
-impl_trig!(
-    f64,
-    core::f64::consts::PI,
     libm::cos,
     libm::sin,
     libm::tan,
     libm::acos,
     libm::asin,
-    libm::atan
+    libm::atan,
+    libm::atan2
 );
 
-impl_real!(f64, libm::fabs, f64::INFINITY, f64::NAN, libm::atan2);
+impl_additive_group!(f64, libm::fabs);
+
+impl_scalar!(f64);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for i8
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for i8 {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(i8, 1, 0, i8::MAX, i8::MIN, 1);
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl Signed for i8 {
-    #[inline(always)]
-    fn abs(self) -> Self {
-        self.abs()
-    }
-}
+impl_int!(i8, 1, 0, i8::MAX, i8::MIN, 1);
+impl_additive_group!(i8, i8::abs);
+impl_scalar!(i8);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for i16
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for i16 {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(i16, 1, 0, i16::MAX, i16::MIN, 1);
-
-impl Signed for i16 {
-    #[inline(always)]
-    fn abs(self) -> Self {
-        self.abs()
-    }
-}
+impl_int!(i16, 1, 0, i16::MAX, i16::MIN, 1);
+impl_additive_group!(i16, i16::abs);
+impl_scalar!(i16);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for i32
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for i32 {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(i32, 1, 0, i32::MAX, i32::MIN, 1);
-
-impl Signed for i32 {
-    #[inline(always)]
-    fn abs(self) -> Self {
-        self.abs()
-    }
-}
+impl_int!(i32, 1, 0, i32::MAX, i32::MIN, 1);
+impl_additive_group!(i32, i32::abs);
+impl_scalar!(i32);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for i64
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for i64 {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(i64, 1, 0, i64::MAX, i64::MIN, 1);
-
-impl Signed for i64 {
-    #[inline(always)]
-    fn abs(self) -> Self {
-        self.abs()
-    }
-}
+impl_int!(i64, 1, 0, i64::MAX, i64::MIN, 1);
+impl_additive_group!(i64, i64::abs);
+impl_scalar!(i64);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for i128
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for i128 {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(i128, 1, 0, i128::MAX, i128::MIN, 1);
-
-impl Signed for i128 {
-    #[inline(always)]
-    fn abs(self) -> Self {
-        self.abs()
-    }
-}
+impl_int!(i128, 1, 0, i128::MAX, i128::MIN, 1);
+impl_additive_group!(i128, i128::abs);
+impl_scalar!(i128);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for isize
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for isize {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(isize, 1, 0, isize::MAX, isize::MIN, 1);
-
-impl Signed for isize {
-    #[inline(always)]
-    fn abs(self) -> Self {
-        self.abs()
-    }
-}
+impl_int!(isize, 1, 0, isize::MAX, isize::MIN, 1);
+impl_additive_group!(isize, isize::abs);
+impl_scalar!(isize);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for u8
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for u8 {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(u8, 1, 0, u8::MAX, u8::MIN, 1);
-
+impl_int!(u8, 1, 0, u8::MAX, u8::MIN, 1);
+impl_scalar!(u8);
 impl Unsigned for u8 {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for u16
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for u16 {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(u16, 1, 0, u16::MAX, u16::MIN, 1);
-
+impl_int!(u16, 1, 0, u16::MAX, u16::MIN, 1);
+impl_scalar!(u16);
 impl Unsigned for u16 {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for u32
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for u32 {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(u32, 1, 0, u32::MAX, u32::MIN, 1);
-
+impl_int!(u32, 1, 0, u32::MAX, u32::MIN, 1);
+impl_scalar!(u32);
 impl Unsigned for u32 {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for u64
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for u64 {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(u64, 1, 0, u64::MAX, u64::MIN, 1);
-
+impl_int!(u64, 1, 0, u64::MAX, u64::MIN, 1);
+impl_scalar!(u64);
 impl Unsigned for u64 {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for u128
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for u128 {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(u128, 1, 0, u128::MAX, u128::MIN, 1);
-
+impl_int!(u128, 1, 0, u128::MAX, u128::MIN, 1);
+impl_scalar!(u128);
 impl Unsigned for u128 {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Implementations for usize
 ////////////////////////////////////////////////////////////////////////////////
-impl Scalar for usize {}
 
-////////////////////////////////////////////////////////////////////////////////
-
-impl_ring!(usize, 1, 0, usize::MAX, usize::MIN, 1);
-
+impl_int!(usize, 1, 0, usize::MAX, usize::MIN, 1);
+impl_scalar!(usize);
 impl Unsigned for usize {}

@@ -45,7 +45,8 @@ Among the four Rust control/estimation crates surveyed during research
 (§11.1 refs. 23–26), none combine a no_std/no_alloc target, compile-time-sized
 state dimensions, and an LTI container offering interconnection,
 discretization, and structural analysis — this is a statement about that
-survey, not a claim of exhaustive ecosystem coverage. The two crates providing a genuine
+survey, not a claim of exhaustive ecosystem coverage. The two crates providing a
+genuine
 state-space model type (`control_systems_torbox`, `rdesarz/control-sys-rs`)
 are both `nalgebra`-backed with dynamically-sized matrices; the two
 embedded-first `no_std` crates surveyed (`sunsided/minikalman-rs`,
@@ -81,144 +82,25 @@ This architecture achieves:
 
 #### 2.1 Functional Requirements
 
-##### FR-1: Decoupled Storage Parameterization
-
-The `StateSpace` type must accept four independent storage backends for
-matrices $A, B, C, D$:
-
-```rust
-pub struct StateSpace<
-    T,
-    NX: Dim,
-    NU: Dim,
-    NY: Dim,
-    Sa: Storage<T, NX, NX>,
-    Sb: Storage<T, NX, NU>,
-    Sc: Storage<T, NY, NX>,
-    Sd: Storage<T, NY, NU>,
-> {}
-```
-
-Descriptor-form systems ($E\dot{x} = Ax + Bu$) are explicitly **out of scope**
-for this revision. Unlike a sparse or zero storage backend, adding a
-descriptor matrix $E$ later changes this signature rather than only adding a
-`Storage` implementation (§9, Descriptor Form Scope).
-
-##### FR-2: Domain Encoding (Continuous vs. Discrete)
-
-The type must encode domain information (continuous $s$-domain vs. discrete $z$
--domain) via an optional sampling period `sample_time: Option<T>`. This is a
-runtime discriminant rather than a type-level one; §9 (Domain Encoding
-Ambiguity) documents the resulting gap between this choice and the crate's
-general preference for compile-time enforcement, and the operations in §5.2
-must each state which domain they assume rather than silently accepting both.
-
-##### FR-3: Interoperability with `Matrix` Type & BLAS Kernels
-
-High-level operations (state propagation, matrix multiplication, coordinate
-transformations) must be capable of utilizing the `Matrix` abstraction (e.g.,
-via `MatrixView` or temporary `Matrix` wrappers) while underlying data access
-maps directly to `Storage` traits and BLAS level 1/2/3 subprograms (`GEMV`,
-`GEMM`, `AXPY`).
-
-##### FR-4: Time-Domain State Propagation
-
-- **Discrete Step**: Advance discrete state vector $x[k+1] = A x[k] + B u[k]$
-  and calculate output $y[k] = C x[k] + D u[k]$.
-- **Continuous Derivative**: Evaluate state
-  derivative $\dot{x}(t) = A x(t) + B u(t)$ and output $y(t) = C x(t) + D u(t)$.
-
-##### FR-5: System Interconnections
-
-Provide compile-time dimension-checked functions for:
-
-- **Series (Cascade)**: $S_2 \circ S_1$ combining
-  states $x = \begin{bmatrix} x_1 \\ x_2 \end{bmatrix}$. State capacity bound:
-  $N_{x1} + N_{x2}$ via `DimAdd`.
-- **Parallel**: $S_1 + S_2$ combining outputs $y = y_1 + y_2$. State capacity
-  bound: $N_{x1} + N_{x2}$ via `DimAdd`.
-- **Feedback (Closed-Loop)**: Negative/positive feedback around systems with $D$
-  -matrix feedforward resolution. This operation is **fallible** (§4.5,
-  §5.3); its state capacity bound is likewise $N_{x1} + N_{x2}$.
-
-Every `DimAdd`-derived bound above must independently satisfy the crate's
-Peano dimension ceiling (`storage-trait-design.md` C-2, `U32`); see §8 and §9
-(Derived-Dimension Peano Ceiling).
-
-##### FR-6: Discretization & Continuous Transformations
-
-- **Zero-Order Hold (ZOH)**: Matrix
-  exponential $A_d = e^{A T_s}$, $B_d = \left(\int_0^{T_s} e^{A \tau} d\tau\right) B$,
-  computed by forming the augmented block matrix
-  $M = \begin{bmatrix} A & B \\ 0 & 0 \end{bmatrix} \in \mathbb{R}^{(N_x + N_u) \times (N_x + N_u)}$
-  and exponentiating it directly (Van Loan, 1978), rather than by forming the
-  closed form $B_d = A^{-1}(A_d - I)B$, which requires $A$ nonsingular and
-  therefore fails on every pure-integrator or kinematic model — including this
-  document's own §7.2 validation example. $M$'s state capacity
-  bound $N_x + N_u$ must independently satisfy the Peano ceiling (§8, §9).
-- **Bilinear (Tustin) Transform**: Discretization with optional frequency
-  pre-warping. This operation is **fallible** (§4.5, §5.4): the transition
-  matrix $(I - \frac{T_s}{2}A)^{-1}$ is singular exactly when $\frac{2}{T_s}$
-  is an eigenvalue of $A$, and ill-conditioned near it.
-
-##### FR-7: Canonical Form Transformations & Structural Analysis
-
-- Conversions to/from Controllable Canonical Form (CCF) and Observable Canonical
-  Form (OCF), scoped to low-to-moderate system order (§5.5 Conditioning
-  Caveat).
-- Similarity transformations $A' = T A T^{-1}$, $B' = T B$, $C' = C T^{-1}$,
-  under the convention $z = Tx$ (§5.5).
-- Computation of Controllability Matrix $\mathcal{C}$ and Observability
-  Matrix $\mathcal{O}$, scoped to a **definitional/analysis** construction
-  rather than the primary rank-determination method (§5.5 Conditioning
-  Caveat). $\mathcal{C}$'s and $\mathcal{O}$'s column/row capacity
-  bounds ($N_x \cdot N_u$, $N_y \cdot N_x$ respectively) must independently
-  satisfy the Peano ceiling (§8, §9).
-
-##### FR-8: Transfer Function Conversion
-
-Bidirectional conversion between `StateSpace` models and `TransferFunction`
-models ($H(s) = C (sI - A)^{-1} B + D$), with **SISO as the primary target for
-this revision**; MIMO conversion is scoped as future work (§9, FR-8 Scope).
+- **FR-1 — Decoupled Storage Parameterization**: `StateSpace` must accept four independent `Storage` backends for $A, B, C, D$; descriptor-form systems ($E\dot{x} = Ax + Bu$) are out of scope (§9).
+- **FR-2 — Domain Encoding**: The type must encode continuous vs. discrete domain via an optional sampling period `sample_time: Option<T>`, a runtime rather than type-level discriminant (§9).
+- **FR-3 — Interoperability with `Matrix` & BLAS Kernels**: High-level operations must be able to use the `Matrix` abstraction while underlying data access maps directly to `Storage` and BLAS level 1/2/3 subprograms.
+- **FR-4 — Time-Domain State Propagation**: Advance the discrete state ($x[k+1] = Ax[k]+Bu[k]$) and evaluate the continuous derivative ($\dot{x}(t) = Ax(t)+Bu(t)$), each with matching output equations.
+- **FR-5 — System Interconnections**: Provide compile-time dimension-checked series, parallel, and feedback interconnections, each with state capacity bound $N_{x1}+N_{x2}$ via `DimAdd`; feedback is fallible (§4.5, §5.3).
+- **FR-6 — Discretization & Continuous Transformations**: Provide Zero-Order Hold via augmented-matrix exponentiation (Van Loan, 1978) and a fallible bilinear (Tustin) transform with optional pre-warping (§4.5, §5.4).
+- **FR-7 — Canonical Form Transformations & Structural Analysis**: Provide CCF/OCF conversions, $z=Tx$ similarity transforms, and definitional controllability/observability matrix construction, scoped to low-to-moderate system order (§5.5).
+- **FR-8 — Transfer Function Conversion**: Bidirectional conversion between `StateSpace` and `TransferFunction` ($H(s) = C(sI-A)^{-1}B+D$), with SISO as the primary target; MIMO is future work (§9).
 
 #### 2.2 Non-Functional Requirements
 
-##### NFR-1: Zero Dynamic Allocation (`#![no_std]`, `no_alloc`)
-
-All operations must execute deterministically without relying on heap
-allocation (`Vec`, `Box`).
-
-##### NFR-2: Zero-Cost Abstraction
-
-Storage abstraction and Peano dimension bounds must monomorphize completely,
-matching hand-optimized raw array operations.
-
-##### NFR-3: Contiguity-Gated Slice & Matrix Accessors
-
-Safe slice and raw-matrix view accessors (`a_slice()`, `a_matrix()`, etc.) must
-be exposed if and only if the underlying storage backends implement
-`ContiguousStorage` (§4.3): constructing a `MatrixView` requires a contiguous
-slice per `matrix-design.md` §5.4.
+- **NFR-1 — Zero Dynamic Allocation**: All operations must execute deterministically without heap allocation (`Vec`, `Box`).
+- **NFR-2 — Zero-Cost Abstraction**: Storage abstraction and Peano dimension bounds must monomorphize completely, matching hand-optimized raw array operations.
+- **NFR-3 — Contiguity-Gated Slice & Matrix Accessors**: Safe slice/matrix-view accessors (`a_slice()`, `a_matrix()`) are exposed only if the backend implements `ContiguousStorage` (§4.3).
 
 #### 2.3 Constraints
 
-- State dimension `NX`, input dimension `NU`, and output dimension `NY` must
-  satisfy `Dim` bounds (`NX >= 1`, `NU >= 1`, `NY >= 1`).
-- Matrices must conform to strict physical layout rules:
-    - $A$: `NX` $\times$ `NX`
-    - $B$: `NX` $\times$ `NU`
-    - $C$: `NY` $\times$ `NX`
-    - $D$: `NY` $\times$ `NU`
-- **Derived-Dimension Peano Preconditions**: `matrix-design.md` §2.3 fixes the
-  usable `Dim` range at `U32` with a 1024-element inline storage budget. FR-5,
-  FR-6, and FR-7 each derive a dimension larger than `NX` that must
-  independently satisfy this ceiling: series/parallel/feedback
-  require $N_{x1} + N_{x2} \le 32$; ZOH requires $N_x + N_u \le 32$;
-  controllability/observability require $N_x \cdot N_u \le 32$
-  and $N_y \cdot N_x \le 32$ respectively (and the 1024-element budget for the
-  resulting matrix). None of these are enforced by a documented precondition
-  today — each breaches as an unresolved `DimAdd`/`DimMul` trait bound at the
-  call site rather than a diagnosed limit (§9).
+- **C-1 — Dimension Bounds**: State, input, and output dimensions (`NX`, `NU`, `NY`) must each satisfy `Dim >= 1`, with $A$/$B$/$C$/$D$ conforming to strict `NX`/`NU`/`NY` layout rules.
+- **C-2 — Derived-Dimension Peano Preconditions**: FR-5/FR-6/FR-7's derived dimensions ($N_{x1}+N_{x2}$, $N_x+N_u$, $N_x \cdot N_u$, $N_y \cdot N_x$) must each independently satisfy the `U32` Peano ceiling (`matrix-design.md` §2.3); none are enforced by a documented precondition today (§9).
 
 ---
 
@@ -386,7 +268,8 @@ Following the crate-wide error strategy, fallible operations return
 `Result<T, Error>` via a crate-local `thiserror` enum rather than panicking.
 Two operations are fallible:
 
-- **Feedback (§5.3)**: forms the loop matrix $F = I - \text{sign} \cdot D_2 D_1 \in \mathbb{R}^{N_u \times N_u}$
+- **Feedback (§5.3)**: forms the loop
+  matrix $F = I - \text{sign} \cdot D_2 D_1 \in \mathbb{R}^{N_u \times N_u}$
   and solves against it rather than inverting explicitly, matching
   `python-control`'s `feedback()` (`control/statesp.py`, §11.1 ref. 5).
   $F$ singular to working precision is a
@@ -398,9 +281,11 @@ Two operations are fallible:
 ```rust
 #[derive(Debug, thiserror::Error)]
 pub enum StateSpaceError {
-    #[error("feedback loop matrix (I - sign*D2*D1) is singular to working precision")]
+    #[error("feedback loop matrix (I - sign*D2*D1) is singular to working precision"
+    )]
     SingularLoopMatrix,
-    #[error("Tustin discretization operator (I - Ts/2 * A) is singular to working precision")]
+    #[error("Tustin discretization operator (I - Ts/2 * A) is singular to working precision"
+    )]
     SingularDiscretizationOperator,
 }
 ```
@@ -533,7 +418,8 @@ Converts a continuous `StateSpace` model ($T_s = \text{None}$) into a discrete
 
 Form the augmented
 matrix $M = \begin{bmatrix} A & B \\ 0 & 0 \end{bmatrix} \in \mathbb{R}^{(N_x + N_u) \times (N_x + N_u)}$
-and compute its exponential $e^{M T_s} = \begin{bmatrix} A_d & B_d \\ 0 & I \end{bmatrix}$
+and compute its
+exponential $e^{M T_s} = \begin{bmatrix} A_d & B_d \\ 0 & I \end{bmatrix}$
 via scaling-and-squaring with Padé approximation. The augmented-matrix
 construction is attributed to **Van Loan (1978)**, "Computing integrals
 involving the matrix exponential" (§11.1 ref. 1), the origin of the
@@ -676,11 +562,11 @@ colliding with the same Peano ceiling as $\mathcal{C}$/$\mathcal{O}$,
 
 ### 6. Alternatives
 
-| Alternative                                             | Description                                                                           | Pros                                                                                                   | Cons                                                                                   |
-|:--------------------------------------------------------|:--------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------|:---------------------------------------------------------------------------------------|
-| **A. Monolithic Storage Field**                         | Storing a single combined block matrix $\begin{bmatrix} A & B \\ C & D \end{bmatrix}$ | Single contiguous allocation                                                                           | Cannot specialize a structurally zero $D$ (common for strictly proper plants); the series/parallel/feedback formulas (§5.3) assemble $A, B, C, D$ from independently shaped sub-blocks and would need awkward strided writes into one contiguous block |
-| **B. Wrapping 4 `Matrix` Structs Directly**             | Storing `a: Matrix<T, NX, NX, Sa>`, `b: Matrix...`                                    | Built-in matrix methods on fields                                                                      | Redundant type wrapper parameters, extra boilerplate vs storing raw `Storage` backends; the zero-$D$ specialization is awkward since the wrapper's own type parameters still have to be named |
-| **C. Generic Storage Backends + `MatrixView` (Chosen)** | Storing raw `Sa, Sb, Sc, Sd` backends and creating `MatrixView` wrappers on demand    | Maximum flexibility (`#![no_std]`, ROM, stack, zero-matrix storage); expresses a zero-sized $D$ specialization that eliminates a `GEMM` per `step()`, which neither A nor B can express as cleanly; symmetric with `TransferFunction` | Requires `a_matrix()`/etc. accessors gated on `ContiguousStorage` (§4.3) for high-level matrix algebra |
+| Alternative                                             | Description                                                                           | Pros                                                                                                                                                                                                                                  | Cons                                                                                                                                                                                                                                                   |
+|:--------------------------------------------------------|:--------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **A. Monolithic Storage Field**                         | Storing a single combined block matrix $\begin{bmatrix} A & B \\ C & D \end{bmatrix}$ | Single contiguous allocation                                                                                                                                                                                                          | Cannot specialize a structurally zero $D$ (common for strictly proper plants); the series/parallel/feedback formulas (§5.3) assemble $A, B, C, D$ from independently shaped sub-blocks and would need awkward strided writes into one contiguous block |
+| **B. Wrapping 4 `Matrix` Structs Directly**             | Storing `a: Matrix<T, NX, NX, Sa>`, `b: Matrix...`                                    | Built-in matrix methods on fields                                                                                                                                                                                                     | Redundant type wrapper parameters, extra boilerplate vs storing raw `Storage` backends; the zero-$D$ specialization is awkward since the wrapper's own type parameters still have to be named                                                          |
+| **C. Generic Storage Backends + `MatrixView` (Chosen)** | Storing raw `Sa, Sb, Sc, Sd` backends and creating `MatrixView` wrappers on demand    | Maximum flexibility (`#![no_std]`, ROM, stack, zero-matrix storage); expresses a zero-sized $D$ specialization that eliminates a `GEMM` per `step()`, which neither A nor B can express as cleanly; symmetric with `TransferFunction` | Requires `a_matrix()`/etc. accessors gated on `ContiguousStorage` (§4.3) for high-level matrix algebra                                                                                                                                                 |
 
 The strongest evidence for Alternative C is the zero-$D$ specialization
 above. The same "avoid wrapping the natural lower-level peer type" decision
@@ -914,7 +800,8 @@ is made independently by `transfer-function-design.md` §6 for
 > This revision scopes FR-8 to SISO (§5.5). Extending to MIMO requires either
 > an algorithm equivalent to SLICOT's `tb04ad` or an accepted non-minimal
 > common-denominator representation whose storage collides with the Peano
-> ceiling the same way $\mathcal{C}$/$\mathcal{O}$ do. `transfer-function-design.md`
+> ceiling the same way $\mathcal{C}$/$\mathcal{O}$ do.
+`transfer-function-design.md`
 > should be revisited together with any future MIMO work, since it currently
 > specifies only the SISO reverse path independently.
 
@@ -933,14 +820,14 @@ is made independently by `transfer-function-design.md` §6 for
 
 ### 10. Development Plan
 
-| Task / Feature                                | Description                                                                                                                                                        | Estimated Effort |
-|:-----------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------|:------------------|
-| **Step 1: Core Struct & Constructors**        | Implement `StateSpace<T, NX, NU, NY, Sa, Sb, Sc, Sd>`, basic array/slice constructors, and `StateSpaceError` (§4.4) in `src/state_space/mod.rs`.                    | 1 Day             |
-| **Step 2: Matrix Views & Basic Operations**   | Implement `a_matrix()`/`b_matrix()`/`c_matrix()`/`d_matrix()` bounded on `ContiguousStorage` per NFR-3 (§4.3), and time-domain simulation (`step()`, derivative). | 1 Day             |
-| **Step 3: System Interconnections**           | Implement `series`, `parallel`, and fallible `feedback` (loop-matrix solve, `StateSpaceError::SingularLoopMatrix`) with compile-time Peano dimension math.        | 2 Days            |
-| **Step 4: Discretization**                    | Implement ZOH (Van Loan augmented matrix, scaling-and-squaring with precision-dependent Padé degree selection §5.4, Al-Mohy/Higham overscaling correction) and fallible Tustin (`StateSpaceError::SingularDiscretizationOperator`).                | 4.5 Days          |
-| **Step 5: Structural Analysis & Conversions** | Implement controllability/observability matrix generation (scoped as definitional, §5.5), similarity transforms ($z=Tx$), and Hessenberg-reduction-based SISO transfer function conversion.  | 3.0 Days            |
-| **Step 6: Tests & Documentation**             | Unit tests, `proptest` suites, `python-control`/MATLAB cross-validation (two external reference implementations), long-horizon fixed-point recursion tests, and crate-level documentation.                  | 3.0 Days          |
+| Task / Feature                                | Description                                                                                                                                                                                                                         | Estimated Effort |
+|:----------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Step 1: Core Struct & Constructors**        | Implement `StateSpace<T, NX, NU, NY, Sa, Sb, Sc, Sd>`, basic array/slice constructors, and `StateSpaceError` (§4.4) in `src/state_space/mod.rs`.                                                                                    | 1 Day            |
+| **Step 2: Matrix Views & Basic Operations**   | Implement `a_matrix()`/`b_matrix()`/`c_matrix()`/`d_matrix()` bounded on `ContiguousStorage` per NFR-3 (§4.3), and time-domain simulation (`step()`, derivative).                                                                   | 1 Day            |
+| **Step 3: System Interconnections**           | Implement `series`, `parallel`, and fallible `feedback` (loop-matrix solve, `StateSpaceError::SingularLoopMatrix`) with compile-time Peano dimension math.                                                                          | 2 Days           |
+| **Step 4: Discretization**                    | Implement ZOH (Van Loan augmented matrix, scaling-and-squaring with precision-dependent Padé degree selection §5.4, Al-Mohy/Higham overscaling correction) and fallible Tustin (`StateSpaceError::SingularDiscretizationOperator`). | 4.5 Days         |
+| **Step 5: Structural Analysis & Conversions** | Implement controllability/observability matrix generation (scoped as definitional, §5.5), similarity transforms ($z=Tx$), and Hessenberg-reduction-based SISO transfer function conversion.                                         | 3.0 Days         |
+| **Step 6: Tests & Documentation**             | Unit tests, `proptest` suites, `python-control`/MATLAB cross-validation (two external reference implementations), long-horizon fixed-point recursion tests, and crate-level documentation.                                          | 3.0 Days         |
 
 ---
 
@@ -1110,34 +997,10 @@ is made independently by `transfer-function-design.md` §6 for
 
 ### 12. Revision History
 
-- **July 26, 2026**: Initial draft outline of the `StateSpace` model design
-  document.
-- **July 26, 2026**: Added inline academic citations and 3-tiered references
-  section (@MitchellDScott).
-- **August 1, 2026**: Separated the crate-wide `no_alloc` rule from the
-  `StateSpace`-specific justification for using raw storage backends instead
-  of wrapping `Matrix` fields directly (@MitchellDScott).
-- **August 2, 2026**: Corrected the ZOH augmented-matrix citation to Van Loan
-  (1978) and added Padé/overscaling refinements (§5.4); added a
-  controllability/observability conditioning caveat, scoped as definitional
-  rather than computational (§5.5); pinned the $z=Tx$ similarity-transform
-  convention; marked feedback/Tustin as fallible with a new
-  `StateSpaceError` type (§4.4); narrowed FR-8 to SISO; documented the
-  derived-dimension Peano ceiling interaction (§9); added Risks entries for
-  fixed-point recursion noise, domain encoding, scaling, descriptor-form
-  scope, and ZOH placement (@MitchellDScott).
-- **August 2, 2026**: Removed the unsupported `TRSM` reference (§3; no such
-  trait exists in `subprograms.rs` or elsewhere in this document family —
-  solves go through `matrix-design.md` §4.10.1's substitution routines) and
-  noted `a_matrix()`/etc.'s layout-agnosticism inherited from
-  `storage-trait-design.md`'s reworked BLAS interop; sharpened the
-  `num-traits-design.md` dependency note to state it has not yet had a
-  `/cr-research`/`/cr-design-doc` pass at all (§3, §9); restructured §5.5 to
-  lead each subsection with its API commitment before the supporting
-  conditioning/citation analysis, cutting its length by roughly 40% without
-  dropping any citation; revised Step 4/5/6 development-plan estimates
-  upward (ZOH's Padé/overscaling machinery, Hessenberg-based transfer
-  function conversion, and dual-reference-implementation cross-validation
-  were all under-scoped); softened the "no existing Rust crate combines..."
-  opening claim to scope it to the four-crate survey it is actually based on
-  (@MitchellDScott).
+| Revision | Date           | Author          | Description                                                                                                          |
+|:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 26, 2026  | @MitchellDScott | Initial draft outline of the `StateSpace` model design document.                                                     |
+| 1.1      | July 26, 2026  | @MitchellDScott | Added inline academic citations and 3-tiered references section.                                                     |
+| 1.2      | August 1, 2026 | @MitchellDScott | Separated the crate-wide `no_alloc` rule from the `StateSpace`-specific raw-storage-backend justification.           |
+| 1.3      | August 2, 2026 | @MitchellDScott | Corrected ZOH citation; added conditioning caveat; pinned similarity-transform convention; narrowed FR-8 to SISO.    |
+| 1.4      | August 2, 2026 | @MitchellDScott | Removed unsupported `TRSM` reference; sharpened dependency note; restructured §5.5; revised effort estimates upward. |

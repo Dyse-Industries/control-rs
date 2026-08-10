@@ -7,6 +7,7 @@
       <w>Gemignani</w>
       <w>Rapita</w>
       <w>Ratatui</w>
+      <w>Renode</w>
       <w>Telem</w>
       <w>Tukey</w>
       <w>Varints</w>
@@ -19,11 +20,13 @@
       <w>horner's</w>
       <w>ifft</w>
       <w>naeini</w>
+      <w>partialord</w>
       <w>roundtrip</w>
       <w>rtic</w>
       <w>semihosting</w>
       <w>serde</w>
       <w>thumbv</w>
+      <w>typenum</w>
       <w>ulps</w>
       <w>underflowed</w>
       <w>virt</w>

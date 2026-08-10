@@ -4,7 +4,7 @@
 //!   * [ ] remove index slicing
 
 use crate::math::{
-    Bijection, Map, complex_num::Complex, num_traits::Real, ops::Neg, storage,
+    Bijection, Map, complex_num::Complex, num_traits::Float, ops::Neg, storage,
 };
 
 type ComplexArrayMut<T, const N: usize> = [Complex<T>; N];
@@ -19,8 +19,8 @@ type RealSliceMut<'a, T, const N: usize> = &'a mut [T; N];
 /// Implementations can be backed by hardware accelerators or software libraries.
 ///
 /// # Generic Arguments
-/// * `T` - The numeric type of the elements (must implement `Real`).
-pub trait FFT<T: 'static + Clone + Real + Neg<Output = T> + Default> {
+/// * `T` - The numeric type of the elements (must implement `Float`).
+pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
     /// Computes the forward Fast Fourier Transform.
     ///
     /// # Arguments
@@ -87,7 +87,7 @@ pub trait FFT<T: 'static + Clone + Real + Neg<Output = T> + Default> {
         // 2. Cooley-Tukey Radix-2 Butterfly
         // Processes the data in log2(N) stages.
         let ptr = data.as_mut_ptr();
-        let two_pi = T::PI * T::TWO;
+        let two_pi = T::PI * (T::ONE + T::ONE);
         let mut stage_len = 1;
         while stage_len < N {
             let step = stage_len << 1;
@@ -168,7 +168,7 @@ pub trait FFT<T: 'static + Clone + Real + Neg<Output = T> + Default> {
 ///
 /// # Generic Arguments
 /// * `T` - The numeric type of the elements.
-pub trait Convolution<T: Real> {
+pub trait Convolution<T: Float> {
     /// Computes the convolution of two signals.
     ///
     /// * Fewer Writes: By calculating `y\[n\]` directly using `k_min` and `k_max`, the method writes to the output
@@ -176,7 +176,7 @@ pub trait Convolution<T: Real> {
     /// * Bounds Safety: The indices for k (`k_min` and `k_max`) ensure that both k remains within
     ///   `[0, input.len()]` and n - k remains within `[0, kernel.len()]`, guaranteeing no out-of-bounds
     ///   panics during the inner loop computation.
-    /// * Traits: This assumes T: Real implies something akin to `num_traits::Real` (which provides
+    /// * Traits: This assumes T: Float implies something akin to `num_traits::Float` (which provides
     ///   `T::zero()` and standard operator overloading).
     ///
     /// # Arguments
@@ -229,7 +229,7 @@ pub trait Convolution<T: Real> {
 /// Trait for Continuous-time systems.
 ///
 /// This trait represents systems defined in the continuous time domain.
-pub trait Continuous<R: Real> {
+pub trait Continuous<R: Float> {
     /// Discretizes the continuous system to a discrete system.
     ///
     /// # Arguments
@@ -249,7 +249,7 @@ pub trait Continuous<R: Real> {
 ///
 /// # Generic Arguments
 /// * `T` - The numeric type of the elements.
-pub trait Discrete<T: Real> {
+pub trait Discrete<T: Float> {
     /// The sampling frequency of the system in Hertz.
     const SAMPLING_FREQUENCY_HZ: T;
 
@@ -267,7 +267,7 @@ pub trait Discrete<T: Real> {
 impl<T, F, const N: usize> Map<[T; N], [Complex<T>; N]> for F
 where
     F: FFT<T>,
-    T: 'static + Copy + Real + Neg<Output = T> + Default,
+    T: 'static + Copy + Float + Neg<Output = T> + Default,
 {
     fn evaluate(&self, x: [T; N]) -> [Complex<T>; N] {
         let mut y = [Complex::<T>::default(); N];
@@ -280,7 +280,7 @@ where
 impl<T, F, const N: usize> Bijection<[T; N], [Complex<T>; N]> for F
 where
     F: FFT<T>,
-    T: 'static + Copy + Real + Neg<Output = T> + Default,
+    T: 'static + Copy + Float + Neg<Output = T> + Default,
 {
     fn evaluate_inverse(&self, y: [Complex<T>; N]) -> [T; N] {
         let mut x = [T::default(); N];

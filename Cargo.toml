@@ -57,6 +57,7 @@ std = []
 hil = ["dep:control-rs-macros", "dep:control-rs-hil"]
 
 [dev-dependencies]
+proptest = "1"
 
 
 [profile.release]

@@ -1,10 +1,18 @@
+//! Fallible/wrapping/saturating arithmetic operator (`ops.rs`) test suite.
+//!
+//! `ops.rs` has no dedicated design doc, so tests here are not cited
+//! against per-test functional requirements. Every `ArithmeticError`
+//! variant asserted below is, however, coverage of `error-design.md`'s
+//! **FR-1** (single shared error type consumed by more than one module) —
+//! `storage_tests.rs` independently exercises the same enum via
+//! `ConversionError`.
 #![allow(clippy::arbitrary_source_item_ordering)]
 
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod op_test_suite {
     use crate::math::{
         ArithmeticError,
-        num_traits::{Real, Ring, Signed},
+        num_traits::{Integer, SaturatingInteger, Signed},
         ops::{
             Div, Neg, Rem, SaturatingAdd, SaturatingMul, SaturatingSub, Shl,
             Shr, TryAdd, TryDiv, TryMul, TryNeg, TryRem, TryShl, TryShr,
@@ -14,37 +22,9 @@ pub mod op_test_suite {
 
     // --- Helper functions for try addition/subtraction/multiplication/division/remainder/negation/shifting ---
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
-    fn _try_add_float_checks<
-        T: Real + TryAdd + Neg<Output = T> + core::fmt::Debug,
-    >(
-        rhs: T,
-        lhs: T,
-        expected: T,
-    ) {
-        assert_eq!(lhs.try_add(&rhs), Ok(expected));
-        assert_eq!(T::MIN.try_add(&T::MIN), Ok(T::INF.neg()));
-        assert_eq!(
-            T::MIN.try_add(&T::ONE),
-            Err(ArithmeticError::PrecisionLoss)
-        );
-        assert_eq!(
-            T::ONE.try_add(&T::MAX),
-            Err(ArithmeticError::PrecisionLoss)
-        );
-        assert_eq!(
-            T::NAN.try_add(&T::ONE),
-            Err(ArithmeticError::DomainViolation)
-        );
-        assert_eq!(
-            T::ZERO.try_add(&(T::MIN_POSITIVE / T::TWO)),
-            Err(ArithmeticError::Underflow)
-        );
-    }
-
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_saturating_add_int_checks<
-        T: Ring + SaturatingAdd + Neg<Output = T> + core::fmt::Debug,
+        T: Integer + SaturatingInteger + Signed + SaturatingAdd + core::fmt::Debug,
     >(
         rhs: T,
         lhs: T,
@@ -56,7 +36,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_saturating_add_int_checks<
-        T: Ring + SaturatingAdd + core::fmt::Debug,
+        T: Integer + SaturatingInteger + SaturatingAdd + core::fmt::Debug,
     >(
         rhs: T,
         lhs: T,
@@ -70,7 +50,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _signed_wrapping_add_int_checks<
-        T: Ring + Signed + WrappingAdd + core::fmt::Debug,
+        T: Integer + Signed + WrappingAdd + core::fmt::Debug,
     >(
         rhs: T,
         lhs: T,
@@ -86,7 +66,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_wrapping_add_int_checks<
-        T: Ring + WrappingAdd + core::fmt::Debug,
+        T: Integer + WrappingAdd + core::fmt::Debug,
     >(
         rhs: T,
         lhs: T,
@@ -101,7 +81,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _signed_try_sub_int_checks<
-        T: Ring + TrySub + core::fmt::Debug + PartialEq,
+        T: Integer + TrySub + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -113,7 +93,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_try_sub_int_checks<
-        T: Ring + TrySub + core::fmt::Debug + PartialEq,
+        T: Integer + TrySub + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -125,11 +105,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _signed_saturating_sub_int_checks<
-        T: Ring
-            + Signed
-            + SaturatingSub
-            + core::ops::Neg<Output = T>
-            + core::fmt::Debug,
+        T: Integer + SaturatingInteger + Signed + SaturatingSub + core::fmt::Debug,
     >(
         rhs: T,
         lhs: T,
@@ -141,7 +117,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_saturating_sub_int_checks<
-        T: Ring + SaturatingSub + core::fmt::Debug,
+        T: Integer + SaturatingInteger + SaturatingSub + core::fmt::Debug,
     >(
         rhs: T,
         lhs: T,
@@ -153,7 +129,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_wrapping_sub_int_checks<
-        T: Ring + WrappingSub + core::ops::Neg<Output = T> + core::fmt::Debug,
+        T: Integer + Signed + WrappingSub + core::fmt::Debug,
     >(
         rhs: T,
         lhs: T,
@@ -165,7 +141,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_wrapping_sub_int_checks<
-        T: Ring + WrappingSub + core::fmt::Debug + PartialEq,
+        T: Integer + WrappingSub + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -177,7 +153,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_mul_int_checks<
-        T: Ring + TryMul + core::fmt::Debug + PartialEq,
+        T: Integer + TryMul + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -188,7 +164,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_try_mul_int_checks<
-        T: Ring + TryMul + core::fmt::Debug + PartialEq,
+        T: Integer + TryMul + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -200,7 +176,12 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_saturating_mul_int_checks<
-        T: Ring + Signed + SaturatingMul + core::fmt::Debug + PartialEq,
+        T: Integer
+            + SaturatingInteger
+            + Signed
+            + SaturatingMul
+            + core::fmt::Debug
+            + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -212,7 +193,11 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_saturating_mul_int_checks<
-        T: Ring + SaturatingMul + core::fmt::Debug + PartialEq,
+        T: Integer
+            + SaturatingInteger
+            + SaturatingMul
+            + core::fmt::Debug
+            + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -224,11 +209,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_wrapping_mul_int_checks<
-        T: Ring
-            + WrappingMul
-            + core::ops::Neg<Output = T>
-            + core::fmt::Debug
-            + PartialEq,
+        T: Integer + Signed + WrappingMul + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -240,7 +221,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_wrapping_mul_int_checks<
-        T: Ring + WrappingMul + core::fmt::Debug + PartialEq,
+        T: Integer + WrappingMul + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -251,10 +232,10 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_div_int_checks<
-        T: Ring
+        T: Integer
+            + Signed
             + TryDiv
             + Div<T, Output = T>
-            + Neg<Output = T>
             + core::fmt::Debug
             + PartialEq,
     >(
@@ -268,7 +249,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_try_div_int_checks<
-        T: Ring + Div<T, Output = T> + TryDiv + core::fmt::Debug + PartialEq,
+        T: Integer + Div<T, Output = T> + TryDiv + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -283,7 +264,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_rem_int_checks<
-        T: Ring
+        T: Integer
             + Signed
             + Rem<T, Output = T>
             + TryRem
@@ -301,7 +282,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_try_rem_int_checks<
-        T: Ring + TryRem + Rem<T, Output = T> + core::fmt::Debug + PartialEq,
+        T: Integer + TryRem + Rem<T, Output = T> + core::fmt::Debug + PartialEq,
     >(
         rhs: T,
         lhs: T,
@@ -315,7 +296,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_neg_int_checks<
-        T: Ring + Neg<Output = T> + TryNeg + core::fmt::Debug + PartialEq + Copy,
+        T: Integer + Signed + TryNeg + core::fmt::Debug + PartialEq + Copy,
     >(
         val: T,
         expected: T,
@@ -327,7 +308,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_shl_int_checks<
-        T: Ring + Shl<u32, Output = T> + TryShl + core::fmt::Debug + PartialEq,
+        T: Integer + Shl<u32, Output = T> + TryShl + core::fmt::Debug + PartialEq,
     >(
         val: T,
         expected: T,
@@ -338,7 +319,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_try_shl_int_checks<
-        T: Ring + Shl<u32, Output = T> + TryShl + core::fmt::Debug + PartialEq,
+        T: Integer + Shl<u32, Output = T> + TryShl + core::fmt::Debug + PartialEq,
     >(
         val: T,
         expected: T,
@@ -350,7 +331,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_shr_int_checks<
-        T: Ring + Shr<u32, Output = T> + TryShr + core::fmt::Debug + PartialEq,
+        T: Integer + Shr<u32, Output = T> + TryShr + core::fmt::Debug + PartialEq,
     >(
         val: T,
         bits: u32,
@@ -360,7 +341,7 @@ pub mod op_test_suite {
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _unsigned_try_shr_int_checks<
-        T: Ring + Shr<u32, Output = T> + TryShr + core::fmt::Debug + PartialEq,
+        T: Integer + Shr<u32, Output = T> + TryShr + core::fmt::Debug + PartialEq,
     >(
         val: T,
         bits: u32,
@@ -377,13 +358,41 @@ pub mod op_test_suite {
     #[cfg_attr(test, test)]
     /// Verifies `try_add` (fallible addition) for f32 floats.
     fn test_ops_try_add_f32() {
-        _try_add_float_checks(1.0_f32, 2.0_f32, 3.0_f32);
+        assert_eq!(1.0_f32.try_add(&2.0), Ok(3.0));
+        assert_eq!(f32::MIN.try_add(&f32::MIN), Ok(f32::INFINITY.neg()));
+        assert_eq!(f32::MIN.try_add(&1.0), Err(ArithmeticError::PrecisionLoss));
+        assert_eq!(
+            1.0_f32.try_add(&f32::MAX),
+            Err(ArithmeticError::PrecisionLoss)
+        );
+        assert_eq!(
+            f32::NAN.try_add(&1.0),
+            Err(ArithmeticError::DomainViolation)
+        );
+        assert_eq!(
+            0.0_f32.try_add(&(f32::MIN_POSITIVE / 2.0)),
+            Err(ArithmeticError::Underflow)
+        );
     }
 
     #[cfg_attr(test, test)]
     /// Verifies `try_add` (fallible addition) for f64 floats.
     fn test_ops_try_add_f64() {
-        _try_add_float_checks(1.0_f64, 2.0_f64, 3.0_f64);
+        assert_eq!(1.0_f64.try_add(&2.0), Ok(3.0));
+        assert_eq!(f64::MIN.try_add(&f64::MIN), Ok(f64::INFINITY.neg()));
+        assert_eq!(f64::MIN.try_add(&1.0), Err(ArithmeticError::PrecisionLoss));
+        assert_eq!(
+            1.0_f64.try_add(&f64::MAX),
+            Err(ArithmeticError::PrecisionLoss)
+        );
+        assert_eq!(
+            f64::NAN.try_add(&1.0),
+            Err(ArithmeticError::DomainViolation)
+        );
+        assert_eq!(
+            0.0_f64.try_add(&(f64::MIN_POSITIVE / 2.0)),
+            Err(ArithmeticError::Underflow)
+        );
     }
 
     #[cfg_attr(test, test)]

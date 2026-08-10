@@ -20,20 +20,20 @@ config:
   layout: fixed
 ---
 flowchart LR
- subgraph Target["Target MCU / QEMU (Server Architecture)"]
+ subgraph Target["Target MCU / QEMU (control-rs-hil)"]
     direction TB
         CommsRx["HostComms"]
-        Runner{"Server"}
+        Server["Server"]
         Tests["SuiteDescriptors"]
         CPUUtils["CPUProfiler"]
   end
-    Tests -. <br> .-> Runner
+    Tests -. <br> .-> Server
     Host(("Host CLI / TUI / CI")) <--> CommsRx
-    CommsRx <--> Runner
-    CPUUtils --> Runner
+    CommsRx <--> Server
+    CPUUtils --> Server
     
      CommsRx:::commsNode
-     Runner:::serverLoop
+     Server:::serverLoop
      Tests:::testNode
      Host:::hostNode
      CPUUtils:::cpuNode
@@ -56,7 +56,7 @@ flowchart LR
 
 Developers use `control-rs-hil` by defining a target-side transport (such as a
 UART interface) and CPU profiling utilities, and then passing them into the
-runner context.
+Server's context.
 
 Here is an example implementation:
 
@@ -150,7 +150,7 @@ pub mod pid_control_suite {
     }
 }
 
-// 4. Initialize HIL runner server
+// 4. Initialize HIL Server
 #[hil_setup]
 fn setup() -> Context<UartComms, SystemCPUUtils> {
     Context::new(

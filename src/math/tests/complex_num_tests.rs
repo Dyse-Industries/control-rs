@@ -1,4 +1,10 @@
 //! Complex number mathematical HIL and unit test suite.
+//!
+//! `complex_num.rs` has no dedicated design doc, so tests here are not
+//! cited against per-test functional requirements. `Complex<T>: Scalar`
+//! (and the fallible-arithmetic tests below) do transitively exercise
+//! `num-traits-design.md`'s **FR-3** — see `num_trait_tests.rs` for the
+//! primary `Scalar` coverage.
 #![allow(clippy::arithmetic_side_effects)]
 
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
@@ -11,8 +17,7 @@ pub mod complex_num_test_suite {
             complex_num::Complex32,
             complex_num::Complex64,
             num_traits::{
-                Exponential, Field, One, Radical, Real, Ring, Signed, Trig,
-                Zero,
+                Exponential, Float, One, Radical, Signed, Trig, Zero,
             },
             ops::{
                 Neg, TryAdd, TryDiv, TryMul, TrySub, WrappingAdd, WrappingMul,
@@ -97,7 +102,7 @@ pub mod complex_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies `TrySub`, `PartialOrd`, and Ring constants traits for complex numbers.
+    /// Verifies `TrySub`, `PartialOrd`, and identity constants for complex numbers.
     fn test_complex_fallible_sub_and_ord_traits() {
         let a = Complex::new(5.0, 3.0);
         let b = Complex::new(5.0, 1.0);
@@ -108,10 +113,9 @@ pub mod complex_num_test_suite {
         // Covers PartialOrd equal-real branch
         assert_eq!(a.partial_cmp(&b), Some(core::cmp::Ordering::Greater));
 
-        // Covers Zero, One, Ring constants
+        // Covers Zero, One constants
         let _ = Complex::<f64>::ZERO;
         let _ = Complex::<f64>::ONE;
-        let _ = Complex::<f64>::MAX;
     }
 
     #[cfg_attr(test, test)]
@@ -204,9 +208,11 @@ pub mod complex_num_test_suite {
         assert!(z1 < z2); // Real part differs
         assert!(z1 < z3); // Imaginary part differs
         assert!(z1 < z4); // Both differ
+        assert!(z2 > z3); // lexicographic ordering https://doc.rust-lang.org/std/cmp/trait.PartialOrd.html
         assert!(z2 > z1);
         assert!(z3 > z1);
         assert!(z4 > z1);
+        assert!(z3 < z2);
     }
 
     #[cfg_attr(test, test)]
@@ -337,10 +343,10 @@ pub mod complex_num_test_suite {
     #[cfg_attr(test, test)]
     /// Verifies that extreme magnitude calculations involving infinity do not overflow to NaN.
     fn test_complex_infinity_magnitude() {
-        let z = Complex64::new(f64::INF, 5.0);
+        let z = Complex64::new(f64::INFINITY, 5.0);
         assert!(z.magnitude().is_infinite());
 
-        let z2 = Complex64::new(f64::INF, f64::INF);
+        let z2 = Complex64::new(f64::INFINITY, f64::INFINITY);
         assert!(z2.magnitude().is_infinite());
     }
 
@@ -470,9 +476,9 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(try_div_res.re, -11.0 / 5.0);
         assert_almost_eq!(try_div_res.im, 2.0 / 5.0);
 
-        // Test abs
+        // Test abs (the complex absolute value: `|z|` as a real number)
         let abs_res = z1.abs();
-        assert_almost_eq!(abs_res.re, 3.0);
-        assert_almost_eq!(abs_res.im, 4.0);
+        assert_almost_eq!(abs_res.re, 5.0);
+        assert_almost_eq!(abs_res.im, 0.0);
     }
 }

@@ -5,6 +5,44 @@
 //!
 //! This implementation avoids heavy code generation by forcing the Rust
 //! compiler's trait solver to calculate matrix dimensions during compilation.
+//!
+//! # Ceiling
+//!
+//! Friendly aliases stop at `U127`, because the unary Peano representation
+//! requires trait-solver recursion proportional to dimension size. Beyond
+//! it, arithmetic whose Peano depth exceeds the compiler's default
+//! trait-solver recursion limit (128) fails to compile with an "overflow
+//! evaluating the requirement" error rather than miscompiling silently,
+//! e.g. `U127 * U2` (depth ~254):
+//!
+//! ```compile_fail
+//! use control_rs::math::num_types::{DimMul, U127, U2};
+//!
+//! let _: <U127 as DimMul<U2>>::Output = Default::default();
+//! ```
+//!
+//! The per-pair envelope is narrower than the ceiling itself: structural
+//! recursion re-resolves `Dim` on an operand at each step, so operations
+//! whose results stay at or below `U127` can still overflow the solver.
+//! `U126 * U1` fails even though `U125 * U1` resolves:
+//!
+//! ```compile_fail
+//! use control_rs::math::num_types::{DimMul, U1, U126};
+//!
+//! let _: <U126 as DimMul<U1>>::Output = Default::default();
+//! ```
+//!
+//! and the envelope is asymmetric: `U1 + U126` fails even though
+//! `U63 + U64` (the same sum) resolves:
+//!
+//! ```compile_fail
+//! use control_rs::math::num_types::{DimAdd, U1, U126};
+//!
+//! let _: <U1 as DimAdd<U126>>::Output = Default::default();
+//! ```
+//!
+//! The passing sides of both boundaries are pinned as unit tests in
+//! `num_type_tests`.
 #![allow(clippy::arbitrary_source_item_ordering)]
 
 use core::marker::PhantomData;
@@ -67,6 +105,24 @@ pub struct S<N: Dim>(PhantomData<N>);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub struct Const<const N: usize>;
 
+impl<const N: usize> Const<N> {
+    /// Constructs `Self` from a runtime `i8`, validating that its magnitude
+    /// matches `N`.
+    ///
+    /// Uses `saturating_abs()` rather than `abs()` so the magnitude is
+    /// well-defined for every `i8`: `i8::MIN`'s magnitude (128) does not fit in
+    /// an `i8` (`abs()` panics on that overflow), so it saturates to
+    /// `i8::MAX` (127); the `Dim` ceiling.
+    ///
+    /// # Panics
+    /// Only in debug builds if `n.saturating_abs() as usize != N`.
+    #[must_use]
+    pub const fn from_i8(n: i8) -> Self {
+        debug_assert!(n.saturating_abs() as usize == N);
+        Self
+    }
+}
+
 // ==========================================
 // Friendly Type Aliases Macro
 // ==========================================
@@ -115,7 +171,13 @@ macro_rules! generate_peano_aliases {
 generate_peano_aliases!(
     1, U0, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15,
     U16, U17, U18, U19, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U30,
-    U31, U32,
+    U31, U32, U33, U34, U35, U36, U37, U38, U39, U40, U41, U42, U43, U44, U45,
+    U46, U47, U48, U49, U50, U51, U52, U53, U54, U55, U56, U57, U58, U59, U60,
+    U61, U62, U63, U64, U65, U66, U67, U68, U69, U70, U71, U72, U73, U74, U75,
+    U76, U77, U78, U79, U80, U81, U82, U83, U84, U85, U86, U87, U88, U89, U90,
+    U91, U92, U93, U94, U95, U96, U97, U98, U99, U100, U101, U102, U103, U104,
+    U105, U106, U107, U108, U109, U110, U111, U112, U113, U114, U115, U116,
+    U117, U118, U119, U120, U121, U122, U123, U124, U125, U126, U127,
 );
 
 impl Dim for Z {

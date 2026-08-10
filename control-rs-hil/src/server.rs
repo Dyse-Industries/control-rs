@@ -1,8 +1,8 @@
-//! On-target test runner server loop.
+//! On-target Server event loop.
 //!
 //! # Description
 //!
-//! This module implements the interactive test runner server, coordination contexts,
+//! This module implements the interactive Server, coordination contexts,
 //! and global run state indicators. The server processes incoming commands from the host,
 //! dynamically edits settings, executes target test routines, and profiles their cycles/memory.
 //!
@@ -87,7 +87,7 @@ pub struct Context<C, P> {
     pub cpu_utils: P,
 }
 
-/// Interactive test runner server.
+/// Interactive HIL Server.
 ///
 /// The `Server` coordinates the execution of HIL tests on the target. It manages the boot discovery phase,
 /// processes settings updates, runs tests inside critical sections (interrupts disabled), and returns
@@ -146,7 +146,7 @@ pub struct TestMetrics {
     pub time_us: u64,
 }
 
-/// Represents the active state of a test runner indicator.
+/// Represents the active state of a Server execution indicator.
 ///
 /// Tracks execution indexes or flags idle state via atomic operations.
 ///
@@ -942,7 +942,7 @@ mod tests {
                 .unwrap()
         );
 
-        assert!(context.comms.payloads.is_empty());
+        assert_eq!(context.comms.payloads, Vec::<Vec<u8>>::new());
         assert_eq!(context.comms.flush_count, 0);
 
         context.comms_lock.unlock();
@@ -1088,7 +1088,7 @@ mod tests {
         let mut server = Server::new(context, SUITES);
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
-        assert!(server.context.comms.payloads.is_empty());
+        assert_eq!(server.context.comms.payloads, Vec::<Vec<u8>>::new());
     }
 
     #[test]

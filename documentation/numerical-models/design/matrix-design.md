@@ -33,45 +33,42 @@ architecture:
 
 #### 2.1. Functional Requirements
 
-- **Compile-Time Sizing**: Enforce dimensions of arguments at compile time
-  using [num_types](../../src/math/num_types.rs).
-- **Static Constructors**: Provide compile-time evaluated constructors for zero
-  matrices, identity matrices, and diagonal matrices.
-- **Core Arithmetic**: Implement standard operator overloading for matrix
+- **FR-1 — Compile-Time Sizing**: Enforce dimensions of arguments at compile
+  time using `num_types`.
+- **FR-2 — Static Constructors**: Provide compile-time evaluated constructors
+  for zero, identity, and diagonal matrices.
+- **FR-3 — Core Arithmetic**: Implement standard operator overloading for
   addition, subtraction, multiplication, and negation.
-- **Matrix Operations**: Provide methods for matrix transposition, determinant
+- **FR-4 — Matrix Operations**: Provide methods for transposition, determinant
   calculation, and inversion.
-- **Specializations**: Support specialized structures (Upper Triangular, Lower
-  Triangular, and Symmetric) to dispatch optimized mathematical routines.
-- **Coordinate-Based Instantiation**: Expose coordinate-based mapping functions
-  to initialize elements by index.
-- **Matrix Concatenation**: Implement a method to combine matrices and lists of
-  matrics both vertically and horizontally.
-- **Type Conversions**: Support conversions between `Matrix`, `Polynomial`, and
-  `Tensor` representations (e.g., computing a characteristic polynomial from a
-  square matrix, or mapping a 2D matrix to a rank-2 tensor).
+- **FR-5 — Specializations**: Support specialized structures (Upper Triangular,
+  Lower Triangular, Symmetric) to dispatch optimized routines.
+- **FR-6 — Coordinate-Based Instantiation**: Expose coordinate-based mapping
+  functions to initialize elements by index.
+- **FR-7 — Matrix Concatenation**: Implement a method to combine matrices and
+  lists of matrices both vertically and horizontally.
+- **FR-8 — Type Conversions**: Support conversions between `Matrix`,
+  `Polynomial`, and `Tensor` representations for compatible ranks and sizes.
 
 #### 2.2. Non-Functional Requirements
 
-- **Deterministic Execution**: Matrix operations must execute within
+- **NFR-1 — Deterministic Execution**: Matrix operations must execute within
   predictable, deterministic timeframes.
-- **No Excessive Compile-Time Overhead**: The use of `const fn` for static
-  constructors and dimension enforcement must not cause excessive compile-time
-  increase or binary bloat.
-- **Specialization Optimization**: The structural specializations should run
+- **NFR-2 — No Excessive Compile-Time Overhead**: `const fn` static constructors
+  and dimension enforcement must not cause excessive compile-time increase or
+  binary bloat.
+- **NFR-3 — Specialization Optimization**: Structural specializations should run
   in about half the operations of a regular matrix multiplication.
 
 #### 2.3. Constraints
 
-- **No-Std Environment**: The code must compile and run in `#![no_std]`
+- **C-1 — No-Std Environment**: The code must compile and run in `#![no_std]`
   environments without the Rust standard library.
-- **No Dynamic Allocation**: The module must not use a heap allocator. All
-  memory allocations must be static or stack-based.
-- **Memory Footprint**: Limit maximum matrix dimensions to $32 \times 32$
-  elements to guarantee that a single matrix instance never exceeds 4KB of stack
-  space (when using 32-bit floats).
-  _See [PeanoTypeNum](../../src/math/num_types.rs) implementations for more
-  details._
+- **C-2 — No Dynamic Allocation**: The module must not use a heap allocator; all
+  memory allocations are static or stack-based.
+- **C-3 — Memory Footprint**: Maximum matrix dimensions are limited
+  to $32 \times 32$ elements, keeping a single instance under 4KB of stack (
+  32-bit floats).
 
 ---
 
@@ -113,18 +110,11 @@ of requiring a separate implementation per backend.
 #### 4.2. Memory Layout & Storage Strategy
 
 The default storage backend (`ArrayStorage`) uses a **column-major array
-representation** (`[[T; R]; C]`). This is `ArrayStorage`'s choice, not an
-assumption `Matrix` itself makes: per `storage-trait-design.md` FR-4/FR-6,
-every `ContiguousStorage` backend declares its physical layout via a
-`MatrixLayout` marker (`RowMajor`/`ColMajor`), and BLAS-facing subprogram
-calls take that marker as an explicit parameter rather than assuming one.
-`Matrix`'s own arithmetic (§4.5) never branches on layout — it reads
-`S::ORDER` off whichever storage backend it was instantiated with and
-forwards it. This is what makes it possible to introduce a row-major
-backend later (or swap `ArrayStorage`'s own default) without touching a
-single `Matrix` operator implementation — see §4.5 for how this resolves
-the previously-undocumented mismatch between `ArrayStorage`'s column-major
-default and `subprograms.rs`'s row-major `GEMV`/`GEMM` implementations.
+representation** (`[[T; R]; C]`). `Matrix`'s own arithmetic never branches 
+on layout — it reads `S::ORDER` off whichever storage backend it was 
+instantiated with and forwards it. This is what makes it possible to 
+introduce a row-major backend later without touching a single `Matrix` 
+operator implementation.
 
 - **Cache Locality**: Matrix multiplication: Under column-major ordering, each
   column $ A_j $ is contiguous in memory, maximizing CPU cache hit rates.
@@ -167,21 +157,25 @@ where
 
 ##### 4.3.1. Zero-Copy Non-Destructive Views (`MatrixView` & `MatrixViewMut`)
 
-`MatrixView<'a, T, R, C>` and `MatrixViewMut<'a, T, R, C>` are storage
-backends, not `Matrix`-level types — their field layout, `offset()`
-implementation, and transposition mechanics are defined once, canonically,
-in `storage-trait-design.md` FR-3b/FR-4. This document does not restate
-that struct definition; an earlier revision did, and the two definitions
-had begun to drift (this document's sketch carried separate `row_stride`/
-`col_stride` fields where the storage design's `offset()`-based model does
-not need them stored explicitly). That duplication is removed as of this
-revision.
-
-What *is* Matrix-level, and does belong here, is the convenience wrapper
-that presents a `MatrixView`/`MatrixViewMut`-backed storage as a full
-`Matrix`:
+To support zero-copy operations (such as non-destructive transposition) without
+requiring memory copies or stack allocations, `control-rs` provides
+reference-holding view types:
 
 ```rust
+pub struct MatrixView<'a, T, R: Dim, C: Dim> {
+    data: &'a [T],
+    row_stride: usize,
+    col_stride: usize,
+    _marker: core::marker::PhantomData<(R, C)>,
+}
+
+pub struct MatrixViewMut<'a, T, R: Dim, C: Dim> {
+    data: &'a mut [T],
+    row_stride: usize,
+    col_stride: usize,
+    _marker: core::marker::PhantomData<(R, C)>,
+}
+
 /// A high-level Matrix wrapper around an immutable MatrixView storage backend.
 pub type MatrixSlice<'a, T, R, C> = Matrix<T, R, C, MatrixView<'a, T, R, C>>;
 
@@ -411,36 +405,10 @@ A square matrix `Matrix<T, D, D>` converts to its characteristic polynomial
   }
   ```
 - **Behavior**: Coefficients are computed using the Faddeev-LeVerrier
-  algorithm (Faddeev & Faddeeva, 1963). The recurrence divides by each
-  integer $k = 1, \dots, D$ and needs no integer-embedding conversion
-  beyond `T::ONE`: each $k$ is synthesized by repeated addition
-  ($k \cdot \mathbb{1} = \underbrace{1 + \dots + 1}_{k}$), which only needs
-  `T: One + Add`, already implied by `Float`'s `Signed` supertrait chain
-  once `One` is bound alongside it (`num-traits-design.md` §4.1 — `Float`
-  does not itself declare `One` as a supertrait, so it is bound explicitly).
-- **Scope: Floating-Point Only**: This conversion is bounded on `T: Float`,
-  not on a fixed-point-compatible bound. A prior revision bounded it on
-  `T: Field + Copy + From<i32>`; `From<i32>` was infeasible for the Q15/Q31
-  fixed-point types this crate otherwise treats as first-class (§7,
-  `num-traits-design.md`'s `SaturatingInteger`/fixed-point framing) —
-  representing an arbitrary `i32` (up to $D \le 32$, but the bound wasn't
-  even scoped to that range) in a Q15 accumulator is not generally possible
-  without a separate, unspecified scaling convention. No fixed-point
-  Faddeev–LeVerrier precedent was found during this document's research
-  pass (`research/results/matrix.json` documents CMSIS-DSP's Q31/Q15
-  accumulator conventions for `GEMM`/`GEMV` specifically, and surfaces no
-  equivalent for a trace-based characteristic-polynomial recurrence),
-  mirroring `polynomial-design.md` §5.2's identical scoping of `div_rem`
-  and companion-matrix root-finding to "Host/Design-Time Scope." Faddeev–
-  LeVerrier is scoped the same way, for the same reason: this is a
-  design-time/offline conversion (e.g. computing a characteristic
-  polynomial for controller synthesis), not an on-target fixed-point
-  runtime path.
-- **Failure Condition**: Returns `ConversionError::DimensionMismatch` if
-  numerical overflow occurs or if capacity is insufficient. (The prior
-  "if the scalar type cannot perform division" clause is removed: division
-  is now unconditionally available via the `Float` bound, not a runtime
-  possibility to fail on.)
+  algorithm (Faddeev & Faddeeva, 1963).
+- **Failure Condition**: Returns `ConversionError::DimensionMismatch` if the
+  scalar type cannot perform division, if numerical overflow occurs or if
+  capacity is insufficient.
 
 ##### 4.8.2. Conversion to Tensor
 
@@ -471,9 +439,9 @@ compiling invalid math.
 
 ##### 4.9.2. Runtime Error Taxonomy
 
-To supplement the crate's generic `ArithmeticError`, `control-rs` defines a
-dedicated error enum for linear-algebra failures that are specific to
-`Matrix` and not shared with any peer module:
+To supplement the crate's generic `ArithmeticError`, `control-rs` defines
+dedicated error enums in the `math` module to represent linear algebra and
+conversion failures:
 
 ```rust
 /// Unified linear algebra errors supplementing ArithmeticError.
@@ -484,16 +452,18 @@ pub enum LinAlgError {
     /// The matrix operation requires a square shape but a non-square shape was provided.
     NonSquareMatrix,
 }
-```
 
-`ConversionError` — used by §4.8's `Matrix ↔ Polynomial`/`Matrix ↔ Tensor`
-conversions — is **not** defined here. It is shared across `Matrix`,
-`Polynomial`, and `Tensor` and moved to a dedicated crate-wide location,
-[`error-design.md`](../../math/design/error-design.md), as of this
-revision; §4.8 above references it by name rather than restating it. A
-prior revision of this document defined `ConversionError` locally, which
-left `polynomial-design.md` and `tensor-design.md` depending on a type
-neither of them declared a source for.
+/// Representation and layout conversion errors supplementing ArithmeticError.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversionError {
+    /// Rank or coordinate dimensions do not align between Matrix/Tensor.
+    LayoutMismatch,
+    /// The polynomial is not monic (leading coefficient is not ONE), preventing companion matrix construction.
+    NonMonicPolynomial,
+    /// Dimension or capacity overflow/underflow during calculations.
+    DimensionMismatch,
+}
+```
 
 ##### 4.9.3. Runtime Fallbacks
 
@@ -563,15 +533,38 @@ a sequence of planar rotators guarantees normwise backward stability.
 
 ##### 4.10.3. Kalman Filter State Update
 
-The `Matrix` API computes the covariance update in a Kalman filter loop,
+The following example demonstrates the proposed `Matrix` API when computing the
+covariance update in a Kalman filter loop:
 $$ P*{k|k} = (I - K_k H_k) P*{k|k-1} $$
-directly from `identity()`, `Sub`, and `Mul<Matrix>` — no operation beyond
-what §4.4–§4.5 already specify is required. This needs only
-`T: Scalar + Copy` (`num-traits-design.md` FR-3: `AdditiveGroup + Signed +
-Mul`, the crate's general-purpose arithmetic-scalar bound — no division,
-no square root). §6.2 gives the fully worked, concretely-typed version of
-this same example as part of the Validation Strategy; it is not repeated
-here a second time.
+
+```rust
+use control_rs::math::matrix::{Matrix, Dim, U1};
+
+pub fn kalman_covariance_update<T, S: Dim, O: Dim>(
+    p_pred: &Matrix<T, S, S>,
+    k: &Matrix<T, S, O>,
+    h: &Matrix<T, O, S>,
+) -> Matrix<T, S, S>
+where
+    T: Ring + Copy,
+    S: Dim,
+    O: Dim,
+    S: DimMul<S>,
+    S: DimMul<O>,
+    O: DimMul<S>,
+{
+    // Identity matrix I of state dimension S
+    let i = Matrix::<T, S, S>::identity();
+
+    // K * H -> S x S matrix
+    let k_h = k * h;
+
+    // I - K * H -> S x S matrix
+    let diff = &i - &k_h;
+
+    // (I - K * H) * P_pred -> S x S matrix
+    &diff * p_pred
+}
 ```
 
 ###### 4.10.4. Abstracting Target-Specific DSP / BLAS FFI
@@ -850,19 +843,6 @@ execution predictability.
   `-ffast-math` or rely on strict IEEE 754 compliance for float math.
 - **Fixed-Point Precision Loss**: Truncation errors in Q31/Q15 accumulator
   scaling might lead to drift in high-frequency loops.
-- **`num-traits-design.md` Dependency Is Provisional**: Every trait bound in
-  this document (`Float`, `Scalar`, `One`, `Zero`) follows
-  `num-traits-design.md`'s current hierarchy, which has itself not been
-  through `/cr-research` or `/cr-design-doc` and remains Draft pending its
-  own gated-pipeline pass. These bounds may need another revision once that
-  document is formally researched and re-approved — this mirrors the same
-  caveat `state-space-design.md` §9 already carries for its own `Float`
-  dependency.
-- **CBLAS `Order`-Parameter Citation Is Open**: §4.2/§4.5's layout-agnostic
-  BLAS interop (reading `S::ORDER` and passing it through to `GEMV`/`GEMM`)
-  is architecturally decided in `storage-trait-design.md` FR-6 but not yet
-  backed by a citation in `research/results/matrix.json` — see that
-  document's own Risks entry for the same gap.
 
 ---
 
@@ -872,10 +852,10 @@ execution predictability.
 |:-----------------------------|:----------------------------------------------------------------------------------------|:-----------------|
 | **Step 1: Core Layout**      | Define `Matrix` struct, column-major storage, and slice casting.                        | 1.0 Day          |
 | **Step 2: Operators**        | Implement `Add`, `Sub`, `Mul` traits with compile-time checks.                          | 1.5 Days         |
-| **Step 3: Solvers**          | Implement in-place LU (partial pivoting) and $LDL^T$ decomposition, scratch-space pivot API, forward/backward substitution, determinants, and `invert_mut`/`invert_into`, with singular/near-singular edge-case handling. | 4.0 Days         |
+| **Step 3: Solvers**          | Implement $LDL^T$ decomposition, LU, determinants, and matrix inversion.                | 2.0 Days         |
 | **Step 4: Specializations**  | Create `UpperTriangular`, `LowerTriangular`, and `Symmetric` wrappers.                  | 1.0 Day          |
-| **Step 5: Factorizations**   | Implement Cholesky and QR (Householder/Givens) solvers.                                 | 3.0 Days         |
-| **Step 6: Verification**     | `proptest` algebraic-identity suites, ARM DWT cycle profiling, and Cachegrind setup (hardware profiling infrastructure, not just test-writing).                                     | 2.5 Days         |
+| **Step 5: Factorizations**   | Implement Cholesky and QR solvers.                                                      | 2.0 Days         |
+| **Step 6: Verification**     | Set up `proptest` suites, ARM DWT cycle profiling, and Cachegrind setups.               | 1.5 Days         |
 | **Step 7: Interoperability** | Implement conversions between `Matrix`, `Polynomial` (Faddeev-LeVerrier), and `Tensor`. | 2.0 Days         |
 
 ---
@@ -935,13 +915,13 @@ execution predictability.
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description of Changes                                                                                                                                                                                                             |
-|:---------|:---------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026  | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                                                                                                                                     |
-| 2.0      | July 19, 2026  | @MitchellDScott | Restructured to new template; added embedded performance/verification details.                                                                                                                                                     |
-| 3.0      | July 25, 2026  | @MitchellDScott | Added supporting bibliography and inline citations.                                                                                                                                                                                |
-| 4.0      | July 26, 2026  | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, decoupled Storage trait model, and no_alloc scratch space patterns.                                                                                                    |
-| 5.0      | July 26, 2026  | @MitchellDScott | Harmonized matrix design with storage trait design doc; updated Matrix<T, R, C, S> definition, contiguous bounds, explicit decomposition rules, alternatives, and 4-pillar V&V.                                                    |
-| 6.0      | July 26, 2026  | @MitchellDScott | Added comprehensive 3-tiered bibliography (Practical/Analytical, Theoretical, Cross-Cutting Standards & Safety) and inline citations across core architectural sections.                                                           |
-| 7.0      | August 1, 2026 | @MitchellDScott | Corrected `nalgebra` comparison claims (no_std support, nonexistent `ContiguousStorage` trait), clarified the actual benefit of decoupling storage from `Matrix`, and added a system-solving convenience note per review feedback. |
-| 8.0      | August 2, 2026 | @MitchellDScott | Propagated the `num-traits-design.md` hierarchy pivot (`Field`→`Float`, `Ring`→`Scalar`, redundant `Signed` dropped where `Float` already implies it — §4.8.1, §4.10.1, §4.10.3); removed the duplicate `MatrixView`/`MatrixViewMut` struct definitions in favor of `storage-trait-design.md` as sole owner (§4.3.1); documented the `S::ORDER`-parameter mechanism that makes `Matrix`'s arithmetic layout-agnostic, resolving the previously-undisclosed row-major/column-major mismatch with `subprograms.rs` (§4.2, §4.5); relocated `ConversionError` to the new crate-wide `error-design.md`, keeping `LinAlgError` here (§4.9.2); rescoped Faddeev–LeVerrier to `Float`-only, dropping the infeasible `From<i32>` bound and excluding fixed-point `T` per absence of precedent (§4.8.1); collapsed the duplicate Kalman-filter example down to its single worked instance in §6.2 (§4.10.3); revised Step 3/5/6 development-plan estimates upward to reflect pivoting/edge-case/profiling-infrastructure complexity; added Risks entries for the still-provisional `num-traits-design.md` dependency and the open CBLAS `Order`-parameter citation. |
+| Revision | Date           | Author          | Description                                                                                                          |
+|:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 12, 2026  | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                       |
+| 1.1      | July 19, 2026  | @MitchellDScott | Restructured to new template; added embedded performance and verification details.                                   |
+| 1.2      | July 25, 2026  | @MitchellDScott | Added supporting bibliography and inline citations.                                                                  |
+| 1.3      | July 26, 2026  | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, and no_alloc scratch space patterns.                     |
+| 1.4      | July 26, 2026  | @MitchellDScott | Harmonized with storage trait design doc; updated `Matrix` definition, bounds, decomposition rules, and V&V.         |
+| 1.5      | July 26, 2026  | @MitchellDScott | Added comprehensive 3-tiered bibliography and inline citations across core architectural sections.                   |
+| 1.6      | August 1, 2026 | @MitchellDScott | Corrected `nalgebra` comparison claims; clarified storage-decoupling benefit; added system-solving convenience note. |
+| 1.7      | August 2, 2026 | @MitchellDScott | Propagated `num-traits-design.md` pivot; removed duplicate MatrixView definitions; relocated `ConversionError`.      |

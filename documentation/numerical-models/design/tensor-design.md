@@ -30,64 +30,53 @@ out of scope.
 
 #### 2.1. Functional Requirements
 
-- **Compile-Time Sizing**: Shape and rank are enforced entirely at compile
-  time via the `TensorLayout` trait and the crate's `Dim` system.
-- **Static Constructors**: `zero`, `from_raw`, `from_fn`, `from_storage`,
-  `from_slice`/`from_mut_slice` for stack, ROM-constant, and zero-copy
-  borrowed instantiation.
-- **Core Arithmetic**: Operator overloading for element-wise `Add`, `Sub`,
-  and scalar `Mul`/`Div`.
-- **Tensor Operations**: Zero-copy sub-tensor views (`as_view`,
-  `slice_inplace`), Einstein-summation contraction (`contract_into`,
-  `contract_into_dynamic`), and axis permutation (`permute`).
-- **Grid Interpolation**: A point-query evaluation over a `TensorLayout`
-  grid using piecewise-multilinear interpolation, for gain-scheduled
-  lookup-table applications where the query coordinate falls between stored
-  breakpoints.
-- **Minimal Activation Function Support**: A small operator or trait for
-  applying a pointwise nonlinear function between contracted layers (ReLU,
-  and table-driven functions such as tanh/sigmoid), sufficient to hand-write
-  a small inference network without requiring a full ML framework.
-- **Type-Level Quantized Scalar Representation**: A fixed-point scalar type
-  encoding its quantization scale (and, for the affine case, zero-point) as
-  integer const generic parameters in the type signature, so a quantized
-  `Tensor<T, Layout, S>` carries no additional runtime metadata over an
-  unquantized one.
-- **Type Conversions**: `TryFrom` conversions between `Tensor`, `Matrix`,
+- **FR-1 — Compile-Time Sizing**: Shape and rank are enforced entirely at
+  compile time via the `TensorLayout` trait and the crate's `Dim` system.
+- **FR-2 — Static Constructors**: Provide `zero`, `from_raw`, `from_fn`,
+  `from_storage`, `from_slice`/`from_mut_slice` for stack, ROM-constant, and
+  zero-copy instantiation.
+- **FR-3 — Core Arithmetic**: Operator overloading for element-wise `Add`,
+  `Sub`, and scalar `Mul`/`Div`.
+- **FR-4 — Tensor Operations**: Zero-copy sub-tensor views, Einstein-summation
+  contraction, and axis permutation.
+- **FR-5 — Grid Interpolation**: A point-query evaluation over a `TensorLayout`
+  grid using piecewise-multilinear interpolation for gain-scheduled lookup
+  tables.
+- **FR-6 — Minimal Activation Function Support**: A small operator or trait for
+  applying a pointwise nonlinear function (ReLU, tanh/sigmoid) between
+  contracted layers.
+- **FR-7 — Type-Level Quantized Scalar Representation**: A fixed-point scalar
+  type encoding its quantization scale as const generic parameters, with no
+  additional runtime metadata.
+- **FR-8 — Type Conversions**: `TryFrom` conversions between `Tensor`, `Matrix`,
   and `Polynomial` for compatible ranks and sizes.
 
 #### 2.2. Non-Functional Requirements
 
-- **Deterministic Execution**: All operations, including interpolation and
-  activation evaluation, execute within predictable, deterministic
-  timeframes with no dynamic branching on unbounded loops.
-- **No Excessive Compile-Time Overhead**: `const fn` constructors and
-  compile-time shape/quantization-scale encoding must not cause outsized
-  compile-time increases relative to the existing `Dim`/Peano system already
-  in use by `Matrix`.
-- **Zero-Cost Quantization**: A quantized `Tensor` must not carry runtime
-  scale/zero-point fields; dequantization must compile down to a bit-shift
-  (or, for the rational-scale variant, a single integer division) with no
-  heap or additional stack allocation.
+- **NFR-1 — Deterministic Execution**: All operations execute within
+  predictable, deterministic timeframes with no dynamic branching on unbounded
+  loops.
+- **NFR-2 — No Excessive Compile-Time Overhead**: `const fn` constructors and
+  shape/quantization-scale encoding must not cause outsized compile-time
+  increases relative to `Matrix`'s existing `Dim`/Peano system.
+- **NFR-3 — Zero-Cost Quantization**: A quantized `Tensor` carries no runtime
+  scale/zero-point fields; dequantization compiles down to a bit-shift or single
+  integer division.
 
 #### 2.3. Constraints
 
-- **No-Std Environment**: Must compile and run in `#![no_std]` environments.
-- **No Dynamic Allocation**: No heap allocator; all memory is static or
+- **C-1 — No-Std Environment**: Must compile and run in `#![no_std]`
+  environments.
+- **C-2 — No Dynamic Allocation**: No heap allocator; all memory is static or
   stack-based.
-- **Memory Footprint**: Total element capacity across all dimensions remains
-  capped at 1,024 elements, guaranteeing a single stack tensor never exceeds
-  4KB (`f32`).
-- **Type-Level Quantization Encoding**: Const generic parameters
-  representing a quantization scale must be plain integers (a power-of-two
-  shift/exponent, or a rational numerator/denominator pair) — Rust does not
-  permit floating-point values as const generic parameters on stable Rust,
-  since const generics require the "structural match" (reflexive `Eq`)
-  property that floats lack due to NaN's non-reflexive equality.
-- **Out of Scope**: On-device training and automatic differentiation are not
-  addressed by this design. Ahead-of-time tooling to import a trained
-  external model (TFLite/PyTorch Mobile/ONNX) is recorded as a future
-  extension (§4.12) but is not implemented in this revision.
+- **C-3 — Memory Footprint**: Total element capacity across all dimensions is
+  capped at 1,024 elements, keeping a single stack tensor under 4KB (`f32`).
+- **C-4 — Type-Level Quantization Encoding**: Quantization-scale const generic
+  parameters must be plain integers, since Rust disallows floating-point const
+  generics.
+- **C-5 — Out of Scope**: On-device training, automatic differentiation, and
+  trained-model import (TFLite/PyTorch Mobile/ONNX) are not addressed by this
+  design.
 
 ---
 
@@ -130,11 +119,11 @@ pub struct Tensor<
 
 // Type aliases for common storage backends
 pub type ArrayTensor<T, Layout> =
-    Tensor<T, Layout, ArrayStorage<T, <Layout as TensorLayout>::Size, U1>>;
+Tensor<T, Layout, ArrayStorage<T, <Layout as TensorLayout>::Size, U1>>;
 pub type ViewTensor<'a, T, Layout> =
-    Tensor<T, Layout, MatrixView<'a, T, <Layout as TensorLayout>::Size, U1>>;
+Tensor<T, Layout, MatrixView<'a, T, <Layout as TensorLayout>::Size, U1>>;
 pub type ViewMutTensor<'a, T, Layout> =
-    Tensor<T, Layout, MatrixViewMut<'a, T, <Layout as TensorLayout>::Size, U1>>;
+Tensor<T, Layout, MatrixViewMut<'a, T, <Layout as TensorLayout>::Size, U1>>;
 ```
 
 Layout sizing verification uses type-level bounds (`Shape2D`, `Shape3D`, ...)
@@ -200,12 +189,13 @@ and return an owning `ArrayTensor<T, Layout>`.
 #### 4.7. Grid Interpolation
 
 Motivated by gain-scheduled flight-control lookup tables (Koo & Sands,
+
 2024) and the general N-D table-interpolation problem formalized by Weiser &
-Zarantonello (1988): a query at a fractional coordinate is evaluated as a
-weighted sum over the $2^{\text{RANK}}$ hypercube corner vertices
-surrounding it (the multilinear generalization of bilinear/trilinear
-interpolation), reading directly through `Storage::get_unchecked` with no
-intermediate allocation:
+      Zarantonello (1988): a query at a fractional coordinate is evaluated as a
+      weighted sum over the $2^{\text{RANK}}$ hypercube corner vertices
+      surrounding it (the multilinear generalization of bilinear/trilinear
+      interpolation), reading directly through `Storage::get_unchecked` with no
+      intermediate allocation:
 
 ```rust
 impl<T, Layout: TensorLayout, S> Tensor<T, Layout, S>
@@ -468,7 +458,8 @@ pub fn update_thermal_grid<T, Sa, Sx, Sy>(
     transition_matrix: &Tensor<f32, Shape2D<U4, U4>, Sa>,
     current_grid: &Tensor<f32, Shape3D<U4, U2, U2>, Sx>,
     next_grid: &mut Tensor<f32, Shape3D<U4, U2, U2>, Sy>,
-) where
+)
+where
     Sa: Storage<f32, <Shape2D<U4, U4> as TensorLayout>::Size, U1>,
     Sx: Storage<f32, <Shape3D<U4, U2, U2> as TensorLayout>::Size, U1>,
     Sy: StorageMut<f32, <Shape3D<U4, U2, U2> as TensorLayout>::Size, U1>,
@@ -547,13 +538,13 @@ pub fn predict<Sw1, Sb1, Sw2, Sb2>(
 
 ### 8. Development Plan
 
-| Task / Feature                                | Description                                                                                                         | Estimated Effort |
-|:------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------|:------------------|
-| **Phase 1: Core Layout & Storage**             | `TensorLayout`, `Dim`-based sizing, `ArrayStorage`/view aliases, column-major stride mapping, `repr(C)` slicing.    | 2.0 Days          |
-| **Phase 2: Element Ops & Contraction**         | Operator overloads, `contract_into`/`contract_into_dynamic`, `permute`, `as_view`/`slice_inplace`.                  | 2.5 Days          |
-| **Phase 3: Grid Interpolation & Activation**   | Multilinear `interpolate`, `Activation` trait, `Relu`, `TableActivation`.                                          | 2.5 Days          |
-| **Phase 4: Quantized Scalar Type**             | `Quantized<Repr, SHIFT>` with full `Zero`/`One`/`Scalar` arithmetic `num_traits` impls (correct rounding/saturation semantics), quantize/dequantize, integration across existing generic `T` paths in `Tensor`/`Matrix`. | 3.5 Days          |
-| **Phase 5: Verification & Interoperability**   | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial`.             | 3.0 Days          |
+| Task / Feature                               | Description                                                                                                                                                                                                              | Estimated Effort |
+|:---------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Phase 1: Core Layout & Storage**           | `TensorLayout`, `Dim`-based sizing, `ArrayStorage`/view aliases, column-major stride mapping, `repr(C)` slicing.                                                                                                         | 2.0 Days         |
+| **Phase 2: Element Ops & Contraction**       | Operator overloads, `contract_into`/`contract_into_dynamic`, `permute`, `as_view`/`slice_inplace`.                                                                                                                       | 2.5 Days         |
+| **Phase 3: Grid Interpolation & Activation** | Multilinear `interpolate`, `Activation` trait, `Relu`, `TableActivation`.                                                                                                                                                | 2.5 Days         |
+| **Phase 4: Quantized Scalar Type**           | `Quantized<Repr, SHIFT>` with full `Zero`/`One`/`Scalar` arithmetic `num_traits` impls (correct rounding/saturation semantics), quantize/dequantize, integration across existing generic `T` paths in `Tensor`/`Matrix`. | 3.5 Days         |
+| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial`.                                                                      | 3.0 Days         |
 
 ---
 
@@ -611,8 +602,8 @@ pub fn predict<Sw1, Sb1, Sw2, Sb2>(
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description of Changes                                                                                                                                                                                                                                                                                    |
-|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 26, 2026  | @MitchellDScott | Initial draft: `Storage<T, Layout::Size, U1>` trait hierarchy, zero-copy views (`MatrixView`/`MatrixViewMut`), stack `ArrayStorage`, inline academic citations.                                                                                                                                          |
-| 2.0      | August 2, 2026 | @MitchellDScott | Full overhaul following a two-round retroactive research pass (`documentation/numerical-models/research/results/tensor.json`): corrected TinyML citation misattribution; added grid interpolation (§4.7), a minimal `Activation` trait (§4.8), and a type-level quantized scalar representation (§4.9); reframed system-identification and lookup-table target applications against research findings; recorded model-import codegen as future work only (§4.12); restructured the document to match the current house template (`matrix-design.md`) with explicit Alternatives and Risks & Open Questions sections. |
-| 2.1      | August 2, 2026 | @MitchellDScott | Relocated `ConversionError` to `error-design.md` (§4.10); flagged `T: Float`'s dependency on `num-traits-design.md`'s unreconciled pivot as provisional (§4.7, §7); merged the redundant §5.5 (AOT-vs-interpreter) into §4.12 and trimmed both it and the affine-quantization paragraph (§4.9) to reduce future-work real estate relative to v1 scope; revised Phase 4/5 development-plan estimates upward (quantized-scalar `num_traits` integration and golden-value/hardware-benchmark verification were under-scoped at 2.0 Days each). |
+| Revision | Date           | Author          | Description                                                                                                        |
+|:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 26, 2026  | @MitchellDScott | Initial draft: `Storage` trait hierarchy, zero-copy views, stack `ArrayStorage`, and inline citations.             |
+| 1.1      | August 2, 2026 | @MitchellDScott | Full overhaul after a research pass: added grid interpolation, an `Activation` trait, and a quantized scalar type. |
+| 1.2      | August 2, 2026 | @MitchellDScott | Relocated `ConversionError`; flagged `Float` dependency as provisional; revised development-plan estimates upward. |

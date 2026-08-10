@@ -16,9 +16,9 @@
 /// Target-specific utilities for CPU profiling, stack tracking, and interrupt management during HIL tests.
 ///
 /// This trait provides a target-agnostic interface to low-level hardware features, allowing the
-/// HIL test runner to execute test functions in a controlled environment, gather cycle counts, and
+/// HIL Server to execute test functions in a controlled environment, gather cycle counts, and
 /// safely measure stack usage. By encapsulating architecture-specific inline assembly and memory-mapped
-/// I/O operations, this trait helps prevent safety issues in the test runner's core logic.
+/// I/O operations, this trait helps prevent safety issues in the Server's core logic.
 ///
 /// # Safety
 /// Implementors must ensure that architecture-specific profiling operations (like reading CSRs or memory mapped registers)
@@ -84,7 +84,7 @@ pub trait CPUProfiler {
 
     /// Get the current CPU cycle count.
     ///
-    /// Used by the test runner to calculate the clock cycles spent running a test.
+    /// Used by the Server to calculate the clock cycles spent running a test.
     ///
     /// # Returns
     /// * `u64` - The current clock cycle count.

@@ -8,25 +8,20 @@ as internal, closed-source chores.
 
 ## 2. Requirements
 
-The objective of this design is to provide testing and benchmarking
-infrastructure as part of the published `control-rs` development tools
-available to end-users. This allows users to test provided implementations in
-`control-rs` against their custom algorithms and compare them side-by-side on
-specific hardware.
+The objective of this project is to provide testing and benchmarking
+infrastructure as part of the published `control-rs` development tools. This
+allows users to test provided implementations in `control-rs` against their
+custom algorithms and compare them side-by-side on specific hardware.
 
-1. The server must be `#![no-std]` and cannot use any heap allocations.
-2. The compiled harness (not including tests) must consume less than 32 KB of
-   Flash and 8 KB of RAM.
-3. `CPUProfiler` must support cycle-accurate profiling.
-4. Running an empty test function causes the server to report less than 50
-   cycles and may not use more than 32 bytes of stack.
-5. Running a test that panics will enter the servers panic handler.
-6. The host TUI must parse and render incoming each frame in under 16
+1. The server must be `#![no_std]` and cannot use any heap allocations.
+2. `CPUProfiler` must support cycle-accurate profiling.
+3. The host TUI must parse and render incoming each frame in under 16
    ms (maintaining 60 FPS UI updates).
-7. The server must intercept standard Rust panics, serialize and send the panic
+4. The server must intercept standard Rust panics, serialize and send the panic
    message via the `HostComms` transport layer.
-8. The user should be able to start a test server in a Qemu emulator or
-   connect to a real board with `cargo run ...`.
+5. The user should be able to start a test server in a Qemu emulator or
+   connect to a real board.
+6. `cargo run ...` from the workspace root should start the tui or emulator.
 
 ---
 
@@ -45,21 +40,26 @@ necessary tooling components so users only need a single dependency.
 
 ```mermaid
 flowchart TD
-    Host["Host TUI"]
+    Host <==> MCU
+
+    subgraph Host ["Host PC (control-rs-xtask)"]
+        direction TB
+        TUI["TUI"]
+        Bridge["ServerBridge"]
+        TUI <--> Bridge
+    end
 
     subgraph MCU ["MCU"]
         direction TB
-        Harness["HIL Harness"]
+        Server["Server"]
         BuiltIn["Built-in Suites"]
         Custom["Custom Suites"]
-        Harness <--> BuiltIn
-        Harness <--> Custom
+        Server <--> BuiltIn
+        Server <--> Custom
     end
-
-    Host <==> MCU
 ```
 
-## 4. Core Architecture
+## 4. Architecture
 
 ### 4.1. Execution Context
 
@@ -77,7 +77,7 @@ This object provides the specific drivers for cpu profiling and communication:
 
 ### 4.2. Communication & Transport Layer
 
-The communication protocol used between the runner on the MCU and the host TUI
+The communication protocol used between the Server on the MCU and the host TUI
 is a simple frame-based binary packet structure. This allows the host TUI to
 parse continuous telemetry streams byte-by-byte instead of blocking until a
 full message has arrived.
@@ -112,12 +112,12 @@ rustflags = [
 ]
 ```
 
-### Application: `src/bin/custom_drone_benchmarks.rs`
+### Application: `src/bin/custom_board.rs`
 
 Users can invoke the harness from the command line:
 
 ```bash
 cargo run --release \
-    --bin custom_drone_benchmarks \
+    --bin custom_board \
     --target thumbv7em-none-eabihf
 ```
