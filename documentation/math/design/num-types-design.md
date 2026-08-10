@@ -191,26 +191,17 @@ concern.
    compile-time-only module the only on-target-relevant claim is the
    zero-footprint assertion in item 1, since the arithmetic itself has no
    runtime component to diverge across targets.
-5. **Pairwise-arithmetic boundary tests (C-2)**: standalone `rustc` probes
-   against the module's own trait shapes (default
-   `#![recursion_limit] = 128` (Rust Reference, 2026c), rustc 1.97.1) confirm
-   a single `Dim` value resolves up to depth 127 and fails at 128, matching
-   C-1 exactly. The same probes show the pairwise envelope is asymmetric
-   and not bounded by the operand sum: `U63 + U64` (sum 127) resolves while
-   `U1 + U126` (the same sum) does not. Both sides of the boundary are
-   pinned — passing cases as unit tests (`U125 * U1`, `U63 + U64`) and
-   failing cases as `compile_fail` doctests in the `num_types` module
-   documentation (`U127 * U2`, `U126 * U1`, `U1 + U126`) — closing Risk 4
-   (§8).
+5. **Arithmetic boundary tests (C-2)**: A single `Dim` value resolves up to
+   depth 127 and fails at 128, matching C-1 exactly. Both sides of the boundary
+   are tested by unit tests: (`U125 * U1`, `U63 + U64`) and failing cases as
+   `compile_fail` doctests in the `num_types` module
+   (`U127 * U2`, `U126 * U1`, `U1 + U126`).
 
 #### 6.2 Validation
 
 Validation is deferred to the consumers that do not yet exist
 (`Storage`, `Matrix`, `Polynomial`, `StateSpace`, `Tensor`,
-`TransferFunction`). `storage-trait-design.md` already commits to using this
-module's `U0..U32` aliases as `Storage`'s dimension parameter; once that
-type lands, its own test suite becomes the first external validation that
-`Dim`'s arithmetic composes correctly across a real consumer.
+`TransferFunction`).
 
 ---
 
@@ -271,23 +262,23 @@ type lands, its own test suite becomes the first external validation that
 
 ### 9. Development Plan
 
-| Phase / Feature                                    | Description                                                                                                                                                                                                                                                                       | Estimated Effort |
-|:---------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Phase 1: Core Encoding & Arithmetic (complete)** | `Dim`, `DimAdd`/`DimSub`/`DimMul`/`DimMax`/`DimMin`, `Z`/`S<N>`, `Const<N>` bridge, and the `U0..U32` alias macro already exist in `src/math/num_types.rs` with passing unit tests.                                                                                               | —                |
-| **Phase 2: Ceiling Extension to `U127` (complete)** | `U33..U127` aliases generated and appended to the `generate_peano_aliases!` invocation; module doc ceiling description, dimension-value assertions, and the recursion-limit test (pinned at `U125`, §6.1 item 3) moved to the new ceiling.                                          | —                |
-| **Phase 3: Storage/Matrix Integration**            | Wire `Dim` into the `Storage<T, R, C>` trait per `storage-trait-design.md` FR-2, confirming the `U127` ceiling (C-1) and the pairwise-arithmetic boundary (C-2) are documented consistently at the first real call site.                                                          | Medium           |
-| **Phase 4: Verification Hardening (complete)**     | Asymmetric-pair boundary tests landed — passing sides as unit tests, failing sides as `compile_fail` doctests (§6.1, item 5) — closing Risk 4; `proptest`-based coverage of arithmetic identities deferred until more `Dim`-generic consumers land.                               | —                |
-| **Phase 5: Extended Arithmetic (conditional)**     | Evaluate `DimDiv`/`DimOrd` (Risk 3) once a concrete consumer needs them; not scheduled otherwise.                                                                                                                                                                                 | Small            |
+| Phase / Feature                                     | Description                                                                                                                                                                                                                                         | Estimated Effort |
+|:----------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Phase 1: Core Encoding & Arithmetic (complete)**  | `Dim`, `DimAdd`/`DimSub`/`DimMul`/`DimMax`/`DimMin`, `Z`/`S<N>`, `Const<N>` bridge, and the `U0..U32` alias macro already exist in `src/math/num_types.rs` with passing unit tests.                                                                 | —                |
+| **Phase 2: Ceiling Extension to `U127` (complete)** | `U33..U127` aliases generated and appended to the `generate_peano_aliases!` invocation; module doc ceiling description, dimension-value assertions, and the recursion-limit test (pinned at `U125`, §6.1 item 3) moved to the new ceiling.          | —                |
+| **Phase 3: Storage/Matrix Integration**             | Wire `Dim` into the `Storage<T, R, C>` trait per `storage-trait-design.md` FR-2, confirming the `U127` ceiling (C-1) and the pairwise-arithmetic boundary (C-2) are documented consistently at the first real call site.                            | Medium           |
+| **Phase 4: Verification Hardening (complete)**      | Asymmetric-pair boundary tests landed — passing sides as unit tests, failing sides as `compile_fail` doctests (§6.1, item 5) — closing Risk 4; `proptest`-based coverage of arithmetic identities deferred until more `Dim`-generic consumers land. | —                |
+| **Phase 5: Extended Arithmetic (conditional)**      | Evaluate `DimDiv`/`DimOrd` (Risk 3) once a concrete consumer needs them; not scheduled otherwise.                                                                                                                                                   | Small            |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                               |
-|:---------|:---------------|:----------------|:----------------------------------------------------------------------------------------------------------|
-| 1.0      | August 7, 2026 | @MitchellDScott | Initial draft backfilling design rationale for the existing `num_types.rs` module from research findings. |
-| 1.1      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                   |
-| 1.2      | August 9, 2026 | @MitchellDScott | Raised the friendly-alias ceiling (C-1) from `U32` to `U127`                                              |
+| Revision | Date            | Author          | Description                                                                                                                                              |
+|:---------|:----------------|:----------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 7, 2026  | @MitchellDScott | Initial draft backfilling design rationale for the existing `num_types.rs` module from research findings.                                                |
+| 1.1      | August 9, 2026  | @MitchellDScott | Review and corrections.                                                                                                                                  |
+| 1.2      | August 9, 2026  | @MitchellDScott | Raised the friendly-alias ceiling (C-1) from `U32` to `U127`                                                                                             |
 | 1.3      | August 10, 2026 | @MitchellDScott | Aligned §6.1 with the shipped `U125` `DimMul` pin; added pairwise boundary tests (unit + `compile_fail`) closing Risk 4; marked Phases 2 and 4 complete. |
 
 ---
