@@ -19,123 +19,53 @@ level code accesses data.
 
 #### 2.1 Functional Requirements
 
-##### FR-1: Core Storage Trait
-
-At minimum, a backend must expose: raw-pointer access to its backing allocation;
-a mapping from a logical `(row, column)` index to a physical memory location,
-general enough to represent row-major, column-major, reversed, and
-strided/padded layouts through one interface; and unchecked (`unsafe`) element
-access built on top of that mapping.
-
-##### FR-2: Type-Level Dimension Encoding
-
-The trait must be parameterized by compile-time row and column dimensions,
-using the existing `Dim` type system, so that dimension mismatches in
-matrix operations (e.g., multiplying a 3×4 by a 5×2) are rejected as
-compile errors rather than surfaced as runtime panics. The compile-time
-dimension representation must still expose its value at runtime without
-additional bookkeeping, since the existing BLAS subprograms take dimension
-parameters (`m`, `n`, `k`) at runtime.
-
-##### FR-3: Core Storage Implementations
-
-The module must ship backends covering the three fundamental ownership
-models (owned-stack, borrowed-immutable, borrowed-mutable), plus a
-scratch-data category for decomposition algorithms, and must support
-user-defined hardware-specific backends as extension points.
-
-**FR-3a: Stack-Based Array Storage**
-
-The module must provide a default, owning backend that stores its elements
-inline on the stack, guarantees a contiguous and predictable memory layout
-suitable for BLAS interop, and supports both mutable and immutable access.
-
-**FR-3b: Zero-Copy View Storage**
-
-The module must provide two non-owning backends that borrow existing
-memory without copying — one immutable, one mutable. Views must support
-layout-changing operations such as transposition without allocating memory
-or copying data.
-
-##### FR-4: Trait Hierarchy
-
-The trait hierarchy must distinguish two independent capabilities: mutable
-access and guaranteed contiguity.
-
-##### FR-5: Initialization Strategies
-
-Every backend must support safe initialization with a constant `T`. At minimum
-this includes: construction from a single repeated value, zero-filled
-construction and identity construction.
-
-##### FR-6: BLAS Interoperability
-
-Any backend that guarantees contiguous memory must be directly usable by
-the existing BLAS subprogram traits (`AXPY`, `DOT`, `GEMV`, `GEMM`) without
-intermediate copies or adapter code.
-
-**Layout genericity is a hard requirement, not an implementation detail**:
-a caller must be able to swap a backend's physical layout, or introduce an
-alternative backend with the opposite layout, without changing any of
-`Matrix`'s arithmetic implementations. Non-contiguous backends interact
-with BLAS only through element-wise access or an explicit, visible copy
-into a contiguous temporary — never a silent one.
-
-##### FR-7: Retrofit Existing Types
-
-The existing `Polynomial<T, N>` and `StateSpace<T, NX, NU, NY>` types must
-be expressible in terms of the new storage trait without changing their
-public API. This is a migration path, not an immediate requirement.
-
----
+- **FR-1 — Core Storage Trait**: A backend must expose raw-pointer access, a
+  logical-to-physical `(row, column)` index mapping general enough for
+  row-major/column-major/strided layouts, and unchecked `unsafe` element access.
+- **FR-2 — Type-Level Dimension Encoding**: The trait must be parameterized by
+  compile-time `Dim` row/column dimensions, rejecting mismatches at compile time
+  while still exposing values at runtime for BLAS parameters.
+- **FR-3 — Core Storage Implementations**: The module must ship owned-stack,
+  borrowed-immutable, and borrowed-mutable backends plus a scratch-data
+  category, and support user-defined hardware-specific backends as extension
+  points.
+- **FR-3a — Stack-Based Array Storage**: Provide a default, owning backend
+  storing elements inline on the stack with a contiguous, BLAS-interop-suitable
+  layout and mutable/immutable access.
+- **FR-3b — Zero-Copy View Storage**: Provide non-owning immutable and mutable
+  backends that borrow existing memory and support layout-changing operations
+  like transposition without copying.
+- **FR-4 — Trait Hierarchy**: The trait hierarchy must distinguish two
+  independent capabilities: mutable access and guaranteed contiguity.
+- **FR-5 — Initialization Strategies**: Every backend must support safe
+  initialization from a repeated value, zero-fill, and identity construction.
+- **FR-6 — BLAS Interoperability**: Any contiguous-guaranteeing backend must be
+  directly usable by existing BLAS subprogram traits, with layout genericity a
+  hard requirement rather than an implementation detail.
+- **FR-7 — Retrofit Existing Types**: `Polynomial<T, N>` and
+  `StateSpace<T, NX, NU, NY>` must be expressible in terms of the new storage
+  trait without changing their public API.
 
 #### 2.2 Non-Functional Requirements
 
-##### NFR-1: Zero-Cost Abstraction
-
-The `Storage` trait must compile down to the same machine code as
-handwritten array access.
-
-##### NFR-2: `no_std` + `no_alloc` Compatibility
-
-The storage trait and all provided backends must be fully functional in a
-`#![no_std]` environment with no allocator:
-
-##### NFR-3: Const-Constructibility
-
-Storage constructors should be constant when possible except `from_fn(|i,
-j| -> T)`.
-
-##### NFR-4: Safety Discipline
-
-Access must be split into two categories: safe, bounds-checked access, and
-unsafe, unchecked raw-memory access.
-
----
+- **NFR-1 — Zero-Cost Abstraction**: The `Storage` trait must compile down to
+  the same machine code as handwritten array access.
+- **NFR-2 — `no_std` + `no_alloc` Compatibility**: The storage trait and all
+  provided backends must be fully functional in a `#![no_std]` environment with
+  no allocator.
+- **NFR-3 — Const-Constructibility**: Storage constructors should be constant
+  where possible, except `from_fn(|i, j| -> T)`.
+- **NFR-4 — Safety Discipline**: Access must split into safe, bounds-checked
+  access and unsafe, unchecked raw-memory access.
 
 #### 2.3 Constraints
 
-##### C-1: Peano Dimension Ceiling
-
-The current `Dim` type system defines aliases up to `U32`. The storage trait
-inherits this limit: inline-backed matrices are restricted to dimensions where
-`R::DIM * C::DIM ≤ 1024` (32×32).
-
-##### C-2: Clippy Compliance
-
-The implementation must pass the workspace Clippy configuration. Of particular
-relevance:
-
-- `clippy::large_stack_arrays = "deny"` (rust-clippy, 2026a) — inline backends
-  for large dimensions must _not_ trigger this lint. Clippy's own default
-  `array_size_threshold` is 16 KiB (`16 * 1024` bytes) (rust-clippy, 2026b),
-  and `clippy.toml` does not override it. Rather than shrinking C-1's
-  dimension ceiling to accommodate every possible scalar width, any
-  `ArrayStorage<T, R, C>` instantiation whose size reaches the
-  `large_stack_arrays` threshold requires an explicit
-  `#[allow(clippy::large_stack_arrays)]`.
-- `clippy::indexing_slicing = "deny"` (rust-clippy, 2026c) — all element
-  access must use checked methods or documented `unsafe` blocks.
+- **C-1 — Peano Dimension Ceiling**: The `Dim` system defines aliases up to
+  `U32`; inline-backed matrices are restricted to `R::DIM * C::DIM ≤ 1024` (
+  32×32).
+- **C-2 — Clippy Compliance**: The implementation must pass the workspace Clippy
+  configuration, including `large_stack_arrays` and `indexing_slicing`
+  deny-lints.
 
 ---
 
@@ -402,13 +332,13 @@ lint.
 
 ### 11. Revision History
 
-| Date       | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-|:-----------|:----------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 2026-07-26 | @MitchellDScott | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| 2026-07-26 | @MitchellDScott | Expanded Core Architecture, Alternatives, and 4-pillar V&V sections to align with matrix doc                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 2026-08-01 | @MitchellDScott | Rewrote Core Architecture to remove decomposition-scope drift and duplicate FR text; folded resolved Risks items into Requirements; collapsed Development Plan into 4 phases; caveated HIL applicability                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 2026-08-02 | @MitchellDScott | Made this document the sole owner of `MatrixView`/`MatrixViewMut` struct definitions (`matrix-design.md` no longer redefines them); added `ContiguousStorage::ORDER` (FR-4) and reworked FR-6/NFR-6 so BLAS interop takes an explicit layout parameter instead of assuming `ArrayStorage`'s column-major default, superseding the prior "rewrite subprograms to column-major" note; added a Risks entry for the still-open CBLAS `Order`-parameter citation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 2026-08-02 | @MitchellDScott | Clarified in FR-7 that FR-6's layout-genericity mechanism is a property of `Storage` itself, not Matrix-specific, and applies uniformly to `Polynomial` and future `Storage`-backed models.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 2026-08-07 | @MitchellDScott | Backfilled citations from `/cr-research` passes 3-4 (`research/results/storage-trait.json`): corrected nalgebra's license to Apache-2.0 and clarified which nalgebra version each borrowed trait name follows; reworded the nalgebra Alternatives entry to credit the hierarchy concept rather than exact struct-layout fidelity; closed the CBLAS `Order`-parameter citation gap in FR-6 and removed the corresponding Risks entry; added citations to FR-3c (`nalgebra::PermutationSequence`/`LU`) and FR-3d (`cortex-m-rt`, `embedded-dma`, `aligned`); corrected C-3's Clippy `large_stack_arrays` default from 512 KiB to the actual 16 KiB and added an explicit-`#[allow]`-with-justification requirement (mirroring NFR-4's `# Safety` convention) for scalar types that reach the threshold; added a Risks entry for the resulting narrow stack-size headroom on wide scalar types (e.g. `Complex<f64>`); added two Alternatives entries (compile-time vs. runtime dimension checking; sealed vs. open trait hierarchy). |
-| 2026-08-07 | @MitchellDScott | Reorganized per the template's section intent: Requirements (§2) now state quantified, behavioral goals only — concrete trait/struct signatures, `offset()` layout formulas, initialization function signatures, BLAS parameter-threading mechanics, backend type names, and code examples moved to Core Architecture (§4). Removed the duplicate trait-hierarchy diagram from FR-4 (single copy retained in §4). Removed a stale `SliceMut`/`SliceRef` reference in C-2 (the module never defines those names; replaced with a generic reference to borrowed-view backends). Moved the `subprograms.rs` layout-mismatch discussion from an NFR-6 blockquote to a new Alternatives entry, reframed as a technical tradeoff rather than a revision narrative. Moved NFR-1's assembly-inspection verification method to §6 (Compile-Time Verification pillar).                                                                                                                                                                      |
-| 2026-08-07 | @MitchellDScott | Updated citations to the new author-year + numbered References standard (matching `matrix-design.md`'s §9 convention), following `research/results/storage-trait.json`'s migration to structured bibliographic `source` objects. Added inline `(cite_author, year)` citations to C-2's Clippy lint/threshold claims, §4's `cortex-m-rt` Flash/DMA pattern, §4's CBLAS `Order`-parameter and BLAS leading-dimension (`LDA`/`LDB`/`LDC`) claims, §4's CMSIS-DSP row-major-only counterpoint, and the two Risks/Performance restatements of the Clippy threshold. Added a new §10 References section (8 entries) and renumbered Revision History to §11. No factual claims were added, removed, or reworded — only citation apparatus.                                                                                                                                                                                                                                                                                               |
+| Revision | Date           | Author          | Description                                                                                                                            |
+|:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 26, 2026  | @MitchellDScott | Initial draft.                                                                                                                         |
+| 1.1      | July 26, 2026  | @MitchellDScott | Expanded Core Architecture, Alternatives, and 4-pillar V&V sections to align with the matrix doc.                                      |
+| 1.2      | August 1, 2026 | @MitchellDScott | Rewrote Core Architecture to remove scope drift; folded resolved Risks into Requirements; collapsed Development Plan to 4 phases.      |
+| 1.3      | August 2, 2026 | @MitchellDScott | Made this doc sole owner of `MatrixView`/`MatrixViewMut`; added `ContiguousStorage::ORDER`; reworked BLAS interop for explicit layout. |
+| 1.4      | August 2, 2026 | @MitchellDScott | Clarified that FR-6's layout-genericity mechanism belongs to `Storage` itself, applying uniformly across models.                       |
+| 1.5      | August 7, 2026 | @MitchellDScott | Backfilled citations from research passes 3-4; corrected nalgebra license; closed CBLAS citation gap; added Alternatives entries.      |
+| 1.6      | August 7, 2026 | @MitchellDScott | Reorganized per template intent: moved implementation detail from Requirements to Core Architecture; removed stale references.         |
+| 1.7      | August 7, 2026 | @MitchellDScott | Updated citations to the author-year standard; added inline citations and a References section; renumbered Revision History.           |

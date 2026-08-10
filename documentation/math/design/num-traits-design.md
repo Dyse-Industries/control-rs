@@ -28,63 +28,18 @@ The system-level goals of the numeric trait hierarchy are:
 
 #### 2.1 Functional Requirements
 
-##### FR-1: Hardware Traits
-
-The trait hierarchy shall break down basic numerical behaviors into small,
-granular traits representing specific hardware capabilities. This mirrors the
-`az` crate's split of numeric casts into one narrow trait per fallibility mode
-(`Cast`, `CheckedCast`, `StrictCast`, `SaturatingCast`, `WrappingCast`,
-`OverflowingCast`) rather than one monolithic conversion trait (Spiteri,
-2026a). `Clone + PartialEq + PartialOrd` is declared directly on these traits
-rather than through a separate base-marker trait (the previous
-`Scalar: Clone + PartialEq + PartialOrd` marker is retired).
-
-- `Zero`: Additive identity constant (`ZERO`) and `Add` operator. Does not
-  require `Sub`.
-- `One`: Multiplicative identity constant (`ONE`) and `Mul` operator.
-- `AdditiveGroup`: `Zero + Sub<Output = Self>`. The single explicit opt-in for
-  types whose subtraction is total and non-panicking (signed integer primitives,
-  floats, `Complex<T>` where `T: AdditiveGroup`). Unsigned primitives do not
-  implement it, since `u8 - 1` is not closed.
-- `Signed`: `AdditiveGroup + Neg + PartialOrd`, adding `abs()`,
-  `is_sign_positive()`, and `is_sign_negative()`.
-- `Unsigned`: Marker trait for unsigned types.
-- `Radical`: Square root (`sqrt()`) and hypotenuse (`hypot()`).
-- `Exponential`: Natural exponential (`exp()`), natural logarithm (`ln()`),
-  base-10 logarithm (`log10()`), and power (`pow()`).
-- `Trig`: Trigonometric and hyperbolic functions (`sin()`, `cos()`, `tan()`,
-  `asin()`, `acos()`, `atan()`, `PI`).
-
-##### FR-2: Functional Containers
-
-Granular traits shall be grouped into flat categories that represent the exact
-behavior of hardware execution units:
-
-- `Integer`: Flat category for integer types that wrap on overflow. Exposes
-  constants like `MAX`, `MIN`, `MIN_POSITIVE`, and `TWO`.
-- `SaturatingInteger`: Flat category for integer types that saturate on
-  overflow. wrap-vs-saturate is a choice of which trait bound an algorithm
-  names, not a property of the type's signedness.
-- `Float`: Flat category for floating-point types. Exposes hardware float
-  constants, `epsilon()`, and checks/functions. `Div` and `epsilon()` are
-  scoped to `Float` specifically: IEEE-754 division never panics (it produces
-  `inf`/`NaN` instead).
-
-##### FR-3: The Unified Target (`Scalar`)
-
-The hierarchy shall expose a single, flat trait `Scalar` representing signed
-control scalars. This replaces the previous lightweight
-`Scalar: Clone + PartialEq + PartialOrd` marker entirely — there is one `Scalar`
-trait in this design, not two.
-
-- It inherits `AdditiveGroup + Signed + Mul<Output = Self>`.
-- It defines essential control-loop utilities: `clamp()` and `signum()`.
-- It does **not** require `Div` or `epsilon()`. Division and machine epsilon
-  remain scoped to `Float` (FR-2).
-- Implemented independently by `f32`/`f64` and by signed integer primitives
-  `i8..i128`/`isize` — both satisfy `AdditiveGroup + Signed + Mul`, but `Float`
-  does not declare `Scalar` as a super trait, so float types carry both
-  implementations explicitly rather than deriving one from the other.
+- **FR-1 — Trait hierarchy**: Break basic numerical behaviors into
+  granular traits per hardware capability: `Zero`, `One`, `AdditiveGroup`,
+  `Signed`, `Unsigned`, `Radical`, `Exponential`, `Trig`, with `Clone + 
+  PartialEq + PartialOrd` declared directly on each rather than a
+  base-marker trait.
+- **FR-2 — Functional Containers**: Group granular traits into flat categories
+  matching hardware execution units: `Integer` (wrapping), `SaturatingInteger` (
+  saturating), and `Float` (with `Div`/`epsilon()` scoped here only).
+- **FR-3 — The Unified Target (`Scalar`)**: Expose a single flat `Scalar`
+  trait (`AdditiveGroup + Signed + Mul<Output = Self>`) with `clamp()`/
+  `signum()`, excluding `Div`/`epsilon()` (FR-2), implemented independently by
+  floats and signed integers.
 
 ---
 
@@ -359,9 +314,9 @@ and **zero memory footprint**:
 
 ### 11. Revision History
 
-| Date       | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-|:-----------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 2026-08-01 | @mitchelldscott | Comprehensive design specification for `math::num_traits` hierarchy refinement, introducing `AdditiveGroup` and `ClosedRing`, updating Mermaid architectural diagrams, and integrating HIL/SIL verification suite standards.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 2026-08-02 | @mitchelldscott | Superseded `Ring`/`Field`/`ClosedRing`/`Real` with the hardware-aligned `Zero`/`One`/`AdditiveGroup`/`Integer`/`SaturatingInteger`/`Float`/`Scalar` hierarchy (`ControlScalar` research pivot). Reverted status to Draft pending re-approval.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 2026-08-08 | @mitchelldscott | Updated citations to the author-year + numbered References standard, following `research/results/num-traits.json`'s structured bibliography. Added inline `(cite_author, year)` citations to FR-1's granular-trait rationale, FR-2's `Integer`/`SaturatingInteger` naming and Cortex-M `SSAT`/`USAT` claims, Technical Overview's hardware-behavior framing, Alternatives 1 and 2, a new Alternative 6 (`fixed`-crate wrapper-type pattern, rejected), and the `SafeDiv`/`NonZero<T>` and `const fn` traits Risks items. Added a new §10 References section (10 entries) and renumbered Revision History to §11. No factual claims were added, removed, or reworded — only citation apparatus. |
-| 2026-08-09 | @mitchelldscott | Review and corrections                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Revision | Date           | Author          | Description                                                                                                                               |
+|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 1, 2026 | @MitchellDScott | Comprehensive design spec for `math::num_traits` refinement, introducing `AdditiveGroup`/`ClosedRing` and HIL/SIL verification standards. |
+| 1.1      | August 2, 2026 | @MitchellDScott | Superseded `Ring`/`Field`/`Real` with the hardware-aligned `Zero`/`One`/`Integer`/`Float`/`Scalar` hierarchy; reverted status to Draft.   |
+| 1.2      | August 8, 2026 | @MitchellDScott | Updated citations to the author-year standard; added inline citations and a References section; renumbered Revision History.              |
+| 1.3      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                                                   |

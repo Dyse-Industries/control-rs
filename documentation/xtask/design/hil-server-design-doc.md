@@ -22,34 +22,21 @@ commands.
 
 #### Functional Requirements
 
-* **Interactive Server Execution**: The target Server must run persistently as
-  an idle loop, listening for host commands and executing tests on command.
-* **Distributed Test Discovery**: The system must automatically collect and
-  register test cases across multiple modules without requiring a centralized
-  registry.
-* **Telemetry Stream**: The target must transmit execution status,
-  assertions, performance metrics, and debugging logs back to the host.
-* **Crash Recovery**: In the event of a test panic or a hardware
-  exception (e.g., HardFault), the Server must capture diagnostic details (a "
-  Firmware Black Box") and transmit them before performing a hardware reboot.
-* **Lockup Recovery**: If a test hangs while interrupts are disabled, the
-  only recovery path is a hardware watchdog timer.
+- **FR-1 — Interactive Server Execution**: The target Server must run persistently as an idle loop, listening for host commands and executing tests on command.
+- **FR-2 — Distributed Test Discovery**: The system must automatically collect and register test cases across multiple modules without a centralized registry.
+- **FR-3 — Telemetry Stream**: The target must transmit execution status, assertions, performance metrics, and debugging logs back to the host.
+- **FR-4 — Crash Recovery**: On a test panic or hardware exception, the Server must capture diagnostic details (a "Firmware Black Box") and transmit them before rebooting.
+- **FR-5 — Lockup Recovery**: If a test hangs while interrupts are disabled, the only recovery path is a hardware watchdog timer.
 
 #### Non-Functional Requirements
 
-* **Real-Time Determinism**: Telemetry and control operations must maintain
-  microsecond-level timing budgets to avoid violating plant simulation
-  intervals (e.g., 1000 Hz) or introducing control loop jitter.
-* **Timing-Critical Logging**: The logging system must not block the CPU
-  during tests.
+- **NFR-1 — Real-Time Determinism**: Telemetry and control operations must maintain microsecond-level timing budgets to avoid violating plant simulation intervals or inducing control loop jitter.
+- **NFR-2 — Timing-Critical Logging**: The logging system must not block the CPU during tests.
 
 #### Constraints
 
-* **Zero Dynamic Allocation**: The target Server must compile under `#![no_std]`
-  and use zero heap allocation to avoid memory exhaustion and fragmentation.
-* **Memory & Flash Efficiency**: The target Server (excluding individual
-  tests) must consume less than 32 KB of Flash (ROM) and 8 KB of RAM. Test suite
-  descriptors must reside in ROM.
+- **C-1 — Zero Dynamic Allocation**: The target Server must compile under `#![no_std]` with zero heap allocation.
+- **C-2 — Memory & Flash Efficiency**: The target Server (excluding tests) must consume under 32 KB Flash and 8 KB RAM, with test suite descriptors residing in ROM.
 
 ---
 
@@ -355,10 +342,10 @@ stateDiagram-v2
 
 ### 10. Revision History
 
-| Revision | Date           | Description                                                                                                                                                                                                                                                                                                                                                   | Author          |
-|:---------|:---------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
-| 1.0      | May 23, 2026   | Initial design of the HIL Server harness.                                                                                                                                                                                                                                                                                                                     | @MitchellDScott |
-| 1.1      | July 18, 2026  | Restructured to template; integrated research findings on linker KEEP directives, watchdog multiplexing, COBS/postcard telemetry, soft vs. hard reset trade-offs, and safety compliance details.                                                                                                                                                              | @MitchellDScott |
-| 1.2      | August 5, 2026 | Corrected framing description to match the shipped sync-byte + length + CRC-16 scheme (COBS was considered and rejected, not adopted); noted `.hil_test_suites` discovery and postcard/serde messaging as already implemented rather than open proposals; added `linkme`, `task-watchdog`/`mwdg`, and RTIC as evaluated alternatives; added inline citations. | @MitchellDScott |
-| 1.3      | August 6, 2026 | Corrected §7 telemetry claim (`defmt` is not a dependency; hot-path telemetry is postcard enums); removed the Embassy assumption from Development Plan Step 3; aligned the watchdog constraint with its MVP deferral in §4.3.                                                                                                                                 | @MitchellDScott |
-| 1.4      | August 9, 2026 | Review, diagram updates and corrections.                                                                                                                                                                                                                                                                                                                      | @MitchellDScott |
+| Revision | Date | Author | Description |
+|:---------|:-----|:-------|:-------------|
+| 1.0 | May 23, 2026 | @MitchellDScott | Initial design of the HIL Server harness. |
+| 1.1 | July 18, 2026 | @MitchellDScott | Restructured to template; integrated linker KEEP, watchdog multiplexing, and telemetry framing research. |
+| 1.2 | August 5, 2026 | @MitchellDScott | Corrected framing to shipped sync-byte/CRC-16 scheme; added `linkme` and RTIC as evaluated alternatives. |
+| 1.3 | August 6, 2026 | @MitchellDScott | Corrected telemetry claim (postcard enums, not `defmt`); aligned watchdog constraint with MVP deferral. |
+| 1.4 | August 9, 2026 | @MitchellDScott | Review, diagram updates, and corrections. |

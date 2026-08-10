@@ -18,21 +18,16 @@ aims to export the HIL testing framework directly to developers.
 
 #### Functional Requirements
 
-* **Two-Tier Target Verification**: The pipeline must support both virtual
-  simulated targets and physical hardware targets.
-* **Firmware Flash & Run**: The system must automatically compile target
-  firmware, flash it onto the target device, execute the tests, and retrieve
-  execution logs.
+- **FR-1 — Two-Tier Target Verification**: The pipeline must support both virtual simulated targets and physical hardware targets.
+- **FR-2 — Firmware Flash & Run**: The system must automatically compile target firmware, flash it, execute the tests, and retrieve execution logs.
 
 #### Non-Functional Requirements
 
-* **Test Isolation**: Each test run must boot into a clean, uncorrupted hardware
-  state.
+- **NFR-1 — Test Isolation**: Each test run must boot into a clean, uncorrupted hardware state.
 
 #### Constraints
 
-* **Target Microcontroller Restrictions**: The pipeline must support Cortex-M*
-  platforms (NXP i.MX RT1062 / Teensy 4.1) and RISC-V32/64.
+- **C-1 — Target Microcontroller Restrictions**: The pipeline must support Cortex-M* platforms (NXP i.MX RT1062 / Teensy 4.1) and RISC-V32/64.
 
 ---
 
@@ -166,10 +161,10 @@ are invisible to the static call graph).
 
 ### 10. Revision History
 
-| Revision | Date           | Description                                                                                                                                                                                                                                                                                                                                                        | Author          |
-|:---------|:---------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
-| 1.0      | May 24, 2026   | Initial skeletal outline of CI testing.                                                                                                                                                                                                                                                                                                                            | @MitchellDScott |
-| 1.1      | July 18, 2026  | Restructured to design-template standard. Added two-tier verification architecture details (Renode, Labgrid, pytest) and parallel scheduling optimization.                                                                                                                                                                                                         | @MitchellDScott |
-| 1.2      | July 18, 2026  | Documented transition from QEMU to Renode simulation and the use of custom xtask-based device runners on Raspberry Pi for Git pipeline pushes.                                                                                                                                                                                                                     | @MitchellDScott |
-| 1.3      | August 4, 2026 | Removed the planned Labgrid Coordinator/Exporter/Client fleet architecture and parallel scheduler (Tier 2): never implemented, and Tier 2 scope is reduced to a single physical board driven directly by `xtask`/`ServerBridge`, matching the existing local-development path. Clarified "runner" terminology to distinguish CI runners from the on-target Server. | @MitchellDScott |
-| 1.4      | August 6, 2026 | fixed a `hil-runner-design-doc.md` cross-reference, aligned the Tier 1 diagram with Renode, documented shipped QEMU headless orchestration versus unimplemented Tiers 1–2, added the Golioth self-hosted-runner reference and the static stack analysis cross-link.                                                                                                | @MitchellDScott |
+| Revision | Date | Author | Description |
+|:---------|:-----|:-------|:-------------|
+| 1.0 | May 24, 2026 | @MitchellDScott | Initial skeletal outline of CI testing. |
+| 1.1 | July 18, 2026 | @MitchellDScott | Restructured to template; added two-tier verification architecture (Renode, Labgrid, pytest) and parallel scheduling. |
+| 1.2 | July 18, 2026 | @MitchellDScott | Documented transition to Renode simulation and custom xtask-based device runners on Raspberry Pi. |
+| 1.3 | August 4, 2026 | @MitchellDScott | Removed unimplemented Labgrid fleet architecture; reduced Tier 2 to a single board; clarified runner terminology. |
+| 1.4 | August 6, 2026 | @MitchellDScott | Fixed a cross-reference, aligned the Tier 1 diagram with Renode, and documented shipped versus unimplemented tiers. |

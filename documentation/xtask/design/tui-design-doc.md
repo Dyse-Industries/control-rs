@@ -21,30 +21,17 @@ facilitating rapid hardware-in-the-loop iteration.
 
 #### Functional Requirements
 
-* **Target Metadata Display**: The TUI must query and display target board
-  details, core clock frequency, Floating Point Unit (FPU) status, and debug
-  link parameters.
-* **Hierarchical Test Tree**: The interface must present test suites and test
-  cases in a tree layout mapping the Rust module namespace.
-* **Hierarchical Telemetry Table**: For each test, the TUI must display cycle
-  count (CYCCNT), temporal duration (µs), and peak stack memory usage.
-* **Persistent Log Terminal**: An integrated console window must display
-  real-time debug and system logs streaming from the target.
-* **Keystroke Controls**: Users must be able to control target execution using
-  single-key shortcuts:
-    - `f` (Filter suites)
-    - `r` (Run all tests)
-    - `s` (Stop execution)
-    - `q` (Quit TUI)
+- **FR-1 — Target Metadata Display**: The TUI must query and display target board details, core clock frequency, FPU status, and debug link parameters.
+- **FR-2 — Hierarchical Test Tree**: The interface must present test suites and cases in a tree layout mapping the Rust module namespace.
+- **FR-3 — Hierarchical Telemetry Table**: For each test, the TUI must display cycle count (CYCCNT), duration (µs), and peak stack memory usage.
+- **FR-4 — Persistent Log Terminal**: An integrated console window must display real-time debug and system logs streaming from the target.
+- **FR-5 — Keystroke Controls**: Users must control target execution via single-key shortcuts (`f` filter, `r` run all, `s` stop, `q` quit).
 
 #### Non-Functional Requirements
 
-* **Low-Latency Rendering**: The screen rendering engine must repaint within
-  16ms (60 FPS) to maintain a highly responsive feel.
-* **Future Extension: Metrics Caching**: Storing results of test suites on the host
-  to maintain the state across target restarts or re-connections.
-* **Non-Intrusive Polling**: The communication driver must poll telemetry
-  buffers asynchronously without halting the target CPU.
+- **NFR-1 — Low-Latency Rendering**: The screen rendering engine must repaint within 16ms (60 FPS).
+- **NFR-2 — Metrics Caching**: Test suite results are stored on the host to maintain state across target restarts or reconnections.
+- **NFR-3 — Non-Intrusive Polling**: The communication driver must poll telemetry buffers asynchronously without halting the target CPU.
 
 ---
 
@@ -232,9 +219,9 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 
 ### 10. Revision History
 
-| Revision | Date          | Description                                                                                                                                                                             | Author          |
-|:---------|:--------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
-| 1.0      | May 24, 2026  | Initial design outline of TUI host menu.                                                                                                                                                | @MitchellDScott |
-| 1.1      | July 18, 2026 | Restructured to design-template standard. Replaced semihosting references with RTT details, integrated Teensy 4.1 bootloader debug workarounds, and defined metrics cache architecture. | @MitchellDScott |
-| 1.2      | July 18, 2026 | Documented host-target ServerBridge architecture, postcard serialization/packet framing protocol, and target panic re-connection lifecycle based on `control-rs-xtask` source code.     | @MitchellDScott |
-| 1.3      | August 6, 2026 | Consistency pass: aligned command names with the shipped `Command` enum (`RunExecutable`/`SetSetting`), removed the semihosting label from the QEMU stdio transport, replaced the probe-rs RTT development step with the `ServerBridge` connection matching the architecture. | @MitchellDScott |
+| Revision | Date | Author | Description |
+|:---------|:-----|:-------|:-------------|
+| 1.0 | May 24, 2026 | @MitchellDScott | Initial design outline of TUI host menu. |
+| 1.1 | July 18, 2026 | @MitchellDScott | Restructured to template; replaced semihosting with RTT; integrated Teensy 4.1 bootloader workarounds. |
+| 1.2 | July 18, 2026 | @MitchellDScott | Documented host-target ServerBridge architecture, postcard framing protocol, and panic re-connection lifecycle. |
+| 1.3 | August 6, 2026 | @MitchellDScott | Consistency pass: aligned command names with shipped enum; replaced RTT step with ServerBridge connection. |

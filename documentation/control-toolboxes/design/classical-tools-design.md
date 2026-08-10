@@ -37,66 +37,24 @@ every architectural decision below.
 
 #### 2.1. Functional Requirements
 
-- **Root Locus**: Compute the closed-loop pole locations of a `TransferFunction`
-  as a function of a swept scalar gain, matching the analysis role MATLAB's
-  `rlocus` and Julia's `rlocus` occupy in their respective toolboxes
-  (MathWorks, 2026a; JuliaControl, 2026).
-- **Routh-Hurwitz Stability Criterion**: Construct the Routh array from a
-  characteristic polynomial's coefficients and report the number of
-  right-half-plane roots from first-column sign changes, without requiring
-  root-finding.
-- **Frequency-Domain Analysis**: Generate Bode (magnitude/phase), Nyquist
-  (real/imaginary), and Nichols (open-loop gain/phase) response data over a
-  caller-supplied frequency sweep. python-control groups these three plus
-  root locus and stability margins under a single "Control analysis" feature
-  set, separate from its "Control design" functions (python-control, 2026a) —
-  `classical_tools` follows the same functional split (§4).
-- **Stability Margins**: Compute gain margin, phase margin, and their
-  crossover frequencies from frequency-response data, matching the scope of
-  `margin`/`sisomargin` in python-control and Julia's `ControlSystems.jl`
-  (python-control, 2026a; JuliaControl, 2026).
-- **Compensator Design**: Provide PID (parallel and standard forms) and
-  lead/lag network constructors that return `TransferFunction` values,
-  matching the `pid`/`pidstd`/`leadlink`/`laglink` primitives found in Octave
-  and Julia's control toolboxes (Octave-Forge, 2026; JuliaControl, 2026).
+- **FR-1 — Root Locus**: Compute closed-loop pole locations of a `TransferFunction` as a function of a swept scalar gain.
+- **FR-2 — Routh-Hurwitz Stability Criterion**: Construct the Routh array from a characteristic polynomial and report right-half-plane root count from sign changes, without root-finding.
+- **FR-3 — Frequency-Domain Analysis**: Generate Bode, Nyquist, and Nichols response data over a caller-supplied frequency sweep.
+- **FR-4 — Stability Margins**: Compute gain margin, phase margin, and their crossover frequencies from frequency-response data.
+- **FR-5 — Compensator Design**: Provide PID (parallel and standard forms) and lead/lag network constructors returning `TransferFunction` values.
 
 #### 2.2. Non-Functional Requirements
 
-- **No Plotting Dependency**: The module must not depend on a plotting or
-  GUI library. Every surveyed toolbox assumes an interactive workstation
-  host — MATLAB's Control System Designer is an interactive GUI app for
-  graphically tuning root locus, Bode, and Nichols views (MathWorks, 2026a);
-  python-control requires `matplotlib` directly (python-control, 2026a); the
-  closest existing Rust prior art, `control_systems_torbox`, depends on the
-  `egui`/`egui_plot` GUI stack (TorBorve, 2026). None of this is compatible
-  with `no_std`, so `classical_tools` must expose numeric results only (§4).
-- **No Dynamic Allocation**: Sweep outputs (root locus points, frequency
-  response samples) are written into caller-provided, statically sized
-  buffers, consistent with the crate-wide no-heap rule.
-- **Deterministic Core, Bounded Search Elsewhere**: Routh array construction
-  and frequency-response evaluation execute in a fixed operation count for a
-  given polynomial/transfer-function size. Root locus, which depends on
-  per-gain root-finding, inherits whatever convergence behavior the
-  underlying companion-matrix eigenvalue solver provides; no additional
-  iterative search is introduced at the `classical_tools` layer.
+- **NFR-1 — No Plotting Dependency**: The module must not depend on a plotting or GUI library; it exposes numeric results only.
+- **NFR-2 — No Dynamic Allocation**: Sweep outputs are written into caller-provided, statically sized buffers.
+- **NFR-3 — Deterministic Core**: Routh array construction and frequency-response evaluation execute in a fixed operation count for a given size.
 
 #### 2.3. Constraints
 
-- **Built on Existing Primitives**: `classical_tools` builds on
-  `Polynomial` and `TransferFunction`; it does not introduce a parallel
-  polynomial or rational-function representation.
-- **Capacity Bounds**: Maximum representable system order is bounded by
-  `Polynomial`'s 128-element capacity and `Matrix`'s 32×32 companion-matrix
-  limit (README.md capacity table), since root locus and margin computation
-  route through both.
-- **No Fortran/GPL Wrapper Dependencies**: Reference toolboxes lean on a
-  SLICOT Fortran wrapper for advanced routines; python-control's own
-  `Slycot` wrapper remains GPLv2-licensed pending contributor sign-off to
-  relicense under the BSD-3-Clause terms SLICOT itself adopted in December
-  2020 (python-control, 2026b). `classical_tools` does not adopt an
-  equivalent wrapper — see §5.3.
-- **No Interactive Tuning Surface**: An `sisotool`/`pidtune`-equivalent
-  interactive design loop is out of scope for this module (§5.4).
+- **C-1 — Built on Existing Primitives**: `classical_tools` builds on `Polynomial` and `TransferFunction`, introducing no parallel representation.
+- **C-2 — Capacity Bounds**: Maximum representable system order is bounded by `Polynomial`'s 128-element and `Matrix`'s 32×32 limits.
+- **C-3 — No Fortran/GPL Wrapper Dependencies**: `classical_tools` does not adopt a SLICOT/Slycot-equivalent wrapper (§5.3).
+- **C-4 — No Interactive Tuning Surface**: An `sisotool`/`pidtune`-equivalent interactive design loop is out of scope (§5.4).
 
 ---
 
@@ -267,7 +225,7 @@ one the module amortizes or hides.
   directly (cool-japan, 2026), making it the closer functional analog, but
   its `Cargo.toml` carries `chrono`, `serde_json`, `num_cpus`, and other
   std-oriented dependencies with no `no_std` marker present (cool-japan,
-  2026) — it is not a reusable dependency, only a naming/scope reference.
+    2026) — it is not a reusable dependency, only a naming/scope reference.
 - **Routh Array Degenerate Cases Unverified**: The classic "row of zeros"
   and "first-column zero" special cases in the Routh array were not
   independently verified against either MATLAB File Exchange submission
@@ -293,13 +251,13 @@ one the module amortizes or hides.
 
 ### 9. Development Plan
 
-| Task / Feature | Description | Estimated Effort |
-|:---|:---|:---|
-| **Phase 1: Routh-Hurwitz** | Routh array construction over `Polynomial` coefficients, first-column sign-change stability determination, degenerate-case (zero-row, first-column-zero) handling. | 2.5 Days |
-| **Phase 2: Root Locus** | Gain-sweep driver over the existing companion-matrix root-finding path; caller-provided output buffer API. | 2.0 Days |
-| **Phase 3: Frequency Response & Margins** | Bode/Nyquist/Nichols sweep driver over `TransferFunction::evaluate_complex`; gain/phase margin and crossover-frequency extraction. | 2.5 Days |
-| **Phase 4: Compensator Synthesis** | PID (parallel and standard form) and lead/lag `TransferFunction` constructors. | 1.5 Days |
-| **Phase 5: Verification** | Golden-value regression vs. python-control/Octave, `proptest` Routh/root-count invariants, compensator cross-validation. | 2.5 Days |
+| Task / Feature                            | Description                                                                                                                                                        | Estimated Effort |
+|:------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Phase 1: Routh-Hurwitz**                | Routh array construction over `Polynomial` coefficients, first-column sign-change stability determination, degenerate-case (zero-row, first-column-zero) handling. | 2.5 Days         |
+| **Phase 2: Root Locus**                   | Gain-sweep driver over the existing companion-matrix root-finding path; caller-provided output buffer API.                                                         | 2.0 Days         |
+| **Phase 3: Frequency Response & Margins** | Bode/Nyquist/Nichols sweep driver over `TransferFunction::evaluate_complex`; gain/phase margin and crossover-frequency extraction.                                 | 2.5 Days         |
+| **Phase 4: Compensator Synthesis**        | PID (parallel and standard form) and lead/lag `TransferFunction` constructors.                                                                                     | 1.5 Days         |
+| **Phase 5: Verification**                 | Golden-value regression vs. python-control/Octave, `proptest` Routh/root-count invariants, compensator cross-validation.                                           | 2.5 Days         |
 
 ---
 
@@ -352,11 +310,11 @@ one the module amortizes or hides.
 10. **cool-japan. (2026).** *scirs2-signal*. [Online]. Available:
     https://docs.rs/scirs2-signal/latest/scirs2_signal/. Accessed: Aug. 8,
     2026. — Closer Rust functional analog (`root_locus`, `nichols_chart`,
-    `stability_margins`) and its non-`no_std` dependency profile (§8).
+          `stability_margins`) and its non-`no_std` dependency profile (§8).
 11. **python-control. (2026b).** *python-control/Slycot*. [Online].
     Available: https://github.com/python-control/Slycot. Accessed: Aug. 8,
     2026. — SLICOT-wrapper GPLv2 licensing status, motivating rejection of
-    an equivalent vendored dependency (§2.3, §5.3).
+          an equivalent vendored dependency (§2.3, §5.3).
 12. **Shamshiri, R. R. (2009).** *Routh-Hurwitz Stability test*. MATLAB
     Central File Exchange (submission #25956). [Online]. Available:
     https://www.mathworks.com/matlabcentral/fileexchange/25956-routh-hurwitz-stability-test.
@@ -372,6 +330,6 @@ one the module amortizes or hides.
 
 ### 11. Revision History
 
-| Revision | Date | Author | Description of Changes |
-|:---|:---|:---|:---|
-| 1.0 | August 8, 2026 | @MitchellDScott | Initial draft: functional scope, numeric-core/no-plotting architecture, root locus and Routh-Hurwitz precedent mapping to existing `Polynomial`/`Matrix` primitives, and open questions on Routh degenerate cases and margin sweep resolution. |
+| Revision | Date           | Author          | Description                                                                                                              |
+|:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: functional scope, numeric-core architecture, and root-locus/Routh-Hurwitz mapping to existing primitives. |

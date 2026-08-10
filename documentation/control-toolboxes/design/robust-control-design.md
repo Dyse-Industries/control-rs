@@ -40,57 +40,36 @@ uncertainty representation and robustness *analysis* only.
 
 #### 2.1. Functional Requirements
 
-- **FR1 — Single-Block Uncertain Plant**: Represent a nominal LTI plant with
-  one norm-bounded, unstructured, full complex uncertainty block (‖Δ‖ ≤ 1)
-  using the existing `StateSpace`/`Matrix`/`TransferFunction` types, without
-  introducing a new dynamically sized container.
-- **FR2 — Closed-Form Robust-Stability Check**: Provide the robust-stability
-  predicate for that single-block interconnection, equivalent to
-  `opnorm(P.M) < 1` (JuliaControl, 2026a): the largest singular value of the
-  interconnection matrix M stays below unity.
-- **FR3 — Parametric Uncertain Value**: Provide a fixed-size, `no_alloc`
-  analogue of a parametric uncertain real — nominal value plus an asymmetric
-  `[-DL, +DR]` deviation — mirroring `ureal`'s data model (MathWorks, 2026c),
-  without a heap-backed collection of such values.
-- **FR4 — Analysis, Not Synthesis**: Scope this phase to robustness
-  *analysis* (stability/margin checks against a given plant and uncertainty
-  bound). Controller *synthesis* (µ-synthesis, DK-iteration) is excluded; it
-  is exactly the capability modern-control.json already flagged as an open
-  `modern_tools`/`robust_tools` packaging question and is not re-decided here.
+- **FR-1 — Single-Block Uncertain Plant**: Represent a nominal LTI plant with
+  one norm-bounded, unstructured, full complex uncertainty block (‖Δ‖ ≤ 1) using
+  existing `StateSpace`/`Matrix`/`TransferFunction` types.
+- **FR-2 — Closed-Form Robust-Stability Check**: Provide the robust-stability
+  predicate for that interconnection, equivalent to `opnorm(P.M) < 1`.
+- **FR-3 — Parametric Uncertain Value**: Provide a fixed-size, `no_alloc`
+  parametric uncertain real (nominal value plus asymmetric deviation), without a
+  heap-backed collection.
+- **FR-4 — Analysis, Not Synthesis**: Scope this phase to robustness analysis
+  only; controller synthesis (µ-synthesis, DK-iteration) is excluded.
 
 #### 2.2. Non-Functional Requirements
 
-- **Deterministic, Bounded Execution**: Any computation admitted to run
-  on-target (FR2) must execute in bounded, deterministic time with no heap
-  allocation, consistent with the crate-wide no-`unwrap`/no-heap convention.
-- **Golden-Value Testability**: Every analysis routine's output must be
-  checkable against an external reference (MATLAB, Julia, or a hand-derived
-  closed form) per the crate's solver/estimator testing standard.
+- **NFR-1 — Deterministic, Bounded Execution**: Any computation admitted to run
+  on-target (FR-2) must execute in bounded, deterministic time with no heap
+  allocation.
+- **NFR-2 — Golden-Value Testability**: Every analysis routine's output must be
+  checkable against an external reference per the crate's solver/estimator
+  testing standard.
 
 #### 2.3. Constraints
 
-- **No General Structured µ in This Phase**: Every surveyed route to the
-  tightest µ upper bound ends in a general LMI optimization (MathWorks,
-  2026a; Boyd and El Ghaoui, 1993) or an external SDP solver such as MOSEK
-  (Adams et al., 2025). No `no_std`/no-alloc precedent for such a solver was
-  found. The one Rust-native SDP/LMI-capable solver located in this research,
-  Clarabel.rs, documents no embedded or `no_std` support (Oxford Control,
-  2026; Goulart and Chen, 2024), and the only `no_std` embedded Rust
-  estimation/control crate found in prior research (`multicalc`) implements
-  LQR/EKF-class functionality but no robust/µ-analysis capability (kmolan,
-  2026). General structured µ-analysis is therefore out of scope until a
-  solver dependency question is resolved by its own design review.
-- **No Unified Dynamically Sized Uncertain-System Type**: Even JuliaControl's
-  own representation does not unify the full generalized-plant partition in
-  one type — `UncertainSS` covers `[[P11,P12],[P21,P22]]` and
-  `ExtendedStateSpace` covers `[[P22,P23],[P32,P33]]`, with "no type that
-  represents the full system P above" (JuliaControl, 2026a). That gap exists
-  in a heap-backed ecosystem; control-rs's const-generic `Matrix`/`StateSpace`
-  model forecloses that flexibility further, so v1 is restricted to the
-  fixed, single-block interconnection in FR1 rather than an arbitrary
+- **C-1 — No General Structured µ in This Phase**: No `no_std`/no-alloc SDP or
+  LMI solver precedent exists; general structured µ-analysis is out of scope
+  until a solver dependency is resolved separately.
+- **C-2 — No Unified Dynamically Sized Uncertain-System Type**: v1 is restricted
+  to the fixed, single-block interconnection in FR-1 rather than an arbitrary
   block-diagonal Δ.
-- **`no_std` / No Heap Allocator**: Inherited from the crate-wide constraint
-  (README); no `robust_tools` type may require dynamic allocation.
+- **C-3 — `no_std` / No Heap Allocator**: Inherited from the crate-wide
+  constraint; no `robust_tools` type may require dynamic allocation.
 
 ---
 
@@ -151,12 +130,12 @@ block" assumption and is exactly the structured-uncertainty case excluded by
 
 #### 4.4. Design-Time vs. On-Target Boundary
 
-| Capability | Boundary |
-|:---|:---|
-| Single-block `opnorm(P.M) < 1` check (FR2) | On-target-capable: bounded, deterministic, no solver dependency. |
-| `UncertainReal` construction/inspection (FR3) | On-target-capable: plain value type. |
-| General structured µ upper/lower bound | Design-time only; depends on an LMI/SDP solve or iterative method not scoped here (§2.3). |
-| µ-synthesis / DK-iteration | Out of scope this phase (FR4); design-time only wherever it lands. |
+| Capability                                    | Boundary                                                                                  |
+|:----------------------------------------------|:------------------------------------------------------------------------------------------|
+| Single-block `opnorm(P.M) < 1` check (FR2)    | On-target-capable: bounded, deterministic, no solver dependency.                          |
+| `UncertainReal` construction/inspection (FR3) | On-target-capable: plain value type.                                                      |
+| General structured µ upper/lower bound        | Design-time only; depends on an LMI/SDP solve or iterative method not scoped here (§2.3). |
+| µ-synthesis / DK-iteration                    | Out of scope this phase (FR4); design-time only wherever it lands.                        |
 
 ---
 
@@ -285,52 +264,90 @@ adopts a solver dependency.
 
 ### 9. Development Plan
 
-| Task / Feature | Description | Estimated Effort |
-|:---|:---|:---|
-| **Step 1: Uncertain-Value & Uncertain-Plant Types** | Define `UncertainReal<T>` and the single-block M-Delta wrapper around existing `StateSpace`/`Matrix` types (FR1, FR3). | 1.5 Days |
-| **Step 2: Spectral-Norm Primitive** | Add a largest-singular-value/power-iteration routine to `Matrix` sufficient for the `opnorm(P.M)` check. | 2.5 Days |
-| **Step 3: Robust-Stability Check** | Implement the `sup_w σ_max(M(jw)) < 1` predicate over `TransferFunction`/`StateSpace` frequency response (FR2). | 1.5 Days |
-| **Step 4: Verification** | Golden-value regression tests against MATLAB/Julia references; `proptest` invariants (§6). | 1.5 Days |
+| Task / Feature                                                         | Description                                                                                                                        | Estimated Effort                               |
+|:-----------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------|:-----------------------------------------------|
+| **Step 1: Uncertain-Value & Uncertain-Plant Types**                    | Define `UncertainReal<T>` and the single-block M-Delta wrapper around existing `StateSpace`/`Matrix` types (FR1, FR3).             | 1.5 Days                                       |
+| **Step 2: Spectral-Norm Primitive**                                    | Add a largest-singular-value/power-iteration routine to `Matrix` sufficient for the `opnorm(P.M)` check.                           | 2.5 Days                                       |
+| **Step 3: Robust-Stability Check**                                     | Implement the `sup_w σ_max(M(jw)) < 1` predicate over `TransferFunction`/`StateSpace` frequency response (FR2).                    | 1.5 Days                                       |
+| **Step 4: Verification**                                               | Golden-value regression tests against MATLAB/Julia references; `proptest` invariants (§6).                                         | 1.5 Days                                       |
 | **Step 5 (Future Phase, Not This Approval): Solver Integration Spike** | Investigate an LMI/SDP solver dependency (e.g., Clarabel) as a host-only feature toward general structured µ; blocked on §8 risks. | Unestimated — separate design review required. |
 
 ---
 
 ### 10. References
 
-[1] MathWorks, "mussv - Compute bounds on structured singular value (µ)," *MATLAB Robust Control Toolbox Documentation*. [Online]. Available: https://www.mathworks.com/help/robust/ref/mussv.html. Accessed: Aug. 8, 2026.
+[1] MathWorks, "mussv - Compute bounds on structured singular value (µ),"
+*MATLAB Robust Control Toolbox Documentation*. [Online].
+Available: https://www.mathworks.com/help/robust/ref/mussv.html. Accessed: Aug.
+8, 2026.
 
-[2] MathWorks, "Robust Control of Active Suspension," *MATLAB Robust Control Toolbox Documentation*. [Online]. Available: https://www.mathworks.com/help/robust/gs/active-suspension-control-design.html. Accessed: Aug. 8, 2026.
+[2] MathWorks, "Robust Control of Active Suspension," *MATLAB Robust Control
+Toolbox Documentation*. [Online].
+Available: https://www.mathworks.com/help/robust/gs/active-suspension-control-design.html.
+Accessed: Aug. 8, 2026.
 
-[3] M. Djukanovic et al., "Application of the structured singular value theory for robust stability and control analysis in multimachine power systems. I. Framework development," *IEEE Transactions on Power Systems*, 1998, doi: 10.1109/59.736270.
+[3] M. Djukanovic et al., "Application of the structured singular value theory
+for robust stability and control analysis in multimachine power systems. I.
+Framework development," *IEEE Transactions on Power Systems*, 1998, doi:
+10.1109/59.736270.
 
-[4] T. E. Adams, S. Dahdah, and J. R. Forbes, "dkpy: Robust Control with Structured Uncertainty in Python," arXiv:2511.13927, 2025. [Online]. Available: https://arxiv.org/pdf/2511.13927.
+[4] T. E. Adams, S. Dahdah, and J. R. Forbes, "dkpy: Robust Control with
+Structured Uncertainty in Python," arXiv:2511.13927, 2025. [Online].
+Available: https://arxiv.org/pdf/2511.13927.
 
-[5] JuliaControl, "Uncertainty modeling," *RobustAndOptimalControl.jl documentation*, version dev. [Online]. Available: https://juliacontrol.github.io/RobustAndOptimalControl.jl/dev/uncertainty/. Accessed: Aug. 8, 2026.
+[5] JuliaControl, "Uncertainty modeling," *RobustAndOptimalControl.jl
+documentation*, version dev. [Online].
+Available: https://juliacontrol.github.io/RobustAndOptimalControl.jl/dev/uncertainty/.
+Accessed: Aug. 8, 2026.
 
-[6] MathWorks, "ureal - Uncertain real parameter," *MATLAB Robust Control Toolbox Documentation*. [Online]. Available: https://www.mathworks.com/help/robust/ref/ureal.html. Accessed: Aug. 8, 2026.
+[6] MathWorks, "ureal - Uncertain real parameter," *MATLAB Robust Control
+Toolbox Documentation*. [Online].
+Available: https://www.mathworks.com/help/robust/ref/ureal.html. Accessed: Aug.
+8, 2026.
 
-[7] S. Boyd and L. El Ghaoui, "Methods of centers for minimizing generalized eigenvalues," *Linear Algebra and Its Applications*, vol. 188-189, pp. 63-111, 1993.
+[7] S. Boyd and L. El Ghaoui, "Methods of centers for minimizing generalized
+eigenvalues," *Linear Algebra and Its Applications*, vol. 188-189, pp. 63-111,
 
-[8] Oxford Control, *Clarabel.rs*: Rust implementation of an interior-point solver for conic programs (Version 0.11.1). [Online]. Available: https://github.com/oxfordcontrol/Clarabel.rs. Accessed: Aug. 8, 2026.
+1993.
 
-[9] P. J. Goulart and Y. Chen, "Clarabel: An interior-point solver for conic programs with quadratic objectives," arXiv:2405.12762, 2024. [Online]. Available: https://arxiv.org/abs/2405.12762.
+[8] Oxford Control, *Clarabel.rs*: Rust implementation of an interior-point
+solver for conic programs (Version 0.11.1). [Online].
+Available: https://github.com/oxfordcontrol/Clarabel.rs. Accessed: Aug. 8, 2026.
 
-[10] kmolan, "Multicalc: Scientific computing for real time embedded systems in no_std rust," *users.rust-lang.org*, 2026. [Online]. Available: https://users.rust-lang.org/t/multicalc-scientific-computing-for-real-time-embedded-systems-in-no-std-rust/141510. Accessed: Aug. 8, 2026.
+[9] P. J. Goulart and Y. Chen, "Clarabel: An interior-point solver for conic
+programs with quadratic objectives," arXiv:2405.12762, 2024. [Online].
+Available: https://arxiv.org/abs/2405.12762.
 
-[11] J. Doyle, A. Packard, and K. Zhou, "Review of LFTs, LMIs, and mu," in *Proc. 30th IEEE Conference on Decision and Control*, 1991, pp. 1227-1232.
+[10] kmolan, "Multicalc: Scientific computing for real time embedded systems in
+no_std rust," *users.rust-lang.org*, 2026. [Online].
+Available: https://users.rust-lang.org/t/multicalc-scientific-computing-for-real-time-embedded-systems-in-no-std-rust/141510.
+Accessed: Aug. 8, 2026.
 
-[12] A. K. Packard, M. Fan, and J. Doyle, "A power method for the structured singular value," in *Proc. 1988 IEEE Conference on Decision and Control*, Dec. 1988, pp. 2132-2137.
+[11] J. Doyle, A. Packard, and K. Zhou, "Review of LFTs, LMIs, and mu," in
+*Proc. 30th IEEE Conference on Decision and Control*, 1991, pp. 1227-1232.
 
-[13] python-control, "control.hinfsyn," *Python Control Systems Library documentation*, version 0.10.2. [Online]. Available: https://python-control.readthedocs.io/en/latest/generated/control.hinfsyn.html. Accessed: Aug. 8, 2026.
+[12] A. K. Packard, M. Fan, and J. Doyle, "A power method for the structured
+singular value," in *Proc. 1988 IEEE Conference on Decision and Control*, Dec.
+1988, pp. 2132-2137.
 
-[14] MathWorks, "Robust Control Toolbox," *MathWorks*. [Online]. Available: https://www.mathworks.com/products/robust.html. Accessed: Aug. 8, 2026.
+[13] python-control, "control.hinfsyn," *Python Control Systems Library
+documentation*, version 0.10.2. [Online].
+Available: https://python-control.readthedocs.io/en/latest/generated/control.hinfsyn.html.
+Accessed: Aug. 8, 2026.
 
-[15] JuliaControl, *RobustAndOptimalControl.jl* (Version 0.4.51). [Online]. Available: https://github.com/JuliaControl/RobustAndOptimalControl.jl. Accessed: Aug. 8, 2026.
+[14] MathWorks, "Robust Control Toolbox," *MathWorks*. [Online].
+Available: https://www.mathworks.com/products/robust.html. Accessed: Aug. 8,
+
+2026.
+
+[15] JuliaControl, *RobustAndOptimalControl.jl* (Version 0.4.51). [Online].
+Available: https://github.com/JuliaControl/RobustAndOptimalControl.jl. Accessed:
+Aug. 8, 2026.
 
 ---
 
 ### 11. Revision History
 
-| Revision | Date | Author | Description of Changes |
-|:---|:---|:---|:---|
-| 1.0 | August 8, 2026 | @MitchellDScott | Initial draft: scoped `robust_tools` to a single-block uncertain-plant representation and closed-form `opnorm(P.M) < 1` robust-stability check, deferred general structured µ-analysis pending an LMI/SDP solver decision, and carried forward the open `modern_tools`/`robust_tools` packaging question from `modern-control.json`. |
+| Revision | Date           | Author          | Description                                                                                                                                    |
+|:---------|:---------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: scoped `robust_tools` to single-block uncertainty and a closed-form stability check; deferred µ-analysis pending an SDP solver. |

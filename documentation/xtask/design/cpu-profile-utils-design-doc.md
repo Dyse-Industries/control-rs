@@ -4,7 +4,7 @@
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
-## 1. Introduction
+### 1. Introduction
 
 The HIL test harness requires target-specific hooks to measure performance
 metrics (clock cycles, elapsed execution time, and stack usage). By defining a
@@ -14,44 +14,36 @@ hooks to the end-user or silicon vendor.
 
 ---
 
-## 2. Requirements
+### 2. Requirements
 
 #### Functional Requirements
 
-1. **Cycle Count**: Read a monotonically increasing CPU cycle count
-   (`get_cycles`), robust to hardware counter wraparound.
-2. **Timer**: Report elapsed time in nanoseconds (`get_nanos`).
-3. **Stack Pointer Read**: Read the active stack pointer (`get_sp`) and the
-   stack boundary (`get_stack_end`).
-4. **Stack Painting/Scanning**: Paint the stack with a sentinel pattern and
-   scan for the peak-usage high-water mark.
-5. **Interrupt Control**: Run a closure with interrupts disabled and disable
-   interrupts permanently.
-6. **Default Implementations**: Provide defaults for targets that do not
-   support these features.
+- **FR-1 — Cycle Count**: Read a monotonically increasing CPU cycle count (`get_cycles`), robust to hardware counter wraparound.
+- **FR-2 — Timer**: Report elapsed time in nanoseconds (`get_nanos`).
+- **FR-3 — Stack Pointer Read**: Read the active stack pointer (`get_sp`) and the stack boundary (`get_stack_end`).
+- **FR-4 — Stack Painting/Scanning**: Paint the stack with a sentinel pattern and scan for the peak-usage high-water mark.
+- **FR-5 — Interrupt Control**: Run a closure with interrupts disabled and disable interrupts permanently.
+- **FR-6 — Default Implementations**: Provide defaults for targets that do not support these features.
 
 #### Non-Functional Requirements
 
-* **Deterministic Low Overhead**: Cycle and timer hooks must execute within a
-  few clock cycles so measurements do not perturb the code under test.
+- **NFR-1 — Deterministic Low Overhead**: Cycle and timer hooks must execute within a few clock cycles so measurements do not perturb the code under test.
 
 #### Constraints
 
-* **Strict `#![no_std]`, Zero Heap**: Consistent with the rest of
-  `control-rs-hil`.
-* **Target Architectures**: ARM Cortex-M (ARMv6/7/8-M) and RISC-V (RV32/RV64).
-  Note that ARMv6-M (Cortex-M0/M0+) has no DWT cycle counter; see §8.
+- **C-1 — Strict `#![no_std]`, Zero Heap**: Consistent with the rest of `control-rs-hil`.
+- **C-2 — Target Architectures**: ARM Cortex-M (ARMv6/7/8-M) and RISC-V (RV32/RV64); ARMv6-M has no DWT cycle counter (§8).
 
 ---
 
-## 3. Technical Overview
+### 3. Technical Overview
 
 This project provides hardware specific hooks through a trait to keep the
 server hardware-agnostic.
 
 ---
 
-## 4. Core Architecture
+### 4. Core Architecture
 
 ### 4.1. The CPUProfiler Trait
 
@@ -177,7 +169,7 @@ active DMA running (see `hil-server-design-doc.md` §4.4).
 
 ---
 
-## 5. Alternatives
+### 5. Alternatives
 
 **Retain ClientClock and TestExecutor**: Previously, this was split into two
 interfaces: `ClientClock` (system clock
@@ -235,7 +227,7 @@ layout — and is a candidate on Cortex-M (no RISC-V support per its README).
 
 ---
 
-## 6. Verification & Validation
+### 6. Verification & Validation
 
 Developers must validate their custom hardware hooks using automated
 on-target testing. Ideally these will be available to end users.
@@ -255,7 +247,7 @@ on-target testing. Ideally these will be available to end users.
 
 ---
 
-## 7. Performance and Resource Considerations
+### 7. Performance and Resource Considerations
 
 * **Hook latency**: The `get_cycles()` and `get_nanos()` hooks must execute
   deterministically and as close to zero-overhead as possible (typically within
@@ -270,7 +262,7 @@ on-target testing. Ideally these will be available to end users.
 
 ---
 
-## 8. Risks and Open Questions
+### 8. Risks and Open Questions
 
 * **Register Overflows**: `CortexMProfiler::get_cycles()` casts the 32-bit DWT
   counter to `u64` with no wraparound handling; at typical core clocks it
@@ -300,7 +292,7 @@ on-target testing. Ideally these will be available to end users.
 
 ---
 
-## 9. Development Plan
+### 9. Development Plan
 
 | Task / Feature                           | Description                                                                                                     | Status / Effort |
 |:-----------------------------------------|:----------------------------------------------------------------------------------------------------------------|:----------------|
@@ -311,10 +303,10 @@ on-target testing. Ideally these will be available to end users.
 
 ---
 
-## 10. Revision History
+### 10. Revision History
 
-| Revision | Date           | Description                                                                                                                                                                                                                                             | Author          |
-|:---------|:---------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
-| 1.0      | July 18, 2026  | Initial design of the `CPUProfiler` trait, consolidating `ClientClock` and `TestExecutor`.                                                                                                                                                              | @MitchellDScott |
-| 1.1      | August 6, 2026 | Incorporated build-vs-adopt research: evidence-backed `embedded-profiling` rejection, DWT overflow and ARMv6-M gaps, `critical-section` reuse candidate, static-analysis scoping. Added Requirements structure, Development Plan, and Revision History. | @MitchellDScott |
-| 1.2      | August 9, 2026 | Review and minor updates.                                                                                                                                                                                                                               | @MitchellDScott |
+| Revision | Date | Author | Description |
+|:---------|:-----|:-------|:-------------|
+| 1.0 | July 18, 2026 | @MitchellDScott | Initial design of the `CPUProfiler` trait, consolidating `ClientClock` and `TestExecutor`. |
+| 1.1 | August 6, 2026 | @MitchellDScott | Incorporated build-vs-adopt research; added Requirements structure and Development Plan. |
+| 1.2 | August 9, 2026 | @MitchellDScott | Review and minor updates. |

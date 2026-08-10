@@ -30,42 +30,27 @@ the constraint that positioning places on every current and future
 ### 2. Requirements
 
 The following are binding constraints on `classical_tools`, `modern_tools`,
-`robust_tools`, `nonlinear_tools`, and any future controls-toolbox module,
-derived from the comparative research:
+`robust_tools`, `nonlinear_tools`, and any future controls-toolbox module.
 
-- **Native authorability.** Every controller construct a toolbox module
-  exposes (gain computation, filter design, controller structure) must be
-  directly expressible as Rust code against `Matrix`/`Polynomial`/
-  `TransferFunction`/`StateSpace` and the `Storage` trait, compilable and
-  runnable on the target `no_std` device without a separate code-generation
-  or export pass. This mirrors the "author natively for the target" pole
-  observed in PX4, ArduPilot, and the existing Rust `no_std` control-crate
-  ecosystem — `minikalman` (sunsided, 2026), `adskalman` (strawlab, 2026),
-  and `pid-ctrl` (pid-ctrl, 2026).
-- **No required host-to-target codegen pipeline.** A toolbox module must
-  not depend on a MATLAB/Python/Simulink/CasADi-style external modeling
-  environment producing C or Rust source that is then vendored into the
-  crate. This rules out an acados- or FORCES Pro-style workflow, where the
-  control problem is formulated in one environment and a solver is
-  generated for another (Verschueren et al., 2021; embotech, 2026).
-- **No mandatory dynamic allocation.** Toolbox algorithms must hold to the
-  same `no_alloc`, stack/static-storage discipline as `Matrix` and
-  `StateSpace`, keeping `control-rs` at the bare-metal, zero-heap execution
-  tier described in §4.2, distinct from the RTOS-plus-heap tier PX4 and
-  ArduPilot occupy.
-- **Compile-time verification takes priority over runtime numerical-
-  equivalence pipelines.** A toolbox module should rely on the crate's
-  existing Peano-arithmetic const-generic dimension checking to catch
-  shape and structural errors at build time, rather than depending on a
-  Simulink-style MIL/SIL/PIL sequence as the primary correctness gate
-  (MathWorks, 2026).
-- **Symbolic/offline tooling, if ever introduced, stays clearly out of the
-  runtime path.** Any future design-time helper (e.g., symbolic
-  linearization or gain-scheduling table generation) must be scoped as an
-  offline, host-side utility analogous to `matrix-design.md`'s existing
-  Faddeev-LeVerrier characteristic-polynomial scoping, not as a
-  SymForce-style generator whose output becomes a runtime dependency
-  (Steiner et al., 2022).
+#### 2.1 Non-Functional Requirements
+
+- **NFR-1 — Compile-Time Verification**: Toolbox modules rely on the crate's
+  Peano const-generic dimension checking to catch shape errors at build time,
+  not a runtime MIL/SIL/PIL pipeline.
+
+#### 2.2 Constraints
+
+- **C-1 — Native Authorability**: Every controller construct must be directly
+  expressible as Rust against `Matrix`/`Polynomial`/`TransferFunction`/
+  `StateSpace`, compiling on-target without a codegen pass.
+- **C-2 — No Host-to-Target Codegen**: A toolbox module must not depend on an
+  external MATLAB/Python/Simulink/CasADi environment producing vendored C or
+  Rust source.
+- **C-3 — No Dynamic Allocation**: Toolbox algorithms follow the same
+  `no_alloc`, stack/static-storage discipline as `Matrix` and `StateSpace`.
+- **C-4 — Offline-Only Symbolic Tooling**: Any future symbolic or
+  gain-scheduling helper must be an offline, host-side utility, not a runtime
+  dependency.
 
 ---
 
@@ -231,10 +216,10 @@ gate, or HIL harness to build for this document itself.
   `documentation/control-toolboxes/research/results/controls-tools.json`).
 - **OpEn's Rust-codegen pattern.** Whether Optimization Engine's
   Python-formulation-to-generated-Rust-solver pattern (Sopasakis et al.,
-  2020) is a viable external integration point if users request
-  Python-driven controller synthesis is unresolved and out of scope for
-  this document (open question 4 in
-  `documentation/control-toolboxes/research/results/controls-tools.json`).
+    2020) is a viable external integration point if users request
+          Python-driven controller synthesis is unresolved and out of scope for
+          this document (open question 4 in
+          `documentation/control-toolboxes/research/results/controls-tools.json`).
 - **Assumption:** this document assumes the four existing `src/`
   toolbox scaffolds (`classical_tools`, `modern_tools`, `robust_tools`,
   `nonlinear_tools`) are the intended scope of "future controls-toolbox
@@ -245,45 +230,71 @@ gate, or HIL harness to build for this document itself.
 
 ### 8. Development Plan
 
-| Task / Feature | Description | Estimated Effort |
-|:---|:---|:---|
-| Positioning note review | Circulate this document for maintainer review and status update to Approved. | 0.5 Day |
+| Task / Feature          | Description                                                                                                                                                       | Estimated Effort    |
+|:------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------|:--------------------|
+| Positioning note review | Circulate this document for maintainer review and status update to Approved.                                                                                      | 0.5 Day             |
 | Requirement propagation | Reference §2's constraints explicitly in the `classical_tools`, `modern_tools`, and `robust_tools` design docs as they are drafted, rather than re-deriving them. | Ongoing, per-module |
-| Open-question triage | Decide whether the SIL/PIL harness extension (§7) warrants its own research query before any `modern_tools`/`robust_tools` design doc that would depend on it. | 0.5 Day |
+| Open-question triage    | Decide whether the SIL/PIL harness extension (§7) warrants its own research query before any `modern_tools`/`robust_tools` design doc that would depend on it.    | 0.5 Day             |
 
 ---
 
 ### 9. References
 
-[1] sunsided, *minikalman-rs*: no_std Kalman filter with static buffers, f32 and Q16.16 fixed-point support. [Online]. Available: https://github.com/sunsided/minikalman-rs. Accessed: Aug. 8, 2026.
+[1] sunsided, *minikalman-rs*: no_std Kalman filter with static buffers, f32 and
+Q16.16 fixed-point support. [Online].
+Available: https://github.com/sunsided/minikalman-rs. Accessed: Aug. 8, 2026.
 
-[2] strawlab, *adskalman-rs*: no_std/embedded-capable Kalman filter built on nalgebra, includes Rauch-Tung-Striebel smoothing. [Online]. Available: https://github.com/strawlab/adskalman-rs. Accessed: Aug. 8, 2026.
+[2] strawlab, *adskalman-rs*: no_std/embedded-capable Kalman filter built on
+nalgebra, includes Rauch-Tung-Striebel smoothing. [Online].
+Available: https://github.com/strawlab/adskalman-rs. Accessed: Aug. 8, 2026.
 
-[3] pid-ctrl, *pid-ctrl*: #![no_std] PID controller with output clamping and measurement-based derivative. [Online]. Available: https://crates.io/crates/pid-ctrl. Accessed: Aug. 8, 2026.
+[3] pid-ctrl, *pid-ctrl*: #![no_std] PID controller with output clamping and
+measurement-based derivative. [Online].
+Available: https://crates.io/crates/pid-ctrl. Accessed: Aug. 8, 2026.
 
-[4] R. Verschueren et al., "acados — a modular open-source framework for fast embedded optimal control," *Mathematical Programming Computation*, 2021. [Online]. Available: https://publications.syscop.de/Verschueren2021.pdf.
+[4] R. Verschueren et al., "acados — a modular open-source framework for fast
+embedded optimal control," *Mathematical Programming Computation*,
 
-[5] embotech AG, "FORCESPRO documentation," *embotech*. [Online]. Available: https://forces.embotech.com/Documentation/. Accessed: Aug. 8, 2026.
+2021. [Online]. Available: https://publications.syscop.de/Verschueren2021.pdf.
 
-[6] MathWorks, "About SIL and PIL Simulations," *Embedded Coder Documentation*. [Online]. Available: https://www.mathworks.com/help/ecoder/ug/about-sil-and-pil-simulations.html. Accessed: Aug. 8, 2026.
+[5] embotech AG, "FORCESPRO documentation," *embotech*. [Online].
+Available: https://forces.embotech.com/Documentation/. Accessed: Aug. 8, 2026.
 
-[7] P. Steiner et al., "SymForce: Symbolic Computation and Code Generation for Robotics Applications," in *Proc. Robotics: Science and Systems (RSS)*, 2022.
+[6] MathWorks, "About SIL and PIL Simulations," *Embedded Coder
+Documentation*. [Online].
+Available: https://www.mathworks.com/help/ecoder/ug/about-sil-and-pil-simulations.html.
+Accessed: Aug. 8, 2026.
 
-[8] M. Giftthaler, M. Neunert, M. Stauble, and J. Buchli, "The Control Toolbox — An Open-Source C++ Library for Robotics, Optimal and Model Predictive Control," in *Proc. IEEE Int. Conf. Simulation, Modeling, and Programming for Autonomous Robots (SIMPAR)*, 2018, pp. 123–129, doi: 10.1109/SIMPAR.2018.8376281.
+[7] P. Steiner et al., "SymForce: Symbolic Computation and Code Generation for
+Robotics Applications," in *Proc. Robotics: Science and Systems (RSS)*, 2022.
 
-[9] J. A. E. Andersson, J. Gillis, G. Horn, J. B. Rawlings, and M. Diehl, "CasADi — A software framework for nonlinear optimization and optimal control," *Mathematical Programming Computation*, 2019.
+[8] M. Giftthaler, M. Neunert, M. Stauble, and J. Buchli, "The Control Toolbox —
+An Open-Source C++ Library for Robotics, Optimal and Model Predictive Control,"
+in *Proc. IEEE Int. Conf. Simulation, Modeling, and Programming for Autonomous
+Robots (SIMPAR)*, 2018, pp. 123–129, doi: 10.1109/SIMPAR.2018.8376281.
 
-[10] ArduPilot, *AP_HAL_ChibiOS/hwdef/common/malloc.c*: confirms dynamic heap allocation via a custom multi-region DMA-aware allocator on ArduPilot's ChibiOS bare-metal target. [Online]. Available: https://github.com/ArduPilot/ardupilot/blob/master/libraries/AP_HAL_ChibiOS/hwdef/common/malloc.c. Accessed: Aug. 8, 2026.
+[9] J. A. E. Andersson, J. Gillis, G. Horn, J. B. Rawlings, and M. Diehl, "
+CasADi — A software framework for nonlinear optimization and optimal control,"
+*Mathematical Programming Computation*, 2019.
 
-[11] PX4 Development Team, "Using the ECL EKF," *PX4 Developer Guide*. [Online]. Available: https://docs.px4.io/main/en/advanced_config/tuning_the_ecl_ekf. Accessed: Aug. 8, 2026.
+[10] ArduPilot, *AP_HAL_ChibiOS/hwdef/common/malloc.c*: confirms dynamic heap
+allocation via a custom multi-region DMA-aware allocator on ArduPilot's ChibiOS
+bare-metal target. [Online].
+Available: https://github.com/ArduPilot/ardupilot/blob/master/libraries/AP_HAL_ChibiOS/hwdef/common/malloc.c.
+Accessed: Aug. 8, 2026.
 
-[12] P. Sopasakis et al., "Open source implementation of PANOC and OpEn," *arXiv preprint*, arXiv:2003.00292, 2020.
+[11] PX4 Development Team, "Using the ECL EKF," *PX4 Developer Guide*. [Online].
+Available: https://docs.px4.io/main/en/advanced_config/tuning_the_ecl_ekf.
+Accessed: Aug. 8, 2026.
+
+[12] P. Sopasakis et al., "Open source implementation of PANOC and OpEn," *arXiv
+preprint*, arXiv:2003.00292, 2020.
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date | Author | Description of Changes |
-|:---|:---|:---|:---|
-| 1.0 | August 8, 2026 | @MitchellDScott | Initial draft: positions control-rs against CT, acados, FORCES Pro, CVXGEN, SymForce, PX4/ArduPilot, ros2_control, and Simulink Embedded Coder; states native-authoring/no-required-codegen/no_alloc/compile-time-verification constraints for classical_tools/modern_tools/robust_tools/nonlinear_tools. |
-| 1.1 | August 8, 2026 | @MitchellDScott | Removed fabricated "control-rs research, 2026" self-citations (review feedback); replaced with primary-source citations (ArduPilot, minikalman-rs, adskalman-rs, pid-ctrl) or direct references to the research artifact's open-questions list; renumbered References. |
+| Revision | Date           | Author          | Description                                                                                                             |
+|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft positioning control-rs against major control toolboxes; states native-authoring and no_alloc constraints. |
+| 1.1      | August 8, 2026 | @MitchellDScott | Removed fabricated self-citations per review feedback; replaced with primary-source citations; renumbered References.   |

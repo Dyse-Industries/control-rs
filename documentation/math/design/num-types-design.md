@@ -21,62 +21,35 @@ these types.
 
 #### 2.1 Functional Requirements
 
-##### FR-1: Base Dimension Trait
-
-The module shall define a single trait representing "a compile-time
-dimension," exposing both its runtime-visible `usize` value and a
-type-level representation that other traits can pattern-match on. Every
-concrete dimension type must be `Clone + Copy + PartialEq + Eq`.
-
-##### FR-2: Type-Level Arithmetic
-
-The module shall define one trait per arithmetic operation: addition,
-subtraction, multiplication, maximum, and minimum. Each trait's output must
-itself satisfy the base dimension trait (FR-1), so arithmetic results can be
-composed and re-used as bounds without an extra conversion step.
-
-##### FR-3: Canonical Unary Representation
-
-The module shall represent every dimension value canonically as a
-recursively-defined successor chain over a single base case, in the style
-of Peano's axioms — one type for "zero" and one type-level "successor of N"
-constructor. All five arithmetic traits (FR-2) are implemented by structural
-recursion over this representation.
-
-##### FR-4: Const-Generic Ergonomics Bridge
-
-Because the canonical representation (FR-3) is unwieldy to write by hand, the
-module provides a const-generic wrapper that lets call sites write an
-ordinary integer literal and have it resolve automatically.
-
-##### FR-5: Friendly Aliases
-
-The module shall generate named aliases (`U0`, `U1`, ... up to a fixed
-ceiling) for the canonical representation of each small dimension, so
-downstream code never has to spell out a successor chain directly.
+- **FR-1 — Base Dimension Trait**: Define a single trait for "a compile-time
+  dimension," exposing a runtime `usize` value and a pattern-matchable
+  type-level representation; concrete types must be
+  `Clone + Copy + PartialEq + Eq`.
+- **FR-2 — Type-Level Arithmetic**: Define one trait per arithmetic operation (
+  addition, subtraction, multiplication, maximum, minimum), each producing an
+  output satisfying the base dimension trait (FR-1).
+- **FR-3 — Canonical Unary Representation**: Represent every dimension value as
+  a recursively-defined Peano successor chain; all arithmetic traits (FR-2) are
+  implemented by structural recursion over it.
+- **FR-4 — Const-Generic Ergonomics Bridge**: Provide a const-generic wrapper
+  letting call sites write an ordinary integer literal that resolves to the
+  canonical representation (FR-3).
+- **FR-5 — Friendly Aliases**: Generate named aliases (`U0`, `U1`, ... up to a
+  fixed ceiling) for the canonical representation of each small dimension.
 
 #### 2.2 Non-Functional Requirements
 
-##### NFR-1: Zero Memory Footprint
-
-Every dimension type must occupy zero bytes at runtime. Dimension
-arithmetic is a compile-time-only concept; it must not inflate the size of
-any struct that carries a dimension as a type parameter.
-
-##### NFR-2: `no_std` Compatibility
-
-The module must depend only on `core`, with no allocation and no dependency
-on an operating system or standard-library-only feature.
+- **NFR-1 — Zero Memory Footprint**: Every dimension type must occupy zero bytes
+  at runtime and not inflate the size of any struct carrying it as a type
+  parameter.
+- **NFR-2 — `no_std` Compatibility**: The module must depend only on `core`,
+  with no allocation and no OS or std-only feature dependency.
 
 #### 2.3 Constraints
 
-##### C-1: Recursion-Bounded Dimension Ceiling
-
-The friendly aliases (FR-5) stop at a fixed ceiling (`U32`) because the
-canonical representation (FR-3) is unary: representing dimension `N`
-requires `N` levels of nested type, and arithmetic on two dimensions
-requires the compiler's trait solver to recurse to a depth proportional to
-their sum.
+- **C-1 — Recursion-Bounded Dimension Ceiling**: Friendly aliases (FR-5) stop at
+  a fixed ceiling (`U32`) because the unary canonical representation (FR-3)
+  requires trait-solver recursion proportional to dimension size.
 
 ---
 
@@ -254,10 +227,10 @@ type lands, its own test suite becomes the first external validation that
 
 ### 10. Revision History
 
-| Date       | Author          | Description                                                                                                                                                                                                                                                        |
-|:-----------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 2026-08-07 | @mitchelldscott | Initial draft. Backfills design rationale for the existing `src/math/num_types.rs` module from `research/results/num-types.json`, using the author-year citation style and structured bibliography introduced by that research file's 2026-08-07 maintenance pass. |
-| 2026-08-09 | @mitchelldscott | Review and corrections.                                                                                                                                                                                                                                            |
+| Revision | Date           | Author          | Description                                                                                               |
+|:---------|:---------------|:----------------|:----------------------------------------------------------------------------------------------------------|
+| 1.0      | August 7, 2026 | @MitchellDScott | Initial draft backfilling design rationale for the existing `num_types.rs` module from research findings. |
+| 1.1      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                   |
 
 ---
 

@@ -25,33 +25,22 @@ registry, requiring zero boilerplate and little runtime overhead.
 
 #### Functional Requirements
 
-* **Suite-Discovery**: The suites must be discoverable at runtime.
-* **Dynamic Parameter Configuration**: Settings dynamically on the target
-  should be adjustable from the host (`xtask`).
-* **Embedded metadata**: test suites must include doc-strings.
+- **FR-1 — Suite Discovery**: The suites must be discoverable at runtime.
+- **FR-2 — Dynamic Parameter Configuration**: Settings on the target must be adjustable from the host (`xtask`).
+- **FR-3 — Embedded Metadata**: Test suites must include doc-strings.
 
 #### Non-Functional Requirements
 
-* **Zero Runtime Registration Overhead**: The test registry must be constructed
-  during the linking phase.
-* **High ROM/RAM Efficiency**: Test descriptors must reside directly in Flash
-  memory (ROM) to conserve RAM.
-* **Low-Overhead Execution**: Running an empty test function must cause the
-  target Server to return immediately, only costing a few cycles.
-* **Real-Time Telemetry updates**: Telemetry streams must support low-latency
-  packet delivery to maintain smooth host-side rendering (under 16ms frame
-  updates).
+- **NFR-1 — Zero Runtime Registration Overhead**: The test registry must be constructed during the linking phase.
+- **NFR-2 — High ROM/RAM Efficiency**: Test descriptors must reside directly in Flash memory (ROM) to conserve RAM.
+- **NFR-3 — Low-Overhead Execution**: Running an empty test function must return immediately, costing only a few cycles.
+- **NFR-4 — Real-Time Telemetry Updates**: Telemetry streams must support low-latency delivery to maintain smooth host-side rendering (under 16ms).
 
 #### Constraints
 
-* **Strict `#![no_std]` Execution**: The target-side framework must compile
-  under `#![no_std]` and operate with zero dynamic heap allocation.
-* **Target Architecture Constraints**:
-    * ARM-V6/7/8
-    * RISC-V
-* **Eradication of `static mut`**: All global state indicators and configurable
-  settings must use thread-safe interior mutability wrappers instead of the
-  deprecated `static mut` construct.
+- **C-1 — Strict `#![no_std]` Execution**: The target-side framework must compile under `#![no_std]` with zero dynamic heap allocation.
+- **C-2 — Target Architecture Constraints**: ARM-V6/7/8 and RISC-V.
+- **C-3 — Eradication of `static mut`**: All global state and configurable settings must use thread-safe interior mutability wrappers, not `static mut`.
 
 ---
 
@@ -397,9 +386,9 @@ Interactive testing sessions follow a strict state-machine flow:
 
 ### 10. Revision History
 
-| Revision | Date           | Description                                                                                                                                                                                                                        | Author          |
-|:---------|:---------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
-| 1.0      | May 23, 2026   | Initial design of exportable test suites.                                                                                                                                                                                          | @MitchellDScott |
-| 1.1      | July 18, 2026  | Updated to the latest design document template; incorporated research findings on linker GC mitigation, ARMv6-M atomics constraints, and RTT/Semihosting. Verified alignment with `control-rs-hil` implementation.                 | @MitchellDScott |
-| 1.2      | August 6, 2026 | rust-lang/rust#67209 citation in GC mitigation and Risks, evidence-backed `inventory`/`linkme` rejections, settings-registry ecosystem gap, `ExecDescriptor` metadata open question. Unified linker script name to `hil_suites.x`. | @MitchellDScott |
-| 1.3      | August 9, 2026 | Review and corrections.                                                                                                                                                                                                            | @MitchellDScott |
+| Revision | Date | Author | Description |
+|:---------|:-----|:-------|:-------------|
+| 1.0 | May 23, 2026 | @MitchellDScott | Initial design of exportable test suites. |
+| 1.1 | July 18, 2026 | @MitchellDScott | Updated to latest template; incorporated linker GC and ARMv6-M atomics research; verified alignment with `control-rs-hil`. |
+| 1.2 | August 6, 2026 | @MitchellDScott | Added GC-mitigation and rejection citations; resolved metadata open question; unified linker script name. |
+| 1.3 | August 9, 2026 | @MitchellDScott | Review and corrections. |

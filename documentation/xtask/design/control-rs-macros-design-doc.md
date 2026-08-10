@@ -26,37 +26,22 @@ automated discovery without a centralized registry.
 
 #### Functional Requirements
 
-* **Distributed Module Annotation**: Developers must be able to declare a suite
-  simply by tagging a module with `#[hil_suite]`.
-* **Automatic Registration**: The macro must automatically identify all
-  functions within the module, that do not begin with an underscore and generate
-  test descriptors.
-* **Type-Safe Settings Translation**: Any static variable declared inside the
-  `#[hil_suite]` module must be translated into a thread-safe atomic setting
-  structure.
-* **Entrypoint & Setup Generation**: The `#[hil_setup]` macro must generate the
-  standard `main()` entrypoint, call the user's hardware initialization code,
-  and instantiate the execution context.
-* **Custom Panic Redirection**: The macro-generated entrypoint must register a
-  custom panic handler that intercepts test panics and routes them through the
-  host communications layer.
+- **FR-1 — Distributed Module Annotation**: Developers must declare a suite by tagging a module with `#[hil_suite]`.
+- **FR-2 — Automatic Registration**: The macro must automatically identify non-underscore-prefixed functions within the module and generate test descriptors.
+- **FR-3 — Type-Safe Settings Translation**: Any static variable declared inside the `#[hil_suite]` module must be translated into a thread-safe atomic setting structure.
+- **FR-4 — Entrypoint & Setup Generation**: The `#[hil_setup]` macro must generate the `main()` entrypoint, call the user's hardware init code, and instantiate the execution context.
+- **FR-5 — Custom Panic Redirection**: The macro-generated entrypoint must register a custom panic handler that routes test panics through the host communications layer.
 
 #### Non-Functional Requirements
 
-* **Zero Runtime Allocation**: All generated code, setup contexts, and panic
-  handlers must operate strictly without a heap.
-* **Linker Retention Safety**: Generated descriptors must survive aggressive
-  linker garbage collection (`--gc-sections`) in release builds.
-* **Rust 2024/2027 Compliance**: The generated structures must eliminate all
-  deprecated `static mut` usage, using type-safe atomic wrappers and interior
-  mutability instead.
+- **NFR-1 — Zero Runtime Allocation**: All generated code, setup contexts, and panic handlers must operate strictly without a heap.
+- **NFR-2 — Linker Retention Safety**: Generated descriptors must survive aggressive linker garbage collection (`--gc-sections`) in release builds.
+- **NFR-3 — Rust 2024/2027 Compliance**: Generated structures must eliminate `static mut` usage in favor of type-safe atomic wrappers and interior mutability.
 
 #### Constraints
 
-* **Strict `#![no_std]` Compatibility**: The code emitted by the macros must
-  compile on bare-metal targets without standard library support.
-* **Target Independency**: The macros must emit target-agnostic Rust code that
-  that delegates hardware specifics to the user defined profiler.
+- **C-1 — Strict `#![no_std]` Compatibility**: Code emitted by the macros must compile on bare-metal targets without standard library support.
+- **C-2 — Target Independency**: The macros must emit target-agnostic Rust code that delegates hardware specifics to the user-defined profiler.
 
 ---
 
@@ -311,8 +296,8 @@ Steps 1–4 are implemented in `control-rs-macros/src/lib.rs`; discovery via
 
 ### 10. Revision History
 
-| Revision | Date           | Description                                                                                                                                                                                                                                                                                             | Author          |
-|:---------|:---------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
-| 1.0      | May 24, 2026   | Initial design of procedural macros for test discovery.                                                                                                                                                                                                                                                 | @MitchellDScott |
-| 1.1      | July 18, 2026  | Restructured to design-template standard. Incorporated findings on linker GC mitigation (`KEEP` directives, build.rs injection), atomic settings conversion, and custom panic redirection.                                                                                                              | @MitchellDScott |
-| 1.2      | August 6, 2026 | Incorporated build-vs-adopt research (`documentation/xtask/research/results/control-rs-macros.json`): evidence-backed `linkme`/`inventory` rejections, `#[hil_setup]` diagnostics gap, per-test opt-out gap, syn feature audit. Marked Steps 1–4 shipped; unified linker script name to `hil_suites.x`. | @MitchellDScott |
+| Revision | Date | Author | Description |
+|:---------|:-----|:-------|:-------------|
+| 1.0 | May 24, 2026 | @MitchellDScott | Initial design of procedural macros for test discovery. |
+| 1.1 | July 18, 2026 | @MitchellDScott | Restructured to design-template standard; added linker GC mitigation and panic-redirection findings. |
+| 1.2 | August 6, 2026 | @MitchellDScott | Incorporated build-vs-adopt research; marked Steps 1-4 shipped; unified linker script name to `hil_suites.x`. |

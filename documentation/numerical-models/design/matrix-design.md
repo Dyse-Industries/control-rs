@@ -33,45 +33,42 @@ architecture:
 
 #### 2.1. Functional Requirements
 
-- **Compile-Time Sizing**: Enforce dimensions of arguments at compile time
-  using [num_types](../../src/math/num_types.rs).
-- **Static Constructors**: Provide compile-time evaluated constructors for zero
-  matrices, identity matrices, and diagonal matrices.
-- **Core Arithmetic**: Implement standard operator overloading for matrix
+- **FR-1 — Compile-Time Sizing**: Enforce dimensions of arguments at compile
+  time using `num_types`.
+- **FR-2 — Static Constructors**: Provide compile-time evaluated constructors
+  for zero, identity, and diagonal matrices.
+- **FR-3 — Core Arithmetic**: Implement standard operator overloading for
   addition, subtraction, multiplication, and negation.
-- **Matrix Operations**: Provide methods for matrix transposition, determinant
+- **FR-4 — Matrix Operations**: Provide methods for transposition, determinant
   calculation, and inversion.
-- **Specializations**: Support specialized structures (Upper Triangular, Lower
-  Triangular, and Symmetric) to dispatch optimized mathematical routines.
-- **Coordinate-Based Instantiation**: Expose coordinate-based mapping functions
-  to initialize elements by index.
-- **Matrix Concatenation**: Implement a method to combine matrices and lists of
-  matrics both vertically and horizontally.
-- **Type Conversions**: Support conversions between `Matrix`, `Polynomial`, and
-  `Tensor` representations (e.g., computing a characteristic polynomial from a
-  square matrix, or mapping a 2D matrix to a rank-2 tensor).
+- **FR-5 — Specializations**: Support specialized structures (Upper Triangular,
+  Lower Triangular, Symmetric) to dispatch optimized routines.
+- **FR-6 — Coordinate-Based Instantiation**: Expose coordinate-based mapping
+  functions to initialize elements by index.
+- **FR-7 — Matrix Concatenation**: Implement a method to combine matrices and
+  lists of matrices both vertically and horizontally.
+- **FR-8 — Type Conversions**: Support conversions between `Matrix`,
+  `Polynomial`, and `Tensor` representations for compatible ranks and sizes.
 
 #### 2.2. Non-Functional Requirements
 
-- **Deterministic Execution**: Matrix operations must execute within
+- **NFR-1 — Deterministic Execution**: Matrix operations must execute within
   predictable, deterministic timeframes.
-- **No Excessive Compile-Time Overhead**: The use of `const fn` for static
-  constructors and dimension enforcement must not cause excessive compile-time
-  increase or binary bloat.
-- **Specialization Optimization**: The structural specializations should run
+- **NFR-2 — No Excessive Compile-Time Overhead**: `const fn` static constructors
+  and dimension enforcement must not cause excessive compile-time increase or
+  binary bloat.
+- **NFR-3 — Specialization Optimization**: Structural specializations should run
   in about half the operations of a regular matrix multiplication.
 
 #### 2.3. Constraints
 
-- **No-Std Environment**: The code must compile and run in `#![no_std]`
+- **C-1 — No-Std Environment**: The code must compile and run in `#![no_std]`
   environments without the Rust standard library.
-- **No Dynamic Allocation**: The module must not use a heap allocator. All
-  memory allocations must be static or stack-based.
-- **Memory Footprint**: Limit maximum matrix dimensions to $32 \times 32$
-  elements to guarantee that a single matrix instance never exceeds 4KB of stack
-  space (when using 32-bit floats).
-  _See [PeanoTypeNum](../../src/math/num_types.rs) implementations for more
-  details._
+- **C-2 — No Dynamic Allocation**: The module must not use a heap allocator; all
+  memory allocations are static or stack-based.
+- **C-3 — Memory Footprint**: Maximum matrix dimensions are limited
+  to $32 \times 32$ elements, keeping a single instance under 4KB of stack (
+  32-bit floats).
 
 ---
 
@@ -184,7 +181,6 @@ pub type MatrixSlice<'a, T, R, C> = Matrix<T, R, C, MatrixView<'a, T, R, C>>;
 
 /// A high-level Matrix wrapper around a mutable MatrixViewMut storage backend.
 pub type MatrixSliceMut<'a, T, R, C> = Matrix<T, R, C, MatrixViewMut<'a, T, R, C>>;
-
 ```
 
 - **Non-Destructive Transposed Views**:
@@ -411,7 +407,7 @@ A square matrix `Matrix<T, D, D>` converts to its characteristic polynomial
 - **Behavior**: Coefficients are computed using the Faddeev-LeVerrier
   algorithm (Faddeev & Faddeeva, 1963).
 - **Failure Condition**: Returns `ConversionError::DimensionMismatch` if the
-  scalar type cannot perform division, if numerical overflow occurs, or if
+  scalar type cannot perform division, if numerical overflow occurs or if
   capacity is insufficient.
 
 ##### 4.8.2. Conversion to Tensor
@@ -919,12 +915,13 @@ execution predictability.
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description of Changes                                                                                                                                                                                                             |
-|:---------|:---------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026  | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                                                                                                                                     |
-| 2.0      | July 19, 2026  | @MitchellDScott | Restructured to new template; added embedded performance/verification details.                                                                                                                                                     |
-| 3.0      | July 25, 2026  | @MitchellDScott | Added supporting bibliography and inline citations.                                                                                                                                                                                |
-| 4.0      | July 26, 2026  | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, decoupled Storage trait model, and no_alloc scratch space patterns.                                                                                                    |
-| 5.0      | July 26, 2026  | @MitchellDScott | Harmonized matrix design with storage trait design doc; updated Matrix<T, R, C, S> definition, contiguous bounds, explicit decomposition rules, alternatives, and 4-pillar V&V.                                                    |
-| 6.0      | July 26, 2026  | @MitchellDScott | Added comprehensive 3-tiered bibliography (Practical/Analytical, Theoretical, Cross-Cutting Standards & Safety) and inline citations across core architectural sections.                                                           |
-| 7.0      | August 1, 2026 | @MitchellDScott | Corrected `nalgebra` comparison claims (no_std support, nonexistent `ContiguousStorage` trait), clarified the actual benefit of decoupling storage from `Matrix`, and added a system-solving convenience note per review feedback. |
+| Revision | Date           | Author          | Description                                                                                                          |
+|:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 12, 2026  | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                       |
+| 1.1      | July 19, 2026  | @MitchellDScott | Restructured to new template; added embedded performance and verification details.                                   |
+| 1.2      | July 25, 2026  | @MitchellDScott | Added supporting bibliography and inline citations.                                                                  |
+| 1.3      | July 26, 2026  | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, and no_alloc scratch space patterns.                     |
+| 1.4      | July 26, 2026  | @MitchellDScott | Harmonized with storage trait design doc; updated `Matrix` definition, bounds, decomposition rules, and V&V.         |
+| 1.5      | July 26, 2026  | @MitchellDScott | Added comprehensive 3-tiered bibliography and inline citations across core architectural sections.                   |
+| 1.6      | August 1, 2026 | @MitchellDScott | Corrected `nalgebra` comparison claims; clarified storage-decoupling benefit; added system-solving convenience note. |
+| 1.7      | August 2, 2026 | @MitchellDScott | Propagated `num-traits-design.md` pivot; removed duplicate MatrixView definitions; relocated `ConversionError`.      |

@@ -20,37 +20,21 @@ core logic.
 
 #### Functional Requirements
 
-* **Unified Abstraction**: The target firmware must expose a hardware-agnostic
-  API to poll commands, transmit telemetry, and flush data.
-* **Bidirectional Telemetry**: The system must support command packets sent
-  from the host (such as real-time parameter tuning and running specific test
-  executable paths) and telemetry packets sent from the target.
-* **Catastrophic Failure Capture**: The target must capture panics and hardware
-  exceptions, format them with timestamps and backtraces, and transmit them as
-  prioritized telemetry to the host before halting or rebooting.
+- **FR-1 — Unified Abstraction**: The target firmware must expose a hardware-agnostic API to poll commands, transmit telemetry, and flush data.
+- **FR-2 — Bidirectional Telemetry**: The system must support host-to-target command packets and target-to-host telemetry packets.
+- **FR-3 — Catastrophic Failure Capture**: The target must capture panics and hardware exceptions, format them with timestamps and backtraces, and transmit them as prioritized telemetry before halting or rebooting.
 
 #### Non-Functional Requirements
 
-* **Low Latency & Determinism**: Telemetry and logging operations must execute
-  within microsecond-level budgets to avoid violating real-time plant simulation
-  step intervals (e.g., 1000 Hz loop) or inducing artificial control loop
-  jitter.
-* **Zero Dynamic Allocation**: The target-side library must compile under
-  `#![no_std]` and strictly operate with zero heap allocation (`alloc` crate) to
-  prevent runtime heap fragmentation or memory exhaustion.
-* **High Bandwidth Efficiency**: The protocol must minimize the transport
-  payload footprint, shifting string formatting, deserialization, and UI state
-  management onto the computationally superior host machine.
+- **NFR-1 — Low Latency & Determinism**: Telemetry and logging must execute within microsecond-level budgets to avoid violating real-time plant simulation intervals or inducing control loop jitter.
+- **NFR-2 — Zero Dynamic Allocation**: The target-side library must compile under `#![no_std]` with strictly zero heap allocation.
+- **NFR-3 — High Bandwidth Efficiency**: The protocol must minimize transport payload footprint, shifting formatting and UI state management onto the host.
 
 #### Constraints
 
-* **Strict `#![no_std]` target execution**: The firmware environment does not
-  possess a standard library or heap allocator.
-* **Stack Footprint Restrictions**: Serialization must avoid massive stack
-  allocations to prevent stack overflows on memory-limited microcontrollers.
-* **Physical Connectivity Limits**: Interfaces are restricted to standard
-  peripherals (UART, Ethernet MAC/PHY) or physical hardware debug probes (
-  SWD/JTAG).
+- **C-1 — Strict `#![no_std]` Target Execution**: The firmware environment has no standard library or heap allocator.
+- **C-2 — Stack Footprint Restrictions**: Serialization must avoid massive stack allocations to prevent overflows on memory-limited microcontrollers.
+- **C-3 — Physical Connectivity Limits**: Interfaces are restricted to standard peripherals (UART, Ethernet MAC/PHY) or hardware debug probes (SWD/JTAG).
 
 ---
 
@@ -392,9 +376,9 @@ SWD/JTAG.
 
 ### 10. Revision History
 
-| Date           | Version | Description                                                                                                                                                                                                                       | Author          |
-|:---------------|:--------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
-| May 23, 2026   | v0.1    | Initial draft outlining HostComm middleware trait.                                                                                                                                                                                | @MitchellDScott |
-| July 18, 2026  | v1.0    | Restructured to template; incorporated comprehensive HIL, serialization, framing, defmt, panic handling, remote tooling, and non-probe-rs portability updates based on research report.                                           | @MitchellDScott |
-| August 6, 2026 | v1.1    | Consistency pass: removed leftover COBS-as-chosen language, marked deferred formatting (`defmt`) as planned rather than shipped, standardized on the `serial2` host serial crate, fixed section numbering, marked Step 1 shipped. | @MitchellDScott |
-| August 9, 2026 | v1.1    | Review and corrections.                                                                                                                                                                                                           | @MitchellDScott |
+| Revision | Date | Author | Description |
+|:---------|:-----|:-------|:-------------|
+| 1.0 | May 23, 2026 | @MitchellDScott | Initial draft outlining HostComm middleware trait. |
+| 1.1 | July 18, 2026 | @MitchellDScott | Restructured to template; incorporated HIL, serialization, framing, and remote-tooling research findings. |
+| 1.2 | August 6, 2026 | @MitchellDScott | Consistency pass: removed COBS-as-chosen language, marked `defmt` planned, standardized on `serial2`, fixed numbering. |
+| 1.3 | August 9, 2026 | @MitchellDScott | Review and corrections. |

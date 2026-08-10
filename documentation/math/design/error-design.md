@@ -20,16 +20,15 @@
 
 #### 2.1 Functional Requirements
 
-- **Single Definition for Shared Error Types**: An error type consumed by
-  more than one sibling module (`Matrix`, `Polynomial`, `Tensor`,
-  `StateSpace`, `TransferFunction`) must be defined once, here, rather than
-  inside whichever module happened to need it first.
+- **FR-1 — Single Definition for Shared Error Types**: An error type consumed by
+  more than one sibling module (`Matrix`, `Polynomial`, `Tensor`, `StateSpace`,
+  `TransferFunction`) must be defined once, here.
 
 #### 2.2 Non-Functional Requirements
 
-- Follows the crate-wide `thiserror`-enum convention already established by
-  `matrix-design.md` and `state-space-design.md` — no behavior
-  change, relocation only.
+- **NFR-1 — Convention Compliance**: Follows the crate-wide `thiserror`-enum
+  convention already established by `matrix-design.md` and
+  `state-space-design.md`; relocation only, no behavior change.
 
 ---
 
@@ -72,7 +71,7 @@ pub enum ConversionError {
 
 ### 10. Revision History
 
-| Date       | Author          | Description                                                                                                                                                                                                                                                |
-|:-----------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 2026-08-02 | @MitchellDScott | Initial stub. Relocates `ConversionError` out of `matrix-design.md` §4.9.2 in response to review feedback identifying it as an undeclared shared dependency of `polynomial-design.md` and `tensor-design.md`. Deliberately minimal pending `/cr-research`. |
-| 2026-08-09 | @MitchellDScott | Review and corrections                                                                                                                                                                                                                                     |
+| Revision | Date           | Author          | Description                                                                                                        |
+|:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 2, 2026 | @MitchellDScott | Initial stub relocating `ConversionError` out of `matrix-design.md` per review feedback; minimal pending research. |
+| 1.1      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                            |

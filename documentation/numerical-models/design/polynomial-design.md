@@ -28,51 +28,27 @@ sections below.
 
 #### 2.1 Functional Requirements
 
-- **Compile-Time Sizing**: Enforce polynomial capacity/degree bounds at
-  compile time using [num_types](../../src/math/num_types.rs) (`Dim`).
-- **Constructors**: Provide `const fn` constructors for common low-degree
-  cases (`constant`, `line`) and general capacity (`from_coefficients`), plus
-  runtime constructors over borrowed memory (`from_slice`, `from_fn`).
-- **Core Arithmetic**: Implement operator overloading for polynomial
-  addition, subtraction, and negation (`Add`, `Sub`, `Neg`).
-- **Multiplication**: Provide two multiplication paths — `mul_poly` for
-  statically-sized, capacity-bound multiplication, and `mul_with_conv` for
-  DSP-kernel-backed convolution via the `Convolution<T>` trait.
-- **Evaluation**: Evaluate $p(x)$ using Horner's method in exactly $N-1$
-  multiply-adds.
-- **Division**: Implement `div_rem` to compute quotient and remainder
-  polynomials with statically resized capacity bounds.
-- **Calculus Operations**: Implement analytical derivative and integral
-  methods returning statically resized polynomial bounds.
-- **Type Conversions**: Support conversion to a companion `Matrix` (for
-  root-finding) and to a rank-1 `Tensor`.
+- **FR-1 — Compile-Time Sizing**: Enforce polynomial capacity/degree bounds at compile time using `num_types` (`Dim`).
+- **FR-2 — Constructors**: Provide `const fn` constructors for low-degree cases and general capacity, plus runtime constructors over borrowed memory.
+- **FR-3 — Core Arithmetic**: Implement operator overloading for addition, subtraction, and negation (`Add`, `Sub`, `Neg`).
+- **FR-4 — Multiplication**: Provide `mul_poly` (statically-sized) and `mul_with_conv` (DSP-kernel convolution via `Convolution<T>`) paths.
+- **FR-5 — Evaluation**: Evaluate $p(x)$ using Horner's method in exactly $N-1$ multiply-adds.
+- **FR-6 — Division**: Implement `div_rem` to compute quotient and remainder polynomials with statically resized capacity bounds.
+- **FR-7 — Calculus Operations**: Implement analytical derivative and integral methods returning statically resized polynomial bounds.
+- **FR-8 — Type Conversions**: Support conversion to a companion `Matrix` (for root-finding) and to a rank-1 `Tensor`.
 
 #### 2.2 Non-Functional Requirements
 
-- **Deterministic Execution**: Horner evaluation and `div_rem` must execute in
-  a fixed, data-independent number of operations for a given capacity `N`.
-- **Zero-Cost Storage Abstraction**: The `Storage<T, N, U1>` abstraction must
-  monomorphize and inline without vtables or dynamic dispatch.
-- **Vectorization-Friendly Layout**: Contiguous storage backends must allow
-  compiler SIMD auto-vectorization over coefficient slices.
+- **NFR-1 — Deterministic Execution**: Horner evaluation and `div_rem` execute in a fixed, data-independent operation count for a given capacity `N`.
+- **NFR-2 — Zero-Cost Storage Abstraction**: The `Storage<T, N, U1>` abstraction must monomorphize and inline without vtables or dynamic dispatch.
+- **NFR-3 — Vectorization-Friendly Layout**: Contiguous storage backends must allow compiler SIMD auto-vectorization over coefficient slices.
 
 #### 2.3 Constraints
 
-- **No-Std Environment**: The code must compile and run in `#![no_std]`
-  environments without the Rust standard library (crate-wide rule, see
-  [README](../../README.md)).
-- **No Dynamic Allocation**: The module must not use a heap allocator; all
-  memory allocations must be static or stack-based (crate-wide rule).
-- **Coefficient Ordering**: Coefficients are stored in **ascending order of
-  powers** (see §3.3 for the full layout rationale). This is a *logical*
-  indexing rule — index `i` maps to the coefficient of $x^i$ — independent of
-  the underlying `Storage` backend's physical memory layout (row-major,
-  column-major, strided; see [storage-trait-design.md](../../math/design/storage-trait-design.md)
-  FR-1/FR-6). This is the canonical statement of the convention; other
-  numerical models that share it (e.g. `transfer-function-design.md`)
-  reference this section rather than restating it.
-- **Capacity Bound**: Maximum polynomial capacity is limited to 128 elements
-  (see the crate-level capacity table in [README](../../README.md)).
+- **C-1 — No-Std Environment**: The code must compile and run in `#![no_std]` environments without the Rust standard library (crate-wide rule).
+- **C-2 — No Dynamic Allocation**: The module must not use a heap allocator; all memory allocations are static or stack-based.
+- **C-3 — Coefficient Ordering**: Coefficients are stored in ascending order of powers, a logical indexing rule independent of `Storage`'s physical layout ([storage-trait-design.md](../../math/design/storage-trait-design.md) FR-1/FR-6); this is the canonical statement other models cross-reference.
+- **C-4 — Capacity Bound**: Maximum polynomial capacity is limited to 128 elements (crate-level capacity table).
 
 ---
 
@@ -530,12 +506,12 @@ via Peano type constraints.
 
 ### 12. Revision History
 
-| Date          | Author          | Description                                                                                         |
-|:--------------|:----------------|:----------------------------------------------------------------------------------------------------|
-| July 12, 2026 | @MitchellDScott | Initial draft with static array layout.                                                             |
-| July 26, 2026 | @MitchellDScott | Integrated `Storage<T, N, U1>` trait hierarchy to support borrowed zero-copy views and ROM storage. |
-| July 26, 2026 | @MitchellDScott | Added inline academic citations and 3-tiered references section.                                    |
-| August 1, 2026 | @MitchellDScott | Restructured §2 to the crate-wide Requirements template (Functional/Non-Functional/Constraints); made coefficient ordering the canonical cross-referenced statement. |
-| August 2, 2026 | @MitchellDScott | Added Aurentz et al. (2018) and Higham (2002) citations; clarified Controllable-Canonical-Form conditioning (§4.4.1); documented `div_rem` conditioning caveats (§5.2); added §7 Alternatives, §9 Risks, §10 Development Plan. |
-| August 2, 2026 | @MitchellDScott | Propagated the `num-traits-design.md` pivot to the companion-matrix bound (`Zero + One + Copy + Neg + PartialEq` → `Zero + One + Signed + Copy`, §4.4.1); condensed §4.4.1's "two conditioning subtleties" framing into direct implementer guidance; relocated `ConversionError` to `error-design.md`; flagged `Convolution<T: Real>` (§4.2) as a reference to shipped, pre-pivot code pending its own migration, and corrected a factual error conflating `mul_poly`'s (broader) bound with `Convolution<T>`'s `Real`-only bound (§7); documented `Convolution::convolve_input`'s pre-existing `assert!` panic as a required, not-yet-applied `/cr-implement`-time fix (§5.2, §9); softened the "every established Rust polynomial crate" claim to name its actual (four-crate) survey scope (§3.3). |
-| August 2, 2026 | @MitchellDScott | Separated §3.3's logical coefficient-ordering convention from physical `Storage` layout, which it does not need to resolve; cross-referenced `storage-trait-design.md` FR-1/FR-6/FR-7 instead of restating the layout-genericity mechanism (§2.3, §3.3). |
+| Revision | Date | Author | Description |
+|:---------|:-----|:-------|:-------------|
+| 1.0 | July 12, 2026 | @MitchellDScott | Initial draft with static array layout. |
+| 1.1 | July 26, 2026 | @MitchellDScott | Integrated `Storage` trait hierarchy to support borrowed zero-copy views and ROM storage. |
+| 1.2 | July 26, 2026 | @MitchellDScott | Added inline academic citations and 3-tiered references section. |
+| 1.3 | August 1, 2026 | @MitchellDScott | Restructured Requirements to the crate-wide template; made coefficient ordering the canonical cross-referenced statement. |
+| 1.4 | August 2, 2026 | @MitchellDScott | Added citations; clarified companion-form conditioning; documented `div_rem` caveats; added Alternatives, Risks, and Development Plan. |
+| 1.5 | August 2, 2026 | @MitchellDScott | Propagated `num-traits-design.md` pivot to companion-matrix bound; relocated `ConversionError`; corrected a factual error. |
+| 1.6 | August 2, 2026 | @MitchellDScott | Separated coefficient-ordering convention from `Storage` layout; cross-referenced `storage-trait-design.md` instead of restating it. |

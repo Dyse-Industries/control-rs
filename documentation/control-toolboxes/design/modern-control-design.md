@@ -31,80 +31,37 @@ estimation.
 
 #### 2.1. Functional Requirements
 
-- **Pole/Eigenvalue Placement**: Compute a state-feedback gain $K$ (or
-  observer gain $L$) placing the eigenvalues of $A - BK$ (or $A - LC$) at a
-  caller-specified set. Ackermann's formula is the SISO case (Ackermann,
-  1972); MATLAB's `place` and Octave's `place`/`acker` (Octave-Forge
-  Community, 2026) and Julia's `place` (JuliaControl, 2026a) all expose this
-  split — Ackermann's formula for SISO systems, a distinct MIMO algorithm
-  (`place_knvd`, tracing to Kautsky, Nichols, and Van Dooren, 1985) for
-  multi-input systems. `modern_tools` requires both paths, not one
-  generalized routine.
-- **LQR/LQG Synthesis**: Given $(A, B, Q, R)$, compute the state-feedback
-  gain $K$ minimizing $J = \int_0^\infty (x^\top Q x + u^\top R u)\, dt$ (or
-  its discrete-time sum form), i.e. `u = -Kx` (python-control, 2026a;
-  JuliaControl, 2026a). LQG composes this with a Kalman-filter state
-  estimate in place of the true state — JuliaControl's synthesis docs
-  describe this explicitly as combining a `kalman`-computed gain with an
-  `lqr`-computed gain through an `observer_controller` composition
-  (JuliaControl, 2026a), i.e. LQG is not a separate solver, it is LQR and
-  Kalman filtering wired together.
-- **Riccati Equation Solving**: Solve the continuous- and discrete-time ARE.
-  This is not a standalone convenience function — python-control's `care`
-  and MATLAB's `care`/`icare` are the same underlying computation LQR gain
-  synthesis calls internally (python-control, 2026b; MathWorks, 2026a), and
-  JuliaControl's `kalman` function returns the ARE solution `R∞` directly
-  alongside the gain (JuliaControl, 2026a). `modern_tools` requires ARE
-  solving as a shared substrate under both LQR and steady-state Kalman gain
-  computation, not two independent implementations.
-- **Kalman Filtering and Observer Design as Distinct Code Paths**: Surveyed
-  toolboxes separate three estimator flavors:
-    - **Steady-state / linear Kalman filtering**: a fixed gain from the ARE
-      solution, grouped by Octave-Forge under "Optimal Control" alongside
-      `lqr` (`kalman`, `lqe`, `dlqe`; Octave-Forge Community, 2026) and by
-      python-control/JuliaControl as `lqe`/`kalman` (JuliaControl, 2026a).
-    - **Extended Kalman filtering (EKF)**: relinearizes nonlinear $f()$/$h()$
-      every step via Jacobians (Labbe, 2016a).
-    - **Unscented Kalman filtering (UKF)**: propagates sigma points through
-      the nonlinear map instead of linearizing (Labbe, 2016b), per the
-      scaled unscented transform (Julier, 2002) and the Wan/Van der Merwe
-      formulation (Wan and Van der Merwe, 2000).
-    - **Luenberger observer design**: a deterministic pole-placement
-      problem ($A - LC$ eigenvalues at $p$), with no noise/covariance model
-      — JuliaControl's `place` computes both the state-feedback gain and
-      the "observer gain matrix $L$" from the same Ackermann/`place_knvd`
-      machinery used for control-law placement (JuliaControl, 2026a), i.e.
-      observer design is a placement problem, not an estimation problem.
-      `modern_tools` requires all four as distinct types/entry points rather
-      than one generic "filter" abstraction.
+- **FR-1 — Pole/Eigenvalue Placement**: Compute a state-feedback gain $K$ (or
+  observer gain $L$) placing eigenvalues of $A - BK$ (or $A - LC$) at a
+  caller-specified set, via Ackermann's formula (SISO) and a distinct MIMO
+  algorithm.
+- **FR-2 — LQR/LQG Synthesis**: Given $(A, B, Q, R)$, compute the state-feedback
+  gain $K$ minimizing the quadratic cost $J$; LQG composes this gain with a
+  Kalman-filter state estimate.
+- **FR-3 — Riccati Equation Solving**: Solve the continuous- and discrete-time
+  ARE as a shared substrate under both LQR and steady-state Kalman gain
+  computation.
+- **FR-4 — Kalman/Observer Estimation Paths**: Provide steady-state Kalman
+  filtering, EKF, UKF, and Luenberger observer design as four distinct
+  types/entry points, not one generic "filter" abstraction.
 
 #### 2.2. Non-Functional Requirements
 
-- **`no_std`, No Heap, No Dynamic Allocation**: Consistent with the crate's
-  existing constraints, per `README.md`'s capability table (`Matrix` capped
-  at 32x32). This is the requirement the surveyed evidence supports least
-  well — see §4.2 and §8.
-- **Build on `Matrix`/`StateSpace`, Not a Parallel Numeric Stack**: All
-  solvers operate on `control_rs::math::matrix::Matrix` and
-  `control_rs::state_space::StateSpace` types; no independent
-  linear-algebra path is introduced.
-- **No LAPACK/BLAS Dependency**: Every industry-standard reference
-  implementation surveyed leans on a compiled linear-algebra backend
-  (`lqr`'s `method` parameter tries Fortran/LAPACK via `slycot` first, then
-  falls back to SciPy; python-control, 2026a) or an external Julia package
-  (JuliaControl, 2026a — `MatrixEquations.jl`, per Varga, 2026).
-  `modern_tools` cannot depend on any of these; it must reuse or extend
-  `Matrix`'s existing in-house decomposition routines.
+- **NFR-1 — `no_std`, No Heap, No Dynamic Allocation**: Consistent with the
+  crate's existing constraints (`Matrix` capped at 32x32); see §4.2 and §8 for
+  evidence gaps.
+- **NFR-2 — Build on `Matrix`/`StateSpace`**: All solvers operate on existing
+  `Matrix`/`StateSpace` types; no independent linear-algebra path is introduced.
+- **NFR-3 — No LAPACK/BLAS Dependency**: `modern_tools` reuses or extends
+  `Matrix`'s in-house decomposition routines rather than an external compiled
+  backend.
 
 #### 2.3. Constraints
 
-- Numeric methods are bounded by `Matrix`'s $32 \times 32$ / no-heap
-  ceiling; any ARE solver design must fit inside that envelope.
-- H-infinity/mu-synthesis is out of scope for this document's Requirements
-  — every surveyed toolbox treats it as a separately packaged capability
-  (§4.3, §8), and `control-rs` already carries a separate `robust_tools`
-  scaffold for it. This document does not commit H-infinity to
-  `modern_tools`.
+- **C-1 — Matrix Capacity Ceiling**: Numeric methods are bounded by `Matrix`'s
+  32×32/no-heap ceiling; any ARE solver design must fit inside that envelope.
+- **C-2 — H-infinity Out of Scope**: H-infinity/mu-synthesis is not committed to
+  `modern_tools`; it belongs to the separate `robust_tools` scaffold (§4.3, §8).
 
 ---
 
@@ -500,6 +457,6 @@ Two options follow:
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description of Changes                                                                                                                                                                    |
-|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: requirements, Riccati-solver architecture and alternatives, Kalman/EKF/UKF/Luenberger code-path split, modern_tools-vs-robust_tools packaging question flagged for review. |
+| Revision | Date           | Author          | Description                                                                                                                           |
+|:---------|:---------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: requirements, Riccati-solver architecture, Kalman/EKF/UKF/Luenberger split, and packaging question flagged for review. |
