@@ -20,6 +20,29 @@
 //!
 //! let _: <U127 as DimMul<U2>>::Output = Default::default();
 //! ```
+//!
+//! The per-pair envelope is narrower than the ceiling itself: structural
+//! recursion re-resolves `Dim` on an operand at each step, so operations
+//! whose results stay at or below `U127` can still overflow the solver.
+//! `U126 * U1` fails even though `U125 * U1` resolves:
+//!
+//! ```compile_fail
+//! use control_rs::math::num_types::{DimMul, U1, U126};
+//!
+//! let _: <U126 as DimMul<U1>>::Output = Default::default();
+//! ```
+//!
+//! and the envelope is asymmetric: `U1 + U126` fails even though
+//! `U63 + U64` (the same sum) resolves:
+//!
+//! ```compile_fail
+//! use control_rs::math::num_types::{DimAdd, U1, U126};
+//!
+//! let _: <U1 as DimAdd<U126>>::Output = Default::default();
+//! ```
+//!
+//! The passing sides of both boundaries are pinned as unit tests in
+//! `num_type_tests`.
 #![allow(clippy::arbitrary_source_item_ordering)]
 
 use core::marker::PhantomData;

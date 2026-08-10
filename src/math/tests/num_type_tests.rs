@@ -29,7 +29,7 @@
 pub mod num_type_test_suite {
     use crate::math::num_types::{
         Const, Dim, DimAdd, DimMax, DimMin, DimMul, DimSub, S, U0, U1, U2, U3,
-        U4, U5, U6, U10, U12, U15, U32, U125, U127, Z,
+        U4, U5, U6, U10, U12, U15, U32, U63, U64, U125, U127, Z,
     };
     use core::marker::PhantomData;
     use core::mem;
@@ -114,6 +114,17 @@ pub mod num_type_test_suite {
         // limit above U125, not U127 (see C-2). U125 is the largest operand
         // pinned here as a regression against that boundary shrinking further.
         let _: U125 = <U125 as DimMul<U1>>::Output::default();
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies type-level addition at the pairwise recursion boundary (C-2).
+    fn test_num_type_addition_recursion_limit() {
+        // `DimAdd`'s envelope is asymmetric, not bounded by the operand sum:
+        // `U63 + U64` resolves while `U1 + U126` (the same sum) overflows
+        // the trait solver — the failing side is pinned as a `compile_fail`
+        // doctest in `num_types`. This pins the passing side against the
+        // envelope shrinking.
+        let _: U127 = <U63 as DimAdd<U64>>::Output::default();
     }
 
     #[cfg_attr(test, test)]

@@ -1,7 +1,7 @@
 # Numeric Types (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-August_9,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-greengit)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@mitchelldscott-blueviolet)
 
 ---
@@ -179,21 +179,29 @@ concern.
    minimum, each checked both as a type-level assertion (`let _: U5 = ...`)
    and as a runtime `Dim::DIM` value check.
 3. **Recursion-limit test**:
-   `test_num_type_multiplication_recursion_limit` moves to exercise the
-   `U127` ceiling (C-1) directly — e.g. `<U127 as DimMul<U1>>::Output` —
-   so a future change that increases per-operation recursion depth surfaces
-   as a build failure here before it does anywhere downstream.
+   `test_num_type_multiplication_recursion_limit` pins `U125` as the
+   largest operand for which `DimMul<U1>` resolves — the per-pair envelope
+   stops two levels short of the `U127` ceiling because each recursive step
+   re-resolves `Dim` on the multiplier (C-2). A future change that
+   increases per-operation recursion depth surfaces as a build failure here
+   before it does anywhere downstream.
 4. **HIL suite wrapping**: the test module is wrapped with
    `#[cfg_attr(not(test), control_rs_macros::hil_suite)]`, consistent with
    this crate's convention of running math test suites on-target; for a
    compile-time-only module the only on-target-relevant claim is the
    zero-footprint assertion in item 1, since the arithmetic itself has no
    runtime component to diverge across targets.
-5. **Pairwise-arithmetic boundary characterization (C-2)**: standalone
-   `rustc` probes against the module's own trait shapes (default
+5. **Pairwise-arithmetic boundary tests (C-2)**: standalone `rustc` probes
+   against the module's own trait shapes (default
    `#![recursion_limit] = 128` (Rust Reference, 2026c), rustc 1.97.1) confirm
    a single `Dim` value resolves up to depth 127 and fails at 128, matching
-   C-1 exactly.
+   C-1 exactly. The same probes show the pairwise envelope is asymmetric
+   and not bounded by the operand sum: `U63 + U64` (sum 127) resolves while
+   `U1 + U126` (the same sum) does not. Both sides of the boundary are
+   pinned — passing cases as unit tests (`U125 * U1`, `U63 + U64`) and
+   failing cases as `compile_fail` doctests in the `num_types` module
+   documentation (`U127 * U2`, `U126 * U1`, `U1 + U126`) — closing Risk 4
+   (§8).
 
 #### 6.2 Validation
 
@@ -251,13 +259,13 @@ type lands, its own test suite becomes the first external validation that
    defines `DimMax`/`DimMin` but no `DimDiv` and no general `DimOrd`. Open
    until a consumer (e.g. a decomposition algorithm needing a ratio of
    dimensions) demonstrates a concrete need.
-4. **Pairwise-arithmetic boundary is characterized but not yet enforced by
-   a checked test (C-2).** §6.1 item 5 probes show the safe envelope for
-   `DimAdd`/`DimSub`/`DimMax`/`DimMin` between two large operands is
-   narrower than, and asymmetric with respect to, the `U127` ceiling — no
-   closed-form rule (e.g. "sum ≤ 127") predicts it. Until the regression
-   test in item 5 lands, a consumer combining two dimensions each under
-   `U127` has no compile-time guarantee the combination itself compiles.
+4. **Pairwise-arithmetic boundary is pinned only at sampled points (C-2).**
+   The §6.1 item 5 tests fix the envelope at specific operand pairs; no
+   closed-form rule (e.g. "sum ≤ 127") predicts whether an arbitrary pair
+   below the ceiling compiles. A consumer combining two large dimensions
+   still only learns the answer when that combination is first
+   instantiated — the failure mode is a compile error, never a
+   miscompilation.
 
 ---
 
@@ -266,9 +274,9 @@ type lands, its own test suite becomes the first external validation that
 | Phase / Feature                                    | Description                                                                                                                                                                                                                                                                       | Estimated Effort |
 |:---------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
 | **Phase 1: Core Encoding & Arithmetic (complete)** | `Dim`, `DimAdd`/`DimSub`/`DimMul`/`DimMax`/`DimMin`, `Z`/`S<N>`, `Const<N>` bridge, and the `U0..U32` alias macro already exist in `src/math/num_types.rs` with passing unit tests.                                                                                               | —                |
-| **Phase 2: Ceiling Extension to `U127`**           | Generate the `U33..U127` identifier list (§4) and extend the `generate_peano_aliases!` invocation; update the module doc comment's ceiling description; move `test_num_type_multiplication_recursion_limit` and the dimension-value assertions to exercise `U127` (§6.1, item 3). | Small            |
+| **Phase 2: Ceiling Extension to `U127` (complete)** | `U33..U127` aliases generated and appended to the `generate_peano_aliases!` invocation; module doc ceiling description, dimension-value assertions, and the recursion-limit test (pinned at `U125`, §6.1 item 3) moved to the new ceiling.                                          | —                |
 | **Phase 3: Storage/Matrix Integration**            | Wire `Dim` into the `Storage<T, R, C>` trait per `storage-trait-design.md` FR-2, confirming the `U127` ceiling (C-1) and the pairwise-arithmetic boundary (C-2) are documented consistently at the first real call site.                                                          | Medium           |
-| **Phase 4: Verification Hardening**                | Add the asymmetric-pair `compile_fail`/pass regression test from §6.1 item 5, closing Risk 4; consider `proptest`-based coverage of arithmetic identities as more `Dim`-generic consumers land, per this crate's invariant-heavy-code testing standard.                           | Small            |
+| **Phase 4: Verification Hardening (complete)**     | Asymmetric-pair boundary tests landed — passing sides as unit tests, failing sides as `compile_fail` doctests (§6.1, item 5) — closing Risk 4; `proptest`-based coverage of arithmetic identities deferred until more `Dim`-generic consumers land.                               | —                |
 | **Phase 5: Extended Arithmetic (conditional)**     | Evaluate `DimDiv`/`DimOrd` (Risk 3) once a concrete consumer needs them; not scheduled otherwise.                                                                                                                                                                                 | Small            |
 
 ---
@@ -280,6 +288,7 @@ type lands, its own test suite becomes the first external validation that
 | 1.0      | August 7, 2026 | @MitchellDScott | Initial draft backfilling design rationale for the existing `num_types.rs` module from research findings. |
 | 1.1      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                   |
 | 1.2      | August 9, 2026 | @MitchellDScott | Raised the friendly-alias ceiling (C-1) from `U32` to `U127`                                              |
+| 1.3      | August 10, 2026 | @MitchellDScott | Aligned §6.1 with the shipped `U125` `DimMul` pin; added pairwise boundary tests (unit + `compile_fail`) closing Risk 4; marked Phases 2 and 4 complete. |
 
 ---
 
