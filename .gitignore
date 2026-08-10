@@ -35,3 +35,8 @@ tarpaulin-report.*
 # Added by cargo
 
 /target
+
+
+**/CLAUDE.md
+**/copilot-instructions.md
+documentation/**/research/*

@@ -162,7 +162,7 @@ impl CPUProfiler for CortexMProfiler {
 
 ---
 
-## **5. Alternatives**
+## 5. Alternatives
 
 **Retain ClientClock and TestExecutor**: Previously, this was split into two
 interfaces: `ClientClock` (system clock
@@ -202,7 +202,7 @@ will be implemented as part of the CI.
 
 ---
 
-## **6. Verification & Validation**
+## 6. Verification & Validation
 
 Developers must validate their custom hardware hooks using automated
 on-target testing. Ideally these will be available to end users.
@@ -222,7 +222,7 @@ on-target testing. Ideally these will be available to end users.
 
 ---
 
-## **7. Performance and Resource Considerations**
+## 7. Performance and Resource Considerations
 
 * **Hook latency**: The `get_cycles()` and `get_nanos()` hooks must execute
   deterministically and as close to zero-overhead as possible (typically within
@@ -237,7 +237,7 @@ on-target testing. Ideally these will be available to end users.
 
 ---
 
-## **8. Risks and Open Questions**
+## 8. Risks and Open Questions
 
 * **Register Overflows**: Cycle counters and timers are usually integers,
   these will overflow eventually.

@@ -1,12 +1,87 @@
 # control-rs
 
 `control-rs` is a `no_std` Rust library for numerical modeling, control
-synthesis, and real-time execution. It targets autonomous systems and bare-metal
-embedded platforms.
+synthesis, and real-time execution, targeting autonomous systems and
+bare-metal embedded platforms.
+
+`control-rs` approaches V&V in a few ways:
+
+- **Compile-Time Structural Verification**: Type-level Peano arithmetic enforces
+  matrix/vector dimensional compatibility.
+- **High Unit Test Coverage**: Each submodule is responsible for
+  implementing unit tests and docs, these are linked to a runner through macros.
+- **SIL/HIL Testing**: The library includes a built-in
+  Hardware-in-the-Loop engine for users to verify custom software.
 
 ---
 
-## Infrastructure Overview
+## Models
+
+`control-rs` is built around three core numerical primitives — `Polynomial`,
+`Matrix`, and `Tensor` — each rigidly bounded to respect embedded hardware
+constraints. `TransferFunction` and `StateSpace` are built on top of these
+primitives to represent LTI control systems directly.
+
+| Model                | Capacity Limit        | Primary Applications                                               | Key Algorithms & Mechanics                                                  |
+|----------------------|-----------------------|--------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| **Polynomial**       | 128 elements          | Signal filtering, trajectory generation, discretization.           | Horner's Method (FMA optimized), Tustin transform.                          |
+| **Matrix**           | 32x32 (1024 elements) | State-space modeling, observability, MIMO systems.                 | Type-level dimensions, division-free Faddeev-LeVerrier `$p(x)=\det(xI-A)$`. |
+| **Tensor**           | 1024 elements total   | Spatial grid modeling, Edge AI, multi-dimensional LTI.             | Column-major sequencing, in-place contraction (`contract_into`).            |
+| **TransferFunction** | `Polynomial`-bound    | SISO/MIMO rational transfer functions $H(s)$, $H(z)$.              | Direct storage-backed Horner evaluation, series/parallel/feedback algebra.  |
+| **StateSpace**       | `Matrix`-bound        | Continuous/discrete LTI state-space models, Kalman filtering, LQR. | Zero-copy `MatrixView` composition, ZOH/Tustin discretization.              |
+
+---
+
+## Architecture
+
+```mermaid
+---
+config:
+  layout: dagre
+---
+flowchart TB
+    subgraph Math
+        subgraph Primitives
+            NumTypes:::external
+            NumTraits:::external
+            ...:::external
+            Subprograms:::external
+        end
+
+        subgraph Storage ["Storage Trait & Implementors"]
+            direction TB
+            ArrayStorage["ArrayStorage<br>(Stack)"]:::storage
+            MatrixView["MatrixView<br>(Slice)"]:::storage
+            Extend1["..."]:::storage
+        end
+    end
+
+    subgraph Models ["Mathematical Models"]
+        direction TB
+        Matrix:::core
+        Polynomial:::core
+        Extend2["..."]:::core
+        Tensor:::core
+    end
+
+%% Cleaned up structural flow
+    Storage --> Models
+    NumTypes -.-> Models
+    NumTraits -.-> Models
+    Subprograms -.-> Models
+%% Styling
+    classDef core fill: #0f172a, stroke: #38bdf8, stroke-width: 2px, color: #f8fafc
+    classDef storage fill: #042f2e, stroke: #2dd4bf, stroke-width: 2px, color: #ccfbf1
+    classDef external fill: #312e81, stroke: #a78bfa, stroke-width: 2px, color: #f5f3ff
+    style Models fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
+    style Math fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
+    style Primitives fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
+    style Storage fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
+```
+
+---
+
+## Infrastructure
 
 ```mermaid
 ---
@@ -14,63 +89,62 @@ config:
   layout: dagre
 ---
 flowchart LR
- subgraph Host["Host Environment"]
+    subgraph Host["Host Environment"]
         TUI("fa:fa-display Terminal UI (TUI)")
         CI("fa:fa-robot CI Runner")
         Comm{"fa:fa-code ServerBridge"}
-  end
- subgraph Loop["fa:fa-rotate-right Server Event Loop"]
-    direction TB
+    end
+    subgraph Loop["fa:fa-rotate-right Server Event Loop"]
+        direction TB
         Comms["Read Comms"]
         Tasks["Run Tasks"]
         Telem["Send Telemetry"]
-  end
- subgraph TargetEnv["Execution Environment (Hardware / QEMU)"]
+    end
+    subgraph TargetEnv["Execution Environment (Hardware / QEMU)"]
         Loop
-  end
+    end
     Comms --> Tasks
     Tasks --> Telem
     Telem --> Comms
     TUI <====> Comm
     CI <====> Comm
     Comm <====> Comms
-
-     TUI:::host
-     CI:::host
-     Comm:::host
-     Comms:::target
-     Tasks:::target
-     Telem:::target
-    classDef host fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
-    classDef target fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#e0e7ff
-    style Loop fill:transparent,stroke:#6366f1,stroke-width:2px,stroke-dasharray:5 5,color:#e0e7ff
-    style Host fill:transparent,stroke:#475569,stroke-width:1px,stroke-dasharray:3 3
-    style TargetEnv fill:transparent,stroke:#475569,stroke-width:1px,stroke-dasharray:3 3
+    TUI:::host
+    CI:::host
+    Comm:::host
+    Comms:::target
+    Tasks:::target
+    Telem:::target
+    classDef host fill: #0f172a, stroke: #38bdf8, stroke-width: 2px, color: #f8fafc
+    classDef target fill: #1e1b4b, stroke: #818cf8, stroke-width: 2px, color: #e0e7ff
+    style Loop fill: transparent, stroke: #6366f1, stroke-width: 2px, stroke-dasharray: 5 5, color: #e0e7ff
+    style Host fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
+    style TargetEnv fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
 ```
 
-### 1. Embedded HIL Engine (`control-rs-hil`)
+### 1. Hardware-In-The-Loop (`control-rs-hil`)
 
 Located in [control-rs-hil](control-rs-hil), this
 `no_std` crate provides the target-side infrastructure:
 
-* **Interactive Test Server**: A lightweight event loop that executes test
+- **Interactive Test Server**: A lightweight event loop that executes test
   suites on request and streams results back.
-* **Target Profiling**: Measures execution time using hardware cycle counters (
+- **Target Profiling**: Measures execution time using hardware cycle counters (
   ARM DWT) and tracks memory limits using stack painting and scanning.
 
-### 2. Host-Side Orchestration (`control-rs-xtask`)
+### 2. Host-Side (`control-rs-xtask`)
 
-* **Terminal User Interface (TUI)**: A terminal dashboard built with
+- **Terminal User Interface (TUI)**: A terminal dashboard built with
   `ratatui` to trigger live tests, tweak parameters, and view logs.
-* **HIL Bridge**: Handles communication and telemetry between the TUI and
+- **HIL Bridge**: Handles communication and telemetry between the TUI and
   the hil server.
 
 ### 3. Continuous Integration (`.github/workflows/CI.yml`)
 
-* **Multi-Arch Emulation**: Spins up headless QEMU instances for both **ARM
+- **Multi-Arch Emulation**: Spins up headless QEMU instances for both **ARM
   Cortex-M** (`thumbv7em-none-eabihf`) and **RISC-V** (
   `riscv32imac-unknown-none-elf`) targets.
-* **Code Quality Reporting**: Parses stdout/stderr from the available
+- **Code Quality Reporting**: Parses stdout/stderr from the available
   cargo tooling (`fmt`, `clippy`, `test`, `tarpaulin`, `qemu`) and generates
   a report (`ci-report.md`).
 
@@ -107,7 +181,7 @@ parameters in real time.
 
 ```bash
   $> cargo tui
-  
+
 ┌ control-rs HIL Console ─────────────────────────────────────────────────────────────────────────────────────────────┐
 │ TARGET: QEMU (cortex-m7) | LINK: Semihosting (mps2-an500)                                                           │
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -131,12 +205,12 @@ parameters in real time.
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-* **Launch TUI for QEMU Emulator (default target: cortex-m7, mps2-an500):**
+- **Launch TUI for QEMU Emulator (default target: cortex-m7, mps2-an500):**
   ```bash
   cargo qemu # target: arm-none-eabihf, semihosting
   cargo tui qemu risc-v # target: risc-v32, virt
   ```
-* **Launch TUI for Physical Teensy 4.0 Hardware:**
+- **Launch TUI for Physical Teensy 4.0 Hardware:**
   ```bash
   cargo teensy
   ```
@@ -146,16 +220,16 @@ parameters in real time.
 Run the exact verification steps performed by the GitHub Actions pipeline
 locally (clippy, formatting, tarpaulin coverage, and QEMU HIL tests).
 
-* **Run all checks (ARM & RISC-V QEMU):**
+- **Run all checks (ARM & RISC-V QEMU):**
   ```bash
   cargo ci
   ```
-* **Run checks for specific targets:**
+- **Run checks for specific targets:**
   ```bash
   cargo qemu-ci
   cargo teensy-ci
   ```
-* **Run workspace code coverage analysis:**
+- **Run workspace code coverage analysis:**
   ```bash
   cargo coverage      # Detailed console coverage
   cargo coverage-ci   # Export HTML and JSON reports (headless CI style)

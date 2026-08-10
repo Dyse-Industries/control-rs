@@ -6,7 +6,7 @@
 
 ---
 
-### **1. Introduction**
+### 1. Introduction
 
 While host-based unit tests execute quickly, they cannot capture physical timing
 constraints, register configurations, or real-time hardware behaviors. The HIL
@@ -18,9 +18,9 @@ commands.
 
 ---
 
-### **2. Requirements**
+### 2. Requirements
 
-#### **Functional Requirements**
+#### Functional Requirements
 
 * **Interactive Server Execution**: The target runner must run persistently as
   an idle loop, listening for host commands and executing tests on command.
@@ -33,7 +33,7 @@ commands.
   exception (e.g., HardFault), the runner must capture diagnostic details (a "
   Firmware Black Box") and transmit them before performing a hardware reboot.
 
-#### **Non-Functional Requirements**
+#### Non-Functional Requirements
 
 * **Real-Time Determinism**: Telemetry and control operations must maintain
   microsecond-level timing budgets to avoid violating plant simulation
@@ -49,7 +49,7 @@ commands.
 * **Instant Resynchronization**: The communication link must recover immediately
   from byte corruption or dropped bytes caused by electrical noise.
 
-#### **Constraints**
+#### Constraints
 
 * **Cooperative Multitasking Lockups**: Because tests run in a non-preemptive
   environment without an RTOS, an infinite loop in a test can lock up the MCU. A
@@ -59,7 +59,7 @@ commands.
 
 ---
 
-### **3. Technical Overview**
+### 3. Technical Overview
 
 The HIL Runner framework is structured as a dual-targeted system across two
 execution environments: the Host PC and the Target MCU.
@@ -101,9 +101,9 @@ assembly, binary serialization (framing and postcard), and task watchdogs.
 
 ---
 
-### **4. Core Architecture**
+### 4. Core Architecture
 
-#### **4.1. Workspace Structure & Cross-Compilation**
+#### 4.1. Workspace Structure & Cross-Compilation
 
 To prevent compilation friction, `control-rs` implements a dual-targeted nested
 Cargo workspace structure. This separates platform-independent business logic (
@@ -124,7 +124,7 @@ host execution will deadlock. Host-side integration runners must claim exclusive
 access and run in a single-threaded configuration using the `--test-threads=1`
 flag in Cargo.
 
-#### **4.2. Test Discovery via Linker Metaprogramming**
+#### 4.2. Test Discovery via Linker Metaprogramming
 
 To avoid the overhead of runtime registration or unstable nightly custom test
 harnesses, test discovery is implemented as a "distributed slice" inside a
@@ -147,19 +147,19 @@ pub struct SuiteDescriptor {
 }
 ```
 
-#### **4.3. Execution Model & Watchdog Multiplexing**
+#### 4.3. Execution Model & Watchdog Multiplexing
 
 The HIL runner executes test suites in a non-preemptive cooperative multitasking
 environment. Once a test function is invoked, it retains total control of the
 MCU core.
 
-##### **Vulnerability to Lockups**
+##### Vulnerability to Lockups
 
 If a test enters an infinite loop or blocks waiting for an interrupt that never
 fires, the MCU will freeze. The host will register a timeout, but the target
 will remain unresponsive, requiring physical intervention.
 
-##### **Future Extension: Mitigation via Task Watchdogs**
+##### Future Extension: Mitigation via Task Watchdogs
 
 While cooperative tests run in a non-preemptive environment and can theoretically lock up the target MCU, the current MVP executes without active watchdog timers to simplify initial deployment. 
 
@@ -169,12 +169,12 @@ To prevent target freezes in production, a future extension will introduce **Tas
 3. The hardware WDT is fed only if *all* registered virtual watchdogs check in within their individual timeouts.
 4. Long-running tests feed their virtual watchdog periodically, preventing false-positive resets, while unexpected freezes starve the WDT and trigger a hard reset.
 
-#### **4.4. Panic Handling, Firmware Black Box, and State Recovery**
+#### 4.4. Panic Handling, Firmware Black Box, and State Recovery
 
 When a test assertion fails, the custom `#[panic_handler]` takes over to capture
 debugging forensic data and return the system to a clean state.
 
-##### **Firmware Black Box**
+##### Firmware Black Box
 
 Before rebooting, the panic handler constructs a diagnostic payload:
 
@@ -185,7 +185,7 @@ Before rebooting, the panic handler constructs a diagnostic payload:
   `USGFAULTENA`) before forcing a HardFault via `asm::udf()` to guarantee clean
   exception capture.
 
-##### **Programmatic Reset: SCB vs. WDT**
+##### Programmatic Reset: SCB vs. WDT
 
 - **Soft Reset (SCB::sys_reset())**: Using the cortex-m crate, the runner can
   request a warm reset by writing to the AIRCR register. However, soft resets do
@@ -202,7 +202,7 @@ If the system requires recovery from board-level power failures, external
 supervisor ICs and bulk capacitors are integrated to allow the MCU to gracefully
 shut down and prevent NVRAM corruption.
 
-#### **4.6. Target-Side Execution Flow**
+#### 4.6. Target-Side Execution Flow
 
 ```mermaid
 stateDiagram-v2
@@ -231,9 +231,9 @@ stateDiagram-v2
 
 ---
 
-### **5. Alternatives**
+### 5. Alternatives
 
-#### **5.1. Test Discovery Alternatives**
+#### 5.1. Test Discovery Alternatives
 
 * **Procedural Macros**: Parsing the AST to dynamically rewrite the main
   function entry point.
@@ -246,7 +246,7 @@ stateDiagram-v2
       exponential compile-time degradation and requires rigid, complex array
       registration.
 
-#### **5.2. Debug-Probe-Driven execution (probe-rs + embedded-test)**
+#### 5.2. Debug-Probe-Driven execution (probe-rs + embedded-test)
 
 * Instead of UART communication, the host uses `probe-rs` to flash tests and
   direct execution using ARM semihosting (`SYS_GET_CMDLINE`).
@@ -254,7 +254,7 @@ stateDiagram-v2
       operations. This introduces millisecond-level timing overhead, destroying
       the real-time determinism required to validate high-speed control loops.
 
-#### **5.3. Soft Reset (SCB::sys_reset)**
+#### 5.3. Soft Reset (SCB::sys_reset)
 
 * Using the CPU System Control Block to reboot.
     - *Reason for Rejection*: Leaves peripherals (like DMA) active, risking
@@ -263,9 +263,9 @@ stateDiagram-v2
 
 ---
 
-### **6. Verification & Validation**
+### 6. Verification & Validation
 
-#### **6.1. Verification Plan**
+#### 6.1. Verification Plan
 
 * **Watchdog Recovery Test**: Execute a mock test that enters an infinite loop.
   Verify that the hardware watchdog reset is triggered, the MCU reboots, and the
@@ -274,7 +274,7 @@ stateDiagram-v2
   host receives a framed "Black Box" payload containing the correct panic
   location and register values, followed by a system reboot.
 
-#### **6.2. Validation Plan**
+#### 6.2. Validation Plan
 
 * **Hardware-in-the-Loop Execution**: Run the HIL suite on a physical target (
   e.g., Teensy 4.0/4.1 or STM32 nucleo) using the `xtask` orchestrator. Verify
@@ -285,7 +285,7 @@ stateDiagram-v2
 
 ---
 
-### **7. Performance & Resource Considerations**
+### 7. Performance & Resource Considerations
 
 * **Flash/RAM Footprint**: The target-side test runner must consume less than 32
   KB of Flash and 8 KB of RAM. Descriptors are stored strictly in ROM.
@@ -300,7 +300,7 @@ stateDiagram-v2
 
 ---
 
-### **8. Risks & Open Questions**
+### 8. Risks & Open Questions
 
 * **RTT Buffer Overflow**: In non-blocking RTT mode, high-frequency logging can
   overflow the target buffer if the debug probe doesn't read it quickly enough,
@@ -311,7 +311,7 @@ stateDiagram-v2
 
 ---
 
-### **9. Development Plan**
+### 9. Development Plan
 
 | Task / Feature                             | Description                                                                                         | Estimated Effort |
 |:-------------------------------------------|:----------------------------------------------------------------------------------------------------|:-----------------|
@@ -323,7 +323,7 @@ stateDiagram-v2
 
 ---
 
-### **10. Revision History**
+### 10. Revision History
 
 | Revision | Date          | Description                                                                                                                                                                                      | Author          |
 |:---------|:--------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|

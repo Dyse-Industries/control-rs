@@ -6,7 +6,7 @@
 
 ---
 
-### **1. Introduction**
+### 1. Introduction
 
 In safety-critical control systems, standard software verification (such as unit
 testing on host platforms) is necessary but insufficient. Code must be verified
@@ -21,9 +21,9 @@ developers.
 
 ---
 
-### **2. Requirements**
+### 2. Requirements
 
-#### **Functional Requirements**
+#### Functional Requirements
 
 * **Two-Tier Target Verification**: The pipeline must support both virtual
   simulated targets and physical hardware targets.
@@ -33,19 +33,19 @@ developers.
   firmware, flash it onto the target device, execute the tests, and retrieve
   execution logs.
 
-#### **Non-Functional Requirements**
+#### Non-Functional Requirements
 
 * **Test Isolation**: Each test run must boot into a clean, uncorrupted hardware
   state.
 
-#### **Constraints**
+#### Constraints
 
 * **Target Microcontroller Restrictions**: The pipeline must support Cortex-M7
   platforms (NXP i.MX RT1062 / Teensy 4.1) and RISC-V32/64.
 
 ---
 
-### **3. Technical Overview**
+### 3. Technical Overview
 
 The verification pipeline is divided into two primary tiers:
 
@@ -68,9 +68,9 @@ flowchart TD
 
 ---
 
-### **4. Core Architecture**
+### 4. Core Architecture
 
-#### **4.1. Tier 1: Virtual Simulation (Renode)**
+#### 4.1. Tier 1: Virtual Simulation (Renode)
 
 To validate logical correctness on every pull request without exhausting
 physical lab resources, the pipeline runs virtual simulations using **Renode**.
@@ -85,7 +85,7 @@ physical lab resources, the pipeline runs virtual simulations using **Renode**.
   port, and verifies test assertions using regular expressions matched against
   the serial output.
 
-#### **4.2. Tier 2: Physical HIL Lab**
+#### 4.2. Tier 2: Physical HIL Lab
 
 To validate true electrical timing, cache effects, and analog interactions, the
 pipeline interfaces with a physical board lab managed by a custom
@@ -106,7 +106,7 @@ alternative to LabGrid.
 * **Flashing and Control**: The exporter uses the **probe-rs** CLI utility to
   flash the compiled ELF target binary over SWD.
 
-#### **4.3. Algorithmic Workload Parallelization**
+#### 4.3. Algorithmic Workload Parallelization
 
 When a large test matrix must run on physical boards (e.g., benchmarking 10
 different control models with varying parameter settings), sequential HIL runs
@@ -121,7 +121,7 @@ execution times from hours to minutes.
 
 ---
 
-### **5. Alternatives**
+### 5. Alternatives
 
 * **Simulation-Only Pipeline**: Rejected. Simulation cannot replicate
   microarchitectural details like Cortex-M7 Branch Target Address Cache (BTAC)
@@ -136,9 +136,9 @@ execution times from hours to minutes.
 
 ---
 
-### **6. Verification & Validation**
+### 6. Verification & Validation
 
-#### **6.1. Verification Plan**
+#### 6.1. Verification Plan
 
 - **Renode Script Verification**: Execute simulation checks locally using
   `renode` scripts to verify that the simulated i.MX RT1062 model matches the
@@ -147,7 +147,7 @@ execution times from hours to minutes.
   exporter setup to verify that the target allocating and power cycling
   mechanics work correctly.
 
-#### **6.2. Validation Plan**
+#### 6.2. Validation Plan
 
 - **End-to-End Pipeline Execution**: Submit a test pull request containing a
   known failure and verify that the virtual Renode run catches the failure on
@@ -156,7 +156,7 @@ execution times from hours to minutes.
 
 ---
 
-### **7. Performance & Resource Considerations**
+### 7. Performance & Resource Considerations
 
 * **Compiler Caching**: The CI environment uses `sccache` targeting a shared
   Amazon S3 or local minio bucket to avoid rebuilding compiler assets on every
@@ -169,7 +169,7 @@ execution times from hours to minutes.
 
 ---
 
-### **8. Risks & Open Questions**
+### 8. Risks & Open Questions
 
 * **Edge Node Network Drops**: Exporter Raspberry Pis located in physical labs
   can disconnect due to network instability. Labgrid must handle node timeouts
@@ -180,7 +180,7 @@ execution times from hours to minutes.
 
 ---
 
-### **9. Development Plan**
+### 9. Development Plan
 
 | Task / Feature                      | Description                                                                                    | Estimated Effort |
 |:------------------------------------|:-----------------------------------------------------------------------------------------------|:-----------------|
@@ -192,7 +192,7 @@ execution times from hours to minutes.
 
 ---
 
-### **10. Revision History**
+### 10. Revision History
 
 | Revision | Date          | Description                                                                                                                                                | Author          |
 |:---------|:--------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------|
@@ -200,7 +200,7 @@ execution times from hours to minutes.
 | 1.1      | July 18, 2026 | Restructured to design-template standard. Added two-tier verification architecture details (Renode, Labgrid, pytest) and parallel scheduling optimization. | @MitchellDScott |
 | 1.2      | July 18, 2026 | Documented transition from QEMU to Renode simulation and the use of custom xtask-based device runners on Raspberry Pi for Git pipeline pushes.             | @MitchellDScott |
 
-#### **Change Notes: QEMU to Renode Transition & Device Runners**
+#### Change Notes: QEMU to Renode Transition & Device Runners
 
 * **QEMU to Renode Transition**: QEMU was originally considered for target-side
   test simulation. However, QEMU only emulates CPU instruction sets and basic
