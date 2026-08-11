@@ -173,9 +173,8 @@ where
   a degree-0 polynomial containing a single coefficient.
 - `pub const fn line(c0: T, c1: T) -> Polynomial<T, U2> where T: Copy`:
   Constructs a degree-1 polynomial $[c_0, c_1]$ ($c_0 + c_1 x$).
--
-
-`pub const fn from_coefficients(data: [T; N::DIM]) -> Polynomial<T, N, ArrayStorage<T, N, U1>>`:
+- `pub const fn from_coefficients(data: [T; N::DIM]) -> Polynomial<T, N, 
+ArrayStorage<T, N, U1>>`:
 Constructs an owning stack polynomial.
 
 - `pub const fn from_storage(storage: S) -> Self`: Constructs a polynomial
@@ -355,7 +354,7 @@ via Peano type constraints.
 
 - **Host/Target Tests**: Unit tests executed on host and qemu targets.
 - **Property-Based Testing**: `proptest` validation for
-  commutativity ($P+Q=Q+P$), distributivity ($P(Q+R) = PQ + PR$) and division
+  commutativity ($P+Q=Q+P$), distributivity ($P(Q+R) = PQ + PR$), and division
   invariants ($P = QD + R$), adopting the random generation methodology of
   QuickCheck (Claessen & Hughes, 2000).
 
@@ -399,8 +398,7 @@ via Peano type constraints.
   companion-matrix QR approach (Bini et al., 2010; Aurentz et al., 2015)
   keeps root-finding structurally consistent with the rest of the crate's
   fixed-operation-count posture.
-- **FFT-Based Polynomial Multiplication (rejected
-  for `mul_poly`/`mul_with_conv`)**:
+- **FFT-Based Polynomial Multiplication (rejected for `mul_poly`/`mul_with_conv`)**:
   Asymptotically faster than direct $O(N \times M)$ summation for large
   degree, but numerically stable only when both operands' coefficients are
   of comparable magnitude (van der Hoeven) — an assumption this crate cannot
@@ -414,10 +412,10 @@ via Peano type constraints.
   `mul_with_conv` alone can later delegate to a hardware- or
   fixed-point-specialized `Convolution<T>` implementation without changing
   `mul_poly`'s own, strictly broader bound (`T: Copy + Zero + Add<Output=T>
-    + Mul<Output=T>`, §4.2 — no `Real`/`Float` required, so `mul_poly` already
+  + Mul<Output=T>`, §4.2 — no `Real`/`Float` required, so `mul_poly` already
   works for fixed-point and integer `T` today) or requiring downstream
   callers of `mul_poly` to opt into `Convolution<T>`'s narrower, `Real`-only
-      specialization.
+  specialization.
 
 ---
 
@@ -439,7 +437,7 @@ via Peano type constraints.
   rescale after *every* multiply-add rather than once per operation. No
   CMSIS-DSP or equivalent fixed-point reference implementation for
   Horner-style evaluation was found during research. This is an open
-  question distinct from and not resolved by, the wide-accumulator
+  question distinct from, and not resolved by, the wide-accumulator
   convention already adopted for Matrix in `matrix-design.md` §7.
 - **`div_rem` / Root-Finding Fixed-Point Scope**: Should the host/design-time
   scoping in §5.2 be stated as a hard constraint (compile-time bound to
@@ -460,13 +458,13 @@ via Peano type constraints.
 
 ### 10. Development Plan
 
-| Task / Feature                          | Description                                                                                                                                  | Estimated Effort |
-|:----------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| Step 1: Storage & Constructors          | `Polynomial<T, N, S>` struct, `ArrayPolynomial`/`PolynomialView`/`PolynomialViewMut` aliases, §4.1 constructors.                             | 1.5 Days         |
-| Step 2: Core Arithmetic                 | `Add`/`Sub`/`Neg` operator overloads, `mul_poly`, `mul_with_conv` via `Convolution<T>`.                                                      | 2.0 Days         |
-| Step 3: Evaluation, Calculus & Division | Horner `evaluate`, derivative/integral methods, `div_rem` with `DivisionError` and the near-singular caveat.                                 | 2.5 Days         |
-| Step 4: Interoperability                | Companion-`Matrix` `TryFrom` conversion, `Tensor` conversion, cross-check against `matrix-design.md`'s reverse Faddeev–LeVerrier conversion. | 1.5 Days         |
-| Step 5: Verification                    | `proptest` algebraic invariants, host/qemu unit tests, cubic-spline trajectory validation example.                                           | 1.5 Days         |
+| Task / Feature                              | Description                                                                                                   | Estimated Effort |
+|:---------------------------------------------|:-----------------------------------------------------------------------------------------------------------|:------------------|
+| Step 1: Storage & Constructors               | `Polynomial<T, N, S>` struct, `ArrayPolynomial`/`PolynomialView`/`PolynomialViewMut` aliases, §4.1 constructors. | 1.5 Days          |
+| Step 2: Core Arithmetic                      | `Add`/`Sub`/`Neg` operator overloads, `mul_poly`, `mul_with_conv` via `Convolution<T>`.                        | 2.0 Days          |
+| Step 3: Evaluation, Calculus & Division      | Horner `evaluate`, derivative/integral methods, `div_rem` with `DivisionError` and the near-singular caveat.   | 2.5 Days          |
+| Step 4: Interoperability                     | Companion-`Matrix` `TryFrom` conversion, `Tensor` conversion, cross-check against `matrix-design.md`'s reverse Faddeev–LeVerrier conversion. | 1.5 Days |
+| Step 5: Verification                         | `proptest` algebraic invariants, host/qemu unit tests, cubic-spline trajectory validation example.             | 1.5 Days          |
 
 ---
 
@@ -529,12 +527,12 @@ via Peano type constraints.
 
 ### 12. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                                           |
-|:---------|:---------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026  | @MitchellDScott | Initial draft with static array layout.                                                                                               |
-| 1.1      | July 26, 2026  | @MitchellDScott | Integrated `Storage` trait hierarchy to support borrowed zero-copy views and ROM storage.                                             |
-| 1.2      | July 26, 2026  | @MitchellDScott | Added inline academic citations and 3-tiered references section.                                                                      |
-| 1.3      | August 1, 2026 | @MitchellDScott | Restructured Requirements to the crate-wide template; made coefficient ordering the canonical cross-referenced statement.             |
-| 1.4      | August 2, 2026 | @MitchellDScott | Added citations; clarified companion-form conditioning; documented `div_rem` caveats; added Alternatives, Risks and Development Plan. |
-| 1.5      | August 2, 2026 | @MitchellDScott | Propagated `num-traits-design.md` pivot to companion-matrix bound; relocated `ConversionError`; corrected a factual error.            |
-| 1.6      | August 2, 2026 | @MitchellDScott | Separated coefficient-ordering convention from `Storage` layout; cross-referenced `storage-trait-design.md` instead of restating it.  |
+| Revision | Date | Author | Description |
+|:---------|:-----|:-------|:-------------|
+| 1.0 | July 12, 2026 | @MitchellDScott | Initial draft with static array layout. |
+| 1.1 | July 26, 2026 | @MitchellDScott | Integrated `Storage` trait hierarchy to support borrowed zero-copy views and ROM storage. |
+| 1.2 | July 26, 2026 | @MitchellDScott | Added inline academic citations and 3-tiered references section. |
+| 1.3 | August 1, 2026 | @MitchellDScott | Restructured Requirements to the crate-wide template; made coefficient ordering the canonical cross-referenced statement. |
+| 1.4 | August 2, 2026 | @MitchellDScott | Added citations; clarified companion-form conditioning; documented `div_rem` caveats; added Alternatives, Risks, and Development Plan. |
+| 1.5 | August 2, 2026 | @MitchellDScott | Propagated `num-traits-design.md` pivot to companion-matrix bound; relocated `ConversionError`; corrected a factual error. |
+| 1.6 | August 2, 2026 | @MitchellDScott | Separated coefficient-ordering convention from `Storage` layout; cross-referenced `storage-trait-design.md` instead of restating it. |

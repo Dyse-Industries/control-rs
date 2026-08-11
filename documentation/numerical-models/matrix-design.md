@@ -217,7 +217,7 @@ placing static matrices directly in read-only flash memory.
 
 #### 4.5. Operator Overloading
 
-Overloads `Add`, `Sub` and `Mul` from `core::ops`. Dimension rules are
+Overloads `Add`, `Sub`, and `Mul` from `core::ops`. Dimension rules are
 statically enforced at compile-time. Under the hood, these high-level operator
 implementations follow standard numerical linear algebra conventions by mapping
 directly to specific low-level BLAS subprograms (Anderson et al., 1999; Golub &
@@ -569,7 +569,7 @@ where
 
 ###### 4.10.4. Abstracting Target-Specific DSP / BLAS FFI
 
-When hardware acceleration (e.g., CMSIS-DSP, ARM NEON or vendor-specific
+When hardware acceleration (e.g., CMSIS-DSP, ARM NEON, or vendor-specific
 DSPLib) is enabled, underlying BLAS traits dispatch calls to FFI functions.
 
 - **Wrapped Unsafe Functions**: External foreign function interfaces (FFI)
@@ -634,7 +634,7 @@ bypassed for two primary reasons:
 
 While `nalgebra` was bypassed as a direct dependency for the reasons above, the
 matrix architecture implemented in `control-rs` is a direct adaptation of
-`nalgebra`'s design. Key design structures, trait hierarchies, dimensions and
+`nalgebra`'s design. Key design structures, trait hierarchies, dimensions, and
 slicing properties are structurally modeled on Sébastien Crozet's original
 architecture.
 
@@ -644,13 +644,13 @@ The physical memory layout is abstracted from mathematical dimensions via the
 `Storage<T, R, C>` trait hierarchy (`Storage`, `StorageMut`).
 
 - **Base `Storage<T, R, C>`**: Encapsulates raw pointer access (`ptr`,
-  `ptr_mut`), offset calculation (`offset`) and unchecked indexing (
+  `ptr_mut`), offset calculation (`offset`), and unchecked indexing (
   `get_unchecked`).
 - **Marker `ContiguousStorage<T, R, C>`**: Restricts slice coercion (`as_slice`)
   strictly to contiguous memory backends (`ArrayStorage`, `MatrixView`),
   protecting strided or padded memory layouts from slice-based data corruption.
 - **Custom Backends**: Enables user-defined backends including read-only Flash
-  wrappers, DMA memory pools and borrowed `MatrixView`/`MatrixViewMut`
+  wrappers, DMA memory pools, and borrowed `MatrixView`/`MatrixViewMut`
   wrappers.
 
 #### 5.5. Memory Layout Alternatives
@@ -758,7 +758,7 @@ For computing $\det(A)$, two primary methods were analyzed:
 ### 6. Verification & Validation
 
 The matrix implementation is verified and validated across four structured
-pillars to guarantee mathematical correctness, embedded safety and real-time
+pillars to guarantee mathematical correctness, embedded safety, and real-time
 execution predictability.
 
 #### 6.1. Verification Strategy
@@ -770,16 +770,16 @@ execution predictability.
       pointer arithmetic at compile time.
 2. **Property & Unit Testing**:
     - Host-based unit tests execute via `cargo test` to verify constructors,
-      operators, triangular solvers and slice bounds.
+      operators, triangular solvers, and slice bounds.
     - Property-based testing via `proptest` mathematically proves algebraic
       matrix identities (e.g., $(AB)^T = B^T A^T$, $A(B+C) = AB + AC$) over
       thousands of generated inputs.
-    - Ill-conditioned, near-singular and Hilbert matrices are tested to confirm
+    - Ill-conditioned, near-singular, and Hilbert matrices are tested to confirm
       safe, panic-free error degradation (`Err(LinAlgError::SingularMatrix)`).
 3. **Hardware-in-the-Loop (HIL) & Cache Profiling**:
     - Cross-compiled binaries run on physical target microcontrollers (e.g., ARM
       Cortex-M4/M7) to profile L1 data/instruction cache misses (`I1mr`/`D1mr`),
-      FPU cycle counts ($c_{\text{inner}}$) and hardware pipeline stall
+      FPU cycle counts ($c_{\text{inner}}$), and hardware pipeline stall
       dependencies.
     - Cycle time for matrix multiplication is validated against the execution
       model:
@@ -848,15 +848,15 @@ execution predictability.
 
 ### 8. Development Plan
 
-| Task / Feature               | Description                                                                            | Estimated Effort |
-|:-----------------------------|:---------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Core Layout**      | Define `Matrix` struct, column-major storage and slice casting.                        | 1.0 Day          |
-| **Step 2: Operators**        | Implement `Add`, `Sub`, `Mul` traits with compile-time checks.                         | 1.5 Days         |
-| **Step 3: Solvers**          | Implement $LDL^T$ decomposition, LU, determinants and matrix inversion.                | 2.0 Days         |
-| **Step 4: Specializations**  | Create `UpperTriangular`, `LowerTriangular` and `Symmetric` wrappers.                  | 1.0 Day          |
-| **Step 5: Factorizations**   | Implement Cholesky and QR solvers.                                                     | 2.0 Days         |
-| **Step 6: Verification**     | Set up `proptest` suites, ARM DWT cycle profiling and Cachegrind setups.               | 1.5 Days         |
-| **Step 7: Interoperability** | Implement conversions between `Matrix`, `Polynomial` (Faddeev-LeVerrier) and `Tensor`. | 2.0 Days         |
+| Task / Feature               | Description                                                                             | Estimated Effort |
+|:-----------------------------|:----------------------------------------------------------------------------------------|:-----------------|
+| **Step 1: Core Layout**      | Define `Matrix` struct, column-major storage, and slice casting.                        | 1.0 Day          |
+| **Step 2: Operators**        | Implement `Add`, `Sub`, `Mul` traits with compile-time checks.                          | 1.5 Days         |
+| **Step 3: Solvers**          | Implement $LDL^T$ decomposition, LU, determinants, and matrix inversion.                | 2.0 Days         |
+| **Step 4: Specializations**  | Create `UpperTriangular`, `LowerTriangular`, and `Symmetric` wrappers.                  | 1.0 Day          |
+| **Step 5: Factorizations**   | Implement Cholesky and QR solvers.                                                      | 2.0 Days         |
+| **Step 6: Verification**     | Set up `proptest` suites, ARM DWT cycle profiling, and Cachegrind setups.               | 1.5 Days         |
+| **Step 7: Interoperability** | Implement conversions between `Matrix`, `Polynomial` (Faddeev-LeVerrier), and `Tensor`. | 2.0 Days         |
 
 ---
 
@@ -917,11 +917,11 @@ execution predictability.
 
 | Revision | Date           | Author          | Description                                                                                                          |
 |:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026  | @MitchellDScott | Initial draft outlining core concepts, layout and operations.                                                        |
+| 1.0      | July 12, 2026  | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                       |
 | 1.1      | July 19, 2026  | @MitchellDScott | Restructured to new template; added embedded performance and verification details.                                   |
 | 1.2      | July 25, 2026  | @MitchellDScott | Added supporting bibliography and inline citations.                                                                  |
-| 1.3      | July 26, 2026  | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers and no_alloc scratch space patterns.                      |
-| 1.4      | July 26, 2026  | @MitchellDScott | Harmonized with storage trait design doc; updated `Matrix` definition, bounds, decomposition rules and V&V.          |
+| 1.3      | July 26, 2026  | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, and no_alloc scratch space patterns.                     |
+| 1.4      | July 26, 2026  | @MitchellDScott | Harmonized with storage trait design doc; updated `Matrix` definition, bounds, decomposition rules, and V&V.         |
 | 1.5      | July 26, 2026  | @MitchellDScott | Added comprehensive 3-tiered bibliography and inline citations across core architectural sections.                   |
 | 1.6      | August 1, 2026 | @MitchellDScott | Corrected `nalgebra` comparison claims; clarified storage-decoupling benefit; added system-solving convenience note. |
 | 1.7      | August 2, 2026 | @MitchellDScott | Propagated `num-traits-design.md` pivot; removed duplicate MatrixView definitions; relocated `ConversionError`.      |

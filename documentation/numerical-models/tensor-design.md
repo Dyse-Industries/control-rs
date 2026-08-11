@@ -1,6 +1,6 @@
 # Tensor Type & Low-Cost Inference (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_2,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_10,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -207,11 +207,13 @@ where
 }
 ```
 
-`Float` here is `num-traits-design.md`'s current (pivoted) hierarchy, used
-deliberately rather than the retired `Real` — this document already
-follows the new naming crate-wide (§4.4, §4.9). Per that document's own
-status, this remains provisional until it completes its own
-`/cr-research`/`/cr-design-doc` pass (§7).
+`Float` here is [`num-traits-design.md`](../../math/design/num-traits-design.md)'s
+hardware-aligned hierarchy (`Signed + One + Radical + Exponential + Trig +
+Div`), used deliberately rather than the retired `Real` — this document
+already follows that naming crate-wide (§4.4, §4.9). That dependency is no
+longer provisional: `num-traits-design.md` has completed its own
+`/cr-research`/`/cr-design-doc` pass and carries an `Approved` status badge
+as of its revision 1.4.
 
 This is a distinct operation from `contract_into` (which contracts against
 another whole tensor) and from `as_view` (which extracts a whole sub-tensor
@@ -277,8 +279,12 @@ pub struct Quantized<Repr, const SHIFT: i32> {
 value as `raw * 2^-SHIFT`, mirroring the integer-exponent pattern already
 used by existing Rust fixed-point/decimal crates (`decimal-scaled`,
 `primitive_fixed_point_decimal`) for type-level scale. `Quantized`
-implements the crate's `Zero`/`One`/arithmetic `num_traits` so it plugs into
-every existing generic `Tensor`/`Matrix` code path unchanged.
+implements the crate's `Zero`, `One`, and `Scalar` (`Zero + One + Sub + Mul`)
+traits — [`num-traits-design.md`](../../math/design/num-traits-design.md)'s
+unified arithmetic target for generic `Tensor`/`Matrix` code paths — so it
+plugs into every existing generic call site unchanged. `Scalar` deliberately
+excludes `Div`; `Quantized`'s dequantization is a bit-shift, not a
+`Float::Div` call, so this omission is not a gap.
 
 An affine variant (`AffineQuantized<Repr, const SHIFT: i32, const
 ZERO_POINT: i32>`) is deferred future work for imported-model
@@ -527,12 +533,6 @@ pub fn predict<Sw1, Sb1, Sw2, Sb2>(
   usage grows.
 - **Model-Import Tooling**: Recorded as future work only (§4.12); no risk
   analysis is performed in this revision since it is not implemented.
-- **`num-traits-design.md` Dependency Is Provisional**: `T: Float` (§4.7)
-  and the `Zero`/`One` bounds on `Quantized<Repr, SHIFT>` (§4.9) follow
-  `num-traits-design.md`'s current hierarchy, which has not yet had its own
-  `/cr-research` or `/cr-design-doc` pass and remains Draft pending one —
-  matching the caveat `state-space-design.md` §9 and `matrix-design.md` §7
-  already carry for the same dependency.
 
 ---
 
@@ -607,3 +607,4 @@ pub fn predict<Sw1, Sb1, Sw2, Sb2>(
 | 1.0      | July 26, 2026  | @MitchellDScott | Initial draft: `Storage` trait hierarchy, zero-copy views, stack `ArrayStorage` and inline citations.              |
 | 1.1      | August 2, 2026 | @MitchellDScott | Full overhaul after a research pass: added grid interpolation, an `Activation` trait and a quantized scalar type.  |
 | 1.2      | August 2, 2026 | @MitchellDScott | Relocated `ConversionError`; flagged `Float` dependency as provisional; revised development-plan estimates upward. |
+| 1.3      | August 10, 2026 | @MitchellDScott | Synced §4.7's `Float` bound and §4.9's `Quantized` trait list with `num-traits-design.md`'s now-`Approved` hierarchy; removed the resolved provisional-dependency risk from §7. |
