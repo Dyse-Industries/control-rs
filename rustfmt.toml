@@ -16,7 +16,7 @@ max_width = 80
 #
 ## Reorder imports to be grouped and sorted.
 #reorder_imports = true
-## How to group imports. `StdExternalCrate` separates std/core, external crates, and local modules.
+## How to group imports. `StdExternalCrate` separates std/core, external crates and local modules.
 #group_imports = "StdExternalCrate"
 ## Determines the granularity of imports. `Crate` groups all imports from the same crate together.
 #imports_granularity = "Crate"

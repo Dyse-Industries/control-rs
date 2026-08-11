@@ -140,7 +140,7 @@ impl ServerBridge {
     ///
     /// # Errors
     ///
-    /// Returns an error if opening the serial port fails after 5 attempts, or if QEMU fails to start.
+    /// Returns an error if opening the serial port fails after 5 attempts or if QEMU fails to start.
     ///
     /// # Panics
     ///

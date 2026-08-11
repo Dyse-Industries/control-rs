@@ -6,7 +6,7 @@ the features described in the design documents.
 Status (August 6, 2026): items 1–5 are substantially shipped — the
 `CPUProfiler` trait and target implementations, the `HostComms` framing and
 postcard schemas (`control-rs-hil/src/comms.rs`), the `SuiteDescriptor`/linker
-mechanics, the `.hil_test_suites` discovery macros, and the host-side
+mechanics, the `.hil_test_suites` discovery macros and the host-side
 `ServerBridge`/headless orchestration. Remaining MVP work is concentrated in
 the open steps of each design doc's Development Plan (watchdog multiplexing,
 driver integration, TUI polish, CI Tiers 1–2).

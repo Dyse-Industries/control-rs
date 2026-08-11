@@ -7,7 +7,7 @@
 ### 1. Introduction
 
 The HIL test harness requires target-specific hooks to measure performance
-metrics (clock cycles, elapsed execution time, and stack usage). By defining a
+metrics (clock cycles, elapsed execution time and stack usage). By defining a
 unified `CPUProfiler` trait within the `control-rs-hil::profiler` module,
 the server delegates the implementation of primitive hardware
 hooks to the end-user or silicon vendor.
@@ -18,21 +18,29 @@ hooks to the end-user or silicon vendor.
 
 #### Functional Requirements
 
-- **FR-1 — Cycle Count**: Read a monotonically increasing CPU cycle count (`get_cycles`), robust to hardware counter wraparound.
+- **FR-1 — Cycle Count**: Read a monotonically increasing CPU cycle count (
+  `get_cycles`), robust to hardware counter wraparound.
 - **FR-2 — Timer**: Report elapsed time in nanoseconds (`get_nanos`).
-- **FR-3 — Stack Pointer Read**: Read the active stack pointer (`get_sp`) and the stack boundary (`get_stack_end`).
-- **FR-4 — Stack Painting/Scanning**: Paint the stack with a sentinel pattern and scan for the peak-usage high-water mark.
-- **FR-5 — Interrupt Control**: Run a closure with interrupts disabled and disable interrupts permanently.
-- **FR-6 — Default Implementations**: Provide defaults for targets that do not support these features.
+- **FR-3 — Stack Pointer Read**: Read the active stack pointer (`get_sp`) and
+  the stack boundary (`get_stack_end`).
+- **FR-4 — Stack Painting/Scanning**: Paint the stack with a sentinel pattern
+  and scan for the peak-usage high-water mark.
+- **FR-5 — Interrupt Control**: Run a closure with interrupts disabled and
+  disable interrupts permanently.
+- **FR-6 — Default Implementations**: Provide defaults for targets that do not
+  support these features.
 
 #### Non-Functional Requirements
 
-- **NFR-1 — Deterministic Low Overhead**: Cycle and timer hooks must execute within a few clock cycles so measurements do not perturb the code under test.
+- **NFR-1 — Deterministic Low Overhead**: Cycle and timer hooks must execute
+  within a few clock cycles so measurements do not perturb the code under test.
 
 #### Constraints
 
-- **C-1 — Strict `#![no_std]`, Zero Heap**: Consistent with the rest of `control-rs-hil`.
-- **C-2 — Target Architectures**: ARM Cortex-M (ARMv6/7/8-M) and RISC-V (RV32/RV64); ARMv6-M has no DWT cycle counter (§8).
+- **C-1 — Strict `#![no_std]`, Zero Heap**: Consistent with the rest of
+  `control-rs-hil`.
+- **C-2 — Target Architectures**: ARM Cortex-M (ARMv6/7/8-M) and RISC-V (
+  RV32/RV64); ARMv6-M has no DWT cycle counter (§8).
 
 ---
 
@@ -175,13 +183,13 @@ active DMA running (see `hil-server-design-doc.md` §4.4).
 interfaces: `ClientClock` (system clock
 abstraction) and `TestExecutor` (orchestrating the full execution lifecycle of a
 test). However, implementing the full execution logic in `TestExecutor` on the
-target side was verbose, repetitive, and error-prone.
+target side was verbose, repetitive and error-prone.
 
 To simplify target-side integration, these hooks were consolidated into a single
 trait: `CPUProfiler`. Users only implement primitive hardware hooks (
-retrieving cycle counts, reading time, getting the stack pointer, and
+retrieving cycle counts, reading time, getting the stack pointer and
 identifying stack boundaries). The core HIL `Server` implements the generic
-execution wrapper, timing calculations, and metric telemetry reporting in a
+execution wrapper, timing calculations and metric telemetry reporting in a
 platform-agnostic manner.
 
 **Heap Profiling**: Adding traits for tracking dynamic memory allocation, if
@@ -196,12 +204,12 @@ only surveyed complete profiling crate in this niche
 (`documentation/xtask/research/results/cpu-profiling-utils.json`). Its
 `EmbeddedProfiler` trait covers roughly one-fifth of the required surface —
 elapsed time via `read_clock()`/snapshots only, with no cycle counting, stack
-introspection, or interrupt control — and its last release (0.3.0) was
+introspection or interrupt control — and its last release (0.3.0) was
 published 2021-12-25. Rejected; implementing the trait in-house allows it to
 be tightly coupled with the server.
 
 **`critical-section` for Interrupt Control**: `critical_section::with(|cs| ...)`
-is structurally identical to `disable_interrupts<F, R>`, and
+is structurally identical to `disable_interrupts<F, R>` and
 `CortexMProfiler` already delegates to `cortex_m::interrupt::free`, one of its
 backends. Depending on the crate directly (it is already a transitive
 dependency) would reduce the interrupt-control surface to a thin wrapper
@@ -213,7 +221,7 @@ from the host (or another controller).
 
 **Stack Painting**: The paint-then-scan technique matches
 [Rapita RapiTest](https://www.rapitasystems.com/blog/how-measure-stack-usage-through-stack-painting-rapitest),
-Zephyr's `k_thread_stack_space_get()`, and the FreeRTOS high-water mark — a
+Zephyr's `k_thread_stack_space_get()` and the FreeRTOS high-water mark — a
 recognized industry technique, not an ad hoc invention.
 
 **Static Stack Usage Analysis**: Tools like `cargo-call-stack` evaluate LLVM-IR
@@ -305,8 +313,8 @@ on-target testing. Ideally these will be available to end users.
 
 ### 10. Revision History
 
-| Revision | Date | Author | Description |
-|:---------|:-----|:-------|:-------------|
-| 1.0 | July 18, 2026 | @MitchellDScott | Initial design of the `CPUProfiler` trait, consolidating `ClientClock` and `TestExecutor`. |
-| 1.1 | August 6, 2026 | @MitchellDScott | Incorporated build-vs-adopt research; added Requirements structure and Development Plan. |
-| 1.2 | August 9, 2026 | @MitchellDScott | Review and minor updates. |
+| Revision | Date           | Author          | Description                                                                                |
+|:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------|
+| 1.0      | July 18, 2026  | @MitchellDScott | Initial design of the `CPUProfiler` trait, consolidating `ClientClock` and `TestExecutor`. |
+| 1.1      | August 6, 2026 | @MitchellDScott | Incorporated build-vs-adopt research; added Requirements structure and Development Plan.   |
+| 1.2      | August 9, 2026 | @MitchellDScott | Review and minor updates.                                                                  |

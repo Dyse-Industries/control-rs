@@ -1,5 +1,5 @@
 //! Interactive Terminal User Interface (TUI) for hardware-in-the-loop (HIL) testing.
-//! Allows running, stopping, and filtering tests, as well as modifying settings dynamically.
+//! Allows running, stopping and filtering tests, as well as modifying settings dynamically.
 use std::io::stdout;
 use std::time::Duration;
 
@@ -198,7 +198,7 @@ impl AppState {
     }
 
     /// Returns a flattened list of items for UI rendering and navigation
-    /// (Suite headers, Tests, and Settings).
+    /// (Suite headers, Tests and Settings).
     fn get_flat_items(&self) -> Vec<FlatItem<'_>> {
         let mut flat = Vec::new();
         for (s_idx, suite) in self.suites.iter().enumerate() {
@@ -1096,7 +1096,7 @@ Metrics:
 ///
 /// # Errors
 ///
-/// Returns an error if terminal setup fails, or if the run loop fails.
+/// Returns an error if terminal setup fails or if the run loop fails.
 pub fn run_tui(
     bridge: ServerBridge,
     target: &Target,
@@ -1121,7 +1121,7 @@ pub fn run_tui(
     Ok(())
 }
 
-/// The main event loop for the TUI, handling drawing, polling messages, and input.
+/// The main event loop for the TUI, handling drawing, polling messages and input.
 #[allow(clippy::too_many_lines)]
 fn run_tui_loop(
     terminal: &mut TuiTerminal,
@@ -2099,7 +2099,7 @@ mod tests {
         assert!(state.show_details_modal);
 
         // Press any key (e.g., Up) to close it.
-        // It should close, and NOT execute the normal action of that key (which is moving selection).
+        // It should close and NOT execute the normal action of that key (which is moving selection).
         state.selected_item_idx = 1;
         state.handle_key(KeyCode::Up, &mut cmd_tx);
         assert!(!state.show_details_modal);

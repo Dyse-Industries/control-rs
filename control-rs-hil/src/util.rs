@@ -3,8 +3,8 @@
 //! # Description
 //!
 //! This module provides auxiliary structures and functions to support HIL server diagnostics,
-//! error reporting, and hardware exception management. It includes a custom formatting writer
-//! for panic state telemetry construction, a suite table retriever, and low-level failure/exception
+//! error reporting and hardware exception management. It includes a custom formatting writer
+//! for panic state telemetry construction, a suite table retriever and low-level failure/exception
 //! panic handlers.
 //!
 //! # Core Concepts
@@ -93,7 +93,7 @@ impl Write for FailureBufWriter<'_> {
 /// * Both `start` and `end` point to valid, aligned references of [`SuiteDescriptor`] located within
 ///   the same contiguous read-only memory allocation.
 /// * `start` is less than or equal to `end`.
-/// * The returned slice refers to valid, initialized, and static memory.
+/// * The returned slice refers to valid, initialized and static memory.
 /// * The memory range `[start, end)` must remain immutable and valid for the entire `'static` lifetime.
 /// * No other thread or process modifies the custom ELF/binary section memory while constructing or accessing this slice.
 ///
@@ -273,9 +273,9 @@ pub unsafe fn handle_failure<
 /// This function operates in an exception handler context (e.g., `HardFault`, `PageFault`) where the target state is highly unstable.
 /// The caller MUST ensure the following conditions are met:
 ///
-/// * The processor is in an exception state, and it is safe to permanently disable interrupts.
+/// * The processor is in an exception state and it is safe to permanently disable interrupts.
 /// * `context` is a valid, reference-stable reference to the HIL server context.
-/// * Global interrupts are permanently disabled, and the target is reset.
+/// * Global interrupts are permanently disabled and the target is reset.
 /// * The communication channel configuration must remain intact to allow sending exception reports.
 /// * The exception handler is not preempted by an even higher priority non-maskable interrupt (NMI).
 ///

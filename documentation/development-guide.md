@@ -1,7 +1,7 @@
 # Development Guide
 
 Reference for working on `control-rs`: model internals, workspace
-architecture, cargo aliases, and CI/HIL verification workflows.
+architecture, cargo aliases and CI/HIL verification workflows.
 
 ---
 
@@ -59,7 +59,7 @@ the target-side infrastructure:
 ### 2. Host-Side (`control-rs-xtask`)
 
 - **Terminal User Interface (TUI)**: A terminal dashboard built with
-  `ratatui` to trigger live tests, tweak parameters, and view logs.
+  `ratatui` to trigger live tests, tweak parameters and view logs.
 - **HIL Bridge**: Handles communication and telemetry between the TUI and
   the hil server.
 
@@ -88,7 +88,7 @@ rustup target add thumbv7em-none-eabihf riscv32imac-unknown-none-elf
 
 Helpful cargo aliases are configured
 in [.cargo/config.toml](../.cargo/config.toml)
-to simplify development, testing, formatting, linting, and coverage reporting:
+to simplify development, testing, formatting, linting and coverage reporting:
 
 | Category                               | Alias               | Underlying Command                                             | Description                                                         |
 |:---------------------------------------|:--------------------|:---------------------------------------------------------------|:--------------------------------------------------------------------|
@@ -111,7 +111,7 @@ to simplify development, testing, formatting, linting, and coverage reporting:
 
 ## Interactive Testing (Host TUI)
 
-Launch the Ratatui control dashboard. Select tests, run them, and adjust
+Launch the Ratatui control dashboard. Select tests, run them and adjust
 parameters in real time.
 
 ```bash
@@ -153,7 +153,7 @@ parameters in real time.
 ## Continuous Integration & Verification
 
 Run the exact verification steps performed by the GitHub Actions pipeline
-locally (clippy, formatting, tarpaulin coverage, and QEMU HIL tests).
+locally (clippy, formatting, tarpaulin coverage and QEMU HIL tests).
 
 - **Run all checks (ARM & RISC-V QEMU):**
   ```bash

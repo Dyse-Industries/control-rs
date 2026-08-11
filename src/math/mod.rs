@@ -134,7 +134,7 @@ pub enum ArithmeticError {
 }
 
 /// Representation and layout conversion errors, shared across `Matrix`,
-/// `Polynomial`, and `Tensor` conversions.
+/// `Polynomial` and `Tensor` conversions.
 ///
 /// # Safety
 /// This enum does not use `unsafe` code.
@@ -233,7 +233,7 @@ pub trait Map<Domain, Codomain> {
 /// A bijective mathematical mapping $f: X \to Y$ with a defined inverse $f^{-1}: Y \to X$.
 ///
 /// Because this represents a bijection, every element in the Domain maps to exactly
-/// one element in the Codomain, and vice versa.
+/// one element in the Codomain and vice versa.
 pub trait Bijection<Domain, Codomain>: Map<Domain, Codomain> {
     /// Evaluates the inverse mapping $x = f^{-1}(y)$.
     ///

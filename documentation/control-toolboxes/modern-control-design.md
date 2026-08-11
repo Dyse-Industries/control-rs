@@ -10,7 +10,7 @@
 
 `src/modern_tools/mod.rs` is currently an empty scaffold. Its module doc
 commits the module to "analyzing and designing linear systems using optimal
-methods such as Linear Quadratic Regulator (LQR), and Kalman Filters."
+methods such as Linear Quadratic Regulator (LQR) and Kalman Filters."
 `README.md`'s capability table already advertises `StateSpace` (built on the
 `Matrix` primitive, capped at 32x32) as supporting "Kalman filtering, LQR" —
 a claim with no implementation behind it yet. This document turns that
@@ -22,7 +22,7 @@ Nyquist/Nichols, lead-lag/PID — frequency-domain design) and
 `src/robust_tools/mod.rs` ("tools for designing and analyzing robust control
 system[s]" — currently undefined). `modern_tools` is the state-space,
 time-domain counterpart: pole/eigenvalue placement, LQR/LQG synthesis,
-algebraic Riccati equation (ARE) solving, and Kalman/observer-based state
+algebraic Riccati equation (ARE) solving and Kalman/observer-based state
 estimation.
 
 ---
@@ -42,7 +42,7 @@ estimation.
   ARE as a shared substrate under both LQR and steady-state Kalman gain
   computation.
 - **FR-4 — Kalman/Observer Estimation Paths**: Provide steady-state Kalman
-  filtering, EKF, UKF, and Luenberger observer design as four distinct
+  filtering, EKF, UKF and Luenberger observer design as four distinct
   types/entry points, not one generic "filter" abstraction.
 
 #### 2.2. Non-Functional Requirements
@@ -68,10 +68,10 @@ estimation.
 ### 3. Technical Overview
 
 `modern_tools` covers time-domain, state-space design and estimation:
-pole/eigenvalue placement, LQR/LQG synthesis, ARE solving, and the Kalman/
+pole/eigenvalue placement, LQR/LQG synthesis, ARE solving and the Kalman/
 EKF/UKF/Luenberger estimator family. It explicitly excludes frequency-domain
 classical design (`classical_tools`) and nonlinear MPC/codegen tooling
-(surveyed separately in `controls-tools.json`, covering CT, acados, and
+(surveyed separately in `controls-tools.json`, covering CT, acados and
 FORCES Pro — none of which are state-space LQR/Kalman toolboxes in the
 sense surveyed here).
 
@@ -80,7 +80,7 @@ The central technical problem is the ARE: $A^\top X + XA - XBR^{-1}B^\top X
 + Q = 0$ (python-control, 2026b). Every surveyed workstation toolbox solves
   it with an eigenvalue-decomposition method (Hamiltonian-matrix or
   generalized-eigenvalue/Schur-vector techniques, §4.2) backed by a compiled
-  LAPACK-class library. No such backend is available to `modern_tools`, and
+  LAPACK-class library. No such backend is available to `modern_tools` and
   the research pass surfaced no toolbox describing a no_std/embedded-friendly
   equivalent (§8) — the closest evidence is `multicalc`'s no_std Kalman-filter
   demonstration (which sidesteps ARE-solving via online covariance recursion,
@@ -140,7 +140,7 @@ methods:
 
 All three require a general eigenvalue or Schur decomposition. `Matrix`
 does not currently expose one: its decomposition set is LU (partial
-pivoting), $LDL^\top$, Cholesky, and QR, plus a companion-matrix
+pivoting), $LDL^\top$, Cholesky and QR, plus a companion-matrix
 eigenvalue solver scoped specifically to polynomial root-finding
 (Faddeev-LeVerrier characteristic-polynomial extraction feeding a
 unitary-plus-rank-one companion-matrix QR iteration). Adopting the
@@ -173,7 +173,7 @@ difference equation to a fixed point instead of Schur-decomposing the
 Hamiltonian matrix — is mathematically standard but was not found described
 as a production LQR method by any surveyed toolbox. This is presented here
 as `modern_tools`'s own extrapolation from the Kalman-filter-side evidence,
-not as an industry-precedented technique, and needs its own convergence/
+not as an industry-precedented technique and needs its own convergence/
 worst-case-execution-time analysis before being treated as load-bearing
 (§8).
 
@@ -198,7 +198,7 @@ decision is not made here (§8).
 #### 4.4. Illustrative API Sketch
 
 The following is illustrative of the module's shape, not a final API
-surface — signatures, generic bounds, and error types are unresolved.
+surface — signatures, generic bounds and error types are unresolved.
 
 ```rust
 // Illustrative — not a final API surface.
@@ -280,7 +280,7 @@ of an iteration count that is not fixed at compile time.
   robust and used by every surveyed workstation toolbox. Rejected as the
   near-term default because it requires a general Schur/QZ decomposition
   `Matrix` does not currently implement (§4.2) — adopting it means taking on
-  new `Matrix`-level design scope before `modern_tools` can start, and no
+  new `Matrix`-level design scope before `modern_tools` can start and no
   surveyed source documents this method running without a compiled
   LAPACK-class backend.
 - **Recursive/iterative Riccati propagation** (indirect precedent: sunsided,
@@ -299,7 +299,7 @@ closed-loop pole extraction and (potentially) placement. That machinery —
 `Matrix`'s Faddeev-LeVerrier characteristic-polynomial conversion and its
 companion-matrix eigenvalue solver — already lives at the `Matrix` primitive
 layer, not inside `classical_tools` (`classical_tools`'s own scope is root
-locus, Routh-Hurwitz, Bode/Nyquist/Nichols, and lead-lag/PID compensators;
+locus, Routh-Hurwitz, Bode/Nyquist/Nichols and lead-lag/PID compensators;
 it does not own polynomial/companion-matrix code per its module doc).
 Two options follow:
 
@@ -359,7 +359,7 @@ Two options follow:
   document and not yet proposed anywhere in the crate's design documents.
 - **MIMO Pole Placement Algorithm Choice**: Ackermann's formula is SISO-only
   per every surveyed source (Octave-Forge Community, 2026; JuliaControl,
-  2026a). The MIMO case needs a distinct algorithm; Kautsky, Nichols, and
+  2026a). The MIMO case needs a distinct algorithm; Kautsky, Nichols and
   Van Dooren (1985) is the evidenced precedent (it underlies MATLAB's
   `place`, per secondary/uncorroborated evidence in the source research),
   but the exact algorithm to implement is not finalized here.
@@ -402,7 +402,7 @@ Two options follow:
 4. JuliaControl, "Synthesis," *ControlSystems.jl documentation*. [Online].
    Available: https://juliacontrol.github.io/ControlSystems.jl/stable/lib/synthesis/.
    Accessed: Aug. 8, 2026.
-5. J. Kautsky, N. K. Nichols, and P. Van Dooren, "Robust pole assignment in
+5. J. Kautsky, N. K. Nichols and P. Van Dooren, "Robust pole assignment in
    linear state feedback," *International Journal of Control*, vol. 41, pp.
    1129–1155, 1985.
 6. J. Ackermann, "Der Entwurf linearer Regelungssysteme im Zustandsraum," *at -
@@ -457,6 +457,6 @@ Two options follow:
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                                           |
-|:---------|:---------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: requirements, Riccati-solver architecture, Kalman/EKF/UKF/Luenberger split, and packaging question flagged for review. |
+| Revision | Date           | Author          | Description                                                                                                                          |
+|:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: requirements, Riccati-solver architecture, Kalman/EKF/UKF/Luenberger split and packaging question flagged for review. |

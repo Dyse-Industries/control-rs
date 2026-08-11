@@ -3,7 +3,7 @@
 //! # Description
 //!
 //! This module provides the `CPUProfiler` trait and architecture-specific implementations
-//! to measure hardware performance metrics (such as clock cycles, timing, and stack consumption)
+//! to measure hardware performance metrics (such as clock cycles, timing and stack consumption)
 //! during HIL tests.
 //!
 //! # Core Concepts
@@ -13,10 +13,10 @@
 //!   with sentinel bytes to compute high-water-mark stack usage safely.
 //! - **Platform Implementations**: Cortex-M DWT-based and RISC-V CSR-based profiling structures.
 
-/// Target-specific utilities for CPU profiling, stack tracking, and interrupt management during HIL tests.
+/// Target-specific utilities for CPU profiling, stack tracking and interrupt management during HIL tests.
 ///
 /// This trait provides a target-agnostic interface to low-level hardware features, allowing the
-/// HIL Server to execute test functions in a controlled environment, gather cycle counts, and
+/// HIL Server to execute test functions in a controlled environment, gather cycle counts and
 /// safely measure stack usage. By encapsulating architecture-specific inline assembly and memory-mapped
 /// I/O operations, this trait helps prevent safety issues in the Server's core logic.
 ///
@@ -215,7 +215,7 @@ pub trait CPUProfiler {
 /// Target-specific implementation of `CPUProfiler` for ARM Cortex-M microcontrollers.
 ///
 /// This structure tracks execution cycles using the ARM DWT (Data Watchpoint and Trace) cycle
-/// counter, measures elapsed time using the SysTick timer, and inspects the stack using linker symbols.
+/// counter, measures elapsed time using the SysTick timer and inspects the stack using linker symbols.
 #[cfg(target_arch = "arm")]
 pub struct CortexMProfiler {
     clock_frequency: u32,
@@ -293,7 +293,7 @@ impl CPUProfiler for CortexMProfiler {
     fn get_sp(&self) -> usize {
         let sp: usize;
         // SAFETY: Reading the active stack pointer `sp` using inline assembly does not write to
-        // memory, affect any active stack frames, or corrupt processor flags. The assembly options
+        // memory, affect any active stack frames or corrupt processor flags. The assembly options
         // `nomem` and `nostack` verify these constraints.
         unsafe {
             core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
@@ -319,7 +319,7 @@ impl CPUProfiler for CortexMProfiler {
 /// Target-specific implementation of `CPUProfiler` for RISC-V targets.
 ///
 /// This structure tracks execution cycles using the RISC-V `mcycle` CSR register,
-/// measures elapsed time using the `time` CSR register, and calculates stack limits using linker-defined variables.
+/// measures elapsed time using the `time` CSR register and calculates stack limits using linker-defined variables.
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub struct RiscvProfiler {
     clock_frequency: u32,
@@ -385,7 +385,7 @@ impl CPUProfiler for RiscvProfiler {
     fn get_sp(&self) -> usize {
         let sp: usize;
         // SAFETY: Reading the active stack pointer `sp` using inline assembly does not write to
-        // memory, affect any active stack frames, or corrupt processor flags. The assembly options
+        // memory, affect any active stack frames or corrupt processor flags. The assembly options
         // `nomem` and `nostack` verify these constraints.
         unsafe {
             core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));

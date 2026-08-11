@@ -21,13 +21,13 @@ level code accesses data.
 
 - **FR-1 — Core Storage Trait**: A backend must expose raw-pointer access, a
   logical-to-physical `(row, column)` index mapping general enough for
-  row-major/column-major/strided layouts, and unchecked `unsafe` element access.
+  row-major/column-major/strided layouts and unchecked `unsafe` element access.
 - **FR-2 — Type-Level Dimension Encoding**: The trait must be parameterized by
   compile-time `Dim` row/column dimensions, rejecting mismatches at compile time
   while still exposing values at runtime for BLAS parameters.
 - **FR-3 — Core Storage Implementations**: The module must ship owned-stack,
-  borrowed-immutable, and borrowed-mutable backends plus a scratch-data
-  category, and support user-defined hardware-specific backends as extension
+  borrowed-immutable and borrowed-mutable backends plus a scratch-data
+  category and support user-defined hardware-specific backends as extension
   points.
     - **FR-3a — Stack-Based Array Storage**: Provide a default, owning backend
       storing elements inline on the stack with a contiguous,
@@ -41,7 +41,7 @@ level code accesses data.
 - **FR-4 — Trait Hierarchy**: The trait hierarchy must distinguish two
   independent capabilities: mutable access and guaranteed contiguity.
 - **FR-5 — Initialization Strategies**: Every backend must support safe
-  initialization from a repeated value, zero-fill, and identity construction.
+  initialization from a repeated value, zero-fill and identity construction.
 - **FR-6 — BLAS Interoperability**: Any contiguous-guaranteeing backend must be
   directly usable by existing BLAS subprogram traits.
 
@@ -176,7 +176,7 @@ this design's `rows`/`cols` parameters play the equivalent role for.
 
 `GEMV`/`GEMM`/`AXPY` expect an `order: MatrixLayout` parameter. A single
 implementation branches on `order` internally rather than requiring one
-dispatch-wrapper per storage type, and `Matrix`'s operator implementations read
+dispatch-wrapper per storage type and `Matrix`'s operator implementations read
 `S::ORDER` off their own storage backend and pass it straight through, never
 branching on layout themselves.
 
@@ -244,7 +244,7 @@ safety-critical embedded control systems:
   `S<S<S<...>>>` where possible.
 - **Code size**: monomorphization of `Storage` methods for every `(T, R, C)`
   combination can bloat the binary. Critical methods should be marked
-  `#[inline]` judiciously, and shared logic should be factored into
+  `#[inline]` judiciously and shared logic should be factored into
   non-generic helper functions operating on `&[T]`.
 
 ---
@@ -276,7 +276,7 @@ lint.
 | Task / Feature                             | Description                                                                                                                 | Estimated Effort |
 |:-------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------|:-----------------|
 | Phase 1: Trait Hierarchy & Core Backend    | Define `Storage`, `StorageMut`, `ContiguousStorage`, `ContiguousStorageMut`; implement `ArrayStorage<T, R, C>`              | M                |
-| Phase 2: View & Scratch Storage            | Implement `MatrixView`, `MatrixViewMut`, and `PivotStorage<D>`                                                              | M                |
+| Phase 2: View & Scratch Storage            | Implement `MatrixView`, `MatrixViewMut` and `PivotStorage<D>`                                                               | M                |
 | Phase 3: Initialization & BLAS Integration | Add `from_fn`, `from_element`, `zeros`, `identity`, `diagonal` constructors; verify `as_slice()` interop with `GEMV`/`GEMM` | M                |
 | Phase 4: `Matrix` Wrapper & Retrofit       | Introduce `Matrix<T, R, C, S>`; migrate `Polynomial` and `StateSpace` onto storage backends                                 | L                |
 
@@ -333,7 +333,7 @@ lint.
 | Revision | Date           | Author          | Description                                                                                                                            |
 |:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------------------------------|
 | 1.0      | July 26, 2026  | @MitchellDScott | Initial draft.                                                                                                                         |
-| 1.1      | July 26, 2026  | @MitchellDScott | Expanded Core Architecture, Alternatives, and 4-pillar V&V sections to align with the matrix doc.                                      |
+| 1.1      | July 26, 2026  | @MitchellDScott | Expanded Core Architecture, Alternatives and 4-pillar V&V sections to align with the matrix doc.                                       |
 | 1.2      | August 1, 2026 | @MitchellDScott | Rewrote Core Architecture to remove scope drift; folded resolved Risks into Requirements; collapsed Development Plan to 4 phases.      |
 | 1.3      | August 2, 2026 | @MitchellDScott | Made this doc sole owner of `MatrixView`/`MatrixViewMut`; added `ContiguousStorage::ORDER`; reworked BLAS interop for explicit layout. |
 | 1.4      | August 2, 2026 | @MitchellDScott | Clarified that FR-6's layout-genericity mechanism belongs to `Storage` itself, applying uniformly across models.                       |

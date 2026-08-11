@@ -4,7 +4,7 @@
 //!
 //! This module implements the interactive Server, coordination contexts,
 //! and global run state indicators. The server processes incoming commands from the host,
-//! dynamically edits settings, executes target test routines, and profiles their cycles/memory.
+//! dynamically edits settings, executes target test routines and profiles their cycles/memory.
 //!
 //! # Core Concepts
 //!
@@ -39,7 +39,7 @@ pub static CURRENT_TEST: TestIndexIndicator = TestIndexIndicator::new();
 
 // --- Type definitions ---
 
-/// Context object that encapsulates communication, CPU profiling utilities, and the communication lock.
+/// Context object that encapsulates communication, CPU profiling utilities and the communication lock.
 ///
 /// This type coordinates accesses to low-level target hardware. To ensure thread safety and avoid race
 /// conditions (for example, between the main event loop and interrupt/exception/panic handlers that
@@ -90,7 +90,7 @@ pub struct Context<C, P> {
 /// Interactive HIL Server.
 ///
 /// The `Server` coordinates the execution of HIL tests on the target. It manages the boot discovery phase,
-/// processes settings updates, runs tests inside critical sections (interrupts disabled), and returns
+/// processes settings updates, runs tests inside critical sections (interrupts disabled) and returns
 /// telemetry and cycle/stack usage metrics.
 ///
 /// # Safety
@@ -125,7 +125,7 @@ pub struct Context<C, P> {
 /// assert_eq!(server.suites.len(), 0);
 /// ```
 pub struct Server<'a, C, P> {
-    /// The global context containing comms, `cpu_utils`, and the comms lock.
+    /// The global context containing comms, `cpu_utils` and the comms lock.
     pub context: Context<C, P>,
     /// The registered test suites.
     pub suites: &'a [&'static SuiteDescriptor],
@@ -168,7 +168,7 @@ pub struct TestMetrics {
 /// assert!(indicator.get().is_none());
 /// ```
 pub struct TestIndexIndicator {
-    /// Holds the active test index (>= 0), or `IDLE_STATE` (< 0).
+    /// Holds the active test index (>= 0) or `IDLE_STATE` (< 0).
     state: AtomicIsize,
 }
 
@@ -286,7 +286,7 @@ impl<C: HostComms, P> Context<C, P> {
 
 #[allow(clippy::type_complexity)]
 impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
-    /// Profile the execution of a test function, measuring cycles, stack, and time.
+    /// Profile the execution of a test function, measuring cycles, stack and time.
     pub fn profile_test<F>(&self, test_fn: F) -> TestMetrics
     where
         F: FnOnce(),
@@ -313,7 +313,7 @@ impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
         });
 
         // SAFETY: We query the peak stack usage relative to the same stack pointer `sp` used
-        // to paint the stack. The stack was painted with sentinel bytes, and reading occurs within
+        // to paint the stack. The stack was painted with sentinel bytes and reading occurs within
         // the valid boundaries calculated during the painting phase.
         let elapsed_stack = unsafe { self.cpu_utils.read_stack_peak(sp) };
         let elapsed_cycles = end_cycles.saturating_sub(start_cycles);
@@ -432,7 +432,7 @@ where
     ///
     /// # Errors
     /// Returns a transport error `C::Error` propagated from the underlying communication interface if polling,
-    /// transmitting telemetry, or flushing fails.
+    /// transmitting telemetry or flushing fails.
     pub fn run(&mut self) -> ServerResult<C::Error> {
         loop {
             let cmd = self.context.poll_command_locked()?;

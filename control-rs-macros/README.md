@@ -9,7 +9,7 @@ in the `control-rs` library.
 The purpose of this crate is to automate the boilerplates of bare-metal embedded
 test setups. Declaring a HIL test suite requires setting up memory sections,
 registering function pointers, defining static descriptors, exporting symbols to
-linker scripts, and configuring custom low-level panic handlers.
+linker scripts and configuring custom low-level panic handlers.
 `control-rs-macros` encapsulates these behaviors behind clean, declarative Rust
 attributes.
 
@@ -47,7 +47,7 @@ graph LR
 3. **Generates the main entrypoint** (`#[entry] fn main() -> !`) and links the
    target-side runner loop automatically.
 4. **Implements the low-level target panic handler** that captures stack
-   assertions/panics, sends failure telemetry to the host bridge, and resets the
+   assertions/panics, sends failure telemetry to the host bridge and resets the
    target safely.
 
 ## End-User Example

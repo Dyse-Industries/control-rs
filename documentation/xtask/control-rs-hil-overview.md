@@ -3,7 +3,7 @@
 ## 1. Introduction
 
 Traditionally, embedded hardware libraries treat benchmarks,
-Hardware-in-the-Loop (HIL) tests, and Continuous Integration (CI) test matrices
+Hardware-in-the-Loop (HIL) tests and Continuous Integration (CI) test matrices
 as internal, closed-source chores.
 
 ## 2. Requirements
@@ -73,7 +73,7 @@ This object provides the specific drivers for cpu profiling and communication:
 * **CPUProfiler:** A generic trait that allows users to configure CPU
   profiling utilities for the hil server. Users implement this trait to
   provide low-level access to CPU cycle counters, nanosecond system timers,
-  stack pointers, stack painting/scanning, and critical sections.
+  stack pointers, stack painting/scanning and critical sections.
 
 ### 4.2. Communication & Transport Layer
 

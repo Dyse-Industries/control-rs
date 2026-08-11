@@ -50,7 +50,7 @@ pub const fn reverse_array<T: Copy, const N: usize>(input: [T; N]) -> [T; N] {
 /// * `initialized_array` - An array filled with elements from the iterator.
 ///
 /// # Safety
-/// * The iterator must have **at least** `N` elements, or this assumes an uninitialized
+/// * The iterator must have **at least** `N` elements or this assumes an uninitialized
 ///   value is initialized (resulting in undefined behavior).
 ///
 /// # Panics
@@ -158,7 +158,7 @@ pub unsafe trait Storage<T, R: Dim, C: Dim> {
     /// # Safety
     /// `i < self.rows()` and `j < self.cols()` must hold.
     unsafe fn get_unchecked(&self, i: usize, j: usize) -> &T;
-    /// Returns a reference to the element at `(i, j)`, or `None` if either
+    /// Returns a reference to the element at `(i, j)` or `None` if either
     /// index is out of bounds.
     fn get(&self, i: usize, j: usize) -> Option<&T> {
         if i < R::DIM && j < C::DIM {
@@ -201,7 +201,7 @@ pub unsafe trait StorageMut<T, R: Dim, C: Dim>:
     /// # Safety
     /// `i < self.rows()` and `j < self.cols()` must hold.
     unsafe fn get_unchecked_mut(&mut self, i: usize, j: usize) -> &mut T;
-    /// Returns a mutable reference to the element at `(i, j)`, or `None` if
+    /// Returns a mutable reference to the element at `(i, j)` or `None` if
     /// either index is out of bounds.
     fn get_mut(&mut self, i: usize, j: usize) -> Option<&mut T> {
         if i < R::DIM && j < C::DIM {
@@ -218,7 +218,7 @@ pub unsafe trait StorageMut<T, R: Dim, C: Dim>:
 /// interop.
 ///
 /// # Safety
-/// `as_slice()` must return exactly `R::DIM * C::DIM` elements, ordered
+/// `as_slice()` must return exactly `R::DIM * C::DIM` elements ordered
 /// consistently with `Storage::offset` and `ORDER`.
 pub unsafe trait ContiguousStorage<T, R: Dim, C: Dim>:
     Storage<T, R, C>
@@ -448,7 +448,7 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> Storage<T, R, C>
 }
 
 // Safety: `data` covers exactly `R::DIM * C::DIM` contiguous elements
-// (checked at construction), ordered consistently with `offset`.
+// (checked at construction) ordered consistently with `offset`.
 unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorage<T, R, C>
     for StorageView<'_, T, R, C, O>
 {
@@ -522,7 +522,7 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> StorageMut<T, R, C>
 }
 
 // Safety: `data` covers exactly `R::DIM * C::DIM` contiguous elements
-// (checked at construction), ordered consistently with `offset`.
+// (checked at construction) ordered consistently with `offset`.
 unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorage<T, R, C>
     for StorageViewMut<'_, T, R, C, O>
 {

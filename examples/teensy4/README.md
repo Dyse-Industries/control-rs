@@ -6,9 +6,9 @@ test server on physical **Teensy 4.0** hardware over a native USB connection.
 ## Purpose
 
 The purpose of this example is to show how to integrate the target-side
-`control-rs-hil` event loop, clocks, and macros into a real bare-metal embedded
+`control-rs-hil` event loop, clocks and macros into a real bare-metal embedded
 microcontroller environment. It exposes a live PID controller tuning suite where
-settings (Proportional, Integral, and Derivative gains) can be read and set
+settings (Proportional, Integral and Derivative gains) can be read and set
 dynamically by the host TUI or CI runner over a native USB serial connection.
 
 ---
@@ -39,7 +39,7 @@ No external USB-to-UART serial adapters or custom wiring are needed!
 1. **Host-Target Communications**: The HIL server operates as a native **USB CDC
    ACM (virtual COM port) device**. The `TeensyComms` struct polls the USB stack
    dynamically inside `poll_command()`, handling the USB enumeration,
-   configuration states, and bidirectional packet transmission seamlessly.
+   configuration states and bidirectional packet transmission seamlessly.
 2. **Device USB Profile**:
     - **Vendor ID (VID)**: `0x5824`
     - **Product ID (PID)**: `0x27dd`
@@ -120,7 +120,7 @@ active and waiting for a connection from the host.
 
 ### Alternative: Run/Flash via Cargo Alias
 
-Alternatively, you can compile, convert, and flash the Teensy in one step from
+Alternatively, you can compile, convert and flash the Teensy in one step from
 the workspace root:
 
 ```bash
@@ -166,5 +166,5 @@ The TUI header will automatically update to display:
 - **LINK**: `USB CDC (/dev/ttyACM0)` (or your specified port)
 
 You can now interactively trigger test cases (by selecting them and pressing
-`Enter`), change PID parameters, and inspect the real-time console telemetry
+`Enter`), change PID parameters and inspect the real-time console telemetry
 logs streamed back from the Teensy.

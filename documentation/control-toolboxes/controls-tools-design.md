@@ -12,12 +12,12 @@
 and `Tensor` models directly in Rust against a hardware-agnostic `Storage`
 trait, compiling to `no_std`/`no_alloc` targets without an intermediate
 export or code-generation step. The `classical_tools`, `modern_tools`,
-`robust_tools`, and `nonlinear_tools` modules extend this same primitive set
-toward classical, modern, robust, and nonlinear control design.
+`robust_tools` and `nonlinear_tools` modules extend this same primitive set
+toward classical, modern, robust and nonlinear control design.
 
 External embedded-control tooling generally does not share this authoring
 model. Research into ETH Zurich's Control Toolbox (CT), acados, FORCES Pro,
-CVXGEN, SymForce, PX4, ArduPilot, ros2_control, and Simulink Embedded Coder
+CVXGEN, SymForce, PX4, ArduPilot, ros2_control and Simulink Embedded Coder
 (`documentation/control-toolboxes/research/results/controls-tools.json`)
 shows a spectrum running from workstation research toolboxes, through
 symbolic-design/embedded-codegen pipelines, to native on-target authoring.
@@ -30,7 +30,7 @@ the constraint that positioning places on every current and future
 ### 2. Requirements
 
 The following are binding constraints on `classical_tools`, `modern_tools`,
-`robust_tools`, `nonlinear_tools`, and any future controls-toolbox module.
+`robust_tools`, `nonlinear_tools` and any future controls-toolbox module.
 
 #### 2.1 Non-Functional Requirements
 
@@ -59,7 +59,7 @@ The following are binding constraints on `classical_tools`, `modern_tools`,
 This document does not scope a new module or API. It states an
 architectural constraint — grounded in comparative evidence from nine
 external tools and frameworks — that governs how `classical_tools`,
-`modern_tools`, `robust_tools`, and `nonlinear_tools` are designed and
+`modern_tools`, `robust_tools` and `nonlinear_tools` are designed and
 implemented. No `src/controls_tools/` module exists or is proposed; the
 four sibling toolbox scaffolds already present under `src/` are the actual
 subjects of this constraint.
@@ -74,20 +74,20 @@ Every surveyed tool falls somewhere between two poles: "author natively
 for the target" and "design in one environment, generate code for
 another."
 
-- **Native-authoring pole**: CT, PX4, ArduPilot, ros2_control, and the
+- **Native-authoring pole**: CT, PX4, ArduPilot, ros2_control and the
   existing Rust `no_std` control crates (`minikalman`, `adskalman`,
   `pid-ctrl`) write the control law directly against the target's runtime
   abstraction — Eigen/C++ objects for CT (Giftthaler et al., 2018), AP_HAL
-  for ArduPilot, or a `Storage`-backed type for `control-rs`.
+  for ArduPilot or a `Storage`-backed type for `control-rs`.
 - **Generate-for-target pole**: Simulink Embedded Coder, acados, FORCES
-  Pro, CVXGEN, and SymForce's PX4 EKF2 integration formulate the problem
+  Pro, CVXGEN and SymForce's PX4 EKF2 integration formulate the problem
   in a workstation-class symbolic or modeling environment (CasADi,
   SymPy/SymForce, Simulink) and emit static C for the embedded target
   (Andersson et al., 2019; Verschueren et al., 2021; embotech, 2026;
   Steiner et al., 2022).
 
 `control-rs` sits at the native-authoring pole. `TransferFunction`,
-`StateSpace`, `Polynomial`, `Matrix`, and `Tensor` are authored directly in
+`StateSpace`, `Polynomial`, `Matrix` and `Tensor` are authored directly in
 Rust against the `Storage` trait; its differentiator relative to the other
 native-authoring tools is compile-time dimensional verification via
 Peano-arithmetic const generics, which the generate-for-target tools obtain
@@ -99,11 +99,11 @@ instead through post-hoc SIL/PIL numerical-equivalence testing (MathWorks,
 `control-rs` occupies a bare-metal `no_std` execution tier — zero heap
 allocation, 1 kHz-10 kHz+ loop frequency — distinct from the workstation
 tools surveyed (CT, Drake, Pinocchio, CasADi), the real-time Linux/
-middleware tools surveyed (ros2_control, micro-ROS), and the RTOS
+middleware tools surveyed (ros2_control, micro-ROS) and the RTOS
 microcontroller tools surveyed (PX4, ArduPilot, acados' STM32 target,
 FORCES Pro embedded C) that retain a heap allocator or RTOS dependency
 (ArduPilot, 2026; Verschueren et al., 2021; embotech, 2026).
-`classical_tools`, `modern_tools`, `robust_tools`, and `nonlinear_tools`
+`classical_tools`, `modern_tools`, `robust_tools` and `nonlinear_tools`
 inherit this tier placement by construction: they build exclusively on
 `Matrix`/`StateSpace`/`TransferFunction`, which already carry the
 `no_alloc`, static-storage constraints documented in `matrix-design.md`
@@ -140,7 +140,7 @@ MIL/SIL/PIL already cover.
   dimensional verification plus the existing `control-rs-hil` harness
   serve this role instead (MathWorks, 2026).
 - **No SymForce-style symbolic-generator dependency for toolbox
-  algorithms.** Gain computation, filter synthesis, and controller
+  algorithms.** Gain computation, filter synthesis and controller
   structure in `classical_tools`/`modern_tools`/`robust_tools` are
   hand-authored against `Matrix`/`Polynomial`, not produced by a symbolic
   Python/SymPy front end emitting C++ kernels, as SymForce does for PX4's
@@ -157,7 +157,7 @@ static C or Rust solver code was considered as a path to more complex
 modern/robust control problems. Rejected: this requires vendoring or
 depending on an external symbolic differentiation and codegen toolchain,
 conflicting with the crate's minimal-dependency and self-contained
-`no_std` audit constraints, and reproduces the acados/FORCES Pro
+`no_std` audit constraints and reproduces the acados/FORCES Pro
 generate-for-target model this research explicitly evaluated against
 (Andersson et al., 2019; Verschueren et al., 2021).
 
@@ -169,7 +169,7 @@ on Embedded Coder's workflow was considered as the toolboxes' primary
 verification mechanism (MathWorks, 2026). Rejected as the primary
 mechanism: compile-time dimensional verification already eliminates the
 shape-mismatch and allocation-panic failure classes MIL/SIL numerical-
-equivalence testing is partly aimed at, and the existing `control-rs-hil`
+equivalence testing is partly aimed at and the existing `control-rs-hil`
 harness already provides target-hardware verification. A lightweight
 SIL/PIL-style numerical-equivalence extension to `control-rs-hil` remains
 an open question (see §7) rather than a decision made here.
@@ -192,13 +192,13 @@ been evaluated for any `*_tools` algorithm. Left open per §7.
 
 This document establishes a documented architectural constraint, not a
 code change. Verification of this design consists of conformance review:
-future `classical_tools`, `modern_tools`, `robust_tools`, and
+future `classical_tools`, `modern_tools`, `robust_tools` and
 `nonlinear_tools` design docs and implementations are checked against §2's
 requirements (native authorability, no required host-to-target codegen
 pipeline, no mandatory dynamic allocation, compile-time verification
 priority, offline-only scoping for any symbolic tooling) during their own
 design-doc review and code review. There is no separate test suite, CI
-gate, or HIL harness to build for this document itself.
+gate or HIL harness to build for this document itself.
 
 ---
 
@@ -230,11 +230,11 @@ gate, or HIL harness to build for this document itself.
 
 ### 8. Development Plan
 
-| Task / Feature          | Description                                                                                                                                                       | Estimated Effort    |
-|:------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------|:--------------------|
-| Positioning note review | Circulate this document for maintainer review and status update to Approved.                                                                                      | 0.5 Day             |
-| Requirement propagation | Reference §2's constraints explicitly in the `classical_tools`, `modern_tools`, and `robust_tools` design docs as they are drafted, rather than re-deriving them. | Ongoing, per-module |
-| Open-question triage    | Decide whether the SIL/PIL harness extension (§7) warrants its own research query before any `modern_tools`/`robust_tools` design doc that would depend on it.    | 0.5 Day             |
+| Task / Feature          | Description                                                                                                                                                      | Estimated Effort    |
+|:------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------|:--------------------|
+| Positioning note review | Circulate this document for maintainer review and status update to Approved.                                                                                     | 0.5 Day             |
+| Requirement propagation | Reference §2's constraints explicitly in the `classical_tools`, `modern_tools` and `robust_tools` design docs as they are drafted, rather than re-deriving them. | Ongoing, per-module |
+| Open-question triage    | Decide whether the SIL/PIL harness extension (§7) warrants its own research query before any `modern_tools`/`robust_tools` design doc that would depend on it.   | 0.5 Day             |
 
 ---
 
@@ -268,12 +268,12 @@ Accessed: Aug. 8, 2026.
 [7] P. Steiner et al., "SymForce: Symbolic Computation and Code Generation for
 Robotics Applications," in *Proc. Robotics: Science and Systems (RSS)*, 2022.
 
-[8] M. Giftthaler, M. Neunert, M. Stauble, and J. Buchli, "The Control Toolbox —
+[8] M. Giftthaler, M. Neunert, M. Stauble and J. Buchli, "The Control Toolbox —
 An Open-Source C++ Library for Robotics, Optimal and Model Predictive Control,"
-in *Proc. IEEE Int. Conf. Simulation, Modeling, and Programming for Autonomous
+in *Proc. IEEE Int. Conf. Simulation, Modeling and Programming for Autonomous
 Robots (SIMPAR)*, 2018, pp. 123–129, doi: 10.1109/SIMPAR.2018.8376281.
 
-[9] J. A. E. Andersson, J. Gillis, G. Horn, J. B. Rawlings, and M. Diehl, "
+[9] J. A. E. Andersson, J. Gillis, G. Horn, J. B. Rawlings and M. Diehl, "
 CasADi — A software framework for nonlinear optimization and optimal control,"
 *Mathematical Programming Computation*, 2019.
 

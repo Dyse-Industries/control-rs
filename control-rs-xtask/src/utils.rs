@@ -1,5 +1,5 @@
 //! Utility functions and structures for `xtask`'s build and test-execution tasks.
-//! Contains formatting, git information collection, and report generation helper functions.
+//! Contains formatting, git information collection and report generation helper functions.
 
 use control_rs_hil::comms::TestState;
 use regex::Regex;

@@ -35,7 +35,7 @@ The system-level goals of the numeric trait hierarchy are:
   base-marker trait.
 - **FR-2 — Functional Containers**: Group granular traits into flat categories
   matching hardware execution units: `Integer` (wrapping), `SaturatingInteger` (
-  saturating), and `Float` (with `Div`/`epsilon()` scoped here only).
+  saturating) and `Float` (with `Div`/`epsilon()` scoped here only).
 - **FR-3 — The Unified Target (`Scalar`)**: Expose a single flat `Scalar`
   trait (`Zero + One + Sub<Output = Self> + Mul<Output = Self>`) with
   `clamp()`/`signum()`, excluding `Div`/`epsilon()` (FR-2). Implemented by
@@ -51,7 +51,7 @@ The system-level goals of the numeric trait hierarchy are:
 
 This effort touches a single, self-contained module (`src/math/num_traits.rs`)
 plus its generated `impl_*!` macros. The scope is the trait definitions
-themselves, the primitive implementations, and `Complex<T>`'s delegating
+themselves, the primitive implementations and `Complex<T>`'s delegating
 implementations — it does not add new files or new consumers.
 
 ---
@@ -114,13 +114,13 @@ on unsigned primitives. `AdditiveGroup`/`Signed`/`Float` remain signed-only
 To prevent boilerplate duplication across primitive types, implementation blocks
 are generated using internal declarative macros:
 
-- `impl_int!`: Emits `Zero`, `One`, `Integer`, and `SaturatingInteger`
+- `impl_int!`: Emits `Zero`, `One`, `Integer` and `SaturatingInteger`
   implementations for all integer primitives (signed and unsigned).
 - `impl_additive_group!`: Emits `AdditiveGroup` and `Signed` implementations
   for signed integer primitives and `f32`/`f64`.
 - `impl_scalar!`: Emits `Scalar` implementations for every integer
   primitive (signed and unsigned) and for `f32`/`f64`.
-- `impl_float!`: Emits `Float`, `Radical`, `Exponential`, and `Trig`
+- `impl_float!`: Emits `Float`, `Radical`, `Exponential` and `Trig`
   implementations for `f32` and `f64`.
 
 ---
@@ -178,7 +178,7 @@ target environments:
 
 1. **Unit Testing & Hardware-Boundary Verification**:
     - Test suites (`num_trait_tests.rs`) validate identity elements, wrapping
-      behavior at `MAX`/`MIN`, and saturation behavior at `MAX`/`MIN` across
+      behavior at `MAX`/`MIN` and saturation behavior at `MAX`/`MIN` across
       primitive types and `Complex<T>`.
 2. **Compile-Time Marker Assertions**:
     - Marker tests verify at compile time that `Scalar` is implemented for
@@ -254,12 +254,12 @@ and **zero memory footprint**:
 
 ### 9. Development Plan
 
-| Phase / Feature                                    | Description                                                                                                                                         | Estimated Effort |
-|:---------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Phase 1: Core Trait Hierarchy & Boundaries**     | Implement `Zero`, `One`, `AdditiveGroup`, `Signed`, `Integer`, `SaturatingInteger`, `Float`, `Scalar` with full doc comments                        | Medium           |
-| **Phase 2: Primitive & Composite Implementations** | Write `impl_int!`, `impl_additive_group!`, `impl_scalar!`, `impl_float!` macros; update `Complex<T>` trait bridges                                  | Medium           |
-| **Phase 3: Existing Call-Site Migration**          | Re-bound `AXPY`/`GEMV`/`GEMM`/`DOT`/`NRM2`/`IAMAX` (`subprograms.rs`), `FFT`/`Convolution`/`Discrete` (`dsp.rs`), and `assert.rs` to the new traits | Medium           |
-| **Phase 4: Verification & Test Suite Integration** | Implement wrap/saturate boundary tests, compile-time marker assertions, and `#[hil_suite]` SIL/HIL runner test wrappers                             | Medium           |
+| Phase / Feature                                    | Description                                                                                                                                        | Estimated Effort |
+|:---------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Phase 1: Core Trait Hierarchy & Boundaries**     | Implement `Zero`, `One`, `AdditiveGroup`, `Signed`, `Integer`, `SaturatingInteger`, `Float`, `Scalar` with full doc comments                       | Medium           |
+| **Phase 2: Primitive & Composite Implementations** | Write `impl_int!`, `impl_additive_group!`, `impl_scalar!`, `impl_float!` macros; update `Complex<T>` trait bridges                                 | Medium           |
+| **Phase 3: Existing Call-Site Migration**          | Re-bound `AXPY`/`GEMV`/`GEMM`/`DOT`/`NRM2`/`IAMAX` (`subprograms.rs`), `FFT`/`Convolution`/`Discrete` (`dsp.rs`) and `assert.rs` to the new traits | Medium           |
+| **Phase 4: Verification & Test Suite Integration** | Implement wrap/saturate boundary tests, compile-time marker assertions and `#[hil_suite]` SIL/HIL runner test wrappers                             | Medium           |
 
 ---
 
@@ -325,10 +325,10 @@ and **zero memory footprint**:
 
 ### 11. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                                               |
-|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 1, 2026 | @MitchellDScott | Comprehensive design spec for `math::num_traits` refinement, introducing `AdditiveGroup`/`ClosedRing` and HIL/SIL verification standards. |
-| 1.1      | August 2, 2026 | @MitchellDScott | Superseded `Ring`/`Field`/`Real` with the hardware-aligned `Zero`/`One`/`Integer`/`Float`/`Scalar` hierarchy; reverted status to Draft.   |
-| 1.2      | August 8, 2026 | @MitchellDScott | Updated citations to the author-year standard; added inline citations and a References section; renumbered Revision History.              |
-| 1.3      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                                                   |
-| 1.4      | August 10, 2026 | @MitchellDScott | Aligned FR-3, hierarchy diagram, §4 layers, and §6.1 markers with shipped `Scalar` (`Zero + One + Sub + Mul`, including unsigned).       |
+| Revision | Date            | Author          | Description                                                                                                                               |
+|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 1, 2026  | @MitchellDScott | Comprehensive design spec for `math::num_traits` refinement, introducing `AdditiveGroup`/`ClosedRing` and HIL/SIL verification standards. |
+| 1.1      | August 2, 2026  | @MitchellDScott | Superseded `Ring`/`Field`/`Real` with the hardware-aligned `Zero`/`One`/`Integer`/`Float`/`Scalar` hierarchy; reverted status to Draft.   |
+| 1.2      | August 8, 2026  | @MitchellDScott | Updated citations to the author-year standard; added inline citations and a References section; renumbered Revision History.              |
+| 1.3      | August 9, 2026  | @MitchellDScott | Review and corrections.                                                                                                                   |
+| 1.4      | August 10, 2026 | @MitchellDScott | Aligned FR-3, hierarchy diagram, §4 layers and §6.1 markers with shipped `Scalar` (`Zero + One + Sub + Mul`, including unsigned).         |

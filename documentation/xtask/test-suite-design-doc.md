@@ -12,7 +12,7 @@ The standard Rust testing harness (`cargo test`) implicitly relies on the
 standard library (`std`), which triggers compilation errors in bare-metal
 environments. Attempting to bypass this by setting `harness = false` solves the
 immediate compilation failure but leaves a functional void with no native
-mechanism to automatically discover, execute, or report tests.
+mechanism to automatically discover, execute or report tests.
 
 This design document establishes the architecture for "Exportable Test Suites"
 designed natively for bare-metal embedded Rust. It enables developers to declare
@@ -26,21 +26,28 @@ registry, requiring zero boilerplate and little runtime overhead.
 #### Functional Requirements
 
 - **FR-1 — Suite Discovery**: The suites must be discoverable at runtime.
-- **FR-2 — Dynamic Parameter Configuration**: Settings on the target must be adjustable from the host (`xtask`).
+- **FR-2 — Dynamic Parameter Configuration**: Settings on the target must be
+  adjustable from the host (`xtask`).
 - **FR-3 — Embedded Metadata**: Test suites must include doc-strings.
 
 #### Non-Functional Requirements
 
-- **NFR-1 — Zero Runtime Registration Overhead**: The test registry must be constructed during the linking phase.
-- **NFR-2 — High ROM/RAM Efficiency**: Test descriptors must reside directly in Flash memory (ROM) to conserve RAM.
-- **NFR-3 — Low-Overhead Execution**: Running an empty test function must return immediately, costing only a few cycles.
-- **NFR-4 — Real-Time Telemetry Updates**: Telemetry streams must support low-latency delivery to maintain smooth host-side rendering (under 16ms).
+- **NFR-1 — Zero Runtime Registration Overhead**: The test registry must be
+  constructed during the linking phase.
+- **NFR-2 — High ROM/RAM Efficiency**: Test descriptors must reside directly in
+  Flash memory (ROM) to conserve RAM.
+- **NFR-3 — Low-Overhead Execution**: Running an empty test function must return
+  immediately, costing only a few cycles.
+- **NFR-4 — Real-Time Telemetry Updates**: Telemetry streams must support
+  low-latency delivery to maintain smooth host-side rendering (under 16ms).
 
 #### Constraints
 
-- **C-1 — Strict `#![no_std]` Execution**: The target-side framework must compile under `#![no_std]` with zero dynamic heap allocation.
+- **C-1 — Strict `#![no_std]` Execution**: The target-side framework must
+  compile under `#![no_std]` with zero dynamic heap allocation.
 - **C-2 — Target Architecture Constraints**: ARM-V6/7/8 and RISC-V.
-- **C-3 — Eradication of `static mut`**: All global state and configurable settings must use thread-safe interior mutability wrappers, not `static mut`.
+- **C-3 — Eradication of `static mut`**: All global state and configurable
+  settings must use thread-safe interior mutability wrappers, not `static mut`.
 
 ---
 
@@ -49,14 +56,14 @@ registry, requiring zero boilerplate and little runtime overhead.
 The Exportable Test Suites framework consists of three main components:
 
 1. **Target-side Harness (`control-rs-hil`)**: The on-target interactive Server
-   that manages target execution, dynamic settings configuration, and CPU
+   that manages target execution, dynamic settings configuration and CPU
    profiling.
 2. **Procedural Macros (`control-rs-macros`)**: Attributes (`#[hil_suite]` and
    `#[hil_setup]`) that abstract the boilerplate of creating descriptors and
    wrapping test main functions.
 3. **Host-side Orchestrator (`control-rs-xtask`)**: Standard Rust automation
    scripts that cross-compile the firmware, parse ELF files to discover test
-   suites, and control debugging hardware.
+   suites and control debugging hardware.
 
 ```mermaid
 flowchart TD
@@ -356,12 +363,12 @@ Interactive testing sessions follow a strict state-machine flow:
 * **Cross-Crate Discovery (`rust-lang/rust#67209`)**: The open upstream defect
   drops `#[used]` + `#[link_section]` statics defined in dependency crates
   even with `KEEP`. Open question: must suites be declarable in separate
-  crates, or only separate modules within one crate? Multi-module discovery is
+  crates or only separate modules within one crate? Multi-module discovery is
   unaffected; multi-crate discovery requires the retention strategy in §4.2 as
   a hedge and must be validated per target.
 * **`ExecDescriptor` Metadata Completeness**: The functional requirements list
-  `#[should_panic]`, `#[ignore]`, and `#[timeout]`, but `ExecDescriptor` (§4.4)
-  carries only `description`, `name`, and `test_fn`. Prior art does not supply
+  `#[should_panic]`, `#[ignore]` and `#[timeout]`, but `ExecDescriptor` (§4.4)
+  carries only `description`, `name` and `test_fn`. Prior art does not supply
   a copyable struct shape — `embedded-test` encodes these attributes as
   macro-generated ELF metadata, not struct fields. Open question: plain fields
   (bitflags, `Option<Duration>`) versus macro-time metadata, chosen under the
@@ -377,18 +384,18 @@ Interactive testing sessions follow a strict state-machine flow:
 
 | Task / Feature                              | Description                                                                                                       | Estimated Effort |
 |:--------------------------------------------|:------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Core Structs & Traits**           | Define `SuiteDescriptor`, `Setting` trait, and type-safe atomic settings wrappers.                                | 0.5 days         |
+| **Step 1: Core Structs & Traits**           | Define `SuiteDescriptor`, `Setting` trait and type-safe atomic settings wrappers.                                 | 0.5 days         |
 | **Step 2: Linker Script & Injection**       | Develop the `build.rs` script to generate the custom `hil_suites.x` script fragment containing `KEEP` directives. | 0.5 days         |
-| **Step 3: Target Server State Machine**     | Implement the on-target Server's state machine, timestamp-based lifecycle tracking, and panic handlers.           | 0.5 days         |
+| **Step 3: Target Server State Machine**     | Implement the on-target Server's state machine, timestamp-based lifecycle tracking and panic handlers.            | 0.5 days         |
 | **Step 4: Host-Side `xtask` ELF Discovery** | Implement ELF section parsing (using `goblin`/`elf`) inside the `xtask` tool to auto-discover suites.             | 0.5 days         |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date | Author | Description |
-|:---------|:-----|:-------|:-------------|
-| 1.0 | May 23, 2026 | @MitchellDScott | Initial design of exportable test suites. |
-| 1.1 | July 18, 2026 | @MitchellDScott | Updated to latest template; incorporated linker GC and ARMv6-M atomics research; verified alignment with `control-rs-hil`. |
-| 1.2 | August 6, 2026 | @MitchellDScott | Added GC-mitigation and rejection citations; resolved metadata open question; unified linker script name. |
-| 1.3 | August 9, 2026 | @MitchellDScott | Review and corrections. |
+| Revision | Date           | Author          | Description                                                                                                                |
+|:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | May 23, 2026   | @MitchellDScott | Initial design of exportable test suites.                                                                                  |
+| 1.1      | July 18, 2026  | @MitchellDScott | Updated to latest template; incorporated linker GC and ARMv6-M atomics research; verified alignment with `control-rs-hil`. |
+| 1.2      | August 6, 2026 | @MitchellDScott | Added GC-mitigation and rejection citations; resolved metadata open question; unified linker script name.                  |
+| 1.3      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                                    |

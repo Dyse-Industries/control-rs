@@ -8,7 +8,7 @@ use crate::math::{
 
 /// Asserts that two floating-point numbers are almost equal.
 ///
-/// This macro compares two expressions, `$left` and `$right`, and panics if they are not
+/// This macro compares two expressions, `$left` and `$right` and panics if they are not
 /// almost equal. The comparison is done using an absolute difference against the machine
 /// epsilon for the floating-point type.
 ///
@@ -61,7 +61,7 @@ macro_rules! assert_almost_eq {
 
 /// Asserts that two floating-point numbers are almost equal.
 ///
-/// This macro compares two expressions, `$left` and `$right`, and panics if they are not
+/// This macro compares two expressions, `$left` and `$right` and panics if they are not
 /// almost equal. The comparison is done using an absolute difference against the machine
 /// epsilon for the floating-point type.
 ///
@@ -120,7 +120,7 @@ macro_rules! assert_not_almost_eq {
 /// is less than the machine epsilon for that type.
 ///
 /// # Generic Arguments
-/// - `T`: A type that implements `PartialOrd`, `PartialEq`, `TrySub<Output = T>`, and `Real`.
+/// - `T`: A type that implements `PartialOrd`, `PartialEq`, `TrySub<Output = T>` and `Real`.
 ///
 /// # Arguments
 /// - `a`: The first value to compare.
@@ -145,7 +145,7 @@ where
 /// is less than `epsilon`.
 ///
 /// # Generic Arguments
-/// - `T`: A type that implements `PartialOrd`, `PartialEq`, `TrySub<Output = T>`, and `Real`.
+/// - `T`: A type that implements `PartialOrd`, `PartialEq`, `TrySub<Output = T>` and `Real`.
 ///
 /// # Arguments
 /// - `a`: The first value to compare.

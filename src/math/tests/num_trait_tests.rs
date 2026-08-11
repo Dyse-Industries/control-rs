@@ -9,13 +9,13 @@
 //!   and identity checks, plus the `Unsigned`/`Integer`/`SaturatingInteger`
 //!   marker test.
 //! - **FR-2** (functional containers `Integer`/`SaturatingInteger`/`Float`):
-//!   `test_num_trait_integer_axioms`, `test_num_trait_float_axioms`, and
+//!   `test_num_trait_integer_axioms`, `test_num_trait_float_axioms` and
 //!   (in `op_tests.rs`) the saturating add/sub/mul suites.
 //! - **FR-3** (unified `Scalar`): `test_num_trait_scalar_properties` and
 //!   `test_num_trait_scalar_markers`; also exercised transitively via
 //!   `Complex<T>: Scalar` in `complex_num_tests.rs`.
 //!
-//! `CartesianQuadrant2D`, hyperbolic functions, and the custom-`atan2`
+//! `CartesianQuadrant2D`, hyperbolic functions and the custom-`atan2`
 //! fallback tests exercise implementation details of FR-1's `Trig`/`Float`
 //! traits rather than a separately numbered requirement.
 #![allow(
@@ -213,7 +213,7 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies commutative, associative, distributive, and identity axioms
+    /// Verifies commutative, associative, distributive and identity axioms
     /// of the Integer trait (FR-2 of `num-traits-design.md`).
     fn test_num_trait_integer_axioms() {
         _check_integer_axioms(3_i8, 4_i8, 5_i8);
@@ -222,7 +222,7 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies commutative, associative, distributive, and identity axioms
+    /// Verifies commutative, associative, distributive and identity axioms
     /// of the Float trait (FR-2 of `num-traits-design.md`).
     fn test_num_trait_float_axioms() {
         _check_float_axioms(2.0f32, 3.0f32, 4.0f32);
@@ -231,7 +231,7 @@ pub mod num_trait_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies the `AdditiveGroup` opt-in (identity and inverse) for signed
-    /// integers, floats, and `Complex<T>`, none of which are exercised by
+    /// integers, floats and `Complex<T>`, none of which are exercised by
     /// the Integer/Float axiom checks above (FR-1 of
     /// `num-traits-design.md`).
     fn test_num_trait_additive_group_axioms() {
@@ -283,7 +283,7 @@ pub mod num_trait_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies general Float trait properties including NAN/INF behavior
-    /// and epsilons, and drives the `Radical`/`Exponential`/`Trig` property
+    /// and epsilons and drives the `Radical`/`Exponential`/`Trig` property
     /// checks (FR-1 + FR-2 of `num-traits-design.md`).
     fn test_num_trait_float_properties() {
         _float_property_check::<f32>();
@@ -430,7 +430,7 @@ pub mod num_trait_test_suite {
 
     #[cfg_attr(test, test)]
     /// Statically verifies the compile-time presence of `Unsigned`,
-    /// `Integer`, and `SaturatingInteger` on every unsigned primitive
+    /// `Integer` and `SaturatingInteger` on every unsigned primitive
     /// (FR-1 + FR-2 of `num-traits-design.md`).
     /// `AdditiveGroup`/`Signed` being withheld from these same types is a
     /// negative compile-time property, verified separately by the

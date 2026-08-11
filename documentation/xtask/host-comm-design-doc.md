@@ -11,7 +11,7 @@
 The `HostComms` trait is designed to provide a unified, hardware-agnostic
 communication abstraction for applications operating in resource-constrained
 environments. This allows the Server to separate physical transport mechanics
-(such as serial ports, network sockets, or hardware debug probes) from its
+(such as serial ports, network sockets or hardware debug probes) from its
 core logic.
 
 ---
@@ -20,21 +20,32 @@ core logic.
 
 #### Functional Requirements
 
-- **FR-1 — Unified Abstraction**: The target firmware must expose a hardware-agnostic API to poll commands, transmit telemetry, and flush data.
-- **FR-2 — Bidirectional Telemetry**: The system must support host-to-target command packets and target-to-host telemetry packets.
-- **FR-3 — Catastrophic Failure Capture**: The target must capture panics and hardware exceptions, format them with timestamps and backtraces, and transmit them as prioritized telemetry before halting or rebooting.
+- **FR-1 — Unified Abstraction**: The target firmware must expose a
+  hardware-agnostic API to poll commands, transmit telemetry and flush data.
+- **FR-2 — Bidirectional Telemetry**: The system must support host-to-target
+  command packets and target-to-host telemetry packets.
+- **FR-3 — Catastrophic Failure Capture**: The target must capture panics and
+  hardware exceptions, format them with timestamps and backtraces and transmit
+  them as prioritized telemetry before halting or rebooting.
 
 #### Non-Functional Requirements
 
-- **NFR-1 — Low Latency & Determinism**: Telemetry and logging must execute within microsecond-level budgets to avoid violating real-time plant simulation intervals or inducing control loop jitter.
-- **NFR-2 — Zero Dynamic Allocation**: The target-side library must compile under `#![no_std]` with strictly zero heap allocation.
-- **NFR-3 — High Bandwidth Efficiency**: The protocol must minimize transport payload footprint, shifting formatting and UI state management onto the host.
+- **NFR-1 — Low Latency & Determinism**: Telemetry and logging must execute
+  within microsecond-level budgets to avoid violating real-time plant simulation
+  intervals or inducing control loop jitter.
+- **NFR-2 — Zero Dynamic Allocation**: The target-side library must compile
+  under `#![no_std]` with strictly zero heap allocation.
+- **NFR-3 — High Bandwidth Efficiency**: The protocol must minimize transport
+  payload footprint, shifting formatting and UI state management onto the host.
 
 #### Constraints
 
-- **C-1 — Strict `#![no_std]` Target Execution**: The firmware environment has no standard library or heap allocator.
-- **C-2 — Stack Footprint Restrictions**: Serialization must avoid massive stack allocations to prevent overflows on memory-limited microcontrollers.
-- **C-3 — Physical Connectivity Limits**: Interfaces are restricted to standard peripherals (UART, Ethernet MAC/PHY) or hardware debug probes (SWD/JTAG).
+- **C-1 — Strict `#![no_std]` Target Execution**: The firmware environment has
+  no standard library or heap allocator.
+- **C-2 — Stack Footprint Restrictions**: Serialization must avoid massive stack
+  allocations to prevent overflows on memory-limited microcontrollers.
+- **C-3 — Physical Connectivity Limits**: Interfaces are restricted to standard
+  peripherals (UART, Ethernet MAC/PHY) or hardware debug probes (SWD/JTAG).
 
 ---
 
@@ -43,7 +54,7 @@ core logic.
 The `HostComms` trait spans two distinct execution environments:
 
 1. **Target-side (microcontroller)**: A zero-cost abstraction trait and
-   associated drivers that pack telemetry data, frame packets, and poll for
+   associated drivers that pack telemetry data, frame packets and poll for
    inbound commands.
 2. **Host-side (PC)**: A demultiplexing (DEMUX) state machine that reads raw
    target bytes, verifies framing, decodes compressed logs using ELF symbols,
@@ -142,7 +153,7 @@ to ensure structural alignment:
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    /// Request the target to stream the list of all suites, tests, and settings.
+    /// Request the target to stream the list of all suites, tests and settings.
     ListSuites,
     /// Request execution of a specific test.
     RunExecutable {
@@ -219,7 +230,7 @@ integrity validation:
 * **Integrity Check**: A 2-byte (big-endian) CRC-16 checksum (calculated using
   `CRC_16_IBM_SDLC`) appended at the end of the frame payload.
 * **Single-Pass Decoding**: The host `FrameReader` processes incoming streams
-  statefully byte-by-byte, checking for the sync header, validating lengths, and
+  statefully byte-by-byte, checking for the sync header, validating lengths and
   confirming the CRC-16 checksum before deserializing.
 
 #### 4.5. Target-Side Driver Implementations
@@ -243,7 +254,7 @@ impl HostComms for UartComms {
     }
 
     fn send_telemetry(&mut self, log: &LogMessage) -> Result<(), Self::Error> {
-        // Serialize via postcard, add sync headers and CRC-16 checksum, and write to UART DMA buffer
+        // Serialize via postcard, add sync headers and CRC-16 checksum and write to UART DMA buffer
         Ok(())
     }
 
@@ -257,7 +268,7 @@ impl HostComms for UartComms {
 #### 4.6. Host-Side Tooling & Portability
 
 On the host side, standard environments utilize the **`probe-rs`** debugging
-library to flash binaries, control execution, and poll target RTT buffers over
+library to flash binaries, control execution and poll target RTT buffers over
 SWD/JTAG.
 
 ##### Hardware Portability & Non-probe-rs Environments
@@ -288,7 +299,7 @@ SWD/JTAG.
   FlatBuffers avoids parsing overhead (zero-copy) but consumes a larger memory
   footprint due to strict alignment padding and has a less ergonomic API for
   bare-metal targets. Postcard was selected for its native Rust type mapping,
-  zero-allocation design, and variable-length integer compression. Although COBS
+  zero-allocation design and variable-length integer compression. Although COBS
   framing was considered for packet delimiting, the final implementation uses a
   sync-byte and length-based frame header with CRC-16 checksums to minimize
   target-side processing and framing overhead.
@@ -315,13 +326,13 @@ SWD/JTAG.
 
 #### Manual Validation
 
-* **Fault Injection Simulation**: Simulate on-target panics, hard faults, and
+* **Fault Injection Simulation**: Simulate on-target panics, hard faults and
   brownouts to validate that `panic-probe` and `panic-persist` reliably transmit
   crash details to the host TUI.
 * **Hardware Portability Test**: Deploy the exact same Server logic over
-  UART DMA, SEGGER RTT, and Ethernet physical interfaces to confirm transport
+  UART DMA, SEGGER RTT and Ethernet physical interfaces to confirm transport
   independence.
-* **Remote WebSocket Demo**: Validate remote flashing, control, and telemetry
+* **Remote WebSocket Demo**: Validate remote flashing, control and telemetry
   streaming on a remote Raspberry Pi host node from a separate client machine.
 
 ---
@@ -329,7 +340,7 @@ SWD/JTAG.
 ### 7. Performance & Resource Considerations
 
 * **Solver Timing Budget**: HIL solvers operate on strict millisecond steps. The
-  entire target execution block—including controls, sensor reads, and telemetry
+  entire target execution block—including controls, sensor reads and telemetry
   serialization—must complete before the solver step expires. Late responses are
   flagged as timing failures.
 * **Static Allocation Bounds**: All target buffer structures are statically
@@ -366,19 +377,19 @@ SWD/JTAG.
 
 | Task / Feature                                       | Description                                                                                                                                | Estimated Effort |
 |:-----------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Core Serialization & Framing** — *Shipped* | Postcard schemas, sync-header framing/deframing, and CRC-16 verification, implemented in `control-rs-hil/src/comms.rs`.                    | Complete         |
-| **Step 2: Target Trait & Drivers**                   | Implement the `HostComms` trait on the target, writing drivers for Embassy UART DMA, SEGGER RTT buffers, and smoltcp Ethernet.             | 2 weeks          |
+| **Step 1: Core Serialization & Framing** — *Shipped* | Postcard schemas, sync-header framing/deframing and CRC-16 verification, implemented in `control-rs-hil/src/comms.rs`.                     | Complete         |
+| **Step 2: Target Trait & Drivers**                   | Implement the `HostComms` trait on the target, writing drivers for Embassy UART DMA, SEGGER RTT buffers and smoltcp Ethernet.              | 2 weeks          |
 | **Step 3: Target Crash Handlers**                    | Integrate `panic-probe` and `panic-persist` handlers to write backtrace logs to active buffers and persistent RAM regions.                 | 1 week           |
 | **Step 4: Host-Side DEMUX & Decoder**                | Build the TUI state machine and integrate the `defmt-decoder` using ELF files, supporting direct inputs from serial ports and TCP sockets. | 2 weeks          |
-| **Step 5: Remote HIL Infrastructure**                | Set up the WebSocket-based `probe-rs` remote server, implement `postcard-rpc` commands, and configure Docker cross-compilers.              | 2 weeks          |
+| **Step 5: Remote HIL Infrastructure**                | Set up the WebSocket-based `probe-rs` remote server, implement `postcard-rpc` commands and configure Docker cross-compilers.               | 2 weeks          |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date | Author | Description |
-|:---------|:-----|:-------|:-------------|
-| 1.0 | May 23, 2026 | @MitchellDScott | Initial draft outlining HostComm middleware trait. |
-| 1.1 | July 18, 2026 | @MitchellDScott | Restructured to template; incorporated HIL, serialization, framing, and remote-tooling research findings. |
-| 1.2 | August 6, 2026 | @MitchellDScott | Consistency pass: removed COBS-as-chosen language, marked `defmt` planned, standardized on `serial2`, fixed numbering. |
-| 1.3 | August 9, 2026 | @MitchellDScott | Review and corrections. |
+| Revision | Date           | Author          | Description                                                                                                            |
+|:---------|:---------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------|
+| 1.0      | May 23, 2026   | @MitchellDScott | Initial draft outlining HostComm middleware trait.                                                                     |
+| 1.1      | July 18, 2026  | @MitchellDScott | Restructured to template; incorporated HIL, serialization, framing and remote-tooling research findings.               |
+| 1.2      | August 6, 2026 | @MitchellDScott | Consistency pass: removed COBS-as-chosen language, marked `defmt` planned, standardized on `serial2`, fixed numbering. |
+| 1.3      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                                |

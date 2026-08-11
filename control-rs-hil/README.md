@@ -7,9 +7,9 @@ Hardware-in-the-Loop (HIL) testing and benchmarking infrastructure of
 ## Purpose
 
 The purpose of this crate is to provide target-side abstractions, communication
-framing, and the interactive test server event loop. It enables control systems
+framing and the interactive test server event loop. It enables control systems
 developers to test their algorithms directly on embedded hardware (or within
-emulators like QEMU) and collect real-time telemetry, panic logs, and execution
+emulators like QEMU) and collect real-time telemetry, panic logs and execution
 cycle/time benchmarks without dynamic memory allocations (`no_std`).
 
 ## Role in the Ecosystem
@@ -47,15 +47,15 @@ flowchart LR
 `control-rs-hil`:
 
 1. **Defines core abstractions** (`CPUProfiler` and `HostComms` traits) for
-   hardware communication, timing, and CPU profiling.
+   hardware communication, timing and CPU profiling.
 2. **Implements packet framing** using a robust CRC-16 checksum binary protocol.
 3. **Hosts the server event loop** which processes incoming execution commands
-   from the host, executes target tests, and streams back telemetry.
+   from the host, executes target tests and streams back telemetry.
 
 ## End-User Example
 
 Developers use `control-rs-hil` by defining a target-side transport (such as a
-UART interface) and CPU profiling utilities, and then passing them into the
+UART interface) and CPU profiling utilities and then passing them into the
 Server's context.
 
 Here is an example implementation:
@@ -162,7 +162,7 @@ fn setup() -> Context<UartComms, SystemCPUUtils> {
 
 ## QA / Testing
 
-To ensure that the target-side abstractions, serialization, and compilation
+To ensure that the target-side abstractions, serialization and compilation
 build correctly, execute the following commands:
 
 ### Target Compilation Check
