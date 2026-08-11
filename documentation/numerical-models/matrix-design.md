@@ -1,7 +1,7 @@
 # Matrix Type & Structural Specializations (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-July_19,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Date Badge](https://img.shields.io/badge/Date-August_10,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -20,12 +20,17 @@ architecture:
   identical to `nalgebra`'s.
 - **Storage Trait Hierarchy**: `control-rs` extends this with its own
   `ContiguousStorage`/`ContiguousStorageMut` traits (see below).
-- **ArrayStorage Structure**: `ArrayStorage<T, R, C>` wrapping `[[T; R]; C]`
-  with `#[repr(transparent)]` (or `#[repr(C)]` on storage types) for contiguous
-  stack storage.
-- **Matrix Views**: `MatrixView` and `MatrixViewMut` providing zero-copy
-  non-destructive window slices over memory, equivalent to `ViewStorage` and
-  `ViewStorageMut`.
+- **ArrayStorage Structure**: `ArrayStorage<T, const R: usize, const C: usize>`
+  wrapping `[[T; R]; C]` with `#[repr(C)]` for contiguous stack storage. `R`/`C`
+  are plain `const usize` rather than `Dim`-typed parameters — Rust cannot use
+  an associated const of a generic `Dim` type as an array length on stable —
+  so `ArrayStorage` implements the `Dim`-generic `Storage` family specifically
+  for `Const<R>`/`Const<C>` (`storage-trait-design.md` §4).
+- **Matrix Views**: `MatrixSlice`/`MatrixSliceMut` wrap the
+  `storage-trait-design.md`-owned `StorageView`/`StorageViewMut` backends,
+  providing zero-copy non-destructive window slices over memory with layout
+  (`ColMajor`/`RowMajor`) carried as a compile-time type parameter rather than
+  a runtime stride.
 
 ---
 
@@ -66,9 +71,17 @@ architecture:
   environments without the Rust standard library.
 - **C-2 — No Dynamic Allocation**: The module must not use a heap allocator; all
   memory allocations are static or stack-based.
-- **C-3 — Memory Footprint**: Maximum matrix dimensions are limited
-  to $32 \times 32$ elements, keeping a single instance under 4KB of stack (
-  32-bit floats).
+- **C-3 — Memory Footprint**: Maximum matrix dimensions match the `Dim`
+  system's own `U127` ceiling (`num-types-design.md` C-1): $127 \times 127$
+  elements, $R{::}DIM \times C{::}DIM \le 16{,}129$ — the same figure
+  `storage-trait-design.md` C-1 states for inline-backed matrices. This is a
+  type-system ceiling, not a recommended instance size: a $127 \times 127$
+  `f32` `ArrayStorage` instance is ~63KB of stack, far past the 2–8KB
+  bare-metal budgets `num-traits-design.md` §7 assumes, so callers targeting
+  stack-constrained targets are expected to stay well under C-3 in practice
+  and lean on `clippy::large_stack_arrays` (`storage-trait-design.md` §7) to
+  catch oversized instances, or use a borrowed `StorageView` (no owned
+  backing array) instead.
 
 ---
 
@@ -89,7 +102,7 @@ The core `Matrix` structure decouples mathematical dimensions from physical
 storage using the `Storage<T, R, C>` trait hierarchy:
 
 ```rust
-pub struct Matrix<T, R: Dim, C: Dim, S: Storage<T, R, C> = ArrayStorage<T, R, C>> {
+pub struct Matrix<T, R: Dim, C: Dim, S: Storage<T, R, C>> {
     storage: S,
     _marker: core::marker::PhantomData<(R, C)>,
 }
@@ -101,7 +114,23 @@ arithmetic (e.g., dimension addition or multiplication) to statically verify
 shape changes at compile time, while `S` determines where and how elements are
 physically stored in memory.
 
-This is the actual point of decoupling storage from the matrix: one
+`Storage<T, R, C>`'s own `R`/`C` are `Dim`-generic, so the trait bound above
+accepts any `Dim` implementor. The owned default backend does not: because
+`ArrayStorage<T, const R: usize, const C: usize>` is parameterized over plain
+`const usize` (§1; `storage-trait-design.md` §4), a `Matrix` using it is
+necessarily fixed to the `Const<N>` bridge rather than an arbitrary `Dim`
+type. This is expressed as a convenience alias rather than a default type
+parameter on `Matrix` itself:
+
+```rust
+/// The default owned, stack-based `Matrix`, fixed to the `Const<N>` bridge
+/// so its backing `ArrayStorage<T, R, C>` can use plain `const usize` row/
+/// column parameters.
+pub type Owned<T, const R: usize, const C: usize> =
+Matrix<T, Const<R>, Const<C>, ArrayStorage<T, R, C>>;
+```
+
+This is the point of decoupling storage from the matrix: one
 `Matrix<T, R, C, S>` implementation — one set of arithmetic, factorization,
 and conversion routines — operates unmodified over any conforming storage
 backend (stack array, borrowed view or memory-mapped DMA register), instead
@@ -155,40 +184,43 @@ where
 }
 ```
 
-##### 4.3.1. Zero-Copy Non-Destructive Views (`MatrixView` & `MatrixViewMut`)
+##### 4.3.1. Zero-Copy Non-Destructive Views (`StorageView` & `StorageViewMut`)
 
 To support zero-copy operations (such as non-destructive transposition) without
-requiring memory copies or stack allocations, `control-rs` provides
-reference-holding view types:
+requiring memory copies or stack allocations, `Matrix` builds on the
+reference-holding view backends owned by `storage-trait-design.md`:
 
 ```rust
-pub struct MatrixView<'a, T, R: Dim, C: Dim> {
+// Owned by storage-trait-design.md. `data` is the only runtime field —
+// layout (`ColMajor`/`RowMajor`) is the `LayoutMarker` type parameter `O`,
+// not a stride stored at runtime, so `ORDER`/`offset()` cannot drift from
+// the formula a view was actually constructed with.
+pub struct StorageView<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
     data: &'a [T],
-    row_stride: usize,
-    col_stride: usize,
-    _marker: core::marker::PhantomData<(R, C)>,
+    _marker: core::marker::PhantomData<(R, C, O)>,
 }
 
-pub struct MatrixViewMut<'a, T, R: Dim, C: Dim> {
+pub struct StorageViewMut<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
     data: &'a mut [T],
-    row_stride: usize,
-    col_stride: usize,
-    _marker: core::marker::PhantomData<(R, C)>,
+    _marker: core::marker::PhantomData<(R, C, O)>,
 }
 
-/// A high-level Matrix wrapper around an immutable MatrixView storage backend.
-pub type MatrixSlice<'a, T, R, C> = Matrix<T, R, C, MatrixView<'a, T, R, C>>;
+/// A high-level Matrix wrapper around an immutable StorageView backend.
+/// `O` defaults to `ColMajor` so existing call sites (§4.6) do not need to
+/// name a layout explicitly.
+pub type MatrixSlice<'a, T, R, C, O = ColMajor> = Matrix<T, R, C, StorageView<'a, T, R, C, O>>;
 
-/// A high-level Matrix wrapper around a mutable MatrixViewMut storage backend.
-pub type MatrixSliceMut<'a, T, R, C> = Matrix<T, R, C, MatrixViewMut<'a, T, R, C>>;
+/// A high-level Matrix wrapper around a mutable StorageViewMut backend.
+pub type MatrixSliceMut<'a, T, R, C, O = ColMajor> = Matrix<T, R, C, StorageViewMut<'a, T, R, C, O>>;
 ```
 
 - **Non-Destructive Transposed Views**:
   `pub fn transpose_view(&self) -> MatrixSlice<'_, T, C, R>` creates a
-  transposed $C \times R$ view over the original matrix data with swapped
-  striding rules (`new_row_stride = old_col_stride` and
-  `new_col_stride = old_row_stride`),
-  incurring zero allocation or byte copying.
+  transposed $C \times R$ view over the original matrix data. Because layout
+  is a compile-time `LayoutMarker` type parameter rather than a runtime
+  stride field, transposition swaps the `R`/`C` type arguments; it does not
+  recompute or mutate stride state at the call site. Incurs zero allocation
+  or byte copying.
 - **In-Place Transposition**: For square matrices ($R = C$), in-place element
   swapping (`pub fn transpose_mut(&mut self)`) mutates elements directly within
   the existing memory layout.
@@ -224,7 +256,11 @@ directly to specific low-level BLAS subprograms (Anderson et al., 1999; Golub &
 Van Loan, 2013; Demmel, 1997).
 This mapping represents the industry-conventional approach to structuring basic
 linear
-algebra operations, rather than a custom design innovation:
+algebra operations, rather than a custom design innovation. Each subprogram
+trait (`AXPY`, `GEMV`, `GEMM`) is generic over `T: Scalar` — the hardware-
+aligned successor to the retired `Ring`/`Field`/`Real` hierarchy
+(`num-traits-design.md` FR-3) — and `Matrix`'s own operator impls carry the
+same bound:
 
 - **Matrix Addition (`Add`) & Subtraction (`Sub`)**: Evaluated element-wise.
   Following standard convention, these operations map to the BLAS Level 1 *
@@ -260,7 +296,7 @@ argument rather than a fixed assumption on either side.
 ```rust
 impl<T, M: Dim, N: Dim, P: Dim> Mul<Matrix<T, N, P>> for Matrix<T, M, N>
 where
-    T: Copy + Zero + Add<Output=T> + Mul<Output=T>,
+    T: Scalar + Add<Output=T> + Mul<Output=T> + Copy,
 {
     type Output = Matrix<T, M, P>;
     // ...
@@ -294,8 +330,8 @@ where
   `pub fn invert_into(&self, dest: &mut Matrix<T, D, D, S2>, pivots: &mut [usize]) -> Result<(), LinAlgError>`:
   Computes the matrix inverse into a caller-provided destination matrix
   buffer.
-    - **Symmetric Matrices**: Factorized via **$LDL^T$ Decomposition
-      ** ($A = L D L^T$).
+    - **Symmetric Matrices**: Factorized via
+      **$LDL^T$ Decomposition** ($A = L D L^T$).
     - **General Square Matrices**: Factorized via **LU Decomposition with
       Partial Pivoting** ($P A = L U$).
 - **Determinant Calculation**:
@@ -309,6 +345,13 @@ Similar to structural specializations, matrix factorizations are exposed as
 dedicated **Decomposition Objects**. These types encapsulate matrix factors
 alongside statically bounded auxiliary state (e.g. permutation indices for
 pivoting) without heap allocation (`no_alloc`).
+
+The illustrative defaults below carry the same caveat as §4.1's `Owned<T, R,
+C>` alias: `ArrayStorage<T, D, D>` only resolves once `D` is `Const<N>` for
+some `N`, and `PivotStorage<const N: usize>` (the pivot scratch backend) is
+likewise a plain `usize` slot count, not a `Dim`-generic type — `D`/`P`
+below stand in for that bridged relationship rather than compiling as
+written.
 
 ```rust
 /// LU Factorization with partial pivoting (PA = LU)
@@ -357,7 +400,10 @@ where
 
     /// Consumes the matrix to construct a stack-allocated LuDecomposition wrapper.
     pub fn into_lu(mut self) -> Result<LuDecomposition<T, D>, LinAlgError> {
-        let mut pivots = PivotStorage::<D>::default();
+        // `PivotStorage<const N: usize>` has no `Default`; `identity()` builds
+        // the initial `[0, 1, ..., N - 1]` permutation. `N` is bridged from
+        // `D` the same way `S`'s `ArrayStorage<T, D, D>` is (§4.1, §4.7).
+        let mut pivots = PivotStorage::identity();
         let row_exchanges = self.lu_decompose_mut(pivots.as_mut_slice())?;
         Ok(LuDecomposition {
             data: self,
@@ -546,7 +592,7 @@ pub fn kalman_covariance_update<T, S: Dim, O: Dim>(
     h: &Matrix<T, O, S>,
 ) -> Matrix<T, S, S>
 where
-    T: Ring + Copy,
+    T: Scalar + Copy,
     S: Dim,
     O: Dim,
     S: DimMul<S>,
@@ -566,6 +612,10 @@ where
     &diff * p_pred
 }
 ```
+
+`T: Scalar` (identity, subtraction, multiplication) is sufficient here; the
+prior `Ring`/`Field`/`Real` hierarchy this bound targeted has been retired in
+favor of the hardware-aligned trait tier (`num-traits-design.md` FR-3, §4).
 
 ###### 4.10.4. Abstracting Target-Specific DSP / BLAS FFI
 
@@ -647,10 +697,10 @@ The physical memory layout is abstracted from mathematical dimensions via the
   `ptr_mut`), offset calculation (`offset`), and unchecked indexing (
   `get_unchecked`).
 - **Marker `ContiguousStorage<T, R, C>`**: Restricts slice coercion (`as_slice`)
-  strictly to contiguous memory backends (`ArrayStorage`, `MatrixView`),
+  strictly to contiguous memory backends (`ArrayStorage`, `StorageView`),
   protecting strided or padded memory layouts from slice-based data corruption.
 - **Custom Backends**: Enables user-defined backends including read-only Flash
-  wrappers, DMA memory pools, and borrowed `MatrixView`/`MatrixViewMut`
+  wrappers, DMA memory pools, and borrowed `StorageView`/`StorageViewMut`
   wrappers.
 
 #### 5.5. Memory Layout Alternatives
@@ -786,10 +836,16 @@ execution predictability.
       $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text{overhead}}}{f}$$
 4. **Stack Bounds Verification**:
     - Inline stack-allocated matrix capacities are strictly capped
-      at $32 \times 32$ elements ($R::DIM \times C::DIM \le 1024$),
-      ensuring that a single float matrix instance never
-      exceeds 4KB of stack
-      space ($1024 \times 4\text{ bytes} = 4096\text{ bytes}$).
+      at $127 \times 127$ elements ($R::DIM \times C::DIM \le 16{,}129$; C-3),
+      matching the `Dim` system's `U127` ceiling rather than an independently
+      chosen number.
+    - This is a type-system bound, not a stack-safety guarantee: a
+      $127 \times 127$ `f32` instance is
+      $16{,}129 \times 4\text{ bytes} \approx 63\text{KB}$, well past typical
+      2–8KB bare-metal stack budgets. `clippy::large_stack_arrays`
+      (`storage-trait-design.md` §7) is the actual enforcement point for
+      call-site instance size; CI must fail on any un-justified `#[allow]`
+      of that lint.
 
 #### 6.2. Validation Strategy
 
@@ -915,13 +971,14 @@ execution predictability.
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                          |
-|:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026  | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                       |
-| 1.1      | July 19, 2026  | @MitchellDScott | Restructured to new template; added embedded performance and verification details.                                   |
-| 1.2      | July 25, 2026  | @MitchellDScott | Added supporting bibliography and inline citations.                                                                  |
-| 1.3      | July 26, 2026  | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, and no_alloc scratch space patterns.                     |
-| 1.4      | July 26, 2026  | @MitchellDScott | Harmonized with storage trait design doc; updated `Matrix` definition, bounds, decomposition rules, and V&V.         |
-| 1.5      | July 26, 2026  | @MitchellDScott | Added comprehensive 3-tiered bibliography and inline citations across core architectural sections.                   |
-| 1.6      | August 1, 2026 | @MitchellDScott | Corrected `nalgebra` comparison claims; clarified storage-decoupling benefit; added system-solving convenience note. |
-| 1.7      | August 2, 2026 | @MitchellDScott | Propagated `num-traits-design.md` pivot; removed duplicate MatrixView definitions; relocated `ConversionError`.      |
+| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+|:---------|:----------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 12, 2026   | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.1      | July 19, 2026   | @MitchellDScott | Restructured to new template; added embedded performance and verification details.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.2      | July 25, 2026   | @MitchellDScott | Added supporting bibliography and inline citations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1.3      | July 26, 2026   | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, and no_alloc scratch space patterns.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 1.4      | July 26, 2026   | @MitchellDScott | Harmonized with storage trait design doc; updated `Matrix` definition, bounds, decomposition rules, and V&V.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.5      | July 26, 2026   | @MitchellDScott | Added comprehensive 3-tiered bibliography and inline citations across core architectural sections.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.6      | August 1, 2026  | @MitchellDScott | Corrected `nalgebra` comparison claims; clarified storage-decoupling benefit; added system-solving convenience note.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.7      | August 2, 2026  | @MitchellDScott | Propagated `num-traits-design.md` pivot; removed duplicate MatrixView definitions; relocated `ConversionError`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.8      | August 10, 2026 | @MitchellDScott | Realigned with shipped math-module code: replaced retired `Ring` bound with `Scalar` (num-traits-design.md FR-3); renamed `MatrixView`/`MatrixViewMut` to the storage-trait-design.md-owned `StorageView`/`StorageViewMut` (layout as a `LayoutMarker` type parameter, not a runtime stride); corrected `ArrayStorage`/`PivotStorage` defaults for their actual `const usize` (not `Dim`) generics; updated the `Mul` operator bound to match `subprograms.rs`'s shipped `GEMM` bound; aligned C-3/§6.1's max matrix dimension with the `Dim` system's `U127` ceiling ($127 \times 127$, $\le 16{,}129$ elements — matching `storage-trait-design.md` C-1) instead of an independently-chosen figure, and flagged the resulting ~63KB worst-case stack footprint against `clippy::large_stack_arrays` as the real per-instance size guard. |
