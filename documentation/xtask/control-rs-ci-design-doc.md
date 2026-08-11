@@ -18,16 +18,20 @@ aims to export the HIL testing framework directly to developers.
 
 #### Functional Requirements
 
-- **FR-1 — Two-Tier Target Verification**: The pipeline must support both virtual simulated targets and physical hardware targets.
-- **FR-2 — Firmware Flash & Run**: The system must automatically compile target firmware, flash it, execute the tests, and retrieve execution logs.
+- **FR-1 — Two-Tier Target Verification**: The pipeline must support both
+  virtual simulated targets and physical hardware targets.
+- **FR-2 — Firmware Flash & Run**: The system must automatically compile target
+  firmware, flash it, execute the tests and retrieve execution logs.
 
 #### Non-Functional Requirements
 
-- **NFR-1 — Test Isolation**: Each test run must boot into a clean, uncorrupted hardware state.
+- **NFR-1 — Test Isolation**: Each test run must boot into a clean, uncorrupted
+  hardware state.
 
 #### Constraints
 
-- **C-1 — Target Microcontroller Restrictions**: The pipeline must support Cortex-M* platforms (NXP i.MX RT1062 / Teensy 4.1) and RISC-V32/64.
+- **C-1 — Target Microcontroller Restrictions**: The pipeline must support
+  Cortex-M* platforms (NXP i.MX RT1062 / Teensy 4.1) and RISC-V32/64.
 
 ---
 
@@ -67,12 +71,12 @@ physical lab resources, the pipeline runs virtual simulations using **Renode**.
   runner.
 * **Assertions**: The pipeline scripts test runs using the **Robot Framework**.
   It boots the firmware ELF inside Renode, interacts with the simulated UART
-  port, and handles test failures similar to the hil-server (catch error,
+  port and handles test failures similar to the hil-server (catch error,
   flush comms and restart).
 
 #### 4.2. Tier 2: Physical HIL Lab
 
-To validate true electrical timing, cache effects, and analog interactions, the
+To validate true electrical timing, cache effects and analog interactions, the
 pipeline runs against a single physical board connected directly to the CI
 runner via `control-rs-xtask` (`ServerBridge`), the same host-side connection
 manager used for local development.
@@ -101,13 +105,13 @@ are invisible to the static call graph).
 
 * **Simulation-Only Pipeline**: Rejected. Simulation cannot replicate
   microarchitectural details like Cortex-M7 Branch Target Address Cache (BTAC)
-  misprediction penalties, L1 cache conflict misses, or analog electrical noise
+  misprediction penalties, L1 cache conflict misses or analog electrical noise
   on ADC lines.
 * **Manual Target Testing**: Rejected. Scaling the codebase requires automated
   tests; manual flashing does not scale and prevents pull request validation.
 * **Proprietary HIL Systems (dSpace / Vector / National Instruments)**:
   Rejected. These are closed, expensive enterprise platforms that lack native
-  integration with cargo toolchains, command lines, and containerized cloud
+  integration with cargo toolchains, command lines and containerized cloud
   runners.
 
 ---
@@ -124,8 +128,8 @@ are invisible to the static call graph).
 
 - **End-to-End Pipeline Execution**: Submit a test pull request containing a
   known failure and verify that the virtual Renode run catches the failure on
-  GitHub Actions, and that the physical HIL run (via `xtask`/`ServerBridge`)
-  compiles, flashes, and logs test results correctly.
+  GitHub Actions and that the physical HIL run (via `xtask`/`ServerBridge`)
+  compiles, flashes and logs test results correctly.
 
 ---
 
@@ -161,10 +165,10 @@ are invisible to the static call graph).
 
 ### 10. Revision History
 
-| Revision | Date | Author | Description |
-|:---------|:-----|:-------|:-------------|
-| 1.0 | May 24, 2026 | @MitchellDScott | Initial skeletal outline of CI testing. |
-| 1.1 | July 18, 2026 | @MitchellDScott | Restructured to template; added two-tier verification architecture (Renode, Labgrid, pytest) and parallel scheduling. |
-| 1.2 | July 18, 2026 | @MitchellDScott | Documented transition to Renode simulation and custom xtask-based device runners on Raspberry Pi. |
-| 1.3 | August 4, 2026 | @MitchellDScott | Removed unimplemented Labgrid fleet architecture; reduced Tier 2 to a single board; clarified runner terminology. |
-| 1.4 | August 6, 2026 | @MitchellDScott | Fixed a cross-reference, aligned the Tier 1 diagram with Renode, and documented shipped versus unimplemented tiers. |
+| Revision | Date           | Author          | Description                                                                                                           |
+|:---------|:---------------|:----------------|:----------------------------------------------------------------------------------------------------------------------|
+| 1.0      | May 24, 2026   | @MitchellDScott | Initial skeletal outline of CI testing.                                                                               |
+| 1.1      | July 18, 2026  | @MitchellDScott | Restructured to template; added two-tier verification architecture (Renode, Labgrid, pytest) and parallel scheduling. |
+| 1.2      | July 18, 2026  | @MitchellDScott | Documented transition to Renode simulation and custom xtask-based device runners on Raspberry Pi.                     |
+| 1.3      | August 4, 2026 | @MitchellDScott | Removed unimplemented Labgrid fleet architecture; reduced Tier 2 to a single board; clarified runner terminology.     |
+| 1.4      | August 6, 2026 | @MitchellDScott | Fixed a cross-reference, aligned the Tier 1 diagram with Renode and documented shipped versus unimplemented tiers.    |

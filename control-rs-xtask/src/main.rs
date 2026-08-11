@@ -1,5 +1,5 @@
 //! Entry points for the `xtask` host binary (a `cargo-xtask`-style task runner).
-//! Implements subcommands for CI linting, QEMU execution, and interactive HIL TUI.
+//! Implements subcommands for CI linting, QEMU execution and interactive HIL TUI.
 
 #![deny(missing_docs)]
 #![allow(
@@ -300,7 +300,7 @@ fn run_ci_all_qemu() {
     println!("CI pipeline passed. Report written to ci-report.md.");
 }
 
-/// Executes the full CI validation pipeline for a single target, including formatting, clippy, test coverage, and SIL tests.
+/// Executes the full CI validation pipeline for a single target, including formatting, clippy, test coverage and SIL tests.
 fn run_ci_single(target: &bridge::Target) {
     unsafe {
         env::set_var("RUST_BACKTRACE", "full");

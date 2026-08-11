@@ -2,8 +2,8 @@
 //!
 //! # Description
 //!
-//! This module defines the framing reader, serialization utilities, and target-to-host messaging traits
-//! used to exchange HIL test suite information, run tests, report performance metrics, and handle telemetry logs.
+//! This module defines the framing reader, serialization utilities and target-to-host messaging traits
+//! used to exchange HIL test suite information, run tests, report performance metrics and handle telemetry logs.
 //! The transport layer uses a robust packet framing scheme with CRC-16-IBM-SDLC checksum protection.
 //!
 //! # Core Concepts
@@ -60,7 +60,7 @@ pub type DecodedFrame<'a> = &'a [u8];
 
 /// Result of polling a command from the host.
 ///
-/// Returns a command if successfully decoded, or transport error `E`.
+/// Returns a command if successfully decoded or transport error `E`.
 pub type PollResult<E> = Result<Option<Command>, E>;
 
 /// Result of sending telemetry or flushing.
@@ -71,7 +71,7 @@ pub type SendResult<E> = Result<(), E>;
 /// A trait for executing frame-based communication between target and host.
 ///
 /// Handlers of this trait bridge the parsed commands and telemetry messages
-/// onto concrete hardware peripherals (like UART, USB, or RTT).
+/// onto concrete hardware peripherals (like UART, USB or RTT).
 ///
 /// # Safety
 /// Implementations must guarantee safe register/hardware access during transfer and framing.
@@ -150,7 +150,7 @@ pub trait HostComms {
 /// Encapsulates all executable remote operations that can be instructed by the host.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Command {
-    /// Request the target to stream the list of all suites, tests, and settings.
+    /// Request the target to stream the list of all suites, tests and settings.
     ListSuites,
     /// Request execution of a specific test.
     RunExecutable {
@@ -185,7 +185,7 @@ enum ReaderState {
 
 /// Telemetry and logs sent from the Target MCU to the Host TUI.
 ///
-/// Encapsulates all data updates, performance metrics, log outputs, and crash reports.
+/// Encapsulates all data updates, performance metrics, log outputs and crash reports.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Telemetry<'a> {
     /// Notification that the target has finished sending discovery information.
@@ -359,7 +359,7 @@ impl CommsLock {
         }
     }
 
-    /// Attempts to acquire the lock. Returns `true` if successful, or `false` if already locked.
+    /// Attempts to acquire the lock. Returns `true` if successful or `false` if already locked.
     ///
     /// # Returns
     /// * `bool` - `true` if lock was acquired successfully, `false` otherwise.
@@ -480,7 +480,7 @@ impl FrameReader {
 /// * `dest` - Target byte buffer destination.
 ///
 /// # Returns
-/// * `Result<usize, postcard::Error>` - The count of bytes written on success, or serialization error.
+/// * `Result<usize, postcard::Error>` - The count of bytes written on success or serialization error.
 ///
 /// # Errors
 /// Returns `postcard::Error` if serialization fails or `dest` is too small.

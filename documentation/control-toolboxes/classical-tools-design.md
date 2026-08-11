@@ -12,19 +12,19 @@
 commits the module to "root locus, Routh-Hurwitz stability criterion, Bode
 plots, Nyquist plots and compensators." This document defines the
 architecture that fulfills that commitment on top of `control-rs`'s existing
-`Polynomial`, `Matrix`, and `TransferFunction` primitives.
+`Polynomial`, `Matrix` and `TransferFunction` primitives.
 
 Classical frequency- and root-locus-based design remains the primary design
 method for a large share of real control loops. Industrial process control is
 dominated by PID: more than 95 percent of industrial control loops are of PID
-type, and the majority of those are pure PI (Åström and Hägglund, 2006).
+type and the majority of those are pure PI (Åström and Hägglund, 2006).
 Root-locus and Bode/Nyquist loop-shaping carry the same weight in other
 domains — flight control design documented by MathWorks pairs Control System
 Toolbox with Simulink Control Design and Aerospace Blockset for longitudinal
-motion control (MathWorks, 2026b), and switching-mode power supply
+motion control (MathWorks, 2026b) and switching-mode power supply
 compensator design is a Bode-plot-driven discipline in its own right: an
-undercompensated converter shows up as audible noise, output oscillation, and
-FET overheating (Analog Devices, 2026), and vendor guidance frames the Bode
+undercompensated converter shows up as audible noise, output oscillation and
+FET overheating (Analog Devices, 2026) and vendor guidance frames the Bode
 plot directly as the tool for assessing whether a design meets its dynamic
 control requirements (Dostal, 2021). `classical_tools` targets this same
 class of design problem, but as a `no_std`, `no_alloc` numeric core rather
@@ -37,24 +37,38 @@ every architectural decision below.
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Root Locus**: Compute closed-loop pole locations of a `TransferFunction` as a function of a swept scalar gain.
-- **FR-2 — Routh-Hurwitz Stability Criterion**: Construct the Routh array from a characteristic polynomial and report right-half-plane root count from sign changes, without root-finding.
-- **FR-3 — Frequency-Domain Analysis**: Generate Bode, Nyquist, and Nichols response data over a caller-supplied frequency sweep.
-- **FR-4 — Stability Margins**: Compute gain margin, phase margin, and their crossover frequencies from frequency-response data.
-- **FR-5 — Compensator Design**: Provide PID (parallel and standard forms) and lead/lag network constructors returning `TransferFunction` values.
+- **FR-1 — Root Locus**: Compute closed-loop pole locations of a
+  `TransferFunction` as a function of a swept scalar gain.
+- **FR-2 — Routh-Hurwitz Stability Criterion**: Construct the Routh array from a
+  characteristic polynomial and report right-half-plane root count from sign
+  changes, without root-finding.
+- **FR-3 — Frequency-Domain Analysis**: Generate Bode, Nyquist and Nichols
+  response data over a caller-supplied frequency sweep.
+- **FR-4 — Stability Margins**: Compute gain margin, phase margin and their
+  crossover frequencies from frequency-response data.
+- **FR-5 — Compensator Design**: Provide PID (parallel and standard forms) and
+  lead/lag network constructors returning `TransferFunction` values.
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — No Plotting Dependency**: The module must not depend on a plotting or GUI library; it exposes numeric results only.
-- **NFR-2 — No Dynamic Allocation**: Sweep outputs are written into caller-provided, statically sized buffers.
-- **NFR-3 — Deterministic Core**: Routh array construction and frequency-response evaluation execute in a fixed operation count for a given size.
+- **NFR-1 — No Plotting Dependency**: The module must not depend on a plotting
+  or GUI library; it exposes numeric results only.
+- **NFR-2 — No Dynamic Allocation**: Sweep outputs are written into
+  caller-provided, statically sized buffers.
+- **NFR-3 — Deterministic Core**: Routh array construction and
+  frequency-response evaluation execute in a fixed operation count for a given
+  size.
 
 #### 2.3. Constraints
 
-- **C-1 — Built on Existing Primitives**: `classical_tools` builds on `Polynomial` and `TransferFunction`, introducing no parallel representation.
-- **C-2 — Capacity Bounds**: Maximum representable system order is bounded by `Polynomial`'s 128-element and `Matrix`'s 32×32 limits.
-- **C-3 — No Fortran/GPL Wrapper Dependencies**: `classical_tools` does not adopt a SLICOT/Slycot-equivalent wrapper (§5.3).
-- **C-4 — No Interactive Tuning Surface**: An `sisotool`/`pidtune`-equivalent interactive design loop is out of scope (§5.4).
+- **C-1 — Built on Existing Primitives**: `classical_tools` builds on
+  `Polynomial` and `TransferFunction`, introducing no parallel representation.
+- **C-2 — Capacity Bounds**: Maximum representable system order is bounded by
+  `Polynomial`'s 128-element and `Matrix`'s 32×32 limits.
+- **C-3 — No Fortran/GPL Wrapper Dependencies**: `classical_tools` does not
+  adopt a SLICOT/Slycot-equivalent wrapper (§5.3).
+- **C-4 — No Interactive Tuning Surface**: An `sisotool`/`pidtune`-equivalent
+  interactive design loop is out of scope (§5.4).
 
 ---
 
@@ -65,7 +79,7 @@ component. It sits alongside `TransferFunction` and consumes it directly:
 inputs are `TransferFunction`/`Polynomial` values, outputs are either
 `TransferFunction` values (compensator synthesis) or fixed-capacity point
 buffers (root locus, frequency response, margins). The module owns no
-plotting, rendering, or terminal-UI logic; that is left entirely to
+plotting, rendering or terminal-UI logic; that is left entirely to
 consumers, matching the numeric/graphical split every surveyed toolbox
 implements internally but does not expose as a boundary a `no_std` crate can
 reuse (§4.1).
@@ -77,7 +91,7 @@ reuse (§4.1).
 #### 4.1. Numeric Core vs. Plotting Layer
 
 Every reference toolbox internally separates a numeric computation from its
-display: JuliaControl's own command listing puts `margin`, `sisomargin`, and
+display: JuliaControl's own command listing puts `margin`, `sisomargin` and
 other analysis functions in a distinct "Analysis" category from
 `bodeplot`/`nyquistplot`/`rlocus`/`nicholsplot` in "Plotting" (JuliaControl,
 2026); Octave's control package documents `rlocus` itself as "Display root
@@ -116,7 +130,7 @@ method but are not resolved by evidence gathered for this design — see §8.
 
 #### 4.4. Frequency-Domain Analysis and Margins
 
-Bode, Nyquist, and Nichols outputs are all projections of the same
+Bode, Nyquist and Nichols outputs are all projections of the same
 underlying computation: `TransferFunction::evaluate_complex` evaluated at
 $s = j\omega$ (or $z = e^{j\omega T_s}$) over a caller-supplied frequency
 buffer (`transfer-function-design.md` §5.2). `classical_tools` adds no new
@@ -185,7 +199,7 @@ surface, if built at all, belongs to a host-side companion tool consuming
 ### 6. Verification & Validation
 
 1. **Golden-Value Regression**: Root locus point sets at fixed gains, Routh
-   array stability determinations, and gain/phase margin values are checked
+   array stability determinations and gain/phase margin values are checked
    against `python-control` and/or Octave control-package reference outputs
    for a shared set of test transfer functions (`python-control`'s `margin`,
    Octave's `rlocus`/`margin` — python-control, 2026a; Octave-Forge, 2026),
@@ -221,9 +235,9 @@ one the module amortizes or hides.
 - **Limited Rust Prior Art**: `control_systems_torbox`'s `analysis` module
   exposes only `frequency_response` and `system_properties` submodules — no
   root locus or Routh-Hurwitz (TorBorve, 2026). `scirs2-signal` re-exports
-  `root_locus`, `nichols_chart`, `nyquist_diagram`, and `stability_margins`
+  `root_locus`, `nichols_chart`, `nyquist_diagram` and `stability_margins`
   directly (cool-japan, 2026), making it the closer functional analog, but
-  its `Cargo.toml` carries `chrono`, `serde_json`, `num_cpus`, and other
+  its `Cargo.toml` carries `chrono`, `serde_json`, `num_cpus` and other
   std-oriented dependencies with no `no_std` marker present (cool-japan,
     2026) — it is not a reusable dependency, only a naming/scope reference.
 - **Routh Array Degenerate Cases Unverified**: The classic "row of zeros"
@@ -240,7 +254,7 @@ one the module amortizes or hides.
 - **Margin Accuracy vs. Sweep Resolution**: §4.4's crossing-detection
   approach to gain/phase margin has no interpolation or refinement strategy
   specified yet; whether a coarse caller-chosen sweep produces acceptable
-  margin accuracy, or whether the API needs a documented minimum resolution
+  margin accuracy or whether the API needs a documented minimum resolution
   or a follow-up refinement step, is unresolved and not addressed by the
   evidence gathered for this design.
 - **No `sisotool`-Equivalent Scoping Decision**: §5.4 defers, rather than
@@ -264,7 +278,7 @@ one the module amortizes or hides.
 ### 10. References
 
 1. **Åström, K. J., & Hägglund, T. (2006).** *Advanced PID Control*, Chapter
-   1: Introduction. ISA — The Instrumentation, Systems, and Automation
+   1: Introduction. ISA — The Instrumentation, Systems and Automation
    Society. — PID prevalence statistics motivating compensator-design scope
    (§1, §2.1).
 2. **MathWorks. (2026a).** *Control System Toolbox*. [Online]. Available:
@@ -289,7 +303,7 @@ one the module amortizes or hides.
    case (§1).
 6. **python-control. (2026a).** *python-control/python-control*. [Online].
    Available: https://github.com/python-control/python-control. Accessed:
-   Aug. 8, 2026. — Feature-set grouping (analysis vs. design), and
+   Aug. 8, 2026. — Feature-set grouping (analysis vs. design) and
    `matplotlib`/`slycot` host-dependency profile (§2.1, §2.2, §4.1, §6).
 7. **JuliaControl. (2026).** *ControlSystems.jl README.md*. [Online].
    Available:
@@ -330,6 +344,6 @@ one the module amortizes or hides.
 
 ### 11. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                              |
-|:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: functional scope, numeric-core architecture, and root-locus/Routh-Hurwitz mapping to existing primitives. |
+| Revision | Date           | Author          | Description                                                                                                             |
+|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: functional scope, numeric-core architecture and root-locus/Routh-Hurwitz mapping to existing primitives. |

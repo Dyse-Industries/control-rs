@@ -5,7 +5,7 @@ Rust native control systems toolbox intended for safety-critical applications.
 
 # 1. General Etiquette
 
-To maintain a clean, readable, and highly maintainable codebase, all
+To maintain a clean, readable and highly maintainable codebase, all
 documentation must adhere to the following rules:
 
 * **Module-level Documentation**: Module-level documentation must be written
@@ -14,8 +14,8 @@ documentation must adhere to the following rules:
   declarations (e.g., `pub mod my_module;`). Placing module-level docs at the
   top of the file keeps the module definition clean and ensures the rustdoc
   output is correctly associated with the module content.
-* **Language, Tone and Tense**: Write in clear, concise, and professional
-  English. Avoid marketing jargon, colloquialisms, and excessive formalities.
+* **Language, Tone and Tense**: Write in clear, concise and professional
+  English. Avoid marketing jargon, colloquialisms and excessive formalities.
   Focus on providing precise technical information. Always use present tense,
   the second-person imperative for procedural steps and the objective
   third-person for concepts.
@@ -42,12 +42,12 @@ safety manual for the crate.
 * **Features**: A list and explanation of all cargo features, especially those
   that alter functionality or introduce
   dependencies.
-* **Limitations**: A clear statement of any known limitations, assumptions, or
+* **Limitations**: A clear statement of any known limitations, assumptions or
   operational constraints.
 
 # 3. Public API Documentation
 
-All public items (modules, structs, enums, functions, traits, and macros) must
+All public items (modules, structs, enums, functions, traits and macros) must
 be thoroughly documented using ///. The
 documentation for each item must follow a consistent and explicit structure.
 
@@ -91,7 +91,7 @@ The documentation for every public item should adhere to the following order:
 /// # Returns
 /// * `Option<usize>`
 ///     * `Some(index)` - The largest index containing a non-zero value.
-///     * `None` - If the slice is empty, or all elements are zero.
+///     * `None` - If the slice is empty or all elements are zero.
 ///
 /// # Panics
 /// This function does not panic.
@@ -129,7 +129,7 @@ impl B for MyType {}
 
 ## 3.2 The #Safety Section: A Contract for Critical Code
 
-For any function, method, or unsafe block that has safety implications, a
+For any function, method or unsafe block that has safety implications, a
 dedicated `#safety` section is mandatory. This section must explicitly detail
 the contract the caller must uphold to ensure safe execution.
 
@@ -138,7 +138,7 @@ list below:
 
 * Pre-conditions: The conditions that must be true before calling the function.
   This includes, but is not limited to,
-  the state of hardware, the validity of inputs, and the expected configuration
+  the state of hardware, the validity of inputs and the expected configuration
   of the system.
 * Post-conditions: The state of the system after the function has executed
   successfully. This describes the expected
@@ -176,7 +176,7 @@ logic and the settings it uses.
 ## 4.1. Structuring HIL Docs
 
 * **Omit Formalities**: Do not include `# Detailed Summary`, `# Generic Args`,
-  `# Returns`, or `# Example`
+  `# Returns` or `# Example`
   sections in HIL documentation.
 * **Suite-Level Docs**: Provide a brief one-sentence or two-sentence description
   using outer doc comments (`///`) directly above the `#[hil_suite]` macro or
@@ -216,7 +216,7 @@ pub mod teensy_pid_suite {
 
 * All examples must be runnable via cargo test.
 * Examples should use the ? operator for error handling and avoid unwrap(),
-  expect(), or panic!() unless demonstrating
+  expect() or panic!() unless demonstrating
   a panic condition.
 
 # Resources

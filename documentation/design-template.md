@@ -18,7 +18,7 @@ technical details.
 
 Use the examples and scenarios, from the introduction, to formally define
 (quantify) features and behaviors needed to meet the goal. Distinguish between
-functional requirements, non-functional requirements, and constraints.
+functional requirements, non-functional requirements and constraints.
 
 ---
 

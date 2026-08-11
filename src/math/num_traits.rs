@@ -1,6 +1,6 @@
 //! # Numeric Traits
 //!
-//! This module defines a hierarchy of traits for numerical types, organized
+//! This module defines a hierarchy of traits for numerical types organized
 //! around **hardware behavior** rather than abstract algebra. Each tier
 //! reflects a physical ALU/FPU capability, giving generic control algorithms
 //! exact compile-time boundaries on overflow behavior (wrapping vs.
@@ -459,7 +459,7 @@ pub trait Scalar: Zero + One + Sub<Output = Self> + Mul<Output = Self> {
 // Macro Code Generation
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Implements `Zero`, `One`, `Integer`, and `SaturatingInteger` for a given
+/// Implements `Zero`, `One`, `Integer` and `SaturatingInteger` for a given
 /// integer primitive (signed or unsigned).
 ///
 /// Relies on `ops.rs`'s existing `WrappingAdd`/`WrappingSub`/`WrappingMul`
@@ -539,7 +539,7 @@ macro_rules! impl_scalar {
     };
 }
 
-/// Implements `Zero`, `One`, `Radical`, `Exponential`, `Trig`, and `Float`
+/// Implements `Zero`, `One`, `Radical`, `Exponential`, `Trig` and `Float`
 /// for a given floating-point type.
 ///
 /// # Arguments

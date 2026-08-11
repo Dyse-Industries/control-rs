@@ -4,7 +4,7 @@
 //! corresponding Peano representations.
 //!
 //! The test suite must comprehensively cover the operations for addition, subtraction,
-//! multiplication, minimum, and maximum behaviors.
+//! multiplication, minimum and maximum behaviors.
 //!
 //! A specialized testing sequence must assert that the memory footprint of these types remains
 //! strictly zero bytes, ensuring that compile-time mathematics does not inflate the compiled
@@ -29,7 +29,7 @@
 //! - **FR-1** (base dimension trait): dimension value/structure checks.
 //! - **FR-2** (type-level arithmetic): addition/subtraction/multiplication/
 //!   min/max tests, including the pairwise recursion-limit regressions.
-//! - **FR-3** (const-generic bridge): `Const<N>` hoisting, `from_i8`, and
+//! - **FR-3** (const-generic bridge): `Const<N>` hoisting, `from_i8` and
 //!   the static-concatenation helpers.
 //! - **FR-4** (named aliases `U0`..`U127`): exercised incidentally as the
 //!   type arguments every other test in this suite uses, but has no test

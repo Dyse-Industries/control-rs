@@ -6,7 +6,7 @@
 //!   access): `ArrayStorage`/`StorageView` layout and bounds-check tests,
 //!   plus the property-based index-mapping suite below.
 //! - **FR-2** (type-level dimension encoding): the `Const<_>`/`U2`/`U3`
-//!   parameterization throughout, and `test_storage_view_length_mismatch`
+//!   parameterization throughout and `test_storage_view_length_mismatch`
 //!   for the runtime-length assertion.
 //! - **FR-3** (owned/borrowed/scratch backend categories): `ArrayStorage`
 //!   (owned), `StorageView`/`StorageViewMut` (borrowed), `PivotStorage`
@@ -172,7 +172,7 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies `as_mut_slice` observes writes made through `get_mut`, and
+    /// Verifies `as_mut_slice` observes writes made through `get_mut` and
     /// vice versa (both paths address the same backing memory) (FR-3a of
     /// `storage-trait-design.md`).
     fn test_array_storage_mutation_round_trip() {
@@ -260,7 +260,7 @@ pub mod storage_test_suite {
     #[cfg_attr(test, test)]
     /// Verifies a `ContiguousStorage` backend's `as_slice()`/`as_mut_slice()`
     /// feed directly into a BLAS subprogram trait (`GEMV`) with no
-    /// intermediate copy, and that `ORDER` matches the layout `GEMV`'s
+    /// intermediate copy and that `ORDER` matches the layout `GEMV`'s
     /// default implementation assumes (row-major: `a.chunks_exact(cols)`)
     /// (FR-6 of `storage-trait-design.md`).
     fn test_storage_gemv_contiguous_storage_interop() {
@@ -326,7 +326,7 @@ mod storage_property_tests {
 
     proptest! {
         /// Every logical `(i, j)` in a 3x4 `ArrayStorage` reads back the
-        /// value it was constructed with, and `offset()` matches the
+        /// value it was constructed with and `offset()` matches the
         /// column-major formula exactly (implying, over the full `i, j`
         /// range, that the index mapping is injective).
         #[test]

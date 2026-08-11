@@ -19,9 +19,9 @@ backends (`Storage<T, N, U1>` and `Storage<T, D, U1>`). It does **not** wrap
 `Polynomial` objects under the hood; instead, it operates directly on numerator
 and denominator storage memory via lower-level Peano dimension traits (
 `num_types.rs`), DSP subprogram traits (such as convolution and polynomial
-evaluation), and BLAS kernels. This design preserves symmetry with `Matrix` and
+evaluation) and BLAS kernels. This design preserves symmetry with `Matrix` and
 `Polynomial`, ensuring zero-cost abstraction, zero dynamic heap allocation (
-`#![no_std]`), and flexible memory ownership (owning arrays, borrowed views, and
+`#![no_std]`) and flexible memory ownership (owning arrays, borrowed views and
 Flash ROM tables).
 
 ---
@@ -37,10 +37,10 @@ Flash ROM tables).
   domain and hold an optional sampling period $T_s$.
 - **FR-3 — Direct Interoperability with Math & DSP Traits**: All operations (
   frequency response, system algebra, discretization, canonical transforms) must
-  interact directly with Peano, DSP, and BLAS traits without delegating to
+  interact directly with Peano, DSP and BLAS traits without delegating to
   `Polynomial` wrappers.
 - **FR-4 — System Interconnections**: Provide static capacity computation for
-  series, parallel, and feedback (closed-loop) algebraic connections.
+  series, parallel and feedback (closed-loop) algebraic connections.
 - **FR-5 — Discretization Algorithms**: Support bilinear (Tustin) transform with
   optional pre-warping and exact Zero-Order Hold discretization.
 - **FR-6 — State-Space Canonical Conversions**: Support bidirectional conversion
@@ -167,7 +167,7 @@ pub enum TransferFunctionError {
 
 Runtime constructors that accept caller-supplied coefficients (`from_slices`,
 and any validating variant of `from_coefficients`/`from_storage`) return
-`Result<Self, TransferFunctionError>`. No `unwrap()`, `expect()`, or `panic!()`
+`Result<Self, TransferFunctionError>`. No `unwrap()`, `expect()` or `panic!()`
 is used outside tests and examples. Near-pole frequency-response evaluation
 (§5.2) and partial-fraction ZOH decomposition (§5.4) are *not* treated as
 constructor-time errors — a valid `TransferFunction` may still be evaluated at
@@ -277,7 +277,7 @@ $$\frac{H_1(s)}{1 + H_1(s) H_2(s)} = \frac{B_1 A_2}{A_1 A_2 + B_1 B_2}$$
 Numerator dimension bound: $(N_1 + D_2 - 1)$. Denominator dimension bound:
 $\max(D_1 + D_2 - 1,\ N_1 + N_2 - 1)$ — the sum of the two product terms
 $A_1 A_2$ and $B_1 B_2$ is bounded by the larger of their two individual
-degree bounds, not their sum, and is expressed via `DimMax` rather than a
+degree bounds, not their sum and is expressed via `DimMax` rather than a
 further `DimAdd`:
 
 ```rust
@@ -311,7 +311,7 @@ the reference source, not just the textbook identity.
 
 ##### Non-Minimal Results
 
-None of series, parallel, or feedback perform pole-zero cancellation or degree
+None of series, parallel or feedback perform pole-zero cancellation or degree
 reduction after combination. `python-control`'s equivalent operators do not
 either — `minreal()` is a separate, explicit, user-invoked operation in the
 reference implementation (python-control, `control.minreal`). `TransferFunction`
@@ -403,7 +403,7 @@ mid-range orders" and marks its own direct companion-form realization command
 State-Space Realizations*; MathWorks, `canon`). Formal analysis of
 companion-form controllability radii confirms this is a structural property of
 the form itself, not an implementation artifact (companion-form controllability
-radii literature), and recent work characterizes the condition number of the
+radii literature) and recent work characterizes the condition number of the
 standard companion-form transformation as growing exponentially with system
 dimension, treating numerically reliable computation of it as an open problem
 (Yang & Jones, 2026). This design scopes §5.5 to controllable/observable
@@ -489,7 +489,7 @@ than implemented in the initial revision.
   hierarchy, which has not yet been through `/cr-research` or
   `/cr-design-doc` and will be revised independently of this document —
   matching the same caveat `matrix-design.md` §7, `state-space-design.md`
-  §9, and `tensor-design.md` §7 already carry for the identical dependency.
+  §9 and `tensor-design.md` §7 already carry for the identical dependency.
   Separately, `Convolution<T>` (FR-3, `src/math/dsp.rs`) is shipped code
   still bound on the retired `T: Real`; its migration is tracked in
   `polynomial-design.md` §9, which owns the primary specification of that
@@ -501,12 +501,12 @@ than implemented in the initial revision.
 
 | Task / Feature                              | Description                                                                                                                                                                                                       | Estimated Effort |
 |:--------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Phase 1: Storage Wrapper & Constructors** | Base `TransferFunction` struct, storage traits, slice accessors, and error type.                                                                                                                                  | 1.0 Day          |
+| **Phase 1: Storage Wrapper & Constructors** | Base `TransferFunction` struct, storage traits, slice accessors and error type.                                                                                                                                   | 1.0 Day          |
 | **Phase 2: Frequency Evaluation**           | Direct Horner evaluation over storage for $H(j\omega)$ and Bode calculations.                                                                                                                                     | 1.0 Day          |
-| **Phase 3: Algebra & DSP Convolution**      | Implement series, parallel, and feedback connections using direct DSP convolution.                                                                                                                                | 1.5 Days         |
+| **Phase 3: Algebra & DSP Convolution**      | Implement series, parallel and feedback connections using direct DSP convolution.                                                                                                                                 | 1.5 Days         |
 | **Phase 4: Discretization**                 | Bilinear (Tustin, with pre-warping) transform and transfer-function-direct ZOH, including partial-fraction decomposition (§9's closely-spaced/repeated-pole conditioning risk must be bounded, not assumed away). | 2.5 Days         |
 | **Phase 5: State-Space Conversion**         | Controllable and Observable Canonical Form conversions.                                                                                                                                                           | 1.5 Days         |
-| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites, and cross-validation against two external reference implementations (MATLAB, `python-control`).                                                                                    | 2.0 Days         |
+| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites and cross-validation against two external reference implementations (MATLAB, `python-control`).                                                                                     | 2.0 Days         |
 
 ---
 
@@ -543,9 +543,9 @@ than implemented in the initial revision.
 
 7. **Oppenheim, A. V., & Schafer, R. W. (2009).** *Discrete-Time Signal
    Processing* (3rd ed.). Pearson. — FIR/IIR filter representation, transfer
-   function stability, and frequency-response $H(e^{j\omega})$ theory.
+   function stability and frequency-response $H(e^{j\omega})$ theory.
 8. **Ogata, K. (2010).** *Modern Control Engineering* (5th ed.). Prentice
-   Hall. — Continuous transfer functions, bilinear (Tustin) transformation, and
+   Hall. — Continuous transfer functions, bilinear (Tustin) transformation and
    frequency pre-warping derivations.
 9. **Henrici, P. (1974).** *Applied and Computational Complex Analysis, Volume
    1*. Wiley. — Complex-arithmetic numerical stability foundations

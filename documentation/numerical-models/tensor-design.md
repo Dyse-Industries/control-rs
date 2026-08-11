@@ -33,12 +33,12 @@ out of scope.
 - **FR-1 — Compile-Time Sizing**: Shape and rank are enforced entirely at
   compile time via the `TensorLayout` trait and the crate's `Dim` system.
 - **FR-2 — Static Constructors**: Provide `zero`, `from_raw`, `from_fn`,
-  `from_storage`, `from_slice`/`from_mut_slice` for stack, ROM-constant, and
+  `from_storage`, `from_slice`/`from_mut_slice` for stack, ROM-constant and
   zero-copy instantiation.
 - **FR-3 — Core Arithmetic**: Operator overloading for element-wise `Add`,
-  `Sub`, and scalar `Mul`/`Div`.
+  `Sub` and scalar `Mul`/`Div`.
 - **FR-4 — Tensor Operations**: Zero-copy sub-tensor views, Einstein-summation
-  contraction, and axis permutation.
+  contraction and axis permutation.
 - **FR-5 — Grid Interpolation**: A point-query evaluation over a `TensorLayout`
   grid using piecewise-multilinear interpolation for gain-scheduled lookup
   tables.
@@ -74,7 +74,7 @@ out of scope.
 - **C-4 — Type-Level Quantization Encoding**: Quantization-scale const generic
   parameters must be plain integers, since Rust disallows floating-point const
   generics.
-- **C-5 — Out of Scope**: On-device training, automatic differentiation, and
+- **C-5 — Out of Scope**: On-device training, automatic differentiation and
   trained-model import (TFLite/PyTorch Mobile/ONNX) are not addressed by this
   design.
 
@@ -170,7 +170,7 @@ constants.
 
 #### 4.5. Operator Overloading
 
-`Add`, `Sub`, and scalar `Mul`/`Div` iterate directly over element storage
+`Add`, `Sub` and scalar `Mul`/`Div` iterate directly over element storage
 and return an owning `ArrayTensor<T, Layout>`.
 
 #### 4.6. Core Operations
@@ -287,7 +287,7 @@ interoperability (§5.2) — not part of this revision's default path.
 #### 4.10. Interoperability & Conversions
 
 `ConversionError` is defined once, canonically, in
-[`error-design.md`](../../math/design/error-design.md) — shared with
+[`error-design.md`](../math/error-design.md) — shared with
 `Matrix` and `Polynomial`'s conversions — not restated here.
 
 - **To `Matrix`**: `TryFrom<Tensor<T, Layout, S>> for Matrix<T, R, C, S>`
@@ -307,20 +307,20 @@ is required.
 #### 4.11. Error Handling & State Management
 
 - **Compile-Time Constraints**: Dimension and rank mismatches in
-  contraction, permutation, or layout conversion are compile-time type
+  contraction, permutation or layout conversion are compile-time type
   errors.
 - **Runtime Fallbacks**: Dynamic coordinate access returns
   `Option<&T>`/`Option<&mut T>` via `get`/`get_mut`; `contract_into_dynamic`
   returns `Result<(), ContractionError>`. Neither raises a panic.
 - **Interpolation Bounds**: A query coordinate outside the grid's valid
   range is a genuinely open question (§7) — whether it clamps to the
-  boundary, extrapolates, or returns `Result<T, InterpolationError>` is not
+  boundary, extrapolates or returns `Result<T, InterpolationError>` is not
   finalized in this revision.
 
 #### 4.12. Structural Specializations & Future Extensions
 
 - **Sparse Tensor Representations**, **ROM-Backed Static Storage
-  Backends**, and **Matrix-Free Operators** remain noted future extensions
+  Backends** and **Matrix-Free Operators** remain noted future extensions
   from the prior revision.
 - **Model-Import Codegen (future work, not implemented in this revision)**:
   A future ahead-of-time tool could import a trained TFLite/ExecuTorch/ONNX
@@ -347,7 +347,7 @@ is required.
 - **`Tensor`-Level Const Generics (considered, rejected)**: Adding
   `const SHIFT: i32` directly to `Tensor<T, Layout, S, SHIFT>` was
   considered, but this conflates two orthogonal concerns — shape (`Layout`)
-  and scalar representation (`SHIFT`) — inside one type, and would require
+  and scalar representation (`SHIFT`) — inside one type and would require
   every existing `impl` block (`Add`, `contract_into`, conversions) to
   thread `SHIFT` arithmetic (e.g. rescaling when contracting two tensors
   with different shifts), a significant complexity increase to an
@@ -405,7 +405,7 @@ unstabilized (§2.3).
 #### 5.5. External Tensor Libraries
 
 As with `Matrix`, no existing crate combines `no_std`/no-alloc,
-compile-time (const-generic) tensor shapes, and interoperability with a
+compile-time (const-generic) tensor shapes and interoperability with a
 broader `Matrix`/`Polynomial` type system. MicroFlow is the closest analog
 but is a single-model NN inference engine with no general `Tensor<T,
 Layout, S>` abstraction; `tfmicro` requires a C++ toolchain. Building on
@@ -419,8 +419,8 @@ and `const fn`-on-stable-Rust requirements.
 
 #### 6.1. Verification Strategy
 
-1. **Compile-Time Verification**: Shape, rank, and axis-index mismatches in
-   contraction, permutation, and layout conversion are rejected by the type
+1. **Compile-Time Verification**: Shape, rank and axis-index mismatches in
+   contraction, permutation and layout conversion are rejected by the type
    system, matching `Matrix`'s `Dim`-based verification model.
 2. **Property & Unit Testing** (`proptest`, Claessen & Hughes, 2000):
     - Stride index calculations and axis-permutation round trips (existing).
@@ -440,7 +440,7 @@ and `const fn`-on-stable-Rust requirements.
 4. **Host/Target Test Integration**: `cargo test` on host; QEMU
    cross-compilation across `ArrayStorage`, `MatrixView`, `MatrixViewMut`,
    and the new `Quantized<Repr, SHIFT>` scalar type.
-5. **Benchmarks and Quality Reporting**: Contraction, interpolation, and
+5. **Benchmarks and Quality Reporting**: Contraction, interpolation and
    activation-function cycle counts benchmarked on ARM hardware; binary
    size checks confirm unused shape/activation variants are dead-code
    eliminated.
@@ -511,7 +511,7 @@ pub fn predict<Sw1, Sb1, Sw2, Sb2>(
 ### 7. Risks & Open Questions
 
 - **Interpolation Bounds Policy**: Whether an out-of-grid query clamps,
-  extrapolates, or returns an error is not finalized (§4.11).
+  extrapolates or returns an error is not finalized (§4.11).
 - **Q-Format vs. Rational Scale Selection**: This revision defaults to
   power-of-two `SHIFT` (§5.2); whether/when the rational variant is needed
   depends on the (future, out-of-scope) model-import path's accuracy
@@ -604,6 +604,6 @@ pub fn predict<Sw1, Sb1, Sw2, Sb2>(
 
 | Revision | Date           | Author          | Description                                                                                                        |
 |:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 26, 2026  | @MitchellDScott | Initial draft: `Storage` trait hierarchy, zero-copy views, stack `ArrayStorage`, and inline citations.             |
-| 1.1      | August 2, 2026 | @MitchellDScott | Full overhaul after a research pass: added grid interpolation, an `Activation` trait, and a quantized scalar type. |
+| 1.0      | July 26, 2026  | @MitchellDScott | Initial draft: `Storage` trait hierarchy, zero-copy views, stack `ArrayStorage` and inline citations.              |
+| 1.1      | August 2, 2026 | @MitchellDScott | Full overhaul after a research pass: added grid interpolation, an `Activation` trait and a quantized scalar type.  |
 | 1.2      | August 2, 2026 | @MitchellDScott | Relocated `ConversionError`; flagged `Float` dependency as provisional; revised development-plan estimates upward. |

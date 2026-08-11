@@ -45,7 +45,7 @@ than as a runtime panic.
 
 - **C-1 — Recursion-Bounded Dimension Ceiling**: Friendly aliases (FR-4) stop at
   a fixed ceiling (`U127`) because the unary canonical representation
-  requires trait-solver recursion proportional to dimension size, and rustc's
+  requires trait-solver recursion proportional to dimension size and rustc's
   default `#![recursion_limit]` is 128 (Rust Reference, 2026c) — one Peano level
   above the deepest chain a single `Dim` value can resolve to.
 - **C-2 — Ceiling Does Not Bound Pairwise Arithmetic**: Raising C-1 to `U127`
@@ -53,7 +53,7 @@ than as a runtime panic.
   not guarantee `DimAdd`/`DimSub`/`DimMax`/`DimMin` succeeds for every pair of
   aliases below the ceiling. The structural-recursion where-clauses in §4 can
   require resolving `Dim` for an operand more than once per step, so the safe
-  envelope for a pair is smaller than, and asymmetric with respect to, `U127`
+  envelope for a pair is smaller than and asymmetric with respect to, `U127`
   (§6.1, item 5).
 
 ---
@@ -73,7 +73,7 @@ computed structurally (`S<N>::DIM = N::DIM + 1`), giving every dimension type a
 `usize` value without storing one in the binary.
 
 **Arithmetic by structural recursion.** `DimAdd`, `DimSub`, `DimMul`,
-`DimMax`, and `DimMin` are each implemented as a base case over `Z` and an
+`DimMax` and `DimMin` are each implemented as a base case over `Z` and an
 inductive case over `S<N>`, mirroring textbook Peano-arithmetic recursion
 (e.g., `(N+1) + M = (N + M) + 1` for `DimAdd`, `(N+1) * M = M + (N * M)` for
 `DimMul`). The unary form was chosen here for the simplicity of a single
@@ -85,7 +85,7 @@ peano, 2016).
 **Const-generic bridge.** `Const<const N: usize>` is a friendly front end
 onto the canonical representation, not an independent arithmetic
 implementation. The aliasing macro gives `Const<N>` (for `N` in `0..=127`) an
-associated `PeanoTypeNum` pointing at the matching `U`-alias, and `Const<N>`'s
+associated `PeanoTypeNum` pointing at the matching `U`-alias and `Const<N>`'s
 `DimAdd` impls resolve by first converting through that associated type and
 then reusing the canonical `S<N>`/`Z` arithmetic.
 
@@ -149,7 +149,7 @@ concern.
    alias extension, instead of a checked-in static list.**
    *Considered*: adding a `generate_dims!(127)` entry point to the
    in-workspace `control_rs_macros` proc-macro crate (already used for
-   `hil_suite`), or pulling in the `paste` crate so `macro_rules!` could
+   `hil_suite`) or pulling in the `paste` crate so `macro_rules!` could
    token-paste `U` + a counted literal directly, avoiding a hand-authored
    identifier list.
    *Rejected*: the alias ceiling is a fixed constant chosen once (C-1), not
@@ -174,7 +174,7 @@ concern.
    2026a).
 2. **Structural arithmetic tests**: `num_type_tests.rs` covers addition
    (including commutativity and the `Z` identity), subtraction (including a
-   `compile_fail` doctest for underflow), multiplication, maximum, and
+   `compile_fail` doctest for underflow), multiplication, maximum and
    minimum, each checked both as a type-level assertion (`let _: U5 = ...`)
    and as a runtime `Dim::DIM` value check.
 3. **Recursion-limit test**:
@@ -209,7 +209,7 @@ Validation is deferred to the consumers that do not yet exist
 - **Compile time, not runtime**: every trait in this module is resolved
   during compilation; there is no generated code or data at runtime beyond
   what a consumer's own fields require.
-- **Zero memory footprint**: `Z`, `S<N>`, and `Const<N>` are zero-sized
+- **Zero memory footprint**: `Z`, `S<N>` and `Const<N>` are zero-sized
   (NFR-1), matching the general Rust guarantee that `PhantomData<T>` and
   types built only from it occupy no space (Rust Standard Library, 2026).
 - **Recursion depth scales with dimension size**: because arithmetic is
@@ -242,7 +242,7 @@ Validation is deferred to the consumers that do not yet exist
    limit under the default `#![recursion_limit]` (§6.1, item 5); there is
    no headroom left to push further without one of the options this
    document still declines to pick: raising the recursion limit crate-wide,
-   switching to a binary encoding (Alternative 1), or introducing a second,
+   switching to a binary encoding (Alternative 1) or introducing a second,
    non-Peano dimension type for large sizes. Flagged here for whoever needs
    dimensions above 127.
 3. **No type-level division or ordering beyond max/min.** The module
@@ -263,8 +263,8 @@ Validation is deferred to the consumers that do not yet exist
 
 | Phase / Feature                                     | Description                                                                                                                                                                                                                                         | Estimated Effort |
 |:----------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Phase 1: Core Encoding & Arithmetic (complete)**  | `Dim`, `DimAdd`/`DimSub`/`DimMul`/`DimMax`/`DimMin`, `Z`/`S<N>`, `Const<N>` bridge, and the `U0..U32` alias macro already exist in `src/math/num_types.rs` with passing unit tests.                                                                 | —                |
-| **Phase 2: Ceiling Extension to `U127` (complete)** | `U33..U127` aliases generated and appended to the `generate_peano_aliases!` invocation; module doc ceiling description, dimension-value assertions, and the recursion-limit test (pinned at `U125`, §6.1 item 3) moved to the new ceiling.          | —                |
+| **Phase 1: Core Encoding & Arithmetic (complete)**  | `Dim`, `DimAdd`/`DimSub`/`DimMul`/`DimMax`/`DimMin`, `Z`/`S<N>`, `Const<N>` bridge and the `U0..U32` alias macro already exist in `src/math/num_types.rs` with passing unit tests.                                                                  | —                |
+| **Phase 2: Ceiling Extension to `U127` (complete)** | `U33..U127` aliases generated and appended to the `generate_peano_aliases!` invocation; module doc ceiling description, dimension-value assertions and the recursion-limit test (pinned at `U125`, §6.1 item 3) moved to the new ceiling.           | —                |
 | **Phase 3: Storage/Matrix Integration**             | Wire `Dim` into the `Storage<T, R, C>` trait per `storage-trait-design.md` FR-2, confirming the `U127` ceiling (C-1) and the pairwise-arithmetic boundary (C-2) are documented consistently at the first real call site.                            | Medium           |
 | **Phase 4: Verification Hardening (complete)**      | Asymmetric-pair boundary tests landed — passing sides as unit tests, failing sides as `compile_fail` doctests (§6.1, item 5) — closing Risk 4; `proptest`-based coverage of arithmetic identities deferred until more `Dim`-generic consumers land. | —                |
 | **Phase 5: Extended Arithmetic (conditional)**      | Evaluate `DimDiv`/`DimOrd` (Risk 3) once a concrete consumer needs them; not scheduled otherwise.                                                                                                                                                   | Small            |

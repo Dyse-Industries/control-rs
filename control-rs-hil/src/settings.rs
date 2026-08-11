@@ -2,14 +2,14 @@
 //!
 //! # Description
 //!
-//! This module provides the `Setting` trait, value representations, and thread-safe atomic wrappers
+//! This module provides the `Setting` trait, value representations and thread-safe atomic wrappers
 //! to manage configurable parameters within a test suite. These parameters can be queried, listed,
 //! and updated dynamically by the host during HIL testing.
 //!
 //! # Core Concepts
 //!
 //! - **Setting Trait**: Provides a uniform interface to read and write typed values, retrieve names
-//!   and descriptions, and perform type checks.
+//!   and descriptions and perform type checks.
 //! - **Atomic Setting Wrappers**: Thread-safe implementations for primitive types (`bool`, `f32`,
 //!   `i32`, `u8`, etc.) that allow tests to read configuration parameters while running, without
 //!   requiring heavy lock primitives.

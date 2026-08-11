@@ -36,7 +36,7 @@
 
 ```rust
 /// Representation and layout conversion errors, shared across `Matrix`,
-/// `Polynomial`, and `Tensor` conversions.
+/// `Polynomial` and `Tensor` conversions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConversionError {
     /// Rank or coordinate dimensions do not align between Matrix/Tensor.

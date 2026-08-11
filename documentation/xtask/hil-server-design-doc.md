@@ -9,7 +9,7 @@
 ### 1. Introduction
 
 While host-based unit tests execute quickly, they cannot capture physical timing
-constraints, register configurations, or real-time hardware behaviors. The HIL
+constraints, register configurations or real-time hardware behaviors. The HIL
 Server bridges this gap by executing compiled firmware directly on the target
 Microcontroller Unit (MCU), operating as an interactive, persistent test server.
 Rather than running a static, sequential test suite that requires restarting the
@@ -22,21 +22,35 @@ commands.
 
 #### Functional Requirements
 
-- **FR-1 — Interactive Server Execution**: The target Server must run persistently as an idle loop, listening for host commands and executing tests on command.
-- **FR-2 — Distributed Test Discovery**: The system must automatically collect and register test cases across multiple modules without a centralized registry.
-- **FR-3 — Telemetry Stream**: The target must transmit execution status, assertions, performance metrics, and debugging logs back to the host.
-- **FR-4 — Crash Recovery**: On a test panic or hardware exception, the Server must capture diagnostic details (a "Firmware Black Box") and transmit them before rebooting.
-- **FR-5 — Lockup Recovery**: If a test hangs while interrupts are disabled, the only recovery path is a hardware watchdog timer.
+- **FR-1 — Interactive Server Execution**: The target Server must run
+  persistently as an idle loop, listening for host commands and executing tests
+  on command.
+- **FR-2 — Distributed Test Discovery**: The system must automatically collect
+  and register test cases across multiple modules without a centralized
+  registry.
+- **FR-3 — Telemetry Stream**: The target must transmit execution status,
+  assertions, performance metrics and debugging logs back to the host.
+- **FR-4 — Crash Recovery**: On a test panic or hardware exception, the Server
+  must capture diagnostic details (a "Firmware Black Box") and transmit them
+  before rebooting.
+- **FR-5 — Lockup Recovery**: If a test hangs while interrupts are disabled, the
+  only recovery path is a hardware watchdog timer.
 
 #### Non-Functional Requirements
 
-- **NFR-1 — Real-Time Determinism**: Telemetry and control operations must maintain microsecond-level timing budgets to avoid violating plant simulation intervals or inducing control loop jitter.
-- **NFR-2 — Timing-Critical Logging**: The logging system must not block the CPU during tests.
+- **NFR-1 — Real-Time Determinism**: Telemetry and control operations must
+  maintain microsecond-level timing budgets to avoid violating plant simulation
+  intervals or inducing control loop jitter.
+- **NFR-2 — Timing-Critical Logging**: The logging system must not block the CPU
+  during tests.
 
 #### Constraints
 
-- **C-1 — Zero Dynamic Allocation**: The target Server must compile under `#![no_std]` with zero heap allocation.
-- **C-2 — Memory & Flash Efficiency**: The target Server (excluding tests) must consume under 32 KB Flash and 8 KB RAM, with test suite descriptors residing in ROM.
+- **C-1 — Zero Dynamic Allocation**: The target Server must compile under
+  `#![no_std]` with zero heap allocation.
+- **C-2 — Memory & Flash Efficiency**: The target Server (excluding tests) must
+  consume under 32 KB Flash and 8 KB RAM, with test suite descriptors residing
+  in ROM.
 
 ---
 
@@ -46,20 +60,20 @@ The HIL Server framework is structured as a dual-targeted system across two
 execution environments: the Host PC and the Target MCU.
 
 1. **Host-Side (PC)**:
-    - **`control-rs-xtask`**: Orchestrates firmware compilation, flashing, and
+    - **`control-rs-xtask`**: Orchestrates firmware compilation, flashing and
       automated execution. It parses the compiled ELF file to extract the list
       of available test suites prior to execution.
     - **TUI**: An interactive developer terminal interface that displays
-      available test suites, starts execution, and displays telemetry logs.
+      available test suites, starts execution and displays telemetry logs.
 2. **Target-Side (MCU)**:
     - **HIL Server**: The main loop that receives commands, dispatches test
-      functions, and manages the test state machine.
+      functions and manages the test state machine.
     - **HostComms Concrete Drivers**: Drivers implementing UART (with DMA) or
       SEGGER RTT for data transport.
     - **Distributed Test Sections**: Test functions compiled into a dedicated
       ELF memory section.
     - **Watchdog & Panic Handler**: Systems ensuring target safety, diagnostic
-      capture, and system reset.
+      capture and system reset.
 
 ```mermaid
 flowchart TD
@@ -94,7 +108,7 @@ from target-specific peripheral drivers:
 
 ```
 control-rs (Root Workspace)
-├── control-rs-hil/     # Target-side server event loop, settings registry, and profiling
+├── control-rs-hil/     # Target-side server event loop, settings registry and profiling
 ├── control-rs-xtask/   # Host-side orchestration (TUI, headless CI, QEMU bridge)
 ├── control-rs-macros/  # Procedural macros for test suite setup and registry generation
 ├── examples/           # Target binary examples (qemu/teensy4) executing on-device
@@ -113,7 +127,7 @@ harnesses, test discovery is implemented as a "distributed slice" inside a
 dedicated linker section named `.hil_test_suites`.
 
 This mechanism is implemented today: `control-rs-macros` emits
-`#[unsafe(link_section = ".hil_test_suites")]` static descriptors, and
+`#[unsafe(link_section = ".hil_test_suites")]` static descriptors and
 `control-rs-hil/build.rs` generates a linker script reserving the section with
 `KEEP` and exposing `__hil_test_suites_start`/`__hil_test_suites_end` boundary
 symbols.
@@ -162,7 +176,7 @@ To prevent target freezes in production, a future extension will introduce
 3. The hardware WDT is fed only if *all* registered virtual watchdogs check in
    within their individual timeouts.
 
-#### 4.4. Panic Handling, Firmware Black Box, and State Recovery
+#### 4.4. Panic Handling, Firmware Black Box and State Recovery
 
 When a test assertion fails, the custom `#[panic_handler]` takes over to capture
 debugging forensic data and return the system to a clean state.
@@ -226,7 +240,7 @@ stateDiagram-v2
 * Adopting `linkme::DistributedSlice` [1] in place of the hand-rolled
   `.hil_test_suites` linker section.
     - *Reason Not Adopted*: The custom mechanism is already implemented,
-      tested, and shipped (§4.2). Adopting `linkme` would trade that
+      tested and shipped (§4.2). Adopting `linkme` would trade that
       working code for reduced linker-script maintenance burden and
       `linkme`'s existing cross-platform linker-section portability; whether
       the migration is worth the churn remains open (§8).
@@ -236,9 +250,9 @@ stateDiagram-v2
 * Delimiting frames with COBS byte-stuffing (escaping the frame boundary byte
   out of the payload) instead of a length-prefixed header.
     - *Reason for Rejection*: The `HostComms` design
-      (`documentation/xtask/design/host-comm-design-doc.md`, §4.4–§5) selected
+      (`documentation/xtask/host-comm-design-doc.md`, §4.4–§5) selected
       a sync-byte (`0xAA 0x55`) + big-endian length prefix + CRC-16-IBM-SDLC
-      trailer to minimize target-side processing and framing overhead, and
+      trailer to minimize target-side processing and framing overhead and
       this is what `control-rs-hil/src/comms.rs` implements. The tradeoff is a
       weaker resynchronization guarantee than COBS provides (§7).
 
@@ -249,7 +263,7 @@ stateDiagram-v2
 #### 6.1. Verification Plan
 
 * **Watchdog Recovery Test**: Execute a mock test that enters an infinite loop.
-  Verify that the hardware watchdog reset is triggered, the MCU reboots, and the
+  Verify that the hardware watchdog reset is triggered, the MCU reboots and the
   Server returns to Idle.
 * **Panic Black Box Test**: Execute a test designed to panic. Verify that the
   host receives a framed "Black Box" payload containing the correct panic
@@ -297,7 +311,7 @@ stateDiagram-v2
 * **Watchdog Library Adoption**: `task-watchdog` [2] and `mwdg` [3] already
   solve Task Watchdog Multiplexing (§4.3). Pulling one into MVP scope, versus
   continuing to defer it, is undecided; neither has been evaluated against
-  this crate's Embassy-vs-blocking driver assumptions, and no `embassy`
+  this crate's Embassy-vs-blocking driver assumptions and no `embassy`
   dependency currently appears in this repository's `Cargo.lock`.
 * **Preemptive Scheduling Alternative**: RTIC's priority-based preemptive
   model [4] addresses the Cooperative Multitasking Lockups constraint (§2) at
@@ -312,6 +326,12 @@ stateDiagram-v2
   integration with physically attached hardware, but has not yet been
   cross-checked against `control-rs-xtask`'s already-declared host
   dependencies (`serial2`, `ratatui`, `crossterm`, `serde_json`).
+* **TUI Distribution**: The design specifies the TUI as an `xtask`-internal
+  console (§3, §9 Step 5) but does not define a mechanism for end users
+  consuming `control-rs` as a published crate (per
+  `documentation/xtask/control-rs-hil-overview.md`, §4.3) to obtain or run it —
+  e.g., as a standalone binary, a `cargo install`-able crate or bundled
+  behind the `hil` feature. Undecided; deferred.
 
 ---
 
@@ -323,7 +343,7 @@ stateDiagram-v2
 | **Step 2: Postcard Messaging & Sync-Byte Framing** — *Shipped* | Postcard message schemas and sync-byte + length + CRC-16 framing, implemented per the `HostComms` design.                                                                        | Complete         |
 | **Step 3: HIL Server & Driver Integration**                    | Implement target-side server loop with UART DMA / RTT drivers. Blocking-HAL vs. Embassy driver model undecided — no `embassy` dependency currently exists in the workspace (§8). | 3 days           |
 | **Step 4: Watchdog & Panic Recovery**                          | Integrate multiplexed virtual task watchdogs (custom or adopted, §8) and custom HardFault panic handler.                                                                         | 2 days           |
-| **Step 5: Host Orchestrator (`xtask`)**                        | Build host-side CLI parser, ELF discovery tool, and TUI console.                                                                                                                 | 3 days           |
+| **Step 5: Host Orchestrator (`xtask`)**                        | Build host-side CLI parser, ELF discovery tool and TUI console.                                                                                                                  | 3 days           |
 
 ---
 
@@ -342,10 +362,10 @@ stateDiagram-v2
 
 ### 10. Revision History
 
-| Revision | Date | Author | Description |
-|:---------|:-----|:-------|:-------------|
-| 1.0 | May 23, 2026 | @MitchellDScott | Initial design of the HIL Server harness. |
-| 1.1 | July 18, 2026 | @MitchellDScott | Restructured to template; integrated linker KEEP, watchdog multiplexing, and telemetry framing research. |
-| 1.2 | August 5, 2026 | @MitchellDScott | Corrected framing to shipped sync-byte/CRC-16 scheme; added `linkme` and RTIC as evaluated alternatives. |
-| 1.3 | August 6, 2026 | @MitchellDScott | Corrected telemetry claim (postcard enums, not `defmt`); aligned watchdog constraint with MVP deferral. |
-| 1.4 | August 9, 2026 | @MitchellDScott | Review, diagram updates, and corrections. |
+| Revision | Date           | Author          | Description                                                                                              |
+|:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------|
+| 1.0      | May 23, 2026   | @MitchellDScott | Initial design of the HIL Server harness.                                                                |
+| 1.1      | July 18, 2026  | @MitchellDScott | Restructured to template; integrated linker KEEP, watchdog multiplexing and telemetry framing research.  |
+| 1.2      | August 5, 2026 | @MitchellDScott | Corrected framing to shipped sync-byte/CRC-16 scheme; added `linkme` and RTIC as evaluated alternatives. |
+| 1.3      | August 6, 2026 | @MitchellDScott | Corrected telemetry claim (postcard enums, not `defmt`); aligned watchdog constraint with MVP deferral.  |
+| 1.4      | August 9, 2026 | @MitchellDScott | Review, diagram updates and corrections.                                                                 |

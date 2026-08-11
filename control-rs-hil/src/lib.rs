@@ -5,18 +5,18 @@
 //! The `control-rs-hil` crate implements a Hardware-in-the-Loop (HIL) testing framework for
 //! embedded control systems. It acts as the on-target server that communicates with a host machine
 //! over a structured packet-framed protocol, enabling remote test execution, settings configuration,
-//! and execution profiling (CPU cycles, timing, and peak stack memory usage).
+//! and execution profiling (CPU cycles, timing and peak stack memory usage).
 //!
 //! # Core Concepts
 //!
 //! 1. **Server**: A loop that listens for framed commands from a host TUI, executes
-//!    targeted test functions in critical sections (with interrupts disabled), and reports status.
+//!    targeted test functions in critical sections (with interrupts disabled) and reports status.
 //! 2. **Settings Registry**: Test suites declare dynamic settings (represented by the `Setting` trait)
 //!    which the host can query and update in real-time.
-//! 3. **Hardware Profiling**: Tracks CPU clock cycles, wall-clock execution time, and paint-based
+//! 3. **Hardware Profiling**: Tracks CPU clock cycles, wall-clock execution time and paint-based
 //!    peak stack depth using target-specific mechanisms (like DWT on ARM Cortex-M or CSRs on RISC-V).
 //! 4. **Structured Telemetry**: Frames and serializes protocol events (like panic alerts, test outcome
-//!    transitions, and metrics reports) using the Postcard wire format.
+//!    transitions and metrics reports) using the Postcard wire format.
 //!
 //! # Usage
 //!
@@ -79,7 +79,7 @@ pub mod util;
 /// Describes a single test executable.
 ///
 /// This structure holds metadata about an individual test function, including
-/// its name, doc description, and the function pointer itself.
+/// its name, doc description and the function pointer itself.
 ///
 /// # Safety
 /// This struct does not use `unsafe` code.

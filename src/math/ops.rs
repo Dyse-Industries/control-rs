@@ -133,7 +133,7 @@ pub trait TryShl<Rhs = u32>: Sized + Shl<Rhs> {
     ///
     /// # Errors
     /// - `ArithmeticError::Overflow`: The number of bits to shift (`rhs`) is
-    ///   greater than or equal to the bit-width of the type, or the result
+    ///   greater than or equal to the bit-width of the type or the result
     ///   of the shift overflows the type.
     #[allow(clippy::type_complexity)]
     fn try_shl(&self, rhs: Rhs) -> ArithmeticResult<Self::Output>;

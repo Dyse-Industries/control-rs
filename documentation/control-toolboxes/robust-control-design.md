@@ -12,7 +12,7 @@
 commits only to "tools for designing and analyzing robust control system."
 Every mature toolbox surveyed for this design organizes that space around two
 ideas: a linear-fractional (M-Delta) interconnection of a known plant with a
-bounded uncertainty block, and the structured singular value, µ, which
+bounded uncertainty block and the structured singular value, µ, which
 generalizes the singular value to quantify robustness against that
 interconnection (MathWorks, 2026a). µ-based and margin-based robustness
 analysis has documented use across automotive active-suspension design
@@ -20,7 +20,7 @@ analysis has documented use across automotive active-suspension design
 assessment (Djukanovic et al., 1998).
 
 µ cannot be computed exactly; every surveyed toolbox instead computes upper
-and lower bounds (MathWorks, 2026a), and the tightest available bound
+and lower bounds (MathWorks, 2026a) and the tightest available bound
 terminates in a general-purpose linear matrix inequality (LMI) or
 semidefinite-programming (SDP) solve (MathWorks, 2026a; Adams et al., 2025).
 That same solver dependency, together with a plant-uncertainty representation
@@ -78,13 +78,13 @@ uncertainty representation and robustness *analysis* only.
 `robust_tools`'s initial scope is a robustness-*analysis* library for a
 single fixed-size nominal plant plus one norm-bounded uncertainty block: the
 closed-form stability check (FR2) and the parametric uncertain-value type
-(FR3). It does not implement general structured µ-analysis, µ-synthesis, or
+(FR3). It does not implement general structured µ-analysis, µ-synthesis or
 DK-iteration, since those require a general LMI/SDP solver dependency and a
 dynamically structured uncertainty representation for which no `no_std`
 embedded precedent exists in the evidence base (Adams et al., 2025; Oxford
 Control, 2026). The work draws on linear-fractional-transformation/M-Delta
 theory (Doyle et al., 1991), singular-value/operator-norm computation as an
-extension of `Matrix`'s existing decomposition machinery, and the
+extension of `Matrix`'s existing decomposition machinery and the
 numerical-conditioning caveat MATLAB documents for skewed parametric
 uncertainty ranges (MathWorks, 2026c).
 
@@ -181,10 +181,10 @@ Evidence shows mixed precedent across ecosystems. python-control ships
 `hinfsyn` in the same package as `lqr` (python-control, 2026), while both
 MATLAB and Julia keep robust-control functionality in a separate
 product/package: MATLAB's Robust Control Toolbox is a distinct add-on
-product from the base Control System Toolbox (MathWorks, 2026d), and
+product from the base Control System Toolbox (MathWorks, 2026d) and
 `RobustAndOptimalControl.jl` describes itself as "an extension to
 ControlSystems.jl" (JuliaControl, 2026b) rather than part of it. Since
-modern-control.json already opened this question without resolving it, and
+modern-control.json already opened this question without resolving it and
 `modern-control-design.md` (Draft) likewise carries it forward as an open
 risk rather than adjudicating it (its own §7), this document does not
 re-decide it either. `robust_tools` remains scoped to uncertainty representation
@@ -229,7 +229,7 @@ adopts a solver dependency.
   no-alloc precedent was found for computing the tightest µ upper bound;
   every surveyed toolbox's tightest bound terminates in a general LMI
   optimization (MathWorks, 2026a; Boyd and El Ghaoui, 1993) or MOSEK (Adams
-  et al., 2025), and Clarabel.rs, the one Rust SDP solver found, does not
+  et al., 2025) and Clarabel.rs, the one Rust SDP solver found, does not
   document embedded/`no_std` status (Oxford Control, 2026). This blocks any
   extension beyond the single-full-complex-block special case until resolved.
 - **nu-Gap / Disk Margin as a Nearer-Term Target**: JuliaControl documents
@@ -291,7 +291,7 @@ for robust stability and control analysis in multimachine power systems. I.
 Framework development," *IEEE Transactions on Power Systems*, 1998, doi:
 10.1109/59.736270.
 
-[4] T. E. Adams, S. Dahdah, and J. R. Forbes, "dkpy: Robust Control with
+[4] T. E. Adams, S. Dahdah and J. R. Forbes, "dkpy: Robust Control with
 Structured Uncertainty in Python," arXiv:2511.13927, 2025. [Online].
 Available: https://arxiv.org/pdf/2511.13927.
 
@@ -323,10 +323,10 @@ no_std rust," *users.rust-lang.org*, 2026. [Online].
 Available: https://users.rust-lang.org/t/multicalc-scientific-computing-for-real-time-embedded-systems-in-no-std-rust/141510.
 Accessed: Aug. 8, 2026.
 
-[11] J. Doyle, A. Packard, and K. Zhou, "Review of LFTs, LMIs, and mu," in
+[11] J. Doyle, A. Packard and K. Zhou, "Review of LFTs, LMIs and mu," in
 *Proc. 30th IEEE Conference on Decision and Control*, 1991, pp. 1227-1232.
 
-[12] A. K. Packard, M. Fan, and J. Doyle, "A power method for the structured
+[12] A. K. Packard, M. Fan and J. Doyle, "A power method for the structured
 singular value," in *Proc. 1988 IEEE Conference on Decision and Control*, Dec.
 1988, pp. 2132-2137.
 

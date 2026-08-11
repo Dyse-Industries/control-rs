@@ -1,38 +1,34 @@
 # control-rs
 
 `control-rs` is a `no_std` Rust library for numerical modeling, control
-synthesis, and real-time execution, targeting autonomous systems and
+synthesis and real-time execution, targeting autonomous systems and
 bare-metal embedded platforms.
 
 ## Features
 
-- **Static Math Types and Traits** - Modified forks of
+- **Static Math Types & Traits** — Modified forks of
   [`num-traits`](https://github.com/rust-num/num-traits),
   [`num-complex`](https://github.com/rust-num/num-complex) and
-  [`type-num`](https://github.com/paholg/typenum).
-- **Core Numerical Primitives** — `Polynomial`, `Matrix`, and `Tensor`, that
-  do not alloc and reject size mismatches at compile time.
-- **LTI System Models** — `TransferFunction` and `StateSpace`, built on the
-  primitives above, with continuous/discrete support and ZOH/Tustin
-  discretization.
-- **SIL/HIL Testing** — Built-in Hardware-in-the-Loop engine
-  ([`control-rs-hil`](control-rs-hil)) for verifying custom software on target
-  hardware or QEMU.
+  [`typenum`](https://github.com/paholg/typenum).
+- **Core Numerical Primitives** — Zero-alloc `Polynomial`, `Matrix` and `Tensor`
+  with size mismatches rejected at compile time.
+- **LTI System Models** — `TransferFunction` and `StateSpace` with
+  continuous/discrete support.
+- **SIL / HIL Testing** — Built-in Hardware-in-the-Loop engine
+  ([`control-rs-hil`](control-rs-hil)) for target hardware and QEMU.
 
 ## Models
 
 `control-rs` is built around three core numerical primitives — `Polynomial`,
-`Matrix`, and `Tensor` — each rigidly bounded to respect embedded hardware
-constraints. `TransferFunction` and `StateSpace` are built on top of these
-primitives to represent LTI control systems directly.
+`Matrix` and `Tensor`.
 
-| Model                | Capacity Limit        | Primary Applications                                               | Key Algorithms & Mechanics                                                  |
-|----------------------|-----------------------|--------------------------------------------------------------------|-----------------------------------------------------------------------------|
-| **Polynomial**       | 128 elements          | Signal filtering, trajectory generation, discretization.           | Horner's Method (FMA optimized), Tustin transform.                          |
-| **Matrix**           | 32x32 (1024 elements) | State-space modeling, observability, MIMO systems.                 | Type-level dimensions, division-free Faddeev-LeVerrier `$p(x)=\det(xI-A)$`. |
-| **Tensor**           | 1024 elements total   | Spatial grid modeling, Edge AI, multi-dimensional LTI.             | Column-major sequencing, in-place contraction (`contract_into`).            |
-| **TransferFunction** | `Polynomial`-bound    | SISO/MIMO rational transfer functions $H(s)$, $H(z)$.              | Direct storage-backed Horner evaluation, series/parallel/feedback algebra.  |
-| **StateSpace**       | `Matrix`-bound        | Continuous/discrete LTI state-space models, Kalman filtering, LQR. | Zero-copy `MatrixView` composition, ZOH/Tustin discretization.              |
+| Model                | Capacity         | Applications                            | Algorithms                                           |
+|:---------------------|:-----------------|:----------------------------------------|:-----------------------------------------------------|
+| **Polynomial**       | 127 coeffs       | Filtering, trajectories, discretization | Horner (FMA), Tustin                                 |
+| **Matrix**           | 128×128          | State-space, observability, MIMO        | Type-level dims, Faddeev–LeVerrier $p(x)=\det(xI-A)$ |
+| **Tensor**           | 127 elems        | Spatial grids, Edge AI, multi-dim LTI   | Column-major layout, in-place `contract_into`        |
+| **TransferFunction** | Polynomial-bound | SISO/MIMO $H(s)$, $H(z)$                | Storage-backed Horner; series / parallel / feedback  |
+| **StateSpace**       | Matrix-bound     | Continuous/discrete LTI, Kalman, LQR    | Zero-copy `MatrixView`; ZOH / Tustin                 |
 
 ### Crate Architecture
 
@@ -43,49 +39,54 @@ config:
 ---
 flowchart TB
     subgraph Math
-        subgraph Primitives
-            NumTypes:::external
-            NumTraits:::external
-            ...:::external
-            Subprograms:::external
-        end
+        direction TB
+        NumTypes:::external
+        NumTraits:::external
+        ...:::external
+        Subprograms:::external
 
-        subgraph Storage ["Storage Trait & Implementors"]
+        subgraph Storage
             direction TB
-            ArrayStorage["ArrayStorage<br>(Stack)"]:::storage
-            MatrixView["MatrixView<br>(Slice)"]:::storage
-            Extend1["..."]:::storage
+            ArrayStorage:::storage
+            MatrixView:::storage
         end
     end
 
-    subgraph Models ["Mathematical Models"]
+    subgraph Models
         direction TB
         Matrix:::core
         Polynomial:::core
-        Extend2["..."]:::core
+        TransferFunction:::core
+        StateSpace:::core
         Tensor:::core
     end
 
+    subgraph Tools
+        direction TB
+        Classical
+        Modern
+        Robust
+    end
+
 %% Cleaned up structural flow
-    Storage --> Models
-    NumTypes -.-> Models
-    NumTraits -.-> Models
-    Subprograms -.-> Models
+    Math --> Models
+    Models --> Tools
 %% Styling
     classDef core fill: #0f172a, stroke: #38bdf8, stroke-width: 2px, color: #f8fafc
     classDef storage fill: #042f2e, stroke: #2dd4bf, stroke-width: 2px, color: #ccfbf1
     classDef external fill: #312e81, stroke: #a78bfa, stroke-width: 2px, color: #f5f3ff
+    classDef tools fill: #312e81, stroke: #a78bfa, stroke-width: 2px, color: #f5f3ff
     style Models fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
     style Math fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
-    style Primitives fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
     style Storage fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
+    style Tools fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
 ```
 
 ---
 
 ## Links
 
-- Development workflow, cargo aliases, and architecture diagrams:
+- Development workflow, cargo aliases and architecture diagrams:
   [documentation/development_guide.md](documentation/development-guide.md)
 - HIL server internals: [control-rs-hil](control-rs-hil)
 - Host-side TUI and task runner: [control-rs-xtask](control-rs-xtask)

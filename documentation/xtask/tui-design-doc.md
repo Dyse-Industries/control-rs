@@ -12,7 +12,7 @@ This design document establishes the architecture for the `control-rs-xtask`
 Host Console Menu, a Terminal User Interface (TUI) designed to control and
 monitor on-target Hardware-in-the-Loop (HIL) testing. The TUI provides
 developers with a dynamic, real-time dashboard displaying system metadata, test
-suite namespaces, cycle-level execution statistics, and target logs,
+suite namespaces, cycle-level execution statistics and target logs,
 facilitating rapid hardware-in-the-loop iteration.
 
 ---
@@ -21,17 +21,25 @@ facilitating rapid hardware-in-the-loop iteration.
 
 #### Functional Requirements
 
-- **FR-1 — Target Metadata Display**: The TUI must query and display target board details, core clock frequency, FPU status, and debug link parameters.
-- **FR-2 — Hierarchical Test Tree**: The interface must present test suites and cases in a tree layout mapping the Rust module namespace.
-- **FR-3 — Hierarchical Telemetry Table**: For each test, the TUI must display cycle count (CYCCNT), duration (µs), and peak stack memory usage.
-- **FR-4 — Persistent Log Terminal**: An integrated console window must display real-time debug and system logs streaming from the target.
-- **FR-5 — Keystroke Controls**: Users must control target execution via single-key shortcuts (`f` filter, `r` run all, `s` stop, `q` quit).
+- **FR-1 — Target Metadata Display**: The TUI must query and display target
+  board details, core clock frequency, FPU status and debug link parameters.
+- **FR-2 — Hierarchical Test Tree**: The interface must present test suites and
+  cases in a tree layout mapping the Rust module namespace.
+- **FR-3 — Hierarchical Telemetry Table**: For each test, the TUI must display
+  cycle count (CYCCNT), duration (µs) and peak stack memory usage.
+- **FR-4 — Persistent Log Terminal**: An integrated console window must display
+  real-time debug and system logs streaming from the target.
+- **FR-5 — Keystroke Controls**: Users must control target execution via
+  single-key shortcuts (`f` filter, `r` run all, `s` stop, `q` quit).
 
 #### Non-Functional Requirements
 
-- **NFR-1 — Low-Latency Rendering**: The screen rendering engine must repaint within 16ms (60 FPS).
-- **NFR-2 — Metrics Caching**: Test suite results are stored on the host to maintain state across target restarts or reconnections.
-- **NFR-3 — Non-Intrusive Polling**: The communication driver must poll telemetry buffers asynchronously without halting the target CPU.
+- **NFR-1 — Low-Latency Rendering**: The screen rendering engine must repaint
+  within 16ms (60 FPS).
+- **NFR-2 — Metrics Caching**: Test suite results are stored on the host to
+  maintain state across target restarts or reconnections.
+- **NFR-3 — Non-Intrusive Polling**: The communication driver must poll
+  telemetry buffers asynchronously without halting the target CPU.
 
 ---
 
@@ -93,7 +101,8 @@ developer situational awareness:
    active communication link information.
 2. **Hierarchical Metrics Table**: A collapsible tree table showing test
    namespaces, cycle metrics, temporal duration (calculated on the host by
-   dividing target cycle delta by core frequency), and peak stack memory usage in bytes.
+   dividing target cycle delta by core frequency) and peak stack memory usage in
+   bytes.
 3. **Logs Panel**: A live log terminal streaming output from the target.
 4. **Footer Action Bar**: Displays available key shortcuts.
 
@@ -107,7 +116,7 @@ rendering from target-specific transport APIs, supporting two execution targets:
 
 * **QEMU Emulator (stdio pipe)**: Spawn a local QEMU virtual machine in a
   background child process by running `cargo run --bin ...` inside
-  `examples/qemu`, piping stdin, stdout, and stderr. (Semihosting is not used
+  `examples/qemu`, piping stdin, stdout and stderr. (Semihosting is not used
   for data transport; see §5.)
 * **Physical Serial Device**: Opens a connection to hardware (such as the Teensy
   4.0 board) over a USB CDC virtual serial port at a configured baud rate (
@@ -131,7 +140,7 @@ the bridge employs a custom binary framing protocol:
 * **Uplink (Target to Host)**: Background threads read the target's output
   stream:
     - A thread decodes incoming bytes using `FrameReader` to detect the sync
-      header, verify the CRC, and deserialize the payload into
+      header, verify the CRC and deserialize the payload into
       `BridgeMessage::Telemetry`.
     - Another thread reads standard error or raw console lines, emitting them as
       `BridgeMessage::RawConsole` to be displayed in the TUI's logs panel.
@@ -142,15 +151,15 @@ In bare-metal control applications, a target crash or panic must not stall the
 host-side developer flow. The TUI manages connection lifecycles dynamically:
 
 1. **Panic Detection**: The target's panic handler intercepts crashes, formats a
-   failure report, and sends it over the link. The host receives this as
+   failure report and sends it over the link. The host receives this as
    `Telemetry::TargetPanic`.
 2. **Bridge Tear-Down**: The TUI stops generating new test runs, sends
-   `Command::TryReset` to the target, and calls `bridge.kill()` to terminate
+   `Command::TryReset` to the target and calls `bridge.kill()` to terminate
    QEMU or close the serial port interface.
 3. **Cool-Down & Reset**: The TUI sleeps for 2 seconds to allow target
    bootloader sequences and hardware initialization to finish.
 4. **Re-Establishment**: The TUI instantiates a new `ServerBridge` connection,
-   clears the local command queue, and broadcasts `Command::ListSuites` to
+   clears the local command queue and broadcasts `Command::ListSuites` to
    re-trigger suite/test discovery.
 
 ---
@@ -164,7 +173,7 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
   bugs during rapid semihosting trap polling.
 * **Standard UART Logging**: Rejected. While it operates asynchronously,
   standard serial output lacks structured data capability, rendering
-  hierarchical tables, dynamic status overlays, and bidirectional control
+  hierarchical tables, dynamic status overlays and bidirectional control
   vectors impossible without complex custom parsers.
 * **ServerBridge Logging**: The bridge handles parsing all data between the
   server and the tui. This would be an ideal location to record all traffic
@@ -178,7 +187,7 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 
 - **Mock Stream Tests**: Implement a host-side test suite that feeds a mock
   stream generator into the TUI component, verifying that the tree
-  rendering, auto-scrolling, and metrics calculation modules execute correctly
+  rendering, auto-scrolling and metrics calculation modules execute correctly
   under load.
 - **Key Binding Validation**: Verify that keyboard event handlers translate
   keystrokes into correct command byte vectors.
@@ -209,19 +218,19 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 
 ### 9. Development Plan
 
-| Task / Feature                         | Description                                                                             | Estimated Effort |
-|:---------------------------------------|:----------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Ratatui Interface Skeleton** | Build the terminal UI layout panels using `ratatui` (Header, Tree Table, Logs, Footer). | 1.0 day          |
+| Task / Feature                         | Description                                                                                 | Estimated Effort |
+|:---------------------------------------|:--------------------------------------------------------------------------------------------|:-----------------|
+| **Step 1: Ratatui Interface Skeleton** | Build the terminal UI layout panels using `ratatui` (Header, Tree Table, Logs, Footer).     | 1.0 day          |
 | **Step 2: ServerBridge Connection**    | Integrate `ServerBridge` polling channels (QEMU stdio / `serial2`) into the TUI event loop. | 1.0 day          |
-| **Step 3: Bidirectional Controls**     | Implement keystroke handlers and write command packets to the target down-buffer.       | 0.5 day          |
+| **Step 3: Bidirectional Controls**     | Implement keystroke handlers and write command packets to the target down-buffer.           | 0.5 day          |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date | Author | Description |
-|:---------|:-----|:-------|:-------------|
-| 1.0 | May 24, 2026 | @MitchellDScott | Initial design outline of TUI host menu. |
-| 1.1 | July 18, 2026 | @MitchellDScott | Restructured to template; replaced semihosting with RTT; integrated Teensy 4.1 bootloader workarounds. |
-| 1.2 | July 18, 2026 | @MitchellDScott | Documented host-target ServerBridge architecture, postcard framing protocol, and panic re-connection lifecycle. |
-| 1.3 | August 6, 2026 | @MitchellDScott | Consistency pass: aligned command names with shipped enum; replaced RTT step with ServerBridge connection. |
+| Revision | Date           | Author          | Description                                                                                                    |
+|:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------|
+| 1.0      | May 24, 2026   | @MitchellDScott | Initial design outline of TUI host menu.                                                                       |
+| 1.1      | July 18, 2026  | @MitchellDScott | Restructured to template; replaced semihosting with RTT; integrated Teensy 4.1 bootloader workarounds.         |
+| 1.2      | July 18, 2026  | @MitchellDScott | Documented host-target ServerBridge architecture, postcard framing protocol and panic re-connection lifecycle. |
+| 1.3      | August 6, 2026 | @MitchellDScott | Consistency pass: aligned command names with shipped enum; replaced RTT step with ServerBridge connection.     |

@@ -28,7 +28,7 @@ pub mod complex_num_test_suite {
     use core::mem;
 
     #[cfg_attr(test, test)]
-    /// Verifies basic addition, subtraction, multiplication, and division on complex floats.
+    /// Verifies basic addition, subtraction, multiplication and division on complex floats.
     fn test_complex_basic_arithmetic() {
         let z1 = Complex64::new(1.0, 2.0);
         let z2 = Complex64::new(3.0, 4.0);
@@ -72,7 +72,7 @@ pub mod complex_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies try (fallible) addition, subtraction, multiplication, and division.
+    /// Verifies try (fallible) addition, subtraction, multiplication and division.
     fn test_complex_fallible_try_arithmetic() {
         let z1 = Complex::<u8>::new(200, 10);
         let z2 = Complex::<u8>::new(100, 10);
@@ -102,7 +102,7 @@ pub mod complex_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies `TrySub`, `PartialOrd`, and identity constants for complex numbers.
+    /// Verifies `TrySub`, `PartialOrd` and identity constants for complex numbers.
     fn test_complex_fallible_sub_and_ord_traits() {
         let a = Complex::new(5.0, 3.0);
         let b = Complex::new(5.0, 1.0);
