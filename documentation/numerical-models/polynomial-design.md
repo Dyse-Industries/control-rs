@@ -47,7 +47,7 @@ sections below.
 
 - **C-1 — No-Std Environment**: The code must compile and run in `#![no_std]` environments without the Rust standard library (crate-wide rule).
 - **C-2 — No Dynamic Allocation**: The module must not use a heap allocator; all memory allocations are static or stack-based.
-- **C-3 — Coefficient Ordering**: Coefficients are stored in ascending order of powers, a logical indexing rule independent of `Storage`'s physical layout ([storage-trait-design.md](../../math/design/storage-trait-design.md) FR-1/FR-6); this is the canonical statement other models cross-reference.
+- **C-3 — Coefficient Ordering**: Coefficients are stored in ascending order of powers, a logical indexing rule independent of `Storage`'s physical layout ([storage-trait-design.md](../math/storage-trait-design.md) FR-1/FR-6); this is the canonical statement other models cross-reference.
 - **C-4 — Capacity Bound**: Maximum polynomial capacity is limited to 128 elements (crate-level capacity table).
 
 ---
@@ -265,7 +265,7 @@ where
 ```
 
 `ConversionError` is defined once, canonically, in
-[`error-design.md`](../../math/design/error-design.md) — shared with
+[`error-design.md`](../math/error-design.md) — shared with
 `Matrix` and `Tensor`'s conversions — not restated here.
 
 This conversion builds the companion matrix directly from coefficients — a

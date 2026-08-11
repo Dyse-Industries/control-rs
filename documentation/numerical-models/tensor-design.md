@@ -287,7 +287,7 @@ interoperability (§5.2) — not part of this revision's default path.
 #### 4.10. Interoperability & Conversions
 
 `ConversionError` is defined once, canonically, in
-[`error-design.md`](../../math/design/error-design.md) — shared with
+[`error-design.md`](../math/error-design.md) — shared with
 `Matrix` and `Polynomial`'s conversions — not restated here.
 
 - **To `Matrix`**: `TryFrom<Tensor<T, Layout, S>> for Matrix<T, R, C, S>`

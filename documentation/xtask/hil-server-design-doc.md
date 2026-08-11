@@ -236,7 +236,7 @@ stateDiagram-v2
 * Delimiting frames with COBS byte-stuffing (escaping the frame boundary byte
   out of the payload) instead of a length-prefixed header.
     - *Reason for Rejection*: The `HostComms` design
-      (`documentation/xtask/design/host-comm-design-doc.md`, §4.4–§5) selected
+      (`documentation/xtask/host-comm-design-doc.md`, §4.4–§5) selected
       a sync-byte (`0xAA 0x55`) + big-endian length prefix + CRC-16-IBM-SDLC
       trailer to minimize target-side processing and framing overhead, and
       this is what `control-rs-hil/src/comms.rs` implements. The tradeoff is a
