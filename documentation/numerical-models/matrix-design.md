@@ -1,7 +1,7 @@
 # Matrix Type & Structural Specializations (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_10,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-August_18,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -16,21 +16,27 @@ Crozet).
 The following elements of `nalgebra` are directly mirrored or adapted in our
 architecture:
 
-- **Matrix Signature**: `Matrix<T, R: Dim, C: Dim, S: Storage<T, R, C>>` is
-  identical to `nalgebra`'s.
-- **Storage Trait Hierarchy**: `control-rs` extends this with its own
-  `ContiguousStorage`/`ContiguousStorageMut` traits (see below).
-- **ArrayStorage Structure**: `ArrayStorage<T, const R: usize, const C: usize>`
-  wrapping `[[T; R]; C]` with `#[repr(C)]` for contiguous stack storage. `R`/`C`
-  are plain `const usize` rather than `Dim`-typed parameters — Rust cannot use
-  an associated const of a generic `Dim` type as an array length on stable —
-  so `ArrayStorage` implements the `Dim`-generic `Storage` family specifically
-  for `Const<R>`/`Const<C>` (`storage-trait-design.md` §4).
-- **Matrix Views**: `MatrixSlice`/`MatrixSliceMut` wrap the
-  `storage-trait-design.md`-owned `StorageView`/`StorageViewMut` backends,
-  providing zero-copy non-destructive window slices over memory with layout
-  (`ColMajor`/`RowMajor`) carried as a compile-time type parameter rather than
-  a runtime stride.
+- **Matrix Signature**: `Matrix<T, R: Dim, C: Dim, S: MatrixStorage<T, R, C>>`
+  is identical to `nalgebra`'s decoupled storage pattern §4.1.
+- **Storage Trait Hierarchy**: Based on the three-tier hierarchy defined in
+  `storage-subprograms-design.md` §4.1 (`Buffer`/
+  `BufferMut`,
+  `BlasStorage<T, R, C>`/`BlasStorageMut`,
+  Tier-2 addressing branches `MatrixStorage<T, R, C>`/
+  `PackedStorage`, and concrete leaves `Dense`, `Symmetric`,
+  `Triangular`, `Diagonal`).
+- **Dense Leaf Structure**: Owning dense storage is `DenseArray<T, const R,
+  const C>` (`Dense<T, Const<R>, Const<C>, Array2<T, R, C>>`), wrapping
+  `Array2`'s nested `[[T; R]; C]` (`storage-subprograms-design.md` §4.1.3).
+  Capacity is two bare `const usize` parameters on the alias, never
+  `Dim::USIZE`.
+- **Matrix Views**: `MatrixSlice`/`MatrixSliceMut` wrap
+  `DenseRef<'a, T, const R, const C>` and
+  `DenseRefMut<'a, T, const R, const C>` (`Ref` over `&[[T; R]; C]`).
+  There is no `StridedView` leaf.
+- **Operand Model**: Typed `BlasStorage`/`MatrixStorage` plus nested
+  `as_nested() -> &[[T; R]; C]` (and `&[T; N]` for vectors) are the
+  subprogram floor. Algebraic transpose is a kernel `trans` flag.
 
 ---
 
@@ -38,50 +44,36 @@ architecture:
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Compile-Time Sizing**: Enforce dimensions of arguments at compile
-  time using `num_types`.
-- **FR-2 — Static Constructors**: Provide compile-time evaluated constructors
-  for zero, identity and diagonal matrices.
-- **FR-3 — Core Arithmetic**: Implement standard operator overloading for
-  addition, subtraction, multiplication and negation.
-- **FR-4 — Matrix Operations**: Provide methods for transposition, determinant
-  calculation and inversion.
-- **FR-5 — Specializations**: Support specialized structures (Upper Triangular,
-  Lower Triangular, Symmetric) to dispatch optimized routines.
-- **FR-6 — Coordinate-Based Instantiation**: Expose coordinate-based mapping
-  functions to initialize elements by index.
-- **FR-7 — Matrix Concatenation**: Implement a method to combine matrices and
-  lists of matrices both vertically and horizontally.
-- **FR-8 — Type Conversions**: Support conversions between `Matrix`,
-  `Polynomial` and `Tensor` representations for compatible ranks and sizes.
+- **FR-1 — Compile-Time Shape Verification**: Operations between matrix operands
+  validate matching dimensions ($R_1 = R_2, C_1 = C_2$ for
+  addition/subtraction; $C_1 = R_2$ for multiplication) at compile time via
+  Peano type bounds (`Dim`).
+- **FR-2 — Fallible Linear Algebra Solvers**: Matrix inversion and system
+  solving ($A x = b$) over singular matrices return
+  `Err(LinAlgError::SingularMatrix)` rather than panicking or producing invalid
+  numerical outputs.
+- **FR-3 — Value-Preserving Structure Conversions**: Conversions between dense,
+  symmetric, triangular, and 1D polynomial/vector views preserve element values
+  and coordinates without numerical truncation.
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — Deterministic Execution**: Matrix operations must execute within
-  predictable, deterministic timeframes.
-- **NFR-2 — No Excessive Compile-Time Overhead**: `const fn` static constructors
-  and dimension enforcement must not cause excessive compile-time increase or
-  binary bloat.
-- **NFR-3 — Specialization Optimization**: Structural specializations should run
-  in about half the operations of a regular matrix multiplication.
+- **NFR-1 — Operation Complexity Guarantees**: Dense matrix
+  multiplication ($M \times N \times P$) executes in $O(MNP)$ operations;
+  triangular matrix multiplication and solves execute in $O(MN^2)$ operations;
+  vector updates execute in $O(N)$ operations.
+- **NFR-2 — Deterministic Fixed-Memory Execution**: Matrix operations perform
+  zero heap allocations, executing in deterministic $O(1)$ stack memory.
 
 #### 2.3. Constraints
 
-- **C-1 — No-Std Environment**: The code must compile and run in `#![no_std]`
-  environments without the Rust standard library.
-- **C-2 — No Dynamic Allocation**: The module must not use a heap allocator; all
-  memory allocations are static or stack-based.
-- **C-3 — Memory Footprint**: Maximum matrix dimensions match the `Dim`
-  system's own `U127` ceiling (`num-types-design.md` C-1): $127 \times 127$
-  elements, $R{::}DIM \times C{::}DIM \le 16{,}129$ — the same figure
-  `storage-trait-design.md` C-1 states for inline-backed matrices. This is a
-  type-system ceiling, not a recommended instance size: a $127 \times 127$
-  `f32` `ArrayStorage` instance is ~63KB of stack, far past the 2–8KB
-  bare-metal budgets `num-traits-design.md` §7 assumes, so callers targeting
-  stack-constrained targets are expected to stay well under C-3 in practice
-  and lean on `clippy::large_stack_arrays` (`storage-trait-design.md` §7) to
-  catch oversized instances, or use a borrowed `StorageView` (no owned
-  backing array) instead.
+- **C-1 — `#![no_std]` Environment**: Matrix operations execute without standard
+  library dependencies.
+- **C-2 — Zero Dynamic Allocation**: All storage is stack-based or statically
+  borrowed.
+- **C-3 — Dimension Ceiling**: Matrix dimensions are bounded by the `U127` Peano
+  ceiling ($N \le 127$), capping maximum stack array size (e.g. 16,129 elements
+  for $127 \times 127$).
 
 ---
 
@@ -96,76 +88,72 @@ factorization, inversion and substitution — convenient for callers.
 
 ### 4. Core Architecture
 
+The `Matrix` struct will be implemented in a new submodule: `src/matrix/mod.rs`.
+
 #### 4.1. Generics Foundation & Sizing
 
 The core `Matrix` structure decouples mathematical dimensions from physical
-storage using the `Storage<T, R, C>` trait hierarchy:
+storage using the `MatrixStorage<T, R, C>` trait bound (
+`storage-subprograms-design.md` Rev 1.16). `R` and `C` stay `Dim` on
+`Matrix` itself. Owning aliases and nested `Ref` views take bare
+`const usize` parameters (`storage-subprograms-design.md` §4.1.3):
 
 ```rust
-pub struct Matrix<T, R: Dim, C: Dim, S: Storage<T, R, C>> {
+pub struct Matrix<T, R: Dim, C: Dim, S: MatrixStorage<T, R, C>> {
     storage: S,
     _marker: core::marker::PhantomData<(R, C)>,
 }
+
+/// Default owned, stack-based `Matrix`. `R`/`C` are the alias's own const
+/// generics; `Dim` slots on `Matrix`/`Dense` are `Const<R>`/`Const<C>`.
+pub type ArrayMatrix<T, const R: usize, const C: usize> =
+    Matrix<T, Const<R>, Const<C>, DenseArray<T, R, C>>;
+pub type Owned<T, const R: usize, const C: usize> = ArrayMatrix<T, R, C>;
 ```
 
-The `Dim` trait and Peano number representations defined in
-[num_types](../../src/math/num_types.rs) perform type-level
-arithmetic (e.g., dimension addition or multiplication) to statically verify
-shape changes at compile time, while `S` determines where and how elements are
-physically stored in memory.
+`DenseArray<T, const R, const C>` is `Dense<T, Const<R>, Const<C>, Array2<T, R,
+C>>`. It does not accept a `Dim` type argument and does not project
+`Dim::USIZE` into an array length.
 
-`Storage<T, R, C>`'s own `R`/`C` are `Dim`-generic, so the trait bound above
-accepts any `Dim` implementor. The owned default backend does not: because
-`ArrayStorage<T, const R: usize, const C: usize>` is parameterized over plain
-`const usize` (§1; `storage-trait-design.md` §4), a `Matrix` using it is
-necessarily fixed to the `Const<N>` bridge rather than an arbitrary `Dim`
-type. This is expressed as a convenience alias rather than a default type
-parameter on `Matrix` itself:
+Borrowed views use the same bare `const usize` parameters: `Ref` borrows
+`[[T; R]; C]`, so `MatrixSlice` is not `Dim`-generic.
 
 ```rust
-/// The default owned, stack-based `Matrix`, fixed to the `Const<N>` bridge
-/// so its backing `ArrayStorage<T, R, C>` can use plain `const usize` row/
-/// column parameters.
-pub type Owned<T, const R: usize, const C: usize> =
-Matrix<T, Const<R>, Const<C>, ArrayStorage<T, R, C>>;
+pub type MatrixSlice<'a, T, const R: usize, const C: usize> =
+    Matrix<T, Const<R>, Const<C>, DenseRef<'a, T, R, C>>;
+pub type MatrixSliceMut<'a, T, const R: usize, const C: usize> =
+    Matrix<T, Const<R>, Const<C>, DenseRefMut<'a, T, R, C>>;
 ```
 
-This is the point of decoupling storage from the matrix: one
-`Matrix<T, R, C, S>` implementation — one set of arithmetic, factorization,
-and conversion routines — operates unmodified over any conforming storage
-backend (stack array, borrowed view or memory-mapped DMA register), instead
-of requiring a separate implementation per backend.
+The point of decoupling storage is to have one `Matrix` implementation that
+works for every `MatrixStorage` implementor.
 
 #### 4.2. Memory Layout & Storage Strategy
 
-The default storage backend (`ArrayStorage`) uses a **column-major array
-representation** (`[[T; R]; C]`). `Matrix`'s own arithmetic never branches
-on layout — it reads `S::ORDER` off whichever storage backend it was
-instantiated with and forwards it. This is what makes it possible to
-introduce a row-major backend later without touching a single `Matrix`
-operator implementation.
+`Matrix`'s own arithmetic never branches on layout — it reads `order()` from
+whichever `MatrixStorage` backend it was instantiated with.
 
 - **Cache Locality**: Matrix multiplication: Under column-major ordering, each
   column $ A_j $ is contiguous in memory, maximizing CPU cache hit rates.
 - **BLAS Interoperability**: Column-major layout matches the standard convention
   of legacy BLAS/LAPACK (Anderson et al., 1999) and embedded DSP libraries (
-  e.g., ARM CMSIS-DSP),
-  allowing zero-copy routing to hardware-accelerated kernels. Panel-major vs.
-  column-major memory-layout performance trade-offs for embedded optimization
-  are evaluated in BLASFEO (Frison et al., 2018).
+  e.g., ARM CMSIS-DSP).
+
+*The default storage backend (`DenseArray`) uses a **column-major** nested
+array (`Array2<T, R, C>` = `[[T; R]; C]`).*
 
 #### 4.3. Memory Representation, Slicing & Views
 
 To ensure stable memory layout and compatibility with C-based hardware
 libraries the matrix owns a contiguous array marked as `#[repr(C)]`.
 
-Flat slice interfaces are safely gated behind the `ContiguousStorage` sub-traits
-to prevent leaking padded or strided memory as valid contiguous slices:
+Flat slice interfaces are exposed directly on `BlasStorage` / `BlasStorageMut`
+(Tier 1 universal floor; `storage-subprograms-design.md` §4.1.1):
 
 ```rust
 impl<T, R: Dim, C: Dim, S> Matrix<T, R, C, S>
 where
-    S: ContiguousStorage<T, R, C>,
+    S: BlasStorage<T, R, C>,
 {
     /// Exposes a safe contiguous slice view of matrix memory.
     pub fn as_slice(&self) -> &[T] {
@@ -175,55 +163,49 @@ where
 
 impl<T, R: Dim, C: Dim, S> Matrix<T, R, C, S>
 where
-    S: ContiguousStorageMut<T, R, C>,
+    S: BlasStorageMut<T, R, C>,
 {
-    /// Exposes a safe mutable contiguous slice view of matrix memory.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         self.storage.as_mut_slice()
     }
 }
+
+impl<T, const R: usize, const C: usize> ArrayMatrix<T, R, C> {
+    /// Nested operand for subprogram kernels (`storage-subprograms-design.md` §4.2.2).
+    pub fn as_nested(&self) -> &[[T; R]; C] {
+        self.storage.as_nested()
+    }
+}
 ```
 
-##### 4.3.1. Zero-Copy Non-Destructive Views (`StorageView` & `StorageViewMut`)
+Owning kernels call `as_nested()` (`&[[T; R]; C]`). `as_slice()` remains the
+inspection path on any `BlasStorage` backend, including views. There is no
+flattened `&[T; R * C]` accessor.
 
-To support zero-copy operations (such as non-destructive transposition) without
-requiring memory copies or stack allocations, `Matrix` builds on the
-reference-holding view backends owned by `storage-trait-design.md`:
+##### 4.3.1. Zero-Copy Views (`DenseRef`)
 
-```rust
-// Owned by storage-trait-design.md. `data` is the only runtime field —
-// layout (`ColMajor`/`RowMajor`) is the `LayoutMarker` type parameter `O`,
-// not a stride stored at runtime, so `ORDER`/`offset()` cannot drift from
-// the formula a view was actually constructed with.
-pub struct StorageView<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
-    data: &'a [T],
-    _marker: core::marker::PhantomData<(R, C, O)>,
-}
+`Matrix` builds on the nested-array view backends in
+`storage-subprograms-design.md` §4.1.3. There is no `StridedView` and no
+`transpose_view` storage type; algebraic transpose is a kernel `trans` flag.
 
-pub struct StorageViewMut<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
-    data: &'a mut [T],
-    _marker: core::marker::PhantomData<(R, C, O)>,
-}
+Borrowed `DenseRef`/`DenseRefMut` leaves are constructed only through
+`storage-subprograms-design.md` FR-6:
 
-/// A high-level Matrix wrapper around an immutable StorageView backend.
-/// `O` defaults to `ColMajor` so existing call sites (§4.6) do not need to
-/// name a layout explicitly.
-pub type MatrixSlice<'a, T, R, C, O = ColMajor> = Matrix<T, R, C, StorageView<'a, T, R, C, O>>;
+- `ArrayMatrix::view()` / `view_mut()` copy `R`/`C` from the owning alias's
+  own const generics. `as_nested()` on the view is `&[[T; R]; C]`.
+- `DenseArray::try_submatrix<const R2, const C2, const LDA>(origin)` takes
+  caller-supplied shape and leading dimension. The runtime check is `origin`
+  against `self`. Nested operand of the result is `&[[T; LDA]; C2]`
+  (column panel when `origin.0 == 0` and `LDA` equals the parent's inner
+  dimension). No public constructor accepts an independent `Dim` plus a
+  raw `&[T]`.
 
-/// A high-level Matrix wrapper around a mutable StorageViewMut backend.
-pub type MatrixSliceMut<'a, T, R, C, O = ColMajor> = Matrix<T, R, C, StorageViewMut<'a, T, R, C, O>>;
-```
+`MatrixSlice` / `MatrixSliceMut` wrap those leaves.
 
-- **Non-Destructive Transposed Views**:
-  `pub fn transpose_view(&self) -> MatrixSlice<'_, T, C, R>` creates a
-  transposed $C \times R$ view over the original matrix data. Because layout
-  is a compile-time `LayoutMarker` type parameter rather than a runtime
-  stride field, transposition swaps the `R`/`C` type arguments; it does not
-  recompute or mutate stride state at the call site. Incurs zero allocation
-  or byte copying.
 - **In-Place Transposition**: For square matrices ($R = C$), in-place element
   swapping (`pub fn transpose_mut(&mut self)`) mutates elements directly within
-  the existing memory layout.
+  the existing memory layout. Copying `transpose` / `transpose_into` write a
+  new buffer; they do not produce a transposed view type.
 
 #### 4.4. Instantiation & Constructors
 
@@ -234,64 +216,35 @@ pub type MatrixSliceMut<'a, T, R, C, O = ColMajor> = Matrix<T, R, C, StorageView
   `T::ZERO` and filling the main diagonal with `T::ONE` via a const-evaluated
   loop.
 
-- `pub const fn diagonal(val: [T; D::DIM]) -> Matrix<T, D, D>`:
+- `pub const fn diagonal<const D: usize>(val: [T; D]) -> Owned<T, D, D>`:
   Constructs a diagonal matrix using the provided array of diagonal values and
   filling off-diagonal elements with `T::ZERO`.
 
 - `pub fn from_fn<F>(mut f: F) -> Self where F: FnMut(usize, usize) -> T`:
   Generates a matrix using a coordinate-based mapping function at runtime.
 
-_Implementation Note_: To support generic `const fn` initialization on stable
-Rust, the scalar type `T` must implement the `Zero` and `One` traits from
-`crate::math::num_traits`. These traits expose the associated constants
-`T::ZERO` and `T::ONE`. All static constructors are marked `const fn` to allow
-placing static matrices directly in read-only flash memory.
+_Implementation Note_: All static constructors are marked `const fn` to allow
+placing static matrices directly in read-only flash memory. The scalar type
+`T` must implement `Zero` and `One` from `crate::math::num_traits`. These
+traits expose the associated constants `T::ZERO` and `T::ONE`.
 
 #### 4.5. Operator Overloading
 
-Overloads `Add`, `Sub`, and `Mul` from `core::ops`. Dimension rules are
-statically enforced at compile-time. Under the hood, these high-level operator
-implementations follow standard numerical linear algebra conventions by mapping
-directly to specific low-level BLAS subprograms (Anderson et al., 1999; Golub &
-Van Loan, 2013; Demmel, 1997).
-This mapping represents the industry-conventional approach to structuring basic
-linear
-algebra operations, rather than a custom design innovation. Each subprogram
-trait (`AXPY`, `GEMV`, `GEMM`) is generic over `T: Scalar` — the hardware-
-aligned successor to the retired `Ring`/`Field`/`Real` hierarchy
-(`num-traits-design.md` FR-3) — and `Matrix`'s own operator impls carry the
-same bound:
+Overloads `Add`, `Sub`, `Neg`, and `Mul` from `core::ops`. Dimension rules are
+statically enforced at compile-time. Conventionally these map to BLAS
+subprograms in [subprograms.rs](../../src/math/subprograms.rs) (Anderson et
+al., 1999; Golub & Van Loan, 2013; Demmel, 1997):
 
-- **Matrix Addition (`Add`) & Subtraction (`Sub`)**: Evaluated element-wise.
-  Following standard convention, these operations map to the BLAS Level 1 *
-  *`AXPY`** subprogram (
-  `y = a*x + y` trait defined
-  in [subprograms.rs](../../src/math/subprograms.rs)), where addition uses
-  `a = T::ONE` and subtraction uses `a = -T::ONE`.
-- **Matrix Negation (`Neg`)**: Maps to the standard BLAS Level 1 **`SCAL`**
-  subprogram with
-  `a = -T::ONE`.
-- **Matrix-Matrix Multiplication (`Mul<Matrix>`)**: Statically enforces
-  dimension matching (e.g. $(M \times N) \times (N \times P) \to (M \times P)$).
-  It maps to the conventional BLAS Level 3 **`GEMM`** subprogram (
-  `C = alpha*A*B + beta*C`
-  trait in [subprograms.rs](../../src/math/subprograms.rs)) with
-  `alpha = T::ONE` and `beta = T::ZERO`.
-- **Matrix-Vector Multiplication (`Mul<Vector>`)**: Maps to the conventional
-  BLAS Level 2
-  **`GEMV`** subprogram (`y = alpha*A*x + beta*y` trait in
-  [subprograms.rs](../../src/math/subprograms.rs)) with `alpha = T::ONE` and
-  `beta = T::ZERO`.
+| Operator      | Subprogram              | Level | Binding                     |
+|:--------------|:------------------------|:------|:----------------------------|
+| `Add`         | `AXPY` (`y = a*x + y`)  | 1     | `a = T::ONE`                |
+| `Sub`         | `AXPY`                  | 1     | `a = -T::ONE`               |
+| `Neg`         | `SCAL`                  | 1     | `a = -T::ONE`               |
+| `Mul<Matrix>` | `GEMM` (`C = αAB + βC`) | 3     | `α = T::ONE`, `β = T::ZERO` |
+| `Mul<Vector>` | `GEMV` (`y = αAx + βy`) | 2     | `α = T::ONE`, `β = T::ZERO` |
 
-Every mapping above passes `S::ORDER` (`storage-trait-design.md` FR-4)
-through to the subprogram call as an explicit layout parameter; `Matrix`'s
-operator implementations do not special-case column-major vs. row-major
-storage. This closes a gap in a prior revision of this document, which
-described these mappings as though `GEMV`/`GEMM` already matched
-`ArrayStorage`'s column-major default — `subprograms.rs`'s current
-implementations are row-major (`chunks_exact(cols)`), a mismatch
-`storage-trait-design.md` NFR-6 now resolves by making layout an explicit
-argument rather than a fixed assumption on either side.
+`Mul<Matrix>` statically enforces $(M \times N) \times (N \times P) \to (M
+\times P)$.
 
 ```rust
 impl<T, M: Dim, N: Dim, P: Dim> Mul<Matrix<T, N, P>> for Matrix<T, M, N>
@@ -303,33 +256,66 @@ where
 }
 ```
 
+##### 4.5.1. Required Subprogram Inventory
+
+`Matrix` is a caller of `subprograms.rs`, not an extension of it. Every kernel
+this design needs is one of the subprogram traits defined in
+`storage-subprograms-design.md` §4.2.
+
+| Subprogram | Level | Operation                      | Required by                                                                                                                                          |
+|:-----------|:------|:-------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| `AXPY`     | 1     | $y = a x + y$                  | `Add`, `Sub` (§4.5); reflector application in QR (§4.7)                                                                                              |
+| `SCAL`     | 1     | $x = a x$                      | `Neg` (§4.5); pivot-row normalization in LU (§4.6); diagonal scaling in $LDL^T$ (§4.7)                                                               |
+| `DOT`      | 1     | $x^T y$                        | Inner-product accumulation in forward/backward substitution (§4.7.2, §4.10.1) and in $LDL^T$/Cholesky diagonal updates (§4.7)                        |
+| `NRM2`     | 1     | $\lVert x \rVert_2$            | Householder reflector construction in QR (§4.7)                                                                                                      |
+| `IAMAX`    | 1     | $\arg\max_i \lvert x_i \rvert$ | Partial-pivot column search in LU (§4.6) and the symmetric pivot search in $LDL^T$, which inspects at most two columns per step (Greif et al., 2016) |
+| `GER`      | 2     | $A = \alpha x y^T + A$         | LU decomposition trailing submatrix rank-1 updates (`lu_decompose_mut`; Decision D-2)                                                                |
+| `TRSV`     | 2     | $\text{op}(A) x = b$           | Triangular linear system solves ($Ax = b$) and forward/backward substitutions (§4.7.2, §4.10.1; Decision D-2)                                        |
+| `GEMV`     | 2     | $y = \alpha A x + \beta y$     | `Mul<Vector>` (§4.5); matrix-vector products in the solver paths (§4.7.2)                                                                            |
+| `GEMM`     | 3     | $C = \alpha A B + \beta C$     | `Mul<Matrix>` (§4.5); trailing-submatrix block updates in LU, $LDL^T$ and QR                                                                         |
+
+`SCAL` is defined in `subprograms.rs` and included in
+`storage-subprograms-design.md` §4.2.1.
+
+Per Decision D-2 (resolving B-2), `GER` (Level 2) and `TRSV` (Level 2) are
+required routines:
+
+- **`GER`** expresses LU elimination steps over trailing submatrices (
+  `lu_decompose_mut`), avoiding full three-loop dispatch overhead of `GEMM`
+  with $k = 1$.
+- **`TRSV`** accelerates triangular solves and forward/backward substitutions in
+  linear system solvers.
+
+*Backend Selection*: `Matrix<T, R, C, S>` dispatches subprogram calls through
+monomorphized subprogram traits backed by feature-selected implementations (
+e.g., `#[cfg(feature = "accelerate")]` for hardware BLAS/DSP acceleration, with
+default naive fallback bodies) without introducing a 5th generic backend
+parameter `B` to the `Matrix` struct signature.
+
 #### 4.6. Core Operations
 
 - **Transposition**:
-    - `pub fn transpose_view(&self) -> MatrixSlice<'_, T, C, R>`: Creates a
-      zero-copy, non-destructive transposed view over the original matrix
-      without allocations or memory copies.
     - `pub fn transpose_into(&self, dest: &mut Matrix<T, C, R>)`: Writes the
       transposed matrix into a caller-provided destination buffer, avoiding
       stack returns.
     - `pub fn transpose_mut(&mut self)`: Performs an in-place transposition for
       square matrices ($R = C$).
-    - `pub fn transpose(&self) -> Matrix<T, C, R>`: Consumes/borrows the matrix
-      and returns a new transposed matrix on the stack (convenience API for
-      small matrix shapes).
+    - `pub fn transpose(&self) -> Matrix<T, C, R>`: Returns a new transposed
+      matrix on the stack (convenience API for small shapes).
+    - Algebraic $A^T x$ / $A^T B$ without a new buffer: pass `trans` /
+      `trans_a` into `GEMV`/`GEMM` (`storage-subprograms-design.md` §4.2.3).
+      There is no `transpose_view` storage type.
 - **Matrix Inversion & System Solving**:
     - _Explicit Decomposition Design_: Convenient signatures that mask
       heavy $O(N^3)$ operations behind stack-allocating value returns (such as
       `invert(&self) -> Result<Matrix<T, D, D>, LinAlgError>`) are explicitly
       rejected to prevent unexpected stack bloat in embedded runtimes.
-    -
-  `pub fn invert_mut(&mut self, pivots: &mut [usize]) -> Result<(), LinAlgError>`:
-  Inverts a square matrix purely in-place using caller-provided pivot scratch
-  space.
-    -
-  `pub fn invert_into(&self, dest: &mut Matrix<T, D, D, S2>, pivots: &mut [usize]) -> Result<(), LinAlgError>`:
-  Computes the matrix inverse into a caller-provided destination matrix
-  buffer.
+    - `pub fn invert_mut(&mut self, pivots: &mut [usize; D]) -> Result<(), 
+      LinAlgError>`: Inverts a square matrix purely in-place using
+      caller-provided pivot scratch space.
+    - `pub fn invert_into(&self, dest: &mut Matrix<T, D, D, S2>, pivots: 
+    &mut [usize; D]) -> Result<(), LinAlgError>`: Computes the matrix inverse
+      into a caller-provided destination matrix buffer.
     - **Symmetric Matrices**: Factorized via
       **$LDL^T$ Decomposition** ($A = L D L^T$).
     - **General Square Matrices**: Factorized via **LU Decomposition with
@@ -342,39 +328,48 @@ where
 #### 4.7. Matrix Decomposition Objects
 
 Similar to structural specializations, matrix factorizations are exposed as
-dedicated **Decomposition Objects**. These types encapsulate matrix factors
-alongside statically bounded auxiliary state (e.g. permutation indices for
-pivoting) without heap allocation (`no_alloc`).
+dedicated **Decomposition Objects**.
 
-The illustrative defaults below carry the same caveat as §4.1's `Owned<T, R,
-C>` alias: `ArrayStorage<T, D, D>` only resolves once `D` is `Const<N>` for
-some `N`, and `PivotStorage<const N: usize>` (the pivot scratch backend) is
-likewise a plain `usize` slot count, not a `Dim`-generic type — `D`/`P`
-below stand in for that bridged relationship rather than compiling as
-written.
+The struct definitions below match shipped code (`src/matrix/decomposition.rs`),
+using concrete `const D: usize` parameters with `Const<D>: Dim` bounds so that
+pivot scratch and temporary factors are stored in statically bounded stack
+arrays:
 
 ```rust
 /// LU Factorization with partial pivoting (PA = LU)
-pub struct LuDecomposition<T, D: Dim, S = ArrayStorage<T, D, D>, P = PivotStorage<D>> {
-    data: Matrix<T, D, D, S>,
-    pivots: P, // Statically bounded pivot array (decoupled via storage trait)
+pub struct LuDecomposition<T, const D: usize>
+where
+    Const<D>: Dim,
+{
+    data: Owned<T, D, D>,
+    pivots: [usize; D],
     row_exchanges: usize,
 }
 
 /// LDL^T Factorization for symmetric indefinite/positive-definite matrices (A = L D L^T)
-pub struct LdltDecomposition<T, D: Dim, S = ArrayStorage<T, D, D>> {
-    data: Matrix<T, D, D, S>,
+pub struct LdltDecomposition<T, const D: usize>
+where
+    Const<D>: Dim,
+{
+    data: Owned<T, D, D>,
 }
 
 /// Cholesky Factorization for symmetric positive-definite matrices (A = L L^T)
-pub struct CholeskyDecomposition<T, D: Dim, S = ArrayStorage<T, D, D>> {
-    l: LowerTriangular<T, D, S>,
+pub struct CholeskyDecomposition<T, const D: usize>
+where
+    Const<D>: Dim,
+{
+    l: LowerTriangular<T, D>,
 }
 
 /// QR Factorization (A = Q R)
-pub struct QrDecomposition<T, R: Dim, C: Dim, SQ = ArrayStorage<T, R, R>, SR = ArrayStorage<T, R, C>> {
-    q: Matrix<T, R, R, SQ>,
-    r: UpperTriangular<T, R, SR>, // Restricted to top R x C triangular factor
+pub struct QrDecomposition<T, const R: usize, const C: usize>
+where
+    Const<R>: Dim,
+    Const<C>: Dim,
+{
+    q: Owned<T, R, R>,
+    r: UpperTriangular<T, R>,
 }
 ```
 
@@ -385,26 +380,25 @@ provide in-place mutation methods where caller-provided scratch buffers or
 mutable references act as the working state:
 
 ```rust
-impl<T, D: Dim, S> Matrix<T, D, D, S>
+impl<T, const D: usize> Owned<T, D, D>
 where
-    S: Storage<T, D, D>,
+    Const<D>: Dim,
 {
     /// Performs LU decomposition purely in-place on the matrix data.
     /// Overwrites self with L and U factors and populates the caller-provided pivot scratch array.
-    pub fn lu_decompose_mut(&mut self, pivots: &mut [usize]) -> Result<usize, LinAlgError> {
-        assert_eq!(pivots.len(), D::DIM, "Pivot scratch buffer size mismatch");
+    pub fn lu_decompose_mut(&mut self, pivots: &mut [usize; D]) -> Result<usize, LinAlgError> {
         let mut row_exchanges = 0;
-        // Low-level LAPACK/BLAS GETRF kernel execution on slice pointers...
+        // Low-level GETRF kernel execution using array bounds [usize; D]...
         Ok(row_exchanges)
     }
 
     /// Consumes the matrix to construct a stack-allocated LuDecomposition wrapper.
     pub fn into_lu(mut self) -> Result<LuDecomposition<T, D>, LinAlgError> {
-        // `PivotStorage<const N: usize>` has no `Default`; `identity()` builds
-        // the initial `[0, 1, ..., N - 1]` permutation. `N` is bridged from
-        // `D` the same way `S`'s `ArrayStorage<T, D, D>` is (§4.1, §4.7).
-        let mut pivots = PivotStorage::identity();
-        let row_exchanges = self.lu_decompose_mut(pivots.as_mut_slice())?;
+        let mut pivots = [0usize; D];
+        for i in 0..D {
+            pivots[i] = i;
+        }
+        let row_exchanges = self.lu_decompose_mut(&mut pivots)?;
         Ok(LuDecomposition {
             data: self,
             pivots,
@@ -420,9 +414,15 @@ Decomposition objects expose specialized linear solver methods ($A x = b$)
 utilizing forward and backward substitution over factor matrices:
 
 ```rust
-impl<T, D: Dim, S, P> LuDecomposition<T, D, S, P> {
+impl<T, const D: usize> LuDecomposition<T, D>
+where
+    Const<D>: Dim,
+{
     /// Solves A * x = b in-place by mutating the right-hand side vector b into the solution x.
-    pub fn solve_mut<const COLS: usize>(&self, b: &mut Matrix<T, D, Const<COLS>>) -> Result<(), LinAlgError> {
+    pub fn solve_mut<const COLS: usize>(&self, b: &mut Owned<T, D, COLS>) -> Result<(), LinAlgError>
+    where
+        Const<COLS>: Dim,
+    {
         // 1. Permute rows of b according to self.pivots
         // 2. Solve L * y = P * b using forward substitution
         // 3. Solve U * x = y using backward substitution
@@ -435,13 +435,14 @@ impl<T, D: Dim, S, P> LuDecomposition<T, D, S, P> {
 
 ##### 4.8.1. Conversion to Polynomial
 
-A square matrix `Matrix<T, D, D>` converts to its characteristic polynomial
+A square matrix `Matrix<T, D, D, S>` converts to its characteristic polynomial
 `Polynomial<T, <D as DimAdd<U1>>::Output>`.
 
 - **Type Signature**:
   ```rust
-  impl<T, D: Dim> TryFrom<Matrix<T, D, D>> for Polynomial<T, <D as DimAdd<U1>>::Output>
+  impl<T, D: Dim, S> TryFrom<Matrix<T, D, D, S>> for Polynomial<T, <D as DimAdd<U1>>::Output>
   where
+      S: BlasStorage<T, D, D>,
       D: DimAdd<U1>,
       <D as DimAdd<U1>>::Output: Dim,
       T: Float + One + Copy,
@@ -458,24 +459,24 @@ A square matrix `Matrix<T, D, D>` converts to its characteristic polynomial
 
 ##### 4.8.2. Conversion to Tensor
 
-Converts a 2D matrix to a rank-2 `Tensor<T, Layout>`.
+Converts a 2D matrix to a rank-2 `Tensor<T, Layout, B>`.
 
 - **Type Signature**:
   ```rust
-  impl<T, R: Dim, C: Dim, Layout: TensorLayout> TryFrom<Matrix<T, R, C>> for Tensor<T, Layout>
+  impl<T, R: Dim, C: Dim, B: Buffer<T>, Layout: TensorLayout> From<Matrix<T, R, C, Dense<T, R, C, B>>> for Tensor<T, Layout, B>
   where
       Layout: TensorLayout<Size = <R as DimMul<C>>::Output>,
   {
-      type Error = ConversionError;
-      // ...
+      // Preserves backing buffer zero-copy when compile-time size and rank 2 match
   }
   ```
-- **Behavior**: Maps nested column-major arrays into the flat array
+- **Behavior**: Maps column-major array storage directly into the flat buffer
   representation of the `Tensor`.
-- **Failure Condition**: Returns `ConversionError::LayoutMismatch` if
-  `Layout::RANK != 2` or if the layout's dimensions do not match $ R \times C $.
+- **Infallible Compile-Time Bound**: Dimensions and rank are verified statically
+  at compile time via `Layout: TensorLayout<Size = <R as DimMul<C>>::Output>`,
+  eliminating runtime `LayoutMismatch` failure modes.
 
-#### 4.9. Error Handling & State Management
+#### 4.9. Error Handling & Element Lookup
 
 ##### 4.9.1. Compile-Time Constraints
 
@@ -483,33 +484,39 @@ Dimension mismatches (e.g., adding matrices of different sizes or multiplying
 incompatible dimensions) fail at compile-time. Rust's type checker prevents
 compiling invalid math.
 
-##### 4.9.2. Runtime Error Taxonomy
+##### 4.9.2. Element Lookup & Leading-Dimension Offset
 
-To supplement the crate's generic `ArithmeticError`, `control-rs` defines
-dedicated error enums in the `math` module to represent linear algebra and
-conversion failures:
+Element lookup on `Matrix<T, R, C, S>` where `S: MatrixStorage<T, R, C>`
+evaluates coordinate offsets directly via `S::lda()` and `S::order()`:
 
 ```rust
-/// Unified linear algebra errors supplementing ArithmeticError.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinAlgError {
-    /// The matrix is singular (or near-singular under the given numerical tolerance).
-    SingularMatrix,
-    /// The matrix operation requires a square shape but a non-square shape was provided.
-    NonSquareMatrix,
-}
-
-/// Representation and layout conversion errors supplementing ArithmeticError.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConversionError {
-    /// Rank or coordinate dimensions do not align between Matrix/Tensor.
-    LayoutMismatch,
-    /// The polynomial is not monic (leading coefficient is not ONE), preventing companion matrix construction.
-    NonMonicPolynomial,
-    /// Dimension or capacity overflow/underflow during calculations.
-    DimensionMismatch,
+impl<T, R: Dim, C: Dim, S> Matrix<T, R, C, S>
+where
+    S: MatrixStorage<T, R, C>,
+{
+    /// Safe bounds-checked coordinate lookup for MatrixStorage backends.
+    pub fn get(&self, row: usize, col: usize) -> Option<&T> {
+        if row >= R::USIZE || col >= C::USIZE {
+            return None;
+        }
+        // Evaluates element offset according to storage layout order:
+        // - Column-major: col * lda + row
+        // - Row-major: row * lda + col
+        let offset = if self.storage.order() == MatrixLayout::ColMajor {
+            col * self.storage.lda() + row
+        } else {
+            row * self.storage.lda() + col
+        };
+        self.storage.as_slice().get(offset)
+    }
 }
 ```
+
+*Codegen Constraint*: In release builds, a runtime branch `if row >= R::USIZE`
+against generic `R: Dim` does not fold if `R` is an un-monomorphized type
+parameter. Range-check elimination and branch folding require `R` and `C` to
+resolve to fixed constants (`Const<N>`) so that nested array access (
+`&[[T; R]; C]`) compiles to 0 branch instructions and 0 panic paths.
 
 ##### 4.9.3. Runtime Fallbacks
 
@@ -522,14 +529,26 @@ Dynamic operations that cannot be validated statically use soft failure paths:
 
 #### 4.10. Structural Specializations & Extensions
 
-Specialized matrices are implemented as new-type wrappers around `Matrix` to
-enforce mathematical invariants and dispatch optimized routines:
+Structural specializations are implemented as specialized storage leaves at Tier
+3 (`Symmetric`, `Triangular` implementing `MatrixStorage`) paired with
+high-level newtype wrappers around `Matrix`:
 
 ```rust
-pub struct UpperTriangular<T, D: Dim>(Matrix<T, D, D>);
-pub struct LowerTriangular<T, D: Dim>(Matrix<T, D, D>);
-pub struct Symmetric<T, D: Dim>(Matrix<T, D, D>);
+pub struct UpperTriangular<T, const D: usize, S = DenseArray<T, D, D>>(
+    pub Matrix<T, Const<D>, Const<D>, S>,
+);
+pub struct LowerTriangular<T, const D: usize, S = DenseArray<T, D, D>>(
+    pub Matrix<T, Const<D>, Const<D>, S>,
+);
+pub struct Symmetric<T, const D: usize, S = DenseArray<T, D, D>>(
+    pub Matrix<T, Const<D>, Const<D>, S>,
+);
 ```
+
+This dual story provides complete consistency: storage leaves define physical
+memory layout and bounds, while high-level newtype wrappers enforce mathematical
+invariants, optimize solver algorithms ($LDL^T$, forward/backward substitution),
+and dispatch specialized subprogram kernels.
 
 Rather than packing triangular data (which requires complex
 non-linear index mapping and prevents flat slicing), we wrap a full square
@@ -539,30 +558,36 @@ slice-based BLAS kernels.
 ##### 4.10.1. Forward and Backward Substitution Examples
 
 ```rust
-/// Solves L * x = b for a lower triangular matrix where L is L::DIM x L::DIM and x, b are L::DIM x 1.
-pub fn solve_lower_triangular<T, D: Dim>(
+/// Solves L * x = b for a lower triangular matrix where L is D x D and x, b are D x 1.
+pub fn solve_lower_triangular<T, const D: usize>(
     l: &LowerTriangular<T, D>,
-    b: &Matrix<T, D, U1>,
+    b: &Matrix<T, Const<D>, U1>,
     tolerance: T,
-) -> Result<Matrix<T, D, U1>, LinAlgError>
+) -> Result<Matrix<T, Const<D>, U1>, LinAlgError>
 where
+    Const<D>: Dim,
     T: Float + Copy,
 {
-    let n = D::DIM;
-    let mut x = Matrix::<T, D, U1>::zero();
+    let n = D;
+    let mut x = Matrix::<T, Const<D>, U1>::zero();
     let l_mat = &l.0;
 
     for i in 0..n {
-        let l_ii = l_mat.data[i][i];
+        let l_ii = l_mat.get(i, i).copied().unwrap_or(T::ZERO);
         // Tolerance-based singularity check using the type's Signed abs()
         if l_ii.abs() < tolerance {
             return Err(LinAlgError::SingularMatrix);
         }
         let mut sum = T::ZERO;
         for j in 0..i {
-            sum = sum + l_mat.data[j][i] * x.data[0][j]; // column-major: data[col][row]
+            let l_ij = l_mat.get(i, j).copied().unwrap_or(T::ZERO);
+            let x_j = x.get(j, 0).copied().unwrap_or(T::ZERO);
+            sum = sum + l_ij * x_j;
         }
-        x.data[0][i] = (b.data[0][i] - sum) / l_ii;
+        let b_i = b.get(i, 0).copied().unwrap_or(T::ZERO);
+        if let Some(x_i) = x.as_mut_slice().get_mut(i) {
+            *x_i = (b_i - sum) / l_ii;
+        }
     }
     Ok(x)
 }
@@ -584,7 +609,7 @@ covariance update in a Kalman filter loop:
 $$ P*{k|k} = (I - K_k H_k) P*{k|k-1} $$
 
 ```rust
-use control_rs::math::matrix::{Matrix, Dim, U1};
+use control_rs::matrix::{Matrix, Dim, U1};
 
 pub fn kalman_covariance_update<T, S: Dim, O: Dim>(
     p_pred: &Matrix<T, S, S>,
@@ -612,10 +637,6 @@ where
     &diff * p_pred
 }
 ```
-
-`T: Scalar` (identity, subtraction, multiplication) is sufficient here; the
-prior `Ring`/`Field`/`Real` hierarchy this bound targeted has been retired in
-favor of the hardware-aligned trait tier (`num-traits-design.md` FR-3, §4).
 
 ###### 4.10.4. Abstracting Target-Specific DSP / BLAS FFI
 
@@ -662,7 +683,7 @@ interface versus type-level dimension traits (`Dim`).
   arithmetic in public trait bounds (e.g., expressing that
   multiplying $M \times N$ by $N \times P$ yields $M \times P$).
 - **Selected `Dim` + Decoupled Storage Architecture**: Combining the `Dim` trait
-  system with the decoupled `Storage<T, R, C>` trait enables complex
+  system with the decoupled `MatrixStorage<T, R, C>` trait enables complex
   compile-time matrix arithmetic bounds while keeping storage backends
   completely pluggable.
 
@@ -671,49 +692,40 @@ interface versus type-level dimension traits (`Dim`).
 Using external crates like `nalgebra` in `no_std` mode was considered and
 bypassed for two primary reasons:
 
-1. **Generic `const fn` Support on Stable Rust**: Baking static matrices into
-   read-only Flash memory requires `const fn` constructors. `nalgebra` relies on
+1. **Generic `const fn` Support on Stable Rust**: `nalgebra` relies on
    traits like `Default` which cannot be evaluated inside `const fn` on stable
-   Rust. The custom `Zero` and `One` traits in `crate::math::num_traits` expose
-   associated constants (`T::ZERO`/`T::ONE`), enabling compile-time matrix
-   initialization into ROM.
-2. **Safety-Critical Audit Footprint**: Certification standards (ISO 26262,
-   DO-178C) require complete auditing of dependency source code. Bypassing
-   external libraries keeps the audit footprint minimal and strictly focused on
-   safety invariants.
+   Rust.
+2. **Custom `Zero` and `One` traits**: expose associated constants (`T::ZERO`/
+   `T::ONE`).
+3. **Audit Footprint**: Complete auditing of dependency source code is
+   difficult with more dependencies. `nalgebra` has a large number of
+   dependencies.
 
-While `nalgebra` was bypassed as a direct dependency for the reasons above, the
-matrix architecture implemented in `control-rs` is a direct adaptation of
-`nalgebra`'s design. Key design structures, trait hierarchies, dimensions, and
-slicing properties are structurally modeled on Sébastien Crozet's original
-architecture.
+While `nalgebra` was bypassed as a direct dependency, the matrix architecture is
+a direct adaptation of `nalgebra`'s design. Key design structures, trait
+hierarchies, dimensions, and slicing properties are structurally modeled on
+Sébastien Crozet's original architecture.
 
 #### 5.4. Decoupled Storage Architecture
 
-The physical memory layout is abstracted from mathematical dimensions via the
-`Storage<T, R, C>` trait hierarchy (`Storage`, `StorageMut`).
+The physical memory layout is decoupled from mathematical dimensions via the
+three-tier storage trait hierarchy (`storage-subprograms-design.md` §4.1):
 
-- **Base `Storage<T, R, C>`**: Encapsulates raw pointer access (`ptr`,
-  `ptr_mut`), offset calculation (`offset`), and unchecked indexing (
-  `get_unchecked`).
-- **Marker `ContiguousStorage<T, R, C>`**: Restricts slice coercion (`as_slice`)
-  strictly to contiguous memory backends (`ArrayStorage`, `StorageView`),
-  protecting strided or padded memory layouts from slice-based data corruption.
-- **Custom Backends**: Enables user-defined backends including read-only Flash
-  wrappers, DMA memory pools, and borrowed `StorageView`/`StorageViewMut`
-  wrappers.
+- **Tier 0 Provenance (`Buffer`/`BufferMut`)**: Distinguishes an owning,
+  stack-allocated
+  buffer from borrowed (`Ref`, `RefMut`) nested arrays.
+- **Tier 1 Universal Shape Floor (`BlasStorage`/`BlasStorageMut`)**: Mandates
+  `as_slice()`
+  and `as_mut_slice()` for universal contiguous memory access.
+- **Tier 2 Addressing
+  Branches (`MatrixStorage`/`PackedStorage`)**:
+  Branch according to addressing capability: leading dimension (`lda`/`order`)
+  or packed (`packed_index`/`IMPLICIT`).
+- **Concrete
+  Leaves (`Dense`, `Symmetric`, `Triangular`, `Diagonal`)**:
+  Each implements exactly one Tier 2 branch. There is no `StridedView` leaf.
 
-#### 5.5. Memory Layout Alternatives
-
-- **Row-Major Layout**: Row-major layouts provide spatial locality when
-  accessing rows.
-- **Panel-Major Layout (BLASFEO style)**: BLASFEO stores matrices in
-  fixed-height panels with column-major layouts inside. This avoids data-packing
-  overhead for cache-resident matrices but requires non-contiguous mapping and
-  index arithmetic. It prevents exposing zero-copy flat slice APIs (`&[T]`)
-  without allocation, which conflicts with safe API requirements.
-
-#### 5.6. Factorization & Inversion Algorithms
+#### 5.5. Factorization & Inversion Algorithms
 
 For solving linear systems and matrix inversion, the following factorization
 algorithms were analyzed with their trade-offs for embedded deployment:
@@ -757,7 +769,7 @@ algorithms were analyzed with their trade-offs for embedded deployment:
       the matrix ($\kappa(A^T A) = \kappa(A)^2$), which halves the number of
       valid decimal digits in calculations and leads to severe precision loss.
 
-#### 5.7. Matrix Multiplication Algorithms
+#### 5.6. Matrix Multiplication Algorithms
 
 To evaluate $C = A B$, several multiplication approaches were compared:
 
@@ -784,7 +796,7 @@ To evaluate $C = A B$, several multiplication approaches were compared:
       functions. It is highly hardware-specific and requires fallback
       implementations for targets lacking SIMD engines.
 
-#### 5.8. Determinant Calculation Algorithms
+#### 5.7. Determinant Calculation Algorithms
 
 For computing $\det(A)$, two primary methods were analyzed:
 
@@ -836,14 +848,15 @@ execution predictability.
       $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text{overhead}}}{f}$$
 4. **Stack Bounds Verification**:
     - Inline stack-allocated matrix capacities are strictly capped
-      at $127 \times 127$ elements ($R::DIM \times C::DIM \le 16{,}129$; C-3),
+      at $127 \times 127$ elements ($R::USIZE \times C::USIZE \le 16{,}129$;
+      C-3),
       matching the `Dim` system's `U127` ceiling rather than an independently
       chosen number.
     - This is a type-system bound, not a stack-safety guarantee: a
       $127 \times 127$ `f32` instance is
       $16{,}129 \times 4\text{ bytes} \approx 63\text{KB}$, well past typical
       2–8KB bare-metal stack budgets. `clippy::large_stack_arrays`
-      (`storage-trait-design.md` §7) is the actual enforcement point for
+      (`storage-subprograms-design.md` §8) is the actual enforcement point for
       call-site instance size; CI must fail on any un-justified `#[allow]`
       of that lint.
 
@@ -859,7 +872,7 @@ execution predictability.
    generation without heap allocation.
 
    ```rust
-   use control_rs::math::matrix::{Matrix, Dim, U2, U1};
+   use control_rs::matrix::{Matrix, Dim, U2, U1};
 
    /// Updates the 2x2 error covariance matrix for a 2D state vector (e.g., Position, Velocity)
    /// given a 1D measurement (e.g., GPS position).
@@ -955,7 +968,8 @@ execution predictability.
     suites (`proptest`).
 11. **Rust Project Developers. (2024).** _The Rustonomicon: The Dark Arts of
     Advanced and Unsafe Rust Programming_. — Memory-aliasing and layout
-    guarantees underpinning the `Storage<T, R, C>` trait split and `#[repr(C)]`
+    guarantees underpinning the `BlasStorage`/`MatrixStorage` trait split and
+    `#[repr(C)]`
     slice casting.
 12. **ISO. (2018).** _ISO 26262-6:2018 Road vehicles — Functional safety — Part
     6: Product development at the software level_. — Automotive functional
@@ -966,19 +980,46 @@ execution predictability.
 14. **IEEE Computer Society. (2008).** _IEEE Standard for Software and System
     Test Documentation_ (IEEE Std 829-2008). — Software verification and test
     suite structure standards.
+15. **control-rs. (2026).** `src/math/subprograms.rs`. — Level-1/2/3 subprogram
+    trait definitions (`AXPY`, `SCAL`, `DOT`, `NRM2`, `IAMAX`, `GEMV`, `GEMM`);
+    the inventory of kernels available to `Matrix` (§4.5.1).
+16. **Greif, C., He, S., & Liu, P. (2016).** SYM-ILDL: Incomplete $LDL^T$
+    Factorization of Symmetric Indefinite and Skew-Symmetric Matrices.
+    _arXiv:1505.07589_. — $O(n)$ per-step pivot-search cost for symmetric
+    partial pivoting, bounding the `IAMAX` work per elimination step.
+17. **Higham, N. J., & Tisseur, F. (2000).** A Block Algorithm for Matrix
+    1-Norm Estimation, with an Application to 1-Norm Pseudospectra. _SIAM
+    Journal on Matrix Analysis and Applications_, 21(4).
+    doi: 10.1137/S0895479899356080. — Multiple-right-hand-side triangular
+    solves arising in LU-based solver paths.
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-|:---------|:----------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026   | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 1.1      | July 19, 2026   | @MitchellDScott | Restructured to new template; added embedded performance and verification details.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 1.2      | July 25, 2026   | @MitchellDScott | Added supporting bibliography and inline citations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 1.3      | July 26, 2026   | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, and no_alloc scratch space patterns.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 1.4      | July 26, 2026   | @MitchellDScott | Harmonized with storage trait design doc; updated `Matrix` definition, bounds, decomposition rules, and V&V.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 1.5      | July 26, 2026   | @MitchellDScott | Added comprehensive 3-tiered bibliography and inline citations across core architectural sections.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 1.6      | August 1, 2026  | @MitchellDScott | Corrected `nalgebra` comparison claims; clarified storage-decoupling benefit; added system-solving convenience note.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 1.7      | August 2, 2026  | @MitchellDScott | Propagated `num-traits-design.md` pivot; removed duplicate MatrixView definitions; relocated `ConversionError`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| 1.8      | August 10, 2026 | @MitchellDScott | Realigned with shipped math-module code: replaced retired `Ring` bound with `Scalar` (num-traits-design.md FR-3); renamed `MatrixView`/`MatrixViewMut` to the storage-trait-design.md-owned `StorageView`/`StorageViewMut` (layout as a `LayoutMarker` type parameter, not a runtime stride); corrected `ArrayStorage`/`PivotStorage` defaults for their actual `const usize` (not `Dim`) generics; updated the `Mul` operator bound to match `subprograms.rs`'s shipped `GEMM` bound; aligned C-3/§6.1's max matrix dimension with the `Dim` system's `U127` ceiling ($127 \times 127$, $\le 16{,}129$ elements — matching `storage-trait-design.md` C-1) instead of an independently-chosen figure, and flagged the resulting ~63KB worst-case stack footprint against `clippy::large_stack_arrays` as the real per-instance size guard. |
+| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 12, 2026   | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 1.1      | July 19, 2026   | @MitchellDScott | Restructured to new template; added embedded performance and verification details.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.2      | July 25, 2026   | @MitchellDScott | Added supporting bibliography and inline citations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.3      | July 26, 2026   | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, and no_alloc scratch space patterns.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 1.4      | July 26, 2026   | @MitchellDScott | Harmonized with storage trait design doc; updated `Matrix` definition, bounds, decomposition rules, and V&V.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.5      | July 26, 2026   | @MitchellDScott | Added comprehensive 3-tiered bibliography and inline citations across core architectural sections.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.6      | August 1, 2026  | @MitchellDScott | Corrected `nalgebra` comparison claims; clarified storage-decoupling benefit; added system-solving convenience note.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.7      | August 2, 2026  | @MitchellDScott | Propagated `num-traits-design.md` pivot; removed duplicate MatrixView definitions; relocated `ConversionError`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.8      | August 10, 2026 | @MitchellDScott | Realigned with updated math-module code                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.10     | August 11, 2026 | @MitchellDScott | Condensed §4.5 operator→subprogram mapping into a scannable table (`Add`/`Sub`→`AXPY`, `Neg`→`SCAL`, `Mul<Matrix>`→`GEMM`, `Mul<Vector>`→`GEMV`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.13     | August 15, 2026 | @mitchelldscott | Reverted Doc Status to Draft. `storage-subprograms-design.md` rev 1.2 (August 14, 2026) replaced the flat `Storage`/`StorageMut`/`ContiguousStorage`/`ContiguousStorageMut` hierarchy this document's §1, §4.1, §4.2, §4.3, §4.3.1 and §5.4 still describe with a four-tier `Buffer`/`BlasStorage`/{`MatrixStorage`, `PackedStorage`, `StridedStorage`}/leaf hierarchy; `ArrayStorage`, `StorageView` and `StorageViewMut` no longer name a type that hierarchy defines. No section content changed in this revision; reconciliation (renaming `Matrix`'s `S` bound to the correct Tier-2 branch and updating the architecture prose) is tracked as its own maintenance pass.                   |
+| 1.14     | August 16, 2026 | @mitchelldscott | Propagated four-tier `BlasStorage` hierarchy (§1, §4.1, §4.3, §4.3.1, §5.4): updated `Matrix` bound to `MatrixStorage<T, R, C>`, default storage alias to `Dense<T, R, C, Array<T, N>>`, slice methods to `BlasStorage`, and view aliases to `Dense` / `StridedView`. Applied B-2/D-2 resolution (§4.5.1): added `GER` and `TRSV` to required subprogram inventory.                                                                                                                                                                                                                                                                                                                             |
+| 1.15     | August 16, 2026 | @mitchelldscott | Harmonized with `storage-subprograms-design.md` Rev 1.4 (§1, §4.1): updated `Matrix` storage bound to single-parameter `S: MatrixStorage<T, R = R, C = C>` with associated `R`/`C` types, integrated `FixedBlasStorage<T>` array access (`as_array()`), and detailed monomorphized zero-cost subprogram delegation.                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.16     | August 16, 2026 | @mitchelldscott | Harmonized with `storage-subprograms-design.md` Rev 1.5 (§1, §4.1): updated `BlasStorage<T, R, C, Stride>` and `MatrixStorage<T, R, C>` to keep `R: Dim`, `C: Dim`, `Stride: Dim` as generic parameters on the storage trait itself, enabling one storage implementor (`Dense`, `Array`, `Ref`, `RefMut`) to be used for any compile-time shape and stride.                                                                                                                                                                                                                                                                                                                                     |
+| 1.17     | August 16, 2026 | @mitchelldscott | Completed `/cr-design-doc` pass (§1-§10): standardized typed `BlasStorage`/`MatrixStorage` + `&[T; N]` operand model; restored unique `MX-FR-*`/`MX-NFR-*`/`MX-C-*` requirement IDs; specified feature-selected backend dispatch (`#[cfg(feature = "accelerate")]`); aligned decomposition signatures (`LuDecomposition`, `LdltDecomposition`, `CholeskyDecomposition`, `QrDecomposition`) with shipped `src/matrix/decomposition.rs` code (`Const<D>: Dim`); eliminated `lu_decompose_mut` runtime `assert!`; added Tier-2 storage branch element lookup composition (`get`) with `R::USIZE` codegen folding constraint; unified `Symmetric`/`Triangular` leaf + newtype specialization story. |
+| 1.18     | August 16, 2026 | @mitchelldscott | Reconciled residual `Storage<T, R, C>` prose references in §5.1 and §8 with `MatrixStorage<T, R, C>` and `BlasStorage`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.19     | August 16, 2026 | @mitchelldscott | Standardized requirement IDs in §2 from MX- prefixed tags to plain FR/NFR/C numbered format.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.20     | August 16, 2026 | @mitchelldscott | Updated `Matrix` default storage parameter and view aliases (`Owned`, `MatrixSlice`, `MatrixSliceMut`) to convenience storage aliases (`DenseArray`, `DenseRef`, `DenseRefMut`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 1.21     | August 16, 2026 | @mitchelldscott | Encapsulated dimension multiplication inside `DenseArray<T, R, C>` in `storage.rs`, eliminating non-stable const generic math (`{ R * C }`) and extra capacity parameters from `Matrix`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 1.22     | August 16, 2026 | @mitchelldscott | Removed obsolete `FixedBlasStorage` mention; decoupled `R: DimMul<C>` from `Matrix` struct definition; corrected decomposition `Owned<T, Const<D>, Const<D>>` type arguments; aligned `solve_lower_triangular` generic dimension parameters with `LowerTriangular<T, const D: usize>`; refined `Matrix::get` element lookup offset evaluation.                                                                                                                                                                                                                                                                                                                                                  |
+| 1.23     | August 18, 2026 | @mitchelldscott | Reconciled `Matrix` struct storage bound to `S: MatrixStorage<T, R, C>` across §1 and §4.1; clarified `StridedMatrixSlice` as a standalone wrapper over `StridedView`; harmonized §4.9.2 coordinate lookup with Tier-2 `MatrixStorage`; aligned with `storage-subprograms-design.md` Rev 1.10 `&[T; N]` operand model.                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.24     | August 18, 2026 | @mitchelldscott | Aligned §4.8.2 `Matrix` → `Tensor` conversion to infallible `From` bounded by `TensorLayout<Size = <R as DimMul<C>>::Output>`, eliminating obsolete `LayoutMismatch` runtime check.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 1.25     | August 18, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.11–1.12: `ArrayMatrix`/`Owned` take `const R, const C` over `DenseArray<T, R, C>`/`Array2`; `Matrix` itself stays `Dim`-generic with no owning default; views via FR-6 `view()`/`try_submatrix()`; subprogram operands via `as_array()`. |
+| 1.26     | August 18, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.16: `as_nested()` over `&[[T; R]; C]`; caller-supplied `R2`/`C2`/`LDA` on `try_submatrix`; kernel `trans` only (no `transpose_view` / `StridedView`); `BlasStorage` without `Stride`; `IMPLICIT` packed branch. |

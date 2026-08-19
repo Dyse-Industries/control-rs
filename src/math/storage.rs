@@ -87,9 +87,9 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatrixLayout {
     /// Elements of a row are contiguous in memory.
-    RowMajor,
+    RowMajor = 1,
     /// Elements of a column are contiguous in memory.
-    ColMajor,
+    ColMajor = 2,
 }
 
 /// Zero-sized type-level tag for a contiguous backend's memory layout.
@@ -107,7 +107,6 @@ pub trait LayoutMarker: 'static {
 }
 
 /// [`LayoutMarker`] tag: elements of a column are contiguous in memory.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ColMajor;
 
 impl LayoutMarker for ColMajor {
@@ -140,8 +139,8 @@ impl LayoutMarker for RowMajor {
 /// # Safety
 /// `offset(i, j)` must return a value such that
 /// `self.ptr().offset(self.offset(i, j))` is a valid, in-bounds pointer to
-/// the element at logical position `(i, j)` for every `i < R::DIM` and
-/// `j < C::DIM`.
+/// the element at logical position `(i, j)` for every `i < R::USIZE` and
+/// `j < C::USIZE`.
 pub unsafe trait Storage<T, R: Dim, C: Dim> {
     /// Returns a raw pointer to the backend's first addressable element.
     fn ptr(&self) -> *const T;
@@ -161,8 +160,8 @@ pub unsafe trait Storage<T, R: Dim, C: Dim> {
     /// Returns a reference to the element at `(i, j)` or `None` if either
     /// index is out of bounds.
     fn get(&self, i: usize, j: usize) -> Option<&T> {
-        if i < R::DIM && j < C::DIM {
-            // Safety: just checked `i < R::DIM` and `j < C::DIM` above.
+        if i < R::USIZE && j < C::USIZE {
+            // Safety: just checked `i < R::USIZE` and `j < C::USIZE` above.
             Some(unsafe { self.get_unchecked(i, j) })
         } else {
             None
@@ -170,11 +169,11 @@ pub unsafe trait Storage<T, R: Dim, C: Dim> {
     }
     /// Number of logical rows.
     fn rows(&self) -> usize {
-        R::DIM
+        R::USIZE
     }
     /// Number of logical columns.
     fn cols(&self) -> usize {
-        C::DIM
+        C::USIZE
     }
 }
 
@@ -204,8 +203,8 @@ pub unsafe trait StorageMut<T, R: Dim, C: Dim>:
     /// Returns a mutable reference to the element at `(i, j)` or `None` if
     /// either index is out of bounds.
     fn get_mut(&mut self, i: usize, j: usize) -> Option<&mut T> {
-        if i < R::DIM && j < C::DIM {
-            // Safety: just checked `i < R::DIM` and `j < C::DIM` above.
+        if i < R::USIZE && j < C::USIZE {
+            // Safety: just checked `i < R::USIZE` and `j < C::USIZE` above.
             Some(unsafe { self.get_unchecked_mut(i, j) })
         } else {
             None
@@ -213,12 +212,12 @@ pub unsafe trait StorageMut<T, R: Dim, C: Dim>:
     }
 }
 
-/// Marker for backends whose `R::DIM * C::DIM` elements are laid out with
+/// Marker for backends whose `R::USIZE * C::USIZE` elements are laid out with
 /// no padding or stride gaps, enabling flat-slice access and direct BLAS
 /// interop.
 ///
 /// # Safety
-/// `as_slice()` must return exactly `R::DIM * C::DIM` elements ordered
+/// `as_slice()` must return exactly `R::USIZE * C::USIZE` elements ordered
 /// consistently with `Storage::offset` and `ORDER`.
 pub unsafe trait ContiguousStorage<T, R: Dim, C: Dim>:
     Storage<T, R, C>
@@ -416,9 +415,9 @@ impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StorageView<'a, T, R, C, O> {
     ///
     /// # Errors
     /// Returns [`ConversionError::DimensionMismatch`] if
-    /// `data.len() != R::DIM * C::DIM`.
+    /// `data.len() != R::USIZE * C::USIZE`.
     pub fn new(data: &'a [T]) -> ConversionResult<Self> {
-        if R::DIM.checked_mul(C::DIM) == Some(data.len()) {
+        if R::USIZE.checked_mul(C::USIZE) == Some(data.len()) {
             Ok(Self {
                 data,
                 _marker: PhantomData,
@@ -427,10 +426,26 @@ impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StorageView<'a, T, R, C, O> {
             Err(ConversionError::DimensionMismatch)
         }
     }
+
+    /// Wraps `data` as an `R x C` view with layout `O`, without validating
+    /// `data.len() == R::USIZE * C::USIZE`.
+    ///
+    /// Internal fast path for callers (e.g. `Matrix::transpose_view`) that
+    /// already know the length invariant holds by construction, avoiding a
+    /// redundant runtime check and an unusable `Result`.
+    ///
+    /// # Safety
+    /// `data.len()` must equal `R::USIZE * C::USIZE`.
+    pub(crate) const unsafe fn new_unchecked(data: &'a [T]) -> Self {
+        Self {
+            data,
+            _marker: PhantomData,
+        }
+    }
 }
 
 // Safety: `offset` maps every in-bounds `(i, j)` to a distinct index within
-// `data`, whose length was checked against `R::DIM * C::DIM` at construction.
+// `data`, whose length was checked against `R::USIZE * C::USIZE` at construction.
 unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> Storage<T, R, C>
     for StorageView<'_, T, R, C, O>
 {
@@ -438,7 +453,7 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> Storage<T, R, C>
         self.data.as_ptr()
     }
     fn offset(&self, i: usize, j: usize) -> isize {
-        O::offset(R::DIM, C::DIM, i, j)
+        O::offset(R::USIZE, C::USIZE, i, j)
     }
     unsafe fn get_unchecked(&self, i: usize, j: usize) -> &T {
         let offset = self.offset(i, j);
@@ -447,7 +462,7 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> Storage<T, R, C>
     }
 }
 
-// Safety: `data` covers exactly `R::DIM * C::DIM` contiguous elements
+// Safety: `data` covers exactly `R::USIZE * C::USIZE` contiguous elements
 // (checked at construction) ordered consistently with `offset`.
 unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorage<T, R, C>
     for StorageView<'_, T, R, C, O>
@@ -475,9 +490,9 @@ impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StorageViewMut<'a, T, R, C, O> {
     ///
     /// # Errors
     /// Returns [`ConversionError::DimensionMismatch`] if
-    /// `data.len() != R::DIM * C::DIM`.
+    /// `data.len() != R::USIZE * C::USIZE`.
     pub fn new(data: &'a mut [T]) -> ConversionResult<Self> {
-        if R::DIM.checked_mul(C::DIM) == Some(data.len()) {
+        if R::USIZE.checked_mul(C::USIZE) == Some(data.len()) {
             Ok(Self {
                 data,
                 _marker: PhantomData,
@@ -497,7 +512,7 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> Storage<T, R, C>
         self.data.as_ptr()
     }
     fn offset(&self, i: usize, j: usize) -> isize {
-        O::offset(R::DIM, C::DIM, i, j)
+        O::offset(R::USIZE, C::USIZE, i, j)
     }
     unsafe fn get_unchecked(&self, i: usize, j: usize) -> &T {
         let offset = self.offset(i, j);
@@ -521,7 +536,7 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> StorageMut<T, R, C>
     }
 }
 
-// Safety: `data` covers exactly `R::DIM * C::DIM` contiguous elements
+// Safety: `data` covers exactly `R::USIZE * C::USIZE` contiguous elements
 // (checked at construction) ordered consistently with `offset`.
 unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorage<T, R, C>
     for StorageViewMut<'_, T, R, C, O>

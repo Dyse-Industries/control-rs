@@ -1,7 +1,7 @@
 # Transfer Function Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_2,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Date Badge](https://img.shields.io/badge/Date-August_16,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -15,14 +15,17 @@ control systems and digital signal processing.
 
 Following the core architecture of `control-rs`, `TransferFunction` is a *
 *standalone, type-safe wrapper** built directly on top of generic storage
-backends (`Storage<T, N, U1>` and `Storage<T, D, U1>`). It does **not** wrap
+backends (`MatrixStorage<T, N, U1>` and `MatrixStorage<T, D, U1>`). It does *
+*not** wrap
 `Polynomial` objects under the hood; instead, it operates directly on numerator
 and denominator storage memory via lower-level Peano dimension traits (
 `num_types.rs`), DSP subprogram traits (such as convolution and polynomial
-evaluation) and BLAS kernels. This design preserves symmetry with `Matrix` and
-`Polynomial`, ensuring zero-cost abstraction, zero dynamic heap allocation (
-`#![no_std]`) and flexible memory ownership (owning arrays, borrowed views and
-Flash ROM tables).
+evaluation) and BLAS kernels. Built-in operations delegate directly to the
+single-source
+subprogram kernels in `src/math/subprograms.rs`, while providing easy conversion
+to
+`Polynomial` (`numerator_poly()`, `denominator_poly()`) and `Matrix` (companion
+matrix form).
 
 ---
 
@@ -30,41 +33,37 @@ Flash ROM tables).
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Direct Storage Parameterization**: `TransferFunction` must accept
-  independent storage backends for numerator and denominator coefficients (
-  `Sn: Storage<T, N, U1>`, `Sd: Storage<T, D, U1>`).
-- **FR-2 — Domain Encoding**: The type must encode continuous vs. discrete
-  domain and hold an optional sampling period $T_s$.
-- **FR-3 — Direct Interoperability with Math & DSP Traits**: All operations (
-  frequency response, system algebra, discretization, canonical transforms) must
-  interact directly with Peano, DSP and BLAS traits without delegating to
-  `Polynomial` wrappers.
-- **FR-4 — System Interconnections**: Provide static capacity computation for
-  series, parallel and feedback (closed-loop) algebraic connections.
-- **FR-5 — Discretization Algorithms**: Support bilinear (Tustin) transform with
-  optional pre-warping and exact Zero-Order Hold discretization.
-- **FR-6 — State-Space Canonical Conversions**: Support bidirectional conversion
-  between transfer functions and `StateSpace` in Controllable and Observable
-  Canonical Form.
+- **FR-1 — Rational Polynomial Representation**: Represents
+  continuous ($G(s) = N(s)/D(s)$) or discrete ($G(z) = N(z)/D(z)$) SISO transfer
+  functions as numerator and denominator polynomials with explicit sample
+  time $T_s$ for discrete systems.
+- **FR-2 — Fallible System Discretization**: Tustin (bilinear) and Zero-Order
+  Hold (ZOH) discretization evaluate system poles/zeros, returning
+  `Err(TransferFunctionError::SingularDiscretization)` when the transformation
+  matrix is ill-conditioned.
+- **FR-3 — Frequency Response Evaluation**: Frequency evaluation $G(j\omega)$
+  or $G(e^{j\omega T_s})$ computes magnitude ($|G|$) and phase ($\angle G$)
+  in $O(N + D)$ FMA operations per frequency point.
+- **FR-4 — State-Space Canonical Realization**: Conversion to `StateSpace`
+  constructs a controllable or observable canonical realization with exact state
+  dimension $\max(N, D)$.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Zero Dynamic Allocation**: All operations must execute
-  deterministically without heap allocation (`Vec`, `Box`).
-- **NFR-2 — Zero-Cost Abstraction**: Storage abstraction and Peano dimension
-  bounds must monomorphize completely, matching hand-optimized raw array
-  operations.
-- **NFR-3 — Contiguity-Gated Slice Views**: Safe slice accessors (`num_slice()`,
-  `den_slice()`) are exposed only if the backend implements `ContiguousStorage`.
+- **NFR-1 — Fixed-Memory System Algebra**: Cascaded and parallel transfer
+  function multiplication/addition execute in polynomial convolution complexity
+  without dynamic heap allocations.
+- **NFR-2 — `#![no_std]` Environment**: Operates in `#![no_std]` without
+  standard library dependencies.
 
 #### 2.3 Constraints
 
-- **C-1 — Coefficient Ordering**: Ascending order of powers for numerator and
-  denominator, matching `Polynomial`'s
-  convention ([polynomial-design.md §2.3](polynomial-design.md#23-constraints));
-  diverges from MATLAB/`python-control`'s descending order (§7).
-- **C-2 — Denominator Validity**: Denominator capacity $D$ must
-  satisfy $D \ge 1$ with a non-zero leading coefficient ($a_{D-1} \neq 0$).
+- **C-1 — Properness Precondition**: Denominator degree $D$ must
+  satisfy $D \ge 1$ and $D \ge N$ (proper transfer function).
+- **C-2 — Non-Zero Leading Denominator**: Leading denominator coefficient $d_D$
+  must be non-zero ($d_D \neq 0$).
+- **C-3 — Capacity Bound**: Numerator and denominator polynomial capacities are
+  bounded by the `U127` Peano ceiling ($N, D \le 127$).
 
 ---
 
@@ -78,8 +77,9 @@ abstractions, `TransferFunction` interacts directly with:
   etc.) for compile-time shape verification.
 - **`crate::math::subprograms`**: BLAS Level 1/2/3 subprograms (`AXPY`, `SCAL`,
   `GEMV`, `GEMM`) and DSP helpers (`CONV`, Horner's evaluation).
-- **`crate::math::storage`**: Storage traits (`Storage`, `StorageMut`,
-  `ContiguousStorage`, `ContiguousStorageMut`).
+- **`crate::math::storage`**: Storage traits (`Buffer`, `BufferMut`,
+  `BlasStorage`, `BlasStorageMut`, `MatrixStorage`, `MatrixStorageMut`,
+  `Dense`).
 
 ---
 
@@ -92,13 +92,12 @@ pub struct TransferFunction<
     T,
     N: Dim,
     D: Dim,
-    Sn: Storage<T, N, U1> = ArrayStorage<T, N, U1>,
-    Sd: Storage<T, D, U1> = ArrayStorage<T, D, U1>,
+    Sn: MatrixStorage<T, N, U1>,
+    Sd: MatrixStorage<T, D, U1>,
 > {
     num_storage: Sn,
     den_storage: Sd,
     sample_time: Option<T>, // None = Continuous (s-domain), Some(Ts) = Discrete (z-domain)
-    _marker: core::marker::PhantomData<(N, D)>,
 }
 ```
 
@@ -111,14 +110,17 @@ pub struct TransferFunction<
 #### 4.2 Storage Backends & Zero-Copy Views
 
 ```rust
-/// Owning transfer function with stack-allocated arrays
-pub type ArrayTransferFunction<T, N, D> = TransferFunction<T, N, D, ArrayStorage<T, N, U1>, ArrayStorage<T, D, U1>>;
+/// Owning transfer function. `N`/`D` are the alias's own const generics.
+pub type ArrayTransferFunction<T, const N: usize, const D: usize> =
+    TransferFunction<T, Const<N>, Const<D>, DenseVectorArray<T, N>, DenseVectorArray<T, D>>;
 
-/// Zero-copy borrowed read-only transfer function view over &[T] slices
-pub type TransferFunctionView<'a, T, N, D> = TransferFunction<T, N, D, MatrixView<'a, T, N, U1>, MatrixView<'a, T, D, U1>>;
+/// Zero-copy borrowed read-only view.
+pub type TransferFunctionView<'a, T, const N: usize, const D: usize> =
+    TransferFunction<T, Const<N>, Const<D>, DenseVectorRef<'a, T, N>, DenseVectorRef<'a, T, D>>;
 
-/// Zero-copy borrowed mutable transfer function view over &mut [T] slices
-pub type TransferFunctionViewMut<'a, T, N, D> = TransferFunction<T, N, D, MatrixViewMut<'a, T, N, U1>, MatrixViewMut<'a, T, D, U1>>;
+/// Zero-copy borrowed mutable view.
+pub type TransferFunctionViewMut<'a, T, const N: usize, const D: usize> =
+    TransferFunction<T, Const<N>, Const<D>, DenseVectorRefMut<'a, T, N>, DenseVectorRefMut<'a, T, D>>;
 ```
 
 #### 4.3 Slicing & Memory Access
@@ -126,8 +128,8 @@ pub type TransferFunctionViewMut<'a, T, N, D> = TransferFunction<T, N, D, Matrix
 ```rust
 impl<T, N: Dim, D: Dim, Sn, Sd> TransferFunction<T, N, D, Sn, Sd>
 where
-    Sn: ContiguousStorage<T, N, U1>,
-    Sd: ContiguousStorage<T, D, U1>,
+    Sn: BlasStorage<T, N, U1>,
+    Sd: BlasStorage<T, D, U1>,
 {
     /// Safe contiguous slice view of numerator coefficients.
     pub fn num_slice(&self) -> &[T] {
@@ -146,16 +148,16 @@ where
 MIMO systems are represented as a matrix of transfer functions:
 
 ```rust
-pub type TransferFunctionMatrix<T, R: Dim, C: Dim, N: Dim, D: Dim, S = ArrayStorage<TransferFunction<T, N, D>, R, C>> =
-Matrix<TransferFunction<T, N, D>, R, C, S>;
+pub type TransferFunctionMatrix<T, const R: usize, const C: usize, const N: usize, const D: usize> =
+    ArrayMatrix<ArrayTransferFunction<T, N, D>, R, C>;
 ```
 
 #### 4.5 Error Handling
 
 Following the crate-wide error strategy, fallible constructors return
 `Result<T, Error>` via a crate-local `thiserror` enum rather than panicking.
-The only runtime-checked invariant at construction is FR-6/§2.3's Denominator
-Validity constraint ($D \ge 1$, non-zero leading coefficient $a_{D-1}$):
+The only runtime-checked invariant at construction is §2.3's Denominator
+Validity constraint ($D \ge 1$, non-zero leading coefficient $a_{D-1}$, C-2):
 
 ```rust
 #[derive(Debug, thiserror::Error)]
@@ -165,30 +167,27 @@ pub enum TransferFunctionError {
 }
 ```
 
-Runtime constructors that accept caller-supplied coefficients (`from_slices`,
-and any validating variant of `from_coefficients`/`from_storage`) return
+Runtime constructors that accept caller-supplied coefficients (any
+validating variant of `from_coefficients`/`from_storage`) return
 `Result<Self, TransferFunctionError>`. No `unwrap()`, `expect()` or `panic!()`
 is used outside tests and examples. Near-pole frequency-response evaluation
-(§5.2) and partial-fraction ZOH decomposition (§5.4) are *not* treated as
+(§4.7) and partial-fraction ZOH decomposition (§4.9) are *not* treated as
 constructor-time errors — a valid `TransferFunction` may still be evaluated at
-an ill-conditioned point at call time, which is documented behavior (§5.2)
+an ill-conditioned point at call time, which is documented behavior (§4.7)
 rather than a distinct error variant, matching how `python-control`'s
 `warn_infinity` documents rather than rejects evaluation at a pole.
 
----
-
-### 5. API Specification & Operations
-
-#### 5.1 Constructors
+#### 4.6 Instantiation & Constructors
 
 - **From Storage**:
   `pub const fn from_storage(num_storage: Sn, den_storage: Sd, sample_time: Option<T>) -> Self`
 - **Owning Stack Constructor**:
-  `pub const fn from_coefficients(num: [T; N::DIM], den: [T; D::DIM], sample_time: Option<T>) -> ArrayTransferFunction<T, N, D>`
-- **Zero-Copy Slice View Constructor**:
-  `pub fn from_slices(num: &'a [T], den: &'a [T], sample_time: Option<T>) -> TransferFunctionView<'a, T, N, D>`
+  `pub const fn from_coefficients<const N: usize, const D: usize>(num: [T; N], den: [T; D], sample_time: Option<T>) -> ArrayTransferFunction<T, N, D>`
+- **Borrowed views**: `ArrayTransferFunction::view()` / `view_mut()` (FR-6).
+  There is no `from_slices(&[T], &[T])` constructor that pairs independent
+  `N: Dim`/`D: Dim` with raw slices.
 
-#### 5.2 Frequency Response Evaluation
+#### 4.7 Frequency Response Evaluation
 
 Evaluates frequency response $H(s)$ at $s = j\omega$ or $H(z)$
 at $z = e^{j\omega T_s}$ using direct Horner evaluation on the numerator and
@@ -198,7 +197,7 @@ $$\text{Num}(s) = \text{Horner}(B, s), \quad \text{Den}(s) = \text{Horner}(A, s)
 $$H(s) = \frac{\text{Num}(s)}{\text{Den}(s)}$$
 
 ```rust
-impl<T, N: Dim, D: Dim, Sn: Storage<T, N, U1>, Sd: Storage<T, D, U1>> TransferFunction<T, N, D, Sn, Sd> {
+impl<T, N: Dim, D: Dim, Sn: MatrixStorage<T, N, U1>, Sd: MatrixStorage<T, D, U1>> TransferFunction<T, N, D, Sn, Sd> {
     pub fn evaluate_complex(&self, s: Complex<T>) -> Complex<T>
     where
         T: Copy + Zero + One + Add<Output=T> + Mul<Output=T>,
@@ -214,7 +213,7 @@ impl<T, N: Dim, D: Dim, Sn: Storage<T, N, U1>, Sd: Storage<T, D, U1>> TransferFu
 value is exact for a coefficient set perturbed by a relative error on the order
 of machine epsilon (Higham, 2002, Ch. 5). Backward stability does not imply
 uniform forward accuracy: the forward error at a given evaluation point $s$ is
-governed by that point's condition number, which grows as $s$ approaches a
+goverbed by that point's condition number, which grows as $s$ approaches a
 root of the polynomial being evaluated (Higham, 2002). Evaluating
 `evaluate_complex` at $s$ close to a pole (a root of the denominator) is
 therefore an inherently ill-conditioned operation — division by a
@@ -227,7 +226,7 @@ compensation in the initial implementation. Compensated Horner algorithms
 mitigation if measured near-pole Bode-sweep accuracy proves insufficient in a
 future revision.
 
-#### 5.3 System Interconnections
+#### 4.8 System Interconnections
 
 Algebraic interconnections invoke DSP subprograms (such as polynomial
 convolution routines) directly on storage elements without creating intermediate
@@ -240,8 +239,8 @@ Numerator dimension bound: $(N_1 + N_2 - 1)$. Denominator dimension
 bound: $(D_1 + D_2 - 1)$.
 
 ```rust
-impl<T, N1: Dim, D1: Dim, Sn1: Storage<T, N1, U1>, Sd1: Storage<T, D1, U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
-    pub fn series<N2: Dim, D2: Dim, Sn2: Storage<T, N2, U1>, Sd2: Storage<T, D2, U1>>(
+impl<T, N1: Dim, D1: Dim, Sn1: MatrixStorage<T, N1, U1>, Sd1: MatrixStorage<T, D1, U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
+    pub fn series<N2: Dim, D2: Dim, Sn2: MatrixStorage<T, N2, U1>, Sd2: MatrixStorage<T, D2, U1>>(
         &self,
         other: &TransferFunction<T, N2, D2, Sn2, Sd2>,
     ) -> TransferFunction<
@@ -281,19 +280,22 @@ degree bounds, not their sum and is expressed via `DimMax` rather than a
 further `DimAdd`:
 
 ```rust
-impl<T, N1: Dim, D1: Dim, Sn1: Storage<T, N1, U1>, Sd1: Storage<T, D1, U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
-    pub fn feedback<N2: Dim, D2: Dim, Sn2: Storage<T, N2, U1>, Sd2: Storage<T, D2, U1>>(
+impl<T, N1: Dim, D1: Dim, Sn1: MatrixStorage<T, N1, U1>, Sd1: MatrixStorage<T, D1, U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
+    pub fn feedback<N2: Dim, D2: Dim, Sn2: MatrixStorage<T, N2, U1>, Sd2: MatrixStorage<T, D2, U1>>(
         &self,
         other: &TransferFunction<T, N2, D2, Sn2, Sd2>,
     ) -> TransferFunction<
         T,
-        <N1 as DimAdd<D2>>::Output,
-        <<D1 as DimAdd<D2>>::Output as DimMax<<N1 as DimAdd<N2>>::Output>>::Output,
+        <<N1 as DimAdd<D2>>::Output as DimSub<U1>>::Output,
+        <<<D1 as DimAdd<D2>>::Output as DimSub<U1>>::Output as DimMax<<<N1 as DimAdd<N2>>::Output as DimSub<U1>>::Output>>::Output,
     >
     where
         N1: DimAdd<D2> + DimAdd<N2>,
+        <N1 as DimAdd<D2>>::Output: DimSub<U1>,
+        <N1 as DimAdd<N2>>::Output: DimSub<U1>,
         D1: DimAdd<D2>,
-        <D1 as DimAdd<D2>>::Output: DimMax<<N1 as DimAdd<N2>>::Output>,
+        <D1 as DimAdd<D2>>::Output: DimSub<U1>,
+        <<D1 as DimAdd<D2>>::Output as DimSub<U1>>::Output: DimMax<<<N1 as DimAdd<N2>>::Output as DimSub<U1>>::Output>,
         T: Copy + Zero + Add<Output=T> + Mul<Output=T>,
     {
         // num = B1 * A2 (DSP convolution); den = A1*A2 + sign * B1*B2
@@ -320,10 +322,10 @@ capacity bound derived above; a fixed-capacity type cannot shrink its own
 dimension even where the true post-convolution polynomial degree is lower
 (e.g. an exact or near-exact pole-zero cancellation introduced by a feedback
 loop). A `minreal`-equivalent capacity-reducing operation is left as future
-work (see §9 Risks & Open Questions) rather than an implicit side effect of
+work (see §8 Risks & Open Questions) rather than an implicit side effect of
 algebra.
 
-#### 5.4 Discretization (Continuous-to-Discrete)
+#### 4.9 Discretization (Continuous-to-Discrete)
 
 Converts a continuous $H(s)$ to discrete $H(z)$ via Bilinear (Tustin)
 transformation with pre-warping or Zero-Order Hold (ZOH).
@@ -340,7 +342,7 @@ specifying a critical frequency to match exactly under the transform (Ogata,
 2010; Franklin et al., 1998).
 
 ```rust
-impl<T, N: Dim, D: Dim, Sn: Storage<T, N, U1>, Sd: Storage<T, D, U1>> TransferFunction<T, N, D, Sn, Sd> {
+impl<T, N: Dim, D: Dim, Sn: MatrixStorage<T, N, U1>, Sd: MatrixStorage<T, D, U1>> TransferFunction<T, N, D, Sn, Sd> {
     pub fn to_discrete_tustin(
         &self,
         sample_time: T,
@@ -355,7 +357,7 @@ impl<T, N: Dim, D: Dim, Sn: Storage<T, N, U1>, Sd: Storage<T, D, U1>> TransferFu
 }
 ```
 
-`T: Float` (`num-traits-design.md`'s current hierarchy — see §9) replaces
+`T: Float` (`num-traits-design.md`'s current hierarchy — see §8) replaces
 a prior `T: Real` bound: the pre-warping path needs `tan()` and the
 $\frac{2}{T_s}$ factor needs division, both of which `Float` provides and
 the narrower general-arithmetic bounds elsewhere in this document do not.
@@ -370,7 +372,7 @@ numerical profiles:
   via partial-fraction expansion of $G(s)/s$ followed by table-based
   $z$-transform of each term (Franklin et al., 1998). This path never forms a
   state-space realization or a matrix exponential, so it does not inherit the
-  companion-form conditioning risk described in §5.5; its own numerical risk is
+  companion-form conditioning risk described in §4.10; its own numerical risk is
   partial-fraction decomposition, which is itself ill-conditioned for
   closely-spaced or repeated poles and must be bounded/documented at
   implementation time.
@@ -379,12 +381,12 @@ numerical profiles:
   convert back. Rejected as the *default* ZOH path specifically because it
   would silently inherit whatever conditioning risk the chosen state-space
   realization carries — material for controllable/observable canonical form
-  per §5.5's finding. The state-space-mediated path remains available
-  independently through explicit use of §5.5's conversion plus a `StateSpace`
+  per §4.10's finding. The state-space-mediated path remains available
+  independently through explicit use of §4.10's conversion plus a `StateSpace`
   discretization method, for callers who already need a state-space
   realization for other reasons.
 
-#### 5.5 State-Space Canonical Conversions
+#### 4.10 State-Space Canonical Conversions
 
 Converts a strictly proper continuous transfer
 function $H(s) = \frac{b_{m} s^m + \dots + b_0}{s^n + a_{n-1} s^{n-1} + \dots + a_0}$ (
@@ -406,16 +408,16 @@ the form itself, not an implementation artifact (companion-form controllability
 radii literature) and recent work characterizes the condition number of the
 standard companion-form transformation as growing exponentially with system
 dimension, treating numerically reliable computation of it as an open problem
-(Yang & Jones, 2026). This design scopes §5.5 to controllable/observable
+(Yang & Jones, 2026). This design scopes §4.10 to controllable/observable
 canonical form for its structural value (explicit characteristic-polynomial
 coefficients in $\mathbf{A}$) and low-to-moderate system order; balanced or
 modal realization — MathWorks' own recommended numerically-preferred
-alternative — is left as future work (see §9 Risks & Open Questions) rather
+alternative — is left as future work (see §8 Risks & Open Questions) rather
 than implemented in the initial revision.
 
 ---
 
-### 6. Alternatives
+### 5. Alternatives
 
 | Architecture Option                     | Advantages                                                                                                                                                                                                        | Disadvantages                                                                                                                                                                                         | Decision     |
 |:----------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------|
@@ -425,7 +427,7 @@ than implemented in the initial revision.
 
 ---
 
-### 7. Verification & Validation
+### 6. Verification & Validation
 
 1. **Unit Tests**: Test frequency response evaluations ($H(j\omega)$) against
    known analytic
@@ -445,7 +447,7 @@ than implemented in the initial revision.
    rather than assuming a matching layout.
 4. **Non-Minimality Regression Tests**: Verify series/parallel/feedback
    produce the full static-capacity result with no implicit pole-zero
-   cancellation (§5.3), matching `python-control`'s behavior where `minreal()`
+   cancellation (§4.8), matching `python-control`'s behavior where `minreal()`
    is a separate, explicit operation.
 5. **HIL Verification**: Execute cross-compiled continuous-to-discrete filter
    loops on hardware target runners under real-time safety standards (ISO 26262,
@@ -453,7 +455,7 @@ than implemented in the initial revision.
 
 ---
 
-### 8. Performance & Resource Considerations
+### 7. Performance & Resource Considerations
 
 - **Stack Overhead**: Owning transfer functions `ArrayTransferFunction<T, N, D>`
   occupy $(N + D) \times \text{size\_of}(T)$ bytes.
@@ -464,55 +466,49 @@ than implemented in the initial revision.
 
 ---
 
-### 9. Risks & Open Questions
+### 8. Risks & Open Questions
 
 - **Non-Minimal Realization Handling**: Series/parallel/feedback never
-  cancel poles/zeros (§5.3). A `minreal`-equivalent capacity-reducing
+  cancel poles/zeros (§4.8). A `minreal`-equivalent capacity-reducing
   operation is not yet scoped; whether and how to offer one is deferred to a
   future revision.
 - **Partial-Fraction Conditioning for ZOH**: The chosen transfer-function-direct
-  ZOH path (§5.4) requires partial-fraction decomposition, which is itself
+  ZOH path (§4.9) requires partial-fraction decomposition, which is itself
   ill-conditioned for closely-spaced or repeated poles. The implementation
   phase must bound or document this explicitly rather than assume it away.
-- **Canonical Form Scope**: Controllable/observable canonical form (§5.5) is
+- **Canonical Form Scope**: Controllable/observable canonical form (§4.10) is
   numerically fragile above low system order (Kenney & Laub, 1988; Yang &
   Jones, 2026). Balanced or modal realization is identified as the
   numerically-preferred alternative used by reference implementations but is
   not implemented in this revision.
 - **Compensated Horner Evaluation**: Near-pole frequency-response evaluation
-  (§5.2) is documented as inherently ill-conditioned rather than compensated.
+  (§4.7) is documented as inherently ill-conditioned rather than compensated.
   If measured Bode-sweep accuracy proves insufficient once implemented,
   compensated Horner evaluation (Graillat, Langlois, & Louvet, 2006) is the
   identified mitigation path.
-- **`num-traits-design.md` Dependency Is Provisional**: `to_discrete_tustin`'s
-  `T: Float` bound (§5.4) follows `num-traits-design.md`'s current
-  hierarchy, which has not yet been through `/cr-research` or
-  `/cr-design-doc` and will be revised independently of this document —
-  matching the same caveat `matrix-design.md` §7, `state-space-design.md`
-  §9 and `tensor-design.md` §7 already carry for the identical dependency.
-  Separately, `Convolution<T>` (FR-3, `src/math/dsp.rs`) is shipped code
-  still bound on the retired `T: Real`; its migration is tracked in
-  `polynomial-design.md` §9, which owns the primary specification of that
-  trait's usage.
+- **`num-traits-design.md` Status**: `to_discrete_tustin`'s `T: Float` bound (
+  §4.9) follows `num-traits-design.md`'s hierarchy, which is **Approved** (Rev 1.4).
+  Separately, `Convolution<T: Float>` (`src/math/dsp.rs`) is bound on
+  `Float`, fully aligned with the approved `num-traits` hierarchy.
 
 ---
 
-### 10. Development Plan & Roadmap
+### 9. Development Plan & Roadmap
 
 | Task / Feature                              | Description                                                                                                                                                                                                       | Estimated Effort |
 |:--------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
 | **Phase 1: Storage Wrapper & Constructors** | Base `TransferFunction` struct, storage traits, slice accessors and error type.                                                                                                                                   | 1.0 Day          |
 | **Phase 2: Frequency Evaluation**           | Direct Horner evaluation over storage for $H(j\omega)$ and Bode calculations.                                                                                                                                     | 1.0 Day          |
 | **Phase 3: Algebra & DSP Convolution**      | Implement series, parallel and feedback connections using direct DSP convolution.                                                                                                                                 | 1.5 Days         |
-| **Phase 4: Discretization**                 | Bilinear (Tustin, with pre-warping) transform and transfer-function-direct ZOH, including partial-fraction decomposition (§9's closely-spaced/repeated-pole conditioning risk must be bounded, not assumed away). | 2.5 Days         |
+| **Phase 4: Discretization**                 | Bilinear (Tustin, with pre-warping) transform and transfer-function-direct ZOH, including partial-fraction decomposition (§8's closely-spaced/repeated-pole conditioning risk must be bounded, not assumed away). | 2.5 Days         |
 | **Phase 5: State-Space Conversion**         | Controllable and Observable Canonical Form conversions.                                                                                                                                                           | 1.5 Days         |
 | **Phase 6: Verification Suite**             | Unit tests, `proptest` suites and cross-validation against two external reference implementations (MATLAB, `python-control`).                                                                                     | 2.0 Days         |
 
 ---
 
-### 11. References
+### 10. References
 
-#### 11.1. Practical
+#### 10.1. Practical
 
 1. **Franklin, G. F., Powell, J. D., & Workman, M. L. (1998).** *Digital Control
    of Dynamic Systems* (3rd ed.). Addison-Wesley. — Implementation-oriented
@@ -521,25 +517,25 @@ than implemented in the initial revision.
 2. **Moler, C., & Van Loan, C. (2003).** Nineteen Dubious Ways to Compute the
    Exponential of a Matrix, Twenty-Five Years Later. *SIAM Review*, 45(1),
    3–49. — Rationale and conditioning concerns for the state-space-mediated
-   ZOH path (§5.4).
+   ZOH path (§4.9).
 3. **python-control developers.** `control/xferfcn.py`, python-control library
    source. <https://github.com/python-control/python-control/blob/main/control/xferfcn.py>
    — Reference `series`/`parallel`/`feedback` algebra and non-minimality
-   behavior (§5.3).
+   behavior (§4.8).
 4. **MathWorks.** *Discretize a Compensator*, MATLAB & Simulink documentation.
    <https://www.mathworks.com/help/control/ug/discretize-a-compensator.html>
    — ZOH as `c2d` default; Tustin frequency-shift and pre-warping guidance
-   (§5.4).
+   (§4.9).
 5. **MathWorks.** *Canonical State-Space Realizations* and `canon`, MATLAB
    documentation.
    <https://www.mathworks.com/help/control/ug/canonical-state-space-realizations.html>
-   — Companion-form conditioning caveat and "Not recommended" status (§5.5).
+   — Companion-form conditioning caveat and "Not recommended" status (§4.10).
 6. **ARM Ltd.** *Biquad Cascade IIR Filters Using a Direct Form II Transposed
    Structure*, CMSIS-DSP documentation.
    <https://arm-software.github.io/CMSIS-DSP/main/group__BiquadCascadeDF2T.html>
-   — Second-order-sections cascade convention considered in §6 Alternatives.
+   — Second-order-sections cascade convention considered in §5 Alternatives.
 
-#### 11.2. Theoretical
+#### 10.2. Theoretical
 
 7. **Oppenheim, A. V., & Schafer, R. W. (2009).** *Discrete-Time Signal
    Processing* (3rd ed.). Pearson. — FIR/IIR filter representation, transfer
@@ -552,20 +548,20 @@ than implemented in the initial revision.
    for $H(j\omega)$ evaluation.
 10. **Higham, N. J. (2002).** *Accuracy and Stability of Numerical Algorithms*
     (2nd ed.). SIAM, Ch. 5. — Horner's method backward-error bound and
-    conditioning near polynomial roots (§5.2).
+    conditioning near polynomial roots (§4.7).
 11. **Graillat, S., Langlois, P., & Louvet, N. (2006).** Faithful Polynomial
     Evaluation with Compensated Horner Algorithm. *Proceedings of the 17th
     IEEE Symposium on Computer Arithmetic*. — Compensated Horner as a
-    documented mitigation for near-root evaluation error (§5.2).
+    documented mitigation for near-root evaluation error (§4.7).
 12. **Kenney, C. S., & Laub, A. J. (1988).** Controllability and stability
     radii for companion form systems. *Mathematics of Control, Signals and
     Systems*, 1, 239–256. — Formal treatment of near-uncontrollability and
-    near-singularity in high-order companion-form realizations (§5.5).
+    near-singularity in high-order companion-form realizations (§4.10).
 13. **Yang, S., & Jones, C. N. (2026).** Numerically Reliable Brunovsky
     Transformations. — Exponential condition-number growth of the standard
-    companion-form transformation with system dimension (§5.5).
+    companion-form transformation with system dimension (§4.10).
 
-#### 11.3. Standards, Safety and Verification
+#### 10.3. Standards, Safety and Verification
 
 14. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool for
     Random Testing of Haskell Programs. *ACM SIGPLAN Notices*, 35(9), 268–279. —
@@ -580,13 +576,23 @@ than implemented in the initial revision.
 
 ---
 
-### 12. Revision History
+### 11. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                                   |
-|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 26, 2026  | @MitchellDScott | Initial draft establishing `TransferFunction` as a standalone peer storage wrapper.                                           |
-| 1.1      | July 26, 2026  | @MitchellDScott | Added inline academic citations and 3-tiered references section.                                                              |
-| 1.2      | August 1, 2026 | @MitchellDScott | Deduplicated coefficient-ordering constraint via cross-reference to `polynomial-design.md`'s canonical statement.             |
-| 1.3      | August 2, 2026 | @MitchellDScott | Documented Horner conditioning and capacity bounds; split ZOH into direct and rejected paths; added Error Handling and Risks. |
-| 1.4      | August 2, 2026 | @MitchellDScott | Propagated `num-traits-design.md` pivot to Tustin's bound; revised development-plan estimates upward.                         |
-| 1.5      | August 2, 2026 | @MitchellDScott | Noted coefficient ordering is independent of physical layout; surfaced MATLAB/`python-control` ordering divergence.           |
+| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                           |
+|:---------|:----------------|:----------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 26, 2026   | @MitchellDScott | Initial draft establishing `TransferFunction` as a standalone peer storage wrapper.                                                                                                                                                                                   |
+| 1.1      | July 26, 2026   | @MitchellDScott | Added inline academic citations and 3-tiered references section.                                                                                                                                                                                                      |
+| 1.2      | August 1, 2026  | @MitchellDScott | Deduplicated coefficient-ordering constraint via cross-reference to `polynomial-design.md`'s canonical statement.                                                                                                                                                     |
+| 1.3      | August 2, 2026  | @MitchellDScott | Documented Horner conditioning and capacity bounds; split ZOH into direct and rejected paths; added Error Handling and Risks.                                                                                                                                         |
+| 1.4      | August 2, 2026  | @MitchellDScott | Propagated `num-traits-design.md` pivot to Tustin's bound; revised development-plan estimates upward.                                                                                                                                                                 |
+| 1.5      | August 2, 2026  | @MitchellDScott | Noted coefficient ordering is independent of physical layout; surfaced MATLAB/`python-control` ordering divergence.                                                                                                                                                   |
+| 1.6      | August 16, 2026 | @mitchelldscott | Harmonized with `storage-subprograms-design.md` Rev 1.4 (§1, §4.1): updated storage bounds for numerator and denominator to single-parameter `MatrixStorage<T, R = N/D, C = U1>` with associated `R`/`C` types and `FixedBlasStorage<T>` array access (`as_array()`). |
+| 1.7      | August 16, 2026 | @mitchelldscott | Harmonized with `storage-subprograms-design.md` Rev 1.5 (§1, §4.1): updated numerator and denominator storage bounds to `MatrixStorage<T, N, U1>` and `MatrixStorage<T, D, U1>` where dimensions are generic parameters on `MatrixStorage`.                           |
+| 1.8      | August 16, 2026 | @mitchelldscott | Reconciled residual `Storage`/`ContiguousStorage`/`ArrayStorage` references with `MatrixStorage`, `BlasStorage`, and `Dense`; detailed `Polynomial`/`Matrix` conversion methods and single-source subprogram delegation.                                              |
+| 1.9      | August 16, 2026 | @mitchelldscott | Reconciled `TransferFunctionView`/`TransferFunctionViewMut` aliases to `Dense<..., Ref/RefMut>` and updated `num-traits-design.md` status to Approved.                                                                                                                |
+| 1.10     | August 16, 2026 | @mitchelldscott | Refactored §2 to outcome-focused requirements (properness precondition, non-zero leading denominator, $O(N+D)$ frequency response evaluation complexity).                                                                                                             |
+| 1.11     | August 16, 2026 | @mitchelldscott | Updated `TransferFunction` type aliases (`ArrayTransferFunction`, `TransferFunctionView`, `TransferFunctionViewMut`) to convenience storage aliases (`DenseVectorArray`, `DenseVectorRef`, `DenseVectorRefMut`).                                                      |
+| 1.12     | August 16, 2026 | @mitchelldscott | Encapsulated 1D capacity evaluation (`N::USIZE`, `D::USIZE`) inside `DenseVectorArray<T, N>`, eliminating extra capacity parameters from `ArrayTransferFunction`.                                                                                                     |
+| 1.13     | August 16, 2026 | @mitchelldscott | Updated Date and Status badges to Reviewed; removed obsolete `FixedBlasStorage` reference; aligned §4.5 constraint citation (C-2) and §8 convolution citation; corrected `feedback` algebraic return type degree subtraction (`DimSub<U1>`).                                      |
+| 1.14     | August 18, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.11–1.12: `ArrayTransferFunction<T, const N, const D>` over `DenseVectorArray`; MIMO alias is `ArrayMatrix<ArrayTransferFunction<...>, R, C>`; `from_slices` replaced by FR-6 `view()`. |
+| 1.15     | August 18, 2026 | @mitchelldscott | Propagated storage Rev 1.16: `TransferFunctionView`/`ViewMut` take `const N, D` over `DenseVectorRef`. |

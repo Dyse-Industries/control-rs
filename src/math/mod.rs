@@ -151,9 +151,6 @@ pub enum ConversionError {
     /// Dimension or capacity overflow/underflow during calculations.
     DimensionMismatch,
 
-    /// Rank or coordinate dimensions do not align between Matrix/Tensor.
-    LayoutMismatch,
-
     /// The polynomial is not monic (leading coefficient is not ONE),
     /// preventing companion matrix construction.
     NonMonicPolynomial,
@@ -161,6 +158,33 @@ pub enum ConversionError {
 
 /// A specialized `Result` type for fallible representation/layout conversions.
 pub type ConversionResult<T> = Result<T, ConversionError>;
+
+/// Unified linear algebra errors, supplementing [`ArithmeticError`] for
+/// `Matrix` factorization, inversion and system-solving failures.
+///
+/// # Safety
+/// This enum does not use `unsafe` code.
+///
+/// # Example
+/// ```
+/// use control_rs::math::LinAlgError;
+///
+/// let err = LinAlgError::SingularMatrix;
+/// assert_eq!(format!("{}", err), "Matrix is singular");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinAlgError {
+    /// The matrix operation requires a square shape but a non-square shape
+    /// was provided.
+    NonSquareMatrix,
+
+    /// The matrix is singular (or near-singular under the given numerical
+    /// tolerance) and cannot be factored, inverted or solved.
+    SingularMatrix,
+}
+
+/// A specialized `Result` type for fallible linear algebra operations.
+pub type LinAlgResult<T> = Result<T, LinAlgError>;
 
 /// Convenience enum representing the 2D Cartesian Plane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -316,9 +340,6 @@ impl core::error::Error for ConversionError {}
 impl core::fmt::Display for ConversionError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::LayoutMismatch => {
-                write!(f, "Rank or coordinate dimensions do not align")
-            }
             Self::NonMonicPolynomial => {
                 write!(f, "Polynomial is not monic")
             }
@@ -331,9 +352,26 @@ impl core::fmt::Display for ConversionError {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+impl core::error::Error for LinAlgError {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl core::fmt::Display for LinAlgError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NonSquareMatrix => {
+                write!(f, "Matrix operation requires a square shape")
+            }
+            Self::SingularMatrix => write!(f, "Matrix is singular"),
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 #[cfg(test)]
 mod test {
-    use crate::math::{ArithmeticError, ConversionError};
+    use crate::math::{ArithmeticError, ConversionError, LinAlgError};
     use core::fmt::{self, Write};
 
     /// A simple helper to capture format output into a stack buffer
@@ -399,6 +437,17 @@ mod test {
         assert_eq!(writer.as_str(), expected_msg);
     }
 
+    /// A helper function to assert the `Display` output of a `LinAlgError`.
+    fn assert_lin_alg_error_display(err: LinAlgError, expected_msg: &str) {
+        let mut buffer = [0u8; 128]; // Stack-allocated buffer
+        let mut writer = TestWriter::new(&mut buffer);
+
+        write!(writer, "{err}")
+            .expect("Buffer was too small for the error message");
+
+        assert_eq!(writer.as_str(), expected_msg);
+    }
+
     #[test]
     fn test_display_division_by_zero() {
         assert_error_display(
@@ -448,14 +497,6 @@ mod test {
     }
 
     #[test]
-    fn test_display_layout_mismatch() {
-        assert_conversion_error_display(
-            ConversionError::LayoutMismatch,
-            "Rank or coordinate dimensions do not align",
-        );
-    }
-
-    #[test]
     fn test_display_non_monic_polynomial() {
         assert_conversion_error_display(
             ConversionError::NonMonicPolynomial,
@@ -468,6 +509,22 @@ mod test {
         assert_conversion_error_display(
             ConversionError::DimensionMismatch,
             "Dimension or capacity overflow/underflow",
+        );
+    }
+
+    #[test]
+    fn test_display_singular_matrix() {
+        assert_lin_alg_error_display(
+            LinAlgError::SingularMatrix,
+            "Matrix is singular",
+        );
+    }
+
+    #[test]
+    fn test_display_non_square_matrix() {
+        assert_lin_alg_error_display(
+            LinAlgError::NonSquareMatrix,
+            "Matrix operation requires a square shape",
         );
     }
 

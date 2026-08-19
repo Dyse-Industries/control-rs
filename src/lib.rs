@@ -4,6 +4,7 @@
 pub mod classical_tools;
 pub mod integrators;
 pub mod math;
+pub mod matrix;
 pub mod modern_tools;
 pub mod nonlinear_tools;
 // pub mod polynomial;

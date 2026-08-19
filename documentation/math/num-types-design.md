@@ -68,8 +68,9 @@ types and associated-type bookkeeping resolved during compilation.
 ### 4. Architecture
 
 **Base representation.** `Z` is the zero case; `S<N: Dim>(PhantomData<N>)`
-is the successor of `N`. Both are zero-sized, satisfying NFR-1. `Dim::DIM` is
-computed structurally (`S<N>::DIM = N::DIM + 1`), giving every dimension type a
+is the successor of `N`. Both are zero-sized, satisfying NFR-1. `Dim::USIZE` is
+computed structurally (`S<N>::USIZE = N::USIZE + 1`), giving every dimension
+type a
 `usize` value without storing one in the binary.
 
 **Arithmetic by structural recursion.** `DimAdd`, `DimSub`, `DimMul`,
@@ -138,7 +139,8 @@ concern.
    the pattern `generic-array`'s `ArrayLength` uses to keep its own
    typenum-backed trait closed to downstream implementors (Kamiński and
    Trent, 2026).
-   *Rejected*: `storage-trait-design.md` (§5) leaves its own storage-backend
+   *Rejected*: `storage-subprograms-design.md` (§5.1) leaves its own
+   storage-backend
    traits open specifically so downstream code can add custom
    implementations; sealing the dimension traits here would block any
    future custom `Dim` implementor (e.g. a hardware-specific fixed-size
@@ -176,7 +178,7 @@ concern.
    (including commutativity and the `Z` identity), subtraction (including a
    `compile_fail` doctest for underflow), multiplication, maximum and
    minimum, each checked both as a type-level assertion (`let _: U5 = ...`)
-   and as a runtime `Dim::DIM` value check.
+   and as a runtime `Dim::USIZE` value check.
 3. **Recursion-limit test**:
    `test_num_type_multiplication_recursion_limit` pins `U125` as the
    largest operand for which `DimMul<U1>` resolves — the per-pair envelope
@@ -265,7 +267,7 @@ Validation is deferred to the consumers that do not yet exist
 |:----------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
 | **Phase 1: Core Encoding & Arithmetic (complete)**  | `Dim`, `DimAdd`/`DimSub`/`DimMul`/`DimMax`/`DimMin`, `Z`/`S<N>`, `Const<N>` bridge and the `U0..U32` alias macro already exist in `src/math/num_types.rs` with passing unit tests.                                                                  | —                |
 | **Phase 2: Ceiling Extension to `U127` (complete)** | `U33..U127` aliases generated and appended to the `generate_peano_aliases!` invocation; module doc ceiling description, dimension-value assertions and the recursion-limit test (pinned at `U125`, §6.1 item 3) moved to the new ceiling.           | —                |
-| **Phase 3: Storage/Matrix Integration**             | Wire `Dim` into the `Storage<T, R, C>` trait per `storage-trait-design.md` FR-2, confirming the `U127` ceiling (C-1) and the pairwise-arithmetic boundary (C-2) are documented consistently at the first real call site.                            | Medium           |
+| **Phase 3: Storage/Matrix Integration**             | Wire `Dim` into the `Storage<T, R, C>` trait per `storage-subprograms-design.md` ST-FR-2, confirming the `U127` ceiling (C-1) and the pairwise-arithmetic boundary (C-2) are documented consistently at the first real call site.                   | Medium           |
 | **Phase 4: Verification Hardening (complete)**      | Asymmetric-pair boundary tests landed — passing sides as unit tests, failing sides as `compile_fail` doctests (§6.1, item 5) — closing Risk 4; `proptest`-based coverage of arithmetic identities deferred until more `Dim`-generic consumers land. | —                |
 | **Phase 5: Extended Arithmetic (conditional)**      | Evaluate `DimDiv`/`DimOrd` (Risk 3) once a concrete consumer needs them; not scheduled otherwise.                                                                                                                                                   | Small            |
 

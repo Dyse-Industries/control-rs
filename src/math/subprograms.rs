@@ -121,6 +121,55 @@ pub mod level1 {
         }
     }
 
+    /// Trait for the SCAL operation: `x = a*x`.
+    ///
+    /// This trait abstracts the scalar-vector multiplication operation.
+    ///
+    /// # Generic Arguments
+    /// * `T` - The numeric type of the elements.
+    pub trait SCAL<T: Scalar + Mul<Output = T>> {
+        /// Computes `x = a*x`.
+        ///
+        /// This function scales every element of the vector `x` by `a`, in place.
+        ///
+        /// # Generic Arguments
+        /// * `T` - The numeric type of the elements.
+        ///
+        /// # Arguments
+        /// * `a` - The scalar scaling factor.
+        /// * `x` - The input/output vector (mutable slice).
+        ///
+        /// # Returns
+        /// * `()` - This function modifies `x` in place.
+        ///
+        /// # Errors
+        /// This function does not return a `Result`.
+        ///
+        /// # Panics
+        /// This function does not panic.
+        ///
+        /// # Safety
+        /// This function does not use `unsafe` code.
+        ///
+        /// # Example
+        /// ```
+        /// use control_rs::math::subprograms::level1::SCAL;
+        ///
+        /// struct CpuScal;
+        /// impl SCAL<f32> for CpuScal {}
+        ///
+        /// let mut x = [1.0, 2.0, 3.0];
+        /// CpuScal::scal(2.0, &mut x);
+        /// debug_assert_eq!(x, [2.0, 4.0, 6.0]);
+        /// ```
+        #[allow(clippy::arithmetic_side_effects)]
+        fn scal(a: T, x: &mut [T]) {
+            for xi in x.iter_mut() {
+                *xi = a.clone() * xi.clone();
+            }
+        }
+    }
+
     /// Trait for the DOT operation: dot product of two vectors.
     ///
     /// # Generic Arguments
@@ -276,6 +325,7 @@ pub mod level2 {
     use crate::math::{
         num_traits::Scalar,
         ops::{Add, Mul},
+        storage::MatrixLayout,
     };
 
     /// Trait for the GEMV operation: `y = alpha*A*x + beta*y`.
@@ -293,12 +343,16 @@ pub mod level2 {
         ///
         /// # Arguments
         /// * `alpha` - The scalar alpha.
-        /// * `a` - The matrix A (slice). Expected shape: `rows` x `cols` (row-major).
+        /// * `a` - The matrix A (slice). Expected shape: `rows` x `cols`, laid
+        ///   out according to `order`.
         /// * `x` - The vector x (slice). Expected to be of size `cols`.
         /// * `beta` - The scalar beta.
         /// * `y` - The vector y (mutable slice). Expected to be of size `rows`.
         /// * `rows` - Number of rows in matrix A.
         /// * `cols` - Number of columns in matrix A.
+        /// * `order` - The physical memory layout of `a` (row-major or
+        ///   column-major). Callers pass a `ContiguousStorage` backend's own
+        ///   `ORDER` here rather than assuming a fixed layout.
         ///
         /// # Panics (Debug only)
         /// * Panics if `a.len() != rows * cols`.
@@ -311,6 +365,7 @@ pub mod level2 {
         /// # Example
         /// ```
         /// use control_rs::math::subprograms::level2::GEMV;
+        /// use control_rs::math::storage::MatrixLayout;
         ///
         /// struct CpuGemv;
         ///
@@ -323,10 +378,12 @@ pub mod level2 {
         ///         y: &mut [f32],
         ///         rows: usize,
         ///         cols: usize,
+        ///         order: MatrixLayout,
         ///     ) {
         ///         debug_assert_eq!(a.len(), rows * cols);
         ///         debug_assert_eq!(x.len(), cols);
         ///         debug_assert_eq!(y.len(), rows);
+        ///         debug_assert_eq!(order, MatrixLayout::RowMajor);
         ///
         ///         let y_orig = y.to_vec();
         ///         for i in 0..rows {
@@ -345,7 +402,7 @@ pub mod level2 {
         /// // y = 1.0 * A * x + 0.0 * y
         /// // y[0] = 1*1 + 2*1 = 3
         /// // y[1] = 3*1 + 4*1 = 7
-        /// CpuGemv::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        /// CpuGemv::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2, MatrixLayout::RowMajor);
         /// debug_assert_eq!(y, [3.0, 7.0]);
         /// ```
         #[allow(
@@ -361,17 +418,36 @@ pub mod level2 {
             y: &mut [T],
             rows: usize,
             cols: usize,
+            order: MatrixLayout,
         ) {
             debug_assert_eq!(a.len(), rows * cols);
             debug_assert_eq!(x.len(), cols);
             debug_assert_eq!(y.len(), rows);
 
-            for (row, yi) in a.chunks_exact(cols).zip(y.iter_mut()) {
-                let dot: T =
-                    row.iter().zip(x.iter()).fold(T::ZERO, |acc, (aij, xj)| {
-                        acc + (aij.clone() * xj.clone())
-                    });
-                *yi = alpha.clone() * dot.clone() + beta.clone() * yi.clone();
+            match order {
+                MatrixLayout::RowMajor => {
+                    for (row, yi) in a.chunks_exact(cols).zip(y.iter_mut()) {
+                        let dot: T = row
+                            .iter()
+                            .zip(x.iter())
+                            .fold(T::ZERO, |acc, (aij, xj)| {
+                                acc + (aij.clone() * xj.clone())
+                            });
+                        *yi = alpha.clone() * dot.clone()
+                            + beta.clone() * yi.clone();
+                    }
+                }
+                MatrixLayout::ColMajor => {
+                    for yi in y.iter_mut() {
+                        *yi = beta.clone() * yi.clone();
+                    }
+                    for (col, xj) in a.chunks_exact(rows).zip(x.iter()) {
+                        let scalar = alpha.clone() * xj.clone();
+                        for (yi, aij) in y.iter_mut().zip(col.iter()) {
+                            *yi = yi.clone() + (scalar.clone() * aij.clone());
+                        }
+                    }
+                }
             }
         }
     }
@@ -380,6 +456,7 @@ pub mod level2 {
 /// Level 3 BLAS: Matrix-Matrix Operations
 pub mod level3 {
     use super::{Add, Mul, Scalar};
+    use crate::math::storage::MatrixLayout;
 
     /// Trait for the GEMM operation: `C = alpha*A*B + beta*C`.
     ///
@@ -396,13 +473,19 @@ pub mod level3 {
         ///
         /// # Arguments
         /// * `alpha` - The scalar alpha.
-        /// * `a` - The matrix A (slice). Expected shape: `m` x `k`.
-        /// * `b` - The matrix B (slice). Expected shape: `k` x `n`.
+        /// * `a` - The matrix A (slice). Expected shape: `m` x `k`, laid out
+        ///   according to `order`.
+        /// * `b` - The matrix B (slice). Expected shape: `k` x `n`, laid out
+        ///   according to `order`.
         /// * `beta` - The scalar beta.
-        /// * `c` - The matrix C (mutable slice). Expected shape: `m` x `n`.
+        /// * `c` - The matrix C (mutable slice). Expected shape: `m` x `n`,
+        ///   laid out according to `order`.
         /// * `m` - Number of rows in matrix A and C.
         /// * `n` - Number of columns in matrix B and C.
         /// * `k` - Number of columns in matrix A and rows in matrix B.
+        /// * `order` - The shared physical memory layout of `a`, `b` and `c`
+        ///   (row-major or column-major). Callers pass a `ContiguousStorage`
+        ///   backend's own `ORDER` here rather than assuming a fixed layout.
         ///
         /// # Returns
         /// * `()` - This function modifies `c` in place.
@@ -421,6 +504,7 @@ pub mod level3 {
         /// # Example
         /// ```
         /// use control_rs::math::subprograms::level3::GEMM;
+        /// use control_rs::math::storage::MatrixLayout;
         ///
         /// struct CpuGemm;
         ///
@@ -434,10 +518,12 @@ pub mod level3 {
         ///         m: usize,
         ///         n: usize,
         ///         k: usize,
+        ///         order: MatrixLayout,
         ///     ) {
         ///         debug_assert_eq!(a.len(), m * k);
         ///         debug_assert_eq!(b.len(), k * n);
         ///         debug_assert_eq!(c.len(), m * n);
+        ///         debug_assert_eq!(order, MatrixLayout::RowMajor);
         ///
         ///         let c_orig = c.to_vec();
         ///         for i in 0..m {
@@ -456,7 +542,7 @@ pub mod level3 {
         /// let b = [1.0, 0.0, 0.0, 1.0]; // 2x2 identity
         /// let mut c = [0.0; 4];
         /// // C = 1.0 * A * I + 0.0 * C = A
-        /// CpuGemm::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        /// CpuGemm::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2, MatrixLayout::RowMajor);
         /// debug_assert_eq!(c, [1.0, 2.0, 3.0, 4.0]);
         /// ```
         #[allow(
@@ -473,21 +559,53 @@ pub mod level3 {
             m: usize,
             n: usize,
             k: usize,
+            order: MatrixLayout,
         ) {
             debug_assert_eq!(a.len(), m * k);
             debug_assert_eq!(b.len(), k * n);
             debug_assert_eq!(c.len(), m * n);
 
-            for (c_row, a_row) in c.chunks_exact_mut(n).zip(a.chunks_exact(k)) {
-                for val in c_row.iter_mut() {
-                    *val = val.clone() * beta.clone();
-                }
+            match order {
+                MatrixLayout::RowMajor => {
+                    for (c_row, a_row) in
+                        c.chunks_exact_mut(n).zip(a.chunks_exact(k))
+                    {
+                        for val in c_row.iter_mut() {
+                            *val = val.clone() * beta.clone();
+                        }
 
-                for (a_val, b_row) in a_row.iter().zip(b.chunks_exact(n)) {
-                    let scalar = alpha.clone() * a_val.clone();
-                    for (c_elem, b_elem) in c_row.iter_mut().zip(b_row.iter()) {
-                        *c_elem =
-                            c_elem.clone() + (scalar.clone() * b_elem.clone());
+                        for (a_val, b_row) in
+                            a_row.iter().zip(b.chunks_exact(n))
+                        {
+                            let scalar = alpha.clone() * a_val.clone();
+                            for (c_elem, b_elem) in
+                                c_row.iter_mut().zip(b_row.iter())
+                            {
+                                *c_elem = c_elem.clone()
+                                    + (scalar.clone() * b_elem.clone());
+                            }
+                        }
+                    }
+                }
+                MatrixLayout::ColMajor => {
+                    for (c_col, b_col) in
+                        c.chunks_exact_mut(m).zip(b.chunks_exact(k))
+                    {
+                        for val in c_col.iter_mut() {
+                            *val = val.clone() * beta.clone();
+                        }
+
+                        for (a_col, b_val) in
+                            a.chunks_exact(m).zip(b_col.iter())
+                        {
+                            let scalar = alpha.clone() * b_val.clone();
+                            for (c_elem, a_elem) in
+                                c_col.iter_mut().zip(a_col.iter())
+                            {
+                                *c_elem = c_elem.clone()
+                                    + (scalar.clone() * a_elem.clone());
+                            }
+                        }
                     }
                 }
             }
@@ -523,6 +641,10 @@ impl level1::AXPY<f32> for BasicSubProgramsF32 {}
 
 ////////////////////////////////////////////////////////////////////////////////
 
+impl level1::SCAL<f32> for BasicSubProgramsF32 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
 impl level1::DOT<f32> for BasicSubProgramsF32 {}
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -546,6 +668,10 @@ impl level3::GEMM<f32> for BasicSubProgramsF32 {}
 ////////////////////////////////////////////////////////////////////////////////
 
 impl level1::AXPY<f64> for BasicSubProgramsF64 {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl level1::SCAL<f64> for BasicSubProgramsF64 {}
 
 ////////////////////////////////////////////////////////////////////////////////
 

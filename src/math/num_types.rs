@@ -50,7 +50,7 @@ use core::marker::PhantomData;
 /// Defines the base behavior for all dimensions.
 pub trait Dim: Clone + Copy + PartialEq + Eq {
     /// Represents the compile-time value of the dimension.
-    const DIM: usize;
+    const USIZE: usize;
     /// Type num representation of the dimension.
     type PeanoTypeNum;
 }
@@ -158,7 +158,7 @@ macro_rules! generate_peano_aliases {
         ///.
         pub type $current = S<$prev>;
         impl Dim for Const<{$count}> {
-            const DIM: usize = $count;
+            const USIZE: usize = $count;
             type PeanoTypeNum = $current;
         }
         impl DimAdd<Z> for Const<{$count}> {
@@ -181,12 +181,12 @@ generate_peano_aliases!(
 );
 
 impl Dim for Z {
-    const DIM: usize = 0;
+    const USIZE: usize = 0;
     type PeanoTypeNum = Self;
 }
 
 impl<N: Dim> Dim for S<N> {
-    const DIM: usize = N::DIM + 1;
+    const USIZE: usize = N::USIZE + 1;
     type PeanoTypeNum = Self;
 }
 

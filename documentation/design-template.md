@@ -69,9 +69,9 @@ Acknowledge any unspecified details or partial thoughts here.
 
 Include the required implementation tasks:
 
-| Task / Feature | Description | Estimated Effort |
-|:---------------|:------------|:-----------------|
-| Step 1: [...]  | [...]       | [...]            |
+| Task / Feature | Description | Estimated Effort (1-10) |
+|:---------------|:------------|:------------------------|
+| Step 1: [...]  | [...]       | [...]                   |
 
 ---
 

@@ -222,7 +222,7 @@ pub mod storage_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies both view constructors reject a backing slice whose length
-    /// does not match `R::DIM * C::DIM` (FR-2 of `storage-trait-design.md`).
+    /// does not match `R::USIZE * C::USIZE` (FR-2 of `storage-trait-design.md`).
     fn test_storage_view_length_mismatch() {
         let data = [1, 2, 3];
         assert!(matches!(
@@ -291,6 +291,7 @@ pub mod storage_test_suite {
             y.as_mut_slice(),
             2,
             2,
+            MatrixLayout::RowMajor,
         );
 
         crate::assert_almost_eq!(y_data[0], 3.0);

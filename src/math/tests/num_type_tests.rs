@@ -94,10 +94,10 @@ pub mod num_type_test_suite {
     /// Verifies static dimension constants equal their runtime values
     /// (FR-1 of `num-types-design.md`, runtime `usize` exposure).
     fn test_num_type_dimension_values() {
-        assert_eq!(U0::DIM, 0);
-        assert_eq!(U1::DIM, 1);
-        assert_eq!(U15::DIM, 15);
-        assert_eq!(U127::DIM, 127);
+        assert_eq!(U0::USIZE, 0);
+        assert_eq!(U1::USIZE, 1);
+        assert_eq!(U15::USIZE, 15);
+        assert_eq!(U127::USIZE, 127);
     }
 
     #[cfg_attr(test, test)]
@@ -110,7 +110,7 @@ pub mod num_type_test_suite {
         let _: U3 = <U3 as DimAdd<U0>>::Output::default();
 
         // Constant value assertions
-        assert_eq!(<<U10 as DimAdd<U5>>::Output as Dim>::DIM, 15);
+        assert_eq!(<<U10 as DimAdd<U5>>::Output as Dim>::USIZE, 15);
     }
 
     #[cfg_attr(test, test)]
@@ -129,7 +129,7 @@ pub mod num_type_test_suite {
         let _: U0 = <U5 as DimSub<U5>>::Output::default();
         let _: U5 = <U5 as DimSub<U0>>::Output::default();
 
-        assert_eq!(<<U15 as DimSub<U10>>::Output as Dim>::DIM, 5);
+        assert_eq!(<<U15 as DimSub<U10>>::Output as Dim>::USIZE, 5);
     }
 
     #[cfg_attr(test, test)]
@@ -140,7 +140,7 @@ pub mod num_type_test_suite {
         let _: U0 = <U5 as DimMul<U0>>::Output::default();
         let _: U0 = <U0 as DimMul<U5>>::Output::default();
 
-        assert_eq!(<<U4 as DimMul<U5>>::Output as Dim>::DIM, 20);
+        assert_eq!(<<U4 as DimMul<U5>>::Output as Dim>::USIZE, 20);
     }
 
     #[cfg_attr(test, test)]
@@ -175,7 +175,7 @@ pub mod num_type_test_suite {
         let _: U5 = <U5 as DimMax<U2>>::Output::default();
         let _: U5 = <U5 as DimMax<U5>>::Output::default();
 
-        assert_eq!(<<U12 as DimMax<U4>>::Output as Dim>::DIM, 12);
+        assert_eq!(<<U12 as DimMax<U4>>::Output as Dim>::USIZE, 12);
     }
 
     #[cfg_attr(test, test)]
@@ -186,7 +186,7 @@ pub mod num_type_test_suite {
         let _: U2 = <U5 as DimMin<U2>>::Output::default();
         let _: U5 = <U5 as DimMin<U5>>::Output::default();
 
-        assert_eq!(<<U12 as DimMin<U4>>::Output as Dim>::DIM, 4);
+        assert_eq!(<<U12 as DimMin<U4>>::Output as Dim>::USIZE, 4);
     }
 
     #[cfg_attr(test, test)]

@@ -10,9 +10,10 @@
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod subprogram_test_suite {
     use crate::assert_almost_eq;
+    use crate::math::storage::MatrixLayout;
     use crate::math::subprograms::{
         BasicSubProgramsF32, BasicSubProgramsF64,
-        level1::{AXPY, DOT, IAMAX, NRM2},
+        level1::{AXPY, DOT, IAMAX, NRM2, SCAL},
         level2::GEMV,
         level3::GEMM,
     };
@@ -43,7 +44,17 @@ pub mod subprogram_test_suite {
             a[3] = _next_f32(&mut rng);
 
             let mut c = [0.0; 4];
-            BasicSubProgramsF32::gemm(1.0, &a, &a, 0.0, &mut c, 2, 2, 2);
+            BasicSubProgramsF32::gemm(
+                1.0,
+                &a,
+                &a,
+                0.0,
+                &mut c,
+                2,
+                2,
+                2,
+                MatrixLayout::RowMajor,
+            );
             assert_almost_eq!(c[1], c[2]);
         }
     }
@@ -65,13 +76,40 @@ pub mod subprogram_test_suite {
             // M(v1 + v2)
             let v_sum = [v1[0] + v2[0], v1[1] + v2[1]];
             let mut r1 = [0.0; 2];
-            BasicSubProgramsF32::gemv(1.0, &m, &v_sum, 0.0, &mut r1, 2, 2);
+            BasicSubProgramsF32::gemv(
+                1.0,
+                &m,
+                &v_sum,
+                0.0,
+                &mut r1,
+                2,
+                2,
+                MatrixLayout::RowMajor,
+            );
 
             // Mv1 + Mv2
             let mut term_a = [0.0; 2];
             let mut term_b = [0.0; 2];
-            BasicSubProgramsF32::gemv(1.0, &m, &v1, 0.0, &mut term_a, 2, 2);
-            BasicSubProgramsF32::gemv(1.0, &m, &v2, 0.0, &mut term_b, 2, 2);
+            BasicSubProgramsF32::gemv(
+                1.0,
+                &m,
+                &v1,
+                0.0,
+                &mut term_a,
+                2,
+                2,
+                MatrixLayout::RowMajor,
+            );
+            BasicSubProgramsF32::gemv(
+                1.0,
+                &m,
+                &v2,
+                0.0,
+                &mut term_b,
+                2,
+                2,
+                MatrixLayout::RowMajor,
+            );
             let r2 = [term_a[0] + term_b[0], term_a[1] + term_b[1]];
 
             let epsilon = 1e-4;
@@ -186,6 +224,49 @@ pub mod subprogram_test_suite {
         assert!(y[0].is_nan());
         assert!(y[1].is_infinite() && y[1].is_sign_positive());
         assert!(y[2].is_infinite() && y[2].is_sign_negative());
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies SCAL vector scaling (x = a*x) on f32.
+    fn test_subprograms_level1_scal_f32() {
+        let mut x = [1.0, 2.0, 3.0];
+        BasicSubProgramsF32::scal(2.0, &mut x);
+        assert_almost_eq!(x[0], 2.0);
+        assert_almost_eq!(x[1], 4.0);
+        assert_almost_eq!(x[2], 6.0);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies SCAL vector scaling (x = a*x) on f64.
+    fn test_subprograms_level1_scal_f64() {
+        let mut x = [1.0, 2.0, 3.0];
+        BasicSubProgramsF64::scal(2.0, &mut x);
+        assert_almost_eq!(x[0], 2.0);
+        assert_almost_eq!(x[1], 4.0);
+        assert_almost_eq!(x[2], 6.0);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies SCAL by zero collapses the vector to zero (matches `Neg`'s
+    /// `a = -T::ONE` binding at the opposite end of the scale spectrum,
+    /// `matrix-design.md` §4.5).
+    fn test_subprograms_level1_scal_zero() {
+        let mut x = [1.0, -2.0, 3.0];
+        BasicSubProgramsF32::scal(0.0, &mut x);
+        assert_almost_eq!(x[0], 0.0);
+        assert_almost_eq!(x[1], 0.0);
+        assert_almost_eq!(x[2], 0.0);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies SCAL with `a = -1` matches `Neg`'s BLAS binding
+    /// (`matrix-design.md` §4.5).
+    fn test_subprograms_level1_scal_negation() {
+        let mut x = [1.0, -2.0, 3.0];
+        BasicSubProgramsF32::scal(-1.0, &mut x);
+        assert_almost_eq!(x[0], -1.0);
+        assert_almost_eq!(x[1], 2.0);
+        assert_almost_eq!(x[2], -3.0);
     }
 
     #[cfg_attr(test, test)]
@@ -326,7 +407,16 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0];
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubProgramsF32::gemv(
+            1.0,
+            &a,
+            &x,
+            0.0,
+            &mut y,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
     }
@@ -337,7 +427,16 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0];
-        BasicSubProgramsF64::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubProgramsF64::gemv(
+            1.0,
+            &a,
+            &x,
+            0.0,
+            &mut y,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
     }
@@ -351,7 +450,16 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0];
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0];
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubProgramsF32::gemv(
+            1.0,
+            &a,
+            &x,
+            0.0,
+            &mut y,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
     }
 
     #[cfg(test)]
@@ -363,7 +471,16 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0];
         let mut y = [0.0, 0.0];
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubProgramsF32::gemv(
+            1.0,
+            &a,
+            &x,
+            0.0,
+            &mut y,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
     }
 
     #[cfg(test)]
@@ -375,7 +492,16 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [0.0];
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubProgramsF32::gemv(
+            1.0,
+            &a,
+            &x,
+            0.0,
+            &mut y,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
     }
 
     #[cfg_attr(test, test)]
@@ -384,7 +510,16 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let x = [1.0, 1.0];
         let mut y = [0.0, 0.0, 0.0];
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 3, 2);
+        BasicSubProgramsF32::gemv(
+            1.0,
+            &a,
+            &x,
+            0.0,
+            &mut y,
+            3,
+            2,
+            MatrixLayout::RowMajor,
+        );
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
         assert_almost_eq!(y[2], 11.0);
@@ -396,7 +531,16 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let x = [1.0, 1.0, 1.0];
         let mut y = [0.0, 0.0];
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 3);
+        BasicSubProgramsF32::gemv(
+            1.0,
+            &a,
+            &x,
+            0.0,
+            &mut y,
+            2,
+            3,
+            MatrixLayout::RowMajor,
+        );
         assert_almost_eq!(y[0], 6.0);
         assert_almost_eq!(y[1], 15.0);
     }
@@ -407,7 +551,16 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0];
         let x = [1.0, 1.0];
         let mut y = [123.45, 67.89];
-        BasicSubProgramsF32::gemv(1.0, &a, &x, 0.0, &mut y, 2, 2);
+        BasicSubProgramsF32::gemv(
+            1.0,
+            &a,
+            &x,
+            0.0,
+            &mut y,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
         assert_almost_eq!(y[0], 3.0);
         assert_almost_eq!(y[1], 7.0);
     }
@@ -419,7 +572,16 @@ pub mod subprogram_test_suite {
         let x = [1.0, 1.0];
         let mut y = [123.45, 67.89];
         let y_original = y;
-        BasicSubProgramsF32::gemv(0.0, &a, &x, 1.0, &mut y, 2, 2);
+        BasicSubProgramsF32::gemv(
+            0.0,
+            &a,
+            &x,
+            1.0,
+            &mut y,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
         for (val, orig) in y.iter().zip(y_original.iter()) {
             assert_almost_eq!(*val, *orig);
         }
@@ -433,7 +595,17 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0];
         let b = [1.0, 0.0, 0.0, 1.0];
         let mut c = [0.0; 4];
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        BasicSubProgramsF32::gemm(
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+            2,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
         assert_almost_eq!(c[0], 1.0);
         assert_almost_eq!(c[1], 2.0);
         assert_almost_eq!(c[2], 3.0);
@@ -446,7 +618,17 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0];
         let b = [1.0, 0.0, 0.0, 1.0];
         let mut c = [0.0; 4];
-        BasicSubProgramsF64::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        BasicSubProgramsF64::gemm(
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+            2,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
         assert_almost_eq!(c[0], 1.0);
         assert_almost_eq!(c[1], 2.0);
         assert_almost_eq!(c[2], 3.0);
@@ -462,7 +644,17 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0];
         let b = [1.0, 0.0, 0.0, 1.0];
         let mut c = [0.0; 4];
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        BasicSubProgramsF32::gemm(
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+            2,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
     }
 
     #[cfg(test)]
@@ -474,7 +666,17 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0];
         let b = [1.0, 0.0, 0.0];
         let mut c = [0.0; 4];
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        BasicSubProgramsF32::gemm(
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+            2,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
     }
 
     #[cfg(test)]
@@ -486,7 +688,17 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0];
         let b = [1.0, 0.0, 0.0, 1.0];
         let mut c = [0.0; 3];
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 2);
+        BasicSubProgramsF32::gemm(
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+            2,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
     }
 
     #[cfg_attr(test, test)]
@@ -495,7 +707,17 @@ pub mod subprogram_test_suite {
         let a = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         let b = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
         let mut c = [0.0; 4];
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c, 2, 2, 3);
+        BasicSubProgramsF32::gemm(
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+            2,
+            2,
+            3,
+            MatrixLayout::RowMajor,
+        );
         assert_almost_eq!(c[0], 3.0);
         assert_almost_eq!(c[1], 3.0);
         assert_almost_eq!(c[2], 3.0);
@@ -508,7 +730,17 @@ pub mod subprogram_test_suite {
         let a = [1.0, 2.0, 3.0, 4.0];
         let b = [1.0, 1.0, 1.0, 1.0];
         let mut c2 = [f32::NAN; 4];
-        BasicSubProgramsF32::gemm(1.0, &a, &b, 0.0, &mut c2, 2, 2, 2);
+        BasicSubProgramsF32::gemm(
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c2,
+            2,
+            2,
+            2,
+            MatrixLayout::RowMajor,
+        );
         assert!(c2[0].is_nan());
         assert!(c2[1].is_nan());
         assert!(c2[2].is_nan());

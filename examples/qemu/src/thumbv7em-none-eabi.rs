@@ -67,6 +67,9 @@ impl HostComms for SemihostingComms {
 // Force linking of the math test suites by referencing them
 #[allow(unused_imports)]
 pub use control_rs::math::tests::suites::*;
+// Force linking of the matrix test suites by referencing them
+#[allow(unused_imports)]
+pub use control_rs::matrix::tests::suites::*;
 
 use control_rs_hil::CortexMProfiler;
 use core::sync::atomic::AtomicU32;

@@ -1,10 +1,20 @@
 <component name="ProjectDictionaryState">
   <dictionary name="project">
     <words>
+      <w>Bischof</w>
+      <w>Blackford</w>
       <w>Boito</w>
       <w>Cholesky</w>
+      <w>Dabbelt</w>
+      <w>Demmel</w>
+      <w>Dongarra</w>
       <w>Eidelman</w>
+      <w>Embench</w>
+      <w>Garlati</w>
       <w>Gemignani</w>
+      <w>Madhusudan</w>
+      <w>Mudge</w>
+      <w>Netlib</w>
       <w>Rapita</w>
       <w>Ratatui</w>
       <w>Renode</w>
@@ -12,21 +22,40 @@
       <w>Tukey</w>
       <w>Varints</w>
       <w>ardupilot</w>
+      <w>axpy</w>
       <w>blasfeo</w>
+      <w>bluss</w>
+      <w>cblas</w>
       <w>cdot</w>
       <w>compensators</w>
+      <w>dimforge</w>
       <w>eabihf</w>
       <w>emami</w>
+      <w>gemm</w>
+      <w>gemv</w>
       <w>golioth</w>
       <w>horner</w>
+      <w>iamax</w>
       <w>ifft</w>
       <w>naeini</w>
+      <w>nalgebra</w>
+      <w>ndarray</w>
+      <w>ndarray's</w>
       <w>partialord</w>
       <w>roundtrip</w>
       <w>rtic</w>
+      <w>scal</w>
       <w>semihosting</w>
       <w>serde</w>
+      <w>strided</w>
+      <w>symm</w>
+      <w>symv</w>
+      <w>syrk</w>
       <w>thumbv</w>
+      <w>trmm</w>
+      <w>trmv</w>
+      <w>trsm</w>
+      <w>trsv</w>
       <w>typenum</w>
       <w>ulps</w>
       <w>underflowed</w>

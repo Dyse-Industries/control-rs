@@ -11,16 +11,8 @@
 The `num_traits` module provides a numerical abstraction designed around
 **hardware behavior** rather than abstract mathematical theory. It enables
 control algorithms to implement generic code over primitive numerical types,
-while giving developers exact compile-time boundaries on overflow behavior (
+while giving developers compile-time constraints and overflow behavior (
 wrapping vs. saturating).
-
-The system-level goals of the numeric trait hierarchy are:
-
-1. **Hardware Realism**: Reflect physical ALU/FPU overflow boundaries (wrapping
-   vs. saturating) and execution realities rather than abstract algebraic rings
-   and fields.
-2. **Type-State Safety**: Leverage zero-cost validation wrappers to enforce
-   validation of boundaries prior to execution.
 
 ---
 
@@ -28,22 +20,24 @@ The system-level goals of the numeric trait hierarchy are:
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Trait hierarchy**: Break basic numerical behaviors into
-  granular traits per hardware capability: `Zero`, `One`, `AdditiveGroup`,
-  `Signed`, `Unsigned`, `Radical`, `Exponential`, `Trig`, with `Clone + 
-  PartialEq + PartialOrd` declared directly on each rather than a
-  base-marker trait.
-- **FR-2 — Functional Containers**: Group granular traits into flat categories
-  matching hardware execution units: `Integer` (wrapping), `SaturatingInteger` (
-  saturating) and `Float` (with `Div`/`epsilon()` scoped here only).
-- **FR-3 — The Unified Target (`Scalar`)**: Expose a single flat `Scalar`
-  trait (`Zero + One + Sub<Output = Self> + Mul<Output = Self>`) with
-  `clamp()`/`signum()`, excluding `Div`/`epsilon()` (FR-2). Implemented by
-  every integer and float primitive — signed and unsigned — so BLAS-style
-  loops (`AXPY`/`GEMV`/`GEMM`) can monomorphize over `u*` widths without a
-  parallel trait. `AdditiveGroup`/`Signed` remain withheld from unsigned
-  types: `Scalar`'s `Sub` bound is the operator requirement, not a claim that
-  unsigned subtraction is underflow-free.
+- **FR-1 — Overflow Mode Disambiguation**: Primitive integer types explicitly
+  partition overflow semantics into wrapping or saturating execution modes at
+  compile time.
+- **FR-2 — Unsigned Primitive BLAS-Loop Monomorphization**: Unsigned integer
+  types (`u8`, `u16`, `u32`, `u64`, `usize`) monomorphize in linear algebra
+  loops (`AXPY`, `GEMV`, `GEMM`) via a common scalar abstraction that provides
+  zero, identity, addition, subtraction, and multiplication.
+
+#### 2.2 Non-Functional Requirements
+
+- **NFR-1 — Zero-Cost Abstraction**: Trait calls, zero/one constants, and
+  saturating/wrapping operations compile to direct primitive FPU/ALU
+  instructions with zero runtime overhead or function call trampolines.
+
+#### 2.3 Constraints
+
+- **C-1 — `#![no_std]` Compatibility**: Numerical traits operate without
+  standard library dependencies or dynamic allocation.
 
 ---
 
@@ -127,8 +121,7 @@ are generated using internal declarative macros:
 
 ### 5. Alternatives
 
-1. **Full Abstract Algebra
-   Taxonomy **:
+1. **Full Abstract Algebra Taxonomy**:
     - _Considered_: Implementing a granular algebraic hierarchy matching formal
       abstract algebra, of the kind the `noether` crate ships (`Magma`,
       `Semigroup`, `Monoid`, `Group`, `Ring`, `Field`) (warlock-labs, 2025).
@@ -332,3 +325,4 @@ and **zero memory footprint**:
 | 1.2      | August 8, 2026  | @MitchellDScott | Updated citations to the author-year standard; added inline citations and a References section; renumbered Revision History.              |
 | 1.3      | August 9, 2026  | @MitchellDScott | Review and corrections.                                                                                                                   |
 | 1.4      | August 10, 2026 | @MitchellDScott | Aligned FR-3, hierarchy diagram, §4 layers and §6.1 markers with shipped `Scalar` (`Zero + One + Sub + Mul`, including unsigned).         |
+| 1.5      | August 16, 2026 | @MitchellDScott | Refactored §2 to observable outcome requirements, separating hardware goals from §4 architecture.                                         |
