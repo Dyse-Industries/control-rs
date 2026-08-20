@@ -1,6 +1,6 @@
 # State-Space Model Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_16,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_20,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -30,7 +30,7 @@ and $(N_y \times N_u)$ respectively.
 Following the design philosophy established by `TransferFunction` and `Matrix`,
 `StateSpace` is a **standalone, generic container** built directly on top of
 four generic storage backends (`Sa`, `Sb`, `Sc`, `Sd`) implementing the
-`MatrixStorage` trait, rather than storing four `Matrix<T, R, C, S>` fields
+`DenseStorage` trait, rather than storing four `Matrix<T, R, C, S>` fields
 directly. Avoiding heap allocation is the crate-wide `no_alloc` rule (see
 [README](../../README.md)), not a `StateSpace`-specific decision; what is
 specific here is *why* raw storage backends are used instead of full `Matrix`
@@ -124,8 +124,12 @@ It integrates cleanly with existing `control-rs` modules:
 - **`crate::math::num_types`**: Peano arithmetic (`Dim`, `DimAdd`, `DimSub`,
   `DimMul`, `U1`, etc.) for compile-time shape verification.
 - **`crate::math::storage`**: Storage traits (`Buffer`, `BufferMut`,
-  `BlasStorage`, `BlasStorageMut`, `MatrixStorage`, `MatrixStorageMut`,
-  `Dense`).
+  `MatrixStorage`, `MatrixStorageMut`, `DenseStorage`, `DenseStorageMut`,
+  `Dense`). `PackedStorage` (`storage-subprograms-design.md` §4.1.4) is out
+  of scope here: none of $A$, $B$, $C$, $D$ are structured (diagonal,
+  symmetric or triangular) in the general case this document targets, and
+  the structurally zero $D$ specialization (§1, §5) is handled by a
+  zero-sized `MatrixStorage` leaf, not a packed one.
 - **`crate::math::matrix`**: `Matrix<T, R, C, S>`, `MatrixSlice<'a, T, R, C>`
   and `MatrixSliceMut<'a, T, R, C>` for safe, high-level matrix operations.
   These accessors (§4.3) are layout-agnostic per `storage-subprograms-design.md`
@@ -158,10 +162,10 @@ pub struct StateSpaceCore<
     NX: Dim,
     NU: Dim,
     NY: Dim,
-    Sa: MatrixStorage<T, NX, NX>,
-    Sb: MatrixStorage<T, NX, NU>,
-    Sc: MatrixStorage<T, NY, NX>,
-    Sd: MatrixStorage<T, NY, NU>,
+    Sa: DenseStorage<T, NX, NX>,
+    Sb: DenseStorage<T, NX, NU>,
+    Sc: DenseStorage<T, NY, NX>,
+    Sd: DenseStorage<T, NY, NU>,
 > {
     a_storage: Sa,
     b_storage: Sb,
@@ -226,7 +230,7 @@ pub type StateSpaceViewMut<'a, T, const NX: usize, const NU: usize, const NY: us
 ```
 
 `Dense` views are themselves contiguous storage
-backends and implement `BlasStorage`/`BlasStorageMut`
+backends and implement `MatrixStorage`/`MatrixStorageMut`
 (`matrix-design.md` §5.4). `StateSpaceView`'s `a_matrix()` (§4.3) therefore
 constructs a `MatrixSlice` directly over the existing borrowed view rather
 than performing a redundant copy — the accessor borrows straight through, it
@@ -243,16 +247,16 @@ While data is stored inside storage backends (`Sa`, `Sb`, `Sc`, `Sd`),
 view
 or `MatrixSlice`, enabling full reuse of `Matrix` operations (multiplication,
 addition, transposition, solver routines). Per §4.1 and NFR-2, these accessors are
-bounded on `BlasStorage`/`BlasStorageMut`:
+bounded on `MatrixStorage`/`MatrixStorageMut`:
 
 ```rust
 impl<T, const NX: usize, const NU: usize, const NY: usize, Sa, Sb, Sc, Sd>
     StateSpaceCore<T, Const<NX>, Const<NU>, Const<NY>, Sa, Sb, Sc, Sd>
 where
-    Sa: BlasStorage<T, Const<NX>, Const<NX>>,
-    Sb: BlasStorage<T, Const<NX>, Const<NU>>,
-    Sc: BlasStorage<T, Const<NY>, Const<NX>>,
-    Sd: BlasStorage<T, Const<NY>, Const<NU>>,
+    Sa: MatrixStorage<T, Const<NX>, Const<NX>>,
+    Sb: MatrixStorage<T, Const<NX>, Const<NU>>,
+    Sc: MatrixStorage<T, Const<NY>, Const<NX>>,
+    Sd: MatrixStorage<T, Const<NY>, Const<NU>>,
 {
     /// Exposes system matrix A as a high-level Matrix view.
     pub fn a_matrix(&self) -> MatrixSlice<'_, T, NX, NX> {
@@ -347,10 +351,10 @@ output $y \in \mathbb{R}^{N_y}$:
 ```rust
 impl<T, NX: Dim, NU: Dim, NY: Dim, Sa, Sb, Sc, Sd> StateSpaceCore<T, NX, NU, NY, Sa, Sb, Sc, Sd>
 where
-    Sa: MatrixStorage<T, NX, NX>,
-    Sb: MatrixStorage<T, NX, NU>,
-    Sc: MatrixStorage<T, NY, NX>,
-    Sd: MatrixStorage<T, NY, NU>,
+    Sa: DenseStorage<T, NX, NX>,
+    Sb: DenseStorage<T, NX, NU>,
+    Sc: DenseStorage<T, NY, NX>,
+    Sd: DenseStorage<T, NY, NU>,
 {
     pub fn step<Sx, Su>(
         &self,
@@ -358,8 +362,8 @@ where
         u: &Matrix<T, NU, U1, Su>,
     ) -> (ArrayMatrix<T, NX, U1>, ArrayMatrix<T, NY, U1>)
     where
-        Sx: MatrixStorage<T, NX, U1>,
-        Su: MatrixStorage<T, NU, U1>,
+        Sx: DenseStorage<T, NX, U1>,
+        Su: DenseStorage<T, NU, U1>,
         T: Copy + Zero + Add<Output=T> + Mul<Output=T>,
     {
         let x_next = self.a_matrix() * x + self.b_matrix() * u;
@@ -440,8 +444,8 @@ $$H(s) = C (s I - A)^{-1} B + D = \frac{C \text{adj}(sI - A) B + D \det(sI - A)}
 | Alternative                                              | Description                                                                           | Pros                                                                                                                                                                                                                                  | Cons                                                                                                                                                                                                                                                   |
 |:---------------------------------------------------------|:--------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **A. Monolithic Storage Field**                          | Storing a single combined block matrix $\begin{bmatrix} A & B \\ C & D \end{bmatrix}$ | Single contiguous allocation                                                                                                                                                                                                          | Cannot specialize a structurally zero $D$ (common for strictly proper plants); the series/parallel/feedback formulas (§4.7) assemble $A, B, C, D$ from independently shaped sub-blocks and would need awkward strided writes into one contiguous block |
-| **B. Wrapping 4 `Matrix` Structs Directly**              | Storing `a: Matrix<T, NX, NX, Sa>`, `b: Matrix...`                                    | Built-in matrix methods on fields                                                                                                                                                                                                     | Redundant type wrapper parameters, extra boilerplate vs storing raw `MatrixStorage` backends; the zero-$D$ specialization is awkward since the wrapper's own type parameters still have to be named                                                    |
-| **C. Generic Storage Backends + `MatrixSlice` (Chosen)** | Storing raw `Sa, Sb, Sc, Sd` backends and creating `MatrixSlice` wrappers on demand   | Maximum flexibility (`#![no_std]`, ROM, stack, zero-matrix storage); expresses a zero-sized $D$ specialization that eliminates a `GEMM` per `step()`, which neither A nor B can express as cleanly; symmetric with `TransferFunction` | Requires `a_matrix()`/etc. accessors gated on `BlasStorage` (§4.3) for high-level matrix algebra                                                                                                                                                       |
+| **B. Wrapping 4 `Matrix` Structs Directly**              | Storing `a: Matrix<T, NX, NX, Sa>`, `b: Matrix...`                                    | Built-in matrix methods on fields                                                                                                                                                                                                     | Redundant type wrapper parameters, extra boilerplate vs storing raw `DenseStorage` backends; the zero-$D$ specialization is awkward since the wrapper's own type parameters still have to be named                                                    |
+| **C. Generic Storage Backends + `MatrixSlice` (Chosen)** | Storing raw `Sa, Sb, Sc, Sd` backends and creating `MatrixSlice` wrappers on demand   | Maximum flexibility (`#![no_std]`, ROM, stack, zero-matrix storage); expresses a zero-sized $D$ specialization that eliminates a `GEMM` per `step()`, which neither A nor B can express as cleanly; symmetric with `TransferFunction` | Requires `a_matrix()`/etc. accessors gated on `MatrixStorage` (§4.3) for high-level matrix algebra                                                                                                                                                       |
 
 The strongest evidence for Alternative C is the zero-$D$ specialization
 above. The same "avoid wrapping the natural lower-level peer type" decision
@@ -536,7 +540,7 @@ is made independently by `transfer-function-design.md` §6 for
 
 - **Stack Allocation Limits**: Large state vectors (e.g., $N_x = 32$)
   require $32 \times 32 = 1024$ elements for matrix $A$, exactly
-  `matrix-design.md` §2.3's per-matrix budget. Storing via `MatrixStorage`
+  `matrix-design.md` §2.3's per-matrix budget. Storing via `DenseStorage`
   enables
   static buffer placement or borrowed views, preventing embedded stack
   overflow for $A$/$B$/$C$/$D$ themselves.
@@ -622,7 +626,7 @@ is made independently by `transfer-function-design.md` §6 for
 > **Descriptor Form (`E` Matrix) Scope**
 > Descriptor/DAE systems ($E\dot{x} = Ax + Bu$) are out of scope for this
 > revision (C-1, §4.1). Unlike a sparse storage backend, adding $E$ later changes
-> the `StateSpace` type signature rather than only adding a new `MatrixStorage`
+> the `StateSpace` type signature rather than only adding a new `DenseStorage`
 > implementation. Whether descriptor form belongs on a future roadmap is an
 > open scoping question, not a technical blocker.
 
@@ -696,7 +700,7 @@ is made independently by `transfer-function-design.md` §6 for
 | Task / Feature                                | Description                                                                                                                                                                                                                         | Estimated Effort |
 |:----------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
 | **Step 1: Core Struct & Constructors**        | Implement `StateSpaceCore<T, NX, NU, NY, Sa, Sb, Sc, Sd>`, `StateSpace<T, NX, NU, NY>` alias, basic array/slice constructors and `StateSpaceError` (§4.4) in `src/state_space/mod.rs`.                                              | 1 Day            |
-| **Step 2: Matrix Views & Basic Operations**   | Implement `a_matrix()`/`b_matrix()`/`c_matrix()`/`d_matrix()` bounded on `BlasStorage` per §4.3 and time-domain simulation (`step()`, derivative).                                                                                  | 1 Day            |
+| **Step 2: Matrix Views & Basic Operations**   | Implement `a_matrix()`/`b_matrix()`/`c_matrix()`/`d_matrix()` bounded on `MatrixStorage` per §4.3 and time-domain simulation (`step()`, derivative).                                                                                  | 1 Day            |
 | **Step 3: System Interconnections**           | Implement `series`, `parallel` and fallible `feedback` (loop-matrix solve, `StateSpaceError::SingularLoopMatrix`) with compile-time Peano dimension math.                                                                           | 2 Days           |
 | **Step 4: Discretization**                    | Implement ZOH (Van Loan augmented matrix, scaling-and-squaring with precision-dependent Padé degree selection §4.8, Al-Mohy/Higham overscaling correction) and fallible Tustin (`StateSpaceError::SingularDiscretizationOperator`). | 4.5 Days         |
 | **Step 5: Structural Analysis & Conversions** | Implement controllability/observability matrix generation (scoped as definitional, §4.9), similarity transforms ($z=Tx$) and Hessenberg-reduction-based SISO transfer function conversion.                                          | 3.0 Days         |
@@ -886,3 +890,4 @@ is made independently by `transfer-function-design.md` §6 for
 | 1.11     | August 16, 2026 | @mitchelldscott | Updated Date and Status badges to Reviewed; removed obsolete `FixedBlasStorage` reference; reconciled section cross-references (§5.3/§5.4/§5.5 to §4.7/§4.8/§4.9, §6 to §5) and requirement citations (FR-5/6/7/8 to FR-1/2/4, NFR-3 to NFR-2).        |
 | 1.12     | August 18, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.11–1.12: `StateSpace`/`ArrayStateSpace` take `const NX, NU, NY` over `DenseArray`/`Array2`; views stay `Dim`-generic; `from_slices` replaced by FR-6 `view()`. |
 | 1.13     | August 18, 2026 | @mitchelldscott | Propagated storage Rev 1.16: `StateSpaceView`/`ViewMut` and `a_matrix()` use `const NX, NU, NY` over `DenseRef` / `MatrixSlice`. |
+| 1.14     | August 20, 2026 | @mitchelldscott | Renamed `BlasStorage`/`BlasStorageMut` -> `MatrixStorage`/`MatrixStorageMut` (universal floor) and the prior `MatrixStorage`/`MatrixStorageMut` (leading-dimension branch) -> `DenseStorage`/`DenseStorageMut`, matching `storage-subprograms-design.md` Rev 1.31 and `matrix-design.md` Rev 1.31; updated §1, §3, §4.1, §4.3, §4.6, §5, and §7. Noted `PackedStorage` as explicitly out of scope for `A`/`B`/`C`/`D` (§3). Intervening storage-subprograms-design.md revisions (1.17–1.33) introduce no other call-site changes here: this document names no `level1`/`level2`/`level3` trait directly. |

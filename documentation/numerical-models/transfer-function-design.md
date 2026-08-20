@@ -1,6 +1,6 @@
 # Transfer Function Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_16,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_20,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -15,7 +15,7 @@ control systems and digital signal processing.
 
 Following the core architecture of `control-rs`, `TransferFunction` is a *
 *standalone, type-safe wrapper** built directly on top of generic storage
-backends (`MatrixStorage<T, N, U1>` and `MatrixStorage<T, D, U1>`). It does *
+backends (`DenseStorage<T, N, U1>` and `DenseStorage<T, D, U1>`). It does *
 *not** wrap
 `Polynomial` objects under the hood; instead, it operates directly on numerator
 and denominator storage memory via lower-level Peano dimension traits (
@@ -78,8 +78,10 @@ abstractions, `TransferFunction` interacts directly with:
 - **`crate::math::subprograms`**: BLAS Level 1/2/3 subprograms (`AXPY`, `SCAL`,
   `GEMV`, `GEMM`) and DSP helpers (`CONV`, Horner's evaluation).
 - **`crate::math::storage`**: Storage traits (`Buffer`, `BufferMut`,
-  `BlasStorage`, `BlasStorageMut`, `MatrixStorage`, `MatrixStorageMut`,
-  `Dense`).
+  `MatrixStorage`, `MatrixStorageMut`, `DenseStorage`, `DenseStorageMut`,
+  `Dense`). `PackedStorage` (`storage-subprograms-design.md` §4.1.4) does not
+  apply: `Sn`/`Sd` are $N \times 1$/$D \times 1$ column storage, the same
+  shape `polynomial-design.md` §1 notes has no packed analogue.
 
 ---
 
@@ -92,8 +94,8 @@ pub struct TransferFunction<
     T,
     N: Dim,
     D: Dim,
-    Sn: MatrixStorage<T, N, U1>,
-    Sd: MatrixStorage<T, D, U1>,
+    Sn: DenseStorage<T, N, U1>,
+    Sd: DenseStorage<T, D, U1>,
 > {
     num_storage: Sn,
     den_storage: Sd,
@@ -128,8 +130,8 @@ pub type TransferFunctionViewMut<'a, T, const N: usize, const D: usize> =
 ```rust
 impl<T, N: Dim, D: Dim, Sn, Sd> TransferFunction<T, N, D, Sn, Sd>
 where
-    Sn: BlasStorage<T, N, U1>,
-    Sd: BlasStorage<T, D, U1>,
+    Sn: MatrixStorage<T, N, U1>,
+    Sd: MatrixStorage<T, D, U1>,
 {
     /// Safe contiguous slice view of numerator coefficients.
     pub fn num_slice(&self) -> &[T] {
@@ -197,7 +199,7 @@ $$\text{Num}(s) = \text{Horner}(B, s), \quad \text{Den}(s) = \text{Horner}(A, s)
 $$H(s) = \frac{\text{Num}(s)}{\text{Den}(s)}$$
 
 ```rust
-impl<T, N: Dim, D: Dim, Sn: MatrixStorage<T, N, U1>, Sd: MatrixStorage<T, D, U1>> TransferFunction<T, N, D, Sn, Sd> {
+impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, N, U1>, Sd: DenseStorage<T, D, U1>> TransferFunction<T, N, D, Sn, Sd> {
     pub fn evaluate_complex(&self, s: Complex<T>) -> Complex<T>
     where
         T: Copy + Zero + One + Add<Output=T> + Mul<Output=T>,
@@ -239,8 +241,8 @@ Numerator dimension bound: $(N_1 + N_2 - 1)$. Denominator dimension
 bound: $(D_1 + D_2 - 1)$.
 
 ```rust
-impl<T, N1: Dim, D1: Dim, Sn1: MatrixStorage<T, N1, U1>, Sd1: MatrixStorage<T, D1, U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
-    pub fn series<N2: Dim, D2: Dim, Sn2: MatrixStorage<T, N2, U1>, Sd2: MatrixStorage<T, D2, U1>>(
+impl<T, N1: Dim, D1: Dim, Sn1: DenseStorage<T, N1, U1>, Sd1: DenseStorage<T, D1, U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
+    pub fn series<N2: Dim, D2: Dim, Sn2: DenseStorage<T, N2, U1>, Sd2: DenseStorage<T, D2, U1>>(
         &self,
         other: &TransferFunction<T, N2, D2, Sn2, Sd2>,
     ) -> TransferFunction<
@@ -280,8 +282,8 @@ degree bounds, not their sum and is expressed via `DimMax` rather than a
 further `DimAdd`:
 
 ```rust
-impl<T, N1: Dim, D1: Dim, Sn1: MatrixStorage<T, N1, U1>, Sd1: MatrixStorage<T, D1, U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
-    pub fn feedback<N2: Dim, D2: Dim, Sn2: MatrixStorage<T, N2, U1>, Sd2: MatrixStorage<T, D2, U1>>(
+impl<T, N1: Dim, D1: Dim, Sn1: DenseStorage<T, N1, U1>, Sd1: DenseStorage<T, D1, U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
+    pub fn feedback<N2: Dim, D2: Dim, Sn2: DenseStorage<T, N2, U1>, Sd2: DenseStorage<T, D2, U1>>(
         &self,
         other: &TransferFunction<T, N2, D2, Sn2, Sd2>,
     ) -> TransferFunction<
@@ -342,7 +344,7 @@ specifying a critical frequency to match exactly under the transform (Ogata,
 2010; Franklin et al., 1998).
 
 ```rust
-impl<T, N: Dim, D: Dim, Sn: MatrixStorage<T, N, U1>, Sd: MatrixStorage<T, D, U1>> TransferFunction<T, N, D, Sn, Sd> {
+impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, N, U1>, Sd: DenseStorage<T, D, U1>> TransferFunction<T, N, D, Sn, Sd> {
     pub fn to_discrete_tustin(
         &self,
         sample_time: T,
@@ -596,3 +598,4 @@ than implemented in the initial revision.
 | 1.13     | August 16, 2026 | @mitchelldscott | Updated Date and Status badges to Reviewed; removed obsolete `FixedBlasStorage` reference; aligned §4.5 constraint citation (C-2) and §8 convolution citation; corrected `feedback` algebraic return type degree subtraction (`DimSub<U1>`).                                      |
 | 1.14     | August 18, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.11–1.12: `ArrayTransferFunction<T, const N, const D>` over `DenseVectorArray`; MIMO alias is `ArrayMatrix<ArrayTransferFunction<...>, R, C>`; `from_slices` replaced by FR-6 `view()`. |
 | 1.15     | August 18, 2026 | @mitchelldscott | Propagated storage Rev 1.16: `TransferFunctionView`/`ViewMut` take `const N, D` over `DenseVectorRef`. |
+| 1.16     | August 20, 2026 | @mitchelldscott | Renamed `BlasStorage`/`BlasStorageMut` -> `MatrixStorage`/`MatrixStorageMut` (universal floor) and the prior `MatrixStorage`/`MatrixStorageMut` (leading-dimension branch) -> `DenseStorage`/`DenseStorageMut`, matching `storage-subprograms-design.md` Rev 1.31 and `matrix-design.md` Rev 1.31; updated §1, §3, §4.1, §4.3, §4.7, §4.8, §4.9. Noted `PackedStorage` does not apply to `Sn`/`Sd` (§3), mirroring `polynomial-design.md`. Intervening storage-subprograms-design.md revisions (1.17–1.33) introduce no other call-site changes here: this document names no `level1`/`level2`/`level3` trait directly. |

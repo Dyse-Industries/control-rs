@@ -47,5 +47,5 @@ required-features = ["cffi"]
 # src/bin/measure.rs) -- one codegen unit per crate, so LLVM optimizes the
 # whole gemv_* body as a unit instead of splitting it across parallel
 # codegen units, which can otherwise hide or shift where bounds checks land.
-opt-level = 0
+opt-level = 3
 codegen-units = 1
