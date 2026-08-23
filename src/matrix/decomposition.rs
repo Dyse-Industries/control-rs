@@ -13,8 +13,9 @@
 //! concrete lets pivot/solve scratch use plain `[T; D]`/`[usize; D]` stack
 //! arrays. `Const<D>: Dim` (and `Const<COLS>: Dim` for `solve_mut`) is
 //! restated on every impl/struct below because `Dim` is implemented per
-//! literal (`Const<1>` .. `Const<127>`, `num_types.rs`'s macro-generated
-//! impls), not via a blanket `impl<const N: usize> Dim for Const<N>` — the
+//! literal (`Const<1>` .. `Const<1024>` plus extra powers of two through
+//! `Const<16384>`, `num_types` generated impls), not via a blanket
+//! `impl<const N: usize> Dim for Const<N>` — the
 //! same pattern `storage.rs`'s own `ArrayStorage` impls already use.
 #![allow(
     clippy::arbitrary_source_item_ordering,
@@ -32,7 +33,7 @@
 use super::{LowerTriangular, Owned, Symmetric, UpperTriangular};
 use crate::math::num_traits::Float;
 use crate::math::num_types::{Const, Dim};
-use crate::math::storage::{Storage, StorageMut};
+use crate::math::storage::{DenseStorage, DenseStorageMut};
 use crate::math::{LinAlgError, LinAlgResult};
 
 /// `LU` factorization with partial pivoting (`P * A = L * U`).

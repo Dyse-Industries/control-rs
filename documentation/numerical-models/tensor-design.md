@@ -1,7 +1,7 @@
 # Tensor Type & Low-Cost Inference (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_20,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
+![Date Badge](https://img.shields.io/badge/Date-August_22,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -11,7 +11,7 @@
 The `Tensor` type provides an N-dimensional array parameterized over a
 compile-time shape layout and a pluggable memory storage backend, extending
 `control-rs`'s linear algebra beyond the 2-dimensional `Matrix` type. It
-shares its architectural foundation with `Matrix` — the same `Dim`/Peano
+shares its architectural foundation with `Matrix` — the same `Dim`
 sizing system and Tier 0 `Buffer<T>` / `BufferMut<T>` provenance abstraction,
 while
 operating independently of 2D `MatrixStorage` matrix bounds.
@@ -627,3 +627,4 @@ pub fn predict<Bw1, Bb1, Bw2, Bb2>(
 | 1.11     | August 18, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.11–1.12: rank-2 `ArrayTensor<T, const R, const C>` over `Array2`; dropped `Array<T, Size::USIZE>` default; views via FR-6, not `from_slice`. |
 | 1.12     | August 18, 2026 | @mitchelldscott | Propagated storage Rev 1.16: `slice_matrix` returns `MatrixSlice<'_, T, R, C>` with bare `const R, C`. |
 | 1.13     | August 20, 2026 | @mitchelldscott | Renamed the contrastive `BlasStorage` reference (§1) to `MatrixStorage`, matching `storage-subprograms-design.md` Rev 1.31; no other content affected since `Tensor` bypasses the 2D storage branch entirely. |
+| 1.14     | August 22, 2026 | @MitchellDScott | Reverted Doc Status to Draft. Body still cites deleted `storage-subprograms-design.md`; retarget onto `storage-design.md` is a dedicated pass. |

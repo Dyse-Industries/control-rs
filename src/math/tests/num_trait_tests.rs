@@ -30,7 +30,7 @@ pub mod num_trait_test_suite {
     use crate::math::CartesianQuadrant2D;
     use crate::math::complex_num::Complex;
     use crate::math::num_traits::{
-        AdditiveGroup, Exponential, Float, Integer, One, Radical,
+        AdditiveGroup, Conjugate, Exponential, Float, Integer, One, Radical,
         SaturatingInteger, Scalar, Signed, Trig, Unsigned, Zero,
     };
     use crate::math::ops::{TryAdd, TryDiv, TryMul, TrySub};
@@ -210,6 +210,26 @@ pub mod num_trait_test_suite {
         assert_eq!(0_u32.signum(), 0);
         // Qualified: `Ord::clamp` also exists for integer primitives.
         assert_eq!(Scalar::clamp(7_u8, 0, 3), 3);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies Conjugate and Scalar projection methods across real and complex numbers (FR-3/FR-5 of `num-traits-design.md`).
+    fn test_num_trait_conjugate_and_scalar_projections() {
+        // Real scalars: conjugation is identity
+        assert_eq!(5i32.conj(), 5i32);
+        assert_almost_eq!(3.5f64.conj(), 3.5f64);
+        assert_eq!(5i32.re(), 5i32);
+        assert_eq!(5i32.im(), 0i32);
+        assert_eq!(<i32 as Scalar>::from_real(10), 10);
+        assert_eq!(3i32.abs2(), 9);
+
+        // Complex scalars: conjugation negates imaginary component
+        let z = Complex::new(3.0f64, 4.0f64);
+        assert_eq!(z.conj(), Complex::new(3.0, -4.0));
+        assert_almost_eq!(z.re(), 3.0);
+        assert_almost_eq!(z.im(), 4.0);
+        assert_eq!(Complex::<f64>::from_real(7.0), Complex::new(7.0, 0.0));
+        assert_almost_eq!(z.abs2(), 25.0);
     }
 
     #[cfg_attr(test, test)]
@@ -598,7 +618,23 @@ pub mod num_trait_test_suite {
         const ZERO: Self = Self(0.0);
     }
     impl AdditiveGroup for TestFloat {}
-    impl Scalar for TestFloat {}
+    impl Conjugate for TestFloat {
+        fn conj(self) -> Self {
+            self
+        }
+    }
+    impl Scalar for TestFloat {
+        type Real = Self;
+        fn re(&self) -> Self::Real {
+            *self
+        }
+        fn im(&self) -> Self::Real {
+            Self::ZERO
+        }
+        fn from_real(re: Self::Real) -> Self {
+            re
+        }
+    }
     impl Signed for TestFloat {
         fn abs(self) -> Self {
             Self(self.0.abs())

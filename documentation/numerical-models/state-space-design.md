@@ -1,7 +1,7 @@
 # State-Space Model Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_20,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
+![Date Badge](https://img.shields.io/badge/Date-August_22,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -59,7 +59,7 @@ $A_d, B_d$ (§11.1 refs. 23–26). `StateSpace` fills exactly that gap.
 
 `StateSpace` still leverages the high-level `Matrix` type and zero-copy
 `MatrixSlice` wrappers to execute linear algebra operations safely and
-conveniently, while retaining direct access to lower-level Peano dimension
+  conveniently, while retaining direct access to lower-level `Dim` dimension
 traits (`Dim`), storage traits and BLAS kernels.
 
 This architecture achieves:
@@ -73,8 +73,8 @@ This architecture achieves:
    `MatrixSliceMut`) and leverages `Matrix` operations for state propagation,
    system interconnection and linear transformations.
 4. **Compile-Time Dimension Safety**: Enforces matrix dimension
-   compatibility ($N_x, N_u, N_y$) at compile time using Peano arithmetic (
-   `DimAdd`, `DimSub`, `DimMul`).
+   compatibility ($N_x, N_u, N_y$) at compile time using type-level `Dim`
+   arithmetic (`DimAdd`, `DimSub`, `DimMul`).
 
 ---
 
@@ -109,8 +109,11 @@ This architecture achieves:
 - **C-1 — Non-Zero Layout Preconditions**: Dimensions $N_x, N_u, N_y$ must
   satisfy $N_x \ge 1, N_u \ge 1, N_y \ge 1$.
 - **C-2 — Derived Dimension Ceiling**: Derived composite state
-  dimensions ($N_{x1} + N_{x2}$) must satisfy the `U127` Peano
-  ceiling ($N_{x, \text{total}} \le 127$).
+  dimensions ($N_{x1} + N_{x2}$) must have a `Dim` encoding.
+  `Const<N>: Dim` covers $0..=1024$ plus extra powers of two
+  (`num-types-design.md` C-1). A C-1 value without a `U*` alias is
+  `<Const<N> as Dim>::TypeNum`. Larger sums remain valid unnamed binary
+  types (C-2).
 
 ---
 
@@ -121,7 +124,7 @@ storage backends `Sa`, `Sb`, `Sc`, `Sd`.
 
 It integrates cleanly with existing `control-rs` modules:
 
-- **`crate::math::num_types`**: Peano arithmetic (`Dim`, `DimAdd`, `DimSub`,
+- **`crate::math::num_types`**: Binary type-level arithmetic (`Dim`, `DimAdd`, `DimSub`,
   `DimMul`, `U1`, etc.) for compile-time shape verification.
 - **`crate::math::storage`**: Storage traits (`Buffer`, `BufferMut`,
   `MatrixStorage`, `MatrixStorageMut`, `DenseStorage`, `DenseStorageMut`,
@@ -561,8 +564,9 @@ is made independently by `transfer-function-design.md` §6 for
   temporary-count estimate at Padé degree 13).
 - **Interconnection Depth**: series/parallel/feedback each produce
   an $N_{x1}+N_{x2}$-state result. Cascading four 8-state
-  blocks — an ordinary controller-plant-filter arrangement — reaches the
-  32-state Peano ceiling; a fifth stage cannot be expressed. The combined
+  blocks — an ordinary controller-plant-filter arrangement — is no longer
+  blocked by a `U127` type-level ceiling; stack workspace for the combined
+  $A$ matrix remains the practical limit. The combined
   system's $A$ matrix at that size is a 4 KB value returned by `step()`'s
   owning signature (§4.6), which `matrix-design.md` §5.1 already flags as a
   pattern to avoid for heavy operations on stack-constrained targets.
@@ -575,18 +579,13 @@ is made independently by `transfer-function-design.md` §6 for
 ### 8. Risks & Open Questions
 
 > [!IMPORTANT]
-> **Derived-Dimension Peano Ceiling Breaches**
+> **Derived-Dimension Alias Gaps**
 > FR-2 ($N_{x1}+N_{x2}$), ZOH ($N_x+N_u$) and matrix multiplications ($N_x \cdot N_u$,
-> $N_y \cdot N_x$) each derive a dimension larger than $N_x$ that must
-> independently fit the crate's `U127` Peano ceiling
-> (`num-types-design.md` C-1). None of these preconditions is
-> currently documented; each surfaces as
-> an unresolvable trait bound rather than a diagnosed limit and this
-> document's own §7 example ($N_x = 32$) cannot be ZOH-discretized at all.
-> This is the finding most likely to force a structural change and it is
-> independent of the storage architecture chosen in §5 — Alternatives A and B
-> would hit it identically. Whether to raise the Peano ceiling or to document
-> per-FR preconditions is an open question for the next revision.
+> $N_y \cdot N_x$) each derive a dimension larger than $N_x$. Binary `Dim`
+> encoding (`num-types-design.md` C-1/C-2) no longer rejects these at a
+> `U127` solver ceiling; unnamed products are valid. `Const<N>: Dim` is still
+> missing for some flattened sizes in $1025..16383$. Stack workspace, not the
+> trait solver, is the remaining limit for large $N_x$.
 
 > [!IMPORTANT]
 > **Matrix Inversion & Numerical Stability**
@@ -676,15 +675,15 @@ is made independently by `transfer-function-design.md` §6 for
 > **FR-4 Scope (MIMO Transfer Function Conversion)**
 > This revision scopes FR-4 to SISO (§4.9). Extending to MIMO requires either
 > an algorithm equivalent to SLICOT's `tb04ad` or an accepted non-minimal
-> common-denominator representation whose storage collides with the Peano
-> ceiling the same way $\mathcal{C}$/$\mathcal{O}$ do.
+> common-denominator representation whose storage collides with the named-alias
+> range the same way $\mathcal{C}$/$\mathcal{O}$ do.
 `transfer-function-design.md`
 > should be revisited together with any future MIMO work, since it currently
 > specifies only the SISO reverse path independently.
 
 > [!NOTE]
 > **On-Target vs. Host-Side ZOH Discretization**
-> Given §7's workspace multiplier and Peano-ceiling interaction and given
+> Given §7's workspace multiplier and `Dim` alias-range interaction and given
 > that every surveyed embedded-Rust precedent (`minikalman`, `adskalman`)
 > has users hand-discretize a plant offline and hardcode the resulting
 > $A_d, B_d$, whether on-target ZOH discretization is a hard requirement at
@@ -701,7 +700,7 @@ is made independently by `transfer-function-design.md` §6 for
 |:----------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
 | **Step 1: Core Struct & Constructors**        | Implement `StateSpaceCore<T, NX, NU, NY, Sa, Sb, Sc, Sd>`, `StateSpace<T, NX, NU, NY>` alias, basic array/slice constructors and `StateSpaceError` (§4.4) in `src/state_space/mod.rs`.                                              | 1 Day            |
 | **Step 2: Matrix Views & Basic Operations**   | Implement `a_matrix()`/`b_matrix()`/`c_matrix()`/`d_matrix()` bounded on `MatrixStorage` per §4.3 and time-domain simulation (`step()`, derivative).                                                                                  | 1 Day            |
-| **Step 3: System Interconnections**           | Implement `series`, `parallel` and fallible `feedback` (loop-matrix solve, `StateSpaceError::SingularLoopMatrix`) with compile-time Peano dimension math.                                                                           | 2 Days           |
+| **Step 3: System Interconnections**           | Implement `series`, `parallel` and fallible `feedback` (loop-matrix solve, `StateSpaceError::SingularLoopMatrix`) with compile-time `Dim` arithmetic.                                                                                   | 2 Days           |
 | **Step 4: Discretization**                    | Implement ZOH (Van Loan augmented matrix, scaling-and-squaring with precision-dependent Padé degree selection §4.8, Al-Mohy/Higham overscaling correction) and fallible Tustin (`StateSpaceError::SingularDiscretizationOperator`). | 4.5 Days         |
 | **Step 5: Structural Analysis & Conversions** | Implement controllability/observability matrix generation (scoped as definitional, §4.9), similarity transforms ($z=Tx$) and Hessenberg-reduction-based SISO transfer function conversion.                                          | 3.0 Days         |
 | **Step 6: Tests & Documentation**             | Unit tests, `proptest` suites, `python-control`/MATLAB cross-validation (two external reference implementations), long-horizon fixed-point recursion tests and crate-level documentation.                                           | 3.0 Days         |
@@ -891,3 +890,5 @@ is made independently by `transfer-function-design.md` §6 for
 | 1.12     | August 18, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.11–1.12: `StateSpace`/`ArrayStateSpace` take `const NX, NU, NY` over `DenseArray`/`Array2`; views stay `Dim`-generic; `from_slices` replaced by FR-6 `view()`. |
 | 1.13     | August 18, 2026 | @mitchelldscott | Propagated storage Rev 1.16: `StateSpaceView`/`ViewMut` and `a_matrix()` use `const NX, NU, NY` over `DenseRef` / `MatrixSlice`. |
 | 1.14     | August 20, 2026 | @mitchelldscott | Renamed `BlasStorage`/`BlasStorageMut` -> `MatrixStorage`/`MatrixStorageMut` (universal floor) and the prior `MatrixStorage`/`MatrixStorageMut` (leading-dimension branch) -> `DenseStorage`/`DenseStorageMut`, matching `storage-subprograms-design.md` Rev 1.31 and `matrix-design.md` Rev 1.31; updated §1, §3, §4.1, §4.3, §4.6, §5, and §7. Noted `PackedStorage` as explicitly out of scope for `A`/`B`/`C`/`D` (§3). Intervening storage-subprograms-design.md revisions (1.17–1.33) introduce no other call-site changes here: this document names no `level1`/`level2`/`level3` trait directly. |
+| 1.15     | August 22, 2026 | @MitchellDScott | Reverted Doc Status to Draft. Body still cites deleted `storage-subprograms-design.md`; retarget onto `storage-design.md` / `subprograms-design.md` is a dedicated pass. |
+| 1.16     | August 22, 2026 | @MitchellDScott | C-2 derived-dimension ceiling cites `Const<N>: Dim` and `<Const<N> as Dim>::TypeNum` (`num-types-design.md` Rev 1.7). |

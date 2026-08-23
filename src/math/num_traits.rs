@@ -36,6 +36,34 @@
 //! fn assert_additive_group<T: AdditiveGroup>() {}
 //! assert_additive_group::<u32>(); // u32 does not implement AdditiveGroup
 //! ```
+//!
+//! `Float` and `Signed` are withheld from `Complex<T>`:
+//!
+//! ```compile_fail
+//! use control_rs::math::complex_num::Complex;
+//! use control_rs::math::num_traits::Float;
+//!
+//! fn assert_float<T: Float>() {}
+//! assert_float::<Complex<f64>>();
+//! ```
+//!
+//! ```compile_fail
+//! use control_rs::math::complex_num::Complex;
+//! use control_rs::math::num_traits::Signed;
+//!
+//! fn assert_signed<T: Signed>() {}
+//! assert_signed::<Complex<f64>>();
+//! ```
+//!
+//! `Scalar` is withheld from `Complex<T>` when `T` does not implement `Neg`:
+//!
+//! ```compile_fail
+//! use control_rs::math::complex_num::Complex;
+//! use control_rs::math::num_traits::Scalar;
+//!
+//! fn assert_scalar<T: Scalar>() {}
+//! assert_scalar::<Complex<u8>>();
+//! ```
 
 use crate::math::CartesianQuadrant2D;
 use crate::math::ops::{
@@ -101,6 +129,21 @@ pub trait One: Clone + PartialEq + PartialOrd + Mul<Output = Self> {
     fn one() -> Self {
         Self::ONE
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Conjugation Tier
+////////////////////////////////////////////////////////////////////////////////
+
+/// Reflexive and complex conjugation.
+///
+/// Implemented as the identity for all real scalars (integer primitives,
+/// `f32`, `f64`, `Quantized`). Implemented as imaginary negation for `Complex<T>`.
+/// A scalar value `x` is real if and only if `x == x.conj()`.
+pub trait Conjugate: Sized {
+    /// Returns the conjugate of `self`.
+    #[must_use]
+    fn conj(self) -> Self;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -216,11 +259,12 @@ pub trait Signed: AdditiveGroup + Neg<Output = Self> {
 pub trait Radical:
     Clone + PartialEq + PartialOrd + Add<Output = Self> + Mul<Output = Self>
 {
-    /// Computes the hypotenuse of a triangle with the given side lengths.
+    /// Computes the hypotenuse of a right triangle with legs `self` (`x`)
+    /// and `y`: $\sqrt{x^2 + y^2}$.
     #[must_use]
     #[allow(clippy::arithmetic_side_effects)]
-    fn hypot(self, rhs: Self) -> Self {
-        ((self.clone() * self) + (rhs.clone() * rhs)).sqrt()
+    fn hypot(self, y: Self) -> Self {
+        ((self.clone() * self) + (y.clone() * y)).sqrt()
     }
     /// Computes the square root of a number.
     #[must_use]
@@ -303,9 +347,10 @@ pub trait Trig: Clone + PartialEq + PartialOrd {
 /// assert!(!is_significantly_different(1.00000001f32, 1.0f32));
 /// ```
 pub trait Float:
-    Signed + One + Radical + Exponential + Trig + Div<Output = Self>
+    Scalar + Signed + Radical + Exponential + Trig + Div<Output = Self>
 {
-    /// Computes the four-quadrant inverse tangent of `y` and `x` in radians.
+    /// Computes the four-quadrant inverse tangent of `self` (`y`) and `x`
+    /// in radians.
     ///
     /// Unlike the standard `atan(y / x)`, this function uses the signs of both
     /// arguments to identify the correct quadrant and handles the case where `x` is zero.
@@ -330,15 +375,15 @@ pub trait Float:
     /// in real-time control loops.*
     #[must_use]
     #[allow(clippy::arithmetic_side_effects)]
-    fn atan2(self, rhs: Self) -> Self {
+    fn atan2(self, x: Self) -> Self {
         let two = Self::ONE + Self::ONE;
-        match CartesianQuadrant2D::from_coords(&rhs, &self) {
+        match CartesianQuadrant2D::from_coords(&x, &self) {
             CartesianQuadrant2D::Origin
             | CartesianQuadrant2D::PositiveXAxis => Self::ZERO,
             CartesianQuadrant2D::NegativeYAxis => -(Self::PI / two),
             CartesianQuadrant2D::NegativeXAxis => Self::PI,
             CartesianQuadrant2D::PositiveYAxis => Self::PI / two,
-            _ => Self::atan(self / rhs),
+            _ => Self::atan(self / x),
         }
     }
     /// Computes the hyperbolic cosine of the number.
@@ -410,12 +455,12 @@ pub trait Float:
 
 /// The unified target for control-loop arithmetic.
 ///
-/// `Zero + One + Sub + Mul`, implemented by every integer and float
-/// primitive, signed and unsigned. Deliberately excludes `Div`: integer
-/// division is not total (`/0` panics, `i32::MIN / -1` overflows), so
-/// requiring it here would reintroduce the panic surface this hierarchy
-/// exists to remove. Division stays on `Float`, where IEEE-754 semantics
-/// make it total.
+/// `Zero + One + Sub + Mul + Conjugate`, implemented by every integer and float
+/// primitive, signed and unsigned, and `Complex<T>` where `T: Scalar<Real = T> + Neg`.
+/// Deliberately excludes `Div`: integer division is not total (`/0` panics,
+/// `i32::MIN / -1` overflows), so requiring it here would reintroduce the
+/// panic surface this hierarchy exists to remove. Division stays on `Float`,
+/// where IEEE-754 semantics make it total.
 ///
 /// # Example
 /// ```
@@ -428,7 +473,21 @@ pub trait Float:
 /// assert_eq!(clamp_to_unit(5i32), 1);
 /// assert_eq!(clamp_to_unit(5u32), 1);
 /// ```
-pub trait Scalar: Zero + One + Sub<Output = Self> + Mul<Output = Self> {
+pub trait Scalar:
+    Zero + One + Sub<Output = Self> + Mul<Output = Self> + Conjugate
+{
+    /// The associated real scalar type for norms, eigenvalues, and projection.
+    type Real: Scalar<Real = Self::Real>;
+
+    /// Evaluates the squared modulus / Euclidean norm squared (`re^2 + im^2`),
+    /// without requiring a square root.
+    #[allow(clippy::arithmetic_side_effects)]
+    fn abs2(&self) -> Self::Real {
+        let r = self.re();
+        let i = self.im();
+        r.clone() * r + i.clone() * i
+    }
+
     /// Restricts a value to a certain interval.
     #[must_use]
     fn clamp(self, min: Self, max: Self) -> Self {
@@ -440,6 +499,16 @@ pub trait Scalar: Zero + One + Sub<Output = Self> + Mul<Output = Self> {
             self
         }
     }
+
+    /// Constructs a scalar from its real component with zero imaginary component.
+    fn from_real(re: Self::Real) -> Self;
+
+    /// Returns the imaginary component of `self` (returns `Real::ZERO` on real scalars).
+    fn im(&self) -> Self::Real;
+
+    /// Returns the real component of `self`.
+    fn re(&self) -> Self::Real;
+
     /// Returns a number that represents the sign of self (`-ONE`, `ZERO`,
     /// or `ONE`); for unsigned types the negative branch is unreachable.
     #[must_use]
@@ -526,14 +595,46 @@ macro_rules! impl_additive_group {
     };
 }
 
-/// Implements the `Scalar` marker trait for a given type.
+/// Implements `Conjugate` (identity) and `Scalar` (`Real = Self`) for a given type.
 ///
 /// # Arguments
 /// - `$type`: The numeric type; must already implement `Zero + One + Sub + Mul`.
 #[macro_export]
 macro_rules! impl_scalar {
     ($type:ty) => {
-        impl Scalar for $type {}
+        impl Conjugate for $type {
+            #[inline(always)]
+            fn conj(self) -> Self {
+                self
+            }
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////
+
+        impl Scalar for $type {
+            type Real = Self;
+
+            #[allow(clippy::arithmetic_side_effects)]
+            #[inline(always)]
+            fn abs2(&self) -> Self::Real {
+                *self * *self
+            }
+
+            #[inline(always)]
+            fn from_real(re: Self::Real) -> Self {
+                re
+            }
+
+            #[inline(always)]
+            fn im(&self) -> Self::Real {
+                Self::ZERO
+            }
+
+            #[inline(always)]
+            fn re(&self) -> Self::Real {
+                *self
+            }
+        }
 
         ////////////////////////////////////////////////////////////////////////////////
     };
@@ -634,8 +735,8 @@ macro_rules! impl_float {
 
         impl Float for $type {
             #[inline(always)]
-            fn atan2(self, rhs: Self) -> Self {
-                $atan2(self, rhs)
+            fn atan2(self, x: Self) -> Self {
+                $atan2(self, x)
             }
             #[inline(always)]
             fn epsilon() -> Self {

@@ -16,9 +16,7 @@ pub mod complex_num_test_suite {
             complex_num::Complex,
             complex_num::Complex32,
             complex_num::Complex64,
-            num_traits::{
-                Exponential, Float, One, Radical, Signed, Trig, Zero,
-            },
+            num_traits::{One, Trig, Zero},
             ops::{
                 Neg, TryAdd, TryDiv, TryMul, TrySub, WrappingAdd, WrappingMul,
                 WrappingSub,
@@ -478,7 +476,6 @@ pub mod complex_num_test_suite {
 
         // Test abs (the complex absolute value: `|z|` as a real number)
         let abs_res = z1.abs();
-        assert_almost_eq!(abs_res.re, 5.0);
-        assert_almost_eq!(abs_res.im, 0.0);
+        assert_almost_eq!(abs_res, 5.0);
     }
 }

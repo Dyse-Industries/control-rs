@@ -1,5 +1,6 @@
 //! # Control-rs
 #![cfg_attr(not(feature = "std"), no_std)]
+#![recursion_limit = "256"]
 
 pub mod classical_tools;
 pub mod integrators;

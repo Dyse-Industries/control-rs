@@ -1,8 +1,8 @@
 # Numeric Trait Hierarchy (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_10,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_23,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
-![Author Badge](https://img.shields.io/badge/Author-@mitchelldscott-blueviolet)
+![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
 
@@ -22,11 +22,26 @@ wrapping vs. saturating).
 
 - **FR-1 — Overflow Mode Disambiguation**: Primitive integer types explicitly
   partition overflow semantics into wrapping or saturating execution modes at
-  compile time.
+  compile time (num-traits, 2024a; num-traits, 2024b; Spiteri, 2026a).
 - **FR-2 — Unsigned Primitive BLAS-Loop Monomorphization**: Unsigned integer
   types (`u8`, `u16`, `u32`, `u64`, `usize`) monomorphize in linear algebra
   loops (`AXPY`, `GEMV`, `GEMM`) via a common scalar abstraction that provides
-  zero, identity, addition, subtraction, and multiplication.
+  zero, identity, addition, subtraction, and multiplication (num-traits, 2024a).
+- **FR-3 — Reflexive & Complex Conjugation**: `Conjugate` is a `Scalar`
+  super trait exposing `fn conj(self) -> Self`. Real scalars (integer
+  primitives, `f32`, `f64`, `Quantized<Repr, SHIFT>`) implement it as the
+  identity; `Complex<T>` implements it as imaginary-component negation. A
+  value is real iff `self == self.conj()`.
+- **FR-4 — Real Projection**: Every `Scalar` exposes
+  `type Real: Scalar<Real = Self>` plus `re()`, `im()`, `from_real()`, and
+  `abs2()` (`re² + im²`, no
+  square root). Real types set `Real = Self`; `Complex<T>` sets `Real = T`.
+- **FR-5 — Implementor Partition**: `Scalar` covers integer primitives,
+  `f32`/`f64`, `Complex<T>` where `T: Scalar<Real = T> + Neg`, and
+  `Quantized<Repr, SHIFT>` where `Repr: Scalar<Real = Repr>`. `Float` is
+  implemented only by `f32` and `f64`. `Complex<T>` and `Quantized<_, _>` do
+  not implement `Float`. Unsigned `Complex<u8>` (etc.) implements wrapping
+  arithmetic but not `Scalar`, because conjugation requires `Neg`.
 
 #### 2.2 Non-Functional Requirements
 
@@ -43,122 +58,298 @@ wrapping vs. saturating).
 
 ### 3. Technical Overview
 
-This effort touches a single, self-contained module (`src/math/num_traits.rs`)
-plus its generated `impl_*!` macros. The scope is the trait definitions
-themselves, the primitive implementations and `Complex<T>`'s delegating
-implementations — it does not add new files or new consumers.
+This effort touches `src/math/num_traits.rs` (trait definitions and
+`impl_*!` macros) and the `Complex<T>` bridges in `src/math/complex_num.rs`.
+`Quantized<Repr, SHIFT>` is defined with the tensor scalar type; this module
+only states the trait contract that type must satisfy. No new files.
+
+```mermaid
+classDiagram
+    direction TB
+
+    class Zero {
+        <<trait>>
+        +ZERO Self
+        +is_zero() bool
+        +zero() Self
+    }
+
+    class One {
+        <<trait>>
+        +ONE Self
+        +is_one() bool
+        +one() Self
+    }
+
+    class Conjugate {
+        <<trait>>
+        +conj() Self
+    }
+
+    class AdditiveGroup {
+        <<trait>>
+    }
+
+    class Signed {
+        <<trait>>
+        +abs() Self
+        +is_sign_negative() bool
+        +is_sign_positive() bool
+    }
+
+    class Integer {
+        <<trait>>
+        +MAX Self
+        +MIN Self
+        +MIN_POSITIVE Self
+        +TWO Self
+    }
+
+    class SaturatingInteger {
+        <<trait>>
+    }
+
+    class Unsigned {
+        <<markertrait>>
+    }
+
+    class Scalar {
+        <<trait>>
+        +Real Scalar
+        +re() Real
+        +im() Real
+        +from_real(re: Real) Self
+        +abs2() Real
+        +clamp(min: Self, max: Self) Self
+        +signum() Self
+    }
+
+    class Radical {
+        <<trait>>
+        +sqrt() Self
+        +hypot(y: Self) Self
+    }
+
+    class Exponential {
+        <<trait>>
+        +E Self
+        +exp() Self
+        +ln() Self
+        +log10() Self
+        +pow(n: Self) Self
+    }
+
+    class Trig {
+        <<trait>>
+        +PI Self
+        +sin() Self
+        +cos() Self
+        +tan() Self
+        +asin() Self
+        +acos() Self
+        +atan() Self
+    }
+
+    class Float {
+        <<trait>>
+        +epsilon() Self
+        +atan2(x: Self) Self
+    }
+
+    class Complex~T~ {
+        +re T
+        +im T
+        +Real = T
+    }
+
+    Zero <|-- AdditiveGroup
+    AdditiveGroup <|-- Signed
+    Zero <|-- Integer
+    One <|-- Integer
+    Zero <|-- SaturatingInteger
+    One <|-- SaturatingInteger
+    Zero <|-- Scalar
+    One <|-- Scalar
+    Conjugate <|-- Scalar
+    Scalar <|-- Float
+    Signed <|-- Float
+    Radical <|-- Float
+    Exponential <|-- Float
+    Trig <|-- Float
+    Scalar <|.. Complex
+    AdditiveGroup <|.. Complex
+```
+
+_Figure 1: UML hierarchy for the numeric trait tower. Solid arrows are
+supertrait bounds; dashed arrows are type realizations. `Complex<T>`
+realizes `Scalar` (`Real = T`) and `AdditiveGroup`; it does not
+realize `Float`, `Signed`, or the analytic traits. `Unsigned` is a `Sized`-only
+marker with no supertrait bounds._
+
+`Scalar` is the ring bound for generic linear algebra. `Conjugate` is a
+`Scalar` supertrait (identity on reals, imaginary negation on `Complex<T>`).
+`Float` extends `Scalar` and is implemented only by `f32` and `f64`.
+`Complex<T>` implements `Scalar` with `Real = T` when `T: Neg` and does not
+implement `Float`, `Signed`, or the analytic traits. `Integer`/
+`SaturatingInteger`
+cover every integer primitive; `Quantized<Repr, SHIFT>` uses saturating
+arithmetic. `AdditiveGroup`/`Signed` remain signed-only; unsigned types
+never enter that branch. `Complex<T>` implements `AdditiveGroup` when
+`T: AdditiveGroup`.
 
 ---
 
-### 4. Core Architecture
+### 4. Architecture
 
-#### 4.1 Trait Hierarchy Diagram
-
-```mermaid
-graph TD
-    Zero["Zero<br/>(Add + ZERO)"]
-    One["One<br/>(Mul + ONE)"]
-    Zero --> AdditiveGroup["AdditiveGroup<br/>(Zero + Sub)"]
-    AdditiveGroup --> Signed["Signed<br/>(AdditiveGroup + Neg)"]
-    Zero --> Integer["Integer<br/>(Zero + One + Wrapping*)"]
-    One --> Integer
-    Zero --> SaturatingInteger["SaturatingInteger<br/>(Zero + One + Saturating*)"]
-    One --> SaturatingInteger
-    Zero --> Scalar["Scalar<br/>(Zero + One + Sub + Mul + clamp/signum)"]
-    One --> Scalar
-    Signed --> Float["Float<br/>(Signed + Radical + Exponential + Trig + Div)"]
-    Unsigned["Unsigned<br/>(Sized marker)"]
-```
-
-`Integer`/`SaturatingInteger`/`Scalar` cover every integer primitive (signed
-and unsigned) plus floats for `Scalar`. `Unsigned` is a `Sized`-only marker
-on unsigned primitives. `AdditiveGroup`/`Signed`/`Float` remain signed-only
-(floats for `Float`); unsigned types never enter that branch.
-
-#### 4.2 Architectural Layers
+#### 4.1 Architectural Layers
 
 1. **Identity Tier (`Zero`, `One`)**:
-    - `Zero` requires `Add<Output = Self>` and associated constant `ZERO`.
-    - `One` requires `Mul<Output = Self>` and associated constant `ONE`.
-2. **Subtraction Tier (`AdditiveGroup`)**:
-    - Opt-in trait binding `Zero` and `Sub<Output = Self>`.
-    - Marks types where `a - b` is underflow-free for ordinary values (
-      signed integers, floats, `Complex<T>`).
-3. **Hardware Integer Tier (`Integer`, `SaturatingInteger`, `Unsigned`)**:
-    - `Integer` and `SaturatingInteger` expose the wrap and saturate ALU
-      behaviors respectively, plus range constants (`MAX`, `MIN`,
-      `MIN_POSITIVE`, `TWO`). Both are implemented by every integer
-      primitive, signed and unsigned.
-    - `Unsigned` remains a `Sized`-only marker distinguishing unsigned
-      primitives from the `AdditiveGroup`/`Signed`/`Float` branch.
-4. **Signed & Analytic Tier (`Signed`, `Float`, `Scalar`, `Radical`,
-   `Exponential`, `Trig`)**:
-    - `Signed` extends `AdditiveGroup` with `Neg<Output = Self>`, providing
-      `abs()` and sign predicates.
-    - `Float` requires `Signed + Radical + Exponential + Trig +
-     Div<Output = Self>` plus `epsilon()`, scoping division and machine
-      epsilon to floating-point types only (FR-2, FR-3).
-    - `Scalar` requires `Zero + One + Sub + Mul` and adds `clamp()`/
-      `signum()`, without `Div` — see FR-3. Implemented by every integer
-      primitive (signed and unsigned) and by `f32`/`f64`. `signum()`'s
-      negative branch is unreachable for unsigned types.
+   - `Zero` requires `Add<Output = Self>` and associated constant `ZERO`.
+   - `One` requires `Mul<Output = Self>` and associated constant `ONE`.
+2. **Conjugation Tier (`Conjugate`)**:
+   - `Conjugate` exposes `fn conj(self) -> Self` and is a `Scalar`
+     supertrait (FR-3).
+   - Identity on every real `Scalar`; imaginary negation on `Complex<T>`
+     (`T: Neg`).
+   - Realness predicate: `self == self.conj()`. Hermitian diagonal writes
+     use this test; they do not require an `.im()` check on a separate
+     complex trait.
+3. **Subtraction Tier (`AdditiveGroup`)**:
+   - Opt-in trait binding `Zero` and `Sub<Output = Self>`.
+   - Marks types where `a - b` is underflow-free for ordinary values (
+     signed integers, floats, `Complex<T>` when `T: AdditiveGroup`).
+4. **Hardware Integer Tier (`Integer`, `SaturatingInteger`, `Unsigned`)**:
+   - `Integer` and `SaturatingInteger` expose the wrap and saturate ALU
+     behaviors respectively (num-traits, 2024a; num-traits, 2024b), plus range constants (`MAX`, `MIN`,
+     `MIN_POSITIVE`, `TWO`). Both are implemented by every integer
+     primitive, signed and unsigned.
+   - `Quantized<Repr, SHIFT>` implements `SaturatingInteger` when `Repr`
+     does; Q-format DSP types (`q15`, `q31`) follow the same saturating
+     contract (systemonchips.com, 2025).
+   - `Unsigned` remains a `Sized`-only marker distinguishing unsigned
+     primitives from the `AdditiveGroup`/`Signed`/`Float` branch.
+5. **Scalar Tier (`Scalar`)**:
+   - `Scalar` requires `Zero + One + Sub + Mul + Conjugate` and adds
+     `clamp()` / `signum()`, without `Div` (FR-2, Alternative 3).
+   - Associated type `Real: Scalar<Real = Self>` with `re()`, `im()`,
+     `from_real()`, and `abs2()` (FR-4). `im()` returns `Real::ZERO` on
+     real types. `abs2()` is `re² + im²` (equals `self * self` on reals).
+   - `signum()`'s negative branch is unreachable for unsigned types.
+6. **Signed & Analytic Tier (`Signed`, `Float`, `Radical`, `Exponential`,
+   `Trig`)**:
+   - `Signed` extends `AdditiveGroup` with `Neg<Output = Self>`, providing
+     `abs()` and sign predicates. Withheld from `Complex<T>`: BLAS 1-norms
+     and `Iamax` project through `T::Real` / `abs2()`, not `Signed::abs`
+     returning `Complex`.
+   - `Float` requires `Scalar + Signed + Radical + Exponential + Trig + Div<Output = Self>` plus `epsilon()`. Implemented only by `f32` and
+     `f64` (FR-5). Division on `Float` follows IEEE-754 (`inf`/`NaN`).
+   - `Complex<T>` implements `Div` when `T: Div` without implementing
+     `Float`. Integer and `Quantized` division remain on `TryDiv`.
 
-#### 4.3 Macro Code Generation
+#### 4.2 Macro Code Generation
 
 To prevent boilerplate duplication across primitive types, implementation blocks
 are generated using internal declarative macros:
 
-- `impl_int!`: Emits `Zero`, `One`, `Integer` and `SaturatingInteger`
+- `impl_int!`: Emits `Zero`, `One`, `Integer`, and `SaturatingInteger`
   implementations for all integer primitives (signed and unsigned).
 - `impl_additive_group!`: Emits `AdditiveGroup` and `Signed` implementations
   for signed integer primitives and `f32`/`f64`.
-- `impl_scalar!`: Emits `Scalar` implementations for every integer
-  primitive (signed and unsigned) and for `f32`/`f64`.
+- `impl_scalar!`: Emits `Conjugate` (identity) and `Scalar` (`Real = Self`,
+  `re`/`from_real` identity, `im` returns `ZERO`, `abs2` is `self * self`)
+  for every integer primitive and for `f32`/`f64`. Emitting `Conjugate`
+  strictly within `impl_scalar!` prevents duplicate trait implementations.
 - `impl_float!`: Emits `Float`, `Radical`, `Exponential` and `Trig`
-  implementations for `f32` and `f64`.
+  implementations for `f32` and `f64`. `Float: Scalar` is already satisfied
+  by the preceding `impl_scalar!` invocation.
+- `Complex<T>`: hand-written `Conjugate` (imaginary negation, `T: Neg`),
+  `Scalar` (`Real = T`, `T: Scalar<Real = T> + Neg`), `AdditiveGroup` (when
+  `T: AdditiveGroup`), and `Div` (when `T: Div`). Does not receive
+  `impl_float!`, `Signed`, `Radical`, `Exponential`, or `Trig`.
+- `Quantized<Repr, SHIFT>`: implements `Scalar` / `Conjugate` (identity) in
+  the quantized-scalar module, not via these macros.
+
+#### 4.3 Implementor Partition (FR-5)
+
+| Type                                                       | `Scalar` | `Real` | `Float` | `Integer` / `SaturatingInteger` | `AdditiveGroup` / `Signed` |
+| :--------------------------------------------------------- | :------: | :----: | :-----: | :-----------------------------: | :------------------------: |
+| signed integers                                            |   yes    | `Self` |   no    |              both               |            both            |
+| unsigned integers                                          |   yes    | `Self` |   no    |              both               |          neither           |
+| `f32`, `f64`                                               |   yes    | `Self` |   yes   |               no                |            both            |
+| `Complex<T>` where `T: Scalar<Real = T> + Neg`             |   yes    |  `T`   |   no    |               no                |    `AdditiveGroup` only    |
+| `Quantized<Repr, SHIFT>` where `Repr: Scalar<Real = Repr>` |   yes    | `Self` |   no    |    saturating when `Repr` is    |       follows `Repr`       |
+
+`Div` is not a `Scalar` supertrait. `Float` requires it. `Complex<T>`
+implements `Div` when `T: Div`. Integer and `Quantized` division stay on
+`TryDiv`.
 
 ---
 
 ### 5. Alternatives
 
 1. **Full Abstract Algebra Taxonomy**:
-    - _Considered_: Implementing a granular algebraic hierarchy matching formal
-      abstract algebra, of the kind the `noether` crate ships (`Magma`,
-      `Semigroup`, `Monoid`, `Group`, `Ring`, `Field`) (warlock-labs, 2025).
-    - _Rejected_: Too complex for practical control systems engineering. Rust's
-      trait solver overhead and complex bound signatures outweigh the benefits
-      — `noether`'s own documentation cautions that "extensive use of dispatch
-      ... may incur some runtime cost" (warlock-labs, 2025; secondary,
-      uncorroborated claim), a risk this design avoids entirely by not
-      building a comparably deep tower. The pragmatic tiering (`Zero`,
-      `AdditiveGroup`, `Integer`, `SaturatingInteger`, `Float`, `Scalar`)
-      provides the exact boundaries required by numerical algorithms.
+   - _Considered_: Implementing a granular algebraic hierarchy matching formal
+     abstract algebra, of the kind the `noether` crate ships (`Magma`,
+     `Semigroup`, `Monoid`, `Group`, `Ring`, `Field`) (warlock-labs, 2025).
+   - _Rejected_: Too complex for practical control systems engineering. Rust's
+     trait solver overhead and complex bound signatures outweigh the benefits
+     — `noether`'s own documentation cautions that "extensive use of dispatch
+     ... may incur some runtime cost" (warlock-labs, 2025; secondary,
+     uncorroborated claim), a risk this design avoids entirely by not
+     building a comparably deep tower. The pragmatic tiering (`Zero`,
+     `Conjugate`, `AdditiveGroup`, `Integer`, `SaturatingInteger`, `Scalar`,
+     `Float`) provides the exact boundaries required by numerical algorithms.
 2. **Blanket Derivation of `AdditiveGroup` from `Zero + Sub`**:
-    - _Considered_: Adding
-      `impl<T: Zero + Sub<Output = Self>> AdditiveGroup for T {}`.
-    - _Rejected_: Standard library unsigned integers already implement
-      `core::ops::Sub`. A blanket implementation would automatically grant
-      `AdditiveGroup` to unsigned types, defeating the safety goal. Explicit
-      per-type opt-in is required.
+   - _Considered_: Adding
+     `impl<T: Zero + Sub<Output = Self>> AdditiveGroup for T {}`.
+   - _Rejected_: Standard library unsigned integers already implement
+     `core::ops::Sub`. A blanket implementation would automatically grant
+     `AdditiveGroup` to unsigned types, defeating the safety goal. Explicit
+     per-type opt-in is required.
 3. **Requiring `Div` on the Unified `Scalar` Trait**:
-    - _Considered_: Giving `Scalar` a `Div<Output = Self>` bound directly, so
-      one trait covers every arithmetic operator a control loop might need.
-    - _Rejected_: Integer division is not total (`/0` panics, `i32::MIN / -1`
-      overflows), so requiring it on every `Scalar` implementor — including
-      plain signed integers — reintroduces exactly the panic surface this
-      hierarchy exists to remove. Division stays on `Float`, where IEEE-754
-      semantics make it genuinely total (`inf`/`NaN` instead of a panic).
+   - _Considered_: Giving `Scalar` a `Div<Output = Self>` bound directly, so
+     one trait covers every arithmetic operator a control loop might need.
+   - _Rejected_: Integer division is not total (`/0` panics, `i32::MIN / -1`
+     overflows), so requiring it on every `Scalar` implementor — including
+     plain signed integers and `Quantized` — reintroduces exactly the panic
+     surface this hierarchy exists to remove. `Div` stays off `Scalar`.
+     `Float` requires it (IEEE-754 `inf`/`NaN`). `Complex<T>` implements
+     `Div` when `T: Div` without implementing `Float`. Integer and
+     `Quantized` division remain on `TryDiv`.
 4. **Wrapper-Type Semantics (`fixed`-crate Pattern) Instead of Method-Level
    Traits**:
-    - _Considered_: Expressing wrapping/saturating behavior through a new type
-      wrapper — analogous to the `fixed` crate's `Saturating<F>`, which
-      "provides saturating arithmetic on fixed-point numbers" by overloading
-      operators on the wrapper rather than exposing named methods on the
-      underlying type (Spiteri, 2026b) — instead of `Integer`/
-      `SaturatingInteger` method calls (`wrapping_add()`, `saturating_add()`)
-      on the scalar type itself.
-    - _Rejected_: Requiring callers to convert into and out of a wrapper type at
-      each boundary adds friction the trait-method approach avoids.
+   - _Considered_: Expressing wrapping/saturating behavior through a new type
+     wrapper — analogous to the `fixed` crate's `Saturating<F>`, which
+     "provides saturating arithmetic on fixed-point numbers" by overloading
+     operators on the wrapper rather than exposing named methods on the
+     underlying type (Spiteri, 2026b) — instead of `Integer`/
+     `SaturatingInteger` method calls (`wrapping_add()`, `saturating_add()`)
+     on the scalar type itself.
+   - _Rejected_: Requiring callers to convert into and out of a wrapper type at
+     each boundary adds friction the trait-method approach avoids.
+5. **`ComplexField` / `RealField` Tower**:
+   - _Considered_: A second trait pair (`ComplexField` with associated
+     `RealField`) in the style of nalgebra/simba, separate from `Scalar` (Crozet, 2020).
+   - _Rejected_: `Scalar::Real` plus `Conjugate` as a `Scalar` supertrait
+     gives ring kernels a single bound (`T: Scalar`) and projects norms,
+     real α, and Givens cosine onto `T::Real` without a parallel algebra
+     tower (Alternative 1).
+6. **`Conjugate` as a Separate Bound, Not a `Scalar` Supertrait**:
+   - _Considered_: Leaving `Conjugate` independent so ring kernels write
+     `T: Scalar + Conjugate`.
+   - _Rejected_: Every `Scalar` that participates in `Trans::ConjTrans` or
+     Hermitian reflection needs `conj`. On reals the operation is identity
+     and monomorphizes away, so the extra bound adds noise without excluding
+     any intended implementor.
+7. **`Float` for `Complex<T>`**:
+   - _Considered_: `impl<T: Float> Float for Complex<T>` so one `T: Float`
+     bound covers real and complex analytic kernels.
+   - _Rejected_: BLAS `Nrm2`/`Asum` return a real (`SCNRM2`/`DZNRM2`), not
+     a complex. `Float` also pulls in `Trig`/`Exponential`/`epsilon` that
+     complex LAPACK does not need on `T` itself. Analytic operations run on
+     `T::Real`. The shipped `complex_num.rs` `Float`/`Signed`/`Radical`/
+     `Trig`/`Exponential` impls for `Complex<T>` are retracted by this
+     revision.
 
 ---
 
@@ -170,20 +361,29 @@ Verification ensures structural correctness and trait compliance across all
 target environments:
 
 1. **Unit Testing & Hardware-Boundary Verification**:
-    - Test suites (`num_trait_tests.rs`) validate identity elements, wrapping
-      behavior at `MAX`/`MIN` and saturation behavior at `MAX`/`MIN` across
-      primitive types and `Complex<T>`.
+   - Test suites (`num_trait_tests.rs`) validate identity elements, wrapping
+     behavior at `MAX`/`MIN` and saturation behavior at `MAX`/`MIN` across
+     primitive types and `Complex<T>`.
 2. **Compile-Time Marker Assertions**:
-    - Marker tests verify at compile time that `Scalar` is implemented for
-      every integer and float primitive (signed and unsigned), that
-      `Unsigned + Integer + SaturatingInteger` hold on unsigned primitives,
-      and that `AdditiveGroup`/`Signed` are withheld from unsigned types (
-      positive checks in `num_trait_tests.rs`; the negative
-      `AdditiveGroup` bound is a `compile_fail` doctest on `num_traits`'s
-      module docs).
+   - Marker tests verify at compile time that `Scalar` is implemented for
+     every integer and float primitive (signed and unsigned), that
+     `Unsigned + Integer + SaturatingInteger` hold on unsigned primitives,
+     and that `AdditiveGroup`/`Signed` are withheld from unsigned types (
+     positive checks in `num_trait_tests.rs`; the negative
+     `AdditiveGroup` bound is a `compile_fail` doctest on `num_traits`'s
+     module docs).
+   - `Complex<T>: Scalar` with `Real = T` when `T: Neg`; `compile_fail` that
+     `Complex<f64>` does not implement `Float` or `Signed`, and that
+     `Complex<u8>` does not implement `Scalar`.
+   - Identity conjugation: `x.conj() == x` for every real primitive;
+     `Complex::new(a, b).conj() == Complex::new(a, -b)`.
+   - Real projection: `T::Real = T` and `x.re() == x`, `x.im() == T::ZERO`
+     for real primitives; `Complex<T>::Real = T`, method `re()`/`im()` match
+     the `re`/`im` fields, and
+     `z.abs2() == z.re * z.re + z.im * z.im`.
 3. **SIL/HIL Test Suite Integration**:
-    - Unit tests within `num_traits` are wrapped with the `#[hil_suite]` proc
-      macro infrastructure.
+   - Unit tests within `num_traits` are wrapped with the `#[hil_suite]` proc
+     macro infrastructure.
 
 #### 6.2 Validation
 
@@ -194,7 +394,10 @@ the trait hierarchy:
   `assert_not_almost_eq!` macros operate seamlessly over `T: Float`.
 - **DSP & Linear Algebra Integration**: Signal processing modules (FFT in
   `dsp.rs`) and BLAS subprograms (`subprograms.rs`) validate performance and
-  compile-time ergonomics over generic `Float` and `Complex<T>` scalars.
+  compile-time ergonomics over `T: Scalar` (integers, floats, `Complex<T>`,
+  and later `Quantized`). Field kernels (`Nrm2`, `Trsv`, LAPACK) bound
+  `T: Scalar + Div` with `T::Real: Radical` / `Trig` as required, not
+  `T: Float` as a stand-in for complex.
 
 ---
 
@@ -215,17 +418,20 @@ and **zero memory footprint**:
 
 ### 8. Risks & Open Questions
 
-1. **Ordering Semantics on `Complex<T>`**: `Zero`/`One`/`Scalar` (and
-   `Signed`) require `PartialOrd`. `Complex<T>` implements `PartialOrd` via a
-   lexicographic order. While convenient for comparison utilities,
-   lexicographic ordering is not algebraically compatible with field
+1. **Ordering Semantics on `Complex<T>`**: `Zero`/`One`/`Scalar` require
+   `PartialOrd`. `Complex<T>` implements `PartialOrd` via a lexicographic
+   order. Lexicographic ordering is not algebraically compatible with field
    multiplication. This boundary is documented in doc comments.
-2. **`Scalar` Retirement Is a Breaking Change for Existing Bounds**:
-   Implementation must re-bound each existing call site rather than assume
-   the rename is transparent.
-3. **`SafeDiv`/`NonZero<T>` Is Not Yet Specified**: This design confines `Div`
-   to `Float` and defers integer/fixed-point division entirely to the
-   existing `TryDiv` (`math::ops`). A future `NonZero<T>`-gated `SafeDiv` for
+2. **Associated Type and Supertrait Migration**: Adding `Conjugate` as a
+   `Scalar` supertrait and `type Real` on `Scalar` is a breaking change for
+   existing `T: Scalar` impls (including the shipped `impl<T: Scalar> Scalar
+for Complex<T>`). Every implementor must name `Real` and provide
+   projections. Call sites that used `T: Float` to accept `Complex<T>` must
+   re-bind to `T: Scalar` (ring) or `T: Scalar + Div` with `T::Real: …`
+   (field).
+3. **`SafeDiv`/`NonZero<T>` Is Not Yet Specified**: This design keeps `Div`
+   off `Scalar` and defers integer/`Quantized` division to `TryDiv`
+   (`math::ops`). A future `NonZero<T>`-gated `SafeDiv` for
    validate-once/divide-many hot loops is out of scope for this revision and
    needs its own design pass. Generic `NonZero<T>` itself is stable (Rust
    stabilized `generic_nonzero` after RFC 2307 replaced a single generic
@@ -242,87 +448,85 @@ and **zero memory footprint**:
    traits ... [but] the feature is still firmly in experimental territory:
    there has never been an RFC describing its syntax," with stabilization
    itself still a stretch goal (Scherer, 2025).
+5. **Shipped `Complex: Float` Impls**: `complex_num.rs` currently implements
+   `Float`, `Signed`, `Radical`, `Trig`, and `Exponential` for `Complex<T>`.
+   Those impls contradict FR-5 and Alternative 7. Phase 3 of this revision
+   removes them.
 
 ---
 
 ### 9. Development Plan
 
-| Phase / Feature                                    | Description                                                                                                                                        | Estimated Effort |
-|:---------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Phase 1: Core Trait Hierarchy & Boundaries**     | Implement `Zero`, `One`, `AdditiveGroup`, `Signed`, `Integer`, `SaturatingInteger`, `Float`, `Scalar` with full doc comments                       | Medium           |
-| **Phase 2: Primitive & Composite Implementations** | Write `impl_int!`, `impl_additive_group!`, `impl_scalar!`, `impl_float!` macros; update `Complex<T>` trait bridges                                 | Medium           |
-| **Phase 3: Existing Call-Site Migration**          | Re-bound `AXPY`/`GEMV`/`GEMM`/`DOT`/`NRM2`/`IAMAX` (`subprograms.rs`), `FFT`/`Convolution`/`Discrete` (`dsp.rs`) and `assert.rs` to the new traits | Medium           |
-| **Phase 4: Verification & Test Suite Integration** | Implement wrap/saturate boundary tests, compile-time marker assertions and `#[hil_suite]` SIL/HIL runner test wrappers                             | Medium           |
+| Phase / Feature                           | Description                                                                                                                                                      | Estimated Effort |
+| :---------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------- |
+| **Phase 1: Core hierarchy (complete)**    | `Zero`, `One`, `AdditiveGroup`, `Signed`, `Integer`, `SaturatingInteger`, `Float`, `Scalar` on primitives.                                                       | —                |
+| **Phase 2: `Conjugate` + `Scalar::Real`** | `Conjugate` supertrait of `Scalar`; `type Real` with `re`/`im`/`from_real`/`abs2`; `impl_scalar!` emits identity conjugation and `Real = Self`; `Float: Scalar`. | Medium           |
+| **Phase 3: `Complex<T>` retraction**      | `Complex<T>: Scalar` (`Real = T`) + `Conjugate` + `AdditiveGroup` + `Div`; remove `Float`/`Signed`/`Radical`/`Trig`/`Exponential`.                               | Medium           |
+| **Phase 4: Call-site migration**          | Re-bound `subprograms.rs`, `dsp.rs`, `assert.rs`, and matrix decompositions that used `T: Float` as a complex stand-in.                                          | Medium           |
+| **Phase 5: Verification**                 | Marker tests and `compile_fail` doctests for FR-3–FR-5; `#[hil_suite]` wrap/saturate suite unchanged. `Quantized` impls wait on the tensor scalar type.          | Small            |
 
 ---
 
 ### 10. References
 
-1. **num-traits (2024a).** _WrappingAdd_ (Version 0.2.19) [Software
-   documentation]. rust-num, docs.rs.
-   https://docs.rs/num-traits/latest/num_traits/ops/wrapping/trait.WrappingAdd.html
-   (accessed Aug. 6, 2026) — Source of the `wrapping_add`-style operator
-   names and "wraps around at the boundary of the type" semantics `Integer`
-   (FR-2) reuses.
-2. **num-traits (2024b).** _Saturating_ (Version 0.2.19) [Software
-   documentation]. rust-num, docs.rs.
-   https://docs.rs/num-traits/latest/num_traits/ops/saturating/trait.Saturating.html
-   (accessed Aug. 6, 2026) — Documents the crate's own deprecation of a
-   monolithic `Saturating` trait in favor of split `SaturatingAdd`/
-   `SaturatingSub`/`SaturatingMul` traits, the precedent `SaturatingInteger`
-   (FR-2) follows.
-3. **Spiteri, T. (2026a).** _az_ (Version 1.3.0) [Software documentation].
-   docs.rs. https://docs.rs/az/latest/az/ (accessed Aug. 6, 2026) — Prior art
-   for splitting numeric-conversion behavior into narrow, per-fallibility-mode
-   traits, cited in support of FR-1's granular-trait structure.
-4. **systemonchips.com (2025).** _...and Correctly Using CMSIS-DSP
-   Fixed-Point (Qx) Functions_ [Website].
-   https://www.systemonchips.com/and-correctly-using-cmsis-dsp-fixed-point-qx-functions/
-   (accessed Aug. 6, 2026) — Secondary source describing Cortex-M `SSAT`/
-   `USAT` saturating instructions; the primary ARM reference could not be
-   retrieved during research, so this evidence is uncorroborated.
-5. **Crozet, S. (2020).** _Switch to Simba and make the base and geometry
-   modules mostly SIMD AoSoA friendly_ (PR #713) [Repository].
-   dimforge/nalgebra.
-   https://github.com/dimforge/nalgebra/pull/713 (accessed Aug. 6, 2026) —
-   Ecosystem precedent for retreating from a heavy abstract-algebra trait
-   tower (`alga`) to a flatter one (`simba`), cited in Alternative 1.
-6. **warlock-labs (2025).** _noether README_ (Version 0.3.0) [Repository].
-   GitHub. https://github.com/warlock-labs/noether (accessed Aug. 6, 2026) —
-   Concrete example of a full `Magma`→`Field` abstract-algebra tower in Rust,
-   cited in Alternative 2; its dispatch-cost caveat is a secondary,
-   uncorroborated claim.
-7. **Spiteri, T. (2026b).** _fixed::Saturating_ (Version 1.31.0) [Software
-   documentation].
-   docs.rs. https://docs.rs/fixed/latest/fixed/struct.Saturating.html
-   (accessed Aug. 6, 2026) — Source of the wrapper-type (`Saturating<F>`)
-   pattern evaluated and rejected in Alternative 6.
-8. **Reitermarkus, M. (2024).** _Tracking Issue for generic NonZero_ (issue
-   #120257) [Repository]. rust-lang/rust.
-   https://github.com/rust-lang/rust/issues/120257 (accessed Aug. 6, 2026) —
-   Confirms `core::num::NonZero<T>` generic stabilization, cited in the
-   `SafeDiv`/`NonZero<T>` risk item.
-9. **RFC 2307 (2018).** _RFC 2307: Concrete NonZero Types_ [Technical report].
-   Rust Project, Rust RFC Book.
-   https://rust-lang.github.io/rfcs/2307-concrete-nonzero-types.html
-   (accessed Aug. 6, 2026) — Rationale for `NonZero<T>`'s sealed
-   `Zeroable`/`ZeroablePrimitive` design not extending to arbitrary custom
-   types, cited in the `SafeDiv`/`NonZero<T>` risk item.
-10. **Scherer, O. (2025).** _Prepare const traits for stabilization_
-    [Website]. Rust Project Goals (2025H1).
-    https://rust-lang.github.io/rust-project-goals/2025h1/const-trait.html
-    (accessed Aug. 6, 2026) — Current status and stabilization timeline for
-    `const_trait_impl`, cited in the `const fn` traits risk item.
+[1] rust-num, "WrappingAdd," in *num_traits::ops::wrapping* (Version 0.2.19).
+[Online]. Available:
+https://docs.rs/num-traits/latest/num_traits/ops/wrapping/trait.WrappingAdd.html.
+Accessed: Aug. 6, 2026.
+
+[2] rust-num, "Saturating," in *num_traits::ops::saturating* (Version 0.2.19).
+[Online]. Available:
+https://docs.rs/num-traits/latest/num_traits/ops/saturating/trait.Saturating.html.
+Accessed: Aug. 6, 2026.
+
+[3] T. Spiteri, *az* (Version 1.3.0). [Online]. Available:
+https://docs.rs/az/latest/az/. Accessed: Aug. 6, 2026.
+
+[4] systemonchips.com, "...and Correctly Using CMSIS-DSP Fixed-Point (Qx)
+Functions," 2025. [Online]. Available:
+https://www.systemonchips.com/and-correctly-using-cmsis-dsp-fixed-point-qx-functions/.
+Accessed: Aug. 6, 2026.
+
+[5] S. Crozet, "Switch to Simba and make the base and geometry modules mostly
+SIMD AoSoA friendly (PR #713)," in *dimforge/nalgebra*, 2020. [Online].
+Available: https://github.com/dimforge/nalgebra/pull/713. Accessed: Aug. 6,
+2026.
+
+[6] warlock-labs, *noether README* (Version 0.3.0). [Online]. Available:
+https://github.com/warlock-labs/noether. Accessed: Aug. 6, 2026.
+
+[7] T. Spiteri, *fixed::Saturating* (Version 1.31.0). [Online]. Available:
+https://docs.rs/fixed/latest/fixed/struct.Saturating.html. Accessed: Aug. 6,
+2026.
+
+[8] M. Reitermarkus, "Tracking Issue for generic NonZero (issue #120257)," in
+*rust-lang/rust*, 2024. [Online]. Available:
+https://github.com/rust-lang/rust/issues/120257. Accessed: Aug. 6, 2026.
+
+[9] Rust Project, "RFC 2307: Concrete NonZero Types," *Rust RFC Book*, 2018.
+[Online]. Available:
+https://rust-lang.github.io/rfcs/2307-concrete-nonzero-types.html. Accessed:
+Aug. 6, 2026.
+
+[10] O. Scherer, "Prepare const traits for stabilization," *Rust Project Goals
+(2025H1)*, 2025. [Online]. Available:
+https://rust-lang.github.io/rust-project-goals/2025h1/const-trait.html.
+Accessed: Aug. 6, 2026.
 
 ---
 
 ### 11. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                               |
-|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 1, 2026  | @MitchellDScott | Comprehensive design spec for `math::num_traits` refinement, introducing `AdditiveGroup`/`ClosedRing` and HIL/SIL verification standards. |
-| 1.1      | August 2, 2026  | @MitchellDScott | Superseded `Ring`/`Field`/`Real` with the hardware-aligned `Zero`/`One`/`Integer`/`Float`/`Scalar` hierarchy; reverted status to Draft.   |
-| 1.2      | August 8, 2026  | @MitchellDScott | Updated citations to the author-year standard; added inline citations and a References section; renumbered Revision History.              |
-| 1.3      | August 9, 2026  | @MitchellDScott | Review and corrections.                                                                                                                   |
-| 1.4      | August 10, 2026 | @MitchellDScott | Aligned FR-3, hierarchy diagram, §4 layers and §6.1 markers with shipped `Scalar` (`Zero + One + Sub + Mul`, including unsigned).         |
-| 1.5      | August 16, 2026 | @MitchellDScott | Refactored §2 to observable outcome requirements, separating hardware goals from §4 architecture.                                         |
+| Revision | Date            | Author          | Description                                                                                                                                                                             |
+| :------- | :-------------- | :-------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0      | August 1, 2026  | @MitchellDScott | Comprehensive design spec for `math::num_traits` refinement, introducing `AdditiveGroup`/`ClosedRing` and HIL/SIL verification standards.                                               |
+| 1.1      | August 2, 2026  | @MitchellDScott | Superseded `Ring`/`Field`/`Real` with the hardware-aligned `Zero`/`One`/`Integer`/`Float`/`Scalar` hierarchy; reverted status to Draft.                                                 |
+| 1.2      | August 8, 2026  | @MitchellDScott | Updated citations to the author-year standard; added inline citations and a References section; renumbered Revision History.                                                            |
+| 1.3      | August 9, 2026  | @MitchellDScott | Review and corrections.                                                                                                                                                                 |
+| 1.4      | August 10, 2026 | @MitchellDScott | Aligned FR-3, hierarchy diagram, §4 layers and §6.1 markers with shipped `Scalar` (`Zero + One + Sub + Mul`, including unsigned).                                                       |
+| 1.5      | August 16, 2026 | @MitchellDScott | Refactored §2 to observable outcome requirements, separating hardware goals from §4 architecture.                                                                                       |
+| 1.6      | August 21, 2026 | @MitchellDScott | Added `Conjugate` trait (FR-3) for scalar and complex conjugation; scoped macro emission to prevent duplicate integer impls; corrected cross-references.                                |
+| 1.7      | August 22, 2026 | @MitchellDScott | `Conjugate` supertrait of `Scalar`; `Scalar::Real` projection (FR-4); implementor partition (FR-5) retracting `Complex: Float`; `Float: Scalar`; named `Quantized` as a `Scalar` implementor. Status reverted to Draft. |
+| 1.8      | August 22, 2026 | @MitchellDScott | Replaced §4.1 flowchart with a UML class diagram (supertrait bounds and `Complex<T>` realizations).                                                                                     |
+| 1.9      | August 22, 2026 | @MitchellDScott | Named `hypot`/`atan2` arguments `y`/`x` in the §4.1 UML (`rhs` is an operator-trait convention, not the geometric operands).                                                            |
+| 1.10     | August 23, 2026 | @MitchellDScott | Standardized IEEE references formatting, grounded all inline citations across architectural sections, aligned heading hierarchy (§4 Architecture), and updated Author metadata badge.     |

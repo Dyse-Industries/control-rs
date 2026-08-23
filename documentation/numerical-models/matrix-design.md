@@ -38,7 +38,7 @@ architecture:
 #### 2.1. Functional Requirements
 
 - **FR-1 — Compile-Time Shape Verification**: Operand dimensions are
-  validated at compile time via Peano type bounds (`Dim`).
+  validated at compile time via `Dim` type bounds.
 - **FR-2 — Fallible Linear Algebra Solvers**: Matrix inversion and system
   solving ($A x = b$) over singular matrices return `Err` rather than
   panicking or producing invalid numerical outputs.
@@ -234,7 +234,7 @@ bound, which C-4 restricts to `Dense`-backed matrices.
 `as_array::<N>()` is the storage-level flattened accessor
 (`storage-subprograms-design.md` §4.1.1, §4.2.2); it proves $N = R \cdot C$
 through the bound
-`Const<R>: DimMul<Const<C>, Output = <Const<N> as Dim>::PeanoTypeNum>`
+`Const<R>: DimMul<Const<C>, Output = <Const<N> as Dim>::TypeNum>`
 rather than through an array length expression, so call sites name `N` by
 expected type or turbofish. `as_nested()` is defined here rather than in
 `storage-subprograms-design.md`, which specifies the nested operand *type*
@@ -835,7 +835,7 @@ DSPLib) is enabled, underlying BLAS traits dispatch calls to FFI functions.
     - C-based FFI routines do not perform bounds checking and assume that the
       caller has allocated sufficient, correctly-aligned memory.
     - The `Matrix` type acts as a guard by statically verifying all dimension
-      constraints at compile time (using Peano types). It ensures that the
+      constraints at compile time (using `Dim` types). It ensures that the
       buffers passed to FFI calls have the precise size expected by the hardware
       kernels, preventing memory corruption or CPU faults.
 
@@ -1024,7 +1024,7 @@ execution predictability.
 
 1. **Compile-Time Verification**:
     - Matrix dimension matching ($M \times N \times N \times P \to M \times P$)
-      is strictly enforced by the Rust type system using Peano types (`Dim`),
+      is strictly enforced by the Rust type system using `Dim` types,
       completely eliminating runtime dimension checks and preventing invalid
       pointer arithmetic at compile time.
 2. **Storage-Branch Coverage**:
@@ -1060,13 +1060,12 @@ execution predictability.
       $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text{overhead}}}{f}$$
 5. **Stack Bounds Verification**:
     - Inline stack-allocated matrix capacities are strictly capped
-      at $127 \times 127$ elements ($R::USIZE \times C::USIZE \le 16{,}129$;
-      C-3),
-      matching the `Dim` system's `U127` ceiling rather than an independently
+      at $128 \times 128$ elements ($R::USIZE \times C::USIZE \le 16{,}384$),
+      matching the named `U16384` `DimMul` product rather than an independently
       chosen number.
     - This is a type-system bound, not a stack-safety guarantee: a
-      $127 \times 127$ `f32` instance is
-      $16{,}129 \times 4\text{ bytes} \approx 63\text{KB}$, well past typical
+      $128 \times 128$ `f32` instance is
+      $16{,}384 \times 4\text{ bytes} \approx 64\text{KB}$, well past typical
       2–8KB bare-metal stack budgets. `clippy::large_stack_arrays`
       (`storage-subprograms-design.md` C-1) is the actual enforcement point for
       call-site instance size; CI must fail on any un-justified `#[allow]`

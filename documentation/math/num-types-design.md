@@ -1,8 +1,8 @@
 # Numeric Types (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_9,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_23,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
-![Author Badge](https://img.shields.io/badge/Author-@mitchelldscott-blueviolet)
+![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
 
@@ -11,8 +11,10 @@
 Every numerical model in the crate (matrices, polynomials, state-space
 systems, tensors, transfer functions) is parameterized over fixed dimensions
 that must be known and checked before the program runs. Catching a dimension
-mismatch (i.e. multiplying a 3×4 matrix by a 5×2 matrix) at compile time rather
-than as a runtime panic.
+mismatch (e.g. multiplying a $3 \times 4$ matrix by a $5 \times 2$ matrix) at
+compile time rather than as a runtime panic guarantees safety in embedded
+control systems. Matrix storage targets 128×128 shapes; flattened products
+such as $128 \times 128 = 16384$ must be expressible as type-level results.
 
 ---
 
@@ -21,17 +23,23 @@ than as a runtime panic.
 #### 2.1 Functional Requirements
 
 - **FR-1 — Base Dimension Trait**: Define a single trait for "a compile-time
-  dimension," exposing a runtime `usize` value and a pattern-matchable
-  type-level representation; concrete types must be
-  `Clone + Copy + PartialEq + Eq`.
+  dimension," exposing a runtime `usize` value and a canonical type-level
+  representation; concrete types must be `Clone + Copy + PartialEq + Eq`.
 - **FR-2 — Type-Level Arithmetic**: Define one trait per arithmetic operation (
   addition, subtraction, multiplication, maximum, minimum), each producing an
   output satisfying the base dimension trait (FR-1).
 - **FR-3 — Const-Generic Bridge**: Provide a const-generic wrapper
   letting call sites write an ordinary integer literal that resolves to the
-  canonical representation.
-- **FR-4 — Aliases**: Generate named aliases (`U0`, `U1`, ... up to a
-  fixed ceiling) for the canonical representation of each small dimension.
+  canonical representation. The wrapper is a ZST; it has no runtime
+  constructor that pairs a value with `N`. Every `N` in C-1 exposes that
+  canonical type as `TypeNum`.
+- **FR-4 — Convenience Aliases**: Provide named `U*` aliases for a small
+  checked-in subset of C-1. Dimensions in C-1 without a `U*` name are spelled
+  `<Const<N> as Dim>::TypeNum`.
+- **FR-5 — Type-Level Bitwise Operations**: Define traits for bitwise logic
+  (`DimBitAnd`, `DimBitOr`, `DimBitXor`), each producing a canonical output
+  satisfying the base dimension trait (FR-1) with automatic leading-zero
+  trimming where cancellations occur.
 
 #### 2.2 Non-Functional Requirements
 
@@ -40,127 +48,239 @@ than as a runtime panic.
   parameter.
 - **NFR-2 — `no_std` Compatibility**: The module must depend only on `core`,
   with no allocation and no OS or std-only feature dependency.
+- **NFR-3 — Const OP Feasibility**: For const-generic bridge operands
+  `Const<N>` and `Const<M>`, `DimMul<Const<M>>` is implemented for `Const<N>`
+  if and only if the product $N \times M$ is representable as a valid `Const`
+  dimension in C-1 (i.e. $N \times M \in 0..=1024$ or
+  $N \times M \in \{2048, 4096, 8192, 16384\}$).
 
 #### 2.3 Constraints
 
-- **C-1 — Recursion-Bounded Dimension Ceiling**: Friendly aliases (FR-4) stop at
-  a fixed ceiling (`U127`) because the unary canonical representation
-  requires trait-solver recursion proportional to dimension size and rustc's
-  default `#![recursion_limit]` is 128 (Rust Reference, 2026c) — one Peano level
-  above the deepest chain a single `Dim` value can resolve to.
-- **C-2 — Ceiling Does Not Bound Pairwise Arithmetic**: Raising C-1 to `U127`
-  only guarantees that a single dimension up to that size resolves; it does
-  not guarantee `DimAdd`/`DimSub`/`DimMax`/`DimMin` succeeds for every pair of
-  aliases below the ceiling. The structural-recursion where-clauses in §4 can
-  require resolving `Dim` for an operand more than once per step, so the safe
-  envelope for a pair is smaller than and asymmetric with respect to, `U127`
-  (§6.1, item 5).
+- **C-1 — `Const<N>: Dim` Range**: `Const<N>` implements `Dim` for every
+  $N \in 0..=1024$ and for $2048, 4096, 8192, 16384$. The range is an
+  authoring bound for array-backed storage, not a trait-solver bound; binary
+  encoding depth is $O(\log N)$. Impls are contiguous through $1024$ because
+  `TypeNum` is defined from `Const<{N/2}>`.
+- **C-2 — Canonical Arithmetic Results Need No Name**: `DimAdd`/`DimSub`/
+  `DimMul`/`DimMax`/`DimMin`/`DimBit*` on canonical types (`UTerm`/`UInt`)
+  succeed for operands whose bit-width stays within the solver budget. The result
+  is a `UTerm`/`UInt` tree; it need not have a `U*` alias and need not equal
+  `<Const<K> as Dim>::TypeNum` unless $K$ is in C-1.
 
 ---
 
 ### 3. Technical Overview
 
-The module has no runtime component — it lowers entirely to zero-sized marker
-types and associated-type bookkeeping resolved during compilation.
+The module has no runtime component. It lowers to zero-sized marker types and
+associated-type bookkeeping: a binary unsigned encoding, bit-recursive
+arithmetic, a const-generic bridge (`Const<N>`) whose `TypeNum` is that
+encoding, and a small set of `U*` names for common values.
+
+```mermaid
+flowchart TB
+    subgraph publicAPI [Public API]
+        Bits["B0 / B1"]
+        Tree["UTerm / UInt"]
+        DimT["Dim USIZE TypeNum"]
+        Ops["DimAdd DimSub DimMul DimMax DimMin DimBitAnd DimBitOr DimBitXor"]
+        ConstN["Const of N"]
+        Aliases["U0 to U128 and extra powers of two"]
+    end
+    subgraph privateOps [Crate-private]
+        Carry["AddBit SubBit PrivateSub"]
+        Trim["Trim AttachBit"]
+        Cmp["Cmp PrivateCmp Less Equal Greater"]
+        BitLogic["PrivateAnd PrivateOr PrivateXor"]
+        Sel["SelectBit 0 or 1"]
+    end
+    Bits --> Tree
+    Tree --> DimT
+    ConstN --> DimT
+    Aliases -->|" TypeNum projection "| ConstN
+    Sel -->|" LSB of N "| ConstN
+    ConstN -->|" TypeNum via N/2 "| Tree
+    Carry --> Ops
+    Trim --> Ops
+    Cmp --> Ops
+    BitLogic --> Ops
+    Tree --> Ops
+    Ops --> Tree
+```
+
+_Figure 1: Public dimension types and crate-private operators. Bits construct
+the unsigned tree and do not implement `Dim`. `UTerm`/`UInt` and `Const<N>`
+do; operator traits consume that tree and produce a new one. Carry, trim,
+comparison, bitwise logic, and `SelectBit` stay crate-private._
 
 ---
 
 ### 4. Architecture
 
-**Base representation.** `Z` is the zero case; `S<N: Dim>(PhantomData<N>)`
-is the successor of `N`. Both are zero-sized, satisfying NFR-1. `Dim::USIZE` is
-computed structurally (`S<N>::USIZE = N::USIZE + 1`), giving every dimension
-type a
-`usize` value without storing one in the binary.
+#### 4.1 Canonical Encoding
 
-**Arithmetic by structural recursion.** `DimAdd`, `DimSub`, `DimMul`,
-`DimMax` and `DimMin` are each implemented as a base case over `Z` and an
-inductive case over `S<N>`, mirroring textbook Peano-arithmetic recursion
-(e.g., `(N+1) + M = (N + M) + 1` for `DimAdd`, `(N+1) * M = M + (N * M)` for
-`DimMul`). The unary form was chosen here for the simplicity of a single
-recursive case per operation, at the cost of the recursion depth ceiling in
-C-1 — the same tradeoff the `peano` crate's own documentation names
-explicitly when it recommends `typenum` for anything beyond small numbers (
-peano, 2016).
+Bits are `B0` and `B1`. They implement `Bit` (`USIZE` is 0 or 1) and do not
+implement `Dim`. Unsigned values are `UTerm` (zero) and `UInt<U, B>` (value
+$(U \ll 1) \mid B$, `B` the LSB). Leading zeros are not canonical:
+`UInt<UTerm, B0>` is not a value. `Dim` exposes `USIZE` and an associated
+`TypeNum: Dim`. On canonical types `TypeNum = Self` and
+`USIZE = 2 \cdot U::\mathrm{USIZE} + B::\mathrm{USIZE}`. `UTerm`, `UInt`,
+`B0`, `B1`, and `Const<N>` are zero-sized (NFR-1) (Rust Reference, 2026a;
+Rust Standard Library, 2026). The module is `core`-only (NFR-2) (typenum, 2026).
 
-**Const-generic bridge.** `Const<const N: usize>` is a friendly front end
-onto the canonical representation, not an independent arithmetic
-implementation. The aliasing macro gives `Const<N>` (for `N` in `0..=127`) an
-associated `PeanoTypeNum` pointing at the matching `U`-alias and `Const<N>`'s
-`DimAdd` impls resolve by first converting through that associated type and
-then reusing the canonical `S<N>`/`Z` arithmetic.
+#### 4.2 Public Arithmetic and Bitwise Operations
 
-**Friendly aliases.** `generate_peano_aliases!` emits `U0..U127`, each a type
-alias for the corresponding `S<S<...<Z>>>` chain. The macro itself is
-unchanged from Phase 1 (§9); it still consumes a literal, comma-separated
-identifier list rather than deriving `U33..U127` from a numeric range,
-because `macro_rules!` cannot synthesize identifiers from an expression
-without token-pasting support the crate does not otherwise need (§5, item 4).
-The extended list is generated once by a throwaway script and checked in as
-static source text, identical in kind to the existing `U0..U32` list — this
-is a one-time authoring step, not a build-time or proc-macro code generation
-concern.
+`DimAdd`, `DimSub`, `DimMul`, `DimMax`, `DimMin`, `DimBitAnd`, `DimBitOr`,
+and `DimBitXor` are implemented on `UTerm` / `UInt`. Each `Output: Dim`.
+Specific `UTerm` versus `UInt` impls avoid overlapping blankets. Recipes
+follow typenum's `UInt`/`UTerm` operators (typenum, 2026) without taking that
+crate.
+
+- **Add**: four LSB pairs. `B0`/`B0` and mixed bits write the sum bit and
+  recurse on the MSBs; `B1`/`B1` writes `B0` and applies private `AddBit<B1>`
+  (carry) to the MSB sum.
+- **Sub**: private bitwise `PrivateSub` (borrow via `SubBit`), then `Trim` /
+  `AttachBit` so a leading `UInt<UTerm, B0>` collapses and equal operands
+  yield `UTerm`. There is no `SubBit<B1>` on `UTerm`: underflow has no impl
+  and fails at compile time.
+- **Mul**: shift-and-add. `UInt<Ul, B0> * Ur = UInt<Ul * Ur, B0>`; the `B1`
+  case adds `Ur` onto that shift. Times `UTerm` is `UTerm`.
+- **Max / min**: private `Cmp` (`Less` / `Equal` / `Greater`) with
+  LSB-to-MSB `SoFar`, then `PrivateMax` / `PrivateMin` select an operand.
+- **Bitwise AND (`DimBitAnd`)**: bit-recursive conjunction of bit pairs via
+  private `PrivateAnd` (`UTerm & Rhs = UTerm`, `UInt & UTerm = UTerm`).
+  Leading zeros are eliminated via `Trim` / `AttachBit`.
+- **Bitwise OR (`DimBitOr`)**: bit-recursive disjunction of bit pairs via
+  private `PrivateOr` (`UTerm | X = X`, `X | UTerm = X`). Because non-zero
+  MSBs are preserved, output is canonical without trimming.
+- **Bitwise XOR (`DimBitXor`)**: bit-recursive exclusive disjunction via
+  private `PrivateXor` (`UTerm ^ X = X`, `X ^ UTerm = X`). Cancelled MSBs are
+  trimmed to canonical form via `Trim` / `AttachBit` (`A ^ A = UTerm`).
+
+Carry, borrow, trim, comparison, bitwise logic, and max/min selection stay
+crate-private. Public traits name only dimension types.
+
+#### 4.3 Const-Generic Bridge
+
+`Const<const N: usize>` is a ZST front end, not a second arithmetic
+implementation. `Const<0>::TypeNum = UTerm`. For $N > 0$:
+
+```text
+TypeNum = UInt< <Const<{N/2}> as Dim>::TypeNum , SelectBit<{N%2}> >
+```
+
+`{N/2}` and `{N%2}` are literal const expressions (stable since Rust 1.51.0;
+no `generic_const_exprs`) (Rust, 2021). `SelectBit` maps 0/1 to `B0`/`B1` and
+is not part of the public `Dim` API. Because each impl mentions `Const<{N/2}>`,
+C-1 impls are contiguous from 0 through 1024; the extra powers of two chain through
+that prefix (`16384 → 8192 → … → 1024 → … → 0`).
+
+Const does not reimplement bit recursion. Five forwarding impls per
+operator cover `Const`↔`UTerm`, `Const`↔`UInt`, `Const`↔`Const`, and the
+reverse `UTerm`/`UInt`↔`Const`, each projecting both sides through
+`TypeNum` and reusing the canonical operators. For `Const<N> * Const<M>`,
+multiplication requires the product to be representable as a `Const` in C-1
+(C-3), failing at compile time for unrepresentable values.
+
+There is no `from_i8` / `from_u8` / `try_from_usize`: a runtime integer
+cannot be tied to `N` in a way release builds or the type system enforce.
+Array lengths remain caller `const R` / `const C` (storage C-4).
+
+#### 4.4 Aliases and Call-Site Naming
+
+Named identifiers exist for `U0..=U128` and `U256`, `U512`, `U1024`,
+`U2048`, `U4096`, `U8192`, `U16384` (FR-4). Each alias is the projection
+`type Un = <Const<n> as Dim>::TypeNum` (`U0 = UTerm`). They are not a
+second encoding and are not required for every C-1 value.
+
+| Need                                                | Spelling                                           |
+|:----------------------------------------------------|:---------------------------------------------------|
+| Array-backed storage / models                       | `Const<R>`, `Const<C>` with `Const<R>: Dim` (C-1)  |
+| Small or power-of-two dimension in bounds and tests | `U5`, `U128`, `U16384`, …                          |
+| C-1 value with no `U*` alias                        | `<Const<N> as Dim>::TypeNum`                       |
+| Arithmetic result (C-2)                             | `<A as DimMul<B>>::Output` (a `UTerm`/`UInt` tree) |
+
+#### 4.5 Generation
+
+Declarative macros emit `impl Dim for Const<N>` from the halving rule.
+Expansion stays under the default `recursion_limit` of 128 (Rust Reference, 2026c):
+a short recursive muncher may cover the `U1..=U128` alias band; the remaining C-1
+impls are a flat or chunked `impl_dim_single!(n)` sequence, not 1024 nested recursive
+calls. No proc-macro, `paste`, or checked-in `UInt` tree dump. Extra powers
+of two are explicit `impl_dim_single!` invocations plus matching `U*`
+projections.
 
 ---
 
 ### 5. Alternatives
 
-1. **Binary (typenum-style) encoding instead of Peano/unary.**
-   *Considered*: representing dimensions as a bit sequence
-   (`UInt<U, B>`/`UTerm`), as `typenum` does (typenum, 2026), where each
-   successive value adds one bit rather than one full recursive level, so
-   the recursion depth needed to represent a given dimension grows far more
-   slowly than in the unary form here.
-   *Rejected*: it requires two mutually-recursive base representations
-   (`UInt`/`UTerm`) and per-bit carry logic for every arithmetic operation,
-   against a single base case each for the unary form here. Given this
-   crate's dimensions describe matrix/tensor shapes rather than arbitrary
-   integers, the practical ceiling this trades away (`U127`, C-1) was judged
-   an acceptable cost for the simpler recursive definitions in §4.
+1. **Peano / unary encoding (`Z` / `S<N>`).**
+   _Considered_: successor recursion with a single inductive case per
+   operation (peano, 2016).
+   _Rejected_: trait-solver depth scales with the value, so aliases stop at
+   `U127` and pairwise `DimMul` fails earlier and asymmetrically. That cannot
+   express `Const<128>` or $128 \times 128 = 16384$.
 
 2. **Native const-generic expressions instead of a `Dim` trait hierarchy.**
-   *Considered*: using bare `const N: usize` parameters and ordinary
+   _Considered_: using bare `const N: usize` parameters and ordinary
    `usize` arithmetic (`N + M`) directly in type signatures, skipping the
    `Dim`/`DimAdd`/... traits entirely.
-   *Rejected*: RFC 2000 does not unify abstract const expressions beyond
+   _Rejected_: RFC 2000 does not unify abstract const expressions beyond
    literal AST identity, so `N + M` and `M + N` are different, non-unifying
    types to the compiler even though they denote the same value (RFC 2000,
-   2017). A caller who receives `Const<N + M>` from one function
-   cannot pass it to another expecting `Const<M + N>` without an explicit
-   conversion. Encoding dimensions as `Dim`-bound associated types instead
-   makes commutativity (and the other arithmetic identities) provable
-   through trait implementations rather than unavailable compiler
-   unification — the existing `test_num_type_addition_commutativity` test
-   depends on exactly this.
+   2017). Encoding dimensions as `Dim`-bound associated types makes
+   commutativity provable through trait implementations — the existing
+   `test_num_type_addition_commutativity` test depends on exactly this.
 
 3. **Sealing the arithmetic traits.**
-   *Considered*: sealing `DimAdd`/`DimSub`/`DimMul`/`DimMax`/`DimMin` so
-   only this module can implement them for new dimension types, following
-   the pattern `generic-array`'s `ArrayLength` uses to keep its own
-   typenum-backed trait closed to downstream implementors (Kamiński and
-   Trent, 2026).
-   *Rejected*: `storage-subprograms-design.md` (§5.1) leaves its own
-   storage-backend
-   traits open specifically so downstream code can add custom
-   implementations; sealing the dimension traits here would block any
-   future custom `Dim` implementor (e.g. a hardware-specific fixed-size
-   type) from participating in the same compile-time arithmetic that
-   `Storage` and its consumers rely on.
+   _Considered_: sealing `DimAdd`/`DimSub`/`DimMul`/`DimMax`/`DimMin` so
+   only this module can implement them, following `generic-array`'s
+   `ArrayLength` (Kamiński and Trent, 2026).
+   _Rejected_: `storage-design.md` leaves storage traits open so downstream
+   code can add custom backends; sealing dimension traits would block a
+   future custom `Dim` implementor from the same compile-time arithmetic.
 
-4. **Proc-macro or `paste`-based identifier synthesis for the `U33..U127`
-   alias extension, instead of a checked-in static list.**
-   *Considered*: adding a `generate_dims!(127)` entry point to the
-   in-workspace `control_rs_macros` proc-macro crate (already used for
-   `hil_suite`) or pulling in the `paste` crate so `macro_rules!` could
-   token-paste `U` + a counted literal directly, avoiding a hand-authored
-   identifier list.
-   *Rejected*: the alias ceiling is a fixed constant chosen once (C-1), not
-   a value that varies per build or per call site, so there is nothing for
-   a proc macro or token-pasting crate to compute at compile time that a
-   one-time text-generation step cannot equally produce ahead of time. Both
-   options add a dependency or expand the surface of an in-tree proc-macro
-   crate to solve a problem that resolves to the same static token list
-   either way, against this crate's "minimize dependency use" convention.
+4. **Dense `U*` identifiers through `U1024`.**
+   _Considered_: a `U*` name for every C-1 value, via `paste`, a proc-macro,
+   or a checked-in dump of nested `UInt` trees.
+   _Rejected_: `macro_rules!` cannot synthesize `U537`. Extra names do not
+   add solver power; `<Const<N> as Dim>::TypeNum` already names that tree.
+   FR-4 stays a small convenience set.
+
+5. **Runtime `Const` constructors (`from_u8`, `try_from_usize`).**
+   _Considered_: hoisting a runtime integer onto `Const<N>` with a debug
+   assert or a `u8` range cap to limit stack arrays.
+   _Rejected_: `n == N` is not enforceable in release builds, and a matching
+   runtime value does not prevent `Const::<16384>` existing as a type.
+   Array lengths remain caller `const R` / `const C` (storage C-4).
+
+6. **`typenum` crate dependency.**
+   _Considered_: using `typenum` directly for `UInt`/`UTerm` and `core::ops`
+   operators (typenum, 2026).
+   _Rejected_: this crate minimizes dependencies and already exposes `Dim*`
+   traits; an in-tree unsigned subset behind those traits is sufficient.
+
+7. **Unary recursive muncher through 1024.**
+   _Considered_: one recursive `macro_rules!` step per `N` from 1 to 1024.
+   _Rejected_: the default `recursion_limit` is 128 (Rust Reference, 2026c).
+   Raising it is out of scope. The `U1..=U128` band may use a short muncher;
+   remaining `Const` impls use flat or chunked expansion.
+
+8. **Deferred vs Upfront Structural Bounds (`nalgebra` vs `control-rs`).**
+   _Considered_: implementing `Dim` generically for all `Const<N>`
+   (`impl<const N: usize> Dim for Const<N>`) as `nalgebra` does (Crozet, 2026),
+   allowing arbitrary `usize` dimensions (up to `usize::MAX`) for simple storage
+   and metadata without upfront macro bounds, while deferring type-level
+   arithmetic to an auxiliary trait (e.g. `ToTypenum`) generated via macros for
+   a limited range (e.g. `0..=127`).
+   _Rejected_: neither library has a completely bounds-free solution on stable
+   Rust without `generic_const_exprs`. `nalgebra`'s deferred approach permits
+   unconstrained types like `Matrix<T, Const<10000>, Const<10000>>` for basic
+   storage, but traps downstream callers when attempting type-level math (like
+   concatenation or block operations) because `ToTypenum` fails at compile time
+   with obscure trait errors far from the definition site. `control-rs` enforces
+   structural bounds upfront: by requiring `type TypeNum: Dim` directly on `Dim`,
+   any dimension that can be instantiated is statically guaranteed to support
+   all type-level arithmetic operations reliably.
 
 ---
 
@@ -168,162 +288,156 @@ concern.
 
 #### 6.1 Verification
 
-1. **Zero-footprint assertion**: `test_num_type_zero_byte_footprint`
-   asserts `size_of::<Z>() == 0` and `size_of::<S<Z>>() == 0` /
-   `size_of::<S<S<Z>>>() == 0` directly, machine-checking NFR-1 rather than
-   relying on the language's general zero-sized-type guarantees for
-   `PhantomData`-only structs (Rust Standard Library, 2026; Rust Reference,
-   2026a).
-2. **Structural arithmetic tests**: `num_type_tests.rs` covers addition
-   (including commutativity and the `Z` identity), subtraction (including a
-   `compile_fail` doctest for underflow), multiplication, maximum and
-   minimum, each checked both as a type-level assertion (`let _: U5 = ...`)
-   and as a runtime `Dim::USIZE` value check.
-3. **Recursion-limit test**:
-   `test_num_type_multiplication_recursion_limit` pins `U125` as the
-   largest operand for which `DimMul<U1>` resolves — the per-pair envelope
-   stops two levels short of the `U127` ceiling because each recursive step
-   re-resolves `Dim` on the multiplier (C-2). A future change that
-   increases per-operation recursion depth surfaces as a build failure here
-   before it does anywhere downstream.
+1. **Zero-footprint assertion**: `test_num_type_zero_byte_footprint` asserts
+   `size_of::<UTerm>() == 0` and `size_of::<UInt<UTerm, B1>>() == 0` on a
+   nested `UInt` chain (NFR-1) (Rust Reference, 2026a; Rust Standard Library, 2026).
+2. **Structural arithmetic & bitwise tests**: `num_type_tests.rs` covers
+   addition (including commutativity and the zero identity), subtraction
+   (including a `compile_fail` doctest for underflow), multiplication, maximum,
+   minimum, and bitwise logic (`DimBitAnd`, `DimBitOr`, `DimBitXor`), each
+   checked as a type-level assertion (`let _: U5 = ...`) and as `Dim::USIZE`.
+   Bitwise power-of-two invariants ($N \ \& \ (N - 1) == 0$), XOR cancellation
+   ($A \oplus A = 0$), and masking ($A \mid 0 = A$) must hold at compile time.
+3. **Large-product pin**: `U128 * U128` resolves with `USIZE == 16384` and
+   is type-equal to `U16384`. Former Peano overflow pins (`U127 * U2`,
+   `U126 * U1`, `U1 + U126`) must compile.
 4. **HIL suite wrapping**: the test module is wrapped with
-   `#[cfg_attr(not(test), control_rs_macros::hil_suite)]`, consistent with
-   this crate's convention of running math test suites on-target; for a
-   compile-time-only module the only on-target-relevant claim is the
-   zero-footprint assertion in item 1, since the arithmetic itself has no
-   runtime component to diverge across targets.
-5. **Arithmetic boundary tests (C-2)**: A single `Dim` value resolves up to
-   depth 127 and fails at 128, matching C-1 exactly. Both sides of the boundary
-   are tested by unit tests: (`U125 * U1`, `U63 + U64`) and failing cases as
-   `compile_fail` doctests in the `num_types` module
-   (`U127 * U2`, `U126 * U1`, `U1 + U126`).
+   `#[cfg_attr(not(test), control_rs_macros::hil_suite)]`. Arithmetic has no
+   runtime component to diverge across targets; the on-target claim is the
+   zero-footprint assertion.
+5. **Const bridge**: `Const<5>::TypeNum` is `U5`; `Const<A> + Const<B>`
+   concatenates in the existing static-array helper. A C-1 value with no
+   `U*` alias (for example `Const<200>`) implements `Dim` with
+   `USIZE == 200`.
+6. **Const product representability (C-3)**: `Const<128> * Const<128>` resolves
+   to `U16384` (since $16384 \in \text{C-1}$), while `Const<N> * Const<M>`
+   with $N \times M \notin \text{C-1}$ (e.g. `Const<100> * Const<100>`, where
+   $10000 \notin \text{C-1}$) is unresolvable and fails to compile.
+7. **Compile-time validation checks**:
+   - *In-bounds arithmetic safety*: Verify that all dimensions in C-1 (such as
+     `Const<5>`, `Const<200>`, `Const<1024>`, `Const<16384>`) satisfy `Dim` and
+     participate in type-level arithmetic (`DimAdd`, `DimSub`, `DimMul`, `DimMax`,
+     `DimMin`, `DimBit*`) without missing trait bounds.
+   - *Out-of-bounds immediate failure*: Verify that attempting to use
+     `Const<N>` outside C-1 (e.g. `Const<1025>` or `Const<10000>`) as a `Dim`
+     fails immediately at compile time at the `Dim` trait boundary (`the trait
+     bound Const<...>: Dim is not satisfied`), preventing deferred compile-time
+     failure cascades in downstream arithmetic operations.
 
 #### 6.2 Validation
 
-Validation is deferred to the consumers that do not yet exist
-(`Storage`, `Matrix`, `Polynomial`, `StateSpace`, `Tensor`,
-`TransferFunction`).
+`Storage<T, R: Dim, C: Dim>` is the first consumer (`storage-design.md` C-4).
+Array leaves bind `Const<R>` / `Const<C>` for every C-1 `R`, `C`, including
+values that have no `U*` alias. Matrix/polynomial/tensor designs use
+`DimMul` products that may exceed both aliases and C-1 (C-2); confirm
+`as_array::<16384>()` can name `Const<16384>: Dim`.
 
 ---
 
 ### 7. Performance & Resource Considerations
 
-- **Compile time, not runtime**: every trait in this module is resolved
-  during compilation; there is no generated code or data at runtime beyond
-  what a consumer's own fields require.
-- **Zero memory footprint**: `Z`, `S<N>` and `Const<N>` are zero-sized
-  (NFR-1), matching the general Rust guarantee that `PhantomData<T>` and
-  types built only from it occupy no space (Rust Standard Library, 2026).
-- **Recursion depth scales with dimension size**: because arithmetic is
-  unary (§4), a `DimAdd`/`DimMul` on operands near the `U127` ceiling
-  recurses close to the trait-solver's 128-step default budget (C-1); this
-  is the cost C-1 accepts in exchange for the simpler recursive definitions
-  over a binary encoding.
-- **~95 additional `Dim`/`DimAdd<Z>` impls**: extending the alias list from
-  `U0..U32` to `U0..U127` adds one `impl Dim for Const<N>` and one
-  `impl DimAdd<Z> for Const<N>` per new value (§4). Each impl is checked
-  once at definition time regardless of use, so this is a fixed, one-time
-  compile-time cost rather than one that scales with how many aliases a
-  downstream consumer actually instantiates; not yet measured against the
-  crate's overall build time.
+- **Compile time, not runtime**: trait resolution only; no runtime data
+  beyond consumer fields.
+- **Zero memory footprint**: `UTerm`, `UInt<U, B>`, `B0`/`B1`, and `Const<N>`
+  are zero-sized (NFR-1) (Rust Reference, 2026a; Rust Reference, 2026b;
+  Rust Standard Library, 2026).
+- **Recursion depth scales with bit width**: `DimAdd`/`DimMul`/`DimBit*` on
+  14-bit products ($16384$) stay far below the default solver budget of 128
+  (Rust Reference, 2026c).
+- **Fixed Const-impl cost**: one `impl Dim for Const<N>` per $N$ in C-1,
+  checked once at definition time. Alias identifiers add no extra solver
+  work.
 
 ---
 
 ### 8. Risks & Open Questions
 
-1. **`Const<N>` arithmetic is not O(1).** Unlike nalgebra's `Const<T>`,
-   which computes `Dim::value()` directly from its `usize` parameter with
-   no type-level detour (Crozet, 2026), this module's `Const<N>` resolves
-   `DimAdd` by first mapping to `PeanoTypeNum` and then recursing over the
-   canonical `S<N>`/`Z` chain (§4). Compile time for `Const`-expressed
-   arithmetic therefore scales with the operands' Peano depth even when
-   both sides are given as plain literals. Whether this matters in practice
-   depends on how consumers actually call it; not yet measured.
-2. **Ceiling extension resolved to `U127`; beyond it remains unresolved.**
-   C-1 now stops exactly at the trait-solver's single-value resolution
-   limit under the default `#![recursion_limit]` (§6.1, item 5); there is
-   no headroom left to push further without one of the options this
-   document still declines to pick: raising the recursion limit crate-wide,
-   switching to a binary encoding (Alternative 1) or introducing a second,
-   non-Peano dimension type for large sizes. Flagged here for whoever needs
-   dimensions above 127.
-3. **No type-level division or ordering beyond max/min.** The module
-   defines `DimMax`/`DimMin` but no `DimDiv` and no general `DimOrd`. Open
-   until a consumer (e.g. a decomposition algorithm needing a ratio of
-   dimensions) demonstrates a concrete need.
-4. **Pairwise-arithmetic boundary is pinned only at sampled points (C-2).**
-   The §6.1 item 5 tests fix the envelope at specific operand pairs; no
-   closed-form rule (e.g. "sum ≤ 127") predicts whether an arbitrary pair
-   below the ceiling compiles. A consumer combining two large dimensions
-   still only learns the answer when that combination is first
-   instantiated — the failure mode is a compile error, never a
-   miscompilation.
+1. **`Const<N>` still detours through `TypeNum`.** nalgebra's `Const<T>`
+   reads `N` directly (Crozet, 2026). This module's `Const` arithmetic is
+   $O(\log N)$ via the binary tree, not $O(1)$ from the literal. Not yet
+   measured against crate build time.
+2. **Sparse `Const<N>: Dim` above 1024.** Flattened sizes in $1025..16383$
+   other than $2048, 4096, 8192, 16384$ have no `Dim` impl. Fill the gap only
+   if a consumer's `as_array::<N>()` bound requires it.
+3. **No type-level division or ordering beyond max/min.** `DimDiv` / `DimOrd`
+   stay open until a consumer needs them.
 
 ---
 
 ### 9. Development Plan
 
-| Phase / Feature                                     | Description                                                                                                                                                                                                                                         | Estimated Effort |
-|:----------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Phase 1: Core Encoding & Arithmetic (complete)**  | `Dim`, `DimAdd`/`DimSub`/`DimMul`/`DimMax`/`DimMin`, `Z`/`S<N>`, `Const<N>` bridge and the `U0..U32` alias macro already exist in `src/math/num_types.rs` with passing unit tests.                                                                  | —                |
-| **Phase 2: Ceiling Extension to `U127` (complete)** | `U33..U127` aliases generated and appended to the `generate_peano_aliases!` invocation; module doc ceiling description, dimension-value assertions and the recursion-limit test (pinned at `U125`, §6.1 item 3) moved to the new ceiling.           | —                |
-| **Phase 3: Storage/Matrix Integration**             | Wire `Dim` into the `Storage<T, R, C>` trait per `storage-subprograms-design.md` ST-FR-2, confirming the `U127` ceiling (C-1) and the pairwise-arithmetic boundary (C-2) are documented consistently at the first real call site.                   | Medium           |
-| **Phase 4: Verification Hardening (complete)**      | Asymmetric-pair boundary tests landed — passing sides as unit tests, failing sides as `compile_fail` doctests (§6.1, item 5) — closing Risk 4; `proptest`-based coverage of arithmetic identities deferred until more `Dim`-generic consumers land. | —                |
-| **Phase 5: Extended Arithmetic (conditional)**      | Evaluate `DimDiv`/`DimOrd` (Risk 3) once a concrete consumer needs them; not scheduled otherwise.                                                                                                                                                   | Small            |
+| Phase / Feature                                | Description                                                                                                                                                                          | Estimated Effort |
+|:-----------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Phase 1: Binary encoding and arithmetic**    | Replace `Z`/`S<N>` with `UTerm`/`UInt`/`B0`/`B1`; implement `Dim*` via private carry, shift-and-add, cmp, and trim; `Const` forwards through `TypeNum`; delete runtime constructors. | Complete         |
+| **Phase 2: Names and Const range**             | Sparse `U*` aliases (`U0..=U128` plus extras) as `TypeNum` projections. `impl Dim for Const<N>` for every C-1 $N$ via `{N/2}`, under the default `recursion_limit`.                  | Complete         |
+| **Phase 3: Verification and downstream**       | `U128 * U128 = U16384`; underflow `compile_fail`; `Const<N>: Dim` pin for a C-1 value with no `U*` alias; storage/model C-1 wording uses `Const`/`TypeNum`, not dense `U*`.          | Complete         |
+| **Phase 4: Type-level bitwise operations**     | `DimBitAnd`, `DimBitOr`, `DimBitXor` over `UTerm`, `UInt`, `Const<N>`, and `B0`/`B1` with leading-zero trimming and power-of-two static verification.                                | Complete         |
+| **Phase 5: Extended arithmetic (conditional)** | Evaluate `DimDiv`/`DimOrd` (Risk 3) once a consumer needs them.                                                                                                                      | Small            |
 
 ---
 
-### 10. Revision History
+### 10. References
 
-| Revision | Date            | Author          | Description                                                                                                                                              |
-|:---------|:----------------|:----------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 7, 2026  | @MitchellDScott | Initial draft backfilling design rationale for the existing `num_types.rs` module from research findings.                                                |
-| 1.1      | August 9, 2026  | @MitchellDScott | Review and corrections.                                                                                                                                  |
-| 1.2      | August 9, 2026  | @MitchellDScott | Raised the friendly-alias ceiling (C-1) from `U32` to `U127`                                                                                             |
-| 1.3      | August 10, 2026 | @MitchellDScott | Aligned §6.1 with the shipped `U125` `DimMul` pin; added pairwise boundary tests (unit + `compile_fail`) closing Risk 4; marked Phases 2 and 4 complete. |
+[1] paholg, *typenum* (Version 1.20.1). [Online]. Available:
+https://docs.rs/typenum/latest/typenum/. Accessed: Aug. 7, 2026.
+
+[2] paholg, *peano* (Version 1.0.2). [Online]. Available:
+https://docs.rs/peano/latest/peano/. Accessed: Aug. 7, 2026.
+
+[3] Rust Project, "RFC 2000: Const Generics," *Rust RFC Book*, 2017. [Online].
+Available: https://rust-lang.github.io/rfcs/2000-const-generics.html. Accessed:
+Aug. 7, 2026.
+
+[4] S. Crozet, "src/base/dimension.rs," in *dimforge/nalgebra*, 2026. [Online].
+Available: https://github.com/dimforge/nalgebra/blob/main/src/base/dimension.rs.
+Accessed: Aug. 7, 2026.
+
+[5] B. Kamiński and A. Trent, "ArrayLength," in *generic-array* (Version 1.4.4).
+[Online]. Available:
+https://docs.rs/generic-array/latest/generic_array/trait.ArrayLength.html.
+Accessed: Aug. 7, 2026.
+
+[6] Rust Project, "Glossary — Zero-sized type (ZST)," *The Rust Reference*,
+2026. [Online]. Available:
+https://doc.rust-lang.org/reference/glossary.html#zero-sized-type-zst. Accessed:
+Aug. 7, 2026.
+
+[7] Rust Project, "Type layout — The Rust representation," *The Rust Reference*,
+2026. [Online]. Available:
+https://doc.rust-lang.org/reference/type-layout.html#the-rust-representation.
+Accessed: Aug. 7, 2026.
+
+[8] Rust Project, "PhantomData," *std::marker* (Version 1.97.1). [Online].
+Available: https://doc.rust-lang.org/std/marker/struct.PhantomData.html.
+Accessed: Aug. 7, 2026.
+
+[9] Rust Project, "Version 1.51.0 (2021-03-25) — RELEASES.md," *rust-lang/rust*,
+2021. [Online]. Available:
+https://raw.githubusercontent.com/rust-lang/rust/1.51.0/RELEASES.md. Accessed:
+Aug. 7, 2026.
+
+[10] Rust Project, "recursion_limit," *The Rust Reference — Attributes*,
+2026. [Online]. Available:
+https://doc.rust-lang.org/reference/attributes/limits.html. Accessed: Aug. 7,
+2026.
 
 ---
 
-### 11. References
+### 11. Revision History
 
-[1] paholg, "typenum," docs.rs, v1.20.1, 2026. [Online].
-Available: https://docs.rs/typenum/latest/typenum/
-
-[2] paholg, "peano," docs.rs, v1.0.2, 2016. [Online].
-Available: https://docs.rs/peano/latest/peano/
-
-[3] Rust RFC Book, "RFC 2000: Const Generics," Rust Project, 2017. [Online].
-Available: https://rust-lang.github.io/rfcs/2000-const-generics.html
-
-[4] S. Crozet, "src/base/dimension.rs," dimforge/nalgebra, 2026. [Online].
-Available: https://github.com/dimforge/nalgebra/blob/main/src/base/dimension.rs
-
-[5] B. Kamiński and A. Trent, "ArrayLength," generic_array, docs.rs, v1.4.4,
-
-2026. [Online].
-      Available: https://docs.rs/generic-array/latest/generic_array/trait.ArrayLength.html
-
-[6] Rust Project, "Glossary — Zero-sized type (ZST)," The Rust Reference,
-
-2026. [Online].
-      Available: https://doc.rust-lang.org/reference/glossary.html#zero-sized-type-zst
-
-[7] Rust Project, "Type layout — The Rust representation," The Rust Reference,
-
-2026. [Online].
-      Available: https://doc.rust-lang.org/reference/type-layout.html#the-rust-representation
-
-[8] Rust Project, "PhantomData," std::marker, doc.rust-lang.org, v1.97.1,
-
-2026. [Online].
-      Available: https://doc.rust-lang.org/std/marker/struct.PhantomData.html
-
-[9] Rust Project, "Version 1.51.0 (2021-03-25) — RELEASES.md," rust-lang/rust,
-
-2021. [Online].
-      Available: https://raw.githubusercontent.com/rust-lang/rust/1.51.0/RELEASES.md
-
-[10] Rust Project, "recursion_limit," The Rust Reference — Attributes,
-
-doc.rust-lang.org, 2026. [Online].
-Available: https://doc.rust-lang.org/reference/attributes/limits.html
+| Revision | Date            | Author          | Description                                                                                                                                                                                                            |
+|:---------|:----------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 7, 2026  | @MitchellDScott | Initial draft backfilling design rationale for the existing `num_types.rs` module from research findings.                                                                                                              |
+| 1.1      | August 9, 2026  | @MitchellDScott | Review and corrections.                                                                                                                                                                                                |
+| 1.2      | August 9, 2026  | @MitchellDScott | Raised the friendly-alias ceiling (C-1) from `U32` to `U127`.                                                                                                                                                          |
+| 1.3      | August 10, 2026 | @MitchellDScott | Aligned §6.1 with the shipped `U125` `DimMul` pin; added pairwise boundary tests (unit + `compile_fail`) closing Risk 4; marked Phases 2 and 4 complete.                                                             |
+| 1.4      | August 22, 2026 | @MitchellDScott | Retargeted Alternative 3 and Phase 3 from deleted `storage-subprograms-design.md` onto `storage-design.md`.                                                                                                            |
+| 1.5      | August 22, 2026 | @MitchellDScott | Switched canonical encoding from Peano `Z`/`S<N>` to binary `UTerm`/`UInt`; dropped runtime `Const` constructors; alias range `U0..=U1024` plus powers of two through `U16384`.                                      |
+| 1.6      | August 22, 2026 | @MitchellDScott | Refactored type alias definitions from a generated static file to a compact, paired macro call (`generate_binary_aliases!`) to prevent code bloat and simplify file structure.                                       |
+| 1.7      | August 22, 2026 | @MitchellDScott | Split C-1 onto `Const<N>: Dim` (`0..=1024` plus extras); FR-4 is a convenience `U*` subset; unnamed C-1 values use `<Const<N> as Dim>::TypeNum`. Rewrote §4 to binary encoding and generation limits.              |
+| 1.8      | August 23, 2026 | @MitchellDScott | Collapsed `Cmp` into a single blanket `PrivateCmp` rule; moved `SelectBit` into `mod private`; batch-generated full contiguous `Const<0..=1024>` range and aliases; marked Phases 2 and 3 complete.                    |
+| 1.9      | August 23, 2026 | @MitchellDScott | Added FR-5 specification, architecture, and verification plan for type-level bitwise operations (`DimBitAnd`, `DimBitOr`, `DimBitXor`).                                                                               |
+| 1.10     | August 23, 2026 | @MitchellDScott | Added C-3 constraint requiring `Const<N> * Const<M>` to be representable as a valid `Const` in C-1 for the multiplication operator to be implemented.                                                                  |
+| 1.11     | August 23, 2026 | @MitchellDScott | Moved the public/private flowchart into §3 Technical Overview (Figure 1). Split §4 Architecture into encoding, operators, Const bridge, naming, and generation subsections.                                           |
+| 1.12     | August 23, 2026 | @MitchellDScott | Added nalgebra/typenum architectural comparison (deferred vs upfront structural bounds) to §5 Alternatives (item 8) and compile-time validation check to §6.1 (item 7).                                               |
+| 1.13     | August 23, 2026 | @MitchellDScott | Grounded citations across all sections, corrected section heading hierarchy and numbering (§10 References, §11 Revision History), cleaned broken revision table formatting, and verified contract alignment with `num_types.rs`. |

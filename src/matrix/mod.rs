@@ -34,8 +34,9 @@ use crate::math::num_traits::{One, Scalar, Zero};
 use crate::math::num_types::{Const, Dim};
 use crate::math::ops::{Add, Mul, Neg, Sub};
 use crate::math::storage::{
-    ArrayStorage, ColMajor, ContiguousStorage, ContiguousStorageMut, RowMajor,
-    Storage, StorageInit, StorageMut, StorageView,
+    ArrayStorage, ColMajor, ContiguousStorage, ContiguousStorageMut,
+    DenseStorage, DenseStorageMut, RowMajor, Storage, StorageInit, StorageMut,
+    StorageView,
 };
 use core::marker::PhantomData;
 
@@ -178,7 +179,9 @@ impl<T, R: Dim, C: Dim, S: StorageMut<T, R, C>> Matrix<T, R, C, S> {
     }
 }
 
-impl<T, R: Dim, C: Dim, S: ContiguousStorage<T, R, C>> Matrix<T, R, C, S> {
+impl<T, R: Dim, C: Dim, S: Storage<T, R, C> + ContiguousStorage<T>>
+    Matrix<T, R, C, S>
+{
     /// Exposes a safe contiguous slice view of matrix memory.
     #[must_use]
     pub fn as_slice(&self) -> &[T] {
@@ -186,7 +189,9 @@ impl<T, R: Dim, C: Dim, S: ContiguousStorage<T, R, C>> Matrix<T, R, C, S> {
     }
 }
 
-impl<T, R: Dim, C: Dim, S: ContiguousStorageMut<T, R, C>> Matrix<T, R, C, S> {
+impl<T, R: Dim, C: Dim, S: StorageMut<T, R, C> + ContiguousStorageMut<T>>
+    Matrix<T, R, C, S>
+{
     /// Exposes a safe mutable contiguous slice view of matrix memory.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         self.storage.as_mut_slice()

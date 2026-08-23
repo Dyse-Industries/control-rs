@@ -82,8 +82,9 @@ architecture:
 - **C-3 — Coefficient Ordering**: Coefficients are stored in ascending order of
   powers, a logical indexing rule independent of storage physical layout.
 - **C-4 — Capacity Bound**: Maximum polynomial capacity (coefficient count $N$)
-  is bounded by the `U127` Peano ceiling ($N \le 127$, ~1KB stack footprint for
-  `f64`). Max representable degree is 126.
+  is bounded by `Const<N>: Dim` in `num-types-design.md` C-1 ($N \le 1024$).
+  Max representable degree is 1023. Stack footprint, not the trait solver, limits
+  larger degrees.
 
 ---
 
@@ -293,7 +294,8 @@ provides two interfaces:
    hardware-optimized DSP kernels. `Convolution<T>` is shipped code
    bound on `T: Float`. The default implementation (`convolve_input`)
    verifies length bounds statically or returns
-   `Err(LinAlgError::DimensionMismatch)`,
+   `Err(ConversionError::DimensionMismatch)`
+   (`error-design.md` FR-3),
    guaranteeing a panic-free execution path under release optimization.
 
 #### 4.6. Core Operations
@@ -407,7 +409,7 @@ Converts flat coefficient data into a 1D `Tensor<T, Layout, B>`, mirroring
 ##### 4.8.1. Compile-Time Constraints
 
 Capacity mismatches during polynomial arithmetic are rejected at compile
-time via Peano type constraints, the same mechanism `matrix-design.md`
+time via `Dim` type constraints, the same mechanism `matrix-design.md`
 §4.9.1 uses for `Matrix` dimension mismatches.
 
 ##### 4.8.2. Runtime Error Taxonomy
@@ -519,7 +521,7 @@ trigger.
 #### 6.1. Verification Strategy
 
 1. **Compile-Time Verification**: Capacity/degree mismatches are rejected
-   by Peano type constraints (§4.8.1), eliminating a class of runtime
+   by `Dim` type constraints (§4.8.1), eliminating a class of runtime
    bounds errors before they compile.
 2. **Host/Target Tests**: Unit tests executed on host and qemu targets,
    matching `matrix-design.md` §6.1's testing tiers.
@@ -704,5 +706,7 @@ pub fn evaluate_trajectory(time_sec: f32) -> f32 {
 | 1.19     | August 19, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.21 (Approved). Struct bound lowered to `BlasStorage<T, N, U1>` with `MatrixStorage` required per `impl` block, mirroring `matrix-design.md` §4.1.1; recorded that a single column reaches only the leading-dimension branch (`type LDA = Const<N>`) and has no packed analogue. Added the level-1 operand contract (`as_array::<N>()`, `INC_X = 1`, `BUF_X = N`) as FR-5 and moved Horner evaluation onto it (§4.3, §4.6); relaxed the companion conversion to `BlasStorage`; reframed §5.4 as the companion-versus-column-copy tradeoff; added operand and release-codegen verification (§6.1); corrected stale requirement IDs (`ST-NFR-1`, `NFR-3`) and removed draft-revision narration from §7. |
 | 1.20     | August 20, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.31: packed branch is `PackedStorage` with Phase-1 `Diagonal` and planned `SP`/`TP`; still no $N \times 1$ packed analogue. |
 | 1.21     | August 20, 2026 | @mitchelldscott | Renamed `BlasStorage` -> `MatrixStorage` (universal floor) and the prior `MatrixStorage` -> `DenseStorage` (leading-dimension branch), matching `storage-subprograms-design.md` Rev 1.31 and `matrix-design.md` Rev 1.31; updated §1, struct bound, and companion-conversion bound. |
+| 1.22     | August 22, 2026 | @MitchellDScott | `Convolution` length failure returns `ConversionError::DimensionMismatch`, not `LinAlgError::DimensionMismatch` (`error-design.md` FR-3). Storage hierarchy citations remain on the deleted `storage-subprograms-design.md`; this document stays Draft pending a dedicated retarget to `storage-design.md`. |
+| 1.23     | August 22, 2026 | @MitchellDScott | C-4 capacity bound cites `Const<N>: Dim` (`num-types-design.md` C-1), not a dense `U*` alias range. |
 
 ---

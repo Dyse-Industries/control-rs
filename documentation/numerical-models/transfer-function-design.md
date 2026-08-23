@@ -1,7 +1,7 @@
 # Transfer Function Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_20,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
+![Date Badge](https://img.shields.io/badge/Date-August_22,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -18,8 +18,8 @@ Following the core architecture of `control-rs`, `TransferFunction` is a *
 backends (`DenseStorage<T, N, U1>` and `DenseStorage<T, D, U1>`). It does *
 *not** wrap
 `Polynomial` objects under the hood; instead, it operates directly on numerator
-and denominator storage memory via lower-level Peano dimension traits (
-`num_types.rs`), DSP subprogram traits (such as convolution and polynomial
+and denominator storage memory via lower-level `Dim` traits (
+`num_types`), DSP subprogram traits (such as convolution and polynomial
 evaluation) and BLAS kernels. Built-in operations delegate directly to the
 single-source
 subprogram kernels in `src/math/subprograms.rs`, while providing easy conversion
@@ -63,7 +63,7 @@ matrix form).
 - **C-2 — Non-Zero Leading Denominator**: Leading denominator coefficient $d_D$
   must be non-zero ($d_D \neq 0$).
 - **C-3 — Capacity Bound**: Numerator and denominator polynomial capacities are
-  bounded by the `U127` Peano ceiling ($N, D \le 127$).
+  bounded by `Const<N>: Dim` in `num-types-design.md` C-1 ($N, D \le 1024$).
 
 ---
 
@@ -73,7 +73,7 @@ matrix form).
 numerator storage `Sn` and denominator storage `Sd`. Rather than layering
 abstractions, `TransferFunction` interacts directly with:
 
-- **`crate::math::num_types`**: Peano arithmetic (`DimAdd`, `DimSub`, `U1`,
+- **`crate::math::num_types`**: Binary type-level arithmetic (`DimAdd`, `DimSub`, `U1`,
   etc.) for compile-time shape verification.
 - **`crate::math::subprograms`**: BLAS Level 1/2/3 subprograms (`AXPY`, `SCAL`,
   `GEMV`, `GEMM`) and DSP helpers (`CONV`, Horner's evaluation).
@@ -425,7 +425,7 @@ than implemented in the initial revision.
 |:----------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------|
 | **Wrapping `Polynomial`**               | Reuses existing polynomial methods.                                                                                                                                                                               | Breaks container peer model; adds artificial coupling; forces extra abstraction layers — the same rationale `state-space-design.md` uses to reject wrapping `Matrix` fields directly.                 | **Rejected** |
 | **Second-Order-Sections (SOS) Cascade** | Standard embedded-DSP answer to coefficient sensitivity growing with filter order (ARM CMSIS-DSP `BiquadCascadeDF2T`; Rust `biquad` crate); bounds conditioning per-stage rather than across the full polynomial. | Cannot represent an arbitrary rational transfer function, only designed filters reducible to cascaded biquads; would require a structurally different type from this general $N/D$ container.         | **Rejected** |
-| **Direct Storage Wrapper (Chosen)**     | Symmetric with `Matrix` and `Polynomial`; zero cost; direct access to Peano/DSP/BLAS; supports views and ROM storage.                                                                                             | Requires implementing evaluation and convolution calls against storage directly; flat coefficient representation inherits the coefficient-sensitivity growth SOS is designed to avoid, at high order. | **Selected** |
+| **Direct Storage Wrapper (Chosen)**     | Symmetric with `Matrix` and `Polynomial`; zero cost; direct access to `Dim`/DSP/BLAS; supports views and ROM storage.                                                                                              | Requires implementing evaluation and convolution calls against storage directly; flat coefficient representation inherits the coefficient-sensitivity growth SOS is designed to avoid, at high order. | **Selected** |
 
 ---
 
@@ -599,3 +599,5 @@ than implemented in the initial revision.
 | 1.14     | August 18, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.11–1.12: `ArrayTransferFunction<T, const N, const D>` over `DenseVectorArray`; MIMO alias is `ArrayMatrix<ArrayTransferFunction<...>, R, C>`; `from_slices` replaced by FR-6 `view()`. |
 | 1.15     | August 18, 2026 | @mitchelldscott | Propagated storage Rev 1.16: `TransferFunctionView`/`ViewMut` take `const N, D` over `DenseVectorRef`. |
 | 1.16     | August 20, 2026 | @mitchelldscott | Renamed `BlasStorage`/`BlasStorageMut` -> `MatrixStorage`/`MatrixStorageMut` (universal floor) and the prior `MatrixStorage`/`MatrixStorageMut` (leading-dimension branch) -> `DenseStorage`/`DenseStorageMut`, matching `storage-subprograms-design.md` Rev 1.31 and `matrix-design.md` Rev 1.31; updated §1, §3, §4.1, §4.3, §4.7, §4.8, §4.9. Noted `PackedStorage` does not apply to `Sn`/`Sd` (§3), mirroring `polynomial-design.md`. Intervening storage-subprograms-design.md revisions (1.17–1.33) introduce no other call-site changes here: this document names no `level1`/`level2`/`level3` trait directly. |
+| 1.17     | August 22, 2026 | @MitchellDScott | Reverted Doc Status to Draft. Body still cites deleted `storage-subprograms-design.md`; retarget onto `storage-design.md` / `subprograms-design.md` is a dedicated pass. |
+| 1.18     | August 22, 2026 | @MitchellDScott | C-3 capacity bound cites `Const<N>: Dim` (`num-types-design.md` C-1), not a dense `U*` alias range. |

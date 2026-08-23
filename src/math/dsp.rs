@@ -4,7 +4,11 @@
 //!   * [ ] remove index slicing
 
 use crate::math::{
-    Bijection, Map, complex_num::Complex, num_traits::Float, ops::Neg, storage,
+    Bijection, Map,
+    complex_num::Complex,
+    num_traits::{Float, Scalar},
+    ops::Neg,
+    storage,
 };
 
 type ComplexArrayMut<T, const N: usize> = [Complex<T>; N];
@@ -167,8 +171,8 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
 /// This trait defines the interface for performing convolution between two signals.
 ///
 /// # Generic Arguments
-/// * `T` - The numeric type of the elements.
-pub trait Convolution<T: Float> {
+/// * `T` - The numeric type of the elements (must implement `Scalar`).
+pub trait Convolution<T: Scalar> {
     /// Computes the convolution of two signals.
     ///
     /// * Fewer Writes: By calculating `y\[n\]` directly using `k_min` and `k_max`, the method writes to the output
@@ -176,8 +180,6 @@ pub trait Convolution<T: Float> {
     /// * Bounds Safety: The indices for k (`k_min` and `k_max`) ensure that both k remains within
     ///   `[0, input.len()]` and n - k remains within `[0, kernel.len()]`, guaranteeing no out-of-bounds
     ///   panics during the inner loop computation.
-    /// * Traits: This assumes T: Float implies something akin to `num_traits::Float` (which provides
-    ///   `T::zero()` and standard operator overloading).
     ///
     /// # Arguments
     /// * `input` - The input signal.
@@ -211,7 +213,7 @@ pub trait Convolution<T: Float> {
 
         // Calculate the convolution sum: y[n] = sum(x[k] * h[n-k])
         for n in 0..expected_len {
-            let mut sum = T::zero();
+            let mut sum = T::ZERO;
 
             // Determine the valid range for k to ensure indices stay within bounds
             let k_min = n.saturating_sub(kernel_len - 1);

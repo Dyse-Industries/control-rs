@@ -24,9 +24,9 @@ bare-metal embedded platforms.
 
 | Model                | Capacity         | Applications                            | Algorithms                                           |
 |:---------------------|:-----------------|:----------------------------------------|:-----------------------------------------------------|
-| **Polynomial**       | 127 coeffs       | Filtering, trajectories, discretization | Horner (FMA), Tustin                                 |
+| **Polynomial**       | 1024 coeffs      | Filtering, trajectories, discretization | Horner (FMA), Tustin                                 |
 | **Matrix**           | 128×128          | State-space, observability, MIMO        | Type-level dims, Faddeev–LeVerrier $p(x)=\det(xI-A)$ |
-| **Tensor**           | 127 elems        | Spatial grids, Edge AI, multi-dim LTI   | Column-major layout, in-place `contract_into`        |
+| **Tensor**           | 1024 elems       | Spatial grids, Edge AI, multi-dim LTI   | Column-major layout, in-place `contract_into`        |
 | **TransferFunction** | Polynomial-bound | SISO/MIMO $H(s)$, $H(z)$                | Storage-backed Horner; series / parallel / feedback  |
 | **StateSpace**       | Matrix-bound     | Continuous/discrete LTI, Kalman, LQR    | Zero-copy `MatrixView`; ZOH / Tustin                 |
 

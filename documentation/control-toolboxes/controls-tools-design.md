@@ -35,7 +35,7 @@ The following are binding constraints on `classical_tools`, `modern_tools`,
 #### 2.1 Non-Functional Requirements
 
 - **NFR-1 — Compile-Time Verification**: Toolbox modules rely on the crate's
-  Peano const-generic dimension checking to catch shape errors at build time,
+  type-level `Dim` checking to catch shape errors at build time,
   not a runtime MIL/SIL/PIL pipeline.
 
 #### 2.2 Constraints
@@ -90,7 +90,7 @@ another."
 `StateSpace`, `Polynomial`, `Matrix` and `Tensor` are authored directly in
 Rust against the `Storage` trait; its differentiator relative to the other
 native-authoring tools is compile-time dimensional verification via
-Peano-arithmetic const generics, which the generate-for-target tools obtain
+type-level `Dim` const generics, which the generate-for-target tools obtain
 instead through post-hoc SIL/PIL numerical-equivalence testing (MathWorks,
 2026).
 
@@ -117,7 +117,7 @@ between the modeling environment and the deployed target (MathWorks,
 2026). `control-rs` catches an overlapping but distinct class of errors —
 matrix-dimension mismatches, state-space dimension mismatches, storage
 layout mismatches — at `rustc` compile time via the crate's existing
-Peano-arithmetic `Dim` system, at zero runtime cost, before any MIL/SIL/PIL
+binary `Dim` system, at zero runtime cost, before any MIL/SIL/PIL
 pass would run. This is complementary to, not
 a replacement for, the crate's own `control-rs-hil` runtime test harness;
 it removes an entire class of runtime shape-mismatch and allocation-panic
