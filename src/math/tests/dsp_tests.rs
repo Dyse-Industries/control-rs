@@ -6,7 +6,9 @@
 #[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod dsp_test_suite {
     use crate::math::{
-        Bijection, Map, complex_num::Complex, dsp::Convolution, dsp::FFT,
+        Bijection, Map,
+        complex_num::Complex,
+        dsp::{Continuous, Convolution, Discrete, FFT},
         num_traits::Trig,
     };
 
@@ -15,6 +17,10 @@ pub mod dsp_test_suite {
 
     struct TestConvolution;
     struct TestFFT;
+    struct DummyContinuous;
+    struct DummyDiscrete {
+        dt: f64,
+    }
 
     impl<T: crate::math::num_traits::Float> Convolution<T> for TestConvolution {}
 
@@ -26,6 +32,26 @@ pub mod dsp_test_suite {
             + Default,
     > FFT<T> for TestFFT
     {
+    }
+
+    impl Continuous<f64> for DummyContinuous {
+        type Discrete = DummyDiscrete;
+
+        fn discretize(&self, dt: f64) -> Self::Discrete {
+            DummyDiscrete { dt }
+        }
+    }
+
+    impl Discrete<f64> for DummyDiscrete {
+        type Continuous = DummyContinuous;
+
+        fn sampling_period(&self) -> f64 {
+            self.dt
+        }
+
+        fn to_continuous(&self) -> Self::Continuous {
+            DummyContinuous
+        }
     }
 
     // --- Convolution Tests ---
@@ -156,5 +182,19 @@ pub mod dsp_test_suite {
         let freq_signal = fft.evaluate(time_signal);
         let recovered: [f64; 4] = fft.evaluate_inverse(freq_signal);
         assert!((recovered[0] - 1.0_f64).abs() < 1e-6);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies Continuous/Discrete associated-type round-trip and Map wiring.
+    fn test_dsp_continuous_discrete_roundtrip() {
+        let plant = DummyContinuous;
+        let dt = 0.01_f64;
+        let sampled = plant.discretize(dt);
+        assert!((sampled.sampling_period() - dt).abs() < TOLERANCE);
+
+        let mapped: DummyDiscrete = plant.evaluate(dt);
+        assert!((mapped.sampling_period() - dt).abs() < TOLERANCE);
+
+        let _ = sampled.to_continuous();
     }
 }

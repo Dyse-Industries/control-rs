@@ -43,11 +43,6 @@ impl<T> Complex<T> {
     }
 
     /// Creates a new complex number from real and imaginary parts.
-    ///
-    /// # Arguments
-    ///
-    /// * `re` - The real part.
-    /// * `im` - The imaginary part.
     #[must_use]
     pub const fn new(re: T, im: T) -> Self {
         Self { re, im }
@@ -58,18 +53,12 @@ impl<T> Complex<T> {
 
 impl<T: Zero> Complex<T> {
     /// Creates a new complex number from the imaginary part, with the real set to zero.
-    ///
-    /// # Arguments
-    /// * `im` - The imaginary component.
     #[must_use]
     pub fn from_imag(im: T) -> Self {
         Self::new(T::zero(), im)
     }
 
     /// Creates a complex number from the real part, with the imaginary part set to zero.
-    ///
-    /// # Arguments
-    /// * `re` - The real component.
     #[must_use]
     pub fn from_real(re: T) -> Self {
         Self::new(re, T::zero())
@@ -85,11 +74,7 @@ impl<T: Float> Complex<T> {
         self.im.atan2(self.re)
     }
 
-    /// Creates a new complex number from polar coordinates.
-    ///
-    /// # Arguments
-    /// * `r` - magnitude of the number.
-    /// * `theta` - phase of the number.
+    /// Creates a new complex number from polar coordinates (`r`, `theta`).
     #[must_use]
     #[allow(clippy::arithmetic_side_effects)]
     pub fn from_polar(r: T, theta: T) -> Self {
@@ -102,11 +87,7 @@ impl<T: Float> Complex<T> {
         self.re.hypot(self.im)
     }
 
-    /// Creates a pair of polar coordinates from self.
-    ///
-    /// # Returns
-    /// * `r` - magnitude of the number.
-    /// * `theta` - phase of the number.
+    /// Creates a pair of polar coordinates `(r, theta)` from self.
     #[must_use]
     pub fn to_polar(self) -> (T, T) {
         (self.clone().magnitude(), self.arg())
@@ -310,7 +291,7 @@ impl<T: Neg<Output = T>> Conjugate for Complex<T> {
 
 impl<T> Scalar for Complex<T>
 where
-    T: Scalar<Real = T> + Neg<Output = T>,
+    T: Scalar<Real = T> + Neg<Output = T> + PartialOrd,
 {
     type Real = T;
 
@@ -333,17 +314,6 @@ where
     #[inline(always)]
     fn re(&self) -> Self::Real {
         self.re.clone()
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl<T: PartialOrd> PartialOrd for Complex<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        match self.re.partial_cmp(&other.re) {
-            Some(core::cmp::Ordering::Equal) => self.im.partial_cmp(&other.im),
-            ord => ord,
-        }
     }
 }
 

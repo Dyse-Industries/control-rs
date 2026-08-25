@@ -1,6 +1,6 @@
 # Controls Ecosystem Positioning (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_8,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -9,8 +9,9 @@
 ### 1. Introduction
 
 `control-rs` authors `TransferFunction`, `StateSpace`, `Polynomial`, `Matrix`,
-and `Tensor` models directly in Rust against a hardware-agnostic `Storage`
-trait, compiling to `no_std`/`no_alloc` targets without an intermediate
+and `Tensor` models directly in Rust against the hardware-agnostic storage
+traits of `storage-design.md`, compiling to `no_std`/`no_alloc` targets
+without an intermediate
 export or code-generation step. The `classical_tools`, `modern_tools`,
 `robust_tools` and `nonlinear_tools` modules extend this same primitive set
 toward classical, modern, robust and nonlinear control design.
@@ -78,7 +79,7 @@ another."
   existing Rust `no_std` control crates (`minikalman`, `adskalman`,
   `pid-ctrl`) write the control law directly against the target's runtime
   abstraction — Eigen/C++ objects for CT (Giftthaler et al., 2018), AP_HAL
-  for ArduPilot or a `Storage`-backed type for `control-rs`.
+  for ArduPilot or a `DenseStorage`-backed type for `control-rs`.
 - **Generate-for-target pole**: Simulink Embedded Coder, acados, FORCES
   Pro, CVXGEN and SymForce's PX4 EKF2 integration formulate the problem
   in a workstation-class symbolic or modeling environment (CasADi,
@@ -88,7 +89,7 @@ another."
 
 `control-rs` sits at the native-authoring pole. `TransferFunction`,
 `StateSpace`, `Polynomial`, `Matrix` and `Tensor` are authored directly in
-Rust against the `Storage` trait; its differentiator relative to the other
+Rust against the storage traits; its differentiator relative to the other
 native-authoring tools is compile-time dimensional verification via
 type-level `Dim` const generics, which the generate-for-target tools obtain
 instead through post-hoc SIL/PIL numerical-equivalence testing (MathWorks,
@@ -298,3 +299,4 @@ preprint*, arXiv:2003.00292, 2020.
 |:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------|
 | 1.0      | August 8, 2026 | @MitchellDScott | Initial draft positioning control-rs against major control toolboxes; states native-authoring and no_alloc constraints. |
 | 1.1      | August 8, 2026 | @MitchellDScott | Removed fabricated self-citations per review feedback; replaced with primary-source citations; renumbered References.   |
+| 1.2      | August 24, 2026 | @mitchelldscott | Retargeted the flat `Storage` trait references (§1, §4.1, §4.2) onto the storage traits of `storage-design.md` Rev 1.8. Positioning content unchanged. Status stays Draft. |

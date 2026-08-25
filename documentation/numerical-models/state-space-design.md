@@ -1,6 +1,6 @@
 # State-Space Model Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_22,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -38,7 +38,7 @@ wrappers: it avoids redundant type-wrapper parameters on every field and it
 lets each matrix ($A$, $B$, $C$, $D$) opt into a different storage strategy
 independently without changing the `StateSpace` signature (see §5, Alternative
 C). The concrete payoff: a zero-sized storage backend can specialize a
-structurally zero $D$ matrix, eliminating one `GEMM` per `step()` for any
+structurally zero $D$ matrix, eliminating one `Gemm` per `step()` for any
 strictly proper plant.
 
 Among the four Rust control/estimation crates surveyed during research
@@ -126,30 +126,39 @@ It integrates cleanly with existing `control-rs` modules:
 
 - **`crate::math::num_types`**: Binary type-level arithmetic (`Dim`, `DimAdd`, `DimSub`,
   `DimMul`, `U1`, etc.) for compile-time shape verification.
-- **`crate::math::storage`**: Storage traits (`Buffer`, `BufferMut`,
-  `MatrixStorage`, `MatrixStorageMut`, `DenseStorage`, `DenseStorageMut`,
-  `Dense`). `PackedStorage` (`storage-subprograms-design.md` §4.1.4) is out
-  of scope here: none of $A$, $B$, $C$, $D$ are structured (diagonal,
-  symmetric or triangular) in the general case this document targets, and
-  the structurally zero $D$ specialization (§1, §5) is handled by a
-  zero-sized `MatrixStorage` leaf, not a packed one.
+- **`crate::math::storage`**: The dense strided subsystem
+  (`DenseStorage`, `DenseStorageMut`, `ContiguousStorage`,
+  `ContiguousStorageMut`, `ArrayStorage`, `ViewStorage`;
+  `storage-design.md` FR-1 to FR-6). The packed subsystem
+  (`storage-design.md` FR-7 to FR-10) is out of scope here: none of $A$,
+  $B$, $C$, $D$ are structured (diagonal, symmetric or triangular) in the
+  general case this document targets, and the structurally zero $D$
+  specialization (§1, §5) is handled by a zero-sized `DenseStorage` leaf,
+  not a packed one. The sparse subsystem (FR-11 to FR-15) is likewise
+  unclaimed; see §7 for the open scoping question it raises for sparse
+  plant dynamics.
 - **`crate::math::matrix`**: `Matrix<T, R, C, S>`, `MatrixSlice<'a, T, R, C>`
   and `MatrixSliceMut<'a, T, R, C>` for safe, high-level matrix operations.
-  These accessors (§4.3) are layout-agnostic per `storage-subprograms-design.md`
-  §4.1: `a_matrix()`/`b_matrix()`/`c_matrix()`/`d_matrix()` and the
+  These accessors (§4.3) are layout-agnostic per `storage-design.md`
+  §4.1, where ordering is carried by the leaf's `isize` strides rather than
+  by a layout flag: `a_matrix()`/`b_matrix()`/`c_matrix()`/`d_matrix()` and the
   arithmetic `step()`/`derivative()` build on top of never assume
   `Sa`/`Sb`/`Sc`/`Sd` are column-major — swapping any one of them for a
   row-major backend requires no change here.
-- **`crate::math::subprograms`**: BLAS Level 1/2/3 kernels (`GEMV`, `GEMM`,
-  `AXPY`). Solves (§4.4, §4.7, §4.9) are performed via forward/backward
-  substitution over triangular factors (`matrix-design.md` §4.10.1), not a
-  dedicated `TRSM` trait — no such trait exists in `subprograms.rs` or is
-  specified elsewhere in this document family; a prior revision of this
-  section referenced one in error.
+- **`crate::math::subprograms`**: BLAS Level 1/2/3 kernels (`Gemv`, `Gemm`,
+  `Axpy`) and the LAPACK factorization and solver traits
+  (`Getrf`/`Getrs`, `Potrf`/`Potrs`, `Geqrf`, `Syev`/`Heev`;
+  `subprograms-design.md` FR-6 to FR-8). Solves (§4.4, §4.7, §4.9) call
+  those traits rather than re-implementing substitution;
+  `Trsv` and `Trsm` both exist in `subprograms-design.md` FR-2 and FR-4 and
+  are available where a bare triangular solve is wanted.
 
 Transcendental operations required by §4.8/§4.9 (matrix exponential scaling
-factors, `tan` for Tustin pre-warping) are bounded against `Float`
-in `crate::math::num_traits`. `num-traits-design.md` is **Approved** (Rev 1.4).
+factors, `tan` for Tustin pre-warping) project onto `T::Real`, which the
+analytic traits `Radical`, `Exponential` and `Trig` cover
+(`num-traits-design.md` §4.1). `T: Float` is `f32`/`f64` only and is not a
+bound that admits `Complex<T>` (FR-5), so those sites bind
+`T: Scalar + Div` with `T::Real: Trig` rather than `T: Float`.
 
 ---
 
@@ -158,17 +167,17 @@ in `crate::math::num_traits`. `num-traits-design.md` is **Approved** (Rev 1.4).
 #### 4.1 Type Signature & Storage Layout
 
 ```rust
-// Dim-generic core. Owning defaults cannot be `DenseArray<T, NX, NX>`:
-// that alias takes bare `const usize` parameters, not `Dim` types.
+// Dim-generic core. Owning defaults cannot be `ArrayStorage<T, NX, NX>`:
+// that leaf takes bare `const usize` parameters, not `Dim` types.
 pub struct StateSpaceCore<
     T,
     NX: Dim,
     NU: Dim,
     NY: Dim,
-    Sa: DenseStorage<T, NX, NX>,
-    Sb: DenseStorage<T, NX, NU>,
-    Sc: DenseStorage<T, NY, NX>,
-    Sd: DenseStorage<T, NY, NU>,
+    Sa: DenseStorage<T, R = NX, C = NX>,
+    Sb: DenseStorage<T, R = NX, C = NU>,
+    Sc: DenseStorage<T, R = NY, C = NX>,
+    Sd: DenseStorage<T, R = NY, C = NU>,
 > {
     a_storage: Sa,
     b_storage: Sb,
@@ -213,10 +222,10 @@ pub type StateSpaceView<'a, T, const NX: usize, const NU: usize, const NY: usize
     Const<NX>,
     Const<NU>,
     Const<NY>,
-    DenseRef<'a, T, NX, NX>,
-    DenseRef<'a, T, NX, NU>,
-    DenseRef<'a, T, NY, NX>,
-    DenseRef<'a, T, NY, NU>,
+    ViewStorage<'a, T, Const<NX>, Const<NX>>,
+    ViewStorage<'a, T, Const<NX>, Const<NU>>,
+    ViewStorage<'a, T, Const<NY>, Const<NX>>,
+    ViewStorage<'a, T, Const<NY>, Const<NU>>,
 >;
 
 /// Zero-copy borrowed mutable view.
@@ -225,23 +234,22 @@ pub type StateSpaceViewMut<'a, T, const NX: usize, const NU: usize, const NY: us
     Const<NX>,
     Const<NU>,
     Const<NY>,
-    DenseRefMut<'a, T, NX, NX>,
-    DenseRefMut<'a, T, NX, NU>,
-    DenseRefMut<'a, T, NY, NX>,
-    DenseRefMut<'a, T, NY, NU>,
+    ViewStorageMut<'a, T, Const<NX>, Const<NX>>,
+    ViewStorageMut<'a, T, Const<NX>, Const<NU>>,
+    ViewStorageMut<'a, T, Const<NY>, Const<NX>>,
+    ViewStorageMut<'a, T, Const<NY>, Const<NU>>,
 >;
 ```
 
-`Dense` views are themselves contiguous storage
-backends and implement `MatrixStorage`/`MatrixStorageMut`
-(`matrix-design.md` §5.4). `StateSpaceView`'s `a_matrix()` (§4.3) therefore
+`ViewStorage`/`ViewStorageMut` are themselves `DenseStorage` implementors
+(`storage-design.md` FR-5), so `StateSpaceView`'s `a_matrix()` (§4.3)
 constructs a `MatrixSlice` directly over the existing borrowed view rather
 than performing a redundant copy — the accessor borrows straight through, it
-does not re-wrap. Built-in time-domain simulation methods (`step()`,
-`derivative()`)
-delegate directly to the single-source subprogram kernels (`GEMV`, `AXPY`)
-defined in
-`src/math/subprograms.rs`.
+does not re-wrap. Views are strided, not necessarily contiguous, so they
+carry no `as_slice()`; the accessors that need one bound
+`ContiguousStorage` separately (§4.3). Built-in time-domain simulation
+methods (`step()`, `derivative()`) delegate directly to the single-source
+subprogram kernels (`Gemv`, `Axpy`) defined in `src/math/subprograms.rs`.
 
 #### 4.3 Safe `Matrix` Integration & Zero-Copy Matrix Views
 
@@ -250,16 +258,16 @@ While data is stored inside storage backends (`Sa`, `Sb`, `Sc`, `Sd`),
 view
 or `MatrixSlice`, enabling full reuse of `Matrix` operations (multiplication,
 addition, transposition, solver routines). Per §4.1 and NFR-2, these accessors are
-bounded on `MatrixStorage`/`MatrixStorageMut`:
+bounded on `DenseStorage`/`DenseStorageMut`:
 
 ```rust
 impl<T, const NX: usize, const NU: usize, const NY: usize, Sa, Sb, Sc, Sd>
     StateSpaceCore<T, Const<NX>, Const<NU>, Const<NY>, Sa, Sb, Sc, Sd>
 where
-    Sa: MatrixStorage<T, Const<NX>, Const<NX>>,
-    Sb: MatrixStorage<T, Const<NX>, Const<NU>>,
-    Sc: MatrixStorage<T, Const<NY>, Const<NX>>,
-    Sd: MatrixStorage<T, Const<NY>, Const<NU>>,
+    Sa: DenseStorage<T, R = Const<NX>, C = Const<NX>>,
+    Sb: DenseStorage<T, R = Const<NX>, C = Const<NU>>,
+    Sc: DenseStorage<T, R = Const<NY>, C = Const<NX>>,
+    Sd: DenseStorage<T, R = Const<NY>, C = Const<NU>>,
 {
     /// Exposes system matrix A as a high-level Matrix view.
     pub fn a_matrix(&self) -> MatrixSlice<'_, T, NX, NX> {
@@ -337,11 +345,13 @@ matching the posture already adopted for `TransferFunction::evaluate_complex`
       sample_time: Option<T>,
   ) -> ArrayStateSpace<T, NX, NU, NY>
   ```
-  Nested arrays match `Array2` (`storage-subprograms-design.md` §4.1.1).
-  Lengths are the alias's own const generics, not `Dim::USIZE` products.
-- **Borrowed views**: `ArrayStateSpace::view()` / `view_mut()` (FR-6). There
-  is no `from_slices(&[T], ...)` constructor that pairs independent `Dim`
-  shapes with raw slices.
+  Nested arrays match `ArrayStorage`'s `[[T; R]; C]` buffer
+  (`storage-design.md` FR-4). Lengths are the alias's own const generics,
+  not `Dim::USIZE` products.
+- **Borrowed views**: `ArrayStateSpace::view()` / `view_mut()`
+  (`storage-design.md` FR-5). Wrapping an erased-length slice goes through
+  `ViewStorage::new`, which is fallible with
+  `ConversionError::DimensionMismatch`.
 
 #### 4.6 State Propagation & Time-Domain Simulation
 
@@ -354,10 +364,10 @@ output $y \in \mathbb{R}^{N_y}$:
 ```rust
 impl<T, NX: Dim, NU: Dim, NY: Dim, Sa, Sb, Sc, Sd> StateSpaceCore<T, NX, NU, NY, Sa, Sb, Sc, Sd>
 where
-    Sa: DenseStorage<T, NX, NX>,
-    Sb: DenseStorage<T, NX, NU>,
-    Sc: DenseStorage<T, NY, NX>,
-    Sd: DenseStorage<T, NY, NU>,
+    Sa: DenseStorage<T, R = NX, C = NX>,
+    Sb: DenseStorage<T, R = NX, C = NU>,
+    Sc: DenseStorage<T, R = NY, C = NX>,
+    Sd: DenseStorage<T, R = NY, C = NU>,
 {
     pub fn step<Sx, Su>(
         &self,
@@ -365,8 +375,8 @@ where
         u: &Matrix<T, NU, U1, Su>,
     ) -> (ArrayMatrix<T, NX, U1>, ArrayMatrix<T, NY, U1>)
     where
-        Sx: DenseStorage<T, NX, U1>,
-        Su: DenseStorage<T, NU, U1>,
+        Sx: DenseStorage<T, R = NX, C = U1>,
+        Su: DenseStorage<T, R = NU, C = U1>,
         T: Copy + Zero + Add<Output=T> + Mul<Output=T>,
     {
         let x_next = self.a_matrix() * x + self.b_matrix() * u;
@@ -448,7 +458,7 @@ $$H(s) = C (s I - A)^{-1} B + D = \frac{C \text{adj}(sI - A) B + D \det(sI - A)}
 |:---------------------------------------------------------|:--------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **A. Monolithic Storage Field**                          | Storing a single combined block matrix $\begin{bmatrix} A & B \\ C & D \end{bmatrix}$ | Single contiguous allocation                                                                                                                                                                                                          | Cannot specialize a structurally zero $D$ (common for strictly proper plants); the series/parallel/feedback formulas (§4.7) assemble $A, B, C, D$ from independently shaped sub-blocks and would need awkward strided writes into one contiguous block |
 | **B. Wrapping 4 `Matrix` Structs Directly**              | Storing `a: Matrix<T, NX, NX, Sa>`, `b: Matrix...`                                    | Built-in matrix methods on fields                                                                                                                                                                                                     | Redundant type wrapper parameters, extra boilerplate vs storing raw `DenseStorage` backends; the zero-$D$ specialization is awkward since the wrapper's own type parameters still have to be named                                                    |
-| **C. Generic Storage Backends + `MatrixSlice` (Chosen)** | Storing raw `Sa, Sb, Sc, Sd` backends and creating `MatrixSlice` wrappers on demand   | Maximum flexibility (`#![no_std]`, ROM, stack, zero-matrix storage); expresses a zero-sized $D$ specialization that eliminates a `GEMM` per `step()`, which neither A nor B can express as cleanly; symmetric with `TransferFunction` | Requires `a_matrix()`/etc. accessors gated on `MatrixStorage` (§4.3) for high-level matrix algebra                                                                                                                                                       |
+| **C. Generic Storage Backends + `MatrixSlice` (Chosen)** | Storing raw `Sa, Sb, Sc, Sd` backends and creating `MatrixSlice` wrappers on demand   | Maximum flexibility (`#![no_std]`, ROM, stack, zero-matrix storage); expresses a zero-sized $D$ specialization that eliminates a `Gemm` per `step()`, which neither A nor B can express as cleanly; symmetric with `TransferFunction` | Requires `a_matrix()`/etc. accessors gated on `DenseStorage` (§4.3) for high-level matrix algebra                                                                                                                                                       |
 
 The strongest evidence for Alternative C is the zero-$D$ specialization
 above. The same "avoid wrapping the natural lower-level peer type" decision
@@ -559,8 +569,8 @@ is made independently by `transfer-function-design.md` §6 for
   roughly $7 \times 32 \times 32 \times 4\ \text{bytes} \approx 28\ \text{KB}$
   of `f32` transient workspace — several times the single-matrix budget above,
   and a materially larger stack-overflow risk on a Cortex-M target than the
-  storage of $A$/$B$/$C$/$D$ alone (`storage-subprograms-design.md` ST-C-2;
-  `matrix-design.md` §2.3; Higham, 2005, §10.1 ref. 3, for the
+  storage of $A$/$B$/$C$/$D$ alone (`storage-design.md` §6.1 Level 5;
+  `matrix-design.md` §6.1; Higham, 2005, §10.1 ref. 3, for the
   temporary-count estimate at Padé degree 13).
 - **Interconnection Depth**: series/parallel/feedback each produce
   an $N_{x1}+N_{x2}$-state result. Cascading four 8-state
@@ -571,7 +581,7 @@ is made independently by `transfer-function-design.md` §6 for
   owning signature (§4.6), which `matrix-design.md` §5.1 already flags as a
   pattern to avoid for heavy operations on stack-constrained targets.
 - **Matrix Exponential Performance**: ZOH discretization of $A$ uses
-  scaling-and-squaring Padé approximation using BLAS level 3 `GEMM` kernels (
+  scaling-and-squaring Padé approximation using the Level 3 `Gemm` kernel (
   see §4.8 for the specific Padé-degree and overscaling considerations).
 
 ---
@@ -617,9 +627,14 @@ is made independently by `transfer-function-design.md` §6 for
 > matrix — see below.
 
 > [!NOTE]
-> **`num-traits-design.md` Status**
-> §4.8/§4.9's `Float` bound (matrix exponential scaling, Tustin pre-warping)
-> depends on `num-traits-design.md`, which is **Approved** (Rev 1.4).
+> **Analytic Scalar Bounds**
+> §4.8/§4.9's transcendental sites (matrix exponential scaling, Tustin
+> pre-warping) bind `T: Scalar + Div` with `T::Real: Radical`/`Trig` rather
+> than `T: Float`, which `num-traits-design.md` FR-5 restricts to
+> `f32`/`f64`. Projecting onto `T::Real` keeps those paths open to
+> `Complex<T>` plants. `num-traits-design.md` is currently **Draft**
+> (Rev 1.9, August 24, 2026); confirm the analytic-trait names before
+> `/cr-implement`.
 
 > [!NOTE]
 > **Descriptor Form (`E` Matrix) Scope**
@@ -654,7 +669,7 @@ is made independently by `transfer-function-design.md` §6 for
 
 > [!NOTE]
 > **Fixed-Point Recursion Noise & Limit Cycles**
-> A wide-accumulator convention for a single `GEMM` (e.g. CMSIS-DSP's 64-bit
+> A wide-accumulator convention for a single `Gemm` (e.g. CMSIS-DSP's 64-bit
 > `arm_mat_mult_q31` vs. its 32-bit `arm_mat_mult_fast_q31`, §10.1 ref. 22) is
 > necessary but not sufficient for `step()`, which is a recursion: the state
 > vector is re-quantized to the storage format every iteration regardless of
@@ -699,7 +714,7 @@ is made independently by `transfer-function-design.md` §6 for
 | Task / Feature                                | Description                                                                                                                                                                                                                         | Estimated Effort |
 |:----------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
 | **Step 1: Core Struct & Constructors**        | Implement `StateSpaceCore<T, NX, NU, NY, Sa, Sb, Sc, Sd>`, `StateSpace<T, NX, NU, NY>` alias, basic array/slice constructors and `StateSpaceError` (§4.4) in `src/state_space/mod.rs`.                                              | 1 Day            |
-| **Step 2: Matrix Views & Basic Operations**   | Implement `a_matrix()`/`b_matrix()`/`c_matrix()`/`d_matrix()` bounded on `MatrixStorage` per §4.3 and time-domain simulation (`step()`, derivative).                                                                                  | 1 Day            |
+| **Step 2: Matrix Views & Basic Operations**   | Implement `a_matrix()`/`b_matrix()`/`c_matrix()`/`d_matrix()` bounded on `DenseStorage` per §4.3 and time-domain simulation (`step()`, derivative).                                                                                  | 1 Day            |
 | **Step 3: System Interconnections**           | Implement `series`, `parallel` and fallible `feedback` (loop-matrix solve, `StateSpaceError::SingularLoopMatrix`) with compile-time `Dim` arithmetic.                                                                                   | 2 Days           |
 | **Step 4: Discretization**                    | Implement ZOH (Van Loan augmented matrix, scaling-and-squaring with precision-dependent Padé degree selection §4.8, Al-Mohy/Higham overscaling correction) and fallible Tustin (`StateSpaceError::SingularDiscretizationOperator`). | 4.5 Days         |
 | **Step 5: Structural Analysis & Conversions** | Implement controllability/observability matrix generation (scoped as definitional, §4.9), similarity transforms ($z=Tx$) and Hessenberg-reduction-based SISO transfer function conversion.                                          | 3.0 Days         |
@@ -891,4 +906,5 @@ is made independently by `transfer-function-design.md` §6 for
 | 1.13     | August 18, 2026 | @mitchelldscott | Propagated storage Rev 1.16: `StateSpaceView`/`ViewMut` and `a_matrix()` use `const NX, NU, NY` over `DenseRef` / `MatrixSlice`. |
 | 1.14     | August 20, 2026 | @mitchelldscott | Renamed `BlasStorage`/`BlasStorageMut` -> `MatrixStorage`/`MatrixStorageMut` (universal floor) and the prior `MatrixStorage`/`MatrixStorageMut` (leading-dimension branch) -> `DenseStorage`/`DenseStorageMut`, matching `storage-subprograms-design.md` Rev 1.31 and `matrix-design.md` Rev 1.31; updated §1, §3, §4.1, §4.3, §4.6, §5, and §7. Noted `PackedStorage` as explicitly out of scope for `A`/`B`/`C`/`D` (§3). Intervening storage-subprograms-design.md revisions (1.17–1.33) introduce no other call-site changes here: this document names no `level1`/`level2`/`level3` trait directly. |
 | 1.15     | August 22, 2026 | @MitchellDScott | Reverted Doc Status to Draft. Body still cites deleted `storage-subprograms-design.md`; retarget onto `storage-design.md` / `subprograms-design.md` is a dedicated pass. |
+| 1.16     | August 24, 2026 | @mitchelldscott | Retargeted onto `storage-design.md` Rev 1.8 and `subprograms-design.md` Rev 1.6, closing the Rev 1.15 note. Storage bounds take the associated-type form `DenseStorage<T, R = .., C = ..>`; views bind `ViewStorage`/`ViewStorageMut` and are strided rather than contiguous, so slice-returning accessors bound `ContiguousStorage` separately (§4.1, §4.2, §4.3). Subprogram names lowercased and solves pointed at the LAPACK traits `Getrf`/`Getrs`, `Potrf`/`Potrs`, `Geqrf`, `Syev`/`Heev`, correcting the §3 note that no triangular-solve trait exists (`Trsv`/`Trsm` are `subprograms-design.md` FR-2, FR-4). Transcendental bounds moved from `T: Float` onto `T::Real: Radical`/`Trig` per `num-traits-design.md` FR-5 (§3, §8). Recorded the unclaimed sparse subsystem as an open scoping question (§3). Status stays Draft. |
 | 1.16     | August 22, 2026 | @MitchellDScott | C-2 derived-dimension ceiling cites `Const<N>: Dim` and `<Const<N> as Dim>::TypeNum` (`num-types-design.md` Rev 1.7). |

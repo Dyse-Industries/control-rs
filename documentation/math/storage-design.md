@@ -1,6 +1,6 @@
 # Storage Backends & Data Layouts (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_22,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -8,24 +8,14 @@
 
 ### 1. Introduction
 
-`src/math/storage.rs`
-establishes the foundation for linear algebra in `control-rs`, providing a
-unified
-storage hierarchy across dense strided arrays, packed structured matrices (
-symmetric,
-Hermitian, triangular, diagonal), and sparse graph representations (CSR, CSC,
-COO, 1-D sparse vectors) (dimforge, 2026a; sparsemat, 2026a; Netlib, 2026).
+`src/math/storage.rs` provides a unified storage hierarchy covering dense
+strided arrays, packed structured matrices and sparse representations.
 
-The storage architecture supports **primitive integers** (`u8`–`u64`, `i8`–
-`i64`),
-**fixed-point numbers** (`fixed-num`), **floating-point scalars** (`f32`,
-`f64`),
-and **complex numbers** (`Complex<T>`). All storage contracts provide dual
-**checked** (returning `Option<&T>` / `Option<T>`) and **unchecked** (calling
-`unsafe`
-pointer arithmetic) accessors, ensuring safety at boundary interfaces and
-branchless, zero-overhead execution in inner subprogram loops (dimforge, 2026a;
-sarah-quinones, 2026b).
+The storage architecture supports **primitive integers** (`u8`–`u64`, `i8`
+– `i64`), **fixed-point numbers** (`fixed-num`), **floating-point scalars**
+(`f32`, `f64`) and **complex numbers** (`Complex<T>`). All storage contracts
+provide **checked** (returning `Option<&T>` / `Option<T>`) and **unchecked**
+(calling `unsafe` pointer arithmetic) accessors.
 
 ---
 
@@ -33,125 +23,80 @@ sarah-quinones, 2026b).
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Dense Strided Storage**: `unsafe trait DenseStorage<T>` provides
-  type-level dimensions via associated types `type R: Dim; type C: Dim;`,
-  dimension projections `rows() -> usize { Self::R::USIZE }`,
-  `cols() -> usize { Self::C::USIZE }`, strides `r_stride() -> isize`,
-  `c_stride() -> isize`,
-  base data pointer `as_ptr() -> *const T`, safe checked
-  `get(r, c) -> Option<&T>`,
-  and `unsafe get_unchecked(r, c) -> &T` (dimforge, 2026a; NumPy Developers,
-  2026).
-- **FR-2 — Dense Mutable Storage**:
-  `unsafe trait DenseStorageMut<T>: DenseStorage<T>` provides base mutable
-  pointer
-  `as_mut_ptr() -> *mut T`, safe `get_mut(r, c) -> Option<&mut T>`,
-  `set(r, c, val) -> Result<(), StorageError>`, and `unsafe` variants
-  `get_mut_unchecked(r, c) -> &mut T`, `set_unchecked(r, c, val)`
-  (dimforge, 2026a; sarah-quinones, 2026b).
-- **FR-3 — Contiguous Memory Markers**:
-  `unsafe trait ContiguousStorage<T>: DenseStorage<T>` (`as_slice() -> &[T]`,
-  `const ORDER: MatrixLayout`)
-  and
-  `unsafe trait ContiguousStorageMut<T>: ContiguousStorage<T> + DenseStorageMut<T>` (
-  `as_mut_slice() -> &mut [T]`)
-  guarantee contiguous memory without padding (dimforge, 2026a).
-- **FR-4 — Owned Dense Storage**:
-  `ArrayStorage<T, const R: usize, const C: usize>` (column-major) and
-  `RowArrayStorage<T, const R: usize, const C: usize>` (row-major) provide
-  stack-allocated inline nested
-  arrays `[[T; R]; C]` and `[[T; C]; R]`, avoiding unstable
-  `generic_const_exprs`.
-  Each implements `DenseStorage<T>` with associated types
-  `type R = Const<R>; type C = Const<C>;`
-  (dimforge, 2026b; rust-embedded, 2026a).
-- **FR-5 — Non-Owning Strided Views**: `ViewStorage<'a, T, R: Dim, C: Dim>` and
-  `ViewStorageMut<'a, T, R: Dim, C: Dim>` borrow slices with arbitrary `isize`
-  strides
-  without allocation, implementing `DenseStorage<T>` / `DenseStorageMut<T>` (
-  dimforge, 2026c; Eigen, 2026a, 2026b).
-- **FR-6 — Zero-Cost Transpose & Reverse Views**: Slicing methods provide
-  zero-copy transposition (`transpose_view()`, strides swapped) and vector
-  reversal (`reverse_view()`, negative row stride) (rust-ndarray, 2026a;
-  NumPy Developers, 2026; sarah-quinones, 2026b).
-- **FR-7 — Packed Structured Storage**: `unsafe trait PackedStorage<T>`
-  decouples physical
-  element lookup `packed_index(i, j) -> Option<usize>` from algebraic evaluation
-  `value(i, j) -> Option<T>`, providing `type N: Dim;`, `dim()`, `uplo()`,
-  `as_slice()`,
-  `packed_index_unchecked()`, and `value_unchecked()` (Anderson et al., 1999;
-  Netlib, 2026).
-- **FR-8 — Packed Mutation**:
-  `unsafe trait PackedStorageMut<T>: PackedStorage<T>` provides
-  `as_mut_slice()`, safe `set(i, j, val)`, and `unsafe set_unchecked(i, j, val)`
-  for physical storage slots (Netlib, 2026).
-- **FR-9 — Packed Leaf Implementations**: Provide
-  `SymmetricPackedStorage<T, N, L>` (SP), `HermitianPackedStorage<T, N, L>` (
-  HP),
-  `TriangularPackedStorage<T, N, L>` (TP), and `DiagonalStorage<T, N>` with
-  $N(N+1)/2$ and $N$ elements (Lawson et al., 1979; Dongarra et al., 1988;
-  Anderson et al., 1999).
-- **FR-10 — Non-Owning Packed Views**: `SymmetricPackedView`,
-  `HermitianPackedView`,
-  `TriangularPackedView`, and `DiagonalView` (and their `...Mut` counterparts)
-  borrow packed slices without data copies (Anderson et al., 1999; Netlib,
-  2026).
-- **FR-11 — Sparse Storage Contract**: `unsafe trait SparseStorage<T>` provides
-  `type R: Dim; type C: Dim;`, non-zero traversal (`nnz()`, `row_indices()`,
-  `col_indices()`, `values()`),
-  and entry query `get(r, c) -> Option<T>` (SciPy Developers, 2026; sparsemat,
-  2026a).
-- **FR-12 — Mutable Sparse Entry Modification**:
-  `unsafe trait SparseStorageMut<T>: SparseStorage<T>` provides in-place
-  mutation of existing
-  non-zeros (`values_mut()`, `get_mut(r, c)`, `set(r, c, val)`) without
-  structural reallocation (sparsemat, 2026a; Eigen, 2026c).
-- **FR-13 — Compressed Sparse Formats**: `CsrStorage<T>` and `CscStorage<T>`
-  provide row/column offset slicing with defensive bounds checks (SciPy
-  Developers, 2026;
-  Eigen, 2026c; sparsemat, 2026a).
-- **FR-14 — Fixed-Capacity Stack Sparse Leaves**: `ArrayCsrStorage`,
-  `ArrayCscStorage`, and `ArrayCooStorage` manage fixed capacities `MAX_NNZ` on
-  `#![no_std]` stacks (rust-embedded, 2026a; sparsemat, 2026a).
-- **FR-15 — 1-D Sparse Vector Abstraction**: `SparseVectorStorage<T>`,
-  `ArraySparseVector<T, N, MAX_NNZ>`, and `ViewSparseVector<'a, T, N>` support
-  sparse vector-vector BLAS routines (Lawson et al., 1979; sparsemat, 2026b).
-- **FR-16 — Layout Conversions**: Provide conversion traits (`ToDenseStorage`,
-  `FromDenseStorage`, `ToCsrStorage`, `ToCscStorage`) between dense, packed,
-  and sparse formats (sparsemat, 2026a).
-- **FR-17 — Complex & Hermitian Support**: `HermitianPackedStorage<T, N, L>`
-  enforces conjugate reflection ($A_{i,j} = \overline{A_{j,i}}$) and validates
-  real diagonals ($\text{Im}(A_{i,i}) = 0$) on write (Anderson et al., 1999;
-  Netlib, 2026). Adjoint / conjugate transposition is resolved in subprograms
-  via `Trans::ConjTrans`.
+- **FR-1 — Decoupled Storage Subsystems Architecture**: Provide distinct,
+  zero-cost storage subsystem contracts across dense strided arrays (
+  `DenseStorage<T>` / `Storage<T, R, C>`), packed structured matrices (
+  `PackedStorage<T>`), and compressed sparse backends (`SparseStorage<T>`).
+  Subsystems share no common raw supertrait, preserving zero-cost abstraction
+  without forcing artificial unification between dense contiguous indexing,
+  packed triangular layout math, and CSR/CSC compressed buffers. Each
+  subsystem exposes type-level or runtime dimension queries (`R: Dim, C: Dim`
+  / `rows()`, `cols()`), safe element retrieval (`Option<&T>` / `Option<T>`),
+  and safe modification (`Result<(), StorageError>`).
+- **FR-2 — Dense Strided Storage & Views**:
+    - Unsafe immutable and mutable base pointer traits with signed `isize`
+      strides and checked/unchecked accessors.
+    - Zero-copy strided views supporting runtime strides, compile-time layouts (
+      `LayoutMarker`), transposition ($RS \leftrightarrow CS$), and vector
+      reversal.
+    - Unsafe contiguity markers (`ContiguousStorage`, `ContiguousStorageMut`)
+      exposing direct continuous slice access (`&[T]`, `&mut [T]`) for
+      C-ABI/BLAS interop.
+    - Fixed-capacity stack backends (`ArrayStorage`, `RowArrayStorage`) backed
+      by nested inline arrays (`[[T; R]; C]`, `[[T; C]; R]`).
+- **FR-3 — Packed Structured Storage**:
+    - Decouple physical slot lookup (`packed_index`) from algebraic entry
+      evaluation (`value`).
+    - Fixed stack leaves and zero-copy non-owning views for Symmetric (SP),
+      Hermitian (HP), Triangular (TP with Unit/NonUnit diagonal), and Diagonal
+      structures.
+    - In-place mutation restricted to physical stored slots, rejecting implicit
+      writes with `StorageError`.
+- **FR-4 — Compressed Sparse Storage & In-Place Modification**:
+    - Abstract sparse matrix traits for row-compressed (CSR) and
+      column-compressed (CSC) formats with zero-copy row/column slicing.
+    - Safe and unchecked in-place value modification of existing non-zeros
+      without structural reallocation.
+- **FR-5 — Incremental Sparse Assembly & Stack Compression**:
+    - Fixed-capacity Coordinate (COO) assembly buffer supporting incremental
+      `push`.
+    - Stack-allocated $O(\text{nnz} + R)$ 3-pass sorting and duplicate
+      accumulation compressing COO triplets into canonical sorted CSR/CSC
+      storage without dynamic heap allocation.
+- **FR-6 — 1-D Sparse Vectors**: Dedicated trait (`SparseVectorStorage`),
+  fixed-capacity stack leaf (`ArraySparseVector`), and borrowed view (
+  `ViewSparseVector`) over parallel index and value slices for Level-1 SpBLAS
+  operations.
+- **FR-7 — Layout Conversions & Numeric Support**:
+    - Bidirectional conversion traits (`ToDenseStorage`, `FromDenseStorage`,
+      `ToCsrStorage`, `ToCscStorage`) across dense, packed, and sparse backends.
+    - Generic scalar support (`T: Scalar`) across real primitives, fixed-point (
+      `Quantized`), and complex numbers (`Complex<T>`), enforcing conjugate
+      reflection and validating real diagonals on write.
 
-#### 2.2 Non-Functional Requirements & Constraints
+#### 2.2 Non-Functional Requirements
 
 - **NFR-1 — `#![no_std]` Compatibility**: Core storage executes with zero
-  dynamic heap allocation (rust-embedded, 2026a).
+  dynamic heap allocation.
 - **NFR-2 — Compile-Time Verification**: Fixed capacities and array lengths are
   checked statically at compile time without unstable `generic_const_exprs`.
 - **NFR-3 — Zero-Branch Codegen**: Unchecked pointer indexing compiles to
   branchless instructions with 0 panic paths at `opt-level=3`.
+
+#### 2.3 Constraints
+
 - **C-1 — Strided Index Arithmetic**: Pointer offset
-  is $r \cdot RS + c \cdot CS$ using `isize` arithmetic (NumPy Developers, 2026;
-  sarah-quinones, 2026b).
+  is $r \cdot RS + c \cdot CS$ using `isize` arithmetic.
 - **C-2 — Const Bounds Invariant**: Packed array lengths require $L = N(N+1)/2$
-  enforced via const assertions (Anderson et al., 1999).
+  enforced via const assertions.
 - **C-3 — Defensive & Unchecked Safety Contract**: Safe accessors validate
   bounds; `unsafe` accessors require caller-proven bounds. `DenseStorage` and
-  `DenseStorageMut` are `unsafe trait`s to guarantee backing pointer validity
-  (vbarrielle, 2015; dimforge, 2026a).
-- **C-4 — Dim Call Site**: `DenseStorage<T>` associated types
-  `type R: Dim; type C: Dim;`
-  consume `num-types-design.md`. `Const<N>: Dim` follows num-types C-1 (
-  `0..=1024`
-  plus extra powers of two through `16384`). Named `U*` aliases are a
-  convenience subset (num-types FR-4); a C-1 value without an alias is
-  `<Const<N> as Dim>::TypeNum`. Owning array leaves bind
-  `const R: usize, const C: usize`
-  and implement `DenseStorage<T>` with `type R = Const<R>; type C = Const<C>;` (
-  rust-embedded, 2026a).
+  `DenseStorageMut` are `unsafe trait`s to guarantee backing pointer validity.
+- **C-4 — Dim Call Site**: Dimension types come from `num-types-design.md`'s
+  `Dim` trait; this document does not define its own dimension representation.
+- **C-5 — Error Invariant Boundary**: Fallible indexing and structural
+  violations return `StorageError`; shape mismatches against runtime slices
+  return `ConversionError::DimensionMismatch` per `error-design.md`.
 
 ---
 
@@ -167,23 +112,16 @@ classDiagram
 
     class DenseStorage~T~ {
         <<unsafetrait>>
-        +type R: Dim
-        +type C: Dim
-        +rows() usize
-        +cols() usize
         +r_stride() isize
         +c_stride() isize
         +as_ptr() *const T
-        +get(r: usize, c: usize) Option~&T~
         +get_unchecked(r: usize, c: usize) &T
     }
 
     class DenseStorageMut~T~ {
         <<unsafetrait>>
         +as_mut_ptr() *mut T
-        +get_mut(r: usize, c: usize) Option~&mut T~
         +get_mut_unchecked(r: usize, c: usize) &mut T
-        +set(r: usize, c: usize, val: T) Result~(), StorageError~
         +set_unchecked(r: usize, c: usize, val: T)
     }
 
@@ -198,7 +136,17 @@ classDiagram
         +as_mut_slice() &mut [T]
     }
 
-    class ArrayStorage~T, R, C~ {
+    class Storage~T, R, C~ {
+<<unsafetrait>>
++get(r: usize, c: usize) Option~&T~
+ }
+
+class StorageMut~T, R, C~ {
+<<unsafetrait>>
++set(r: usize, c: usize, val: T) Result~(), StorageError~
+}
+
+class ArrayStorage~T, R, C~ {
 +data: [[T; R]; C]
 +from_array(data: [[T; R]; C]) ArrayStorage
 +as_slice() &[T]
@@ -210,31 +158,54 @@ class RowArrayStorage~T, R, C~ {
 +from_array(data: [[T; C]; R]) RowArrayStorage
  }
 
-class ViewStorage~T, R, C~ {
+class StorageView~T, R, C~ {
 +ptr: *const T
-+new(data: &[T]) Result~ViewStorage, ConversionError~
-+new_unchecked(data: &[T]) ViewStorage
++r_stride: isize
++c_stride: isize
++new_with_strides(data: &[T], r_stride: isize, c_stride: isize) Result~StorageView, ConversionError~
 }
 
-class ViewStorageMut~T, R, C~ {
+class StorageViewMut~T, R, C~ {
 +ptr: *mut T
-+new(data: &mut [T]) Result~ViewStorageMut, ConversionError~
++r_stride: isize
++c_stride: isize
++new_with_strides(data: &mut [T], r_stride: isize, c_stride: isize) Result~StorageViewMut, ConversionError~
+}
+
+class StaticStorageView~T, R, C, O~ {
++data: &[T]
++new(data: &[T]) Result~StaticStorageView, ConversionError~
+}
+
+class StaticStorageViewMut~T, R, C, O~ {
++data: &mut [T]
++new(data: &mut [T]) Result~StaticStorageViewMut, ConversionError~
 }
 
 %% Inheritance & Realizations
 DenseStorage <|-- DenseStorageMut
 DenseStorage <|-- ContiguousStorage
+DenseStorage <|-- Storage
+DenseStorageMut <|-- StorageMut
+Storage <|-- StorageMut
 ContiguousStorage <|-- ContiguousStorageMut
 DenseStorageMut <|-- ContiguousStorageMut
 
+StorageMut <|.. ArrayStorage~T, R, C~
 ContiguousStorageMut <|.. ArrayStorage~T, R, C~
-DenseStorageMut <|.. RowArrayStorage~T, R, C~
-DenseStorage <|.. ViewStorage~T, R, C~
-DenseStorageMut <|.. ViewStorageMut~T, R, C~
+StorageMut <|.. RowArrayStorage~T, R, C~
+Storage <|.. StorageView~T, R, C~
+StorageMut <|.. StorageViewMut~T, R, C~
+Storage <|.. StaticStorageView~T, R, C, O~
+StorageMut <|.. StaticStorageViewMut~T, R, C, O~
+ContiguousStorage <|.. StaticStorageView~T, R, C, O~
+ContiguousStorageMut <|.. StaticStorageViewMut~T, R, C, O~
 ```
 
 _Figure 1: UML hierarchy for Dense Storage (`DenseStorage<T>`), Contiguous
-Storage markers, stack backends, and non-owning views._
+Storage markers, stack backends, runtime-stride views (`StorageView<T, R, C>`),
+and
+`LayoutMarker`-tagged views (`StaticStorageView<T, R, C, O>`)._
 
 #### 3.2 Packed Structured Storage Hierarchy
 
@@ -244,19 +215,16 @@ classDiagram
 
     class PackedStorage~T~ {
         <<trait>>
-        +dim() usize
         +uplo() UpLo
         +as_slice() &[T]
         +packed_index(i: usize, j: usize) Option~usize~
         +packed_index_unchecked(i: usize, j: usize) usize
-        +value(i: usize, j: usize) Option~T~
         +value_unchecked(i: usize, j: usize) T
     }
 
     class PackedStorageMut~T~ {
         <<trait>>
         +as_mut_slice() &mut [T]
-        +set(i: usize, j: usize, val: T) Result~(), StorageError~
         +set_unchecked(i: usize, j: usize, val: T)
     }
 
@@ -361,17 +329,13 @@ classDiagram
 
     class SparseStorage~T~ {
         <<trait>>
-        +rows() usize
-        +cols() usize
         +nnz() usize
-        +get(r: usize, c: usize) Option~T~
     }
 
     class SparseStorageMut~T~ {
         <<trait>>
         +values_mut() &mut [T]
         +get_mut(r: usize, c: usize) Option~&mut T~
-        +set(r: usize, c: usize, val: T) Result~(), StorageError~
         +set_unchecked(r: usize, c: usize, val: T)
     }
 
@@ -484,6 +448,39 @@ _Figure 3: UML hierarchy for compressed sparse matrix formats, coordinate
 assembly buffers, 1-D sparse vectors, layout conversions, and storage error
 enums._
 
+#### 3.4 Decoupled Storage Subsystems & Safe Access Contracts
+
+The storage architecture explicitly avoids a monolithic raw storage supertrait
+unifying dense, packed, and sparse layouts. Unifying those layouts behind a
+single raw accessor trait would introduce branch overhead, dynamic dispatch, or
+awkward default methods that cannot be implemented efficiently across dense
+strided pointers, triangular packed arrays, and CSR/CSC compressed structures
+(sarah-quinones, 2026b; vbarrielle, 2015).
+
+Instead, storage backends are partitioned into three dedicated subsystems:
+
+1. **Dense Strided Storage (`DenseStorage<T>`, `DenseStorageMut<T>`)**:
+   Provides low-level unsafe pointer and stride access (`as_ptr`, `r_stride`,
+   `c_stride`, `get_unchecked`). For type-level shaped buffers,
+   `Storage<T, R, C>`
+   and `StorageMut<T, R, C>` extend dense storage to provide safe,
+   bounds-checked element retrieval (`get(r, c) -> Option<&T>`) and mutation
+   (`set(r, c, val) -> Result<(), StorageError>`).
+2. **Packed Structured Storage (`PackedStorage<T>`, `PackedStorageMut<T>`)**:
+   Provides packed slot mapping (`packed_index`), algebraic element evaluation
+   (`value(i, j) -> Option<T>`), and in-place slot modification (
+   `set(i, j, val)`),
+   handling triangular, symmetric, Hermitian, and diagonal symmetries.
+3. **Compressed Sparse Storage (`SparseStorage<T>`, `SparseStorageMut<T>`)**:
+   Provides indexed access (`get(r, c) -> Option<T>`), non-zero values slice
+   inspection (`values()`), and in-place existing non-zero mutation (
+   `set(r, c, val)`).
+
+Higher-level abstractions (such as `Matrix<T, R, C, S>`,
+`PackedMatrix<T, N, S>`,
+and `SparseMatrix<T, R, C, S>`) wrap their respective storage subsystem traits
+directly without forcing cross-subsystem trait inheritance.
+
 ---
 
 ### 4. Architecture
@@ -543,37 +540,60 @@ integers, fixed-point) and evaluates imaginary negation for `Complex<T>`.
 Stack-allocated dense storage is provided by `ArrayStorage<T, R, C>` (
 column-major,
 $RS=1, CS=R$) and `RowArrayStorage<T, R, C>` (row-major, $RS=C, CS=1$) backed by
-nested inline arrays `[[T; R]; C]` and `[[T; C]; R]` (dimforge, 2026b). Using
+nested inline arrays `[[T; R]; C]` and `[[T; C]; R]`. Using
 nested arrays avoids requiring `#![feature(generic_const_exprs)]` on stable Rust
 while preserving zero-padding flat memory layouts (accessible via `as_slice()` /
 `as_mut_slice()`) (rust-embedded, 2026a). Array lengths require `const R: usize,
-const C: usize`; the leaves implement `DenseStorage<T>` with `type R = Const<R>; type C = Const<C>;` via the
+const C: usize`; the leaves implement `DenseStorage<T>` with
+`type R = Const<R>; type C = Const<C>;` via the
 const-generic bridge in `num-types-design.md` FR-3 (C-4). `Const<N>: Dim`
 follows num-types C-1; a missing `U*` name is `<Const<N> as Dim>::TypeNum`
-(FR-4). Products may exceed both (C-2).
+(FR-4). Products may exceed both (C-2). Owning array leaves bind
+`const R: usize, const C: usize` and do not define a parallel dimension
+representation.
 
-Non-owning slices are wrapped by `ViewStorage` and `ViewStorageMut`,
-parameterizing
-arbitrary `isize` strides without memory allocation (dimforge, 2026c; Eigen,
-2026a):
+Non-owning slices come in two distinct families with specialized constructor
+interfaces:
 
-- **Transposition Views**: Formed by swapping strides ($RS \leftrightarrow CS$)
-  and dimensions ($R \leftrightarrow C$) with zero memory copying (rust-ndarray,
-  2026a;
-  sarah-quinones, 2026b).
-- **Reversed Vector Views**: Formed by passing a negative row stride ($RS = -1$)
-  and an offset pointer pointing to the tail element (Netlib, 2026; NumPy
-  Developers, 2026).
-- **Conjugate Transpose (Adjoint)**: Evaluated in subprogram kernels via
-  `Trans::ConjTrans` by reading transposed coordinates and applying scalar
-  `.conj()` without requiring a separate view type that falsifies reference
-  returns.
+- **`StorageView<T, R, C>` / `StorageViewMut<T, R, C>`** (FR-2, runtime stride):
+  wrap a borrowed slice with arbitrary `isize` strides without allocation
+  (dimforge, 2026c; Eigen, 2026a). To enforce explicit stride specification and
+  eliminate overlap with compile-time layout views, `StorageView` provides *
+  *only**
+  runtime-stride constructors (`new_with_strides`, `new_with_strides_unchecked`)
+  taking explicit `r_stride` and `c_stride`. Transposition swaps strides
+  ($RS \leftrightarrow CS$) and dimensions; reversal uses a negative row
+  stride and a tail pointer (Netlib, 2026; NumPy Developers, 2026).
+- **`StaticStorageView<T, R, C, O>` / `StaticStorageViewMut<T, R, C, O>`** (
+  FR-2, compile-time layout):
+  wrap a borrowed slice whose length equals $R \cdot C$, tagged by a
+  `LayoutMarker` (`ColMajor` / `RowMajor`). `StaticStorageView` provides **only
+  **
+  const-stride constructors (`new`, `new_unchecked`), where strides are
+  statically
+  fixed by the marker (`ColMajor`: $RS=1, CS=R$; `RowMajor`: $RS=C, CS=1$). This
+  pair
+  does **not** accept runtime strides; runtime-strided `StorageView` does.
 
-| Type                               | Dimensions | Row Stride ($RS$) | Col Stride ($CS$) | Backing Memory Layout | Entry Access Formula           | Citation Reference                                     |
-|:-----------------------------------|:----------:|:-----------------:|:-----------------:|:---------------------:|:-------------------------------|:-------------------------------------------------------|
-| `ArrayStorage<T, R, C>`    |  $(R, C)$  |        $1$        |        $R$        |     `[[T; R]; C]`     | `data[c][r]`                   | (dimforge, 2026b; rust-embedded, 2026a)                |
-| `RowArrayStorage<T, R, C>` |  $(R, C)$  |        $C$        |        $1$        |     `[[T; C]; R]`     | `data[r][c]`                   | (dimforge, 2026b; Arm Limited, 2022)                   |
-| `ViewStorage<'a, T, R, C>` |  $(R, C)$  |       $RS$        |       $CS$        |       `&'a [T]`       | `*ptr.offset(r * RS + c * CS)` | (dimforge, 2026c; Eigen, 2026a; sarah-quinones, 2026b) |
+`ndarray`'s `ArrayBase` keeps dimension and stride in a shared `ArrayParts`
+struct; `swap_axes` permutes both without copying (ndarray, 2026a, 2026b).
+`nalgebra`'s plain `transpose()` returns an owning `OMatrix`, not a strided
+view—zero-copy transposition stays on `StorageView` / stride-swapped views (
+nalgebra, 2026c; faer, 2026b). Eigen's `Block` expression stores parent
+reference plus `(startRow, startCol, blockRows, blockCols)` for zero-copy
+submatrix windows (Eigen, 2026d). **Proposal (not in evidence)**: a
+`BlockView` over `DenseStorage` mirroring Eigen's pattern.
+
+Conjugate transpose (adjoint) is evaluated in subprogram kernels via
+`Trans::ConjTrans` by reading transposed coordinates and applying scalar
+`.conj()` without a separate view type that falsifies reference returns.
+
+| Type                                | Dimensions | Row Stride ($RS$) | Col Stride ($CS$) | Backing Memory Layout | Constructor Interface                      | Entry Access Formula           | Citation Reference                                     |
+|:------------------------------------|:----------:|:-----------------:|:-----------------:|:---------------------:|:-------------------------------------------|:-------------------------------|:-------------------------------------------------------|
+| `ArrayStorage<T, R, C>`             |  $(R, C)$  |        $1$        |        $R$        |     `[[T; R]; C]`     | `from_array([[T; R]; C])`                  | `data[c][r]`                   | (dimforge, 2026b; rust-embedded, 2026a)                |
+| `RowArrayStorage<T, R, C>`          |  $(R, C)$  |        $C$        |        $1$        |     `[[T; C]; R]`     | `from_array([[T; C]; R])`                  | `data[r][c]`                   | (dimforge, 2026b; Arm Limited, 2022)                   |
+| `StorageView<'a, T, R, C>`          |  $(R, C)$  |       $RS$        |       $CS$        |       `&'a [T]`       | `new_with_strides(&[T], RS, CS)` (runtime) | `*ptr.offset(r * RS + c * CS)` | (dimforge, 2026c; Eigen, 2026a; sarah-quinones, 2026b) |
+| `StaticStorageView<'a, T, R, C, O>` |  $(R, C)$  |   marker-fixed    |   marker-fixed    |       `&'a [T]`       | `new(&[T])` (const marker-fixed)           | `O::offset(R, C, r, c)`        | (`LayoutMarker`; not arbitrary stride)                 |
 
 #### 4.3 Packed Storage Architecture
 
@@ -699,7 +719,7 @@ allocation (SciPy Developers, 2026; sparsemat, 2026a):
    compacted
    row lengths and sets `self.nnz = compressed_nnz`.
 
-##### Layout Conversion Traits (FR-17)
+##### Layout Conversion Traits (FR-7)
 
 - `ToDenseStorage<Dense>`: Converts packed or sparse representations to dense
   `ArrayStorage` (sparsemat, 2026a).
@@ -740,9 +760,10 @@ C-compatible enumerations (Netlib, 2026):
   `DimensionMismatch`,
   `NonMonicPolynomial`).
 - **`StorageError`**: Governs indexing, mutation, and structural invariant
-  violations (`error-design.md` FR-3). Shape conditions already pinned by
+  violations (`error-design.md` FR-3, C-5). Shape conditions already pinned by
   `Dim` parameters are compile errors. Erased-length wrapping
-  (`ViewStorage::new`) and DSP convolution against a runtime slice stay on
+  (`StorageView::new_with_strides` and `StaticStorageView::new`) and DSP
+  convolution against a runtime slice stay on
   `ConversionError::DimensionMismatch`. `StorageError` does not duplicate
   that arm.
     - `OutOfBounds`: Index exceeds logical row/column bounds.
@@ -759,20 +780,100 @@ C-compatible enumerations (Netlib, 2026):
   uninitialized buffer initialization without requiring `T: Default` (
   rust-embedded, 2026a).
 
+#### 4.7 Device-Resident Storage Boundary (Extension, Not MVP)
+
+Host leaves (`ArrayStorage`, packed arrays, stack CSR) remain the only
+implemented backends. Prior art separates device memory from host slices at
+the type level:
+
+| Ecosystem            | Host vs device split                                                                                                          | Layout exposure                            | Citation                                          |
+|:---------------------|:------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------|:--------------------------------------------------|
+| **Rust-CUDA `cust`** | `DeviceBuffer<T>` / `DeviceSlice<T>` distinct from host `Box<[T]>`                                                            | Typed element `T` on device                | (Rust-CUDA, 2026a, 2026b)                         |
+| **candle-core**      | `Storage` enum (`Cpu` / `Cuda` / `Metal`); `BackendStorage` + `BackendDevice` traits with mutually recursive associated types | Layout via separate `Layout` type          | (candle, 2026a, 2026b)                            |
+| **wgpu**             | `Buffer` holds GPU-accessible untyped bytes; `MAP_READ` / `MAP_WRITE` flag host-mappable buffers vs device-local usage        | Interpretation deferred to bind/read calls | (wgpu, 2026a, 2026b)                              |
+| **PJRT / XLA**       | Opaque `PJRT_Buffer` C handle; `PjRtBuffer` abstract base with `on_device_shape()`                                            | Internal layout opaque; shape via vtable   | (OpenXLA, 2026a, 2026b, 2026c; PyTorch/XLA, 2026) |
+
+PJRT targets a uniform device API across CPU, TPU, and CUDA selectable via
+`PJRT_DEVICE` (PyTorch/XLA, 2026). No Rust PJRT crate appears in the
+research corpus; integration would be FFI-first.
+
+**Adoption decision (this design)**: `control-rs` does **not** depend on
+`cust`, `wgpu`, `candle-core`, or PJRT for the storage MVP. Mandatory
+transitive deps conflict with crate-local minimize-dependencies policy (
+`CLAUDE.md`): `cust` pulls `cust_core`, `cust_raw`, and `bitflags`; `wgpu`
+default features enable `wgpu-core` plus DX12/Metal/Vulkan/GLES/WebGPU
+backends; `candle-core` pulls `gemm`, `half`, `rayon`, and optional
+`cudarc`/Metal stacks. Device-resident layouts stay an documented extension
+boundary for future `subprograms-design.md` accelerator backends.
+
+**Proposal (not in evidence)**: an optional `DeviceDenseStorage` unsafe trait
+with opaque handle + shape metadata, host `ContiguousStorage` leaves
+unchanged.
+
+#### 4.8 Band Storage (LAPACK Scheme, Out of MVP Scope)
+
+LAPACK band storage maps an $m \times n$ matrix with $k_l$ subdiagonals and
+$k_u$ superdiagonals into a $(k_l + k_u + 1) \times n$ compact array when
+$k_l, k_u \ll \min(m,n)$ (Anderson et al., 1999). GPU LAPACK libraries
+factor band batches with LU partial pivoting on band-structured systems (
+Abdelfattah et al., 2023). RISC-V vector work optimizes BLAS on band matrices (
+Pirova et al., 2025).
+
+Phases 1–4 implement dense, packed (symmetric/Hermitian/triangular/diagonal),
+and CSR/CSC/COO formats only. Band indexing uses a non-linear slot map
+distinct from FR-2 stride arithmetic and from packed triangular indexing—
+forcing it onto `DenseStorage` would forfeit the same optimization separation
+cited in §5 for packed/sparse splits.
+
+**Proposal (not in evidence)**: a dedicated `BandStorage<T, N, KL, KU>` leaf
+and matching `PackedStorage`-style slot lookup, deferred until a numerical-model
+consumer requires `?GBTRF` / `?GBMV` band kernels.
+
+#### 4.9 Mixed-Precision & Accelerator Scalar Layouts
+
+Scalar type `T` on every leaf remains a free type parameter (`f32`, `f64`,
+integers, `fixed-num`, `Complex<T>`). Mixed-precision algorithms exploit
+hardware that is faster at lower precision while higher precision remains
+available in software (Higham and Mary, 2022). Tensor-core LU can store the
+working matrix in half precision but state-of-the-art mixed half/single LU
+still requires single-precision resident storage for data-movement reasons (
+Lopez and Mary, 2023). Dongarra et al. (2025) tie mixed-precision algorithms
+and floating-point emulation to Tensor Core evolution on GPUs. MAGMA exposes
+roughly 750 routines across four precisions on diverse GPU vendors (
+Abdelfattah et al., 2024). Embedded TinyML accelerators such as RedMulE target
+mixed-precision GEMM on RISC-V SoCs (Tortorella et al., 2023). RISC-V vector
+GEMM micro-kernel generators (Igual et al., 2023) and OpenBLAS productization
+issues on RISC-V (Zaytseva et al., 2023) inform host-side layout choices for
+future bare-metal backends without changing the MVP trait surface. GPU adaptive
+batching for small matrix multiplies (Zhang et al., 2022) is a subprogram
+scheduling concern (`subprograms-design.md`), not a storage-layout invariant.
+
+Storage does not fix precision at compile time beyond monomorphizing `T`.
+**Proposal (not in evidence)**: typed aliases `ArrayStorage<f16, R, C>` or
+dual-buffer mixed-precision leaves paired with `subprograms-design.md`
+accelerator backends once `num-traits-design.md` admits half-width scalars.
+
 ---
 
 ### 5. Alternatives
 
-| Alternative                                                                  | Rejected Because                                                                                                                                    | Reference                                                  |
-|:-----------------------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------------------------------------------------|
-| **`usize` only strides**                                                     | Cannot represent negative increments ($INCX < 0$) or zero-copy reversed vector views required by BLAS standards.                                    | §4.1, §4.2 (Netlib, 2026; NumPy Developers, 2026)          |
-| **Checked-only queries**                                                     | Introduces 20–40 branches in tight BLAS loops, destroying bare-metal DSP throughput.                                                                | §4.1, §7 (Arm Limited, 2022; sarah-quinones, 2026a)        |
-| **Unchecked-only queries**                                                   | Violates C-3 and creates undefined behavior risks for external inputs and malformed slices.                                                         | §4.1, §4.5 (vbarrielle, 2015)                              |
-| **Dynamic sparse vector via 2D CSR**                                         | Inflates metadata and indexing overhead for 1-D vector operations (`SpDot`, `SpAxpy`).                                                              | §4.6 (Lawson et al., 1979; sparsemat, 2026b)               |
-| **One `Storage<T>` for packed & sparse**                                     | Offset is $r\cdot RS+c\cdot CS$. Packed and CSR index maps are non-linear; forcing them onto `Storage` destroys compiler optimizations.             | §4.1, §4.3, §4.5 (Anderson et al., 1999; sparsemat, 2026a) |
-| **Generic const expression (`Self::ROWS * Self::COLS`) for capacity**        | Direct const-generic arithmetic on traits is unstable (`generic parameters may not be used in const operations`). Nested `[[T; R]; C]` avoids that. | §4.2, C-4, NFR-2 (rust-embedded, 2026a)                    |
-| **Capacity from `DimMul` associated type multiplication (`R as DimMul<C>`)** | Projecting type-level multiplication into an array length is still a parameter-dependent const expression and needs `generic_const_exprs`.          | §4.2, C-4, NFR-2 (rust-embedded, 2026a)                    |
-| **Flattened `as_array() -> &[T; R * C]`**                                    | `R * C` in array-length position requires unstable `generic_const_exprs`. `as_slice()` on nested arrays is the stable contiguous view.              | §4.2, NFR-2 (rust-embedded, 2026a)                         |
+| Alternative                                                                  | Rejected Because                                                                                                                                                                       | Reference                                                                         |
+|:-----------------------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------------------------------|
+| **`usize` only strides**                                                     | Cannot represent negative increments ($INCX < 0$) or zero-copy reversed vector views required by BLAS standards.                                                                       | §4.1, §4.2 (Netlib, 2026; NumPy Developers, 2026)                                 |
+| **Checked-only queries**                                                     | Introduces 20–40 branches in tight BLAS loops, destroying bare-metal DSP throughput.                                                                                                   | §4.1, §7 (Arm Limited, 2022; sarah-quinones, 2026a)                               |
+| **Unchecked-only queries**                                                   | Violates C-3 and creates undefined behavior risks for external inputs and malformed slices.                                                                                            | §4.1, §4.5 (vbarrielle, 2015)                                                     |
+| **Dynamic sparse vector via 2D CSR**                                         | Inflates metadata and indexing overhead for 1-D vector operations (`SpDot`, `SpAxpy`).                                                                                                 | §4.6 (Lawson et al., 1979; sparsemat, 2026b)                                      |
+| **One `Storage<T>` for packed & sparse**                                     | Offset is $r\cdot RS+c\cdot CS$. Packed and CSR index maps are non-linear; forcing them onto `Storage` destroys compiler optimizations.                                                | §4.1, §4.3, §4.5 (Anderson et al., 1999; sparsemat, 2026a)                        |
+| **Generic const expression (`Self::ROWS * Self::COLS`) for capacity**        | Direct const-generic arithmetic on traits is unstable (`generic parameters may not be used in const operations`). Nested `[[T; R]; C]` avoids that.                                    | §4.2, C-4, NFR-2 (rust-embedded, 2026a)                                           |
+| **Capacity from `DimMul` associated type multiplication (`R as DimMul<C>`)** | Projecting type-level multiplication into an array length is still a parameter-dependent const expression and needs `generic_const_exprs`.                                             | §4.2, C-4, NFR-2 (rust-embedded, 2026a)                                           |
+| **Flattened `as_array() -> &[T; R * C]`**                                    | `R * C` in array-length position requires unstable `generic_const_exprs`. `as_slice()` on nested arrays is the stable contiguous view.                                                 | §4.2, NFR-2 (rust-embedded, 2026a)                                                |
+| **`nalgebra`-style owning `transpose()`**                                    | Returns `OMatrix` by value; violates FR-2 zero-copy transpose on views. Stride-swapped `StorageView` matches `faer`/`ndarray`/`NumPy` prior art.                                       | §4.2, FR-2 (nalgebra, 2026c; faer, 2026b; ndarray, 2026b; NumPy Developers, 2026) |
+| **Strideless default constructor on `StorageView`**                          | Redundant with `StaticStorageView::new`; obscures whether layout assumptions are compile-time static invariants or runtime strided configurations.                                     | §4.2 (Eigen, 2026a; NumPy Developers, 2026)                                       |
+| **Third-party GPU storage crates (`cust`, `wgpu`, `candle-core`)**           | Large mandatory transitive graphs (CUDA driver stack, multi-backend `wgpu-core`, ML framework deps) violate minimize-dependencies; host `#![no_std]` MVP needs no GPU buffer type.     | §4.7 (`CLAUDE.md`; Rust-CUDA, 2026; wgpu, 2026; candle, 2026)                     |
+| **PJRT / XLA buffer adoption**                                               | Uniform CPU/TPU/CUDA API exists (OpenXLA, 2026; PyTorch/XLA, 2026) but no Rust crate in evidence; FFI surface and opaque layouts defer to `subprograms-design.md`.                     | §4.7 (OpenXLA, 2026a, 2026b, 2026c)                                               |
+| **`candle`-style `Storage` enum for host+device**                            | Enum dispatch couples CPU leaves to CUDA/Metal variants at every call site; trait hierarchy keeps host subprograms monomorphic.                                                        | §4.7 (candle, 2026a, 2026b)                                                       |
+| **Band matrix on `DenseStorage` or packed traits**                           | Band slot map is neither $r \cdot RS + c \cdot CS$ nor triangular packed indexing; LAPACK uses a dedicated $(k_l+k_u+1) \times n$ scheme.                                              | §4.8 (Anderson et al., 1999; Abdelfattah et al., 2023)                            |
+| **Fixed `f64`-only storage leaves**                                          | Mixed-precision algorithms and embedded `fixed-num` / integer paths require `T` as a free parameter; half/single LU literature shows precision is a kernel policy, not a layout field. | §4.9 (Higham and Mary, 2022; Lopez and Mary, 2023)                                |
 
 ---
 
@@ -780,26 +881,40 @@ C-compatible enumerations (Netlib, 2026):
 
 #### 6.1 Verification Plan (Specification Conformance)
 
-- **Level 1 (Static & Memory)**: Verify `size_of` formulas for dense
-  arrays ($R \cdot C \cdot \text{size\_of}(T)$), packed
-  structures ($\frac{N(N+1)}{2}\text{size\_of}(T) + \text{align}$), and sparse
-  structures ($MAX\_NNZ \cdot (\text{size\_of}(T) + \text{size\_of}(\text{usize})) + \dots$).
-  Assert stride invariants ($RS=1, CS=R$ for col-major).
-- **Level 2 (Unit Layout & Coordinates)**: Assert
-  `storage.get(r, c).unwrap() == storage.get_unchecked(r, c)`.
-  Validate $(A^H)^H == A$, Hermitian reflection $A_{i,j} == \overline{A_{j,i}}$
-  with real diagonals $\text{Im}(A_{i,i}) = 0$, and negative stride reverse
-  views (Anderson et al., 1999; Netlib, 2026).
-- **Level 3 (Conversions & Infallibility)**: Validate round-trip conversions
-  between Dense $\leftrightarrow$ Packed $\leftrightarrow$ Sparse
-  representations for real and complex scalars (sparsemat, 2026a).
-- **Level 4 (Codegen & Panic Audit)**: Monomorphized pointer math
-  `r * RS + c * CS` must compile to direct FMA/LEA instructions with **0
-  branches** and **0 panic paths** at `opt-level=3`.
-- **Level 5 (Stack Budget & HIL Target)**: Verify stack allocations on ARM
-  Cortex-M7 and RISC-V32 targets within MCU RAM limits (Arm Limited, 2022).
+- **Level 1 (Static & Memory)**: Assert `size_of` formulas in
+  `size_of::<T>()` and `size_of::<usize>()`. Dense arrays:
+  $R \cdot C \cdot \mathrm{size\_of}(T)$. Packed:
+  $\frac{N(N+1)}{2}\mathrm{size\_of}(T) + \mathrm{align}$. CSR
+  (`ArrayCsrStorage`, `MAX_NNZ = 3N`, `R1 = N+1`):
+  $MAX\_NNZ \cdot (\mathrm{size\_of}(T) + \mathrm{size\_of}(\mathrm{usize})) + (N+2)\mathrm{size\_of}(\mathrm{usize})$.
+  For $N=4$, $T=\mathrm{f32}$ that is $120$ bytes on 32-bit and $192$ bytes
+  on 64-bit. Do not gate on a single-width absolute table. Assert stride
+  invariants ($RS=1, CS=R$ for col-major).
+- **Level 2 (Unit Layout & Coordinates)**: Required equalities, for dense,
+  packed, and both view families (`StorageView<T, R, C>` and
+  `StaticStorageView<T, R, C, O>` at `ColMajor` and `RowMajor`):
+  `get(r,c).unwrap() == *get_unchecked(r,c)` on the interior; `get` is `None`
+  outside. Hermitian: $(A^H)^H = A$ entrywise, $A_{i,j} == \overline{A_{j,i}}$,
+  real diagonals $\text{Im}(A_{i,i}) = 0$, and negative-stride reverse views (
+  Anderson et al., 1999; Netlib, 2026).
+- **Level 3 (Conversions & Infallibility)**: Round-trip conversions between
+  Dense $\leftrightarrow$ Packed $\leftrightarrow$ Sparse for real and
+  complex scalars (sparsemat, 2026a). Complex
+  `HermitianPackedStorage` $\leftrightarrow$ `ArrayStorage<Complex<T>, N, N>`
+  round-trips. `from_dense` with a non-real diagonal returns
+  `InvalidHermitianDiagonal`.
+- **Level 4 (Codegen)**: Zero-branch / zero-panic claims are measured in
+  §7; they are not a CI gate.
+- **Level 5 (HIL `size_of`)**: Assert the 32-bit column of §7 via
+  `size_of` on RV32 and/or Thumb HIL. Stack-watermark telemetry stays an
+  Open Question unless `control-rs-hil` already exposes it.
 
 #### 6.2 Validation Plan (Control Engineering Applications)
+
+Deferred until numerical-model designs (`matrix`, `state-space`, …) are
+Approved and implemented. The cases below are requirements for that future
+suite; present kernel smoke tests must not use Val-\* names as success
+criteria.
 
 - **Val-1: Multi-Layout State Estimation**: Kalman filter covariance matrices
   stored in packed symmetric format ($P$) alongside dense state vectors ($x$).
@@ -817,19 +932,24 @@ C-compatible enumerations (Netlib, 2026):
 ### 7. Performance & Resource Considerations
 
 Memory footprints across $N \times N$ matrix representations ($T = \text{f32}$,
-4 bytes; $T = \text{Complex32}$, 8 bytes, 32/64-bit platforms) grounded in
-standard structured and sparse storage layouts (Anderson et al., 1999;
-SciPy Developers, 2026; sparsemat, 2026a):
+4 bytes; $T = \text{Complex32}$, 8 bytes). Dense and packed sizes are
+independent of `usize` width except alignment. CSR and sparse-vector sizes
+depend on `size_of::<usize>()`; both 32-bit and 64-bit columns are required.
+Host tests using `size_of::<usize>()` cannot validate a 64-bit-only table on
+Cortex-M7 / RV32.
 
-| Layout                                            | $N=4$ (Bytes, f32) | $N=16$ (Bytes, f32) | $N=64$ (Bytes, f32) | $N=16$ (Bytes, Complex32) |                                            Memory Scaling                                            |
-|:--------------------------------------------------|:------------------:|:-------------------:|:-------------------:|:-------------------------:|:----------------------------------------------------------------------------------------------------:|
-| **Dense (`ArrayStorage`)**                        |         64         |        1,024        |       16,384        |           2,048           |                                     $N^2 \cdot \text{sizeof}(T)$                                     |
-| **Packed Symmetric (`SymmetricPackedStorage`)**   |         44         |         548         |        8,324        |           1,092           |                       $\frac{N(N+1)}{2} \cdot \text{sizeof}(T) + \text{align}$                       |
-| **Packed Hermitian (`HermitianPackedStorage`)**   |         44         |         548         |        8,324        |           1,092           |                       $\frac{N(N+1)}{2} \cdot \text{sizeof}(T) + \text{align}$                       |
-| **Packed Triangular (`TriangularPackedStorage`)** |         44         |         548         |        8,324        |           1,092           |                       $\frac{N(N+1)}{2} \cdot \text{sizeof}(T) + \text{align}$                       |
-| **Diagonal (`DiagonalStorage`)**                  |         16         |         64          |         256         |            128            |                                      $N \cdot \text{sizeof}(T)$                                      |
-| **CSR Sparse ($MAX\_NNZ = 3N$)**                  |        184         |         688         |        2,704        |           1,072           | $MAX\_NNZ \cdot (\text{sizeof}(T) + \text{sizeof}(\text{usize})) + (N+2)\text{sizeof}(\text{usize})$ |
-| **Sparse Vector ($MAX\_NNZ = N/2$)**              |         32         |         104         |         392         |            168            |   $MAX\_NNZ \cdot (\text{sizeof}(T) + \text{sizeof}(\text{usize})) + \text{sizeof}(\text{usize})$    |
+CSR formula (`ArrayCsrStorage`, `MAX_NNZ = 3N`, `R1 = N+1`):
+$MAX\_NNZ \cdot (\mathrm{size\_of}(T) + \mathrm{size\_of}(\mathrm{usize})) + (N+2)\mathrm{size\_of}(\mathrm{usize})$.
+Sparse-vector formula (`MAX_NNZ = N/2`):
+$MAX\_NNZ \cdot (\mathrm{size\_of}(T) + \mathrm{size\_of}(\mathrm{usize})) + \mathrm{size\_of}(\mathrm{usize})$.
+
+| Layout                                        | $N=4$ f32 32-bit | $N=4$ f32 64-bit | $N=16$ f32 32-bit | $N=16$ f32 64-bit |                         Memory Scaling                         |
+|:----------------------------------------------|:----------------:|:----------------:|:-----------------:|:-----------------:|:--------------------------------------------------------------:|
+| **Dense (`ArrayStorage`)**                    |        64        |        64        |       1,024       |       1,024       |                $N^2 \cdot \mathrm{size\_of}(T)$                |
+| **Packed Symmetric / Hermitian / Triangular** |        44        |        48        |        548        |        552        | $\frac{N(N+1)}{2} \cdot \mathrm{size\_of}(T) + \mathrm{align}$ |
+| **Diagonal (`DiagonalStorage`)**              |        16        |        16        |        64         |        64         |                 $N \cdot \mathrm{size\_of}(T)$                 |
+| **CSR Sparse ($MAX\_NNZ = 3N$)**              |       120        |       192        |        456        |        720        |                         formula above                          |
+| **Sparse Vector ($MAX\_NNZ = N/2$)**          |        20        |        32        |        68         |        104        |                         formula above                          |
 
 ---
 
@@ -842,19 +962,48 @@ SciPy Developers, 2026; sparsemat, 2026a):
   fixed at compile time while live `nnz <= MAX_NNZ` is data
   (rust-embedded, 2026a). `CapacityExceeded` is the runtime arm.
 - **Error-enum alignment (closed, this revision)**: `StorageError` matches
-  `error-design.md` FR-3. `DimensionMismatch` is not an arm of this enum.
+  `error-design.md` FR-3 and C-5. `DimensionMismatch` is not an arm of this
+  enum.
 - **Numerical-model consumers (assumption)**: `matrix-design.md`,
   `polynomial-design.md`, `state-space-design.md`,
   `transfer-function-design.md`, and `tensor-design.md` still describe the
   pre-split storage hierarchy. Those documents stay Draft until a dedicated
   retarget pass; this spec does not silently rename `MatrixStorage` /
   `BlasStorage` onto `DenseStorage<T>`.
+- **`StaticStorageView<T, R, C, O>` stride contract**:
+  `StaticStorageView<T, R, C, O>` /
+  `StaticStorageViewMut<T, R, C, O>` strides
+  are fixed by `LayoutMarker`. They do not inherit runtime-strided
+  `StorageView`'s
+  arbitrary `isize` stride guarantee. Stack-watermark HIL remains Open unless
+  `control-rs-hil` already exposes painted-stack telemetry.
+- **Device-resident backends**: §4.7 documents PJRT, wgpu, CUDA (`cust`), and
+  candle patterns but adopts none. **Proposal (not in evidence)**: optional
+  `DeviceDenseStorage` trait behind a feature gate once
+  `subprograms-design.md` defines accelerator dispatch.
+- **Band storage leaf**: LAPACK band layout and GPU band-LU literature (
+  Anderson et al., 1999; Abdelfattah et al., 2023) are uncorroborated for
+  Rust embedded use. **Proposal (not in evidence)**:
+  `BandStorage<T, N, KL, KU>`.
+- **Block / submatrix views**: Eigen `Block` stores offset + extent without
+  copy (Eigen, 2026d). **Proposal (not in evidence)**: `BlockView` over
+  `DenseStorage`.
+- **Half-precision leaves**: Mixed-precision survey and Tensor Core LU work (
+  Higham and Mary, 2022; Lopez and Mary, 2023) cite `f16` storage benefits but
+  `num-traits-design.md` does not yet admit half-width scalars. **Proposal (
+  not in evidence)**: `ArrayStorage<f16, R, C>` once traits land.
+- **RISC-V host BLAS productization**: OpenBLAS-on-RISC-V pitfalls (Zaytseva
+  et al., 2023) and vector GEMM generators (Igual et al., 2023) inform future
+  contiguous-layout requirements for CMSIS/NMSIS-style FFI; no storage change
+  until those backends are specified in `subprograms-design.md`.
+
+---
 
 ### 9. Development Plan
 
 | Phase                                 | Description                                                                                                                                                             | Effort |
 |:--------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:------:|
-| **Phase 1: Strided Storage**          | `DenseStorage<T>` / `DenseStorageMut<T>` with `isize` strides, checked/unchecked methods, `ContiguousStorage`, `ArrayStorage` via `Const<R>`/`Const<C>`, `ViewStorage`. |   M    |
+| **Phase 1: Strided Storage**          | `DenseStorage<T>` / `DenseStorageMut<T>` with `isize` strides, checked/unchecked methods, `ContiguousStorage`, `ArrayStorage` via `Const<R>`/`Const<C>`, `StorageView`. |   M    |
 | **Phase 2: Packed Storage**           | `PackedStorage` / `PackedStorageMut`, `DiagonalStorage`, SP, HP, TP, specialized typed views, checked/unchecked accessors.                                              |   M    |
 | **Phase 3: Sparse Storage & Vectors** | `SparseStorage`, `CsrStorage`, `CscStorage`, `CooStorage`, `SparseVectorStorage`, stack leaves, COO assembly & compression.                                             |   L    |
 | **Phase 4: Layout Conversions**       | Dense $\leftrightarrow$ Packed $\leftrightarrow$ Sparse conversion traits and implementations across real and complex scalars.                                          |   M    |
@@ -887,15 +1036,17 @@ Aug. 18, 2026.
 Available: https://numpy.org/doc/stable/reference/generated/numpy.ndarray.strides.html.
 Accessed: Aug. 18, 2026.
 
-[7] dimforge, "src/base/array_storage.rs," in _dimforge/nalgebra_,
+[7] dimforge, "src/base/array*storage.rs," in \_dimforge/nalgebra*,
 
 2026. [Online].
       Available: https://raw.githubusercontent.com/dimforge/nalgebra/main/src/base/array_storage.rs.
       Accessed: Aug. 6, 2026.
 
-[8] dimforge, "src/base/matrix_view.rs," in _dimforge/nalgebra_, 2026. [Online].
-Available: https://raw.githubusercontent.com/dimforge/nalgebra/main/src/base/matrix_view.rs.
-Accessed: Aug. 18, 2026.
+[8] dimforge, "src/base/matrix*view.rs," in \_dimforge/nalgebra*,
+
+2026. [Online].
+      Available: https://raw.githubusercontent.com/dimforge/nalgebra/main/src/base/matrix_view.rs.
+      Accessed: Aug. 18, 2026.
 
 [9] Eigen, "Eigen::Map class reference," _Eigen documentation_, 2026. [Online].
 Available: https://libeigen.gitlab.io/eigen/docs-nightly/classEigen_1_1Map.html.
@@ -926,7 +1077,7 @@ Algebra Subprograms for Fortran Usage," _ACM Trans. Math. Softw._, vol. 5, no.
 Set of FORTRAN Basic Linear Algebra Subprograms," _ACM Trans. Math. Softw._,
 vol. 14, no. 1, pp. 1–17, Mar. 1988, doi: 10.1145/42288.42291.
 
-[15] SciPy Developers, "scipy.sparse.csr_array," in _SciPy v1.18.0 Manual_,
+[15] SciPy Developers, "scipy.sparse.csr*array," in \_SciPy v1.18.0 Manual*,
 
 2026. [Online].
       Available: https://docs.scipy.org/doc/scipy/reference/generated/scipy.sparse.csr_array.html.
@@ -946,13 +1097,114 @@ Accessed: Aug. 21, 2026.
 in _sparsemat/sprs_, 2015. [Online].
 Available: https://github.com/sparsemat/sprs/issues/39. Accessed: Aug. 21, 2026.
 
-[19] Arm Limited, "Include/dsp/matrix_functions.h," in _ARM-software/CMSIS-DSP_,
+[19] Arm Limited, "Include/dsp/matrix*functions.h," in
+\_ARM-software/CMSIS-DSP*,
 Version V1.10.1, 2022. [Online].
 Available: https://raw.githubusercontent.com/ARM-software/CMSIS-DSP/main/Include/dsp/matrix_functions.h.
 Accessed: Aug. 6, 2026.
 
 [20] sarah-quinones, "paper.md," in _sarah-quinones/faer-rs_, 2026. [Online].
 Available: https://raw.githubusercontent.com/sarah-quinones/faer-rs/main/paper.md.
+Accessed: Aug. 18, 2026.
+
+[21] dimforge, "src/base/matrix.rs," in _dimforge/nalgebra_, 2026. [Online].
+Available: https://raw.githubusercontent.com/dimforge/nalgebra/main/src/base/matrix.rs.
+Accessed: Aug. 24, 2026.
+
+[22] Eigen, "Eigen/src/Core/Block.h," in _libigl/eigen_, 2026. [Online].
+Available: https://raw.githubusercontent.com/libigl/eigen/master/Eigen/src/Core/Block.h.
+Accessed: Aug. 21, 2026.
+
+[23] Rust-GPU, "crates/cust/src/memory/device/device*buffer.rs," in
+\_Rust-GPU/Rust-CUDA*, 2026. [Online].
+Available: https://raw.githubusercontent.com/Rust-GPU/Rust-CUDA/main/crates/cust/src/memory/device/device_buffer.rs.
+Accessed: Aug. 21, 2026.
+
+[24] Rust-GPU, "crates/cust/src/memory/device/device*slice.rs," in
+\_Rust-GPU/Rust-CUDA*, 2026. [Online].
+Available: https://raw.githubusercontent.com/Rust-GPU/Rust-CUDA/main/crates/cust/src/memory/device/device_slice.rs.
+Accessed: Aug. 21, 2026.
+
+[25] huggingface, "candle-core/src/storage.rs," in _huggingface/candle_, 2026.
+[Online].
+Available: https://raw.githubusercontent.com/huggingface/candle/main/candle-core/src/storage.rs.
+Accessed: Aug. 21, 2026.
+
+[26] huggingface, "candle-core/src/backend.rs," in _huggingface/candle_, 2026.
+[Online].
+Available: https://raw.githubusercontent.com/huggingface/candle/main/candle-core/src/backend.rs.
+Accessed: Aug. 21, 2026.
+
+[27] gfx-rs, "wgpu/src/api/buffer.rs," in _gfx-rs/wgpu_, 2026. [Online].
+Available: https://raw.githubusercontent.com/gfx-rs/wgpu/trunk/wgpu/src/api/buffer.rs.
+Accessed: Aug. 21, 2026.
+
+[28] gfx-rs, "wgpu-types/src/buffer.rs," in _gfx-rs/wgpu_, 2026. [Online].
+Available: https://raw.githubusercontent.com/gfx-rs/wgpu/trunk/wgpu-types/src/buffer.rs.
+Accessed: Aug. 21, 2026.
+
+[29] OpenXLA Project, "PJRT - Uniform Device API," _openxla.org_, 2026.
+[Online]. Available: https://openxla.org/xla/pjrt. Accessed: Aug. 21, 2026.
+
+[30] openxla, "xla/pjrt/c/pjrt*c_api.h," in \_openxla/xla*, 2026. [Online].
+Available: https://raw.githubusercontent.com/openxla/xla/main/xla/pjrt/c/pjrt_c_api.h.
+Accessed: Aug. 21, 2026.
+
+[31] openxla, "xla/pjrt/pjrt*client.h," in \_openxla/xla*, 2026. [Online].
+Available: https://raw.githubusercontent.com/openxla/xla/main/xla/pjrt/pjrt_client.h.
+Accessed: Aug. 21, 2026.
+
+[32] PyTorch/XLA, "PJRT Runtime," _docs.pytorch.org_, 2026. [Online].
+Available: https://docs.pytorch.org/xla/release/r2.6/learn/pjrt.html.
+Accessed: Aug. 21, 2026.
+
+[33] N. J. Higham and T. Mary, "Mixed precision algorithms in numerical linear
+algebra," _Acta Numerica_, vol. 31, pp. 347–414, 2022, doi:
+10.1017/S0962492922000022.
+
+[34] J. J. Dongarra, J. Gunnels, H. Bayraktar, A. Haidar, and D. Ernst,
+"Accelerating Supercomputing: AI-Hardware-Driven Innovation for Speed and
+Efficiency," in _2025 IEEE High Performance Extreme Computing Conference (
+HPEC)_, Wakefield, MA, USA, 2025, doi: 10.1109/HPEC67600.2025.11196413.
+
+[35] F. Lopez and T. Mary, "Mixed precision LU factorization on GPU tensor
+cores: reducing data movement and memory footprint," _Int. J. High Perform.
+Comput. Appl._, vol. 37, no. 2, pp. 165–179, 2023, doi:
+10.1177/10943420221136848.
+
+[36] A. Abdelfattah et al., "MAGMA: Enabling exascale performance with
+accelerated BLAS and LAPACK for diverse GPU architectures," _Int. J. High
+Perform. Comput. Appl._, vol. 38, no. 5, pp. 468–490, 2024, doi:
+10.1177/10943420241261960.
+
+[37] A. Abdelfattah et al., "GPU-based LU Factorization and Solve on Batches of
+Matrices with Band Structure," in _Proc. SC '23 Workshops_, Denver, CO, USA,
+2023, pp. 1672–1679, doi: 10.1145/3624062.3624247.
+
+[38] A. Pirova et al., "Performance optimization of BLAS algorithms with band
+matrices for RISC-V processors," arXiv:2502.13839, 2025. [Online].
+Available: https://arxiv.org/abs/2502.13839. Accessed: Aug. 21, 2026.
+
+[39] Y. Tortorella et al., "RedMulE: A Mixed-Precision Matrix-Matrix Operation
+Engine for Flexible and Energy-Efficient On-Chip Linear Algebra and TinyML
+Training Acceleration," arXiv:2301.03904, 2023. [Online].
+Available: https://arxiv.org/abs/2301.03904. Accessed: Aug. 21, 2026.
+
+[40] K. A. Zaytseva, V. V. Puzikova, and A. D. Sokolov, "On Problems in
+OpenBLAS Library Usage in Productized Code on RISC-V," _Proc. ISP RAS_, vol.
+35, no. 5, pp. 91–106, 2023, doi: 10.15514/ISPRAS-2022-35(5)-7.
+
+[41] F. Igual et al., "Automatic Generation of Micro-kernels for Performance
+Portability of Matrix Multiplication on RISC-V Vector Processors," in _Proc.
+SC '23 Workshops_, 2023, doi: 10.1145/3624062.3624229.
+
+[42] Y. Zhang et al., "Accelerating small matrix multiplications by adaptive
+batching strategy on GPU," in _2022 IEEE HPCC/DSS/SmartCity/DependSys_, 2022,
+doi: 10.1109/hpcc-dss-smartcity-dependsys57074.2022.00143.
+
+[43] rust-ndarray, "src/impl*methods.rs," in \_rust-ndarray/ndarray*, 2026.
+[Online].
+Available: https://raw.githubusercontent.com/rust-ndarray/ndarray/master/src/impl_methods.rs.
 Accessed: Aug. 18, 2026.
 
 ---
@@ -970,3 +1222,7 @@ Accessed: Aug. 18, 2026.
 | 1.6      | August 22, 2026 | @MitchellDScott | Restored `R: Dim, C: Dim` on `Storage` / `StorageMut` / `ContiguousStorage` / `ContiguousStorageMut` (Figure 1, FR-1–FR-4, C-4, §4.1), matching `num-types-design.md` Phase 3. Array leaves remain `const R, const C` and implement the trait at `Const<R>` / `Const<C>`.                                                                                                                                                                                                                                           |
 | 1.7      | August 22, 2026 | @MitchellDScott | Removed `StorageError::DimensionMismatch` (Figure 3, §4.6) per `error-design.md` FR-3; split §8 Risks from §9 Development Plan; dropped leftover alternatives that cited deleted §4.1.1 / §5.1 / §5.2.                                                                                                                                                                                                                                                                                                              |
 | 1.8      | August 22, 2026 | @MitchellDScott | Retargeted C-4 / §4.2 onto `num-types-design.md` Rev 1.7: `Const<N>: Dim` is the capacity bound; missing `U*` names are `<Const<N> as Dim>::TypeNum`.                                                                                                                                                                                                                                                                                                                                                               |
+| 1.9      | August 24, 2026 | @MitchellDScott | Reverted Doc Status Approved → Draft for verification-gap Phase 1. Rewrote FR-1, 2, 3, 4, 5, 7, 8, 11, 12 as need statements; trimmed C-4 and FR-17; split §2.2 into NFR and Constraints. Documented `StaticStorageView`/`StaticStorageViewMut` (`LayoutMarker`) beside `ViewStorage`. §6 uses `size_of` formulas, required L2/L3 equalities including complex Hermitian round-trip, deferred Val-\*; §7 publishes 32/64-bit CSR columns (N=4: 120 / 192).                                                          |
+| 2.0      | August 24, 2026 | @MitchellDScott | Maintenance pass: consumed `storage-subprograms.json` (16:43) PJRT/wgpu/CUDA/candle device-storage evidence and mixed-precision literature. Added §4.7–§4.9, §4.2 block/stride prior art, dependency rejection of GPU/PJRT crates, alternatives and open questions for proposals; IEEE refs [21]–[42]. Status badge unchanged (Draft).                                                                                                                                                                              |
+| 2.1      | August 24, 2026 | @MitchellDScott | Requirements realignment and view renaming: updated document cross-references to match new consolidated FR-1–FR-7 and C-1–C-5 structure; renamed runtime strided views `ViewStorage` → `StorageView` / `StorageViewMut` while retaining `StaticStorageView` for compile-time `LayoutMarker` views; specialized constructor interfaces (runtime-stride only for `StorageView`, const-stride only for `StaticStorageView`); pruned strideless constructors from Figure 1 UML.                                         |
+| 2.2      | August 24, 2026 | @MitchellDScott | Architecture reconciliation: replaced legacy `MatrixStorage` umbrella in FR-1, Figures 1–3, and §3.4 with the decoupled storage subsystems architecture (`DenseStorage`/`Storage`, `PackedStorage`, `SparseStorage`), eliminating artificial cross-subsystem inheritance in preparation for Reviewed status.                                                                                                                                                                                                        |

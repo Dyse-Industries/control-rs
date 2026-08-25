@@ -2,7 +2,6 @@
 //!
 //! This module defines traits for (`try_`), wrapping and saturating
 //! arithmetic operations.
-#![allow(clippy::arbitrary_source_item_ordering)]
 
 // Re-export core arithmetic traits for unchecked operations.
 use crate::math::{ArithmeticError, ArithmeticResult, num_traits::Zero};
@@ -14,12 +13,6 @@ pub use core::ops::{
 /// Performs addition.
 pub trait TryAdd<Rhs = Self>: Sized + Add<Rhs> {
     /// Adds two numbers, returning an error on failure.
-    ///
-    /// # Arguments
-    /// * `v` - The value to add.
-    ///
-    /// # Returns
-    /// * `ArithmeticResult<Self::Output>` - The result of the addition.
     ///
     /// # Errors
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
@@ -34,12 +27,6 @@ pub trait TryAdd<Rhs = Self>: Sized + Add<Rhs> {
 pub trait TrySub<Rhs = Self>: Sized + Sub<Rhs> {
     /// Subtracts two numbers, returning an error on failure.
     ///
-    /// # Arguments
-    /// * `v` - The value to subtract.
-    ///
-    /// # Returns
-    /// * `ArithmeticResult<Self::Output>` - The result of the subtraction.
-    ///
     /// # Errors
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
     ///   representable range of the type.
@@ -53,12 +40,6 @@ pub trait TrySub<Rhs = Self>: Sized + Sub<Rhs> {
 pub trait TryMul<Rhs = Self>: Sized + Mul<Rhs> {
     /// Multiplies two numbers, returning an error on failure.
     ///
-    /// # Arguments
-    /// * `v` - The value to multiply by.
-    ///
-    /// # Returns
-    /// * `ArithmeticResult<Self::Output>` - The result of the multiplication.
-    ///
     /// # Errors
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
     ///   representable range of the type.
@@ -71,12 +52,6 @@ pub trait TryMul<Rhs = Self>: Sized + Mul<Rhs> {
 /// Performs fallible division.
 pub trait TryDiv<Rhs = Self>: Sized + Div<Rhs> {
     /// Divides two numbers, returning an error on failure.
-    ///
-    /// # Arguments
-    /// * `v` - The divisor.
-    ///
-    /// # Returns
-    /// * `ArithmeticResult<Self::Output>` - The result of the division.
     ///
     /// # Errors
     /// - `ArithmeticError::DivisionByZero`: The divisor `v` is zero.
@@ -92,9 +67,6 @@ pub trait TryDiv<Rhs = Self>: Sized + Div<Rhs> {
 pub trait TryNeg: Sized + Neg {
     /// Negates a number, returning an error on failure.
     ///
-    /// # Returns
-    /// * `ArithmeticResult<Self::Output>` - The negated value.
-    ///
     /// # Errors
     /// - `ArithmeticError::Overflow`: The result cannot be represented (e.g., `-i32::MIN`).
     #[allow(clippy::type_complexity)]
@@ -104,12 +76,6 @@ pub trait TryNeg: Sized + Neg {
 /// Performs remainder.
 pub trait TryRem<Rhs = Self>: Sized + Rem<Rhs> {
     /// Finds the remainder of a division, returning an error on failure.
-    ///
-    /// # Arguments
-    /// * `v` - The divisor.
-    ///
-    /// # Returns
-    /// * `ArithmeticResult<Self::Output>` - The remainder.
     ///
     /// # Errors
     ///
@@ -125,12 +91,6 @@ pub trait TryRem<Rhs = Self>: Sized + Rem<Rhs> {
 pub trait TryShl<Rhs = u32>: Sized + Shl<Rhs> {
     /// Performs a left shift (`self << rhs`).
     ///
-    /// # Arguments
-    /// * `rhs` - The number of bits to shift.
-    ///
-    /// # Returns
-    /// * `ArithmeticResult<Self::Output>` - The shifted value.
-    ///
     /// # Errors
     /// - `ArithmeticError::Overflow`: The number of bits to shift (`rhs`) is
     ///   greater than or equal to the bit-width of the type or the result
@@ -142,12 +102,6 @@ pub trait TryShl<Rhs = u32>: Sized + Shl<Rhs> {
 /// Performs a right shift.
 pub trait TryShr<Rhs = u32>: Sized + Shr<Rhs> {
     /// Performs a right shift (`self >> rhs`).
-    ///
-    /// # Arguments
-    /// * `rhs` - The number of bits to shift.
-    ///
-    /// # Returns
-    /// * `ArithmeticResult<Self::Output>` - The shifted value.
     ///
     /// # Errors
     ///
@@ -211,71 +165,19 @@ pub trait SaturatingMul: Sized + Mul<Self, Output = Self> {
 // --- Integer Implementations ---
 ////////////////////////////////////////////////////////////////////////////////
 
-macro_rules! try_impl_int {
-    ($trait:ident, $try_method:ident, $checked_method:ident, $($t:ty),+) => {
+macro_rules! binop_impl_int {
+    ($trait:ident, $method:ident, $inner_method:ident, $($t:ty),+) => {
         $(
             impl $trait for $t {
                 #[inline]
-                fn $try_method(&self, v: &$t) -> ArithmeticResult<$t> {
-                    self.$checked_method(*v).ok_or(ArithmeticError::Overflow)
+                fn $method(&self, v: &$t) -> $t {
+                    <$t>::$inner_method(*self, *v)
                 }
             }
             ////////////////////////////////////////////////////////////////////////////////
         )+
     };
 }
-
-try_impl_int!(
-    TryAdd,
-    try_add,
-    checked_add,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-try_impl_int!(
-    TrySub,
-    try_sub,
-    checked_sub,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-try_impl_int!(
-    TryMul,
-    try_mul,
-    checked_mul,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
 
 macro_rules! try_div_rem_impl {
     ($trait:ident, $try_method:ident, $checked_method:ident, $($t:ty),+) => {
@@ -294,242 +196,6 @@ macro_rules! try_div_rem_impl {
     };
 }
 
-try_div_rem_impl!(
-    TryDiv,
-    try_div,
-    checked_div,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-try_div_rem_impl!(
-    TryRem,
-    try_rem,
-    checked_rem,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-
-macro_rules! try_neg_impl {
-    ($($t:ty),+) => {
-        $(
-            impl TryNeg for $t {
-                #[inline]
-                fn try_neg(&self) -> ArithmeticResult<$t> {
-                    self.checked_neg().ok_or(ArithmeticError::Overflow)
-                }
-            }
-            ////////////////////////////////////////////////////////////////////////////////
-        )+
-    };
-}
-
-try_neg_impl!(i8, i16, i32, i64, i128, isize);
-
-macro_rules! try_shift_impl {
-    ($trait:ident, $try_method:ident, $checked_method:ident, $($t:ty),+) => {
-        $(
-            impl $trait<u32> for $t {
-                #[inline]
-                fn $try_method(&self, rhs: u32) -> ArithmeticResult<$t> {
-                    self.$checked_method(rhs).ok_or(ArithmeticError::Overflow)
-                }
-            }
-            ////////////////////////////////////////////////////////////////////////////////
-        )+
-    };
-}
-
-try_shift_impl!(
-    TryShr,
-    try_shr,
-    checked_shr,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-
-try_shift_impl!(
-    TryShl,
-    try_shl,
-    checked_shl,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-
-macro_rules! wrapping_impl_int {
-    ($trait:ident, $method:ident, $wrapping_method:ident, $($t:ty),+) => {
-        $(
-            impl $trait for $t {
-                #[inline]
-                fn $method(&self, v: &$t) -> $t {
-                    <$t>::$wrapping_method(*self, *v)
-                }
-            }
-            ////////////////////////////////////////////////////////////////////////////////
-        )+
-    };
-}
-
-wrapping_impl_int!(
-    WrappingAdd,
-    wrapping_add,
-    wrapping_add,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-wrapping_impl_int!(
-    WrappingSub,
-    wrapping_sub,
-    wrapping_sub,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-wrapping_impl_int!(
-    WrappingMul,
-    wrapping_mul,
-    wrapping_mul,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-
-macro_rules! saturating_impl_int {
-    ($trait:ident, $method:ident, $saturating_method:ident, $($t:ty),+) => {
-        $(
-            impl $trait for $t {
-                #[inline]
-                fn $method(&self, v: &$t) -> $t {
-                    <$t>::$saturating_method(*self, *v)
-                }
-            }
-            ////////////////////////////////////////////////////////////////////////////////
-        )+
-    };
-}
-
-saturating_impl_int!(
-    SaturatingAdd,
-    saturating_add,
-    saturating_add,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-saturating_impl_int!(
-    SaturatingSub,
-    saturating_sub,
-    saturating_sub,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-saturating_impl_int!(
-    SaturatingMul,
-    saturating_mul,
-    saturating_mul,
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize
-);
-
-////////////////////////////////////////////////////////////////////////////////
-// --- Floating Point Implementations ---
-////////////////////////////////////////////////////////////////////////////////
 macro_rules! try_float_impl {
     ($($t:ty),+) => {
         $(
@@ -539,12 +205,10 @@ macro_rules! try_float_impl {
                         return Err(ArithmeticError::DomainViolation);
                     }
                     let result = self.add(v);
-                    #[allow(clippy::float_cmp)]
-                    if result == *self && *v != <$t>::ZERO {
+                    if result.to_bits() == self.to_bits() && v.to_bits() != <$t>::ZERO.to_bits() {
                         return Err(ArithmeticError::PrecisionLoss);
                     }
-                    #[allow(clippy::float_cmp)]
-                    if result == *v && *self != <$t>::ZERO {
+                    if result.to_bits() == v.to_bits() && self.to_bits() != <$t>::ZERO.to_bits() {
                         return Err(ArithmeticError::PrecisionLoss);
                     }
                     if result != 0.0 && result.abs() < <$t>::MIN_POSITIVE {
@@ -623,12 +287,10 @@ macro_rules! try_float_impl {
                         return Err(ArithmeticError::DomainViolation);
                     }
                     let result = self.sub(v);
-                    #[allow(clippy::float_cmp)]
-                    if result == *self && *v != <$t>::ZERO {
+                    if result.to_bits() == self.to_bits() && v.to_bits() != <$t>::ZERO.to_bits() {
                         return Err(ArithmeticError::PrecisionLoss);
                     }
-                    #[allow(clippy::float_cmp)]
-                    if result == v.neg() && *self != <$t>::ZERO {
+                    if result.to_bits() == v.neg().to_bits() && self.to_bits() != <$t>::ZERO.to_bits() {
                         return Err(ArithmeticError::PrecisionLoss);
                     }
                     if result != <$t>::ZERO && result.abs() < <$t>::MIN_POSITIVE {
@@ -643,4 +305,274 @@ macro_rules! try_float_impl {
     };
 }
 
+macro_rules! try_impl_int {
+    ($trait:ident, $try_method:ident, $checked_method:ident, $($t:ty),+) => {
+        $(
+            impl $trait for $t {
+                #[inline]
+                fn $try_method(&self, v: &$t) -> ArithmeticResult<$t> {
+                    self.$checked_method(*v).ok_or(ArithmeticError::Overflow)
+                }
+            }
+            ////////////////////////////////////////////////////////////////////////////////
+        )+
+    };
+}
+
+macro_rules! try_neg_impl {
+    ($($t:ty),+) => {
+        $(
+            impl TryNeg for $t {
+                #[inline]
+                fn try_neg(&self) -> ArithmeticResult<$t> {
+                    self.checked_neg().ok_or(ArithmeticError::Overflow)
+                }
+            }
+            ////////////////////////////////////////////////////////////////////////////////
+        )+
+    };
+}
+
+macro_rules! try_shift_impl {
+    ($trait:ident, $try_method:ident, $checked_method:ident, $($t:ty),+) => {
+        $(
+            impl $trait<u32> for $t {
+                #[inline]
+                fn $try_method(&self, rhs: u32) -> ArithmeticResult<$t> {
+                    self.$checked_method(rhs).ok_or(ArithmeticError::Overflow)
+                }
+            }
+            ////////////////////////////////////////////////////////////////////////////////
+        )+
+    };
+}
+
+binop_impl_int!(
+    SaturatingAdd,
+    saturating_add,
+    saturating_add,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+binop_impl_int!(
+    SaturatingSub,
+    saturating_sub,
+    saturating_sub,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+binop_impl_int!(
+    SaturatingMul,
+    saturating_mul,
+    saturating_mul,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+
+try_div_rem_impl!(
+    TryDiv,
+    try_div,
+    checked_div,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+try_div_rem_impl!(
+    TryRem,
+    try_rem,
+    checked_rem,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+
 try_float_impl!(f32, f64);
+
+try_impl_int!(
+    TryAdd,
+    try_add,
+    checked_add,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+try_impl_int!(
+    TrySub,
+    try_sub,
+    checked_sub,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+try_impl_int!(
+    TryMul,
+    try_mul,
+    checked_mul,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+
+try_neg_impl!(i8, i16, i32, i64, i128, isize);
+
+try_shift_impl!(
+    TryShr,
+    try_shr,
+    checked_shr,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+try_shift_impl!(
+    TryShl,
+    try_shl,
+    checked_shl,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+
+binop_impl_int!(
+    WrappingAdd,
+    wrapping_add,
+    wrapping_add,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+binop_impl_int!(
+    WrappingSub,
+    wrapping_sub,
+    wrapping_sub,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);
+binop_impl_int!(
+    WrappingMul,
+    wrapping_mul,
+    wrapping_mul,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize
+);

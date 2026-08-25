@@ -1,6 +1,6 @@
 # Classical Tools (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_8,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -347,3 +347,4 @@ one the module amortizes or hides.
 | Revision | Date           | Author          | Description                                                                                                             |
 |:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------|
 | 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: functional scope, numeric-core architecture and root-locus/Routh-Hurwitz mapping to existing primitives. |
+| 1.1      | August 24, 2026 | @mitchelldscott | Refreshed date badge alongside the numerical-models retarget. No content change required: this document names no storage trait, no subprogram, and no scalar bound directly, citing `polynomial-design.md` / `transfer-function-design.md` / `matrix-design.md` sections only. Status stays Draft. |

@@ -1,6 +1,6 @@
 # Robust Tools (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_8,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -95,8 +95,14 @@ uncertainty ranges (MathWorks, 2026c).
 #### 4.1. Uncertain-Plant Representation
 
 The nominal interconnection matrix M is represented with the existing
-`StateSpace<T, ...>`/`Matrix<T, R, C>` types; no new heap-based uncertain-
-system container is introduced. The uncertainty itself is represented purely
+`StateSpace<T, ...>`/`Matrix<T, R, C, S>` types; no new heap-based
+uncertain-system container is introduced. Frequency-response evaluation of
+$M(j\omega)$ is complex-valued, which the retargeted numerical models now
+admit directly: `Complex<T>` satisfies `T: Scalar`
+(`num-traits-design.md` §4.3), and the Hermitian routines `Hemv`, `Herk`
+and `Heev` (`subprograms-design.md` FR-2, FR-4, FR-8) supply the
+$M(j\omega)^H M(j\omega)$ singular-value machinery $\mu$-analysis and
+$\mathcal{H}_\infty$ norms require. The uncertainty itself is represented purely
 as a scalar norm bound (‖Δ‖ ≤ 1) on a single, unstructured, full complex
 block — the one case JuliaControl documents as currently tractable without a
 general LMI solve (JuliaControl, 2026a). Frequency-dependent uncertainty
@@ -351,3 +357,4 @@ Aug. 8, 2026.
 | Revision | Date           | Author          | Description                                                                                                                                    |
 |:---------|:---------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------|
 | 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: scoped `robust_tools` to single-block uncertainty and a closed-form stability check; deferred µ-analysis pending an SDP solver. |
+| 1.1      | August 24, 2026 | @mitchelldscott | Aligned §4.1 with the retargeted models: `Matrix<T, R, C, S>` carries its storage parameter, and recorded that `Complex<T>` now satisfies `T: Scalar`, so the Hermitian routines `Hemv`/`Herk`/`Heev` (`subprograms-design.md` FR-2, FR-4, FR-8) supply the frequency-response singular-value machinery. Robust control content unchanged. Status stays Draft. |

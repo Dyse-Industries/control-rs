@@ -4,6 +4,7 @@
 /// HIL test suite for complex number mathematical operations.
 pub mod complex_num_tests;
 pub mod dsp_tests;
+pub mod fixed_num_tests;
 pub mod num_trait_tests;
 pub mod num_type_tests;
 pub mod op_tests;
@@ -18,6 +19,9 @@ pub mod suites {
 
     // dsp
     pub use super::dsp_tests::dsp_test_suite::SUITE_DESCRIPTOR_PTR as dsp;
+
+    // fixed_num
+    pub use super::fixed_num_tests::fixed_num_test_suite::SUITE_DESCRIPTOR_PTR as fixed_num;
 
     // num_traits
     pub use super::num_trait_tests::num_trait_test_suite::SUITE_DESCRIPTOR_PTR as num_traits;

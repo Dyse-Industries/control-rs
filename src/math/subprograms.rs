@@ -26,23 +26,30 @@
 //! // Calling gemv and attempting to handle it as a Result fails to compile because gemv returns ()
 //! let _res: Result<(), ()> = DefaultBlas::gemv(Trans::NoTrans, 1.0, &a, &x, 0.0, &mut y);
 //! ```
-#![allow(clippy::too_many_arguments)]
+// Conventional single-character argument names are standard and accepted for BLAS/LAPACK subprograms (e.g. m, n, k, A, B, C, x, y).
 #![allow(clippy::many_single_char_names)]
-#![allow(clippy::arithmetic_side_effects)]
+// Direct matrix/vector indexing using brackets (slice[idx]) is used throughout this file for optimal memory layout access, bypassing bounds check branches in performance-critical BLAS loops.
 #![allow(clippy::indexing_slicing)]
+// Standard floating-point matrix arithmetic operations are unavoidable in generic BLAS/LAPACK implementations.
+#![allow(clippy::arithmetic_side_effects)]
+// BLAS/LAPACK routines naturally require many arguments (exceeding clippy's default limit of 4), conforming to standard BLAS/LAPACK APIs.
+#![allow(clippy::too_many_arguments)]
+// Parameter names matching BLAS standards (e.g., lda, ldb, trans_a, trans_b) look similar but are standard.
+#![allow(clippy::similar_names)]
+// Subprogram traits and implementations are grouped logically by BLAS Level 1/2/3 and LAPACK, rather than alphabetically.
+#![allow(clippy::arbitrary_source_item_ordering)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::match_same_arms)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::doc_markdown)]
-#![allow(clippy::arbitrary_source_item_ordering)]
 #![allow(clippy::wildcard_imports)]
 #![allow(clippy::match_like_matches_macro)]
 #![allow(clippy::eq_op)]
 #![allow(clippy::collapsible_if)]
-#![allow(clippy::similar_names)]
 #![allow(clippy::use_self)]
+#![allow(clippy::needless_pass_by_ref_mut)]
 
 use crate::math::num_traits::{Float, One, Radical, Scalar, Zero};
 use crate::math::ops::Div;
@@ -3498,7 +3505,7 @@ where
         let m = a.rows();
         let n = a.cols();
         let min_dim = core::cmp::min(m, n);
-        if tau.len() < min_dim {
+        if tau.len() < min_dim || work.len() < n {
             return Err(LinAlgError::WorkspaceTooSmall);
         }
 
@@ -3585,6 +3592,13 @@ where
         let m = c.rows();
         let n = c.cols();
         let k_limit = core::cmp::min(a.rows(), a.cols());
+        let min_work = match side {
+            Side::Left => n,
+            Side::Right => m,
+        };
+        if tau.len() < k_limit || work.len() < min_work {
+            return Err(LinAlgError::WorkspaceTooSmall);
+        }
 
         match (side, trans) {
             (Side::Left, Trans::NoTrans) => {
@@ -3678,6 +3692,13 @@ where
         let m = c.rows();
         let n = c.cols();
         let k_limit = core::cmp::min(a.rows(), a.cols());
+        let min_work = match side {
+            Side::Left => n,
+            Side::Right => m,
+        };
+        if tau.len() < k_limit || work.len() < min_work {
+            return Err(LinAlgError::WorkspaceTooSmall);
+        }
 
         match (side, trans) {
             (Side::Left, Trans::NoTrans) => {
@@ -3751,23 +3772,32 @@ where
     }
 }
 
-impl<T, A> lapack::Syev<T, A> for DefaultBlas
+/// Jacobi eigendecomposition of a real symmetric operand under an explicit
+/// sweep budget.
+///
+/// Crate-private seam for [`lapack::Syev`]. The public `syev` supplies the
+/// default budget $50 n^2$; verification supplies `max_iter = 0` to reach the
+/// [`LinAlgError::MaxIterationsReached`] arm on a well-conditioned operand
+/// (`subprograms-design.md` §4.3, §6.1.2). The budget travels on the call
+/// stack, so no global state participates in the result (NFR-1b).
+#[inline(always)]
+pub(crate) fn syev_impl<T, A>(
+    jobz: JobZ,
+    uplo: UpLo,
+    a: &mut A,
+    w: &mut [T::Real],
+    work: &mut [T],
+    max_iter: usize,
+) -> LinAlgResult<()>
 where
     T: Scalar + Div<Output = T>,
     T::Real: Float,
     A: DenseStorageMut<T>,
 {
-    #[inline(always)]
-    fn syev(
-        jobz: JobZ,
-        uplo: UpLo,
-        a: &mut A,
-        w: &mut [T::Real],
-        work: &mut [T],
-    ) -> LinAlgResult<()> {
+    {
         let n = a.rows();
         debug_assert_eq!(n, a.cols());
-        if w.len() < n {
+        if w.len() < n || work.len() < 2 * n {
             return Err(LinAlgError::WorkspaceTooSmall);
         }
 
@@ -3780,7 +3810,6 @@ where
             }
         }
 
-        let max_iter = 50 * n * n;
         let mut iter = 0;
         loop {
             let mut max_off = <T::Real as Zero>::ZERO;
@@ -3898,23 +3927,29 @@ where
     }
 }
 
-impl<T, A> lapack::Heev<T, A> for DefaultBlas
+/// Jacobi eigendecomposition of a complex Hermitian operand under an explicit
+/// sweep budget.
+///
+/// Crate-private seam for [`lapack::Heev`]. See [`syev_impl`] for the budget
+/// contract.
+#[inline(always)]
+pub(crate) fn heev_impl<T, A>(
+    jobz: JobZ,
+    uplo: UpLo,
+    a: &mut A,
+    w: &mut [T::Real],
+    work: &mut [T],
+    max_iter: usize,
+) -> LinAlgResult<()>
 where
     T: Scalar + Div<Output = T>,
     T::Real: Float,
     A: DenseStorageMut<T>,
 {
-    #[inline(always)]
-    fn heev(
-        jobz: JobZ,
-        uplo: UpLo,
-        a: &mut A,
-        w: &mut [T::Real],
-        work: &mut [T],
-    ) -> LinAlgResult<()> {
+    {
         let n = a.rows();
         debug_assert_eq!(n, a.cols());
-        if w.len() < n {
+        if w.len() < n || work.len() < 2 * n {
             return Err(LinAlgError::WorkspaceTooSmall);
         }
 
@@ -3927,7 +3962,6 @@ where
             }
         }
 
-        let max_iter = 50 * n * n;
         let mut iter = 0;
         loop {
             let mut max_off = <T::Real as Zero>::ZERO;
@@ -4054,8 +4088,40 @@ where
     }
 }
 
-/// Type alias for [`DefaultBlas`] backwards compatibility.
-pub type BasicSubProgramsF32 = DefaultBlas;
+impl<T, A> lapack::Syev<T, A> for DefaultBlas
+where
+    T: Scalar + Div<Output = T>,
+    T::Real: Float,
+    A: DenseStorageMut<T>,
+{
+    #[inline(always)]
+    fn syev(
+        jobz: JobZ,
+        uplo: UpLo,
+        a: &mut A,
+        w: &mut [T::Real],
+        work: &mut [T],
+    ) -> LinAlgResult<()> {
+        let n = a.rows();
+        syev_impl(jobz, uplo, a, w, work, 50 * n * n)
+    }
+}
 
-/// Type alias for [`DefaultBlas`] backwards compatibility.
-pub type BasicSubProgramsF64 = DefaultBlas;
+impl<T, A> lapack::Heev<T, A> for DefaultBlas
+where
+    T: Scalar + Div<Output = T>,
+    T::Real: Float,
+    A: DenseStorageMut<T>,
+{
+    #[inline(always)]
+    fn heev(
+        jobz: JobZ,
+        uplo: UpLo,
+        a: &mut A,
+        w: &mut [T::Real],
+        work: &mut [T],
+    ) -> LinAlgResult<()> {
+        let n = a.rows();
+        heev_impl(jobz, uplo, a, w, work, 50 * n * n)
+    }
+}

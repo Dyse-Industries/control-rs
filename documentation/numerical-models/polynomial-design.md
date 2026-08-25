@@ -1,6 +1,6 @@
 # Polynomial Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_20,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -13,32 +13,31 @@ filter coefficients, Tustin/ZOH discretization of continuous models,
 cubic/quintic trajectory generation and companion-matrix root-finding for
 characteristic polynomials produced by `Matrix`. Its architecture directly
 reuses the storage hierarchy `matrix-design.md` §4.1 builds on
-(`storage-subprograms-design.md`, Reviewed, Rev 1.31) rather than defining a
-parallel storage abstraction, fixing `C = U1` to specialize it to a single
-column.
+(`storage-design.md`, Approved, Rev 1.8) rather than defining a parallel
+storage abstraction, fixing the column dimension to `U1` to specialize it to
+a single column.
 
 The following elements are directly shared with, or adapted from, `Matrix`'s
 architecture:
 
-- **Signature Pattern**: `Polynomial<T, N: Dim, S: MatrixStorage<T, N, U1>>`
-  mirrors `Matrix<T, R, C, S: MatrixStorage<T, R, C>>` with `C` fixed to `U1`
-  (`matrix-design.md` §4.1). Owning stack storage is
-  `DenseVectorArray<T, const N>` (`Const<N>` in the `Dim` slot).
+- **Signature Pattern**: `Polynomial<T, N: Dim, S: DenseStorage<T, R = N, C = U1>>`
+  mirrors `Matrix<T, R, C, S: DenseStorage<T, R = R, C = C>>` with the column
+  dimension fixed to `U1` (`matrix-design.md` §4.1). Owning stack storage is
+  `ArrayStorage<T, N, 1>`, which implements the trait at
+  `type R = Const<N>; type C = Const<1>;` (`storage-design.md` FR-4).
 - **Storage Trait Reuse**: No new storage trait is introduced; `Polynomial`
-  is `Matrix`'s $N \times 1$ column case, inheriting
-  `DenseVectorArray<T, const N>`,
-  `DenseVectorRef<'a, T, N>` / `DenseVectorRefMut<'a, T, N>`,
-  and the `MatrixStorage<T, N, U1>` universal floor as-is.
-- **Single Addressing Branch**: A single column reaches only the
-  leading-dimension branch, where `DenseStorage`'s associated
-  `type LDA = Const<N>` (`storage-subprograms-design.md` §4.1.2). The packed
-  branch (`PackedStorage`, `IMPLICIT`; `Diagonal` now, `SP`/`TP` later) has
-  no $N \times 1$ analogue, so
-  `matrix-design.md` §4.9.2's second lookup accessor has no counterpart here.
-- **Level-1 Operand Contract**: Coefficients reach kernels as
-  `as_array::<N>() -> &[T; N]` with `INC_X = 1` and `BUF_X = N`
-  (`storage-subprograms-design.md` §4.2.2). No level-2/3 nested operand
-  arises from a single column.
+  is `Matrix`'s $N \times 1$ column case, reusing `ArrayStorage<T, N, 1>` and
+  the strided views `ViewStorage<'a, T, N, U1>` /
+  `ViewStorageMut<'a, T, N, U1>` as-is.
+- **Single Storage Subsystem**: A single column reaches only the dense
+  strided subsystem, with $RS = 1$ and $CS = N$
+  (`storage-design.md` §4.1). The packed subsystem has no $N \times 1$
+  analogue, so `matrix-design.md` §4.9.2's `value` accessor and the
+  `PackedMatrix` sibling have no counterpart here.
+- **Level-1 Operand Contract**: Coefficients reach kernels as the typed
+  storage operand itself (`subprograms-design.md` FR-9); the kernel reads
+  the unit row stride off the leaf rather than taking an increment
+  parameter. No Level 2/3 operand arises from a single column.
 - **Ownership Aliases**: `ArrayPolynomial`/`PolynomialView`/
   `PolynomialViewMut` mirror `matrix-design.md`'s `Owned`/`MatrixSlice`/
   `MatrixSliceMut` aliases (§4.1, §4.3.1).
@@ -62,9 +61,9 @@ architecture:
   division operations over zero polynomials return explicit error variants (
   `PolynomialError`) rather than panicking or producing `NaN`.
 - **FR-5 — Fixed-Extent Kernel Operands**: Every subprogram call site derives
-  its extents ($N$, `INC_X`, `BUF_X`) from the coefficient storage type, not
-  from a caller-supplied scalar, discharging the caller-side half of
-  `storage-subprograms-design.md` C-4 for the $N \times 1$ case.
+  its extent $N$ and its strides from the coefficient storage type, not from
+  a caller-supplied scalar, discharging the caller-side half of
+  `subprograms-design.md` C-1 for the $N \times 1$ case.
 
 #### 2.2. Non-Functional Requirements
 
@@ -98,8 +97,8 @@ root-finding — convenient and allocation-free for callers across the FIR/IIR,
 discretization and trajectory-generation use cases named in §1. Because the
 storage hierarchy is specified to monomorphize without vtables and to compile
 to zero-branch, zero-panic-path code over compile-time array extents
-(`storage-subprograms-design.md` NFR-4, §7.1), reusing it here carries no
-additional runtime cost beyond what `Matrix` already pays.
+(`storage-design.md` NFR-3; `subprograms-design.md` NFR-3, §7), reusing it
+here carries no additional runtime cost beyond what `Matrix` already pays.
 
 ---
 
@@ -112,45 +111,45 @@ the module's current pre-`Storage` stub (a bare `Polynomial<T>` trait over
 #### 4.1. Generics Foundation & Sizing
 
 The core `Polynomial` structure decouples mathematical dimensions from
-physical storage using the same Tier-1 bound `Matrix` names on its struct
-(`matrix-design.md` §4.1.1), with `C` fixed to `U1`:
+physical storage using the same bound `Matrix` names on its struct
+(`matrix-design.md` §4.1.1), with the column dimension fixed to `U1`:
 
 ```rust
-pub struct Polynomial<T, N: Dim, S: MatrixStorage<T, N, U1>> {
+pub struct Polynomial<T, N: Dim, S: DenseStorage<T, R = N, C = U1>> {
     storage: S,
     _marker: core::marker::PhantomData<N>,
 }
 ```
 
-Operations needing a leading dimension (level-2 kernel calls on the
-companion-matrix path, §4.7.1) require `S: DenseStorage<T, N, U1>` on their
-own `impl` block, as `Matrix` does. For a single column the two bounds admit
-the same leaves, so the split costs nothing here; it keeps the two documents'
-storage story identical.
+Operations needing a padding-free slice (FFI hand-off, §4.3) additionally
+require `S: ContiguousStorage<T>` on their own `impl` block, as `Matrix`
+does. Every owning single-column leaf satisfies both, so the split costs
+nothing here; it keeps the two documents' storage story identical.
 
 Here, `N` represents the capacity (number of coefficients, maximum possible
 degree is $N - 1$) and `S` defines where the coefficients reside (e.g. stack
-`DenseVectorArray`, borrowed `DenseVectorRef` view or static Flash memory).
-`DenseVectorArray` takes a bare `const usize`, so it is not a valid default
-for `N: Dim`.
+`ArrayStorage<T, N, 1>`, a borrowed `ViewStorage` or static Flash memory).
+`ArrayStorage` takes bare `const usize` capacities, so it is not a valid
+default for `N: Dim`.
 
 #### 4.2. Coefficient Layout & Storage Strategy
 
-By parameterizing `Polynomial` over `MatrixStorage<T, N, U1>`, `control-rs`
-supports multiple ownership models without duplicating algebraic logic:
+By parameterizing `Polynomial` over `DenseStorage<T, R = N, C = U1>`,
+`control-rs` supports multiple ownership models without duplicating
+algebraic logic:
 
 ```rust
 /// Owning polynomial backed by a stack array — `N` is the alias's own const generic.
 pub type ArrayPolynomial<T, const N: usize> =
-    Polynomial<T, Const<N>, DenseVectorArray<T, N>>;
+    Polynomial<T, Const<N>, ArrayStorage<T, N, 1>>;
 
 /// Zero-copy read-only borrowed polynomial view.
-pub type PolynomialView<'a, T, const N: usize> =
-    Polynomial<T, Const<N>, DenseVectorRef<'a, T, N>>;
+pub type PolynomialView<'a, T, N> =
+    Polynomial<T, N, ViewStorage<'a, T, N, U1>>;
 
 /// Zero-copy mutable borrowed polynomial view.
-pub type PolynomialViewMut<'a, T, const N: usize> =
-    Polynomial<T, Const<N>, DenseVectorRefMut<'a, T, N>>;
+pub type PolynomialViewMut<'a, T, N> =
+    Polynomial<T, N, ViewStorageMut<'a, T, N, U1>>;
 ```
 
 Coefficients are stored in **ascending order of powers**:
@@ -158,7 +157,7 @@ $$ p(x) = c_0 + c_1 x + c_2 x^2 + \dots + c_{N-1} x^{N-1} $$
 where index `i` maps to the coefficient of $x^i$. This is a logical
 convention (`index = degree of term`) that `Polynomial` itself defines and
 fully resolves; it says nothing about physical memory layout, which remains
-`Storage`'s concern.
+the storage leaf's concern.
 
 - **Ascending Power Storage Rationale**:
     - Direct index-to-exponent mapping: element at index `i` corresponds
@@ -173,26 +172,26 @@ fully resolves; it says nothing about physical memory layout, which remains
       not crate-specific" without overstating coverage.
 
 **Physical layout is storage's concern, not `Polynomial`'s.** Cold paths
-address coefficients through a bounds-checked accessor and hot paths through
-`as_array::<N>()` (§4.3), never through a raw offset, so `Polynomial` is
-agnostic to whichever concrete backend it is instantiated over. Row-major and
-column-major degenerate to the same addressing scheme for a $C = U1$
-container, so the layout distinction `matrix-design.md` §4.2 draws between
-them (cache locality across columns, BLAS interoperability) does not apply
-here in the same way. The storage hierarchy still permits mixing and
-matching backends under `Polynomial` to the extent a single-column shape
-allows.
+address coefficients through a bounds-checked accessor and hot paths hand
+the typed storage operand to a kernel (§4.3), never through a raw offset, so
+`Polynomial` is agnostic to whichever concrete backend it is instantiated
+over. Row-major and column-major degenerate to the same addressing scheme
+for a single-column container, so the layout distinction
+`matrix-design.md` §4.2 draws between them (cache locality across columns,
+BLAS interoperability) does not apply here in the same way. A non-unit row
+stride remains representable through `ViewStorage`, which is how a
+coefficient run embedded in a larger buffer is borrowed without a copy.
 
 #### 4.3. Memory Representation & Slicing
 
-CONTIGUOUS slice interfaces are safely exposed when the storage backend
-implements `MatrixStorage` or `MatrixStorageMut`, gated the same way
+Padding-free slice interfaces are exposed when the storage backend
+implements `ContiguousStorage` or `ContiguousStorageMut`, gated the same way
 `matrix-design.md` §4.3 gates `Matrix::as_slice`/`as_mut_slice`:
 
 ```rust
 impl<T, N: Dim, S> Polynomial<T, N, S>
 where
-    S: MatrixStorage<T, N, U1>,
+    S: ContiguousStorage<T, R = N, C = U1>,
 {
     /// Exposes a safe contiguous slice view of coefficient memory.
     pub fn as_slice(&self) -> &[T] {
@@ -202,43 +201,35 @@ where
 
 impl<T, N: Dim, S> Polynomial<T, N, S>
 where
-    S: MatrixStorageMut<T, N, U1>,
+    S: ContiguousStorageMut<T, R = N, C = U1>,
 {
     /// Exposes a safe mutable contiguous slice view of coefficient memory.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         self.storage.as_mut_slice()
     }
 }
-
-impl<T, const N: usize> ArrayPolynomial<T, N> {
-    /// Fixed-extent level-1 operand (`storage-subprograms-design.md` §4.2.2).
-    /// The storage accessor is generic in the extent; on this alias `N` is
-    /// already concrete, so `Polynomial`'s wrapper takes no turbofish.
-    /// `N = N * 1` holds by `as_array`'s own `DimMul` bound, so no
-    /// `generic_const_exprs` gate applies.
-    pub fn as_array(&self) -> &[T; N] {
-        self.storage.as_array::<N>()
-    }
-}
 ```
 
-Level-1 kernels and `Convolution` take the fixed-extent form,
-`as_array::<N>() -> &[T; N]`, rather than the unsized slice: the array's
-length is in the signature, so LLVM folds the loop bounds checks
-(`storage-subprograms-design.md` §4.2.2, §7.1). `as_slice()` remains the
-inspection and FFI hand-off path. Both are contiguous, which is what lets
-`mul_with_conv` (§4.5) and `evaluate` (§4.6) vectorize over coefficients and
-pass into hardware DSP kernels without copying (NFR-1).
+Level 1 kernels take the typed storage operand directly
+(`subprograms-design.md` FR-9): shape comes from `S::R::USIZE` and
+addressing from `as_ptr()` plus the leaf's strides, both monomorphization
+constants on an owning array leaf, so LLVM folds the loop bounds
+(`storage-design.md` NFR-3). This removes the former
+`as_array::<N>() -> &[T; N]` accessor and its `DimMul` bound. `as_slice()`
+remains the inspection and FFI hand-off path, which is what lets
+`mul_with_conv` (§4.5) and `evaluate` (§4.6) pass into hardware DSP kernels
+without copying (NFR-1).
 
 Unlike `Matrix` (`matrix-design.md` §4.3.1), `Polynomial` does not define a
 zero-copy transposed view: transposition is not a meaningful operation on
 an $N \times 1$ shape, so that subsection of `Matrix`'s architecture has no
 analogue here.
 
-Borrowed views are constructed only through `storage-subprograms-design.md`
-FR-6: `ArrayPolynomial::view()` / `view_mut()` copy `N` from the owning
-alias's const generic. There is no `from_slice(&[T])` constructor that
-pairs an independent `N: Dim` with a raw slice.
+Borrowed views are constructed through `storage-design.md` FR-5:
+`ArrayPolynomial::view()` / `view_mut()` copy `N` from the owning alias's
+const generic. `ViewStorage::new` is the only path that wraps an
+erased-length slice, and it is fallible with
+`ConversionError::DimensionMismatch` (`storage-design.md` §4.6).
 
 #### 4.4. Instantiation & Constructors
 
@@ -266,8 +257,8 @@ provides two interfaces:
 
 1. `mul_poly`: Static multiplication returning a combined capacity bound:
    ```rust
-   impl<T, N: Dim, S1: MatrixStorage<T, N, U1>> Polynomial<T, N, S1> {
-       pub fn mul_poly<M: Dim, S2: MatrixStorage<T, M, U1>, SOut>(
+   impl<T, N: Dim, S1: DenseStorage<T, R = N, C = U1>> Polynomial<T, N, S1> {
+       pub fn mul_poly<M: Dim, S2: DenseStorage<T, R = M, C = U1>, SOut>(
            &self,
            other: &Polynomial<T, M, S2>,
        ) -> Polynomial<T, <<N as DimAdd<M>>::Output as DimSub<U1>>::Output, SOut>
@@ -275,8 +266,12 @@ provides two interfaces:
            N: DimAdd<M>,
            <N as DimAdd<M>>::Output: DimSub<U1>,
            <N as DimAdd<M>>::Output: Dim,
-           SOut: DenseStorage<T, <<N as DimAdd<M>>::Output as DimSub<U1>>::Output, U1>,
-           T: Copy + Zero + Add<Output = T> + Mul<Output = T>,
+           SOut: DenseStorageMut<
+               T,
+               R = <<N as DimAdd<M>>::Output as DimSub<U1>>::Output,
+               C = U1,
+           >,
+           T: Scalar,
        { /* ... */ }
    }
    ```
@@ -284,8 +279,8 @@ provides two interfaces:
    approximation: ascending-power zero-padding (§4.2) guarantees any
    coefficient above the true product degree evaluates to `T::zero()`
    rather than a silently wrong value. The return type does not name
-   `DenseVectorArray<T, Out>`: that alias takes a bare `const usize`, not a
-   `Dim` associated type (`storage-subprograms-design.md` §4.1.3). The
+   `ArrayStorage<T, Out, 1>`: that leaf takes bare `const usize` capacities,
+   not a `Dim` associated type (`storage-design.md` FR-4, C-4). The
    `ArrayPolynomial<T, const N>` convenience impl builds the owning result
    through `from_fn` at the monomorphized `Const<N>`/`Const<M>` call site.
 2. `mul_with_conv`: Decouples arithmetic from representation by leveraging
@@ -301,12 +296,13 @@ provides two interfaces:
 #### 4.6. Core Operations
 
 - **Horner's Method Evaluation**: Evaluates $p(x)$ using the recurrence
-  $p(x) = c_0 + x(c_1 + x(c_2 + \dots))$ over the fixed-extent operand
-  `as_array::<N>()`, descending from index $N-1$. The array extent is in the
-  signature, so the loop carries no bounds check and no panic path
-  (`storage-subprograms-design.md` NFR-4). Minimizes floating-point rounding
+  $p(x) = c_0 + x(c_1 + x(c_2 + \dots))$ over the typed storage operand,
+  descending from index $N-1$. The extent is `S::R::USIZE`, a
+  monomorphization constant, so the loop carries no bounds check and no
+  panic path (`storage-design.md` NFR-3). Minimizes floating-point rounding
   error and operation count to $N-1$ additions and multiplications
-  (Horner, 1819).
+  (Horner, 1819). The recurrence is multiply-add only, so it holds at
+  `T: Scalar` and admits integer, fixed-point and complex coefficients.
   The computed result is exact for a polynomial whose coefficients are
   relatively perturbed by at most $\gamma_{2n} = 2nu / (1 - 2nu)$ from
   $p$'s true coefficients, where $u$ is unit roundoff (Higham, 2002, Ch.
@@ -315,8 +311,8 @@ provides two interfaces:
 - **Polynomial Division (`div_rem`)**: Computes quotient and remainder with
   statically checked degree bounds (`Q = N - M + 1`, `R = M - 1`):
   ```rust
-  impl<T, N: Dim, S: MatrixStorage<T, N, U1>> Polynomial<T, N, S> {
-      pub fn div_rem<M: Dim, Sm: MatrixStorage<T, M, U1>, Q: Dim, R: Dim>(
+  impl<T, N: Dim, S: DenseStorage<T, R = N, C = U1>> Polynomial<T, N, S> {
+      pub fn div_rem<M: Dim, Sm: DenseStorage<T, R = M, C = U1>, Q: Dim, R: Dim>(
           &self,
           divisor: &Polynomial<T, M, Sm>,
       ) -> Result<(Polynomial<T, Q>, Polynomial<T, R>), DivisionError> { /* ... */ }
@@ -341,7 +337,7 @@ $O(N)$-space companion-matrix QR rootfinding.
 
 - **Type Signature**:
   ```rust
-  impl<T, N: Dim, S: MatrixStorage<T, N, U1>> TryFrom<Polynomial<T, N, S>>
+  impl<T, N: Dim, S: DenseStorage<T, R = N, C = U1>> TryFrom<Polynomial<T, N, S>>
   for Matrix<T, <N as DimSub<U1>>::Output, <N as DimSub<U1>>::Output>
   where
       N: DimSub<U1>,
@@ -353,7 +349,7 @@ $O(N)$-space companion-matrix QR rootfinding.
   }
   ```
   Unlike the inverse `Matrix` → `Polynomial` conversion
-  (`matrix-design.md` §4.8.1), which requires `T: Float` for its
+  (`matrix-design.md` §4.8.1), which requires `T: Scalar + Div` for its
   division-based Faddeev–LeVerrier recursion, this conversion only places
   and negates coefficients into matrix cells — no division — so the
   narrower `Signed` bound suffices.
@@ -391,18 +387,22 @@ Converts flat coefficient data into a 1D `Tensor<T, Layout, B>`, mirroring
 
 - **Type Signature**:
   ```rust
-  impl<T, N: Dim, B: Buffer<T>, Layout: TensorLayout> From<Polynomial<T, N, Dense<T, N, U1, B>>> for Tensor<T, Layout, B>
+  impl<T, N: Dim, S, Layout: TensorLayout> From<Polynomial<T, N, S>> for Tensor<T, Layout, S>
   where
+      S: ContiguousStorage<T, R = N, C = U1>,
       Layout: TensorLayout<Size = N>,
   {
       // Preserves backing buffer zero-copy when compile-time size and rank 1 match
   }
   ```
-- **Behavior**: Maps coefficient storage directly into the flat buffer
-  representation of the `Tensor`.
+- **Behavior**: Maps the leaf's padding-free slice directly into the flat
+  buffer representation of the `Tensor`. The `ContiguousStorage` bound is
+  what makes the mapping zero-copy; a strided `ViewStorage` has no such
+  slice and converts by element copy
+  (`tensor-design.md` §4.1, `FlatBuffer<T>`).
 - **Infallible Compile-Time Bound**: Dimensions and rank are verified statically
-  at compile time via `Layout: TensorLayout<Size = N>`, eliminating runtime
-  `LayoutMismatch` failure modes.
+  at compile time via `Layout: TensorLayout<Size = N>`.
+  `ConversionError::LayoutMismatch` no longer exists (`error-design.md` §3).
 
 #### 4.8. Error Handling & State Management
 
@@ -418,9 +418,10 @@ time via `Dim` type constraints, the same mechanism `matrix-design.md`
 conversions and is defined once, canonically, in
 [`error-design.md`](../math/error-design.md) §3 — not restated here.
 
-`DivisionError` is specific to `Polynomial` and is defined here, matching
-`matrix-design.md` §4.9.2's precedent of defining single-consumer error
-enums directly in their owning design doc:
+`DivisionError` is specific to `Polynomial` and stays in this module, which
+`error-design.md` FR-1 states as the rule: an error type consumed by more
+than one sibling module is defined once in `src/math/mod.rs`, while a
+single-consumer enum stays with its owner.
 
 ```rust
 /// Errors returned by Polynomial::div_rem, supplementing ConversionError.
@@ -451,9 +452,9 @@ pub enum DivisionError {
   `Convolution::convolve_input` (`src/math/dsp.rs:196-210`) panics via
   `assert!` on an undersized caller-provided output buffer, violating the
   crate's no-panic-outside-tests-and-examples rule (`CLAUDE.md`) and
-  `storage-subprograms-design.md` NFR-4. `mul_with_conv` (§4.5) delegates to
-  it directly. The correction (`assert!` → `debug_assert!`, matching the
-  "Panics (Debug only)" convention `GEMV`/`GEMM` already use in
+  `subprograms-design.md` NFR-3. `mul_with_conv` (§4.5) delegates to it
+  directly. The correction (`assert!` → `debug_assert!`, matching the
+  `debug_assert_eq!` precondition convention `Gemv`/`Gemm` already use in
   `subprograms.rs`) is a required pre-implementation fix, tracked in §7.
 
 ---
@@ -494,8 +495,9 @@ since they are currently algorithmically identical (§4.5). They are kept
 separate so that `mul_with_conv` alone can later delegate to a hardware- or
 fixed-point-specialized `Convolution<T>` implementation without changing
 `mul_poly`'s own, strictly broader bound (`T: Copy + Zero + Add<Output=T> +
-Mul<Output=T>`, §4.5 — no `Float` required, so `mul_poly` already works
-for fixed-point and integer `T` today) or requiring downstream callers of
+Mul<Output=T>`, satisfied by `T: Scalar`, §4.5 — no `Float` required, so
+`mul_poly` already works for fixed-point, integer and complex `T` today) or
+requiring downstream callers of
 `mul_poly` to opt into `Convolution<T>`'s narrower, `Float`-only
 specialization.
 
@@ -507,9 +509,9 @@ Companion construction is $n \times n$, fallible on a non-monic input, and
 reorders coefficients; a value-preserving column copy is $N \times 1$,
 infallible, and moves the same buffer `Polynomial` already owns. Both are
 provided: the column copy is the `From` conversion to
-`Matrix<T, N, U1>` (a $\Theta(1)$ storage move, since
-`DenseVectorArray<T, N>` and a single-column `DenseArray<T, N, 1>` share the
-`Array<T, N>` buffer), and companion form stays the named, fallible
+`Matrix<T, N, U1>` (a $\Theta(1)$ storage move, since both wrappers hold the
+same `ArrayStorage<T, N, 1>` leaf), and companion form stays the named,
+fallible
 `TryFrom`. Overloading one conversion for both would force callers wanting
 coefficients as a vector to accept a `ConversionError` they cannot
 trigger.
@@ -525,11 +527,12 @@ trigger.
    bounds errors before they compile.
 2. **Host/Target Tests**: Unit tests executed on host and qemu targets,
    matching `matrix-design.md` §6.1's testing tiers.
-3. **Operand & Codegen Checks**: `as_array::<N>()` is exercised for every
-   owning and borrowed alias, asserting `N` resolves to the alias's own const
-   generic; `evaluate` and `mul_with_conv` are disassembled at
-   `opt-level=3` to confirm zero panic paths survive the level-1 operand
-   form (§4.3; `storage-subprograms-design.md` §7.1).
+3. **Operand & Codegen Checks**: Every owning and borrowed alias is passed
+   to a Level 1 kernel, asserting the extent resolves to `S::R::USIZE`;
+   `evaluate` and `mul_with_conv` are disassembled at `opt-level=3` to
+   confirm zero panic paths survive the typed operand form
+   (§4.3; `subprograms-design.md` §6.1.4, §7). Coefficient scalars cover
+   `f64`, an integer type and `Complex<f64>`.
 4. **Property-Based Testing**: `proptest` validation for commutativity
    ($P+Q=Q+P$), distributivity ($P(Q+R) = PQ + PR$) and division
    invariants ($P = QD + R$), adopting the random-generation framing
@@ -584,19 +587,24 @@ pub fn evaluate_trajectory(time_sec: f32) -> f32 {
   recommendation pending a concrete fixed-point use case?
 - **`Convolution::convolve_input` Panic Path**: `src/math/dsp.rs:196-210`
   panics via `assert!` on an undersized output buffer, violating the crate's
-  no-panic rule and `storage-subprograms-design.md` NFR-4. Correct it
+  no-panic rule and `subprograms-design.md` NFR-3. Correct it
   (`assert!` → `debug_assert!`) before or during `/cr-implement` (§4.8.3).
 - **`Convolution` Call-Site Migration**: `num-traits-design.md` §9 Phase 3
   lists `Convolution`/`FFT`/`Discrete` (`dsp.rs`) as migration targets.
   Shipped source already declares `Convolution<T: Float>`; confirm at
   `/cr-implement` time whether any further re-bind is outstanding beyond
   that bound.
-- **`Convolution` Operand Form**: `Convolution<T>` predates the level-1
-  operand contract and takes slices, not `&[T; N]`
-  (`storage-subprograms-design.md` §4.2.2). Whether `mul_with_conv`
-  re-binds it to fixed-extent arrays, or keeps the slice form and accepts
-  the residual bounds checks on that path alone, is unresolved and belongs
-  to the `dsp.rs` owner rather than this document.
+- **`Convolution` Operand Form**: `Convolution<T>` predates the typed
+  operand contract and takes slices, not storage types
+  (`subprograms-design.md` FR-9). Whether `mul_with_conv` re-binds it to a
+  storage operand, or keeps the slice form and accepts the residual bounds
+  checks on that path alone, is unresolved and belongs to the `dsp.rs`
+  owner rather than this document.
+- **`Convolution` Scalar Bound (new, this revision)**: `Convolution<T>` is
+  declared over `T: Float`, which `num-traits-design.md` FR-5 restricts to
+  `f32`/`f64`. `mul_poly` now admits `Complex<T>` at `T: Scalar`, so the two
+  multiplication paths no longer accept the same scalars. Widening
+  `Convolution` to `T: Scalar` is the natural fix and belongs to `dsp.rs`.
 
 ---
 
@@ -604,7 +612,7 @@ pub fn evaluate_trajectory(time_sec: f32) -> f32 {
 
 | Task / Feature                              | Description                                                                                                                                  | Estimated Effort |
 |:--------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Storage & Constructors**          | `Polynomial<T, N, S>` struct over `MatrixStorage<T, N, U1>`, `ArrayPolynomial`/`PolynomialView`/`PolynomialViewMut` aliases, `as_array`/`as_slice` accessors, §4.4 constructors. | 1.5 Days |
+| **Step 1: Storage & Constructors**          | `Polynomial<T, N, S>` struct over `DenseStorage<T, R = N, C = U1>`, `ArrayPolynomial`/`PolynomialView`/`PolynomialViewMut` aliases, the `ContiguousStorage` slice accessors, §4.4 constructors. | 1.5 Days |
 | **Step 2: Core Arithmetic**                 | `Add`/`Sub`/`Neg` operator overloads, `mul_poly`, `mul_with_conv` via `Convolution<T>`.                                                      | 2.0 Days         |
 | **Step 3: Evaluation, Calculus & Division** | Horner `evaluate`, derivative/integral methods, `div_rem` with `DivisionError` and the near-singular caveat.                                 | 2.5 Days         |
 | **Step 4: Interoperability**                | Companion-`Matrix` `TryFrom` conversion, column-copy `From` conversion (§5.4), `Tensor` conversion, cross-check against `matrix-design.md`'s reverse Faddeev–LeVerrier conversion. | 2.0 Days |
@@ -708,5 +716,6 @@ pub fn evaluate_trajectory(time_sec: f32) -> f32 {
 | 1.21     | August 20, 2026 | @mitchelldscott | Renamed `BlasStorage` -> `MatrixStorage` (universal floor) and the prior `MatrixStorage` -> `DenseStorage` (leading-dimension branch), matching `storage-subprograms-design.md` Rev 1.31 and `matrix-design.md` Rev 1.31; updated §1, struct bound, and companion-conversion bound. |
 | 1.22     | August 22, 2026 | @MitchellDScott | `Convolution` length failure returns `ConversionError::DimensionMismatch`, not `LinAlgError::DimensionMismatch` (`error-design.md` FR-3). Storage hierarchy citations remain on the deleted `storage-subprograms-design.md`; this document stays Draft pending a dedicated retarget to `storage-design.md`. |
 | 1.23     | August 22, 2026 | @MitchellDScott | C-4 capacity bound cites `Const<N>: Dim` (`num-types-design.md` C-1), not a dense `U*` alias range. |
+| 1.24     | August 24, 2026 | @mitchelldscott | Retargeted onto `storage-design.md` Rev 1.8 and `subprograms-design.md` Rev 1.6, closing the Rev 1.22 note. Struct bound is `DenseStorage<T, R = N, C = U1>`; owning storage is `ArrayStorage<T, N, 1>` and views are `ViewStorage`/`ViewStorageMut` (§1, §4.1, §4.2). Slice accessors moved to the `ContiguousStorage` markers and the `as_array::<N>()` level-1 operand replaced by the typed storage operand of `subprograms-design.md` FR-9 (§4.3, §4.6, FR-5, §6.1). `mul_poly` and `div_rem` bound `T: Scalar`, admitting complex coefficients; the companion conversion binds `T: Scalar + Div`. Recorded the resulting `Convolution<T: Float>` scalar-bound divergence as an open question (§7). Status stays Draft. |
 
 ---

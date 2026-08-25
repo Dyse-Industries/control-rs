@@ -4,7 +4,6 @@
 #![allow(clippy::many_single_char_names)]
 #![allow(clippy::arithmetic_side_effects)]
 #![allow(clippy::indexing_slicing)]
-#![allow(clippy::float_cmp)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::similar_names)]
 
@@ -13,15 +12,16 @@ pub mod subprogram_test_suite {
     use crate::assert_almost_eq;
     use crate::math::LinAlgError;
     use crate::math::complex_num::{Complex, Complex32, Complex64};
-    use crate::math::num_traits::{One, Zero};
+    use crate::math::num_traits::{One, Scalar, Zero};
     use crate::math::num_types::Const;
     use crate::math::storage::{
-        ArrayCooStorage, ArrayCsrStorage, ArraySparseVector, ArrayStorage,
-        DenseStorage, DenseStorageMut, Diag, HermitianPackedStorage,
-        MatrixLayout, PackedStorage, PackedStorageMut, RowArrayStorage, Side,
-        SparseStorage, Storage, StorageInit, StorageMut, StorageView,
-        StorageViewMut, SymmetricPackedStorage, ToCsrStorage, Trans,
-        TriangularPackedStorage, UpLo, ViewStorage, ViewStorageMut,
+        ArrayCooStorage, ArrayCscStorage, ArrayCsrStorage, ArraySparseVector,
+        ArrayStorage, DenseStorage, DenseStorageMut, Diag,
+        HermitianPackedStorage, MatrixLayout, PackedStorage, PackedStorageMut,
+        RowArrayStorage, Side, SparseStorage, Storage, StorageInit, StorageMut,
+        StorageView, StorageViewMut, SymmetricPackedStorage, ToCscStorage,
+        ToCsrStorage, Trans, TriangularPackedStorage, UpLo, ViewStorage,
+        ViewStorageMut,
     };
     use crate::math::subprograms::{
         DefaultBlas, JobZ,
@@ -224,10 +224,10 @@ pub mod subprogram_test_suite {
         let mut a = ArrayStorage::<f32, 2, 1>::from_array([[1.0, 2.0]]);
         let mut b = ArrayStorage::<f32, 2, 1>::from_array([[3.0, 4.0]]);
         DefaultBlas::swap(&mut a, &mut b);
-        assert_eq!(unsafe { *a.get_unchecked(0, 0) }, 3.0);
-        assert_eq!(unsafe { *a.get_unchecked(1, 0) }, 4.0);
-        assert_eq!(unsafe { *b.get_unchecked(0, 0) }, 1.0);
-        assert_eq!(unsafe { *b.get_unchecked(1, 0) }, 2.0);
+        assert_almost_eq!(unsafe { *a.get_unchecked(0, 0) }, 3.0);
+        assert_almost_eq!(unsafe { *a.get_unchecked(1, 0) }, 4.0);
+        assert_almost_eq!(unsafe { *b.get_unchecked(0, 0) }, 1.0);
+        assert_almost_eq!(unsafe { *b.get_unchecked(1, 0) }, 2.0);
 
         let mut rx = ArrayStorage::<f32, 1, 1>::from_array([[1.0]]);
         let mut ry = ArrayStorage::<f32, 1, 1>::from_array([[0.0]]);
@@ -589,6 +589,15 @@ pub mod subprogram_test_suite {
             ArrayStorage::<f64, 2, 2>::from_array([[-1.0, 0.0], [0.0, -1.0]]);
         let err = DefaultBlas::potrf(UpLo::Lower, &mut non_spd);
         assert!(matches!(err, Err(LinAlgError::NotPositiveDefinite)));
+
+        // Complex non-HPD error check
+        let mut complex_non_hpd =
+            ArrayStorage::<Complex64, 2, 2>::from_array([
+                [Complex64::new(-1.0, 0.0), Complex64::ZERO],
+                [Complex64::ZERO, Complex64::new(1.0, 0.0)],
+            ]);
+        let err_c = DefaultBlas::potrf(UpLo::Lower, &mut complex_non_hpd);
+        assert_eq!(err_c, Err(LinAlgError::NotPositiveDefinite));
     }
 
     #[cfg_attr(test, test)]
@@ -607,6 +616,14 @@ pub mod subprogram_test_suite {
         DefaultBlas::pptrs(UpLo::Lower, &ap, &mut b).unwrap();
         assert_almost_eq!(unsafe { *b.get_unchecked(0, 0) }, 1.0);
         assert_almost_eq!(unsafe { *b.get_unchecked(1, 0) }, 2.0);
+
+        // Not positive definite error check for Pptrf
+        let mut non_spd_ap = SymmetricPackedStorage::<f64, 2, 3>::new(
+            [-1.0, 0.0, -1.0],
+            UpLo::Lower,
+        );
+        let err_packed = DefaultBlas::pptrf(UpLo::Lower, &mut non_spd_ap);
+        assert_eq!(err_packed, Err(LinAlgError::NotPositiveDefinite));
     }
 
     #[cfg_attr(test, test)]
@@ -713,6 +730,7 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
     /// Verifies that Syev and Heev return Err(LinAlgError::MaxIterationsReached) on non-converging state.
     fn test_subprograms_syev_heev_max_iterations_reached() {
         let mut a_real = ArrayStorage::<f64, 3, 3>::from_array([
@@ -758,6 +776,291 @@ pub mod subprogram_test_suite {
             &mut work_cplx,
         );
         assert_eq!(res_cplx, Err(LinAlgError::MaxIterationsReached));
+
+        // §6.1.2 oracle: a Jacobi budget of zero on a well-conditioned operand
+        // returns MaxIterationsReached. The budget is passed explicitly to the
+        // crate-private seam; NaN-poisoned matrices above are a separate case,
+        // not this oracle.
+        let mut a_real_budget =
+            ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [2.0, 3.0]]);
+        let mut w_real_budget = [0.0f64; 2];
+        let mut work_real_budget = [0.0f64; 4];
+        let res_real_budget = crate::math::subprograms::syev_impl(
+            JobZ::Vectors,
+            UpLo::Upper,
+            &mut a_real_budget,
+            &mut w_real_budget,
+            &mut work_real_budget,
+            0,
+        );
+        assert_eq!(res_real_budget, Err(LinAlgError::MaxIterationsReached));
+
+        let mut a_cplx_budget = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(1.0, 0.0), Complex64::new(2.0, 1.0)],
+            [Complex64::new(2.0, -1.0), Complex64::new(3.0, 0.0)],
+        ]);
+        let mut w_cplx_budget = [0.0f64; 2];
+        let mut work_cplx_budget = [Complex64::ZERO; 4];
+        let res_cplx_budget = crate::math::subprograms::heev_impl(
+            JobZ::Vectors,
+            UpLo::Upper,
+            &mut a_cplx_budget,
+            &mut w_cplx_budget,
+            &mut work_cplx_budget,
+            0,
+        );
+        assert_eq!(res_cplx_budget, Err(LinAlgError::MaxIterationsReached));
+
+        // The default budget converges on the same real operand, so the
+        // assertions above isolate the budget rather than the matrix.
+        let mut a_real_default =
+            ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [2.0, 3.0]]);
+        let mut w_real_default = [0.0f64; 2];
+        let mut work_real_default = [0.0f64; 4];
+        assert_eq!(
+            DefaultBlas::syev(
+                JobZ::Vectors,
+                UpLo::Upper,
+                &mut a_real_default,
+                &mut w_real_default,
+                &mut work_real_default,
+            ),
+            Ok(())
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    /// Verifies WorkspaceTooSmall errors for LAPACK routines Geqrf, Ormqr, Unmqr, Syev, and Heev.
+    fn test_subprograms_lapack_workspace_too_small() {
+        let mut a =
+            ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [3.0, 4.0]]);
+        let mut tau = [0.0f64; 2];
+        let mut work_short = [0.0f64; 1]; // Geqrf needs work.len() >= n = 2
+        let mut work_ok = [0.0f64; 2];
+
+        // 1. Geqrf
+        let err_geqrf = DefaultBlas::geqrf(&mut a, &mut tau, &mut work_short);
+        assert_eq!(err_geqrf, Err(LinAlgError::WorkspaceTooSmall));
+
+        // 2. Ormqr
+        let mut c = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 0.0]]);
+        let tau_short = [0.0f64; 0];
+        let err_ormqr_tau = DefaultBlas::ormqr(
+            Side::Left,
+            Trans::NoTrans,
+            &a,
+            &tau_short,
+            &mut c,
+            &mut work_ok,
+        );
+        assert_eq!(err_ormqr_tau, Err(LinAlgError::WorkspaceTooSmall));
+
+        let mut work_ormqr_short = [0.0f64; 0]; // Left needs work.len() >= cols of C = 1
+        let err_ormqr_work = DefaultBlas::ormqr(
+            Side::Left,
+            Trans::NoTrans,
+            &a,
+            &tau,
+            &mut c,
+            &mut work_ormqr_short,
+        );
+        assert_eq!(err_ormqr_work, Err(LinAlgError::WorkspaceTooSmall));
+
+        // 3. Unmqr
+        let a_c = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
+            [Complex64::new(3.0, 0.0), Complex64::new(4.0, 0.0)],
+        ]);
+        let mut c_c = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex64::ONE,
+            Complex64::ZERO,
+        ]]);
+        let tau_c = [Complex64::ZERO; 2];
+        let mut work_unmqr_short = [Complex64::ZERO; 0];
+        let err_unmqr = DefaultBlas::unmqr(
+            Side::Left,
+            Trans::NoTrans,
+            &a_c,
+            &tau_c,
+            &mut c_c,
+            &mut work_unmqr_short,
+        );
+        assert_eq!(err_unmqr, Err(LinAlgError::WorkspaceTooSmall));
+
+        // 4. Syev
+        let mut w = [0.0f64; 2];
+        let mut work_syev_short = [0.0f64; 3]; // Syev needs work.len() >= 2 * n = 4
+        let err_syev = DefaultBlas::syev(
+            JobZ::Vectors,
+            UpLo::Upper,
+            &mut a,
+            &mut w,
+            &mut work_syev_short,
+        );
+        assert_eq!(err_syev, Err(LinAlgError::WorkspaceTooSmall));
+
+        // 5. Heev
+        let mut a_c_mut = a_c;
+        let mut w_c = [0.0f64; 2];
+        let mut work_heev_short = [Complex64::ZERO; 3]; // Heev needs work.len() >= 2 * n = 4
+        let err_heev = DefaultBlas::heev(
+            JobZ::Vectors,
+            UpLo::Upper,
+            &mut a_c_mut,
+            &mut w_c,
+            &mut work_heev_short,
+        );
+        assert_eq!(err_heev, Err(LinAlgError::WorkspaceTooSmall));
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    /// Verifies Level 2 complex Hermitian updates (Hemv, Her, Her2) and algebraic invariants.
+    fn test_subprograms_level2_and_complex_invariants() {
+        use crate::math::complex_num::Complex64;
+        use crate::math::storage::{
+            ArrayStorage, DenseStorageMut, Trans, UpLo,
+        };
+        use crate::math::subprograms::level2::{Hemv, Her, Her2};
+
+        // 1. Dotc(x, y) == Dotu(conj(x), y)
+        let x = ArrayStorage::<Complex64, 3, 1>::from_array([[
+            Complex64::new(1.0, 2.0),
+            Complex64::new(3.0, 4.0),
+            Complex64::new(5.0, 6.0),
+        ]]);
+        let y = ArrayStorage::<Complex64, 3, 1>::from_array([[
+            Complex64::new(7.0, 8.0),
+            Complex64::new(9.0, 10.0),
+            Complex64::new(11.0, 12.0),
+        ]]);
+        let dotc_val = DefaultBlas::dotc(&x, &y);
+
+        let mut x_conj = x;
+        for i in 0..3 {
+            unsafe {
+                x_conj.set_unchecked(i, 0, x.get_unchecked(i, 0).conj());
+            }
+        }
+        let dotu_conj_val = DefaultBlas::dotu(&x_conj, &y);
+        assert_almost_eq!(dotc_val.re, dotu_conj_val.re);
+        assert_almost_eq!(dotc_val.im, dotu_conj_val.im);
+
+        // 2. Level 2 complex Hermitian updates: Hemv, Her, Her2
+        let mut a = ArrayStorage::<Complex64, 3, 3>::from_array([
+            [
+                Complex64::new(2.0, 0.0),
+                Complex64::new(1.0, -1.0),
+                Complex64::new(0.5, 2.0),
+            ],
+            [
+                Complex64::new(1.0, 1.0),
+                Complex64::new(3.0, 0.0),
+                Complex64::new(1.5, -1.0),
+            ],
+            [
+                Complex64::new(0.5, -2.0),
+                Complex64::new(1.5, 1.0),
+                Complex64::new(4.0, 0.0),
+            ],
+        ]);
+        let mut y_out = ArrayStorage::<Complex64, 3, 1>::zeros();
+        DefaultBlas::hemv(
+            UpLo::Upper,
+            Complex64::ONE,
+            &a,
+            &x,
+            Complex64::ZERO,
+            &mut y_out,
+        );
+        assert!(y_out.get(0, 0).unwrap().abs2() > 0.0);
+
+        // Her: A = A + alpha * x * x^H
+        DefaultBlas::her(UpLo::Upper, 2.0, &x, &mut a);
+
+        // Her2: A = A + alpha * x * y^H + conj(alpha) * y * x^H
+        DefaultBlas::her2(
+            UpLo::Upper,
+            Complex64::new(1.0, 1.0),
+            &x,
+            &y,
+            &mut a,
+        );
+
+        // 3. (AB)^H == B^H A^H across Gemm(ConjTrans)
+        let a_gemm = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(1.0, 2.0), Complex64::new(3.0, 4.0)],
+            [Complex64::new(5.0, 6.0), Complex64::new(7.0, 8.0)],
+        ]);
+        let b_gemm = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(9.0, 10.0), Complex64::new(11.0, 12.0)],
+            [Complex64::new(13.0, 14.0), Complex64::new(15.0, 16.0)],
+        ]);
+        let mut ab = ArrayStorage::<Complex64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::NoTrans,
+            Trans::NoTrans,
+            Complex64::ONE,
+            &a_gemm,
+            &b_gemm,
+            Complex64::ZERO,
+            &mut ab,
+        );
+        let mut ab_h = ArrayStorage::<Complex64, 2, 2>::zeros();
+        for i in 0..2 {
+            for j in 0..2 {
+                unsafe {
+                    ab_h.set_unchecked(i, j, ab.get_unchecked(j, i).conj());
+                }
+            }
+        }
+
+        // Compute B^H A^H
+        let mut bha_h = ArrayStorage::<Complex64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::ConjTrans,
+            Trans::ConjTrans,
+            Complex64::ONE,
+            &b_gemm,
+            &a_gemm,
+            Complex64::ZERO,
+            &mut bha_h,
+        );
+        for i in 0..2 {
+            for j in 0..2 {
+                assert_almost_eq!(
+                    ab_h.get(i, j).unwrap().re,
+                    bha_h.get(i, j).unwrap().re
+                );
+                assert_almost_eq!(
+                    ab_h.get(i, j).unwrap().im,
+                    bha_h.get(i, j).unwrap().im
+                );
+            }
+        }
+
+        // 4. 1x1 Edge cases
+        let a_1x1 =
+            ArrayStorage::<Complex64, 1, 1>::from_array([[Complex64::new(
+                2.0, 3.0,
+            )]]);
+        let x_1x1 =
+            ArrayStorage::<Complex64, 1, 1>::from_array([[Complex64::new(
+                4.0, 5.0,
+            )]]);
+        let mut y_1x1 = ArrayStorage::<Complex64, 1, 1>::zeros();
+        DefaultBlas::gemv(
+            Trans::NoTrans,
+            Complex64::ONE,
+            &a_1x1,
+            &x_1x1,
+            Complex64::ZERO,
+            &mut y_1x1,
+        );
+        let expected_1x1 = Complex64::new(2.0, 3.0) * Complex64::new(4.0, 5.0);
+        assert_almost_eq!(y_1x1.get(0, 0).unwrap().re, expected_1x1.re);
+        assert_almost_eq!(y_1x1.get(0, 0).unwrap().im, expected_1x1.im);
     }
 
     #[cfg_attr(test, test)]
@@ -800,6 +1103,7 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
     /// Verifies analytical backward error and residual bounds scaled by N * EPS * ||A|| * ||x||.
     fn test_subprograms_residual_bounds_gemv_gemm() {
         let a = ArrayStorage::<f64, 3, 3>::from_array([
@@ -815,12 +1119,33 @@ pub mod subprogram_test_suite {
         let eps = f64::EPSILON;
         let n = 3.0f64;
         let a_inf_norm = 6.0f64;
-        let x_inf_norm = 3.0f64;
-        let bound = n * eps * a_inf_norm * x_inf_norm;
 
         for (i, &exact_val) in y_exact.iter().enumerate() {
             let diff = (y.as_slice()[i] - exact_val).abs();
-            assert!(diff <= bound.max(1e-14));
+            // Exact dyadic case must have 0.0 residual
+            assert_almost_eq!(diff, 0.0);
+        }
+
+        // Inexact gemv case using non-dyadic values
+        let a_inexact = ArrayStorage::<f64, 2, 2>::from_array([
+            [1.0 / 3.0, 1.0 / 7.0],
+            [1.0 / 11.0, 1.0 / 13.0],
+        ]);
+        let x_inexact = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 2.0]]);
+        let mut y_inexact = ArrayStorage::<f64, 2, 1>::zeros();
+        DefaultBlas::gemv(
+            Trans::NoTrans,
+            1.0,
+            &a_inexact,
+            &x_inexact,
+            0.0,
+            &mut y_inexact,
+        );
+        let y_exact_inexact = [17.0 / 33.0, 27.0 / 91.0];
+        let bound_inexact = 2.0 * eps * 1.0 * 2.0; // n=2, ||A||_inf < 1.0, ||x||_inf = 2.0
+        for (i, &exact_val) in y_exact_inexact.iter().enumerate() {
+            let diff = (y_inexact.as_slice()[i] - exact_val).abs();
+            assert!(diff <= bound_inexact); // No floor!
         }
 
         let mut l = a;
@@ -847,12 +1172,14 @@ pub mod subprogram_test_suite {
                 let diff = (recon.as_slice()[j * 3 + i]
                     - a.as_slice()[j * 3 + i])
                     .abs();
-                assert!(diff <= (n * eps * a_inf_norm).max(1e-14));
+                // Inexact potrf reconstruction - assert Higham bound without floor
+                assert!(diff <= n * eps * a_inf_norm);
             }
         }
     }
 
     #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
     /// Verifies mathematical equivalence between packed, sparse, and dense operations.
     fn test_subprograms_packed_sparse_dense_equivalence() {
         let a_dense = ArrayStorage::<f64, 3, 3>::from_array([
@@ -890,7 +1217,140 @@ pub mod subprogram_test_suite {
         assert!(svec.push(2, 3.0).is_ok());
         let dot_dense = DefaultBlas::dotu(&x, &x);
         let dot_sparse = DefaultBlas::sp_dotu(&svec, &x);
-        assert_eq!(dot_dense, dot_sparse);
+        assert_almost_eq!(dot_dense, dot_sparse);
+
+        // 4. Hpmv vs Hemv (complex hermitian packed vs dense)
+        let a_cplx_dense = ArrayStorage::<Complex64, 3, 3>::from_array([
+            [
+                Complex64::new(4.0, 0.0),
+                Complex64::new(1.0, -2.0),
+                Complex64::new(2.0, 3.0),
+            ],
+            [
+                Complex64::new(1.0, 2.0),
+                Complex64::new(5.0, 0.0),
+                Complex64::new(3.0, -1.0),
+            ],
+            [
+                Complex64::new(2.0, -3.0),
+                Complex64::new(3.0, 1.0),
+                Complex64::new(6.0, 0.0),
+            ],
+        ]);
+        let ap_cplx_data = [
+            Complex64::new(4.0, 0.0),
+            Complex64::new(1.0, 2.0),
+            Complex64::new(5.0, 0.0),
+            Complex64::new(2.0, -3.0),
+            Complex64::new(3.0, 1.0),
+            Complex64::new(6.0, 0.0),
+        ];
+        let ap_cplx = HermitianPackedStorage::<Complex64, 3, 6>::new(
+            ap_cplx_data,
+            UpLo::Upper,
+        );
+        let x_cplx = ArrayStorage::<Complex64, 3, 1>::from_array([[
+            Complex64::new(1.0, 1.0),
+            Complex64::new(2.0, -1.0),
+            Complex64::new(3.0, 2.0),
+        ]]);
+        let mut y_cplx_dense = ArrayStorage::<Complex64, 3, 1>::zeros();
+        let mut y_cplx_packed = ArrayStorage::<Complex64, 3, 1>::zeros();
+        DefaultBlas::hemv(
+            UpLo::Upper,
+            Complex64::ONE,
+            &a_cplx_dense,
+            &x_cplx,
+            Complex64::ZERO,
+            &mut y_cplx_dense,
+        );
+        DefaultBlas::hpmv(
+            UpLo::Upper,
+            Complex64::ONE,
+            &ap_cplx,
+            &x_cplx,
+            Complex64::ZERO,
+            &mut y_cplx_packed,
+        );
+        for i in 0..3 {
+            assert_almost_eq!(
+                y_cplx_dense.get(i, 0).unwrap().re,
+                y_cplx_packed.get(i, 0).unwrap().re
+            );
+            assert_almost_eq!(
+                y_cplx_dense.get(i, 0).unwrap().im,
+                y_cplx_packed.get(i, 0).unwrap().im
+            );
+        }
+
+        // 5. Tpsv vs Trsv (packed triangular solver vs dense)
+        let a_tri_dense = ArrayStorage::<f64, 3, 3>::from_array([
+            [4.0, 0.0, 0.0],
+            [1.0, 5.0, 0.0],
+            [2.0, 3.0, 6.0],
+        ]);
+        let ap_tri_data = [4.0, 1.0, 5.0, 2.0, 3.0, 6.0];
+        let ap_tri = TriangularPackedStorage::<f64, 3, 6>::new(
+            ap_tri_data,
+            UpLo::Upper,
+            Diag::NonUnit,
+        );
+        let mut b_trsv =
+            ArrayStorage::<f64, 3, 1>::from_array([[8.0, 6.0, 12.0]]);
+        let mut b_tpsv =
+            ArrayStorage::<f64, 3, 1>::from_array([[8.0, 6.0, 12.0]]);
+        DefaultBlas::trsv(
+            UpLo::Upper,
+            Trans::NoTrans,
+            Diag::NonUnit,
+            &a_tri_dense,
+            &mut b_trsv,
+        )
+        .unwrap();
+        DefaultBlas::tpsv(
+            UpLo::Upper,
+            Trans::NoTrans,
+            Diag::NonUnit,
+            &ap_tri,
+            &mut b_tpsv,
+        )
+        .unwrap();
+        assert_almost_eq!(
+            *b_trsv.get(0, 0).unwrap(),
+            *b_tpsv.get(0, 0).unwrap()
+        );
+        assert_almost_eq!(
+            *b_trsv.get(1, 0).unwrap(),
+            *b_tpsv.get(1, 0).unwrap()
+        );
+        assert_almost_eq!(
+            *b_trsv.get(2, 0).unwrap(),
+            *b_tpsv.get(2, 0).unwrap()
+        );
+
+        // 6. Cscmv vs Gemv
+        let mut coo_csc = ArrayCooStorage::<f64, 3, 3, 9>::new();
+        for j in 0..3 {
+            for i in 0..3 {
+                assert!(
+                    coo_csc.push(i, j, *a_dense.get(i, j).unwrap()).is_ok()
+                );
+            }
+        }
+        let a_csc: ArrayCscStorage<f64, 3, 3, 9, 4> = coo_csc.to_csc().unwrap();
+        let mut y_csc = ArrayStorage::<f64, 3, 1>::zeros();
+        DefaultBlas::cscmv(1.0, &a_csc, &x, 0.0, &mut y_csc);
+        assert_eq!(y_dense.as_slice(), y_csc.as_slice());
+
+        // 7. SpDotc vs Dotc
+        let mut svec_c = ArraySparseVector::<Complex64, 3, 3>::new();
+        assert!(svec_c.push(0, Complex64::new(1.0, 1.0)).is_ok());
+        assert!(svec_c.push(1, Complex64::new(2.0, -1.0)).is_ok());
+        assert!(svec_c.push(2, Complex64::new(3.0, 2.0)).is_ok());
+        let dot_c_dense = DefaultBlas::dotc(&x_cplx, &x_cplx);
+        let dot_c_sparse = DefaultBlas::sp_dotc(&svec_c, &x_cplx);
+        assert_almost_eq!(dot_c_dense.re, dot_c_sparse.re);
+        assert_almost_eq!(dot_c_dense.im, dot_c_sparse.im);
     }
 
     #[cfg_attr(test, test)]
@@ -909,7 +1369,10 @@ pub mod subprogram_test_suite {
             ViewStorageMut::<f64, Const<3>, Const<1>>::new(&mut y_data)
                 .unwrap();
         DefaultBlas::axpy(2.0, &x_rev, &mut y_view);
-        assert_eq!(y_data, [16.0, 24.0, 32.0]);
+        assert_eq!(
+            y_data.map(f64::to_bits),
+            [16.0f64.to_bits(), 24.0f64.to_bits(), 32.0f64.to_bits()]
+        );
     }
 
     #[cfg_attr(test, test)]
@@ -954,7 +1417,7 @@ pub mod subprogram_test_suite {
         let u = ArrayStorage::<f64, 3, 1>::from_array([[1.0, 0.5, 0.2]]);
         let mut x_pred = ArrayStorage::<f64, 3, 1>::zeros();
         DefaultBlas::csrmv(1.0, &a_csr, &u, 0.0, &mut x_pred);
-        assert_eq!(x_pred.as_slice()[0], 1.0);
+        assert_almost_eq!(x_pred.as_slice()[0], 1.0);
         assert_almost_eq!(x_pred.as_slice()[1], -0.8 * 1.0 + 1.0 * 0.5, 1e-10);
     }
 

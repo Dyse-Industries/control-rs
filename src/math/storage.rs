@@ -13,16 +13,17 @@
 //! compressed sparse backends (`ArrayCsrStorage`, `ArrayCscStorage`, `ArrayCooStorage`),
 //! and 1-D sparse vectors (`ArraySparseVector`, `ViewSparseVector`).
 #![allow(clippy::arbitrary_source_item_ordering)]
-#![allow(clippy::type_complexity)]
 #![allow(clippy::indexing_slicing)]
 #![allow(clippy::arithmetic_side_effects)]
 #![allow(clippy::eq_op)]
 #![allow(clippy::too_many_arguments)]
-#![allow(clippy::needless_range_loop)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::missing_const_for_fn)]
-#![allow(clippy::option_if_let_else)]
+
+type ColMajorArray<T, const R: usize, const C: usize> = [[T; R]; C];
+type RowMajorArray<T, const R: usize, const C: usize> = [[T; C]; R];
+type ViewMarker<'a, T, R, C> = PhantomData<(&'a [T], R, C)>;
+type ViewMarkerMut<'a, T, R, C> = PhantomData<(&'a mut [T], R, C)>;
+type StorageMarker<R, C, O> = PhantomData<(R, C, O)>;
+type SlicePair<'a, T> = (&'a [usize], &'a [T]);
 
 use crate::math::num_traits::{One, Scalar, Zero};
 use crate::math::num_types::{Const, Dim};
@@ -52,23 +53,12 @@ pub const fn reverse_array<T: Copy, const N: usize>(input: [T; N]) -> [T; N] {
 
 /// Initialize an array from an iterator.
 ///
-/// # Generic Arguments
-/// * `I` - Any collection that implements [`IntoIterator<Item = T>`].
-/// * `T` - Field type of the array.
-/// * `N` - Capacity of the array.
-///
-/// # Arguments
-/// * `iterator` - Collection of `T`.
-///
-/// # Returns
-/// * `initialized_array` - An array filled with elements from the iterator.
-///
 /// # Safety
-/// * The iterator must have **at least** `N` elements or this assumes an uninitialized
-///   value is initialized (resulting in undefined behavior).
+/// The iterator must have **at least** `N` elements or this assumes an
+/// uninitialized value is initialized (undefined behavior).
 ///
 /// # Panics
-/// * This function panics in debug builds if the safety criterion is not met.
+/// Panics in debug builds if the iterator is shorter than `N`.
 #[allow(clippy::arithmetic_side_effects)]
 pub(crate) unsafe fn array_from_iterator<I, T, const N: usize>(
     iterator: I,
@@ -239,6 +229,7 @@ pub unsafe trait DenseStorage<T> {
     }
 
     /// Returns a zero-copy transposed view of the storage grid.
+    #[allow(clippy::type_complexity)]
     fn transpose_view<'a>(&'a self) -> ViewStorage<'a, T, Self::C, Self::R>
     where
         Self: 'a,
@@ -253,6 +244,7 @@ pub unsafe trait DenseStorage<T> {
     }
 
     /// Returns a zero-copy reversed view of the storage grid.
+    #[allow(clippy::type_complexity)]
     fn reverse_view<'a>(&'a self) -> ViewStorage<'a, T, Self::R, Self::C>
     where
         Self: 'a,
@@ -314,6 +306,9 @@ pub unsafe trait DenseStorageMut<T>: DenseStorage<T> {
     }
 
     /// Updates the element at `(r, c)` with `val`.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::OutOfBounds`] if either index is out of bounds.
     fn set(&mut self, r: usize, c: usize, val: T) -> StorageResult<()> {
         if r < self.rows() && c < self.cols() {
             unsafe {
@@ -337,6 +332,7 @@ pub unsafe trait DenseStorageMut<T>: DenseStorage<T> {
     }
 
     /// Returns a mutable zero-copy transposed view of the storage grid.
+    #[allow(clippy::type_complexity)]
     fn transpose_mut_view<'a>(
         &'a mut self,
     ) -> ViewStorageMut<'a, T, Self::C, Self::R>
@@ -353,6 +349,7 @@ pub unsafe trait DenseStorageMut<T>: DenseStorage<T> {
     }
 
     /// Returns a mutable zero-copy reversed view of the storage grid.
+    #[allow(clippy::type_complexity)]
     fn reverse_mut_view<'a>(
         &'a mut self,
     ) -> ViewStorageMut<'a, T, Self::R, Self::C>
@@ -467,25 +464,25 @@ pub trait StorageInit<T, R: Dim, C: Dim>: Sized {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArrayStorage<T, const R: usize, const C: usize> {
-    data: [[T; R]; C],
+    data: ColMajorArray<T, R, C>,
 }
 
 impl<T, const R: usize, const C: usize> ArrayStorage<T, R, C> {
     /// Builds a backend directly from a column-major `[[T; R]; C]` array.
     #[must_use]
-    pub const fn from_array(data: [[T; R]; C]) -> Self {
+    pub const fn from_array(data: ColMajorArray<T, R, C>) -> Self {
         Self { data }
     }
 
     /// Returns the backend's elements as a flat slice.
     #[must_use]
-    pub fn as_slice(&self) -> &[T] {
+    pub const fn as_slice(&self) -> &[T] {
         self.data.as_flattened()
     }
 
     /// Returns the backend's elements as a mutable flat slice.
     #[must_use]
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
+    pub const fn as_mut_slice(&mut self) -> &mut [T] {
         self.data.as_flattened_mut()
     }
 }
@@ -579,25 +576,25 @@ where
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RowArrayStorage<T, const R: usize, const C: usize> {
-    data: [[T; C]; R],
+    data: RowMajorArray<T, R, C>,
 }
 
 impl<T, const R: usize, const C: usize> RowArrayStorage<T, R, C> {
     /// Builds a backend directly from a row-major `[[T; C]; R]` array.
     #[must_use]
-    pub const fn from_array(data: [[T; C]; R]) -> Self {
+    pub const fn from_array(data: RowMajorArray<T, R, C>) -> Self {
         Self { data }
     }
 
     /// Returns the backend's elements as a flat slice.
     #[must_use]
-    pub fn as_slice(&self) -> &[T] {
+    pub const fn as_slice(&self) -> &[T] {
         self.data.as_flattened()
     }
 
     /// Returns the backend's elements as a mutable flat slice.
     #[must_use]
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
+    pub const fn as_mut_slice(&mut self) -> &mut [T] {
         self.data.as_flattened_mut()
     }
 }
@@ -693,11 +690,12 @@ where
 
 /// Zero-copy non-owning immutable view with arbitrary `isize` strides.
 #[derive(Debug)]
+#[allow(clippy::type_complexity)]
 pub struct ViewStorage<'a, T, R: Dim, C: Dim> {
     ptr: *const T,
     r_stride: isize,
     c_stride: isize,
-    _marker: PhantomData<(&'a [T], R, C)>,
+    _marker: ViewMarker<'a, T, R, C>,
 }
 
 impl<'a, T, R: Dim, C: Dim> ViewStorage<'a, T, R, C> {
@@ -780,11 +778,12 @@ unsafe impl<T, R: Dim, C: Dim> ContiguousStorage<T>
 
 /// Zero-copy non-owning mutable view with arbitrary `isize` strides.
 #[derive(Debug)]
+#[allow(clippy::type_complexity)]
 pub struct ViewStorageMut<'a, T, R: Dim, C: Dim> {
     ptr: *mut T,
     r_stride: isize,
     c_stride: isize,
-    _marker: PhantomData<(&'a mut [T], R, C)>,
+    _marker: ViewMarkerMut<'a, T, R, C>,
 }
 
 impl<'a, T, R: Dim, C: Dim> ViewStorageMut<'a, T, R, C> {
@@ -810,7 +809,7 @@ impl<'a, T, R: Dim, C: Dim> ViewStorageMut<'a, T, R, C> {
     ///
     /// # Safety
     /// `data.len()` must equal `R::USIZE * C::USIZE`.
-    pub unsafe fn new_unchecked(data: &'a mut [T]) -> Self {
+    pub const unsafe fn new_unchecked(data: &'a mut [T]) -> Self {
         Self {
             ptr: data.as_mut_ptr(),
             r_stride: 1,
@@ -889,21 +888,30 @@ unsafe impl<T, R: Dim, C: Dim> ContiguousStorageMut<T>
 
 /// Non-owning view parameterized by [`LayoutMarker`].
 #[derive(Debug)]
+#[allow(clippy::type_complexity)]
 pub struct StorageView<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
     data: &'a [T],
-    _marker: PhantomData<(R, C, O)>,
+    _marker: StorageMarker<R, C, O>,
 }
 
 impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StorageView<'a, T, R, C, O> {
     /// Wraps `data` as an `R x C` view with layout marker `O`.
-    pub fn new(data: &'a [T]) -> ConversionResult<Self> {
-        if R::USIZE.checked_mul(C::USIZE) == Some(data.len()) {
-            Ok(Self {
-                data,
-                _marker: PhantomData,
-            })
-        } else {
-            Err(ConversionError::DimensionMismatch)
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != R::USIZE * C::USIZE`.
+    pub const fn new(data: &'a [T]) -> ConversionResult<Self> {
+        match R::USIZE.checked_mul(C::USIZE) {
+            Some(expected_len) => {
+                if expected_len == data.len() {
+                    Ok(Self {
+                        data,
+                        _marker: PhantomData,
+                    })
+                } else {
+                    Err(ConversionError::DimensionMismatch)
+                }
+            }
+            None => Err(ConversionError::DimensionMismatch),
         }
     }
 
@@ -966,21 +974,30 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorage<T>
 
 /// Mutable non-owning view parameterized by [`LayoutMarker`].
 #[derive(Debug)]
+#[allow(clippy::type_complexity)]
 pub struct StorageViewMut<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
     data: &'a mut [T],
-    _marker: PhantomData<(R, C, O)>,
+    _marker: StorageMarker<R, C, O>,
 }
 
 impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StorageViewMut<'a, T, R, C, O> {
     /// Wraps `data` as a mutable `R x C` view with layout marker `O`.
-    pub fn new(data: &'a mut [T]) -> ConversionResult<Self> {
-        if R::USIZE.checked_mul(C::USIZE) == Some(data.len()) {
-            Ok(Self {
-                data,
-                _marker: PhantomData,
-            })
-        } else {
-            Err(ConversionError::DimensionMismatch)
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != R::USIZE * C::USIZE`.
+    pub const fn new(data: &'a mut [T]) -> ConversionResult<Self> {
+        match R::USIZE.checked_mul(C::USIZE) {
+            Some(expected_len) => {
+                if expected_len == data.len() {
+                    Ok(Self {
+                        data,
+                        _marker: PhantomData,
+                    })
+                } else {
+                    Err(ConversionError::DimensionMismatch)
+                }
+            }
+            None => Err(ConversionError::DimensionMismatch),
         }
     }
 }
@@ -1091,6 +1108,11 @@ pub unsafe trait PackedStorageMut<T>: PackedStorage<T> {
     fn as_mut_slice(&mut self) -> &mut [T];
 
     /// Updates the physical storage slot at `(i, j)`.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::OutOfBounds`] if either index is out of bounds,
+    /// or [`StorageError::InvalidStructuralInvariant`] if attempting to modify
+    /// an element not physically stored.
     fn set(&mut self, i: usize, j: usize, val: T) -> StorageResult<()>;
 
     /// Updates the physical storage slot at `(i, j)` without bounds checking.
@@ -1558,7 +1580,10 @@ pub struct DiagonalView<'a, T, const N: usize> {
 
 impl<'a, T, const N: usize> DiagonalView<'a, T, N> {
     /// Creates a diagonal view from a slice of length $N$.
-    pub fn new(data: &'a [T]) -> ConversionResult<Self> {
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N`.
+    pub const fn new(data: &'a [T]) -> ConversionResult<Self> {
         if data.len() == N {
             Ok(Self { data })
         } else {
@@ -1616,7 +1641,10 @@ pub struct DiagonalViewMut<'a, T, const N: usize> {
 
 impl<'a, T, const N: usize> DiagonalViewMut<'a, T, N> {
     /// Creates a mutable diagonal view from a slice of length $N$.
-    pub fn new(data: &'a mut [T]) -> ConversionResult<Self> {
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N`.
+    pub const fn new(data: &'a mut [T]) -> ConversionResult<Self> {
         if data.len() == N {
             Ok(Self { data })
         } else {
@@ -1702,7 +1730,10 @@ pub struct SymmetricPackedView<'a, T, const N: usize> {
 
 impl<'a, T, const N: usize> SymmetricPackedView<'a, T, N> {
     /// Creates a symmetric packed view from a slice of length $N(N+1)/2$.
-    pub fn new(data: &'a [T], uplo: UpLo) -> ConversionResult<Self> {
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N * (N + 1) / 2`.
+    pub const fn new(data: &'a [T], uplo: UpLo) -> ConversionResult<Self> {
         if data.len() == (N * (N + 1)) / 2 {
             Ok(Self { data, uplo })
         } else {
@@ -1789,7 +1820,10 @@ pub struct SymmetricPackedViewMut<'a, T, const N: usize> {
 
 impl<'a, T, const N: usize> SymmetricPackedViewMut<'a, T, N> {
     /// Creates a mutable symmetric packed view from a slice of length $N(N+1)/2$.
-    pub fn new(data: &'a mut [T], uplo: UpLo) -> ConversionResult<Self> {
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N * (N + 1) / 2`.
+    pub const fn new(data: &'a mut [T], uplo: UpLo) -> ConversionResult<Self> {
         if data.len() == (N * (N + 1)) / 2 {
             Ok(Self { data, uplo })
         } else {
@@ -1903,7 +1937,10 @@ pub struct HermitianPackedView<'a, T, const N: usize> {
 
 impl<'a, T, const N: usize> HermitianPackedView<'a, T, N> {
     /// Creates a Hermitian packed view from a slice of length $N(N+1)/2$.
-    pub fn new(data: &'a [T], uplo: UpLo) -> ConversionResult<Self> {
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N * (N + 1) / 2`.
+    pub const fn new(data: &'a [T], uplo: UpLo) -> ConversionResult<Self> {
         if data.len() == (N * (N + 1)) / 2 {
             Ok(Self { data, uplo })
         } else {
@@ -1998,7 +2035,10 @@ pub struct HermitianPackedViewMut<'a, T, const N: usize> {
 
 impl<'a, T, const N: usize> HermitianPackedViewMut<'a, T, N> {
     /// Creates a mutable Hermitian packed view from a slice of length $N(N+1)/2$.
-    pub fn new(data: &'a mut [T], uplo: UpLo) -> ConversionResult<Self> {
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N * (N + 1) / 2`.
+    pub const fn new(data: &'a mut [T], uplo: UpLo) -> ConversionResult<Self> {
         if data.len() == (N * (N + 1)) / 2 {
             Ok(Self { data, uplo })
         } else {
@@ -2124,7 +2164,10 @@ pub struct TriangularPackedView<'a, T, const N: usize> {
 
 impl<'a, T, const N: usize> TriangularPackedView<'a, T, N> {
     /// Creates a triangular packed view from a slice of length $N(N+1)/2$.
-    pub fn new(
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N * (N + 1) / 2`.
+    pub const fn new(
         data: &'a [T],
         uplo: UpLo,
         diag: Diag,
@@ -2225,7 +2268,10 @@ pub struct TriangularPackedViewMut<'a, T, const N: usize> {
 
 impl<'a, T, const N: usize> TriangularPackedViewMut<'a, T, N> {
     /// Creates a mutable triangular packed view from a slice of length $N(N+1)/2$.
-    pub fn new(
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N * (N + 1) / 2`.
+    pub const fn new(
         data: &'a mut [T],
         uplo: UpLo,
         diag: Diag,
@@ -2391,6 +2437,11 @@ pub unsafe trait SparseStorageMut<T>: SparseStorage<T> {
     fn get_mut(&mut self, r: usize, c: usize) -> Option<&mut T>;
 
     /// Updates the existing non-zero value at `(r, c)`.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::OutOfBounds`] if either index is out of bounds,
+    /// or [`StorageError::InvalidStructuralInvariant`] if attempting to modify
+    /// a structural zero entry that is not stored.
     fn set(&mut self, r: usize, c: usize, val: T) -> StorageResult<()>;
 
     /// Updates the non-zero value at `(r, c)` without bounds checking.
@@ -2416,7 +2467,8 @@ pub unsafe trait CsrStorage<T>: SparseStorage<T> {
     fn values(&self) -> &[T];
 
     /// Slices the column indices and non-zero values for row `r`.
-    fn row_slice(&self, r: usize) -> Option<(&[usize], &[T])> {
+    #[allow(clippy::type_complexity)]
+    fn row_slice(&self, r: usize) -> Option<SlicePair<'_, T>> {
         if r < self.rows() {
             Some(self.row_slice_unchecked(r))
         } else {
@@ -2426,7 +2478,7 @@ pub unsafe trait CsrStorage<T>: SparseStorage<T> {
 
     /// Slices the column indices and values for row `r` without bounds checking.
     #[allow(clippy::indexing_slicing)]
-    fn row_slice_unchecked(&self, r: usize) -> (&[usize], &[T]) {
+    fn row_slice_unchecked(&self, r: usize) -> SlicePair<'_, T> {
         let offsets = self.row_offsets();
         let start = offsets[r];
         let end = offsets[r + 1];
@@ -2508,6 +2560,10 @@ impl<T: Zero, const R: usize, const C: usize, const MAX_NNZ: usize>
     }
 
     /// Pushes a new coordinate triplet `(r, c, val)` into the buffer.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::OutOfBounds`] if either index is out of bounds,
+    /// or [`StorageError::CapacityExceeded`] if the buffer is at capacity.
     #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
     pub fn push(&mut self, r: usize, c: usize, val: T) -> StorageResult<()> {
         if r >= R || c >= C {
@@ -2584,10 +2640,14 @@ impl<
 > ArrayCsrStorage<T, R, C, MAX_NNZ, R1>
 {
     /// Constructs a canonical CSR matrix by sorting and accumulating an [`ArrayCooStorage`] buffer.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::OutOfBounds`] if any coordinate in `coo` is out of bounds.
     #[allow(
         clippy::indexing_slicing,
         clippy::arithmetic_side_effects,
-        clippy::needless_range_loop
+        clippy::needless_range_loop,
+        clippy::too_many_lines
     )]
     pub fn from_coo(
         coo: &ArrayCooStorage<T, R, C, MAX_NNZ>,
@@ -2778,14 +2838,19 @@ where
     }
 
     fn set(&mut self, r: usize, c: usize, val: T) -> StorageResult<()> {
-        if let Some(entry) = self.get_mut(r, c) {
-            *entry = val;
-            Ok(())
-        } else if r < R && c < C {
-            Err(StorageError::InvalidStructuralInvariant)
-        } else {
-            Err(StorageError::OutOfBounds)
-        }
+        self.get_mut(r, c).map_or_else(
+            || {
+                if r < R && c < C {
+                    Err(StorageError::InvalidStructuralInvariant)
+                } else {
+                    Err(StorageError::OutOfBounds)
+                }
+            },
+            |entry| {
+                *entry = val;
+                Ok(())
+            },
+        )
     }
 
     #[allow(clippy::indexing_slicing)]
@@ -2898,6 +2963,10 @@ impl<T: Zero, const N: usize, const MAX_NNZ: usize>
     }
 
     /// Pushes a non-zero element `(idx, val)`.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::OutOfBounds`] if `idx >= N`,
+    /// or [`StorageError::CapacityExceeded`] if the vector is at capacity.
     #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
     pub fn push(&mut self, idx: usize, val: T) -> StorageResult<()> {
         if idx >= N {
@@ -2952,7 +3021,10 @@ pub struct ViewSparseVector<'a, T, const N: usize> {
 
 impl<'a, T, const N: usize> ViewSparseVector<'a, T, N> {
     /// Creates a sparse vector view from parallel slices.
-    pub fn new(
+    ///
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `indices.len() != values.len()`.
+    pub const fn new(
         indices: &'a [usize],
         values: &'a [T],
     ) -> ConversionResult<Self> {
@@ -2991,24 +3063,36 @@ where
 /// Conversion to dense array storage.
 pub trait ToDenseStorage<Dense> {
     /// Converts `self` to dense storage format.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] if conversion fails due to dimension mismatch or capacity constraints.
     fn to_dense(&self) -> StorageResult<Dense>;
 }
 
 /// Construction from dense array storage.
 pub trait FromDenseStorage<Dense>: Sized {
     /// Constructs `self` from a dense matrix representation.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] if initialization fails due to invalid parameters.
     fn from_dense(dense: &Dense) -> StorageResult<Self>;
 }
 
 /// Conversion to Compressed Sparse Row (CSR) format.
 pub trait ToCsrStorage<Csr> {
     /// Converts `self` into CSR format.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] if the layout conversion fails.
     fn to_csr(&self) -> StorageResult<Csr>;
 }
 
 /// Conversion to Compressed Sparse Column (CSC) format.
 pub trait ToCscStorage<Csc> {
     /// Converts `self` into CSC format.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] if the layout conversion fails.
     fn to_csc(&self) -> StorageResult<Csc>;
 }
 
@@ -3224,8 +3308,154 @@ impl<
 > ToCsrStorage<ArrayCsrStorage<T, R, C, MAX_NNZ, R1>>
     for ArrayCooStorage<T, R, C, MAX_NNZ>
 {
+    /// Converts `self` into CSR format.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::OutOfBounds`] if any coordinate is out of bounds.
     fn to_csr(&self) -> StorageResult<ArrayCsrStorage<T, R, C, MAX_NNZ, R1>> {
         ArrayCsrStorage::from_coo(self)
+    }
+}
+
+impl<
+    T: Scalar,
+    const R: usize,
+    const C: usize,
+    const MAX_NNZ: usize,
+    const C1: usize,
+> ArrayCscStorage<T, R, C, MAX_NNZ, C1>
+{
+    /// Constructs a canonical CSC matrix by sorting and accumulating an [`ArrayCooStorage`] buffer.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::OutOfBounds`] if any coordinate in `coo` is out of bounds.
+    #[allow(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        clippy::needless_range_loop,
+        clippy::manual_memcpy,
+        clippy::too_many_lines
+    )]
+    pub fn from_coo(
+        coo: &ArrayCooStorage<T, R, C, MAX_NNZ>,
+    ) -> StorageResult<Self> {
+        debug_assert_eq!(C1, C + 1);
+
+        // Pass 1: Histogram & column counts
+        let mut col_counts = [0usize; C];
+        for k in 0..coo.nnz {
+            let r = coo.row_indices[k];
+            let c = coo.col_indices[k];
+            if r >= R || c >= C {
+                return Err(StorageError::OutOfBounds);
+            }
+            col_counts[c] += 1;
+        }
+
+        // Prefix sums -> col_offsets
+        let mut col_offsets = [0usize; C1];
+        col_offsets[0] = 0;
+        for j in 0..C {
+            col_offsets[j + 1] = col_offsets[j] + col_counts[j];
+        }
+
+        // Pass 2: Bucket distribution
+        let mut current_offsets = [0usize; C];
+        current_offsets.copy_from_slice(&col_offsets[..C]);
+
+        let mut temp_rows = [0usize; MAX_NNZ];
+        let mut temp_vals: [T; MAX_NNZ] = core::array::from_fn(|_| T::ZERO);
+
+        for k in 0..coo.nnz {
+            let c = coo.col_indices[k];
+            let dest = current_offsets[c];
+            temp_rows[dest] = coo.row_indices[k];
+            temp_vals[dest] = coo.values[k].clone();
+            current_offsets[c] += 1;
+        }
+
+        // Pass 3: In-column sorting & duplicate accumulation
+        let mut final_offsets = [0usize; C1];
+        let mut final_rows = [0usize; MAX_NNZ];
+        let mut final_vals: [T; MAX_NNZ] = core::array::from_fn(|_| T::ZERO);
+        let mut write_idx = 0;
+
+        for c in 0..C {
+            final_offsets[c] = write_idx;
+            let start = col_offsets[c];
+            let end = col_offsets[c + 1];
+            let len = end - start;
+
+            if len > 0 {
+                // Collect row indices and values for this column
+                let mut col_rows = [0usize; MAX_NNZ];
+                let mut col_vals: [T; MAX_NNZ] =
+                    core::array::from_fn(|_| T::ZERO);
+                for i in 0..len {
+                    col_rows[i] = temp_rows[start + i];
+                    col_vals[i] = temp_vals[start + i].clone();
+                }
+
+                // Simple insertion sort by row index
+                for i in 1..len {
+                    let key_row = col_rows[i];
+                    let key_val = col_vals[i].clone();
+                    let mut j = i;
+                    while j > 0 && col_rows[j - 1] > key_row {
+                        col_rows[j] = col_rows[j - 1];
+                        col_vals[j] = col_vals[j - 1].clone();
+                        j -= 1;
+                    }
+                    col_rows[j] = key_row;
+                    col_vals[j] = key_val;
+                }
+
+                // Accumulate duplicates
+                let mut curr_row = col_rows[0];
+                let mut curr_val = col_vals[0].clone();
+
+                for i in 1..len {
+                    if col_rows[i] == curr_row {
+                        curr_val = curr_val + col_vals[i].clone();
+                    } else {
+                        final_rows[write_idx] = curr_row;
+                        final_vals[write_idx] = curr_val;
+                        write_idx += 1;
+                        curr_row = col_rows[i];
+                        curr_val = col_vals[i].clone();
+                    }
+                }
+                final_rows[write_idx] = curr_row;
+                final_vals[write_idx] = curr_val;
+                write_idx += 1;
+            }
+        }
+        final_offsets[C] = write_idx;
+
+        Ok(Self {
+            col_offsets: final_offsets,
+            row_indices: final_rows,
+            values: final_vals,
+            nnz: write_idx,
+        })
+    }
+}
+
+impl<
+    T: Scalar,
+    const R: usize,
+    const C: usize,
+    const MAX_NNZ: usize,
+    const C1: usize,
+> ToCscStorage<ArrayCscStorage<T, R, C, MAX_NNZ, C1>>
+    for ArrayCooStorage<T, R, C, MAX_NNZ>
+{
+    /// Converts `self` into CSC format.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::OutOfBounds`] if any coordinate is out of bounds.
+    fn to_csc(&self) -> StorageResult<ArrayCscStorage<T, R, C, MAX_NNZ, C1>> {
+        ArrayCscStorage::from_coo(self)
     }
 }
 

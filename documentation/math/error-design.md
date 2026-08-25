@@ -1,6 +1,6 @@
 # Crate-Wide Error Module (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_22,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -45,31 +45,18 @@ failure in the course of computation (Anderson et al., 1999).
   `debug_assert` at a kernel boundary) with respect to that condition.
 - **FR-3 — Layered Failure Classes**: Map each runtime failure to one
   enum by class, not by producing file:
-  - scalar arithmetic → `ArithmeticError`;
-  - erased-length / representation conversion → `ConversionError`;
-  - storage index, capacity, structural invariant → `StorageError`;
-  - factorization / solver / eigensolver computation → `LinAlgError`.
-    The same named condition (`DimensionMismatch`) must not appear on more
-    than one crate-wide enum.
+    - scalar arithmetic → `ArithmeticError`;
+    - erased-length / representation conversion → `ConversionError`;
+    - storage index, capacity, structural invariant → `StorageError`;
+    - factorization / solver / eigensolver computation → `LinAlgError`.
+      The same named condition (`DimensionMismatch`) must not appear on more
+      than one crate-wide enum.
 
 #### 2.2 Non-Functional Requirements
 
 - **NFR-1 — Convention Compliance**: Follows the crate-wide `thiserror`-enum
   convention already established by `matrix-design.md` and
   `state-space-design.md`.
-- **NFR-2 — Shipped Producers Unchanged Except Dead `LinAlgError` Arms**:
-  `StorageView` / `StorageViewMut::new` (`src/math/storage.rs`;
-  `ViewStorage` / `ViewStorageMut` in `storage-design.md`) remain the only
-  shipped `ConversionError` producers. Their `data.len()` check stays a
-  runtime `Err`: `&[T]` erases length from its type, and
-  `&[T; R::USIZE * C::USIZE]` requires `generic_const_exprs`. `StorageError`
-  has no shipped producers. Shipped `LinAlgError` producers return only
-  `SingularMatrix`. `NonSquareMatrix` has Display coverage and no producer;
-  removing it is not a change to a live failure path. As-yet-unimplemented
-  `Matrix` / `Polynomial` / `Tensor` `TryFrom` conversions remain as
-  specified in `../numerical-models/matrix-design.md`,
-  `../numerical-models/polynomial-design.md` and
-  `../numerical-models/tensor-design.md`.
 
 ---
 
@@ -136,7 +123,7 @@ flowchart TD
     S -- yes --> C[Trait bound / marker.\nFrom or infallible kernel.\nWrong types: compile error.]
     S -- no --> K{Failure class}
     K -- scalar arithmetic --> A[ArithmeticError]
-    K -- erased length or value-validity conversion --> V[ConversionError]
+    K -- erased length or value - validity conversion --> V[ConversionError]
     K -- index / capacity / structural invariant --> ST[StorageError]
     K -- factorization / solver / eigensolver computation --> L[LinAlgError]
 ```
@@ -167,7 +154,12 @@ cost over using the raw storage type" (uom, 2026).
 **`DimensionMismatch` stays.** Producers are value- or slice-length-dependent:
 
 - `ViewStorage` / `ViewStorageMut::new` wrap a runtime `&[T]`; length is
-  not part of the type (NFR-2; `storage-design.md` §3.1, §4.6).
+  not part of the type (`storage-design.md` §3.1, §4.2, §4.6).
+- `StorageView` / `StorageViewMut::new` (`LayoutMarker`-tagged; same
+  constructors in `src/math/storage.rs`) wrap a runtime `&[T]` whose length
+  must equal `R::USIZE * C::USIZE`. Length is erased from `&[T]`;
+  `&[T; R::USIZE * C::USIZE]` requires `generic_const_exprs`. Both view
+  families remain the shipped `ConversionError` producers.
 - `Matrix → Polynomial` (Faddeev–LeVerrier,
   `../numerical-models/matrix-design.md` §4.8.1) fails "if the scalar type
   cannot perform division, if numerical overflow occurs or if capacity is
@@ -203,11 +195,11 @@ Adopted from `storage-design.md` §3.3 / §4.6, with one deletion:
 all runtime properties of a live buffer, not of `Dim`:
 
 | Variant                      | Producer                                                                                                                  | Why runtime                                                                                                           |
-| :--------------------------- | :------------------------------------------------------------------------------------------------------------------------ | :-------------------------------------------------------------------------------------------------------------------- |
+|:-----------------------------|:--------------------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------|
 | `OutOfBounds`                | `StorageMut::set`, `PackedStorageMut::set`, `SparseStorageMut::set`, `ArrayCooStorage::push`, `ArrayCsrStorage::from_coo` | `(r, c)` is a value; checked accessors return `Result` at library boundaries (`storage-design.md` FR-2, FR-8, FR-12). |
 | `CapacityExceeded`           | `ArrayCooStorage::push`; dense → sparse when `nnz > MAX_NNZ`                                                              | `MAX_NNZ` is a type parameter; live `nnz` is not (ndarray's offset/length overflow class; ndarray, 2026).             |
 | `ImmutableUnitDiagonal`      | `TriangularPackedStorage::set` with `Diag::Unit`                                                                          | Unit diagonal is a construction flag; the write is a value at `(i, i)`.                                               |
-| `InvalidHermitianDiagonal`   | `HermitianPackedStorage::set` on the diagonal                                                                             | $\mathrm{Im}(A_{i,i}) = 0$ is a value invariant (`storage-design.md` FR-18).                                          |
+| `InvalidHermitianDiagonal`   | `HermitianPackedStorage::set` on the diagonal                                                                             | $\mathrm{Im}(A_{i,i}) = 0$ is a value invariant (`storage-design.md` FR-17).                                          |
 | `InvalidStructuralInvariant` | `SparseStorageMut::set` on an unallocated coordinate; malformed CSR/CSC offsets                                           | Sparsity pattern is data, not a `Dim`.                                                                                |
 
 Checked `get` continues to return `Option<&T>` (`None` = missing or
@@ -284,7 +276,8 @@ to `Potrf` is a `matrix-design.md` change, not this module's.
 - **Wrap `StorageError` / `ConversionError` inside `LinAlgError`**,
   following ndarray-linalg's `Shape` / `Lapack` composition
   (ndarray-linalg, 2026). Rejected: wrapping reintroduces a shape arm on
-  the solver type; kernel preconditions are compile-time (`subprograms-design.md`
+  the solver type; kernel preconditions are compile-time (
+  `subprograms-design.md`
   C-1).
 - **Collapse `LinAlgError` (and `ConversionError`) to `Option`**,
   following nalgebra's `Cholesky::new -> Option<Self>` (nalgebra, 2026).
@@ -320,10 +313,10 @@ to `Potrf` is a `matrix-design.md` change, not this module's.
 
 ### 6. Verification & Validation
 
-1. `StorageView` / `StorageViewMut::new`'s `DimensionMismatch` path keeps
-   its existing success/failure unit test pairs and proptest coverage
-   (`src/math/tests/storage_tests.rs`) — unaffected (NFR-2). After the
-   `ViewStorage` rename, the same pairs move with the constructors.
+1. `StorageView` / `StorageViewMut::new` and `ViewStorage` /
+   `ViewStorageMut::new` `DimensionMismatch` paths keep their existing
+   success/failure unit test pairs and proptest coverage
+   (`src/math/tests/storage_tests.rs`) — unaffected (§4.2).
 2. When `Matrix → Polynomial` and `Polynomial → Matrix` land, each
    `ConversionError` variant they produce (`DimensionMismatch`,
    `NonMonicPolynomial`) needs a dedicated failure-path unit test, matching
@@ -333,25 +326,32 @@ to `Potrf` is a `matrix-design.md` change, not this module's.
 3. When the `From` + `TensorLayout<Size = …>` conversions (§4.2) land, add
    a `compile_fail` doctest demonstrating that a `Layout` whose `Size`
    does not match the source shape fails to compile rather than returning
-   `Err`, matching the `compile_fail` doctest pattern already used in
-   `src/math/num_types` for subtraction underflow.
+   `Err`. This item is not a current gate; it waits on
+   `../numerical-models/tensor-design.md` retarget and `From` conversions.
 4. Add `Display` / `Error` unit tests for every `StorageError` variant when
-   the enum lands. When storage Phases 2–4 land (`storage-design.md` §8),
+   the enum lands. When storage Phases 2–4 land (`storage-design.md` §9),
    each producer listed in §4.3 needs a dedicated failure-path test:
    `OutOfBounds` (`set` / `push` / `from_coo`), `CapacityExceeded` (`push`
    and dense → sparse), `ImmutableUnitDiagonal`,
    `InvalidHermitianDiagonal`, `InvalidStructuralInvariant`.
-5. When LAPACK Phase 4 lands (`subprograms-design.md` §9):
-   `Potrf` / `Pptrf` return `Err(LinAlgError::NotPositiveDefinite)` on a
-   non-SPD / non-HPD matrix; `Getrf` returns `Err(LinAlgError::SingularMatrix)`
-   on a singular matrix; a short `work` / `tau` / `ipiv` slice returns
-   `WorkspaceTooSmall`; a Jacobi budget of zero (or a non-converging
-   fixture if one is specified later) returns `MaxIterationsReached`.
-   Remove the `NonSquareMatrix` Display test with the variant.
-6. `compile_fail` (or type-level) coverage that a BLAS `Gemv` /
-   `Gemm` impl does not return `Result` for shape: mismatched `Dim`
-   parameters fail to compile. Kernel-boundary mismatches remain
-   `debug_assert` only (debug builds).
+5. LAPACK failure oracles (`subprograms-design.md` §6.1.2):
+   `Potrf` returns `Err(LinAlgError::NotPositiveDefinite)` on a non-SPD
+   matrix and on a complex non-HPD matrix; `Pptrf` returns the same arm on
+   a non-SPD packed matrix; `Getrf` returns
+   `Err(LinAlgError::SingularMatrix)` on a singular matrix. A `tau` /
+   `work` / `ipiv` slice one element under the documented minimum, passed to
+   `Geqrf` / `Ormqr` / `Unmqr` / `Syev` / `Heev`, returns
+   `WorkspaceTooSmall`. A Jacobi budget of zero on `Syev` / `Heev` returns
+   `MaxIterationsReached`; NaN-poisoned matrices are not this oracle.
+   Kernel names stay `Potrf` / `Getrf`; this document does not claim a
+   `src/matrix` mapping (`NotPositiveDefinite` from Matrix wrappers is a
+   `matrix-design.md` open item).
+6. Two separate bullets, not one:
+    - (a) Now: rustdoc `compile_fail` that `Gemv` / `Gemm` return `()` not
+      `Result` (the kernel is infallible w.r.t. shape).
+    - (b) Later: mismatched `Dim` `compile_fail` on typed `Matrix` wrappers
+      (`subprograms-design.md` NFR-2 / C-1). Kernel-boundary mismatches
+      remain `debug_assert` only.
 
 No HIL of the error enums themselves; HIL of kernels is
 `subprograms-design.md` §6.1.5.
@@ -400,34 +400,44 @@ with `subprograms-design.md` NFR-3. `StorageError` and the extra
 - **Assumption**: No `StorageError` producers exist in shipped code
   (confirmed by repository search). Adding the enum is not a breaking
   change. Removing `LinAlgError::NonSquareMatrix` is a public-enum break
-  with no live producer (NFR-2).
+  with no live producer.
+- **Shipped producers (closed, moved from former NFR-2)**:
+  `StorageView` / `StorageViewMut::new` and `ViewStorage` /
+  `ViewStorageMut::new` remain the shipped `ConversionError` producers
+  (§4.2). `StorageError` has no shipped producers. Shipped `LinAlgError`
+  producers return only `SingularMatrix`. `NonSquareMatrix` had Display
+  coverage and no producer; removing it was not a change to a live failure
+  path. As-yet-unimplemented `Matrix` / `Polynomial` / `Tensor` conversions
+  remain as specified in the numerical-model drafts.
 
 ---
 
 ### 9. Development Plan
 
 | Task / Feature                     | Description                                                                                                                                              | Estimated Effort           |
-| :--------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------- |
+|:-----------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------|:---------------------------|
 | Step 1: Narrow `ConversionError`   | Remove `LayoutMismatch` from the enum (§3); update `Display`/`Error` impls and their tests in `src/math/mod.rs`.                                         | Complete                   |
 | Step 2: Rank-marker traits         | Superseded. Rank and size are `TensorLayout<Size = …>` bounds (§4.2), not a `Rank1Layout` / `Rank2Layout` family.                                        | —                          |
 | Step 3: Align dependent model docs | `matrix-design.md` §4.8.2, `polynomial-design.md` §4.7.2, `tensor-design.md` §4.11 use the `From` + `Size` shape.                                        | Complete                   |
-| Step 4: Add `StorageError`         | Land the enum, `StorageResult`, `Display`/`Error` impls, and Display tests in `src/math/mod.rs` (§3, §4.3). View constructors stay on `ConversionError`. | 2                          |
-| Step 5: Align `LinAlgError`        | Add `NotPositiveDefinite`, `WorkspaceTooSmall`, `MaxIterationsReached`; remove `NonSquareMatrix`; keep `SingularMatrix`. Update Display tests.           | 2                          |
+| Step 4: Add `StorageError`         | Land the enum, `StorageResult`, `Display`/`Error` impls, and Display tests in `src/math/mod.rs` (§3, §4.3). View constructors stay on `ConversionError`. | Complete                   |
+| Step 5: Align `LinAlgError`        | Add `NotPositiveDefinite`, `WorkspaceTooSmall`, `MaxIterationsReached`; remove `NonSquareMatrix`; keep `SingularMatrix`. Update Display tests.           | Complete                   |
 | Step 6: Producer tests             | Storage Phases 2–4 and subprograms Phase 4 attach the failure-path tests in §6 items 4–5.                                                                | — (owned by those designs) |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| :------- | :-------------- | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1.0      | August 2, 2026  | @MitchellDScott | Initial stub relocating `ConversionError` out of `matrix-design.md` per review feedback; minimal pending research.                                                                                                                                                                                                                                                                                                                        |
-| 1.1      | August 9, 2026  | @MitchellDScott | Review and corrections.                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 1.2      | August 18, 2026 | @MitchellDScott | Corrected §1's error-type count (three, not two: added `LinAlgError`). Added FR-2/NFR-2, §4 Architecture, §6 Verification & Validation, §7 Performance and §8 Risks & Open Questions. Removed `LayoutMismatch`, moving its rank/size checks into `TensorLayout` trait bounds (§4); added comparative alternatives (§5) grounded in `research/error.json`. Reverted Doc Status to Draft pending re-review of the `LayoutMismatch` removal. |
-| 1.3      | August 18, 2026 | @MitchellDScott | Reconciled Doc Status badge to Reviewed-yellow; aligned downstream cross-model conversions in `matrix-design.md`, `polynomial-design.md`, and `tensor-design.md` to infallible compile-time `From` conversions via `TensorLayout<Size = ...>`, eliminating `LayoutMismatch` across design specifications and `src/math/mod.rs`.                                                                                                           |
-| 1.4      | August 18, 2026 | @MitchellDScott | Closed stale §8/§9 items against Rev 1.3: downstream `From` + `Size` alignment is complete; rank-marker traits are superseded; V&V item 3 tests the `Size` bound, not `RankNLayout`.                                                                                                                                                                                                                                                      |
-| 1.5      | August 22, 2026 | @MitchellDScott | Canonicalized `StorageError` from `storage-design.md` (without duplicating `DimensionMismatch`) and realigned `LinAlgError` with `subprograms-design.md` computational failures (`NotPositiveDefinite`, `WorkspaceTooSmall`, `MaxIterationsReached`); dropped dead `NonSquareMatrix`; FR-3 forbids cloning `DimensionMismatch` across enums.                                                                                              |
-| 1.6      | August 22, 2026 | @MitchellDScott | Closed sibling-doc drift: storage, subprograms, and polynomial Convolution match FR-3. `NonSquareMatrix` remains absent from `LinAlgError`.                                                                                                                                                                                                                                                                                               |
+| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 2, 2026  | @MitchellDScott | Initial stub relocating `ConversionError` out of `matrix-design.md` per review feedback; minimal pending research.                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.1      | August 9, 2026  | @MitchellDScott | Review and corrections.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.2      | August 18, 2026 | @MitchellDScott | Corrected §1's error-type count (three, not two: added `LinAlgError`). Added FR-2/NFR-2, §4 Architecture, §6 Verification & Validation, §7 Performance and §8 Risks & Open Questions. Removed `LayoutMismatch`, moving its rank/size checks into `TensorLayout` trait bounds (§4); added comparative alternatives (§5) grounded in `research/error.json`. Reverted Doc Status to Draft pending re-review of the `LayoutMismatch` removal.                                                                                     |
+| 1.3      | August 18, 2026 | @MitchellDScott | Reconciled Doc Status badge to Reviewed-yellow; aligned downstream cross-model conversions in `matrix-design.md`, `polynomial-design.md`, and `tensor-design.md` to infallible compile-time `From` conversions via `TensorLayout<Size = ...>`, eliminating `LayoutMismatch` across design specifications and `src/math/mod.rs`.                                                                                                                                                                                               |
+| 1.4      | August 18, 2026 | @MitchellDScott | Closed stale §8/§9 items against Rev 1.3: downstream `From` + `Size` alignment is complete; rank-marker traits are superseded; V&V item 3 tests the `Size` bound, not `RankNLayout`.                                                                                                                                                                                                                                                                                                                                          |
+| 1.5      | August 22, 2026 | @MitchellDScott | Canonicalized `StorageError` from `storage-design.md` (without duplicating `DimensionMismatch`) and realigned `LinAlgError` with `subprograms-design.md` computational failures (`NotPositiveDefinite`, `WorkspaceTooSmall`, `MaxIterationsReached`); dropped dead `NonSquareMatrix`; FR-3 forbids cloning `DimensionMismatch` across enums.                                                                                                                                                                                  |
+| 1.6      | August 22, 2026 | @MitchellDScott | Closed sibling-doc drift: storage, subprograms, and polynomial Convolution match FR-3. `NonSquareMatrix` remains absent from `LinAlgError`.                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.7      | August 24, 2026 | @MitchellDScott | Reverted Doc Status Approved → Draft for verification-gap Phase 1. The Reviewed-yellow reconciliation in 1.3 was never re-logged as Approved; that unlogged Reviewed → Approved transition is recorded here as a reconciliation, not a back-dated approval. Moved former NFR-2 producer/dead-arm inventory to §4.2 / §8; §2.2 keeps NFR-1. Repointed `InvalidHermitianDiagonal` to `storage-design.md` FR-17. Split §6 item 6; named `WorkspaceTooSmall` and Jacobi-budget-0 oracles; deferred `TensorLayout` `compile_fail`. |
+| 1.8      | August 24, 2026 | @MitchellDScott | Maintenance pass: marked Development Plan Steps 4 and 5 Complete following implementation and Display unit testing in `src/math/mod.rs`; verified citation grounding and research schema alignment in preparation for Reviewed status.                                                                                                                                                                                                                                                                                        |
 
 ---
 
@@ -437,25 +447,26 @@ with `subprograms-design.md` NFR-3. `StorageError` and the extra
 A. Greenbaum, S. Hammarling, A. McKenney, and D. Sorensen, _LAPACK
 Users' Guide_, 3rd ed. Philadelphia, PA, USA: SIAM, 1999.
 
-[2] ndarray, _ndarray_ (Version 0.17.2). [Online]. Available:
+[2] ndarray, _ndarray_ (Version 0.17.2), 2026. [Online]. Available:
 https://docs.rs/ndarray/latest/ndarray/. Accessed: Aug. 18, 2026.
 
-[3] ndarray-linalg, _ndarray-linalg_ (Version 0.18.1). [Online]. Available:
+[3] ndarray-linalg, _ndarray-linalg_ (Version 0.18.1), 2026. [Online].
+Available:
 https://docs.rs/ndarray-linalg/latest/ndarray_linalg/error/enum.LinalgError.html.
 Accessed: Aug. 18, 2026.
 
-[4] Eigen, "Assertions," _Eigen documentation (nightly)_. [Online].
+[4] Eigen, "Assertions," _Eigen documentation (nightly)_, 2026. [Online].
 Available: https://libeigen.gitlab.io/eigen/docs-nightly/TopicAssertions.html.
 Accessed: Aug. 18, 2026.
 
-[5] uom, _uom_ (Version 0.38.0). [Online]. Available:
+[5] uom, _uom_ (Version 0.38.0), 2026. [Online]. Available:
 https://docs.rs/uom/latest/uom/. Accessed: Aug. 18, 2026.
 
-[6] nalgebra, _nalgebra_ (Version 0.35.0). [Online]. Available:
+[6] nalgebra, _nalgebra_ (Version 0.35.0), 2026. [Online]. Available:
 https://docs.rs/nalgebra/latest/nalgebra/. Accessed: Aug. 18, 2026.
 
-[7] fixed, _fixed_ (Version 1.31.0). [Online]. Available:
+[7] fixed, _fixed_ (Version 1.31.0), 2026. [Online]. Available:
 https://docs.rs/fixed. Accessed: Aug. 18, 2026.
 
-[8] micromath, _micromath_ (Version 2.1.0). [Online]. Available:
+[8] micromath, _micromath_ (Version 2.1.0), 2023. [Online]. Available:
 https://docs.rs/micromath/latest/micromath/. Accessed: Aug. 18, 2026.

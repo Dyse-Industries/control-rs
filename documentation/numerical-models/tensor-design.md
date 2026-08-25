@@ -1,6 +1,6 @@
 # Tensor Type & Low-Cost Inference (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_22,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -12,9 +12,8 @@ The `Tensor` type provides an N-dimensional array parameterized over a
 compile-time shape layout and a pluggable memory storage backend, extending
 `control-rs`'s linear algebra beyond the 2-dimensional `Matrix` type. It
 shares its architectural foundation with `Matrix` — the same `Dim`
-sizing system and Tier 0 `Buffer<T>` / `BufferMut<T>` provenance abstraction,
-while
-operating independently of 2D `MatrixStorage` matrix bounds.
+sizing system and the same contiguity contract — while operating
+independently of the 2-D shape bound `DenseStorage<T>` imposes.
 
 Beyond static N-D storage, this revision extends `Tensor` toward two embedded
 target applications identified during retroactive research: high-dimensional
@@ -71,7 +70,7 @@ out of scope.
 
 ### 3. Technical Overview
 
-`Tensor<T, Layout: TensorLayout, B: Buffer<T>>` is a
+`Tensor<T, Layout: TensorLayout, B: FlatBuffer<T>>` is a
 compile-time-shaped N-dimensional array built on the same generic-scalar,
 decoupled-storage foundation as `Matrix`. This revision adds three
 capabilities motivated by two concrete embedded use cases surfaced during
@@ -87,7 +86,24 @@ no change to `Tensor`'s own generic signature.
 
 #### 4.1. Generics Foundation & Sizing
 
-A `Tensor` wraps a storage backend `B: Buffer<T>`.
+A `Tensor` wraps a flat, padding-free storage backend. `storage-design.md`
+Rev 1.8 removed the rank-agnostic `Buffer<T>` tier, so the crate-wide
+contiguity contract is now `ContiguousStorage<T>` / `ContiguousStorageMut<T>`
+(FR-3), whose `as_slice()` / `as_mut_slice()` are exactly what a tensor
+needs. Those traits are declared as sub-traits of the 2-D
+`DenseStorage<T>`, so `Tensor` names a rank-neutral projection of them:
+
+```rust
+/// Rank-neutral flat-buffer contract. Blanket-implemented for every
+/// `ContiguousStorage<T>` leaf, so a rank-2 tensor reuses `ArrayStorage`
+/// directly (§7).
+pub unsafe trait FlatBuffer<T> {
+    const LEN: usize;
+    fn as_slice(&self) -> &[T];
+    fn as_ptr(&self) -> *const T;
+}
+```
+
 Coordinate mapping is delegated to a type implementing `TensorLayout`:
 
 ```rust
@@ -97,21 +113,22 @@ pub trait TensorLayout {
     fn dims() -> &'static [usize];
 }
 
-pub struct Tensor<T, Layout: TensorLayout, B: Buffer<T>> {
+pub struct Tensor<T, Layout: TensorLayout, B: FlatBuffer<T>> {
     buffer: B,
     _marker: PhantomData<Layout>,
 }
 
-// Rank-2 owning tensors reuse `Array2` (`storage-subprograms-design.md` §4.1.3).
-// `Array<T, Layout::Size::USIZE>` is not a valid default: that projection
+// Rank-2 owning tensors reuse `ArrayStorage` (`storage-design.md` FR-4),
+// which is contiguous and therefore a `FlatBuffer`.
+// `[T; Layout::Size::USIZE]` is not a valid default: that projection
 // requires `generic_const_exprs`. Higher-rank owning layouts supply their
-// own nested-array `Buffer`; they do not project `Dim::USIZE` into `[T; N]`.
+// own nested-array buffer; they do not project `Dim::USIZE` into `[T; N]`.
 pub type ArrayTensor<T, const R: usize, const C: usize> =
-    Tensor<T, Shape2D<Const<R>, Const<C>>, Array2<T, R, C>>;
+    Tensor<T, Shape2D<Const<R>, Const<C>>, ArrayStorage<T, R, C>>;
 pub type ViewTensor<'a, T, Layout> =
-    Tensor<T, Layout, Ref<'a, T>>;
+    Tensor<T, Layout, FlatView<'a, T>>;
 pub type ViewMutTensor<'a, T, Layout> =
-    Tensor<T, Layout, RefMut<'a, T>>;
+    Tensor<T, Layout, FlatViewMut<'a, T>>;
 ```
 
 Layout sizing verification uses type-level bounds (`Shape2D`, `Shape3D`, ...)
@@ -125,20 +142,24 @@ strides (first dimension varies fastest): $\text{flat\_index} = i_0 + i_1
 \prod_{j=0}^{m-1} D_j$.
 
 - **Decoupled Physical Storage**: Flat element access dispatches through
-  `Buffer<T>` / `BufferMut<T>` (`as_slice`, `as_ptr`, `as_mut_slice`,
-  `as_mut_ptr`).
-- **Matrix Interoperability**: Column-major layout matches `Matrix`'s
-  layout, so 2D tensors interoperate with matrices without transposition or
-  copying.
+  `FlatBuffer<T>` / `FlatBufferMut<T>` (`as_slice`, `as_ptr`, `as_mut_slice`,
+  `as_mut_ptr`), which every `ContiguousStorage` leaf satisfies.
+- **Matrix Interoperability**: Column-major layout matches `ArrayStorage`'s
+  ordering ($RS = 1$, $CS = R$), so 2-D tensors interoperate with matrices
+  without transposition or copying. A `Matrix` over a strided `ViewStorage`
+  has no flat buffer and converts by element copy instead
+  (`matrix-design.md` §4.8.2).
 - **Flat Indexing Efficiency**: Element-wise operations iterate the
   underlying storage directly, bypassing multi-index arithmetic.
 
 #### 4.3. Memory Representation & Slicing
 
-`#[repr(C)]` guarantees a stable layout. CONTIGUOUS slice interfaces
-(`as_slice`, `as_mut_slice`) are gated behind the `Buffer`/`BufferMut`
-sub-traits, facilitating zero-copy casting to `&[T]` for BLAS-like
-subprogram routing when the storage backend supports it.
+`#[repr(C)]` guarantees a stable layout. Padding-free slice interfaces
+(`as_slice`, `as_mut_slice`) are gated behind `FlatBuffer`/`FlatBufferMut`,
+facilitating zero-copy casting to `&[T]` for subprogram routing when the
+storage backend supports it. Tensor contraction reaching a 2-D kernel
+rewraps the slice as a `ViewStorage` and calls `Gemm`
+(`subprograms-design.md` FR-4) rather than defining its own inner loop.
 
 #### 4.4. Instantiation & Constructors
 
@@ -186,13 +207,13 @@ Motivated by gain-scheduled flight-control lookup tables (Koo & Sands,
       Zarantonello (1988): a query at a fractional coordinate is evaluated as a
       weighted sum over the $2^{\text{RANK}}$ hypercube corner vertices
       surrounding it (the multilinear generalization of bilinear/trilinear
-      interpolation), reading directly through `Buffer::as_slice` with no
+      interpolation), reading directly through `FlatBuffer::as_slice` with no
       intermediate allocation:
 
 ```rust
 impl<T, Layout: TensorLayout, B> Tensor<T, Layout, B>
 where
-    B: Buffer<T>,
+    B: FlatBuffer<T>,
     T: Float,
 {
     pub fn interpolate(&self, coords: &[T; Layout::RANK]) -> T { /* ... */ }
@@ -289,12 +310,22 @@ pub struct Quantized<Repr, const SHIFT: i32> {
 value as `raw * 2^-SHIFT`, mirroring the integer-exponent pattern already
 used by existing Rust fixed-point/decimal crates (`decimal-scaled`,
 `primitive_fixed_point_decimal`) for type-level scale. `Quantized`
-implements the crate's `Zero`, `One`, and `Scalar` (`Zero + One + Sub + Mul`)
-traits — [`num-traits-design.md`](../math/num-traits-design.md)'s
-unified arithmetic target for generic `Tensor`/`Matrix` code paths — so it
-plugs into every existing generic call site unchanged. `Scalar` deliberately
-excludes `Div`; `Quantized`'s dequantization is a bit-shift, not a
-`Float::Div` call, so this omission is not a gap.
+implements the crate's `Zero`, `One`, `Conjugate` and `Scalar`
+(`Zero + One + Sub + Mul + Conjugate`) traits —
+[`num-traits-design.md`](../math/num-traits-design.md)'s unified arithmetic
+target for generic `Tensor`/`Matrix` code paths — so it plugs into every
+existing generic call site unchanged. `Conjugate` is the identity on
+`Quantized`, which is real, and `Scalar::Real = Self` with `im()` returning
+`Real::ZERO` (`num-traits-design.md` FR-3, FR-4, §4.3). `Scalar`
+deliberately excludes `Div`; `Quantized`'s dequantization is a bit-shift,
+not a division, so this omission is not a gap, and integer division stays
+on `TryDiv`.
+
+`Quantized` also implements `SaturatingInteger` when `Repr` does
+(`num-traits-design.md` §4.1), which is the contract that makes Q-format
+overflow saturate rather than wrap. `num-traits-design.md` §3 states that
+`Quantized<Repr, SHIFT>` is defined with the tensor scalar type — that is,
+here — while the trait contract it must satisfy is specified there.
 
 An affine variant (`AffineQuantized<Repr, const SHIFT: i32, const
 ZERO_POINT: i32>`) is deferred future work for imported-model
@@ -427,7 +458,7 @@ compile-time (const-generic) tensor shapes and interoperability with a
 broader `Matrix`/`Polynomial` type system. MicroFlow is the closest analog
 but is a single-model NN inference engine with no general `Tensor<T,
 Layout, B>` abstraction; `tfmicro` requires a C++ toolchain. Building on
-`control-rs`'s existing `Dim`/`Buffer` foundation remains the only option
+`control-rs`'s existing `Dim` and contiguity foundation remains the only option
 meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 
 ---
@@ -477,9 +508,9 @@ pub fn update_thermal_grid<T, Ba, Bx, By>(
     next_grid: &mut Tensor<f32, Shape3D<U4, U2, U2>, By>,
 )
 where
-    Ba: Buffer<f32>,
-    Bx: Buffer<f32>,
-    By: BufferMut<f32>,
+    Ba: FlatBuffer<f32>,
+    Bx: FlatBuffer<f32>,
+    By: FlatBufferMut<f32>,
 {
     transition_matrix.contract_into::<U1, U0, _, _, _, _>(current_grid, next_grid);
 }
@@ -511,7 +542,7 @@ controller end-to-end, without requiring the future-work import tooling
 
 ```rust
 pub fn predict<Bw1, Bb1, Bw2, Bb2>(
-    input: &Tensor<Quantized<i8, 7>, Shape1D<U4>, impl Buffer<Quantized<i8, 7>>>,
+    input: &Tensor<Quantized<i8, 7>, Shape1D<U4>, impl FlatBuffer<Quantized<i8, 7>>>,
     w1: &Tensor<Quantized<i8, 7>, Shape2D<U8, U4>, Bw1>,
     b1: &Tensor<Quantized<i8, 7>, Shape1D<U8>, Bb1>,
     w2: &Tensor<Quantized<i8, 7>, Shape2D<U1, U8>, Bw2>,
@@ -628,3 +659,4 @@ pub fn predict<Bw1, Bb1, Bw2, Bb2>(
 | 1.12     | August 18, 2026 | @mitchelldscott | Propagated storage Rev 1.16: `slice_matrix` returns `MatrixSlice<'_, T, R, C>` with bare `const R, C`. |
 | 1.13     | August 20, 2026 | @mitchelldscott | Renamed the contrastive `BlasStorage` reference (§1) to `MatrixStorage`, matching `storage-subprograms-design.md` Rev 1.31; no other content affected since `Tensor` bypasses the 2D storage branch entirely. |
 | 1.14     | August 22, 2026 | @MitchellDScott | Reverted Doc Status to Draft. Body still cites deleted `storage-subprograms-design.md`; retarget onto `storage-design.md` is a dedicated pass. |
+| 1.15     | August 24, 2026 | @mitchelldscott | Retargeted onto `storage-design.md` Rev 1.8, closing the Rev 1.14 note. `storage-design.md` removed the rank-agnostic `Buffer<T>` tier, so §4.1 defines the rank-neutral `FlatBuffer<T>`/`FlatBufferMut<T>` projection, blanket-implemented for every `ContiguousStorage<T>` leaf; rank-2 owning tensors bind `ArrayStorage<T, R, C>` (§4.1, §4.2, §4.3). Recorded that a strided `ViewStorage`-backed `Matrix` has no flat buffer and converts by copy, and that 2-D contraction rewraps onto `Gemm`. Extended §4.10 with `Quantized`'s `Conjugate`/`Scalar::Real` obligations and its `SaturatingInteger` bound (`num-traits-design.md` FR-3, FR-4, §4.1). Status stays Draft. |

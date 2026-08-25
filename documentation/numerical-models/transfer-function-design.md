@@ -1,6 +1,6 @@
 # Transfer Function Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_22,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -15,7 +15,8 @@ control systems and digital signal processing.
 
 Following the core architecture of `control-rs`, `TransferFunction` is a *
 *standalone, type-safe wrapper** built directly on top of generic storage
-backends (`DenseStorage<T, N, U1>` and `DenseStorage<T, D, U1>`). It does *
+backends (`DenseStorage<T, R = N, C = U1>` and
+`DenseStorage<T, R = D, C = U1>`). It does *
 *not** wrap
 `Polynomial` objects under the hood; instead, it operates directly on numerator
 and denominator storage memory via lower-level `Dim` traits (
@@ -75,13 +76,15 @@ abstractions, `TransferFunction` interacts directly with:
 
 - **`crate::math::num_types`**: Binary type-level arithmetic (`DimAdd`, `DimSub`, `U1`,
   etc.) for compile-time shape verification.
-- **`crate::math::subprograms`**: BLAS Level 1/2/3 subprograms (`AXPY`, `SCAL`,
-  `GEMV`, `GEMM`) and DSP helpers (`CONV`, Horner's evaluation).
-- **`crate::math::storage`**: Storage traits (`Buffer`, `BufferMut`,
-  `MatrixStorage`, `MatrixStorageMut`, `DenseStorage`, `DenseStorageMut`,
-  `Dense`). `PackedStorage` (`storage-subprograms-design.md` §4.1.4) does not
-  apply: `Sn`/`Sd` are $N \times 1$/$D \times 1$ column storage, the same
-  shape `polynomial-design.md` §1 notes has no packed analogue.
+- **`crate::math::subprograms`**: BLAS Level 1/2/3 subprograms (`Axpy`,
+  `Scal`, `Gemv`, `Gemm`) and DSP helpers (`Convolution`, Horner's
+  evaluation).
+- **`crate::math::storage`**: The dense strided subsystem (`DenseStorage`,
+  `DenseStorageMut`, `ContiguousStorage`, `ContiguousStorageMut`,
+  `ArrayStorage`, `ViewStorage`; `storage-design.md` FR-1 to FR-6). The
+  packed subsystem (FR-7 to FR-10) does not apply: `Sn`/`Sd` are
+  $N \times 1$/$D \times 1$ column storage, the same shape
+  `polynomial-design.md` §1 notes has no packed analogue.
 
 ---
 
@@ -94,8 +97,8 @@ pub struct TransferFunction<
     T,
     N: Dim,
     D: Dim,
-    Sn: DenseStorage<T, N, U1>,
-    Sd: DenseStorage<T, D, U1>,
+    Sn: DenseStorage<T, R = N, C = U1>,
+    Sd: DenseStorage<T, R = D, C = U1>,
 > {
     num_storage: Sn,
     den_storage: Sd,
@@ -114,15 +117,15 @@ pub struct TransferFunction<
 ```rust
 /// Owning transfer function. `N`/`D` are the alias's own const generics.
 pub type ArrayTransferFunction<T, const N: usize, const D: usize> =
-    TransferFunction<T, Const<N>, Const<D>, DenseVectorArray<T, N>, DenseVectorArray<T, D>>;
+    TransferFunction<T, Const<N>, Const<D>, ArrayStorage<T, N, 1>, ArrayStorage<T, D, 1>>;
 
 /// Zero-copy borrowed read-only view.
 pub type TransferFunctionView<'a, T, const N: usize, const D: usize> =
-    TransferFunction<T, Const<N>, Const<D>, DenseVectorRef<'a, T, N>, DenseVectorRef<'a, T, D>>;
+    TransferFunction<T, N, D, ViewStorage<'a, T, N, U1>, ViewStorage<'a, T, D, U1>>;
 
 /// Zero-copy borrowed mutable view.
 pub type TransferFunctionViewMut<'a, T, const N: usize, const D: usize> =
-    TransferFunction<T, Const<N>, Const<D>, DenseVectorRefMut<'a, T, N>, DenseVectorRefMut<'a, T, D>>;
+    TransferFunction<T, N, D, ViewStorageMut<'a, T, N, U1>, ViewStorageMut<'a, T, D, U1>>;
 ```
 
 #### 4.3 Slicing & Memory Access
@@ -130,8 +133,8 @@ pub type TransferFunctionViewMut<'a, T, const N: usize, const D: usize> =
 ```rust
 impl<T, N: Dim, D: Dim, Sn, Sd> TransferFunction<T, N, D, Sn, Sd>
 where
-    Sn: MatrixStorage<T, N, U1>,
-    Sd: MatrixStorage<T, D, U1>,
+    Sn: ContiguousStorage<T, R = N, C = U1>,
+    Sd: ContiguousStorage<T, R = D, C = U1>,
 {
     /// Safe contiguous slice view of numerator coefficients.
     pub fn num_slice(&self) -> &[T] {
@@ -199,7 +202,7 @@ $$\text{Num}(s) = \text{Horner}(B, s), \quad \text{Den}(s) = \text{Horner}(A, s)
 $$H(s) = \frac{\text{Num}(s)}{\text{Den}(s)}$$
 
 ```rust
-impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, N, U1>, Sd: DenseStorage<T, D, U1>> TransferFunction<T, N, D, Sn, Sd> {
+impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, R = N, C = U1>, Sd: DenseStorage<T, R = D, C = U1>> TransferFunction<T, N, D, Sn, Sd> {
     pub fn evaluate_complex(&self, s: Complex<T>) -> Complex<T>
     where
         T: Copy + Zero + One + Add<Output=T> + Mul<Output=T>,
@@ -241,8 +244,8 @@ Numerator dimension bound: $(N_1 + N_2 - 1)$. Denominator dimension
 bound: $(D_1 + D_2 - 1)$.
 
 ```rust
-impl<T, N1: Dim, D1: Dim, Sn1: DenseStorage<T, N1, U1>, Sd1: DenseStorage<T, D1, U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
-    pub fn series<N2: Dim, D2: Dim, Sn2: DenseStorage<T, N2, U1>, Sd2: DenseStorage<T, D2, U1>>(
+impl<T, N1: Dim, D1: Dim, Sn1: DenseStorage<T, R = N1, C = U1>, Sd1: DenseStorage<T, R = D1, C = U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
+    pub fn series<N2: Dim, D2: Dim, Sn2: DenseStorage<T, R = N2, C = U1>, Sd2: DenseStorage<T, R = D2, C = U1>>(
         &self,
         other: &TransferFunction<T, N2, D2, Sn2, Sd2>,
     ) -> TransferFunction<
@@ -282,8 +285,8 @@ degree bounds, not their sum and is expressed via `DimMax` rather than a
 further `DimAdd`:
 
 ```rust
-impl<T, N1: Dim, D1: Dim, Sn1: DenseStorage<T, N1, U1>, Sd1: DenseStorage<T, D1, U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
-    pub fn feedback<N2: Dim, D2: Dim, Sn2: DenseStorage<T, N2, U1>, Sd2: DenseStorage<T, D2, U1>>(
+impl<T, N1: Dim, D1: Dim, Sn1: DenseStorage<T, R = N1, C = U1>, Sd1: DenseStorage<T, R = D1, C = U1>> TransferFunction<T, N1, D1, Sn1, Sd1> {
+    pub fn feedback<N2: Dim, D2: Dim, Sn2: DenseStorage<T, R = N2, C = U1>, Sd2: DenseStorage<T, R = D2, C = U1>>(
         &self,
         other: &TransferFunction<T, N2, D2, Sn2, Sd2>,
     ) -> TransferFunction<
@@ -344,14 +347,15 @@ specifying a critical frequency to match exactly under the transform (Ogata,
 2010; Franklin et al., 1998).
 
 ```rust
-impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, N, U1>, Sd: DenseStorage<T, D, U1>> TransferFunction<T, N, D, Sn, Sd> {
+impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, R = N, C = U1>, Sd: DenseStorage<T, R = D, C = U1>> TransferFunction<T, N, D, Sn, Sd> {
     pub fn to_discrete_tustin(
         &self,
         sample_time: T,
         prewarp_frequency: Option<T>,
     ) -> ArrayTransferFunction<T, N, D>
     where
-        T: Copy + Float,
+        T: Scalar + Div<Output = T>,
+        T::Real: Trig,
     {
         // Direct algebraic expansion over numerator and denominator storage
         // ...
@@ -359,10 +363,13 @@ impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, N, U1>, Sd: DenseStorage<T, D, U1>> 
 }
 ```
 
-`T: Float` (`num-traits-design.md`'s current hierarchy — see §8) replaces
-a prior `T: Real` bound: the pre-warping path needs `tan()` and the
-$\frac{2}{T_s}$ factor needs division, both of which `Float` provides and
-the narrower general-arithmetic bounds elsewhere in this document do not.
+The bound is `T: Scalar + Div` with `T::Real: Trig` rather than `T: Float`:
+the pre-warping path needs `tan()`, which `Trig` supplies on the real
+projection, and the $\frac{2}{T_s}$ factor needs division, which `Scalar`
+deliberately excludes (`num-traits-design.md` FR-2, Alternative 3). Binding
+the real projection rather than `Float` keeps the path open to complex
+coefficients, since `num-traits-design.md` FR-5 restricts `Float` to
+`f32`/`f64`.
 
 ##### Zero-Order Hold (ZOH)
 
@@ -488,10 +495,14 @@ than implemented in the initial revision.
   If measured Bode-sweep accuracy proves insufficient once implemented,
   compensated Horner evaluation (Graillat, Langlois, & Louvet, 2006) is the
   identified mitigation path.
-- **`num-traits-design.md` Status**: `to_discrete_tustin`'s `T: Float` bound (
-  §4.9) follows `num-traits-design.md`'s hierarchy, which is **Approved** (Rev 1.4).
-  Separately, `Convolution<T: Float>` (`src/math/dsp.rs`) is bound on
-  `Float`, fully aligned with the approved `num-traits` hierarchy.
+- **Analytic Scalar Bounds**: `to_discrete_tustin` (§4.9) binds
+  `T: Scalar + Div` with `T::Real: Trig`, following
+  `num-traits-design.md` §4.1. That document is currently **Draft**
+  (Rev 1.9, August 24, 2026); confirm the analytic-trait names before
+  `/cr-implement`. Separately, `Convolution<T>` (`src/math/dsp.rs`) is still
+  declared over `T: Float`, so it accepts a strictly narrower scalar set
+  than the arithmetic paths in this document. Widening it is tracked in
+  `polynomial-design.md` §7 and belongs to the `dsp.rs` owner.
 
 ---
 
@@ -601,3 +612,4 @@ than implemented in the initial revision.
 | 1.16     | August 20, 2026 | @mitchelldscott | Renamed `BlasStorage`/`BlasStorageMut` -> `MatrixStorage`/`MatrixStorageMut` (universal floor) and the prior `MatrixStorage`/`MatrixStorageMut` (leading-dimension branch) -> `DenseStorage`/`DenseStorageMut`, matching `storage-subprograms-design.md` Rev 1.31 and `matrix-design.md` Rev 1.31; updated §1, §3, §4.1, §4.3, §4.7, §4.8, §4.9. Noted `PackedStorage` does not apply to `Sn`/`Sd` (§3), mirroring `polynomial-design.md`. Intervening storage-subprograms-design.md revisions (1.17–1.33) introduce no other call-site changes here: this document names no `level1`/`level2`/`level3` trait directly. |
 | 1.17     | August 22, 2026 | @MitchellDScott | Reverted Doc Status to Draft. Body still cites deleted `storage-subprograms-design.md`; retarget onto `storage-design.md` / `subprograms-design.md` is a dedicated pass. |
 | 1.18     | August 22, 2026 | @MitchellDScott | C-3 capacity bound cites `Const<N>: Dim` (`num-types-design.md` C-1), not a dense `U*` alias range. |
+| 1.19     | August 24, 2026 | @mitchelldscott | Retargeted onto `storage-design.md` Rev 1.8 and `subprograms-design.md` Rev 1.6, closing the Rev 1.17 note. Storage bounds take the associated-type form `DenseStorage<T, R = .., C = U1>`; owning aliases bind `ArrayStorage<T, N, 1>` and views bind `ViewStorage`/`ViewStorageMut` (§1, §3, §4.1). Slice accessors moved onto `ContiguousStorage` (§4.3), since a strided view has no padding-free slice. Subprogram names lowercased onto the trait surface. `to_discrete_tustin` binds `T: Scalar + Div` with `T::Real: Trig` in place of `T: Float`, which `num-traits-design.md` FR-5 restricts to `f32`/`f64` (§4.9, §8); recorded the residual `Convolution<T: Float>` divergence. Status stays Draft. |

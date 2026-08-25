@@ -85,6 +85,7 @@
 pub mod assert;
 pub mod complex_num;
 pub mod dsp;
+pub mod fixed_num;
 pub mod num_traits;
 pub mod num_types;
 pub mod ops;
@@ -99,17 +100,6 @@ pub mod tests;
 ///
 /// This structure balances high-level control flow (overflow/underflow) with
 /// fixed-point specific signals (saturation/precision).
-///
-/// # Safety
-/// This enum does not use `unsafe` code.
-///
-/// # Example
-/// ```
-/// use control_rs::math::ArithmeticError;
-///
-/// let err = ArithmeticError::DivisionByZero;
-/// assert_eq!(format!("{}", err), "Division by zero");
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArithmeticError {
     /// Attempted to divide by zero.
@@ -138,17 +128,6 @@ pub enum ArithmeticError {
 
 /// Representation and layout conversion errors, shared across `Matrix`,
 /// `Polynomial` and `Tensor` conversions.
-///
-/// # Safety
-/// This enum does not use `unsafe` code.
-///
-/// # Example
-/// ```
-/// use control_rs::math::ConversionError;
-///
-/// let err = ConversionError::NonMonicPolynomial;
-/// assert_eq!(format!("{}", err), "Polynomial is not monic");
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConversionError {
     /// Dimension or capacity overflow/underflow during calculations.
@@ -163,17 +142,6 @@ pub enum ConversionError {
 pub type ConversionResult<T> = Result<T, ConversionError>;
 
 /// Indexing, capacity, and structural-invariant failures on storage backends.
-///
-/// # Safety
-/// This enum does not use `unsafe` code.
-///
-/// # Example
-/// ```
-/// use control_rs::math::StorageError;
-///
-/// let err = StorageError::OutOfBounds;
-/// assert_eq!(format!("{}", err), "Index out of bounds");
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageError {
     /// `nnz` would exceed the compile-time `MAX_NNZ` of a stack sparse leaf.
@@ -198,17 +166,6 @@ pub type StorageResult<T> = Result<T, StorageError>;
 
 /// Unified linear algebra errors, supplementing [`ArithmeticError`] for
 /// `Matrix` factorization, inversion and system-solving failures.
-///
-/// # Safety
-/// This enum does not use `unsafe` code.
-///
-/// # Example
-/// ```
-/// use control_rs::math::LinAlgError;
-///
-/// let err = LinAlgError::SingularMatrix;
-/// assert_eq!(format!("{}", err), "Matrix is singular");
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinAlgError {
     /// Jacobi eigensolver (`Syev` / `Heev`) exhausted its iteration bound.
@@ -286,12 +243,6 @@ pub enum CartesianQuadrant2D {
 /// ```
 pub trait Map<Domain, Codomain> {
     /// Evaluates the mapping $y = f(x)$ for a given input.
-    ///
-    /// # Arguments
-    /// * `x` - An element $x \in X$ from the function's domain.
-    ///
-    /// # Returns
-    /// * The evaluated element $y \in Y$ in the codomain.
     fn evaluate(&self, x: Domain) -> Codomain;
 }
 
@@ -301,12 +252,6 @@ pub trait Map<Domain, Codomain> {
 /// one element in the Codomain and vice versa.
 pub trait Bijection<Domain, Codomain>: Map<Domain, Codomain> {
     /// Evaluates the inverse mapping $x = f^{-1}(y)$.
-    ///
-    /// # Arguments
-    /// * `y` - An element $y \in Y$ from the function's codomain.
-    ///
-    /// # Returns
-    /// * The recovered element $x \in X$ in the domain.
     fn evaluate_inverse(&self, y: Codomain) -> Domain;
 }
 
@@ -321,13 +266,6 @@ pub trait Bijection<Domain, Codomain>: Map<Domain, Codomain> {
 /// * `Output` - The resulting state derivative or next state.
 pub trait StateEquation<State, Input, Output> {
     /// Evaluates the system dynamics for a given state and input.
-    ///
-    /// # Arguments
-    /// * `x` - The current state of the system $x$.
-    /// * `u` - The current control input $u$.
-    ///
-    /// # Returns
-    /// * The resulting state vector or state derivative.
     fn dynamics(&self, x: &State, u: &Input) -> Output;
 }
 

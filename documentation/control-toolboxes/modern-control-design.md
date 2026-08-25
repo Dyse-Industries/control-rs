@@ -1,6 +1,6 @@
 # Modern Tools (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_8,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -203,65 +203,109 @@ surface — signatures, generic bounds and error types are unresolved.
 ```rust
 // Illustrative — not a final API surface.
 
+/// Scalar bound shared by this module: a division ring with a real
+/// projection carrying `sqrt`. `T: Float` is `f32`/`f64` only and is not
+/// used here (`num-traits-design.md` FR-5).
+trait ControlScalar: Scalar + Div<Output = Self> where Self::Real: Radical + PartialOrd {}
+
 /// Solves AᵀX + XA - XBR⁻¹BᵀX + Q = 0 for X (python-control, 2026b).
 pub trait RiccatiSolver<T, D: Dim, M: Dim> {
-    fn solve_care(
-        a: &Matrix<T, D, D>,
-        b: &Matrix<T, D, M>,
-        q: &Matrix<T, D, D>,
-        r: &Matrix<T, M, M>,
-        tolerance: T,
+    fn solve_care<Sa, Sb, Sq, Sr, Sx>(
+        a: &Matrix<T, D, D, Sa>,
+        b: &Matrix<T, D, M, Sb>,
+        q: &Matrix<T, D, D, Sq>,
+        r: &Matrix<T, M, M, Sr>,
+        x: &mut Matrix<T, D, D, Sx>,
+        tolerance: T::Real,
         max_iterations: usize,
-    ) -> Result<Matrix<T, D, D>, ModernToolsError>;
+    ) -> Result<(), ModernToolsError>
+    where
+        Sa: DenseStorage<T, R = D, C = D>,
+        Sb: DenseStorage<T, R = D, C = M>,
+        Sq: DenseStorage<T, R = D, C = D>,
+        Sr: DenseStorage<T, R = M, C = M>,
+        Sx: DenseStorageMut<T, R = D, C = D>;
 }
 
 /// LQR gain K such that u = -Kx minimizes ∫(xᵀQx + uᵀRu) dt.
-pub fn lqr<T, D: Dim, M: Dim, S: RiccatiSolver<T, D, M>>(
-    a: &Matrix<T, D, D>,
-    b: &Matrix<T, D, M>,
-    q: &Matrix<T, D, D>,
-    r: &Matrix<T, M, M>,
-) -> Result<Matrix<T, M, D>, ModernToolsError> {
-    // delegates to S::solve_care, then K = R⁻¹BᵀX
+/// Writes into a caller-provided K rather than returning one, per
+/// `matrix-design.md` §5.1's rejection of stack-returning O(N³) signatures.
+pub fn lqr<T, D: Dim, M: Dim, S: RiccatiSolver<T, D, M>, Sa, Sb, Sq, Sr, Sk>(
+    a: &Matrix<T, D, D, Sa>,
+    b: &Matrix<T, D, M, Sb>,
+    q: &Matrix<T, D, D, Sq>,
+    r: &Matrix<T, M, M, Sr>,
+    k: &mut Matrix<T, M, D, Sk>,
+) -> Result<(), ModernToolsError>
+where
+    Sk: DenseStorageMut<T, R = M, C = D>,
+{
+    // Delegates to S::solve_care, then K = R⁻¹BᵀX via `Potrf`/`Potrs`
+    // (`subprograms-design.md` FR-6, FR-7) — R is symmetric positive
+    // definite by construction, so Cholesky is the correct factorization.
     todo!()
 }
 
 /// Steady-state (linear, time-invariant) Kalman filter — fixed gain from riccati.
-pub struct SteadyStateKalmanFilter<T, D: Dim, Z: Dim> {
-    gain: Matrix<T, D, Z>,
-    state: Matrix<T, D, U1>,
+pub struct SteadyStateKalmanFilter<T, D: Dim, Z: Dim, Sg, Sx> {
+    gain: Matrix<T, D, Z, Sg>,
+    state: Matrix<T, D, U1, Sx>,
 }
 
 /// Extended Kalman filter — relinearizes every step; a distinct code path
 /// from SteadyStateKalmanFilter, not a generalization of it.
-pub struct ExtendedKalmanFilter<T, D: Dim, Z: Dim> {
-    state: Matrix<T, D, U1>,
-    covariance: Matrix<T, D, D>,
+///
+/// The covariance P is symmetric positive definite, so it is a candidate
+/// for `SymmetricPacked` storage (`matrix-design.md` §4.1.1), which halves
+/// its footprint and reaches `Spmv`/`Spr` directly. §8 tracks that choice.
+pub struct ExtendedKalmanFilter<T, D: Dim, Z: Dim, Sx, Sp> {
+    state: Matrix<T, D, U1, Sx>,
+    covariance: Matrix<T, D, D, Sp>,
 }
 
-impl<T, D: Dim, Z: Dim> ExtendedKalmanFilter<T, D, Z> {
+impl<T, D: Dim, Z: Dim, Sx, Sp> ExtendedKalmanFilter<T, D, Z, Sx, Sp> {
     /// Mirrors FilterPy's predict_update(z, HJacobian, Hx, ...) shape (Labbe, 2016a).
-    pub fn predict_update<F, H>(
+    pub fn predict_update<F, H, Sz, Sq, Sr, Sh>(
         &mut self,
-        z: &Matrix<T, Z, U1>,
+        z: &Matrix<T, Z, U1, Sz>,
         f_jacobian: F,
         h_jacobian: H,
-        q: &Matrix<T, D, D>,
-        r: &Matrix<T, Z, Z>,
+        q: &Matrix<T, D, D, Sq>,
+        r: &Matrix<T, Z, Z, Sr>,
     ) -> Result<(), ModernToolsError>
     where
-        F: Fn(&Matrix<T, D, U1>) -> Matrix<T, D, D>,
-        H: Fn(&Matrix<T, D, U1>) -> Matrix<T, Z, D>,
+        // Jacobians write into caller-provided buffers: a returned
+        // `ArrayMatrix<T, {D::USIZE}, {D::USIZE}>` would be a
+        // parameter-dependent const expression (`matrix-design.md` C-1).
+        F: Fn(&Matrix<T, D, U1, Sx>, &mut Matrix<T, D, D, Sp>),
+        H: Fn(&Matrix<T, D, U1, Sx>, &mut Matrix<T, Z, D, Sh>),
     {
         todo!()
     }
 }
 
 /// Luenberger observer — deterministic pole placement on A - LC, no noise model.
-pub struct LuenbergerObserver<T, D: Dim, Z: Dim> {
-    gain: Matrix<T, D, Z>,
+pub struct LuenbergerObserver<T, D: Dim, Z: Dim, Sg> {
+    gain: Matrix<T, D, Z, Sg>,
 }
 ```
+
+Every operand carries its own storage parameter rather than a fixed leaf, so
+a caller may back $A$ with `ArrayStorage`, borrow it from a larger buffer
+through `ViewStorage`, or place it in Flash, without changing these
+signatures (`storage-design.md` FR-4, FR-5). Outputs are caller-provided
+`DenseStorageMut` operands for the reason `matrix-design.md` §5.1 gives.
+
+Riccati and observer synthesis reach LAPACK through the subprogram traits
+rather than through hand-rolled kernels:
+
+| Routine                        | Subprogram traits consumed                                   |
+|:-------------------------------|:--------------------------------------------------------------|
+| CARE / DARE iterative solve    | `Gemm`, `Getrf`/`Getrs` (`subprograms-design.md` FR-4, FR-6, FR-7) |
+| LQR gain $K = R^{-1}B^T X$     | `Potrf`/`Potrs` (R is SPD), `Gemm`                            |
+| Kalman covariance propagation  | `Syrk` or `Spr` (packed P), `Gemm`, `Potrf`                   |
+| EKF measurement update         | `Gemv`, `Gemm`, `Potrf`/`Potrs`                               |
+| Pole placement / eigenstructure | `Syev` (symmetric) or `Heev` (Hermitian), `Geqrf`/`Ormqr`    |
 
 Riccati-solve cost is bounded by the same $D \le 32$ cap `Matrix` already
 enforces (README, 2026); an iterative solve (§4.2) additionally bounds
@@ -370,6 +414,19 @@ Two options follow:
   of "Kalman filtering (linear, extended, unscented)" as one topic — but
   this boundary was not stress-tested against `nonlinear_tools`'s own
   eventual scope and may need revisiting once that scaffold is designed.
+- **Covariance Storage Form (new, this revision)**: the error covariance $P$
+  is symmetric positive definite, so it may be held as a full-square
+  `Matrix` or as a `SymmetricPacked` `PackedMatrix`
+  (`matrix-design.md` §4.1.1). Packed halves the footprint and reaches
+  `Spmv`/`Spr` directly (`subprograms-design.md` FR-3); full-square reaches
+  `Syrk`/`Potrf` and the Level 3 routines. The two are different types, not
+  a runtime choice, so a filter fixes one at instantiation. Which the
+  default estimators use is unresolved.
+- **Schur Decomposition Still Absent**: `subprograms-design.md` FR-8
+  supplies `Syev`/`Heev` for symmetric and Hermitian problems only. The
+  general real Schur / QZ decomposition a direct Riccati solve (§5.1) would
+  need is still specified nowhere in the crate, which keeps the recursive
+  default in place.
 
 ---
 
@@ -377,7 +434,7 @@ Two options follow:
 
 | Task / Feature                               | Description                                                                                                                                          | Estimated Effort        |
 |:---------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------|:------------------------|
-| **Phase 1: Riccati Substrate**               | Implement recursive/iterative CARE (and DARE) solving on top of existing `Matrix` operations (§4.2); establish convergence/iteration-bound behavior. | 4.0 Days                |
+| **Phase 1: Riccati Substrate**               | Implement recursive/iterative CARE (and DARE) solving on `Gemm` and `Getrf`/`Getrs` (§4.4); establish convergence/iteration-bound behavior.          | 4.0 Days                |
 | **Phase 2: Placement**                       | Ackermann's formula (SISO) and a KNV85-style robust MIMO placement routine, shared by control-law and observer-gain placement.                       | 3.0 Days                |
 | **Phase 3: LQR + Steady-State Kalman**       | `lqr` and `kalman` modules built on Phase 1's Riccati substrate; LQG composition of the two.                                                         | 3.0 Days                |
 | **Phase 4: Observer + Nonlinear Estimators** | Luenberger observer (built on Phase 2); `ExtendedKalmanFilter` and `UnscentedKalmanFilter` as distinct estimator types.                              | 4.0 Days                |
@@ -460,3 +517,4 @@ Two options follow:
 | Revision | Date           | Author          | Description                                                                                                                          |
 |:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------|
 | 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: requirements, Riccati-solver architecture, Kalman/EKF/UKF/Luenberger split and packaging question flagged for review. |
+| 1.1      | August 24, 2026 | @mitchelldscott | Aligned the §4.4 API sketch with the retargeted numerical models: every `Matrix<...>` operand carries its own storage parameter bound on `DenseStorage`/`DenseStorageMut`; outputs are caller-provided rather than stack-returned. Scalar bound stated as `Scalar + Div` with `T::Real: Radical` in place of `T: Float` (`num-traits-design.md` FR-5). Added the routine-to-subprogram mapping table (`Gemm`, `Getrf`/`Getrs`, `Potrf`/`Potrs`, `Syrk`, `Syev`/`Heev`, `Geqrf`/`Ormqr`). Recorded the covariance storage-form choice and the still-absent Schur decomposition as open questions (§7). Control theory content unchanged. Status stays Draft. |

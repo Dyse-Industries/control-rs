@@ -542,9 +542,8 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies layout conversions between dense, packed, and sparse formats (FR-17 of `storage-design.md`).
-    fn test_storage_conversions() {
-        // DiagonalStorage <-> ArrayStorage
+    /// Verifies layout conversion: DiagonalStorage <-> ArrayStorage
+    fn test_storage_conversion_diagonal() {
         let diag = DiagonalStorage::<f64, 3>::from_array([1.0, 2.0, 3.0]);
         let dense: ArrayStorage<f64, 3, 3> = diag.to_dense().unwrap();
         assert_eq!(dense.get(0, 0), Some(&1.0));
@@ -553,8 +552,11 @@ pub mod storage_test_suite {
 
         let diag_back = DiagonalStorage::<f64, 3>::from_dense(&dense).unwrap();
         assert_eq!(diag_back.value(2, 2), Some(3.0));
+    }
 
-        // SymmetricPackedStorage <-> ArrayStorage
+    #[cfg_attr(test, test)]
+    /// Verifies layout conversion: SymmetricPackedStorage <-> ArrayStorage
+    fn test_storage_conversion_symmetric() {
         let sym = SymmetricPackedStorage::<f64, 2, 3>::new(
             [10.0, 20.0, 30.0],
             UpLo::Upper,
@@ -567,8 +569,11 @@ pub mod storage_test_suite {
             SymmetricPackedStorage::<f64, 2, 3>::from_dense(&dense_sym)
                 .unwrap();
         assert_eq!(sym_back.value(0, 1), Some(20.0));
+    }
 
-        // TriangularPackedStorage <-> ArrayStorage
+    #[cfg_attr(test, test)]
+    /// Verifies layout conversion: TriangularPackedStorage <-> ArrayStorage
+    fn test_storage_conversion_triangular() {
         let tri = TriangularPackedStorage::<f64, 2, 3>::new(
             [1.0, 2.0, 3.0],
             UpLo::Upper,
@@ -582,8 +587,50 @@ pub mod storage_test_suite {
             TriangularPackedStorage::<f64, 2, 3>::from_dense(&dense_tri)
                 .unwrap();
         assert_eq!(tri_back.value(0, 1), Some(2.0));
+    }
 
-        // ArrayCooStorage -> ArrayStorage & ToCsrStorage
+    #[cfg_attr(test, test)]
+    /// Verifies layout conversion: HermitianPackedStorage <-> ArrayStorage
+    fn test_storage_conversion_hermitian() {
+        let herm = HermitianPackedStorage::<Complex<f64>, 2, 3>::new(
+            [
+                Complex::new(1.0, 0.0),
+                Complex::new(2.0, 3.0),
+                Complex::new(4.0, 0.0),
+            ],
+            UpLo::Upper,
+        );
+        let dense_herm: ArrayStorage<Complex<f64>, 2, 2> =
+            herm.to_dense().unwrap();
+        assert_eq!(dense_herm.get(0, 0), Some(&Complex::new(1.0, 0.0)));
+        assert_eq!(dense_herm.get(0, 1), Some(&Complex::new(2.0, 3.0)));
+        assert_eq!(dense_herm.get(1, 0), Some(&Complex::new(2.0, -3.0))); // Conjugate reflection
+        assert_eq!(dense_herm.get(1, 1), Some(&Complex::new(4.0, 0.0)));
+
+        let herm_back =
+            HermitianPackedStorage::<Complex<f64>, 2, 3>::from_dense(
+                &dense_herm,
+            )
+            .unwrap();
+        assert_eq!(herm_back.value(1, 0), Some(Complex::new(2.0, -3.0)));
+
+        // Expect InvalidHermitianDiagonal on from_dense when diagonal is not real
+        let mut invalid_dense = dense_herm;
+        unsafe {
+            invalid_dense.set_unchecked(0, 0, Complex::new(1.0, 1.0));
+        }
+        let herm_err = HermitianPackedStorage::<Complex<f64>, 2, 3>::from_dense(
+            &invalid_dense,
+        );
+        assert_eq!(
+            herm_err.err(),
+            Some(StorageError::InvalidHermitianDiagonal)
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies layout conversion: ArrayCooStorage -> ArrayStorage & ToCsrStorage
+    fn test_storage_conversion_coo_csr() {
         let mut coo = ArrayCooStorage::<f64, 2, 2, 4>::new();
         coo.push(0, 0, 5.0).unwrap();
         coo.push(1, 1, 7.0).unwrap();
@@ -771,6 +818,184 @@ pub mod storage_test_suite {
         let g_t = g_jw.transpose_view();
         assert_eq!(g_t.get(0, 1), Some(&Complex::new(0.2, -0.1)));
         assert_eq!(g_t.get(1, 0), Some(&Complex::ZERO));
+        assert_eq!(g_t.get(1, 1), Some(&Complex::ONE));
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies dense checked vs unchecked element access.
+    fn test_storage_dense_checked_unchecked() {
+        let dense = ArrayStorage::<f64, 2, 3>::from_array([
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+        ]);
+        for r in 0..2 {
+            for c in 0..3 {
+                assert_eq!(dense.get(r, c).unwrap().to_bits(), unsafe {
+                    dense.get_unchecked(r, c).to_bits()
+                });
+            }
+        }
+        assert_eq!(dense.get(2, 0), None);
+        assert_eq!(dense.get(0, 3), None);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies view checked vs unchecked access.
+    fn test_storage_view_checked_unchecked() {
+        let slice = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let view = unsafe {
+            ViewStorage::<f64, Const<2>, Const<3>>::new_with_strides(
+                slice.as_ptr(),
+                1,
+                2,
+            )
+        };
+        for r in 0..2 {
+            for c in 0..3 {
+                assert_eq!(view.get(r, c).unwrap().to_bits(), unsafe {
+                    view.get_unchecked(r, c).to_bits()
+                });
+            }
+        }
+        assert_eq!(view.get(2, 0), None);
+        assert_eq!(view.get(0, 3), None);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies StorageView layout and checked/unchecked access.
+    fn test_storage_view_layouts_checked_unchecked() {
+        let slice = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let view_col =
+            StorageView::<f64, Const<2>, Const<3>, ColMajor>::new(&slice)
+                .unwrap();
+        let view_row =
+            StorageView::<f64, Const<2>, Const<3>, RowMajor>::new(&slice)
+                .unwrap();
+        for r in 0..2 {
+            for c in 0..3 {
+                assert_eq!(view_col.get(r, c).unwrap().to_bits(), unsafe {
+                    view_col.get_unchecked(r, c).to_bits()
+                });
+                assert_eq!(view_row.get(r, c).unwrap().to_bits(), unsafe {
+                    view_row.get_unchecked(r, c).to_bits()
+                });
+            }
+        }
+        assert_eq!(view_col.get(2, 0), None);
+        assert_eq!(view_row.get(2, 0), None);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies StorageViewMut checked vs unchecked access.
+    fn test_storage_view_mut_checked_unchecked() {
+        let mut slice_mut = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let view_mut_col =
+            StorageViewMut::<f64, Const<2>, Const<3>, ColMajor>::new(
+                &mut slice_mut,
+            )
+            .unwrap();
+        for r in 0..2 {
+            for c in 0..3 {
+                assert_eq!(view_mut_col.get(r, c).unwrap().to_bits(), unsafe {
+                    view_mut_col.get_unchecked(r, c).to_bits()
+                });
+            }
+        }
+        assert_eq!(view_mut_col.get(2, 0), None);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies packed storage checked vs unchecked access.
+    fn test_storage_packed_checked_unchecked() {
+        use crate::math::complex_num::Complex64;
+        let sym = SymmetricPackedStorage::<f64, 2, 3>::new(
+            [1.0, 2.0, 3.0],
+            UpLo::Upper,
+        );
+        let tri = TriangularPackedStorage::<f64, 2, 3>::new(
+            [1.0, 2.0, 3.0],
+            UpLo::Upper,
+            Diag::NonUnit,
+        );
+        let herm = HermitianPackedStorage::<Complex64, 2, 3>::new(
+            [
+                Complex64::new(1.0, 0.0),
+                Complex64::new(2.0, 3.0),
+                Complex64::new(4.0, 0.0),
+            ],
+            UpLo::Upper,
+        );
+
+        for r in 0..2 {
+            for c in 0..2 {
+                assert_eq!(
+                    sym.value(r, c).unwrap().to_bits(),
+                    sym.value_unchecked(r, c).to_bits()
+                );
+                assert_eq!(
+                    tri.value(r, c).unwrap().to_bits(),
+                    tri.value_unchecked(r, c).to_bits()
+                );
+                assert_eq!(
+                    herm.value(r, c).unwrap().re.to_bits(),
+                    herm.value_unchecked(r, c).re.to_bits()
+                );
+                assert_eq!(
+                    herm.value(r, c).unwrap().im.to_bits(),
+                    herm.value_unchecked(r, c).im.to_bits()
+                );
+            }
+        }
+        assert_eq!(sym.value(2, 0), None);
+        assert_eq!(tri.value(2, 0), None);
+        assert_eq!(herm.value(2, 0), None);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies Hermitian properties (real diagonal, conjugate symmetry).
+    fn test_storage_hermitian_properties() {
+        use crate::math::complex_num::Complex64;
+        let herm = HermitianPackedStorage::<Complex64, 2, 3>::new(
+            [
+                Complex64::new(1.0, 0.0),
+                Complex64::new(2.0, 3.0),
+                Complex64::new(4.0, 0.0),
+            ],
+            UpLo::Upper,
+        );
+
+        for r in 0..2 {
+            for c in 0..2 {
+                let a_rc = herm.value(r, c).unwrap();
+                let a_cr = herm.value(c, r).unwrap();
+                crate::assert_almost_eq!(a_rc.re, a_cr.conj().re);
+                crate::assert_almost_eq!(a_rc.im, a_cr.conj().im);
+                if r == c {
+                    crate::assert_almost_eq!(a_rc.im, 0.0);
+                }
+            }
+        }
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies transposition involution.
+    fn test_storage_transposed_involution() {
+        let dense = ArrayStorage::<f64, 2, 3>::from_array([
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+        ]);
+        let binding = dense.transpose_view();
+        let double_trans = binding.transpose_view();
+        for r in 0..2 {
+            for c in 0..3 {
+                assert_eq!(
+                    double_trans.get(r, c).map(|f| f.to_bits()),
+                    dense.get(r, c).map(|f| f.to_bits())
+                );
+            }
+        }
     }
 }
 
