@@ -234,9 +234,21 @@ pub mod matrix_test_suite {
             Matrix::from_fn(|i, j| [[2.0, 1.0], [1.0, 3.0]][i][j]);
         let lu = a.into_lu().unwrap();
         let mut b: Owned<f64, 2, 1> = Matrix::from_fn(|i, _| [3.0, 5.0][i]);
-        lu.solve_mut(&mut b);
+        lu.solve_mut(&mut b).unwrap();
         assert_almost_eq!(*b.get(0, 0).unwrap(), 0.8, 1e-9);
         assert_almost_eq!(*b.get(1, 0).unwrap(), 1.4, 1e-9);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Undersized pivot scratch returns `WorkspaceTooSmall` instead of panicking.
+    fn test_lu_decompose_undersized_pivots() {
+        let mut a: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| [[2.0, 1.0], [1.0, 3.0]][i][j]);
+        let mut pivots = [0usize; 1];
+        assert_eq!(
+            a.lu_decompose_mut(&mut pivots),
+            Err(LinAlgError::WorkspaceTooSmall)
+        );
     }
 
     #[cfg_attr(test, test)]

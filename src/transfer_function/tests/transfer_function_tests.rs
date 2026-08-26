@@ -59,12 +59,55 @@ pub mod transfer_function_test_suite {
         );
         let ss = tf.to_controllable_canonical_form::<2>().unwrap();
 
-        // A = [[0, -4], [1, -5]], B = [[0], [1]], C = [[2, 3]], D = [[0]]
-        assert_almost_eq!(ss.a().get(0, 1).copied().unwrap(), -4.0, 1e-12);
-        assert_almost_eq!(ss.a().get(1, 0).copied().unwrap(), 1.0, 1e-12);
+        // Controllable companion (design §4.10):
+        // A = [[0, 1], [-4, -5]], B = [[0], [1]], C = [[2, 3]], D = [[0]]
+        assert_almost_eq!(ss.a().get(0, 0).copied().unwrap(), 0.0, 1e-12);
+        assert_almost_eq!(ss.a().get(0, 1).copied().unwrap(), 1.0, 1e-12);
+        assert_almost_eq!(ss.a().get(1, 0).copied().unwrap(), -4.0, 1e-12);
         assert_almost_eq!(ss.a().get(1, 1).copied().unwrap(), -5.0, 1e-12);
+        assert_almost_eq!(ss.b().get(0, 0).copied().unwrap(), 0.0, 1e-12);
         assert_almost_eq!(ss.b().get(1, 0).copied().unwrap(), 1.0, 1e-12);
         assert_almost_eq!(ss.c().get(0, 0).copied().unwrap(), 2.0, 1e-12);
         assert_almost_eq!(ss.c().get(0, 1).copied().unwrap(), 3.0, 1e-12);
+        assert_almost_eq!(ss.d().get(0, 0).copied().unwrap(), 0.0, 1e-12);
+
+        // Realization identity: C(sI-A)^{-1}B + D must match H(s) at s = jω.
+        let h_tf = tf.eval_frequency(1.0);
+        // Manual 2x2 solve of (sI-A)x = B at s = j, then y = Cx.
+        // sI-A = [[j, -1], [4, j+5]]; det = -1 + 5j + 4 = 3 + 5j
+        // (sI-A)^{-1}B = (1/det)[1; j] => y = (2 + 3j)/det
+        let det_re = 3.0;
+        let det_im = 5.0;
+        let det_abs2 = det_re * det_re + det_im * det_im;
+        let num_re = 2.0;
+        let num_im = 3.0;
+        let h_ss_re = (num_re * det_re + num_im * det_im) / det_abs2;
+        let h_ss_im = (num_im * det_re - num_re * det_im) / det_abs2;
+        assert_almost_eq!(h_tf.re, h_ss_re, 1e-12);
+        assert_almost_eq!(h_tf.im, h_ss_im, 1e-12);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_controllable_canonical_form_with_feedthrough() {
+        // Proper but not strictly: H(s) = (2 + 3s + s^2) / (4 + 5s + s^2)
+        // => d = 1, β = (2-4, 3-5) = (-2, -2)
+        let tf = ArrayTransferFunction::<f64, 3, 3>::continuous(
+            [2.0, 3.0, 1.0],
+            [4.0, 5.0, 1.0],
+        );
+        let ss = tf.to_controllable_canonical_form::<2>().unwrap();
+        assert_almost_eq!(ss.d().get(0, 0).copied().unwrap(), 1.0, 1e-12);
+        assert_almost_eq!(ss.c().get(0, 0).copied().unwrap(), -2.0, 1e-12);
+        assert_almost_eq!(ss.c().get(0, 1).copied().unwrap(), -2.0, 1e-12);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_evaluate_complex_empty_numerator() {
+        // N = 0 is a valid Dim; Horner must not underflow usize.
+        let tf = ArrayTransferFunction::<f64, 0, 2>::continuous([], [1.0, 1.0]);
+        let h = tf
+            .evaluate_complex(crate::math::complex_num::Complex::new(0.0, 1.0));
+        assert_almost_eq!(h.re, 0.0, 1e-12);
+        assert_almost_eq!(h.im, 0.0, 1e-12);
     }
 }

@@ -126,25 +126,40 @@ where
     }
 
     /// Builds a transfer function from coefficient arrays.
+    ///
+    /// Empty numerator (`N == 0`) or denominator (`D == 0`) coefficient arrays
+    /// are accepted; the corresponding storage is left empty.
     #[must_use]
     pub const fn from_coefficients(
         num: [T; N],
         den: [T; D],
         sample_time: Option<T>,
     ) -> Self {
-        let mut num_data = [[num[0]; N]; 1];
-        let mut i = 0;
-        while i < N {
-            num_data[0][i] = num[i];
-            i += 1;
-        }
+        // `[[num[0]; N]; 1]` panics when `N == 0`; build via `MaybeUninit`
+        // so zero-length coefficient arrays remain constructible.
+        let num_data: [[T; N]; 1] = {
+            let mut uninit = core::mem::MaybeUninit::<[[T; N]; 1]>::uninit();
+            let mut i = 0;
+            while i < N {
+                unsafe {
+                    (*uninit.as_mut_ptr())[0][i] = num[i];
+                }
+                i += 1;
+            }
+            unsafe { uninit.assume_init() }
+        };
 
-        let mut den_data = [[den[0]; D]; 1];
-        let mut j = 0;
-        while j < D {
-            den_data[0][j] = den[j];
-            j += 1;
-        }
+        let den_data: [[T; D]; 1] = {
+            let mut uninit = core::mem::MaybeUninit::<[[T; D]; 1]>::uninit();
+            let mut j = 0;
+            while j < D {
+                unsafe {
+                    (*uninit.as_mut_ptr())[0][j] = den[j];
+                }
+                j += 1;
+            }
+            unsafe { uninit.assume_init() }
+        };
 
         Self {
             num_storage: ArrayStorage::from_array(num_data),
@@ -234,11 +249,17 @@ impl<
 {
     /// Evaluates the rational transfer function at complex coordinate `s`:
     /// $$H(s) = \frac{B(s)}{A(s)} = \frac{\text{Horner}(B, s)}{\text{Horner}(A, s)}$$
+    ///
+    /// Empty numerator or denominator storage evaluates to zero (caller still
+    /// divides by the denominator value, so a zero-length denominator yields a
+    /// complex NaN/Inf per `T`'s division rules).
     #[must_use]
     pub fn evaluate_complex(&self, s: Complex<T>) -> Complex<T> {
         let n_len = self.num_storage.rows();
         let d_len = self.den_storage.rows();
 
+        // `saturating_sub(1)` avoids `usize` underflow when length is 0
+        // (`0usize - 1` wraps to `usize::MAX` and would spin forever).
         let mut num_val = if n_len > 0 {
             let c = self
                 .num_storage
@@ -249,7 +270,7 @@ impl<
         } else {
             Complex::ZERO
         };
-        for i in (0..(n_len - 1)).rev() {
+        for i in (0..n_len.saturating_sub(1)).rev() {
             let c = self.num_storage.get(i, 0).copied().unwrap_or(T::ZERO);
             num_val = num_val * s + Complex::new(c, T::ZERO);
         }
@@ -264,7 +285,7 @@ impl<
         } else {
             Complex::ZERO
         };
-        for i in (0..(d_len - 1)).rev() {
+        for i in (0..d_len.saturating_sub(1)).rev() {
             let c = self.den_storage.get(i, 0).copied().unwrap_or(T::ZERO);
             den_val = den_val * s + Complex::new(c, T::ZERO);
         }
@@ -355,12 +376,30 @@ where
     Const<N>: Dim,
     Const<D>: Dim,
 {
-    /// Converts a strictly proper transfer function ($N \le D - 1$) into Controllable Canonical Form.
+    /// Converts a proper transfer function ($N \le D$) into Controllable Canonical Form.
     ///
-    /// System state dimension `ORDER = D - 1`.
+    /// System state dimension must satisfy `ORDER = D - 1`. For a monic
+    /// denominator $s^n + a_{n-1}s^{n-1} + \dots + a_0$ the realization is:
+    ///
+    /// $$
+    /// A = \begin{bmatrix}
+    /// 0 & 1 & 0 & \dots & 0 \\
+    /// 0 & 0 & 1 & \dots & 0 \\
+    /// \vdots & \vdots & \vdots & \ddots & \vdots \\
+    /// -a_0 & -a_1 & -a_2 & \dots & -a_{n-1}
+    /// \end{bmatrix},\quad
+    /// B = \begin{bmatrix} 0 \\ \vdots \\ 1 \end{bmatrix}
+    /// $$
+    /// $$
+    /// C = \begin{bmatrix} \beta_0 & \dots & \beta_{n-1} \end{bmatrix},\quad
+    /// D = \begin{bmatrix} d \end{bmatrix}
+    /// $$
+    /// with feedthrough $d = b_n / a_n$ (zero when strictly proper) and
+    /// $\beta_i = b_i / a_n - d \cdot a_i$.
     ///
     /// # Errors
-    /// Returns [`LinAlgError::SingularMatrix`] if $N \ge D$, $D < 2$, or leading denominator is zero.
+    /// Returns [`LinAlgError::SingularMatrix`] if `ORDER + 1 != D`, `ORDER == 0`,
+    /// $N > D$ (improper), or the leading denominator coefficient is zero.
     pub fn to_controllable_canonical_form<const ORDER: usize>(
         &self,
     ) -> LinAlgResult<StateSpace<T, ORDER, 1, 1>>
@@ -369,6 +408,10 @@ where
         Const<1>: Dim,
     {
         if ORDER + 1 != D || ORDER == 0 {
+            return Err(LinAlgError::SingularMatrix);
+        }
+        // Relative degree must be non-negative (proper TF).
+        if N > D {
             return Err(LinAlgError::SingularMatrix);
         }
         let a_n = self.den_storage.get(ORDER, 0).copied().unwrap_or(T::ZERO);
@@ -383,23 +426,33 @@ where
                 self.den_storage.get(i, 0).copied().unwrap_or(T::ZERO) / a_n;
         }
 
-        let mut b_norm = [T::ZERO; ORDER];
+        // Direct feedthrough d = b_n / a_n when deg(num) == deg(den).
+        let d = if N == D {
+            self.num_storage.get(ORDER, 0).copied().unwrap_or(T::ZERO) / a_n
+        } else {
+            T::ZERO
+        };
+
+        // β_i = b_i / a_n - d * a_i  (b_i = 0 when i >= N)
+        let mut beta = [T::ZERO; ORDER];
         for i in 0..ORDER {
-            if i < N {
-                b_norm[i] =
-                    self.num_storage.get(i, 0).copied().unwrap_or(T::ZERO)
-                        / a_n;
-            }
+            let b_i = if i < N {
+                self.num_storage.get(i, 0).copied().unwrap_or(T::ZERO) / a_n
+            } else {
+                T::ZERO
+            };
+            beta[i] = b_i - d * a_norm[i];
         }
 
+        // Controllable companion: ones on the superdiagonal, -a on the last row.
         let mut a_mat = Owned::<T, ORDER, ORDER>::zero();
-        for i in 1..ORDER {
-            if let Some(elem) = a_mat.get_mut(i, i - 1) {
+        for i in 0..(ORDER.saturating_sub(1)) {
+            if let Some(elem) = a_mat.get_mut(i, i + 1) {
                 *elem = T::ONE;
             }
         }
         for i in 0..ORDER {
-            if let Some(elem) = a_mat.get_mut(i, ORDER - 1) {
+            if let Some(elem) = a_mat.get_mut(ORDER - 1, i) {
                 *elem = T::ZERO - a_norm[i];
             }
         }
@@ -412,11 +465,14 @@ where
         let mut c_mat = Owned::<T, 1, ORDER>::zero();
         for i in 0..ORDER {
             if let Some(elem) = c_mat.get_mut(0, i) {
-                *elem = b_norm[i];
+                *elem = beta[i];
             }
         }
 
-        let d_mat = Owned::<T, 1, 1>::zero();
+        let mut d_mat = Owned::<T, 1, 1>::zero();
+        if let Some(elem) = d_mat.get_mut(0, 0) {
+            *elem = d;
+        }
 
         Ok(match self.sample_time {
             None => StateSpace::continuous(a_mat, b_mat, c_mat, d_mat),

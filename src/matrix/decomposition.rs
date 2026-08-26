@@ -121,16 +121,16 @@ where
     /// permutation (`pivots[i]` is the original row now at position `i`).
     ///
     /// # Errors
+    /// Returns [`LinAlgError::WorkspaceTooSmall`] if `pivots.len() != D`.
     /// Returns [`LinAlgError::SingularMatrix`] if a column's largest
     /// available pivot magnitude falls within `T::epsilon()` of zero.
-    ///
-    /// # Panics
-    /// Panics if `pivots.len() != D`.
     pub fn lu_decompose_mut_with<B: Getrf<T, ArrayStorage<T, D, D>>>(
         &mut self,
         pivots: &mut [usize],
     ) -> LinAlgResult<usize> {
-        assert_eq!(pivots.len(), D, "Pivot scratch buffer size mismatch");
+        if pivots.len() != D {
+            return Err(LinAlgError::WorkspaceTooSmall);
+        }
         B::getrf(&mut self.storage, pivots)?;
         let mut row_exchanges = 0usize;
         for (k, &p) in pivots.iter().enumerate().take(D) {
@@ -196,7 +196,7 @@ where
             row_exchanges,
         };
         let mut inv = Self::identity();
-        lu.solve_mut_with::<B, D>(&mut inv);
+        lu.solve_mut_with::<B, D>(&mut inv)?;
         *self = inv;
         Ok(())
     }
@@ -251,17 +251,23 @@ where
     }
 
     /// Computes the matrix inverse using a specific BLAS engine.
+    ///
+    /// # Errors
+    /// Propagates solve failures from [`LuDecomposition::solve_mut_with`].
     pub fn inverse_with<
         B: Getrs<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, D>>,
     >(
         &self,
     ) -> LinAlgResult<Owned<T, D, D>> {
         let mut inv = Owned::<T, D, D>::identity();
-        self.solve_mut_with::<B, D>(&mut inv);
+        self.solve_mut_with::<B, D>(&mut inv)?;
         Ok(inv)
     }
 
     /// Computes the matrix inverse using the default BLAS engine.
+    ///
+    /// # Errors
+    /// See [`LuDecomposition::inverse_with`].
     pub fn inverse(&self) -> LinAlgResult<Owned<T, D, D>> {
         self.inverse_with::<DefaultBlas>()
     }
@@ -282,29 +288,41 @@ where
     }
 
     /// Solves `A * x = b` in-place using a specific BLAS engine.
+    ///
+    /// # Errors
+    /// Propagates [`LinAlgError`] from the underlying `getrs` routine
+    /// (e.g. [`LinAlgError::WorkspaceTooSmall`] if the stored pivot vector is
+    /// shorter than `D`).
     pub fn solve_mut_with<
         B: Getrs<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, COLS>>,
         const COLS: usize,
     >(
         &self,
         b: &mut Owned<T, D, COLS>,
-    ) where
+    ) -> LinAlgResult<()>
+    where
         Const<COLS>: Dim,
     {
-        let _ = B::getrs(
+        B::getrs(
             Trans::NoTrans,
             &self.data.storage,
             &self.pivots,
             &mut b.storage,
-        );
+        )
     }
 
     /// Solves `A * x = b` in-place using the default BLAS engine.
-    pub fn solve_mut<const COLS: usize>(&self, b: &mut Owned<T, D, COLS>)
+    ///
+    /// # Errors
+    /// See [`LuDecomposition::solve_mut_with`].
+    pub fn solve_mut<const COLS: usize>(
+        &self,
+        b: &mut Owned<T, D, COLS>,
+    ) -> LinAlgResult<()>
     where
         Const<COLS>: Dim,
     {
-        self.solve_mut_with::<DefaultBlas, COLS>(b);
+        self.solve_mut_with::<DefaultBlas, COLS>(b)
     }
 }
 
