@@ -2660,6 +2660,118 @@ impl<T: Scalar, A: DenseStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
     }
 }
 
+#[inline(always)]
+fn trmm_tri_elem<T: Scalar, A: DenseStorage<T>>(
+    a: &A,
+    diag: Diag,
+    trans: Trans,
+    uplo: UpLo,
+    row: usize,
+    col: usize,
+) -> Option<T> {
+    let (ar, ac) = match trans {
+        Trans::NoTrans => (row, col),
+        _ => (col, row),
+    };
+    let in_tri = match uplo {
+        UpLo::Upper => ar <= ac,
+        UpLo::Lower => ar >= ac,
+    };
+    if in_tri {
+        let a_val = if diag == Diag::Unit && ar == ac {
+            T::ONE
+        } else {
+            let elem = unsafe { a.get_unchecked(ar, ac).clone() };
+            if trans == Trans::ConjTrans {
+                elem.conj()
+            } else {
+                elem
+            }
+        };
+        Some(a_val)
+    } else {
+        None
+    }
+}
+
+#[inline(always)]
+fn trmm_left<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>>(
+    uplo: UpLo,
+    trans: Trans,
+    diag: Diag,
+    alpha: &T,
+    a: &A,
+    b: &mut B,
+) {
+    let m = b.rows();
+    let n = b.cols();
+    let forward = matches!(
+        (uplo, trans),
+        (UpLo::Upper, Trans::NoTrans)
+            | (UpLo::Lower, Trans::Trans | Trans::ConjTrans)
+    );
+    for j in 0..n {
+        let mut i = if forward { 0 } else { m };
+        while if forward { i < m } else { i > 0 } {
+            if !forward {
+                i -= 1;
+            }
+            let mut acc = T::ZERO;
+            for k in 0..m {
+                if let Some(a_val) = trmm_tri_elem(a, diag, trans, uplo, i, k) {
+                    let bv = unsafe { b.get_unchecked(k, j).clone() };
+                    acc = acc + (a_val * bv);
+                }
+            }
+            unsafe {
+                b.set_unchecked(i, j, alpha.clone() * acc);
+            }
+            if forward {
+                i += 1;
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn trmm_right<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>>(
+    uplo: UpLo,
+    trans: Trans,
+    diag: Diag,
+    alpha: &T,
+    a: &A,
+    b: &mut B,
+) {
+    let m = b.rows();
+    let n = b.cols();
+    let j_forward = matches!(
+        (uplo, trans),
+        (UpLo::Lower, Trans::NoTrans)
+            | (UpLo::Upper, Trans::Trans | Trans::ConjTrans)
+    );
+    for i in 0..m {
+        let mut j = if j_forward { 0 } else { n };
+        while if j_forward { j < n } else { j > 0 } {
+            if !j_forward {
+                j -= 1;
+            }
+            let mut acc = T::ZERO;
+            for k in 0..n {
+                if let Some(a_val) = trmm_tri_elem(a, diag, trans, uplo, k, j) {
+                    let bv = unsafe { b.get_unchecked(i, k).clone() };
+                    acc = acc + (bv * a_val);
+                }
+            }
+            unsafe {
+                b.set_unchecked(i, j, alpha.clone() * acc);
+            }
+            if j_forward {
+                j += 1;
+            }
+        }
+    }
+}
+
 impl<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>> level3::Trmm<T, A, B>
     for DefaultBlas
 {
@@ -2673,110 +2785,175 @@ impl<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>> level3::Trmm<T, A, B>
         a: &A,
         b: &mut B,
     ) {
-        let m = b.rows();
-        let n = b.cols();
-
         match side {
-            Side::Left => {
-                let forward = matches!(
-                    (uplo, trans),
-                    (UpLo::Upper, Trans::NoTrans)
-                        | (UpLo::Lower, Trans::Trans | Trans::ConjTrans)
-                );
-                for j in 0..n {
-                    let mut i = if forward { 0 } else { m };
-                    while if forward { i < m } else { i > 0 } {
-                        if !forward {
-                            i -= 1;
-                        }
-                        let mut acc = T::ZERO;
-                        for k in 0..m {
-                            let (ar, ac) = match trans {
-                                Trans::NoTrans => (i, k),
-                                _ => (k, i),
-                            };
-                            let in_tri = match uplo {
-                                UpLo::Upper => ar <= ac,
-                                UpLo::Lower => ar >= ac,
-                            };
-                            if in_tri {
-                                let a_val = if diag == Diag::Unit && ar == ac {
-                                    T::ONE
-                                } else {
-                                    let elem = unsafe {
-                                        a.get_unchecked(ar, ac).clone()
-                                    };
-                                    if trans == Trans::ConjTrans {
-                                        elem.conj()
-                                    } else {
-                                        elem
-                                    }
-                                };
-                                let bv =
-                                    unsafe { b.get_unchecked(k, j).clone() };
-                                acc = acc + (a_val * bv);
-                            }
-                        }
-                        unsafe {
-                            b.set_unchecked(i, j, alpha.clone() * acc);
-                        }
-                        if forward {
-                            i += 1;
-                        }
-                    }
+            Side::Left => trmm_left(uplo, trans, diag, &alpha, a, b),
+            Side::Right => trmm_right(uplo, trans, diag, &alpha, a, b),
+        }
+    }
+}
+
+#[inline(always)]
+fn trsm_diag_solve<
+    T: Scalar + Div<Output = T>,
+    A: DenseStorage<T>,
+    B: DenseStorageMut<T>,
+>(
+    a: &A,
+    b: &mut B,
+    diag: Diag,
+    trans: Trans,
+    piv_idx: usize,
+    r: usize,
+    c: usize,
+    sum: T,
+) -> LinAlgResult<()> {
+    if diag == Diag::Unit {
+        unsafe {
+            b.set_unchecked(r, c, sum);
+        }
+    } else {
+        let piv = unsafe { a.get_unchecked(piv_idx, piv_idx).clone() };
+        if piv.is_zero() {
+            return Err(LinAlgError::SingularMatrix);
+        }
+        let piv_val = if trans == Trans::ConjTrans {
+            piv.conj()
+        } else {
+            piv
+        };
+        unsafe {
+            b.set_unchecked(r, c, sum / piv_val);
+        }
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn trsm_a_elem<T: Scalar, A: DenseStorage<T>>(
+    a: &A,
+    trans: Trans,
+    row: usize,
+    col: usize,
+) -> T {
+    let (ar, ac) = match trans {
+        Trans::NoTrans => (row, col),
+        _ => (col, row),
+    };
+    let elem = unsafe { a.get_unchecked(ar, ac).clone() };
+    if trans == Trans::ConjTrans {
+        elem.conj()
+    } else {
+        elem
+    }
+}
+
+#[inline(always)]
+fn trsm_left<
+    T: Scalar + Div<Output = T>,
+    A: DenseStorage<T>,
+    B: DenseStorageMut<T>,
+>(
+    uplo: UpLo,
+    trans: Trans,
+    diag: Diag,
+    alpha: &T,
+    a: &A,
+    b: &mut B,
+) -> LinAlgResult<()> {
+    let m = b.rows();
+    let n = b.cols();
+    let is_upper = matches!(
+        (uplo, trans),
+        (UpLo::Upper, Trans::NoTrans)
+            | (UpLo::Lower, Trans::Trans | Trans::ConjTrans)
+    );
+
+    for j in 0..n {
+        if is_upper {
+            for k in 0..m {
+                let i = m - 1 - k;
+                let mut sum =
+                    alpha.clone() * unsafe { b.get_unchecked(i, j).clone() };
+                for p in (i + 1)..m {
+                    let a_val = trsm_a_elem(a, trans, i, p);
+                    let bp = unsafe { b.get_unchecked(p, j).clone() };
+                    sum = sum - (a_val * bp);
                 }
+                trsm_diag_solve(a, b, diag, trans, i, i, j, sum)?;
             }
-            Side::Right => {
-                let j_forward = matches!(
-                    (uplo, trans),
-                    (UpLo::Lower, Trans::NoTrans)
-                        | (UpLo::Upper, Trans::Trans | Trans::ConjTrans)
-                );
-                for i in 0..m {
-                    let mut j = if j_forward { 0 } else { n };
-                    while if j_forward { j < n } else { j > 0 } {
-                        if !j_forward {
-                            j -= 1;
-                        }
-                        let mut acc = T::ZERO;
-                        for k in 0..n {
-                            let (ar, ac) = match trans {
-                                Trans::NoTrans => (k, j),
-                                _ => (j, k),
-                            };
-                            let in_tri = match uplo {
-                                UpLo::Upper => ar <= ac,
-                                UpLo::Lower => ar >= ac,
-                            };
-                            if in_tri {
-                                let a_val = if diag == Diag::Unit && ar == ac {
-                                    T::ONE
-                                } else {
-                                    let elem = unsafe {
-                                        a.get_unchecked(ar, ac).clone()
-                                    };
-                                    if trans == Trans::ConjTrans {
-                                        elem.conj()
-                                    } else {
-                                        elem
-                                    }
-                                };
-                                let bv =
-                                    unsafe { b.get_unchecked(i, k).clone() };
-                                acc = acc + (bv * a_val);
-                            }
-                        }
-                        unsafe {
-                            b.set_unchecked(i, j, alpha.clone() * acc);
-                        }
-                        if j_forward {
-                            j += 1;
-                        }
-                    }
+        } else {
+            for i in 0..m {
+                let mut sum =
+                    alpha.clone() * unsafe { b.get_unchecked(i, j).clone() };
+                for p in 0..i {
+                    let a_val = trsm_a_elem(a, trans, i, p);
+                    let bp = unsafe { b.get_unchecked(p, j).clone() };
+                    sum = sum - (a_val * bp);
                 }
+                trsm_diag_solve(a, b, diag, trans, i, i, j, sum)?;
             }
         }
     }
+    Ok(())
+}
+
+#[inline(always)]
+fn trsm_right<
+    T: Scalar + Div<Output = T>,
+    A: DenseStorage<T>,
+    B: DenseStorageMut<T>,
+>(
+    uplo: UpLo,
+    trans: Trans,
+    diag: Diag,
+    alpha: &T,
+    a: &A,
+    b: &mut B,
+) -> LinAlgResult<()> {
+    let m = b.rows();
+    let n = b.cols();
+    let is_upper = matches!(
+        (uplo, trans),
+        (UpLo::Upper, Trans::NoTrans)
+            | (UpLo::Lower, Trans::Trans | Trans::ConjTrans)
+    );
+
+    for i in 0..m {
+        for j in 0..n {
+            unsafe {
+                let bv = b.get_unchecked(i, j).clone();
+                b.set_unchecked(i, j, alpha.clone() * bv);
+            }
+        }
+    }
+
+    if is_upper {
+        for j in 0..n {
+            for i in 0..m {
+                let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+                for k in 0..j {
+                    let a_val = trsm_a_elem(a, trans, k, j);
+                    let bk = unsafe { b.get_unchecked(i, k).clone() };
+                    sum = sum - (bk * a_val);
+                }
+                trsm_diag_solve(a, b, diag, trans, j, i, j, sum)?;
+            }
+        }
+    } else {
+        for jj in 0..n {
+            let j = n - 1 - jj;
+            for i in 0..m {
+                let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+                for k in (j + 1)..n {
+                    let a_val = trsm_a_elem(a, trans, k, j);
+                    let bk = unsafe { b.get_unchecked(i, k).clone() };
+                    sum = sum - (bk * a_val);
+                }
+                trsm_diag_solve(a, b, diag, trans, j, i, j, sum)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 impl<T: Scalar + Div<Output = T>, A: DenseStorage<T>, B: DenseStorageMut<T>>
@@ -2792,193 +2969,10 @@ impl<T: Scalar + Div<Output = T>, A: DenseStorage<T>, B: DenseStorageMut<T>>
         a: &A,
         b: &mut B,
     ) -> LinAlgResult<()> {
-        let m = b.rows();
-        let n = b.cols();
-
-        if side == Side::Left {
-            let is_upper = match (uplo, trans) {
-                (UpLo::Upper, Trans::NoTrans) => true,
-                (UpLo::Lower, Trans::Trans | Trans::ConjTrans) => true,
-                _ => false,
-            };
-
-            for j in 0..n {
-                if is_upper {
-                    for k in 0..m {
-                        let i = m - 1 - k;
-                        let mut sum = alpha.clone()
-                            * unsafe { b.get_unchecked(i, j).clone() };
-                        for p in (i + 1)..m {
-                            let (ar, ac) = match trans {
-                                Trans::NoTrans => (i, p),
-                                _ => (p, i),
-                            };
-                            let elem =
-                                unsafe { a.get_unchecked(ar, ac).clone() };
-                            let a_val = if trans == Trans::ConjTrans {
-                                elem.conj()
-                            } else {
-                                elem
-                            };
-                            let bp = unsafe { b.get_unchecked(p, j).clone() };
-                            sum = sum - (a_val * bp);
-                        }
-                        if diag == Diag::Unit {
-                            unsafe {
-                                b.set_unchecked(i, j, sum);
-                            }
-                        } else {
-                            let piv = unsafe { a.get_unchecked(i, i).clone() };
-                            if piv.is_zero() {
-                                return Err(LinAlgError::SingularMatrix);
-                            }
-                            let piv_val = if trans == Trans::ConjTrans {
-                                piv.conj()
-                            } else {
-                                piv
-                            };
-                            unsafe {
-                                b.set_unchecked(i, j, sum / piv_val);
-                            }
-                        }
-                    }
-                } else {
-                    for i in 0..m {
-                        let mut sum = alpha.clone()
-                            * unsafe { b.get_unchecked(i, j).clone() };
-                        for p in 0..i {
-                            let (ar, ac) = match trans {
-                                Trans::NoTrans => (i, p),
-                                _ => (p, i),
-                            };
-                            let elem =
-                                unsafe { a.get_unchecked(ar, ac).clone() };
-                            let a_val = if trans == Trans::ConjTrans {
-                                elem.conj()
-                            } else {
-                                elem
-                            };
-                            let bp = unsafe { b.get_unchecked(p, j).clone() };
-                            sum = sum - (a_val * bp);
-                        }
-                        if diag == Diag::Unit {
-                            unsafe {
-                                b.set_unchecked(i, j, sum);
-                            }
-                        } else {
-                            let piv = unsafe { a.get_unchecked(i, i).clone() };
-                            if piv.is_zero() {
-                                return Err(LinAlgError::SingularMatrix);
-                            }
-                            let piv_val = if trans == Trans::ConjTrans {
-                                piv.conj()
-                            } else {
-                                piv
-                            };
-                            unsafe {
-                                b.set_unchecked(i, j, sum / piv_val);
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Side::Right: X op(A) = alpha B
-            let is_upper = match (uplo, trans) {
-                (UpLo::Upper, Trans::NoTrans) => true,
-                (UpLo::Lower, Trans::Trans | Trans::ConjTrans) => true,
-                _ => false,
-            };
-            for i in 0..m {
-                for j in 0..n {
-                    unsafe {
-                        let bv = b.get_unchecked(i, j).clone();
-                        b.set_unchecked(i, j, alpha.clone() * bv);
-                    }
-                }
-            }
-            if is_upper {
-                for j in 0..n {
-                    for i in 0..m {
-                        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                        for k in 0..j {
-                            let (ar, ac) = match trans {
-                                Trans::NoTrans => (k, j),
-                                _ => (j, k),
-                            };
-                            let elem =
-                                unsafe { a.get_unchecked(ar, ac).clone() };
-                            let a_val = if trans == Trans::ConjTrans {
-                                elem.conj()
-                            } else {
-                                elem
-                            };
-                            let bk = unsafe { b.get_unchecked(i, k).clone() };
-                            sum = sum - (bk * a_val);
-                        }
-                        if diag == Diag::Unit {
-                            unsafe {
-                                b.set_unchecked(i, j, sum);
-                            }
-                        } else {
-                            let piv = unsafe { a.get_unchecked(j, j).clone() };
-                            if piv.is_zero() {
-                                return Err(LinAlgError::SingularMatrix);
-                            }
-                            let piv_val = if trans == Trans::ConjTrans {
-                                piv.conj()
-                            } else {
-                                piv
-                            };
-                            unsafe {
-                                b.set_unchecked(i, j, sum / piv_val);
-                            }
-                        }
-                    }
-                }
-            } else {
-                for jj in 0..n {
-                    let j = n - 1 - jj;
-                    for i in 0..m {
-                        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                        for k in (j + 1)..n {
-                            let (ar, ac) = match trans {
-                                Trans::NoTrans => (k, j),
-                                _ => (j, k),
-                            };
-                            let elem =
-                                unsafe { a.get_unchecked(ar, ac).clone() };
-                            let a_val = if trans == Trans::ConjTrans {
-                                elem.conj()
-                            } else {
-                                elem
-                            };
-                            let bk = unsafe { b.get_unchecked(i, k).clone() };
-                            sum = sum - (bk * a_val);
-                        }
-                        if diag == Diag::Unit {
-                            unsafe {
-                                b.set_unchecked(i, j, sum);
-                            }
-                        } else {
-                            let piv = unsafe { a.get_unchecked(j, j).clone() };
-                            if piv.is_zero() {
-                                return Err(LinAlgError::SingularMatrix);
-                            }
-                            let piv_val = if trans == Trans::ConjTrans {
-                                piv.conj()
-                            } else {
-                                piv
-                            };
-                            unsafe {
-                                b.set_unchecked(i, j, sum / piv_val);
-                            }
-                        }
-                    }
-                }
-            }
+        match side {
+            Side::Left => trsm_left(uplo, trans, diag, &alpha, a, b),
+            Side::Right => trsm_right(uplo, trans, diag, &alpha, a, b),
         }
-        Ok(())
     }
 }
 

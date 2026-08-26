@@ -649,10 +649,8 @@ pub mod storage_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
-    /// §6.1 L3 same-tag round-trip: Lower packed triangle is load-bearing.
-    #[allow(clippy::too_many_lines)]
-    fn test_storage_from_dense_triangle_lower_tag_round_trip() {
+    #[allow(clippy::unwrap_used)]
+    fn check_symmetric_lower_round_trip() {
         let mut sym =
             SymmetricPackedStorage::<f64, 3, 6>::new([0.0; 6], UpLo::Lower);
         assert!(sym.set(0, 0, 1.0).is_ok());
@@ -676,7 +674,10 @@ pub mod storage_test_suite {
                 assert_eq!(sym_back.value(i, j), sym.value(i, j));
             }
         }
+    }
 
+    #[allow(clippy::unwrap_used)]
+    fn check_triangular_lower_round_trip() {
         let mut tri = TriangularPackedStorage::<f64, 3, 6>::new(
             [0.0; 6],
             UpLo::Lower,
@@ -706,7 +707,10 @@ pub mod storage_test_suite {
                 assert_eq!(tri_back.value(i, j), tri.value(i, j));
             }
         }
+    }
 
+    #[allow(clippy::unwrap_used)]
+    fn check_hermitian_lower_round_trip() {
         let mut herm = HermitianPackedStorage::<Complex<f64>, 3, 6>::new(
             [Complex::new(0.0, 0.0); 6],
             UpLo::Lower,
@@ -732,6 +736,14 @@ pub mod storage_test_suite {
                 assert_eq!(herm_back.value(i, j), herm.value(i, j));
             }
         }
+    }
+
+    #[cfg_attr(test, test)]
+    /// §6.1 L3 same-tag round-trip: Lower packed triangle is load-bearing.
+    fn test_storage_from_dense_triangle_lower_tag_round_trip() {
+        check_symmetric_lower_round_trip();
+        check_triangular_lower_round_trip();
+        check_hermitian_lower_round_trip();
     }
 
     #[cfg_attr(test, test)]
