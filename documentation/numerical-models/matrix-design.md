@@ -1,41 +1,32 @@
 # Matrix Type & Structural Specializations (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
 
 ### 1. Introduction
 
-This module provides the matrix operations required by advanced control and
-state estimation. Its architecture is modeled on the `nalgebra` linear algebra
-crate (licensed under BSD-3-Clause, by Sébastien Crozet).
+This module provides statically-typed, zero-allocation matrix representations
+and linear algebra routines for real-time control, estimation, and signal
+processing.
 
-The following elements of `nalgebra` are directly mirrored or adapted in our
-architecture:
+Primary usage scenarios:
 
-- **Matrix Signature**: mirrors `nalgebra`'s decoupled storage pattern (§4.1).
-  Shape lives on the storage leaf's associated types; the wrapper re-exposes
-  it as `R`/`C` struct parameters bound to those associated types
-  (§4.1, §4.9.2).
-- **Storage Trait Hierarchy**: The dense and packed subsystems of
-  `storage-design.md` (Rev 1.8) share no supertrait. `DenseStorage<T>`
-  carries `type R: Dim`, `type C: Dim`, `isize` strides, `as_ptr()`,
-  `get`/`get_unchecked`; `DenseStorageMut<T>` adds `as_mut_ptr()`,
-  `get_mut`/`get_mut_unchecked` and `set`. `PackedStorage<T>` carries
-  `type N: Dim`, `uplo()`, `packed_index`/`packed_index_unchecked` and the
-  algebraic `value`/`value_unchecked`. Packed leaves are
-  `SymmetricPackedStorage`, `HermitianPackedStorage`,
-  `TriangularPackedStorage` and `DiagonalStorage`.
-- **Dense Storage**: `ArrayStorage<T, R, C>`'s nested `[[T; R]; C]`
-  (column-major) and `RowArrayStorage<T, R, C>`'s nested `[[T; C]; R]`
-  (row-major). Capacities are bare `const usize` parameters on the leaves,
-  which implement the trait at `type R = Const<R>; type C = Const<C>;`
-  (`storage-design.md` C-4).
-- **Matrix Views**: `MatrixSlice`/`MatrixSliceMut` over
-  `ViewStorage`/`ViewStorageMut`, whose arbitrary `isize` strides carry both
-  orderings and zero-copy transposition (`storage-design.md` FR-5, FR-6).
+- **Kalman Filtering & Covariance Propagation**: Evaluating time
+  updates ($P_{k|k-1} = A P_{k-1} A^T + Q$) and measurement
+  updates ($K = P H^T (H P H^T + R)^{-1}$) on fixed-size state estimates with
+  deterministic execution time and zero heap allocation.
+- **Coordinate Transformations & Kinematics**: Multiplying vectors by spatial
+  rotation and transformation matrices ($v' = R v$) in robotics and flight
+  control loops.
+- **Direct Linear Solves & Least-Squares Estimation**: Solving systems of linear
+  equations ($A x = b$) and computing factorizations (LU, Cholesky, $LDL^T$, QR)
+  for model-predictive control and parameter identification.
+- **Structured Covariance Storage**: Storing and operating on symmetric
+  positive-definite covariance matrices using packed storage representations to
+  cut memory consumption in resource-constrained embedded systems.
 
 ---
 
@@ -43,73 +34,78 @@ architecture:
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Compile-Time Shape Verification**: Operand dimensions are
-  validated at compile time via `Dim` type bounds.
-- **FR-2 — Fallible Linear Algebra Solvers**: Matrix inversion and system
-  solving ($A x = b$) over singular matrices return `Err` rather than
-  panicking or producing invalid numerical outputs.
-- **FR-3 — Value-Preserving Structure Conversions**: Conversions between dense,
-  symmetric, triangular, and 1D polynomial/vector views preserve element values
-  and coordinates without numerical truncation.
-- **FR-4 — Branchless Delegated Coordinate Lookup**: `Matrix` resolves a logical
-  coordinate $(i, j)$ by delegating directly to `DenseStorage::get` (strided
-  backends) and `PackedStorage::value` (packed backends), eliminating
-  wrapper-level layout matching branches and index arithmetic.
-- **FR-5 — Upstream Kernel Precondition Enforcement**: `Matrix` is the
-  enforcement point for the subprogram operand preconditions
-  (`subprograms-design.md` C-1). Kernels receive typed storage operands
-  whose shape and strides come from the operand's own type; no call site
-  accepts a raw slice or a dynamic stride.
-- **FR-6 — Static Dimension Inference**: Operators infer output dimensions
-  from input operands at compile time without dynamic capacity checks.
+- **FR-1 — Compile-Time Shape Verification**: Matrix operations validate operand
+  dimension compatibility at compile time before execution. A dimension
+  mismatch (such as multiplying a $2 \times 2$ matrix by a $3 \times 1$ vector)
+  must prevent compilation rather than panicking at runtime in embedded control
+  loops.
+- **FR-2 — Matrix Algebra & Linear Transformations**: Matrices provide standard
+  matrix-vector and matrix-matrix
+  products ($y = \alpha A x + \beta y$, $C = \alpha A B + \beta C$), addition,
+  subtraction, negation, transposition, and scaling. Operations must
+  mathematically match standard linear algebra without requiring intermediate
+  heap buffers.
+- **FR-3 — Fallible Factorizations & Direct Solvers**: Direct linear system
+  solvers ($A x = b$), triangular solvers, and matrix factorizations (LU,
+  Cholesky, $LDL^T$, QR) return explicit error variants (`LinAlgError`) when
+  inputs are singular, rank-deficient, or non-positive-definite (Anderson et
+  al., 1999). Numerical failures must never panic or silently corrupt downstream
+  state estimates.
+- **FR-4 — Coordinate Element Access**: Element indexing by 2D
+  coordinates $(i, j)$ accesses the correct logical entry for both row-major and
+  column-major representations. Out-of-bounds indices return `None` on checked
+  access and fail at compile time for fixed-index lookups.
+- **FR-5 — Structural Specializations**: Symmetric, Hermitian, triangular, and
+  diagonal matrix structures provide element access and tailored algebraic
+  operations that exploit symmetry and sparsity without allocating full dense
+  storage.
+- **FR-6 — Zero-Copy Submatrix Views**: Callers can extract rectangular
+  sub-windows, row slices, and column vectors without copying underlying matrix
+  data. Slices preserve stride semantics for zero-copy kernel execution.
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — Zero Dynamic Allocation**: All core operations execute strictly
-  on stack-allocated buffers (`#![no_std]`).
-- **NFR-2 — Memory Layout Guarantees**: Matrices over a leaf that also
-  implements `ContiguousStorage<T>` expose a padding-free slice
-  (`as_slice()`) conforming to C-ABI layout (`storage-design.md` FR-3).
-- **NFR-3 — Zero Inlined Bounds Checks in Solvers**: Hot substitution loops
-  and factorization steps address memory through subprogram kernels
-  (`Trsv`, `Geru`, `Gemm`) whose unchecked accessors compile to branchless
-  pointer arithmetic, allowing LLVM to prove bounds safety without emitting
-  runtime checks or panic paths (`storage-design.md` NFR-3).
+- **NFR-1 — Zero-Allocation Deterministic Execution**: Matrix operations and
+  factorizations over statically sized dimensions execute entirely on stack or
+  borrowed memory without dynamic allocation.
+- **NFR-2 — Interoperable C-ABI Layout**: Contiguous matrix layouts expose flat
+  slice views conforming to standard C-ABI contiguous array layouts for hardware
+  DMA and vendor DSP library interoperability.
+- **NFR-3 — Predictable Real-Time Latency**: Factorization and solver execution
+  loops address memory without runtime bounds checking or unwinding landing
+  pads, guaranteeing bounded Worst-Case Execution Time (WCET).
 
 #### 2.3. Constraints
 
 - **C-1 — Stable Rust Toolchain**: Code must compile on `stable` Rust without
-  relying on `generic_const_exprs`.
-- **C-2 — BLAS Level Alignment**: Level 2 and Level 3 linear algebra operations
-  map directly onto the subprogram traits of `subprograms-design.md` §4.2
-  (`Gemv`, `Gemm`, `Trsv`, `Geru`, …), dispatched as associated functions on
-  a backend marker type.
-- **C-3 — In-Place Factorization Restricted to Mutable Dense**: In-place
-  factorizations require `DenseStorageMut<T>`, implemented by the owning
-  array leaves (`ArrayStorage`, `RowArrayStorage`) and `ViewStorageMut`, not
-  by the packed or sparse leaves.
+  requiring incomplete experimental features (`generic_const_exprs`).
+- **C-2 — Stack Footprint Limit**: Matrix dimension capacities are statically
+  bounded ($R, C \le 128$) to ensure stack allocations do not exceed embedded
+  microcontroller memory limits.
+- **C-3 — `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
+  standard library dependencies.
+- **C-4 — In-Place Factorization Mutability**: In-place matrix decompositions
+  require mutable dense storage and cannot be executed over immutable or
+  packed-view backends.
 
 ---
 
 ### 3. Technical Overview
 
-`Matrix<T, R, C, S>` is generic over element type `T`, row and column
-dimensions `R: Dim, C: Dim`, and a strided storage backend
-`S: DenseStorage<T, R = R, C = C>`. The struct places no constraint on
-whether the underlying storage is owning or borrowed, column-major or
-row-major: `ArrayStorage`, `RowArrayStorage`, `ViewStorage` and
-`ViewStorageMut` are all admissible leaves, and their `isize` strides carry
-the ordering.
+`Matrix<T, R, C, S>` provides statically sized matrix algebra and direct
+factorizations parameterized over scalar type `T`, dimensions `R: Dim, C: Dim`,
+and storage backend `S`. Built directly on `control-rs::math`'s decoupled
+storage hierarchy (`storage-design.md`) and BLAS/LAPACK subprograms (
+`subprograms-design.md`), it serves as the single unified matrix wrapper across
+owning stack arrays (`ArrayStorage`, `RowArrayStorage`), borrowed zero-copy
+views (`StorageView`, `StorageViewMut`), and packed structured storage (
+`DiagonalStorage`, `SymmetricPackedStorage`, `TriangularPackedStorage`).
 
-Packed structured matrices are a sibling wrapper, `PackedMatrix<T, N, S>`
-over `S: PackedStorage<T, N = N>` (§4.1.1). `storage-design.md` Rev 1.8
-decouples the dense and packed subsystems entirely — they share no
-supertrait — so no single struct bound admits both, and the per-branch split
-replaces the former Tier-1 floor.
-
-`Matrix` delegates element lookup directly to its storage leaf without
-wrapper-level branching, enabling monomorphized zero-overhead indexing across
-both orderings.
+Packed and structured matrices are provided as type aliases over `Matrix`,
+preserving zero-cost abstraction without wrapper-level duplication or runtime
+layout-matching branching. Linear algebra operations delegate directly to
+zero-overhead subprogram kernels, returning typed `LinAlgError` variants on
+numerical singularity.
 
 ---
 
@@ -120,78 +116,68 @@ The `Matrix` struct will be implemented in a new submodule: `src/matrix/mod.rs`.
 #### 4.1. Core Matrix Types & Storage Hierarchy
 
 ```rust
-pub struct Matrix<T, R: Dim, C: Dim, S: DenseStorage<T, R = R, C = C>> {
+pub struct Matrix<T, R: Dim, C: Dim, S> {
     storage: S,
     _marker: PhantomData<(T, R, C)>,
 }
 
-// Column-Major Matrix Aliases
+// Column-Major Dense Matrix Aliases
 pub type ArrayMatrix<T, const R: usize, const C: usize> =
-    Matrix<T, Const<R>, Const<C>, ArrayStorage<T, R, C>>;
+Matrix<T, Const<R>, Const<C>, ArrayStorage<T, R, C>>;
 pub type Owned<T, const R: usize, const C: usize> = ArrayMatrix<T, R, C>;
 
-pub type MatrixSlice<'a, T, R, C> = Matrix<T, R, C, ViewStorage<'a, T, R, C>>;
+pub type MatrixSlice<'a, T, R, C> = Matrix<T, R, C, StorageView<'a, T, R, C>>;
 pub type MatrixSliceMut<'a, T, R, C> =
-    Matrix<T, R, C, ViewStorageMut<'a, T, R, C>>;
+Matrix<T, R, C, StorageViewMut<'a, T, R, C>>;
 
-// Row-Major Matrix Aliases
+// Row-Major Dense Matrix Aliases
 pub type RowArrayMatrix<T, const R: usize, const C: usize> =
-    Matrix<T, Const<R>, Const<C>, RowArrayStorage<T, R, C>>;
+Matrix<T, Const<R>, Const<C>, RowArrayStorage<T, R, C>>;
 pub type RowOwned<T, const R: usize, const C: usize> = RowArrayMatrix<T, R, C>;
+
+pub type RowMatrixSlice<'a, T, R, C> =
+Matrix<T, R, C, StorageView<'a, T, R, C>>;
+pub type RowMatrixSliceMut<'a, T, R, C> =
+Matrix<T, R, C, StorageViewMut<'a, T, R, C>>;
+
+// Packed and Structured Matrix Aliases
+pub type PackedMatrix<T, const N: usize, S> =
+Matrix<T, Const<N>, Const<N>, S>;
+pub type SymmetricPacked<T, const N: usize, const L: usize> =
+Matrix<T, Const<N>, Const<N>, SymmetricPackedStorage<T, N, L>>;
+pub type HermitianPacked<T, const N: usize, const L: usize> =
+Matrix<T, Const<N>, Const<N>, HermitianPackedStorage<T, N, L>>;
+pub type TriangularPacked<T, const N: usize, const L: usize> =
+Matrix<T, Const<N>, Const<N>, TriangularPackedStorage<T, N, L>>;
+pub type DiagonalMatrix<T, const N: usize> =
+Matrix<T, Const<N>, Const<N>, DiagonalStorage<T, N>>;
 ```
 
 `ArrayStorage<T, R, C>` and `RowArrayStorage<T, R, C>` take bare
 `const usize` capacities and implement `DenseStorage<T>` at
-`type R = Const<R>; type C = Const<C>;` (`storage-design.md` FR-4, C-4).
+`type R = Const<R>; type C = Const<C>;` (`storage-design.md` FR-1, C-4).
 Neither projects `Dim::USIZE` into an array length, so neither requires
 `generic_const_exprs`.
 
-`ViewStorage`/`ViewStorageMut` are `Dim`-generic rather than
-const-generic (`storage-design.md` FR-5): they carry runtime `isize`
+`StorageView`/`StorageViewMut` are `Dim`-generic rather than
+const-generic (`storage-design.md` FR-2): they carry runtime `isize`
 strides, so one view type covers column-major, row-major, transposed and
 reversed windows without a separate alias per ordering.
 
-The point of decoupling storage is to have one `Matrix` implementation that
-works for every strided leaf.
+The point of decoupling storage is to have one single `Matrix` struct
+implementation that works across every dense, strided, and packed storage leaf.
 
-##### 4.1.1. Dense Struct Bound and the Packed Sibling
+##### 4.1.1. Storage Capabilities and Trait Bounds
 
-`storage-design.md` Rev 1.8 organizes storage into three decoupled
-subsystems (dense strided, packed structured, sparse) with **no common
-supertrait**. The former Tier-1 `MatrixStorage` floor no longer exists, so
-there is no bound that admits a strided leaf and a packed leaf at once.
-`Matrix` therefore names the dense branch, and packed structured matrices
-get a sibling wrapper:
+Methods on `Matrix<T, R, C, S>` are enabled via trait bounds on `S`:
 
-```rust
-pub struct PackedMatrix<T, N: Dim, S: PackedStorage<T, N = N>> {
-    storage: S,
-    _marker: PhantomData<(T, N)>,
-}
-
-pub type SymmetricPacked<T, const N: usize, const L: usize> =
-    PackedMatrix<T, Const<N>, SymmetricPackedStorage<T, N, L>>;
-pub type HermitianPacked<T, const N: usize, const L: usize> =
-    PackedMatrix<T, Const<N>, HermitianPackedStorage<T, N, L>>;
-pub type TriangularPacked<T, const N: usize, const L: usize> =
-    PackedMatrix<T, Const<N>, TriangularPackedStorage<T, N, L>>;
-pub type DiagonalMatrix<T, const N: usize> =
-    PackedMatrix<T, Const<N>, DiagonalStorage<T, N>>;
-```
-
-Capability per bound:
-
-| Bound                  | Operations                                                                                     |
-|:-----------------------|:-----------------------------------------------------------------------------------------------|
-| `DenseStorage<T>`      | Strided lookup (`get`, `get_unchecked`), Level 2/3 kernel calls, views (§4.5, §4.9.2)          |
-| `DenseStorageMut<T>`   | Mutable access (`get_mut`, `get_mut_unchecked`, `set`), in-place factorization (§4.7)          |
-| `ContiguousStorage<T>` | `as_slice()`, `const ORDER: MatrixLayout`, C-ABI and FFI hand-off (§4.3)                       |
-| `PackedStorage<T>`     | Packed lookup (`packed_index`, `value`, `value_unchecked`), `uplo()` (§4.9.2)                  |
-| `PackedStorageMut<T>`  | Physical-slot mutation (`set`, `set_unchecked`) with structural rejection (§4.9.2)             |
-
-This reverses the Rev 1.31 decision recorded in §5.4, which chose a single
-struct over the shared floor. That floor is gone; §5.4 records the reversal
-and §7 tracks the surface it costs.
+| Bound                  | Operations                                                                            |
+|:-----------------------|:--------------------------------------------------------------------------------------|
+| `DenseStorage<T>`      | Strided lookup (`get`, `get_unchecked`), Level 2/3 kernel calls, views (§4.5, §4.9.2) |
+| `DenseStorageMut<T>`   | Mutable access (`get_mut`, `get_mut_unchecked`, `set`), in-place factorization (§4.7) |
+| `ContiguousStorage<T>` | `as_slice()`, `const ORDER: MatrixLayout`, C-ABI and FFI hand-off (§4.3)              |
+| `PackedStorage<T>`     | Packed lookup (`packed_index`, `value`, `value_unchecked`), `uplo()` (§4.9.2)         |
+| `PackedStorageMut<T>`  | Physical-slot mutation (`set`, `set_unchecked`) with structural rejection (§4.9.2)    |
 
 #### 4.2. Memory Layout & Storage Strategy
 
@@ -209,7 +195,8 @@ hand-off only (§4.3).
   (`RowArrayStorage`), each row $ A_i $ is contiguous in memory, enabling
   row-strided vectorization.
 - **BLAS Interoperability**: Column-major layout matches standard Fortran/LAPACK
-  conventions (Anderson et al., 1999) and embedded DSP libraries (ARM CMSIS-DSP).
+  conventions (Anderson et al., 1999) and embedded DSP libraries (ARM
+  CMSIS-DSP).
   Row-major layout allows direct zero-copy interfacing with C/C++ libraries and
   hardware sensor/actuator rasters without transposition.
 
@@ -220,16 +207,16 @@ hand-off only (§4.3).
 
 To ensure stable memory layout and compatibility with C-based hardware
 libraries, the owning array leaves store a padding-free nested array and
-implement the contiguity markers of `storage-design.md` FR-3.
+implement the contiguity markers of `storage-design.md` FR-2.
 
 Slice access is a capability of `ContiguousStorage<T>`, not of every dense
-leaf: a `ViewStorage` with a non-unit stride has no contiguous slice to
+leaf: a `StorageView` with a non-unit stride has no contiguous slice to
 return. The accessors are therefore bounded on the marker:
 
 ```rust
 impl<T, R: Dim, C: Dim, S> Matrix<T, R, C, S>
 where
-    S: ContiguousStorage<T, R = R, C = C>,
+    S: ContiguousStorage<T, R=R, C=C>,
 {
     /// Padding-free slice of matrix memory, in `S::ORDER`.
     pub fn as_slice(&self) -> &[T] {
@@ -243,7 +230,7 @@ where
 
 impl<T, R: Dim, C: Dim, S> Matrix<T, R, C, S>
 where
-    S: ContiguousStorageMut<T, R = R, C = C>,
+    S: ContiguousStorageMut<T, R=R, C=C>,
 {
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         self.storage.as_mut_slice()
@@ -253,10 +240,10 @@ where
 
 Two access paths, one per consumer:
 
-| Accessor                | Bound                  | Consumer                                              |
-|:------------------------|:-----------------------|:------------------------------------------------------|
-| `as_slice`              | `ContiguousStorage`    | Inspection, C-ABI and hardware-backend hand-off       |
-| storage operand (`&S`)  | `DenseStorage`         | Every Level 1/2/3 kernel (`Axpy`, `Gemv`, `Gemm`, …)  |
+| Accessor               | Bound               | Consumer                                             |
+|:-----------------------|:--------------------|:-----------------------------------------------------|
+| `as_slice`             | `ContiguousStorage` | Inspection, C-ABI and hardware-backend hand-off      |
+| storage operand (`&S`) | `DenseStorage`      | Every Level 1/2/3 kernel (`Axpy`, `Gemv`, `Gemm`, …) |
 
 Each has a `_mut` counterpart (`as_mut_slice`, `&mut S`) on the
 corresponding `ContiguousStorageMut`/`DenseStorageMut` bound.
@@ -271,10 +258,10 @@ kernel reads shape from `S::R`/`S::C` and addresses through
 and it removes the flattened `&[T; R * C]` accessor that
 `generic_const_exprs` blocked in the first place (`storage-design.md` §5).
 
-##### 4.3.1. Zero-Copy Views (`ViewStorage`)
+##### 4.3.1. Zero-Copy Views (`StorageView`)
 
-`Matrix` builds on the strided view backends of `storage-design.md` FR-5 and
-FR-6. `ViewStorage<'a, T, R, C>` carries arbitrary `isize` strides, which
+`Matrix` builds on the strided view backends of `storage-design.md` FR-2.
+`StorageView<'a, T, R, C>` carries arbitrary `isize` strides, which
 subsumes the former column-panel restriction: an arbitrary submatrix window
 is a pointer offset plus the parent's own strides, with no padded leading
 dimension to leave untouched.
@@ -287,7 +274,7 @@ dimension to leave untouched.
   wrapping an erased-length slice returns
   `ConversionError::DimensionMismatch` (`storage-design.md` §4.6).
 - **Zero-Copy Transposition**: `transpose_view()` swaps strides and
-  dimensions (`storage-design.md` FR-6), so $A^T$ needs no buffer. Algebraic
+  dimensions (`storage-design.md` FR-2), so $A^T$ needs no buffer. Algebraic
   transposition inside a kernel remains the `Trans` flag; the two are
   complementary, not alternatives.
 - **Reversed Views**: `reverse_view()` sets a negative row stride over a
@@ -316,13 +303,14 @@ dimension to leave untouched.
   form is what level-2/3 kernels can consume directly.
 - `pub const fn packed_diagonal<const D: usize>(val: [T; D])
   -> DiagonalMatrix<T, D>`: Constructs the $O(D)$-space `DiagonalStorage`
-  leaf as a `PackedMatrix` (§4.1.1). Off-diagonal coordinates are unstored
+  leaf as a `DiagonalMatrix` alias (§4.1.1). Off-diagonal coordinates are
+  unstored
   and evaluate algebraically to `T::ZERO` (§4.9.2). This backend reaches no
   dense Level 2/3 kernel, because it implements `PackedStorage`, not
   `DenseStorage`; packed operands instead reach the packed kernels
   (`Spmv`, `Hpmv`, `Tpmv`, `Tpsv`; `subprograms-design.md` FR-3), or are
   converted to a dense leaf through `ToDenseStorage`
-  (`storage-design.md` FR-16) before matrix-matrix arithmetic.
+  (`storage-design.md` FR-7) before matrix-matrix arithmetic.
 
 - `pub fn from_fn<F>(mut f: F) -> Self where F: FnMut(usize, usize) -> T`:
   Generates a matrix using a coordinate-based mapping function at runtime.
@@ -331,6 +319,38 @@ _Implementation Note_: All static constructors are marked `const fn` to allow
 placing static matrices directly in read-only flash memory. The scalar type
 `T` must implement `Zero` and `One` from `crate::math::num_traits`. These
 traits expose the associated constants `T::ZERO` and `T::ONE`.
+
+##### 4.4.1. Data-Driven Matrix Factories [Proposal (not in evidence)]
+
+To support higher-level subspace system identification (N4SID, MOESP), modal
+realization (ERA), and direct behavioral simulation (Willems' Fundamental
+Lemma / DeePC), dedicated data-driven **Object Factories** produce structured
+matrix forms from sampled trajectory sequences and impulse responses without
+polluting the core `Matrix` struct (De Cock & De Moor, 2003; Juang & Pappa,
+1985; Willems et al., 2004; Gevers, 2006):
+
+- **Signal Hankel Factory (`HankelMatrixFactory`)**: Produces a Hankel matrix
+  $H_L(w) \in \mathbb{R}^{L \times (T-L+1)}$ from a $T$-point scalar signal
+  vector $w$, where column $j$ contains the sliding window
+  $[w_j, w_{j+1}, \dots, w_{j+L-1}]^T$ to represent behavioral signal subspaces
+  and verify persistency of excitation (Willems et al., 2004).
+- **Multivariable Block-Hankel Factory (`BlockHankelDataFactory`)**: Formulates
+  stacked past and future block-Hankel data matrices ($U_{0|2i-1}, Y_{0|2i-1}$)
+  from $m$-input and $l$-output time series with block-row index $i$ for
+  subspace
+  identification preprocessing (De Cock & De Moor, 2003).
+- **Markov Block-Toeplitz Factory (`ToeplitzMarkovFactory`)**: Assembles
+  lower block-triangular Toeplitz convolution matrices from impulse response
+  Markov parameters ($H_k = C A^{k-1} B$) for deterministic simulation and
+  Ho–Kalman / ERA modal initialization (De Cock & De Moor, 2003; Juang & Pappa,
+  1985).
+- **Sample Covariance Factory (`SampleCovarianceFactory`)**: Computes sample
+  correlation and covariance sequence
+  matrices $R_y(k) = \frac{1}{N} \sum_{t=1}^N y_t y_{t+k}^T$
+  from measurement data directly into packed symmetric storage (Gevers, 2006).
+
+_Detailed standalone design and API signatures for system identification
+factories are specified in `documentation/control-toolboxes/sysid-design.md`._
 
 #### 4.5. Operator Overloading
 
@@ -365,17 +385,18 @@ C-1 and `storage-design.md` NFR-2 forbid.
 impl<T, M: Dim, N: Dim, P: Dim, SA, SB> Matrix<T, M, N, SA>
 where
     T: Scalar,
-    SA: DenseStorage<T, R = M, C = N>,
-    SB: DenseStorage<T, R = N, C = P>,
+    SA: DenseStorage<T, R=M, C=N>,
+    SB: DenseStorage<T, R=N, C=P>,
 {
     pub fn mul_into<SC>(&self, rhs: &Matrix<T, N, P, SB>, out: &mut Matrix<T, M, P, SC>)
     where
-        SC: DenseStorageMut<T, R = M, C = P>;
+        SC: DenseStorageMut<T, R=M, C=P>
+    {}
 }
 
 // Operator sugar, defined where the output length is a plain const usize.
 impl<T: Scalar, const M: usize, const N: usize, const P: usize>
-    Mul<ArrayMatrix<T, N, P>> for ArrayMatrix<T, M, N>
+Mul<ArrayMatrix<T, N, P>> for ArrayMatrix<T, M, N>
 {
     type Output = ArrayMatrix<T, M, P>;
     // delegates to mul_into over a fresh ArrayStorage<T, M, P>
@@ -392,17 +413,17 @@ requires `Div` (`num-traits-design.md` FR-2).
 this design needs is one of the subprogram traits defined in
 `subprograms-design.md` §4.2 and §4.3.
 
-| Subprogram      | Level | Operation                      | Required by                                                                                                                       |
-|:----------------|:------|:-------------------------------|:------------------------------------------------------------------------------------------------------------------------------------|
-| `Axpy`          | 1     | $y \leftarrow \alpha x + y$    | `Add`, `Sub` (§4.5); reflector application in QR (§4.7)                                                                           |
-| `Scal`          | 1     | $x \leftarrow \alpha x$        | `Neg` (§4.5); pivot-row normalization in LU (§4.6); diagonal scaling in $LDL^T$ (§4.7)                                            |
-| `Dotu` / `Dotc` | 1     | $x^T y$ / $x^H y$              | Inner-product accumulation in substitution (§4.7.2, §4.10.1) and $LDL^T$/Cholesky diagonal updates (§4.7). `Dotc` on complex operands |
-| `Nrm2`          | 1     | $\lVert x \rVert_2$            | Householder reflector construction in QR (§4.7)                                                                                   |
-| `Iamax`         | 1     | $\arg\max_i (\lvert \text{Re} \rvert + \lvert \text{Im} \rvert)$ | Partial-pivot column search in LU (§4.6) and the symmetric pivot search in $LDL^T$ (Greif et al., 2016) |
-| `Geru` / `Gerc` | 2     | $A \leftarrow \alpha x y^T + A$ | LU trailing-submatrix rank-1 updates. `Gerc` supplies the conjugated form on complex operands                                     |
-| `Trsv`          | 2     | $x \leftarrow \text{op}(A)^{-1} x$ | Triangular solves and forward/backward substitution (§4.7.2, §4.10.1)                                                         |
-| `Gemv`          | 2     | $y \leftarrow \alpha \text{op}(A) x + \beta y$ | `Mul<Vector>` (§4.5); matrix-vector products in the solver paths (§4.7.2)                                             |
-| `Gemm`          | 3     | $C \leftarrow \alpha \text{op}(A)\text{op}(B) + \beta C$ | `Mul<Matrix>` (§4.5); trailing-submatrix block updates in LU, $LDL^T$ and QR                                |
+| Subprogram      | Level | Operation                                                        | Required by                                                                                                                           |
+|:----------------|:------|:-----------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| `Axpy`          | 1     | $y \leftarrow \alpha x + y$                                      | `Add`, `Sub` (§4.5); reflector application in QR (§4.7)                                                                               |
+| `Scal`          | 1     | $x \leftarrow \alpha x$                                          | `Neg` (§4.5); pivot-row normalization in LU (§4.6); diagonal scaling in $LDL^T$ (§4.7)                                                |
+| `Dotu` / `Dotc` | 1     | $x^T y$ / $x^H y$                                                | Inner-product accumulation in substitution (§4.7.2, §4.10.1) and $LDL^T$/Cholesky diagonal updates (§4.7). `Dotc` on complex operands |
+| `Nrm2`          | 1     | $\lVert x \rVert_2$                                              | Householder reflector construction in QR (§4.7)                                                                                       |
+| `Iamax`         | 1     | $\arg\max_i (\lvert \text{Re} \rvert + \lvert \text{Im} \rvert)$ | Partial-pivot column search in LU (§4.6) and the symmetric pivot search in $LDL^T$ (Greif et al., 2016)                               |
+| `Geru` / `Gerc` | 2     | $A \leftarrow \alpha x y^T + A$                                  | LU trailing-submatrix rank-1 updates. `Gerc` supplies the conjugated form on complex operands                                         |
+| `Trsv`          | 2     | $x \leftarrow \text{op}(A)^{-1} x$                               | Triangular solves and forward/backward substitution (§4.7.2, §4.10.1)                                                                 |
+| `Gemv`          | 2     | $y \leftarrow \alpha \text{op}(A) x + \beta y$                   | `Mul<Vector>` (§4.5); matrix-vector products in the solver paths (§4.7.2)                                                             |
+| `Gemm`          | 3     | $C \leftarrow \alpha \text{op}(A)\text{op}(B) + \beta C$         | `Mul<Matrix>` (§4.5); trailing-submatrix block updates in LU, $LDL^T$ and QR                                                          |
 
 Scalar bounds follow `subprograms-design.md` §4.1. The ring kernels
 (`Axpy`, `Scal`, `Dotu`, `Dotc`, `Geru`, `Gerc`, `Gemv`, `Gemm`) require
@@ -434,19 +455,19 @@ formerly const generics at the call site are now properties the kernel reads
 off the operand's own type (FR-5; `subprograms-design.md` FR-9). `Matrix`
 supplies:
 
-| Kernel input          | Source                                                                     |
-|:----------------------|:----------------------------------------------------------------------------|
-| Operand `&A` / `&mut Y` | `&self.storage`, typed `S: DenseStorage<T>`                                |
-| Shape                 | `S::R::USIZE`, `S::C::USIZE` — monomorphization constants                   |
-| Addressing            | `as_ptr()` with `r_stride()` / `c_stride()` (`storage-design.md` C-1)      |
-| `trans` / `ta`, `tb`  | The algebraic operation, never the layout (§4.6)                            |
-| `uplo`, `diag`, `side` | The structural intent of the call (`UpLo`, `Diag`, `Side`)                 |
-| $\alpha$, $\beta$     | Scalars of type `T`, or `T::Real` on the real-scaled routines               |
+| Kernel input            | Source                                                                |
+|:------------------------|:----------------------------------------------------------------------|
+| Operand `&A` / `&mut Y` | `&self.storage`, typed `S: DenseStorage<T>`                           |
+| Shape                   | `S::R::USIZE`, `S::C::USIZE` — monomorphization constants             |
+| Addressing              | `as_ptr()` with `r_stride()` / `c_stride()` (`storage-design.md` C-1) |
+| `trans` / `ta`, `tb`    | The algebraic operation, never the layout (§4.6)                      |
+| `uplo`, `diag`, `side`  | The structural intent of the call (`UpLo`, `Diag`, `Side`)            |
+| $\alpha$, $\beta$       | Scalars of type `T`, or `T::Real` on the real-scaled routines         |
 
 Row traversal of column-major storage needs no gather into scratch and no
-separate increment parameter: a row is a `ViewStorage` over the same buffer
+separate increment parameter: a row is a `StorageView` over the same buffer
 with the strides swapped, which the Level 1 kernels consume directly
-(`storage-design.md` FR-5, FR-6).
+(`storage-design.md` FR-2).
 
 *Backend Selection*: `Matrix<T, R, C, S>` dispatches through associated
 functions on a backend marker type — `DefaultBlas` for the pure-Rust
@@ -467,7 +488,7 @@ compile time, so it is not a 5th generic parameter on the `Matrix` struct.
     - Algebraic $A^T x$ / $A^T B$ without a new buffer: pass
       `Trans::Trans` (or `Trans::ConjTrans` for the adjoint $A^H$) into
       `Gemv`/`Gemm` (`subprograms-design.md` C-2). Alternatively
-      `transpose_view()` produces a stride-swapped `ViewStorage` with no
+      `transpose_view()` produces a stride-swapped `StorageView` with no
       copy (§4.3.1); the adjoint is only available as `Trans::ConjTrans`,
       since conjugation has no representation as a stride.
 - **Matrix Inversion & System Solving**:
@@ -498,7 +519,7 @@ dedicated **Decomposition Objects**.
 Every factorization mutates its factors in place, so each decomposition
 object holds an owning strided leaf implementing `DenseStorageMut<T>` (C-3).
 A packed input is converted to a dense working copy through `ToDenseStorage`
-(`storage-design.md` FR-16) before factorization, except where a packed
+(`storage-design.md` FR-7) before factorization, except where a packed
 LAPACK routine exists: `Pptrf`/`Pptrs` factor and solve directly in the
 packed triangle (`subprograms-design.md` FR-6, FR-7).
 
@@ -620,15 +641,15 @@ where
 ##### 4.8.1. Conversion to Polynomial
 
 A square matrix `Matrix<T, D, D, S>` converts to its characteristic polynomial
-`Polynomial<T, <D as DimAdd<U1>>::Output>`.
+`Polynomial<T, <D as DimAdd<Const<1>>>::Output>`.
 
 - **Type Signature**:
   ```rust
-  impl<T, D: Dim, S> TryFrom<Matrix<T, D, D, S>> for Polynomial<T, <D as DimAdd<U1>>::Output>
+  impl<T, D: Dim, S> TryFrom<Matrix<T, D, D, S>> for Polynomial<T, <D as DimAdd<Const<1>>>::Output>
   where
       S: DenseStorage<T, R = D, C = D>,
-      D: DimAdd<U1>,
-      <D as DimAdd<U1>>::Output: Dim,
+      D: DimAdd<Const<1>>,
+      <D as DimAdd<Const<1>>>::Output: Dim,
       T: Scalar + Div<Output = T>,
   {
       type Error = ConversionError;
@@ -661,7 +682,7 @@ Converts a 2D matrix to a rank-2 `Tensor<T, Layout, B>`.
   ```
 - **Behavior**: Maps the leaf's padding-free slice directly into the flat
   buffer representation of the `Tensor`. The `ContiguousStorage` bound is
-  what makes the mapping zero-copy: a strided `ViewStorage` has no such
+  what makes the mapping zero-copy: a strided `StorageView` has no such
   slice and converts by element copy instead.
 - **Infallible Compile-Time Bound**: Dimensions and rank are verified statically
   at compile time via `Layout: TensorLayout<Size = <R as DimMul<C>>::Output>`.
@@ -677,7 +698,7 @@ compiling invalid math.
 
 ##### 4.9.2. Element Lookup Across Both Storage Subsystems
 
-`storage-design.md` FR-1, FR-2, FR-7 and FR-8 define logical coordinate
+`storage-design.md` FR-1, FR-2, FR-3, and FR-7 define logical coordinate
 resolution on `DenseStorage` and `PackedStorage`. Each wrapper exposes those
 accessors by delegating directly to `self.storage` (FR-4), eliminating
 wrapper-level layout matching and runtime index arithmetic:
@@ -685,7 +706,7 @@ wrapper-level layout matching and runtime index arithmetic:
 ```rust
 impl<T, R: Dim, C: Dim, S> Matrix<T, R, C, S>
 where
-    S: DenseStorage<T, R = R, C = C>,
+    S: DenseStorage<T, R=R, C=C>,
 {
     /// Strided lookup. Delegates to `self.storage.get(row, col)`.
     #[inline(always)]
@@ -703,7 +724,7 @@ where
 
 impl<T, R: Dim, C: Dim, S> Matrix<T, R, C, S>
 where
-    S: DenseStorageMut<T, R = R, C = C>,
+    S: DenseStorageMut<T, R=R, C=C>,
 {
     #[inline(always)]
     pub fn get_mut(&mut self, row: usize, col: usize) -> Option<&mut T> {
@@ -726,7 +747,7 @@ where
 
 impl<T, N: Dim, S> PackedMatrix<T, N, S>
 where
-    S: PackedStorage<T, N = N>,
+    S: PackedStorage<T, N=N>,
     T: Copy,
 {
     /// Algebraic entry evaluation. Applies the leaf's structural invariant:
@@ -762,7 +783,7 @@ means out of bounds in both, never "structurally zero".
 Packed mutation is separate again: `PackedStorageMut::set` writes physical
 slots only and rejects structural violations with
 `StorageError::ImmutableUnitDiagonal` or
-`StorageError::InvalidHermitianDiagonal` (`storage-design.md` FR-8, §4.4).
+`StorageError::InvalidHermitianDiagonal` (`storage-design.md` FR-3, §4.4).
 
 *Codegen Advantage*: Delegating coordinate lookup to the concrete leaves lets
 each monomorphized implementation compile without dead layout branches —
@@ -787,7 +808,7 @@ Dynamic operations that cannot be validated statically use soft failure paths:
 #### 4.10. Structural Specializations & Extensions
 
 Structural specializations pair a storage leaf with a high-level newtype
-wrapper. `storage-design.md` FR-9 provides four packed leaves
+wrapper. `storage-design.md` FR-3 provides four packed leaves
 (`SymmetricPackedStorage`, `HermitianPackedStorage`,
 `TriangularPackedStorage`, `DiagonalStorage`); the strided branch provides
 the full-square leaves. The newtypes below are distinct items from the
@@ -813,8 +834,8 @@ invariants, optimize solver algorithms ($LDL^T$, forward/backward substitution),
 and dispatch specialized subprogram kernels.
 
 Both forms are now first-class. A full-square wrapper trades $N^2$ storage for
-the dense kernels (`Trmv`, `Trsv`, `Symv`, `Hemv`); the packed sibling
-(§4.1.1) trades a non-linear index map for $N(N+1)/2$ storage and reaches the
+the dense kernels (`Trmv`, `Trsv`, `Symv`, `Hemv`); the packed aliases
+(§4.1.1) trade a non-linear index map for $N(N+1)/2$ storage and reach the
 packed kernels (`Tpmv`, `Tpsv`, `Spmv`, `Hpmv`;
 `subprograms-design.md` FR-3), which the previous four-tier hierarchy did not
 offer. Hardware acceleration is no longer the deciding factor, since
@@ -838,7 +859,7 @@ pub fn solve_lower_triangular_mut<T, const D: usize>(
 ) -> LinAlgResult<()>
 where
     Const<D>: Dim,
-    T: Scalar + Div<Output = T>,
+    T: Scalar + Div<Output=T>,
     T::Real: Radical + PartialOrd,
 {
     // Diagonal screen. `abs2()` is re² + im², so the comparison needs no
@@ -886,7 +907,7 @@ covariance update in a Kalman filter loop:
 $$ P*{k|k} = (I - K_k H_k) P*{k|k-1} $$
 
 ```rust
-use control_rs::matrix::{Matrix, Dim, U1};
+use control_rs::matrix::{Matrix, Dim, Const};
 
 pub fn kalman_covariance_update<T, S: Dim, O: Dim>(
     p_pred: &Matrix<T, S, S>,
@@ -915,7 +936,45 @@ where
 }
 ```
 
-###### 4.10.4. Abstracting Target-Specific DSP / BLAS FFI
+##### 4.10.4. MIMO State Estimation Observer
+
+In a multivariable state estimation context, the Luenberger observer combines
+continuous plant dynamics with measurement feedback:
+$$ \dot{\hat{x}} = A \hat{x} + B u + L (y - C \hat{x}) $$
+
+Using `Matrix`'s compile-time shape enforcement, dimension mismatches between the
+state space ($N_x$), control inputs ($N_u$), and measured outputs ($N_y$) are
+caught at compile-time:
+
+```rust
+pub fn observer_derivative<T, Nx: Dim, Nu: Dim, Ny: Dim>(
+    a: &Matrix<T, Nx, Nx>,
+    b: &Matrix<T, Nx, Nu>,
+    c: &Matrix<T, Ny, Nx>,
+    l: &Matrix<T, Nx, Ny>,
+    x_hat: &Matrix<T, Nx, Const<1>>,
+    u: &Matrix<T, Nu, Const<1>>,
+    y: &Matrix<T, Ny, Const<1>>,
+) -> Matrix<T, Nx, Const<1>>
+where
+    T: Scalar + Copy,
+    Nx: Dim,
+    Nu: Dim,
+    Ny: Dim,
+    Nx: DimMul<Nx> + DimMul<Nu> + DimMul<Ny>,
+    Ny: DimMul<Nx>,
+{
+    let ax = a * x_hat;
+    let bu = b * u;
+    let cx = c * x_hat;
+    let y_err = y - &cx;
+    let feedback = l * &y_err;
+
+    &(&ax + &bu) + &feedback
+}
+```
+
+###### 4.10.5. Abstracting Target-Specific DSP / BLAS FFI
 
 When hardware acceleration (e.g., CMSIS-DSP, ARM NEON, or vendor-specific
 DSPLib) is enabled, underlying BLAS traits dispatch calls to FFI functions.
@@ -996,7 +1055,7 @@ three storage subsystems of `storage-design.md` §3:
   accessors. Contiguity is an orthogonal marker
   (`ContiguousStorage`/`ContiguousStorageMut`) carrying `as_slice()` and
   `const ORDER: MatrixLayout`. Leaves: `ArrayStorage`, `RowArrayStorage`,
-  `ViewStorage`, `ViewStorageMut`.
+  `StorageView`, `StorageViewMut`.
 - **Packed Structured (`PackedStorage`/`PackedStorageMut`)**: `type N: Dim`,
   with physical slot lookup (`packed_index`) decoupled from algebraic
   evaluation (`value`). Leaves: `SymmetricPackedStorage`,
@@ -1008,15 +1067,12 @@ three storage subsystems of `storage-design.md` §3:
 
 Ways of exposing the dense/packed split on the wrapper:
 
-| Alternative                                     | Status                                                                                                                                                                    |
-|:------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| A shared storage floor named on one `Matrix` struct | **No longer available.** `storage-design.md` Rev 1.8 gives the dense and packed subsystems no common supertrait, so no such bound can be written                          |
-| A fifth `Matrix` parameter selecting the branch | Rejected: encodes in a generic what the leaf's own trait impl already decides; doubles every signature                                                                    |
-| **Adopted: per-branch wrappers (`Matrix` / `PackedMatrix`)** | Duplicates the constructor and inspection surface, which is the cost the upstream split imposes. In exchange each wrapper's accessors are exactly its branch's (§4.1.1) |
-| Wrapper-level coordinate resolution branching   | Rejected: incurs layout matching and arithmetic on every lookup; delegating to storage leaves enables zero-branch, monomorphized indexing                                 |
-
-This reverses the Rev 1.31 choice of a single struct over the Tier-1 floor.
-The reversal is forced by the upstream split, not by a new preference here.
+| Alternative                                                        | Status                                                                                                                                                                                                                                                                                                           |
+|:-------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Adopted: Single `Matrix` struct with trait-gated `impl` blocks** | Defines one unified `Matrix<T, R, C, S>` struct. Trait bounds on `S` (`DenseStorage`, `PackedStorage`, `ContiguousStorage`) enable the appropriate methods per backend, with aliases (`PackedMatrix`, `DiagonalMatrix`, `MatrixSlice`, `Owned`) providing ergonomic naming without wrapper duplication (§4.1.1). |
+| Separate struct wrappers (`Matrix` and `PackedMatrix`)             | Rejected: duplicates constructor, conversion, and inspection surface across two distinct wrapper types.                                                                                                                                                                                                          |
+| A fifth `Matrix` parameter selecting the branch                    | Rejected: encodes in a generic what the leaf's own trait impl already decides; doubles every signature.                                                                                                                                                                                                          |
+| Wrapper-level coordinate resolution branching                      | Rejected: incurs layout matching and arithmetic on every lookup; delegating to storage leaves enables zero-branch, monomorphized indexing.                                                                                                                                                                       |
 
 #### 5.5. Factorization & Inversion Algorithms
 
@@ -1112,160 +1168,145 @@ For computing $\det(A)$, two primary methods were analyzed:
 
 ### 6. Verification & Validation
 
-The matrix implementation is verified and validated across five structured
-pillars to guarantee mathematical correctness, embedded safety, and real-time
-execution predictability.
+#### 6.1. Objectives
 
-#### 6.1. Verification Strategy
+- Demonstrate compile-time rejection of mismatched operand dimensions.
+- Demonstrate numerical accuracy and backward stability across matrix
+  multiplication, transposition, triangular substitution, and direct
+  factorizations (LU, Cholesky, $LDL^T$, QR).
+- Demonstrate exact coordinate access and zero-copy slicing semantics across
+  both dense and packed storage subsystems.
+- Demonstrate zero dynamic heap allocation in `#![no_std]` execution and bounded
+  stack memory consumption.
+- Demonstrate deterministic latency and absence of runtime panic landing pads
+  across direct solvers and factorizations.
 
-1. **Compile-Time Verification**:
-    - Matrix dimension matching ($M \times N \times N \times P \to M \times P$)
-      is strictly enforced by the Rust type system using `Dim` types,
-      completely eliminating runtime dimension checks and preventing invalid
-      pointer arithmetic at compile time.
-2. **Storage-Branch Coverage**:
-    - Coordinate lookup (§4.9.2) is tested on both subsystems: `get` over
-      `ArrayStorage`, `RowArrayStorage` and `ViewStorage`, and `value` over
-      each packed leaf, asserting that an in-bounds implicit coordinate
-      evaluates to its structural entry (reflected, conjugate-reflected,
-      unit, or zero) and that only out-of-bounds coordinates yield `None`.
-    - Submatrix views (§4.3.1) are passed to `Gemv`/`Gemm` and compared
-      against the same window copied into a fresh `ArrayStorage`, asserting
-      that a non-unit stride changes no result.
-    - `transpose_view()` operands are asserted equal to the corresponding
-      `Trans::Trans` kernel call, and `reverse_view()` operands to the
-      $INCX < 0$ reference (`storage-design.md` §6.1 Level 2).
-    - Both wrappers are exercised over `f64`, an integer scalar, and
-      `Complex<f64>`, confirming the ring kernels admit all three and the
-      field kernels reject the integer scalar at compile time.
-    - The subprogram verification suite (`subprograms-design.md` §6.1) is the
-      reference oracle for kernel correctness; `Matrix`'s own suite asserts
-      the call sites pass the right operands, not that the kernels are
-      correct.
-3. **Property & Unit Testing**:
-    - Host-based unit tests execute via `cargo test` to verify constructors,
-      operators, triangular solvers, and slice bounds.
-    - Property-based testing via `proptest` mathematically proves algebraic
-      matrix identities (e.g., $(AB)^T = B^T A^T$, $A(B+C) = AB + AC$) over
-      thousands of generated inputs.
-    - Ill-conditioned, near-singular, and Hilbert matrices are tested to confirm
-      safe, panic-free error degradation (`Err(LinAlgError::SingularMatrix)`).
-4. **Hardware-in-the-Loop (HIL) & Cache Profiling**:
-    - Cross-compiled binaries run on physical target microcontrollers (e.g., ARM
-      Cortex-M4/M7) to profile L1 data/instruction cache misses (`I1mr`/`D1mr`),
-      FPU cycle counts ($c_{\text{inner}}$), and hardware pipeline stall
-      dependencies.
-    - Cycle time for matrix multiplication is validated against the execution
-      model:
-      $$T \approx \frac{(n \cdot m \cdot k \cdot c_{\text{inner}}) + c_{\text{overhead}}}{f}$$
-5. **Stack Bounds Verification**:
-    - Inline stack-allocated matrix capacities are strictly capped
-      at $128 \times 128$ elements ($R::USIZE \times C::USIZE \le 16{,}384$),
-      matching the `Const<N>: Dim` range of `num-types-design.md` C-1 and the
-      `Const`×`Const` product bound of C-3 rather than an independently
-      chosen number.
-    - This is a type-system bound, not a stack-safety guarantee: a
-      $128 \times 128$ `f32` instance is
-      $16{,}384 \times 4\text{ bytes} \approx 64\text{KB}$, well past typical
-      2–8KB bare-metal stack budgets. `clippy::large_stack_arrays` is the
-      actual enforcement point for call-site instance size; CI must fail on
-      any un-justified `#[allow]` of that lint. `storage-design.md` §6.1
-      Level 5 carries the corresponding per-target stack-budget check.
+#### 6.2. Methods
 
-#### 6.2. Validation Strategy
+| Method                    | Mechanism                                                | Requirements discharged  |
+|:--------------------------|:---------------------------------------------------------|:-------------------------|
+| Compile-time shape check  | Type-level `Dim` assertions, `compile_fail` doctests     | FR-1, C-1, C-4           |
+| Requirements-based test   | `#[test]` unit tests over edge cases and singular inputs | FR-3, FR-4, FR-5, C-2    |
+| Property-based test       | `proptest` suites verifying algebraic invariants         | FR-2, FR-6               |
+| Doctest                   | Runnable doc examples in rustdoc                         | FR-2, FR-4               |
+| Back-to-back comparison   | `/cr-prototype numerical-models/matrix` oracle           | FR-2, FR-3               |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis   | NFR-1, NFR-2, C-2, C-3   |
+| On-target execution       | ETS suites under QEMU and Teensy hardware                | NFR-3                    |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics  | FR-1..FR-6, NFR-1..NFR-3 |
 
-1. **Kalman Filter Covariance Update**: Validate end-to-end numeric integrity
-   using the discrete Kalman filter covariance
-   update ($P_{k\vert{}k} = (I - K_k H_k) P_{k\vert{}k-1}$).
-   In state estimation (like a discrete Kalman filter running on a
-   microcontroller), you must update the error covariance matrix using the
-   formula $P_{k\vert{}k} = (I - K_k H_k) P_{k\vert{}k-1}$. This example
-   demonstrates how the `Matrix` API handles matrix arithmetic and identity
-   generation without heap allocation.
+#### 6.3. Acceptance Criteria
 
-   ```rust
-   use control_rs::matrix::{Matrix, Dim, U2, U1};
+| Claim                           | Oracle                              | Measure                     | Bound                                                                  | Justification                                                              |
+|:--------------------------------|:------------------------------------|:----------------------------|:-----------------------------------------------------------------------|:---------------------------------------------------------------------------|
+| LU factorization residual       | Manufactured solution / prototype   | Residual test ratio         | $r = \frac{\|A - LU\|_\infty}{N \|A\|_\infty \epsilon} < 20.0$         | Standard LAPACK test ratio threshold (Anderson et al., 1999; Higham, 2002) |
+| Cholesky factorization residual | Manufactured SPD matrix / prototype | Residual test ratio         | $r = \frac{\|A - L L^T\|_\infty}{N \|A\|_\infty \epsilon} < 20.0$      | Backward error bound for Cholesky (Golub & Van Loan, 2013)                 |
+| QR factorization orthogonality  | Identity $Q^T Q = I$                | Absolute error              | $\|Q^T Q - I\|_\infty < N \epsilon$                                    | Householder QR backward stability (Higham, 2002)                           |
+| Linear system solve $A x = b$   | Closed-form manufactured solution   | Residual test ratio         | $\frac{\|A x - b\|_\infty}{\|A\|_\infty \|x\|_\infty \epsilon} < 20.0$ | Standard linear system backward error (Higham, 2002)                       |
+| Transposition identity          | $(AB)^T = B^T A^T$                  | Exact equality / Rel. error | $0$ (exact) / $\le 2\epsilon$                                          | Algebraic ring property over floating-point / integer scalars              |
+| Coordinate retrieval            | In-bounds / Out-of-bounds queries   | Exact equality              | `Some(v)` (exact) / `None`                                             | Structural indexing invariants across row/col dense and packed layouts     |
+| Singular matrix detection       | Known rank-deficient matrices       | Exact equality              | `Err(LinAlgError::SingularMatrix)`                                     | Determinant threshold / zero-pivot detection in factorization              |
+| Zero-allocation guarantee       | Host memory allocator interception  | Exact equality              | 0 heap allocations                                                     | NFR-1 `#![no_std]` invariant                                               |
 
-   /// Updates the 2x2 error covariance matrix for a 2D state vector (e.g., Position, Velocity)
-   /// given a 1D measurement (e.g., GPS position).
-   pub fn update_error_covariance(
-       p_pred: &Matrix<f32, U2, U2>, // Predicted covariance (2x2)
-       k: &Matrix<f32, U2, U1>,      // Kalman Gain (2x1)
-       h: &Matrix<f32, U1, U2>,      // Observation model (1x2)
-   ) -> Matrix<f32, U2, U2> {
-       // 1. Generate a 2x2 Identity matrix
-       let i = Matrix::<f32, U2, U2>::identity();
+#### 6.4. Traceability
 
-       // 2. Compute K * H -> (2x1) * (1x2) = (2x2)
-       let k_h = k * h;
+| Requirement                                     | Method                                           | Artifact                                               |
+|:------------------------------------------------|:-------------------------------------------------|:-------------------------------------------------------|
+| FR-1 — Compile-Time Shape Verification          | Compile-time shape check                         | `tests/matrix_shape_fail.rs` (`compile_fail` doctests) |
+| FR-2 — Matrix Algebra & Linear Transformations  | Property-based test, Back-to-back comparison     | `tests/matrix_algebra.rs::prop_matrix_mult_assoc`      |
+| FR-3 — Fallible Factorizations & Direct Solvers | Requirements-based test, Back-to-back comparison | `tests/matrix_factorization.rs::test_lu_cholesky_qr`   |
+| FR-4 — Coordinate Element Access                | Requirements-based test                          | `tests/matrix_indexing.rs::test_coordinate_access`     |
+| FR-5 — Structural Specializations               | Property-based test, Requirements-based test     | `tests/matrix_specialized.rs::test_symmetric_packed`   |
+| FR-6 — Zero-Copy Submatrix Views                | Property-based test, Requirements-based test     | `tests/matrix_views.rs::test_strided_submatrix`        |
+| NFR-1 — Zero-Allocation Deterministic Execution | Resource usage evaluation                        | `#![no_std]` host check & static allocator audit       |
+| NFR-2 — Interoperable C-ABI Layout              | Resource usage evaluation                        | `tests/matrix_interop.rs::test_c_abi_layout`           |
+| NFR-3 — Predictable Real-Time Latency           | On-target execution                              | ETS test suite `matrix::bench_gemm_execution`          |
+| C-1 — Stable Rust Toolchain                     | Compile-time shape check                         | Workspace build on `stable` Rust                       |
+| C-2 — Stack Footprint Limit                     | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                  |
+| C-3 — `#![no_std]` Environment                  | Resource usage evaluation                        | Compilation under `#![no_std]` target triples          |
+| C-4 — In-Place Factorization Mutability         | Compile-time shape check                         | Type bound verification on `DenseStorageMut`           |
 
-       // 3. Compute (I - K * H) -> (2x2)
-       let diff = &i - &k_h;
+#### 6.5. Coverage
 
-       // 4. Compute final updated covariance: (I - K * H) * P_pred
-       &diff * p_pred
-   }
-   ```
+- **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage reported
+  via `cargo coverage`.
+- **Excluded**: Target-specific ARM assembly branches tested exclusively under
+  on-target ETS execution, and non-functional `core::fmt::Debug`
+  implementations.
 
-2. **External Integration**: Pass contiguous slice views (`as_slice()`) directly
-   to hardware vendor libraries (ARM CMSIS-DSP, MCUXpresso DSPLib) without
-   copying data.
-3. **Control System Demos**: Execute step-response simulations and closed-loop
-   state-space control loops in `examples/`.
+#### 6.6. Validation
+
+- **Kalman Filter Covariance Update**: End-to-end numeric integrity verification
+  in `examples/kalman_filter.rs`
+  executing $P_{k\vert{}k} = (I - K_k H_k) P_{k\vert{}k-1}$ without dynamic heap
+  allocation.
+- **Hardware DSP Interoperability**: Slicing contiguous memory (`as_slice()`) to
+  pass directly into CMSIS-DSP vector routines without intermediate buffers.
+- **Control System Demos**: Multi-state dynamic simulation in `examples/`
+  executing step-response simulations and closed-loop state-space control loops.
+
+#### 6.7. Not Verified
+
+- Dynamic sparse linear solves are not verified in this document (deferred per
+  §8 open questions to dedicated sparse linear dynamics scoping).
+- Trans-architecture floating-point bitwise equivalence is not claimed across
+  differing hardware FPU implementations (FMA vs non-FMA rounding differences).
 
 ---
 
-### 7. Risks & Open Questions
+### 7. Performance & Resource Considerations
 
-- **Const Generics Complexity**: Stabilized const generics are still limited.
-  Custom trait bounds (like `DimAdd`, `DimMul`) might increase compile times and
-  create verbose error messages.
-- **Precision vs. Performance Trade-off**: Deciding whether to utilize
-  `-ffast-math` or rely on strict IEEE 754 compliance for float math.
-- **Fixed-Point Precision Loss**: Truncation errors in Q31/Q15 accumulator
-  scaling might lead to drift in high-frequency loops.
-- **Layout query owner resolved**: ordering is carried by the leaf's `isize`
-  strides and, for contiguous leaves, `ContiguousStorage::ORDER`. Coordinate
-  resolution is encapsulated in the storage accessors, so no
-  `match self.layout()` branch survives in `Matrix` (§4.2, §4.9.2).
-- **Packed mutation resolved**: `PackedStorageMut` (`storage-design.md` FR-8)
-  ships with the packed leaves, so `PackedMatrix` has a typed in-place write
-  from the start. Writes are restricted to physical slots and reject
-  structural violations by `StorageError` arm (§4.9.2).
-- **Per-branch wrapper surface (new, this revision)**: splitting `Matrix` and
-  `PackedMatrix` (§4.1.1) duplicates the constructor, conversion and
-  inspection surface across two types. How much of that surface is worth
-  sharing through a crate-private helper trait — as opposed to writing it
-  twice — is unresolved and should be settled before implementation.
-- **Sparse-backed matrices unscoped**: `storage-design.md` FR-11 to FR-15
-  define a full sparse subsystem with its own SpBLAS kernels
-  (`subprograms-design.md` FR-5). No wrapper in this document consumes it.
-  Whether sparse dynamics matrices belong here or in
-  `state-space-design.md` is an open scoping question.
-- **Complex scalars reach `Matrix` for the first time**: `Complex<T>`
-  satisfies `T: Scalar` (`num-traits-design.md` §4.3), so every ring
-  operator and kernel in this document now admits it. The specializations of
-  §4.10 name only the symmetric and triangular cases; the Hermitian
-  equivalents (`HermitianPacked`, `Hemv`/`Hemm`/`Herk`) have no wrapper here
-  yet.
+- **Stack Overhead**: Inline stack-allocated matrix capacities are strictly
+  capped at $128 \times 128$ elements ($R::USIZE \times C::USIZE \le 16{,}384$),
+  matching the `Const<N>: Dim` range of `num-types-design.md` C-1 and C-3.
+- **Static Memory Footprint**: Dense array storage
+  requires $R \times C \times \text{size\_of}(T)$ bytes on stack;
+  symmetric/triangular packed storage
+  requires $\frac{N(N+1)}{2} \times \text{size\_of}(T)$ bytes, achieving
+  a $\approx 50\%$ RAM saving for covariance representations.
+- **Zero-Copy Views**: `MatrixSlice` and `MatrixSliceMut` occupy 2 pointer words
+  plus stride metadata, incurring zero allocation and constant-time setup.
+- **Worst-Case Execution Time (WCET)**: Subprogram invocations delegate directly
+  to non-allocating unrolled loops without panic landing pads or runtime
+  branching overhead.
 
 ---
 
-### 8. Development Plan
+### 8. Risks & Open Questions
 
-| Task / Feature               | Description                                                                                                                                                                                        | Estimated Effort |
-|:-----------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Core Layout**      | Define `Matrix` over `DenseStorage<T, R = R, C = C>` and the `PackedMatrix` sibling; delegating lookup accessors (`get`/`set`/`value`) and the `ContiguousStorage` slice path.                     | 2.0 Days         |
-| **Step 2: Operators**        | Implement `Add`, `Sub`, `Neg`, `Mul` over `T: Scalar` with compile-time shape checks, passing typed storage operands per §4.5.2.                                                                   | 1.5 Days         |
-| **Step 3: Solvers**          | Wrap `Getrf`/`Getrs` for LU, add $LDL^T$, determinants, and in-place inversion over `DenseStorageMut`.                                                                                             | 2.0 Days         |
-| **Step 4: Specializations**  | Create `UpperTriangular`, `LowerTriangular`, `Symmetric` wrappers and their packed counterparts.                                                                                                   | 1.5 Days         |
-| **Step 5: Factorizations**   | Wrap `Potrf`/`Potrs` (Cholesky, real and complex) and `Geqrf`/`Ormqr`/`Unmqr` (QR) with typed workspaces.                                                                                          | 2.0 Days         |
-| **Step 6: Verification**     | Set up `proptest` suites, dual-subsystem and strided-view coverage (§6.1), complex-scalar cases, ARM DWT cycle profiling, and Cachegrind setups.                                                   | 2.5 Days         |
-| **Step 7: Interoperability** | Implement conversions between `Matrix`, `Polynomial` (Faddeev-LeVerrier), and `Tensor`.                                                                                                            | 2.0 Days         |
+- **Const Generics Compile Overhead**: Trait bounds with type-level dimension
+  arithmetic (`DimAdd`, `DimMul`) may increase compile times or produce complex
+  diagnostics on compilation failure.
+- **Fixed-Point & Quantized Precision Loss**: Truncation and rounding errors in
+  fixed-point / Q-format accumulators may accumulate drift in high-rate control
+  loops.
+- **Hermitian Specialization Wrapper Scoping**: `Complex<T>` satisfies
+  `T: Scalar`, admitting complex matrices across ring operators and
+  factorizations. Whether dedicated high-level wrappers for Hermitian
+  structures (analogous to `Symmetric`) are necessary beyond type aliases is an
+  open API design question.
+- **Sparse Dynamics Matrix Scoping**: Sparse matrix storage (`storage-design.md`
+  FR-11..FR-15) and SpBLAS routines (`subprograms-design.md` FR-5) remain
+  unconsumed by the core `Matrix` wrapper. Scoping whether sparse linear
+  dynamics belong in `Matrix` or directly in `state-space-design.md` is an open
+  question.
 
 ---
 
-### 9. References
+### 9. Development Plan
+
+| Task / Feature               | Description                                                                                                                                                                                                                             | Estimated Effort |
+|:-----------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Step 1: Core Layout**      | Define unified `Matrix<T, R, C, S>` struct and storage aliases (`Owned`, `MatrixSlice`, `DiagonalMatrix`, `SymmetricPacked`, etc.); implement delegating lookup accessors (`get`/`set`/`value`) and the `ContiguousStorage` slice path. | 2.0 Days         |
+| **Step 2: Operators**        | Implement `Add`, `Sub`, `Neg`, `Mul` over `T: Scalar` with compile-time shape checks, passing typed storage operands per §4.5.2.                                                                                                        | 1.5 Days         |
+| **Step 3: Solvers**          | Wrap `Getrf`/`Getrs` for LU, add $LDL^T$, determinants, and in-place inversion over `DenseStorageMut`.                                                                                                                                  | 2.0 Days         |
+| **Step 4: Specializations**  | Create `UpperTriangular`, `LowerTriangular`, `Symmetric` wrappers and their packed counterparts.                                                                                                                                        | 1.5 Days         |
+| **Step 5: Factorizations**   | Wrap `Potrf`/`Potrs` (Cholesky, real and complex) and `Geqrf`/`Ormqr`/`Unmqr` (QR) with typed workspaces.                                                                                                                               | 2.0 Days         |
+| **Step 6: Verification**     | Set up `proptest` suites, dual-subsystem and strided-view coverage (§6.1), complex-scalar cases, ARM DWT cycle profiling, and Cachegrind setups per `vv-standards.md`.                                                                  | 2.5 Days         |
+| **Step 7: Interoperability** | Implement conversions between `Matrix`, `Polynomial` (Faddeev-LeVerrier), and `Tensor`.                                                                                                                                                 | 2.0 Days         |
+
+---
+
+### 10. References
 
 1. **Golub, G. H., & Van Loan, C. F. (2013).** _Matrix Computations_ (4th ed.).
    Johns Hopkins University Press. — Flop-count basis for in-place
@@ -1304,8 +1345,8 @@ execution predictability.
     suites (`proptest`).
 11. **Rust Project Developers. (2024).** _The Rustonomicon: The Dark Arts of
     Advanced and Unsafe Rust Programming_. — Memory-aliasing and layout
-    guarantees underpinning the `DenseStorage`/`ContiguousStorage` marker
-    split and padding-free slice casting.
+    guarantees underpinning the `DenseStorage`/`ContiguousStorage` marker split
+    and padding-free slice casting.
 12. **ISO. (2018).** _ISO 26262-6:2018 Road vehicles — Functional safety — Part
     6: Product development at the software level_. — Automotive functional
     safety requirements governing static allocation and WCET determinism.
@@ -1320,55 +1361,52 @@ execution predictability.
     `Iamax`, `Gemv`, `Gemm`, `Trsv`, `Getrf`, `Potrf`, `Geqrf`); the inventory
     of kernels available to `Matrix` (§4.5.1).
 16. **Greif, C., He, S., & Liu, P. (2016).** SYM-ILDL: Incomplete $LDL^T$
-    Factorization of Symmetric Indefinite and Skew-Symmetric Matrices.
-    _arXiv:1505.07589_. — $O(n)$ per-step pivot-search cost for symmetric
-    partial pivoting, bounding the `Iamax` work per elimination step.
-17. **Higham, N. J., & Tisseur, F. (2000).** A Block Algorithm for Matrix
-    1-Norm Estimation, with an Application to 1-Norm Pseudospectra. _SIAM
-    Journal on Matrix Analysis and Applications_, 21(4).
-    doi: 10.1137/S0895479899356080. — Multiple-right-hand-side triangular
-    solves arising in LU-based solver paths.
+    Factorization of Symmetric Indefinite and Skew-Symmetric Matrices. _arXiv:
+    1505.07589_. — $O(n)$ per-step pivot-search cost for symmetric partial
+    pivoting, bounding the `Iamax` work per elimination step.
+17. **Higham, N. J., & Tisseur, F. (2000).** A Block Algorithm for Matrix 1-Norm
+    Estimation, with an Application to 1-Norm Pseudospectra. _SIAM Journal on
+    Matrix Analysis and Applications_, 21(4). doi: 10.1137/S0895479899356080. —
+    Multiple-right-hand-side triangular solves arising in LU-based solver paths.
 18. **PLASMA (Univ. of Tennessee Innovative Computing Laboratory). (2025).**
-    `plasma_2.4.5/include/cblas.h` Source File. _PLASMA Documentation_.
-    [Online]. Available:
-    https://icl.utk.edu/plasma/docs/cblas_8h_source.html. Accessed:
-    Aug. 8, 2026. — `CBLAS_ORDER` as a per-call argument rather than a
-    routine property, and the `lda`/`ldb`/`ldc` positions in `cblas_sgemm`,
-    behind §4.2's layout-forwarding rule and §4.5.2's operand table.
+    `plasma_2.4.5/include/cblas.h` Source File. _PLASMA
+    Documentation_. [Online].
+    Available: https://icl.utk.edu/plasma/docs/cblas_8h_source.html. Accessed:
+    Aug. 8, 2026. — `CBLAS_ORDER` as a per-call argument rather than a routine
+    property, and the `lda`/`ldb`/`ldc` positions in `cblas_sgemm`, behind
+    §4.2's layout-forwarding rule and §4.5.2's operand table.
+19. **De Cock, K., & De Moor, B. (2003).** Subspace identification, in *Control
+    Systems, Robotics and Automation*, Encyclopedia of Life Support Systems
+    (EOLSS). Eolss Publishers. — Formulations for block-Hankel data matrices
+    and Markov parameter block-Toeplitz matrices.
+20. **Willems, J. C., Rapisarda, P., Markovsky, I., & De Moor, B. (2004).** A
+    note on persistency of excitation. In *Proceedings of the 43rd IEEE
+    Conference on Decision and Control*, Atlantis, Paradise Island, Bahamas,
+    pp. 2650–2653. — Definition of signal Hankel matrices and fundamental
+    persistency rank bounds.
+21. **Juang, J.-N., & Pappa, R. S. (1985).** An eigensystem realization
+    algorithm for modal parameter identification and model reduction. *Journal
+    of
+    Guidance, Control, and Dynamics*, 8(5), 620–627, doi: 10.2514/3.20031. —
+    Generalized block-Hankel matrix construction from measurement data for
+    modal realization.
+22. **Gevers, M. (2006).** A personal view of the development of system
+    identification. In *SYSID 2006: 14th IFAC Symposium on System
+    Identification*, Newcastle, Australia. — Hankel matrices of covariance
+    sequences for stochastic realization.
 
 ---
 
-### 10. Revision History
+### 11. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-|:---------|:----------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026   | @MitchellDScott | Initial draft outlining core concepts, layout, and operations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 1.1      | July 19, 2026   | @MitchellDScott | Restructured to new template; added embedded performance and verification details.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 1.2      | July 25, 2026   | @MitchellDScott | Added supporting bibliography and inline citations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 1.3      | July 26, 2026   | @MitchellDScott | Added Decomposition Objects, zero-copy MatrixView wrappers, and no_alloc scratch space patterns.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 1.4      | July 26, 2026   | @MitchellDScott | Harmonized with storage trait design doc; updated `Matrix` definition, bounds, decomposition rules, and V&V.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 1.5      | July 26, 2026   | @MitchellDScott | Added comprehensive 3-tiered bibliography and inline citations across core architectural sections.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 1.6      | August 1, 2026  | @MitchellDScott | Corrected `nalgebra` comparison claims; clarified storage-decoupling benefit; added system-solving convenience note.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| 1.7      | August 2, 2026  | @MitchellDScott | Propagated `num-traits-design.md` pivot; removed duplicate MatrixView definitions; relocated `ConversionError`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 1.8      | August 10, 2026 | @MitchellDScott | Realigned with updated math-module code                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 1.10     | August 11, 2026 | @MitchellDScott | Condensed §4.5 operator→subprogram mapping into a scannable table (`Add`/`Sub`→`AXPY`, `Neg`→`SCAL`, `Mul<Matrix>`→`GEMM`, `Mul<Vector>`→`GEMV`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 1.13     | August 15, 2026 | @mitchelldscott | Reverted Doc Status to Draft. `storage-subprograms-design.md` rev 1.2 (August 14, 2026) replaced the flat `Storage`/`StorageMut`/`ContiguousStorage`/`ContiguousStorageMut` hierarchy this document's §1, §4.1, §4.2, §4.3, §4.3.1 and §5.4 still describe with a four-tier `Buffer`/`BlasStorage`/{`MatrixStorage`, `PackedStorage`, `StridedStorage`}/leaf hierarchy; `ArrayStorage`, `StorageView` and `StorageViewMut` no longer name a type that hierarchy defines. No section content changed in this revision; reconciliation (renaming `Matrix`'s `S` bound to the correct Tier-2 branch and updating the architecture prose) is tracked as its own maintenance pass.                                                                                            |
-| 1.14     | August 16, 2026 | @mitchelldscott | Propagated four-tier `BlasStorage` hierarchy (§1, §4.1, §4.3, §4.3.1, §5.4): updated `Matrix` bound to `MatrixStorage<T, R, C>`, default storage alias to `Dense<T, R, C, Array<T, N>>`, slice methods to `BlasStorage`, and view aliases to `Dense` / `StridedView`. Applied B-2/D-2 resolution (§4.5.1): added `GER` and `TRSV` to required subprogram inventory.                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 1.15     | August 16, 2026 | @mitchelldscott | Harmonized with `storage-subprograms-design.md` Rev 1.4 (§1, §4.1): updated `Matrix` storage bound to single-parameter `S: MatrixStorage<T, R = R, C = C>` with associated `R`/`C` types, integrated `FixedBlasStorage<T>` array access (`as_array()`), and detailed monomorphized zero-cost subprogram delegation.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 1.16     | August 16, 2026 | @mitchelldscott | Harmonized with `storage-subprograms-design.md` Rev 1.5 (§1, §4.1): updated `BlasStorage<T, R, C, Stride>` and `MatrixStorage<T, R, C>` to keep `R: Dim`, `C: Dim`, `Stride: Dim` as generic parameters on the storage trait itself, enabling one storage implementor (`Dense`, `Array`, `Ref`, `RefMut`) to be used for any compile-time shape and stride.                                                                                                                                                                                                                                                                                                                                                                                                              |
-| 1.17     | August 16, 2026 | @mitchelldscott | Completed `/cr-design-doc` pass (§1-§10): standardized typed `BlasStorage`/`MatrixStorage` + `&[T; N]` operand model; restored unique `MX-FR-*`/`MX-NFR-*`/`MX-C-*` requirement IDs; specified feature-selected backend dispatch (`#[cfg(feature = "accelerate")]`); aligned decomposition signatures (`LuDecomposition`, `LdltDecomposition`, `CholeskyDecomposition`, `QrDecomposition`) with shipped `src/matrix/decomposition.rs` code (`Const<D>: Dim`); eliminated `lu_decompose_mut` runtime `assert!`; added Tier-2 storage branch element lookup composition (`get`) with `R::USIZE` codegen folding constraint; unified `Symmetric`/`Triangular` leaf + newtype specialization story.                                                                          |
-| 1.18     | August 16, 2026 | @mitchelldscott | Reconciled residual `Storage<T, R, C>` prose references in §5.1 and §8 with `MatrixStorage<T, R, C>` and `BlasStorage`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 1.19     | August 16, 2026 | @mitchelldscott | Standardized requirement IDs in §2 from MX- prefixed tags to plain FR/NFR/C numbered format.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 1.20     | August 16, 2026 | @mitchelldscott | Updated `Matrix` default storage parameter and view aliases (`Owned`, `MatrixSlice`, `MatrixSliceMut`) to convenience storage aliases (`DenseArray`, `DenseRef`, `DenseRefMut`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 1.21     | August 16, 2026 | @mitchelldscott | Encapsulated dimension multiplication inside `DenseArray<T, R, C>` in `storage.rs`, eliminating non-stable const generic math (`{ R * C }`) and extra capacity parameters from `Matrix`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 1.22     | August 16, 2026 | @mitchelldscott | Removed obsolete `FixedBlasStorage` mention; decoupled `R: DimMul<C>` from `Matrix` struct definition; corrected decomposition `Owned<T, Const<D>, Const<D>>` type arguments; aligned `solve_lower_triangular` generic dimension parameters with `LowerTriangular<T, const D: usize>`; refined `Matrix::get` element lookup offset evaluation.                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 1.23     | August 18, 2026 | @mitchelldscott | Reconciled `Matrix` struct storage bound to `S: MatrixStorage<T, R, C>` across §1 and §4.1; clarified `StridedMatrixSlice` as a standalone wrapper over `StridedView`; harmonized §4.9.2 coordinate lookup with Tier-2 `MatrixStorage`; aligned with `storage-subprograms-design.md` Rev 1.10 `&[T; N]` operand model.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 1.24     | August 18, 2026 | @mitchelldscott | Aligned §4.8.2 `Matrix` → `Tensor` conversion to infallible `From` bounded by `TensorLayout<Size = <R as DimMul<C>>::Output>`, eliminating obsolete `LayoutMismatch` runtime check.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 1.25     | August 18, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.11–1.12: `ArrayMatrix`/`Owned` take `const R, const C` over `DenseArray<T, R, C>`/`Array2`; `Matrix` itself stays `Dim`-generic with no owning default; views via FR-6 `view()`/`try_submatrix()`; subprogram operands via `as_array()`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| 1.26     | August 18, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.16: `as_nested()` over `&[[T; R]; C]`; caller-supplied `R2`/`C2`/`LDA` on `try_submatrix`; kernel `trans` only (no `transpose_view` / `StridedView`); `BlasStorage` without `Stride`; `IMPLICIT` packed branch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 1.27     | August 19, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.21 (Approved). Struct bound lowered to `BlasStorage<T, R, C>` with Tier-2 capability required per `impl` block (§4.1.1, §5.4). Accepted ownership of per-$(i, j)$ coordinate lookup for both branches (§4.9.2, FR-4) and of kernel operand preconditions (FR-5, §4.5.2), with `S::LDA` replacing the `lda()` query. Added the `Diagonal`-backed constructor and packed `value()` accessor; recorded `SYRK`/`TRSM` as not required while factorizations stay unblocked; restricted in-place paths to `Dense` (C-4); moved substitution off `get()` onto `TRSV` and fixed-array operands (NFR-3, §4.10.1). Added storage-branch, column-panel and row-strided verification (§6.1) and three upstream open questions (§7). |
-| 1.28     | August 19, 2026 | @mitchelldscott | Delegated logical `(i, j)` coordinate lookup from `Matrix` to `MatrixStorage` (`get`/`get_unchecked`, `get_mut`/`get_unchecked_mut`) and `PackedStorage` (`value`/`value_unchecked`) concrete leaves (FR-4); eliminated wrapper-level `match self.layout()` branching and offset calculation; updated §1, §2.1, §3, §4.1.1, §4.9.2, §5.4, §7, and §8.                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 1.29     | August 19, 2026 | @mitchelldscott | Integrated separate Column-Major and Row-Major storage types (`ColDense`/`RowDense`, `DenseColArray`/`DenseRowArray`, `RowOwned`, `RowMatrixSlice`, `RowMatrixSliceMut`) into matrix alias definitions, kernel layout forwarding, and documentation; updated §1, §4.1, §4.2, §5.4, and §10. |
-| 1.30     | August 20, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.31: `PackedStorage` is the packed addressing branch with Phase-1 `Diagonal` leaf; `SP`/`TP` added on the same branch after storage Phase 1; `PackedStorageMut` deferred until those leaves. |
-| 1.31     | August 20, 2026 | @mitchelldscott | Renamed `BlasStorage`/`BlasStorageMut` -> `MatrixStorage`/`MatrixStorageMut` (universal floor) and the prior `MatrixStorage`/`MatrixStorageMut` (leading-dimension branch) -> `DenseStorage`/`DenseStorageMut`, matching `storage-subprograms-design.md` Rev 1.31; updated §1, §4.1, §4.1.1, §4.9.2, and the Alternatives table. |
-| 1.32     | August 24, 2026 | @mitchelldscott | Retargeted onto the split math designs. `storage-subprograms-design.md` citations resolve to `storage-design.md` Rev 1.8 and `subprograms-design.md` Rev 1.6. Replaced the four-tier `Buffer`/`MatrixStorage`/`DenseStorage`/`PackedStorage` hierarchy with the dense/packed/sparse subsystems: `Matrix` binds `DenseStorage<T, R = R, C = C>`, `PackedMatrix` binds `PackedStorage<T, N = N>` (§4.1.1, §5.4), since the upstream split leaves no shared floor. `isize` strides and `transpose_view`/`reverse_view` replace `type LDA` and the column-panel restriction (§4.2, §4.3.1); typed storage operands replace `as_array`/`as_nested` and the call-site const generics (§4.3, §4.5.2). Subprogram names lowercased onto the trait surface and factorizations delegated to `Getrf`/`Potrf`/`Geqrf` (§4.5.1, §4.7). Scalar bounds moved to `T: Scalar` (ring) and `T: Scalar + Div` (field) per `num-traits-design.md` FR-5, admitting `Complex<T>`. Errors resolve to the four crate-wide enums of `error-design.md`. Status stays Draft. |
+| Revision | Date            | Author          | Description                                                                                                                                           |
+|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 12, 2026   | @MitchellDScott | Initial draft: core matrix representation, operations, and zero-allocation scratch patterns.                                                          |
+| 1.1      | July 26, 2026   | @MitchellDScott | Matrix decompositions: added LU, QR, Cholesky, and LDLT factorizations with LAPACK subroutine mapping.                                                |
+| 1.2      | August 16, 2026 | @MitchellDScott | Storage subsystem parameterization: integrated decoupled storage traits (`DenseStorage`, `PackedStorage`) with static array backends.                |
+| 1.3      | August 19, 2026 | @MitchellDScott | View & layout abstractions: added column-major and row-major storage types, submatrices, and strided views.                                          |
+| 1.4      | August 25, 2026 | @MitchellDScott | Unified matrix representation: consolidated `Matrix<T, R, C, S>` struct across dense and packed backends with specialized type aliases.              |
+| 1.5      | August 25, 2026 | @MitchellDScott | V&V standardization: upgraded test oracles, residual bounds ($\tau = 20.0$), and structured matrix verification.                                      |
+| 1.6      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<N>` dimensions.                                                |
+
+

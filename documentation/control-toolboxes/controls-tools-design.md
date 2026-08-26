@@ -120,7 +120,7 @@ matrix-dimension mismatches, state-space dimension mismatches, storage
 layout mismatches — at `rustc` compile time via the crate's existing
 binary `Dim` system, at zero runtime cost, before any MIL/SIL/PIL
 pass would run. This is complementary to, not
-a replacement for, the crate's own `control-rs-hil` runtime test harness;
+a replacement for, the crate's own `control-rs-ets` runtime test harness;
 it removes an entire class of runtime shape-mismatch and allocation-panic
 failure modes ahead of that runtime testing rather than duplicating what
 MIL/SIL/PIL already cover.
@@ -138,7 +138,7 @@ MIL/SIL/PIL already cover.
   gate.** `control-rs` does not adopt IEC Certification Kit-style tool
   qualification or a dedicated MIL/SIL/PIL numerical-equivalence pipeline
   as the toolbox modules' main verification mechanism; compile-time
-  dimensional verification plus the existing `control-rs-hil` harness
+  dimensional verification plus the existing `control-rs-ets` harness
   serve this role instead (MathWorks, 2026).
 - **No SymForce-style symbolic-generator dependency for toolbox
   algorithms.** Gain computation, filter synthesis and controller
@@ -170,9 +170,9 @@ on Embedded Coder's workflow was considered as the toolboxes' primary
 verification mechanism (MathWorks, 2026). Rejected as the primary
 mechanism: compile-time dimensional verification already eliminates the
 shape-mismatch and allocation-panic failure classes MIL/SIL numerical-
-equivalence testing is partly aimed at and the existing `control-rs-hil`
-harness already provides target-hardware verification. A lightweight
-SIL/PIL-style numerical-equivalence extension to `control-rs-hil` remains
+equivalence testing is partly aimed at and the existing `control-rs-ets`
+harness already provides on-target (processor-side) ETS execution, not HIL. A lightweight
+SIL/PIL-style numerical-equivalence extension to `control-rs-ets` remains
 an open question (see §7) rather than a decision made here.
 
 #### 5.3. Narrow Symbolic Codegen for Isolated Kernels (SymForce Precedent)
@@ -199,7 +199,7 @@ requirements (native authorability, no required host-to-target codegen
 pipeline, no mandatory dynamic allocation, compile-time verification
 priority, offline-only scoping for any symbolic tooling) during their own
 design-doc review and code review. There is no separate test suite, CI
-gate or HIL harness to build for this document itself.
+gate or ETS harness to build for this document itself.
 
 ---
 
@@ -207,7 +207,7 @@ gate or HIL harness to build for this document itself.
 
 - **SIL/PIL numerical-equivalence gap.** `control-rs` has no analogue to
   Simulink's SIL/PIL numerical-equivalence testing between host-simulated
-  and target-executed LTI responses. Value of extending `control-rs-hil` to
+  and target-executed LTI responses. Value of extending `control-rs-ets` to
   close this gap is unresolved (open question 2 in
   `documentation/control-toolboxes/research/results/controls-tools.json`).
 - **SymForce precedent applicability.** Whether SymForce's narrow
@@ -295,8 +295,7 @@ preprint*, arXiv:2003.00292, 2020.
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                             |
-|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft positioning control-rs against major control toolboxes; states native-authoring and no_alloc constraints. |
-| 1.1      | August 8, 2026 | @MitchellDScott | Removed fabricated self-citations per review feedback; replaced with primary-source citations; renumbered References.   |
-| 1.2      | August 24, 2026 | @mitchelldscott | Retargeted the flat `Storage` trait references (§1, §4.1, §4.2) onto the storage traits of `storage-design.md` Rev 1.8. Positioning content unchanged. Status stays Draft. |
+| Revision | Date            | Author          | Description                                                                                                              |
+|:---------|:----------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 8, 2026  | @MitchellDScott | Initial draft positioning control-rs against major control toolboxes; states native-authoring and `no_alloc` constraints. |
+| 1.1      | August 24, 2026 | @MitchellDScott | Storage subsystem alignment: retargeted storage references onto decoupled storage traits (`storage-design.md`).          |

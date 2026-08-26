@@ -1,6 +1,6 @@
 # Numeric Types (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -59,16 +59,10 @@ such as $128 \times 128 = 16384$ must be expressible as type-level results.
 - **C-2 — Unnamed Canonical Arithmetic Results**: `DimAdd`/`DimSub`/
   `DimMul`/`DimMax`/`DimMin`/`DimBit*` on canonical types (`UTerm`/`UInt`)
   succeed for operands whose bit-width stays within the solver budget. The
-  result
-  is a `UTerm`/`UInt` tree; it need not have a `U*` alias and need not equal
-  `<Const<K> as Dim>::TypeNum` unless $K$ is in C-1.
-- **C-3 — Const Product Representability**: For const-generic bridge operands
-  `Const<N>` and `Const<M>`, `DimMul<Const<M>>` is implemented for `Const<N>`
-  if and only if the product $N \times M$ is representable as a valid `Const`
-  dimension in C-1 (i.e. $N \times M \in 0..=1024$ or
-  $N \times M \in \{2048, 4096, 8192, 16384\}$). This bound applies to
-  `Const`×`Const` only; unnamed `UInt` products outside C-1 remain allowed
-  under C-2.
+  result is a `UTerm`/`UInt` tree; it need not have a `U*` alias and need
+  not equal `<Const<K> as Dim>::TypeNum` unless $K$ is in C-1. `Const`
+  operands use the same operators through `TypeNum` (§4.3); a
+  `Const`×`Const` product is not required to lie in C-1.
 
 ---
 
@@ -181,9 +175,10 @@ that prefix (`16384 → 8192 → … → 1024 → … → 0`).
 Const does not reimplement bit recursion. Five forwarding impls per
 operator cover `Const`↔`UTerm`, `Const`↔`UInt`, `Const`↔`Const`, and the
 reverse `UTerm`/`UInt`↔`Const`, each projecting both sides through
-`TypeNum` and reusing the canonical operators. For `Const<N> * Const<M>`,
-multiplication requires the product to be representable as a `Const` in C-1
-(C-3), failing at compile time for unrepresentable values.
+`TypeNum` and reusing the canonical operators. `DimMul` is not special:
+`Const<100>: DimMul<Const<100>>` exists; `Output` is the `UInt` tree for
+$10000$, which need not be a C-1 `Const` (C-2). Naming that product as
+`Const<K>` still requires $K$ in C-1.
 
 There is no `from_i8` / `from_u8` / `try_from_usize`: a runtime integer
 cannot be tied to `N` in a way release builds or the type system enforce.
@@ -290,6 +285,17 @@ projections.
    any dimension that can be instantiated is statically guaranteed to support
    all type-level arithmetic operations reliably.
 
+9. **Restrict `Const`×`Const` `DimMul` to products in C-1.**
+   _Considered_: omit the generic `Const`↔`Const` `DimMul` forwarder and
+   emit only pairs whose product is in C-1, either with
+   `where Const<{N*M}>: Dim` or a literal factor table.
+   _Rejected_: `{N*M}` in a where clause is an abstract const expression
+   that RFC 2000 does not unify on stable (RFC 2000, 2017). A factor table
+   special-cases `DimMul` against every other operator and does not produce
+   `Const<{N*M}>: Dim` for array lengths; `storage-design.md` already notes
+   that projection needs `generic_const_exprs`. C-1 already fails
+   `Const<K>` outside the range at the `Dim` bound.
+
 ---
 
 ### 6. Verification & Validation
@@ -298,8 +304,8 @@ projections.
 
 1. **Zero-footprint assertion**: `test_num_type_zero_byte_footprint` asserts
    `size_of::<UTerm>() == 0` and `size_of::<UInt<UTerm, B1>>() == 0` on a
-   nested `UInt` chain (NFR-1) (Rust Reference, 2026a; Rust Standard Library,
-   2026).
+   nested `UInt` chain, and `size_of::<Const<5>>() == 0` (NFR-1) (Rust
+   Reference, 2026a; Rust Standard Library, 2026).
 2. **Structural arithmetic & bitwise tests**: `num_type_tests.rs` covers
    addition (including commutativity and the zero identity), subtraction
    (including a `compile_fail` doctest for underflow), multiplication, maximum,
@@ -310,33 +316,30 @@ projections.
 3. **Large-product pin**: `U128 * U128` resolves with `USIZE == 16384` and
    is type-equal to `U16384`. Former Peano overflow pins (`U127 * U2`,
    `U126 * U1`, `U1 + U126`) must compile.
-4. **HIL suite wrapping**: the test module is wrapped with
-   `#[cfg_attr(not(test), control_rs_macros::hil_suite)]`. Arithmetic has no
+4. **ETS suite wrapping**: the test module is wrapped with
+   `#[cfg_attr(not(test), control_rs_macros::ets_suite)]`. Arithmetic has no
    runtime component to diverge across targets. The on-target claim is the
    zero-footprint `size_of` assertion only; `compile_fail` doctests do not
-   run under HIL.
+   run under ETS.
 5. **Const bridge**: `Const<5>::TypeNum` is `U5`; `Const<A> + Const<B>`
    concatenates in the existing static-array helper. A C-1 value with no
    `U*` alias (for example `Const<200>`) implements `Dim` with
-   `USIZE == 200`.
-6. **Const product representability (C-3)**: `Const<128> * Const<128>`
-   resolves to `U16384` ($16384 \in$ C-1). The negative oracle is a module-doc
-   `compile_fail` of `<(Const<100> as DimMul<Const<100>>)>::Output` (
-   equivalently
-   `Const<100>: DimMul<Const<100>>`): $10000 \notin$ C-1, so the `Const`×`Const`
-   `DimMul` impl does not exist. This is not the same predicate as item 7.
-7. **Compile-time validation checks**:
+   `USIZE == 200`. `Const<128>: DimMul<Const<128>>` has `Output` type-equal
+   to `U16384`. `Const<100>: DimMul<Const<100>>` exists; `Output` is a
+   `UInt` tree (C-2), not `Const<10000>`.
+6. **Compile-time validation checks**:
     - *In-bounds arithmetic safety*: Verify that all dimensions in C-1 (such as
       `Const<5>`, `Const<200>`, `Const<1024>`, `Const<16384>`) satisfy `Dim` and
       participate in type-level arithmetic (`DimAdd`, `DimSub`, `DimMul`,
-      `DimMax`,
-      `DimMin`, `DimBit*`) without missing trait bounds.
+      `DimMax`, `DimMin`, `DimBit*`) without missing trait bounds, including
+      `Const`×`Const`.
     - *Out-of-bounds immediate failure*: Verify that attempting to use
       `Const<N>` outside C-1 (e.g. `Const<1025>` or `Const<10000>`) as a `Dim`
       fails immediately at compile time at the `Dim` trait boundary (`the trait
      bound Const<...>: Dim is not satisfied`), preventing deferred compile-time
       failure cascades in downstream arithmetic operations. `Const<10000>: Dim`
-      is this check; it is not the C-3 product oracle.
+      is this check. It does not require `Const<100>: DimMul<Const<100>>` to
+      be absent.
 
 #### 6.2 Validation
 
@@ -375,10 +378,6 @@ values that have no `U*` alias. Matrix/polynomial/tensor designs use
    if a consumer's `as_array::<N>()` bound requires it.
 3. **No type-level division or ordering beyond max/min.** `DimDiv` / `DimOrd`
    stay open until a consumer needs them.
-4. **C-3 is a `Const`×`Const` bound, not a `UInt` bound.** Unnamed
-   `UTerm`/`UInt` products outside C-1 remain valid under C-2. Restricting
-   `Const`×`Const` `DimMul` may produce deep `TypeNum` errors at array-length
-   sites; the `compile_fail` message must still mention `Dim` / `DimMul`.
 
 ---
 
@@ -396,24 +395,13 @@ values that have no `U*` alias. Matrix/polynomial/tensor designs use
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                                                   |
-|:---------|:----------------|:----------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 7, 2026  | @MitchellDScott | Initial draft backfilling design rationale for the existing `num_types.rs` module from research findings.                                                                                                                                                                                                                                     |
-| 1.1      | August 9, 2026  | @MitchellDScott | Review and corrections.                                                                                                                                                                                                                                                                                                                       |
-| 1.2      | August 9, 2026  | @MitchellDScott | Raised the friendly-alias ceiling (C-1) from `U32` to `U127`.                                                                                                                                                                                                                                                                                 |
-| 1.3      | August 10, 2026 | @MitchellDScott | Aligned §6.1 with the shipped `U125` `DimMul` pin; added pairwise boundary tests (unit + `compile_fail`) closing Risk 4; marked Phases 2 and 4 complete.                                                                                                                                                                                      |
-| 1.4      | August 22, 2026 | @MitchellDScott | Retargeted Alternative 3 and Phase 3 from deleted `storage-subprograms-design.md` onto `storage-design.md`.                                                                                                                                                                                                                                   |
-| 1.5      | August 22, 2026 | @MitchellDScott | Switched canonical encoding from Peano `Z`/`S<N>` to binary `UTerm`/`UInt`; dropped runtime `Const` constructors; alias range `U0..=U1024` plus powers of two through `U16384`.                                                                                                                                                               |
-| 1.6      | August 22, 2026 | @MitchellDScott | Refactored type alias definitions from a generated static file to a compact, paired macro call (`generate_binary_aliases!`) to prevent code bloat and simplify file structure.                                                                                                                                                                |
-| 1.7      | August 22, 2026 | @MitchellDScott | Split C-1 onto `Const<N>: Dim` (`0..=1024` plus extras); FR-4 is a convenience `U*` subset; unnamed C-1 values use `<Const<N> as Dim>::TypeNum`. Rewrote §4 to binary encoding and generation limits.                                                                                                                                         |
-| 1.8      | August 23, 2026 | @MitchellDScott | Collapsed `Cmp` into a single blanket `PrivateCmp` rule; moved `SelectBit` into `mod private`; batch-generated full contiguous `Const<0..=1024>` range and aliases; marked Phases 2 and 3 complete.                                                                                                                                           |
-| 1.9      | August 23, 2026 | @MitchellDScott | Added FR-5 specification, architecture, and verification plan for type-level bitwise operations (`DimBitAnd`, `DimBitOr`, `DimBitXor`).                                                                                                                                                                                                       |
-| 1.10     | August 23, 2026 | @MitchellDScott | Added C-3 constraint requiring `Const<N> * Const<M>` to be representable as a valid `Const` in C-1 for the multiplication operator to be implemented.                                                                                                                                                                                         |
-| 1.11     | August 23, 2026 | @MitchellDScott | Moved the public/private flowchart into §3 Technical Overview (Figure 1). Split §4 Architecture into encoding, operators, Const bridge, naming, and generation subsections.                                                                                                                                                                   |
-| 1.12     | August 23, 2026 | @MitchellDScott | Added nalgebra/typenum architectural comparison (deferred vs upfront structural bounds) to §5 Alternatives (item 8) and compile-time validation check to §6.1 (item 7).                                                                                                                                                                       |
-| 1.13     | August 23, 2026 | @MitchellDScott | Grounded citations across all sections, corrected section heading hierarchy and numbering (§10 References, §11 Revision History), cleaned broken revision table formatting, and verified contract alignment with `num_types.rs`.                                                                                                              |
-| 1.14     | August 24, 2026 | @MitchellDScott | Reverted Doc Status Approved → Draft for verification-gap Phase 1. Annotated FR-3/FR-4 forward references to C-1; retitled C-2; re-housed Const-product feasibility from NFR-3 to C-3 (identifier restored to match rev 1.10 and §4/§6 citations). Split §6.1 item 6 (`Const`×`Const` `DimMul` `compile_fail`) from item 7 (`Const<K>: Dim`). |
-| 1.15     | August 24, 2026 | @MitchellDScott | Maintenance pass: aligned section structure and `## References` section; verified contract alignment with `src/math/num_types.rs` and SIL test suite (20 cases passing) in preparation for Reviewed status.                                                                                                                                   |
+| Revision | Date            | Author          | Description                                                                                                                           |
+|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 7, 2026  | @MitchellDScott | Initial specification for type-level dimensions (`num_types.rs`).                                                                     |
+| 1.1      | August 22, 2026 | @MitchellDScott | Binary encoding: transitioned from Peano integers to binary `UTerm`/`UInt` and macro-generated `Const<N>` aliases (`0..=1024`).        |
+| 1.2      | August 23, 2026 | @MitchellDScott | Type-level bitwise operations: added `DimBitAnd`, `DimBitOr`, and `DimBitXor` traits and verification tests.                          |
+| 1.3      | August 25, 2026 | @MitchellDScott | Operator forwarding: simplified dimension operator implementations across `DimAdd`, `DimSub`, and `DimMul`.                         |
+| 1.4      | August 25, 2026 | @MitchellDScott | Full test suite verification and compile-time dimension validation.                                                                   |
 
 ---
 

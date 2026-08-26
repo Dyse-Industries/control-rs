@@ -249,7 +249,7 @@ where
 /// Steady-state (linear, time-invariant) Kalman filter — fixed gain from riccati.
 pub struct SteadyStateKalmanFilter<T, D: Dim, Z: Dim, Sg, Sx> {
     gain: Matrix<T, D, Z, Sg>,
-    state: Matrix<T, D, U1, Sx>,
+    state: Matrix<T, D, Const<1>, Sx>,
 }
 
 /// Extended Kalman filter — relinearizes every step; a distinct code path
@@ -259,7 +259,7 @@ pub struct SteadyStateKalmanFilter<T, D: Dim, Z: Dim, Sg, Sx> {
 /// for `SymmetricPacked` storage (`matrix-design.md` §4.1.1), which halves
 /// its footprint and reaches `Spmv`/`Spr` directly. §8 tracks that choice.
 pub struct ExtendedKalmanFilter<T, D: Dim, Z: Dim, Sx, Sp> {
-    state: Matrix<T, D, U1, Sx>,
+    state: Matrix<T, D, Const<1>, Sx>,
     covariance: Matrix<T, D, D, Sp>,
 }
 
@@ -267,7 +267,7 @@ impl<T, D: Dim, Z: Dim, Sx, Sp> ExtendedKalmanFilter<T, D, Z, Sx, Sp> {
     /// Mirrors FilterPy's predict_update(z, HJacobian, Hx, ...) shape (Labbe, 2016a).
     pub fn predict_update<F, H, Sz, Sq, Sr, Sh>(
         &mut self,
-        z: &Matrix<T, Z, U1, Sz>,
+        z: &Matrix<T, Z, Const<1>, Sz>,
         f_jacobian: F,
         h_jacobian: H,
         q: &Matrix<T, D, D, Sq>,
@@ -277,8 +277,8 @@ impl<T, D: Dim, Z: Dim, Sx, Sp> ExtendedKalmanFilter<T, D, Z, Sx, Sp> {
         // Jacobians write into caller-provided buffers: a returned
         // `ArrayMatrix<T, {D::USIZE}, {D::USIZE}>` would be a
         // parameter-dependent const expression (`matrix-design.md` C-1).
-        F: Fn(&Matrix<T, D, U1, Sx>, &mut Matrix<T, D, D, Sp>),
-        H: Fn(&Matrix<T, D, U1, Sx>, &mut Matrix<T, Z, D, Sh>),
+        F: Fn(&Matrix<T, D, Const<1>, Sx>, &mut Matrix<T, D, D, Sp>),
+        H: Fn(&Matrix<T, D, Const<1>, Sx>, &mut Matrix<T, Z, D, Sh>),
     {
         todo!()
     }
@@ -292,8 +292,8 @@ pub struct LuenbergerObserver<T, D: Dim, Z: Dim, Sg> {
 
 Every operand carries its own storage parameter rather than a fixed leaf, so
 a caller may back $A$ with `ArrayStorage`, borrow it from a larger buffer
-through `ViewStorage`, or place it in Flash, without changing these
-signatures (`storage-design.md` FR-4, FR-5). Outputs are caller-provided
+through `StorageView`, or place it in Flash, without changing these
+signatures (`storage-design.md` FR-1, FR-2). Outputs are caller-provided
 `DenseStorageMut` operands for the reason `matrix-design.md` §5.1 gives.
 
 Riccati and observer synthesis reach LAPACK through the subprogram traits
@@ -372,7 +372,7 @@ Two options follow:
    stability of $A - BK$/$A - LC$ eigenvalues after placement) are checked
    via `proptest` over generated system matrices, per this crate's
    invariant-heavy-code testing standard.
-3. **HIL**: Not applicable. `modern_tools` is a numerical solver/estimator
+3. **ETS**: Not applicable. `modern_tools` is a numerical solver/estimator
    module with no hardware interface; it is exercised through the same
    host-based unit/property-test path as `Matrix` and `StateSpace`.
 
@@ -514,7 +514,8 @@ Two options follow:
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                                          |
-|:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: requirements, Riccati-solver architecture, Kalman/EKF/UKF/Luenberger split and packaging question flagged for review. |
-| 1.1      | August 24, 2026 | @mitchelldscott | Aligned the §4.4 API sketch with the retargeted numerical models: every `Matrix<...>` operand carries its own storage parameter bound on `DenseStorage`/`DenseStorageMut`; outputs are caller-provided rather than stack-returned. Scalar bound stated as `Scalar + Div` with `T::Real: Radical` in place of `T: Float` (`num-traits-design.md` FR-5). Added the routine-to-subprogram mapping table (`Gemm`, `Getrf`/`Getrs`, `Potrf`/`Potrs`, `Syrk`, `Syev`/`Heev`, `Geqrf`/`Ormqr`). Recorded the covariance storage-form choice and the still-absent Schur decomposition as open questions (§7). Control theory content unchanged. Status stays Draft. |
+| Revision | Date            | Author          | Description                                                                                                                           |
+|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 8, 2026  | @MitchellDScott | Initial draft: requirements, Riccati-solver architecture, and Kalman/EKF/UKF/Luenberger filter split.                                 |
+| 1.1      | August 24, 2026 | @MitchellDScott | Numerical models & subprograms alignment: caller-allocated matrix outputs, `Scalar + Div` bounds, and BLAS/LAPACK subprogram table.  |
+| 1.2      | August 26, 2026 | @MitchellDScott | Storage retarget: updated references to `StorageView` and `Const<1>` dimensions.                                                      |

@@ -1,4 +1,4 @@
-//! Interactive Terminal User Interface (TUI) for hardware-in-the-loop (HIL) testing.
+//! Interactive Terminal User Interface (TUI) for Embedded Test Server (ETS) testing.
 //! Allows running, stopping and filtering tests, as well as modifying settings dynamically.
 use std::io::stdout;
 use std::time::Duration;
@@ -21,8 +21,8 @@ use ratatui::{
 };
 
 use crate::bridge::{BridgeMessage, ServerBridge, Target};
-use control_rs_hil::comms::{Command, LogMessage, Telemetry, TestState};
-use control_rs_hil::settings::SettingValue;
+use control_rs_ets::comms::{Command, LogMessage, Telemetry, TestState};
+use control_rs_ets::settings::SettingValue;
 
 type TuiTerminal = Terminal<CrosstermBackend<std::io::Stdout>>;
 type TuiResult = Result<(), Box<dyn std::error::Error>>;
@@ -838,7 +838,7 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
     let header = Paragraph::new(header_text).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" control-rs HIL Console "),
+            .title(" control-rs ETS Console "),
     );
     f.render_widget(header, chunks[0]);
 
@@ -1237,7 +1237,7 @@ mod tests {
     #![allow(clippy::too_many_lines)]
 
     use super::*;
-    use control_rs_hil::comms::LogMessage;
+    use control_rs_ets::comms::LogMessage;
 
     fn make_exit_status() -> std::process::ExitStatus {
         std::process::Command::new("true")

@@ -1,4 +1,4 @@
-//! Complex number mathematical HIL and unit test suite.
+//! Complex number mathematical ETS and unit test suite.
 //!
 //! `complex_num.rs` has no dedicated design doc, so tests here are not
 //! cited against per-test functional requirements. `Complex<T>: Scalar`
@@ -7,8 +7,8 @@
 //! primary `Scalar` coverage.
 #![allow(clippy::arithmetic_side_effects)]
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
-/// Unit and HIL test suite for complex number operations.
+#[cfg_attr(not(test), control_rs_macros::ets_suite)]
+/// Unit and ETS test suite for complex number operations.
 pub mod complex_num_test_suite {
     use crate::{
         assert_almost_eq,

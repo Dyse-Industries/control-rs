@@ -11,6 +11,7 @@
       <sourceFolder url="file://$MODULE_DIR$/examples" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/examples/experiments/blas-interface/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/examples/experiments/storage-subprogram/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/control-rs-ets/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

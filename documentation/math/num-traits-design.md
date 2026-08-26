@@ -1,6 +1,6 @@
 # Numeric Trait Hierarchy (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -59,8 +59,9 @@ wrapping vs. saturating).
 
 This effort touches `src/math/num_traits.rs` (trait definitions and
 `impl_*!` macros) and the `Complex<T>` bridges in `src/math/complex_num.rs`.
-`Quantized<Repr, SHIFT>` is defined with the tensor scalar type; this module
-only states the trait contract that type must satisfy. No new files.
+`Fixed<Repr, SHIFT>` / `Quantized<Repr, SHIFT>` live in
+`src/math/fixed_num.rs` (`fixed-num-design.md`); this module states the
+trait contract those types must satisfy. No new files.
 
 ```mermaid
 classDiagram
@@ -378,11 +379,12 @@ target environments:
 2. **Compile-Time Marker Assertions**:
     - Negative trait bounds (`unsigned: AdditiveGroup`, `Complex<f64>: Float`,
       `Complex<u8>: Scalar`) are rustdoc `compile_fail` doctests on
-      `num_traits` module docs. They do not live in `#[hil_suite]` / `cfg(test)`
+      `num_traits` module docs. They do not live in `#[ets_suite]` / `cfg(test)`
       modules; rustdoc does not extract doctests from those.
     - Marker tests verify at compile time that `Scalar` is implemented for
       every integer and float primitive (signed and unsigned), that
-      `Unsigned + Integer + SaturatingInteger` hold on unsigned primitives,
+      `Unsigned + Integer + SaturatingInteger` hold on unsigned primitives
+      including `u128` and `usize`,
       and that `AdditiveGroup`/`Signed` are withheld from unsigned types (
       positive checks in `num_trait_tests.rs`).
     - `Complex<T>: Scalar` with `Real = T` when `T: Neg`; `compile_fail` that
@@ -394,15 +396,17 @@ target environments:
       for real primitives; `Complex<T>::Real = T`, method `re()`/`im()` match
       the `re`/`im` fields, and
       `z.abs2() == z.re * z.re + z.im * z.im`.
-    - `Quantized` marker `compile_fail`s are open until the tensor scalar type
-      lands.
+    - `Quantized` / `Fixed` marker `compile_fail`s are specified in
+      `fixed-num-design.md` §6.1.5 (`Q15: One`, `Q15: Scalar`,
+      `Fixed<i16, 14>: SaturatingInteger` as trait bounds). They are no
+      longer deferred to a tensor scalar type.
     - `Complex<T>` does not implement `PartialOrd`. A rustdoc `compile_fail`
       pins that bound. `clamp` / `signum` stay on `T: Scalar + PartialOrd`;
       `src/math/subprograms.rs` and `src/math/dsp.rs` clip through `T::Real`
       (`abs2`, `re`).
-3. **SIL/HIL Test Suite Integration**:
-    - Unit tests within `num_traits` are wrapped with the `#[hil_suite]` proc
-      macro infrastructure. The HIL wrap covers wrap/saturate **runtime**
+3. **Host tests and ETS suite wrap**:
+    - Unit tests within `num_traits` are wrapped with the `#[ets_suite]` proc
+      macro infrastructure. The ETS wrap covers wrap/saturate **runtime**
       tests only; it does not verify marker absence or type-level bounds
       beyond ZST `size_of`.
 
@@ -491,28 +495,19 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | **Phase 2: `Conjugate` + `Scalar::Real`** | `Conjugate` supertrait of `Scalar`; `type Real` with `re`/`im`/`from_real`/`abs2`; `impl_scalar!` emits identity conjugation and `Real = Self`; `Float: Scalar`. | Complete         |
 | **Phase 3: `Complex<T>` retraction**      | `Complex<T>: Scalar` (`Real = T`) + `Conjugate` + `AdditiveGroup` + `Div`; remove `Float`/`Signed`/`Radical`/`Trig`/`Exponential`.                               | Complete         |
 | **Phase 4: Call-site migration**          | Re-bound `subprograms.rs`, `dsp.rs`, `assert.rs`, and matrix decompositions that used `T: Float` as a complex stand-in.                                          | Complete         |
-| **Phase 5: Verification**                 | Marker tests and `compile_fail` doctests for FR-3–FR-5; `#[hil_suite]` wrap/saturate suite verified. `Quantized` impls wait on the tensor scalar type.           | Complete         |
+| **Phase 5: Verification**                 | Marker tests and `compile_fail` doctests for FR-3–FR-5; `#[ets_suite]` wrap/saturate suite verified. `Quantized` / `Fixed` negative oracles live in `fixed-num-design.md` §6.1.5. | Complete         |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                 |
-|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 1, 2026  | @MitchellDScott | Comprehensive design spec for `math::num_traits` refinement, introducing `AdditiveGroup`/`ClosedRing` and HIL/SIL verification standards.                                                                                                                                                                   |
-| 1.1      | August 2, 2026  | @MitchellDScott | Superseded `Ring`/`Field`/`Real` with the hardware-aligned `Zero`/`One`/`Integer`/`Float`/`Scalar` hierarchy; reverted status to Draft.                                                                                                                                                                     |
-| 1.2      | August 8, 2026  | @MitchellDScott | Updated citations to the author-year standard; added inline citations and a References section; renumbered Revision History.                                                                                                                                                                                |
-| 1.3      | August 9, 2026  | @MitchellDScott | Review and corrections.                                                                                                                                                                                                                                                                                     |
-| 1.4      | August 10, 2026 | @MitchellDScott | Aligned FR-3, hierarchy diagram, §4 layers and §6.1 markers with shipped `Scalar` (`Zero + One + Sub + Mul`, including unsigned).                                                                                                                                                                           |
-| 1.5      | August 16, 2026 | @MitchellDScott | Refactored §2 to observable outcome requirements, separating hardware goals from §4 architecture.                                                                                                                                                                                                           |
-| 1.6      | August 21, 2026 | @MitchellDScott | Added `Conjugate` trait (FR-3) for scalar and complex conjugation; scoped macro emission to prevent duplicate integer impls; corrected cross-references.                                                                                                                                                    |
-| 1.7      | August 22, 2026 | @MitchellDScott | `Conjugate` supertrait of `Scalar`; `Scalar::Real` projection (FR-4); implementor partition (FR-5) retracting `Complex: Float`; `Float: Scalar`; named `Quantized` as a `Scalar` implementor. Status reverted to Draft.                                                                                     |
-| 1.8      | August 22, 2026 | @MitchellDScott | Replaced §4.1 flowchart with a UML class diagram (supertrait bounds and `Complex<T>` realizations).                                                                                                                                                                                                         |
-| 1.9      | August 22, 2026 | @MitchellDScott | Named `hypot`/`atan2` arguments `y`/`x` in the §4.1 UML (`rhs` is an operator-trait convention, not the geometric operands).                                                                                                                                                                                |
-| 1.10     | August 23, 2026 | @MitchellDScott | Standardized IEEE references formatting, grounded all inline citations across architectural sections, aligned heading hierarchy (§4 Architecture), and updated Author metadata badge.                                                                                                                       |
-| 1.12     | August 24, 2026 | @MitchellDScott | Dropped `PartialOrd` from `Zero`/`One` and from `Complex<T>`; `clamp`/`signum` take `where Self: PartialOrd`; `Signed` and `Scalar::Real` carry `PartialOrd`.                                                                                                                                               |
-| 1.13     | August 24, 2026 | @MitchellDScott | Maintenance: IEEE years on [1][2][3][6][7] from `num-traits.bib`; labeled unsourced algorithms as Proposal; noted missing 2026 const-traits goal-page bib entry.                                                                                                                                            |
-| 1.14     | August 24, 2026 | @MitchellDScott | Maintenance pass: marked Development Plan Phases 2–5 Complete following full implementation in `src/math/num_traits.rs` and `src/math/complex_num.rs` with verification in `src/math/tests/num_trait_tests.rs`; closed Risk 5; aligned section numbering and references in preparation for Reviewed status. |
+| Revision | Date            | Author          | Description                                                                                                                           |
+|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 1, 2026  | @MitchellDScott | Initial draft introducing numeric trait hierarchy and verification standards.                                                         |
+| 1.1      | August 2, 2026  | @MitchellDScott | Hardware-aligned hierarchy: replaced algebraic Ring/Field with `Zero`, `One`, `Integer`, `Float`, and `Scalar`.                      |
+| 1.2      | August 22, 2026 | @MitchellDScott | Complex scalar support: added `Conjugate` trait, `Scalar::Real` projection, and retracted `Complex: Float` in favor of `Complex: Scalar`. |
+| 1.3      | August 24, 2026 | @MitchellDScott | Comparison decoupling: dropped `PartialOrd` from `Zero`/`One` and `Complex<T>`, restricting ordering to `Signed` and `Scalar::Real`.  |
+| 1.4      | August 24, 2026 | @MitchellDScott | Full implementation and verification of numeric traits and complex number primitives.                                                 |
 
 ---
 

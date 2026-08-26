@@ -81,12 +81,12 @@ jobs:
           path: target/tarpaulin/*coverage.json
           retention-days: 30
 
-      - name: Upload SIL Results Artifact
+      - name: Upload ETS Results Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sil-results-${{ matrix.rust }}
-          path: sil-results.json
+          name: ets-results-${{ matrix.rust }}
+          path: ets-results.json
           retention-days: 30
 
   publish:

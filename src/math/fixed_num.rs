@@ -13,14 +13,34 @@
 //! mathematical identity constants ($1.0$, $2.0$) are strictly representable.
 //!
 //! Standard DSP interchange formats (e.g. `Q15`, `Q31`) span $[-1.0, 1.0)$ and cannot represent
-//! $1.0$. Consequently, `Q15` implements `Zero` and `Conjugate`, but withholds `One` and `Scalar`:
+//! $1.0$. Consequently, `Q15` implements `Zero` and `Conjugate`, but withholds `One`, `Scalar`,
+//! and `SaturatingInteger` as trait bounds:
 //!
 //! ```compile_fail
 //! use control_rs::math::num_traits::One;
 //! use control_rs::math::fixed_num::Q15;
 //!
-//! // Q15 cannot represent 1.0; evaluating ONE triggers a compile-time const assertion failure
-//! let _ = <Q15 as One>::ONE;
+//! fn assert_one<T: One>() {}
+//! // Q15 cannot represent 1.0; trait bound One is withheld
+//! assert_one::<Q15>();
+//! ```
+//!
+//! ```compile_fail
+//! use control_rs::math::num_traits::Scalar;
+//! use control_rs::math::fixed_num::Fixed;
+//!
+//! fn assert_scalar<T: Scalar>() {}
+//! // Fixed<i16, 15> (Q15) cannot represent 1.0; trait bound Scalar is withheld
+//! assert_scalar::<Fixed<i16, 15>>();
+//! ```
+//!
+//! ```compile_fail
+//! use control_rs::math::num_traits::SaturatingInteger;
+//! use control_rs::math::fixed_num::Fixed;
+//!
+//! fn assert_sat_int<T: SaturatingInteger>() {}
+//! // Fixed<i16, 14> can represent 1.0 but not 2.0; trait bound SaturatingInteger is withheld
+//! assert_sat_int::<Fixed<i16, 14>>();
 //! ```
 //!
 //! ```compile_fail
@@ -67,6 +87,20 @@ mod private {
     impl Sealed for u16 {}
     impl Sealed for u32 {}
     impl Sealed for u64 {}
+
+    pub trait SealedMarker {}
+}
+
+/// Sealed marker trait indicating that $1.0$ is strictly representable at this scale.
+pub trait OneRepresentable: private::SealedMarker {
+    /// Multiplicative identity ($1.0$) for this fixed-point format.
+    const ONE: Self;
+}
+
+/// Sealed marker trait indicating that $2.0$ is strictly representable at this scale.
+pub trait TwoRepresentable: OneRepresentable {
+    /// Multiplicative constant ($2.0$) for this fixed-point format.
+    const TWO: Self;
 }
 
 #[inline]
@@ -669,6 +703,13 @@ impl<Repr: FixedRepr, const SHIFT: i32> Fixed<Repr, SHIFT> {
         self.raw
     }
 
+    /// Builds a fixed-point value from raw representation (alias for [`Fixed::from_bits`]).
+    #[inline(always)]
+    #[must_use]
+    pub const fn from_raw(raw: Repr) -> Self {
+        Self { raw }
+    }
+
     /// Converts a floating-point number into this fixed-point format with saturation.
     #[inline]
     #[must_use]
@@ -685,6 +726,27 @@ impl<Repr: FixedRepr, const SHIFT: i32> Fixed<Repr, SHIFT> {
         Repr::to_f64(self.raw, SHIFT)
     }
 
+    /// Extracts the underlying raw representation.
+    #[inline(always)]
+    #[must_use]
+    pub const fn raw(self) -> Repr {
+        self.raw
+    }
+
+    /// Quantizes a floating-point scalar into this fixed-point format (alias for [`Fixed::from_num`]).
+    #[inline]
+    #[must_use]
+    pub fn quantize(val: impl Into<f64>) -> Self {
+        Self::from_num(val.into())
+    }
+
+    /// Dequantizes this fixed-point scalar into a floating-point number (alias for [`Fixed::to_num`]).
+    #[inline]
+    #[must_use]
+    pub fn dequantize(self) -> f64 {
+        self.to_num()
+    }
+
     /// Rescales this value to a new scale exponent `R` with convergent rounding.
     #[inline]
     #[must_use]
@@ -697,58 +759,103 @@ impl<Repr: FixedRepr, const SHIFT: i32> Fixed<Repr, SHIFT> {
     }
 }
 
-macro_rules! impl_concrete_constants_for_fixed {
-    ($($t:ty),+) => {
+macro_rules! impl_representable_markers {
+    ($t:ty, [$($shift_two:expr),* $(,)?], [$($shift_one_only:expr),* $(,)?]) => {
         $(
-            impl<const SHIFT: i32> Fixed<$t, SHIFT> {
-                /// Multiplicative identity ($1.0$), gated to scales where $1.0$ is representable.
-                pub const ONE: Self = {
-                    assert!(0 <= SHIFT && (SHIFT as u32) <= <$t>::BITS);
-                    if <$t>::MIN != 0 {
-                        assert!(
-                            SHIFT <= (<$t>::BITS as i32 - 2),
-                            "ONE is not representable when SHIFT > BITS - 2 for signed representation"
-                        );
-                    } else {
-                        assert!(
-                            SHIFT <= (<$t>::BITS as i32 - 1),
-                            "ONE is not representable when SHIFT > BITS - 1 for unsigned representation"
-                        );
-                    }
-                    Self { raw: (1 as $t) << (SHIFT as u32) }
-                };
-
-                /// Multiplicative constant ($2.0$), gated to scales where $2.0$ is representable.
-                pub const TWO: Self = {
-                    assert!(0 <= SHIFT && (SHIFT as u32) <= <$t>::BITS);
-                    if <$t>::MIN != 0 {
-                        assert!(
-                            SHIFT <= (<$t>::BITS as i32 - 3),
-                            "TWO is not representable when SHIFT > BITS - 3 for signed representation"
-                        );
-                    } else {
-                        assert!(
-                            SHIFT <= (<$t>::BITS as i32 - 2),
-                            "TWO is not representable when SHIFT > BITS - 2 for unsigned representation"
-                        );
-                    }
-                    Self { raw: (1 as $t) << ((SHIFT + 1) as u32) }
-                };
+            impl private::SealedMarker for Fixed<$t, $shift_two> {}
+            impl OneRepresentable for Fixed<$t, $shift_two> {
+                const ONE: Self = Self { raw: (1 as $t) << ($shift_two as u32) };
             }
-
-            impl<const SHIFT: i32> One for Fixed<$t, SHIFT> {
-                const ONE: Self = Self::ONE;
-
-                #[inline(always)]
-                fn is_one(&self) -> bool {
-                    self.raw == Self::ONE.raw
-                }
+            impl TwoRepresentable for Fixed<$t, $shift_two> {
+                const TWO: Self = Self { raw: (1 as $t) << (($shift_two + 1) as u32) };
             }
-        )+
+        )*
+        $(
+            impl private::SealedMarker for Fixed<$t, $shift_one_only> {}
+            impl OneRepresentable for Fixed<$t, $shift_one_only> {
+                const ONE: Self = Self { raw: (1 as $t) << ($shift_one_only as u32) };
+            }
+        )*
     };
 }
 
-impl_concrete_constants_for_fixed!(i8, i16, i32, i64, u8, u16, u32, u64);
+impl_representable_markers!(i8, [0, 1, 2, 3, 4, 5], [6]);
+impl_representable_markers!(
+    i16,
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    [14]
+);
+impl_representable_markers!(
+    i32,
+    [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+        20, 21, 22, 23, 24, 25, 26, 27, 28, 29
+    ],
+    [30]
+);
+impl_representable_markers!(
+    i64,
+    [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+        38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+        56, 57, 58, 59, 60, 61
+    ],
+    [62]
+);
+
+impl_representable_markers!(u8, [0, 1, 2, 3, 4, 5, 6], [7]);
+impl_representable_markers!(
+    u16,
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+    [15]
+);
+impl_representable_markers!(
+    u32,
+    [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30
+    ],
+    [31]
+);
+impl_representable_markers!(
+    u64,
+    [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+        38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+        56, 57, 58, 59, 60, 61, 62
+    ],
+    [63]
+);
+
+impl<Repr: FixedRepr, const SHIFT: i32> Fixed<Repr, SHIFT>
+where
+    Self: OneRepresentable,
+{
+    /// Multiplicative identity ($1.0$), gated to scales where $1.0$ is representable.
+    pub const ONE: Self = <Self as OneRepresentable>::ONE;
+}
+
+impl<Repr: FixedRepr, const SHIFT: i32> Fixed<Repr, SHIFT>
+where
+    Self: TwoRepresentable,
+{
+    /// Multiplicative constant ($2.0$), gated to scales where $2.0$ is representable.
+    pub const TWO: Self = <Self as TwoRepresentable>::TWO;
+}
+
+impl<Repr: FixedRepr, const SHIFT: i32> One for Fixed<Repr, SHIFT>
+where
+    Self: OneRepresentable,
+{
+    const ONE: Self = <Self as OneRepresentable>::ONE;
+
+    #[inline(always)]
+    fn is_one(&self) -> bool {
+        self.raw == Self::ONE.raw
+    }
+}
 
 impl<Repr: FixedRepr, const SHIFT: i32> core::fmt::Display
     for Fixed<Repr, SHIFT>
@@ -896,7 +1003,7 @@ impl<Repr: FixedRepr, const SHIFT: i32> Conjugate for Fixed<Repr, SHIFT> {
 
 impl<Repr: FixedRepr, const SHIFT: i32> Scalar for Fixed<Repr, SHIFT>
 where
-    Self: One,
+    Self: OneRepresentable,
 {
     type Real = Self;
 
@@ -947,7 +1054,7 @@ impl<const SHIFT: i32> Unsigned for Fixed<u32, SHIFT> {}
 impl<const SHIFT: i32> Unsigned for Fixed<u64, SHIFT> {}
 
 impl<Repr: FixedRepr, const SHIFT: i32> SaturatingInteger for Fixed<Repr, SHIFT> where
-    Self: One
+    Self: TwoRepresentable
 {
 }
 

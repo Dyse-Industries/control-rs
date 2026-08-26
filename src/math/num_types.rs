@@ -29,13 +29,14 @@
 //! assert_dim::<Const<1025>>();
 //! ```
 //!
-//! Const values whose product falls outside C-1 do not implement [`Dim`] and fail to compile:
+//! `Const<N>` outside C-1 does not implement [`Dim`]. This is independent of
+//! `DimMul`: `Const<100>: DimMul<Const<100>>` exists and yields an unnamed
+//! `UInt` tree (C-2).
 //!
 //! ```compile_fail
 //! use control_rs::math::num_types::{Const, Dim};
 //!
 //! fn assert_dim<D: Dim>() {}
-//! // 100 * 100 = 10000, which is outside C-1
 //! assert_dim::<Const<10000>>();
 //! ```
 #![allow(clippy::arbitrary_source_item_ordering)]

@@ -212,8 +212,8 @@ surface, if built at all, belongs to a host-side companion tool consuming
 3. **Cross-Validation of Compensator Synthesis**: PID and lead/lag
    constructors are checked against Octave's `pid`/`pidstd`/`leadlink`/
    `laglink` outputs for equivalent parameterizations (Octave-Forge, 2026).
-4. **No HIL Requirement**: `classical_tools` performs no hardware I/O and
-   has no runtime target-side component; the crate's HIL mock-harness
+4. **No ETS Requirement**: `classical_tools` performs no hardware I/O and
+   has no runtime target-side component; the crate's ETS mock-harness
    requirement (`CLAUDE.md`) does not apply.
 
 ---
@@ -344,7 +344,6 @@ one the module amortizes or hides.
 
 ### 11. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                             |
-|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: functional scope, numeric-core architecture and root-locus/Routh-Hurwitz mapping to existing primitives. |
-| 1.1      | August 24, 2026 | @mitchelldscott | Refreshed date badge alongside the numerical-models retarget. No content change required: this document names no storage trait, no subprogram, and no scalar bound directly, citing `polynomial-design.md` / `transfer-function-design.md` / `matrix-design.md` sections only. Status stays Draft. |
+| Revision | Date           | Author          | Description                                                                                                              |
+|:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: functional scope, numeric-core architecture, and root-locus/Routh-Hurwitz mapping to existing primitives.  |

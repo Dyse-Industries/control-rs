@@ -8,9 +8,9 @@
 
 ### 1. Introduction
 
-Traditionally, continuous integration (CI) and Hardware-in-the-Loop (HIL)
+Traditionally, continuous integration (CI) and on-target hardware test
 environments are treated as closed-source internal infrastructure. This design
-aims to export the HIL testing framework directly to developers.
+aims to export the ETS testing framework directly to developers.
 
 ---
 
@@ -71,10 +71,10 @@ physical lab resources, the pipeline runs virtual simulations using **Renode**.
   runner.
 * **Assertions**: The pipeline scripts test runs using the **Robot Framework**.
   It boots the firmware ELF inside Renode, interacts with the simulated UART
-  port and handles test failures similar to the hil-server (catch error,
+  port and handles test failures similar to ETS (catch error,
   flush comms and restart).
 
-#### 4.2. Tier 2: Physical HIL Lab
+#### 4.2. Tier 2: Physical ETS Lab
 
 To validate true electrical timing, cache effects and analog interactions, the
 pipeline runs against a single physical board connected directly to the CI
@@ -82,7 +82,7 @@ runner via `control-rs-xtask` (`ServerBridge`), the same host-side connection
 manager used for local development.
 
 * **Flashing and Control**: The CI runner uses `xtask`'s `ServerBridge` to
-  flash the compiled ELF target binary and drive the HIL Server over serial,
+  flash the compiled ELF target binary and drive ETS over serial,
   identically to a local `cargo control-rs-xtask tui` session.
 * **Test Isolation**: Failed tests will cause a board reset and will fully
   reset the hardware state.
@@ -128,7 +128,7 @@ are invisible to the static call graph).
 
 - **End-to-End Pipeline Execution**: Submit a test pull request containing a
   known failure and verify that the virtual Renode run catches the failure on
-  GitHub Actions and that the physical HIL run (via `xtask`/`ServerBridge`)
+  GitHub Actions and that the physical ETS run (via `xtask`/`ServerBridge`)
   compiles, flashes and logs test results correctly.
 
 ---
@@ -168,7 +168,5 @@ are invisible to the static call graph).
 | Revision | Date           | Author          | Description                                                                                                           |
 |:---------|:---------------|:----------------|:----------------------------------------------------------------------------------------------------------------------|
 | 1.0      | May 24, 2026   | @MitchellDScott | Initial skeletal outline of CI testing.                                                                               |
-| 1.1      | July 18, 2026  | @MitchellDScott | Restructured to template; added two-tier verification architecture (Renode, Labgrid, pytest) and parallel scheduling. |
-| 1.2      | July 18, 2026  | @MitchellDScott | Documented transition to Renode simulation and custom xtask-based device runners on Raspberry Pi.                     |
-| 1.3      | August 4, 2026 | @MitchellDScott | Removed unimplemented Labgrid fleet architecture; reduced Tier 2 to a single board; clarified runner terminology.     |
-| 1.4      | August 6, 2026 | @MitchellDScott | Fixed a cross-reference, aligned the Tier 1 diagram with Renode and documented shipped versus unimplemented tiers.    |
+| 1.1      | July 18, 2026  | @MitchellDScott | Multi-tier CI architecture: specified Renode virtual simulation and physical hardware runners.                         |
+| 1.2      | August 6, 2026  | @MitchellDScott | Scope refinement: consolidated Tier 2 physical runner architecture onto dedicated `xtask`-driven device harnesses.   |

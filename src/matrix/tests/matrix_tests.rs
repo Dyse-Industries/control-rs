@@ -17,13 +17,9 @@
 //! - **FR-6** (coordinate-based instantiation): `test_from_fn`.
 //! - **FR-7** (concatenation): not implemented in this pass (not in scope —
 //!   see the design doc's Development Plan Step 4/7 split).
-//! - **FR-8** (Polynomial/Tensor conversions): explicitly deferred — see
-//!   `matrix-design.md`'s revision history. `Polynomial` is an unregistered
-//!   trait stub and `Tensor` doesn't exist in the crate yet.
+//! - **FR-8** (Polynomial/Tensor interop): covered in sibling polynomial and tensor test suites.
 //!
-//! Companion-matrix polynomial root-finding (§4.10.2) is also deferred (not
-//! required by any FR; depends on the still-unregistered `Polynomial` type,
-//! same as FR-8).
+//! Companion-matrix construction is implemented in `Polynomial::companion_matrix`.
 //!
 //! §6.1.4's `127 x 127` stack-bounds ceiling is a compile-time type bound
 //! (`Const<N>: Dim` for `N` up to 127), not something a runtime unit test
@@ -37,7 +33,7 @@
     clippy::cast_precision_loss
 )]
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod matrix_test_suite {
     use crate::assert_almost_eq;
     use crate::math::LinAlgError;
@@ -382,14 +378,14 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// A symmetric but indefinite matrix (eigenvalues `3` and `-1`, not
     /// positive definite) fails Cholesky decomposition with
-    /// `LinAlgError::SingularMatrix` rather than panicking on a negative
+    /// `LinAlgError::NotPositiveDefinite` rather than panicking on a negative
     /// `sqrt` argument (§4.9.3).
     fn test_cholesky_not_positive_definite_errors() {
         let indefinite: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| [[1.0, 2.0], [2.0, 1.0]][i][j]);
         let sym = Symmetric::from_owned(indefinite).unwrap();
         let result = sym.into_cholesky();
-        assert_eq!(result.err(), Some(LinAlgError::SingularMatrix));
+        assert_eq!(result.err(), Some(LinAlgError::NotPositiveDefinite));
     }
 
     // --- QR (FR-5) ---
@@ -450,9 +446,9 @@ pub mod matrix_test_suite {
 }
 
 // Property-based coverage of algebraic matrix identities (§6.1.2 of
-// `matrix-design.md`). Kept outside the `#[hil_suite]`-wrapped module above:
+// `matrix-design.md`). Kept outside the `#[ets_suite]`-wrapped module above:
 // `proptest` is a host-only dev-dependency, unavailable to the `no_std`/
-// on-target `hil` feature build (matches `storage_tests.rs`'s convention).
+// on-target `ets` feature build (matches `storage_tests.rs`'s convention).
 #[cfg(test)]
 mod matrix_property_tests {
     use crate::math::num_types::{Const, Dim};

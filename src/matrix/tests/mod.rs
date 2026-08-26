@@ -3,7 +3,7 @@
 
 pub mod matrix_tests;
 
-/// Grouped re-exports of all HIL suite descriptors to force link them in example binaries.
+/// Grouped re-exports of all ETS suite descriptors to force link them in example binaries.
 #[cfg(not(test))]
 pub mod suites {
     // matrix

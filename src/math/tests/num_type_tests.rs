@@ -12,7 +12,7 @@
 //!
 //! Subtraction underflow is a `compile_fail` doctest on `num_types` itself
 //! (`U2 - U5`). This suite lives behind
-//! `#[cfg(any(test, feature = "hil"))]`, which `rustdoc`'s doctest extraction
+//! `#[cfg(any(test, feature = "ets"))]`, which `rustdoc`'s doctest extraction
 //! does not set, so `compile_fail` examples placed here never actually run.
 //!
 //! ## Functional Requirement Coverage (`num-types-design.md`)
@@ -26,7 +26,7 @@
 //!   type arguments every other test in this suite uses.
 //!
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod num_type_test_suite {
     use crate::math::num_types::{
         B0, B1, Const, Dim, DimAdd, DimBitAnd, DimBitOr, DimBitXor, DimMax,
@@ -46,6 +46,7 @@ pub mod num_type_test_suite {
         assert_eq!(mem::size_of::<UTerm>(), 0);
         assert_eq!(mem::size_of::<UInt<UTerm, B1>>(), 0);
         assert_eq!(mem::size_of::<UInt<UInt<UTerm, B1>, B0>>(), 0);
+        assert_eq!(mem::size_of::<Const<5>>(), 0);
     }
 
     #[cfg_attr(test, test)]
@@ -293,7 +294,7 @@ pub mod num_type_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies in-bounds Const arithmetic for boundary values (Const<1024>, Const<16384>)
-    /// (V&V §6.1.7 of `num-types-design.md`).
+    /// (V&V §6.1 item 6 of `num-types-design.md`).
     fn test_num_type_in_bounds_const_arithmetic() {
         assert_eq!(U1024::USIZE, 1024);
         assert_eq!(<Const<1024> as Dim>::USIZE, 1024);
@@ -305,6 +306,10 @@ pub mod num_type_test_suite {
         assert_eq!(
             <<Const<128> as DimMul<Const<128>>>::Output as Dim>::USIZE,
             16384
+        );
+        assert_eq!(
+            <<Const<100> as DimMul<Const<100>>>::Output as Dim>::USIZE,
+            10000
         );
     }
 }

@@ -8,21 +8,14 @@
 
 ### 1. Introduction
 
-2–4 usage scenarios. Each scenario states who is using the module, the job
-they need to accomplish, and what fails if this module is missing. System-
-level usage and goals only. No type signatures, trait trees, or file maps —
-those belong in §4.
-
-The scenarios are the input to §2. Do not write requirements until the
-scenarios exist. Do not replace the scenarios with architecture after §4 is
-drafted.
+Brief description of the: motivation, scope, goals and usage scenarios.
 
 ---
 
 ### 2. Requirements
 
-Derive requirements from the §1 scenarios. A requirement is one testable
-need a colleague would state after hearing a scenario. Publish only the
+Derive requirements from §1. A requirement is a testable
+user need, not a specific feature. Publish only the
 finished IDs; keep derivation scratch off the page.
 
 #### Classify
@@ -107,7 +100,7 @@ not chosen.
 ### 6. Verification & Validation
 
 1. Define the required steps to verify an implementation (unit tests,
-   integration tests, hil tests, CI tests).
+   integration tests, ETS tests, CI tests).
 
 2. Define the required steps to validate an implementation (examples, external
    projects, user demos).

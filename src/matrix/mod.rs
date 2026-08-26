@@ -15,13 +15,30 @@
 #![allow(
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects
+    clippy::arithmetic_side_effects,
+    clippy::similar_names,
+    clippy::needless_range_loop,
+    clippy::type_complexity,
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::option_if_let_else,
+    clippy::must_use_candidate,
+    clippy::many_single_char_names,
+    clippy::collapsible_if,
+    clippy::use_self,
+    clippy::too_many_arguments,
+    clippy::missing_const_for_fn,
+    clippy::cast_lossless
 )]
 
 pub mod decomposition;
 pub mod specialized;
 
-#[cfg(any(test, feature = "hil"))]
+#[cfg(any(test, feature = "ets"))]
 /// Matrix module unit tests.
 pub mod tests;
 
@@ -35,9 +52,10 @@ use crate::math::num_types::{Const, Dim};
 use crate::math::ops::{Add, Mul, Neg, Sub};
 use crate::math::storage::{
     ArrayStorage, ColMajor, ContiguousStorage, ContiguousStorageMut,
-    DenseStorage, DenseStorageMut, RowMajor, Storage, StorageInit, StorageMut,
-    StorageView,
+    DenseStorage, DenseStorageMut, RowMajor, StaticStorageView, Storage,
+    StorageInit, StorageMut, Trans,
 };
+use crate::math::subprograms::{DefaultBlas, level1::Axpy, level3::Gemm};
 use core::marker::PhantomData;
 
 /// A type-safe, storage-decoupled matrix.
@@ -46,6 +64,7 @@ use core::marker::PhantomData;
 /// how elements are physically stored. See [`Owned`] for the default
 /// stack-based backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
 #[allow(clippy::type_complexity)]
 pub struct Matrix<T, R: Dim, C: Dim, S: Storage<T, R, C>> {
     storage: S,
@@ -62,7 +81,7 @@ pub type Owned<T, const R: usize, const C: usize> =
 
 /// A zero-copy, non-owning, immutable matrix view.
 pub type MatrixSlice<'a, T, R, C, O = ColMajor> =
-    Matrix<T, R, C, StorageView<'a, T, R, C, O>>;
+    Matrix<T, R, C, StaticStorageView<'a, T, R, C, O>>;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Constructors
@@ -73,6 +92,15 @@ where
     Const<R>: Dim,
     Const<C>: Dim,
 {
+    /// Builds a matrix from a raw column-major `[[T; R]; C]` array.
+    #[must_use]
+    pub const fn from_array(data: [[T; R]; C]) -> Self {
+        Self {
+            storage: ArrayStorage::from_array(data),
+            _marker: PhantomData,
+        }
+    }
+
     /// Builds an all-zero matrix using `T::ZERO`.
     ///
     /// `const fn` so static matrices can be placed directly in read-only
@@ -128,6 +156,31 @@ where
             storage: ArrayStorage::from_array(data),
             _marker: PhantomData,
         }
+    }
+}
+
+impl<T, R: Dim, C: Dim, S: Storage<T, R, C>> Matrix<T, R, C, S> {
+    /// Wraps a custom storage backend in a Matrix.
+    pub const fn from_storage(storage: S) -> Self {
+        Self {
+            storage,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Borrows the underlying storage backend.
+    pub const fn storage(&self) -> &S {
+        &self.storage
+    }
+
+    /// Mutably borrows the underlying storage backend.
+    pub fn storage_mut(&mut self) -> &mut S {
+        &mut self.storage
+    }
+
+    /// Unwraps the underlying storage backend.
+    pub fn into_storage(self) -> S {
+        self.storage
     }
 }
 
@@ -198,20 +251,53 @@ impl<T, R: Dim, C: Dim, S: StorageMut<T, R, C> + ContiguousStorageMut<T>>
     }
 }
 
+impl<T, M: Dim, N: Dim, SA> Matrix<T, M, N, SA>
+where
+    T: Scalar + Copy,
+    SA: DenseStorage<T, R = M, C = N>,
+{
+    /// Multiplies `self` by `rhs` into caller-provided `out` destination buffer using a specific BLAS engine.
+    pub fn mul_into_with<B: Gemm<T, SA, SB, SC>, P: Dim, SB, SC>(
+        &self,
+        rhs: &Matrix<T, N, P, SB>,
+        out: &mut Matrix<T, M, P, SC>,
+    ) where
+        SB: DenseStorage<T, R = N, C = P>,
+        SC: DenseStorageMut<T, R = M, C = P>,
+    {
+        B::gemm(
+            Trans::NoTrans,
+            Trans::NoTrans,
+            T::ONE,
+            &self.storage,
+            &rhs.storage,
+            T::ZERO,
+            &mut out.storage,
+        );
+    }
+
+    /// Multiplies `self` by `rhs` into caller-provided `out` destination buffer using the default BLAS engine.
+    pub fn mul_into<P: Dim, SB, SC>(
+        &self,
+        rhs: &Matrix<T, N, P, SB>,
+        out: &mut Matrix<T, M, P, SC>,
+    ) where
+        SB: DenseStorage<T, R = N, C = P>,
+        SC: DenseStorageMut<T, R = M, C = P>,
+    {
+        self.mul_into_with::<DefaultBlas, P, SB, SC>(rhs, out);
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Operators
 //
 // Implemented for `&Matrix` (matching every worked example in
 // `matrix-design.md`, e.g. `&diff * p_pred`), not for owned `Matrix`, so
 // arithmetic never has to move a potentially large (up to 63KB, C-3) stack
-// matrix. Implemented as direct loops over `Storage::get_unchecked` rather
-// than routed through `subprograms`'s `GEMV`/`GEMM`: `Matrix` has no backend
-// type parameter to select a `GEMM<T>` implementor (those exist only for
-// concrete `f32`/`f64`, not generic `T: Scalar`), and two operands can
-// legitimately carry different storage layouts (e.g. one side a
-// `transpose_view()`) that a single shared `order` parameter can't express.
-// Each operand's own `Storage::offset` already encodes its layout, so this
-// delivers on the "any conforming backend" promise directly.
+// matrix. Delegated directly to canonical BLAS Level 1/3 subprogram kernels
+// ([`DefaultBlas`]), ensuring zero-overhead compilation while enabling
+// hardware-accelerated drop-in backends.
 ////////////////////////////////////////////////////////////////////////////////
 
 impl<'b, T, const R: usize, const C: usize, S, S2>
@@ -221,24 +307,15 @@ where
     T: Scalar + Copy,
     Const<R>: Dim,
     Const<C>: Dim,
-    S: Storage<T, Const<R>, Const<C>>,
-    S2: Storage<T, Const<R>, Const<C>>,
+    S: DenseStorage<T, R = Const<R>, C = Const<C>>,
+    S2: DenseStorage<T, R = Const<R>, C = Const<C>>,
 {
     type Output = Owned<T, R, C>;
 
     fn add(self, rhs: &'b Matrix<T, Const<R>, Const<C>, S2>) -> Self::Output {
         let mut out = Owned::<T, R, C>::zero();
-        for i in 0..R {
-            for j in 0..C {
-                // Safety: `i < R` and `j < C` per the loop bounds; `self`,
-                // `rhs` and `out` all share `Const<R>`/`Const<C>`.
-                unsafe {
-                    let value = *self.storage.get_unchecked(i, j)
-                        + *rhs.storage.get_unchecked(i, j);
-                    *out.storage.get_unchecked_mut(i, j) = value;
-                }
-            }
-        }
+        DefaultBlas::axpy(T::ONE, &self.storage, &mut out.storage);
+        DefaultBlas::axpy(T::ONE, &rhs.storage, &mut out.storage);
         out
     }
 }
@@ -250,23 +327,15 @@ where
     T: Scalar + Copy,
     Const<R>: Dim,
     Const<C>: Dim,
-    S: Storage<T, Const<R>, Const<C>>,
-    S2: Storage<T, Const<R>, Const<C>>,
+    S: DenseStorage<T, R = Const<R>, C = Const<C>>,
+    S2: DenseStorage<T, R = Const<R>, C = Const<C>>,
 {
     type Output = Owned<T, R, C>;
 
     fn sub(self, rhs: &'b Matrix<T, Const<R>, Const<C>, S2>) -> Self::Output {
         let mut out = Owned::<T, R, C>::zero();
-        for i in 0..R {
-            for j in 0..C {
-                // Safety: see `Add` above.
-                unsafe {
-                    let value = *self.storage.get_unchecked(i, j)
-                        - *rhs.storage.get_unchecked(i, j);
-                    *out.storage.get_unchecked_mut(i, j) = value;
-                }
-            }
-        }
+        DefaultBlas::axpy(T::ONE, &self.storage, &mut out.storage);
+        DefaultBlas::axpy(T::ZERO - T::ONE, &rhs.storage, &mut out.storage);
         out
     }
 }
@@ -277,22 +346,13 @@ where
     T: Scalar + Copy,
     Const<R>: Dim,
     Const<C>: Dim,
-    S: Storage<T, Const<R>, Const<C>>,
+    S: DenseStorage<T, R = Const<R>, C = Const<C>>,
 {
     type Output = Owned<T, R, C>;
 
     fn neg(self) -> Self::Output {
         let mut out = Owned::<T, R, C>::zero();
-        for i in 0..R {
-            for j in 0..C {
-                // Safety: `i < R` and `j < C` per the loop bounds, matching
-                // `self`'s and `out`'s shared `Const<R>`/`Const<C>`.
-                unsafe {
-                    *out.storage.get_unchecked_mut(i, j) =
-                        T::ZERO - *self.storage.get_unchecked(i, j);
-                }
-            }
-        }
+        DefaultBlas::axpy(T::ZERO - T::ONE, &self.storage, &mut out.storage);
         out
     }
 }
@@ -309,31 +369,14 @@ where
     Const<M>: Dim,
     Const<N>: Dim,
     Const<P>: Dim,
-    S: Storage<T, Const<M>, Const<N>>,
-    S2: Storage<T, Const<N>, Const<P>>,
+    S: DenseStorage<T, R = Const<M>, C = Const<N>>,
+    S2: DenseStorage<T, R = Const<N>, C = Const<P>>,
 {
     type Output = Owned<T, M, P>;
 
     fn mul(self, rhs: &'b Matrix<T, Const<N>, Const<P>, S2>) -> Self::Output {
         let mut out = Owned::<T, M, P>::zero();
-        for i in 0..M {
-            for j in 0..P {
-                let mut sum = T::ZERO;
-                for k in 0..N {
-                    // Safety: `i < M`, `k < N` within `self`'s bounds;
-                    // `k < N`, `j < P` within `rhs`'s bounds.
-                    unsafe {
-                        sum = sum
-                            + *self.storage.get_unchecked(i, k)
-                                * *rhs.storage.get_unchecked(k, j);
-                    }
-                }
-                // Safety: `i < M` and `j < P` per the loop bounds.
-                unsafe {
-                    *out.storage.get_unchecked_mut(i, j) = sum;
-                }
-            }
-        }
+        self.mul_into(rhs, &mut out);
         out
     }
 }
@@ -362,7 +405,8 @@ where
         // Safety: `self.as_slice()` always holds exactly `R * C` elements
         // (`ArrayStorage`'s `ContiguousStorage` invariant), which equals
         // `C * R` for the transposed view being constructed here.
-        let storage = unsafe { StorageView::new_unchecked(self.as_slice()) };
+        let storage =
+            unsafe { StaticStorageView::new_unchecked(self.as_slice()) };
         Matrix {
             storage,
             _marker: PhantomData,

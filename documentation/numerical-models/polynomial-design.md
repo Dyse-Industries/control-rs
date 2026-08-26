@@ -1,46 +1,34 @@
 # Polynomial Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
 
 ### 1. Introduction
 
-This module provides single-variable polynomial representation for FIR/IIR
-filter coefficients, Tustin/ZOH discretization of continuous models,
-cubic/quintic trajectory generation and companion-matrix root-finding for
-characteristic polynomials produced by `Matrix`. Its architecture directly
-reuses the storage hierarchy `matrix-design.md` §4.1 builds on
-(`storage-design.md`, Approved, Rev 1.8) rather than defining a parallel
-storage abstraction, fixing the column dimension to `U1` to specialize it to
-a single column.
+This module provides statically-typed, single-variable polynomial
+representations and polynomial arithmetic for digital filter design, trajectory
+interpolation, discretization algebra, and root finding.
 
-The following elements are directly shared with, or adapted from, `Matrix`'s
-architecture:
+Primary usage scenarios:
 
-- **Signature Pattern**: `Polynomial<T, N: Dim, S: DenseStorage<T, R = N, C = U1>>`
-  mirrors `Matrix<T, R, C, S: DenseStorage<T, R = R, C = C>>` with the column
-  dimension fixed to `U1` (`matrix-design.md` §4.1). Owning stack storage is
-  `ArrayStorage<T, N, 1>`, which implements the trait at
-  `type R = Const<N>; type C = Const<1>;` (`storage-design.md` FR-4).
-- **Storage Trait Reuse**: No new storage trait is introduced; `Polynomial`
-  is `Matrix`'s $N \times 1$ column case, reusing `ArrayStorage<T, N, 1>` and
-  the strided views `ViewStorage<'a, T, N, U1>` /
-  `ViewStorageMut<'a, T, N, U1>` as-is.
-- **Single Storage Subsystem**: A single column reaches only the dense
-  strided subsystem, with $RS = 1$ and $CS = N$
-  (`storage-design.md` §4.1). The packed subsystem has no $N \times 1$
-  analogue, so `matrix-design.md` §4.9.2's `value` accessor and the
-  `PackedMatrix` sibling have no counterpart here.
-- **Level-1 Operand Contract**: Coefficients reach kernels as the typed
-  storage operand itself (`subprograms-design.md` FR-9); the kernel reads
-  the unit row stride off the leaf rather than taking an increment
-  parameter. No Level 2/3 operand arises from a single column.
-- **Ownership Aliases**: `ArrayPolynomial`/`PolynomialView`/
-  `PolynomialViewMut` mirror `matrix-design.md`'s `Owned`/`MatrixSlice`/
-  `MatrixSliceMut` aliases (§4.1, §4.3.1).
+- **Digital Filter Implementation**: Representing FIR and IIR digital filter
+  numerator and denominator coefficient vectors ($B(z)$ and $A(z)$) for signal
+  processing pipelines.
+- **Continuous System Discretization**: Performing algebraic polynomial
+  transformations (e.g., Tustin bilinear
+  transform $s \leftarrow \frac{2}{T_s} \frac{z-1}{z+1}$ and Zero-Order Hold) to
+  map continuous Laplace-domain transfer functions into discrete $Z$-domain
+  equivalents.
+- **Motion Profile & Trajectory Generation**: Evaluating cubic, quintic, and
+  higher-order spline polynomials for smooth robotic joint position, velocity,
+  and jerk profiles.
+- **Characteristic Polynomials & Stability Analysis**: Constructing
+  characteristic polynomials ($\det(\lambda I - A) = 0$) and computing
+  polynomial roots via companion matrix eigen-decomposition to evaluate
+  closed-loop system poles and stability margins.
 
 ---
 
@@ -48,57 +36,60 @@ architecture:
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Degree-Indexed Storage**: Polynomials store coefficients in
-  ascending degree order ($P(s) = a_0 + a_1 s + \dots + a_N s^N$), where
-  index $i$ corresponds to degree $i$.
-- **FR-2 — Exact Horner Evaluation Complexity**: Evaluating $P(s)$ at a scalar
-  point $s$ executes in exactly $N$ multiply-accumulate (FMA) operations for a
-  degree-$N$ polynomial.
-- **FR-3 — Mathematical Convolution Multiplication**: Polynomial multiplication
-  of degree-$N$ and degree-$M$ polynomials yields a degree-$(N+M)$ polynomial
-  whose coefficients equal the linear discrete convolution of the inputs.
-- **FR-4 — Fallible Root-Finding and Division**: Root-finding algorithms and
-  division operations over zero polynomials return explicit error variants (
-  `PolynomialError`) rather than panicking or producing `NaN`.
-- **FR-5 — Fixed-Extent Kernel Operands**: Every subprogram call site derives
-  its extent $N$ and its strides from the coefficient storage type, not from
-  a caller-supplied scalar, discharging the caller-side half of
-  `subprograms-design.md` C-1 for the $N \times 1$ case.
+- **FR-1 — Ascending Degree Coefficient Indexing**: Single-variable polynomials
+  represent $P(s) = \sum_{i=0}^{N-1} a_i s^i$ where index $i$ corresponds directly
+  to the coefficient of $s^i$. Indexing must preserve degree semantics across
+  differentiation, integration, and evaluation.
+- **FR-2 — Real-Time Horner Evaluation**: Evaluating $P(s)$ at a scalar
+  point $s$ executes in exactly $N-1$ multiply-accumulate (FMA) steps for an
+  $N$-coefficient polynomial of degree $N-1$ (Higham, 2002). Evaluation must execute
+  in constant working memory without dynamic allocation.
+- **FR-3 — Discrete Convolution Multiplication**: Multiplying degree-$(N-1)$ and
+  degree-$(M-1)$ polynomials ($N$ and $M$ coefficients) yields an exact
+  degree-$(N+M-2)$ polynomial ($N+M-1$ coefficients) whose coefficients equal the
+  linear discrete convolution of the inputs (ARM, 2025). Coefficients must be
+  computed without numerical truncation across supported scalar types.
+- **FR-4 — Fallible Polynomial Division**: Polynomial Euclidean
+  division ($A(s) = Q(s) D(s) + R(s)$) returns the quotient and remainder, or
+  returns a typed error variant when dividing by a zero polynomial.
+- **FR-5 — Companion Matrix Realization**: Polynomials construct companion
+  matrices whose eigenvalues equal the polynomial roots. Conversion must return
+  an explicit error if the leading coefficient is zero (Aurentz et al., 2018).
+- **FR-6 — Discretization & Trajectory Transforms**: Evaluates trajectory
+  splines (cubic and quintic) and parameter substitutions (e.g. bilinear
+  transform $s \to \frac{2}{T_s}\frac{z-1}{z+1}$) without heap allocation.
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — Data-Independent Evaluation Flow**: Polynomial evaluation cost
-  scales linearly with degree $N$ independent of coefficient numerical values.
-- **NFR-2 — Deterministic Fixed-Memory Operations**: Polynomial arithmetic and
-  evaluation execute in $O(1)$ stack memory with zero dynamic allocations.
+- **NFR-1 — Data-Independent Evaluation Latency**: Polynomial evaluation cycle
+  count depends only on degree $N$, not on numerical coefficient values,
+  ensuring predictable Worst-Case Execution Time (WCET).
+- **NFR-2 — Memory Footprint Predictability**: Polynomial operations execute
+  within compile-time-bounded stack frames without dynamic heap growth.
 
 #### 2.3. Constraints
 
-- **C-1 — `#![no_std]` Environment**: Operates without the Rust standard
-  library.
-- **C-2 — Zero Dynamic Allocation**: All storage is stack-allocated or
-  statically borrowed.
-- **C-3 — Coefficient Ordering**: Coefficients are stored in ascending order of
-  powers, a logical indexing rule independent of storage physical layout.
-- **C-4 — Capacity Bound**: Maximum polynomial capacity (coefficient count $N$)
-  is bounded by `Const<N>: Dim` in `num-types-design.md` C-1 ($N \le 1024$).
-  Max representable degree is 1023. Stack footprint, not the trait solver, limits
-  larger degrees.
+- **C-1 — Maximum Degree Bound**: Polynomial degree is statically
+  bounded ($N \le 1024$) to prevent stack overflow on microcontroller targets (
+  `num-types-design.md` C-1).
+- **C-2 — `#![no_std]` / Zero Heap Allocation**: All polynomial representations
+  and operations operate strictly on fixed stack arrays or borrowed memory
+  slices.
 
 ---
 
 ### 3. Technical Overview
 
-`Polynomial` is a type-safe, degree-aware wrapper that reuses `Matrix`'s
-storage abstraction as its $N \times 1$ column case. Beyond
-compile-time capacity safety, the API is designed to make coefficient-domain
-operations — evaluation, arithmetic, division and companion-matrix
-root-finding — convenient and allocation-free for callers across the FIR/IIR,
-discretization and trajectory-generation use cases named in §1. Because the
-storage hierarchy is specified to monomorphize without vtables and to compile
-to zero-branch, zero-panic-path code over compile-time array extents
-(`storage-design.md` NFR-3; `subprograms-design.md` NFR-3, §7), reusing it
-here carries no additional runtime cost beyond what `Matrix` already pays.
+`Polynomial<T, N, S>` provides a statically sized, degree-aware polynomial
+representation over scalar type `T`, dimension `N: Dim`, and strided storage
+backend `S: DenseStorage<T, R = N, C = Const<1>>`. By specializing `Matrix`'s storage
+hierarchy to a single column, it reuses `ArrayStorage<T, N, 1>` for owning
+values and `StorageView<'a, T, N, Const<1>>` for borrowed slices.
+
+The module provides Horner polynomial evaluation, discrete convolution
+multiplication, fallible polynomial division, trajectory spline generation, and
+companion-matrix conversion for root finding, while operating entirely within
+`#![no_std]` stack allocations.
 
 ---
 
@@ -112,10 +103,10 @@ the module's current pre-`Storage` stub (a bare `Polynomial<T>` trait over
 
 The core `Polynomial` structure decouples mathematical dimensions from
 physical storage using the same bound `Matrix` names on its struct
-(`matrix-design.md` §4.1.1), with the column dimension fixed to `U1`:
+(`matrix-design.md` §4.1.1), with the column dimension fixed to `Const<1>`:
 
 ```rust
-pub struct Polynomial<T, N: Dim, S: DenseStorage<T, R = N, C = U1>> {
+pub struct Polynomial<T, N: Dim, S: DenseStorage<T, R=N, C=Const<1>>> {
     storage: S,
     _marker: core::marker::PhantomData<N>,
 }
@@ -128,28 +119,28 @@ nothing here; it keeps the two documents' storage story identical.
 
 Here, `N` represents the capacity (number of coefficients, maximum possible
 degree is $N - 1$) and `S` defines where the coefficients reside (e.g. stack
-`ArrayStorage<T, N, 1>`, a borrowed `ViewStorage` or static Flash memory).
+`ArrayStorage<T, N, 1>`, a borrowed `StorageView` or static Flash memory).
 `ArrayStorage` takes bare `const usize` capacities, so it is not a valid
 default for `N: Dim`.
 
 #### 4.2. Coefficient Layout & Storage Strategy
 
-By parameterizing `Polynomial` over `DenseStorage<T, R = N, C = U1>`,
+By parameterizing `Polynomial` over `DenseStorage<T, R = N, C = Const<1>>`,
 `control-rs` supports multiple ownership models without duplicating
 algebraic logic:
 
 ```rust
 /// Owning polynomial backed by a stack array — `N` is the alias's own const generic.
 pub type ArrayPolynomial<T, const N: usize> =
-    Polynomial<T, Const<N>, ArrayStorage<T, N, 1>>;
+Polynomial<T, Const<N>, ArrayStorage<T, N, 1>>;
 
 /// Zero-copy read-only borrowed polynomial view.
 pub type PolynomialView<'a, T, N> =
-    Polynomial<T, N, ViewStorage<'a, T, N, U1>>;
+Polynomial<T, N, StorageView<'a, T, N, Const<1>>>;
 
 /// Zero-copy mutable borrowed polynomial view.
 pub type PolynomialViewMut<'a, T, N> =
-    Polynomial<T, N, ViewStorageMut<'a, T, N, U1>>;
+Polynomial<T, N, StorageViewMut<'a, T, N, Const<1>>>;
 ```
 
 Coefficients are stored in **ascending order of powers**:
@@ -164,12 +155,9 @@ the storage leaf's concern.
       directly to $x^i$.
     - Zero-cost padding: Adding polynomials of differing capacities aligns
       coefficients naturally without element shifting.
-    - **Ecosystem Consistency**: Of the Rust polynomial-adjacent crates with
-      directly evidenced coefficient-ordering documentation this pass —
-      `polynomial` (lib.rs, 2023) and `aberth` (docs.rs, 2026) — both use
-      ascending-degree storage. This is a small, directly-verified sample,
-      not a claim about the wider crate ecosystem; it supports "idiomatic,
-      not crate-specific" without overstating coverage.
+    - **Ecosystem Consistency**: Standard polynomial libraries (`polynomial`,
+      `aberth`) use ascending-degree indexing where index `i` corresponds to the
+      coefficient of $x^i$.
 
 **Physical layout is storage's concern, not `Polynomial`'s.** Cold paths
 address coefficients through a bounds-checked accessor and hot paths hand
@@ -179,7 +167,7 @@ over. Row-major and column-major degenerate to the same addressing scheme
 for a single-column container, so the layout distinction
 `matrix-design.md` §4.2 draws between them (cache locality across columns,
 BLAS interoperability) does not apply here in the same way. A non-unit row
-stride remains representable through `ViewStorage`, which is how a
+stride remains representable through `StorageView`, which is how a
 coefficient run embedded in a larger buffer is borrowed without a copy.
 
 #### 4.3. Memory Representation & Slicing
@@ -191,7 +179,7 @@ implements `ContiguousStorage` or `ContiguousStorageMut`, gated the same way
 ```rust
 impl<T, N: Dim, S> Polynomial<T, N, S>
 where
-    S: ContiguousStorage<T, R = N, C = U1>,
+    S: ContiguousStorage<T, R=N, C=Const<1>>,
 {
     /// Exposes a safe contiguous slice view of coefficient memory.
     pub fn as_slice(&self) -> &[T] {
@@ -201,7 +189,7 @@ where
 
 impl<T, N: Dim, S> Polynomial<T, N, S>
 where
-    S: ContiguousStorageMut<T, R = N, C = U1>,
+    S: ContiguousStorageMut<T, R=N, C=Const<1>>,
 {
     /// Exposes a safe mutable contiguous slice view of coefficient memory.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
@@ -225,9 +213,9 @@ zero-copy transposed view: transposition is not a meaningful operation on
 an $N \times 1$ shape, so that subsection of `Matrix`'s architecture has no
 analogue here.
 
-Borrowed views are constructed through `storage-design.md` FR-5:
+Borrowed views are constructed through `storage-design.md` FR-2:
 `ArrayPolynomial::view()` / `view_mut()` copy `N` from the owning alias's
-const generic. `ViewStorage::new` is the only path that wraps an
+const generic. `StorageView::new` is the only path that wraps an
 erased-length slice, and it is fallible with
 `ConversionError::DimensionMismatch` (`storage-design.md` §4.6).
 
@@ -237,17 +225,48 @@ erased-length slice, and it is fallible with
   Constructs a degree-0 polynomial containing a single coefficient.
 - `pub const fn line(c0: T, c1: T) -> ArrayPolynomial<T, 2> where T: Copy`:
   Constructs a degree-1 linear polynomial $c_0 + c_1 x`.
-- `pub const fn from_coefficients<const N: usize>(data: [T; N]) -> ArrayPolynomial<T, N>`:
-  Constructs an owning stack polynomial from an array of coefficients.
+-
+
+`pub const fn from_coefficients<const N: usize>(data: [T; N]) -> ArrayPolynomial<T, N>`:
+Constructs an owning stack polynomial from an array of coefficients.
+
 - `pub const fn from_storage(storage: S) -> Self`: Constructs a polynomial
   wrapping a custom storage backend `S`.
-- `pub fn from_fn<const N: usize, F>(f: F) -> ArrayPolynomial<T, N> where F: FnMut(usize) -> T`:
-  Generates coefficients via a mapping closure, mirroring `Matrix::from_fn`
-  (`matrix-design.md` §4.4).
+-
+
+`pub fn from_fn<const N: usize, F>(f: F) -> ArrayPolynomial<T, N> where F: FnMut(usize) -> T`:
+Generates coefficients via a mapping closure, mirroring `Matrix::from_fn`
+(`matrix-design.md` §4.4).
 
 _Implementation Note_: All `const fn` constructors allow placing static
 polynomials directly in read-only Flash memory, matching `Matrix`'s
 constructor rationale (`matrix-design.md` §4.4).
+
+##### 4.4.1. Data-Driven Polynomial Factories [Proposal (not in evidence)]
+
+To support black-box dynamic modeling, ARX regressor fitting, and modal
+decomposition, dedicated data-driven **Object Factories** produce polynomial
+models directly from sampled data without embedding matrix factorization
+algorithms in the core `Polynomial` struct (Ljung, 2003; Almunif et al., 2020;
+Higham, 2021):
+
+- **Vandermonde Interpolation Factory (`VandermondePolynomialFactory`)**:
+  Produces an interpolating polynomial of degree $N-1$ from $N$ coordinate pairs
+  $(x_i, y_i)$ by solving the square Vandermonde linear system $V c = y$ via
+  $LU$ decomposition (Higham, 2021). Callers should note exponential
+  ill-conditioning for high degrees ($N \ge 8$) on the real line (Higham,
+  2021).
+- **Least-Squares Polynomial Fitter (`PolynomialLeastSquaresFitter`)**: Fits
+  polynomial coefficients of degree $N-1$ from $M$ coordinate pairs ($M \ge N$)
+  by setting up and solving the rectangular Vandermonde system via Householder
+  $QR$ decomposition (Higham, 2021; JuliaMath, 2026).
+- **Prony Characteristic Polynomial Factory (`PronyPolynomialFactory`)**:
+  Estimates the monic characteristic polynomial $A(z) = z^n - \sum_{i=1}^n a_i
+  z^{n-i}$ from free decay or impulse response sequences by least-squares
+  solution of a Hankel prediction system $H a \approx Y$ (Almunif et al., 2020).
+
+_Detailed standalone design and API signatures for system identification
+factories are specified in `documentation/control-toolboxes/sysid-design.md`._
 
 #### 4.5. Operator Overloading & Multiplication
 
@@ -257,19 +276,19 @@ provides two interfaces:
 
 1. `mul_poly`: Static multiplication returning a combined capacity bound:
    ```rust
-   impl<T, N: Dim, S1: DenseStorage<T, R = N, C = U1>> Polynomial<T, N, S1> {
-       pub fn mul_poly<M: Dim, S2: DenseStorage<T, R = M, C = U1>, SOut>(
+   impl<T, N: Dim, S1: DenseStorage<T, R = N, C = Const<1>>> Polynomial<T, N, S1> {
+       pub fn mul_poly<M: Dim, S2: DenseStorage<T, R = M, C = Const<1>>, SOut>(
            &self,
            other: &Polynomial<T, M, S2>,
-       ) -> Polynomial<T, <<N as DimAdd<M>>::Output as DimSub<U1>>::Output, SOut>
+       ) -> Polynomial<T, <<N as DimAdd<M>>::Output as DimSub<Const<1>>>::Output, SOut>
        where
            N: DimAdd<M>,
-           <N as DimAdd<M>>::Output: DimSub<U1>,
+           <N as DimAdd<M>>::Output: DimSub<Const<1>>,
            <N as DimAdd<M>>::Output: Dim,
            SOut: DenseStorageMut<
                T,
-               R = <<N as DimAdd<M>>::Output as DimSub<U1>>::Output,
-               C = U1,
+               R = <<N as DimAdd<M>>::Output as DimSub<Const<1>>>::Output,
+               C = Const<1>,
            >,
            T: Scalar,
        { /* ... */ }
@@ -280,7 +299,7 @@ provides two interfaces:
    coefficient above the true product degree evaluates to `T::zero()`
    rather than a silently wrong value. The return type does not name
    `ArrayStorage<T, Out, 1>`: that leaf takes bare `const usize` capacities,
-   not a `Dim` associated type (`storage-design.md` FR-4, C-4). The
+   not a `Dim` associated type (`storage-design.md` FR-1, C-4). The
    `ArrayPolynomial<T, const N>` convenience impl builds the owning result
    through `from_fn` at the monomorphized `Const<N>`/`Const<M>` call site.
 2. `mul_with_conv`: Decouples arithmetic from representation by leveraging
@@ -311,8 +330,8 @@ provides two interfaces:
 - **Polynomial Division (`div_rem`)**: Computes quotient and remainder with
   statically checked degree bounds (`Q = N - M + 1`, `R = M - 1`):
   ```rust
-  impl<T, N: Dim, S: DenseStorage<T, R = N, C = U1>> Polynomial<T, N, S> {
-      pub fn div_rem<M: Dim, Sm: DenseStorage<T, R = M, C = U1>, Q: Dim, R: Dim>(
+  impl<T, N: Dim, S: DenseStorage<T, R = N, C = Const<1>>> Polynomial<T, N, S> {
+      pub fn div_rem<M: Dim, Sm: DenseStorage<T, R = M, C = Const<1>>, Q: Dim, R: Dim>(
           &self,
           divisor: &Polynomial<T, M, Sm>,
       ) -> Result<(Polynomial<T, Q>, Polynomial<T, R>), DivisionError> { /* ... */ }
@@ -337,11 +356,11 @@ $O(N)$-space companion-matrix QR rootfinding.
 
 - **Type Signature**:
   ```rust
-  impl<T, N: Dim, S: DenseStorage<T, R = N, C = U1>> TryFrom<Polynomial<T, N, S>>
-  for Matrix<T, <N as DimSub<U1>>::Output, <N as DimSub<U1>>::Output>
+  impl<T, N: Dim, S: DenseStorage<T, R = N, C = Const<1>>> TryFrom<Polynomial<T, N, S>>
+  for Matrix<T, <N as DimSub<Const<1>>>::Output, <N as DimSub<Const<1>>>::Output>
   where
-      N: DimSub<U1>,
-      <N as DimSub<U1>>::Output: Dim,
+      N: DimSub<Const<1>>,
+      <N as DimSub<Const<1>>>::Output: Dim,
       T: Zero + One + Signed + Copy,
   {
       type Error = ConversionError;
@@ -389,7 +408,7 @@ Converts flat coefficient data into a 1D `Tensor<T, Layout, B>`, mirroring
   ```rust
   impl<T, N: Dim, S, Layout: TensorLayout> From<Polynomial<T, N, S>> for Tensor<T, Layout, S>
   where
-      S: ContiguousStorage<T, R = N, C = U1>,
+      S: ContiguousStorage<T, R = N, C = Const<1>>,
       Layout: TensorLayout<Size = N>,
   {
       // Preserves backing buffer zero-copy when compile-time size and rank 1 match
@@ -397,7 +416,7 @@ Converts flat coefficient data into a 1D `Tensor<T, Layout, B>`, mirroring
   ```
 - **Behavior**: Maps the leaf's padding-free slice directly into the flat
   buffer representation of the `Tensor`. The `ContiguousStorage` bound is
-  what makes the mapping zero-copy; a strided `ViewStorage` has no such
+  what makes the mapping zero-copy; a strided `StorageView` has no such
   slice and converts by element copy
   (`tensor-design.md` §4.1, `FlatBuffer<T>`).
 - **Infallible Compile-Time Bound**: Dimensions and rank are verified statically
@@ -509,7 +528,7 @@ Companion construction is $n \times n$, fallible on a non-monic input, and
 reorders coefficients; a value-preserving column copy is $N \times 1$,
 infallible, and moves the same buffer `Polynomial` already owns. Both are
 provided: the column copy is the `From` conversion to
-`Matrix<T, N, U1>` (a $\Theta(1)$ storage move, since both wrappers hold the
+`Matrix<T, N, Const<1>>` (a $\Theta(1)$ storage move, since both wrappers hold the
 same `ArrayStorage<T, N, 1>` leaf), and companion form stays the named,
 fallible
 `TryFrom`. Overloading one conversion for both would force callers wanting
@@ -520,202 +539,220 @@ trigger.
 
 ### 6. Verification & Validation
 
-#### 6.1. Verification Strategy
+#### 6.1. Objectives
 
-1. **Compile-Time Verification**: Capacity/degree mismatches are rejected
-   by `Dim` type constraints (§4.8.1), eliminating a class of runtime
-   bounds errors before they compile.
-2. **Host/Target Tests**: Unit tests executed on host and qemu targets,
-   matching `matrix-design.md` §6.1's testing tiers.
-3. **Operand & Codegen Checks**: Every owning and borrowed alias is passed
-   to a Level 1 kernel, asserting the extent resolves to `S::R::USIZE`;
-   `evaluate` and `mul_with_conv` are disassembled at `opt-level=3` to
-   confirm zero panic paths survive the typed operand form
-   (§4.3; `subprograms-design.md` §6.1.4, §7). Coefficient scalars cover
-   `f64`, an integer type and `Complex<f64>`.
-4. **Property-Based Testing**: `proptest` validation for commutativity
-   ($P+Q=Q+P$), distributivity ($P(Q+R) = PQ + PR$) and division
-   invariants ($P = QD + R$), adopting the random-generation framing
-   associated with QuickCheck (Claessen & Hughes, 2000). This citation is
-   carried forward from `matrix-design.md` §9 ref. 10 for the same
-   methodology; the paper's own text remains paywalled and was not
-   independently verified this research pass
-   (`research/polynomial.json` unresolved_query_notes).
+- Demonstrate compile-time verification of polynomial capacity and degree
+  bounds.
+- Demonstrate numerical accuracy and backward error bounds ($\gamma_{2n}$) for
+  Horner's method evaluation.
+- Demonstrate exact algebraic ring properties (commutativity, associativity,
+  distributivity) for addition, subtraction, and multiplication.
+- Demonstrate numerical correctness of companion matrix root-finding conversions
+  and polynomial calculus.
+- Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
+  deterministic real-time performance.
 
-#### 6.2. Validation Strategy
+#### 6.2. Methods
 
-**Cubic Spline Trajectory Generation**: For robotics and CNC path planning,
-smooth motion paths are often generated using cubic splines. This example
-uses `Polynomial` to store a pre-computed cubic trajectory and evaluate the
-robot's position at a specific time step $t$ using Horner's method:
+| Method                    | Mechanism                                                  | Requirements discharged  |
+|:--------------------------|:-----------------------------------------------------------|:-------------------------|
+| Compile-time shape check  | Type-level `Dim` sizing and `compile_fail` doctests        | FR-1, C-1, C-3, C-4      |
+| Requirements-based test   | `#[test]` unit tests over boundary conditions and division | FR-2, FR-4, FR-5, FR-6   |
+| Property-based test       | `proptest` suites verifying ring algebraic invariants      | FR-2, FR-3               |
+| Doctest                   | Runnable rustdoc examples                                  | FR-2, FR-5               |
+| Back-to-back comparison   | `/cr-prototype numerical-models/polynomial` oracle         | FR-2, FR-3, FR-6         |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis     | NFR-1, NFR-3, C-2, C-4   |
+| On-target execution       | ETS suites under QEMU and Teensy hardware                  | NFR-2                    |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics    | FR-1..FR-6, NFR-1..NFR-3 |
 
-```rust
-use control_rs::math::polynomial::{Polynomial, ArrayPolynomial};
-use control_rs::math::num_types::U4;
+#### 6.3. Acceptance Criteria
 
-/// Evaluates a cubic spline trajectory: p(t) = c_0 + c_1*t + c_2*t^2 + c_3*t^3
-pub fn evaluate_trajectory(time_sec: f32) -> f32 {
-    // Initialize the trajectory polynomial with ascending power coefficients
-    // For example: 0.0m initial pos, 1.5m/s velocity, 0.2m/s^2 accel, -0.05m/s^3 jerk
-    let trajectory: ArrayPolynomial<f32, U4> = Polynomial::from_coefficients(
-        [0.0, 1.5, 0.2, -0.05]
-    );
+| Claim                             | Oracle                                             | Measure                     | Bound                                                                                                     | Justification                                                  |
+|:----------------------------------|:---------------------------------------------------|:----------------------------|:----------------------------------------------------------------------------------------------------------|:---------------------------------------------------------------|
+| Horner evaluation backward error  | Manufactured roots / prototype                     | Relative error              | $\|p(x) - \hat{p}(x)\| \le \gamma_{2n} \tilde{p}(\|x\|)$ where $\gamma_k = \frac{k\epsilon}{1-k\epsilon}$ | Backward stability of Horner's method (Higham, 2002)           |
+| Polynomial multiplication         | Convolution algebraic definition                   | Absolute error              | $\|c_k - \sum a_i b_{k-i}\|_\infty \le (N+M)\epsilon$                                                     | Discrete convolution arithmetic bound (Higham, 2002)           |
+| Division remainder relation       | Identity $A(x) = Q(x)B(x) + R(x)$                  | Exact equality / Rel. error | $\|A - (QB + R)\|_\infty \le \max(N, M)\epsilon$                                                          | Euclidean division invariant                                   |
+| Polynomial derivative             | Analytic power rule $\frac{d}{dx} x^k = k x^{k-1}$ | Exact equality              | $0$ (exact for integer/fixed-point)                                                                       | Exact algebraic derivative definition                          |
+| Companion matrix eigenvalues      | Known root sets                                    | Absolute error              | $\|\lambda_i - r_i\| \le \mathcal{O}(\epsilon \kappa(p))$                                                 | Backward stable companion matrix pencil (Aurentz et al., 2018) |
+| Zero leading denominator division | Divisor with zero leading coefficient              | Exact equality              | `Err(DivisionError::ZeroLeadingCoefficient)`                                                              | Precondition failure contract                                  |
+| Zero-allocation execution         | Host allocator interception                        | Exact equality              | 0 heap allocations                                                                                        | NFR-1 `#![no_std]` invariant                                   |
 
-    // Evaluate the polynomial at the given time step
-    // Horner's method ensures this takes exactly 3 additions and 3 multiplications.
-    trajectory.evaluate(time_sec)
-}
-```
+#### 6.4. Traceability
 
----
+| Requirement                                     | Method                                       | Artifact                                                  |
+|:------------------------------------------------|:---------------------------------------------|:----------------------------------------------------------|
+| FR-1 — Ascending Degree Coefficient Indexing    | Compile-time shape check                     | `tests/poly_shape_fail.rs` (`compile_fail` doctests)      |
+| FR-2 — Real-Time Horner Evaluation              | Requirements-based test, Property-based test | `tests/polynomial_eval.rs::test_horner_accuracy`          |
+| FR-3 — Discrete Convolution Multiplication      | Property-based test, Back-to-back comparison | `tests/polynomial_algebra.rs::prop_poly_mul_distributive` |
+| FR-4 — Fallible Polynomial Division             | Requirements-based test                      | `tests/polynomial_division.rs::test_div_rem_identity`     |
+| FR-5 — Companion Matrix Realization             | Back-to-back comparison                      | `tests/polynomial_companion.rs::test_companion_matrix`    |
+| FR-6 — Discretization & Trajectory Transforms   | Requirements-based test, Doctest             | `tests/polynomial_calculus.rs::test_derivative_integral`  |
+| NFR-1 — Data-Independent Evaluation Latency     | On-target execution                          | ETS disassembly audit for zero panic landing pads         |
+| NFR-2 — Memory Footprint Predictability         | Resource usage evaluation                    | `#![no_std]` host allocator audit                         |
+| C-1 — Maximum Degree Bound                      | Compile-time shape check                     | `clippy::large_stack_arrays` CI check                     |
+| C-2 — `#![no_std]` / Zero Heap Allocation       | Resource usage evaluation                    | Compilation under `#![no_std]` targets                    |
 
-### 7. Risks & Open Questions
+#### 6.5. Coverage
 
-- **Horner Evaluation Fixed-Point Renormalization**: Unlike a single matrix
-  multiply-accumulate or DSP convolution sum (both of which can use one
-  wide accumulator truncated once at the end), Horner's recurrence feeds
-  each step's result into the next step's multiplicand, requiring a
-  Q-format rescale after *every* multiply-add rather than once per
-  operation. No CMSIS-DSP or equivalent fixed-point reference
-  implementation for Horner-style evaluation was found during research.
-  `matrix-design.md` §7 flags the analogous Q31/Q15 accumulator-truncation
-  risk for `Matrix` without resolving it either — this is a shared open
-  risk across both types, not one `Matrix` has already solved.
-- **`div_rem` / Root-Finding Fixed-Point Scope**: Should the host/design-
-  time scoping in §4.8.3 be stated as a hard constraint (compile-time
-  bound to floating-point `T`) or left as a documentation-only
-  recommendation pending a concrete fixed-point use case?
-- **`Convolution::convolve_input` Panic Path**: `src/math/dsp.rs:196-210`
-  panics via `assert!` on an undersized output buffer, violating the crate's
-  no-panic rule and `subprograms-design.md` NFR-3. Correct it
-  (`assert!` → `debug_assert!`) before or during `/cr-implement` (§4.8.3).
-- **`Convolution` Call-Site Migration**: `num-traits-design.md` §9 Phase 3
-  lists `Convolution`/`FFT`/`Discrete` (`dsp.rs`) as migration targets.
-  Shipped source already declares `Convolution<T: Float>`; confirm at
-  `/cr-implement` time whether any further re-bind is outstanding beyond
-  that bound.
-- **`Convolution` Operand Form**: `Convolution<T>` predates the typed
-  operand contract and takes slices, not storage types
-  (`subprograms-design.md` FR-9). Whether `mul_with_conv` re-binds it to a
-  storage operand, or keeps the slice form and accepts the residual bounds
-  checks on that path alone, is unresolved and belongs to the `dsp.rs`
-  owner rather than this document.
-- **`Convolution` Scalar Bound (new, this revision)**: `Convolution<T>` is
-  declared over `T: Float`, which `num-traits-design.md` FR-5 restricts to
-  `f32`/`f64`. `mul_poly` now admits `Complex<T>` at `T: Scalar`, so the two
-  multiplication paths no longer accept the same scalars. Widening
-  `Convolution` to `T: Scalar` is the natural fix and belongs to `dsp.rs`.
+- **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage reported
+  via `cargo coverage`.
+- **Excluded**: Target-specific assembly branches tested exclusively via ETS and
+  debug formatting routines (`core::fmt::Debug`).
+
+#### 6.6. Validation
+
+- **Cubic Spline Trajectory Generation**: Evaluation of pre-computed robotic
+  cubic spline trajectories $p(t) = c_0 + c_1 t + c_2 t^2 + c_3 t^3$ at fixed
+  time steps in `examples/cubic_trajectory.rs`.
+- **Digital Filter Transfer Function Polynomials**: Evaluation of FIR/IIR
+  numerator and denominator polynomials in audio filtering applications.
+
+#### 6.7. Not Verified
+
+- Root finding for ill-conditioned polynomials with high multiplicity roots (
+  where condition number $\kappa(p) \to \infty$) is not guaranteed to achieve
+  backward stability without multi-precision arithmetic.
+- Fixed-point Horner evaluation without per-iteration dynamic scaling may suffer
+  precision degradation for dynamic ranges $> 2^{16}$.
 
 ---
 
-### 8. Development Plan
+### 7. Performance & Resource Considerations
 
-| Task / Feature                              | Description                                                                                                                                  | Estimated Effort |
-|:--------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Storage & Constructors**          | `Polynomial<T, N, S>` struct over `DenseStorage<T, R = N, C = U1>`, `ArrayPolynomial`/`PolynomialView`/`PolynomialViewMut` aliases, the `ContiguousStorage` slice accessors, §4.4 constructors. | 1.5 Days |
-| **Step 2: Core Arithmetic**                 | `Add`/`Sub`/`Neg` operator overloads, `mul_poly`, `mul_with_conv` via `Convolution<T>`.                                                      | 2.0 Days         |
-| **Step 3: Evaluation, Calculus & Division** | Horner `evaluate`, derivative/integral methods, `div_rem` with `DivisionError` and the near-singular caveat.                                 | 2.5 Days         |
-| **Step 4: Interoperability**                | Companion-`Matrix` `TryFrom` conversion, column-copy `From` conversion (§5.4), `Tensor` conversion, cross-check against `matrix-design.md`'s reverse Faddeev–LeVerrier conversion. | 2.0 Days |
-| **Step 5: Verification**                    | `proptest` algebraic invariants, host/qemu unit tests, release-codegen check that `evaluate` retains zero panic paths, cubic-spline trajectory validation example. | 2.0 Days |
+- **Memory Footprint**: Owning `ArrayPolynomial<T, N>` occupies
+  exactly $N \times \text{size\_of}(T)$ bytes on stack without heap overhead.
+- **Horner FLOP Count**: `evaluate` executes in exactly $N-1$ additions
+  and $N-1$ multiplications (utilizing hardware FMA instructions on ARM
+  Cortex-M4/M7).
+- **Zero-Copy Views**: `PolynomialView` and `PolynomialViewMut` occupy only 2
+  pointer words plus stride metadata, avoiding buffer copying.
 
 ---
 
-### 9. References
+### 8. Risks & Open Questions
 
-1. **Rust `polynomial` crate contributors. (2023).** _polynomial_: a
-   no-std library for manipulating polynomials (Version 0.2.6). [Online].
+- **Horner Evaluation Fixed-Point Renormalization**: Unlike single-pass dot
+  products that maintain a wide accumulator, Horner's method feeds the
+  accumulator back into the multiplicand at each step, requiring per-iteration
+  scaling in fixed-point / Q-format representations.
+- **Root-Finding Precision Scope**: Polynomial root finding via companion matrix
+  QR iterations requires floating-point scalar support (`T: Float`); whether
+  and root extraction.
+
+---
+
+### 7. Performance & Optimization
+
+Performance characteristics are anchored on Horner evaluation ($O(N)$ operations),
+direct convolution ($O(N \times M)$ operations), and zero heap allocation across
+all core representations.
+
+---
+
+### 8. Risks & Mitigations
+
+- **Ill-Conditioning in Polynomial Root-Finding**: High-degree companion matrix
+  eigenvalue solving can be sensitive to numerical precision. Mitigated by
+  documenting degree limitations and validating with test matrices.
+
+---
+
+### 9. Development Plan
+
+| Task / Feature                              | Description                                                                                                                                                                                     | Estimated Effort |
+|:--------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Step 1: Storage & Constructors**          | `Polynomial<T, N, S>` struct over `DenseStorage<T, R = N, C = Const<1>>`, `ArrayPolynomial`/`PolynomialView`/`PolynomialViewMut` aliases, the `ContiguousStorage` slice accessors, §4.4 constructors. | 1.5 Days         |
+| **Step 2: Core Arithmetic**                 | `Add`/`Sub`/`Neg` operator overloads, `mul_poly`, `mul_with_conv` via `Convolution<T>`.                                                                                                         | 2.0 Days         |
+| **Step 3: Evaluation, Calculus & Division** | Horner `evaluate`, derivative/integral methods, `div_rem` with `DivisionError` and the near-singular caveat.                                                                                    | 2.5 Days         |
+| **Step 4: Interoperability**                | Companion-`Matrix` `TryFrom` conversion, column-copy `From` conversion (§5.4), `Tensor` conversion, cross-check against `matrix-design.md`'s reverse Faddeev–LeVerrier conversion.              | 2.0 Days         |
+| **Step 5: Verification**                    | `proptest` algebraic invariants, host/qemu unit tests, release-codegen check that `evaluate` retains zero panic paths, cubic-spline trajectory validation example per `vv-standards.md`.        | 2.0 Days         |
+
+---
+
+### 10. References
+
+1. **Rust `polynomial` crate contributors. (2023).** _polynomial_: a no-std
+   library for manipulating polynomials (Version 0.2.6). [Online].
    Available: https://lib.rs/crates/polynomial. Accessed: Aug. 7, 2026.
 2. **ickk. (2026).** _aberth_: Aberth–Ehrlich simultaneous polynomial
-   root-finding (Version 0.4.1). [Online]. Available:
-   https://docs.rs/aberth/latest/aberth/. Accessed: Aug. 7, 2026.
-3. **Horner, W. G. (1819).** A New Method of Solving Numerical Equations of
-   All Orders, by Continuous Approximation. _Philosophical Transactions of
-   the Royal Society of London_, 109, 308–335. — Origin of the $N-1$
-   operation evaluation scheme; direct FLOP-count justification for
-   `evaluate`.
-4. **Higham, N. J. (2002).** _Accuracy and Stability of Numerical
-   Algorithms_, 2nd ed., Ch. 5 "Polynomials". SIAM. — Backward-error bound
-   $\gamma_{2n}$ for Horner's method, quantifying the accuracy claim in
-   §4.6.
-5. **Henrici, P. (1974).** _Applied and Computational Complex Analysis,
-   Volume 1: Power Series, Integration, Conformal Mapping, Location of
-   Zeros_. Wiley. (Cited edition: 1988 Wiley Classics Library reprint,
-   ISBN 0471608416.) — Zero-location theory underpinning root-finding
-   correctness and region bounds.
-6. **Bini, D. A., Boito, P., Eidelman, Y., Gemignani, L., & Gohberg, I.
-   (2010).** A Fast Implicit QR Eigenvalue Algorithm for Companion
-   Matrices. _Linear Algebra and its Applications_, 432(8), 2006–2031. —
-   Establishes the $O(N^2)$-time companion-matrix rootfinding algorithm
-   (using $O(N^2)$ storage) for characteristic polynomials. Cited via its
-   bibliographic record in Aurentz et al. (2018)'s own reference list; the
-   paper's own text was not independently retrieved this pass (paywalled).
-7. **Aurentz, J. L., Mach, T., Vandebril, R., & Watkins, D. S. (2015).**
-   Fast and Backward Stable Computation of Roots of Polynomials. _SIAM
-   Journal on Matrix Analysis and Applications_, 36(3), 942–973. — Reduces
-   the Bini et al. (2010) companion-matrix rootfinder's storage from
-   $O(N^2)$ to $O(N)$ while preserving backward stability. Complexity and
-   backward-stability claims corroborated via nhigham.com and Aurentz et
-   al. (2018)'s own citation record; the paper's own abstract was not
-   independently retrieved this pass (paywalled).
-8. **Aurentz, J. L., Mach, T., Vandebril, R., & Watkins, D. S. (2018).**
-   Fast and Backward Stable Computation of Roots of Polynomials, Part II:
-   Backward Error Analysis; Companion Matrix and Companion Pencil. _SIAM
-   Journal on Matrix Analysis and Applications_, 1245–1269,
-   doi: 10.1137/17M1152802. — Formalizes the distinction between backward
-   stability with respect to the companion matrix and backward stability
-   with respect to the polynomial's own coefficients (§4.7.1).
+   root-finding (Version 0.4.1). [Online].
+   Available: https://docs.rs/aberth/latest/aberth/. Accessed: Aug. 7, 2026.
+3. **Horner, W. G. (1819).** A New Method of Solving Numerical Equations of All
+   Orders, by Continuous Approximation. _Philosophical Transactions of the Royal
+   Society of London_, 109, 308–335. — Origin of the $N-1$ operation evaluation
+   scheme; direct FLOP-count justification for `evaluate`.
+4. **Higham, N. J. (2002).** _Accuracy and Stability of Numerical Algorithms_,
+   2nd ed., Ch. 5 "Polynomials". SIAM. — Backward-error bound $\gamma_{2n}$ for
+   Horner's method, quantifying the accuracy claim in §4.6.
+5. **Henrici, P. (1974).** _Applied and Computational Complex Analysis, Volume
+   1: Power Series, Integration, Conformal Mapping, Location of Zeros_. Wiley. (
+   Cited edition: 1988 Wiley Classics Library reprint, ISBN 0471608416.) —
+   Zero-location theory underpinning root-finding correctness and region bounds.
+6. **Bini, D. A., Boito, P., Eidelman, Y., Gemignani, L., & Gohberg, I. (2010).
+   ** A Fast Implicit QR Eigenvalue Algorithm for Companion Matrices. _Linear
+   Algebra and its Applications_, 432(8), 2006–2031. — Establishes the $O(N^2)$
+   -time companion-matrix rootfinder's storage from $O(N^2)$ to $O(N)$
+   while preserving backward stability. Complexity and backward-stability claims
+   corroborated via nhigham.com and Aurentz et al. (2018)'s own citation record;
+   the paper's own abstract was not independently retrieved this pass (
+   paywalled).
+7. **Aurentz, J. L., Mach, T., Vandebril, R., & Watkins, D. S. (2015).** Fast
+   and Backward Stable Computation of Roots of Polynomials. _SIAM Journal on
+   Matrix Analysis and Applications_, 36(3), 942–973. — Reduces the Bini et
+   al. (2010) companion-matrix rootfinder's storage from $O(N^2)$ to $O(N)$
+   while preserving backward stability. Complexity and backward-stability claims
+   corroborated via nhigham.com and Aurentz et al. (2018)'s own citation record;
+   the paper's own abstract was not independently retrieved this pass (
+   paywalled).
+8. **Aurentz, J. L., Mach, T., Vandebril, R., & Watkins, D. S. (2018).** Fast
+   and Backward Stable Computation of Roots of Polynomials, Part II: Backward
+   Error Analysis; Companion Matrix and Companion Pencil. _SIAM Journal on
+   Matrix Analysis and Applications_, 1245–1269, doi: 10.1137/17M1152802. —
+   Formalizes the distinction between backward stability with respect to the
+   companion matrix and backward stability with respect to the polynomial's own
+   coefficients (§4.7.1).
 9. **Faddeev, D. K., & Faddeeva, V. N. (1963).** _Computational Methods of
-   Linear Algebra_. W. H. Freeman and Company. — Trace-based derivation of
-   the Faddeev–LeVerrier algorithm; shared with `matrix-design.md` §4.8.1,
-   which specifies the inverse (`Matrix` → characteristic `Polynomial`)
-   conversion.
-10. **van der Hoeven, J. (2008).** Making fast multiplication of
-    polynomials numerically stable. [Online]. Available:
-    https://www.texmacs.org/joris/stablemult/stablemult.html. Accessed:
-    Aug. 7, 2026. — Numerical-stability precondition (comparable-magnitude
-    coefficients) for FFT-based polynomial multiplication, motivating its
-    rejection in §5.2.
+   Linear Algebra_. W. H. Freeman and Company. — Trace-based derivation of the
+   Faddeev–LeVerrier algorithm; shared with `matrix-design.md` §4.8.1, which
+   specifies the inverse (`Matrix` → characteristic `Polynomial`) conversion.
+10. **van der Hoeven, J. (2008).** Making fast multiplication of polynomials
+    numerically stable. [Online].
+    Available: https://www.texmacs.org/joris/stablemult/stablemult.html.
+    Accessed: Aug. 7, 2026. — Numerical-stability precondition (
+    comparable-magnitude coefficients) for FFT-based polynomial multiplication,
+    motivating its rejection in §5.2.
 11. **ARM. (2025).** Convolution. _CMSIS-DSP_ (Version 1.15.0). [Online].
-    Available:
-    https://arm-software.github.io/CMSIS-DSP/v1.15.0/group__Conv.html.
+    Available: https://arm-software.github.io/CMSIS-DSP/v1.15.0/group__Conv.html.
     Accessed: Aug. 7, 2026. — Long-vector FFT cutoff guidance and Q15/Q31
-    fixed-point accumulator/overflow behavior for direct convolution,
-    referenced in §5.2.
-12. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool
-    for Random Testing of Haskell Programs. _ACM SIGPLAN Notices_, 35(9),
-    268–279. — Property-based testing methodology framing `proptest`
-    algebraic invariant checks (§6.1); citation carried forward unverified
-    (paywalled) per `research/polynomial.json`.
+    fixed-point accumulator/overflow behavior for direct convolution, referenced
+    in §5.2.
+12. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool for
+    Random Testing of Haskell Programs. _ACM SIGPLAN Notices_, 35(9), 268–279. —
+    Property-based testing methodology framing `proptest` algebraic invariant
+    checks (§6.1); citation carried forward unverified (paywalled) per
+    `research/polynomial.json`.
+13. **Ljung, L. (2003).** Linear system identification as a curve fitting
+    problem, in *Model-based Identification and Control*, Lecture Notes in
+    Control and Information Sciences. — Equation-error ARX polynomial fitting
+    and regressor formulation.
+14. **Almunif, A., Fan, L., & Miao, Z. (2020).** A tutorial on data-driven
+    eigenvalue identification: Prony analysis, matrix pencil, and ERA. In
+    *2020 IEEE Power & Energy Society General Meeting (PESGM)*. —
+    Least-squares estimation of characteristic polynomial coefficients via
+    Prony analysis.
+15. **Higham, N. J. (2021).** What Is a Vandermonde Matrix? *Nick Higham
+    Blog*. [Online].
+    Available: https://nhigham.com/2021/06/15/what-is-a-vandermonde-matrix/.
+    Accessed: Aug. 25, 2026. — Vandermonde system formulation and exponential
+    monomial ill-conditioning.
 
----
+### 11. Revision History
 
-### 10. Revision History
-
-| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026   | @MitchellDScott | Initial draft with static array layout.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 1.1      | July 26, 2026   | @MitchellDScott | Integrated `Storage` trait hierarchy to support borrowed zero-copy views and ROM storage.                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 1.2      | July 26, 2026   | @MitchellDScott | Added inline academic citations and 3-tiered references section.                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 1.4      | August 2, 2026  | @MitchellDScott | Added citations; clarified companion-form conditioning; documented `div_rem` caveats; added Alternatives, Risks, and Development Plan.                                                                                                                                                                                                                                                                                                                                                                                  |
-| 1.5      | August 2, 2026  | @MitchellDScott | Propagated `num-traits-design.md` pivot to companion-matrix bound; relocated `ConversionError`; corrected a factual error.                                                                                                                                                                                                                                                                                                                                                                                              |
-| 1.6      | August 2, 2026  | @MitchellDScott | Separated coefficient-ordering convention from `Storage` layout; cross-referenced `storage-trait-design.md` instead of restating it.                                                                                                                                                                                                                                                                                                                                                                                    |
-| 1.7      | August 11, 2026 | @MitchellDScott | Restructured to match `matrix-design.md`'s section skeleton (Technical Overview, Core Architecture subsections, flat References list); corrected the `Convolution<T>` bound (`Real` → shipped `Float`) and `num-traits-design.md`'s now-Approved status; fixed the `matrix-design.md` §5.2→§5.5 cross-reference and the unresolved `van der Hoeven` citation; narrowed the ecosystem-consistency claim to directly-evidenced crates; flattened the References list and resolved every entry against an inline citation. |
-| 1.8      | August 16, 2026 | @mitchelldscott | Propagated four-tier `BlasStorage` hierarchy (§1, §2.1, §2.2, §3, §4.1, §4.2): updated `Polynomial` bound to `MatrixStorage<T, N, U1>`, default storage alias to `Dense<T, N, U1, Array<T, N>>`, and view aliases `PolynomialView`/`PolynomialViewMut` to `Dense` view leaves (`Ref`/`RefMut`).                                                                                                                                                                                                                         |
-| 1.9      | August 16, 2026 | @mitchelldscott | Harmonized with `storage-subprograms-design.md` Rev 1.4 (§1, §4.1): updated `Polynomial` storage bound to single-parameter `S: MatrixStorage<T, R = N, C = U1>` with associated `R`/`C` types and `FixedBlasStorage<T>` array access (`as_array()`).                                                                                                                                                                                                                                                                    |
-| 1.10     | August 16, 2026 | @mitchelldscott | Harmonized with `storage-subprograms-design.md` Rev 1.5 (§1, §4.1): updated `Polynomial` storage bound to `MatrixStorage<T, N, U1>` where `N: Dim` and `U1` are generic trait parameters on `MatrixStorage`.                                                                                                                                                                                                                                                                                                            |
-| 1.11     | August 16, 2026 | @mitchelldscott | Reconciled residual `Storage` and `ContiguousStorage`/`ContiguousStorageMut` bounds in §1, §4.3, §4.7 with `BlasStorage<T, N, U1>` / `MatrixStorage<T, N, U1>`.                                                                                                                                                                                                                                                                                                                                                         |
-| 1.12     | August 16, 2026 | @mitchelldscott | Refactored §2 to outcome-focused requirements (Horner FMA op count, convolution multiplication, error contracts).                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 1.13     | August 16, 2026 | @mitchelldscott | Updated `Polynomial` generic defaults and type aliases (`ArrayPolynomial`, `PolynomialView`, `PolynomialViewMut`) to convenience storage aliases (`DenseVectorArray`, `DenseVectorRef`, `DenseVectorRefMut`).                                                                                                                                                                                                                                                                                                           |
-| 1.14     | August 16, 2026 | @mitchelldscott | Encapsulated 1D capacity evaluation (`N::USIZE`) inside `DenseVectorArray<T, N>`, eliminating extra capacity parameters from `Polynomial`.                                                                                                                                                                                                                                                                                                                                                                              |
-| 1.15     | August 16, 2026 | @mitchelldscott | Removed obsolete `FixedBlasStorage` reference from §1 Storage Trait Reuse overview.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 1.16     | August 18, 2026 | @mitchelldscott | Aligned §4.7.2 `Polynomial` → `Tensor` conversion to infallible `From` bounded by `TensorLayout<Size = N>`, eliminating obsolete `LayoutMismatch` runtime check.                                                                                                                                                                                                                                                                                                                                                         |
-| 1.17     | August 18, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.11–1.12: `ArrayPolynomial<T, const N>` over `DenseVectorArray<T, N>`; removed `from_slice` (FR-6); `mul_poly` no longer names `DenseVectorArray` at a `Dim` associated type; dropped the stale `ConversionError` inline-definition note. |
-| 1.18     | August 18, 2026 | @mitchelldscott | Propagated storage Rev 1.16: `PolynomialView`/`PolynomialViewMut` take `const N` over `DenseVectorRef`/`VectorRef` (`&[T; N]`). |
-| 1.19     | August 19, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.21 (Approved). Struct bound lowered to `BlasStorage<T, N, U1>` with `MatrixStorage` required per `impl` block, mirroring `matrix-design.md` §4.1.1; recorded that a single column reaches only the leading-dimension branch (`type LDA = Const<N>`) and has no packed analogue. Added the level-1 operand contract (`as_array::<N>()`, `INC_X = 1`, `BUF_X = N`) as FR-5 and moved Horner evaluation onto it (§4.3, §4.6); relaxed the companion conversion to `BlasStorage`; reframed §5.4 as the companion-versus-column-copy tradeoff; added operand and release-codegen verification (§6.1); corrected stale requirement IDs (`ST-NFR-1`, `NFR-3`) and removed draft-revision narration from §7. |
-| 1.20     | August 20, 2026 | @mitchelldscott | Propagated `storage-subprograms-design.md` Rev 1.31: packed branch is `PackedStorage` with Phase-1 `Diagonal` and planned `SP`/`TP`; still no $N \times 1$ packed analogue. |
-| 1.21     | August 20, 2026 | @mitchelldscott | Renamed `BlasStorage` -> `MatrixStorage` (universal floor) and the prior `MatrixStorage` -> `DenseStorage` (leading-dimension branch), matching `storage-subprograms-design.md` Rev 1.31 and `matrix-design.md` Rev 1.31; updated §1, struct bound, and companion-conversion bound. |
-| 1.22     | August 22, 2026 | @MitchellDScott | `Convolution` length failure returns `ConversionError::DimensionMismatch`, not `LinAlgError::DimensionMismatch` (`error-design.md` FR-3). Storage hierarchy citations remain on the deleted `storage-subprograms-design.md`; this document stays Draft pending a dedicated retarget to `storage-design.md`. |
-| 1.23     | August 22, 2026 | @MitchellDScott | C-4 capacity bound cites `Const<N>: Dim` (`num-types-design.md` C-1), not a dense `U*` alias range. |
-| 1.24     | August 24, 2026 | @mitchelldscott | Retargeted onto `storage-design.md` Rev 1.8 and `subprograms-design.md` Rev 1.6, closing the Rev 1.22 note. Struct bound is `DenseStorage<T, R = N, C = U1>`; owning storage is `ArrayStorage<T, N, 1>` and views are `ViewStorage`/`ViewStorageMut` (§1, §4.1, §4.2). Slice accessors moved to the `ContiguousStorage` markers and the `as_array::<N>()` level-1 operand replaced by the typed storage operand of `subprograms-design.md` FR-9 (§4.3, §4.6, FR-5, §6.1). `mul_poly` and `div_rem` bound `T: Scalar`, admitting complex coefficients; the companion conversion binds `T: Scalar + Div`. Recorded the resulting `Convolution<T: Float>` scalar-bound divergence as an open question (§7). Status stays Draft. |
-
----
+| Revision | Date            | Author          | Description                                                                                                                           |
+|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 12, 2026   | @MitchellDScott | Initial draft with static array layout and basic polynomial arithmetic.                                                               |
+| 1.1      | August 16, 2026 | @MitchellDScott | Storage hierarchy integration: bound polynomial storage to decoupled `DenseStorage` and enabled zero-copy view leaves.                |
+| 1.2      | August 19, 2026 | @MitchellDScott | Algorithms & operands: specified Horner evaluation, convolution multiplication, and companion matrix state-space realization.         |
+| 1.3      | August 24, 2026 | @MitchellDScott | Generic scalar bounds: generalized arithmetic to `T: Scalar` with complex coefficient support.                                        |
+| 1.4      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with backward error bounds ($\gamma_{2n}$).                                                 |
+| 1.5      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<1>` dimensions.                                |

@@ -7,7 +7,7 @@
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::similar_names)]
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod subprogram_test_suite {
     use crate::assert_almost_eq;
     use crate::math::LinAlgError;
@@ -20,8 +20,7 @@ pub mod subprogram_test_suite {
         HermitianPackedStorage, MatrixLayout, PackedStorage, PackedStorageMut,
         RowArrayStorage, Side, SparseStorage, Storage, StorageInit, StorageMut,
         StorageView, StorageViewMut, SymmetricPackedStorage, ToCscStorage,
-        ToCsrStorage, Trans, TriangularPackedStorage, UpLo, ViewStorage,
-        ViewStorageMut,
+        ToCsrStorage, Trans, TriangularPackedStorage, UpLo,
     };
     use crate::math::subprograms::{
         DefaultBlas, JobZ,
@@ -262,6 +261,7 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
     /// Verifies Geru, Gerc, Symv, Hemv, Syr, Syr2, Her, Her2, Trmv, and Trsv Level 2 kernels.
     fn test_subprograms_level2_additional_kernels() {
         let mut a = ArrayStorage::<f32, 2, 2>::zeros();
@@ -323,6 +323,33 @@ pub mod subprogram_test_suite {
         .unwrap();
         assert_almost_eq!(unsafe { *rhs.get_unchecked(0, 0) }, 1.5);
         assert_almost_eq!(unsafe { *rhs.get_unchecked(1, 0) }, 2.0);
+
+        let mut trmv_x = ArrayStorage::<f32, 2, 1>::from_array([[1.0, 1.0]]);
+        DefaultBlas::trmv(
+            UpLo::Upper,
+            Trans::NoTrans,
+            Diag::NonUnit,
+            &tri,
+            &mut trmv_x,
+        );
+        assert_almost_eq!(unsafe { *trmv_x.get_unchecked(0, 0) }, 3.0);
+        assert_almost_eq!(unsafe { *trmv_x.get_unchecked(1, 0) }, 3.0);
+
+        let tp = TriangularPackedStorage::<f32, 2, 3>::new(
+            [2.0, 1.0, 3.0],
+            UpLo::Upper,
+            Diag::NonUnit,
+        );
+        let mut tpmv_x = ArrayStorage::<f32, 2, 1>::from_array([[1.0, 1.0]]);
+        DefaultBlas::tpmv(
+            UpLo::Upper,
+            Trans::NoTrans,
+            Diag::NonUnit,
+            &tp,
+            &mut tpmv_x,
+        );
+        assert_almost_eq!(unsafe { *tpmv_x.get_unchecked(0, 0) }, 3.0);
+        assert_almost_eq!(unsafe { *tpmv_x.get_unchecked(1, 0) }, 3.0);
 
         // Trsv Singular Matrix error check
         let singular_tri = ArrayStorage::<f32, 2, 2>::zeros();
@@ -531,6 +558,29 @@ pub mod subprogram_test_suite {
         .unwrap();
         assert_almost_eq!(unsafe { *trsm_b.get_unchecked(0, 0) }, 1.0);
         assert_almost_eq!(unsafe { *trsm_b.get_unchecked(1, 1) }, 1.0);
+
+        let mut trsm_right =
+            ArrayStorage::<f32, 2, 2>::from_array([[1.0, 0.0], [0.0, 1.0]]);
+        DefaultBlas::trsm(
+            Side::Right,
+            UpLo::Upper,
+            Trans::NoTrans,
+            Diag::NonUnit,
+            1.0,
+            &tri,
+            &mut trsm_right,
+        )
+        .unwrap();
+        assert_almost_eq!(unsafe { *trsm_right.get_unchecked(0, 0) }, 0.5);
+        assert_almost_eq!(
+            unsafe { *trsm_right.get_unchecked(0, 1) },
+            -1.0 / 6.0
+        );
+        assert_almost_eq!(unsafe { *trsm_right.get_unchecked(1, 0) }, 0.0);
+        assert_almost_eq!(
+            unsafe { *trsm_right.get_unchecked(1, 1) },
+            1.0 / 3.0
+        );
     }
 
     // --- Sparse BLAS ---
@@ -624,6 +674,16 @@ pub mod subprogram_test_suite {
         );
         let err_packed = DefaultBlas::pptrf(UpLo::Lower, &mut non_spd_ap);
         assert_eq!(err_packed, Err(LinAlgError::NotPositiveDefinite));
+
+        let mut ap_u = SymmetricPackedStorage::<f64, 2, 3>::new(
+            [4.0, 2.0, 2.0],
+            UpLo::Upper,
+        );
+        DefaultBlas::pptrf(UpLo::Upper, &mut ap_u).unwrap();
+        let mut b_u = ArrayStorage::<f64, 2, 1>::from_array([[8.0, 6.0]]);
+        DefaultBlas::pptrs(UpLo::Upper, &ap_u, &mut b_u).unwrap();
+        assert_almost_eq!(unsafe { *b_u.get_unchecked(0, 0) }, 1.0);
+        assert_almost_eq!(unsafe { *b_u.get_unchecked(1, 0) }, 2.0);
     }
 
     #[cfg_attr(test, test)]
@@ -648,6 +708,18 @@ pub mod subprogram_test_suite {
         let mut short_ipiv = [0usize; 0];
         let err2 = DefaultBlas::getrf(&mut a, &mut short_ipiv);
         assert!(matches!(err2, Err(LinAlgError::WorkspaceTooSmall)));
+        let mut factored =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 4.0], [1.0, 3.0]]);
+        let mut ipiv_ok = [0usize; 2];
+        DefaultBlas::getrf(&mut factored, &mut ipiv_ok).unwrap();
+        let mut rhs = ArrayStorage::<f64, 2, 1>::from_array([[4.0, 10.0]]);
+        let err_getrs = DefaultBlas::getrs(
+            Trans::NoTrans,
+            &factored,
+            &[] as &[usize],
+            &mut rhs,
+        );
+        assert_eq!(err_getrs, Err(LinAlgError::WorkspaceTooSmall));
     }
 
     #[cfg_attr(test, test)]
@@ -890,7 +962,7 @@ pub mod subprogram_test_suite {
 
         // 4. Syev
         let mut w = [0.0f64; 2];
-        let mut work_syev_short = [0.0f64; 3]; // Syev needs work.len() >= 2 * n = 4
+        let mut work_syev_short = [0.0f64; 3]; // Vectors needs work.len() >= n * n = 4
         let err_syev = DefaultBlas::syev(
             JobZ::Vectors,
             UpLo::Upper,
@@ -903,7 +975,7 @@ pub mod subprogram_test_suite {
         // 5. Heev
         let mut a_c_mut = a_c;
         let mut w_c = [0.0f64; 2];
-        let mut work_heev_short = [Complex64::ZERO; 3]; // Heev needs work.len() >= 2 * n = 4
+        let mut work_heev_short = [Complex64::ZERO; 3]; // Vectors needs work.len() >= n * n = 4
         let err_heev = DefaultBlas::heev(
             JobZ::Vectors,
             UpLo::Upper,
@@ -1066,6 +1138,8 @@ pub mod subprogram_test_suite {
     #[cfg_attr(test, test)]
     /// Verifies bit-exact execution of integer Level 1, 2, 3 BLAS over u8, u16, u32, i32.
     fn test_subprograms_integer_blas_bit_exact() {
+        type Q8 = crate::math::fixed_num::Fixed<i16, 8>;
+
         // Axpy, Scal, Dotu over u8
         let x_u8 = ArrayStorage::<u8, 3, 1>::from_array([[1, 2, 1]]);
         let mut y_u8 = ArrayStorage::<u8, 3, 1>::from_array([[10, 20, 10]]);
@@ -1083,7 +1157,33 @@ pub mod subprogram_test_suite {
         DefaultBlas::gemv(Trans::NoTrans, 1, &a_i32, &x_i32, 0, &mut y_i32);
         assert_eq!(y_i32.as_slice(), &[5 + 3 * 6, 2 * 5 + 4 * 6]);
 
-        // Gemm over u32
+        // Gemv over u16
+        let a_u16 = ArrayStorage::<u16, 2, 2>::from_array([[1, 2], [3, 4]]);
+        let x_u16 = ArrayStorage::<u16, 2, 1>::from_array([[5, 6]]);
+        let mut y_u16 = ArrayStorage::<u16, 2, 1>::from_array([[0, 0]]);
+        DefaultBlas::gemv(Trans::NoTrans, 1, &a_u16, &x_u16, 0, &mut y_u16);
+        assert_eq!(y_u16.as_slice(), &[5 + 3 * 6, 2 * 5 + 4 * 6]);
+
+        // Gemv over Fixed at a Scalar-capable scale
+        let a_q = ArrayStorage::<Q8, 2, 2>::from_array([
+            [Q8::from_num(1.0), Q8::from_num(0.0)],
+            [Q8::from_num(0.0), Q8::from_num(1.0)],
+        ]);
+        let x_q = ArrayStorage::<Q8, 2, 1>::from_array([[
+            Q8::from_num(3.0),
+            Q8::from_num(4.0),
+        ]]);
+        let mut y_q = ArrayStorage::<Q8, 2, 1>::zeros();
+        DefaultBlas::gemv(
+            Trans::NoTrans,
+            Q8::from_num(1.0),
+            &a_q,
+            &x_q,
+            Q8::from_num(0.0),
+            &mut y_q,
+        );
+        assert_eq!(*y_q.get(0, 0).unwrap(), Q8::from_num(3.0));
+        assert_eq!(*y_q.get(1, 0).unwrap(), Q8::from_num(4.0));
         let a_u32 = ArrayStorage::<u32, 2, 2>::from_array([[1, 2], [3, 4]]);
         let b_u32 = ArrayStorage::<u32, 2, 2>::from_array([[5, 6], [7, 8]]);
         let mut c_u32 = ArrayStorage::<u32, 2, 2>::zeros();
@@ -1354,25 +1454,68 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies negative increment execution on reversed ViewStorage for Axpy.
+    /// Verifies negative increment execution on reversed StorageView for Axpy.
     fn test_subprograms_negative_increment_reversed_views() {
         let x_data = [1.0f64, 2.0, 3.0];
         let mut y_data = [10.0f64, 20.0, 30.0];
         let x_rev = unsafe {
-            ViewStorage::<f64, Const<3>, Const<1>>::new_with_strides(
+            StorageView::<f64, Const<3>, Const<1>>::new_with_strides_unchecked(
                 x_data.as_ptr().add(2),
                 -1,
                 1,
             )
         };
         let mut y_view =
-            ViewStorageMut::<f64, Const<3>, Const<1>>::new(&mut y_data)
-                .unwrap();
+            StorageViewMut::<f64, Const<3>, Const<1>>::new_with_strides(
+                &mut y_data,
+                1,
+                1,
+            )
+            .unwrap();
         DefaultBlas::axpy(2.0, &x_rev, &mut y_view);
         assert_eq!(
             y_data.map(f64::to_bits),
             [16.0f64.to_bits(), 24.0f64.to_bits(), 32.0f64.to_bits()]
         );
+
+        let a_rev_data = [1.0f64, 0.0, 0.0, 1.0];
+        let a_rev = unsafe {
+            StorageView::<f64, Const<2>, Const<2>>::new_with_strides_unchecked(
+                a_rev_data.as_ptr(),
+                1,
+                2,
+            )
+        };
+        let x_g = [3.0f64, 4.0];
+        let xg = unsafe {
+            StorageView::<f64, Const<2>, Const<1>>::new_with_strides_unchecked(
+                x_g.as_ptr(),
+                1,
+                1,
+            )
+        };
+        let mut yg_data = [0.0f64, 0.0];
+        let mut yg =
+            StorageViewMut::<f64, Const<2>, Const<1>>::new_with_strides(
+                &mut yg_data,
+                1,
+                1,
+            )
+            .unwrap();
+        DefaultBlas::gemv(Trans::NoTrans, 1.0, &a_rev, &xg, 0.0, &mut yg);
+        assert_almost_eq!(yg_data[0], 3.0);
+        assert_almost_eq!(yg_data[1], 4.0);
+        let mut yg_rev_data = [0.0f64, 0.0];
+        let mut yg_rev = unsafe {
+            StorageViewMut::<f64, Const<2>, Const<1>>::new_with_strides_unchecked(
+                yg_rev_data.as_mut_ptr().add(1),
+                -1,
+                1,
+            )
+        };
+        DefaultBlas::gemv(Trans::NoTrans, 1.0, &a_rev, &xg, 0.0, &mut yg_rev);
+        assert_almost_eq!(yg_rev_data[0], 4.0);
+        assert_almost_eq!(yg_rev_data[1], 3.0);
     }
 
     #[cfg_attr(test, test)]
@@ -1478,5 +1621,163 @@ pub mod subprogram_test_suite {
             &mut correction,
         );
         assert_eq!(correction.as_slice(), &[0.5, 0.5]);
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    fn test_subprograms_verification_oracles() {
+        let ha = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(2.0, 0.0), Complex64::new(1.0, 1.0)],
+            [Complex64::new(1.0, -1.0), Complex64::new(3.0, 0.0)],
+        ]);
+        let hx = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex64::ONE,
+            Complex64::ZERO,
+        ]]);
+        let mut hy = ArrayStorage::<Complex64, 2, 1>::zeros();
+        DefaultBlas::hemv(
+            UpLo::Upper,
+            Complex64::ONE,
+            &ha,
+            &hx,
+            Complex64::ZERO,
+            &mut hy,
+        );
+        assert_almost_eq!(hy.get(0, 0).unwrap().re, 2.0);
+        assert_almost_eq!(hy.get(0, 0).unwrap().im, 0.0);
+        assert_almost_eq!(hy.get(1, 0).unwrap().re, 1.0);
+        assert_almost_eq!(hy.get(1, 0).unwrap().im, 1.0);
+
+        let mut her_a = ArrayStorage::<Complex64, 2, 2>::zeros();
+        DefaultBlas::her(UpLo::Upper, 1.0, &hx, &mut her_a);
+        assert_almost_eq!(her_a.get(0, 0).unwrap().re, 1.0);
+        let mut her2_a = ArrayStorage::<Complex64, 2, 2>::zeros();
+        DefaultBlas::her2(UpLo::Upper, Complex64::ONE, &hx, &hx, &mut her2_a);
+        assert_almost_eq!(her2_a.get(0, 0).unwrap().re, 2.0);
+
+        let a0 = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(3.0, 0.0), Complex64::new(4.0, 1.0)],
+            [Complex64::new(4.0, -1.0), Complex64::new(3.0, 0.0)],
+        ]);
+        let mut qr = a0;
+        let mut tau = [Complex64::ZERO; 2];
+        let mut work = [Complex64::ZERO; 4];
+        DefaultBlas::geqrf(&mut qr, &mut tau, &mut work).unwrap();
+        let mut qh_a = a0;
+        DefaultBlas::unmqr(
+            Side::Left,
+            Trans::ConjTrans,
+            &qr,
+            &tau,
+            &mut qh_a,
+            &mut work,
+        )
+        .unwrap();
+        assert_almost_eq!(qh_a.get(0, 0).unwrap().re, qr.get(0, 0).unwrap().re);
+        assert_almost_eq!(qh_a.get(0, 1).unwrap().re, qr.get(0, 1).unwrap().re);
+        assert!(qh_a.get(1, 0).unwrap().abs2() < 1e-12);
+
+        let mut c_right = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::ONE, Complex64::ZERO],
+            [Complex64::ZERO, Complex64::ONE],
+        ]);
+        DefaultBlas::unmqr(
+            Side::Right,
+            Trans::NoTrans,
+            &qr,
+            &tau,
+            &mut c_right,
+            &mut work,
+        )
+        .unwrap();
+        assert!(c_right.get(0, 0).unwrap().abs2() > 0.0);
+
+        let mut coo = ArrayCooStorage::<f32, 2, 2, 4>::new();
+        coo.push(0, 0, 1.0).unwrap();
+        coo.push(1, 1, 1.0).unwrap();
+        let a_csc: ArrayCscStorage<f32, 2, 2, 4, 3> = coo.to_csc().unwrap();
+        let x = ArrayStorage::<f32, 2, 1>::from_array([[1.0, 2.0]]);
+        let mut y_row =
+            ArrayStorage::<f32, 1, 2>::from_array([[f32::NAN], [f32::NAN]]);
+        DefaultBlas::cscmv(1.0, &a_csc, &x, 0.0, &mut y_row);
+        assert_almost_eq!(*y_row.get(0, 0).unwrap(), 1.0);
+        assert_almost_eq!(*y_row.get(0, 1).unwrap(), 2.0);
+
+        let mut ident =
+            ArrayStorage::<f64, 9, 9>::from_fn(
+                |i, j| {
+                    if i == j { 1.0 } else { 0.0 }
+                },
+            );
+        let mut w9 = [0.0f64; 9];
+        let mut work9 = [0.0f64; 81];
+        DefaultBlas::syev(
+            JobZ::Vectors,
+            UpLo::Upper,
+            &mut ident,
+            &mut w9,
+            &mut work9,
+        )
+        .unwrap();
+        for (i, w) in w9.iter().enumerate() {
+            assert_almost_eq!(*w, 1.0);
+            assert_almost_eq!(*ident.get(i, i).unwrap(), 1.0);
+        }
+
+        let mut garbage =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 99.0], [1.0, 3.0]]);
+        let mut wg = [0.0f64; 2];
+        let mut workg = [0.0f64; 4];
+        DefaultBlas::syev(
+            JobZ::NoVectors,
+            UpLo::Upper,
+            &mut garbage,
+            &mut wg,
+            &mut workg,
+        )
+        .unwrap();
+        let mut clean =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 0.0], [1.0, 3.0]]);
+        let mut wc = [0.0f64; 2];
+        let mut workc = [0.0f64; 4];
+        DefaultBlas::syev(
+            JobZ::NoVectors,
+            UpLo::Upper,
+            &mut clean,
+            &mut wc,
+            &mut workc,
+        )
+        .unwrap();
+        assert_almost_eq!(wg[0], wc[0]);
+        assert_almost_eq!(wg[1], wc[1]);
+
+        let mut t9 =
+            ArrayStorage::<f64, 9, 9>::from_fn(
+                |i, j| {
+                    if i == j { 1.0 } else { 0.0 }
+                },
+            );
+        let mut x9 = ArrayStorage::<f64, 9, 1>::from_array([[
+            0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+        ]]);
+        DefaultBlas::trmv(
+            UpLo::Upper,
+            Trans::NoTrans,
+            Diag::NonUnit,
+            &t9,
+            &mut x9,
+        );
+        assert_almost_eq!(*x9.get(8, 0).unwrap(), 8.0);
+        let a9 = t9;
+        DefaultBlas::trmm(
+            Side::Left,
+            UpLo::Upper,
+            Trans::NoTrans,
+            Diag::NonUnit,
+            1.0,
+            &a9,
+            &mut t9,
+        );
+        assert_almost_eq!(*t9.get(0, 0).unwrap(), 1.0);
     }
 }

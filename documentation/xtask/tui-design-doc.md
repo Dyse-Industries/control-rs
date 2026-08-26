@@ -10,10 +10,10 @@
 
 This design document establishes the architecture for the `control-rs-xtask`
 Host Console Menu, a Terminal User Interface (TUI) designed to control and
-monitor on-target Hardware-in-the-Loop (HIL) testing. The TUI provides
+monitor on-target Embedded Test Server (ETS) execution. The TUI provides
 developers with a dynamic, real-time dashboard displaying system metadata, test
 suite namespaces, cycle-level execution statistics and target logs,
-facilitating rapid hardware-in-the-loop iteration.
+facilitating rapid on-target iteration.
 
 ---
 
@@ -228,9 +228,8 @@ host-side developer flow. The TUI manages connection lifecycles dynamically:
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                    |
-|:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 24, 2026   | @MitchellDScott | Initial design outline of TUI host menu.                                                                       |
-| 1.1      | July 18, 2026  | @MitchellDScott | Restructured to template; replaced semihosting with RTT; integrated Teensy 4.1 bootloader workarounds.         |
-| 1.2      | July 18, 2026  | @MitchellDScott | Documented host-target ServerBridge architecture, postcard framing protocol and panic re-connection lifecycle. |
-| 1.3      | August 6, 2026 | @MitchellDScott | Consistency pass: aligned command names with shipped enum; replaced RTT step with ServerBridge connection.     |
+| Revision | Date           | Author          | Description                                                                                                                           |
+|:---------|:---------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | May 24, 2026   | @MitchellDScott | Initial specification for interactive terminal user interface (TUI) test dashboard.                                                   |
+| 1.1      | July 18, 2026  | @MitchellDScott | Architecture & transport: added Ratatui layout, `ServerBridge` async polling channels, and Teensy 4.1 hardware integration.            |
+| 1.2      | August 6, 2026  | @MitchellDScott | Protocol alignment: synchronized interactive command schemas with shipped postcard framing and reconnection lifecycles.               |

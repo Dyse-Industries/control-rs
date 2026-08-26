@@ -4,7 +4,7 @@
 //!   * [ ] remove index slicing
 
 use crate::math::{
-    Bijection, Map,
+    Bijection, ConversionError, ConversionResult, Map,
     complex_num::Complex,
     num_traits::{Float, Scalar},
     ops::Neg,
@@ -145,27 +145,29 @@ pub trait Convolution<T: Scalar> {
     /// Writes `input_len + kernel_len - 1` samples. Inner-loop indices stay in
     /// range via `k_min`/`k_max`.
     ///
-    /// # Panics
-    /// Panics if `output` is shorter than `input_len + kernel_len - 1`.
+    /// # Errors
+    /// Returns [`ConversionError::DimensionMismatch`] if `output` is shorter than
+    /// `input_len + kernel_len - 1`.
     // Performance: Direct indexing is used to bypass bounds checking in performance-critical convolution loops.
     #[allow(clippy::indexing_slicing)]
     // Case-by-case: Arithmetic side effects are unavoidable for convolution math.
     #[allow(clippy::arithmetic_side_effects)]
-    fn convolve_input(input: &[T], kernel: &[T], output: &mut [T]) {
+    fn convolve_input(
+        input: &[T],
+        kernel: &[T],
+        output: &mut [T],
+    ) -> ConversionResult<()> {
         let input_len = input.len();
         let kernel_len = kernel.len();
 
         if input_len == 0 || kernel_len == 0 {
-            return;
+            return Ok(());
         }
 
         let expected_len = input_len + kernel_len - 1;
-        assert!(
-            output.len() >= expected_len,
-            "Convolution output buffer is too small. Expected at least {}, got {}",
-            expected_len,
-            output.len()
-        );
+        if output.len() < expected_len {
+            return Err(ConversionError::DimensionMismatch);
+        }
 
         // Calculate the convolution sum: y[n] = sum(x[k] * h[n-k])
         for n in 0..expected_len {
@@ -181,6 +183,7 @@ pub trait Convolution<T: Scalar> {
 
             output[n] = sum;
         }
+        Ok(())
     }
 }
 
@@ -205,6 +208,16 @@ pub trait Discrete<T: Float> {
     /// returns the plant that was discretized, not a unique reconstruction.
     fn to_continuous(&self) -> Self::Continuous;
 }
+
+/// Reference zero-dependency pure-Rust DSP engine implementing [`FFT`] and [`Convolution`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DefaultDsp;
+
+impl<T: 'static + Clone + Float + Neg<Output = T> + Default> FFT<T>
+    for DefaultDsp
+{
+}
+impl<T: Scalar> Convolution<T> for DefaultDsp {}
 
 // Blanket implementation of `Map` for anything that implements `FFT`.
 impl<T, F, const N: usize> Map<[T; N], [Complex<T>; N]> for F

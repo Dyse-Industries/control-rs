@@ -6,8 +6,8 @@ edition = "2024"
 [dependencies]
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 postcard = { version = "1.0", default-features = false }
-control-rs = { path = "../..", default-features = false, features = ["hil"] }
-control-rs-hil = { path = "../../control-rs-hil" }
+control-rs = { path = "../..", default-features = false, features = ["ets"] }
+control-rs-ets = { path = "../../control-rs-ets" }
 control-rs-macros = { path = "../../control-rs-macros" }
 
 [target.'cfg(target_arch = "arm")'.dependencies]

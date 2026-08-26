@@ -210,9 +210,9 @@ synthesis question is eventually resolved.
    norm computation (e.g., scale invariance, agreement with a hand-derived
    closed form for 1×1/2×2 M matrices) per the crate's invariant-heavy-code
    testing standard.
-3. **HIL**: Not required in this phase. The only on-target-capable primitive
+3. **ETS**: Not required in this phase. The only on-target-capable primitive
    (§4.4) is exercised through `Matrix`'s existing verification path; add a
-   HIL mock harness only once/if an on-target consumer of the check is
+   ETS mock-harness only once/if an on-target consumer of the check is
    identified.
 
 ---
@@ -354,7 +354,7 @@ Aug. 8, 2026.
 
 ### 11. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                                                    |
-|:---------|:---------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 8, 2026 | @MitchellDScott | Initial draft: scoped `robust_tools` to single-block uncertainty and a closed-form stability check; deferred µ-analysis pending an SDP solver. |
-| 1.1      | August 24, 2026 | @mitchelldscott | Aligned §4.1 with the retargeted models: `Matrix<T, R, C, S>` carries its storage parameter, and recorded that `Complex<T>` now satisfies `T: Scalar`, so the Hermitian routines `Hemv`/`Herk`/`Heev` (`subprograms-design.md` FR-2, FR-4, FR-8) supply the frequency-response singular-value machinery. Robust control content unchanged. Status stays Draft. |
+| Revision | Date            | Author          | Description                                                                                                                           |
+|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 8, 2026  | @MitchellDScott | Initial draft: scoped `robust_tools` to single-block uncertainty and closed-form stability checks.                                    |
+| 1.1      | August 24, 2026 | @MitchellDScott | Storage & scalar trait alignment: parameterized `Matrix` storage and mapped frequency-response singular values to Hermitian subprograms (`Hemv`/`Herk`/`Heev`). |

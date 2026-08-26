@@ -1,6 +1,6 @@
 # Linear Algebra Subprograms (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_24,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -20,10 +20,13 @@ Reference LAPACK, 2026b).
 Subprograms support **primitive integers** (`u8`–`u64`, `i8`–`i64`),
 **fixed-point numbers** (`fixed-num`), **floats** (`f32`, `f64`), and **complex
 scalars** (`Complex<T>`). Dispatch occurs via associated functions on zero-sized
-backend structs (`B::gemv(...)`), allowing seamless compile-time switching
-between pure-Rust reference implementations (`DefaultBlas`) and bare-metal
-hardware accelerators (ARM CMSIS-DSP, RISC-V NMSIS-DSP) (Arm Software, 2026; Arm
-Limited, 2022; Nuclei Software, 2026a).
+backend structs (`B::gemv(...)`), fixing the backend at compile time. `src/`
+ships a single implementor, `DefaultBlas`. Accelerated backends attach from
+outside the crate by implementing the same traits on a local marker type.
+Reference implementors for ARM CMSIS-DSP, RISC-V NMSIS-DSP and host SIMD
+libraries are provided under `examples/subprograms/` for reuse or reference,
+not linked into `src/` (§4.5) (Arm Software, 2026; Arm Limited, 2022; Nuclei
+Software, 2026a).
 
 > [!NOTE]
 > **Backend Type Support & Compile-Time Enforcement**: Subprogram traits must
@@ -33,7 +36,7 @@ Limited, 2022; Nuclei Software, 2026a).
 > `Quantized`) and field kernels for `T: Scalar + Div` with
 > `T::Real: Radical` / `Trig` as required. `T: Float` is `f32` / `f64` only
 > and is not a stand-in for `Complex<T>` (`num-traits-design.md` FR-5).
-> Hardware backends (`CmsisDspBlas`, `NmsisDspBlas`) implement traits only
+> The example backends (`CmsisDspBlas`, `NmsisDspBlas`) implement traits only
 > for hardware-supported types (e.g. `f32`, `Complex32`, `q31`, `q15`).
 > Invoking unsupported types fails to compile (`error[E0277]`).
 
@@ -122,17 +125,17 @@ its identifier.
       harness
       links without the library itself naming `std`, so `cfg(test)` needs no
       exemption. Supported by `src/` carrying no `extern crate std` prior to the
-      change that prompted this revision (control-rs, 2026); confirm with
+      change that prompted this revision; confirm with
       `cargo test --lib` before the clause is enforced.
     - **NFR-1b — No mutable global state**: no `static mut`, no interior-mutable
       `static` (`AtomicUsize`, `Cell`, `thread_local!`) reachable from kernel
       code. Kernel results are a function of arguments alone, which is what
       makes
-      a bit-for-bit HIL oracle meaningful (§6.1.2).
+      a bit-for-bit ETS oracle meaningful (§6.1.2).
     - **NFR-1c — No `cfg`-conditional public API**: a symbol present in the host
       build and absent in a bare-metal build means the verified binary is not
       the
-      deployed binary (control-rs, 2026).
+      deployed binary.
 
   Allocation-only wording does not imply NFR-1a–NFR-1c: `thread_local!` and
   `AtomicUsize` allocate nothing yet violate both NFR-1a and NFR-1b. The
@@ -155,6 +158,14 @@ its identifier.
 - **C-3 — NaN-Safe Beta Scaling**: When $\beta = 0$, destination memory is
   safely overwritten without
   reading uninitialized $y$ / $C$ (Dongarra et al., 1988, 1990; Netlib, 2026).
+  The zeroing loop covers every dest entry the kernel will write (matrix
+  row count for `Csrmv`/`Cscmv`/`Gemv`), not `y.rows()` alone when $y$ is a
+  row vector.
+- **C-4 — No External Library Under `src/`**: `src/` declares the trait
+  surface and `DefaultBlas` only. No C or Fortran library is vendored,
+  linked or feature-gated inside the crate, and no backend marker is
+  admitted under a `cfg` (NFR-1c). Accelerated backends are out of scope for
+  `src/` and attach from outside it (§4.5).
 
 ---
 
@@ -327,11 +338,7 @@ classDiagram
         <<struct>>
     }
 
-    class CmsisDspBlas {
-        <<struct>>
-    }
-
-    class NmsisDspBlas {
+    class ExampleBlas {
         <<struct>>
     }
 
@@ -368,16 +375,15 @@ classDiagram
     Hemv~T A X Y~ <|.. DefaultBlas
     Trsv~T A X~ <|.. DefaultBlas
     Trsm~T A B~ <|.. DefaultBlas
-    Axpy~T X Y~ <|.. CmsisDspBlas
-    Gemv~T A X Y~ <|.. CmsisDspBlas
-    Gemm~T A B C~ <|.. CmsisDspBlas
-    Axpy~T X Y~ <|.. NmsisDspBlas
-    Gemv~T A X Y~ <|.. NmsisDspBlas
-    Gemm~T A B C~ <|.. NmsisDspBlas
+    Axpy~T X Y~ <|.. ExampleBlas
+    Gemv~T A X Y~ <|.. ExampleBlas
+    Gemm~T A B C~ <|.. ExampleBlas
 ```
 
 *Figure 1: UML hierarchy for dense Level 1, Level 2, and Level 3 BLAS execution
-traits, backend dispatchers, and configuration enums.*
+traits, backend dispatchers, and configuration enums. `DefaultBlas` is the only
+implementor in `src/`. `ExampleBlas` stands for any backend declared outside the
+crate, including the implementors under `examples/subprograms/` (§4.5).*
 
 #### 3.2 Packed BLAS & Sparse BLAS (SpBLAS) Hierarchy
 
@@ -544,7 +550,7 @@ classDiagram
         <<struct>>
     }
 
-    class CmsisDspBlas {
+    class ExampleBlas {
         <<struct>>
     }
 
@@ -574,14 +580,16 @@ classDiagram
     Getrs~T A B~ <|.. DefaultBlas
     Syev~T A~ <|.. DefaultBlas
     Heev~T A~ <|.. DefaultBlas
-    Potrf~T A~ <|.. CmsisDspBlas
+    Potrf~T A~ <|.. ExampleBlas
 ```
 
 *Figure 3: UML hierarchy for direct LAPACK factorizations (Cholesky, QR, LU),
 system solvers, Jacobi spectral decompositions, and structured linear algebra
 error enums. `syev` / `heev` are the public entry points and carry no budget
 argument; each forwards to a crate-private `_impl` (shown `-`) that takes the
-Jacobi budget explicitly, defaulting to $50 n^2$ (§4.3).*
+Jacobi budget explicitly, defaulting to $50 n^2$ (§4.3). `ExampleBlas` carries
+the same meaning as in Figure 1: a backend declared outside `src/`, covering
+only the factorizations its library exposes (§4.5).*
 
 ---
 
@@ -616,7 +624,7 @@ enums (`storage-design.md` §4.6).
 
 Parameterizing storage types directly on subprogram traits allows zero-cost
 monomorphization
-over stack arrays (`ArrayStorage`), strided views (`ViewStorage`), packed
+over stack arrays (`ArrayStorage`), strided views (`StorageView`), packed
 matrices
 (`SymmetricPackedStorage`), and compressed sparse matrices (`CsrStorage`)
 without dynamic
@@ -644,11 +652,14 @@ Direct LAPACK routines operate in-place with stack-allocated workspace buffers
   prior to square-root division; returns `Err(LinAlgError::NotPositiveDefinite)`
   if
   a non-positive pivot occurs (Anderson et al., 1999; Reference LAPACK, 2026b).
+  `Pptrf` writes the physical triangle selected by `uplo`. `set` of an
+  unstored half is not discarded: Upper packed updates \(i \le j\); Lower
+  packed updates \(i \ge j\).
 - **Cholesky Solver (`Potrs`, `Pptrs`)**: Solves $A X = B$ via forward/back
   substitution
   $L Y = B$ followed by $L^T X = Y$ (or $L^H X = Y$) using Level-3 `Trsm`
   kernels
-  (Anderson et al., 1999).
+  (Anderson et al., 1999). `uplo` selects the same triangle `Pptrf` wrote.
 - **Householder QR Factorization (`Geqrf`)**: Computes $A = Q R$ where $Q$ is
   represented
   as a product of elementary Householder
@@ -661,6 +672,9 @@ Direct LAPACK routines operate in-place with stack-allocated workspace buffers
   to a target matrix $C \leftarrow \text{op}(Q) C$ without forming the
   full $N \times N$
   orthogonal matrix $Q$ explicitly (Anderson et al., 1999).
+  \(H = I - \tau v v^H\) and \(H^H = I - \overline{\tau} v v^H\): both
+  paths conjugate \(v\) in the inner product \(v^H C\) and apply \(v\) in
+  the rank-1 update. `Side::Right` is required, not a no-op.
 - **LU Factorization with Partial Pivoting (`Getrf`)**: Computes $P A = L U$
   using row
   swaps recorded in an integer permutation slice `ipiv: &mut [usize]`. Returns
@@ -668,7 +682,9 @@ Direct LAPACK routines operate in-place with stack-allocated workspace buffers
   Anderson et al., 1999).
 - **LU Solver (`Getrs`)**: Applies permutations $P$ followed by triangular
   forward/back
-  solves $L Y = P B$ and $U X = Y$ (Anderson et al., 1999).
+  solves $L Y = P B$ and $U X = Y$ (Anderson et al., 1999). `ipiv.len()`
+  below `min(m, n)` returns `Err(LinAlgError::WorkspaceTooSmall)`, matching
+  `Getrf`.
 - **Jacobi Spectral Eigendecomposition (`Syev`, `Heev`)**: Computes
   eigenvalues $\Lambda$
   and eigenvectors ($A = V \Lambda V^T$ / $A = U \Lambda U^H$) using cyclic
@@ -677,6 +693,14 @@ Direct LAPACK routines operate in-place with stack-allocated workspace buffers
   for symmetric
   and Hermitian matrices without requiring dynamic memory allocations (
   rust-embedded, 2026a).
+  Off-diagonal search and plane updates read only the `uplo` triangle and
+  reflect (conjugate, for `Heev`) the unstored half, matching LAPACK
+  `DSYEV` / `ZHEEV` (Anderson et al., 1999).
+- **Workspaces**: `tau`, `work`, and `ipiv` are caller stack slices
+  (Anderson et al., 1999; rust-embedded, 2026a). Kernels do not allocate a
+  hidden `[T; N]` scratch that silently drops tail entries or panics when
+  \(n\) exceeds a fixed cap. Insufficient length returns
+  `WorkspaceTooSmall`.
 - **Jacobi Sweep Budget**: Convergence is asymptotic, so both routines carry a
   finite iteration budget and return `Err(LinAlgError::MaxIterationsReached)`
   when it is exhausted, matching LAPACK's convention of reporting
@@ -751,38 +775,66 @@ Hemv<T, A, X, Y> for DefaultBlas
 }
 ```
 
-#### 4.5 Hardware Acceleration & FFI Backend Interface
+#### 4.5 Backend Extension Point
 
-Hardware-accelerated target backends implement subprogram traits specifically
-for their supported scalar types and layouts (Arm Software, 2026; Arm Limited,
-2022;
-Nuclei Software, 2026a):
+`src/` ships a single implementor, `DefaultBlas` (§4.4). The subprogram traits
+are the extension point: a downstream crate, or an example in this repository,
+declares its own zero-sized marker and implements the traits on it. A local
+self type satisfies Rust's orphan rule, so attaching an accelerated backend
+requires no edit under `src/`, no crate feature and no addition to this crate's
+dependency graph.
 
-| Subprogram Trait | ARM CMSIS-DSP Mapping (`feature = "cmsis-dsp"`) | RISC-V NMSIS-DSP Mapping (`feature = "nmsis-dsp"`) | Supported Scalar Types | Hardware Citations                          |
-|:-----------------|:------------------------------------------------|:---------------------------------------------------|:----------------------:|:--------------------------------------------|
-| `Axpy` / `Scal`  | `arm_scale_f32`, `arm_scale_q31`                | `riscv_scale_f32`, `riscv_scale_q31`               |  `f32`, `q31`, `q15`   | (Arm Limited, 2022; Nuclei Software, 2026a) |
-| `Dotu` / `Dotc`  | `arm_dot_prod_f32`, `arm_cmplx_dot_prod_f32`    | `riscv_dot_prod_f32`, `riscv_cmplx_dot_prod_f32`   |   `f32`, `Complex32`   | (Arm Limited, 2022; Nuclei Software, 2026a) |
-| `Gemv` / `Symv`  | `arm_mat_vec_mult_f32`, `arm_mat_vec_mult_q31`  | `riscv_mat_vec_mult_f32`, `riscv_mat_vec_mult_q31` |  `f32`, `q31`, `q15`   | (Arm Limited, 2022; Nuclei Software, 2026a) |
-| `Gemm` / `Hemm`  | `arm_mat_mult_f32`, `arm_cmplx_mat_mult_f32`    | `riscv_mat_mult_f32`, `riscv_cmplx_mat_mult_f32`   |   `f32`, `Complex32`   | (Arm Limited, 2022; Nuclei Software, 2026a) |
-| `Nrm2`           | `arm_cmplx_mag_f32` (Euclidean 2-norm)          | `riscv_cmplx_mag_f32` (Euclidean 2-norm)           |   `f32`, `Complex32`   | (Arm Limited, 2022; Nuclei Software, 2026a) |
-| `Potrf`          | `arm_mat_cholesky_f32`                          | `riscv_mat_cholesky_f32`                           |         `f32`          | (Arm Limited, 2022; Nuclei Software, 2026a) |
-| `Trsm` / `Trsv`  | `arm_mat_solve_upper_triangular_f32`            | `riscv_mat_solve_upper_triangular_f32`             |         `f32`          | (Arm Limited, 2022; Nuclei Software, 2026a) |
+External C libraries are not vendored, linked or feature-gated under `src/`
+(C-4). Three properties make that placement unworkable.
 
-*(Note: Specialized packed operations `Hemv`/`Hpmv`/`Spmv` not natively in
-CMSIS-DSP delegate to `DefaultBlas`.)*
+- **Toolchain.** Building OpenBLAS requires GNU Make or CMake, a C compiler
+  and, for LAPACK, a Fortran compiler (OpenBLAS, 2026). BLASFEO supplies its
+  performance-optimized routines only for Linux, Windows and macOS builds,
+  falling back to a target-unspecific reference variant elsewhere (BLASFEO,
+  2026). Neither is a dependency a `no_std` crate can carry.
+- **Target coupling.** CMSIS-DSP addresses Cortex-M and Cortex-A devices (Arm
+  Software, 2026). NMSIS-DSP addresses Nuclei RISC-V cores and its optimized
+  paths assume P-ext or V-ext (Nuclei Software, 2026a), while
+  `riscv32imac-unknown-none-elf` declares `+m,+a,+c` only (Rust Project,
+  2026b). A backend bundled in `src/` is dead weight on every target it does
+  not serve, and on `riscv32imac` NMSIS-DSP would bind correctly without
+  accelerating anything.
+- **NFR-1c.** A marker admitted under one `cfg` and absent under another is a
+  `cfg`-conditional public symbol, which §2.2 rejects. Keeping backends
+  outside `src/` removes the conflict instead of granting it an exception.
+
+##### 4.5.1 Provided implementors
+
+Reference implementors live under `examples/subprograms/` and exist to be read,
+copied or referenced by integrators rather than depended on. Each declares its
+own marker and implements the traits directly, which is evidence that the
+extension point works from the position an external user occupies.
+`subprograms-examples-proposal.md` specifies the set, the feature gating and
+the equivalence harness; the evidence for each binding is collected there.
+
+| Implementor      | Environment                     | Attaches via                                                                     |
+|:-----------------|:--------------------------------|:---------------------------------------------------------------------------------|
+| `AccelerateBlas` | macOS on Apple silicon          | vecLib `cblas.h`, `-framework Accelerate` (Apple Developer, 2026b)               |
+| `CblasBlas`      | any host with a Netlib-ABI BLAS | `-lcblas -lblas`; OpenBLAS and BLIS are link-time substitutions (OpenBLAS, 2026) |
+| `NeonBlas`       | `aarch64`                       | `core::arch::aarch64` intrinsics, no external library                            |
+| `Avx2Blas`       | `x86_64`                        | `core::arch::x86_64` intrinsics, no external library                             |
+| `CmsisDspBlas`   | Cortex-M                        | CMSIS-DSP static library, Apache-2.0 (Arm Software, 2026)                        |
+| `NmsisDspBlas`   | Nuclei RISC-V                   | NMSIS-DSP static library, Apache-2.0 (Nuclei Software, 2026a)                    |
+
+An implementor attaches without a feature gate, because the marker is local to
+the crate that declares it:
 
 ```rust
-#[cfg(feature = "cmsis-dsp")]
-pub struct CmsisDspBlas;
+// In an example or a downstream crate, not in src/.
+struct CmsisDspBlas;
 
-#[cfg(feature = "cmsis-dsp")]
-impl Gemm<Complex<f32>, ArrayStorage<Complex<f32>, 4, 4>, ArrayStorage<Complex<f32>, 4, 4>, ArrayStorage<Complex<f32>, 4, 4>>
+impl Gemm<f32, ArrayStorage<f32, 4, 4>, ArrayStorage<f32, 4, 4>, ArrayStorage<f32, 4, 4>>
 for CmsisDspBlas
 {
     #[inline(always)]
-    fn gemm(ta: Trans, tb: Trans, alpha: Complex<f32>, a: &ArrayStorage<Complex<f32>, 4, 4>, b: &ArrayStorage<Complex<f32>, 4, 4>, beta: Complex<f32>, c: &mut ArrayStorage<Complex<f32>, 4, 4>) {
-        if ta == Trans::NoTrans && tb == Trans::NoTrans && alpha == Complex::ONE && beta == Complex::ZERO {
-            // Direct hardware acceleration via arm_cmplx_mat_mult_f32
+    fn gemm(ta: Trans, tb: Trans, alpha: f32, a: &..., b: &..., beta: f32, c: &mut ...) {
+        if ta == Trans::NoTrans && tb == Trans::NoTrans && alpha == 1.0 && beta == 0.0 {
+            // arm_mat_mult_f32 fast path
         } else {
             DefaultBlas::gemm(ta, tb, alpha, a, b, beta, c);
         }
@@ -790,31 +842,62 @@ for CmsisDspBlas
 }
 ```
 
+The guard is the load-bearing part. CMSIS-DSP and NMSIS-DSP are not BLAS: the
+matrix argument is `arm_matrix_instance_f32 { numRows, numCols, pData }` with
+`pData[i*numCols + j]`, contiguous row-major only, and there is no `alpha`,
+`beta`, `trans` or `lda` (Arm Limited, 2022). NMSIS-DSP mirrors that shape,
+being a port of CMSIS (Nuclei Software, 2026b). Every DSP-backed method is
+therefore a guarded fast path over a `DefaultBlas` delegate, and the delegate
+is what makes partial backend coverage legal.
+
+##### 4.5.2 Closest DSP analogues
+
+The mapping below records the closest entry point each DSP library offers for a
+given trait. It is guidance for an implementor, not a claim of equivalence.
+Rows marked † are not one-to-one substitutions and need composition or a
+`DefaultBlas` delegate rather than a direct call;
+`subprograms-examples-proposal.md` §6 records each discrepancy against the same
+evidence.
+
+| Subprogram Trait  | ARM CMSIS-DSP (`CmsisDspBlas`)                 | RISC-V NMSIS-DSP (`NmsisDspBlas`)                  | Supported Scalar Types | Hardware Citations                          |
+|:------------------|:-----------------------------------------------|:---------------------------------------------------|:----------------------:|:--------------------------------------------|
+| `Axpy`† / `Scal`  | `arm_scale_f32`, `arm_scale_q31`               | `riscv_scale_f32`, `riscv_scale_q31`               |  `f32`, `q31`, `q15`   | (Arm Limited, 2022; Nuclei Software, 2026a) |
+| `Dotu` / `Dotc`   | `arm_dot_prod_f32`, `arm_cmplx_dot_prod_f32`   | `riscv_dot_prod_f32`, `riscv_cmplx_dot_prod_f32`   |   `f32`, `Complex32`   | (Arm Limited, 2022; Nuclei Software, 2026a) |
+| `Gemv` / `Symv`   | `arm_mat_vec_mult_f32`, `arm_mat_vec_mult_q31` | `riscv_mat_vec_mult_f32`, `riscv_mat_vec_mult_q31` |  `f32`, `q31`, `q15`   | (Arm Limited, 2022; Nuclei Software, 2026a) |
+| `Gemm` / `Hemm`   | `arm_mat_mult_f32`, `arm_cmplx_mat_mult_f32`   | `riscv_mat_mult_f32`, `riscv_cmplx_mat_mult_f32`   |   `f32`, `Complex32`   | (Arm Limited, 2022; Nuclei Software, 2026a) |
+| `Nrm2`†           | `arm_cmplx_mag_f32`                            | `riscv_cmplx_mag_f32`                              |   `f32`, `Complex32`   | (Arm Limited, 2022; Nuclei Software, 2026a) |
+| `Potrf`           | `arm_mat_cholesky_f32`                         | `riscv_mat_cholesky_f32`                           |         `f32`          | (Arm Limited, 2022; Nuclei Software, 2026a) |
+| `Trsm`† / `Trsv`† | `arm_mat_solve_upper_triangular_f32`           | `riscv_mat_solve_upper_triangular_f32`             |         `f32`          | (Arm Limited, 2022; Nuclei Software, 2026a) |
+
+*(Packed operations `Hemv`/`Hpmv`/`Spmv` have no DSP entry point and delegate
+to `DefaultBlas`.)*
+
 ---
 
 ### 5. Alternatives
 
-| Alternative                                                                                                         | Rejected Because                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Reference                                                                   |
-|:--------------------------------------------------------------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------------------------|
-| **Float-only BLAS scope**                                                                                           | Prevents bare-metal integer control loops, discrete state observers, and fixed-point DSP filtering from reusing linear algebra infrastructure.                                                                                                                                                                                                                                                                                                                             | §1, §4.1 (Lawson et al., 1979; Arm Limited, 2022)                           |
-| **Omitting Complex / Hermitian BLAS**                                                                               | Prevents multi-input multi-output (MIMO) frequency domain analysis ($G(j\omega)$), $\mathcal{H}_\infty$ control, and quantum state estimation.                                                                                                                                                                                                                                                                                                                             | §1, §4.3, §4.6 (Dongarra et al., 1988, 1990; Netlib, 2026)                  |
-| **String-based LAPACK errors (`&'static str`)**                                                                     | Disables structured programmatic error recovery in embedded control loops. `LinAlgError` provides typed enum matching.                                                                                                                                                                                                                                                                                                                                                     | §4.3 (Anderson et al., 1999)                                                |
-| **Heap-allocated LAPACK workspace (`Vec<T>`)**                                                                      | Violates `#![no_std]` real-time constraints (NFR-1). Explicit stack slice arguments guarantee zero allocation.                                                                                                                                                                                                                                                                                                                                                             | §4.3 (rust-embedded, 2026a)                                                 |
-| **Separate `_trans` / `_conj` function variants**                                                                   | Duplicates the entire BLAS API surface. Zero-cost `Trans` enum plus `Trans::ConjTrans` (scalar `.conj()` in the kernel) resolves transposition and conjugation without an `AdjointView` storage type.                                                                                                                                                                                                                                                                      | §4.1, §4.4 (Netlib, 2026; Anderson et al., 1999; `storage-design.md` FR-17) |
-| **Hardcoding one backend now (e.g. CMSIS-DSP)**                                                                     | The interface's purpose is to remain library-agnostic and CMSIS-DSP does not target RISC-V32IMAC.                                                                                                                                                                                                                                                                                                                                                                          | §1, §4.5 (Arm Software, 2026a)                                              |
-| **Runtime backend dispatch**                                                                                        | Target triple fixes the backend at compile time, so runtime dispatch tests a statically known condition and adds execution overhead.                                                                                                                                                                                                                                                                                                                                       | §5.2 (ndarray, 2026)                                                        |
-| **A single cross-target feature flag**                                                                              | Replaced by per-target-triple features, preventing a RISC-V32IMAC build from compiling ARM-only FFI bindings and vice versa.                                                                                                                                                                                                                                                                                                                                               | §5.2 (rust-embedded, 2026a)                                                 |
-| **CONTIGUOUS-only slices, with `matrix` keeping loops for strided access**                                          | Roughly half of `matrix`'s inner loops read a fixed row of column-major storage (strided); leaving them outside the interface limits optimization.                                                                                                                                                                                                                                                                                                                         | §5.2 (Netlib, 2026)                                                         |
-| **A gather/scatter view type instead of stride parameters**                                                         | Copying a strided row into a contiguous scratch buffer costs an $O(D)$ copy and stack allocation, violating the stack-only footprint.                                                                                                                                                                                                                                                                                                                                      | §5.2 (rust-embedded, 2026a)                                                 |
-| **Adopted: `INC_X`/`INC_Y`/`LDA`/`LDB`/`LDC` as compile-time const generics, not runtime parameters**               | Runtime parameters introduce branching and panic paths (evaluated in the experiment). Const generics read from the operand's type are branchless.                                                                                                                                                                                                                                                                                                                          | §4.2.1, §4.2.2 (Netlib, 2026)                                               |
-| **Reinterpreting `order: MatrixLayout` as a transpose flag, or a `transpose_view` storage type**                    | Exposes no transposed storage view or `StridedView`. In-place transposition and copying remain `Matrix` operations.                                                                                                                                                                                                                                                                                                                                                        | §4.2.1, §4.2.3 (Anderson et al., 1999)                                      |
-| **Leaving `GER`/`TRSV` to caller loops**                                                                            | They are precisely the operations accelerated by hardware; excluding them concedes performance on standard $O(D^2)$ loops.                                                                                                                                                                                                                                                                                                                                                 | §5.2 (Lawson et al., 1979; Netlib, 2026)                                    |
-| **Hand-computing `lda`/`inc_x` at each call site**                                                                  | Pushes computation to call sites with no compiler checking that `lda` matches the layout/shape.                                                                                                                                                                                                                                                                                                                                                                            | §4.2.2 (Netlib, 2026)                                                       |
-| **Two storage traits, one contiguous and one strided, bridged by a blanket impl**                                   | Violates Rust coherence rules (E0119) and lacks standard strided BLAS/LAPACK models.                                                                                                                                                                                                                                                                                                                                                                                       | §5.1, §5.2 (dimforge, 2026)                                                 |
-| **A generic wrapper type (e.g. `Operand<S>`) rather than a trait**                                                  | Forces wrapper construction per operand, whereas traits keep the abstraction at the bound where `Matrix` already names `S`.                                                                                                                                                                                                                                                                                                                                                | §5.2 (dimforge, 2026)                                                       |
-| **A single shared `ld` parameter across `GEMM`'s three matrix operands**                                            | Operand leading dimensions are independent of shape and origin (e.g. submatrix views), so different operands require different strides.                                                                                                                                                                                                                                                                                                                                    | §5.2 (Dongarra et al., 1990)                                                |
-| **A `std`-gated test hook for the Jacobi budget (`thread_local!` override, `AtomicUsize` fallback under `no_std`)** | Violates NFR-1a (`extern crate std` under `src/`), NFR-1b (interior-mutable `static` read per kernel entry) and NFR-1c (one public name with two `cfg`-selected implementations). The host build exercises the `thread_local` path and the HIL build the atomic path, so the verified binary is not the deployed binary, which voids the §6.1.2 oracle it was introduced to satisfy. It also publishes a safe setter that forces every subsequent `syev` / `heev` to fail. | §2.2, §4.3, §6.1.2 (control-rs, 2026; rust-embedded, 2026a)                 |
-| **A public `max_iter` argument on the `Syev` / `Heev` trait methods**                                               | Satisfies §6.1.2 and NFR-1 equally well, but commits the public signature to a tuning parameter that no worst-case execution time requirement yet motivates, and diverges from LAPACK's `ssyev` / `cheev` argument lists (Anderson et al., 1999). Deferred to §8, not rejected on principle.                                                                                                                                                                               | §4.3, §8 (Anderson et al., 1999)                                            |
+| Alternative                                                                                                         | Rejected Because                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Reference                                                                    |
+|:--------------------------------------------------------------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------|
+| **Float-only BLAS scope**                                                                                           | Prevents bare-metal integer control loops, discrete state observers, and fixed-point DSP filtering from reusing linear algebra infrastructure.                                                                                                                                                                                                                                                                                                                             | §1, §4.1 (Lawson et al., 1979; Arm Limited, 2022)                            |
+| **Omitting Complex / Hermitian BLAS**                                                                               | Prevents multi-input multi-output (MIMO) frequency domain analysis ($G(j\omega)$), $\mathcal{H}_\infty$ control, and quantum state estimation.                                                                                                                                                                                                                                                                                                                             | §1, §4.3, §4.6 (Dongarra et al., 1988, 1990; Netlib, 2026)                   |
+| **String-based LAPACK errors (`&'static str`)**                                                                     | Disables structured programmatic error recovery in embedded control loops. `LinAlgError` provides typed enum matching.                                                                                                                                                                                                                                                                                                                                                     | §4.3 (Anderson et al., 1999)                                                 |
+| **Heap-allocated LAPACK workspace (`Vec<T>`)**                                                                      | Violates `#![no_std]` real-time constraints (NFR-1). Explicit stack slice arguments guarantee zero allocation.                                                                                                                                                                                                                                                                                                                                                             | §4.3 (rust-embedded, 2026a)                                                  |
+| **Separate `_trans` / `_conj` function variants**                                                                   | Duplicates the entire BLAS API surface. Zero-cost `Trans` enum plus `Trans::ConjTrans` (scalar `.conj()` in the kernel) resolves transposition and conjugation without an `AdjointView` storage type.                                                                                                                                                                                                                                                                      | §4.1, §4.4 (Netlib, 2026; Anderson et al., 1999; `storage-design.md` FR-3)   |
+| **Hardcoding one backend now (e.g. CMSIS-DSP)**                                                                     | The interface's purpose is to remain library-agnostic and CMSIS-DSP does not target RISC-V32IMAC.                                                                                                                                                                                                                                                                                                                                                                          | §1, §4.5 (Arm Software, 2026a)                                               |
+| **Runtime backend dispatch**                                                                                        | Target triple fixes the backend at compile time, so runtime dispatch tests a statically known condition and adds execution overhead.                                                                                                                                                                                                                                                                                                                                       | §5.2 (ndarray, 2026)                                                         |
+| **Any backend feature flag under `src/` (single cross-target, or one per target triple)**                           | Superseded by C-4. With no backend inside the crate there is no ARM-only or RISC-V-only binding to gate, and a marker admitted under one `cfg` and absent under another violates NFR-1c. The gate moves to the example's own manifest.                                                                                                                                                                                                                                     | §2.3, §4.5 (rust-embedded, 2026a)                                            |
+| **Vendoring CMSIS-DSP or NMSIS-DSP under `src/` behind `feature = "cmsis-dsp"` / `"nmsis-dsp"`**                    | Puts a C static library and its build script inside a `no_std` crate's graph, serves one ISA family per flag, and publishes a `cfg`-conditional marker against NFR-1c. Neither library accelerates `riscv32imac-unknown-none-elf`, which declares `+m,+a,+c` only. The same binding as an example costs the integrator one file to copy and the crate nothing.                                                                                                             | §2.3, §4.5 (Arm Software, 2026; Nuclei Software, 2026a; Rust Project, 2026b) |
+| **CONTIGUOUS-only slices, with `matrix` keeping loops for strided access**                                          | Roughly half of `matrix`'s inner loops read a fixed row of column-major storage (strided); leaving them outside the interface limits optimization.                                                                                                                                                                                                                                                                                                                         | §5.2 (Netlib, 2026)                                                          |
+| **A gather/scatter view type instead of stride parameters**                                                         | Copying a strided row into a contiguous scratch buffer costs an $O(D)$ copy and stack allocation, violating the stack-only footprint.                                                                                                                                                                                                                                                                                                                                      | §5.2 (rust-embedded, 2026a)                                                  |
+| **Adopted: `INC_X`/`INC_Y`/`LDA`/`LDB`/`LDC` as compile-time const generics, not runtime parameters**               | Runtime parameters introduce branching and panic paths (evaluated in the experiment). Const generics read from the operand's type are branchless.                                                                                                                                                                                                                                                                                                                          | §4.2.1, §4.2.2 (Netlib, 2026)                                                |
+| **Reinterpreting `order: MatrixLayout` as a transpose flag, or a `transpose_view` storage type**                    | Exposes no transposed storage view or `StridedView`. In-place transposition and copying remain `Matrix` operations.                                                                                                                                                                                                                                                                                                                                                        | §4.2.1, §4.2.3 (Anderson et al., 1999)                                       |
+| **Leaving `GER`/`TRSV` to caller loops**                                                                            | They are precisely the operations accelerated by hardware; excluding them concedes performance on standard $O(D^2)$ loops.                                                                                                                                                                                                                                                                                                                                                 | §5.2 (Lawson et al., 1979; Netlib, 2026)                                     |
+| **Hand-computing `lda`/`inc_x` at each call site**                                                                  | Pushes computation to call sites with no compiler checking that `lda` matches the layout/shape.                                                                                                                                                                                                                                                                                                                                                                            | §4.2.2 (Netlib, 2026)                                                        |
+| **Two storage traits, one contiguous and one strided, bridged by a blanket impl**                                   | Violates Rust coherence rules (E0119) and lacks standard strided BLAS/LAPACK models.                                                                                                                                                                                                                                                                                                                                                                                       | §5.1, §5.2 (dimforge, 2026)                                                  |
+| **A generic wrapper type (e.g. `Operand<S>`) rather than a trait**                                                  | Forces wrapper construction per operand, whereas traits keep the abstraction at the bound where `Matrix` already names `S`.                                                                                                                                                                                                                                                                                                                                                | §5.2 (dimforge, 2026)                                                        |
+| **A single shared `ld` parameter across `GEMM`'s three matrix operands**                                            | Operand leading dimensions are independent of shape and origin (e.g. submatrix views), so different operands require different strides.                                                                                                                                                                                                                                                                                                                                    | §5.2 (Dongarra et al., 1990)                                                 |
+| **A `std`-gated test hook for the Jacobi budget (`thread_local!` override, `AtomicUsize` fallback under `no_std`)** | Violates NFR-1a (`extern crate std` under `src/`), NFR-1b (interior-mutable `static` read per kernel entry) and NFR-1c (one public name with two `cfg`-selected implementations). The host build exercises the `thread_local` path and the ETS build the atomic path, so the verified binary is not the deployed binary, which voids the §6.1.2 oracle it was introduced to satisfy. It also publishes a safe setter that forces every subsequent `syev` / `heev` to fail. | §2.2, §4.3, §6.1.2 (rust-embedded, 2026a)                                    |
+| **A public `max_iter` argument on the `Syev` / `Heev` trait methods**                                               | Satisfies §6.1.2 and NFR-1 equally well, but commits the public signature to a tuning parameter that no worst-case execution time requirement yet motivates, and diverges from LAPACK's `ssyev` / `cheev` argument lists (Anderson et al., 1999). Deferred to §8, not rejected on principle.                                                                                                                                                                               | §4.3, §8 (Anderson et al., 1999)                                             |
 
 ---
 
@@ -827,15 +910,15 @@ functional requirements (`FR-1`–`FR-8`, `FR-11`) and non-functional
 requirements (`NFR-1`–`NFR-3`). Each named operation in FR-1–FR-7 maps to at
 least one §6 item below.
 
-| FR   | Operations                                                                           | §6 item(s)                                                                         |
-|:-----|:-------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------|
-| FR-1 | `Axpy`, `Scal`, `RealScal`, `Dotu`, `Dotc`, `Asum`, `Iamax`, `Swap`, `Nrm2`, `Rot`   | 6.1.2 integer/complex; 6.1.3 residuals                                             |
-| FR-2 | `Gemv`, `Geru`, `Gerc`, `Symv`, `Hemv`, `Syr`, `Syr2`, `Her`, `Her2`, `Trmv`, `Trsv` | 6.1.2 Level 2 calls, conjugation, $1\times 1$; 6.1.3 residuals                     |
-| FR-3 | `Spmv`, `Hpmv`, `Spr`, `Spr2`, `Hpr`, `Hpr2`, `Tpmv`, `Tpsv`                         | 6.1.3 packed equivalence (`Hpmv`/`Tpsv` required; `Spr`/`Hpr` via 6.1.3 residuals) |
-| FR-4 | `Gemm`, `Symm`, `Hemm`, `Syrk`, `Syr2k`, `Herk`, `Her2k`, `Trmm`, `Trsm`             | 6.1.2 $(AB)^H$; 6.1.3 residuals / solves                                           |
-| FR-5 | `Csrmv`, `Cscmv`, `Csrmm`, `SpDotu`, `SpDotc`, `SpAxpy`                              | 6.1.3 sparse equivalence (`Cscmv`/`SpDotc` required)                               |
-| FR-6 | `Potrf`, `Pptrf`, `Geqrf`, `Getrf`                                                   | 6.1.2 failure modes; 6.1.3 factorization residuals                                 |
-| FR-7 | `Potrs`, `Pptrs`, `Getrs`, `Ormqr`, `Unmqr`                                          | 6.1.2 `WorkspaceTooSmall`; 6.1.3 solve residuals                                   |
+| FR   | Operations                                                                           | §6 item(s)                                                                          |
+|:-----|:-------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------|
+| FR-1 | `Axpy`, `Scal`, `RealScal`, `Dotu`, `Dotc`, `Asum`, `Iamax`, `Swap`, `Nrm2`, `Rot`   | 6.1.2 integer/complex; 6.1.3 residuals                                              |
+| FR-2 | `Gemv`, `Geru`, `Gerc`, `Symv`, `Hemv`, `Syr`, `Syr2`, `Her`, `Her2`, `Trmv`, `Trsv` | 6.1.2 Level 2 calls, conjugation, $1\times 1$; 6.1.3 residuals                      |
+| FR-3 | `Spmv`, `Hpmv`, `Spr`, `Spr2`, `Hpr`, `Hpr2`, `Tpmv`, `Tpsv`                         | 6.1.3 packed equivalence (`Hpmv`/`Tpsv` required; `Spr`/`Hpr` via 6.1.3 residuals)  |
+| FR-4 | `Gemm`, `Symm`, `Hemm`, `Syrk`, `Syr2k`, `Herk`, `Her2k`, `Trmm`, `Trsm`             | 6.1.2 $(AB)^H$; 6.1.3 residuals / solves                                            |
+| FR-5 | `Csrmv`, `Cscmv`, `Csrmm`, `SpDotu`, `SpDotc`, `SpAxpy`                              | 6.1.3 sparse equivalence (`Cscmv`/`SpDotc` required)                                |
+| FR-6 | `Potrf`, `Pptrf`, `Geqrf`, `Getrf`                                                   | 6.1.2 failure modes; 6.1.3 factorization residuals                                  |
+| FR-7 | `Potrs`, `Pptrs`, `Getrs`, `Ormqr`, `Unmqr`                                          | 6.1.2 `WorkspaceTooSmall` including `Getrs` `ipiv`; 6.1.3 solve / `Unmqr` residuals |
 
 ##### 6.1.1 Level 1: Static & API Invariant Verification
 
@@ -846,42 +929,62 @@ least one §6 item below.
 
 ##### 6.1.2 Level 2: Unit Layout & Kernel Precision Tests
 
-- Single-element matrices ($1 \times 1$) edge-case validation.
+- Single-element matrices ($1 \times 1$) edge-case validation. Call `Trmv`
+  and `Tpmv` (not only `Trsv` / `Tpsv`).
 - **Integer & Fixed-Point BLAS**: Verify exact bit-level arithmetic for `Gemv`,
-  `Gemm`, `Axpy`, `Dotu` over `u8`, `u16`, `u32`, `i32`, and `FixedPoint` (
-  Lawson et al., 1979).
+  `Gemm`, `Axpy`, `Dotu` over `u8`, `u16`, `u32`, `i32`, and
+  `Fixed<Repr, SHIFT>` at a `Scalar`-capable scale (Lawson et al., 1979;
+  `fixed-num-design.md` FR-6).
 - **Level 2 Hermitian kernels**: Call `Hemv`, `Her`, and `Her2` in the Level 2
-  suite (not only via packed equivalence).
+  suite (not only via packed equivalence) and assert numerical results, not
+  only `abs2() > 0`.
 - **Complex & Conjugation Invariants**:
     - Assert `Dotc(x, y) == Dotu(conj(x), y)`.
     - Assert $(A B)^H == B^H A^H$ across `Gemm` with `Trans::ConjTrans` (
       Dongarra et al., 1990).
     - Assert `Hemv` over dense and `Hpmv` over `HermitianPackedStorage` yield
       bit-identical results (Dongarra et al., 1988; Anderson et al., 1999).
+    - Assert `Unmqr` `Trans::ConjTrans` satisfies $\|C_{\text{ref}} -
+      \mathrm{op}(Q)^H C\|_\infty$ within the §6.1.3 QR residual; a
+      swapped-conjugation update fails this oracle.
 - **NaN-Safe $\beta = 0$**: Pass NaN-filled destination vectors $y$ into `Gemv`
   with $\beta = 0$; assert that the output contains valid numerical results
-  without NaNs (Netlib, 2026).
-- **Negative Increments**: Validate `Gemv` and `Axpy` on reversed
-  `ViewStorage` ($RS = -1$) matching standard column-major calculations (Lawson
+  without NaNs (Netlib, 2026). Repeat for `Cscmv` with a $1 \times m$ dest
+  ($m > 1$), and for `Spmv` / `Hemv`.
+- **Negative Increments**: Validate `Gemv` **and** `Axpy` on reversed
+  `StorageView` ($RS = -1$) matching standard column-major calculations (Lawson
   et al., 1979; Netlib, 2026).
+- **Triangular Right-Side**: `Trsm` `Side::Right` solves
+  $X\,\mathrm{op}(A) = \alpha B$; scaling $B$ by $\alpha$ alone fails the
+  §6.1.3 solve residual. `Ormqr` / `Unmqr` `Side::Right` apply $C \leftarrow
+  C\,\mathrm{op}(Q)$ (Anderson et al., 1999).
+- **Packed Cholesky triangle**: `Pptrf` `UpLo::Upper` writes the stored upper
+  slots; a subsequent `Pptrs` on that factor matches dense `Potrf`/`Potrs`
+  on the same SPD operand. Tests that only pass `UpLo::Lower` do not discharge
+  this oracle.
+- **Workspace and dimension caps**: A `tau` / `work` / `ipiv` slice one
+  element under the documented minimum, passed to `Geqrf` / `Ormqr` /
+  `Unmqr` / `Syev` / `Heev` / **`Getrs`**, returns `WorkspaceTooSmall`.
+  `Trmv` / `Trmm` / `syev` `JobZ::Vectors` at \(n = 9\) (81 eigenvector
+  slots) complete without panic or a silently unchanged tail.
 - **LAPACK Failure Modes**: Assert `Potrf` returns
   `Err(LinAlgError::NotPositiveDefinite)` on a non-SPD matrix and on a
   complex non-HPD matrix; `Pptrf` returns the same arm on a non-SPD packed
   matrix; `Getrf` returns `Err(LinAlgError::SingularMatrix)` on singular
-  matrices (Anderson et al., 1999). A `tau` / `work` / `ipiv` slice one
-  element under the documented minimum, passed to `Geqrf` / `Ormqr` /
-  `Unmqr` / `Syev` / `Heev`, returns `WorkspaceTooSmall`. `Syev` / `Heev`
+  matrices (Anderson et al., 1999). `Syev` / `Heev`
   with a Jacobi budget of zero return `MaxIterationsReached`; NaN-poisoned
   matrices are not this oracle. The budget of zero is supplied by calling
   `syev_impl` / `heev_impl` with `max_iter = 0` on a well-conditioned operand
   (§4.3). Tests reach the seam through crate-internal visibility, so this oracle
   requires no `cfg`-gated API, no `std` linkage and no mutable global (
   NFR-1a–c).
+- **`uplo` on `Syev` / `Heev`**: An operand with garbage in the unstored
+  triangle and a valid `uplo` half still converges to the §6.1.3 residual.
 - **Configuration Parity**: The `no_std` build and the host test build expose
   the
   same public API and execute the same kernel paths. Any symbol admitted under
   one `cfg` and absent under another is a defect against NFR-1c, not a matter of
-  test convenience (control-rs, 2026).
+  test convenience.
 
 ##### 6.1.3 Level 3: Numerical Equivalence Suite
 
@@ -928,7 +1031,9 @@ residual still under $N \cdot \mathrm{EPS} \cdot \|A\|\|x\|$.
       and $\|A U - U \Lambda\|_\infty \le N \cdot \text{EPS} \cdot \|A\|_\infty$
       with real eigenvalues $\Lambda \in \mathbb{R}^N$ (complex), and
       orthogonality $\|U^H U - I\|_\infty \le N \cdot \text{EPS}$ (Anderson et
-      al., 1999).
+      al., 1999). Trace/det smoke tests do not discharge this oracle.
+    - QR application: `Ormqr` / `Unmqr` residuals as above; `Geqrf` asserting
+      only `tau[0] != 0` does not discharge $\|A - QR\|$.
 
 ##### 6.1.4 Level 4: Performance & Codegen (measured, not a CI gate)
 
@@ -943,14 +1048,16 @@ $\ge \frac{N}{2}\times$ throughput speedup over general dense `Gemv`
 ($O(N^2)$) for dimension $N \ge 16$ (Lawson et al., 1979; Dongarra et al.,
 1988).
 
-##### 6.1.5 Level 5: Target Hardware-in-the-Loop (HIL)
+##### 6.1.5 Level 5: On-target ETS
 
 - Functional kernel tests on ARM Cortex-M7 (Teensy 4.1) and RISC-V32 (QEMU)
   run `DefaultBlas` (Arm Software, 2026; Nuclei Software, 2026a).
 - Integer and fixed-point kernels must match reference implementations
   bit-for-bit.
-- CMSIS-DSP / NMSIS-DSP ≤1 ULP matching is open until subprograms Phase 5
-  backends exist; QEMU does not currently run those backends.
+- Example backend conformance is not an ETS gate. Each implementor under
+  `examples/subprograms/` carries its own equivalence harness against
+  `DefaultBlas` on identical fixtures, run on demand rather than in CI, since
+  the backend under test is not part of this crate (§4.5).
 
 #### 6.2 Validation Plan (Control Engineering Applications)
 
@@ -980,8 +1087,8 @@ Disassembly under `opt-level=3` (LLVM 22.1.6) on `x86_64-apple-darwin`,
 | **A** (`gemv_dyn`)      | Runtime fields, slice indexing | Dynamic slice  |     123      |        23        |      7      | (sarah-quinones, 2026b)                  |
 | **B** (`gemv_const_4`)  | Assoc consts, slice indexing   | Slice view     |     166      |        35        |     21      | (sarah-quinones, 2026b)                  |
 | **C** (`gemv_arr_4`)    | Nested array indexing          | `ArrayStorage` |    **28**    |      **0**       |    **0**    | (dimforge, 2026a; sarah-quinones, 2026b) |
-| **D** (`gemv_ptr_4`)    | Raw pointer `.add()`           | `ViewStorage`  |      59      |        0         |      0      | (dimforge, 2026a; sarah-quinones, 2026b) |
-| **E** (`gemv_ptr_ab_4`) | Raw pointer, full matvec       | `ViewStorage`  |      73      |        0         |      0      | (dimforge, 2026a; sarah-quinones, 2026b) |
+| **D** (`gemv_ptr_4`)    | Raw pointer `.add()`           | `StorageView`  |      59      |        0         |      0      | (dimforge, 2026a; sarah-quinones, 2026b) |
+| **E** (`gemv_ptr_ab_4`) | Raw pointer, full matvec       | `StorageView`  |      73      |        0         |      0      | (dimforge, 2026a; sarah-quinones, 2026b) |
 
 ---
 
@@ -991,9 +1098,9 @@ Disassembly under `opt-level=3` (LLVM 22.1.6) on `x86_64-apple-darwin`,
   `Matrix` constructors and callers maintain shape guarantees to avoid UB (
   Netlib, 2026).
 - **Complex Arithmetic Overhead**: Complex scalar multiplication involves 4 real
-  multiplications and 2 additions ($(a+bi)(c+di) = (ac-bd) + (ad+bc)i$). Target
-  backends should leverage SIMD (`arm_cmplx_*`) on hardware where available (Arm
-  Limited, 2022).
+  multiplications and 2 additions ($(a+bi)(c+di) = (ac-bd) + (ad+bc)i$). An
+  external backend may leverage SIMD (`arm_cmplx_*`) on hardware where
+  available; `DefaultBlas` does not (Arm Limited, 2022).
 - **Pivot Scratch Storage & Workspace Policies**: In-place LU factorization (
   `Getrf`) and solve (`Getrs`) require an integer permutation slice
   `ipiv: &mut [usize]`.
@@ -1001,7 +1108,7 @@ Disassembly under `opt-level=3` (LLVM 22.1.6) on `x86_64-apple-darwin`,
   allocated on
   the caller's stack with deterministic compile-time bounds (rust-embedded,
   2026a; Anderson et al., 1999).
-- **Floating-Point ULP Tolerances Across HIL Targets**: Hardware FMA
+- **Floating-Point ULP Tolerances Across ETS Targets**: Hardware FMA
   instructions
   on Cortex-M7 evaluate single-rounding fused
   multiply-accumulates ($a \cdot b + c$),
@@ -1021,33 +1128,43 @@ Disassembly under `opt-level=3` (LLVM 22.1.6) on `x86_64-apple-darwin`,
   bounded execution; promoting it to an associated constant (e.g. `const
   JACOBI_BUDGET: usize`) for WCET analysis in downstream controller toolboxes is
   strictly additive (§5).
+- **Example backends are not continuously verified**: the implementors under
+  `examples/subprograms/` are outside `cargo ci`, so nothing detects a trait
+  signature change breaking them until someone builds them. A trait-surface
+  change is therefore a manual sweep over the examples, and the alternative,
+  compiling them in CI, reintroduces the system dependencies C-4 exists to
+  keep out.
 - **Enforcement of NFR-1a–NFR-1c (tracked)**: The sub-clauses (NFR-1a no `std`
   linkage under `src/`, NFR-1b no mutable global state, NFR-1c no
-  `cfg`-conditional public API) are verified across 4 bare-metal QEMU SIL
-  targets (`thumbv7em`, `thumbv7m`, `riscv32imc`, `riscv64gc`). Static AST-level
+  `cfg`-conditional public API) are verified across 4 bare-metal virtual ETS
+  (QEMU) targets (`thumbv7em`, `thumbv7m`, `riscv32imc`, `riscv64gc`). Static
+  AST-level
   lint checks are tracked in Phase 6.
 
 ---
 
 ### 9. Development Plan
 
-| Phase                             | Description                                                                                                                                                                                                                                                                                                                     |  Effort  |
-|:----------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:--------:|
-| **Phase 1: Dense BLAS 1/2/3**     | Implement Level 1 (`Axpy`, `Dotu`, `Dotc`, `Scal`, `RealScal`), Level 2 (`Gemv`, `Geru`, `Gerc`, `Symv`, `Hemv`, `Trsv`), Level 3 (`Gemm`, `Symm`, `Hemm`, `Syrk`, `Herk`, `Trsm`) on `DefaultBlas` over `T: Scalar` (ring) and `T: Scalar + Div` with `T::Real: Radical`/`Trig` (field). Dense operands are `DenseStorage<T>`. | Complete |
-| **Phase 2: Packed BLAS**          | Implement `Spmv`, `Hpmv`, `Tpmv`, `Tpsv`, `Spr`/`Hpr`, `Pptrf` on `DefaultBlas`.                                                                                                                                                                                                                                                | Complete |
-| **Phase 3: Sparse BLAS (SpBLAS)** | Implement `Csrmv`, `Cscmv`, `Csrmm`, `SpDotu`, `SpDotc`, `SpAxpy` on `DefaultBlas`.                                                                                                                                                                                                                                             | Complete |
-| **Phase 4: LAPACK Solvers**       | Implement `Potrf`/`Potrs` (SPD & HPD), `Geqrf`/`Ormqr`/`Unmqr`, `Getrf`/`Getrs`, `Syev`/`Heev` (Jacobi) on `DefaultBlas` with typed workspaces and `LinAlgError`. `Syev`/`Heev` route through the crate-private `syev_impl`/`heev_impl` budget seam (§4.3).                                                                     | Complete |
-| **Phase 5: HIL & Hardware FFI**   | CMSIS-DSP and NMSIS-DSP hardware backend mappings for real and complex linear algebra with CI verification.                                                                                                                                                                                                                     |    S     |
-| **Phase 6: NFR-1 Enforcement**    | Add the source-level gate rejecting `extern crate std`, `thread_local`, `static mut` and interior-mutable `static` under `src/` (NFR-1a, NFR-1b), plus a host-vs-bare-metal public API diff for NFR-1c (§8).                                                                                                                    |    S     |
+| Phase                             | Description                                                                                                                                                                                                                                                                                                                     |    Effort     |
+|:----------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------:|
+| **Phase 1: Dense BLAS 1/2/3**     | Implement Level 1 (`Axpy`, `Dotu`, `Dotc`, `Scal`, `RealScal`), Level 2 (`Gemv`, `Geru`, `Gerc`, `Symv`, `Hemv`, `Trsv`), Level 3 (`Gemm`, `Symm`, `Hemm`, `Syrk`, `Herk`, `Trsm`) on `DefaultBlas` over `T: Scalar` (ring) and `T: Scalar + Div` with `T::Real: Radical`/`Trig` (field). Dense operands are `DenseStorage<T>`. |   Complete    |
+| **Phase 2: Packed BLAS**          | Implement `Spmv`, `Hpmv`, `Tpmv`, `Tpsv`, `Spr`/`Hpr`, `Pptrf` on `DefaultBlas`.                                                                                                                                                                                                                                                |   Complete    |
+| **Phase 3: Sparse BLAS (SpBLAS)** | Implement `Csrmv`, `Cscmv`, `Csrmm`, `SpDotu`, `SpDotc`, `SpAxpy` on `DefaultBlas`.                                                                                                                                                                                                                                             |   Complete    |
+| **Phase 4: LAPACK Solvers**       | Implement `Potrf`/`Potrs` (SPD & HPD), `Geqrf`/`Ormqr`/`Unmqr`, `Getrf`/`Getrs`, `Syev`/`Heev` (Jacobi) on `DefaultBlas` with typed workspaces and `LinAlgError`. `Syev`/`Heev` route through the crate-private `syev_impl`/`heev_impl` budget seam (§4.3).                                                                     | Trait surface |
+| **Phase 4b: §6 oracle closure**   | Close Right-side `Trsm`/`Ormqr`/`Unmqr`, Upper `Pptrf`, `Unmqr` \(Q^H\) conjugation, `Getrs` `ipiv` length, C-3 on `Cscmv` row dest, caller workspaces without a hidden `[T; 64]`, and the Level 2/3 oracles listed in this revision. Host CI green on untested stubs does not complete this phase.                             |       M       |
+| **Phase 5: Example implementors** | Reference backend implementors under `examples/subprograms/`, each with an equivalence harness against `DefaultBlas` (§4.5.1). `src/` is unchanged by this phase. Specified in `subprograms-examples-proposal.md`.                                                                                                              |       S       |
+| **Phase 6: NFR-1 Enforcement**    | Add the source-level gate rejecting `extern crate std`, `thread_local`, `static mut` and interior-mutable `static` under `src/` (NFR-1a, NFR-1b), plus a host-vs-bare-metal public API diff for NFR-1c (§8).                                                                                                                    |       S       |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                   |
-|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 21, 2026 | @MitchellDScott | Extracted linear algebra subprogram designs from consolidated `storage-subprograms-design.md` into dedicated closed document. |
-| 1.9      | August 24, 2026 | @MitchellDScott | Maintenance pass.                                                                                                             |
+| Revision | Date            | Author          | Description                                                                                                                     |
+|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 21, 2026 | @MitchellDScott | Extracted BLAS/LAPACK subprogram specifications into dedicated modular document.                                                |
+| 1.1      | August 24, 2026 | @MitchellDScott | Subprogram trait definitions: standardized Level 1-3 BLAS and LAPACK factorizations (`Getrf`, `Potrf`, `Geqrf`, `Syev`/`Heev`). |
+| 1.2      | August 25, 2026 | @MitchellDScott | Verification closure: defined test oracles, caller-workspace conventions, and packed matrix solver coverage.                    |
+| 1.3      | August 26, 2026 | @MitchellDScott | Backend scope: C-4 excludes external libraries from `src/`; §4.5 recast as an extension point served by example implementors.   |
 
 ---
 
@@ -1144,4 +1261,23 @@ algebra," *Acta Numerica*, vol. 31, pp. 347–414, 2022, doi:
 [20] Nuclei Software, "README.md," in *Nuclei-Software/NMSIS*, 2026. [Online].
 Available: https://raw.githubusercontent.com/Nuclei-Software/NMSIS/master/README.md.
 Accessed: Aug. 11, 2026.
+
+[21] OpenMathLib, "README.md," in *OpenMathLib/OpenBLAS*, 2026. [Online].
+Available: https://raw.githubusercontent.com/OpenMathLib/OpenBLAS/develop/README.md.
+Accessed: Aug. 24, 2026.
+
+[22] G. Frison, "README.md," in *giaf/blasfeo*, 2026. [Online].
+Available: https://raw.githubusercontent.com/giaf/blasfeo/master/README.md.
+Accessed: Aug. 24, 2026.
+
+[23] Rust Project, "riscv32imac_unknown_none_elf.rs," in *rust-lang/rust*,
+
+2026. [Online].
+      Available: https://doc.rust-lang.org/nightly/nightly-rustc/src/rustc_target/spec/targets/riscv32imac_unknown_none_elf.rs.html.
+      Accessed: Aug. 24, 2026.
+
+[24] Apple Inc., "BLAS," *Apple Developer Documentation (Accelerate
+Framework)*, 2026. [Online].
+Available: https://developer.apple.com/documentation/accelerate/blas-library.
+Accessed: Aug. 26, 2026.
 

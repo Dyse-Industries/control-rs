@@ -92,7 +92,7 @@ pub mod ops;
 pub mod storage;
 pub mod subprograms;
 
-#[cfg(any(test, feature = "hil"))]
+#[cfg(any(test, feature = "ets"))]
 /// Core mathematical unit tests.
 pub mod tests;
 

@@ -19,9 +19,11 @@
 )]
 
 use super::Owned;
+use crate::math::LinAlgResult;
 use crate::math::num_traits::Float;
 use crate::math::num_types::{Const, Dim};
-use crate::math::{LinAlgError, LinAlgResult};
+use crate::math::storage::{ArrayStorage, Diag, Trans, UpLo};
+use crate::math::subprograms::{DefaultBlas, level2::Trsv};
 
 /// A square matrix known to have all entries below the diagonal within
 /// tolerance of zero.
@@ -166,7 +168,35 @@ where
     }
 }
 
-/// Solves `L * x = b` for a lower triangular `L`, via forward substitution.
+/// Solves `L * x = b` for a lower triangular `L` using a specific BLAS engine.
+///
+/// # Errors
+/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `L` is
+/// within `T::epsilon()` of zero.
+#[allow(clippy::type_complexity)]
+pub fn solve_lower_triangular_with<
+    B: Trsv<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, 1>>,
+    T: Float + Copy,
+    const D: usize,
+>(
+    l: &LowerTriangular<T, D>,
+    b: &Owned<T, D, 1>,
+) -> LinAlgResult<Owned<T, D, 1>>
+where
+    Const<D>: Dim,
+{
+    let mut x = *b;
+    B::trsv(
+        UpLo::Lower,
+        Trans::NoTrans,
+        Diag::NonUnit,
+        &l.as_matrix().storage,
+        &mut x.storage,
+    )?;
+    Ok(x)
+}
+
+/// Solves `L * x = b` for a lower triangular `L`, via forward substitution using the default BLAS engine.
 ///
 /// # Errors
 /// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `L` is
@@ -179,28 +209,38 @@ pub fn solve_lower_triangular<T: Float + Copy, const D: usize>(
 where
     Const<D>: Dim,
 {
-    let l_mat = l.as_matrix();
-    let mut x = Owned::<T, D, 1>::zero();
-    for i in 0..D {
-        let l_ii = l_mat.get(i, i).copied().unwrap_or(T::ZERO);
-        if l_ii.abs() < T::epsilon() {
-            return Err(LinAlgError::SingularMatrix);
-        }
-        let mut sum = T::ZERO;
-        for j in 0..i {
-            let l_ij = l_mat.get(i, j).copied().unwrap_or(T::ZERO);
-            let x_j = x.get(j, 0).copied().unwrap_or(T::ZERO);
-            sum = sum + (l_ij * x_j);
-        }
-        let b_i = b.get(i, 0).copied().unwrap_or(T::ZERO);
-        if let Some(x_i) = x.get_mut(i, 0) {
-            *x_i = (b_i - sum) / l_ii;
-        }
-    }
+    solve_lower_triangular_with::<DefaultBlas, T, D>(l, b)
+}
+
+/// Solves `U * x = b` for an upper triangular `U` using a specific BLAS engine.
+///
+/// # Errors
+/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `U` is
+/// within `T::epsilon()` of zero.
+#[allow(clippy::type_complexity)]
+pub fn solve_upper_triangular_with<
+    B: Trsv<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, 1>>,
+    T: Float + Copy,
+    const D: usize,
+>(
+    u: &UpperTriangular<T, D>,
+    b: &Owned<T, D, 1>,
+) -> LinAlgResult<Owned<T, D, 1>>
+where
+    Const<D>: Dim,
+{
+    let mut x = *b;
+    B::trsv(
+        UpLo::Upper,
+        Trans::NoTrans,
+        Diag::NonUnit,
+        &u.as_matrix().storage,
+        &mut x.storage,
+    )?;
     Ok(x)
 }
 
-/// Solves `U * x = b` for an upper triangular `U`, via back substitution.
+/// Solves `U * x = b` for an upper triangular `U`, via back substitution using the default BLAS engine.
 ///
 /// # Errors
 /// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `U` is
@@ -213,24 +253,5 @@ pub fn solve_upper_triangular<T: Float + Copy, const D: usize>(
 where
     Const<D>: Dim,
 {
-    let u_mat = u.as_matrix();
-    let mut x = Owned::<T, D, 1>::zero();
-    for step in 0..D {
-        let i = D - 1 - step;
-        let u_ii = u_mat.get(i, i).copied().unwrap_or(T::ZERO);
-        if u_ii.abs() < T::epsilon() {
-            return Err(LinAlgError::SingularMatrix);
-        }
-        let mut sum = T::ZERO;
-        for j in (i + 1)..D {
-            let u_ij = u_mat.get(i, j).copied().unwrap_or(T::ZERO);
-            let x_j = x.get(j, 0).copied().unwrap_or(T::ZERO);
-            sum = sum + (u_ij * x_j);
-        }
-        let b_i = b.get(i, 0).copied().unwrap_or(T::ZERO);
-        if let Some(x_i) = x.get_mut(i, 0) {
-            *x_i = (b_i - sum) / u_ii;
-        }
-    }
-    Ok(x)
+    solve_upper_triangular_with::<DefaultBlas, T, D>(u, b)
 }

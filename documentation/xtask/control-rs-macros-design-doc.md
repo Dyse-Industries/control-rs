@@ -14,8 +14,8 @@ macros provide a compile-time solution by automatically analyzing source code
 and generating the underlying test registry metadata.
 
 This design document establishes the architecture for `control-rs-macros`, a
-procedural macro library containing `#[hil_suite]` and `#[hil_setup]`. These
-macros enable developers to declare hardware-in-the-loop (HIL) tests and
+procedural macro library containing `#[ets_suite]` and `#[ets_setup]`. These
+macros enable developers to declare ETS tests and
 benchmarks directly in their modules with zero boilerplate. The macro generates
 all registration hooks and places them in custom linker sections, permitting
 automated discovery without a centralized registry.
@@ -27,14 +27,14 @@ automated discovery without a centralized registry.
 #### Functional Requirements
 
 - **FR-1 — Distributed Module Annotation**: Developers must declare a suite by
-  tagging a module with `#[hil_suite]`.
+  tagging a module with `#[ets_suite]`.
 - **FR-2 — Automatic Registration**: The macro must automatically identify
   non-underscore-prefixed functions within the module and generate test
   descriptors.
 - **FR-3 — Type-Safe Settings Translation**: Any static variable declared inside
-  the `#[hil_suite]` module must be translated into a thread-safe atomic setting
+  the `#[ets_suite]` module must be translated into a thread-safe atomic setting
   structure.
-- **FR-4 — Entrypoint & Setup Generation**: The `#[hil_setup]` macro must
+- **FR-4 — Entrypoint & Setup Generation**: The `#[ets_setup]` macro must
   generate the `main()` entrypoint, call the user's hardware init code and
   instantiate the execution context.
 - **FR-5 — Custom Panic Redirection**: The macro-generated entrypoint must
@@ -74,13 +74,13 @@ flowchart TD
     end
 
     subgraph Target ["Target Codebase"]
-        UserCode["User Module + #[hil_suite]"]
-        HIL["control-rs-hil (SuiteDescriptor)"]
-        LinkerScript["hil_suites.x (KEEP Section)"]
+        UserCode["User Module + #[ets_suite]"]
+        ETS["control-rs-ets (SuiteDescriptor)"]
+        LinkerScript["ets_suites.x (KEEP Section)"]
     end
 
     Macros -->|Parses & Generates| UserCode
-    UserCode -->|Implements| HIL
+    UserCode -->|Implements| ETS
     UserCode -->|Emits to Linker| LinkerScript
 ```
 
@@ -88,9 +88,9 @@ flowchart TD
 
 ### 4. Core Architecture
 
-#### 4.1. `#[hil_suite]` Module Parsing and Code Generation
+#### 4.1. `#[ets_suite]` Module Parsing and Code Generation
 
-When the compiler encounters `#[hil_suite]` on a module, the macro performs the
+When the compiler encounters `#[ets_suite]` on a module, the macro performs the
 following transformations:
 
 1. **Test Identification**: It traverses the module's items, locating all
@@ -117,9 +117,9 @@ following transformations:
    descriptor is annotated with the link section attribute to ensure it is
    placed in the test registry:
     ```rust
-    #[unsafe(link_section = ".hil_test_suites")]
+    #[unsafe(link_section = ".ets_test_suites")]
     #[used]
-    pub static SUITE_DESCRIPTOR_PTR: &::control_rs_hil::SuiteDescriptor = &SUITE_DESCRIPTOR;
+    pub static SUITE_DESCRIPTOR_PTR: &::control_rs_ets::SuiteDescriptor = &SUITE_DESCRIPTOR;
     ```
 
 #### 4.2. Linker Garbage Collection Mitigation
@@ -133,24 +133,24 @@ To prevent this, the workspace employs a multi-tiered retention architecture:
 
 1. **`#[used]`**: Generated static variables use attributes directing LLVM to
    keep the symbol in the object file.
-2. **Linker Script KEEP Directive**: The `control-rs-hil` crate packages a
-   custom linker script snippet (`hil_suites.x`) that includes a `KEEP`
-   directive for the `.hil_test_suites` section:
+2. **Linker Script KEEP Directive**: The `control-rs-ets` crate packages a
+   custom linker script snippet (`ets_suites.x`) that includes a `KEEP`
+   directive for the `.ets_test_suites` section:
    ```ld
-   KEEP(*(.hil_test_suites))
+   KEEP(*(.ets_test_suites))
    ```
 3. **Build Script Linker Argument Injection**: Target binary examples (like QEMU
    and Teensy 4) include a `build.rs` or `.cargo/config.toml` that injects the
    script to the linker command line:
    ```rust
-   println!("cargo:rustc-link-arg=-Thil_suites.x");
+   println!("cargo:rustc-link-arg=-Tets_suites.x");
    ```
    This prevents end-users from needing to manually manage linker configuration
    files.
 
-#### 4.3. `#[hil_setup]` Entrypoint and Panic Handling
+#### 4.3. `#[ets_setup]` Entrypoint and Panic Handling
 
-The `#[hil_setup]` macro is applied to the user's hardware initialization
+The `#[ets_setup]` macro is applied to the user's hardware initialization
 function. It replaces the function with the primary entrypoint:
 
 1. **`main` Function Wrapper**: The macro emits the standard
@@ -167,7 +167,7 @@ function. It replaces the function with the primary entrypoint:
     fn panic(info: &::core::panic::PanicInfo) -> ! {
         let mut msg_buf = [0u8; 128];
         let pos = {
-            let mut writer = ::control_rs_hil::util::FailureBufWriter { buf: &mut msg_buf, pos: 0 };
+            let mut writer = ::control_rs_ets::util::FailureBufWriter { buf: &mut msg_buf, pos: 0 };
             let _ = ::core::fmt::write(&mut writer, format_args!("{}", info.message()));
             writer.pos
         };
@@ -176,12 +176,12 @@ function. It replaces the function with the primary entrypoint:
         let file = info.location().map_or("unknown", |l| l.file());
         let line = info.location().map_or(0, |l| l.line());
 
-        let server_ptr = HIL_SERVER.load(::core::sync::atomic::Ordering::Acquire);
+        let server_ptr = ETS_SERVER.load(::core::sync::atomic::Ordering::Acquire);
         unsafe {
             if !server_ptr.is_null() {
                 let server = &mut *server_ptr;
                 let comms_ok = server.context.comms_lock.try_lock();
-                ::control_rs_hil::util::handle_failure(
+                ::control_rs_ets::util::handle_failure(
                     &mut server.context,
                     msg,
                     file,
@@ -211,7 +211,7 @@ function. It replaces the function with the primary entrypoint:
   covers OS-hosted targets only (Linux, macOS, Windows, FreeBSD, OpenBSD,
   illumos); bare-metal Cortex-M/RISC-V support is uncorroborated by any primary
   source. Adoption would also surrender project-owned control of the
-  `.hil_test_suites` section name and the `hil_suites.x`/`build.rs` linker
+  `.ets_test_suites` section name and the `ets_suites.x`/`build.rs` linker
   coordination.
 * **`inventory` (ctor-based registration)**: Rejected. Registration relies on
   life-before-main constructors invoked by an OS loader (ELF `.init_array`,
@@ -238,7 +238,7 @@ function. It replaces the function with the primary entrypoint:
   verify that the macro correctly handles valid code structures and rejects
   invalid constructs (e.g. non-static variable declarations inside a suite
   module) with clean error messages. Compile-fail cases must cover
-  `#[hil_setup]`
+  `#[ets_setup]`
   misuse (wrong return type, missing `Context` generics) and assert spanned
   `syn::Error` diagnostics rather than opaque proc-macro panics.
 
@@ -254,7 +254,7 @@ function. It replaces the function with the primary entrypoint:
 ### 7. Performance & Resource Considerations
 
 * **Static Flash Storage**: Since the macro places all descriptors in
-  `.hil_test_suites` marked as read-only, they reside entirely in Flash (ROM)
+  `.ets_test_suites` marked as read-only, they reside entirely in Flash (ROM)
   and consume zero RAM during idle state.
 * **Compiler Timing**: To maintain fast build times, the macro relies on minimal
   syn features and avoids complex, recursive macro expansion paths.
@@ -273,11 +273,11 @@ function. It replaces the function with the primary entrypoint:
   the workspace lockfile already carries syn 1.x (via TUI dependencies) and
   syn 2.x side by side, so version fragmentation is a live condition rather
   than a hypothetical.
-* **`#[hil_setup]` Error Diagnostics**: The return-type and generic-extraction
+* **`#[ets_setup]` Error Diagnostics**: The return-type and generic-extraction
   checks currently abort via `panic!`/`.expect()`, which surface as an opaque
   "proc-macro panicked" diagnostic. They must be migrated to the
   `syn::Error::new_spanned(...).to_compile_error()` pattern already used by
-  `#[hil_suite]`.
+  `#[ets_suite]`.
 * **Per-Test Opt-Out**: Test exclusion is limited to underscore-prefixed
   function names. `defmt-test` and `embedded-test` demonstrate attribute-based
   `#[ignore]`/`#[cfg]` opt-out in the same whole-module-rewrite macro shape;
@@ -296,23 +296,23 @@ function. It replaces the function with the primary entrypoint:
 ### 9. Development Plan
 
 Steps 1–4 are implemented in `control-rs-macros/src/lib.rs`; discovery via
-`.hil_test_suites` is exercised by the HIL Server (see
-`hil-server-design-doc.md`). Step 5 covers remaining hardening.
+`.ets_test_suites` is exercised by ETS (see
+`embedded-test-server-design.md`). Step 5 covers remaining hardening.
 
 | Task / Feature                                 | Description                                                                                                                      | Status / Effort |
 |:-----------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------|:----------------|
-| **Step 1: syn Parser Implementation**          | Implement parsing logic for `#[hil_suite]` modules and `#[hil_setup]` functions.                                                 | Shipped         |
+| **Step 1: syn Parser Implementation**          | Implement parsing logic for `#[ets_suite]` modules and `#[ets_setup]` functions.                                                 | Shipped         |
 | **Step 2: AST Code Generation**                | Develop codegen templates for `SuiteDescriptor` outputs and atomic settings translations.                                        | Shipped         |
-| **Step 3: Linker Integration**                 | Write the `build.rs` layout injection code and build the `hil_suites.x` linker script file.                                      | Shipped         |
-| **Step 4: Panic Handler Codegen**              | Implement code generation for the custom bare-metal panic handler in `#[hil_setup]`.                                             | Shipped         |
-| **Step 5: Diagnostics & Ergonomics Hardening** | Migrate `#[hil_setup]` panics to spanned `syn::Error`s, audit the `extra-traits` feature, evaluate a per-test opt-out attribute. | 1.0 day         |
+| **Step 3: Linker Integration**                 | Write the `build.rs` layout injection code and build the `ets_suites.x` linker script file.                                      | Shipped         |
+| **Step 4: Panic Handler Codegen**              | Implement code generation for the custom bare-metal panic handler in `#[ets_setup]`.                                             | Shipped         |
+| **Step 5: Diagnostics & Ergonomics Hardening** | Migrate `#[ets_setup]` panics to spanned `syn::Error`s, audit the `extra-traits` feature, evaluate a per-test opt-out attribute. | 1.0 day         |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                   |
+| Revision | Date           | Author          | Description                                                                                                                           |
 |:---------|:---------------|:----------------|:--------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 24, 2026   | @MitchellDScott | Initial design of procedural macros for test discovery.                                                       |
-| 1.1      | July 18, 2026  | @MitchellDScott | Restructured to design-template standard; added linker GC mitigation and panic-redirection findings.          |
-| 1.2      | August 6, 2026 | @MitchellDScott | Incorporated build-vs-adopt research; marked Steps 1-4 shipped; unified linker script name to `hil_suites.x`. |
+| 1.0      | May 24, 2026   | @MitchellDScott | Initial specification for embedded test registration and discovery procedural macros.                                                |
+| 1.1      | July 18, 2026  | @MitchellDScott | Linker section codegen: added distributed slice linker-section generation and bare-metal panic redirection in `#[ets_setup]`.         |
+| 1.2      | August 6, 2026  | @MitchellDScott | Tooling hardening: unified linker script name (`ets_suites.x`) and added compile-time AST span error diagnostics.                    |

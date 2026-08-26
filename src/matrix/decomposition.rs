@@ -27,13 +27,29 @@
     // Every loop below indexes both a local scratch array (`y`, `col`) and
     // `self.data.storage` by the same loop variable in the same body, so
     // no single iterator covers both accesses.
-    clippy::needless_range_loop
+    clippy::needless_range_loop,
+    clippy::type_complexity,
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::option_if_let_else,
+    clippy::must_use_candidate
 )]
 
 use super::{LowerTriangular, Owned, Symmetric, UpperTriangular};
-use crate::math::num_traits::Float;
+use crate::math::num_traits::{Float, Radical};
 use crate::math::num_types::{Const, Dim};
-use crate::math::storage::{DenseStorage, DenseStorageMut};
+use crate::math::storage::{
+    ArrayStorage, DenseStorage, DenseStorageMut, Diag, Side, Trans, UpLo,
+};
+use crate::math::subprograms::{
+    DefaultBlas,
+    lapack::{Geqrf, Getrf, Getrs, Ormqr, Potrf, Potrs},
+    level3::{Gemm, Trsm},
+};
 use crate::math::{LinAlgError, LinAlgResult};
 
 /// `LU` factorization with partial pivoting (`P * A = L * U`).
@@ -98,7 +114,7 @@ impl<T: Float + Copy, const D: usize> Owned<T, D, D>
 where
     Const<D>: Dim,
 {
-    /// Performs `LU` decomposition with partial pivoting purely in-place.
+    /// Performs `LU` decomposition with partial pivoting purely in-place using a specific BLAS engine.
     ///
     /// Overwrites `self` with the packed `L`/`U` factors and populates the
     /// caller-provided pivot scratch array with the resulting row
@@ -110,79 +126,39 @@ where
     ///
     /// # Panics
     /// Panics if `pivots.len() != D`.
-    pub fn lu_decompose_mut(
+    pub fn lu_decompose_mut_with<B: Getrf<T, ArrayStorage<T, D, D>>>(
         &mut self,
         pivots: &mut [usize],
     ) -> LinAlgResult<usize> {
         assert_eq!(pivots.len(), D, "Pivot scratch buffer size mismatch");
-        for (idx, p) in pivots.iter_mut().enumerate() {
-            *p = idx;
-        }
-
+        B::getrf(&mut self.storage, pivots)?;
         let mut row_exchanges = 0usize;
-        for k in 0..D {
-            let mut pivot_row = k;
-            // Safety: `k < D`.
-            let mut max_val = unsafe { self.storage.get_unchecked(k, k) }.abs();
-            for i in (k + 1)..D {
-                // Safety: `i < D`, `k < D`.
-                let val = unsafe { self.storage.get_unchecked(i, k) }.abs();
-                if val > max_val {
-                    max_val = val;
-                    pivot_row = i;
-                }
-            }
-            if max_val < T::epsilon() {
-                return Err(LinAlgError::SingularMatrix);
-            }
-
-            if pivot_row != k {
-                for col in 0..D {
-                    // Safety: `k < D`, `pivot_row < D`, `col < D`.
-                    unsafe {
-                        let a = *self.storage.get_unchecked(k, col);
-                        let b = *self.storage.get_unchecked(pivot_row, col);
-                        *self.storage.get_unchecked_mut(k, col) = b;
-                        *self.storage.get_unchecked_mut(pivot_row, col) = a;
-                    }
-                }
-                pivots.swap(k, pivot_row);
+        for (k, &p) in pivots.iter().enumerate().take(D) {
+            if p != k {
                 row_exchanges += 1;
             }
-
-            for i in (k + 1)..D {
-                // Safety: `i < D`, `k < D`.
-                let factor = unsafe {
-                    *self.storage.get_unchecked(i, k)
-                        / *self.storage.get_unchecked(k, k)
-                };
-                // Safety: `i < D`, `k < D`.
-                unsafe {
-                    *self.storage.get_unchecked_mut(i, k) = factor;
-                }
-                for j in (k + 1)..D {
-                    // Safety: `i < D`, `j < D`, `k < D`.
-                    unsafe {
-                        let ukj = *self.storage.get_unchecked(k, j);
-                        let aij = *self.storage.get_unchecked(i, j);
-                        *self.storage.get_unchecked_mut(i, j) =
-                            aij - (factor * ukj);
-                    }
-                }
-            }
         }
-
         Ok(row_exchanges)
     }
 
-    /// Consumes the matrix to construct a stack-allocated [`LuDecomposition`].
+    /// Performs `LU` decomposition with partial pivoting purely in-place using the default BLAS engine.
+    pub fn lu_decompose_mut(
+        &mut self,
+        pivots: &mut [usize],
+    ) -> LinAlgResult<usize> {
+        self.lu_decompose_mut_with::<DefaultBlas>(pivots)
+    }
+
+    /// Consumes the matrix to construct a stack-allocated [`LuDecomposition`] using a specific BLAS engine.
     ///
     /// # Errors
     /// See [`Owned::lu_decompose_mut`].
     #[allow(clippy::type_complexity)]
-    pub fn into_lu(mut self) -> LinAlgResult<LuDecomposition<T, D>> {
+    pub fn into_lu_with<B: Getrf<T, ArrayStorage<T, D, D>>>(
+        mut self,
+    ) -> LinAlgResult<LuDecomposition<T, D>> {
         let mut pivots = [0usize; D];
-        let row_exchanges = self.lu_decompose_mut(&mut pivots)?;
+        let row_exchanges = self.lu_decompose_mut_with::<B>(&mut pivots)?;
         Ok(LuDecomposition {
             data: self,
             pivots,
@@ -190,14 +166,28 @@ where
         })
     }
 
-    /// Inverts a square matrix purely in-place using caller-provided pivot
-    /// scratch space.
+    /// Consumes the matrix to construct a stack-allocated [`LuDecomposition`] using the default BLAS engine.
+    ///
+    /// # Errors
+    /// See [`Owned::lu_decompose_mut`].
+    #[allow(clippy::type_complexity)]
+    pub fn into_lu(self) -> LinAlgResult<LuDecomposition<T, D>> {
+        self.into_lu_with::<DefaultBlas>()
+    }
+
+    /// Inverts a square matrix purely in-place using a specific BLAS engine.
     ///
     /// # Errors
     /// Returns [`LinAlgError::SingularMatrix`] if the matrix is singular.
-    pub fn invert_mut(&mut self, pivots: &mut [usize]) -> LinAlgResult<()> {
+    pub fn invert_mut_with<
+        B: Getrf<T, ArrayStorage<T, D, D>>
+            + Getrs<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, D>>,
+    >(
+        &mut self,
+        pivots: &mut [usize],
+    ) -> LinAlgResult<()> {
         let mut factored = *self;
-        let row_exchanges = factored.lu_decompose_mut(pivots)?;
+        let row_exchanges = factored.lu_decompose_mut_with::<B>(pivots)?;
         let mut local_pivots = [0usize; D];
         local_pivots.copy_from_slice(pivots);
         let lu = LuDecomposition {
@@ -206,25 +196,41 @@ where
             row_exchanges,
         };
         let mut inv = Self::identity();
-        lu.solve_mut(&mut inv);
+        lu.solve_mut_with::<B, D>(&mut inv);
         *self = inv;
         Ok(())
     }
 
-    /// Computes the matrix inverse into a caller-provided destination
-    /// buffer, without mutating `self`.
+    /// Inverts a square matrix purely in-place using the default BLAS engine.
+    pub fn invert_mut(&mut self, pivots: &mut [usize]) -> LinAlgResult<()> {
+        self.invert_mut_with::<DefaultBlas>(pivots)
+    }
+
+    /// Computes the matrix inverse into a destination buffer using a specific BLAS engine.
     ///
     /// # Errors
     /// Returns [`LinAlgError::SingularMatrix`] if the matrix is singular.
-    pub fn invert_into(
+    pub fn invert_into_with<
+        B: Getrf<T, ArrayStorage<T, D, D>>
+            + Getrs<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, D>>,
+    >(
         &self,
         dest: &mut Self,
         pivots: &mut [usize],
     ) -> LinAlgResult<()> {
         let mut copy = *self;
-        copy.invert_mut(pivots)?;
+        copy.invert_mut_with::<B>(pivots)?;
         *dest = copy;
         Ok(())
+    }
+
+    /// Computes the matrix inverse into a destination buffer using the default BLAS engine.
+    pub fn invert_into(
+        &self,
+        dest: &mut Self,
+        pivots: &mut [usize],
+    ) -> LinAlgResult<()> {
+        self.invert_into_with::<DefaultBlas>(dest, pivots)
     }
 }
 
@@ -232,6 +238,34 @@ impl<T: Float + Copy, const D: usize> LuDecomposition<T, D>
 where
     Const<D>: Dim,
 {
+    /// Factorizes matrix `a` into its LU decomposition using a specific BLAS engine.
+    pub fn decompose_with<B: Getrf<T, ArrayStorage<T, D, D>>>(
+        a: Owned<T, D, D>,
+    ) -> LinAlgResult<Self> {
+        a.into_lu_with::<B>()
+    }
+
+    /// Factorizes matrix `a` into its LU decomposition using the default BLAS engine.
+    pub fn decompose(a: Owned<T, D, D>) -> LinAlgResult<Self> {
+        a.into_lu()
+    }
+
+    /// Computes the matrix inverse using a specific BLAS engine.
+    pub fn inverse_with<
+        B: Getrs<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, D>>,
+    >(
+        &self,
+    ) -> LinAlgResult<Owned<T, D, D>> {
+        let mut inv = Owned::<T, D, D>::identity();
+        self.solve_mut_with::<B, D>(&mut inv);
+        Ok(inv)
+    }
+
+    /// Computes the matrix inverse using the default BLAS engine.
+    pub fn inverse(&self) -> LinAlgResult<Owned<T, D, D>> {
+        self.inverse_with::<DefaultBlas>()
+    }
+
     /// Computes `det(A)` in `O(D)` time from the diagonal of `U`, applying
     /// the sign flip implied by the number of row exchanges.
     #[must_use]
@@ -247,59 +281,30 @@ where
         det
     }
 
-    /// Solves `A * x = b` in-place by mutating each column of `b` into the
-    /// corresponding solution column, via row permutation, forward
-    /// substitution (`L`) and back substitution (`U`).
+    /// Solves `A * x = b` in-place using a specific BLAS engine.
+    pub fn solve_mut_with<
+        B: Getrs<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, COLS>>,
+        const COLS: usize,
+    >(
+        &self,
+        b: &mut Owned<T, D, COLS>,
+    ) where
+        Const<COLS>: Dim,
+    {
+        let _ = B::getrs(
+            Trans::NoTrans,
+            &self.data.storage,
+            &self.pivots,
+            &mut b.storage,
+        );
+    }
+
+    /// Solves `A * x = b` in-place using the default BLAS engine.
     pub fn solve_mut<const COLS: usize>(&self, b: &mut Owned<T, D, COLS>)
     where
         Const<COLS>: Dim,
     {
-        for c in 0..COLS {
-            let mut col = [T::ZERO; D];
-            for i in 0..D {
-                // Safety: `i < D`, `c < COLS`.
-                col[i] = unsafe { *b.storage.get_unchecked(i, c) };
-            }
-
-            let mut y = [T::ZERO; D];
-            for i in 0..D {
-                y[i] = col[self.pivots[i]];
-            }
-
-            // Forward substitution: L * z = y (L unit lower triangular).
-            for i in 0..D {
-                let mut sum = y[i];
-                for k in 0..i {
-                    // Safety: `i < D`, `k < D`.
-                    let l_ik =
-                        unsafe { *self.data.storage.get_unchecked(i, k) };
-                    sum = sum - (l_ik * y[k]);
-                }
-                y[i] = sum;
-            }
-
-            // Back substitution: U * x = z.
-            for step in 0..D {
-                let i = D - 1 - step;
-                let mut sum = y[i];
-                for k in (i + 1)..D {
-                    // Safety: `i < D`, `k < D`.
-                    let u_ik =
-                        unsafe { *self.data.storage.get_unchecked(i, k) };
-                    sum = sum - (u_ik * y[k]);
-                }
-                // Safety: `i < D`.
-                let u_ii = unsafe { *self.data.storage.get_unchecked(i, i) };
-                y[i] = sum / u_ii;
-            }
-
-            for i in 0..D {
-                // Safety: `i < D`, `c < COLS`.
-                unsafe {
-                    *b.storage.get_unchecked_mut(i, c) = y[i];
-                }
-            }
-        }
+        self.solve_mut_with::<DefaultBlas, COLS>(b);
     }
 }
 
@@ -374,68 +379,64 @@ impl<T: Float + Copy, const D: usize> Symmetric<T, D>
 where
     Const<D>: Dim,
 {
-    /// Performs Cholesky (`A = L * L^T`) decomposition purely in-place on
-    /// the strict lower triangle and diagonal (no pivoting — restricted to
-    /// positive-definite matrices). Like `ldlt_decompose_mut`, the strict
-    /// upper triangle is left untouched (stale): every consumer of the
-    /// result only reads `i >= j` entries.
+    /// Performs Cholesky (`A = L * L^T`) decomposition purely in-place using a specific BLAS engine.
     ///
     /// # Errors
-    /// Returns [`LinAlgError::SingularMatrix`] if a diagonal pivot is not
-    /// positive (within `T::epsilon()`), i.e. `self` is not positive
-    /// definite.
-    pub fn cholesky_decompose_mut(&mut self) -> LinAlgResult<()> {
+    /// Returns [`LinAlgError::NotPositiveDefinite`] if a diagonal pivot is not
+    /// positive, i.e. `self` is not positive definite.
+    pub fn cholesky_decompose_mut_with<B: Potrf<T, ArrayStorage<T, D, D>>>(
+        &mut self,
+    ) -> LinAlgResult<()>
+    where
+        T::Real: Radical,
+    {
         let data = self.as_matrix_mut();
-        for j in 0..D {
-            // Safety: `j < D`.
-            let mut sum = unsafe { *data.storage.get_unchecked(j, j) };
-            for k in 0..j {
-                // Safety: `j < D`, `k < D`.
-                let l_jk = unsafe { *data.storage.get_unchecked(j, k) };
-                sum = sum - (l_jk * l_jk);
-            }
-            if sum <= T::epsilon() {
-                return Err(LinAlgError::SingularMatrix);
-            }
-            let l_jj = sum.sqrt();
-            // Safety: `j < D`.
-            unsafe {
-                *data.storage.get_unchecked_mut(j, j) = l_jj;
-            }
-
-            for i in (j + 1)..D {
-                // Safety: `i < D`, `j < D`.
-                let mut num = unsafe { *data.storage.get_unchecked(i, j) };
-                for k in 0..j {
-                    // Safety: `i < D`, `j < D`, `k < D`.
-                    unsafe {
-                        let l_ik = *data.storage.get_unchecked(i, k);
-                        let l_jk = *data.storage.get_unchecked(j, k);
-                        num = num - (l_ik * l_jk);
-                    }
-                }
-                // Safety: `i < D`, `j < D`.
+        B::potrf(UpLo::Lower, &mut data.storage)?;
+        for i in 0..D {
+            for j in (i + 1)..D {
                 unsafe {
-                    *data.storage.get_unchecked_mut(i, j) = num / l_jj;
+                    *data.storage.get_unchecked_mut(i, j) = T::ZERO;
                 }
             }
         }
         Ok(())
     }
 
-    /// Consumes the matrix to construct a stack-allocated
-    /// [`CholeskyDecomposition`].
+    /// Performs Cholesky (`A = L * L^T`) decomposition purely in-place using the default BLAS engine.
+    pub fn cholesky_decompose_mut(&mut self) -> LinAlgResult<()>
+    where
+        T::Real: Radical,
+    {
+        self.cholesky_decompose_mut_with::<DefaultBlas>()
+    }
+
+    /// Consumes the matrix to construct a stack-allocated [`CholeskyDecomposition`] using a specific BLAS engine.
+    ///
+    /// # Errors
+    /// See [`Symmetric::cholesky_decompose_mut_with`].
+    #[allow(clippy::type_complexity)]
+    pub fn into_cholesky_with<B: Potrf<T, ArrayStorage<T, D, D>>>(
+        mut self,
+    ) -> LinAlgResult<CholeskyDecomposition<T, D>>
+    where
+        T::Real: Radical,
+    {
+        self.cholesky_decompose_mut_with::<B>()?;
+        Ok(CholeskyDecomposition {
+            l: LowerTriangular::from_owned_unchecked(self.into_inner()),
+        })
+    }
+
+    /// Consumes the matrix to construct a stack-allocated [`CholeskyDecomposition`] using the default BLAS engine.
     ///
     /// # Errors
     /// See [`Symmetric::cholesky_decompose_mut`].
     #[allow(clippy::type_complexity)]
-    pub fn into_cholesky(
-        mut self,
-    ) -> LinAlgResult<CholeskyDecomposition<T, D>> {
-        self.cholesky_decompose_mut()?;
-        Ok(CholeskyDecomposition {
-            l: LowerTriangular::from_owned_unchecked(self.into_inner()),
-        })
+    pub fn into_cholesky(self) -> LinAlgResult<CholeskyDecomposition<T, D>>
+    where
+        T::Real: Radical,
+    {
+        self.into_cholesky_with::<DefaultBlas>()
     }
 }
 
@@ -443,114 +444,26 @@ impl<T: Float + Copy, const D: usize> CholeskyDecomposition<T, D>
 where
     Const<D>: Dim,
 {
-    /// Solves `A * x = b` in-place: forward substitution (`L`), back
-    /// substitution (`L^T`).
+    /// Solves `A * x = b` in-place using a specific BLAS engine.
+    pub fn solve_mut_with<
+        B: Potrs<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, COLS>>,
+        const COLS: usize,
+    >(
+        &self,
+        b: &mut Owned<T, D, COLS>,
+    ) where
+        Const<COLS>: Dim,
+    {
+        let _ =
+            B::potrs(UpLo::Lower, &self.l.as_matrix().storage, &mut b.storage);
+    }
+
+    /// Solves `A * x = b` in-place using the default BLAS engine.
     pub fn solve_mut<const COLS: usize>(&self, b: &mut Owned<T, D, COLS>)
     where
         Const<COLS>: Dim,
     {
-        let l = self.l.as_matrix();
-        for c in 0..COLS {
-            let mut y = [T::ZERO; D];
-            for i in 0..D {
-                // Safety: `i < D`, `c < COLS`.
-                y[i] = unsafe { *b.storage.get_unchecked(i, c) };
-            }
-
-            // Forward substitution: L * z = y.
-            for i in 0..D {
-                let mut sum = y[i];
-                for k in 0..i {
-                    // Safety: `i < D`, `k < D`.
-                    let l_ik = unsafe { *l.storage.get_unchecked(i, k) };
-                    sum = sum - (l_ik * y[k]);
-                }
-                // Safety: `i < D`.
-                let l_ii = unsafe { *l.storage.get_unchecked(i, i) };
-                y[i] = sum / l_ii;
-            }
-
-            // Back substitution: L^T * x = z.
-            for step in 0..D {
-                let i = D - 1 - step;
-                let mut sum = y[i];
-                for k in (i + 1)..D {
-                    // Safety: `k < D`, `i < D` — reads `L[k][i]`, which is
-                    // `L^T[i][k]`.
-                    let l_ki = unsafe { *l.storage.get_unchecked(k, i) };
-                    sum = sum - (l_ki * y[k]);
-                }
-                // Safety: `i < D`.
-                let l_ii = unsafe { *l.storage.get_unchecked(i, i) };
-                y[i] = sum / l_ii;
-            }
-
-            for i in 0..D {
-                // Safety: `i < D`, `c < COLS`.
-                unsafe {
-                    *b.storage.get_unchecked_mut(i, c) = y[i];
-                }
-            }
-        }
-    }
-}
-
-/// Left-multiplies `m` by the Householder reflector
-/// `H = I - 2*v*v^T / norm_v_sq` (rows/columns `k..D`, matching `v`'s
-/// nonzero range): `m := H * m`. Shared by `qr_decompose_mut`'s
-/// `R := H * R` step.
-fn reflect_rows<T: Float + Copy, const D: usize>(
-    m: &mut Owned<T, D, D>,
-    v: &[T; D],
-    norm_v_sq: T,
-    k: usize,
-) where
-    Const<D>: Dim,
-{
-    for j in k..D {
-        let mut dot = T::ZERO;
-        for i in k..D {
-            // Safety: `i < D`, `j < D`.
-            let m_ij = unsafe { *m.storage.get_unchecked(i, j) };
-            dot = dot + (v[i] * m_ij);
-        }
-        let factor = (dot + dot) / norm_v_sq;
-        for i in k..D {
-            // Safety: `i < D`, `j < D`.
-            unsafe {
-                let m_ij = *m.storage.get_unchecked(i, j);
-                *m.storage.get_unchecked_mut(i, j) = m_ij - (factor * v[i]);
-            }
-        }
-    }
-}
-
-/// Right-multiplies `m` by the Householder reflector
-/// `H = I - 2*v*v^T / norm_v_sq` (columns `k..D`, all rows): `m := m * H`.
-/// Shared by `qr_decompose_mut`'s `Q := Q * H` step.
-fn reflect_cols<T: Float + Copy, const D: usize>(
-    m: &mut Owned<T, D, D>,
-    v: &[T; D],
-    norm_v_sq: T,
-    k: usize,
-) where
-    Const<D>: Dim,
-{
-    for i in 0..D {
-        let mut dot = T::ZERO;
-        for j in k..D {
-            // Safety: `i < D`, `j < D`.
-            let m_ij = unsafe { *m.storage.get_unchecked(i, j) };
-            dot = dot + (m_ij * v[j]);
-        }
-        let factor = (dot + dot) / norm_v_sq;
-        for j in k..D {
-            // Safety: `i < D`, `j < D`.
-            unsafe {
-                let m_ij = *m.storage.get_unchecked(i, j);
-                *m.storage.get_unchecked_mut(i, j) = m_ij - (factor * v[j]);
-            }
-        }
+        self.solve_mut_with::<DefaultBlas, COLS>(b);
     }
 }
 
@@ -559,64 +472,34 @@ where
     Const<D>: Dim,
 {
     /// Performs `QR` decomposition (`A = Q * R`) via Householder
-    /// reflections, purely in-place: overwrites `self` with the
-    /// upper-triangular `R` factor and writes the orthogonal `Q` factor
-    /// into the caller-provided `q` destination buffer (`q`'s initial
-    /// contents are discarded).
-    ///
-    /// Unlike `lu_decompose_mut`/`ldlt_decompose_mut`, this never fails:
-    /// Householder `QR` is defined (and numerically stable) even for
-    /// rank-deficient or ill-conditioned `A` (`matrix-design.md` §5.5) — a
-    /// near-zero pivot simply leaves the corresponding column of `R`
-    /// already triangular rather than requiring a reflection.
-    pub fn qr_decompose_mut(&mut self, q: &mut Self) {
+    /// reflections using a specific BLAS engine.
+    pub fn qr_decompose_mut_with<
+        B: Geqrf<T, ArrayStorage<T, D, D>>
+            + Ormqr<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, D>>,
+    >(
+        &mut self,
+        q: &mut Self,
+    ) where
+        T::Real: Radical,
+    {
         *q = Self::identity();
-        for k in 0..D.saturating_sub(1) {
-            // Norm of R's k-th column, rows k..D.
-            let mut norm_x = T::ZERO;
-            for i in k..D {
-                // Safety: `i < D`, `k < D`.
-                let r_ik = unsafe { *self.storage.get_unchecked(i, k) };
-                norm_x = norm_x + (r_ik * r_ik);
-            }
-            let norm_x = norm_x.sqrt();
-            if norm_x <= T::epsilon() {
-                continue; // Column already zero below the diagonal.
-            }
-
-            // Safety: `k < D`.
-            let r_kk = unsafe { *self.storage.get_unchecked(k, k) };
-            let alpha = if r_kk.is_sign_negative() {
-                norm_x
-            } else {
-                T::ZERO - norm_x
-            };
-
-            let mut v = [T::ZERO; D];
-            for i in k..D {
-                // Safety: `i < D`, `k < D`.
-                v[i] = unsafe { *self.storage.get_unchecked(i, k) };
-            }
-            v[k] = v[k] - alpha;
-
-            let mut norm_v_sq = T::ZERO;
-            for vi in v.iter().skip(k) {
-                norm_v_sq = norm_v_sq + (*vi * *vi);
-            }
-            if norm_v_sq <= T::epsilon() {
-                continue; // Reflector would be the identity.
-            }
-
-            reflect_rows(self, &v, norm_v_sq, k); // R := H * R
-            reflect_cols(q, &v, norm_v_sq, k); // Q := Q * H
-        }
+        let mut tau = [T::ZERO; D];
+        let mut work = [T::ZERO; D];
+        let _ = B::geqrf(&mut self.storage, &mut tau, &mut work);
+        let _ = B::ormqr(
+            Side::Left,
+            Trans::NoTrans,
+            &self.storage,
+            &tau,
+            &mut q.storage,
+            &mut work,
+        );
 
         // Force exact zeros below the diagonal: reflections leave only
         // numerical noise there, and `UpperTriangular` callers must be able
         // to trust the packed zero region.
         for i in 0..D {
             for j in 0..i {
-                // Safety: `i < D`, `j < D`.
                 unsafe {
                     *self.storage.get_unchecked_mut(i, j) = T::ZERO;
                 }
@@ -624,16 +507,43 @@ where
         }
     }
 
+    /// Performs `QR` decomposition (`A = Q * R`) via Householder
+    /// reflections using the default BLAS engine.
+    pub fn qr_decompose_mut(&mut self, q: &mut Self)
+    where
+        T::Real: Radical,
+    {
+        self.qr_decompose_mut_with::<DefaultBlas>(q);
+    }
+
     /// Consumes the matrix to construct a stack-allocated
-    /// [`QrDecomposition`].
+    /// [`QrDecomposition`] using a specific BLAS engine.
     #[allow(clippy::type_complexity)]
-    pub fn into_qr(mut self) -> QrDecomposition<T, D> {
+    pub fn into_qr_with<
+        B: Geqrf<T, ArrayStorage<T, D, D>>
+            + Ormqr<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, D>>,
+    >(
+        mut self,
+    ) -> QrDecomposition<T, D>
+    where
+        T::Real: Radical,
+    {
         let mut q = Self::zero();
-        self.qr_decompose_mut(&mut q);
+        self.qr_decompose_mut_with::<B>(&mut q);
         QrDecomposition {
             q,
             r: UpperTriangular::from_owned_unchecked(self),
         }
+    }
+
+    /// Consumes the matrix to construct a stack-allocated
+    /// [`QrDecomposition`] using the default BLAS engine.
+    #[allow(clippy::type_complexity)]
+    pub fn into_qr(self) -> QrDecomposition<T, D>
+    where
+        T::Real: Radical,
+    {
+        self.into_qr_with::<DefaultBlas>()
     }
 }
 
@@ -641,8 +551,59 @@ impl<T: Float + Copy, const D: usize> QrDecomposition<T, D>
 where
     Const<D>: Dim,
 {
-    /// Solves `A * x = b` in-place: `y = Q^T * b`, then back substitution
-    /// `R * x = y`.
+    /// Solves `A * x = b` in-place using a specific BLAS engine.
+    ///
+    /// # Errors
+    /// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `R`
+    /// is within `T::epsilon()` of zero (`A` is rank-deficient).
+    pub fn solve_mut_with<B, const COLS: usize>(
+        &self,
+        b: &mut Owned<T, D, COLS>,
+    ) -> LinAlgResult<()>
+    where
+        B: Gemm<
+                T,
+                ArrayStorage<T, D, D>,
+                ArrayStorage<T, D, COLS>,
+                ArrayStorage<T, D, COLS>,
+            > + Trsm<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, COLS>>,
+        Const<COLS>: Dim,
+    {
+        let r = self.r.as_matrix();
+        let tol = T::epsilon() * T::from_usize(128);
+        for i in 0..D {
+            let r_ii = unsafe { *r.storage.get_unchecked(i, i) };
+            if r_ii.abs() <= tol {
+                return Err(LinAlgError::SingularMatrix);
+            }
+        }
+
+        let mut y = Owned::<T, D, COLS>::zero();
+        B::gemm(
+            Trans::Trans,
+            Trans::NoTrans,
+            T::ONE,
+            &self.q.storage,
+            &b.storage,
+            T::ZERO,
+            &mut y.storage,
+        );
+
+        B::trsm(
+            Side::Left,
+            UpLo::Upper,
+            Trans::NoTrans,
+            Diag::NonUnit,
+            T::ONE,
+            &self.r.as_matrix().storage,
+            &mut y.storage,
+        )?;
+
+        *b = y;
+        Ok(())
+    }
+
+    /// Solves `A * x = b` in-place using the default BLAS engine.
     ///
     /// # Errors
     /// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `R`
@@ -654,53 +615,7 @@ where
     where
         Const<COLS>: Dim,
     {
-        let r = self.r.as_matrix();
-        for i in 0..D {
-            // Safety: `i < D`.
-            let r_ii = unsafe { *r.storage.get_unchecked(i, i) };
-            if r_ii.abs() < T::epsilon() {
-                return Err(LinAlgError::SingularMatrix);
-            }
-        }
-
-        for c in 0..COLS {
-            // y = Q^T * b (column c).
-            let mut y = [T::ZERO; D];
-            for i in 0..D {
-                let mut sum = T::ZERO;
-                for k in 0..D {
-                    // Safety: `k < D`, `i < D` — reads `Q[k][i]`, which is
-                    // `Q^T[i][k]`.
-                    let q_ki = unsafe { *self.q.storage.get_unchecked(k, i) };
-                    // Safety: `k < D`, `c < COLS`.
-                    let b_kc = unsafe { *b.storage.get_unchecked(k, c) };
-                    sum = sum + (q_ki * b_kc);
-                }
-                y[i] = sum;
-            }
-
-            // Back substitution: R * x = y.
-            for step in 0..D {
-                let i = D - 1 - step;
-                let mut sum = y[i];
-                for k in (i + 1)..D {
-                    // Safety: `i < D`, `k < D`.
-                    let r_ik = unsafe { *r.storage.get_unchecked(i, k) };
-                    sum = sum - (r_ik * y[k]);
-                }
-                // Safety: `i < D`.
-                let r_ii = unsafe { *r.storage.get_unchecked(i, i) };
-                y[i] = sum / r_ii;
-            }
-
-            for i in 0..D {
-                // Safety: `i < D`, `c < COLS`.
-                unsafe {
-                    *b.storage.get_unchecked_mut(i, c) = y[i];
-                }
-            }
-        }
-        Ok(())
+        self.solve_mut_with::<DefaultBlas, COLS>(b)
     }
 }
 
@@ -719,55 +634,54 @@ where
         det
     }
 
-    /// Solves `A * x = b` in-place: forward substitution (`L`), diagonal
-    /// scaling (`D`), back substitution (`L^T`).
+    /// Solves `A * x = b` in-place using a specific BLAS engine.
+    pub fn solve_mut_with<
+        B: Trsm<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, COLS>>,
+        const COLS: usize,
+    >(
+        &self,
+        b: &mut Owned<T, D, COLS>,
+    ) where
+        Const<COLS>: Dim,
+    {
+        let _ = B::trsm(
+            Side::Left,
+            UpLo::Lower,
+            Trans::NoTrans,
+            Diag::Unit,
+            T::ONE,
+            &self.data.storage,
+            &mut b.storage,
+        );
+
+        for i in 0..D {
+            let d_i = unsafe { *self.data.storage.get_unchecked(i, i) };
+            if d_i.abs() >= T::epsilon() {
+                for c in 0..COLS {
+                    unsafe {
+                        let z = *b.storage.get_unchecked(i, c);
+                        *b.storage.get_unchecked_mut(i, c) = z / d_i;
+                    }
+                }
+            }
+        }
+
+        let _ = B::trsm(
+            Side::Left,
+            UpLo::Lower,
+            Trans::Trans,
+            Diag::Unit,
+            T::ONE,
+            &self.data.storage,
+            &mut b.storage,
+        );
+    }
+
+    /// Solves `A * x = b` in-place using the default BLAS engine.
     pub fn solve_mut<const COLS: usize>(&self, b: &mut Owned<T, D, COLS>)
     where
         Const<COLS>: Dim,
     {
-        for c in 0..COLS {
-            let mut y = [T::ZERO; D];
-            for i in 0..D {
-                // Safety: `i < D`, `c < COLS`.
-                y[i] = unsafe { *b.storage.get_unchecked(i, c) };
-            }
-
-            for i in 0..D {
-                let mut sum = y[i];
-                for k in 0..i {
-                    // Safety: `i < D`, `k < D`.
-                    let l_ik =
-                        unsafe { *self.data.storage.get_unchecked(i, k) };
-                    sum = sum - (l_ik * y[k]);
-                }
-                y[i] = sum;
-            }
-
-            for i in 0..D {
-                // Safety: `i < D`.
-                let d_i = unsafe { *self.data.storage.get_unchecked(i, i) };
-                y[i] = y[i] / d_i;
-            }
-
-            for step in 0..D {
-                let i = D - 1 - step;
-                let mut sum = y[i];
-                for k in (i + 1)..D {
-                    // Safety: `k < D`, `i < D` — reads `L[k][i]`, which is
-                    // `L^T[i][k]`.
-                    let l_ki =
-                        unsafe { *self.data.storage.get_unchecked(k, i) };
-                    sum = sum - (l_ki * y[k]);
-                }
-                y[i] = sum;
-            }
-
-            for i in 0..D {
-                // Safety: `i < D`, `c < COLS`.
-                unsafe {
-                    *b.storage.get_unchecked_mut(i, c) = y[i];
-                }
-            }
-        }
+        self.solve_mut_with::<DefaultBlas, COLS>(b);
     }
 }

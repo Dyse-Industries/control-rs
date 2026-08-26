@@ -1,0 +1,15 @@
+[package]
+name = "aarch64-subprograms"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+# After copying this crate, point `path` at your control-rs checkout.
+control-rs = { path = "../../..", default-features = false }
+libm = "0.2.16"
+
+[features]
+accelerate = []

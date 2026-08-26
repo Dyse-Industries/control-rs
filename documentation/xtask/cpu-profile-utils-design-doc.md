@@ -6,9 +6,9 @@
 
 ### 1. Introduction
 
-The HIL test harness requires target-specific hooks to measure performance
+ETS requires target-specific hooks to measure performance
 metrics (clock cycles, elapsed execution time and stack usage). By defining a
-unified `CPUProfiler` trait within the `control-rs-hil::profiler` module,
+unified `CPUProfiler` trait within the `control-rs-ets::profiler` module,
 the server delegates the implementation of primitive hardware
 hooks to the end-user or silicon vendor.
 
@@ -38,7 +38,7 @@ hooks to the end-user or silicon vendor.
 #### Constraints
 
 - **C-1 — Strict `#![no_std]`, Zero Heap**: Consistent with the rest of
-  `control-rs-hil`.
+  `control-rs-ets`.
 - **C-2 — Target Architectures**: ARM Cortex-M (ARMv6/7/8-M) and RISC-V (
   RV32/RV64); ARMv6-M has no DWT cycle counter (§8).
 
@@ -56,7 +56,7 @@ server hardware-agnostic.
 ### 4.1. The CPUProfiler Trait
 
 The core of the abstraction is the `CPUProfiler` trait, defined in
-`control-rs-hil::profiler`:
+`control-rs-ets::profiler`:
 
 ```rust
 pub trait CPUProfiler {
@@ -171,9 +171,9 @@ impl CPUProfiler for CortexMProfiler {
 ```
 
 `reset()` performs a host-commanded warm reboot (e.g. `Command::TryReset`).
-Crash recovery does not use it: the HIL Server's panic path relies on watchdog
+Crash recovery does not use it: ETS's panic path relies on watchdog
 starvation for a hard reset, since a soft `SCB` reset leaves peripherals and
-active DMA running (see `hil-server-design-doc.md` §4.4).
+active DMA running (see `embedded-test-server-design.md` §4.4).
 
 ---
 
@@ -188,7 +188,7 @@ target side was verbose, repetitive and error-prone.
 To simplify target-side integration, these hooks were consolidated into a single
 trait: `CPUProfiler`. Users only implement primitive hardware hooks (
 retrieving cycle counts, reading time, getting the stack pointer and
-identifying stack boundaries). The core HIL `Server` implements the generic
+identifying stack boundaries). The ETS `Server` implements the generic
 execution wrapper, timing calculations and metric telemetry reporting in a
 platform-agnostic manner.
 
@@ -279,7 +279,7 @@ on-target testing. Ideally these will be available to end users.
   periodic interrupt) is a proven reference implementation; verify against
   `rtic-monotonics` (its actively maintained successor) before committing,
   since `dwt-systick-monotonic` last released in 2022. Open question whether
-  the HIL Server's polling cadence is frequent enough to observe every
+  ETS's polling cadence is frequent enough to observe every
   wraparound without a dedicated interrupt. On RISC-V, RV32's `mcycle` is also
   32 bits (with a separate `mcycleh` CSR) — whether `RiscvProfiler` combines
   them into a full 64-bit value is unverified.
@@ -304,7 +304,7 @@ on-target testing. Ideally these will be available to end users.
 
 | Task / Feature                           | Description                                                                                                     | Status / Effort |
 |:-----------------------------------------|:----------------------------------------------------------------------------------------------------------------|:----------------|
-| **Step 1: Trait & Target Impls**         | Define `CPUProfiler` and implement `CortexMProfiler`/`RiscvProfiler` in `control-rs-hil::profiler`.             | Shipped         |
+| **Step 1: Trait & Target Impls**         | Define `CPUProfiler` and implement `CortexMProfiler`/`RiscvProfiler` in `control-rs-ets::profiler`.             | Shipped         |
 | **Step 2: Overflow-Safe Cycle Counting** | Add DWT wraparound handling (extend technique) and verify RV32 `mcycle`/`mcycleh` combination.                  | 0.5 day         |
 | **Step 3: ARMv6-M Decision**             | Either add a SysTick-only fallback for Cortex-M0/M0+ or document the restriction as a non-goal.                 | 0.5 day         |
 | **Step 4: CI Static Analysis**           | Integrate `cargo-call-stack` with explicit scoping of its SysTick/inline-asm blind spots; evaluate `flip-link`. | 1.0 day         |
@@ -313,8 +313,7 @@ on-target testing. Ideally these will be available to end users.
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                |
-|:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------|
-| 1.0      | July 18, 2026  | @MitchellDScott | Initial design of the `CPUProfiler` trait, consolidating `ClientClock` and `TestExecutor`. |
-| 1.1      | August 6, 2026 | @MitchellDScott | Incorporated build-vs-adopt research; added Requirements structure and Development Plan.   |
-| 1.2      | August 9, 2026 | @MitchellDScott | Review and minor updates.                                                                  |
+| Revision | Date           | Author          | Description                                                                                                                           |
+|:---------|:---------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 18, 2026  | @MitchellDScott | Initial specification for the `CPUProfiler` trait, hardware timer abstractions, and benchmark execution.                              |
+| 1.1      | August 6, 2026  | @MitchellDScott | Hardware targets: added DWT cycle counting for Cortex-M and CSR `mcycle` for RISC-V with static call-stack analysis.                 |

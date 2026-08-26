@@ -1,12 +1,12 @@
-//! Digital Signal Processing (DSP) mathematical HIL and unit test suite.
+//! Digital Signal Processing (DSP) mathematical ETS and unit test suite.
 //!
 //! `dsp.rs` has no dedicated design doc, so no functional-requirement
 //! citations apply here.
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod dsp_test_suite {
     use crate::math::{
-        Bijection, Map,
+        Bijection, ConversionError, Map,
         complex_num::Complex,
         dsp::{Continuous, Convolution, Discrete, FFT},
         num_traits::Trig,
@@ -62,7 +62,7 @@ pub mod dsp_test_suite {
         let input = [1.0, 2.0, 3.0];
         let kernel = [1.0];
         let mut output = [0.0f64; 3];
-        TestConvolution::convolve_input(&input, &kernel, &mut output);
+        TestConvolution::convolve_input(&input, &kernel, &mut output).unwrap();
         for (out_val, in_val) in output.iter().zip(input.iter()) {
             assert!((out_val - in_val).abs() < TOLERANCE);
         }
@@ -74,7 +74,7 @@ pub mod dsp_test_suite {
         let input = [1.0, 2.0, 3.0];
         let kernel = [0.0, 1.0, 0.0];
         let mut output = [0.0f64; 5];
-        TestConvolution::convolve_input(&input, &kernel, &mut output);
+        TestConvolution::convolve_input(&input, &kernel, &mut output).unwrap();
         let expected = [0.0, 1.0, 2.0, 3.0, 0.0];
         for (out_val, exp_val) in output.iter().zip(expected.iter()) {
             assert!((out_val - exp_val).abs() < TOLERANCE);
@@ -87,21 +87,22 @@ pub mod dsp_test_suite {
         let input = [1.0, 1.0];
         let kernel = [1.0, 1.0];
         let mut output = [0.0f64; 3];
-        TestConvolution::convolve_input(&input, &kernel, &mut output);
+        TestConvolution::convolve_input(&input, &kernel, &mut output).unwrap();
         let expected = [1.0, 2.0, 1.0];
         for (out_val, exp_val) in output.iter().zip(expected.iter()) {
             assert!((out_val - exp_val).abs() < TOLERANCE);
         }
     }
 
-    #[cfg(test)]
-    #[test]
-    #[should_panic(expected = "Convolution output buffer is too small")]
-    fn _test_convolve_buffer_panic() {
+    #[cfg_attr(test, test)]
+    fn test_dsp_convolve_dimension_mismatch() {
         let input = [1.0, 2.0];
         let kernel = [1.0, 1.0];
-        let mut output = [0.0; 1]; // Too small! Expected 2 + 2 - 1 = 3
-        TestConvolution::convolve_input(&input, &kernel, &mut output);
+        let mut output = [0.0; 1];
+        assert_eq!(
+            TestConvolution::convolve_input(&input, &kernel, &mut output),
+            Err(ConversionError::DimensionMismatch)
+        );
     }
 
     #[cfg_attr(test, test)]
@@ -110,12 +111,13 @@ pub mod dsp_test_suite {
         let input = [];
         let kernel = [1.0];
         let mut output = [];
-        TestConvolution::convolve_input(&input, &kernel, &mut output);
+        TestConvolution::convolve_input(&input, &kernel, &mut output).unwrap();
 
         let input2 = [1.0];
         let kernel2 = [];
         let mut output2 = [];
-        TestConvolution::convolve_input(&input2, &kernel2, &mut output2);
+        TestConvolution::convolve_input(&input2, &kernel2, &mut output2)
+            .unwrap();
     }
 
     // --- FFT / IFFT Tests ---

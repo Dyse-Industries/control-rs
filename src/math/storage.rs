@@ -6,12 +6,33 @@
 //! memory. `offset()` is the single point of control for a backend's memory
 //! layout; higher-level code accesses elements through it rather than
 //! assuming a layout.
-//!
 //! Includes dense strided backends (`ArrayStorage`, `RowArrayStorage`,
-//! `ViewStorage`), packed structured storage (`DiagonalStorage`,
+//! `StorageView`), packed structured storage (`DiagonalStorage`,
 //! `SymmetricPackedStorage`, `HermitianPackedStorage`, `TriangularPackedStorage`),
 //! compressed sparse backends (`ArrayCsrStorage`, `ArrayCscStorage`, `ArrayCooStorage`),
 //! and 1-D sparse vectors (`ArraySparseVector`, `ViewSparseVector`).
+//!
+//! Runtime-stride views do not implement [`ContiguousStorage`]:
+//!
+//! ```compile_fail
+//! use control_rs::math::storage::{
+//!     ArrayStorage, ContiguousStorage, DenseStorage,
+//! };
+//!
+//! fn needs_contiguous<S: ContiguousStorage<f64>>(_: &S) {}
+//!
+//! let a = ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [3.0, 4.0]]);
+//! let rev = a.reverse_view();
+//! needs_contiguous(&rev);
+//! ```
+//!
+//! Owning packed constructors const-assert `PACKED_LEN = N(N+1)/2`:
+//!
+//! ```compile_fail
+//! use control_rs::math::storage::{SymmetricPackedStorage, UpLo};
+//!
+//! let _ = SymmetricPackedStorage::<f32, 4, 9>::new([0.0; 9], UpLo::Upper);
+//! ```
 #![allow(clippy::arbitrary_source_item_ordering)]
 #![allow(clippy::indexing_slicing)]
 #![allow(clippy::arithmetic_side_effects)]
@@ -34,6 +55,35 @@ use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
 type UninitArray<T, const N: usize> = MaybeUninit<[T; N]>;
+
+/// Returns whether every `(r, c)` in an `rows × cols` window with the given
+/// strides lands inside a slice of length `len` (offsets measured from index 0).
+fn strided_window_fits(
+    len: usize,
+    r_stride: isize,
+    c_stride: isize,
+    rows: usize,
+    cols: usize,
+) -> bool {
+    for r in 0..rows {
+        for c in 0..cols {
+            let Some(off) =
+                r.cast_signed().checked_mul(r_stride).and_then(|row| {
+                    c.cast_signed().checked_mul(c_stride).map(|col| row + col)
+                })
+            else {
+                return false;
+            };
+            if off < 0 {
+                return false;
+            }
+            if off.cast_unsigned() >= len {
+                return false;
+            }
+        }
+    }
+    true
+}
 
 /// Helper function to reverse arrays given to `Polynomial::new()`
 #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
@@ -230,12 +280,12 @@ pub unsafe trait DenseStorage<T> {
 
     /// Returns a zero-copy transposed view of the storage grid.
     #[allow(clippy::type_complexity)]
-    fn transpose_view<'a>(&'a self) -> ViewStorage<'a, T, Self::C, Self::R>
+    fn transpose_view<'a>(&'a self) -> StorageView<'a, T, Self::C, Self::R>
     where
         Self: 'a,
     {
         unsafe {
-            ViewStorage::new_with_strides(
+            StorageView::new_with_strides_unchecked(
                 self.as_ptr(),
                 self.c_stride(),
                 self.r_stride(),
@@ -245,7 +295,7 @@ pub unsafe trait DenseStorage<T> {
 
     /// Returns a zero-copy reversed view of the storage grid.
     #[allow(clippy::type_complexity)]
-    fn reverse_view<'a>(&'a self) -> ViewStorage<'a, T, Self::R, Self::C>
+    fn reverse_view<'a>(&'a self) -> StorageView<'a, T, Self::R, Self::C>
     where
         Self: 'a,
     {
@@ -254,7 +304,7 @@ pub unsafe trait DenseStorage<T> {
             Self::C::USIZE.saturating_sub(1),
         );
         unsafe {
-            ViewStorage::new_with_strides(
+            StorageView::new_with_strides_unchecked(
                 self.as_ptr().offset(off),
                 -self.r_stride(),
                 -self.c_stride(),
@@ -335,12 +385,12 @@ pub unsafe trait DenseStorageMut<T>: DenseStorage<T> {
     #[allow(clippy::type_complexity)]
     fn transpose_mut_view<'a>(
         &'a mut self,
-    ) -> ViewStorageMut<'a, T, Self::C, Self::R>
+    ) -> StorageViewMut<'a, T, Self::C, Self::R>
     where
         Self: 'a,
     {
         unsafe {
-            ViewStorageMut::new_with_strides(
+            StorageViewMut::new_with_strides_unchecked(
                 self.as_mut_ptr(),
                 self.c_stride(),
                 self.r_stride(),
@@ -352,7 +402,7 @@ pub unsafe trait DenseStorageMut<T>: DenseStorage<T> {
     #[allow(clippy::type_complexity)]
     fn reverse_mut_view<'a>(
         &'a mut self,
-    ) -> ViewStorageMut<'a, T, Self::R, Self::C>
+    ) -> StorageViewMut<'a, T, Self::R, Self::C>
     where
         Self: 'a,
     {
@@ -361,7 +411,7 @@ pub unsafe trait DenseStorageMut<T>: DenseStorage<T> {
             Self::C::USIZE.saturating_sub(1),
         );
         unsafe {
-            ViewStorageMut::new_with_strides(
+            StorageViewMut::new_with_strides_unchecked(
                 self.as_mut_ptr().offset(off),
                 -self.r_stride(),
                 -self.c_stride(),
@@ -685,48 +735,46 @@ where
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// ViewStorage / ViewStorageMut (Strided & Transpose Views)
+// StorageView / StorageViewMut (Strided & Transpose Views)
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Zero-copy non-owning immutable view with arbitrary `isize` strides.
 #[derive(Debug)]
 #[allow(clippy::type_complexity)]
-pub struct ViewStorage<'a, T, R: Dim, C: Dim> {
+pub struct StorageView<'a, T, R: Dim, C: Dim> {
     ptr: *const T,
     r_stride: isize,
     c_stride: isize,
     _marker: ViewMarker<'a, T, R, C>,
 }
 
-impl<'a, T, R: Dim, C: Dim> ViewStorage<'a, T, R, C> {
-    /// Wraps `data` as an `R x C` column-major view.
+impl<'a, T, R: Dim, C: Dim> StorageView<'a, T, R, C> {
+    /// Wraps `data` with explicit row/column strides.
     ///
     /// # Errors
-    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != R::USIZE * C::USIZE`.
-    pub fn new(data: &'a [T]) -> ConversionResult<Self> {
-        if R::USIZE.checked_mul(C::USIZE) == Some(data.len()) {
-            Ok(Self {
-                ptr: data.as_ptr(),
-                r_stride: 1,
-                c_stride: R::USIZE.cast_signed(),
-                _marker: PhantomData,
+    /// Returns [`ConversionError::DimensionMismatch`] if `data` cannot cover
+    /// the strided `R × C` window.
+    pub fn new_with_strides(
+        data: &'a [T],
+        r_stride: isize,
+        c_stride: isize,
+    ) -> ConversionResult<Self> {
+        if strided_window_fits(
+            data.len(),
+            r_stride,
+            c_stride,
+            R::USIZE,
+            C::USIZE,
+        ) {
+            Ok(unsafe {
+                Self::new_with_strides_unchecked(
+                    data.as_ptr(),
+                    r_stride,
+                    c_stride,
+                )
             })
         } else {
             Err(ConversionError::DimensionMismatch)
-        }
-    }
-
-    /// Unchecked constructor from a slice with default column-major strides.
-    ///
-    /// # Safety
-    /// `data.len()` must equal `R::USIZE * C::USIZE`.
-    #[must_use]
-    pub const unsafe fn new_unchecked(data: &'a [T]) -> Self {
-        Self {
-            ptr: data.as_ptr(),
-            r_stride: 1,
-            c_stride: R::USIZE.cast_signed(),
-            _marker: PhantomData,
         }
     }
 
@@ -735,7 +783,7 @@ impl<'a, T, R: Dim, C: Dim> ViewStorage<'a, T, R, C> {
     /// # Safety
     /// `ptr` with `r_stride` and `c_stride` must safely address `R x C` elements for lifetime `'a`.
     #[must_use]
-    pub const unsafe fn new_with_strides(
+    pub const unsafe fn new_with_strides_unchecked(
         ptr: *const T,
         r_stride: isize,
         c_stride: isize,
@@ -749,7 +797,7 @@ impl<'a, T, R: Dim, C: Dim> ViewStorage<'a, T, R, C> {
     }
 }
 
-unsafe impl<T, R: Dim, C: Dim> DenseStorage<T> for ViewStorage<'_, T, R, C> {
+unsafe impl<T, R: Dim, C: Dim> DenseStorage<T> for StorageView<'_, T, R, C> {
     type R = R;
     type C = C;
 
@@ -766,55 +814,43 @@ unsafe impl<T, R: Dim, C: Dim> DenseStorage<T> for ViewStorage<'_, T, R, C> {
     }
 }
 
-unsafe impl<T, R: Dim, C: Dim> ContiguousStorage<T>
-    for ViewStorage<'_, T, R, C>
-{
-    const ORDER: MatrixLayout = MatrixLayout::ColMajor;
-
-    fn as_slice(&self) -> &[T] {
-        unsafe { core::slice::from_raw_parts(self.ptr, R::USIZE * C::USIZE) }
-    }
-}
-
 /// Zero-copy non-owning mutable view with arbitrary `isize` strides.
 #[derive(Debug)]
 #[allow(clippy::type_complexity)]
-pub struct ViewStorageMut<'a, T, R: Dim, C: Dim> {
+pub struct StorageViewMut<'a, T, R: Dim, C: Dim> {
     ptr: *mut T,
     r_stride: isize,
     c_stride: isize,
     _marker: ViewMarkerMut<'a, T, R, C>,
 }
 
-impl<'a, T, R: Dim, C: Dim> ViewStorageMut<'a, T, R, C> {
-    /// Wraps `data` as a mutable `R x C` column-major view.
+impl<'a, T, R: Dim, C: Dim> StorageViewMut<'a, T, R, C> {
+    /// Wraps `data` with explicit row/column strides.
     ///
     /// # Errors
-    /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != R::USIZE * C::USIZE`.
-    pub fn new(data: &'a mut [T]) -> ConversionResult<Self> {
-        if R::USIZE.checked_mul(C::USIZE) == Some(data.len()) {
-            let ptr = data.as_mut_ptr();
-            Ok(Self {
-                ptr,
-                r_stride: 1,
-                c_stride: R::USIZE.cast_signed(),
-                _marker: PhantomData,
+    /// Returns [`ConversionError::DimensionMismatch`] if `data` cannot cover
+    /// the strided `R × C` window.
+    pub fn new_with_strides(
+        data: &'a mut [T],
+        r_stride: isize,
+        c_stride: isize,
+    ) -> ConversionResult<Self> {
+        if strided_window_fits(
+            data.len(),
+            r_stride,
+            c_stride,
+            R::USIZE,
+            C::USIZE,
+        ) {
+            Ok(unsafe {
+                Self::new_with_strides_unchecked(
+                    data.as_mut_ptr(),
+                    r_stride,
+                    c_stride,
+                )
             })
         } else {
             Err(ConversionError::DimensionMismatch)
-        }
-    }
-
-    /// Unchecked constructor from a mutable slice with default column-major strides.
-    ///
-    /// # Safety
-    /// `data.len()` must equal `R::USIZE * C::USIZE`.
-    pub const unsafe fn new_unchecked(data: &'a mut [T]) -> Self {
-        Self {
-            ptr: data.as_mut_ptr(),
-            r_stride: 1,
-            c_stride: R::USIZE.cast_signed(),
-            _marker: PhantomData,
         }
     }
 
@@ -823,7 +859,7 @@ impl<'a, T, R: Dim, C: Dim> ViewStorageMut<'a, T, R, C> {
     /// # Safety
     /// `ptr` with `r_stride` and `c_stride` must safely address `R x C` elements for lifetime `'a`.
     #[must_use]
-    pub const unsafe fn new_with_strides(
+    pub const unsafe fn new_with_strides_unchecked(
         ptr: *mut T,
         r_stride: isize,
         c_stride: isize,
@@ -837,7 +873,7 @@ impl<'a, T, R: Dim, C: Dim> ViewStorageMut<'a, T, R, C> {
     }
 }
 
-unsafe impl<T, R: Dim, C: Dim> DenseStorage<T> for ViewStorageMut<'_, T, R, C> {
+unsafe impl<T, R: Dim, C: Dim> DenseStorage<T> for StorageViewMut<'_, T, R, C> {
     type R = R;
     type C = C;
 
@@ -855,46 +891,26 @@ unsafe impl<T, R: Dim, C: Dim> DenseStorage<T> for ViewStorageMut<'_, T, R, C> {
 }
 
 unsafe impl<T, R: Dim, C: Dim> DenseStorageMut<T>
-    for ViewStorageMut<'_, T, R, C>
+    for StorageViewMut<'_, T, R, C>
 {
     fn as_mut_ptr(&mut self) -> *mut T {
         self.ptr
     }
 }
 
-unsafe impl<T, R: Dim, C: Dim> ContiguousStorage<T>
-    for ViewStorageMut<'_, T, R, C>
-{
-    const ORDER: MatrixLayout = MatrixLayout::ColMajor;
-
-    fn as_slice(&self) -> &[T] {
-        unsafe { core::slice::from_raw_parts(self.ptr, R::USIZE * C::USIZE) }
-    }
-}
-
-unsafe impl<T, R: Dim, C: Dim> ContiguousStorageMut<T>
-    for ViewStorageMut<'_, T, R, C>
-{
-    fn as_mut_slice(&mut self) -> &mut [T] {
-        unsafe {
-            core::slice::from_raw_parts_mut(self.ptr, R::USIZE * C::USIZE)
-        }
-    }
-}
-
 ////////////////////////////////////////////////////////////////////////////////
-// StorageView / StorageViewMut (LayoutMarker-tagged backwards compatibility)
+// StaticStorageView / StaticStorageViewMut (LayoutMarker Views)
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Non-owning view parameterized by [`LayoutMarker`].
 #[derive(Debug)]
 #[allow(clippy::type_complexity)]
-pub struct StorageView<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
+pub struct StaticStorageView<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
     data: &'a [T],
     _marker: StorageMarker<R, C, O>,
 }
 
-impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StorageView<'a, T, R, C, O> {
+impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StaticStorageView<'a, T, R, C, O> {
     /// Wraps `data` as an `R x C` view with layout marker `O`.
     ///
     /// # Errors
@@ -929,7 +945,7 @@ impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StorageView<'a, T, R, C, O> {
 }
 
 unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> DenseStorage<T>
-    for StorageView<'_, T, R, C, O>
+    for StaticStorageView<'_, T, R, C, O>
 {
     type R = R;
     type C = C;
@@ -963,7 +979,7 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> DenseStorage<T>
 }
 
 unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorage<T>
-    for StorageView<'_, T, R, C, O>
+    for StaticStorageView<'_, T, R, C, O>
 {
     const ORDER: MatrixLayout = O::ORDER;
 
@@ -975,12 +991,14 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorage<T>
 /// Mutable non-owning view parameterized by [`LayoutMarker`].
 #[derive(Debug)]
 #[allow(clippy::type_complexity)]
-pub struct StorageViewMut<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
+pub struct StaticStorageViewMut<'a, T, R: Dim, C: Dim, O: LayoutMarker> {
     data: &'a mut [T],
     _marker: StorageMarker<R, C, O>,
 }
 
-impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StorageViewMut<'a, T, R, C, O> {
+impl<'a, T, R: Dim, C: Dim, O: LayoutMarker>
+    StaticStorageViewMut<'a, T, R, C, O>
+{
     /// Wraps `data` as a mutable `R x C` view with layout marker `O`.
     ///
     /// # Errors
@@ -1000,10 +1018,22 @@ impl<'a, T, R: Dim, C: Dim, O: LayoutMarker> StorageViewMut<'a, T, R, C, O> {
             None => Err(ConversionError::DimensionMismatch),
         }
     }
+
+    /// Internal fast path without size check.
+    ///
+    /// # Safety
+    /// `data.len()` must equal `R::USIZE * C::USIZE`.
+    #[must_use]
+    pub const unsafe fn new_unchecked(data: &'a mut [T]) -> Self {
+        Self {
+            data,
+            _marker: PhantomData,
+        }
+    }
 }
 
 unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> DenseStorage<T>
-    for StorageViewMut<'_, T, R, C, O>
+    for StaticStorageViewMut<'_, T, R, C, O>
 {
     type R = R;
     type C = C;
@@ -1037,7 +1067,7 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> DenseStorage<T>
 }
 
 unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> DenseStorageMut<T>
-    for StorageViewMut<'_, T, R, C, O>
+    for StaticStorageViewMut<'_, T, R, C, O>
 {
     fn as_mut_ptr(&mut self) -> *mut T {
         self.data.as_mut_ptr()
@@ -1045,7 +1075,7 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> DenseStorageMut<T>
 }
 
 unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorage<T>
-    for StorageViewMut<'_, T, R, C, O>
+    for StaticStorageViewMut<'_, T, R, C, O>
 {
     const ORDER: MatrixLayout = O::ORDER;
 
@@ -1055,7 +1085,7 @@ unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorage<T>
 }
 
 unsafe impl<T, R: Dim, C: Dim, O: LayoutMarker> ContiguousStorageMut<T>
-    for StorageViewMut<'_, T, R, C, O>
+    for StaticStorageViewMut<'_, T, R, C, O>
 {
     fn as_mut_slice(&mut self) -> &mut [T] {
         self.data
@@ -1133,6 +1163,26 @@ impl<T, const N: usize> DiagonalStorage<T, N> {
     #[must_use]
     pub const fn from_array(data: [T; N]) -> Self {
         Self { data }
+    }
+}
+
+impl<T: Scalar, const N: usize> DiagonalStorage<T, N>
+where
+    Const<N>: Dim,
+{
+    /// Projects the diagonal of a dense $N \times N$ matrix.
+    ///
+    /// Off-diagonal entries of `dense` are discarded.
+    ///
+    /// # Errors
+    /// This projection is total with respect to shape; it returns [`Ok`].
+    pub fn from_dense_diagonal(
+        dense: &ArrayStorage<T, N, N>,
+    ) -> StorageResult<Self> {
+        let data: [T; N] = core::array::from_fn(|i| unsafe {
+            dense.get_unchecked(i, i).clone()
+        });
+        Ok(Self::from_array(data))
     }
 }
 
@@ -1217,7 +1267,31 @@ impl<T, const N: usize, const PACKED_LEN: usize>
     /// Creates symmetric packed storage from a flat packed buffer.
     #[must_use]
     pub const fn new(data: [T; PACKED_LEN], uplo: UpLo) -> Self {
+        const { assert!(PACKED_LEN == N * (N + 1) / 2) };
         Self { data, uplo }
+    }
+}
+
+impl<T: Scalar, const N: usize, const PACKED_LEN: usize>
+    SymmetricPackedStorage<T, N, PACKED_LEN>
+where
+    Const<N>: Dim,
+{
+    /// Projects one triangle of a dense $N \times N$ matrix into packed
+    /// symmetric storage.
+    ///
+    /// `uplo` names the stored triangle. A mismatched triangle on `dense` is
+    /// a caller error, not a [`StorageError`].
+    ///
+    /// # Errors
+    /// This projection is total with respect to shape; it returns [`Ok`].
+    pub fn from_dense_triangle(
+        dense: &ArrayStorage<T, N, N>,
+        uplo: UpLo,
+    ) -> StorageResult<Self> {
+        let mut data: [T; PACKED_LEN] = core::array::from_fn(|_| T::ZERO);
+        copy_dense_triangle(dense, uplo, &mut data, false);
+        Ok(Self::new(data, uplo))
     }
 }
 
@@ -1331,7 +1405,38 @@ impl<T, const N: usize, const PACKED_LEN: usize>
     /// Creates Hermitian packed storage.
     #[must_use]
     pub const fn new(data: [T; PACKED_LEN], uplo: UpLo) -> Self {
+        const { assert!(PACKED_LEN == N * (N + 1) / 2) };
         Self { data, uplo }
+    }
+}
+
+impl<T: Scalar, const N: usize, const PACKED_LEN: usize>
+    HermitianPackedStorage<T, N, PACKED_LEN>
+where
+    Const<N>: Dim,
+{
+    /// Projects one triangle of a dense $N \times N$ matrix into packed
+    /// Hermitian storage.
+    ///
+    /// `uplo` names the stored triangle. A non-real diagonal returns
+    /// [`StorageError::InvalidHermitianDiagonal`].
+    ///
+    /// # Errors
+    /// Returns [`StorageError::InvalidHermitianDiagonal`] if any stored
+    /// diagonal entry is not equal to its conjugate.
+    pub fn from_dense_triangle(
+        dense: &ArrayStorage<T, N, N>,
+        uplo: UpLo,
+    ) -> StorageResult<Self> {
+        for k in 0..N {
+            let val = unsafe { dense.get_unchecked(k, k).clone() };
+            if val.clone() != val.conj() {
+                return Err(StorageError::InvalidHermitianDiagonal);
+            }
+        }
+        let mut data: [T; PACKED_LEN] = core::array::from_fn(|_| T::ZERO);
+        copy_dense_triangle(dense, uplo, &mut data, false);
+        Ok(Self::new(data, uplo))
     }
 }
 
@@ -1423,16 +1528,17 @@ where
     }
 
     fn set(&mut self, i: usize, j: usize, val: T) -> StorageResult<()> {
+        if i >= N || j >= N {
+            return Err(StorageError::OutOfBounds);
+        }
         if i == j && val.clone() != val.clone().conj() {
             return Err(StorageError::InvalidHermitianDiagonal);
         }
         if let Some(idx) = self.packed_index(i, j) {
             self.data[idx] = val;
             Ok(())
-        } else if i < N && j < N {
-            Err(StorageError::InvalidStructuralInvariant)
         } else {
-            Err(StorageError::OutOfBounds)
+            Err(StorageError::InvalidStructuralInvariant)
         }
     }
 
@@ -1456,7 +1562,33 @@ impl<T, const N: usize, const PACKED_LEN: usize>
     /// Creates triangular packed storage.
     #[must_use]
     pub const fn new(data: [T; PACKED_LEN], uplo: UpLo, diag: Diag) -> Self {
+        const { assert!(PACKED_LEN == N * (N + 1) / 2) };
         Self { data, uplo, diag }
+    }
+}
+
+impl<T: Scalar, const N: usize, const PACKED_LEN: usize>
+    TriangularPackedStorage<T, N, PACKED_LEN>
+where
+    Const<N>: Dim,
+{
+    /// Projects one triangle of a dense $N \times N$ matrix into packed
+    /// triangular storage.
+    ///
+    /// `uplo` and `diag` name the stored part. When `diag` is [`Diag::Unit`],
+    /// diagonal slots stay implicit (`T::ONE`) and are not copied from
+    /// `dense`.
+    ///
+    /// # Errors
+    /// This projection is total with respect to shape; it returns [`Ok`].
+    pub fn from_dense_triangle(
+        dense: &ArrayStorage<T, N, N>,
+        uplo: UpLo,
+        diag: Diag,
+    ) -> StorageResult<Self> {
+        let mut data: [T; PACKED_LEN] = core::array::from_fn(|_| T::ZERO);
+        copy_dense_triangle(dense, uplo, &mut data, diag == Diag::Unit);
+        Ok(Self::new(data, uplo, diag))
     }
 }
 
@@ -1549,16 +1681,17 @@ where
     }
 
     fn set(&mut self, i: usize, j: usize, val: T) -> StorageResult<()> {
+        if i >= N || j >= N {
+            return Err(StorageError::OutOfBounds);
+        }
         if self.diag == Diag::Unit && i == j {
             return Err(StorageError::ImmutableUnitDiagonal);
         }
         if let Some(idx) = self.packed_index(i, j) {
             self.data[idx] = val;
             Ok(())
-        } else if i < N && j < N {
-            Err(StorageError::InvalidStructuralInvariant)
         } else {
-            Err(StorageError::OutOfBounds)
+            Err(StorageError::InvalidStructuralInvariant)
         }
     }
 
@@ -2135,16 +2268,17 @@ where
     }
 
     fn set(&mut self, i: usize, j: usize, val: T) -> StorageResult<()> {
+        if i >= N || j >= N {
+            return Err(StorageError::OutOfBounds);
+        }
         if i == j && val.clone() != val.clone().conj() {
             return Err(StorageError::InvalidHermitianDiagonal);
         }
         if let Some(idx) = self.packed_index(i, j) {
             self.data[idx] = val;
             Ok(())
-        } else if i < N && j < N {
-            Err(StorageError::InvalidStructuralInvariant)
         } else {
-            Err(StorageError::OutOfBounds)
+            Err(StorageError::InvalidStructuralInvariant)
         }
     }
 
@@ -2373,16 +2507,17 @@ where
     }
 
     fn set(&mut self, i: usize, j: usize, val: T) -> StorageResult<()> {
+        if i >= N || j >= N {
+            return Err(StorageError::OutOfBounds);
+        }
         if self.diag == Diag::Unit && i == j {
             return Err(StorageError::ImmutableUnitDiagonal);
         }
         if let Some(idx) = self.packed_index(i, j) {
             self.data[idx] = val;
             Ok(())
-        } else if i < N && j < N {
-            Err(StorageError::InvalidStructuralInvariant)
         } else {
-            Err(StorageError::OutOfBounds)
+            Err(StorageError::InvalidStructuralInvariant)
         }
     }
 
@@ -2720,20 +2855,16 @@ impl<
                     if next_col == curr_col {
                         curr_val = curr_val + next_val;
                     } else {
-                        if !curr_val.is_zero() {
-                            final_cols[write_idx] = curr_col;
-                            final_vals[write_idx] = curr_val;
-                            write_idx += 1;
-                        }
+                        final_cols[write_idx] = curr_col;
+                        final_vals[write_idx] = curr_val;
+                        write_idx += 1;
                         curr_col = next_col;
                         curr_val = next_val;
                     }
                 }
-                if !curr_val.is_zero() {
-                    final_cols[write_idx] = curr_col;
-                    final_vals[write_idx] = curr_val;
-                    write_idx += 1;
-                }
+                final_cols[write_idx] = curr_col;
+                final_vals[write_idx] = curr_val;
+                write_idx += 1;
             }
         }
         final_offsets[R] = write_idx;
@@ -2941,6 +3072,66 @@ where
     }
 }
 
+unsafe impl<
+    T: Scalar,
+    const R: usize,
+    const C: usize,
+    const MAX_NNZ: usize,
+    const C1: usize,
+> SparseStorageMut<T> for ArrayCscStorage<T, R, C, MAX_NNZ, C1>
+where
+    Const<R>: Dim,
+    Const<C>: Dim,
+{
+    #[allow(clippy::indexing_slicing)]
+    fn values_mut(&mut self) -> &mut [T] {
+        &mut self.values[..self.nnz]
+    }
+
+    #[allow(clippy::indexing_slicing)]
+    fn get_mut(&mut self, r: usize, c: usize) -> Option<&mut T> {
+        if r >= R || c >= C {
+            return None;
+        }
+        let start = self.col_offsets[c];
+        let end = self.col_offsets[c + 1];
+        for idx in start..end {
+            if self.row_indices[idx] == r {
+                return Some(&mut self.values[idx]);
+            }
+        }
+        None
+    }
+
+    fn set(&mut self, r: usize, c: usize, val: T) -> StorageResult<()> {
+        self.get_mut(r, c).map_or_else(
+            || {
+                if r < R && c < C {
+                    Err(StorageError::InvalidStructuralInvariant)
+                } else {
+                    Err(StorageError::OutOfBounds)
+                }
+            },
+            |entry| {
+                *entry = val;
+                Ok(())
+            },
+        )
+    }
+
+    #[allow(clippy::indexing_slicing)]
+    unsafe fn set_unchecked(&mut self, r: usize, c: usize, val: T) {
+        let start = self.col_offsets[c];
+        let end = self.col_offsets[c + 1];
+        for idx in start..end {
+            if self.row_indices[idx] == r {
+                self.values[idx] = val;
+                return;
+            }
+        }
+    }
+}
+
 /// Fixed-capacity stack-allocated 1-D sparse vector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArraySparseVector<T, const N: usize, const MAX_NNZ: usize> {
@@ -3060,6 +3251,35 @@ where
 // Layout Conversion Traits
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Copies the `uplo` triangle of `dense` into a packed buffer using the
+/// packed-index map in `storage-design.md` §4.4.
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+fn copy_dense_triangle<T: Scalar, const N: usize, const PACKED_LEN: usize>(
+    dense: &ArrayStorage<T, N, N>,
+    uplo: UpLo,
+    data: &mut [T; PACKED_LEN],
+    skip_diagonal: bool,
+) where
+    Const<N>: Dim,
+{
+    for j in 0..N {
+        for i in 0..N {
+            let on_triangle = match uplo {
+                UpLo::Upper => i <= j,
+                UpLo::Lower => i >= j,
+            };
+            if !on_triangle || (skip_diagonal && i == j) {
+                continue;
+            }
+            let idx = match uplo {
+                UpLo::Upper => i + (j * (j + 1)) / 2,
+                UpLo::Lower => i - j + (j * (2 * N - j + 1)) / 2,
+            };
+            data[idx] = unsafe { dense.get_unchecked(i, j).clone() };
+        }
+    }
+}
+
 /// Conversion to dense array storage.
 pub trait ToDenseStorage<Dense> {
     /// Converts `self` to dense storage format.
@@ -3067,15 +3287,6 @@ pub trait ToDenseStorage<Dense> {
     /// # Errors
     /// Returns [`StorageError`] if conversion fails due to dimension mismatch or capacity constraints.
     fn to_dense(&self) -> StorageResult<Dense>;
-}
-
-/// Construction from dense array storage.
-pub trait FromDenseStorage<Dense>: Sized {
-    /// Constructs `self` from a dense matrix representation.
-    ///
-    /// # Errors
-    /// Returns [`StorageError`] if initialization fails due to invalid parameters.
-    fn from_dense(dense: &Dense) -> StorageResult<Self>;
 }
 
 /// Conversion to Compressed Sparse Row (CSR) format.
@@ -3106,19 +3317,6 @@ where
     }
 }
 
-impl<T: Scalar, const N: usize> FromDenseStorage<ArrayStorage<T, N, N>>
-    for DiagonalStorage<T, N>
-where
-    Const<N>: Dim,
-{
-    fn from_dense(dense: &ArrayStorage<T, N, N>) -> StorageResult<Self> {
-        let data: [T; N] = core::array::from_fn(|i| unsafe {
-            dense.get_unchecked(i, i).clone()
-        });
-        Ok(Self::from_array(data))
-    }
-}
-
 impl<T: Scalar, const N: usize, const PACKED_LEN: usize>
     ToDenseStorage<ArrayStorage<T, N, N>>
     for SymmetricPackedStorage<T, N, PACKED_LEN>
@@ -3127,27 +3325,6 @@ where
 {
     fn to_dense(&self) -> StorageResult<ArrayStorage<T, N, N>> {
         Ok(ArrayStorage::from_fn(|i, j| self.value_unchecked(i, j)))
-    }
-}
-
-impl<T: Scalar, const N: usize, const PACKED_LEN: usize>
-    FromDenseStorage<ArrayStorage<T, N, N>>
-    for SymmetricPackedStorage<T, N, PACKED_LEN>
-where
-    Const<N>: Dim,
-{
-    fn from_dense(dense: &ArrayStorage<T, N, N>) -> StorageResult<Self> {
-        let mut data: [T; PACKED_LEN] = core::array::from_fn(|_| T::ZERO);
-        let uplo = UpLo::Upper;
-        for j in 0..N {
-            for i in 0..=j {
-                let idx = i + (j * (j + 1)) / 2;
-                if idx < PACKED_LEN {
-                    data[idx] = unsafe { dense.get_unchecked(i, j).clone() };
-                }
-            }
-        }
-        Ok(Self::new(data, uplo))
     }
 }
 
@@ -3163,31 +3340,6 @@ where
 }
 
 impl<T: Scalar, const N: usize, const PACKED_LEN: usize>
-    FromDenseStorage<ArrayStorage<T, N, N>>
-    for HermitianPackedStorage<T, N, PACKED_LEN>
-where
-    Const<N>: Dim,
-{
-    fn from_dense(dense: &ArrayStorage<T, N, N>) -> StorageResult<Self> {
-        let mut data: [T; PACKED_LEN] = core::array::from_fn(|_| T::ZERO);
-        let uplo = UpLo::Upper;
-        for j in 0..N {
-            for i in 0..=j {
-                let val = unsafe { dense.get_unchecked(i, j).clone() };
-                if i == j && val.clone() != val.clone().conj() {
-                    return Err(StorageError::InvalidHermitianDiagonal);
-                }
-                let idx = i + (j * (j + 1)) / 2;
-                if idx < PACKED_LEN {
-                    data[idx] = val;
-                }
-            }
-        }
-        Ok(Self::new(data, uplo))
-    }
-}
-
-impl<T: Scalar, const N: usize, const PACKED_LEN: usize>
     ToDenseStorage<ArrayStorage<T, N, N>>
     for TriangularPackedStorage<T, N, PACKED_LEN>
 where
@@ -3195,28 +3347,6 @@ where
 {
     fn to_dense(&self) -> StorageResult<ArrayStorage<T, N, N>> {
         Ok(ArrayStorage::from_fn(|i, j| self.value_unchecked(i, j)))
-    }
-}
-
-impl<T: Scalar, const N: usize, const PACKED_LEN: usize>
-    FromDenseStorage<ArrayStorage<T, N, N>>
-    for TriangularPackedStorage<T, N, PACKED_LEN>
-where
-    Const<N>: Dim,
-{
-    fn from_dense(dense: &ArrayStorage<T, N, N>) -> StorageResult<Self> {
-        let mut data: [T; PACKED_LEN] = core::array::from_fn(|_| T::ZERO);
-        let uplo = UpLo::Upper;
-        let diag = Diag::NonUnit;
-        for j in 0..N {
-            for i in 0..=j {
-                let idx = i + (j * (j + 1)) / 2;
-                if idx < PACKED_LEN {
-                    data[idx] = unsafe { dense.get_unchecked(i, j).clone() };
-                }
-            }
-        }
-        Ok(Self::new(data, uplo, diag))
     }
 }
 

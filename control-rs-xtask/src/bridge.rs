@@ -6,8 +6,8 @@ use std::process::{Child, Command as StdCommand, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 
-use control_rs_hil::comms::{Command, FrameReader, LogMessage, Telemetry};
-use control_rs_hil::settings::SettingValue;
+use control_rs_ets::comms::{Command, FrameReader, LogMessage, Telemetry};
+use control_rs_ets::settings::SettingValue;
 
 type BridgeResult<T> = Result<T, Box<dyn std::error::Error>>;
 type WaitResult = Result<Option<std::process::ExitStatus>, std::io::Error>;
@@ -64,12 +64,12 @@ pub struct QemuTargetDetails {
 /// Target execution platform.
 #[derive(Debug, Clone)]
 pub enum Target {
-    /// QEMU emulator target.
+    /// virtual ETS (QEMU) target.
     QemuSemihosting {
         /// Target architecture.
         arch: QemuArch,
     },
-    /// Serial connection target.
+    /// ETS (physical board) target.
     Serial {
         /// Serial port path (e.g. `/dev/ttyACM0`).
         port: String,
@@ -78,7 +78,7 @@ pub enum Target {
     },
 }
 
-/// Host bridge to manage the target execution environment (QEMU or Serial).
+/// Host driver (`ServerBridge`) for virtual ETS (QEMU) and ETS (board).
 pub struct ServerBridge {
     inner: BridgeInner,
     link_info: String,
@@ -816,12 +816,12 @@ mod tests {
             make_telemetry_owned(&Telemetry::TestStateChange {
                 suite_id: 1,
                 test_id: 2,
-                state: control_rs_hil::comms::TestState::Passed
+                state: control_rs_ets::comms::TestState::Passed
             }),
             Telemetry::TestStateChange {
                 suite_id: 1,
                 test_id: 2,
-                state: control_rs_hil::comms::TestState::Passed
+                state: control_rs_ets::comms::TestState::Passed
             }
         ));
         assert!(matches!(
@@ -907,7 +907,7 @@ mod tests {
         }
 
         let mut buf = [0u8; 128];
-        let size = control_rs_hil::comms::frame_telemetry(
+        let size = control_rs_ets::comms::frame_telemetry(
             &Telemetry::DiscoveryComplete,
             &mut buf,
         )

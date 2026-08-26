@@ -20,7 +20,7 @@
 //! traits rather than a separately numbered requirement.
 #![allow(clippy::arithmetic_side_effects)]
 
-#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod num_trait_test_suite {
     use crate::assert_almost_eq;
     use crate::math::CartesianQuadrant2D;
@@ -562,7 +562,7 @@ pub mod num_trait_test_suite {
     /// `AdditiveGroup`/`Signed` being withheld from these same types is a
     /// negative compile-time property, verified separately by the
     /// `compile_fail` doctest on `num_traits`'s module documentation
-    /// (this suite lives behind `#[cfg(any(test, feature = "hil"))]`,
+    /// (this suite lives behind `#[cfg(any(test, feature = "ets"))]`,
     /// which `rustdoc` doctest extraction does not set).
     fn test_num_trait_unsigned_integer_markers() {
         fn assert_is_unsigned_integer<
@@ -574,6 +574,8 @@ pub mod num_trait_test_suite {
         assert_is_unsigned_integer::<u16>();
         assert_is_unsigned_integer::<u32>();
         assert_is_unsigned_integer::<u64>();
+        assert_is_unsigned_integer::<u128>();
+        assert_is_unsigned_integer::<usize>();
     }
 
     #[cfg_attr(test, test)]

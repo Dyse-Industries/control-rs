@@ -55,11 +55,11 @@ registry, requiring zero boilerplate and little runtime overhead.
 
 The Exportable Test Suites framework consists of three main components:
 
-1. **Target-side Harness (`control-rs-hil`)**: The on-target interactive Server
+1. **Target-side Harness (`control-rs-ets`)**: The on-target interactive Server
    that manages target execution, dynamic settings configuration and CPU
    profiling.
-2. **Procedural Macros (`control-rs-macros`)**: Attributes (`#[hil_suite]` and
-   `#[hil_setup]`) that abstract the boilerplate of creating descriptors and
+2. **Procedural Macros (`control-rs-macros`)**: Attributes (`#[ets_suite]` and
+   `#[ets_setup]`) that abstract the boilerplate of creating descriptors and
    wrapping test main functions.
 3. **Host-side Orchestrator (`control-rs-xtask`)**: Standard Rust automation
    scripts that cross-compile the firmware, parse ELF files to discover test
@@ -76,10 +76,10 @@ flowchart TD
         TUI <--> Bridge
     end
 
-    subgraph MCU ["Target Microcontroller (control-rs-hil)"]
+    subgraph MCU ["Target Microcontroller (control-rs-ets)"]
         direction TB
         Server["Server"]
-        Suites[".hil_test_suites"]
+        Suites[".ets_test_suites"]
         Settings["Atomic Settings Cache"]
         Tests["fn() "]
         Server --> Suites
@@ -97,22 +97,22 @@ flowchart TD
 Instead of building a dynamic test registry at runtime, the framework utilizes a
 linker-based distributed slice mechanism. Procedural macros generate
 `SuiteDescriptor` instances for each suite and place them in a custom ELF memory
-section named `.hil_test_suites`.
+section named `.ets_test_suites`.
 
-During compilation, the `control-rs-hil` build script (`build.rs`) generates a
-linker script fragment named `hil_suites.x` containing the following section
+During compilation, the `control-rs-ets` build script (`build.rs`) generates a
+linker script fragment named `ets_suites.x` containing the following section
 configuration:
 
 ```ld
 SECTIONS
 {
-  .hil_test_suites :
+  .ets_test_suites :
   {
     . = ALIGN(4);
-    PROVIDE_HIDDEN (__hil_test_suites_start = .);
-    KEEP (*(.hil_test_suites));
+    PROVIDE_HIDDEN (__ets_test_suites_start = .);
+    KEEP (*(.ets_test_suites));
     . = ALIGN(4);
-    PROVIDE_HIDDEN (__hil_test_suites_end = .);
+    PROVIDE_HIDDEN (__ets_test_suites_end = .);
   } > FLASH
 }
 ```
@@ -135,7 +135,7 @@ To prevent this, the crate implements a multi-tiered retention strategy:
    compiler and linker to retain the symbol. On ELF targets, this generates the
    `SHF_GNU_RETAIN` flag.
 2. **`KEEP` Linker Directive**: Wrapping the section wildcard as
-   `KEEP (*(.hil_test_suites))` forces the linker to preserve these blocks
+   `KEEP (*(.ets_test_suites))` forces the linker to preserve these blocks
    regardless of references.
 3. **`--gc-keep-exported` Linker Flag**: Injected via `build.rs` to retain
    default visibility symbols in the ELF dynamic symbol table, enabling host
@@ -168,7 +168,7 @@ interior mutability.
 
 #### 4.4. Core Trait & Struct Definitions
 
-The core implementation in `control-rs-hil` defines the `SuiteDescriptor` and
+The core implementation in `control-rs-ets` defines the `SuiteDescriptor` and
 `ExecDescriptor` structures, along with the `Setting` trait:
 
 ```rust
@@ -225,7 +225,7 @@ pub enum SettingValue {
 ```
 
 ```rust
-// An atomic setting implementation example from control-rs-hil
+// An atomic setting implementation example from control-rs-ets
 pub struct AtomicU32Setting {
     description: &'static str,
     name: &'static str,
@@ -324,7 +324,7 @@ Interactive testing sessions follow a strict state-machine flow:
   `AtomicU8Setting`, etc.) and ensure that get/set operations execute correctly.
 - **Integration Tests**: Verify linker section aggregation by compiling a dummy
   target program with multiple test suites and verifying that the
-  `.hil_test_suites` section is correctly populated (where len = #
+  `.ets_test_suites` section is correctly populated (where len = #
   registered suites).
 - **Toolchain Tests**: Build on both `thumbv6m-none-eabi` (using software CAS
   polyfills) and `thumbv7m-none-eabi` targets to verify compiling correctness
@@ -334,7 +334,7 @@ Interactive testing sessions follow a strict state-machine flow:
 
 #### 6.2. Validation Plan
 
-- **Hardware-in-the-Loop Validation**: Flash and execute the compiled test suite
+- **On-target Validation**: Flash and execute the compiled test suite
   on a physical microcontroller board (e.g., Teensy 4.0/4.1) using the `xtask`
   runner.
 
@@ -359,7 +359,7 @@ Interactive testing sessions follow a strict state-machine flow:
 
 * **Linker Compatibility**: Older GNU ld or LLVM lld versions may not respect
   the `SHF_GNU_RETAIN` flag. Forcing symbol retention must rely heavily on the
-  `KEEP` directive inside the generated `hil_suites.x` script as a fail-safe.
+  `KEEP` directive inside the generated `ets_suites.x` script as a fail-safe.
 * **Cross-Crate Discovery (`rust-lang/rust#67209`)**: The open upstream defect
   drops `#[used]` + `#[link_section]` statics defined in dependency crates
   even with `KEEP`. Open question: must suites be declarable in separate
@@ -376,7 +376,7 @@ Interactive testing sessions follow a strict state-machine flow:
 * **Settings Registry Generalization**: The `Setting` registry fills a genuine
   ecosystem gap. Open question whether it should eventually be generalized
   into a small standalone crate rather than remaining internal to
-  `control-rs-hil`.
+  `control-rs-ets`.
 
 ---
 
@@ -385,7 +385,7 @@ Interactive testing sessions follow a strict state-machine flow:
 | Task / Feature                              | Description                                                                                                       | Estimated Effort |
 |:--------------------------------------------|:------------------------------------------------------------------------------------------------------------------|:-----------------|
 | **Step 1: Core Structs & Traits**           | Define `SuiteDescriptor`, `Setting` trait and type-safe atomic settings wrappers.                                 | 0.5 days         |
-| **Step 2: Linker Script & Injection**       | Develop the `build.rs` script to generate the custom `hil_suites.x` script fragment containing `KEEP` directives. | 0.5 days         |
+| **Step 2: Linker Script & Injection**       | Develop the `build.rs` script to generate the custom `ets_suites.x` script fragment containing `KEEP` directives. | 0.5 days         |
 | **Step 3: Target Server State Machine**     | Implement the on-target Server's state machine, timestamp-based lifecycle tracking and panic handlers.            | 0.5 days         |
 | **Step 4: Host-Side `xtask` ELF Discovery** | Implement ELF section parsing (using `goblin`/`elf`) inside the `xtask` tool to auto-discover suites.             | 0.5 days         |
 
@@ -393,9 +393,8 @@ Interactive testing sessions follow a strict state-machine flow:
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                                |
-|:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 23, 2026   | @MitchellDScott | Initial design of exportable test suites.                                                                                  |
-| 1.1      | July 18, 2026  | @MitchellDScott | Updated to latest template; incorporated linker GC and ARMv6-M atomics research; verified alignment with `control-rs-hil`. |
-| 1.2      | August 6, 2026 | @MitchellDScott | Added GC-mitigation and rejection citations; resolved metadata open question; unified linker script name.                  |
-| 1.3      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                                    |
+| Revision | Date           | Author          | Description                                                                                                                           |
+|:---------|:---------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | May 23, 2026   | @MitchellDScott | Initial specification for exportable embedded test suites and descriptors.                                                             |
+| 1.1      | July 18, 2026  | @MitchellDScott | Linker discovery & atomics: integrated linker GC mitigation, ARMv6-M atomic wrappers, and `control-rs-ets` alignment.                 |
+| 1.2      | August 6, 2026  | @MitchellDScott | Tooling hardening: unified linker script name (`ets_suites.x`) and host-side ELF section metadata parsing.                           |
