@@ -390,7 +390,28 @@ where
         out
     }
 
-    /// Multiplies two polynomials returning an exact degree-bounded polynomial.
+    /// Multiplies two polynomials using DSP backend `C`.
+    ///
+    /// Product capacity $P = N + M - 1$.
+    pub fn mul_poly_with<C, const M: usize, const P: usize>(
+        &self,
+        rhs: &ArrayPolynomial<T, M>,
+    ) -> ArrayPolynomial<T, P>
+    where
+        C: Convolution<T>,
+        Const<M>: Dim,
+        Const<P>: Dim,
+    {
+        let mut out = ArrayPolynomial::<T, P>::zero();
+        let _ = C::convolve_input(
+            self.as_slice(),
+            rhs.as_slice(),
+            out.as_mut_slice(),
+        );
+        out
+    }
+
+    /// Multiplies two polynomials via [`DefaultDsp`].
     ///
     /// Product capacity $P = N + M - 1$.
     pub fn mul_poly<const M: usize, const P: usize>(
@@ -401,13 +422,7 @@ where
         Const<M>: Dim,
         Const<P>: Dim,
     {
-        let mut out = ArrayPolynomial::<T, P>::zero();
-        let _ = DefaultDsp::convolve_input(
-            self.as_slice(),
-            rhs.as_slice(),
-            out.as_mut_slice(),
-        );
-        out
+        self.mul_poly_with::<DefaultDsp, M, P>(rhs)
     }
 
     /// Convolution multiply via [`crate::math::dsp::Convolution`] (`matrix-design` sibling DSP path).
@@ -419,7 +434,7 @@ where
         Const<M>: Dim,
         Const<P>: Dim,
     {
-        self.mul_poly::<M, P>(rhs)
+        self.mul_poly_with::<DefaultDsp, M, P>(rhs)
     }
 }
 

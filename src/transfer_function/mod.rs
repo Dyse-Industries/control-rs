@@ -421,6 +421,40 @@ where
     Const<N1>: Dim,
     Const<D1>: Dim,
 {
+    /// Series connection using DSP backend `C`.
+    pub fn series_with<
+        C,
+        const N2: usize,
+        const D2: usize,
+        const NOUT: usize,
+        const DOUT: usize,
+    >(
+        &self,
+        rhs: &ArrayTransferFunction<T, N2, D2>,
+    ) -> ArrayTransferFunction<T, NOUT, DOUT>
+    where
+        C: Convolution<T>,
+        Const<N2>: Dim,
+        Const<D2>: Dim,
+        Const<NOUT>: Dim,
+        Const<DOUT>: Dim,
+    {
+        let num_storage = convolve_poly::<C, T, N1, N2, NOUT>(
+            &self.num_storage,
+            &rhs.num_storage,
+        );
+        let den_storage = convolve_poly::<C, T, D1, D2, DOUT>(
+            &self.den_storage,
+            &rhs.den_storage,
+        );
+
+        ArrayTransferFunction::from_storage(
+            num_storage,
+            den_storage,
+            self.sample_time,
+        )
+    }
+
     /// Series (cascade) connection: $H_{\text{series}} = H_1 \cdot H_2 = \frac{B_1 B_2}{A_1 A_2}$.
     ///
     /// Capacity: $N_{\text{out}} = N_1 + N_2 - 1$, $D_{\text{out}} = D_1 + D_2 - 1$.
@@ -439,20 +473,43 @@ where
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
     {
-        let num_storage = convolve_poly::<T, N1, N2, NOUT>(
+        self.series_with::<DefaultDsp, N2, D2, NOUT, DOUT>(rhs)
+    }
+
+    /// Parallel connection using DSP backend `C` and BLAS backend `B`.
+    pub fn parallel_with<
+        C,
+        B,
+        const N2: usize,
+        const D2: usize,
+        const NOUT: usize,
+        const DOUT: usize,
+    >(
+        &self,
+        rhs: &ArrayTransferFunction<T, N2, D2>,
+    ) -> ArrayTransferFunction<T, NOUT, DOUT>
+    where
+        C: Convolution<T>,
+        B: Axpy<T, ArrayStorage<T, NOUT, 1>, ArrayStorage<T, NOUT, 1>>,
+        Const<N2>: Dim,
+        Const<D2>: Dim,
+        Const<NOUT>: Dim,
+        Const<DOUT>: Dim,
+    {
+        let mut num = convolve_poly::<C, T, N1, D2, NOUT>(
             &self.num_storage,
-            &rhs.num_storage,
+            &rhs.den_storage,
         );
-        let den_storage = convolve_poly::<T, D1, D2, DOUT>(
+        let b2a1 = convolve_poly::<C, T, N2, D1, NOUT>(
+            &rhs.num_storage,
+            &self.den_storage,
+        );
+        B::axpy(T::ONE, &b2a1, &mut num);
+        let den = convolve_poly::<C, T, D1, D2, DOUT>(
             &self.den_storage,
             &rhs.den_storage,
         );
-
-        ArrayTransferFunction::from_storage(
-            num_storage,
-            den_storage,
-            self.sample_time,
-        )
+        ArrayTransferFunction::from_storage(num, den, self.sample_time)
     }
 
     /// Parallel connection: $H_1 + H_2 = (B_1 A_2 + B_2 A_1) / (A_1 A_2)$.
@@ -473,19 +530,42 @@ where
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
     {
-        let mut num = convolve_poly::<T, N1, D2, NOUT>(
+        self.parallel_with::<DefaultDsp, DefaultBlas, N2, D2, NOUT, DOUT>(rhs)
+    }
+
+    /// Negative feedback using DSP backend `C` and BLAS backend `B`.
+    pub fn feedback_with<
+        C,
+        B,
+        const N2: usize,
+        const D2: usize,
+        const NOUT: usize,
+        const DOUT: usize,
+    >(
+        &self,
+        rhs: &ArrayTransferFunction<T, N2, D2>,
+    ) -> ArrayTransferFunction<T, NOUT, DOUT>
+    where
+        C: Convolution<T>,
+        B: Axpy<T, ArrayStorage<T, DOUT, 1>, ArrayStorage<T, DOUT, 1>>,
+        Const<N2>: Dim,
+        Const<D2>: Dim,
+        Const<NOUT>: Dim,
+        Const<DOUT>: Dim,
+    {
+        let num = convolve_poly::<C, T, N1, D2, NOUT>(
             &self.num_storage,
             &rhs.den_storage,
         );
-        let b2a1 = convolve_poly::<T, N2, D1, NOUT>(
-            &rhs.num_storage,
-            &self.den_storage,
-        );
-        DefaultBlas::axpy(T::ONE, &b2a1, &mut num);
-        let den = convolve_poly::<T, D1, D2, DOUT>(
+        let mut den = convolve_poly::<C, T, D1, D2, DOUT>(
             &self.den_storage,
             &rhs.den_storage,
         );
+        let b1b2 = convolve_poly::<C, T, N1, N2, DOUT>(
+            &self.num_storage,
+            &rhs.num_storage,
+        );
+        B::axpy(T::ONE, &b1b2, &mut den);
         ArrayTransferFunction::from_storage(num, den, self.sample_time)
     }
 
@@ -507,20 +587,7 @@ where
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
     {
-        let num = convolve_poly::<T, N1, D2, NOUT>(
-            &self.num_storage,
-            &rhs.den_storage,
-        );
-        let mut den = convolve_poly::<T, D1, D2, DOUT>(
-            &self.den_storage,
-            &rhs.den_storage,
-        );
-        let b1b2 = convolve_poly::<T, N1, N2, DOUT>(
-            &self.num_storage,
-            &rhs.num_storage,
-        );
-        DefaultBlas::axpy(T::ONE, &b1b2, &mut den);
-        ArrayTransferFunction::from_storage(num, den, self.sample_time)
+        self.feedback_with::<DefaultDsp, DefaultBlas, N2, D2, NOUT, DOUT>(rhs)
     }
 }
 
@@ -534,6 +601,24 @@ where
     Const<N>: Dim,
     Const<D>: Dim,
 {
+    /// Converts a proper transfer function into Controllable Canonical Form using BLAS backend `B`.
+    pub fn to_controllable_canonical_form_with<B, const ORDER: usize>(
+        &self,
+    ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
+    where
+        Const<ORDER>: Dim,
+        Const<1>: Dim,
+        B: Scal<T, ArrayStorage<T, ORDER, 1>>
+            + Axpy<T, ArrayStorage<T, ORDER, 1>, ArrayStorage<T, ORDER, 1>>,
+    {
+        let (a_mat, b_mat, c_mat, d_mat) =
+            self.canonical_blocks_with::<B, ORDER>()?;
+        Ok(match self.sample_time {
+            None => StateSpace::continuous(a_mat, b_mat, c_mat, d_mat),
+            Some(dt) => StateSpace::discrete(a_mat, b_mat, c_mat, d_mat, dt),
+        })
+    }
+
     /// Converts a proper transfer function ($N \le D$) into Controllable Canonical Form.
     ///
     /// System state dimension must satisfy `ORDER = D - 1`. For a monic
@@ -565,7 +650,24 @@ where
         Const<ORDER>: Dim,
         Const<1>: Dim,
     {
-        let (a_mat, b_mat, c_mat, d_mat) = self.canonical_blocks::<ORDER>()?;
+        self.to_controllable_canonical_form_with::<DefaultBlas, ORDER>()
+    }
+
+    /// Observable canonical form using BLAS backend `B`.
+    pub fn to_observable_canonical_form_with<B, const ORDER: usize>(
+        &self,
+    ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
+    where
+        Const<ORDER>: Dim,
+        Const<1>: Dim,
+        B: Scal<T, ArrayStorage<T, ORDER, 1>>
+            + Axpy<T, ArrayStorage<T, ORDER, 1>, ArrayStorage<T, ORDER, 1>>,
+    {
+        let (a_ccf, b_ccf, c_ccf, d_mat) =
+            self.canonical_blocks_with::<B, ORDER>()?;
+        let a_mat = a_ccf.transpose();
+        let b_mat = c_ccf.transpose();
+        let c_mat = b_ccf.transpose();
         Ok(match self.sample_time {
             None => StateSpace::continuous(a_mat, b_mat, c_mat, d_mat),
             Some(dt) => StateSpace::discrete(a_mat, b_mat, c_mat, d_mat, dt),
@@ -580,17 +682,10 @@ where
         Const<ORDER>: Dim,
         Const<1>: Dim,
     {
-        let (a_ccf, b_ccf, c_ccf, d_mat) = self.canonical_blocks::<ORDER>()?;
-        let a_mat = a_ccf.transpose();
-        let b_mat = c_ccf.transpose();
-        let c_mat = b_ccf.transpose();
-        Ok(match self.sample_time {
-            None => StateSpace::continuous(a_mat, b_mat, c_mat, d_mat),
-            Some(dt) => StateSpace::discrete(a_mat, b_mat, c_mat, d_mat, dt),
-        })
+        self.to_observable_canonical_form_with::<DefaultBlas, ORDER>()
     }
 
-    fn canonical_blocks<const ORDER: usize>(
+    fn canonical_blocks_with<B, const ORDER: usize>(
         &self,
     ) -> Result<
         (
@@ -603,6 +698,8 @@ where
     >
     where
         Const<ORDER>: Dim,
+        B: Scal<T, ArrayStorage<T, ORDER, 1>>
+            + Axpy<T, ArrayStorage<T, ORDER, 1>, ArrayStorage<T, ORDER, 1>>,
     {
         if ORDER + 1 != D || ORDER == 0 {
             return Err(TransferFunctionError::ImproperSystem);
@@ -619,7 +716,7 @@ where
 
         let mut a_col =
             Self::copy_col_prefix::<ORDER, D>(&self.den_storage, ORDER);
-        DefaultBlas::scal(T::ONE / a_n, a_col.storage_mut());
+        B::scal(T::ONE / a_n, a_col.storage_mut());
 
         // Direct feedthrough d = b_n / a_n when deg(num) == deg(den).
         let d = if N == D {
@@ -631,8 +728,8 @@ where
         // β = b / a_n - d · a
         let mut beta =
             Self::copy_col_prefix::<ORDER, N>(&self.num_storage, ORDER.min(N));
-        DefaultBlas::scal(T::ONE / a_n, beta.storage_mut());
-        DefaultBlas::axpy(T::ZERO - d, a_col.storage(), beta.storage_mut());
+        B::scal(T::ONE / a_n, beta.storage_mut());
+        B::axpy(T::ZERO - d, a_col.storage(), beta.storage_mut());
 
         // Controllable companion: ones on the superdiagonal, -a on the last row.
         let mut a_mat = Owned::<T, ORDER, ORDER>::zero();
@@ -727,6 +824,7 @@ where
 }
 
 fn convolve_poly<
+    C: Convolution<T>,
     T: Scalar + Copy,
     const NA: usize,
     const NB: usize,
@@ -741,10 +839,6 @@ where
     Const<NO>: Dim,
 {
     let mut out = ArrayStorage::<T, NO, 1>::zero();
-    let _ = DefaultDsp::convolve_input(
-        a.as_slice(),
-        b.as_slice(),
-        out.as_mut_slice(),
-    );
+    let _ = C::convolve_input(a.as_slice(), b.as_slice(), out.as_mut_slice());
     out
 }

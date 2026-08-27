@@ -717,22 +717,26 @@ where
     Const<R>: Dim,
     Const<C>: Dim,
 {
-    /// Rectangular $QR$ via Householder reflections. Requires $R \ge C$.
+    /// Rectangular $QR$ via Householder reflections using backend `B`. Requires $R \ge C$.
     ///
     /// # Errors
     /// Returns [`LinAlgError::WorkspaceTooSmall`] if $R < C$.
-    pub fn into_qr_rect(mut self) -> LinAlgResult<QrDecompositionRect<T, R, C>>
+    pub fn into_qr_rect_with<B>(
+        mut self,
+    ) -> LinAlgResult<QrDecompositionRect<T, R, C>>
     where
         T::Real: Radical,
+        B: Geqrf<T, ArrayStorage<T, R, C>>
+            + Ormqr<T, ArrayStorage<T, R, C>, ArrayStorage<T, R, R>>,
     {
         if R < C {
             return Err(LinAlgError::WorkspaceTooSmall);
         }
         let mut tau = [T::ZERO; C];
         let mut work = [T::ZERO; R];
-        DefaultBlas::geqrf(&mut self.storage, &mut tau, &mut work)?;
+        B::geqrf(&mut self.storage, &mut tau, &mut work)?;
         let mut q = Owned::<T, R, R>::identity();
-        DefaultBlas::ormqr(
+        B::ormqr(
             Side::Left,
             Trans::NoTrans,
             &self.storage,
@@ -750,5 +754,16 @@ where
             }
         }
         Ok(QrDecompositionRect { q, r: self })
+    }
+
+    /// Rectangular $QR$ via Householder reflections. Requires $R \ge C$.
+    ///
+    /// # Errors
+    /// Returns [`LinAlgError::WorkspaceTooSmall`] if $R < C$.
+    pub fn into_qr_rect(self) -> LinAlgResult<QrDecompositionRect<T, R, C>>
+    where
+        T::Real: Radical,
+    {
+        self.into_qr_rect_with::<DefaultBlas>()
     }
 }

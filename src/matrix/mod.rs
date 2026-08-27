@@ -326,16 +326,17 @@ where
     T: Scalar + Copy,
     SA: DenseStorage<T, R = M, C = N>,
 {
-    /// Multiplies `self` by `rhs` into caller-provided `out` destination buffer.
-    pub fn mul_into<P: Dim, SB, SC>(
+    /// Multiplies `self` by `rhs` into caller-provided `out` using backend `B`.
+    pub fn mul_into_with<B, P: Dim, SB, SC>(
         &self,
         rhs: &Matrix<T, N, P, SB>,
         out: &mut Matrix<T, M, P, SC>,
     ) where
+        B: Gemm<T, SA, SB, SC>,
         SB: DenseStorage<T, R = N, C = P>,
         SC: DenseStorageMut<T, R = M, C = P>,
     {
-        DefaultBlas::gemm(
+        B::gemm(
             Trans::NoTrans,
             Trans::NoTrans,
             T::ONE,
@@ -344,6 +345,18 @@ where
             T::ZERO,
             &mut out.storage,
         );
+    }
+
+    /// Multiplies `self` by `rhs` into caller-provided `out` via [`DefaultBlas`].
+    pub fn mul_into<P: Dim, SB, SC>(
+        &self,
+        rhs: &Matrix<T, N, P, SB>,
+        out: &mut Matrix<T, M, P, SC>,
+    ) where
+        SB: DenseStorage<T, R = N, C = P>,
+        SC: DenseStorageMut<T, R = M, C = P>,
+    {
+        self.mul_into_with::<DefaultBlas, P, SB, SC>(rhs, out);
     }
 }
 

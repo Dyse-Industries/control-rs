@@ -53,9 +53,10 @@ use crate::math::num_traits::{Float, Scalar, Zero};
 use crate::math::num_types::{Const, Dim};
 use crate::math::ops::{Add, Mul, Sub};
 use crate::math::storage::{
-    ArrayStorage, RowArrayStorage, StaticStorageView, StaticStorageViewMut,
-    StorageInit,
+    ArrayStorage, ColMajor, RowArrayStorage, StaticStorageView,
+    StaticStorageViewMut, StorageInit,
 };
+use crate::math::subprograms::{DefaultBlas, level3::Gemm};
 use crate::matrix::{Matrix, MatrixSlice, MatrixSliceMut, Owned};
 use core::marker::PhantomData;
 
@@ -445,7 +446,32 @@ where
         })
     }
 
-    /// Contracts this $R \times K$ tensor with `other` ($K \times P$) via [`crate::math::subprograms::level3::Gemm`].
+    /// Contracts this $R \times K$ tensor with `other` ($K \times P$) via backend `B`.
+    pub fn contract_into_with<B, const P: usize>(
+        &self,
+        other: &ArrayTensor<T, C, P>,
+        out: &mut ArrayTensor<T, R, P>,
+    ) where
+        T: Scalar + Copy,
+        Const<P>: Dim,
+        for<'a> B: Gemm<
+                T,
+                StaticStorageView<'a, T, Const<R>, Const<C>, ColMajor>,
+                StaticStorageView<'a, T, Const<C>, Const<P>, ColMajor>,
+                StaticStorageViewMut<'a, T, Const<R>, Const<P>, ColMajor>,
+            >,
+    {
+        let mut dest: MatrixSliceMut<'_, T, Const<R>, Const<P>> =
+            Matrix::from_storage(unsafe {
+                StaticStorageViewMut::new_unchecked(out.as_mut_slice())
+            });
+        self.slice_matrix().mul_into_with::<B, Const<P>, _, _>(
+            &other.slice_matrix(),
+            &mut dest,
+        );
+    }
+
+    /// Contracts this $R \times K$ tensor with `other` ($K \times P`) via [`crate::math::subprograms::level3::Gemm`].
     pub fn contract_into<const P: usize>(
         &self,
         other: &ArrayTensor<T, C, P>,
@@ -454,12 +480,7 @@ where
         T: Scalar + Copy,
         Const<P>: Dim,
     {
-        let mut dest: MatrixSliceMut<'_, T, Const<R>, Const<P>> =
-            Matrix::from_storage(unsafe {
-                StaticStorageViewMut::new_unchecked(out.as_mut_slice())
-            });
-        self.slice_matrix()
-            .mul_into(&other.slice_matrix(), &mut dest);
+        self.contract_into_with::<DefaultBlas, P>(other, out);
     }
 
     /// Permute rank-2 axes by transposing into $C \times R$.
