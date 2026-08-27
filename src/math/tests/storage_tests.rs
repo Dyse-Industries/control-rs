@@ -38,16 +38,17 @@ pub mod storage_test_suite {
     use crate::math::num_types::{Const, U1, U2, U3};
     use crate::math::storage::{
         ArrayCooStorage, ArrayCscStorage, ArrayCsrStorage, ArraySparseVector,
-        ArrayStorage, ColMajor, ContiguousStorage, DenseStorage,
-        DenseStorageMut, Diag, DiagonalStorage, DiagonalView, DiagonalViewMut,
-        HermitianPackedStorage, HermitianPackedView, HermitianPackedViewMut,
-        MatrixLayout, PackedStorage, PackedStorageMut, PivotStorage,
-        RowArrayStorage, RowMajor, SparseStorage, SparseStorageMut,
-        SparseVectorStorage, StaticStorageView, StaticStorageViewMut,
-        StorageError, StorageInit, StorageView, StorageViewMut,
-        SymmetricPackedStorage, SymmetricPackedView, SymmetricPackedViewMut,
+        ArrayStorage, ColMajor, ContiguousStorage, ContiguousStorageMut,
+        CscStorage, CsrStorage, DenseStorage, DenseStorageMut, Diag,
+        DiagonalStorage, DiagonalView, DiagonalViewMut, HermitianPackedStorage,
+        HermitianPackedView, HermitianPackedViewMut, MatrixLayout,
+        PackedStorage, PackedStorageMut, PivotStorage, RowArrayStorage,
+        RowMajor, SparseStorage, SparseStorageMut, SparseVectorStorage,
+        StaticStorageView, StaticStorageViewMut, StorageError, StorageInit,
+        StorageView, StorageViewMut, SymmetricPackedStorage,
+        SymmetricPackedView, SymmetricPackedViewMut, ToCscStorage,
         ToCsrStorage, ToDenseStorage, TriangularPackedStorage,
-        TriangularPackedView, TriangularPackedViewMut, UpLo,
+        TriangularPackedView, TriangularPackedViewMut, UpLo, ViewSparseVector,
         array_from_iterator, reverse_array,
     };
     use crate::math::subprograms::level2::Gemv;
@@ -1209,6 +1210,430 @@ pub mod storage_test_suite {
         assert!(SparseStorageMut::set(&mut csc, 0, 0, 9.0).is_ok());
         assert_eq!(csr.get(0, 0), Some(9.0));
         assert_eq!(csc.get(0, 0), Some(9.0));
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines, clippy::float_cmp)]
+    fn test_storage_row_major_packed_views_sparse_leaves() {
+        let row = ArrayStorage::<i32, 1, 3>::from_row([1, 2, 3]);
+        assert_eq!(row.get(0, 2), Some(&3));
+        let diag_dense = ArrayStorage::<i32, 2, 2>::diagonal([7, 8]);
+        assert_eq!(diag_dense.get(0, 0), Some(&7));
+        assert_eq!(diag_dense.get(1, 1), Some(&8));
+        assert_eq!(diag_dense.get(0, 1), Some(&0));
+
+        let mut row_own = RowArrayStorage::<i32, 1, 3>::from_row([1, 2, 3]);
+        assert_eq!(row_own.as_slice(), &[1, 2, 3]);
+        row_own.as_mut_slice()[0] = 9;
+        assert_eq!(row_own.as_slice()[0], 9);
+        let col_own = RowArrayStorage::<i32, 3, 1>::from_column([4, 5, 6]);
+        assert_eq!(col_own.get(2, 0), Some(&6));
+        let mut ident = RowArrayStorage::<i32, 2, 2>::identity();
+        assert_eq!(ident.get(0, 0), Some(&1));
+        assert_eq!(ident.get(0, 1), Some(&0));
+        let drow = RowArrayStorage::<i32, 2, 2>::diagonal([3, 4]);
+        assert_eq!(drow.get(1, 1), Some(&4));
+        let zeros = RowArrayStorage::<i32, 2, 2>::zero();
+        assert_eq!(zeros.get(1, 0), Some(&0));
+        assert!(!ident.as_ptr().is_null());
+        assert!(!ident.ptr().is_null());
+        assert!(!ident.as_mut_ptr().is_null());
+        assert!(!ident.ptr_mut().is_null());
+        unsafe {
+            assert_eq!(*ident.get_unchecked(1, 1), 1);
+            *ident.get_mut_unchecked(1, 0) = 5;
+        }
+        assert_eq!(
+            <RowArrayStorage<i32, 2, 2> as ContiguousStorage<i32>>::as_slice(
+                &ident
+            )
+            .len(),
+            4
+        );
+        assert_eq!(
+            <RowArrayStorage<i32, 2, 2> as ContiguousStorageMut<i32>>::as_mut_slice(
+                &mut ident
+            )
+            .len(),
+            4
+        );
+
+        let data_rm = [1, 2, 3, 4, 5, 6];
+        let view_rm: StaticStorageView<'_, i32, U2, U3, RowMajor> =
+            StaticStorageView::new(&data_rm).unwrap();
+        assert_eq!(view_rm.r_stride(), 3);
+        assert_eq!(view_rm.c_stride(), 1);
+        assert_eq!(view_rm.get(1, 2), Some(&6));
+        unsafe {
+            let unchecked =
+                StaticStorageView::<i32, U2, U3, RowMajor>::new_unchecked(
+                    &data_rm,
+                );
+            assert_eq!(unchecked.get(0, 1), Some(&2));
+        }
+        let mut data_rm_mut = [1, 2, 3, 4];
+        assert!(matches!(
+            StaticStorageViewMut::<i32, U2, U3, RowMajor>::new(
+                &mut data_rm_mut
+            ),
+            Err(ConversionError::DimensionMismatch)
+        ));
+        let mut data_ok = [10, 20, 30, 40];
+        let mut view_mut: StaticStorageViewMut<'_, i32, U2, U2, RowMajor> =
+            StaticStorageViewMut::new(&mut data_ok).unwrap();
+        assert_eq!(view_mut.r_stride(), 2);
+        assert_eq!(view_mut.c_stride(), 1);
+        assert_eq!(view_mut.get(1, 1), Some(&40));
+        unsafe {
+            *view_mut.get_unchecked_mut(0, 1) = 21;
+        }
+        unsafe {
+            let mut buf = [1, 2, 3, 4];
+            let v =
+                StaticStorageViewMut::<i32, U2, U2, RowMajor>::new_unchecked(
+                    &mut buf,
+                );
+            assert_eq!(v.get(0, 0), Some(&1));
+        }
+
+        let tiny = [1i32, 2, 3, 4];
+        assert!(matches!(
+            StorageView::<i32, U2, U1>::new_with_strides(&tiny, isize::MAX, 1),
+            Err(ConversionError::DimensionMismatch)
+        ));
+        assert!(matches!(
+            StorageView::<i32, U2, U1>::new_with_strides(&tiny, -1, 1),
+            Err(ConversionError::DimensionMismatch)
+        ));
+        let mut tiny_mut = [1i32, 2, 3, 4];
+        assert!(matches!(
+            StorageViewMut::<i32, U2, U1>::new_with_strides(
+                &mut tiny_mut,
+                isize::MAX,
+                1
+            ),
+            Err(ConversionError::DimensionMismatch)
+        ));
+
+        assert!(DiagonalView::<f64, 3>::new(&[1.0]).is_err());
+        let mut short_diag = [1.0];
+        assert!(DiagonalViewMut::<f64, 3>::new(&mut short_diag).is_err());
+        let mut diag_data = [10.0, 20.0, 30.0];
+        let dv = DiagonalView::<f64, 3>::new(&diag_data).unwrap();
+        assert_eq!(dv.dim(), 3);
+        assert_eq!(dv.uplo(), UpLo::Upper);
+        assert_eq!(dv.as_slice(), &[10.0, 20.0, 30.0]);
+        assert_eq!(dv.packed_index(1, 1), Some(1));
+        assert_eq!(dv.packed_index(0, 1), None);
+        assert_eq!(dv.packed_index_unchecked(2, 2), 2);
+        assert_eq!(dv.value(5, 0), None);
+        assert_eq!(dv.value_unchecked(0, 1), 0.0);
+        let mut dvm = DiagonalViewMut::<f64, 3>::new(&mut diag_data).unwrap();
+        assert_eq!(dvm.uplo(), UpLo::Upper);
+        assert_eq!(dvm.as_slice().len(), 3);
+        assert_eq!(dvm.packed_index(0, 0), Some(0));
+        assert_eq!(dvm.packed_index_unchecked(1, 1), 1);
+        assert_eq!(dvm.value(9, 9), None);
+        assert_eq!(dvm.value_unchecked(0, 1), 0.0);
+        assert_eq!(
+            dvm.set(0, 1, 1.0),
+            Err(StorageError::InvalidStructuralInvariant)
+        );
+        assert_eq!(dvm.set(9, 0, 1.0), Err(StorageError::OutOfBounds));
+        unsafe {
+            dvm.set_unchecked(2, 2, 33.0);
+        }
+        assert_eq!(dvm.as_mut_slice()[2], 33.0);
+
+        let mut short = [1.0f64; 2];
+        assert!(
+            SymmetricPackedView::<f64, 3>::new(&short, UpLo::Lower).is_err()
+        );
+        assert!(
+            SymmetricPackedViewMut::<f64, 3>::new(&mut short, UpLo::Lower)
+                .is_err()
+        );
+        let mut lower_sym = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let sv = SymmetricPackedView::<f64, 3>::new(&lower_sym, UpLo::Lower)
+            .unwrap();
+        assert_eq!(sv.uplo(), UpLo::Lower);
+        assert_eq!(sv.as_slice().len(), 6);
+        assert_eq!(sv.packed_index(2, 0), Some(2));
+        assert_eq!(sv.packed_index(0, 2), None);
+        assert_eq!(sv.packed_index(9, 0), None);
+        assert_eq!(sv.packed_index_unchecked(2, 1), 4);
+        assert_eq!(sv.value(0, 1), Some(2.0));
+        assert_eq!(sv.value(9, 0), None);
+        assert_eq!(sv.value_unchecked(1, 0), 2.0);
+        let mut svm =
+            SymmetricPackedViewMut::<f64, 3>::new(&mut lower_sym, UpLo::Lower)
+                .unwrap();
+        assert_eq!(svm.uplo(), UpLo::Lower);
+        assert_eq!(svm.as_slice().len(), 6);
+        assert_eq!(svm.packed_index(1, 0), Some(1));
+        assert_eq!(svm.packed_index(0, 1), None);
+        assert_eq!(svm.packed_index_unchecked(2, 2), 5);
+        assert_eq!(svm.value(9, 0), None);
+        assert_eq!(svm.value_unchecked(0, 2), 3.0);
+        assert_eq!(
+            svm.set(0, 1, 9.0),
+            Err(StorageError::InvalidStructuralInvariant)
+        );
+        assert_eq!(svm.set(9, 0, 1.0), Err(StorageError::OutOfBounds));
+        unsafe {
+            svm.set_unchecked(2, 0, 30.0);
+        }
+        assert_eq!(svm.as_mut_slice()[2], 30.0);
+
+        let mut owned_sym =
+            SymmetricPackedStorage::<f64, 3, 6>::new([0.0; 6], UpLo::Lower);
+        assert_eq!(owned_sym.uplo(), UpLo::Lower);
+        assert_eq!(owned_sym.as_slice().len(), 6);
+        assert_eq!(owned_sym.packed_index(2, 0), Some(2));
+        assert_eq!(owned_sym.packed_index(0, 2), None);
+        assert_eq!(owned_sym.packed_index_unchecked(1, 1), 3);
+        assert!(owned_sym.set(1, 0, 2.0).is_ok());
+        assert_eq!(
+            owned_sym.set(0, 1, 9.0),
+            Err(StorageError::InvalidStructuralInvariant)
+        );
+        unsafe {
+            owned_sym.set_unchecked(2, 2, 6.0);
+        }
+        assert_eq!(owned_sym.as_mut_slice()[5], 6.0);
+        let mut owned_upper = SymmetricPackedStorage::<f64, 2, 3>::new(
+            [1.0, 2.0, 3.0],
+            UpLo::Upper,
+        );
+        assert_eq!(owned_upper.packed_index(0, 1), Some(1));
+        assert_eq!(owned_upper.packed_index(1, 0), None);
+        unsafe {
+            owned_upper.set_unchecked(0, 1, 8.0);
+        }
+
+        let z = Complex::new(0.0, 0.0);
+        let mut herm_short = [z; 2];
+        assert!(
+            HermitianPackedView::<Complex<f64>, 3>::new(
+                &herm_short,
+                UpLo::Lower
+            )
+            .is_err()
+        );
+        assert!(
+            HermitianPackedViewMut::<Complex<f64>, 3>::new(
+                &mut herm_short,
+                UpLo::Lower
+            )
+            .is_err()
+        );
+        let c00 = Complex::new(1.0, 0.0);
+        let c10 = Complex::new(2.0, 3.0);
+        let c20 = Complex::new(4.0, 1.0);
+        let c11 = Complex::new(5.0, 0.0);
+        let c21 = Complex::new(6.0, -2.0);
+        let c22 = Complex::new(7.0, 0.0);
+        let mut herm_lo = [c00, c10, c20, c11, c21, c22];
+        let hv =
+            HermitianPackedView::<Complex<f64>, 3>::new(&herm_lo, UpLo::Lower)
+                .unwrap();
+        assert_eq!(hv.uplo(), UpLo::Lower);
+        assert_eq!(hv.as_slice().len(), 6);
+        assert_eq!(hv.packed_index(2, 0), Some(2));
+        assert_eq!(hv.packed_index(0, 2), None);
+        assert_eq!(hv.packed_index(9, 0), None);
+        assert_eq!(hv.packed_index_unchecked(2, 1), 4);
+        assert_eq!(hv.value(0, 1), Some(c10.conj()));
+        assert_eq!(hv.value(9, 0), None);
+        let mut hvm = HermitianPackedViewMut::<Complex<f64>, 3>::new(
+            &mut herm_lo,
+            UpLo::Lower,
+        )
+        .unwrap();
+        assert_eq!(hvm.uplo(), UpLo::Lower);
+        assert_eq!(hvm.as_slice().len(), 6);
+        assert_eq!(hvm.packed_index(1, 0), Some(1));
+        assert_eq!(hvm.packed_index(0, 1), None);
+        assert_eq!(hvm.packed_index_unchecked(1, 1), 3);
+        assert_eq!(hvm.value(9, 0), None);
+        assert_eq!(
+            hvm.set(0, 0, Complex::new(1.0, 1.0)),
+            Err(StorageError::InvalidHermitianDiagonal)
+        );
+        assert_eq!(
+            hvm.set(0, 1, c10),
+            Err(StorageError::InvalidStructuralInvariant)
+        );
+        assert_eq!(hvm.set(9, 0, c00), Err(StorageError::OutOfBounds));
+        unsafe {
+            hvm.set_unchecked(2, 0, Complex::new(8.0, 1.0));
+        }
+        assert_eq!(hvm.as_mut_slice()[2].re, 8.0);
+
+        let mut owned_h = HermitianPackedStorage::<Complex<f64>, 3, 6>::new(
+            [c00, c10, c20, c11, c21, c22],
+            UpLo::Lower,
+        );
+        assert_eq!(owned_h.uplo(), UpLo::Lower);
+        assert_eq!(owned_h.as_slice().len(), 6);
+        assert_eq!(owned_h.packed_index(2, 1), Some(4));
+        assert_eq!(owned_h.packed_index(0, 2), None);
+        assert_eq!(
+            owned_h.set(0, 1, c10),
+            Err(StorageError::InvalidStructuralInvariant)
+        );
+        unsafe {
+            owned_h.set_unchecked(2, 2, c22);
+        }
+        assert_eq!(owned_h.as_mut_slice().len(), 6);
+
+        let mut tri_short = [1.0f64; 2];
+        assert!(
+            TriangularPackedView::<f64, 3>::new(
+                &tri_short,
+                UpLo::Lower,
+                Diag::Unit
+            )
+            .is_err()
+        );
+        assert!(
+            TriangularPackedViewMut::<f64, 3>::new(
+                &mut tri_short,
+                UpLo::Lower,
+                Diag::Unit
+            )
+            .is_err()
+        );
+        let mut tri_lo = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let tv = TriangularPackedView::<f64, 3>::new(
+            &tri_lo,
+            UpLo::Lower,
+            Diag::Unit,
+        )
+        .unwrap();
+        assert_eq!(tv.uplo(), UpLo::Lower);
+        assert_eq!(tv.as_slice().len(), 6);
+        assert_eq!(tv.packed_index(2, 0), Some(2));
+        assert_eq!(tv.packed_index(0, 2), None);
+        assert_eq!(tv.packed_index(9, 0), None);
+        assert_eq!(tv.packed_index_unchecked(2, 1), 4);
+        assert_eq!(tv.value(0, 0), Some(1.0));
+        assert_eq!(tv.value(0, 1), Some(0.0));
+        assert_eq!(tv.value(9, 0), None);
+        let mut tvm = TriangularPackedViewMut::<f64, 3>::new(
+            &mut tri_lo,
+            UpLo::Lower,
+            Diag::Unit,
+        )
+        .unwrap();
+        assert_eq!(tvm.uplo(), UpLo::Lower);
+        assert_eq!(tvm.as_slice().len(), 6);
+        assert_eq!(tvm.packed_index(1, 0), Some(1));
+        assert_eq!(tvm.packed_index(0, 1), None);
+        assert_eq!(tvm.packed_index_unchecked(2, 2), 5);
+        assert_eq!(tvm.value(9, 0), None);
+        assert_eq!(tvm.value_unchecked(0, 0), 1.0);
+        assert_eq!(tvm.value_unchecked(0, 2), 0.0);
+        assert_eq!(
+            tvm.set(0, 0, 9.0),
+            Err(StorageError::ImmutableUnitDiagonal)
+        );
+        assert_eq!(
+            tvm.set(0, 1, 9.0),
+            Err(StorageError::InvalidStructuralInvariant)
+        );
+        assert_eq!(tvm.set(9, 0, 1.0), Err(StorageError::OutOfBounds));
+        unsafe {
+            tvm.set_unchecked(2, 0, 33.0);
+        }
+        assert_eq!(tvm.as_mut_slice()[2], 33.0);
+
+        let mut owned_tri = TriangularPackedStorage::<f64, 3, 6>::new(
+            [1.0; 6],
+            UpLo::Lower,
+            Diag::NonUnit,
+        );
+        assert_eq!(owned_tri.uplo(), UpLo::Lower);
+        assert_eq!(owned_tri.as_slice().len(), 6);
+        assert_eq!(owned_tri.packed_index(2, 0), Some(2));
+        assert_eq!(owned_tri.packed_index(0, 1), None);
+        assert_eq!(
+            owned_tri.set(0, 1, 1.0),
+            Err(StorageError::InvalidStructuralInvariant)
+        );
+        unsafe {
+            owned_tri.set_unchecked(1, 0, 2.0);
+        }
+        assert_eq!(owned_tri.as_mut_slice()[1], 2.0);
+        let mut diag_owned = DiagonalStorage::<f64, 2>::from_array([1.0, 2.0]);
+        assert_eq!(diag_owned.uplo(), UpLo::Upper);
+        assert_eq!(diag_owned.as_slice(), &[1.0, 2.0]);
+        assert_eq!(diag_owned.packed_index(1, 1), Some(1));
+        assert_eq!(diag_owned.packed_index(0, 1), None);
+        assert_eq!(diag_owned.packed_index_unchecked(0, 0), 0);
+        unsafe {
+            diag_owned.set_unchecked(1, 1, 9.0);
+        }
+        assert_eq!(diag_owned.as_mut_slice()[1], 9.0);
+
+        let mut coo = ArrayCooStorage::<f64, 2, 2, 4>::default();
+        assert_eq!(SparseStorage::get(&coo, 5, 0), None);
+        assert_eq!(SparseStorage::get(&coo, 0, 0), Some(0.0));
+        assert!(coo.push(0, 1, 1.0).is_ok());
+        assert!(coo.push(0, 0, 2.0).is_ok());
+        assert!(coo.push(0, 0, 3.0).is_ok());
+        assert_eq!(SparseStorage::get(&coo, 0, 0), Some(5.0));
+        let mut csr =
+            ArrayCsrStorage::<f64, 2, 2, 4, 3>::from_coo(&coo).unwrap();
+        let mut csc =
+            ArrayCscStorage::<f64, 2, 2, 4, 3>::from_coo(&coo).unwrap();
+        let csr2: ArrayCsrStorage<f64, 2, 2, 4, 3> = coo.to_csr().unwrap();
+        let csc2: ArrayCscStorage<f64, 2, 2, 4, 3> = coo.to_csc().unwrap();
+        assert_eq!(csr2.nnz(), csr.nnz());
+        assert_eq!(csc2.nnz(), csc.nnz());
+        assert_eq!(SparseStorage::get(&csr, 9, 0), None);
+        assert_eq!(SparseStorage::get(&csc, 9, 0), None);
+        assert_eq!(SparseStorage::get(&csr, 1, 1), Some(0.0));
+        assert_eq!(SparseStorage::get(&csc, 1, 1), Some(0.0));
+        assert_eq!(
+            SparseStorageMut::set(&mut csr, 9, 0, 1.0),
+            Err(StorageError::OutOfBounds)
+        );
+        assert_eq!(
+            SparseStorageMut::set(&mut csc, 9, 0, 1.0),
+            Err(StorageError::OutOfBounds)
+        );
+        unsafe {
+            SparseStorageMut::set_unchecked(&mut csr, 0, 0, 8.0);
+            SparseStorageMut::set_unchecked(&mut csc, 0, 0, 8.0);
+            SparseStorageMut::set_unchecked(&mut csr, 1, 1, 0.0);
+            SparseStorageMut::set_unchecked(&mut csc, 1, 1, 0.0);
+        }
+        assert_eq!(CsrStorage::row_offsets(&csr).len(), 3);
+        assert_eq!(CsrStorage::col_indices(&csr).len(), csr.nnz());
+        assert_eq!(CsrStorage::values(&csr).len(), csr.nnz());
+        assert_eq!(CscStorage::col_offsets(&csc).len(), 3);
+        assert_eq!(CscStorage::row_indices(&csc).len(), csc.nnz());
+        assert_eq!(CscStorage::values(&csc).len(), csc.nnz());
+        assert_eq!(csr.values_mut().len(), csr.nnz());
+        assert_eq!(csc.values_mut().len(), csc.nnz());
+        let dense_csc = csc.to_dense().unwrap();
+        assert_eq!(dense_csc.get(0, 0), Some(&8.0));
+
+        let empty_sv = ArraySparseVector::<f64, 4, 2>::default();
+        assert!(empty_sv.is_empty());
+        let idxs = [0usize, 2];
+        let vals = [1.0, 3.0];
+        let vsv = ViewSparseVector::<f64, 4>::new(&idxs, &vals).unwrap();
+        assert_eq!(vsv.nnz(), 2);
+        assert_eq!(vsv.indices(), &idxs);
+        assert_eq!(vsv.values(), &vals);
+        assert!(!vsv.is_empty());
+        assert!(ViewSparseVector::<f64, 4>::new(&idxs, &[1.0]).is_err());
+
+        let mut piv = PivotStorage::<3>::identity();
+        piv.as_mut_slice()[0] = 2;
+        assert_eq!(piv.as_slice()[0], 2);
     }
 }
 

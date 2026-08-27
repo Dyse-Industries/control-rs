@@ -14,7 +14,9 @@
 pub mod polynomial_test_suite {
     use crate::assert_almost_eq;
     use crate::math::complex_num::Complex;
-    use crate::polynomial::ArrayPolynomial;
+    use crate::matrix::Owned;
+    use crate::polynomial::{ArrayPolynomial, DivisionError};
+    use core::convert::TryFrom;
 
     #[cfg_attr(test, test)]
     fn test_polynomial_evaluation() {
@@ -90,6 +92,8 @@ pub mod polynomial_test_suite {
         let p2 = ArrayPolynomial::<f64, 2>::from_coefficients([3.0, 4.0]);
         let prod = p1.mul_poly::<2, 3>(&p2);
         assert_eq!(prod.as_slice(), &[3.0, 10.0, 8.0]);
+        let conv = p1.mul_with_conv::<2, 3>(&p2);
+        assert_eq!(conv.as_slice(), prod.as_slice());
     }
 
     #[cfg_attr(test, test)]
@@ -102,6 +106,18 @@ pub mod polynomial_test_suite {
         assert_almost_eq!(quot.get(0).copied().unwrap(), 3.0, 1e-12);
         assert_almost_eq!(quot.get(1).copied().unwrap(), 4.0, 1e-12);
         assert_almost_eq!(rem.get(0).copied().unwrap(), 0.0, 1e-12);
+
+        let zero_den = ArrayPolynomial::<f64, 2>::zero();
+        assert_eq!(
+            num.div_rem::<2, 2, 1>(&zero_den),
+            Err(DivisionError::ZeroLeadingCoefficient)
+        );
+        let high =
+            ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 0.0, 1.0]);
+        assert_eq!(
+            den.div_rem::<3, 1, 2>(&high),
+            Err(DivisionError::DegreeMismatch)
+        );
     }
 
     #[cfg_attr(test, test)]
@@ -115,5 +131,77 @@ pub mod polynomial_test_suite {
         assert_eq!(comp.get(0, 1), Some(&6.0));
         assert_eq!(comp.get(1, 0), Some(&1.0));
         assert_eq!(comp.get(1, 1), Some(&5.0));
+        let via_try = Owned::<f64, 2, 2>::try_from(&p).unwrap();
+        assert_eq!(via_try.get(0, 1), Some(&6.0));
+        assert_eq!(via_try.get(1, 1), Some(&5.0));
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_cubic_quintic_bilinear() {
+        let cubic = ArrayPolynomial::<f64, 4>::cubic(0.0, 1.0, 0.0, 0.0);
+        assert_almost_eq!(cubic.evaluate(0.0), 0.0, 1e-12);
+        assert_almost_eq!(cubic.evaluate(1.0), 1.0, 1e-12);
+        assert_almost_eq!(cubic.evaluate(0.5), 0.5, 1e-12);
+        let d_cubic = cubic.derivative();
+        assert_almost_eq!(d_cubic.evaluate(0.0), 0.0, 1e-12);
+        assert_almost_eq!(d_cubic.evaluate(1.0), 0.0, 1e-12);
+
+        let quintic =
+            ArrayPolynomial::<f64, 6>::quintic(0.0, 1.0, 0.0, 0.0, 0.0, 0.0);
+        assert_almost_eq!(quintic.evaluate(0.0), 0.0, 1e-12);
+        assert_almost_eq!(quintic.evaluate(1.0), 1.0, 1e-12);
+        let d_q = quintic.derivative();
+        let d2_q = d_q.derivative();
+        assert_almost_eq!(d_q.evaluate(0.0), 0.0, 1e-12);
+        assert_almost_eq!(d_q.evaluate(1.0), 0.0, 1e-12);
+        assert_almost_eq!(d2_q.evaluate(0.0), 0.0, 1e-12);
+        assert_almost_eq!(d2_q.evaluate(1.0), 0.0, 1e-12);
+
+        // p(s) = 1 + s, Ts = 2 → k = 1; clear (z+1): 2z
+        let p = ArrayPolynomial::<f64, 2>::from_coefficients([1.0, 1.0]);
+        let z = p.compose_bilinear(2.0);
+        assert_almost_eq!(z.get(0).copied().unwrap(), 0.0, 1e-12);
+        assert_almost_eq!(z.get(1).copied().unwrap(), 2.0, 1e-12);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_polynomial_constructors_and_storage() {
+        let c = ArrayPolynomial::<f64, 1>::constant(4.0);
+        assert_almost_eq!(c.evaluate(99.0), 4.0, 1e-12);
+        let line = ArrayPolynomial::<f64, 2>::line(1.0, 2.0);
+        assert_almost_eq!(line.evaluate(3.0), 7.0, 1e-12);
+        let from_fn = ArrayPolynomial::<f64, 3>::from_fn(|i| i as f64);
+        assert_eq!(from_fn.get(2).copied(), Some(2.0));
+        let mut p =
+            ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 2.0, 3.0]);
+        assert_eq!(p.storage().as_slice().len(), 3);
+        *p.get_mut(0).unwrap() = 9.0;
+        let storage = p.into_storage();
+        assert_eq!(storage.as_slice()[0], 9.0);
+        assert_eq!(
+            ArrayPolynomial::<f64, 2>::from_coefficients([1.0, 0.0])
+                .div_rem::<1, 2, 2>(
+                    &ArrayPolynomial::<f64, 1>::from_coefficients([0.0])
+                )
+                .err(),
+            Some(DivisionError::ZeroLeadingCoefficient)
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_polynomial_view() {
+        let mut p =
+            ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 2.0, 3.0]);
+        let view = p.view();
+        assert_eq!(view.get(0), Some(&1.0));
+        assert_eq!(view.get(2), Some(&3.0));
+        assert_almost_eq!(view.evaluate(2.0), 17.0, 1e-12);
+        {
+            let mut vm = p.view_mut();
+            if let Some(c0) = vm.get_mut(0) {
+                *c0 = 4.0;
+            }
+        }
+        assert_almost_eq!(p.evaluate(2.0), 20.0, 1e-12);
     }
 }

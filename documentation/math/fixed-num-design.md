@@ -14,7 +14,8 @@ without floating-point hardware require deterministic fixed-point arithmetic
 operations incurs severe execution cycle penalties and substantial code bloat in
 high-rate feedback loops (ARM, 1996).
 
-The `src/math/fixed_num.rs` module introduces the canonical fixed-point scalar
+The [`src/math/fixed_num.rs`](../../src/math/fixed_num.rs) module introduces the
+canonical fixed-point scalar
 type `Fixed<Repr, const SHIFT: i32>` (alongside the `Quantized<Repr, SHIFT>`
 type alias), representing numbers in binary Q-format where each value is
 $x = \text{raw} \cdot 2^{-\text{SHIFT}}$ with fixed quantization step
@@ -254,10 +255,9 @@ Right-shifting the widened product discards fractional bits. Narrowing applies
 2019; AMD, 2024; MathWorks, 2026; Spiteri, 2026b). For fractional remainder
 $\text{rem} = |x| \bmod 2^{\text{SHIFT}}$ and half-scale threshold
 $\text{half} = 2^{\text{SHIFT}-1}$, values with $\text{rem} > \text{half}$ round
-away from zero, values with $\text{rem} < \text{half}$ round toward zero, and
-exact ties ($\text{rem} = \text{half}$) round to the nearest even integer
-(incrementing $|x| \gg \text{SHIFT}$ only when its least significant bit is
-odd). This is followed by sign restoration and saturating narrowing into the
+away from zero, values with $\text{rem} < \text{half}$ round toward zero.
+Exact ties ($\text{rem} = \text{half}$) round to the nearest even integer. This
+is followed by sign restoration and saturating narrowing into the
 destination width.
 
 #### 4.4 Representability Gating (FR-7)
@@ -448,9 +448,9 @@ pub type UQ63 = Fixed<u64, 63>;
       `where [(); (SHIFT <= Repr::BITS as i32 - 2) as usize - 1]:`, so no
       marker trait or enumeration is needed.
     - _Rejected_: The feature is unstable. The crate carries no
-      `#![feature(...)]` gate and pins no nightly toolchain (control-rs,
-      2026), and an unstable feature in `math` propagates to every downstream
-      toolbox that instantiates a kernel over `Fixed`.
+      `#![feature(...)]` gate and pins no nightly toolchain, and an unstable
+      feature in `math` propagates to every downstream toolbox that
+      instantiates a kernel over `Fixed`.
 
 Overflow policy is not re-litigated here. `num-traits-design.md`
 Alternative 4 already evaluated expressing wrapping and saturating behavior
@@ -481,30 +481,32 @@ of method-level traits. This design inherits that decision.
    (FR-5).
 5. **Compile-Time Gates**: rustdoc `compile_fail` doctests on the module
    docs, matching the placement rule in `num-traits-design.md` §6.1.2.
-   Each negative oracle is a **trait bound**, not const-eval of an associated
+   Each negative oracle is a **trait bound**, not const-eval of an
+   associated
    constant. The §4.4 marker realization is what makes these discharge:
    under a const-assertion gate every one of them compiles, and the
    `compile_fail` block fails because the code inside it succeeds.
 
-   | Oracle                             | Form                                                   | Gate     |
-       |:-----------------------------------|:-------------------------------------------------------|:---------|
-   | `Fixed<i16, 15>: One`              | `fn assert_one<T: One>() {}` then `assert_one::<Q15>()` | ONE      |
-   | `Fixed<i16, 15>: Scalar`           | `assert_scalar::<Fixed<i16, 15>>()`                    | ONE      |
-   | `Fixed<i16, 14>: SaturatingInteger`| `assert_sat_int::<Fixed<i16, 14>>()`                   | TWO      |
-   | `Fixed<i16, 17>: Zero`             | `assert_zero::<Fixed<i16, 17>>()`                      | C-3      |
-   | `Fixed<i32, 16>: Float`            | `assert_float::<Fixed<i32, 16>>()`                     | FR-6     |
+| Oracle                              | Form                         <br/>                           | Gate |
+|:------------------------------------|:-------------------------------------------------------------|:-----|
+| `Fixed<i16, 15>: One`               | `fn assert_one<T: One>() {}` <br/>then `assert_one::<Q15>()` | ONE  |
+| `Fixed<i16, 15>: Scalar`            | `assert_scalar::<Fixed<i16, <br/>15>>()`                     | ONE  |
+| `Fixed<i16, 14>: SaturatingInteger` | `assert_sat_int::<Fixed<i16, <br/>14>>()`                    | TWO  |
+| `Fixed<i16, 17>: Zero`              | `assert_zero::<Fixed<i16, <br/>17>>()`                       | C-3  |
+| `Fixed<i32, 16>: Float`             | `assert_float::<Fixed<i32, <br/>16>>()`                      | FR-6 |
 
-   `let _ = <Q15 as One>::ONE` does not discharge FR-7: it is the const-eval
-   form §5 Alternative 7 rejects, and it passes against either mechanism.
-   The `Fixed<i16, 14>` row is the boundary pin that separates the two gates:
-   $14 \le 16-2$ so `One` and `Scalar` hold, and $14 > 16-3$ so
-   `SaturatingInteger` does not. An implementation that routes
-   `SaturatingInteger` through `where Self: One` fails this row.
-   Positive markers assert `Scalar`, `Conjugate` and
-   `SaturatingInteger` on gate-satisfying instantiations, and
-   `AdditiveGroup`/`Signed` withheld from unsigned `Repr`.
-   A signed product tie (raw product $-3$, `SHIFT = 1`) rounds to $-2$
-   (ties-to-even), not $-1$.
+`let _ = <Q15 as One>::ONE` does not discharge FR-7: it is the const-eval
+form §5 Alternative 7 rejects, and it passes against either mechanism.
+The `Fixed<i16, 14>` row is the boundary pin that separates the two gates:
+$14 \le 16-2$ so `One` and `Scalar` hold, and $14 > 16-3$ so
+`SaturatingInteger` does not. An implementation that routes
+`SaturatingInteger` through `where Self: One` fails this row.
+Positive markers assert `Scalar`, `Conjugate` and
+`SaturatingInteger` on gate-satisfying instantiations, and
+`AdditiveGroup`/`Signed` withheld from unsigned `Repr`.
+A signed product tie (raw product $-3$, `SHIFT = 1`) rounds to $-2$
+(ties-to-even), not $-1$.
+
 6. **Footprint**: `size_of::<Fixed<Repr, SHIFT>>() ==
    size_of::<Repr>()` and equal alignment, for every `FixedRepr` width
    (NFR-1).
@@ -538,7 +540,8 @@ of method-level traits. This design inherits that decision.
 `Fixed<Repr, SHIFT>` is a single-field struct over `Repr` and
 monomorphizes to the bare integer (NFR-1). `Add`, `Sub` and `Neg` are one
 saturating integer instruction. `Mul` is a widening multiply, a
-round-ties-to-even rescale (per IEEE, 2019; AMD, 2024) and a saturating narrow: more than a floating-point
+round-ties-to-even rescale (per IEEE, 2019; AMD, 2024) and a saturating narrow:
+more than a floating-point
 multiply on a part with an FPU, and far less than the software floating-point
 sequence an integer core would otherwise run (ARM, 1996).
 
@@ -598,11 +601,11 @@ sequence an integer core would otherwise run (ARM, 1996).
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                              |
-|:---------|:----------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 24, 2026 | @MitchellDScott | Initial specification for `math::fixed_num`: `Fixed<Repr, SHIFT>` representation, sealed `FixedRepr` trait, and widening multiplication. |
-| 1.1      | August 24, 2026 | @MitchellDScott | Convergent rounding & architecture: grounded rescaling in IEEE 754-2019/DSP standards and established `Fixed` with `Quantized` alias.   |
-| 1.2      | August 25, 2026 | @MitchellDScott | Representability gating: established sealed `OneRepresentable` / `TwoRepresentable` marker traits with compile-time failure verification.|
+| Revision | Date            | Author          | Description                                                                                                                               |
+|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 24, 2026 | @MitchellDScott | Initial specification for `math::fixed_num`: `Fixed<Repr, SHIFT>` representation, sealed `FixedRepr` trait, and widening multiplication.  |
+| 1.1      | August 24, 2026 | @MitchellDScott | Convergent rounding & architecture: grounded rescaling in IEEE 754-2019/DSP standards and established `Fixed` with `Quantized` alias.     |
+| 1.2      | August 25, 2026 | @MitchellDScott | Representability gating: established sealed `OneRepresentable` / `TwoRepresentable` marker traits with compile-time failure verification. |
 
 ---
 
@@ -650,6 +653,3 @@ Available: https://en.wikipedia.org/wiki/Q_(number_format). Accessed: Aug.
 1.31.0). [Online]. Available:
 https://docs.rs/fixed/latest/fixed/types/extra/index.html. Accessed: Aug.
 12, 2026.
-
-[10] Dyse Industries, "src/math," in *control-rs*. [Online]. Available:
-https://github.com/Dyse-Industries/control-rs. Accessed: Aug. 25, 2026.

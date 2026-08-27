@@ -1203,7 +1203,6 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[allow(clippy::too_many_lines)]
     /// Verifies analytical backward error and residual bounds scaled by N * EPS * ||A|| * ||x||.
     fn test_subprograms_residual_bounds_gemv_gemm() {
         let a = ArrayStorage::<f64, 3, 3>::from_array([
@@ -1217,8 +1216,6 @@ pub mod subprogram_test_suite {
 
         let y_exact = [5.5f64, 11.5, 15.5];
         let eps = f64::EPSILON;
-        let n = 3.0f64;
-        let a_inf_norm = 6.0f64;
 
         for (i, &exact_val) in y_exact.iter().enumerate() {
             let diff = (y.as_slice()[i] - exact_val).abs();
@@ -1247,6 +1244,19 @@ pub mod subprogram_test_suite {
             let diff = (y_inexact.as_slice()[i] - exact_val).abs();
             assert!(diff <= bound_inexact); // No floor!
         }
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies POTRF reconstruction residual against a Higham-style bound.
+    fn test_subprograms_residual_bounds_potrf() {
+        let a = ArrayStorage::<f64, 3, 3>::from_array([
+            [2.0, 1.0, 0.5],
+            [1.0, 3.0, 1.5],
+            [0.5, 1.5, 4.0],
+        ]);
+        let eps = f64::EPSILON;
+        let n = 3.0f64;
+        let a_inf_norm = 6.0f64;
 
         let mut l = a;
         assert!(DefaultBlas::potrf(UpLo::Lower, &mut l).is_ok());
@@ -1779,5 +1789,526 @@ pub mod subprogram_test_suite {
             &mut t9,
         );
         assert_almost_eq!(*t9.get(0, 0).unwrap(), 1.0);
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines, clippy::float_cmp)]
+    fn test_subprograms_untaken_trans_uplo_side_diag_arms() {
+        let a_c = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(1.0, 1.0), Complex64::new(2.0, 0.0)],
+            [Complex64::new(3.0, 0.0), Complex64::new(4.0, -1.0)],
+        ]);
+        let x_c = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 1.0),
+        ]]);
+        let mut y_row = ArrayStorage::<Complex64, 1, 2>::from_row([
+            Complex64::ONE,
+            Complex64::ONE,
+        ]);
+        DefaultBlas::gemv(
+            Trans::ConjTrans,
+            Complex64::new(2.0, 0.0),
+            &a_c,
+            &x_c,
+            Complex64::new(0.5, 0.0),
+            &mut y_row,
+        );
+        assert!(y_row.get(0, 0).unwrap().abs2() > 0.0);
+
+        let mut y_col = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex64::ONE,
+            Complex64::ONE,
+        ]]);
+        DefaultBlas::gemv(
+            Trans::Trans,
+            Complex64::ONE,
+            &a_c,
+            &x_c,
+            Complex64::new(2.0, 0.0),
+            &mut y_col,
+        );
+
+        let mut ha = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(2.0, 0.0), Complex64::new(1.0, 1.0)],
+            [Complex64::new(1.0, -1.0), Complex64::new(3.0, 0.0)],
+        ]);
+        let hx = ArrayStorage::<Complex64, 1, 2>::from_row([
+            Complex64::ONE,
+            Complex64::new(0.0, 1.0),
+        ]);
+        let mut hy = ArrayStorage::<Complex64, 1, 2>::from_row([
+            Complex64::ONE,
+            Complex64::ONE,
+        ]);
+        DefaultBlas::hemv(
+            UpLo::Lower,
+            Complex64::new(0.5, 0.0),
+            &ha,
+            &hx,
+            Complex64::new(2.0, 0.0),
+            &mut hy,
+        );
+        let sa =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 1.0], [1.0, 3.0]]);
+        let sx = ArrayStorage::<f64, 1, 2>::from_row([1.0, 1.0]);
+        let mut sy_row = ArrayStorage::<f64, 1, 2>::from_row([1.0, 1.0]);
+        DefaultBlas::symv(UpLo::Lower, 2.0, &sa, &sx, 0.5, &mut sy_row);
+
+        let mut syr_a = ArrayStorage::<f64, 2, 2>::zeros();
+        let x_row = ArrayStorage::<f64, 1, 2>::from_row([1.0, 2.0]);
+        DefaultBlas::syr(UpLo::Lower, 1.0, &x_row, &mut syr_a);
+        DefaultBlas::syr2(UpLo::Lower, 1.0, &x_row, &x_row, &mut syr_a);
+
+        let mut her_a = ha;
+        DefaultBlas::her(UpLo::Lower, 1.0, &hx, &mut her_a);
+        DefaultBlas::her2(UpLo::Lower, Complex64::ONE, &hx, &hx, &mut her_a);
+
+        let tri_l =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 0.0], [1.0, 3.0]]);
+        let mut x_tr = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 1.0]]);
+        DefaultBlas::trmv(
+            UpLo::Lower,
+            Trans::Trans,
+            Diag::Unit,
+            &tri_l,
+            &mut x_tr,
+        );
+        let mut x_cj = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex64::ONE,
+            Complex64::ONE,
+        ]]);
+        DefaultBlas::trmv(
+            UpLo::Lower,
+            Trans::ConjTrans,
+            Diag::NonUnit,
+            &ha,
+            &mut x_cj,
+        );
+        let mut rhs = ArrayStorage::<f64, 2, 1>::from_array([[4.0, 5.0]]);
+        DefaultBlas::trsv(
+            UpLo::Lower,
+            Trans::Trans,
+            Diag::Unit,
+            &tri_l,
+            &mut rhs,
+        )
+        .unwrap();
+
+        let hp = HermitianPackedStorage::<Complex64, 2, 3>::new(
+            [
+                Complex64::new(2.0, 0.0),
+                Complex64::new(1.0, 1.0),
+                Complex64::new(3.0, 0.0),
+            ],
+            UpLo::Lower,
+        );
+        let mut y_hp = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex64::ONE,
+            Complex64::ONE,
+        ]]);
+        DefaultBlas::hpmv(
+            UpLo::Lower,
+            Complex64::new(0.5, 0.0),
+            &hp,
+            &x_c,
+            Complex64::new(2.0, 0.0),
+            &mut y_hp,
+        );
+        let mut hp_mut = hp;
+        DefaultBlas::hpr(UpLo::Lower, 1.0, &x_c, &mut hp_mut);
+        DefaultBlas::hpr2(UpLo::Upper, Complex64::ONE, &x_c, &x_c, &mut hp_mut);
+        DefaultBlas::hpr2(UpLo::Lower, Complex64::ONE, &hx, &hx, &mut hp_mut);
+
+        let mut ap_lo = SymmetricPackedStorage::<f64, 2, 3>::new(
+            [1.0, 2.0, 3.0],
+            UpLo::Lower,
+        );
+        DefaultBlas::spr(UpLo::Lower, 1.0, &x_row, &mut ap_lo);
+        DefaultBlas::spr2(UpLo::Lower, 1.0, &x_row, &x_row, &mut ap_lo);
+        let mut y_sp = ArrayStorage::<f64, 1, 2>::from_row([1.0, 1.0]);
+        DefaultBlas::spmv(UpLo::Lower, 0.5, &ap_lo, &x_row, 2.0, &mut y_sp);
+
+        let tp = TriangularPackedStorage::<f64, 2, 3>::new(
+            [2.0, 1.0, 3.0],
+            UpLo::Lower,
+            Diag::Unit,
+        );
+        let mut tpx = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 1.0]]);
+        DefaultBlas::tpmv(UpLo::Lower, Trans::Trans, Diag::Unit, &tp, &mut tpx);
+        let tpc = TriangularPackedStorage::<Complex64, 2, 3>::new(
+            [
+                Complex64::new(2.0, 0.0),
+                Complex64::new(1.0, 1.0),
+                Complex64::new(3.0, 0.0),
+            ],
+            UpLo::Lower,
+            Diag::NonUnit,
+        );
+        let mut tpxc = x_c;
+        DefaultBlas::tpmv(
+            UpLo::Lower,
+            Trans::ConjTrans,
+            Diag::NonUnit,
+            &tpc,
+            &mut tpxc,
+        );
+        let mut tps = ArrayStorage::<f64, 2, 1>::from_array([[4.0, 5.0]]);
+        DefaultBlas::tpsv(UpLo::Lower, Trans::Trans, Diag::Unit, &tp, &mut tps)
+            .unwrap();
+        let mut tpsc = x_c;
+        DefaultBlas::tpsv(
+            UpLo::Lower,
+            Trans::ConjTrans,
+            Diag::NonUnit,
+            &tpc,
+            &mut tpsc,
+        )
+        .unwrap();
+        let tp_sing = TriangularPackedStorage::<f64, 2, 3>::new(
+            [0.0, 1.0, 0.0],
+            UpLo::Lower,
+            Diag::NonUnit,
+        );
+        let mut bad = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 1.0]]);
+        assert!(
+            DefaultBlas::tpsv(
+                UpLo::Lower,
+                Trans::NoTrans,
+                Diag::NonUnit,
+                &tp_sing,
+                &mut bad,
+            )
+            .is_err()
+        );
+
+        let mut c_beta = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::ONE, Complex64::ONE],
+            [Complex64::ONE, Complex64::ONE],
+        ]);
+        DefaultBlas::gemm(
+            Trans::Trans,
+            Trans::Trans,
+            Complex64::ONE,
+            &a_c,
+            &a_c,
+            Complex64::new(0.5, 0.0),
+            &mut c_beta,
+        );
+
+        let mut sc = ArrayStorage::<f64, 2, 2>::zeros();
+        let b_id = ArrayStorage::<f64, 2, 2>::identity();
+        let sym_a =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 1.0], [1.0, 3.0]]);
+        DefaultBlas::symm(
+            Side::Right,
+            UpLo::Lower,
+            1.0,
+            &sym_a,
+            &b_id,
+            0.5,
+            &mut sc,
+        );
+        DefaultBlas::hemm(
+            Side::Left,
+            UpLo::Lower,
+            Complex64::ONE,
+            &ha,
+            &a_c,
+            Complex64::new(0.5, 0.0),
+            &mut c_beta,
+        );
+        DefaultBlas::hemm(
+            Side::Right,
+            UpLo::Upper,
+            Complex64::ONE,
+            &ha,
+            &a_c,
+            Complex64::ZERO,
+            &mut c_beta,
+        );
+        DefaultBlas::hemm(
+            Side::Right,
+            UpLo::Lower,
+            Complex64::ONE,
+            &ha,
+            &a_c,
+            Complex64::ONE,
+            &mut c_beta,
+        );
+
+        let mut rk =
+            ArrayStorage::<f64, 2, 2>::from_array([[1.0, 0.0], [0.0, 1.0]]);
+        DefaultBlas::syrk(UpLo::Lower, Trans::Trans, 1.0, &sym_a, 0.5, &mut rk);
+        DefaultBlas::syr2k(
+            UpLo::Lower,
+            Trans::Trans,
+            1.0,
+            &sym_a,
+            &b_id,
+            0.5,
+            &mut rk,
+        );
+        let mut hrk = ArrayStorage::<Complex64, 2, 2>::zeros();
+        DefaultBlas::herk(
+            UpLo::Lower,
+            Trans::NoTrans,
+            1.0,
+            &a_c,
+            0.0,
+            &mut hrk,
+        );
+        DefaultBlas::herk(
+            UpLo::Lower,
+            Trans::ConjTrans,
+            0.5,
+            &a_c,
+            2.0,
+            &mut hrk,
+        );
+        DefaultBlas::her2k(
+            UpLo::Lower,
+            Trans::NoTrans,
+            Complex64::ONE,
+            &a_c,
+            &a_c,
+            0.0,
+            &mut hrk,
+        );
+        DefaultBlas::her2k(
+            UpLo::Upper,
+            Trans::ConjTrans,
+            Complex64::new(1.0, 1.0),
+            &a_c,
+            &a_c,
+            0.5,
+            &mut hrk,
+        );
+        DefaultBlas::her2k(
+            UpLo::Lower,
+            Trans::Trans,
+            Complex64::ONE,
+            &a_c,
+            &a_c,
+            1.0,
+            &mut hrk,
+        );
+
+        let mut tb = b_id;
+        DefaultBlas::trmm(
+            Side::Right,
+            UpLo::Lower,
+            Trans::NoTrans,
+            Diag::Unit,
+            1.0,
+            &tri_l,
+            &mut tb,
+        );
+        DefaultBlas::trmm(
+            Side::Left,
+            UpLo::Lower,
+            Trans::Trans,
+            Diag::NonUnit,
+            1.0,
+            &tri_l,
+            &mut tb,
+        );
+        DefaultBlas::trmm(
+            Side::Right,
+            UpLo::Upper,
+            Trans::Trans,
+            Diag::NonUnit,
+            1.0,
+            &tri_l,
+            &mut tb,
+        );
+        let mut tbc = a_c;
+        DefaultBlas::trmm(
+            Side::Left,
+            UpLo::Lower,
+            Trans::ConjTrans,
+            Diag::NonUnit,
+            Complex64::ONE,
+            &ha,
+            &mut tbc,
+        );
+        let mut ts = ArrayStorage::<f64, 2, 2>::identity();
+        DefaultBlas::trsm(
+            Side::Right,
+            UpLo::Lower,
+            Trans::NoTrans,
+            Diag::Unit,
+            1.0,
+            &tri_l,
+            &mut ts,
+        )
+        .unwrap();
+        DefaultBlas::trsm(
+            Side::Left,
+            UpLo::Lower,
+            Trans::Trans,
+            Diag::NonUnit,
+            1.0,
+            &tri_l,
+            &mut ts,
+        )
+        .unwrap();
+        let mut tsc = a_c;
+        DefaultBlas::trsm(
+            Side::Left,
+            UpLo::Lower,
+            Trans::ConjTrans,
+            Diag::NonUnit,
+            Complex64::ONE,
+            &ha,
+            &mut tsc,
+        )
+        .unwrap();
+
+        let mut coo = ArrayCooStorage::<f64, 2, 2, 4>::new();
+        coo.push(0, 0, 1.0).unwrap();
+        coo.push(1, 1, 2.0).unwrap();
+        let csr = ArrayCsrStorage::<f64, 2, 2, 4, 3>::from_coo(&coo).unwrap();
+        let csc = ArrayCscStorage::<f64, 2, 2, 4, 3>::from_coo(&coo).unwrap();
+        let x_sp = ArrayStorage::<f64, 1, 2>::from_row([1.0, 1.0]);
+        let mut y_sp2 = ArrayStorage::<f64, 1, 2>::from_row([1.0, 1.0]);
+        DefaultBlas::csrmv(1.0, &csr, &x_sp, 0.5, &mut y_sp2);
+        DefaultBlas::cscmv(1.0, &csc, &x_sp, 2.0, &mut y_sp2);
+        let mut cm = ArrayStorage::<f64, 2, 2>::identity();
+        DefaultBlas::csrmm(1.0, &csr, &b_id, 0.5, &mut cm);
+        let mut svec = ArraySparseVector::<f64, 2, 2>::new();
+        svec.push(0, 1.0).unwrap();
+        let y_row_f = ArrayStorage::<f64, 1, 2>::from_row([3.0, 4.0]);
+        let _ = DefaultBlas::sp_dotu(&svec, &y_row_f);
+        let _ = DefaultBlas::sp_dotc(&svec, &y_row_f);
+        let mut y_ax = y_row_f;
+        DefaultBlas::sp_axpy(1.0, &svec, &mut y_ax);
+
+        let mut chol =
+            ArrayStorage::<f64, 2, 2>::from_array([[4.0, 1.0], [1.0, 3.0]]);
+        DefaultBlas::potrf(UpLo::Upper, &mut chol).unwrap();
+        let mut rhs_p = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 1.0]]);
+        DefaultBlas::potrs(UpLo::Upper, &chol, &mut rhs_p).unwrap();
+        let mut pp = SymmetricPackedStorage::<f64, 2, 3>::new(
+            [4.0, 1.0, 3.0],
+            UpLo::Upper,
+        );
+        DefaultBlas::pptrf(UpLo::Upper, &mut pp).unwrap();
+        DefaultBlas::pptrs(UpLo::Upper, &pp, &mut rhs_p).unwrap();
+
+        let mut lu = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(2.0, 0.0), Complex64::new(1.0, 0.0)],
+            [Complex64::new(1.0, 0.0), Complex64::new(3.0, 0.0)],
+        ]);
+        let mut ipiv = [0usize; 2];
+        DefaultBlas::getrf(&mut lu, &mut ipiv).unwrap();
+        let mut b_lu = a_c;
+        DefaultBlas::getrs(Trans::Trans, &lu, &ipiv, &mut b_lu).unwrap();
+        DefaultBlas::getrs(Trans::ConjTrans, &lu, &ipiv, &mut b_lu).unwrap();
+
+        let mut qr =
+            ArrayStorage::<f64, 2, 2>::from_array([[3.0, 4.0], [4.0, 3.0]]);
+        let mut tau = [0.0f64; 2];
+        let mut work = [0.0f64; 4];
+        DefaultBlas::geqrf(&mut qr, &mut tau, &mut work).unwrap();
+        let mut c_left = ArrayStorage::<f64, 2, 2>::identity();
+        DefaultBlas::ormqr(
+            Side::Left,
+            Trans::Trans,
+            &qr,
+            &tau,
+            &mut c_left,
+            &mut work,
+        )
+        .unwrap();
+        DefaultBlas::ormqr(
+            Side::Right,
+            Trans::NoTrans,
+            &qr,
+            &tau,
+            &mut c_left,
+            &mut work,
+        )
+        .unwrap();
+        DefaultBlas::ormqr(
+            Side::Right,
+            Trans::Trans,
+            &qr,
+            &tau,
+            &mut c_left,
+            &mut work,
+        )
+        .unwrap();
+        DefaultBlas::ormqr(
+            Side::Left,
+            Trans::ConjTrans,
+            &qr,
+            &tau,
+            &mut c_left,
+            &mut work,
+        )
+        .unwrap();
+
+        let mut qrc = a_c;
+        let mut tauc = [Complex64::ZERO; 2];
+        let mut workc = [Complex64::ZERO; 4];
+        DefaultBlas::geqrf(&mut qrc, &mut tauc, &mut workc).unwrap();
+        let mut cc = a_c;
+        DefaultBlas::unmqr(
+            Side::Left,
+            Trans::NoTrans,
+            &qrc,
+            &tauc,
+            &mut cc,
+            &mut workc,
+        )
+        .unwrap();
+        DefaultBlas::unmqr(
+            Side::Right,
+            Trans::ConjTrans,
+            &qrc,
+            &tauc,
+            &mut cc,
+            &mut workc,
+        )
+        .unwrap();
+        DefaultBlas::unmqr(
+            Side::Right,
+            Trans::Trans,
+            &qrc,
+            &tauc,
+            &mut cc,
+            &mut workc,
+        )
+        .unwrap();
+
+        let mut sy =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 1.0], [1.0, 2.0]]);
+        let mut w = [0.0f64; 2];
+        DefaultBlas::syev(
+            JobZ::NoVectors,
+            UpLo::Lower,
+            &mut sy,
+            &mut w,
+            &mut work,
+        )
+        .unwrap();
+        let mut he = ha;
+        DefaultBlas::heev(
+            JobZ::NoVectors,
+            UpLo::Lower,
+            &mut he,
+            &mut w,
+            &mut workc,
+        )
+        .unwrap();
+        DefaultBlas::heev(
+            JobZ::Vectors,
+            UpLo::Lower,
+            &mut ha,
+            &mut w,
+            &mut workc,
+        )
+        .unwrap();
     }
 }

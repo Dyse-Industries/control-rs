@@ -121,9 +121,9 @@ where
     /// permutation (`pivots[i]` is the original row now at position `i`).
     ///
     /// # Errors
-    /// Returns [`LinAlgError::WorkspaceTooSmall`] if `pivots.len() != D`.
     /// Returns [`LinAlgError::SingularMatrix`] if a column's largest
     /// available pivot magnitude falls within `T::epsilon()` of zero.
+    /// Returns [`LinAlgError::WorkspaceTooSmall`] if `pivots.len() != D`.
     pub fn lu_decompose_mut_with<B: Getrf<T, ArrayStorage<T, D, D>>>(
         &mut self,
         pivots: &mut [usize],
@@ -251,9 +251,6 @@ where
     }
 
     /// Computes the matrix inverse using a specific BLAS engine.
-    ///
-    /// # Errors
-    /// Propagates solve failures from [`LuDecomposition::solve_mut_with`].
     pub fn inverse_with<
         B: Getrs<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, D>>,
     >(
@@ -265,9 +262,6 @@ where
     }
 
     /// Computes the matrix inverse using the default BLAS engine.
-    ///
-    /// # Errors
-    /// See [`LuDecomposition::inverse_with`].
     pub fn inverse(&self) -> LinAlgResult<Owned<T, D, D>> {
         self.inverse_with::<DefaultBlas>()
     }
@@ -288,11 +282,6 @@ where
     }
 
     /// Solves `A * x = b` in-place using a specific BLAS engine.
-    ///
-    /// # Errors
-    /// Propagates [`LinAlgError`] from the underlying `getrs` routine
-    /// (e.g. [`LinAlgError::WorkspaceTooSmall`] if the stored pivot vector is
-    /// shorter than `D`).
     pub fn solve_mut_with<
         B: Getrs<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, COLS>>,
         const COLS: usize,
@@ -312,9 +301,6 @@ where
     }
 
     /// Solves `A * x = b` in-place using the default BLAS engine.
-    ///
-    /// # Errors
-    /// See [`LuDecomposition::solve_mut_with`].
     pub fn solve_mut<const COLS: usize>(
         &self,
         b: &mut Owned<T, D, COLS>,
@@ -469,19 +455,22 @@ where
     >(
         &self,
         b: &mut Owned<T, D, COLS>,
-    ) where
-        Const<COLS>: Dim,
-    {
-        let _ =
-            B::potrs(UpLo::Lower, &self.l.as_matrix().storage, &mut b.storage);
-    }
-
-    /// Solves `A * x = b` in-place using the default BLAS engine.
-    pub fn solve_mut<const COLS: usize>(&self, b: &mut Owned<T, D, COLS>)
+    ) -> LinAlgResult<()>
     where
         Const<COLS>: Dim,
     {
-        self.solve_mut_with::<DefaultBlas, COLS>(b);
+        B::potrs(UpLo::Lower, &self.l.as_matrix().storage, &mut b.storage)
+    }
+
+    /// Solves `A * x = b` in-place using the default BLAS engine.
+    pub fn solve_mut<const COLS: usize>(
+        &self,
+        b: &mut Owned<T, D, COLS>,
+    ) -> LinAlgResult<()>
+    where
+        Const<COLS>: Dim,
+    {
+        self.solve_mut_with::<DefaultBlas, COLS>(b)
     }
 }
 
@@ -659,10 +648,11 @@ where
     >(
         &self,
         b: &mut Owned<T, D, COLS>,
-    ) where
+    ) -> LinAlgResult<()>
+    where
         Const<COLS>: Dim,
     {
-        let _ = B::trsm(
+        B::trsm(
             Side::Left,
             UpLo::Lower,
             Trans::NoTrans,
@@ -670,21 +660,22 @@ where
             T::ONE,
             &self.data.storage,
             &mut b.storage,
-        );
+        )?;
 
         for i in 0..D {
             let d_i = unsafe { *self.data.storage.get_unchecked(i, i) };
-            if d_i.abs() >= T::epsilon() {
-                for c in 0..COLS {
-                    unsafe {
-                        let z = *b.storage.get_unchecked(i, c);
-                        *b.storage.get_unchecked_mut(i, c) = z / d_i;
-                    }
+            if d_i.abs() < T::epsilon() {
+                return Err(LinAlgError::SingularMatrix);
+            }
+            for c in 0..COLS {
+                unsafe {
+                    let z = *b.storage.get_unchecked(i, c);
+                    *b.storage.get_unchecked_mut(i, c) = z / d_i;
                 }
             }
         }
 
-        let _ = B::trsm(
+        B::trsm(
             Side::Left,
             UpLo::Lower,
             Trans::Trans,
@@ -692,14 +683,72 @@ where
             T::ONE,
             &self.data.storage,
             &mut b.storage,
-        );
+        )
     }
 
     /// Solves `A * x = b` in-place using the default BLAS engine.
-    pub fn solve_mut<const COLS: usize>(&self, b: &mut Owned<T, D, COLS>)
+    pub fn solve_mut<const COLS: usize>(
+        &self,
+        b: &mut Owned<T, D, COLS>,
+    ) -> LinAlgResult<()>
     where
         Const<COLS>: Dim,
     {
-        self.solve_mut_with::<DefaultBlas, COLS>(b);
+        self.solve_mut_with::<DefaultBlas, COLS>(b)
+    }
+}
+
+/// Rectangular Householder $QR$ ($R \ge C$): $A = Q R$ with $Q \in \mathbb{R}^{R \times R}$
+/// and upper-trapezoidal $R \in \mathbb{R}^{R \times C}$.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QrDecompositionRect<T, const R: usize, const C: usize>
+where
+    Const<R>: Dim,
+    Const<C>: Dim,
+{
+    /// Orthogonal factor.
+    pub q: Owned<T, R, R>,
+    /// Upper-trapezoidal factor.
+    pub r: Owned<T, R, C>,
+}
+
+impl<T: Float + Copy, const R: usize, const C: usize> Owned<T, R, C>
+where
+    Const<R>: Dim,
+    Const<C>: Dim,
+{
+    /// Rectangular $QR$ via Householder reflections. Requires $R \ge C$.
+    ///
+    /// # Errors
+    /// Returns [`LinAlgError::WorkspaceTooSmall`] if $R < C$.
+    pub fn into_qr_rect(mut self) -> LinAlgResult<QrDecompositionRect<T, R, C>>
+    where
+        T::Real: Radical,
+    {
+        if R < C {
+            return Err(LinAlgError::WorkspaceTooSmall);
+        }
+        let mut tau = [T::ZERO; C];
+        let mut work = [T::ZERO; R];
+        DefaultBlas::geqrf(&mut self.storage, &mut tau, &mut work)?;
+        let mut q = Owned::<T, R, R>::identity();
+        DefaultBlas::ormqr(
+            Side::Left,
+            Trans::NoTrans,
+            &self.storage,
+            &tau,
+            &mut q.storage,
+            &mut work,
+        )?;
+        for i in 0..R {
+            for j in 0..C {
+                if i > j {
+                    if let Some(elem) = self.get_mut(i, j) {
+                        *elem = T::ZERO;
+                    }
+                }
+            }
+        }
+        Ok(QrDecompositionRect { q, r: self })
     }
 }

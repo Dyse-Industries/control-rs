@@ -2,7 +2,7 @@
 """Matrix Numerical Prototype Oracle.
 
 Calculates reference matrix linear solver, LU decomposition, matrix inversion,
-and discrete Kalman filter measurement covariance update.
+transposition, and matrix arithmetic.
 Implemented in pure Python (standard library) with optional NumPy verification.
 """
 
@@ -18,6 +18,22 @@ def mat_mul(A, B):
             for j in range(c):
                 res[i][j] += A[i][k] * B[k][j]
     return res
+
+
+def mat_add(A, B):
+    """Add matrix A and B."""
+    return [[A[i][j] + B[i][j] for j in range(len(A[0]))] for i in range(len(A))]
+
+
+def mat_sub(A, B):
+    """Subtract matrix B from A."""
+    return [[A[i][j] - B[i][j] for j in range(len(A[0]))] for i in range(len(A))]
+
+
+def mat_transpose(A):
+    """Transpose matrix A."""
+    r, c = len(A), len(A[0])
+    return [[A[i][j] for i in range(r)] for j in range(c)]
 
 
 def lu_decompose(A):
@@ -102,7 +118,20 @@ def print_mat(name, M):
 def main():
     print("=== Matrix Numerical Prototype Oracle ===")
 
-    # 1. 3x3 Linear System Solve: A * x = b
+    # 1. 2x2 Matrix Arithmetic
+    M1 = [[1.0, 2.0], [3.0, 4.0]]
+    M2 = [[5.0, 6.0], [7.0, 8.0]]
+
+    print("\n--- Matrix Construction & Basic Arithmetic ---")
+    print_mat("M1", M1)
+    print_mat("M2", M2)
+
+    print_mat("M1 + M2", mat_add(M1, M2))
+    print_mat("M2 - M1", mat_sub(M2, M1))
+    print_mat("M1 * M2", mat_mul(M1, M2))
+    print_mat("M1^T (Transpose)", mat_transpose(M1))
+
+    # 2. 3x3 Linear System Solve: A * x = b
     A = [[3.0, 2.0, -1.0], [2.0, -2.0, 4.0], [-1.0, 0.5, -1.0]]
     b = [[1.0], [-2.0], [0.0]]
 
@@ -123,33 +152,13 @@ def main():
     res = math.sqrt(sum((Ax[i][0] - b[i][0]) ** 2 for i in range(len(b))))
     print(f"Residual norm: {res:.16e}")
 
-    # Matrix Inversion
+    # 3. Matrix Inversion & Identity Check
     A_inv = mat_inv(A)
+    print("\n--- Matrix Inversion & Identity Check ---")
     print_mat("A^-1", A_inv)
 
     ident_check = mat_mul(A, A_inv)
     print_mat("A * A^-1 (Identity check)", ident_check)
-
-    # 2. Discrete Kalman Filter Covariance Update: P = (I - K * H) * P_prior
-    # State dimension = 2, Measurement dimension = 1
-    P_prior = [[2.0, 0.5], [0.5, 1.0]]
-    H = [[1.0, 0.0]]
-    K = [[0.6], [0.2]]
-    I = [[1.0, 0.0], [0.0, 1.0]]
-
-    print("\n--- Discrete Kalman Filter Covariance Update ---")
-    print_mat("P_prior", P_prior)
-    print_mat("H", H)
-    print_mat("K", K)
-
-    KH = mat_mul(K, H)
-    I_minus_KH = [
-        [I[i][j] - KH[i][j] for j in range(len(I[0]))] for i in range(len(I))
-    ]
-    P_post = mat_mul(I_minus_KH, P_prior)
-
-    print_mat("I - K*H", I_minus_KH)
-    print_mat("P_post", P_post)
 
 
 if __name__ == "__main__":

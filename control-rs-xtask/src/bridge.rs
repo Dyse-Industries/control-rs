@@ -62,7 +62,7 @@ pub struct QemuTargetDetails {
 }
 
 /// Target execution platform.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     /// virtual ETS (QEMU) target.
     QemuSemihosting {
@@ -921,5 +921,156 @@ mod tests {
             msg2,
             BridgeMessage::Telemetry(Telemetry::DiscoveryComplete)
         ));
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_target_helpers_and_remaining_parse_arches() {
+        assert!(matches!(
+            Target::qemu_arm(),
+            Target::QemuSemihosting {
+                arch: QemuArch::Thumbv7emNoneEabihf
+            }
+        ));
+        assert!(matches!(
+            Target::qemu_arm_soft(),
+            Target::QemuSemihosting {
+                arch: QemuArch::Thumbv7emNoneEabi
+            }
+        ));
+        assert!(matches!(
+            Target::qemu_riscv(),
+            Target::QemuSemihosting {
+                arch: QemuArch::Riscv32imacUnknownNoneElf
+            }
+        ));
+        assert!(matches!(
+            Target::qemu_riscv64(),
+            Target::QemuSemihosting {
+                arch: QemuArch::Riscv64gcUnknownNoneElf
+            }
+        ));
+        let serial = Target::serial("/dev/ttyUSB1".to_string(), 57600);
+        assert!(matches!(serial, Target::Serial { baud: 57600, .. }));
+
+        let arm_sf = Target::parse(
+            &[
+                "bin".to_string(),
+                "ci".to_string(),
+                "qemu".to_string(),
+                "arm-sf".to_string(),
+            ],
+            "arm",
+            "/dev/ttyACM0",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            arm_sf,
+            Target::QemuSemihosting {
+                arch: QemuArch::Thumbv7emNoneEabi
+            }
+        ));
+
+        let rv32 = Target::parse(
+            &[
+                "bin".to_string(),
+                "ci".to_string(),
+                "qemu".to_string(),
+                "risc-v".to_string(),
+            ],
+            "arm",
+            "/dev/ttyACM0",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            rv32,
+            Target::QemuSemihosting {
+                arch: QemuArch::Riscv32imacUnknownNoneElf
+            }
+        ));
+
+        let rv64 = Target::parse(
+            &[
+                "bin".to_string(),
+                "ci".to_string(),
+                "qemu".to_string(),
+                "risc-v64".to_string(),
+            ],
+            "arm",
+            "/dev/ttyACM0",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            rv64,
+            Target::QemuSemihosting {
+                arch: QemuArch::Riscv64gcUnknownNoneElf
+            }
+        ));
+
+        let teensy_default = Target::parse(
+            &["bin".to_string(), "ci".to_string(), "teensy".to_string()],
+            "arm",
+            "/dev/teensy",
+        )
+        .unwrap()
+        .unwrap();
+        if let Target::Serial { port, baud } = teensy_default {
+            assert_eq!(port, "/dev/teensy");
+            assert_eq!(baud, 115_200);
+        } else {
+            panic!("expected serial");
+        }
+
+        assert_eq!(
+            QemuArch::Thumbv7emNoneEabi.details().target_triple,
+            "thumbv7em-none-eabi"
+        );
+        assert_eq!(
+            QemuArch::Riscv64gcUnknownNoneElf.details().target_triple,
+            "riscv64gc-unknown-none-elf"
+        );
+    }
+
+    #[test]
+    fn test_process_incoming_byte_corrupted_payload_and_special_chars() {
+        let (tx, rx) = channel();
+        let mut reader = FrameReader::new();
+        let mut raw_buf = Vec::new();
+
+        // 1. Send invalid postcard payload inside a valid frame
+        let invalid_payload = [0xFF, 0xFF, 0xFF];
+        let len = u16::try_from(invalid_payload.len()).unwrap();
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+        let crc_val = crc.checksum(&invalid_payload);
+        let mut frame = vec![0xAA, 0x55, (len >> 8) as u8, (len & 0xFF) as u8];
+        frame.extend_from_slice(&invalid_payload);
+        frame.push((crc_val >> 8) as u8);
+        frame.push((crc_val & 0xFF) as u8);
+
+        for b in frame {
+            process_incoming_byte(b, &mut reader, &mut raw_buf, &tx);
+        }
+
+        let msg = rx.try_recv().unwrap();
+        if let BridgeMessage::RawConsole(err) = msg {
+            assert!(err.contains("Postcard decode failed"));
+        } else {
+            panic!("expected raw console error");
+        }
+
+        // 2. Send \r and \t and newline
+        process_incoming_byte(b'a', &mut reader, &mut raw_buf, &tx);
+        process_incoming_byte(b'\r', &mut reader, &mut raw_buf, &tx);
+        process_incoming_byte(b'\t', &mut reader, &mut raw_buf, &tx);
+        process_incoming_byte(b'\n', &mut reader, &mut raw_buf, &tx);
+        let msg2 = rx.try_recv().unwrap();
+        if let BridgeMessage::RawConsole(line) = msg2 {
+            assert_eq!(line, "a\t");
+        } else {
+            panic!("expected raw console line");
+        }
     }
 }

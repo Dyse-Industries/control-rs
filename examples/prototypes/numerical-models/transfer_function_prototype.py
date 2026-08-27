@@ -91,13 +91,13 @@ def main():
 
     # 3. Controllable Canonical State-Space Realization
     # For H(s) = (2 + 3s) / (4 + 5s + s^2)
-    # A = [[0, -4], [1, -5]]
+    # A = [[0, 1], [-4, -5]]
     # B = [[0], [1]]
     # C = [[2, 3]]
     # D = [[0]]
     print("\n--- Controllable Canonical Realization ---")
     print(f"H(s) = (2 + 3s) / (4 + 5s + s^2)")
-    A_canon = [[0.0, -4.0], [1.0, -5.0]]
+    A_canon = [[0.0, 1.0], [-4.0, -5.0]]
     B_canon = [[0.0], [1.0]]
     C_canon = [[2.0, 3.0]]
     D_canon = [[0.0]]

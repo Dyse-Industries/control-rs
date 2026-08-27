@@ -720,4 +720,35 @@ mod tests {
         assert_eq!(read_res, report);
         let _ = std::fs::remove_file(path);
     }
+
+    #[test]
+    fn test_format_helpers_and_targeted_ets_rows() {
+        assert!(format_issue_summary(2, 3).contains("Formatting"));
+        assert!(format_performance(1.5, 2.25).contains("1.50s"));
+        assert!(format_test_summary(4, 1, 0).contains("Passed"));
+        assert!(format_coverage_summary("91.00", 91, 100).contains("91 / 100"));
+
+        let results = [
+            HeadlessTestResult {
+                suite_name: "SuiteA (ARM HF)".to_string(),
+                test_name: "Test1".to_string(),
+                state: TestState::Passed,
+                cycles: Some(1_234_567),
+                time_us: Some(10),
+                stack_peak: Some(256),
+            },
+            HeadlessTestResult {
+                suite_name: "SuiteA (RISC-V 32)".to_string(),
+                test_name: "Test1".to_string(),
+                state: TestState::Failed,
+                cycles: None,
+                time_us: None,
+                stack_peak: None,
+            },
+        ];
+        let refs: Vec<&HeadlessTestResult> = results.iter().collect();
+        let formatted = format_ets_rows(&refs);
+        assert!(formatted.contains("ARM HF"));
+        assert!(formatted.contains("1,234,567"));
+    }
 }

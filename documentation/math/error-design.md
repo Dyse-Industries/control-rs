@@ -12,7 +12,7 @@
 `src/math/mod.rs`:
 
 - `ArithmeticError` — Scalar `Try*` failures (`math::ops`), consumed by
-  `complex_num.rs` and `assert.rs`. Unchanged by this revision.
+  `complex_num.rs` and `assert.rs`.
 - `ConversionError` — Representation and value-validity failures whose
   producing conversion's type signature cannot already rule them out.
 - `StorageError` — Indexing, capacity, and structural-invariant failures on
@@ -20,10 +20,9 @@
 - `LinAlgError` — Computational failures of factorizations, solvers, and
   spectral decompositions (`subprograms-design.md`).
 
-`storage-design.md` and `subprograms-design.md` split the former
-`storage-subprograms-design.md` and each introduce error variants. This
-revision is the canonical home for those types (FR-1). A condition already
-pinned by a `where` bound is a compile error, not an `Err` arm (FR-2).
+`storage-design.md` and `subprograms-design.md` each introduce error
+variants owned here (FR-1). A condition already pinned by a `where` bound
+is a compile error, not an `Err` arm (FR-2).
 LAPACK's `INFO` split is the layering rule: illegal arguments versus
 failure in the course of computation (Anderson et al., 1999).
 
@@ -109,9 +108,8 @@ pub type StorageResult<T> = Result<T, StorageError>;
 pub type LinAlgResult<T> = Result<T, LinAlgError>;
 ```
 
-`LayoutMismatch` remains removed from `ConversionError` (Rev 1.2–1.4).
-`StorageError` is new. `LinAlgError` drops `NonSquareMatrix` and does not
-gain `DimensionMismatch`.
+`ConversionError` has no `LayoutMismatch` arm. `LinAlgError` has no
+`NonSquareMatrix` or `DimensionMismatch` arm.
 
 ---
 
@@ -198,13 +196,13 @@ Adopted from `storage-design.md` §3.3 / §4.6, with one deletion:
 `DimensionMismatch` is not duplicated here (FR-3). Remaining variants are
 all runtime properties of a live buffer, not of `Dim`:
 
-| Variant                      | Producer                                                                                                                  | Why runtime                                                                                                           |
-|:-----------------------------|:--------------------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------|
+| Variant                      | Producer                                                                                                                  | Why runtime                                                                                                          |
+|:-----------------------------|:--------------------------------------------------------------------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------|
 | `OutOfBounds`                | `StorageMut::set`, `PackedStorageMut::set`, `SparseStorageMut::set`, `ArrayCooStorage::push`, `ArrayCsrStorage::from_coo` | `(r, c)` is a value; checked accessors return `Result` at library boundaries (`storage-design.md` FR-1, FR-3, FR-4). |
-| `CapacityExceeded`           | `ArrayCooStorage::push`; dense → sparse when `nnz > MAX_NNZ`                                                              | `MAX_NNZ` is a type parameter; live `nnz` is not (ndarray's offset/length overflow class; ndarray, 2026).             |
-| `ImmutableUnitDiagonal`      | `TriangularPackedStorage::set` with `Diag::Unit`                                                                          | Unit diagonal is a construction flag; the write is a value at `(i, i)`.                                               |
-| `InvalidHermitianDiagonal`   | `HermitianPackedStorage::set` on the diagonal                                                                             | $\mathrm{Im}(A_{i,i}) = 0$ is a value invariant (`storage-design.md` FR-3).                                           |
-| `InvalidStructuralInvariant` | `SparseStorageMut::set` on an unallocated coordinate; malformed CSR/CSC offsets                                           | Sparsity pattern is data, not a `Dim`.                                                                                |
+| `CapacityExceeded`           | `ArrayCooStorage::push`; dense → sparse when `nnz > MAX_NNZ`                                                              | `MAX_NNZ` is a type parameter; live `nnz` is not (ndarray's offset/length overflow class; ndarray, 2026).            |
+| `ImmutableUnitDiagonal`      | `TriangularPackedStorage::set` with `Diag::Unit`                                                                          | Unit diagonal is a construction flag; the write is a value at `(i, i)`.                                              |
+| `InvalidHermitianDiagonal`   | `HermitianPackedStorage::set` on the diagonal                                                                             | $\mathrm{Im}(A_{i,i}) = 0$ is a value invariant (`storage-design.md` FR-3).                                          |
+| `InvalidStructuralInvariant` | `SparseStorageMut::set` on an unallocated coordinate; malformed CSR/CSC offsets                                           | Sparsity pattern is data, not a `Dim`.                                                                               |
 
 Checked `get` continues to return `Option<&T>` (`None` = missing or
 out-of-bounds). `set` returns `Result<(), StorageError>` because a failed
@@ -263,12 +261,12 @@ to `Potrf` is a `matrix-design.md` change, not this module's.
 
 ### 5. Alternatives
 
-- **Do nothing (status quo)**: Keep `LayoutMismatch` as a blanket runtime
-  check covering both rank and size; leave `StorageError` unspecified in
-  this module; keep shipped `LinAlgError::{NonSquareMatrix, SingularMatrix}`.
-  Rejected: `storage-design.md` and `subprograms-design.md` now name
-  additional shared failure modes (FR-1); `LayoutMismatch` still violates
-  FR-2 for rank/size.
+- **Blanket `LayoutMismatch` covering rank and size**: Keep `LayoutMismatch`
+  as a runtime check covering both rank and size; leave `StorageError`
+  unspecified in this module; keep shipped
+  `LinAlgError::{NonSquareMatrix, SingularMatrix}`. Rejected:
+  `storage-design.md` and `subprograms-design.md` name additional shared
+  failure modes (FR-1); `LayoutMismatch` still violates FR-2 for rank/size.
 - **Keep `DimensionMismatch` on all three enums**. Rejected:
   FR-3; callers cannot match one condition; LAPACK and ndarray-linalg
   already separate shape from computation (Anderson et al., 1999;
@@ -335,7 +333,7 @@ to `Potrf` is a `matrix-design.md` change, not this module's.
    a `compile_fail` doctest demonstrating that a `Layout` whose `Size`
    does not match the source shape fails to compile rather than returning
    `Err`. This item is not a current gate; it waits on
-   `../numerical-models/tensor-design.md` retarget and `From` conversions.
+   `../numerical-models/tensor-design.md` `From` conversions.
 4. Add `Display` / `Error` unit tests for every `StorageError` variant when
    the enum lands. When storage Phases 2–4 land (`storage-design.md` §9),
    each producer listed in §4.3 needs a dedicated failure-path test:
@@ -369,24 +367,24 @@ No ETS of the error enums themselves; ETS of kernels is
 
 ### 7. Performance & Resource Considerations
 
-Removing `LayoutMismatch` drops a runtime `RANK` branch from every `Tensor`
-conversion. Omitting `DimensionMismatch` from `StorageError` and
-`LinAlgError` keeps BLAS inner loops and `set` match arms free of a
-dead shape class — zero runtime cost on `ArrayStorage` kernels, consistent
-with `subprograms-design.md` NFR-3. `StorageError` and the extra
-`LinAlgError` variants are `Copy` enums; they add no allocation.
+Tensor conversions have no runtime `RANK` branch. Omitting
+`DimensionMismatch` from `StorageError` and `LinAlgError` keeps BLAS inner
+loops and `set` match arms free of a dead shape class — zero runtime cost
+on `ArrayStorage` kernels, consistent with `subprograms-design.md` NFR-3.
+`StorageError` and the extra `LinAlgError` variants are `Copy` enums; they
+add no allocation.
 
 ---
 
 ### 8. Risks & Open Questions
 
-- **Downstream Tensor conversions (closed, Rev 1.3)**:
+- **Downstream Tensor conversions**:
   `../numerical-models/matrix-design.md` §4.8.2,
   `../numerical-models/polynomial-design.md` §4.7.2 and
   `../numerical-models/tensor-design.md` §4.11 specify infallible `From`
   bounded by `TensorLayout<Size = …>`. Rank-marker traits (`Rank1Layout` /
   `Rank2Layout`) are not part of that surface; `Size` is the bound.
-- **Sibling-doc drift (closed, this revision)**:
+- **Sibling-doc alignment**:
   `storage-design.md` §3.3 / §4.6 omits `StorageError::DimensionMismatch`.
   `subprograms-design.md` §3.3 omits `LinAlgError::DimensionMismatch`.
   `polynomial-design.md` §4.5 names `ConversionError::DimensionMismatch`
@@ -394,11 +392,9 @@ with `subprograms-design.md` NFR-3. `StorageError` and the extra
   currently panics on a short output; §6 item 2 is the current producer
   gate.
 - **`faer-rs` unresearched (open, low priority)**:
-  `documentation/math/research/error.json` query 9 could not resolve
-  faer-rs's dimension-mismatch convention from its crate-level docs. Not
-  pursued further — Eigen and the ndarray/LAPACK family already establish
-  the relevant precedent for both branches of §4 (statically-decidable vs.
-  value-dependent).
+  faer-rs's dimension-mismatch convention is not established from its
+  crate-level docs. Eigen and the ndarray/LAPACK family already cover
+  both branches of §4 (statically-decidable vs. value-dependent).
 - **Matrix Cholesky mapping (open)**: Shipped
   `CholeskyDecomposition` / `LdltDecomposition` report a non-positive
   pivot as `SingularMatrix`. `Potrf` reports `NotPositiveDefinite`.
@@ -412,15 +408,14 @@ with `subprograms-design.md` NFR-3. `StorageError` and the extra
   (confirmed by repository search). Adding the enum is not a breaking
   change. Removing `LinAlgError::NonSquareMatrix` is a public-enum break
   with no live producer.
-- **Shipped producers (closed, moved from former NFR-2)**:
+- **Shipped producers**:
   `StorageView` / `StorageViewMut::new_with_strides` and
   `StaticStorageView` / `StaticStorageViewMut::new` remain the shipped
   `ConversionError` producers (§4.2). `StorageError` has no shipped
-  producers. Shipped `LinAlgError`
-  producers return only `SingularMatrix`. `NonSquareMatrix` had Display
-  coverage and no producer; removing it was not a change to a live failure
-  path. As-yet-unimplemented `Matrix` / `Polynomial` / `Tensor` conversions
-  remain as specified in the numerical-model drafts.
+  producers. Shipped `LinAlgError` producers return only `SingularMatrix`.
+  `NonSquareMatrix` has Display coverage and no producer. As-yet-unimplemented
+  `Matrix` / `Polynomial` / `Tensor` conversions remain as specified in the
+  numerical-model drafts.
 
 ---
 
@@ -429,24 +424,23 @@ with `subprograms-design.md` NFR-3. `StorageError` and the extra
 | Task / Feature                     | Description                                                                                                                                              | Estimated Effort           |
 |:-----------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------|:---------------------------|
 | Step 1: Narrow `ConversionError`   | Remove `LayoutMismatch` from the enum (§3); update `Display`/`Error` impls and their tests in `src/math/mod.rs`.                                         | Complete                   |
-| Step 2: Rank-marker traits         | Superseded. Rank and size are `TensorLayout<Size = …>` bounds (§4.2), not a `Rank1Layout` / `Rank2Layout` family.                                        | —                          |
-| Step 3: Align dependent model docs | `matrix-design.md` §4.8.2, `polynomial-design.md` §4.7.2, `tensor-design.md` §4.11 use the `From` + `Size` shape.                                        | Complete                   |
-| Step 4: Add `StorageError`         | Land the enum, `StorageResult`, `Display`/`Error` impls, and Display tests in `src/math/mod.rs` (§3, §4.3). View constructors stay on `ConversionError`. | Complete                   |
-| Step 5: Align `LinAlgError`        | Add `NotPositiveDefinite`, `WorkspaceTooSmall`, `MaxIterationsReached`; remove `NonSquareMatrix`; keep `SingularMatrix`. Update Display tests.           | Complete                   |
-| Step 6: Producer tests             | Storage Phases 2–4 and subprograms Phase 4 attach the failure-path tests in §6 items 4–5.                                                                | — (owned by those designs) |
-| Step 7: Convolution producer       | `dsp.rs` `Convolution` returns `Err(ConversionError::DimensionMismatch)` on a short output (§6 item 2); a panic / `#[should_panic]` test is a defect.     | Current gate               |
+| Step 2: Align dependent model docs | `matrix-design.md` §4.8.2, `polynomial-design.md` §4.7.2, `tensor-design.md` §4.11 use the `From` + `Size` shape.                                        | Complete                   |
+| Step 3: Add `StorageError`         | Land the enum, `StorageResult`, `Display`/`Error` impls, and Display tests in `src/math/mod.rs` (§3, §4.3). View constructors stay on `ConversionError`. | Complete                   |
+| Step 4: Align `LinAlgError`        | Add `NotPositiveDefinite`, `WorkspaceTooSmall`, `MaxIterationsReached`; remove `NonSquareMatrix`; keep `SingularMatrix`. Update Display tests.           | Complete                   |
+| Step 5: Producer tests             | Storage Phases 2–4 and subprograms Phase 4 attach the failure-path tests in §6 items 4–5.                                                                | — (owned by those designs) |
+| Step 6: Convolution producer       | `dsp.rs` `Convolution` returns `Err(ConversionError::DimensionMismatch)` on a short output (§6 item 2); a panic / `#[should_panic]` test is a defect.    | Current gate               |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                                           |
-|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 2, 2026  | @MitchellDScott | Initial draft defining crate-wide error handling architecture and `ConversionError`.                                                                  |
-| 1.1      | August 18, 2026 | @MitchellDScott | Error type consolidation: introduced `LinAlgError` and `StorageError`, replacing ad-hoc errors across subprograms and storage modules.              |
+| Revision | Date            | Author          | Description                                                                                                                                                |
+|:---------|:----------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 2, 2026  | @MitchellDScott | Initial draft defining crate-wide error handling architecture and `ConversionError`.                                                                       |
+| 1.1      | August 18, 2026 | @MitchellDScott | Error type consolidation: introduced `LinAlgError` and `StorageError`, replacing ad-hoc errors across subprograms and storage modules.                     |
 | 1.2      | August 18, 2026 | @MitchellDScott | Infallible conversions: transitioned cross-model conversions (`Matrix`, `Polynomial`, `Tensor`) to compile-time layout bounds, eliminating runtime checks. |
-| 1.3      | August 22, 2026 | @MitchellDScott | Enum canonicalization: standardized error variants across `StorageError` and `LinAlgError` without cross-enum duplication.                            |
-| 1.4      | August 26, 2026 | @MitchellDScott | Storage retarget: updated error semantics for inherent structured projection constructors (`from_dense_diagonal`, `from_dense_triangle`).            |
+| 1.3      | August 22, 2026 | @MitchellDScott | Enum canonicalization: standardized error variants across `StorageError` and `LinAlgError` without cross-enum duplication.                                 |
+| 1.4      | August 26, 2026 | @MitchellDScott | Storage retarget: updated error semantics for inherent structured projection constructors (`from_dense_diagonal`, `from_dense_triangle`).                  |
 
 ---
 

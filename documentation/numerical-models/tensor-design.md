@@ -93,9 +93,8 @@ network inference with lightweight activation functions.
 
 #### 4.1. Generics Foundation & Sizing
 
-A `Tensor` wraps a flat, padding-free storage backend. `storage-design.md`
-Rev 1.8 removed the rank-agnostic `Buffer<T>` tier, so the crate-wide
-contiguity contract is now `ContiguousStorage<T>` / `ContiguousStorageMut<T>`
+A `Tensor` wraps a flat, padding-free storage backend. The crate-wide
+contiguity contract is `ContiguousStorage<T>` / `ContiguousStorageMut<T>`
 (FR-3), whose `as_slice()` / `as_mut_slice()` are exactly what a tensor
 needs. Those traits are declared as sub-traits of the 2-D
 `DenseStorage<T>`, so `Tensor` names a rank-neutral projection of them:
@@ -186,32 +185,6 @@ rewraps the slice as a `StorageView` and calls `Gemm`
 `crate::math::num_traits`, exposing `T::ZERO`/`T::ONE` as associated
 constants.
 
-##### 4.4.1. Data-Driven Tensor Factories [Proposal (not in evidence)]
-
-To support high-dimensional calibration tables, nonlinear Volterra system
-identification, polytopic LPV modeling, and tensor-valued time-series
-estimation, dedicated data-driven **Object Factories** format empirical
-datasets into multidimensional tensor structures without polluting `Tensor`
-(Batselier et al., 2017; Favier & Kibangou, 2023; Van Eeghem et al., 2017;
-Baranyi, 2014; Rogers et al., 2013; Weiser & Zarantonello, 1988):
-
-- **Grid Tensor Factory (`GridTensorFactory`)**: Produces N-D lookup tensors
-  from
-  gridded aerodynamic or engine calibration measurements, populating dense
-  coordinate grids for fast multilinear corner interpolation (Weiser &
-  Zarantonello, 1988; Koo & Sands, 2024).
-- **Hankel Tensor Factory (`HankelTensorFactory`)**: Assembles higher-order
-  Hankel tensors $\mathcal{H} \in \mathbb{R}^{I_1 \times I_2 \times \dots \times
-  I_D}$ from multivariable time series for blind system identification and
-  canonical polyadic decomposition (Van Eeghem et al., 2017).
-- **Matrix Series Factory (`MatrixSeriesTensorFactory`)**: Stacks temporal
-  series
-  of matrix observations into rank-3 batch tensors for Multilinear Dynamical
-  Systems (MLDS) parameter estimation (Rogers et al., 2013).
-
-_Detailed standalone design and API signatures for these factories are
-specified in `documentation/control-toolboxes/sysid-design.md`._
-
 #### 4.5. Operator Overloading
 
 `Add`, `Sub` and scalar `Mul`/`Div` iterate directly over element storage
@@ -235,13 +208,12 @@ return `Tensor<T, Layout, B>` with the same buffer family.
 #### 4.7. Grid Interpolation
 
 Motivated by gain-scheduled flight-control lookup tables (Koo & Sands,
-
 2024) and the general N-D table-interpolation problem formalized by Weiser &
-      Zarantonello (1988): a query at a fractional coordinate is evaluated as a
-      weighted sum over the $2^{\text{RANK}}$ hypercube corner vertices
-      surrounding it (the multilinear generalization of bilinear/trilinear
-      interpolation), reading directly through `FlatBuffer::as_slice` with no
-      intermediate allocation:
+Zarantonello (1988): a query at a fractional coordinate is evaluated as a
+weighted sum over the $2^{\text{RANK}}$ hypercube corner vertices
+surrounding it (the multilinear generalization of bilinear/trilinear
+interpolation), reading directly through `FlatBuffer::as_slice` with no
+intermediate allocation:
 
 ```rust
 impl<T, Layout: TensorLayout, B> Tensor<T, Layout, B>
@@ -267,17 +239,13 @@ To support zero-copy matrix operations and gain-scheduled model extraction,
   yield an evaluated 2D `Matrix`.
 
 *Note*: Detailed N-D storage layout optimizations and tensor contraction
-subprogram acceleration warrant a dedicated `storage/tensor` research pass (
-`/cr-research math/storage-subprograms`).
+subprogram acceleration need a dedicated storage/tensor design.
 
 `Float` here is [
 `num-traits-design.md`](../math/num-traits-design.md)'s
 hardware-aligned hierarchy (`Signed + One + Radical + Exponential + Trig +
 Div`), used deliberately rather than the retired `Real` — this document
-already follows that naming crate-wide (§4.4, §4.9). That dependency is no
-longer provisional: `num-traits-design.md` has completed its own
-`/cr-research`/`/cr-design-doc` pass and carries an `Approved` status badge
-as of its revision 1.4.
+already follows that naming crate-wide (§4.4, §4.9).
 
 This is a distinct operation from `contract_into` (which contracts against
 another whole tensor) and from `as_view` (which extracts a whole sub-tensor
@@ -290,8 +258,8 @@ better $O(\text{RANK} \log \text{RANK})$ asymptotic scaling but is not
 adopted here (see §5.3) since no current target application exceeds rank
 ~4-5.
 
-The out-of-grid-bounds query policy (clamp vs. error) is not finalized in
-this revision — see §7.
+The out-of-grid-bounds query policy (clamp vs. error) is not finalized —
+see §7.
 
 #### 4.9. Minimal Activation Function Support
 
@@ -362,7 +330,7 @@ here — while the trait contract it must satisfy is specified there.
 
 An affine variant (`AffineQuantized<Repr, const SHIFT: i32, const
 ZERO_POINT: i32>`) is deferred future work for imported-model
-interoperability (§5.2) — not part of this revision's default path.
+interoperability (§5.2) — not part of the default path.
 
 #### 4.11. Interoperability & Conversions
 
@@ -401,14 +369,13 @@ is required.
 - **Interpolation Bounds**: A query coordinate outside the grid's valid
   range is a genuinely open question (§7) — whether it clamps to the
   boundary, extrapolates or returns `Result<T, InterpolationError>` is not
-  finalized in this revision.
+  finalized.
 
 #### 4.13. Structural Specializations & Future Extensions
 
 - **Sparse Tensor Representations**, **ROM-Backed Static Storage
-  Backends** and **Matrix-Free Operators** remain noted future extensions
-  from the prior revision.
-- **Model-Import Codegen (future work, not implemented in this revision)**:
+  Backends** and **Matrix-Free Operators** remain noted future extensions.
+- **Model-Import Codegen (future work)**:
   A future ahead-of-time tool could import a trained TFLite/ExecuTorch/ONNX
   model as `ArrayTensor::from_raw` constants plus a fixed
   `contract_into`/`Activation` call sequence, following MicroFlow's proven
@@ -469,7 +436,7 @@ unstabilized (§2.3).
   CMSIS-NN's LUT-based activation precedent (§4.9) and Weiser &
   Zarantonello's formalization. Adequate for the target applications (rank
   2-3 lookup tables, rank-1 activation tables).
-- **Simplex/Triangulated (rejected for this revision)**: $O(\text{RANK}
+- **Simplex/Triangulated (rejected)**: $O(\text{RANK}
   \log \text{RANK})$ asymptotic scaling, better for rank $>$ ~5-6 per
   Weiser & Zarantonello (1988), but adds triangulation complexity not
   justified by any current target application. Noted as a future extension
@@ -521,14 +488,14 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 
 | Method                    | Mechanism                                                                                  | Requirements discharged  |
 |:--------------------------|:-------------------------------------------------------------------------------------------|:-------------------------|
-| Compile-time shape check  | Type-level `Dim` rank assertions, `compile_fail` doctests                                  | FR-1, C-1, C-3, C-4      |
-| Requirements-based test   | `#[test]` unit tests over grid boundaries, activations, and conversions                    | FR-2, FR-4, FR-5, FR-7   |
-| Property-based test       | `proptest` suites verifying axis permutation round-trips and tensor contraction identities | FR-3, FR-6               |
+| Compile-time shape check  | Type-level `Dim` rank assertions, `compile_fail` doctests                                  | FR-1, C-1, C-3           |
+| Requirements-based test   | `#[test]` unit tests over grid boundaries, activations, and conversions                    | FR-2, FR-4, FR-5         |
+| Property-based test       | `proptest` suites verifying axis permutation round-trips and tensor contraction identities | FR-3                     |
 | Doctest                   | Runnable rustdoc examples                                                                  | FR-2, FR-4               |
-| Back-to-back comparison   | `/cr-prototype numerical-models/tensor` and SciPy/NumPy golden references                  | FR-3, FR-4, FR-6         |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                     | NFR-1, NFR-2, C-2, C-4   |
-| On-target execution       | ETS suites under QEMU and Teensy hardware                                                  | NFR-3                    |
-| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                    | FR-1..FR-7, NFR-1..NFR-3 |
+| Back-to-back comparison   | `examples/prototypes/numerical-models/tensor/` and SciPy/NumPy golden references           | FR-3, FR-4               |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                     | NFR-1, NFR-2, C-2, C-3   |
+| On-target execution       | ETS suites under QEMU and Teensy hardware                                                  | NFR-2                    |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                    | FR-1..FR-5, NFR-1..NFR-2 |
 
 #### 6.3. Acceptance Criteria
 
@@ -539,27 +506,23 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | Interior multilinear interpolation | Analytic piecewise linear model              | Absolute error              | $\|f(x) - \hat{f}(x)\| \le \frac{1}{8} \sum h_i^2 \|\frac{\partial^2 f}{\partial x_i^2}\|_\infty$      | Multilinear interpolation error bound (Weiser & Zarantonello, 1988)        |
 | Quantization round-trip            | Exact floating-point vs dequantized integer  | Absolute error              | $\|x - \text{dequantize}(\text{quantize}(x))\| \le 2^{-\text{SHIFT}-1}$                                | Half-LSB rounding bound for fixed-point quantization (Wu et al., 2020)     |
 | Permutation invertibility          | Permute and inverse permute axes             | Exact equality              | Inverted tensor == original tensor                                                                     | Exact structural permutation invariant                                     |
-| Activation lookup residual         | Exact nonlinear activation ($\tanh, \sigma$) | Absolute error              | $\|\hat{a}(x) - a(x)\|_\infty \le \epsilon_{\text{table}}$                                             | Piecewise linear activation table approximation (Lai et al., 2018)         |
+| Activation lookup residual         | Exact nonlinear activation ($\tanh, \sigma$) | Absolute error              | $\|\hat{a}(x) - a(x)\|_\infty \le 2^{-7}$ for a 256-breakpoint Q7 table over $[-8, 8]$                  | Piecewise linear activation table approximation (Lai et al., 2018)         |
 | Zero-allocation execution          | Host memory allocator interception           | Exact equality              | 0 heap allocations                                                                                     | NFR-1 `#![no_std]` invariant                                               |
 
 #### 6.4. Traceability
 
 | Requirement                                         | Method                                           | Artifact                                                |
 |:----------------------------------------------------|:-------------------------------------------------|:--------------------------------------------------------|
-| FR-1 — Compile-Time Static Multi-Dimensional Sizing | Compile-time shape check                         | `tests/tensor_shape_fail.rs` (`compile_fail` doctests)  |
-| FR-2 — Strided Multi-Dimensional Indexing & Slicing | Requirements-based test, Doctest                 | `tests/tensor_indexing.rs::test_strided_access`         |
-| FR-3 — Tensor Contraction & Axis Permutation        | Property-based test, Back-to-back comparison     | `tests/tensor_contract.rs::prop_contraction_gemm`       |
-| FR-4 — Multilinear Grid Interpolation               | Requirements-based test, Back-to-back comparison | `tests/tensor_interp.rs::test_multilinear_grid`         |
-| FR-5 — Activation Functions                         | Requirements-based test                          | `tests/tensor_activation.rs::test_relu_table`           |
-| FR-6 — Quantized Fixed-Point Arithmetic             | Property-based test, Back-to-back comparison     | `tests/quantized_arithmetic.rs::prop_quantized_ops`     |
-| FR-7 — Linear Model Interoperability                | Requirements-based test                          | `tests/tensor_interop.rs::test_matrix_poly_conversions` |
-| NFR-1 — Zero Dynamic Heap Allocation                | Resource usage evaluation                        | `#![no_std]` host allocator audit                       |
-| NFR-2 — Bounded Stack Footprint                     | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                   |
-| NFR-3 — Predictable Real-Time Latency               | On-target execution                              | ETS test suite `tensor::bench_contract_latency`         |
-| C-1 — Column-Major Storage Layout                   | Compile-time shape check                         | Structural stride calculation assertions                |
-| C-2 — `#![no_std]` Compatibility                    | Resource usage evaluation                        | Compilation under `#![no_std]` target triples           |
-| C-3 — Stable Rust Toolchain                         | Compile-time shape check                         | Cargo workspace build on `stable` Rust                  |
-| C-4 — Static Dimension Ceiling                      | Resource usage evaluation                        | Static size verification tests                          |
+| FR-1 — Multidimensional Array Representation        | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/tensor/mod.rs`  |
+| FR-2 — Multilinear Grid Interpolation               | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_tensor_grid_interpolation` |
+| FR-3 — Tensor Contraction & Matrix Slicing          | Property-based test, Back-to-back comparison     | `src/tensor/tests/tensor_tests.rs::test_tensor_contract` |
+| FR-4 — Quantized Fixed-Point Inference              | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_quantized_scalar_operations` |
+| FR-5 — Nonlinear Activation Functions               | Requirements-based test                          | `src/tensor/tests/tensor_tests.rs::test_activations`    |
+| NFR-1 — Bounded Stack Allocation                    | Resource usage evaluation                        | `size_of` assertions; element cap $S \le 1024$          |
+| NFR-2 — Real-Time Inference Latency                 | On-target execution                              | ETS suite `tensor_test_suite`                           |
+| C-1 — Out of Scope Capabilities                     | Inspection                                       | Training/ONNX parsers absent from `src/tensor/`         |
+| C-2 — Static Quantization Parameter Encoding        | Compile-time shape check                         | `Quantized<Repr, SHIFT>` const generic                  |
+| C-3 — `#![no_std]` / Zero Heap Allocation           | Resource usage evaluation                        | Compilation under `#![no_std]` target triples           |
 
 #### 6.5. Coverage
 
@@ -570,13 +533,10 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 
 #### 6.6. Validation
 
-- **Spatial Heat Distribution Update**: Validation of 3D tensor state
-  contraction representing 2D heat diffusion over discrete time steps in
-  `examples/thermal_grid.rs`.
-- **Flight-Control Gain Scheduling**: 2D gain table lookup indexed by Mach
-  number and angle of attack in `examples/gain_scheduling.rs`.
-- **TinyML Neural Controller**: 2-layer quantized MLP evaluation with
-  `Quantized<i8, 7>` and `Relu` activation in `examples/tinyml_controller.rs`.
+- **Multilinear Grid Interpolation & Quantized Activation**: Verification of 2D
+  table multilinear continuous interpolation and fixed-point `Quantized<i8, 7>`
+  arithmetic with `Relu` activation in
+  `examples/numerical-models/tensor_example.rs`.
 
 #### 6.7. Not Verified
 
@@ -590,8 +550,8 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 ### 7. Performance & Resource Considerations
 
 - **Stack Overhead**: Inline tensor capacities are bounded by the total element
-  ceiling $S \le 16{,}384$ ($64\text{KB}$ for `f32`, $16\text{KB}$ for
-  `Quantized<i8, 7>`).
+  ceiling $S \le 1{,}024$ ($4\text{ KB}$ for `f32`, $1\text{ KB}$ for
+  `Quantized<i8, 7>`), matching NFR-1.
 - **Memory Footprint**: `Quantized<i8, 7>` achieves a $4\times$ reduction in
   weight/activation RAM compared to `f32`.
 - **Zero-Copy Views**: `TensorView` and `TensorViewMut` operate over borrowed
@@ -603,18 +563,18 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 
 - **Interpolation Bounds Policy**: Whether an out-of-grid query clamps,
   extrapolates or returns an error is not finalized (§4.12).
-- **Q-Format vs. Rational Scale Selection**: This revision defaults to
+- **Q-Format vs. Rational Scale Selection**: The default is
   power-of-two `SHIFT` (§5.2); whether/when the rational variant is needed
   depends on the future model-import path's accuracy requirements.
 - **Activation Table Resolution**: `TableActivation`'s breakpoint count and
-  domain range are not chosen in this revision; CMSIS-NN's `[-8, 8]` precedent
+  domain range are not chosen; CMSIS-NN's `[-8, 8]` precedent
   is a starting point, but the accuracy/size trade-off needs a concrete target
   application before finalizing.
 - **Const-Generic Compile-Time Complexity**: Adding `SHIFT`/rational const
   generics to the scalar type stacks on top of the compile-time-arithmetic
   concerns; watch compile times as `Quantized<Repr, SHIFT>` usage grows.
 - **Model-Import Tooling**: Recorded as future work only (§4.13); no risk
-  analysis is performed in this revision since it is not implemented.
+  analysis is performed since it is not implemented.
 
 ---
 
@@ -626,7 +586,7 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | **Phase 2: Element Ops & Contraction**       | Operator overloads, `contract_into`/`contract_into_dynamic`, `permute`, `as_view`/`slice_inplace`.                                                                                                              | 2.5 Days         |
 | **Phase 3: Grid Interpolation & Activation** | Multilinear `interpolate`, `Activation` trait, `Relu`, `TableActivation`.                                                                                                                                       | 2.5 Days         |
 | **Phase 4: Quantized Scalar Type**           | `Quantized<Repr, SHIFT>` with full `Zero`/`One`/`Scalar` arithmetic `num_traits` impls (correct rounding/saturation semantics), quantize/dequantize, integration across existing generic `T` paths in `Tensor`. | 3.5 Days         |
-| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial` per `vv-standards.md`.                                       | 3.0 Days         |
+| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial` per [`vv-standards.md`](../vv-standards.md).                                       | 3.0 Days         |
 
 ---
 
@@ -668,38 +628,6 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 11. **Hennessy, J. L., & Patterson, D. A. (2017).** _Computer Architecture: A
     Quantitative Approach_ (6th ed.). Morgan Kaufmann. — Cache and
     memory-hierarchy modeling for stride-based N-D indexing.
-12. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool for
-    Random Testing of Haskell Programs. _ACM SIGPLAN Notices_, 35(9), 268–279. —
-    Property-based testing methodology (`proptest`).
-13. **Rust Project Developers. (2024).** _The Rustonomicon: The Dark Arts of
-    Advanced and Unsafe Rust Programming_. — Unsafe/aliasing rules for tensor
-    slice views.
-14. **ISO. (2018).** _ISO 26262-6:2018 Road vehicles — Functional safety — Part
-    6: Product development at the software level_.
-15. **RTCA / EUROCAE. (2011).** _DO-178C: Software Considerations in Airborne
-    Systems and Equipment Certification_.
-16. **Batselier, K., Chen, Z., & Wong, N. (2017).** A Tensor Network Alternative
-    for ODE/PDE-based System Identification. *IFAC-PapersOnLine*, 50(1),
-    11429–11434, doi: 10.1016/j.ifacol.2017.08.1750.
-17. **Favier, G., & Kibangou, A. (2023).** Overview of Tensor-Based Models for
-    Nonlinear System Identification. *Signals*, 4(4), 664–698, doi:
-    10.3390/signals4040036.
-18. **Van Eeghem, J., Sørensen, M., & De Lathauwer, L. (2017).** Tensor tools
-    for
-    blind system identification. In *2017 25th European Signal Processing
-    Conference (EUSIPCO)*, Kos, Greece.
-19. **Batselier, K., Ko, C.-Y., & Wong, N. (2018).** Tensor Network Algorithms
-    for
-    Linear and Nonlinear System Identification. In *2018 IEEE 28th International
-    Workshop on Machine Learning for Signal Processing (MLSP)*, Aalborg,
-    Denmark.
-20. **Baranyi, P. (2014).** TP-Model Transformation-Based-Control Design
-    Frameworks. *Springer International Publishing*, Cham, Switzerland.
-21. **Szollosi, A., & Baranyi, P. (2018).** Influence of Sampling Density on the
-    Characteristics of Tensor Product Models. *Electronics*, 7(12), 373.
-22. **Rogers, M., Li, L., & Russell, S. (2013).** Multilinear Dynamical Systems
-    for Tensor Time Series. In *Advances in Neural Information Processing
-    Systems (NeurIPS 2013)*, Lake Tahoe, NV, USA.
 
 ---
 
@@ -712,3 +640,4 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | 1.2      | August 24, 2026 | @MitchellDScott | Rank-neutral buffer projection: integrated `FlatBuffer`/`FlatBufferMut` projection over `ContiguousStorage` backends.                 |
 | 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with multilinear interpolation tolerances and fixed-point quantization error bounds.       |
 | 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView` and `DenseStorage` traits.                                                 |
+| 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                          |

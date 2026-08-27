@@ -12,6 +12,15 @@
 //! rather than assuming a fixed physical layout, so mixed-layout operands
 //! (e.g. one side a [`Matrix::transpose_view`]) are handled correctly with
 //! no special-casing.
+//!
+//! Dimension mismatches fail at compile time:
+//!
+//! ```compile_fail
+//! use control_rs::matrix::Owned;
+//! let a = Owned::<f64, 2, 2>::identity();
+//! let b = Owned::<f64, 3, 1>::zero();
+//! let _ = &a * &b;
+//! ```
 #![allow(
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
@@ -44,18 +53,25 @@ pub mod tests;
 
 pub use decomposition::{
     CholeskyDecomposition, LdltDecomposition, LuDecomposition, QrDecomposition,
+    QrDecompositionRect,
 };
 pub use specialized::{LowerTriangular, Symmetric, UpperTriangular};
 
-use crate::math::num_traits::{One, Scalar, Zero};
+use crate::math::StorageResult;
+use crate::math::num_traits::{Float, One, Scalar, Zero};
 use crate::math::num_types::{Const, Dim};
 use crate::math::ops::{Add, Mul, Neg, Sub};
 use crate::math::storage::{
     ArrayStorage, ColMajor, ContiguousStorage, ContiguousStorageMut,
-    DenseStorage, DenseStorageMut, RowMajor, StaticStorageView, Storage,
-    StorageInit, StorageMut, Trans,
+    DenseStorage, DenseStorageMut, RowArrayStorage, RowMajor,
+    StaticStorageView, StaticStorageViewMut, Storage, StorageInit, StorageMut,
+    StorageView, StorageViewMut, Trans,
 };
-use crate::math::subprograms::{DefaultBlas, level1::Axpy, level3::Gemm};
+use crate::math::subprograms::{
+    DefaultBlas,
+    level1::{Axpy, Scal},
+    level3::Gemm,
+};
 use core::marker::PhantomData;
 
 /// A type-safe, storage-decoupled matrix.
@@ -71,17 +87,37 @@ pub struct Matrix<T, R: Dim, C: Dim, S: Storage<T, R, C>> {
     _marker: PhantomData<(T, R, C)>,
 }
 
+/// Column-major owning stack matrix (`matrix-design.md` §4.1).
+pub type ArrayMatrix<T, const R: usize, const C: usize> =
+    Matrix<T, Const<R>, Const<C>, ArrayStorage<T, R, C>>;
+
 /// The default owned, stack-based `Matrix`.
 ///
 /// Fixed to the `Const<N>` bridge so its backing `ArrayStorage<T, R, C>` can
 /// use plain `const usize` row/column parameters (`ArrayStorage` cannot be
 /// generic over an arbitrary `Dim` type — see `matrix-design.md` §4.1).
-pub type Owned<T, const R: usize, const C: usize> =
-    Matrix<T, Const<R>, Const<C>, ArrayStorage<T, R, C>>;
+pub type Owned<T, const R: usize, const C: usize> = ArrayMatrix<T, R, C>;
 
-/// A zero-copy, non-owning, immutable matrix view.
+/// A zero-copy, non-owning, immutable contiguous matrix view.
 pub type MatrixSlice<'a, T, R, C, O = ColMajor> =
     Matrix<T, R, C, StaticStorageView<'a, T, R, C, O>>;
+
+/// A zero-copy, non-owning, mutable contiguous matrix view.
+pub type MatrixSliceMut<'a, T, R, C, O = ColMajor> =
+    Matrix<T, R, C, StaticStorageViewMut<'a, T, R, C, O>>;
+
+/// Strided (possibly non-contiguous) immutable view.
+pub type MatrixView<'a, T, R, C> = Matrix<T, R, C, StorageView<'a, T, R, C>>;
+
+/// Strided (possibly non-contiguous) mutable view.
+pub type MatrixViewMut<'a, T, R, C> =
+    Matrix<T, R, C, StorageViewMut<'a, T, R, C>>;
+
+/// Row-major owning stack matrix.
+pub type RowArrayMatrix<T, const R: usize, const C: usize> =
+    Matrix<T, Const<R>, Const<C>, RowArrayStorage<T, R, C>>;
+/// Alias for [`RowArrayMatrix`].
+pub type RowOwned<T, const R: usize, const C: usize> = RowArrayMatrix<T, R, C>;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Constructors
@@ -110,10 +146,7 @@ where
     where
         T: Zero + Copy,
     {
-        Self {
-            storage: ArrayStorage::from_array([[T::ZERO; R]; C]),
-            _marker: PhantomData,
-        }
+        Self::from_storage(ArrayStorage::zero())
     }
 }
 
@@ -127,16 +160,7 @@ where
     where
         T: Zero + One + Copy,
     {
-        let mut data = [[T::ZERO; D]; D];
-        let mut j = 0;
-        while j < D {
-            data[j][j] = T::ONE;
-            j += 1;
-        }
-        Self {
-            storage: ArrayStorage::from_array(data),
-            _marker: PhantomData,
-        }
+        Self::from_storage(ArrayStorage::identity())
     }
 
     /// Builds a `D x D` diagonal matrix from `values`, filling off-diagonal
@@ -146,16 +170,7 @@ where
     where
         T: Zero + Copy,
     {
-        let mut data = [[T::ZERO; D]; D];
-        let mut j = 0;
-        while j < D {
-            data[j][j] = values[j];
-            j += 1;
-        }
-        Self {
-            storage: ArrayStorage::from_array(data),
-            _marker: PhantomData,
-        }
+        Self::from_storage(ArrayStorage::diagonal(values))
     }
 }
 
@@ -230,6 +245,44 @@ impl<T, R: Dim, C: Dim, S: StorageMut<T, R, C>> Matrix<T, R, C, S> {
     pub fn get_mut(&mut self, i: usize, j: usize) -> Option<&mut T> {
         self.storage.get_mut(i, j)
     }
+
+    /// Writes `val` at `(i, j)`.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::OutOfBounds`] if either index is out of bounds.
+    pub fn set(&mut self, i: usize, j: usize, val: T) -> StorageResult<()> {
+        self.storage.set(i, j, val)
+    }
+}
+
+impl<T: Copy, const R: usize, const C: usize, S>
+    Matrix<T, Const<R>, Const<C>, S>
+where
+    Const<R>: Dim,
+    Const<C>: Dim,
+    S: StorageMut<T, Const<R>, Const<C>>,
+{
+    /// Copies `src` into this matrix starting at `(row, col)`.
+    pub fn write_block<const BR: usize, const BC: usize, S2>(
+        &mut self,
+        row: usize,
+        col: usize,
+        src: &Matrix<T, Const<BR>, Const<BC>, S2>,
+    ) where
+        Const<BR>: Dim,
+        Const<BC>: Dim,
+        S2: Storage<T, Const<BR>, Const<BC>>,
+    {
+        for i in 0..BR {
+            for j in 0..BC {
+                if let (Some(target), Some(&v)) =
+                    (self.get_mut(row + i, col + j), src.get(i, j))
+                {
+                    *target = v;
+                }
+            }
+        }
+    }
 }
 
 impl<T, R: Dim, C: Dim, S: Storage<T, R, C> + ContiguousStorage<T>>
@@ -240,6 +293,15 @@ impl<T, R: Dim, C: Dim, S: Storage<T, R, C> + ContiguousStorage<T>>
     pub fn as_slice(&self) -> &[T] {
         self.storage.as_slice()
     }
+
+    /// Contiguous immutable [`MatrixSlice`].
+    #[must_use]
+    pub fn slice(&self) -> MatrixSlice<'_, T, R, C> {
+        let storage = unsafe {
+            StaticStorageView::new_unchecked(self.storage.as_slice())
+        };
+        Matrix::from_storage(storage)
+    }
 }
 
 impl<T, R: Dim, C: Dim, S: StorageMut<T, R, C> + ContiguousStorageMut<T>>
@@ -249,6 +311,14 @@ impl<T, R: Dim, C: Dim, S: StorageMut<T, R, C> + ContiguousStorageMut<T>>
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         self.storage.as_mut_slice()
     }
+
+    /// Contiguous mutable [`MatrixSliceMut`].
+    pub fn slice_mut(&mut self) -> MatrixSliceMut<'_, T, R, C> {
+        let storage = unsafe {
+            StaticStorageViewMut::new_unchecked(self.storage.as_mut_slice())
+        };
+        Matrix::from_storage(storage)
+    }
 }
 
 impl<T, M: Dim, N: Dim, SA> Matrix<T, M, N, SA>
@@ -256,27 +326,7 @@ where
     T: Scalar + Copy,
     SA: DenseStorage<T, R = M, C = N>,
 {
-    /// Multiplies `self` by `rhs` into caller-provided `out` destination buffer using a specific BLAS engine.
-    pub fn mul_into_with<B: Gemm<T, SA, SB, SC>, P: Dim, SB, SC>(
-        &self,
-        rhs: &Matrix<T, N, P, SB>,
-        out: &mut Matrix<T, M, P, SC>,
-    ) where
-        SB: DenseStorage<T, R = N, C = P>,
-        SC: DenseStorageMut<T, R = M, C = P>,
-    {
-        B::gemm(
-            Trans::NoTrans,
-            Trans::NoTrans,
-            T::ONE,
-            &self.storage,
-            &rhs.storage,
-            T::ZERO,
-            &mut out.storage,
-        );
-    }
-
-    /// Multiplies `self` by `rhs` into caller-provided `out` destination buffer using the default BLAS engine.
+    /// Multiplies `self` by `rhs` into caller-provided `out` destination buffer.
     pub fn mul_into<P: Dim, SB, SC>(
         &self,
         rhs: &Matrix<T, N, P, SB>,
@@ -285,7 +335,15 @@ where
         SB: DenseStorage<T, R = N, C = P>,
         SC: DenseStorageMut<T, R = M, C = P>,
     {
-        self.mul_into_with::<DefaultBlas, P, SB, SC>(rhs, out);
+        DefaultBlas::gemm(
+            Trans::NoTrans,
+            Trans::NoTrans,
+            T::ONE,
+            &self.storage,
+            &rhs.storage,
+            T::ZERO,
+            &mut out.storage,
+        );
     }
 }
 
@@ -354,6 +412,39 @@ where
         let mut out = Owned::<T, R, C>::zero();
         DefaultBlas::axpy(T::ZERO - T::ONE, &self.storage, &mut out.storage);
         out
+    }
+}
+
+impl<T, const R: usize, const C: usize, S> Mul<T>
+    for &Matrix<T, Const<R>, Const<C>, S>
+where
+    T: Scalar + Copy,
+    Const<R>: Dim,
+    Const<C>: Dim,
+    S: DenseStorage<T, R = Const<R>, C = Const<C>>,
+{
+    type Output = Owned<T, R, C>;
+
+    fn mul(self, rhs: T) -> Self::Output {
+        let mut out = Owned::<T, R, C>::zero();
+        DefaultBlas::axpy(T::ONE, &self.storage, &mut out.storage);
+        DefaultBlas::scal(rhs, &mut out.storage);
+        out
+    }
+}
+
+impl<T, const R: usize, const C: usize, S> Mul<&T>
+    for &Matrix<T, Const<R>, Const<C>, S>
+where
+    T: Scalar + Copy,
+    Const<R>: Dim,
+    Const<C>: Dim,
+    S: DenseStorage<T, R = Const<R>, C = Const<C>>,
+{
+    type Output = Owned<T, R, C>;
+
+    fn mul(self, rhs: &T) -> Self::Output {
+        self * *rhs
     }
 }
 
@@ -441,6 +532,74 @@ where
     }
 }
 
+impl<T, R: Dim, C: Dim, S: DenseStorage<T, R = R, C = C>> Matrix<T, R, C, S> {
+    /// Zero-copy strided view of the full matrix.
+    #[must_use]
+    pub fn view(&self) -> MatrixView<'_, T, R, C> {
+        let storage = unsafe {
+            StorageView::new_with_strides_unchecked(
+                self.storage.as_ptr(),
+                self.storage.r_stride(),
+                self.storage.c_stride(),
+            )
+        };
+        Matrix::from_storage(storage)
+    }
+
+    /// Zero-copy reversed-index view.
+    #[must_use]
+    pub fn reverse_view(&self) -> MatrixView<'_, T, R, C> {
+        Matrix::from_storage(self.storage.reverse_view())
+    }
+
+    /// Rectangular window of size `R2 × C2` starting at `(origin_row, origin_col)`.
+    #[must_use]
+    pub fn submatrix<const R2: usize, const C2: usize>(
+        &self,
+        origin_row: usize,
+        origin_col: usize,
+    ) -> Option<MatrixView<'_, T, Const<R2>, Const<C2>>>
+    where
+        Const<R2>: Dim,
+        Const<C2>: Dim,
+    {
+        if origin_row.checked_add(R2)? > R::USIZE
+            || origin_col.checked_add(C2)? > C::USIZE
+        {
+            return None;
+        }
+        let rs = self.storage.r_stride();
+        let cs = self.storage.c_stride();
+        let ptr = unsafe {
+            self.storage.as_ptr().offset(
+                origin_row.cast_signed() * rs + origin_col.cast_signed() * cs,
+            )
+        };
+        let storage = unsafe {
+            StorageView::<T, Const<R2>, Const<C2>>::new_with_strides_unchecked(
+                ptr, rs, cs,
+            )
+        };
+        Some(Matrix::from_storage(storage))
+    }
+}
+
+impl<T, R: Dim, C: Dim, S: DenseStorageMut<T, R = R, C = C>>
+    Matrix<T, R, C, S>
+{
+    /// Zero-copy mutable strided view of the full matrix.
+    pub fn view_mut(&mut self) -> MatrixViewMut<'_, T, R, C> {
+        let storage = unsafe {
+            StorageViewMut::new_with_strides_unchecked(
+                self.storage.as_mut_ptr(),
+                self.storage.r_stride(),
+                self.storage.c_stride(),
+            )
+        };
+        Matrix::from_storage(storage)
+    }
+}
+
 impl<T: Copy, const D: usize> Owned<T, D, D>
 where
     Const<D>: Dim,
@@ -459,4 +618,97 @@ where
             }
         }
     }
+}
+
+impl<T: Scalar + Copy, const N: usize, S> Matrix<T, Const<N>, Const<N>, S>
+where
+    Const<N>: Dim,
+    S: Storage<T, Const<N>, Const<N>>,
+{
+    /// Sum of diagonal entries.
+    #[must_use]
+    pub fn trace(&self) -> T {
+        let mut s = T::ZERO;
+        for i in 0..N {
+            if let Some(&v) = self.get(i, i) {
+                s = s + v;
+            }
+        }
+        s
+    }
+}
+
+impl<T: Float + Copy, const N: usize, S> Matrix<T, Const<N>, Const<N>, S>
+where
+    Const<N>: Dim,
+    S: Storage<T, Const<N>, Const<N>>,
+{
+    /// Induced infinity norm (maximum absolute row sum).
+    #[must_use]
+    pub fn inf_norm(&self) -> T {
+        let mut best = T::ZERO;
+        for i in 0..N {
+            let mut row = T::ZERO;
+            for j in 0..N {
+                if let Some(&v) = self.get(i, j) {
+                    row = row + v.abs();
+                }
+            }
+            if row > best {
+                best = row;
+            }
+        }
+        best
+    }
+}
+
+impl<T: Float + Copy, const N: usize> Owned<T, N, N>
+where
+    Const<N>: Dim,
+{
+    /// Padé $[6/6]$ scaling-and-squaring matrix exponential.
+    #[must_use]
+    pub fn expm(&self) -> Self {
+        let two = T::ONE + T::ONE;
+        let theta = two + T::ONE;
+        let mut a_scaled = *self;
+        let mut s = 0_u32;
+        while a_scaled.inf_norm() > theta && s < 16 {
+            a_scaled = &a_scaled * (T::ONE / two);
+            s += 1;
+        }
+
+        let a2 = &a_scaled * &a_scaled;
+        let a4 = &a2 * &a2;
+        let a6 = &a4 * &a2;
+        let (b0, b1, b2, b3, b4, b5, b6) = pade6_coeffs::<T>();
+        let u_inner = &(&(&Owned::<T, N, N>::identity() * b1) + &(&a2 * b3))
+            + &(&a4 * b5);
+        let u = &a_scaled * &u_inner;
+        let v = &(&(&(&Owned::<T, N, N>::identity() * b0) + &(&a2 * b2))
+            + &(&a4 * b4))
+            + &(&a6 * b6);
+
+        let mut r = &v + &u;
+        if let Ok(lu) = LuDecomposition::decompose(&v - &u) {
+            let _ = lu.solve_mut(&mut r);
+        }
+        for _ in 0..s {
+            r = &r * &r;
+        }
+        r
+    }
+}
+
+fn pade6_coeffs<T: Float + Copy>() -> (T, T, T, T, T, T, T) {
+    let two = T::ONE + T::ONE;
+    (
+        T::ONE,
+        T::ONE / two,
+        T::from_usize(5) / T::from_usize(44),
+        T::ONE / T::from_usize(66),
+        T::ONE / T::from_usize(792),
+        T::ONE / T::from_usize(15_840),
+        T::ONE / T::from_usize(665_280),
+    )
 }

@@ -47,17 +47,47 @@
 pub mod tests;
 
 use crate::math::complex_num::Complex;
+use crate::math::dsp::{Convolution, DefaultDsp};
 use crate::math::num_traits::{Float, Scalar, Zero};
 use crate::math::num_types::{Const, Dim};
 use crate::math::storage::{
-    ArrayStorage, ContiguousStorage, DenseStorage, Storage, StorageView,
-    StorageViewMut,
+    ArrayStorage, ContiguousStorage, DenseStorage, DenseStorageMut, Storage,
+    StorageView, StorageViewMut,
+};
+use crate::math::subprograms::{
+    DefaultBlas,
+    level1::{Axpy, Scal},
 };
 use crate::math::{LinAlgError, LinAlgResult};
 use crate::matrix::Owned;
 use crate::polynomial::ArrayPolynomial;
 use crate::state_space::StateSpace;
+use core::fmt;
 use core::marker::PhantomData;
+
+/// Errors from validating constructors and canonical conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferFunctionError {
+    /// Denominator leading coefficient is zero.
+    ZeroLeadingDenominatorCoefficient,
+    /// Numerator degree exceeds denominator degree ($N > D$).
+    ImproperSystem,
+}
+
+impl fmt::Display for TransferFunctionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroLeadingDenominatorCoefficient => {
+                write!(f, "denominator leading coefficient must be non-zero")
+            }
+            Self::ImproperSystem => {
+                write!(f, "transfer function is improper (N > D)")
+            }
+        }
+    }
+}
+
+impl core::error::Error for TransferFunctionError {}
 
 /// Rational transfer function $H(s) = B(s) / A(s)$ over numerator storage `Sn` and denominator storage `Sd`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,38 +165,98 @@ where
         den: [T; D],
         sample_time: Option<T>,
     ) -> Self {
-        // `[[num[0]; N]; 1]` panics when `N == 0`; build via `MaybeUninit`
-        // so zero-length coefficient arrays remain constructible.
-        let num_data: [[T; N]; 1] = {
-            let mut uninit = core::mem::MaybeUninit::<[[T; N]; 1]>::uninit();
-            let mut i = 0;
-            while i < N {
-                unsafe {
-                    (*uninit.as_mut_ptr())[0][i] = num[i];
-                }
-                i += 1;
-            }
-            unsafe { uninit.assume_init() }
-        };
-
-        let den_data: [[T; D]; 1] = {
-            let mut uninit = core::mem::MaybeUninit::<[[T; D]; 1]>::uninit();
-            let mut j = 0;
-            while j < D {
-                unsafe {
-                    (*uninit.as_mut_ptr())[0][j] = den[j];
-                }
-                j += 1;
-            }
-            unsafe { uninit.assume_init() }
-        };
-
         Self {
-            num_storage: ArrayStorage::from_array(num_data),
-            den_storage: ArrayStorage::from_array(den_data),
+            num_storage: ArrayStorage::from_column(num),
+            den_storage: ArrayStorage::from_column(den),
             sample_time,
             _marker: PhantomData,
         }
+    }
+
+    /// Zero-copy strided view of numerator and denominator coefficients.
+    #[must_use]
+    pub fn view(&self) -> TransferFunctionView<'_, T, N, D> {
+        let num_storage = unsafe {
+            StorageView::new_with_strides_unchecked(
+                self.num_storage.as_ptr(),
+                self.num_storage.r_stride(),
+                self.num_storage.c_stride(),
+            )
+        };
+        let den_storage = unsafe {
+            StorageView::new_with_strides_unchecked(
+                self.den_storage.as_ptr(),
+                self.den_storage.r_stride(),
+                self.den_storage.c_stride(),
+            )
+        };
+        TransferFunction::from_storage(
+            num_storage,
+            den_storage,
+            self.sample_time,
+        )
+    }
+
+    /// Zero-copy mutable strided view of numerator and denominator coefficients.
+    pub fn view_mut(&mut self) -> TransferFunctionViewMut<'_, T, N, D> {
+        let sample_time = self.sample_time;
+        let num_storage = unsafe {
+            StorageViewMut::new_with_strides_unchecked(
+                self.num_storage.as_mut_ptr(),
+                self.num_storage.r_stride(),
+                self.num_storage.c_stride(),
+            )
+        };
+        let den_storage = unsafe {
+            StorageViewMut::new_with_strides_unchecked(
+                self.den_storage.as_mut_ptr(),
+                self.den_storage.r_stride(),
+                self.den_storage.c_stride(),
+            )
+        };
+        TransferFunction::from_storage(num_storage, den_storage, sample_time)
+    }
+}
+
+impl<T: Float + Copy, const N: usize, const D: usize>
+    ArrayTransferFunction<T, N, D>
+where
+    Const<N>: Dim,
+    Const<D>: Dim,
+{
+    /// Validating constructor: non-zero leading denominator and $N \le D$.
+    pub fn try_from_coefficients(
+        num: [T; N],
+        den: [T; D],
+        sample_time: Option<T>,
+    ) -> Result<Self, TransferFunctionError> {
+        if N > D {
+            return Err(TransferFunctionError::ImproperSystem);
+        }
+        let leading = den[D.saturating_sub(1)];
+        if leading.abs() < T::epsilon() {
+            return Err(
+                TransferFunctionError::ZeroLeadingDenominatorCoefficient,
+            );
+        }
+        Ok(Self::from_coefficients(num, den, sample_time))
+    }
+
+    /// Validating continuous-time constructor.
+    pub fn try_continuous(
+        num: [T; N],
+        den: [T; D],
+    ) -> Result<Self, TransferFunctionError> {
+        Self::try_from_coefficients(num, den, None)
+    }
+
+    /// Validating discrete-time constructor.
+    pub fn try_discrete(
+        num: [T; N],
+        den: [T; D],
+        dt: T,
+    ) -> Result<Self, TransferFunctionError> {
+        Self::try_from_coefficients(num, den, Some(dt))
     }
 }
 
@@ -349,20 +439,88 @@ where
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
     {
-        let num1 = ArrayPolynomial::<T, N1>::from_storage(self.num_storage);
-        let num2 = ArrayPolynomial::<T, N2>::from_storage(rhs.num_storage);
-        let num_prod = num1.mul_poly::<N2, NOUT>(&num2);
+        let num_storage = convolve_poly::<T, N1, N2, NOUT>(
+            &self.num_storage,
+            &rhs.num_storage,
+        );
+        let den_storage = convolve_poly::<T, D1, D2, DOUT>(
+            &self.den_storage,
+            &rhs.den_storage,
+        );
 
-        let den1 = ArrayPolynomial::<T, D1>::from_storage(self.den_storage);
-        let den2 = ArrayPolynomial::<T, D2>::from_storage(rhs.den_storage);
-        let den_prod = den1.mul_poly::<D2, DOUT>(&den2);
+        ArrayTransferFunction::from_storage(
+            num_storage,
+            den_storage,
+            self.sample_time,
+        )
+    }
 
-        ArrayTransferFunction {
-            num_storage: num_prod.into_storage(),
-            den_storage: den_prod.into_storage(),
-            sample_time: self.sample_time,
-            _marker: PhantomData,
-        }
+    /// Parallel connection: $H_1 + H_2 = (B_1 A_2 + B_2 A_1) / (A_1 A_2)$.
+    ///
+    /// `NOUT >= N1+D2-1` and `NOUT >= N2+D1-1`; `DOUT >= D1+D2-1`.
+    pub fn parallel<
+        const N2: usize,
+        const D2: usize,
+        const NOUT: usize,
+        const DOUT: usize,
+    >(
+        &self,
+        rhs: &ArrayTransferFunction<T, N2, D2>,
+    ) -> ArrayTransferFunction<T, NOUT, DOUT>
+    where
+        Const<N2>: Dim,
+        Const<D2>: Dim,
+        Const<NOUT>: Dim,
+        Const<DOUT>: Dim,
+    {
+        let mut num = convolve_poly::<T, N1, D2, NOUT>(
+            &self.num_storage,
+            &rhs.den_storage,
+        );
+        let b2a1 = convolve_poly::<T, N2, D1, NOUT>(
+            &rhs.num_storage,
+            &self.den_storage,
+        );
+        DefaultBlas::axpy(T::ONE, &b2a1, &mut num);
+        let den = convolve_poly::<T, D1, D2, DOUT>(
+            &self.den_storage,
+            &rhs.den_storage,
+        );
+        ArrayTransferFunction::from_storage(num, den, self.sample_time)
+    }
+
+    /// Negative feedback: $H_1 / (1 + H_1 H_2) = (B_1 A_2) / (A_1 A_2 + B_1 B_2)$.
+    ///
+    /// `NOUT >= N1+D2-1`; `DOUT` is at least the larger of `D1+D2-1` and `N1+N2-1`.
+    pub fn feedback<
+        const N2: usize,
+        const D2: usize,
+        const NOUT: usize,
+        const DOUT: usize,
+    >(
+        &self,
+        rhs: &ArrayTransferFunction<T, N2, D2>,
+    ) -> ArrayTransferFunction<T, NOUT, DOUT>
+    where
+        Const<N2>: Dim,
+        Const<D2>: Dim,
+        Const<NOUT>: Dim,
+        Const<DOUT>: Dim,
+    {
+        let num = convolve_poly::<T, N1, D2, NOUT>(
+            &self.num_storage,
+            &rhs.den_storage,
+        );
+        let mut den = convolve_poly::<T, D1, D2, DOUT>(
+            &self.den_storage,
+            &rhs.den_storage,
+        );
+        let b1b2 = convolve_poly::<T, N1, N2, DOUT>(
+            &self.num_storage,
+            &rhs.num_storage,
+        );
+        DefaultBlas::axpy(T::ONE, &b1b2, &mut den);
+        ArrayTransferFunction::from_storage(num, den, self.sample_time)
     }
 }
 
@@ -398,33 +556,70 @@ where
     /// $\beta_i = b_i / a_n - d \cdot a_i$.
     ///
     /// # Errors
-    /// Returns [`LinAlgError::SingularMatrix`] if `ORDER + 1 != D`, `ORDER == 0`,
-    /// $N > D$ (improper), or the leading denominator coefficient is zero.
+    /// Returns [`TransferFunctionError`] if $N > D$, $D < 2$, or the leading
+    /// denominator coefficient is zero.
     pub fn to_controllable_canonical_form<const ORDER: usize>(
         &self,
-    ) -> LinAlgResult<StateSpace<T, ORDER, 1, 1>>
+    ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
     where
         Const<ORDER>: Dim,
         Const<1>: Dim,
     {
+        let (a_mat, b_mat, c_mat, d_mat) = self.canonical_blocks::<ORDER>()?;
+        Ok(match self.sample_time {
+            None => StateSpace::continuous(a_mat, b_mat, c_mat, d_mat),
+            Some(dt) => StateSpace::discrete(a_mat, b_mat, c_mat, d_mat, dt),
+        })
+    }
+
+    /// Observable canonical form (dual of last-row CCF).
+    pub fn to_observable_canonical_form<const ORDER: usize>(
+        &self,
+    ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
+    where
+        Const<ORDER>: Dim,
+        Const<1>: Dim,
+    {
+        let (a_ccf, b_ccf, c_ccf, d_mat) = self.canonical_blocks::<ORDER>()?;
+        let a_mat = a_ccf.transpose();
+        let b_mat = c_ccf.transpose();
+        let c_mat = b_ccf.transpose();
+        Ok(match self.sample_time {
+            None => StateSpace::continuous(a_mat, b_mat, c_mat, d_mat),
+            Some(dt) => StateSpace::discrete(a_mat, b_mat, c_mat, d_mat, dt),
+        })
+    }
+
+    fn canonical_blocks<const ORDER: usize>(
+        &self,
+    ) -> Result<
+        (
+            Owned<T, ORDER, ORDER>,
+            Owned<T, ORDER, 1>,
+            Owned<T, 1, ORDER>,
+            Owned<T, 1, 1>,
+        ),
+        TransferFunctionError,
+    >
+    where
+        Const<ORDER>: Dim,
+    {
         if ORDER + 1 != D || ORDER == 0 {
-            return Err(LinAlgError::SingularMatrix);
+            return Err(TransferFunctionError::ImproperSystem);
         }
-        // Relative degree must be non-negative (proper TF).
         if N > D {
-            return Err(LinAlgError::SingularMatrix);
+            return Err(TransferFunctionError::ImproperSystem);
         }
         let a_n = self.den_storage.get(ORDER, 0).copied().unwrap_or(T::ZERO);
         if a_n.abs() < T::epsilon() {
-            return Err(LinAlgError::SingularMatrix);
+            return Err(
+                TransferFunctionError::ZeroLeadingDenominatorCoefficient,
+            );
         }
 
-        // Normalize polynomial coefficients by a_n
-        let mut a_norm = [T::ZERO; ORDER];
-        for i in 0..ORDER {
-            a_norm[i] =
-                self.den_storage.get(i, 0).copied().unwrap_or(T::ZERO) / a_n;
-        }
+        let mut a_col =
+            Self::copy_col_prefix::<ORDER, D>(&self.den_storage, ORDER);
+        DefaultBlas::scal(T::ONE / a_n, a_col.storage_mut());
 
         // Direct feedthrough d = b_n / a_n when deg(num) == deg(den).
         let d = if N == D {
@@ -433,16 +628,11 @@ where
             T::ZERO
         };
 
-        // β_i = b_i / a_n - d * a_i  (b_i = 0 when i >= N)
-        let mut beta = [T::ZERO; ORDER];
-        for i in 0..ORDER {
-            let b_i = if i < N {
-                self.num_storage.get(i, 0).copied().unwrap_or(T::ZERO) / a_n
-            } else {
-                T::ZERO
-            };
-            beta[i] = b_i - d * a_norm[i];
-        }
+        // β = b / a_n - d · a
+        let mut beta =
+            Self::copy_col_prefix::<ORDER, N>(&self.num_storage, ORDER.min(N));
+        DefaultBlas::scal(T::ONE / a_n, beta.storage_mut());
+        DefaultBlas::axpy(T::ZERO - d, a_col.storage(), beta.storage_mut());
 
         // Controllable companion: ones on the superdiagonal, -a on the last row.
         let mut a_mat = Owned::<T, ORDER, ORDER>::zero();
@@ -453,7 +643,7 @@ where
         }
         for i in 0..ORDER {
             if let Some(elem) = a_mat.get_mut(ORDER - 1, i) {
-                *elem = T::ZERO - a_norm[i];
+                *elem = T::ZERO - a_col.get(i, 0).copied().unwrap_or(T::ZERO);
             }
         }
 
@@ -465,7 +655,7 @@ where
         let mut c_mat = Owned::<T, 1, ORDER>::zero();
         for i in 0..ORDER {
             if let Some(elem) = c_mat.get_mut(0, i) {
-                *elem = beta[i];
+                *elem = beta.get(i, 0).copied().unwrap_or(T::ZERO);
             }
         }
 
@@ -474,9 +664,87 @@ where
             *elem = d;
         }
 
-        Ok(match self.sample_time {
-            None => StateSpace::continuous(a_mat, b_mat, c_mat, d_mat),
-            Some(dt) => StateSpace::discrete(a_mat, b_mat, c_mat, d_mat, dt),
-        })
+        Ok((a_mat, b_mat, c_mat, d_mat))
     }
+
+    fn copy_col_prefix<const ORDER: usize, const SRC: usize>(
+        src: &ArrayStorage<T, SRC, 1>,
+        count: usize,
+    ) -> Owned<T, ORDER, 1>
+    where
+        Const<ORDER>: Dim,
+        Const<SRC>: Dim,
+    {
+        let mut col = Owned::<T, ORDER, 1>::zero();
+        for i in 0..count {
+            if let (Some(dst), Some(&v)) = (col.get_mut(i, 0), src.get(i, 0)) {
+                *dst = v;
+            }
+        }
+        col
+    }
+
+    /// Tustin discretization $s = \frac{2}{T_s}\frac{z-1}{z+1}$ with optional pre-warp.
+    #[must_use]
+    pub fn to_discrete_tustin(
+        &self,
+        sample_time: T,
+        prewarp_frequency: Option<T>,
+    ) -> Self {
+        let two = T::ONE + T::ONE;
+        let k = match prewarp_frequency {
+            None => two / sample_time,
+            Some(wc) => wc / (wc * sample_time / two).tan(),
+        };
+        let ts_eff = two / k;
+        let num = ArrayPolynomial::<T, N>::from_storage(self.num_storage)
+            .compose_bilinear(ts_eff);
+        let den = ArrayPolynomial::<T, D>::from_storage(self.den_storage)
+            .compose_bilinear(ts_eff);
+        Self::from_storage(
+            num.into_storage(),
+            den.into_storage(),
+            Some(sample_time),
+        )
+    }
+
+    /// ZOH via last-row CCF, Van Loan `StateSpace::to_discrete_zoh`, then SISO TF.
+    ///
+    /// `ORDER` is the state dimension $D-1$.
+    pub fn to_discrete_zoh<const ORDER: usize>(
+        &self,
+        sample_time: T,
+    ) -> LinAlgResult<ArrayTransferFunction<T, D, D>>
+    where
+        Const<ORDER>: Dim,
+    {
+        let ss = self
+            .to_controllable_canonical_form::<ORDER>()
+            .map_err(|_| LinAlgError::SingularMatrix)?;
+        let dss = ss.to_discrete_zoh(sample_time);
+        Ok(dss.to_transfer_function::<D>())
+    }
+}
+
+fn convolve_poly<
+    T: Scalar + Copy,
+    const NA: usize,
+    const NB: usize,
+    const NO: usize,
+>(
+    a: &ArrayStorage<T, NA, 1>,
+    b: &ArrayStorage<T, NB, 1>,
+) -> ArrayStorage<T, NO, 1>
+where
+    Const<NA>: Dim,
+    Const<NB>: Dim,
+    Const<NO>: Dim,
+{
+    let mut out = ArrayStorage::<T, NO, 1>::zero();
+    let _ = DefaultDsp::convolve_input(
+        a.as_slice(),
+        b.as_slice(),
+        out.as_mut_slice(),
+    );
+    out
 }

@@ -11,9 +11,29 @@ pub mod fixed_num_test_suite {
             UQ15, UQ31, UQ63,
         },
         num_traits::{Conjugate, One, SaturatingInteger, Scalar, Signed, Zero},
-        ops::{SaturatingAdd, SaturatingMul, TryAdd, TryMul, TryNeg, TrySub},
+        ops::{
+            SaturatingAdd, SaturatingMul, SaturatingSub, TryAdd, TryMul,
+            TryNeg, TrySub,
+        },
     };
     use core::mem::{align_of, size_of};
+
+    struct StackBuf {
+        buf: [u8; 64],
+        len: usize,
+    }
+
+    impl core::fmt::Write for StackBuf {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            for &b in s.as_bytes() {
+                if let Some(slot) = self.buf.get_mut(self.len) {
+                    *slot = b;
+                    self.len += 1;
+                }
+            }
+            Ok(())
+        }
+    }
 
     #[cfg_attr(test, test)]
     /// Verifies single-word memory footprint and alignment across all supported primitives (NFR-1).
@@ -266,6 +286,61 @@ pub mod fixed_num_test_suite {
         assert_one::<Q14>();
         assert_scalar::<Q14>();
         // Note: assert_sat_int::<Q14>() and assert_two_rep::<Q14>() fail compile-time trait bound
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_fixed_display_assign_and_rescale() {
+        use core::fmt::Write;
+        type Q1 = Fixed<i16, 1>;
+        type Q8 = Fixed<i16, 8>;
+        type UQ8 = Fixed<u16, 8>;
+        let a = Q8::from_num(0.5);
+        let mut buf = StackBuf {
+            buf: [0u8; 64],
+            len: 0,
+        };
+        write!(&mut buf, "{a}").unwrap();
+        let rendered = buf
+            .buf
+            .get(..buf.len)
+            .and_then(|s| core::str::from_utf8(s).ok())
+            .unwrap_or("");
+        assert!(rendered.contains("Q8"));
+        let mut b = a;
+        b += a;
+        b -= a;
+        let _ = b * a;
+        let mut c = a;
+        c *= Q8::from_num(2.0);
+        let up: Q1 = a.rescale();
+        assert!(up.to_num().abs() > 0.0);
+        let down: Q8 = Q1::from_num(1.0).rescale();
+        assert!((down.to_num() - 1.0).abs() < 0.1);
+        let huge = Q8::from_bits(i16::MAX);
+        let _shifted: Fixed<i16, 12> = huge.rescale();
+        let tiny: Fixed<i16, 0> = Q8::from_num(0.25).rescale();
+        assert!(tiny.to_bits().abs() >= 0);
+
+        // Saturation and Try error paths
+        let max_q8 = Q8::from_bits(i16::MAX);
+        let min_q8 = Q8::from_bits(i16::MIN);
+        assert_eq!(max_q8.try_add(&max_q8), Err(ArithmeticError::Overflow));
+        assert_eq!(min_q8.try_sub(&max_q8), Err(ArithmeticError::Overflow));
+        assert_eq!(max_q8.try_mul(&max_q8), Err(ArithmeticError::Overflow));
+        assert_eq!(min_q8.try_neg(), Err(ArithmeticError::Overflow));
+
+        let _sat_add = max_q8.saturating_add(&max_q8);
+        let _sat_sub = min_q8.saturating_sub(&max_q8);
+        let _sat_mul = max_q8.saturating_mul(&max_q8);
+
+        // UQ8 / unsigned fixed
+        let u_max = UQ8::from_bits(u16::MAX);
+        assert_eq!(u_max.try_add(&u_max), Err(ArithmeticError::Overflow));
+        assert_eq!(
+            UQ8::from_bits(0).try_sub(&u_max),
+            Err(ArithmeticError::Overflow)
+        );
+        assert_eq!(u_max.try_mul(&u_max), Err(ArithmeticError::Overflow));
     }
 }
 

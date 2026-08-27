@@ -535,6 +535,69 @@ impl<T, const R: usize, const C: usize> ArrayStorage<T, R, C> {
     pub const fn as_mut_slice(&mut self) -> &mut [T] {
         self.data.as_flattened_mut()
     }
+
+    /// Builds an all-zero storage backend.
+    #[must_use]
+    pub const fn zero() -> Self
+    where
+        T: Zero + Copy,
+    {
+        Self::from_array([[T::ZERO; R]; C])
+    }
+}
+
+impl<T, const N: usize> ArrayStorage<T, N, 1> {
+    /// Builds a column vector backend from a 1D array of elements.
+    #[must_use]
+    pub const fn from_column(data: [T; N]) -> Self {
+        Self::from_array([data])
+    }
+}
+
+impl<T: Copy, const N: usize> ArrayStorage<T, 1, N> {
+    /// Builds a row vector backend from a 1D array of elements.
+    #[must_use]
+    pub const fn from_row(data: [T; N]) -> Self {
+        let mut arr = [[data[0]]; N];
+        let mut j = 0;
+        while j < N {
+            arr[j][0] = data[j];
+            j += 1;
+        }
+        Self::from_array(arr)
+    }
+}
+
+impl<T, const D: usize> ArrayStorage<T, D, D> {
+    /// Builds the `D x D` multiplicative identity storage backend.
+    #[must_use]
+    pub const fn identity() -> Self
+    where
+        T: Zero + One + Copy,
+    {
+        let mut data = [[T::ZERO; D]; D];
+        let mut j = 0;
+        while j < D {
+            data[j][j] = T::ONE;
+            j += 1;
+        }
+        Self::from_array(data)
+    }
+
+    /// Builds a `D x D` diagonal storage backend from `values`.
+    #[must_use]
+    pub const fn diagonal(values: [T; D]) -> Self
+    where
+        T: Zero + Copy,
+    {
+        let mut data = [[T::ZERO; D]; D];
+        let mut j = 0;
+        while j < D {
+            data[j][j] = values[j];
+            j += 1;
+        }
+        Self::from_array(data)
+    }
 }
 
 unsafe impl<T, const R: usize, const C: usize> DenseStorage<T>
@@ -646,6 +709,69 @@ impl<T, const R: usize, const C: usize> RowArrayStorage<T, R, C> {
     #[must_use]
     pub const fn as_mut_slice(&mut self) -> &mut [T] {
         self.data.as_flattened_mut()
+    }
+
+    /// Builds an all-zero row-major storage backend.
+    #[must_use]
+    pub const fn zero() -> Self
+    where
+        T: Zero + Copy,
+    {
+        Self::from_array([[T::ZERO; C]; R])
+    }
+}
+
+impl<T, const N: usize> RowArrayStorage<T, 1, N> {
+    /// Builds a row vector backend from a 1D array of elements.
+    #[must_use]
+    pub const fn from_row(data: [T; N]) -> Self {
+        Self::from_array([data])
+    }
+}
+
+impl<T: Copy, const N: usize> RowArrayStorage<T, N, 1> {
+    /// Builds a column vector backend from a 1D array of elements.
+    #[must_use]
+    pub const fn from_column(data: [T; N]) -> Self {
+        let mut arr = [[data[0]]; N];
+        let mut i = 0;
+        while i < N {
+            arr[i][0] = data[i];
+            i += 1;
+        }
+        Self::from_array(arr)
+    }
+}
+
+impl<T, const D: usize> RowArrayStorage<T, D, D> {
+    /// Builds the `D x D` multiplicative identity row-major storage backend.
+    #[must_use]
+    pub const fn identity() -> Self
+    where
+        T: Zero + One + Copy,
+    {
+        let mut data = [[T::ZERO; D]; D];
+        let mut j = 0;
+        while j < D {
+            data[j][j] = T::ONE;
+            j += 1;
+        }
+        Self::from_array(data)
+    }
+
+    /// Builds a `D x D` diagonal row-major storage backend from `values`.
+    #[must_use]
+    pub const fn diagonal(values: [T; D]) -> Self
+    where
+        T: Zero + Copy,
+    {
+        let mut data = [[T::ZERO; D]; D];
+        let mut j = 0;
+        while j < D {
+            data[j][j] = values[j];
+            j += 1;
+        }
+        Self::from_array(data)
     }
 }
 

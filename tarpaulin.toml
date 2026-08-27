@@ -3,5 +3,4 @@ engine = "Llvm"
 all-features = true
 exclude-files = [
     "documentation/*",
-    "control-rs-xtask/*"
 ]

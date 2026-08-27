@@ -2,7 +2,7 @@
 # Lowered from 8. Large argument lists often lead to stack bloat and call-site confusion.
 too-many-arguments-threshold = 4
 
-# Drastically lowered from 256. Complex types in robotics (like nested generics for
+# Drastically lowered from 256. Complex types (like nested generics for
 # hardware abstraction layers) should be aliased for readability and to prevent logic errors.
 type-complexity-threshold = 50
 

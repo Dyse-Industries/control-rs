@@ -103,9 +103,9 @@ fn main() {
     if let Ok(ss) = tf_realize.to_controllable_canonical_form::<2>() {
         println!("\n--- Controllable Canonical Realization ---");
         println!("H(s) = (2 + 3s) / (4 + 5s + s^2)");
-        print_matrix("A", ss.a());
-        print_matrix("B", ss.b());
-        print_matrix("C", ss.c());
-        print_matrix("D", ss.d());
+        print_matrix("A", &ss.a());
+        print_matrix("B", &ss.b());
+        print_matrix("C", &ss.c());
+        print_matrix("D", &ss.d());
     }
 }

@@ -57,10 +57,10 @@ fn main() {
     let sys_c = ArrayStateSpace::continuous(a_c, b_c, c_c, d_c);
 
     println!("\n--- Continuous-Time System ---");
-    print_matrix("A_c", sys_c.a());
-    print_matrix("B_c", sys_c.b());
-    print_matrix("C_c", sys_c.c());
-    print_matrix("D_c", sys_c.d());
+    print_matrix("A_c", &sys_c.a());
+    print_matrix("B_c", &sys_c.b());
+    print_matrix("C_c", &sys_c.c());
+    print_matrix("D_c", &sys_c.d());
 
     let x_test: Owned<f64, 2, 1> = Owned::from_array([[1.0, 0.5]]);
     let u_test: Owned<f64, 1, 1> = Owned::zero();
@@ -77,10 +77,10 @@ fn main() {
     let sys_d = sys_c.to_discrete_zoh(dt);
 
     println!("\n--- Discrete-Time System (ZOH, Ts = {dt}s) ---");
-    print_matrix("A_d", sys_d.a());
-    print_matrix("B_d", sys_d.b());
-    print_matrix("C_d", sys_d.c());
-    print_matrix("D_d", sys_d.d());
+    print_matrix("A_d", &sys_d.a());
+    print_matrix("B_d", &sys_d.b());
+    print_matrix("C_d", &sys_d.c());
+    print_matrix("D_d", &sys_d.d());
 
     // 3. 20-step Discrete Unit Step Simulation (u[k] = 1.0, x[0] = 0)
     let num_steps = 20;
@@ -95,9 +95,10 @@ fn main() {
     for k in 0..num_steps {
         let pos = x_k.get(0, 0).copied().unwrap_or(0.0);
         let vel = x_k.get(1, 0).copied().unwrap_or(0.0);
-        let y_k = sys_d.step(&mut x_k, &u_step);
+        let (x_next, y_k) = sys_d.step(&x_k, &u_step);
         let y_val = y_k.get(0, 0).copied().unwrap_or(0.0);
         println!("{k:<6}{pos:<16.8}{vel:<16.8}{y_val:<16.8}");
+        x_k = x_next;
     }
 
     // 4. Similarity Coordinate Transformation: T = [[1, 1], [0, 1]]
@@ -105,8 +106,8 @@ fn main() {
     let t: Owned<f64, 2, 2> = Owned::from_array([[1.0, 0.0], [1.0, 1.0]]);
     if let Ok(sys_transformed) = sys_d.similarity_transform(&t) {
         println!("\n--- Transformed System (T = [[1, 1], [0, 1]]) ---");
-        print_matrix("A_tilde", sys_transformed.a());
-        print_matrix("B_tilde", sys_transformed.b());
-        print_matrix("C_tilde", sys_transformed.c());
+        print_matrix("A_tilde", &sys_transformed.a());
+        print_matrix("B_tilde", &sys_transformed.b());
+        print_matrix("C_tilde", &sys_transformed.c());
     }
 }

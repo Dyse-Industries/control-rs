@@ -30,7 +30,8 @@
     clippy::similar_names,
     clippy::unwrap_used,
     clippy::items_after_statements,
-    clippy::cast_precision_loss
+    clippy::cast_precision_loss,
+    clippy::float_cmp
 )]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
@@ -352,7 +353,7 @@ pub mod matrix_test_suite {
         assert_almost_eq!(ldlt.determinant(), 8.0, 1e-9);
 
         let mut b: Owned<f64, 2, 1> = Matrix::from_fn(|i, _| [6.0, 5.0][i]);
-        ldlt.solve_mut(&mut b);
+        ldlt.solve_mut(&mut b).unwrap();
         assert_almost_eq!(*b.get(0, 0).unwrap(), 1.0, 1e-9);
         assert_almost_eq!(*b.get(1, 0).unwrap(), 1.0, 1e-9);
     }
@@ -382,7 +383,7 @@ pub mod matrix_test_suite {
         let chol = sym.into_cholesky().unwrap();
 
         let mut b: Owned<f64, 2, 1> = Matrix::from_fn(|i, _| [6.0, 5.0][i]);
-        chol.solve_mut(&mut b);
+        chol.solve_mut(&mut b).unwrap();
         assert_almost_eq!(*b.get(0, 0).unwrap(), 1.0, 1e-9);
         assert_almost_eq!(*b.get(1, 0).unwrap(), 1.0, 1e-9);
     }
@@ -454,6 +455,119 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*updated.get(0, 1).unwrap(), 0.0);
         assert_almost_eq!(*updated.get(1, 0).unwrap(), -0.25);
         assert_almost_eq!(*updated.get(1, 1).unwrap(), 1.0);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_coordinate_access() {
+        let mut m: Owned<f64, 2, 2> = Owned::zero();
+        m.set(0, 1, 3.0).unwrap();
+        assert_eq!(*m.get(0, 1).unwrap(), 3.0);
+        assert!(m.set(2, 0, 1.0).is_err());
+        assert!(m.get(2, 0).is_none());
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_strided_submatrix() {
+        let m: Owned<f64, 3, 3> = Owned::from_fn(|i, j| (i * 3 + j) as f64);
+        let sub = m.submatrix::<2, 2>(1, 1).unwrap();
+        assert_eq!(*sub.get(0, 0).unwrap(), *m.get(1, 1).unwrap());
+        assert_eq!(*sub.get(1, 1).unwrap(), *m.get(2, 2).unwrap());
+        assert!(m.submatrix::<2, 2>(2, 2).is_none());
+        let rev = m.reverse_view();
+        assert_eq!(*rev.get(0, 0).unwrap(), *m.get(2, 2).unwrap());
+        let sl = m.slice();
+        assert_eq!(sl.as_slice().len(), 9);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_c_abi_layout() {
+        let m: Owned<f64, 2, 2> = Owned::from_array([[1.0, 2.0], [3.0, 4.0]]);
+        let slice = m.as_slice();
+        assert_eq!(slice.len(), 4);
+        assert_eq!(
+            core::mem::size_of_val(slice),
+            4 * core::mem::size_of::<f64>()
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_lu_workspace_too_small() {
+        let mut a: Owned<f64, 2, 2> = Owned::identity();
+        let mut pivots = [0usize; 1];
+        assert_eq!(
+            a.lu_decompose_mut(&mut pivots),
+            Err(LinAlgError::WorkspaceTooSmall)
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_qr_rect_tall() {
+        let a: Owned<f64, 3, 2> =
+            Owned::from_fn(|i, j| [[1.0, 0.0], [1.0, 1.0], [0.0, 1.0]][i][j]);
+        let qr = a.into_qr_rect().unwrap();
+        let recon = &qr.q * &qr.r;
+        for i in 0..3 {
+            for j in 0..2 {
+                assert_almost_eq!(
+                    *recon.get(i, j).unwrap(),
+                    *a.get(i, j).unwrap(),
+                    1e-9
+                );
+            }
+        }
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_matrix_storage_views_and_mul_into() {
+        let mut m = Owned::<f64, 2, 2>::diagonal([3.0, 4.0]);
+        assert_eq!(m.cols(), 2);
+        assert_eq!(m.rows(), 2);
+        assert_eq!(m.storage().as_slice()[0], 3.0);
+        *m.get_mut(0, 1).unwrap() = 1.0;
+        {
+            let mut sl = m.slice_mut();
+            *sl.get_mut(1, 0).unwrap() = 2.0;
+        }
+        let v = m.view();
+        assert_eq!(v.get(0, 0), Some(&3.0));
+        let rv = m.reverse_view();
+        assert!(rv.get(0, 0).is_some());
+        {
+            let mut vm = m.view_mut();
+            *vm.get_mut(1, 1).unwrap() = 5.0;
+        }
+        assert!(m.submatrix::<2, 2>(1, 0).is_none());
+        let ident = Owned::<f64, 2, 2>::identity();
+        let mut out = Owned::<f64, 2, 2>::zero();
+        m.mul_into(&ident, &mut out);
+        assert_almost_eq!(*out.get(0, 0).unwrap(), 3.0);
+        let stored = m.into_storage();
+        assert_eq!(stored.as_slice()[3], 5.0);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_scalar_mul_trace_expm_write_block() {
+        let ident = Owned::<f64, 2, 2>::identity();
+        let scaled = &ident * 3.0;
+        assert_almost_eq!(*scaled.get(0, 0).unwrap(), 3.0);
+        assert_almost_eq!(*scaled.get(1, 1).unwrap(), 3.0);
+        let scaled_ref = &ident * &2.0;
+        assert_almost_eq!(*scaled_ref.get(0, 0).unwrap(), 2.0);
+        assert_almost_eq!(ident.trace(), 2.0);
+        assert_almost_eq!(ident.inf_norm(), 1.0);
+
+        let zero = Owned::<f64, 2, 2>::zero();
+        let e0 = zero.expm();
+        assert_almost_eq!(*e0.get(0, 0).unwrap(), 1.0);
+        assert_almost_eq!(*e0.get(1, 1).unwrap(), 1.0);
+        assert_almost_eq!(*e0.get(0, 1).unwrap(), 0.0);
+
+        let mut dest = Owned::<f64, 3, 3>::zero();
+        let src = Owned::<f64, 2, 2>::identity();
+        dest.write_block(1, 1, &src);
+        assert_almost_eq!(*dest.get(1, 1).unwrap(), 1.0);
+        assert_almost_eq!(*dest.get(2, 2).unwrap(), 1.0);
+        assert_almost_eq!(*dest.get(0, 0).unwrap(), 0.0);
     }
 }
 

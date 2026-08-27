@@ -49,38 +49,52 @@ use control_rs_xtask::bridge;
 mod tasks;
 mod utils;
 
-/// Main entrypoint. Parses arguments and routes execution to the correct subcommand handler.
-fn main() {
-    let args: Vec<String> = env::args().collect();
+/// Subcommand action parsed from command line arguments.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Subcommand {
+    /// Run CI on a single target or all QEMU targets.
+    Ci(Option<bridge::Target>),
+    /// Run TUI on a single target.
+    Tui(bridge::Target),
+    /// Install pre-commit git hooks.
+    InstallHooks,
+    /// Print usage instructions.
+    Usage,
+}
+
+/// Parses command line arguments into a structured subcommand.
+pub fn parse_subcommand(args: &[String]) -> Result<Subcommand, String> {
     if args.len() < 2 {
-        print_usage_and_exit();
+        return Ok(Subcommand::Usage);
     }
 
     match args[1].as_str() {
-        "ci" => match bridge::Target::parse(&args, "all", "/dev/ttyACM0") {
-            Ok(Some(target)) => run_ci_single(&target),
-            Ok(None) => run_ci_all_qemu(),
-            Err(e) => {
-                eprintln!("\t{e}");
-                exit(1);
+        "ci" => bridge::Target::parse(args, "all", "/dev/ttyACM0")
+            .map(Subcommand::Ci),
+        "tui" => {
+            match bridge::Target::parse(args, "arm", "/dev/teensy")? {
+                Some(target) => Ok(Subcommand::Tui(target)),
+                None => Err("QEMU architecture 'all' is not supported for TUI"
+                    .to_string()),
             }
-        },
-        "tui" => match bridge::Target::parse(&args, "arm", "/dev/teensy") {
-            Ok(Some(target)) => tasks::run_ets_tui(&target),
-            Ok(None) => {
-                eprintln!("\tQEMU architecture 'all' is not supported for TUI");
-                exit(1);
-            }
-            Err(e) => {
-                eprintln!("\t{e}");
-                exit(1);
-            }
-        },
-        "install-hooks" => {
-            tasks::install_hooks();
         }
-        _ => {
-            print_usage_and_exit();
+        "install-hooks" => Ok(Subcommand::InstallHooks),
+        _ => Ok(Subcommand::Usage),
+    }
+}
+
+/// Main entrypoint. Parses arguments and routes execution to the correct subcommand handler.
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    match parse_subcommand(&args) {
+        Ok(Subcommand::Ci(Some(target))) => run_ci_single(&target),
+        Ok(Subcommand::Ci(None)) => run_ci_all_qemu(),
+        Ok(Subcommand::Tui(target)) => tasks::run_ets_tui(&target),
+        Ok(Subcommand::InstallHooks) => tasks::install_hooks(),
+        Ok(Subcommand::Usage) => print_usage_and_exit(),
+        Err(e) => {
+            eprintln!("\t{e}");
+            exit(1);
         }
     }
 }
@@ -396,4 +410,59 @@ fn run_ci_single(target: &bridge::Target) {
         exit(1);
     }
     println!("CI pipeline passed. Results written to ci-report.md.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_subcommand_dispatch() {
+        assert_eq!(parse_subcommand(&[]), Ok(Subcommand::Usage));
+        assert_eq!(
+            parse_subcommand(&["xtask".to_string()]),
+            Ok(Subcommand::Usage)
+        );
+        assert_eq!(
+            parse_subcommand(&["xtask".to_string(), "unknown".to_string()]),
+            Ok(Subcommand::Usage)
+        );
+        assert_eq!(
+            parse_subcommand(&[
+                "xtask".to_string(),
+                "install-hooks".to_string()
+            ]),
+            Ok(Subcommand::InstallHooks)
+        );
+
+        // ci
+        assert_eq!(
+            parse_subcommand(&["xtask".to_string(), "ci".to_string()]),
+            Ok(Subcommand::Ci(None))
+        );
+        assert_eq!(
+            parse_subcommand(&[
+                "xtask".to_string(),
+                "ci".to_string(),
+                "qemu".to_string(),
+                "arm".to_string()
+            ]),
+            Ok(Subcommand::Ci(Some(bridge::Target::qemu_arm())))
+        );
+
+        // tui
+        assert_eq!(
+            parse_subcommand(&["xtask".to_string(), "tui".to_string()]),
+            Ok(Subcommand::Tui(bridge::Target::qemu_arm()))
+        );
+        assert!(
+            parse_subcommand(&[
+                "xtask".to_string(),
+                "tui".to_string(),
+                "qemu".to_string(),
+                "all".to_string()
+            ])
+            .is_err()
+        );
+    }
 }

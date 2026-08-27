@@ -2695,6 +2695,30 @@ fn trmm_tri_elem<T: Scalar, A: DenseStorage<T>>(
 }
 
 #[inline(always)]
+fn trmm_left_elem<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>>(
+    a: &A,
+    b: &mut B,
+    diag: Diag,
+    trans: Trans,
+    uplo: UpLo,
+    alpha: &T,
+    m: usize,
+    i: usize,
+    j: usize,
+) {
+    let mut acc = T::ZERO;
+    for k in 0..m {
+        if let Some(a_val) = trmm_tri_elem(a, diag, trans, uplo, i, k) {
+            let bv = unsafe { b.get_unchecked(k, j).clone() };
+            acc = acc + (a_val * bv);
+        }
+    }
+    unsafe {
+        b.set_unchecked(i, j, alpha.clone() * acc);
+    }
+}
+
+#[inline(always)]
 fn trmm_left<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>>(
     uplo: UpLo,
     trans: Trans,
@@ -2711,25 +2735,39 @@ fn trmm_left<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>>(
             | (UpLo::Lower, Trans::Trans | Trans::ConjTrans)
     );
     for j in 0..n {
-        let mut i = if forward { 0 } else { m };
-        while if forward { i < m } else { i > 0 } {
-            if !forward {
-                i -= 1;
+        if forward {
+            for i in 0..m {
+                trmm_left_elem(a, b, diag, trans, uplo, alpha, m, i, j);
             }
-            let mut acc = T::ZERO;
-            for k in 0..m {
-                if let Some(a_val) = trmm_tri_elem(a, diag, trans, uplo, i, k) {
-                    let bv = unsafe { b.get_unchecked(k, j).clone() };
-                    acc = acc + (a_val * bv);
-                }
-            }
-            unsafe {
-                b.set_unchecked(i, j, alpha.clone() * acc);
-            }
-            if forward {
-                i += 1;
+        } else {
+            for i in (0..m).rev() {
+                trmm_left_elem(a, b, diag, trans, uplo, alpha, m, i, j);
             }
         }
+    }
+}
+
+#[inline(always)]
+fn trmm_right_elem<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>>(
+    a: &A,
+    b: &mut B,
+    diag: Diag,
+    trans: Trans,
+    uplo: UpLo,
+    alpha: &T,
+    n: usize,
+    i: usize,
+    j: usize,
+) {
+    let mut acc = T::ZERO;
+    for k in 0..n {
+        if let Some(a_val) = trmm_tri_elem(a, diag, trans, uplo, k, j) {
+            let bv = unsafe { b.get_unchecked(i, k).clone() };
+            acc = acc + (bv * a_val);
+        }
+    }
+    unsafe {
+        b.set_unchecked(i, j, alpha.clone() * acc);
     }
 }
 
@@ -2750,23 +2788,13 @@ fn trmm_right<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>>(
             | (UpLo::Upper, Trans::Trans | Trans::ConjTrans)
     );
     for i in 0..m {
-        let mut j = if j_forward { 0 } else { n };
-        while if j_forward { j < n } else { j > 0 } {
-            if !j_forward {
-                j -= 1;
+        if j_forward {
+            for j in 0..n {
+                trmm_right_elem(a, b, diag, trans, uplo, alpha, n, i, j);
             }
-            let mut acc = T::ZERO;
-            for k in 0..n {
-                if let Some(a_val) = trmm_tri_elem(a, diag, trans, uplo, k, j) {
-                    let bv = unsafe { b.get_unchecked(i, k).clone() };
-                    acc = acc + (bv * a_val);
-                }
-            }
-            unsafe {
-                b.set_unchecked(i, j, alpha.clone() * acc);
-            }
-            if j_forward {
-                j += 1;
+        } else {
+            for j in (0..n).rev() {
+                trmm_right_elem(a, b, diag, trans, uplo, alpha, n, i, j);
             }
         }
     }
@@ -2848,6 +2876,59 @@ fn trsm_a_elem<T: Scalar, A: DenseStorage<T>>(
 }
 
 #[inline(always)]
+fn trsm_left_upper_col<
+    T: Scalar + Div<Output = T>,
+    A: DenseStorage<T>,
+    B: DenseStorageMut<T>,
+>(
+    a: &A,
+    b: &mut B,
+    diag: Diag,
+    trans: Trans,
+    alpha: &T,
+    m: usize,
+    j: usize,
+) -> LinAlgResult<()> {
+    for k in 0..m {
+        let i = m - 1 - k;
+        let mut sum = alpha.clone() * unsafe { b.get_unchecked(i, j).clone() };
+        for p in (i + 1)..m {
+            let a_val = trsm_a_elem(a, trans, i, p);
+            let bp = unsafe { b.get_unchecked(p, j).clone() };
+            sum = sum - (a_val * bp);
+        }
+        trsm_diag_solve(a, b, diag, trans, i, i, j, sum)?;
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn trsm_left_lower_col<
+    T: Scalar + Div<Output = T>,
+    A: DenseStorage<T>,
+    B: DenseStorageMut<T>,
+>(
+    a: &A,
+    b: &mut B,
+    diag: Diag,
+    trans: Trans,
+    alpha: &T,
+    m: usize,
+    j: usize,
+) -> LinAlgResult<()> {
+    for i in 0..m {
+        let mut sum = alpha.clone() * unsafe { b.get_unchecked(i, j).clone() };
+        for p in 0..i {
+            let a_val = trsm_a_elem(a, trans, i, p);
+            let bp = unsafe { b.get_unchecked(p, j).clone() };
+            sum = sum - (a_val * bp);
+        }
+        trsm_diag_solve(a, b, diag, trans, i, i, j, sum)?;
+    }
+    Ok(())
+}
+
+#[inline(always)]
 fn trsm_left<
     T: Scalar + Div<Output = T>,
     A: DenseStorage<T>,
@@ -2870,29 +2951,61 @@ fn trsm_left<
 
     for j in 0..n {
         if is_upper {
-            for k in 0..m {
-                let i = m - 1 - k;
-                let mut sum =
-                    alpha.clone() * unsafe { b.get_unchecked(i, j).clone() };
-                for p in (i + 1)..m {
-                    let a_val = trsm_a_elem(a, trans, i, p);
-                    let bp = unsafe { b.get_unchecked(p, j).clone() };
-                    sum = sum - (a_val * bp);
-                }
-                trsm_diag_solve(a, b, diag, trans, i, i, j, sum)?;
-            }
+            trsm_left_upper_col(a, b, diag, trans, alpha, m, j)?;
         } else {
-            for i in 0..m {
-                let mut sum =
-                    alpha.clone() * unsafe { b.get_unchecked(i, j).clone() };
-                for p in 0..i {
-                    let a_val = trsm_a_elem(a, trans, i, p);
-                    let bp = unsafe { b.get_unchecked(p, j).clone() };
-                    sum = sum - (a_val * bp);
-                }
-                trsm_diag_solve(a, b, diag, trans, i, i, j, sum)?;
-            }
+            trsm_left_lower_col(a, b, diag, trans, alpha, m, j)?;
         }
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn trsm_right_upper_col<
+    T: Scalar + Div<Output = T>,
+    A: DenseStorage<T>,
+    B: DenseStorageMut<T>,
+>(
+    a: &A,
+    b: &mut B,
+    diag: Diag,
+    trans: Trans,
+    m: usize,
+    j: usize,
+) -> LinAlgResult<()> {
+    for i in 0..m {
+        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+        for k in 0..j {
+            let a_val = trsm_a_elem(a, trans, k, j);
+            let bk = unsafe { b.get_unchecked(i, k).clone() };
+            sum = sum - (bk * a_val);
+        }
+        trsm_diag_solve(a, b, diag, trans, j, i, j, sum)?;
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn trsm_right_lower_col<
+    T: Scalar + Div<Output = T>,
+    A: DenseStorage<T>,
+    B: DenseStorageMut<T>,
+>(
+    a: &A,
+    b: &mut B,
+    diag: Diag,
+    trans: Trans,
+    m: usize,
+    n: usize,
+    j: usize,
+) -> LinAlgResult<()> {
+    for i in 0..m {
+        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+        for k in (j + 1)..n {
+            let a_val = trsm_a_elem(a, trans, k, j);
+            let bk = unsafe { b.get_unchecked(i, k).clone() };
+            sum = sum - (bk * a_val);
+        }
+        trsm_diag_solve(a, b, diag, trans, j, i, j, sum)?;
     }
     Ok(())
 }
@@ -2929,28 +3042,12 @@ fn trsm_right<
 
     if is_upper {
         for j in 0..n {
-            for i in 0..m {
-                let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                for k in 0..j {
-                    let a_val = trsm_a_elem(a, trans, k, j);
-                    let bk = unsafe { b.get_unchecked(i, k).clone() };
-                    sum = sum - (bk * a_val);
-                }
-                trsm_diag_solve(a, b, diag, trans, j, i, j, sum)?;
-            }
+            trsm_right_upper_col(a, b, diag, trans, m, j)?;
         }
     } else {
         for jj in 0..n {
             let j = n - 1 - jj;
-            for i in 0..m {
-                let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                for k in (j + 1)..n {
-                    let a_val = trsm_a_elem(a, trans, k, j);
-                    let bk = unsafe { b.get_unchecked(i, k).clone() };
-                    sum = sum - (bk * a_val);
-                }
-                trsm_diag_solve(a, b, diag, trans, j, i, j, sum)?;
-            }
+            trsm_right_lower_col(a, b, diag, trans, m, n, j)?;
         }
     }
     Ok(())
