@@ -3,7 +3,7 @@
 //! # Description
 //!
 //! This module defines the framing reader, serialization utilities and target-to-host messaging traits
-//! used to exchange ETS test suite information, run tests, report performance metrics and handle telemetry logs.
+//! used to exchange HIL test suite information, run tests, report performance metrics and handle telemetry logs.
 //! The transport layer uses a robust packet framing scheme with CRC-16-IBM-SDLC checksum protection.
 //!
 //! # Core Concepts
@@ -16,7 +16,7 @@
 //! # Usage
 //!
 //! ```
-//! use control_rs_ets::comms::{FrameReader, Telemetry, frame_telemetry};
+//! use control_rs_hil::comms::{FrameReader, Telemetry, frame_telemetry};
 //!
 //! let mut reader = FrameReader::new();
 //! assert!(reader.is_idle());
@@ -82,7 +82,7 @@ pub type SendResult<E> = Result<(), E>;
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// use control_rs_hil::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
 ///
 /// struct MyComms;
 /// impl HostComms for MyComms {
@@ -290,7 +290,7 @@ pub enum TestState {
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::comms::CommsLock;
+/// use control_rs_hil::comms::CommsLock;
 ///
 /// let lock = CommsLock::new();
 /// assert!(lock.try_lock());
@@ -315,7 +315,7 @@ pub struct CommsLock {
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::comms::FrameReader;
+/// use control_rs_hil::comms::FrameReader;
 ///
 /// let mut reader = FrameReader::new();
 /// assert!(reader.is_idle());
@@ -328,7 +328,7 @@ pub struct FrameReader {
 
 /// A log message produced by a test executable or the Server itself.
 ///
-/// Bundles message payload text and ETS metadata tags together.
+/// Bundles message payload text and HIL metadata tags together.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LogMessage<'a> {
     /// The log text payload.

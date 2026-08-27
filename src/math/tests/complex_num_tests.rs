@@ -1,4 +1,4 @@
-//! Complex number mathematical ETS and unit test suite.
+//! Complex number mathematical HIL and unit test suite.
 //!
 //! `complex_num.rs` has no dedicated design doc, so tests here are not
 //! cited against per-test functional requirements. `Complex<T>: Scalar`
@@ -7,8 +7,8 @@
 //! primary `Scalar` coverage.
 #![allow(clippy::arithmetic_side_effects)]
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
-/// Unit and ETS test suite for complex number operations.
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
+/// Unit and HIL test suite for complex number operations.
 pub mod complex_num_test_suite {
     use crate::{
         assert_almost_eq,
@@ -16,7 +16,9 @@ pub mod complex_num_test_suite {
             complex_num::Complex,
             complex_num::Complex32,
             complex_num::Complex64,
-            num_traits::{One, Trig, Zero},
+            num_traits::{
+                Exponential, Float, One, Radical, Signed, Trig, Zero,
+            },
             ops::{
                 Neg, TryAdd, TryDiv, TryMul, TrySub, WrappingAdd, WrappingMul,
                 WrappingSub,
@@ -100,12 +102,18 @@ pub mod complex_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies `TrySub` and identity constants for complex numbers.
-    fn test_complex_fallible_sub_and_identities() {
+    /// Verifies `TrySub`, `PartialOrd` and identity constants for complex numbers.
+    fn test_complex_fallible_sub_and_ord_traits() {
         let a = Complex::new(5.0, 3.0);
         let b = Complex::new(5.0, 1.0);
 
+        // Covers TrySub
         assert!(a.try_sub(&b).is_ok());
+
+        // Covers PartialOrd equal-real branch
+        assert_eq!(a.partial_cmp(&b), Some(core::cmp::Ordering::Greater));
+
+        // Covers Zero, One constants
         let _ = Complex::<f64>::ZERO;
         let _ = Complex::<f64>::ONE;
     }
@@ -187,6 +195,24 @@ pub mod complex_num_test_suite {
         assert_almost_eq!((z * one).re, z.re);
         assert_almost_eq!((z + zero).im, z.im);
         assert_almost_eq!((z * one).im, z.im);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies comparison (lexicographical Ordering) of complex numbers.
+    fn test_complex_comparison_ordering() {
+        let z1 = Complex32::new(1.0, 2.0);
+        let z2 = Complex32::new(2.0, 2.0);
+        let z3 = Complex32::new(1.0, 3.0);
+        let z4 = Complex32::new(2.0, 3.0);
+
+        assert!(z1 < z2); // Real part differs
+        assert!(z1 < z3); // Imaginary part differs
+        assert!(z1 < z4); // Both differ
+        assert!(z2 > z3); // lexicographic ordering https://doc.rust-lang.org/std/cmp/trait.PartialOrd.html
+        assert!(z2 > z1);
+        assert!(z3 > z1);
+        assert!(z4 > z1);
+        assert!(z3 < z2);
     }
 
     #[cfg_attr(test, test)]
@@ -452,6 +478,7 @@ pub mod complex_num_test_suite {
 
         // Test abs (the complex absolute value: `|z|` as a real number)
         let abs_res = z1.abs();
-        assert_almost_eq!(abs_res, 5.0);
+        assert_almost_eq!(abs_res.re, 5.0);
+        assert_almost_eq!(abs_res.im, 0.0);
     }
 }

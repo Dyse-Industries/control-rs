@@ -2,11 +2,11 @@
 name = "control-rs-macros"
 version = "0.1.0"
 edition = "2024"
-description = "Procedural macros for the control-rs ETS test suite."
+description = "Procedural macros for the control-rs HIL test suite."
 license = "MIT"
 repository = "https://github.com/mdyson/control-rs"
 readme = "README.md"
-keywords = ["embedded", "control-systems", "ets", "testing"]
+keywords = ["embedded", "control-systems", "hil", "testing"]
 categories = ["embedded", "no-std"]
 
 [lints]

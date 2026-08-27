@@ -1,10 +1,10 @@
-//! Hardware execution abstraction and CPU profiling for ETS tests.
+//! Hardware execution abstraction and CPU profiling for HIL tests.
 //!
 //! # Description
 //!
 //! This module provides the `CPUProfiler` trait and architecture-specific implementations
 //! to measure hardware performance metrics (such as clock cycles, timing and stack consumption)
-//! during ETS tests.
+//! during HIL tests.
 //!
 //! # Core Concepts
 //!
@@ -13,10 +13,10 @@
 //!   with sentinel bytes to compute high-water-mark stack usage safely.
 //! - **Platform Implementations**: Cortex-M DWT-based and RISC-V CSR-based profiling structures.
 
-/// Target-specific utilities for CPU profiling, stack tracking and interrupt management during ETS tests.
+/// Target-specific utilities for CPU profiling, stack tracking and interrupt management during HIL tests.
 ///
 /// This trait provides a target-agnostic interface to low-level hardware features, allowing the
-/// ETS to execute test functions in a controlled environment, gather cycle counts and
+/// HIL Server to execute test functions in a controlled environment, gather cycle counts and
 /// safely measure stack usage. By encapsulating architecture-specific inline assembly and memory-mapped
 /// I/O operations, this trait helps prevent safety issues in the Server's core logic.
 ///
@@ -29,7 +29,7 @@
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::profiler::CPUProfiler;
+/// use control_rs_hil::profiler::CPUProfiler;
 ///
 /// struct MockProfiler;
 /// impl CPUProfiler for MockProfiler {

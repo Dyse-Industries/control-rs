@@ -60,13 +60,16 @@ is copyable:
 1. A zero-sized marker.
 2. Trait impls only for the scalars and layouts the backend supports.
 3. A predicate that takes the accelerated path or delegates to `DefaultBlas`.
-4. A short `main` that runs the implemented methods on small fixtures and
+4. A `pub type ArchBlas = ...;` alias naming that crate's selected marker.
+5. A short `main` that runs the implemented methods on small fixtures and
    checks a residual (or bit equality) against `DefaultBlas`.
 
 Nothing is shared by `#[path]` include or vendoring. A CBLAS `lda`/`incX`
 bridge is host C ABI and does not belong in a CMSIS or NMSIS crate. A
 contiguity predicate (`one stride == 1`, else delegate) is three lines;
-duplicate it.
+duplicate it. The `ArchBlas` alias is one line; duplicate it too. Restating
+it per crate is exactly what lets item 5 be the same source everywhere
+without a shared module.
 
 Layout translation lives next to the ABI that needs it:
 
@@ -100,6 +103,38 @@ thin runtime: `println` on host, semihosting on the two `no_std` crates. The
 `no_std` crates carry their own `memory.x`, panic handler, and
 `.cargo/config.toml` runner (`qemu-system-arm` / `qemu-system-riscv32`).
 They do not depend on `control-rs-ets` or `control-rs-macros`.
+
+#### The `ArchBlas` alias
+
+Each crate exports one name for its selected backend and `main` uses only
+that name. Every `cfg` lives in the alias, never in the driver:
+
+```rust
+// examples/subprograms/aarch64/src/backend.rs
+#[cfg(feature = "accelerate")]
+pub type ArchBlas = AccelerateBlas;
+#[cfg(not(feature = "accelerate"))]
+pub type ArchBlas = NeonBlas;
+```
+
+```rust
+// src/main.rs, the same source in every crate
+fn main() {
+    // `B` is bound on the traits that crate implements.
+    equivalence::<ArchBlas>();
+}
+```
+
+A crate with no opt-in arm needs no `cfg` at all: `pub type ArchBlas =
+CmsisDspBlas;`. That is the whole of the generic-implementor requirement.
+The alias resolves at compile time, so the call site monomorphizes to the
+selected backend and costs nothing at runtime, which is the argument design
+§5 already uses to reject runtime backend dispatch.
+
+Build system and source therefore separate cleanly, the same way
+`examples/qemu/` and `examples/teensy4/` build differently and run the same
+suite code: the manifest, `build.rs`, linker script and runner differ per
+crate, while the driver does not.
 
 #### E-aarch64 `NeonBlas`
 
@@ -202,7 +237,7 @@ The required check is that each crate builds for its target and that `main`
 exercises the marker against `DefaultBlas`. Timing is bonus.
 
 1. **Equivalence (required).** Run every implemented trait method twice on
-   identical fixtures, once through the backend marker and once through
+   identical fixtures, once through `ArchBlas` and once through
    `DefaultBlas`. Floating-point paths assert a bounded `O(N·EPS)` residual
    per design §8; integer and fixed-point paths assert bit equality per
    §6.1.5. Small compile-time `Const<N>` shapes (`N` in `{4, 8, 16}` on
@@ -229,8 +264,8 @@ is not an ETS suite and not a CI gate. `examples/qemu/` and
 
 ### 6. Corrections to design §4.5 surfaced by this proposal
 
-The §4.5 mapping table does not survive the prototypes collected in the same
-research pass. Three rows need revision before an example can implement them:
+The §4.5 mapping table does not survive the collected prototypes. Three rows
+need revision before an example can implement them:
 
 | §4.5 row | Problem | Evidence |
 |:--|:--|:--|
@@ -263,6 +298,12 @@ editing `examples/qemu/` or `examples/teensy4/`.
   is absent or downclocked on many hosts. SVE raises the same question on
   aarch64 with a vector length not known at compile time. Record both as
   open rather than adding a third intrinsic crate now.
+- A single `ArchBlas` type in one shared module, `cfg`-dispatching inside
+  its trait impls, was considered and rejected. It puts NEON code paths
+  behind `cfg` inside the CMSIS crate and forces one dependency set to cover
+  every ISA, which is what the per-package split exists to avoid. The alias
+  gets the same call-site cleanliness with no cross-architecture
+  contamination.
 - A binary built on one host and run on another reports the implementor it
   was built with. If `main` prints a header, it prints the build triple and
   detected features so the mismatch is visible.
@@ -272,7 +313,7 @@ editing `examples/qemu/` or `examples/teensy4/`.
 | Step | Content | Blocks |
 |:--|:--|:--|
 | 1 | §6 corrections to `subprograms-design.md` §4.5 | E-thumbv7em, E-riscv32 |
-| 2 | E-aarch64 (`NeonBlas` marker + smoke `main`) | none |
+| 2 | E-aarch64 (`NeonBlas` marker, `ArchBlas` alias, smoke `main`) | none |
 | 3 | E-x86_64 (`Avx2Blas` marker + smoke `main`) | none |
 | 4 | E-thumbv7em (`CmsisDspBlas`, CMSIS-DSP in `build.rs`) | §6.1.5 closure (Arm) |
 | 5 | E-riscv32 (`NmsisDspBlas`, NMSIS-DSP in `build.rs`) | §6.1.5 closure (RISC-V) |
@@ -280,7 +321,7 @@ editing `examples/qemu/` or `examples/teensy4/`.
 
 Step 2 is load-bearing. If E-aarch64 attaches to the traits without an
 `src/` edit, the §4.5 claim holds and the remaining crates are substitutions
-of ISA, ABI, and link directive. Timing loops, if added, land in step 6.
+of ISA, ABI and link directive over the same driver. Timing loops, if added, land in step 6.
 
 ---
 

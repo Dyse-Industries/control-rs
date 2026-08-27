@@ -248,23 +248,21 @@ Two access paths, one per consumer:
 Each has a `_mut` counterpart (`as_mut_slice`, `&mut S`) on the
 corresponding `ContiguousStorageMut`/`DenseStorageMut` bound.
 
-Kernels no longer take flattened or nested array operands. Subprogram traits
-are parameterized over the storage types themselves
-(`subprograms-design.md` FR-9), so a call site passes `&self.storage` and the
-kernel reads shape from `S::R`/`S::C` and addresses through
-`as_ptr()` plus the leaf's strides. This removes the former
-`as_array::<N>()` / `as_nested()` pair along with the
-`Const<R>: DimMul<Const<C>, Output = …>` bound each call site had to carry,
-and it removes the flattened `&[T; R * C]` accessor that
-`generic_const_exprs` blocked in the first place (`storage-design.md` §5).
+Subprogram traits are parameterized over the storage types themselves
+(`subprograms-design.md` FR-9): a call site passes `&self.storage`, and the
+kernel reads shape from `S::R`/`S::C` and addresses through `as_ptr()` plus
+the leaf's strides. Kernels do not take flattened or nested array operands,
+so call sites carry no `Const<R>: DimMul<Const<C>, Output = …>` bound and no
+flattened `&[T; R * C]` accessor blocked by `generic_const_exprs`
+(`storage-design.md` §5).
 
 ##### 4.3.1. Zero-Copy Views (`StorageView`)
 
 `Matrix` builds on the strided view backends of `storage-design.md` FR-2.
-`StorageView<'a, T, R, C>` carries arbitrary `isize` strides, which
-subsumes the former column-panel restriction: an arbitrary submatrix window
-is a pointer offset plus the parent's own strides, with no padded leading
-dimension to leave untouched.
+`StorageView<'a, T, R, C>` carries arbitrary `isize` strides: an arbitrary
+submatrix window is a pointer offset plus the parent's own strides, with no
+padded leading dimension to leave untouched and no restriction to column
+panels.
 
 - `ArrayMatrix::view()` / `view_mut()` borrow the whole buffer at the owning
   alias's shape, with $RS = 1, CS = R$.
@@ -319,38 +317,6 @@ _Implementation Note_: All static constructors are marked `const fn` to allow
 placing static matrices directly in read-only flash memory. The scalar type
 `T` must implement `Zero` and `One` from `crate::math::num_traits`. These
 traits expose the associated constants `T::ZERO` and `T::ONE`.
-
-##### 4.4.1. Data-Driven Matrix Factories [Proposal (not in evidence)]
-
-To support higher-level subspace system identification (N4SID, MOESP), modal
-realization (ERA), and direct behavioral simulation (Willems' Fundamental
-Lemma / DeePC), dedicated data-driven **Object Factories** produce structured
-matrix forms from sampled trajectory sequences and impulse responses without
-polluting the core `Matrix` struct (De Cock & De Moor, 2003; Juang & Pappa,
-1985; Willems et al., 2004; Gevers, 2006):
-
-- **Signal Hankel Factory (`HankelMatrixFactory`)**: Produces a Hankel matrix
-  $H_L(w) \in \mathbb{R}^{L \times (T-L+1)}$ from a $T$-point scalar signal
-  vector $w$, where column $j$ contains the sliding window
-  $[w_j, w_{j+1}, \dots, w_{j+L-1}]^T$ to represent behavioral signal subspaces
-  and verify persistency of excitation (Willems et al., 2004).
-- **Multivariable Block-Hankel Factory (`BlockHankelDataFactory`)**: Formulates
-  stacked past and future block-Hankel data matrices ($U_{0|2i-1}, Y_{0|2i-1}$)
-  from $m$-input and $l$-output time series with block-row index $i$ for
-  subspace
-  identification preprocessing (De Cock & De Moor, 2003).
-- **Markov Block-Toeplitz Factory (`ToeplitzMarkovFactory`)**: Assembles
-  lower block-triangular Toeplitz convolution matrices from impulse response
-  Markov parameters ($H_k = C A^{k-1} B$) for deterministic simulation and
-  Ho–Kalman / ERA modal initialization (De Cock & De Moor, 2003; Juang & Pappa,
-  1985).
-- **Sample Covariance Factory (`SampleCovarianceFactory`)**: Computes sample
-  correlation and covariance sequence
-  matrices $R_y(k) = \frac{1}{N} \sum_{t=1}^N y_t y_{t+k}^T$
-  from measurement data directly into packed symmetric storage (Gevers, 2006).
-
-_Detailed standalone design and API signatures for system identification
-factories are specified in `documentation/control-toolboxes/sysid-design.md`._
 
 #### 4.5. Operator Overloading
 
@@ -409,51 +375,14 @@ requires `Div` (`num-traits-design.md` FR-2).
 
 ##### 4.5.1. Required Subprogram Inventory
 
-`Matrix` is a caller of `subprograms.rs`, not an extension of it. Every kernel
-this design needs is one of the subprogram traits defined in
-`subprograms-design.md` §4.2 and §4.3.
-
-| Subprogram      | Level | Operation                                                        | Required by                                                                                                                           |
-|:----------------|:------|:-----------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------|
-| `Axpy`          | 1     | $y \leftarrow \alpha x + y$                                      | `Add`, `Sub` (§4.5); reflector application in QR (§4.7)                                                                               |
-| `Scal`          | 1     | $x \leftarrow \alpha x$                                          | `Neg` (§4.5); pivot-row normalization in LU (§4.6); diagonal scaling in $LDL^T$ (§4.7)                                                |
-| `Dotu` / `Dotc` | 1     | $x^T y$ / $x^H y$                                                | Inner-product accumulation in substitution (§4.7.2, §4.10.1) and $LDL^T$/Cholesky diagonal updates (§4.7). `Dotc` on complex operands |
-| `Nrm2`          | 1     | $\lVert x \rVert_2$                                              | Householder reflector construction in QR (§4.7)                                                                                       |
-| `Iamax`         | 1     | $\arg\max_i (\lvert \text{Re} \rvert + \lvert \text{Im} \rvert)$ | Partial-pivot column search in LU (§4.6) and the symmetric pivot search in $LDL^T$ (Greif et al., 2016)                               |
-| `Geru` / `Gerc` | 2     | $A \leftarrow \alpha x y^T + A$                                  | LU trailing-submatrix rank-1 updates. `Gerc` supplies the conjugated form on complex operands                                         |
-| `Trsv`          | 2     | $x \leftarrow \text{op}(A)^{-1} x$                               | Triangular solves and forward/backward substitution (§4.7.2, §4.10.1)                                                                 |
-| `Gemv`          | 2     | $y \leftarrow \alpha \text{op}(A) x + \beta y$                   | `Mul<Vector>` (§4.5); matrix-vector products in the solver paths (§4.7.2)                                                             |
-| `Gemm`          | 3     | $C \leftarrow \alpha \text{op}(A)\text{op}(B) + \beta C$         | `Mul<Matrix>` (§4.5); trailing-submatrix block updates in LU, $LDL^T$ and QR                                                          |
-
-Scalar bounds follow `subprograms-design.md` §4.1. The ring kernels
-(`Axpy`, `Scal`, `Dotu`, `Dotc`, `Geru`, `Gerc`, `Gemv`, `Gemm`) require
-`T: Scalar`; the field kernels (`Nrm2`, `Trsv`) require `T: Scalar + Div`
-with `T::Real: Radical`. `T: Float` is `f32`/`f64` only and is never used as
-a stand-in for `Complex<T>` (`num-traits-design.md` FR-5).
-
-`Geru`/`Gerc` express LU elimination over trailing submatrices, avoiding the
-three-loop dispatch overhead of `Gemm` with $k = 1$. `Trsv` accelerates
-triangular solves and substitution in the linear system solvers.
-
-The dense factorizations are no longer hand-rolled here. `subprograms-design.md`
-FR-6 and FR-7 supply `Getrf`/`Getrs` (LU with partial pivoting),
-`Potrf`/`Potrs` (Cholesky) and `Geqrf`/`Ormqr`/`Unmqr` (Householder QR) as
-subprogram traits returning `LinAlgResult<()>`, so §4.7's decomposition
-objects are wrappers over those kernels rather than independent
-implementations (§4.7).
-
-`Syrk`/`Trsm` remain outside this inventory: the §4.7 factorizations are
-unblocked, right-looking variants whose trailing updates are rank-1
-(`Geru`) or matrix-matrix (`Gemm`). They become required only if a blocked
-variant is added, which the stack ceiling of §6.1 does not currently
-motivate.
+`Matrix` calls the Level-1/2/3 and LAPACK kernels in
+`subprograms-design.md`; it does not reimplement them.
 
 ##### 4.5.2. Operand Derivation at the Call Site
 
-Kernels take typed storage operands, so the layout parameters that were
-formerly const generics at the call site are now properties the kernel reads
-off the operand's own type (FR-5; `subprograms-design.md` FR-9). `Matrix`
-supplies:
+Kernels take typed storage operands, so layout parameters are properties
+the kernel reads off the operand's own type rather than const generics at
+the call site (FR-5; `subprograms-design.md` FR-9). `Matrix` supplies:
 
 | Kernel input            | Source                                                                |
 |:------------------------|:----------------------------------------------------------------------|
@@ -686,7 +615,8 @@ Converts a 2D matrix to a rank-2 `Tensor<T, Layout, B>`.
   slice and converts by element copy instead.
 - **Infallible Compile-Time Bound**: Dimensions and rank are verified statically
   at compile time via `Layout: TensorLayout<Size = <R as DimMul<C>>::Output>`.
-  `ConversionError::LayoutMismatch` no longer exists (`error-design.md` §3).
+  This conversion cannot produce `ConversionError::LayoutMismatch`
+  (`error-design.md` §3).
 
 #### 4.9. Error Handling & Element Lookup
 
@@ -833,12 +763,11 @@ memory layout and bounds, while high-level newtype wrappers enforce mathematical
 invariants, optimize solver algorithms ($LDL^T$, forward/backward substitution),
 and dispatch specialized subprogram kernels.
 
-Both forms are now first-class. A full-square wrapper trades $N^2$ storage for
+Both forms are first-class: a full-square wrapper trades $N^2$ storage for
 the dense kernels (`Trmv`, `Trsv`, `Symv`, `Hemv`); the packed aliases
 (§4.1.1) trade a non-linear index map for $N(N+1)/2$ storage and reach the
-packed kernels (`Tpmv`, `Tpsv`, `Spmv`, `Hpmv`;
-`subprograms-design.md` FR-3), which the previous four-tier hierarchy did not
-offer. Hardware acceleration is no longer the deciding factor, since
+packed kernels (`Tpmv`, `Tpsv`, `Spmv`, `Hpmv`; `subprograms-design.md`
+FR-3). Hardware acceleration is not the deciding factor between them, since
 `subprograms-design.md` §4.8 delegates the packed routines to `DefaultBlas`
 on every backend. Choose packed when the $\approx 2\times$ space saving
 matters and dense when the operand feeds a Level 3 routine.
@@ -899,95 +828,6 @@ Instead of using a general $O(N^3)$ QR algorithm, the solver exploits the
 unitary-plus-rank-one structure (Aurentz et al., 2014). This reduces storage
 requirements to $O(N)$ and computational complexity to $O(N^2)$ flops. Applying
 a sequence of planar rotators guarantees normwise backward stability.
-
-##### 4.10.3. Kalman Filter State Update
-
-The following example demonstrates the proposed `Matrix` API when computing the
-covariance update in a Kalman filter loop:
-$$ P*{k|k} = (I - K_k H_k) P*{k|k-1} $$
-
-```rust
-use control_rs::matrix::{Matrix, Dim, Const};
-
-pub fn kalman_covariance_update<T, S: Dim, O: Dim>(
-    p_pred: &Matrix<T, S, S>,
-    k: &Matrix<T, S, O>,
-    h: &Matrix<T, O, S>,
-) -> Matrix<T, S, S>
-where
-    T: Scalar + Copy,
-    S: Dim,
-    O: Dim,
-    S: DimMul<S>,
-    S: DimMul<O>,
-    O: DimMul<S>,
-{
-    // Identity matrix I of state dimension S
-    let i = Matrix::<T, S, S>::identity();
-
-    // K * H -> S x S matrix
-    let k_h = k * h;
-
-    // I - K * H -> S x S matrix
-    let diff = &i - &k_h;
-
-    // (I - K * H) * P_pred -> S x S matrix
-    &diff * p_pred
-}
-```
-
-##### 4.10.4. MIMO State Estimation Observer
-
-In a multivariable state estimation context, the Luenberger observer combines
-continuous plant dynamics with measurement feedback:
-$$ \dot{\hat{x}} = A \hat{x} + B u + L (y - C \hat{x}) $$
-
-Using `Matrix`'s compile-time shape enforcement, dimension mismatches between the
-state space ($N_x$), control inputs ($N_u$), and measured outputs ($N_y$) are
-caught at compile-time:
-
-```rust
-pub fn observer_derivative<T, Nx: Dim, Nu: Dim, Ny: Dim>(
-    a: &Matrix<T, Nx, Nx>,
-    b: &Matrix<T, Nx, Nu>,
-    c: &Matrix<T, Ny, Nx>,
-    l: &Matrix<T, Nx, Ny>,
-    x_hat: &Matrix<T, Nx, Const<1>>,
-    u: &Matrix<T, Nu, Const<1>>,
-    y: &Matrix<T, Ny, Const<1>>,
-) -> Matrix<T, Nx, Const<1>>
-where
-    T: Scalar + Copy,
-    Nx: Dim,
-    Nu: Dim,
-    Ny: Dim,
-    Nx: DimMul<Nx> + DimMul<Nu> + DimMul<Ny>,
-    Ny: DimMul<Nx>,
-{
-    let ax = a * x_hat;
-    let bu = b * u;
-    let cx = c * x_hat;
-    let y_err = y - &cx;
-    let feedback = l * &y_err;
-
-    &(&ax + &bu) + &feedback
-}
-```
-
-###### 4.10.5. Abstracting Target-Specific DSP / BLAS FFI
-
-When hardware acceleration (e.g., CMSIS-DSP, ARM NEON, or vendor-specific
-DSPLib) is enabled, underlying BLAS traits dispatch calls to FFI functions.
-
-- **Wrapped Unsafe Functions**: External foreign function interfaces (FFI)
-  accepting raw pointers.
-- **Safety Preconditions & Invariants**:
-    - C-based FFI routines do not perform bounds checking and assume that the
-      caller has allocated sufficient, correctly-aligned memory.
-    - The `Matrix` type acts as a guard by statically verifying all dimension
-      constraints at compile time (using `Dim` types). It ensures that the
-      buffers passed to FFI calls have the precise size expected by the hardware
-      kernels, preventing memory corruption or CPU faults.
 
 ---
 
@@ -1074,95 +914,24 @@ Ways of exposing the dense/packed split on the wrapper:
 | A fifth `Matrix` parameter selecting the branch                    | Rejected: encodes in a generic what the leaf's own trait impl already decides; doubles every signature.                                                                                                                                                                                                          |
 | Wrapper-level coordinate resolution branching                      | Rejected: incurs layout matching and arithmetic on every lookup; delegating to storage leaves enables zero-branch, monomorphized indexing.                                                                                                                                                                       |
 
-#### 5.5. Factorization & Inversion Algorithms
+#### 5.5. Factorization, Multiplication and Determinant Algorithm Choices
 
-For solving linear systems and matrix inversion, the following factorization
-algorithms were analyzed with their trade-offs for embedded deployment:
+$LDL^T$ is the default solver for symmetric matrices: $O(N^3/3)$ operations,
+no square-root evaluations, and no convenience `invert()` (Higham, 2002).
+Near-singular or indefinite symmetric matrices are not handled via
+block-pivoting (e.g. Bunch-Kaufman); callers needing that fall back to LU.
+General non-symmetric systems use LU with partial pivoting ($O(2N^3/3)$); QR
+is reserved for ill-conditioned or non-square systems ($O(4N^3/3)$).
+Forming $A^T A$ to reduce a rectangular system to a symmetric one is
+rejected: it squares the condition number ($\kappa(A^T A) = \kappa(A)^2$),
+halving the number of valid decimal digits (Higham, 2002).
 
-- **LU Factorization (with Partial Pivoting)**:
-    - _Pros_: General-purpose; works on any non-singular square matrix. Pivoting
-      prevents division by small values, preserving numeric stability (Golub &
-      Van Loan, 2013).
-    - _Cons_: Pivoting requires row-swapping logic, which complicates loop
-      unrolling and SIMD optimization. It has a higher constant factor overhead
-      than Cholesky/LDL^T ($O(2N^3/3)$ operations).
-- **QR Factorization (via Givens Rotations or Householder Reflections)**:
-    - _Pros_: Extremely stable numerically, even for poorly conditioned or
-      singular-prone systems.
-    - _Cons_: Highly computationally expensive ($O(4N^3/3)$ operations). Givens
-      rotations require many square root and trigonometric function calls,
-      making it slow on microcontrollers lacking hardware FPU support.
-- **Cholesky Factorization ($LL^T$)**:
-    - _Pros_: Highly efficient ($O(N^3/3)$ operations, half the operations of
-      LU) and exhibits excellent numerical stability for positive-definite
-      symmetric matrices.
-    - _Cons_: Restricted strictly to symmetric positive-definite matrices.
-      Requires calculating square roots for each diagonal element, which
-      typically takes many CPU cycles and increases quantization errors in
-      fixed-point representations.
-- **$LDL^T$ Factorization**:
-    - _Pros_: Chosen as the default solver for symmetric matrices. Like
-      Cholesky, it requires only $O(N^3/3)$ operations. By decomposing the
-      matrix into $L D L^T$ (where $L$ is unit lower-triangular and $D$ is
-      diagonal), it completely avoids square root calculations. This preserves
-      scaling boundaries in fixed-point formats and optimizes CPU cycle counts (
-      Higham, 2002).
-    - _Cons_: Restricted to symmetric matrices. If the matrix is near-singular
-      or indefinite, it may suffer from numerical instability without complex
-      block-pivoting algorithms (e.g., Bunch-Kaufman).
-- **Normal Equation Solving (Forming $A^T A$)**:
-    - _Pros_: Allows solving non-symmetric or rectangular systems ($A x = b$) by
-      converting them to a symmetric system ($A^T A x = A^T b$) and applying
-      efficient symmetric solvers (Cholesky/LDL^T).
-    - _Cons_: Strongly avoided. Forming $A^T A$ squares the condition number of
-      the matrix ($\kappa(A^T A) = \kappa(A)^2$), which halves the number of
-      valid decimal digits in calculations and leads to severe precision loss.
-
-#### 5.6. Matrix Multiplication Algorithms
-
-To evaluate $C = A B$, several multiplication approaches were compared:
-
-- **Naive Row-by-Column (Triple Loop, $O(N^3)$)**:
-    - _Pros_: Tiny code footprint, no temporary buffer requirements,
-      and trivial for the compiler to optimize or auto-vectorize for very small
-      dimension limits ($N \le 8$).
-    - _Cons_: For larger dimensions (e.g., $N = 32$), this approach suffers from
-      high L1 cache miss rates due to non-contiguous memory access in
-      column-major matrices.
-- **Block-Based (Tiled) Multiplication**:
-    - _Pros_: Restructures the triple loop into sub-matrix
-      blocks ($k_c \times n_R$) to fit inside the CPU's cache line size,
-      drastically reducing memory bus transactions for larger
-      matrices ($N > 32$).
-    - _Cons_: Adds complex index boundary math and loop nesting, which increases
-      target binary size and introduces instruction overhead that outweighs
-      cache benefits for small embedded matrices ($N \le 32$).
-- **Vectorized SIMD / Hardware BLAS FFI**:
-    - _Pros_: Directly utilizes SIMD registers (such as ARM NEON or CMSIS-DSP
-      assembly instructions) to perform multiple multiply-accumulate operations
-      per cycle.
-    - _Cons_: Bypasses safe Rust controls by passing raw pointers to FFI
-      functions. It is highly hardware-specific and requires fallback
-      implementations for targets lacking SIMD engines.
-
-#### 5.7. Determinant Calculation Algorithms
-
-For computing $\det(A)$, two primary methods were analyzed:
-
-- **Leibniz Formula / Cofactor Expansion**:
-    - _Pros_: Does not require factorization or modifications to the matrix
-      data. Highly efficient and division-free for tiny dimensions ($2 \times 2$
-      or $3 \times 3$).
-    - _Cons_: Factorial complexity ($O(N!)$). Computing the determinant of
-      a $32 \times 32$ matrix using cofactor expansion is mathematically
-      impossible in real-time.
-- **Factorization-Based**:
-    - _Pros_: Uses the LU or $LDL^T$ decomposition result. Since the determinant
-      of a triangular matrix is the product of its diagonal elements, $\det(A)$
-      is computed in $O(N)$ additional operations after factorization.
-      Numerically stable and scales to $N=32$.
-    - _Cons_: Requires running a full matrix factorization first, which is
-      fallible (e.g., singular matrices return zero determinant or error).
+Matrix multiplication uses the naive triple loop at the crate's target
+dimensions ($N \le 32$); block-tiled and SIMD/FFI variants are not adopted,
+since their cache and code-size benefits do not offset their overhead at
+this scale. Determinant is read from the LU or $LDL^T$ factorization's
+diagonal product ($O(N)$ after factorization) rather than computed by
+cofactor expansion ($O(N!)$, intractable past $N=3$).
 
 ---
 
@@ -1189,7 +958,7 @@ For computing $\det(A)$, two primary methods were analyzed:
 | Requirements-based test   | `#[test]` unit tests over edge cases and singular inputs | FR-3, FR-4, FR-5, C-2    |
 | Property-based test       | `proptest` suites verifying algebraic invariants         | FR-2, FR-6               |
 | Doctest                   | Runnable doc examples in rustdoc                         | FR-2, FR-4               |
-| Back-to-back comparison   | `/cr-prototype numerical-models/matrix` oracle           | FR-2, FR-3               |
+| Back-to-back comparison   | `examples/prototypes/numerical-models/matrix/` oracle    | FR-2, FR-3               |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis   | NFR-1, NFR-2, C-2, C-3   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                | NFR-3                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics  | FR-1..FR-6, NFR-1..NFR-3 |
@@ -1211,15 +980,15 @@ For computing $\det(A)$, two primary methods were analyzed:
 
 | Requirement                                     | Method                                           | Artifact                                               |
 |:------------------------------------------------|:-------------------------------------------------|:-------------------------------------------------------|
-| FR-1 — Compile-Time Shape Verification          | Compile-time shape check                         | `tests/matrix_shape_fail.rs` (`compile_fail` doctests) |
-| FR-2 — Matrix Algebra & Linear Transformations  | Property-based test, Back-to-back comparison     | `tests/matrix_algebra.rs::prop_matrix_mult_assoc`      |
-| FR-3 — Fallible Factorizations & Direct Solvers | Requirements-based test, Back-to-back comparison | `tests/matrix_factorization.rs::test_lu_cholesky_qr`   |
-| FR-4 — Coordinate Element Access                | Requirements-based test                          | `tests/matrix_indexing.rs::test_coordinate_access`     |
-| FR-5 — Structural Specializations               | Property-based test, Requirements-based test     | `tests/matrix_specialized.rs::test_symmetric_packed`   |
-| FR-6 — Zero-Copy Submatrix Views                | Property-based test, Requirements-based test     | `tests/matrix_views.rs::test_strided_submatrix`        |
-| NFR-1 — Zero-Allocation Deterministic Execution | Resource usage evaluation                        | `#![no_std]` host check & static allocator audit       |
-| NFR-2 — Interoperable C-ABI Layout              | Resource usage evaluation                        | `tests/matrix_interop.rs::test_c_abi_layout`           |
-| NFR-3 — Predictable Real-Time Latency           | On-target execution                              | ETS test suite `matrix::bench_gemm_execution`          |
+| FR-1 — Compile-Time Shape Verification          | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/matrix/mod.rs`              |
+| FR-2 — Matrix Algebra & Linear Transformations  | Property-based test, Back-to-back comparison     | `src/matrix/tests/matrix_tests.rs::prop_add_associativity`          |
+| FR-3 — Fallible Factorizations & Direct Solvers | Requirements-based test, Back-to-back comparison | `src/matrix/tests/matrix_tests.rs::test_lu_solve_mut`               |
+| FR-4 — Coordinate Element Access                | Requirements-based test                          | `src/matrix/tests/matrix_tests.rs::test_coordinate_access`          |
+| FR-5 — Structural Specializations               | Property-based test, Requirements-based test     | `src/matrix/tests/matrix_tests.rs::test_symmetric_packed`           |
+| FR-6 — Zero-Copy Submatrix Views                | Property-based test, Requirements-based test     | `src/matrix/tests/matrix_tests.rs::test_strided_submatrix`          |
+| NFR-1 — Zero-Allocation Deterministic Execution | Resource usage evaluation                        | `#![no_std]` host check & `size_of` assertions                      |
+| NFR-2 — Interoperable C-ABI Layout              | Resource usage evaluation                        | `src/matrix/tests/matrix_tests.rs::test_c_abi_layout`               |
+| NFR-3 — Predictable Real-Time Latency           | On-target execution                              | ETS suite `matrix_test_suite`                                       |
 | C-1 — Stable Rust Toolchain                     | Compile-time shape check                         | Workspace build on `stable` Rust                       |
 | C-2 — Stack Footprint Limit                     | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                  |
 | C-3 — `#![no_std]` Environment                  | Resource usage evaluation                        | Compilation under `#![no_std]` target triples          |
@@ -1235,14 +1004,13 @@ For computing $\det(A)$, two primary methods were analyzed:
 
 #### 6.6. Validation
 
-- **Kalman Filter Covariance Update**: End-to-end numeric integrity verification
-  in `examples/kalman_filter.rs`
-  executing $P_{k\vert{}k} = (I - K_k H_k) P_{k\vert{}k-1}$ without dynamic heap
-  allocation.
+- **Matrix Arithmetic, Linear Solves, & Inversion**: End-to-end numeric integrity
+  verification in `examples/numerical-models/matrix_example.rs` executing matrix
+  construction, arithmetic (`+`, `-`, `*`), transposition, $LU$ decomposition
+  solving $Ax = b$, and matrix inversion with identity check ($A \cdot A^{-1} = I$)
+  without dynamic heap allocation.
 - **Hardware DSP Interoperability**: Slicing contiguous memory (`as_slice()`) to
   pass directly into CMSIS-DSP vector routines without intermediate buffers.
-- **Control System Demos**: Multi-state dynamic simulation in `examples/`
-  executing step-response simulations and closed-loop state-space control loops.
 
 #### 6.7. Not Verified
 
@@ -1301,7 +1069,7 @@ For computing $\det(A)$, two primary methods were analyzed:
 | **Step 3: Solvers**          | Wrap `Getrf`/`Getrs` for LU, add $LDL^T$, determinants, and in-place inversion over `DenseStorageMut`.                                                                                                                                  | 2.0 Days         |
 | **Step 4: Specializations**  | Create `UpperTriangular`, `LowerTriangular`, `Symmetric` wrappers and their packed counterparts.                                                                                                                                        | 1.5 Days         |
 | **Step 5: Factorizations**   | Wrap `Potrf`/`Potrs` (Cholesky, real and complex) and `Geqrf`/`Ormqr`/`Unmqr` (QR) with typed workspaces.                                                                                                                               | 2.0 Days         |
-| **Step 6: Verification**     | Set up `proptest` suites, dual-subsystem and strided-view coverage (§6.1), complex-scalar cases, ARM DWT cycle profiling, and Cachegrind setups per `vv-standards.md`.                                                                  | 2.5 Days         |
+| **Step 6: Verification**     | Set up `proptest` suites, dual-subsystem and strided-view coverage (§6.1), complex-scalar cases, ARM DWT cycle profiling, and Cachegrind setups per [`vv-standards.md`](../vv-standards.md).                                                                  | 2.5 Days         |
 | **Step 7: Interoperability** | Implement conversions between `Matrix`, `Polynomial` (Faddeev-LeVerrier), and `Tensor`.                                                                                                                                                 | 2.0 Days         |
 
 ---
@@ -1339,61 +1107,21 @@ For computing $\det(A)$, two primary methods were analyzed:
 9. **Faddeev, D. K., & Faddeeva, V. N. (1963).** _Computational Methods of
    Linear Algebra_. W. H. Freeman and Company. — Classical derivation behind the
    division-free Faddeev–LeVerrier matrix characteristic polynomial formulation.
-10. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool for
-    Random Testing of Haskell Programs. _ACM SIGPLAN Notices_, 35(9), 268–279. —
-    Random generation and shrinking methodology behind property-based test
-    suites (`proptest`).
-11. **Rust Project Developers. (2024).** _The Rustonomicon: The Dark Arts of
-    Advanced and Unsafe Rust Programming_. — Memory-aliasing and layout
-    guarantees underpinning the `DenseStorage`/`ContiguousStorage` marker split
-    and padding-free slice casting.
-12. **ISO. (2018).** _ISO 26262-6:2018 Road vehicles — Functional safety — Part
-    6: Product development at the software level_. — Automotive functional
-    safety requirements governing static allocation and WCET determinism.
-13. **RTCA / EUROCAE. (2011).** _DO-178C: Software Considerations in Airborne
-    Systems and Equipment Certification_. — Airborne software verification and
-    determinism standards.
-14. **IEEE Computer Society. (2008).** _IEEE Standard for Software and System
-    Test Documentation_ (IEEE Std 829-2008). — Software verification and test
-    suite structure standards.
-15. **control-rs. (2026).** `src/math/subprograms.rs`. — Level-1/2/3 subprogram
-    and LAPACK trait definitions (`Axpy`, `Scal`, `Dotu`, `Dotc`, `Nrm2`,
-    `Iamax`, `Gemv`, `Gemm`, `Trsv`, `Getrf`, `Potrf`, `Geqrf`); the inventory
-    of kernels available to `Matrix` (§4.5.1).
-16. **Greif, C., He, S., & Liu, P. (2016).** SYM-ILDL: Incomplete $LDL^T$
+10. **Greif, C., He, S., & Liu, P. (2016).** SYM-ILDL: Incomplete $LDL^T$
     Factorization of Symmetric Indefinite and Skew-Symmetric Matrices. _arXiv:
     1505.07589_. — $O(n)$ per-step pivot-search cost for symmetric partial
     pivoting, bounding the `Iamax` work per elimination step.
-17. **Higham, N. J., & Tisseur, F. (2000).** A Block Algorithm for Matrix 1-Norm
+11. **Higham, N. J., & Tisseur, F. (2000).** A Block Algorithm for Matrix 1-Norm
     Estimation, with an Application to 1-Norm Pseudospectra. _SIAM Journal on
     Matrix Analysis and Applications_, 21(4). doi: 10.1137/S0895479899356080. —
     Multiple-right-hand-side triangular solves arising in LU-based solver paths.
-18. **PLASMA (Univ. of Tennessee Innovative Computing Laboratory). (2025).**
+12. **PLASMA (Univ. of Tennessee Innovative Computing Laboratory). (2025).**
     `plasma_2.4.5/include/cblas.h` Source File. _PLASMA
     Documentation_. [Online].
     Available: https://icl.utk.edu/plasma/docs/cblas_8h_source.html. Accessed:
     Aug. 8, 2026. — `CBLAS_ORDER` as a per-call argument rather than a routine
     property, and the `lda`/`ldb`/`ldc` positions in `cblas_sgemm`, behind
     §4.2's layout-forwarding rule and §4.5.2's operand table.
-19. **De Cock, K., & De Moor, B. (2003).** Subspace identification, in *Control
-    Systems, Robotics and Automation*, Encyclopedia of Life Support Systems
-    (EOLSS). Eolss Publishers. — Formulations for block-Hankel data matrices
-    and Markov parameter block-Toeplitz matrices.
-20. **Willems, J. C., Rapisarda, P., Markovsky, I., & De Moor, B. (2004).** A
-    note on persistency of excitation. In *Proceedings of the 43rd IEEE
-    Conference on Decision and Control*, Atlantis, Paradise Island, Bahamas,
-    pp. 2650–2653. — Definition of signal Hankel matrices and fundamental
-    persistency rank bounds.
-21. **Juang, J.-N., & Pappa, R. S. (1985).** An eigensystem realization
-    algorithm for modal parameter identification and model reduction. *Journal
-    of
-    Guidance, Control, and Dynamics*, 8(5), 620–627, doi: 10.2514/3.20031. —
-    Generalized block-Hankel matrix construction from measurement data for
-    modal realization.
-22. **Gevers, M. (2006).** A personal view of the development of system
-    identification. In *SYSID 2006: 14th IFAC Symposium on System
-    Identification*, Newcastle, Australia. — Hankel matrices of covariance
-    sequences for stochastic realization.
 
 ---
 
@@ -1408,5 +1136,5 @@ For computing $\det(A)$, two primary methods were analyzed:
 | 1.4      | August 25, 2026 | @MitchellDScott | Unified matrix representation: consolidated `Matrix<T, R, C, S>` struct across dense and packed backends with specialized type aliases.              |
 | 1.5      | August 25, 2026 | @MitchellDScott | V&V standardization: upgraded test oracles, residual bounds ($\tau = 20.0$), and structured matrix verification.                                      |
 | 1.6      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<N>` dimensions.                                                |
-
+| 1.7      | August 26, 2026 | @MitchellDScott | Collapsed subprogram inventory; crate-wide standards cite `vv-standards.md`.                                                                          |
 

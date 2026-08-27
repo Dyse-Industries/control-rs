@@ -14,7 +14,7 @@ This document specifies the architecture, requirement contract, and verification
 
 1. **Embedded Control Loop Simulation**: Deterministic 1st-order (Forward Euler) and 2nd-order (Heun, Ralston) integration of continuous plant dynamics in high-rate microcontroller control loops (Verschueren et al., 2022).
 2. **High-Fidelity State Propagation**: 4th-order Classical Runge–Kutta (RK4) integration for flight navigation, vehicle kinematics, and state estimation (Hairer et al., 1993; Renevey, 2024).
-3. **Monomorphized Vector Field Integration**: Direct stepping of `control-rs` continuous models (`StateSpaceCore`, nonlinear dynamics) implementing `SystemDynamics<T, NX, NU>` without heap allocation or virtual dispatch overhead (control-rs, 2026a, 2026b).
+3. **Monomorphized Vector Field Integration**: Direct stepping of `control-rs` continuous models ([`StateSpaceCore`](../numerical-models/state-space-design.md), nonlinear dynamics) implementing `SystemDynamics<T, NX, NU>` without heap allocation or virtual dispatch overhead.
 
 ---
 
@@ -36,7 +36,7 @@ This document specifies the architecture, requirement contract, and verification
 
 #### 2.3 Constraints
 
-- **C-1 — Native Rust Implementation**: Algorithms must be authored directly in Rust without external C code generation (inheriting C-1/C-2 from `controls-tools-design.md`).
+- **C-1 — Native Rust Implementation**: Algorithms must be authored directly in Rust without external C code generation (inheriting C-1/C-2 from [`controls-tools-design.md`](../control-toolboxes/controls-tools-design.md)).
 - **C-2 — Storage Subsystem Interoperability**: State and input vectors must use the crate's `Owned<T, R, C>` and `Storage` traits.
 - **C-3 — Zero Virtual Dispatch Overhead**: Integration loops must fully monomorphize over the system dynamics type `Sys: SystemDynamics<T, NX, NU>`.
 
@@ -209,8 +209,4 @@ pub struct RungeKutta4;
 
 [4] S. Renevey, *ode_solvers*: Numerical methods for solving ordinary differential equations in Rust (Version 0.6.2). [Online]. Available: https://docs.rs/ode_solvers/0.6.2/ode_solvers/. Accessed: Aug. 26, 2026.
 
-[5] control-rs, "src/state_space/mod.rs -- StateSpaceCore continuous/discrete models," in *control-rs repository*, 2026. [Online]. Available: https://github.com/Dyse-Industries/control-rs/blob/main/src/state_space/mod.rs. Accessed: Aug. 26, 2026.
-
-[6] control-rs, "documentation/control-toolboxes/controls-tools-design.md," in *control-rs repository*, 2026. [Online]. Available: https://github.com/Dyse-Industries/control-rs/blob/main/documentation/control-toolboxes/controls-tools-design.md. Accessed: Aug. 26, 2026.
-
-[7] T.-G. Kim, *peroxide*: Comprehensive numerical computing library for Rust (Version 0.37.0). [Online]. Available: https://docs.rs/peroxide/latest/peroxide/. Accessed: Aug. 26, 2026.
+[5] T.-G. Kim, *peroxide*: Comprehensive numerical computing library for Rust (Version 0.37.0). [Online]. Available: https://docs.rs/peroxide/latest/peroxide/. Accessed: Aug. 26, 2026.

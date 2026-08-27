@@ -12,15 +12,16 @@
 models from measured records. It consumes time-series input/output pairs,
 impulse or Markov sequences, frequency-response samples, or free-decay
 traces and emits `TransferFunction`, `StateSpace`, `Polynomial`, `Matrix`,
-or `Tensor` instances via the existing constructors (control-rs, 2026).
+or `Tensor` instances via the existing constructors
+([`numerical-models-design.md`](../numerical-models/numerical-models-design.md)).
 Identification is a data-based alternative to assembling those models from
 known coefficients (Gilson, 2015; Ljung, 2001).
 
-The module is bound by `documentation/control-toolboxes/controls-tools-design.md`
+The module is bound by [`controls-tools-design.md`](./controls-tools-design.md)
 constraints C-1..C-4: native on-target Rust, no host-to-target codegen, no
 dynamic allocation, and no runtime symbolic dependency. Factory APIs for
 this work are specified here rather than on the numerical-model types
-(`documentation/numerical-models/numerical-models-design.md` §4.3).
+([`numerical-models-design.md`](../numerical-models/numerical-models-design.md) §4.3).
 
 Primary usage scenarios:
 
@@ -87,7 +88,7 @@ Primary usage scenarios:
 - **FR-6 — Emit landed model containers**: Estimators fill existing
   `continuous` / `discrete` / `from_coefficients` / `from_raw`
   constructors. They do not add identification methods onto the numerical
-  model types (control-rs, 2026).
+  model types ([`numerical-models-design.md`](../numerical-models/numerical-models-design.md)).
 
 - **FR-7 — Rank and excitation as errors**: Rank-deficient regressors,
   singular Hankel blocks, and failed persistency tests return `Result`
@@ -97,7 +98,7 @@ Primary usage scenarios:
 
 - **NFR-1 — No dynamic allocation**: Estimators, scratchpads, and data
   matrices execute on statically sized storage, matching toolbox C-3 and
-  the landed model backends (control-rs, 2026).
+  the landed model backends ([`controls-tools-design.md`](./controls-tools-design.md)).
 
 - **NFR-2 — Bounded arithmetic**: ARX, Levy, ERA, MOESP, and N4SID run
   in a finite flop count with no nonlinear optimizer (Galrinho, 2016; Van
@@ -109,15 +110,15 @@ Primary usage scenarios:
 
 - **C-1 — Compile-time sizes**: Dataset length, model orders, and Hankel
   block dimensions are const-generic. Runtime resizing is out of scope
-  (control-rs, 2026).
+  ([`controls-tools-design.md`](./controls-tools-design.md)).
 
 - **C-2 — Native authorability, no codegen**: Every estimator is Rust
   against landed `Matrix` / `Polynomial` / `TransferFunction` /
   `StateSpace` / `Tensor`. Host MATLAB/Python generation of vendored
-  source is forbidden (`controls-tools-design.md` C-1, C-2).
+  source is forbidden ([`controls-tools-design.md`](./controls-tools-design.md) C-1, C-2).
 
 - **C-3 — Factories, not model methods**: Identification does not extend
-  the numerical-model public API. Sibling `numerical-models-design.md`
+  the numerical-model public API. Sibling [`numerical-models-design.md`](../numerical-models/numerical-models-design.md)
   already defers those factories to this document.
 
 - **C-4 — Open-loop subspace**: Traditional CVA / N4SID / MOESP estimates
@@ -157,7 +158,7 @@ precondition for treating a data window as the system behavior
 (Markovsky and Mercère, 2016).
 
 Landed kernels today are square Householder QR plus LU/LDLT/Cholesky;
-there is no `sysid` module and no SVD (control-rs, 2026). Rectangular
+there is no SVD ([`matrix-design.md`](../numerical-models/matrix-design.md)). Rectangular
 least squares and truncated SVD are therefore toolbox kernels, not
 reuse of an existing public factorization.
 
@@ -175,7 +176,7 @@ Measurements ──► Hankel / regressor layout ──► LS (QR) or SVD
 ### 4. Architecture
 
 `sysid` is a new crate module. It does not appear in the current public
-module list (control-rs, 2026).
+module list.
 
 ```mermaid
 flowchart LR
@@ -242,11 +243,11 @@ $H_t(w_d)$ is the $t$-sample behavior (Markovsky and Mercère, 2016).
 
 - **Overdetermined least squares** on $M\times N$ stacks, $M\ge N$, using
   Householder QR or regularized normal equations. Landed QR is
-  square-only (control-rs, 2026).
+  square-only ([`matrix-design.md`](../numerical-models/matrix-design.md)).
 - **Truncated SVD** for ERA, MOESP, N4SID, matrix pencil, and optional
   frequency-domain subspace (Juang and Pappa, 1985; Verhaegen and Dewilde,
   1992; Van Overschee and De Moor, 1994; Hua and Sarkar, 1990; McKelvey et
-  al., 1996). Not present in the landed matrix API (control-rs, 2026).
+  al., 1996). Not present in the landed matrix API ([`matrix-design.md`](../numerical-models/matrix-design.md)).
 
 Both kernels use caller-provided scratch of compile-time size (NFR-1).
 
@@ -269,14 +270,16 @@ Vector Fitting is SK with partial-fraction bases; pole flipping is part of
 the published VF description (Gustavsen, 1999). Product of VF is a
 state-equation realization as well as a rational fit (Gustavsen and
 Semlyen, 1998). ARX/Levy/SK coefficients feed
-`ArrayTransferFunction::{continuous,discrete}` (control-rs, 2026). ERA /
+`ArrayTransferFunction::{continuous,discrete}`
+([`transfer-function-design.md`](../numerical-models/transfer-function-design.md)). ERA /
 MOESP / N4SID / VF SER feed `ArrayStateSpace::{continuous,discrete}`
-(control-rs, 2026). Pencil/Prony coefficients feed
-`ArrayPolynomial::from_coefficients` (control-rs, 2026).
+([`state-space-design.md`](../numerical-models/state-space-design.md)). Pencil/Prony
+coefficients feed `ArrayPolynomial::from_coefficients`
+([`polynomial-design.md`](../numerical-models/polynomial-design.md)).
 
 #### 4.4. Surveyed, not first-delivery **[Proposal (not in evidence) where noted]**
 
-These methods are in the research pair and are recorded so the toolbox
+These methods are in the surveyed sources and are recorded so the toolbox
 does not silently shrink the survey. They are not FR-required.
 
 - **Output-error / ARMAX / Box–Jenkins PEM**: model structures exist
@@ -292,8 +295,8 @@ does not silently shrink the survey. They are not FR-required.
   growth. **Proposal (not in evidence)** that const-generic buffers make
   greedy degree growth a host-side or later factory.
 - **Loewner** (Mayo and Antoulas, 2007; Gosea and Antoulas, 2017):
-  descriptor $(E,A,B,C,D)$. Landed `StateSpace` has no $E$ (control-rs,
-  2026). **Proposal (not in evidence)** that Loewner waits on descriptor
+  descriptor $(E,A,B,C,D)$. Landed `StateSpace` has no $E$
+  ([`state-space-design.md`](../numerical-models/state-space-design.md)). **Proposal (not in evidence)** that Loewner waits on descriptor
   storage or is restricted to cases reducible to $E=I$.
 - **DMD** (Schmid, 2010): linear map $v_{i+1}=Av_i$ from snapshots.
   **Proposal (not in evidence)** how $B,C,D$ are completed when only $A$
@@ -301,7 +304,7 @@ does not silently shrink the survey. They are not FR-required.
 - **Block-Hankel tensor BSI** (Van Eeghem et al., 2016): MIMO FIR under
   independent inputs. Deferred until the SVD/Hankel kernels and a tensor
   layout factory exist. Product uses `Tensor::from_raw` / `from_storage`
-  (control-rs, 2026).
+  ([`tensor-design.md`](../numerical-models/tensor-design.md)).
 
 ---
 
@@ -309,7 +312,7 @@ does not silently shrink the survey. They are not FR-required.
 
 - **Identification methods on `StateSpace` / `TransferFunction`.** Rejected
   under C-3. Sibling numerical-model design already routes factories here.
-  Core types stay coefficient containers (control-rs, 2026).
+  Core types stay coefficient containers ([`numerical-models-design.md`](../numerical-models/numerical-models-design.md)).
 
 - **General PEM as the on-target default.** PEM is the parametric
   benchmark and is non-convex except for ARX (Galrinho, 2016). On-target
@@ -356,13 +359,13 @@ does not silently shrink the survey. They are not FR-required.
 | ETS | Same unit suite on QEMU `thumbv7em` / RISC-V targets | NFR-1 |
 | Alloc audit | Host interceptor counts zero heap allocations | NFR-1 |
 
-No external-toolbox oracle is in the research pair. Synthetic plants with
+No external-toolbox oracle is in the surveyed sources. Synthetic plants with
 known $\theta^\ast$ are the primary oracle. An optional host prototype
-(`/cr-prototype control-toolboxes/sysid`) may supply golden vectors later;
+under `examples/prototypes/control-toolboxes/sysid/` may supply golden vectors later;
 it is not a gate.
 
-**Proposal (not in evidence):** the numeric bounds in §6.3. The research
-pair does not state recovery tolerances.
+**Proposal (not in evidence):** the numeric bounds in §6.3. Surveyed sources
+do not state recovery tolerances.
 
 #### 6.2. Validation
 
@@ -406,11 +409,11 @@ Markov-parameter identification.
 **Proposal (not in evidence)** items the review should judge:
 
 1. Rectangular QR and truncated SVD as `sysid` kernels (landed QR is
-   square; no SVD) (control-rs, 2026).
+   square; no SVD) ([`matrix-design.md`](../numerical-models/matrix-design.md)).
 2. AAA deferred because greedy support-point growth fights C-1
    (Nakatsukasa et al., 2018).
 3. Loewner deferred until descriptor $E$ exists on `StateSpace` (Mayo and
-   Antoulas, 2007; control-rs, 2026).
+   Antoulas, 2007; [`state-space-design.md`](../numerical-models/state-space-design.md)).
 4. DMD emits $A$ only; $B,C,D$ completion unspecified (Schmid, 2010).
 5. CVA and McKelvey frequency-domain subspace wait on the SVD kernel
    (Larimore, 1990; McKelvey et al., 1996).
@@ -454,10 +457,6 @@ subspace.
 ---
 
 ## References
-
-[1] control-rs, "Numerical model public constructors and matrix
-    decompositions," in *control-rs*. [Online]. Available:
-    https://github.com/Dyse-Industries/control-rs.git. Accessed: Aug. 25, 2026.
 
 [2] M. Gilson, "What Has Instrumental Variable Method to Offer for System
     Identification?," in *Proc. 8th IFAC Int. Conf. Mathematical Modelling

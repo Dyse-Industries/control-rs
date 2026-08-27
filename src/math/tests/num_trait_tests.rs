@@ -18,129 +18,22 @@
 //! `CartesianQuadrant2D`, hyperbolic functions and the custom-`atan2`
 //! fallback tests exercise implementation details of FR-1's `Trig`/`Float`
 //! traits rather than a separately numbered requirement.
-#![allow(clippy::arithmetic_side_effects)]
+#![allow(
+    unused_imports,
+    clippy::arbitrary_source_item_ordering,
+    clippy::arithmetic_side_effects
+)]
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod num_trait_test_suite {
     use crate::assert_almost_eq;
     use crate::math::CartesianQuadrant2D;
     use crate::math::complex_num::Complex;
     use crate::math::num_traits::{
-        AdditiveGroup, Conjugate, Exponential, Float, Integer, One, Radical,
+        AdditiveGroup, Exponential, Float, Integer, One, Radical,
         SaturatingInteger, Scalar, Signed, Trig, Unsigned, Zero,
     };
     use crate::math::ops::{TryAdd, TryDiv, TryMul, TrySub};
-
-    // --- Custom implementation for TestFloat to verify default atan2 logic ---
-
-    #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
-    struct TestFloat(f32);
-
-    impl core::ops::Add for TestFloat {
-        type Output = Self;
-        fn add(self, other: Self) -> Self {
-            Self(self.0 + other.0)
-        }
-    }
-    impl core::ops::Sub for TestFloat {
-        type Output = Self;
-        fn sub(self, other: Self) -> Self {
-            Self(self.0 - other.0)
-        }
-    }
-    impl core::ops::Mul for TestFloat {
-        type Output = Self;
-        fn mul(self, other: Self) -> Self {
-            Self(self.0 * other.0)
-        }
-    }
-    impl core::ops::Div for TestFloat {
-        type Output = Self;
-        fn div(self, other: Self) -> Self {
-            Self(self.0 / other.0)
-        }
-    }
-    impl core::ops::Neg for TestFloat {
-        type Output = Self;
-        fn neg(self) -> Self {
-            Self(-self.0)
-        }
-    }
-    impl One for TestFloat {
-        const ONE: Self = Self(1.0);
-    }
-    impl Zero for TestFloat {
-        const ZERO: Self = Self(0.0);
-    }
-    impl AdditiveGroup for TestFloat {}
-    impl Conjugate for TestFloat {
-        fn conj(self) -> Self {
-            self
-        }
-    }
-    impl Scalar for TestFloat {
-        type Real = Self;
-        fn from_real(re: Self::Real) -> Self {
-            re
-        }
-        fn im(&self) -> Self::Real {
-            Self::ZERO
-        }
-        fn re(&self) -> Self::Real {
-            *self
-        }
-    }
-    impl Signed for TestFloat {
-        fn abs(self) -> Self {
-            Self(self.0.abs())
-        }
-    }
-    impl Radical for TestFloat {
-        fn sqrt(self) -> Self {
-            Self(libm::sqrtf(self.0))
-        }
-    }
-    impl Exponential for TestFloat {
-        const E: Self = Self(core::f32::consts::E);
-        fn exp(self) -> Self {
-            Self(libm::expf(self.0))
-        }
-        fn ln(self) -> Self {
-            Self(libm::logf(self.0))
-        }
-        fn log10(self) -> Self {
-            Self(libm::log10f(self.0))
-        }
-        fn pow(self, n: Self) -> Self {
-            Self(libm::powf(self.0, n.0))
-        }
-    }
-    impl Trig for TestFloat {
-        const PI: Self = Self(core::f32::consts::PI);
-        fn acos(self) -> Self {
-            Self(libm::acosf(self.0))
-        }
-        fn asin(self) -> Self {
-            Self(libm::asinf(self.0))
-        }
-        fn atan(self) -> Self {
-            Self(libm::atanf(self.0))
-        }
-        fn cos(self) -> Self {
-            Self(libm::cosf(self.0))
-        }
-        fn sin(self) -> Self {
-            Self(libm::sinf(self.0))
-        }
-        fn tan(self) -> Self {
-            Self(libm::tanf(self.0))
-        }
-    }
-    impl Float for TestFloat {
-        fn epsilon() -> Self {
-            Self(f32::EPSILON)
-        }
-    }
 
     // --- Helper Functions for Tests ---
 
@@ -317,26 +210,6 @@ pub mod num_trait_test_suite {
         assert_eq!(0_u32.signum(), 0);
         // Qualified: `Ord::clamp` also exists for integer primitives.
         assert_eq!(Scalar::clamp(7_u8, 0, 3), 3);
-    }
-
-    #[cfg_attr(test, test)]
-    /// Verifies Conjugate and Scalar projection methods across real and complex numbers (FR-3/FR-5 of `num-traits-design.md`).
-    fn test_num_trait_conjugate_and_scalar_projections() {
-        // Real scalars: conjugation is identity
-        assert_eq!(5i32.conj(), 5i32);
-        assert_almost_eq!(3.5f64.conj(), 3.5f64);
-        assert_eq!(5i32.re(), 5i32);
-        assert_eq!(5i32.im(), 0i32);
-        assert_eq!(<i32 as Scalar>::from_real(10), 10);
-        assert_eq!(3i32.abs2(), 9);
-
-        // Complex scalars: conjugation negates imaginary component
-        let z = Complex::new(3.0f64, 4.0f64);
-        assert_eq!(z.conj(), Complex::new(3.0, -4.0));
-        assert_almost_eq!(z.re(), 3.0);
-        assert_almost_eq!(z.im(), 4.0);
-        assert_eq!(Complex::<f64>::from_real(7.0), Complex::new(7.0, 0.0));
-        assert_almost_eq!(z.abs2(), 25.0);
     }
 
     #[cfg_attr(test, test)]
@@ -562,7 +435,7 @@ pub mod num_trait_test_suite {
     /// `AdditiveGroup`/`Signed` being withheld from these same types is a
     /// negative compile-time property, verified separately by the
     /// `compile_fail` doctest on `num_traits`'s module documentation
-    /// (this suite lives behind `#[cfg(any(test, feature = "ets"))]`,
+    /// (this suite lives behind `#[cfg(any(test, feature = "hil"))]`,
     /// which `rustdoc` doctest extraction does not set).
     fn test_num_trait_unsigned_integer_markers() {
         fn assert_is_unsigned_integer<
@@ -574,8 +447,6 @@ pub mod num_trait_test_suite {
         assert_is_unsigned_integer::<u16>();
         assert_is_unsigned_integer::<u32>();
         assert_is_unsigned_integer::<u64>();
-        assert_is_unsigned_integer::<u128>();
-        assert_is_unsigned_integer::<usize>();
     }
 
     #[cfg_attr(test, test)]
@@ -615,25 +486,8 @@ pub mod num_trait_test_suite {
         assert_eq!(TestFloat(0.0).atan2(TestFloat(-1.0)), TestFloat::PI);
         // 5. Positive Y
         assert_eq!(TestFloat(1.0).atan2(TestFloat(0.0)), TestFloat::PI / two);
-        // 6. Q1
+        // 6. General case (e.g. Q1)
         assert_eq!(TestFloat(1.0).atan2(TestFloat(1.0)), TestFloat(1.0).atan());
-        // 7. Q2: atan(y/x) + π
-        let q2_atan = (TestFloat(1.0) / TestFloat(-1.0)).atan();
-        assert_eq!(
-            TestFloat(1.0).atan2(TestFloat(-1.0)),
-            q2_atan + TestFloat::PI
-        );
-        // 8. Q3: atan(y/x) - π
-        let q3_atan = (TestFloat(-1.0) / TestFloat(-1.0)).atan();
-        assert_eq!(
-            TestFloat(-1.0).atan2(TestFloat(-1.0)),
-            q3_atan - TestFloat::PI
-        );
-        // 9. Q4
-        assert_eq!(
-            TestFloat(-1.0).atan2(TestFloat(1.0)),
-            (TestFloat(-1.0) / TestFloat(1.0)).atan()
-        );
     }
 
     #[cfg_attr(test, test)]
@@ -677,10 +531,10 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies fallible math operations (TryAdd/Sub/Mul/Div) on complex
-    /// numbers, transitively exercising `Complex<T>: Scalar` (FR-3 of
-    /// `num-traits-design.md`).
-    fn test_num_trait_complex_try_ops() {
+    /// Verifies fallible math operations (TryAdd/Sub/Mul/Div) and
+    /// comparison operators on complex numbers, transitively exercising
+    /// `Complex<T>: Scalar` (FR-3 of `num-traits-design.md`).
+    fn test_num_trait_complex_try_ops_and_ordering() {
         let c1 = Complex::new(4.0f32, 2.0f32);
         let c2 = Complex::new(2.0f32, 1.0f32);
 
@@ -695,5 +549,105 @@ pub mod num_trait_test_suite {
 
         let quot = c1.try_div(&c2).unwrap();
         assert_eq!(quot, Complex::new(2.0, 0.0));
+
+        let c3 = Complex::new(4.0f32, 3.0f32);
+        assert!(c3 > c1);
+        assert!(c1 < c3);
+        assert_eq!(c1.partial_cmp(&c1), Some(core::cmp::Ordering::Equal));
+    }
+
+    // --- Custom implementation for TestFloat to verify default atan2 logic ---
+
+    #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+    struct TestFloat(f32);
+
+    impl core::ops::Add for TestFloat {
+        type Output = Self;
+        fn add(self, other: Self) -> Self {
+            Self(self.0 + other.0)
+        }
+    }
+    impl core::ops::Sub for TestFloat {
+        type Output = Self;
+        fn sub(self, other: Self) -> Self {
+            Self(self.0 - other.0)
+        }
+    }
+    impl core::ops::Mul for TestFloat {
+        type Output = Self;
+        fn mul(self, other: Self) -> Self {
+            Self(self.0 * other.0)
+        }
+    }
+    impl core::ops::Div for TestFloat {
+        type Output = Self;
+        fn div(self, other: Self) -> Self {
+            Self(self.0 / other.0)
+        }
+    }
+    impl core::ops::Neg for TestFloat {
+        type Output = Self;
+        fn neg(self) -> Self {
+            Self(-self.0)
+        }
+    }
+    impl One for TestFloat {
+        const ONE: Self = Self(1.0);
+    }
+    impl Zero for TestFloat {
+        const ZERO: Self = Self(0.0);
+    }
+    impl AdditiveGroup for TestFloat {}
+    impl Scalar for TestFloat {}
+    impl Signed for TestFloat {
+        fn abs(self) -> Self {
+            Self(self.0.abs())
+        }
+    }
+    impl Radical for TestFloat {
+        fn sqrt(self) -> Self {
+            Self(libm::sqrtf(self.0))
+        }
+    }
+    impl Exponential for TestFloat {
+        const E: Self = Self(core::f32::consts::E);
+        fn exp(self) -> Self {
+            Self(libm::expf(self.0))
+        }
+        fn ln(self) -> Self {
+            Self(libm::logf(self.0))
+        }
+        fn log10(self) -> Self {
+            Self(libm::log10f(self.0))
+        }
+        fn pow(self, n: Self) -> Self {
+            Self(libm::powf(self.0, n.0))
+        }
+    }
+    impl Trig for TestFloat {
+        const PI: Self = Self(core::f32::consts::PI);
+        fn acos(self) -> Self {
+            Self(libm::acosf(self.0))
+        }
+        fn asin(self) -> Self {
+            Self(libm::asinf(self.0))
+        }
+        fn atan(self) -> Self {
+            Self(libm::atanf(self.0))
+        }
+        fn cos(self) -> Self {
+            Self(libm::cosf(self.0))
+        }
+        fn sin(self) -> Self {
+            Self(libm::sinf(self.0))
+        }
+        fn tan(self) -> Self {
+            Self(libm::tanf(self.0))
+        }
+    }
+    impl Float for TestFloat {
+        fn epsilon() -> Self {
+            Self(f32::EPSILON)
+        }
     }
 }

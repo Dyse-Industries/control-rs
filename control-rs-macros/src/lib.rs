@@ -1,5 +1,5 @@
-//! Procedural macros for the control-rs ETS testing framework.
-//! Provides attributes like `#[ets_suite]` and `#[ets_setup]` to declare ETS test suites and setup functions.
+//! Procedural macros for the control-rs HIL testing framework.
+//! Provides attributes like `#[hil_suite]` and `#[hil_setup]` to declare HIL test suites and setup functions.
 
 #![allow(
     unused_extern_crates,
@@ -95,8 +95,8 @@ fn process_static_setting(item_static: &mut ItemStatic) -> Option<syn::Ident> {
 
         let new_static: ItemStatic = parse_quote! {
             #(#attrs)*
-            #vis static #name_ident: ::control_rs_ets::settings::#atomic_type_ident =
-                ::control_rs_ets::settings::#atomic_type_ident::new(stringify!(#name_ident), #setting_doc, #init_expr);
+            #vis static #name_ident: ::control_rs_hil::settings::#atomic_type_ident =
+                ::control_rs_hil::settings::#atomic_type_ident::new(stringify!(#name_ident), #setting_doc, #init_expr);
         };
 
         *item_static = new_static;
@@ -129,7 +129,7 @@ fn generate_suite_descriptors(
 ) -> [Item; 4] {
     let test_descriptors = tests.iter().map(|(t, doc)| {
         quote! {
-            ::control_rs_ets::ExecDescriptor {
+            ::control_rs_hil::ExecDescriptor {
                 name: stringify!(#t),
                 description: #doc,
                 test_fn: #t,
@@ -145,17 +145,17 @@ fn generate_suite_descriptors(
 
     [
         parse_quote! {
-            static EXECUTABLES: &[::control_rs_ets::ExecDescriptor] = &[
+            static EXECUTABLES: &[::control_rs_hil::ExecDescriptor] = &[
                 #(#test_descriptors),*
             ];
         },
         parse_quote! {
-            static SETTINGS: &[&dyn ::control_rs_ets::Setting] = &[
+            static SETTINGS: &[&dyn ::control_rs_hil::Setting] = &[
                 #(#setting_ptrs),*
             ];
         },
         parse_quote! {
-            static SUITE_DESCRIPTOR: ::control_rs_ets::SuiteDescriptor = ::control_rs_ets::SuiteDescriptor {
+            static SUITE_DESCRIPTOR: ::control_rs_hil::SuiteDescriptor = ::control_rs_hil::SuiteDescriptor {
                 name: #suite_name,
                 description: #suite_doc,
                 executables: EXECUTABLES,
@@ -163,25 +163,25 @@ fn generate_suite_descriptors(
             };
         },
         parse_quote! {
-            /// Pointer to the suite descriptor, linked into the ETS test suites section.
-            #[unsafe(link_section = ".ets_test_suites")]
+            /// Pointer to the suite descriptor, linked into the HIL test suites section.
+            #[unsafe(link_section = ".hil_test_suites")]
             #[used]
-            pub static SUITE_DESCRIPTOR_PTR: &::control_rs_ets::SuiteDescriptor = &SUITE_DESCRIPTOR;
+            pub static SUITE_DESCRIPTOR_PTR: &::control_rs_hil::SuiteDescriptor = &SUITE_DESCRIPTOR;
         },
     ]
 }
 
-/// Attribute macro for declaring a ETS test suite.
+/// Attribute macro for declaring a HIL test suite.
 ///
 /// Converts statics to atomic settings and registers functions as test executables.
 #[proc_macro_attribute]
-pub fn ets_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn hil_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut item_mod = parse_macro_input!(item as ItemMod);
     if item_mod.content.is_none() {
         return TokenStream::from(
             syn::Error::new_spanned(
                 &item_mod,
-                "#[ets_suite] attribute is only supported on inline modules (e.g., mod foo { ... })"
+                "#[hil_suite] attribute is only supported on inline modules (e.g., mod foo { ... })"
             )
             .to_compile_error()
         );
@@ -249,12 +249,12 @@ fn extract_context_generics(ty: &syn::Type) -> Option<(syn::Type, syn::Type)> {
     Some((c_ty.clone(), p_ty.clone()))
 }
 
-/// Attribute macro for setting up ETS entrypoint.
+/// Attribute macro for setting up the HIL server entrypoint.
 ///
 /// Annotates the hardware setup function, generates the standard main entrypoint,
 /// and sets up the server event loop and QEMU-compatible panic handler.
 #[proc_macro_attribute]
-pub fn ets_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn hil_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let setup_fn = parse_macro_input!(item as ItemFn);
     let setup_name = &setup_fn.sig.ident;
 
@@ -269,26 +269,26 @@ pub fn ets_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #setup_fn
 
-        static ETS_SERVER: ::core::sync::atomic::AtomicPtr<::control_rs_ets::Server<'static, #c_ty, #p_ty>> =
+        static HIL_SERVER: ::core::sync::atomic::AtomicPtr<::control_rs_hil::Server<'static, #c_ty, #p_ty>> =
             ::core::sync::atomic::AtomicPtr::new(::core::ptr::null_mut());
 
-        ::control_rs_macros::ets_entrypoint!(#setup_name);
-        ::control_rs_macros::ets_panic!();
-        ::control_rs_macros::ets_exception!();
+        ::control_rs_macros::hil_entrypoint!(#setup_name);
+        ::control_rs_macros::hil_panic!();
+        ::control_rs_macros::hil_exception!();
     };
 
     TokenStream::from(expanded)
 }
 
-/// Helper macro to define the unified ETS entrypoint `main`.
+/// Helper macro to define the unified HIL entrypoint `main`.
 #[proc_macro]
-pub fn ets_entrypoint(input: TokenStream) -> TokenStream {
+pub fn hil_entrypoint(input: TokenStream) -> TokenStream {
     let setup_name = parse_macro_input!(input as syn::Ident);
     let expanded = quote! {
         #[cfg(target_os = "none")]
         unsafe extern "Rust" {
-            static __ets_test_suites_start: u8;
-            static __ets_test_suites_end: u8;
+            static __hil_test_suites_start: u8;
+            static __hil_test_suites_end: u8;
         }
 
         // ==================== Unified Entry Point ====================
@@ -297,17 +297,17 @@ pub fn ets_entrypoint(input: TokenStream) -> TokenStream {
         #[cfg_attr(any(target_arch = "riscv32", target_arch = "riscv64"), ::riscv_rt::entry)]
         fn main() -> ! {
             let start = unsafe {
-                &__ets_test_suites_start as *const u8 as *const &::control_rs_ets::SuiteDescriptor
+                &__hil_test_suites_start as *const u8 as *const &::control_rs_hil::SuiteDescriptor
             };
             let end = unsafe {
-                &__ets_test_suites_end as *const u8 as *const &::control_rs_ets::SuiteDescriptor
+                &__hil_test_suites_end as *const u8 as *const &::control_rs_hil::SuiteDescriptor
             };
 
-            let suites = unsafe { ::control_rs_ets::util::get_suites(start, end) };
+            let suites = unsafe { ::control_rs_hil::util::get_suites(start, end) };
 
             let context = #setup_name();
-            let mut server = ::control_rs_ets::Server::new(context, suites);
-            ETS_SERVER.store(&mut server as *mut _, ::core::sync::atomic::Ordering::Release);
+            let mut server = ::control_rs_hil::Server::new(context, suites);
+            HIL_SERVER.store(&mut server as *mut _, ::core::sync::atomic::Ordering::Release);
 
             let _ = server.run();
             server.exit();
@@ -316,9 +316,9 @@ pub fn ets_entrypoint(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Helper macro to define the target ETS panic handler.
+/// Helper macro to define the target HIL panic handler.
 #[proc_macro]
-pub fn ets_panic(input: TokenStream) -> TokenStream {
+pub fn hil_panic(input: TokenStream) -> TokenStream {
     let _ = input;
     let expanded = quote! {
         // ==================== Unified Panic Handler ====================
@@ -327,7 +327,7 @@ pub fn ets_panic(input: TokenStream) -> TokenStream {
         fn panic(info: &::core::panic::PanicInfo) -> ! {
             let mut msg_buf = [0u8; 128];
             let pos = {
-                let mut writer = ::control_rs_ets::util::FailureBufWriter { buf: &mut msg_buf, pos: 0 };
+                let mut writer = ::control_rs_hil::util::FailureBufWriter { buf: &mut msg_buf, pos: 0 };
                 let _ = ::core::fmt::write(&mut writer, format_args!("{}", info.message()));
                 writer.pos
             };
@@ -336,12 +336,12 @@ pub fn ets_panic(input: TokenStream) -> TokenStream {
             let file = info.location().map_or("unknown", |l| l.file());
             let line = info.location().map_or(0, |l| l.line());
 
-            let server_ptr = ETS_SERVER.load(::core::sync::atomic::Ordering::Acquire);
+            let server_ptr = HIL_SERVER.load(::core::sync::atomic::Ordering::Acquire);
             unsafe {
                 if !server_ptr.is_null() {
                     let server = &mut *server_ptr;
                     let comms_ok = server.context.comms_lock.try_lock();
-                    ::control_rs_ets::util::handle_failure(
+                    ::control_rs_hil::util::handle_failure(
                         &mut server.context,
                         msg,
                         file,
@@ -359,10 +359,10 @@ pub fn ets_panic(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Helper macro to define the target ETS trap/exception handlers.
+/// Helper macro to define the target HIL trap/exception handlers.
 #[proc_macro]
 #[allow(clippy::too_many_lines)]
-pub fn ets_exception(input: TokenStream) -> TokenStream {
+pub fn hil_exception(input: TokenStream) -> TokenStream {
     let _ = input;
     let expanded = quote! {
         // ==================== Unified Exception Handler Implementation ====================
@@ -371,7 +371,7 @@ pub fn ets_exception(input: TokenStream) -> TokenStream {
         unsafe fn HardFault(ef: &::cortex_m_rt::ExceptionFrame) -> ! {
             let mut msg_buf = [0u8; 128];
             let pos = {
-                let mut writer = ::control_rs_ets::util::FailureBufWriter { buf: &mut msg_buf, pos: 0 };
+                let mut writer = ::control_rs_hil::util::FailureBufWriter { buf: &mut msg_buf, pos: 0 };
                 let _ = ::core::fmt::write(
                     &mut writer,
                     format_args!("HardFault at pc=0x{:08x}, lr=0x{:08x}", ef.pc() as usize, ef.lr() as usize),
@@ -380,11 +380,11 @@ pub fn ets_exception(input: TokenStream) -> TokenStream {
             };
             let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("exception occurred");
 
-            let server_ptr = ETS_SERVER.load(::core::sync::atomic::Ordering::Acquire);
+            let server_ptr = HIL_SERVER.load(::core::sync::atomic::Ordering::Acquire);
             if !server_ptr.is_null() {
                 let server = unsafe { &mut *server_ptr };
                 let comms_ok = server.context.comms_lock.try_lock();
-                ::control_rs_ets::util::handle_exception(
+                ::control_rs_hil::util::handle_exception(
                     &mut server.context,
                     msg,
                     comms_ok,
@@ -401,7 +401,7 @@ pub fn ets_exception(input: TokenStream) -> TokenStream {
         unsafe fn ExceptionHandler(_ef: &mut ::riscv_rt::TrapFrame) -> ! {
             let mut msg_buf = [0u8; 128];
             let pos = {
-                let mut writer = ::control_rs_ets::util::FailureBufWriter { buf: &mut msg_buf, pos: 0 };
+                let mut writer = ::control_rs_hil::util::FailureBufWriter { buf: &mut msg_buf, pos: 0 };
                 let _ = ::core::fmt::write(
                     &mut writer,
                     format_args!(
@@ -414,11 +414,11 @@ pub fn ets_exception(input: TokenStream) -> TokenStream {
             };
             let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("exception occurred");
 
-            let server_ptr = ETS_SERVER.load(::core::sync::atomic::Ordering::Acquire);
+            let server_ptr = HIL_SERVER.load(::core::sync::atomic::Ordering::Acquire);
             if !server_ptr.is_null() {
                 let server = unsafe { &mut *server_ptr };
                 let comms_ok = server.context.comms_lock.try_lock();
-                ::control_rs_ets::util::handle_exception(
+                ::control_rs_hil::util::handle_exception(
                     &mut server.context,
                     msg,
                     comms_ok,

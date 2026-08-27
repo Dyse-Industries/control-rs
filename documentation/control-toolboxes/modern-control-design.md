@@ -81,7 +81,7 @@ The central technical problem is the ARE: $A^\top X + XA - XBR^{-1}B^\top X
   it with an eigenvalue-decomposition method (Hamiltonian-matrix or
   generalized-eigenvalue/Schur-vector techniques, §4.2) backed by a compiled
   LAPACK-class library. No such backend is available to `modern_tools` and
-  the research pass surfaced no toolbox describing a no_std/embedded-friendly
+  no surveyed toolbox describes a no_std/embedded-friendly
   equivalent (§8) — the closest evidence is `multicalc`'s no_std Kalman-filter
   demonstration (which sidesteps ARE-solving via online covariance recursion,
   not a one-shot solve) and its LQR support, which is roadmapped but not
@@ -330,7 +330,7 @@ of an iteration count that is not fixed at compile time.
 - **Recursive/iterative Riccati propagation** (indirect precedent: sunsided,
   2026; strawlab, 2026; kmolan, 2026a): selected as the near-term default.
   Builds only on operations `Matrix` already has (multiply, add, invert);
-  matches the only `no_std` precedent the research pass found, even though
+  matches the only surveyed `no_std` precedent, even though
   that precedent is on the Kalman-filter side rather than LQR (§4.2,
   labeled assumption). Trade-off: iteration count to convergence is
   system-dependent, which complicates giving a fixed worst-case execution
@@ -366,7 +366,7 @@ Two options follow:
    solvers and estimators, ARE/LQR/Kalman-gain outputs are checked against
    trusted external references — python-control's `care`/`lqr` (python-
    control, 2026a/2026b) and MATLAB's `care`/`icare` (MathWorks, 2026a) are
-   the two reference oracles surfaced by this research pass.
+   the two reference oracles.
 2. **Property-Based Tests**: Covariance-update invariants (symmetric
    positive-semidefinite $P$ after each Kalman/EKF/UKF step, closed-loop
    stability of $A - BK$/$A - LC$ eigenvalues after placement) are checked
@@ -380,8 +380,7 @@ Two options follow:
 
 ### 7. Risks & Open Questions
 
-- **No Confirmed `no_std` ARE-Solver Precedent**: The research pass's
-  central open question is unresolved. Every workstation-class Riccati
+- **No Confirmed `no_std` ARE-Solver Precedent**: Every workstation-class Riccati
   solver surveyed depends on a compiled LAPACK-class backend
   (`slycot`/SciPy, MATLAB, `MatrixEquations.jl`). The one no_std control
   crate surveyed (`multicalc`) demonstrates a no_std EKF in production but
@@ -397,7 +396,7 @@ Two options follow:
   for explicit human decision, consistent with `robust_tools` already
   existing as its own (currently undefined) scaffold.
 - **Schur/QZ Decomposition Is a `Matrix`-Level Dependency, Not Yet
-  Designed**: If a future revision selects the direct Hamiltonian/Schur ARE
+  Designed**: If a later design selects the direct Hamiltonian/Schur ARE
   solver (§5.1) over the recursive default, that decision is blocked on
   `Matrix` gaining a general Schur/QZ decomposition — out of scope for this
   document and not yet proposed anywhere in the crate's design documents.
@@ -405,16 +404,16 @@ Two options follow:
   per every surveyed source (Octave-Forge Community, 2026; JuliaControl,
   2026a). The MIMO case needs a distinct algorithm; Kautsky, Nichols and
   Van Dooren (1985) is the evidenced precedent (it underlies MATLAB's
-  `place`, per secondary/uncorroborated evidence in the source research),
+  `place`, per secondary/uncorroborated evidence),
   but the exact algorithm to implement is not finalized here.
 - **EKF/UKF vs. `nonlinear_tools` Boundary**: `src/nonlinear_tools/mod.rs`
   is also an undefined scaffold ("tools and methods for designing and
   analyzing nonlinear control systems"). This document places EKF/UKF in
-  `modern_tools`, following the research query's explicit in-scope framing
-  of "Kalman filtering (linear, extended, unscented)" as one topic — but
+  `modern_tools`. Kalman filtering (linear, extended, unscented) is in
+  this document's scope — but
   this boundary was not stress-tested against `nonlinear_tools`'s own
   eventual scope and may need revisiting once that scaffold is designed.
-- **Covariance Storage Form (new, this revision)**: the error covariance $P$
+- **Covariance Storage Form**: the error covariance $P$
   is symmetric positive definite, so it may be held as a full-square
   `Matrix` or as a `SymmetricPacked` `PackedMatrix`
   (`matrix-design.md` §4.1.1). Packed halves the footprint and reaches

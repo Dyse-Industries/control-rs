@@ -38,8 +38,8 @@ This document establishes the architecture, requirement contract, and validation
 
 #### 2.3 Constraints
 
-- **C-1 — Native Rust Implementation**: Authored natively in Rust without C code generation (control-rs, 2026b).
-- **C-2 — Storage Decoupling**: State and vector storage must use `control-rs::matrix::Owned` and `DenseStorage` (control-rs, 2026a).
+- **C-1 — Native Rust Implementation**: Authored natively in Rust without C code generation ([`controls-tools-design.md`](../control-toolboxes/controls-tools-design.md) C-1).
+- **C-2 — Storage Decoupling**: State and vector storage must use `control-rs::matrix::Owned` and `DenseStorage` ([`matrix-design.md`](../numerical-models/matrix-design.md)).
 - **C-3 — Zero Virtual Dispatch**: Steppers must monomorphize over `Sys: SystemDynamics<T, NX, NU>`.
 
 ---
@@ -170,10 +170,6 @@ pub struct StepControlConfig<T> {
 
 [6] E. Hairer, S. P. N{\o}rsett, and G. Wanner, *Solving Ordinary Differential Equations I: Nonstiff Problems*, 2nd ed. Berlin, Germany: Springer-Verlag, 1993.
 
-[7] control-rs, "documentation/control-toolboxes/controls-tools-design.md," in *control-rs repository*, 2026. [Online]. Available: https://github.com/Dyse-Industries/control-rs/blob/main/documentation/control-toolboxes/controls-tools-design.md. Accessed: Aug. 26, 2026.
+[7] T.-G. Kim, *peroxide*: Comprehensive numerical computing library for Rust (Version 0.37.0). [Online]. Available: https://docs.rs/peroxide/latest/peroxide/. Accessed: Aug. 26, 2026.
 
-[8] control-rs, "src/state_space/mod.rs -- StateSpaceCore continuous/discrete models," in *control-rs repository*, 2026. [Online]. Available: https://github.com/Dyse-Industries/control-rs/blob/main/src/state_space/mod.rs. Accessed: Aug. 26, 2026.
-
-[9] T.-G. Kim, *peroxide*: Comprehensive numerical computing library for Rust (Version 0.37.0). [Online]. Available: https://docs.rs/peroxide/latest/peroxide/. Accessed: Aug. 26, 2026.
-
-[10] S. Renevey, *ode_solvers*: Numerical methods for solving ordinary differential equations in Rust (Version 0.6.2). [Online]. Available: https://docs.rs/ode_solvers/0.6.2/ode_solvers/. Accessed: Aug. 26, 2026.
+[8] S. Renevey, *ode_solvers*: Numerical methods for solving ordinary differential equations in Rust (Version 0.6.2). [Online]. Available: https://docs.rs/ode_solvers/0.6.2/ode_solvers/. Accessed: Aug. 26, 2026.

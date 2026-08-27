@@ -8,7 +8,7 @@
 //!
 //! # Core Concepts
 //!
-//! - **ETS**: The central coordinator (`Server`) executing suites, managing settings updates,
+//! - **HIL Server**: The central coordinator (`Server`) executing suites, managing settings updates,
 //!   and reporting telemetry outcomes back to the host machine.
 //! - **Execution Context**: `Context` wraps host communication mechanisms and CPU profiling metrics
 //!   using thread-safe mutex-free locking (`CommsLock`).
@@ -56,9 +56,9 @@ pub static CURRENT_TEST: TestIndexIndicator = TestIndexIndicator::new();
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::server::Context;
-/// # use control_rs_ets::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
-/// # use control_rs_ets::profiler::CPUProfiler;
+/// use control_rs_hil::server::Context;
+/// # use control_rs_hil::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// # use control_rs_hil::profiler::CPUProfiler;
 ///
 /// # struct MockComms;
 /// # impl HostComms for MockComms {
@@ -87,9 +87,9 @@ pub struct Context<C, P> {
     pub cpu_utils: P,
 }
 
-/// Interactive Embedded Test Server.
+/// Interactive HIL Server.
 ///
-/// The `Server` coordinates the execution of ETS tests on the target. It manages the boot discovery phase,
+/// The `Server` coordinates the execution of HIL tests on the target. It manages the boot discovery phase,
 /// processes settings updates, runs tests inside critical sections (interrupts disabled) and returns
 /// telemetry and cycle/stack usage metrics.
 ///
@@ -101,9 +101,9 @@ pub struct Context<C, P> {
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::server::{Server, Context};
-/// # use control_rs_ets::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
-/// # use control_rs_ets::profiler::CPUProfiler;
+/// use control_rs_hil::server::{Server, Context};
+/// # use control_rs_hil::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// # use control_rs_hil::profiler::CPUProfiler;
 ///
 /// # struct MockComms;
 /// # impl HostComms for MockComms {
@@ -158,7 +158,7 @@ pub struct TestMetrics {
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::server::TestIndexIndicator;
+/// use control_rs_hil::server::TestIndexIndicator;
 ///
 /// let indicator = TestIndexIndicator::new();
 /// assert!(indicator.get().is_none());

@@ -22,7 +22,7 @@ use super::Owned;
 use crate::math::LinAlgResult;
 use crate::math::num_traits::Float;
 use crate::math::num_types::{Const, Dim};
-use crate::math::storage::{ArrayStorage, Diag, Trans, UpLo};
+use crate::math::storage::{Diag, Trans, UpLo};
 use crate::math::subprograms::{DefaultBlas, level2::Trsv};
 
 /// A square matrix known to have all entries below the diagonal within
@@ -168,35 +168,7 @@ where
     }
 }
 
-/// Solves `L * x = b` for a lower triangular `L` using a specific BLAS engine.
-///
-/// # Errors
-/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `L` is
-/// within `T::epsilon()` of zero.
-#[allow(clippy::type_complexity)]
-pub fn solve_lower_triangular_with<
-    B: Trsv<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, 1>>,
-    T: Float + Copy,
-    const D: usize,
->(
-    l: &LowerTriangular<T, D>,
-    b: &Owned<T, D, 1>,
-) -> LinAlgResult<Owned<T, D, 1>>
-where
-    Const<D>: Dim,
-{
-    let mut x = *b;
-    B::trsv(
-        UpLo::Lower,
-        Trans::NoTrans,
-        Diag::NonUnit,
-        &l.as_matrix().storage,
-        &mut x.storage,
-    )?;
-    Ok(x)
-}
-
-/// Solves `L * x = b` for a lower triangular `L`, via forward substitution using the default BLAS engine.
+/// Solves `L * x = b` for a lower triangular `L`, via forward substitution.
 ///
 /// # Errors
 /// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `L` is
@@ -209,38 +181,18 @@ pub fn solve_lower_triangular<T: Float + Copy, const D: usize>(
 where
     Const<D>: Dim,
 {
-    solve_lower_triangular_with::<DefaultBlas, T, D>(l, b)
-}
-
-/// Solves `U * x = b` for an upper triangular `U` using a specific BLAS engine.
-///
-/// # Errors
-/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `U` is
-/// within `T::epsilon()` of zero.
-#[allow(clippy::type_complexity)]
-pub fn solve_upper_triangular_with<
-    B: Trsv<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, 1>>,
-    T: Float + Copy,
-    const D: usize,
->(
-    u: &UpperTriangular<T, D>,
-    b: &Owned<T, D, 1>,
-) -> LinAlgResult<Owned<T, D, 1>>
-where
-    Const<D>: Dim,
-{
     let mut x = *b;
-    B::trsv(
-        UpLo::Upper,
+    DefaultBlas::trsv(
+        UpLo::Lower,
         Trans::NoTrans,
         Diag::NonUnit,
-        &u.as_matrix().storage,
+        &l.as_matrix().storage,
         &mut x.storage,
     )?;
     Ok(x)
 }
 
-/// Solves `U * x = b` for an upper triangular `U`, via back substitution using the default BLAS engine.
+/// Solves `U * x = b` for an upper triangular `U`, via back substitution.
 ///
 /// # Errors
 /// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `U` is
@@ -253,5 +205,13 @@ pub fn solve_upper_triangular<T: Float + Copy, const D: usize>(
 where
     Const<D>: Dim,
 {
-    solve_upper_triangular_with::<DefaultBlas, T, D>(u, b)
+    let mut x = *b;
+    DefaultBlas::trsv(
+        UpLo::Upper,
+        Trans::NoTrans,
+        Diag::NonUnit,
+        &u.as_matrix().storage,
+        &mut x.storage,
+    )?;
+    Ok(x)
 }

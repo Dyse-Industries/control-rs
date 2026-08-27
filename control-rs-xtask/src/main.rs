@@ -1,5 +1,5 @@
 //! Entry points for the `xtask` host binary (a `cargo-xtask`-style task runner).
-//! Implements subcommands for CI linting, virtual ETS (QEMU) execution and interactive ETS TUI.
+//! Implements subcommands for CI linting, QEMU execution and interactive HIL TUI.
 
 #![deny(missing_docs)]
 #![allow(
@@ -66,7 +66,7 @@ fn main() {
             }
         },
         "tui" => match bridge::Target::parse(&args, "arm", "/dev/teensy") {
-            Ok(Some(target)) => tasks::run_ets_tui(&target),
+            Ok(Some(target)) => tasks::run_hil_tui(&target),
             Ok(None) => {
                 eprintln!("\tQEMU architecture 'all' is not supported for TUI");
                 exit(1);
@@ -145,117 +145,121 @@ fn run_ci_all_qemu() {
         }
     };
 
-    let mut combined_ets_results = Vec::new();
-    let mut ets_errors = Vec::new();
+    let mut combined_sil_results = Vec::new();
+    let mut sil_errors = Vec::new();
 
-    // 1. CI → virtual ETS (ARM HF)
+    // 1. Run ARM HF SIL tests
     let arm_hf_target = bridge::Target::qemu_arm();
     let start_arm_hf = Instant::now();
-    let (arm_hf_ets_res, _arm_hf_logs) = tasks::run_ci_ets(&arm_hf_target);
-    let arm_hf_ets_time = start_arm_hf.elapsed().as_secs_f32();
-    println!("\t* ARM HF virtual ETS completed in {arm_hf_ets_time:.2}s.");
+    let (arm_hf_sil_res, _arm_hf_logs) =
+        tasks::run_headless_sil(&arm_hf_target);
+    let arm_hf_sil_time = start_arm_hf.elapsed().as_secs_f32();
+    println!("\t* ARM HF SIL tests completed in {arm_hf_sil_time:.2}s.");
 
-    match arm_hf_ets_res {
+    match arm_hf_sil_res {
         Ok(mut results) => {
             for r in &mut results {
                 r.suite_name = format!("{} (ARM HF)", r.suite_name);
             }
             let all_passed = results.iter().all(|r| {
-                matches!(r.state, control_rs_ets::comms::TestState::Passed)
+                matches!(r.state, control_rs_hil::comms::TestState::Passed)
             });
             if !all_passed {
                 ci_success = false;
             }
-            combined_ets_results.extend(results);
+            combined_sil_results.extend(results);
         }
         Err(e) => {
             ci_success = false;
-            ets_errors.push(format!("ARM HF failure: {e}"));
+            sil_errors.push(format!("ARM HF failure: {e}"));
         }
     }
 
-    // 2. CI → virtual ETS (ARM SF)
+    // 2. Run ARM SF SIL tests
     let arm_sf_target = bridge::Target::qemu_arm_soft();
     let start_arm_sf = Instant::now();
-    let (arm_sf_ets_res, _arm_sf_logs) = tasks::run_ci_ets(&arm_sf_target);
-    let arm_sf_ets_time = start_arm_sf.elapsed().as_secs_f32();
-    println!("\t* ARM SF virtual ETS completed in {arm_sf_ets_time:.2}s.");
+    let (arm_sf_sil_res, _arm_sf_logs) =
+        tasks::run_headless_sil(&arm_sf_target);
+    let arm_sf_sil_time = start_arm_sf.elapsed().as_secs_f32();
+    println!("\t* ARM SF SIL tests completed in {arm_sf_sil_time:.2}s.");
 
-    match arm_sf_ets_res {
+    match arm_sf_sil_res {
         Ok(mut results) => {
             for r in &mut results {
                 r.suite_name = format!("{} (ARM SF)", r.suite_name);
             }
             let all_passed = results.iter().all(|r| {
-                matches!(r.state, control_rs_ets::comms::TestState::Passed)
+                matches!(r.state, control_rs_hil::comms::TestState::Passed)
             });
             if !all_passed {
                 ci_success = false;
             }
-            combined_ets_results.extend(results);
+            combined_sil_results.extend(results);
         }
         Err(e) => {
             ci_success = false;
-            ets_errors.push(format!("ARM SF failure: {e}"));
+            sil_errors.push(format!("ARM SF failure: {e}"));
         }
     }
 
-    // 3. CI → virtual ETS (RISC-V 32)
+    // 3. Run RISC-V 32 SIL tests
     let riscv32_target = bridge::Target::qemu_riscv();
     let start_riscv32 = Instant::now();
-    let (riscv32_ets_res, _riscv32_logs) = tasks::run_ci_ets(&riscv32_target);
-    let riscv32_ets_time = start_riscv32.elapsed().as_secs_f32();
-    println!("\t* RISC-V 32 virtual ETS completed in {riscv32_ets_time:.2}s.");
+    let (riscv32_sil_res, _riscv32_logs) =
+        tasks::run_headless_sil(&riscv32_target);
+    let riscv32_sil_time = start_riscv32.elapsed().as_secs_f32();
+    println!("\t* RISC-V 32 SIL tests completed in {riscv32_sil_time:.2}s.");
 
-    match riscv32_ets_res {
+    match riscv32_sil_res {
         Ok(mut results) => {
             for r in &mut results {
                 r.suite_name = format!("{} (RISC-V 32)", r.suite_name);
             }
             let all_passed = results.iter().all(|r| {
-                matches!(r.state, control_rs_ets::comms::TestState::Passed)
+                matches!(r.state, control_rs_hil::comms::TestState::Passed)
             });
             if !all_passed {
                 ci_success = false;
             }
-            combined_ets_results.extend(results);
+            combined_sil_results.extend(results);
         }
         Err(e) => {
             ci_success = false;
-            ets_errors.push(format!("RISC-V 32 failure: {e}"));
+            sil_errors.push(format!("RISC-V 32 failure: {e}"));
         }
     }
 
-    // 4. CI → virtual ETS (RISC-V 64)
+    // 4. Run RISC-V 64 SIL tests
     let riscv64_target = bridge::Target::qemu_riscv64();
     let start_riscv64 = Instant::now();
-    let (riscv64_ets_res, _riscv64_logs) = tasks::run_ci_ets(&riscv64_target);
-    let riscv64_ets_time = start_riscv64.elapsed().as_secs_f32();
-    println!("\t* RISC-V 64 virtual ETS completed in {riscv64_ets_time:.2}s.");
+    let (riscv64_sil_res, _riscv64_logs) =
+        tasks::run_headless_sil(&riscv64_target);
+    let riscv64_sil_time = start_riscv64.elapsed().as_secs_f32();
+    println!("\t* RISC-V 64 SIL tests completed in {riscv64_sil_time:.2}s.");
 
-    match riscv64_ets_res {
+    match riscv64_sil_res {
         Ok(mut results) => {
             for r in &mut results {
                 r.suite_name = format!("{} (RISC-V 64)", r.suite_name);
             }
             let all_passed = results.iter().all(|r| {
-                matches!(r.state, control_rs_ets::comms::TestState::Passed)
+                matches!(r.state, control_rs_hil::comms::TestState::Passed)
             });
             if !all_passed {
                 ci_success = false;
             }
-            combined_ets_results.extend(results);
+            combined_sil_results.extend(results);
         }
         Err(e) => {
             ci_success = false;
-            ets_errors.push(format!("RISC-V 64 failure: {e}"));
+            sil_errors.push(format!("RISC-V 64 failure: {e}"));
         }
     }
 
-    let ets_res = if ets_errors.is_empty() {
-        Ok(combined_ets_results)
+    let sil_res = if sil_errors.is_empty() {
+        Ok(combined_sil_results)
     } else {
-        Err(ets_errors.join("; "))
+        Err(sil_errors.join("; "))
     };
 
     // Generate markdown report
@@ -266,7 +270,7 @@ fn run_ci_all_qemu() {
         &clippy_str,
         &tarp_summary,
         &tarp_str,
-        &ets_res,
+        &sil_res,
         lint_time,
         test_time,
     );
@@ -277,13 +281,13 @@ fn run_ci_all_qemu() {
         exit(1);
     }
 
-    // Save ets-results.json if execution succeeded
-    if let Ok(ref results) = ets_res {
+    // Save sil-results.json if execution succeeded
+    if let Ok(ref results) = sil_res {
         if let Ok(json_content) = serde_json::to_string_pretty(results) {
             if let Err(e) =
-                utils::save_report("ets-results.json", &json_content)
+                utils::save_report("sil-results.json", &json_content)
             {
-                eprintln!("\tFailed to write ets-results.json: {e}");
+                eprintln!("\tFailed to write sil-results.json: {e}");
                 exit(1);
             }
         }
@@ -296,8 +300,7 @@ fn run_ci_all_qemu() {
     println!("CI pipeline passed. Report written to ci-report.md.");
 }
 
-/// Executes the full CI validation pipeline for a single target, including
-/// formatting, clippy, test coverage and CI → ETS / virtual ETS.
+/// Executes the full CI validation pipeline for a single target, including formatting, clippy, test coverage and SIL tests.
 fn run_ci_single(target: &bridge::Target) {
     unsafe {
         env::set_var("RUST_BACKTRACE", "full");
@@ -347,15 +350,15 @@ fn run_ci_single(target: &bridge::Target) {
         }
     };
 
-    // CI → virtual ETS (QEMU) or CI → ETS (board)
-    let start_ets = Instant::now();
-    let (ets_res, _ets_logs) = tasks::run_ci_ets(target);
-    let ets_time = start_ets.elapsed().as_secs_f32();
+    // Run SIL tests
+    let start_sil = Instant::now();
+    let (sil_res, _sil_logs) = tasks::run_headless_sil(target);
+    let sil_time = start_sil.elapsed().as_secs_f32();
 
-    match &ets_res {
+    match &sil_res {
         Ok(results) => {
             let all_passed = results.iter().all(|r| {
-                matches!(r.state, control_rs_ets::comms::TestState::Passed)
+                matches!(r.state, control_rs_hil::comms::TestState::Passed)
             });
             if !all_passed {
                 ci_success = false;
@@ -366,11 +369,7 @@ fn run_ci_single(target: &bridge::Target) {
         }
     }
 
-    let backend = match target {
-        bridge::Target::QemuSemihosting { .. } => "virtual ETS",
-        bridge::Target::Serial { .. } => "ETS",
-    };
-    println!("\tCI → {backend} completed in {ets_time:.2}s.");
+    println!("\tHeadless SIL tests completed in {sil_time:.2}s.");
 
     // Generate Markdown report
     let report_content = utils::build_report(
@@ -380,7 +379,7 @@ fn run_ci_single(target: &bridge::Target) {
         &clippy_str,
         &tarp_summary,
         &tarp_str,
-        &ets_res,
+        &sil_res,
         lint_time,
         test_time,
     );

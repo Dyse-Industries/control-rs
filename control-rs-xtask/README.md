@@ -13,18 +13,18 @@ monitor, build and test embedded binaries. It hosts:
 2. **The Terminal User Interface** (`tui.rs`), built on `ratatui` and
    `crossterm`, which allows developers to run tests, inspect cycle counters,
    tweak controller settings and read logs interactively.
-3. **The CI frontend** (`main.rs`) which drives virtual ETS (QEMU) or ETS
-   (board) through `ServerBridge`, runs the target's suite, and writes
-   `ci-report.md` and `ets-results.json`.
+3. **The headless CI test harness** (`main.rs`) which automatically spins up
+   QEMU, runs the target's entire suite of tests, generates performance
+   telemetry and appends the result to `ci-report.md`.
 
 ## Role in the Ecosystem
 
 ```mermaid
 graph TD
-    User[Developer] -->|cargo xtask tui| TUI[Ratatui UI]
-    CI[GitHub Actions] -->|cargo xtask ci| CIHarness[CI frontend]
-    TUI <-->|ServerBridge| VETS[virtual ETS]
-    CIHarness <-->|ServerBridge| VETS
+    User[Developer] -->|cargo xtask hil-tui| TUI[Ratatui UI]
+    CI[GitHub Actions] -->|cargo xtask ci| CIHarness[Headless CI Harness]
+    TUI <-->|ServerBridge| QEMU[qemu-system-arm]
+    CIHarness <-->|ServerBridge| QEMU
 ```
 
 Within the `control-rs` ecosystem, `control-rs-xtask` represents the "host
@@ -45,7 +45,7 @@ Developers run `control-rs-xtask` using standard `cargo run` wrapper commands.
 To control a simulated target and monitor live cycles/duration metrics, execute:
 
 ```bash
-cargo run --package control-rs-xtask -- tui
+cargo run --package control-rs-xtask -- hil-tui
 ```
 
 *Key Bindings:*
@@ -57,10 +57,10 @@ cargo run --package control-rs-xtask -- tui
   setting.
 - `q`: Quits the TUI console.
 
-### 2. CI → virtual ETS
+### 2. Running Headless HIL Tests in CI
 
 To execute the automated lints, host-side unit tests, line coverage checks and
-CI → virtual ETS (QEMU):
+headless HIL tests on the QEMU emulator:
 
 ```bash
 cargo run --package control-rs-xtask -- ci
@@ -95,7 +95,7 @@ cargo check --package control-rs-xtask
 
 ### Execution Verification
 
-To run the full validation suite including CI → virtual ETS (QEMU):
+To run the full validation suite including the headless HIL QEMU runner:
 
 ```bash
 cargo run --package control-rs-xtask -- ci

@@ -8,7 +8,7 @@
 
 ### 1. Introduction
 
-`src/math/storage.rs` provides a unified storage hierarchy covering dense
+[`src/math/storage.rs`](../../src/math/storage.rs) provides a unified storage hierarchy covering dense
 strided arrays, packed structured matrices and sparse representations.
 
 The storage architecture supports **primitive integers** (`u8`–`u64`, `i8`
@@ -839,11 +839,11 @@ research corpus; integration would be FFI-first.
 **Adoption decision (this design)**: `control-rs` does **not** depend on
 `cust`, `wgpu`, `candle-core`, or PJRT for the storage MVP. Mandatory
 transitive deps conflict with crate-local minimize-dependencies policy (
-`CLAUDE.md`): `cust` pulls `cust_core`, `cust_raw`, and `bitflags`; `wgpu`
+[`CLAUDE.md`](../../CLAUDE.md)): `cust` pulls `cust_core`, `cust_raw`, and `bitflags`; `wgpu`
 default features enable `wgpu-core` plus DX12/Metal/Vulkan/GLES/WebGPU
 backends; `candle-core` pulls `gemm`, `half`, `rayon`, and optional
 `cudarc`/Metal stacks. Device-resident layouts stay an documented extension
-boundary for future `subprograms-design.md` accelerator backends.
+boundary for future [`subprograms-design.md`](./subprograms-design.md) accelerator backends.
 
 **Proposal (not in evidence)**: an optional `DeviceDenseStorage` unsafe trait
 with opaque handle + shape metadata, host `ContiguousStorage` leaves
@@ -908,15 +908,15 @@ accelerator backends once `num-traits-design.md` admits half-width scalars.
 | **Flattened `as_array() -> &[T; R * C]`**                                    | `R * C` in array-length position requires unstable `generic_const_exprs`. `as_slice()` on nested arrays is the stable contiguous view.                                                                                                                                                                           | §4.2, NFR-2 (rust-embedded, 2026a)                                                |
 | **`nalgebra`-style owning `transpose()`**                                    | Returns `OMatrix` by value; violates FR-2 zero-copy transpose on views. Stride-swapped `StorageView` matches `faer`/`ndarray`/`NumPy` prior art.                                                                                                                                                                 | §4.2, FR-2 (nalgebra, 2026c; faer, 2026b; ndarray, 2026b; NumPy Developers, 2026) |
 | **Strideless default constructor on `StorageView`**                          | Redundant with `StaticStorageView::new`; obscures whether layout assumptions are compile-time static invariants or runtime strided configurations.                                                                                                                                                               | §4.2 (Eigen, 2026a; NumPy Developers, 2026)                                       |
-| **Third-party GPU storage crates (`cust`, `wgpu`, `candle-core`)**           | Large mandatory transitive graphs (CUDA driver stack, multi-backend `wgpu-core`, ML framework deps) violate minimize-dependencies; host `#![no_std]` MVP needs no GPU buffer type.                                                                                                                               | §4.7 (`CLAUDE.md`; Rust-CUDA, 2026; wgpu, 2026; candle, 2026)                     |
-| **PJRT / XLA buffer adoption**                                               | Uniform CPU/TPU/CUDA API exists (OpenXLA, 2026; PyTorch/XLA, 2026) but no Rust crate in evidence; FFI surface and opaque layouts defer to `subprograms-design.md`.                                                                                                                                               | §4.7 (OpenXLA, 2026a, 2026b, 2026c)                                               |
+| **Third-party GPU storage crates (`cust`, `wgpu`, `candle-core`)**           | Large mandatory transitive graphs (CUDA driver stack, multi-backend `wgpu-core`, ML framework deps) violate minimize-dependencies; host `#![no_std]` MVP needs no GPU buffer type.                                                                                                                               | §4.7 ([`CLAUDE.md`](../../CLAUDE.md); Rust-CUDA, 2026; wgpu, 2026; candle, 2026)                     |
+| **PJRT / XLA buffer adoption**                                               | Uniform CPU/TPU/CUDA API exists (OpenXLA, 2026; PyTorch/XLA, 2026) but no Rust crate in evidence; FFI surface and opaque layouts defer to [`subprograms-design.md`](./subprograms-design.md).                                                                                                                                               | §4.7 (OpenXLA, 2026a, 2026b, 2026c)                                               |
 | **`candle`-style `Storage` enum for host+device**                            | Enum dispatch couples CPU leaves to CUDA/Metal variants at every call site; trait hierarchy keeps host subprograms monomorphic.                                                                                                                                                                                  | §4.7 (candle, 2026a, 2026b)                                                       |
 | **A `FromDenseStorage` trait over the reverse direction**                    | Only four leaves admit a dense projection (Diagonal, SP, HP, TP); CSR, CSC and COO do not, and no code in `src/` is bounded on such a trait. A shared signature must either fix `UpLo`/`Diag` internally, which cannot preserve a Lower operand, or put parameters on `DiagonalStorage` that mean nothing to it. | §4.5 (Netlib, 2026; Anderson et al., 1999)                                        |
-| **Splitting the reverse direction across two traits**                        | Moving the three packed leaves to a second trait leaves the first with one implementor, `DiagonalStorage`. A one-implementor, one-method trait states no shared contract and no generic consumer exists to use it.                                                                                               | §4.5 (control-rs, 2026)                                                           |
-| **An associated `Part` type carrying each target's tags**                    | Reaches one uniform trait with no meaningless parameters, and would extend to a band leaf's `KL`/`KU` (§4.8). Rejected as speculative: nothing in `src/` consumes the reverse direction generically, so the associated type buys vocabulary rather than reuse. Reconsider if a generic consumer appears.         | §4.5, §4.8 (control-rs, 2026)                                                     |
+| **Splitting the reverse direction across two traits**                        | Moving the three packed leaves to a second trait leaves the first with one implementor, `DiagonalStorage`. A one-implementor, one-method trait states no shared contract and no generic consumer exists to use it.                                                                                               | §4.5                                                                                |
+| **An associated `Part` type carrying each target's tags**                    | Reaches one uniform trait with no meaningless parameters, and would extend to a band leaf's `KL`/`KU` (§4.8). Rejected as speculative: nothing in `src/` consumes the reverse direction generically, so the associated type buys vocabulary rather than reuse. Reconsider if a generic consumer appears.         | §4.5, §4.8                                                                          |
 | **Fixing `UpLo::Upper` inside the projection**                               | Returns `Ok` on a lossy conversion: a Lower triangular operand loses its subdiagonal and is retagged Upper, so the §6.1 L3 round-trip cannot be written and a suite exercising only Upper passes vacuously.                                                                                                      | §4.5, §6.1 (Anderson et al., 1999)                                                |
 | **Canonicalize to Upper and error on a lossy source**                        | Keeps one signature and converts silent truncation into `StorageError`. Rejected because a Lower operand is exactly representable in the target, so refusing it is a gap in FR-7, not a safety property.                                                                                                         | §4.5, FR-7 (Anderson et al., 1999)                                                |
-| **`UpLo` / `Diag` as type parameters on the packed leaves**                  | Makes the triangle a compile-time property and the round-trip total by construction. Rejected for this revision: `UpLo` is a runtime field across the packed accessors (§4.3), so lifting it multiplies every packed leaf and view by four instantiations for a property the BLAS convention keeps at runtime.   | §4.3, §4.5 (Netlib, 2026)                                                         |
+| **`UpLo` / `Diag` as type parameters on the packed leaves**                  | Makes the triangle a compile-time property and the round-trip total by construction. Rejected: `UpLo` is a runtime field across the packed accessors (§4.3), so lifting it multiplies every packed leaf and view by four instantiations for a property the BLAS convention keeps at runtime.                         | §4.3, §4.5 (Netlib, 2026)                                                         |
 | **Band matrix on `DenseStorage` or packed traits**                           | Band slot map is neither $r \cdot RS + c \cdot CS$ nor triangular packed indexing; LAPACK uses a dedicated $(k_l+k_u+1) \times n$ scheme.                                                                                                                                                                        | §4.8 (Anderson et al., 1999; Abdelfattah et al., 2023)                            |
 | **Fixed `f64`-only storage leaves**                                          | Mixed-precision algorithms and embedded `fixed-num` / integer paths require `T` as a free parameter; half/single LU literature shows precision is a kernel policy, not a layout field.                                                                                                                           | §4.9 (Higham and Mary, 2022; Lopez and Mary, 2023)                                |
 
@@ -985,8 +985,8 @@ accelerator backends once `num-traits-design.md` admits half-width scalars.
 
 #### 6.2 Validation Plan (Control Engineering Applications)
 
-Deferred until numerical-model designs (`matrix`, `state-space`, …) are
-Approved and implemented. The cases below are requirements for that future
+Deferred until numerical-model modules (`matrix`, `state-space`, …) exist.
+The cases below are requirements for that future
 suite; present kernel smoke tests must not use Val-\* names as success
 criteria.
 
@@ -1035,15 +1035,15 @@ $MAX\_NNZ \cdot (\mathrm{size\_of}(T) + \mathrm{size\_of}(\mathrm{usize})) + \ma
 - **Sparse Capacity vs. Count**: In `#![no_std]` stack structs, `MAX_NNZ` is
   fixed at compile time while live `nnz <= MAX_NNZ` is data
   (rust-embedded, 2026a). `CapacityExceeded` is the runtime arm.
-- **Error-enum alignment (closed, this revision)**: `StorageError` matches
+- **Error-enum alignment**: `StorageError` matches
   `error-design.md` FR-3 and C-5. `DimensionMismatch` is not an arm of this
   enum.
 - **Numerical-model consumers (assumption)**: `matrix-design.md`,
   `polynomial-design.md`, `state-space-design.md`,
-  `transfer-function-design.md`, and `tensor-design.md` still describe the
-  pre-split storage hierarchy. Those documents stay Draft until a dedicated
-  retarget pass; this spec does not silently rename `MatrixStorage` /
-  `BlasStorage` onto `DenseStorage<T>`.
+  `transfer-function-design.md`, and `tensor-design.md` still name
+  `MatrixStorage` / `BlasStorage` rather than `DenseStorage<T>`. Those
+  documents stay Draft; this spec does not silently rename those types
+  onto `DenseStorage<T>`.
 - **`StaticStorageView<T, R, C, O>` stride contract**:
   `StaticStorageView<T, R, C, O>` /
   `StaticStorageViewMut<T, R, C, O>` strides
@@ -1051,7 +1051,7 @@ $MAX\_NNZ \cdot (\mathrm{size\_of}(T) + \mathrm{size\_of}(\mathrm{usize})) + \ma
   `StorageView`'s
   arbitrary `isize` stride guarantee. Stack-watermark ETS remains Open unless
   `control-rs-ets` already exposes painted-stack telemetry.
-- **Reverse direction is untraited (this revision)**: the four dense
+- **Reverse direction is untraited**: the four dense
   projections are inherent constructors. If a consumer later needs to be
   generic over "any structured leaf projected from dense", the associated-
   `Part` trait in §5 is the form to adopt; a band leaf (§4.8) would be the
@@ -1297,11 +1297,6 @@ doi: 10.1109/hpcc-dss-smartcity-dependsys57074.2022.00143.
 [Online].
 Available: https://raw.githubusercontent.com/rust-ndarray/ndarray/master/src/impl_methods.rs.
 Accessed: Aug. 18, 2026.
-
-[44] Dyse Industries, "src/math/storage.rs," in *control-rs*. [Online].
-Available: https://github.com/Dyse-Industries/control-rs. Accessed: Aug. 25,
-
-2026.
 
 ---
 

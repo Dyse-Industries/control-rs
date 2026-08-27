@@ -1,6 +1,6 @@
 //! Modules defining the test-execution and compilation tasks executed by `xtask`.
 //! Includes tasks for formatting check, clippy checks, coverage tracking with tarpaulin,
-//! and running CI (virtual ETS / ETS) and interactive TUI tests.
+//! and running headless/interactive tests.
 
 use regex::Regex;
 use std::fs;
@@ -15,7 +15,7 @@ struct TestItem {
     /// Name of the test case.
     name: String,
     /// Current execution state of the test.
-    state: control_rs_ets::comms::TestState,
+    state: control_rs_hil::comms::TestState,
 }
 
 /// Representation of a configuration setting in a test suite.
@@ -23,7 +23,7 @@ struct SettingItem {
     /// Name of the setting.
     name: String,
     /// Current value of the setting.
-    value: control_rs_ets::settings::SettingValue,
+    value: control_rs_hil::settings::SettingValue,
 }
 
 /// Representation of a test suite containing tests and settings.
@@ -242,12 +242,12 @@ pub fn run_tarpaulin() -> (Result<TarpaulinSummary, ()>, String) {
     (res, clean_tarp_str)
 }
 
-/// CI frontend: drive ETS or virtual ETS through `ServerBridge` (no TUI).
-pub fn run_ci_ets(
+/// Task to run headless SIL execution.
+pub fn run_headless_sil(
     target: &bridge::Target,
 ) -> (Result<Vec<HeadlessTestResult>, String>, String) {
     use bridge::BridgeMessage;
-    use control_rs_ets::comms::{Command as CommCommand, Telemetry, TestState};
+    use control_rs_hil::comms::{Command as CommCommand, Telemetry, TestState};
 
     let mut logs = String::new();
     let mut elf_path = String::new();
@@ -272,11 +272,7 @@ pub fn run_ci_ets(
         logs.push_str(msg);
     };
 
-    let backend = match target {
-        bridge::Target::QemuSemihosting { .. } => "virtual ETS",
-        bridge::Target::Serial { .. } => "ETS",
-    };
-    log_and_print(&format!("\t* CI → {backend}...\n"));
+    log_and_print("\t* headless SIL tests...\n");
 
     // Initial discovery
     let mut last_send = Instant::now();
@@ -296,7 +292,7 @@ pub fn run_ci_ets(
         if start_time.elapsed() > timeout {
             bridge.kill();
             return (
-                Err("CI ETS execution timed out after 90s".to_string()),
+                Err("SIL execution timed out after 90s".to_string()),
                 logs,
             );
         }
@@ -352,7 +348,7 @@ pub fn run_ci_ets(
                             suites[s_id].settings.push(SettingItem {
                                 name: String::new(),
                                 value:
-                                    control_rs_ets::settings::SettingValue::U8(
+                                    control_rs_hil::settings::SettingValue::U8(
                                         0,
                                     ),
                             });
@@ -562,8 +558,8 @@ pub fn run_ci_ets(
     (Ok(results), logs)
 }
 
-/// Task to start the interactive ETS TUI.
-pub fn run_ets_tui(target: &bridge::Target) {
+/// Task to start the interactive HIL TUI.
+pub fn run_hil_tui(target: &bridge::Target) {
     let elf_path = match target {
         bridge::Target::QemuSemihosting { arch } => build_qemu_elf(*arch),
         bridge::Target::Serial { .. } => String::new(),

@@ -8,7 +8,7 @@
 
 ### 1. Introduction
 
-Autonomous flight control, embedded robotics, neural dynamical systems, and scientific computing require high-fidelity numerical simulation and time-stepping of continuous-time physics (Betts, 2010; Chen et al., 2018; Rackauckas and Nie, 2017). Currently, `control-rs` implements continuous-time state derivatives $\dot{x}(t) = Ax(t) + Bu(t)$ and Zero-Order Hold (ZOH) matrix exponential discretization on `StateSpaceCore`, but lacks a general, composable numerical integration subsystem across linear, nonlinear, Hamiltonian, and differential-algebraic systems (control-rs, 2026a).
+Autonomous flight control, embedded robotics, neural dynamical systems, and scientific computing require high-fidelity numerical simulation and time-stepping of continuous-time physics (Betts, 2010; Chen et al., 2018; Rackauckas and Nie, 2017). Currently, `control-rs` implements continuous-time state derivatives $\dot{x}(t) = Ax(t) + Bu(t)$ and Zero-Order Hold (ZOH) matrix exponential discretization on [`StateSpaceCore`](../numerical-models/state-space-design.md), but lacks a general, composable numerical integration subsystem across linear, nonlinear, Hamiltonian, and differential-algebraic systems.
 
 This document establishes the architecture for the `control-rs::integrators` module and modernizes the mathematical mapping traits (`MathFunction`, `MathFunctionInto`, and `InvertibleFunction`) in `control-rs::math`. The subsystem satisfies five primary usage scenarios:
 
@@ -16,7 +16,7 @@ This document establishes the architecture for the `control-rs::integrators` mod
 2. **Structure-Preserving Hamiltonian Dynamics**: Symplectic and geometric integration (Symplectic Euler, Störmer–Verlet, Ruth 3rd-order, Yoshida 4th/6th-order) for mechanical manipulators, orbital mechanics, and Hamiltonian Neural Networks requiring exact energy conservation and phase-space volume preservation over long time horizons (Greydanus et al., 2019; Hairer et al., 2006; Ruth, 1983; Yoshida, 1990).
 3. **Adaptive Trajectory Propagation & Neural ODEs**: High-efficiency adaptive embedded pairs (Tsitouras 5(4), Dormand–Prince 5(4), Bogacki–Shampine 3(2)) with First Same As Last (FSAL) stage reuse, Proportional-Integral (PI) step-size adaptation, continuous 4th-order polynomial dense output interpolation, and adjoint sensitivity propagation for continuous-depth neural models (Chen et al., 2018; Dormand and Prince, 1980; Kidger, 2022; Tsitouras, 2011).
 4. **Stiff Systems & Implicit Optimal Control Collocation**: Implicit Runge–Kutta (IRK) methods, Gauss–Legendre collocation, Radau IIA, and Singly Diagonally Implicit Runge–Kutta (SDIRK) solvers for stiff physical networks, index-1 Differential-Algebraic Equations (DAEs), and direct trajectory optimization (Betts, 2010; Hairer and Wanner, 1996; Hindmarsh et al., 2005).
-5. **Decoupled Model Transformation & Invertible Functions**: Standardized mathematical evaluation of dynamical models via modernized `MathFunction`, `MathFunctionInto`, and `InvertibleFunction` traits, decoupling physical storage and coordinate systems from integrator algorithms (control-rs, 2026b).
+5. **Decoupled Model Transformation & Invertible Functions**: Standardized mathematical evaluation of dynamical models via modernized `MathFunction`, `MathFunctionInto`, and `InvertibleFunction` traits, decoupling physical storage and coordinate systems from integrator algorithms.
 
 ---
 
@@ -40,7 +40,7 @@ This document establishes the architecture for the `control-rs::integrators` mod
 
 #### 2.3 Constraints
 
-- **C-1 — Native Rust Authoring**: Integrators must be authored natively in Rust without external host-to-target C code generation (inheriting C-1/C-2 from `controls-tools-design.md`).
+- **C-1 — Native Rust Authoring**: Integrators must be authored natively in Rust without external host-to-target C code generation (inheriting C-1/C-2 from [`controls-tools-design.md`](../control-toolboxes/controls-tools-design.md)).
 - **C-2 — Storage Subsystem Interoperability**: Integrators must accept state and stage vectors adhering to the crate's `Storage` and `DenseStorage` contracts (`Owned`, `StorageView`, `StorageViewMut`).
 - **C-3 — Zero Dynamic Dispatch Overhead**: Stepper and model combinations must fully monomorphize without requiring dynamic trait object dispatch (`dyn`) on inner integration loops.
 
@@ -175,7 +175,7 @@ pub trait HamiltonianDynamics<T, const NQ: usize> {
 
 #### 4.3 Model Implementations of Function & Dynamics Traits
 
-1. **`StateSpaceCore`**: Implements `SystemDynamics<T, NX, NU>` via its linear $Ax + Bu$ formulation, `MathFunction<(&Owned<T, NX, 1>, &Owned<T, NU, 1>), Owned<T, NX, 1>>`, and `MathFunctionInto<(&Owned<T, NX, 1>, &Owned<T, NU, 1>), Owned<T, NX, 1>>` (control-rs, 2026a).
+1. **`StateSpaceCore`**: Implements `SystemDynamics<T, NX, NU>` via its linear $Ax + Bu$ formulation, `MathFunction<(&Owned<T, NX, 1>, &Owned<T, NU, 1>), Owned<T, NX, 1>>`, and `MathFunctionInto<(&Owned<T, NX, 1>, &Owned<T, NU, 1>), Owned<T, NX, 1>>` ([`src/state_space/mod.rs`](../../src/state_space/mod.rs)).
 2. **`TransferFunctionCore`**: Implements `MathFunction<Complex<T>, Complex<T>>` for frequency evaluation and converts to observable canonical `StateSpaceCore` for continuous integration.
 3. **`MatrixCore`**: Implements `MathFunction<Owned<T, N, 1>, Owned<T, M, 1>>` / `MathFunctionInto<Owned<T, N, 1>, Owned<T, M, 1>>`, and `InvertibleFunction<Owned<T, N, 1>, Owned<T, N, 1>>` / `InvertibleFunctionInto<Owned<T, N, 1>, Owned<T, N, 1>>` when $M = N$ and $\det(A) \neq 0$ (via LU solver).
 4. **`PolynomialCore`**: Implements `MathFunction<T, T>` via Horner evaluation.
@@ -344,38 +344,34 @@ src/
 
 [3] C. Rackauckas and Q. Nie, "DifferentialEquations.jl -- A Performant and Feature-Rich Ecosystem for Solving Differential Equations in Julia," *Journal of Open Research Software*, vol. 5, no. 1, p. 15, 2017, doi: 10.5334/jors.151.
 
-[4] control-rs, "src/state_space/mod.rs -- StateSpaceCore continuous/discrete models," in *control-rs repository*, 2026. [Online]. Available: https://github.com/Dyse-Industries/control-rs/blob/main/src/state_space/mod.rs. Accessed: Aug. 26, 2026.
+[4] R. Verschueren, G. Frison, D. Kouzoupis, J. Frey, N. van Duijkeren, A. Zanelli, B. Novoselnik, T. Albin, R. Quirynen, and M. Diehl, "acados -- a modular open-source framework for fast embedded optimal control," *Mathematical Programming Computation*, vol. 14, no. 1, pp. 147–183, 2022, doi: 10.1007/s12532-021-00208-8.
 
-[5] R. Verschueren, G. Frison, D. Kouzoupis, J. Frey, N. van Duijkeren, A. Zanelli, B. Novoselnik, T. Albin, R. Quirynen, and M. Diehl, "acados -- a modular open-source framework for fast embedded optimal control," *Mathematical Programming Computation*, vol. 14, no. 1, pp. 147–183, 2022, doi: 10.1007/s12532-021-00208-8.
+[5] S. Greydanus, M. Dzamba, and J. Yosinski, "Hamiltonian Neural Networks," in *Advances in Neural Information Processing Systems 32 (NeurIPS 2019)*, 2019, pp. 15353–15363.
 
-[6] S. Greydanus, M. Dzamba, and J. Yosinski, "Hamiltonian Neural Networks," in *Advances in Neural Information Processing Systems 32 (NeurIPS 2019)*, 2019, pp. 15353–15363.
+[6] E. Hairer, C. Lubich, and G. Wanner, *Geometric Numerical Integration: Structure-Preserving Algorithms for Ordinary Differential Equations*, 2nd ed. Berlin, Germany: Springer-Verlag, 2006.
 
-[7] E. Hairer, C. Lubich, and G. Wanner, *Geometric Numerical Integration: Structure-Preserving Algorithms for Ordinary Differential Equations*, 2nd ed. Berlin, Germany: Springer-Verlag, 2006.
+[7] R. D. Ruth, "A Canonical Integration Technique," *IEEE Transactions on Nuclear Science*, vol. 30, no. 4, pp. 2669–2671, 1983, doi: 10.1109/TNS.1983.4332919.
 
-[8] R. D. Ruth, "A Canonical Integration Technique," *IEEE Transactions on Nuclear Science*, vol. 30, no. 4, pp. 2669–2671, 1983, doi: 10.1109/TNS.1983.4332919.
+[8] H. Yoshida, "Construction of higher order symplectic integrators," *Physics Letters A*, vol. 150, no. 5–7, pp. 262–268, 1990, doi: 10.1016/0375-9601(90)90092-3.
 
-[9] H. Yoshida, "Construction of higher order symplectic integrators," *Physics Letters A*, vol. 150, no. 5–7, pp. 262–268, 1990, doi: 10.1016/0375-9601(90)90092-3.
+[9] J. R. Dormand and P. J. Prince, "A family of embedded Runge-Kutta formulae," *Journal of Computational and Applied Mathematics*, vol. 6, no. 1, pp. 19–26, 1980, doi: 10.1016/0771-050X(80)90013-3.
 
-[10] J. R. Dormand and P. J. Prince, "A family of embedded Runge-Kutta formulae," *Journal of Computational and Applied Mathematics*, vol. 6, no. 1, pp. 19–26, 1980, doi: 10.1016/0771-050X(80)90013-3.
+[10] P. Kidger, "On Neural Differential Equations," University of Oxford, Oxford, UK, Rep. no. arXiv:2202.02435, 2022.
 
-[11] P. Kidger, "On Neural Differential Equations," University of Oxford, Oxford, UK, Rep. no. arXiv:2202.02435, 2022.
+[11] C. Tsitouras, "Runge--Kutta pairs of order 5(4) satisfying only the first column simplifying assumption," *Computers & Mathematics with Applications*, vol. 62, no. 2, pp. 770–775, 2011, doi: 10.1016/j.camwa.2011.06.002.
 
-[12] C. Tsitouras, "Runge--Kutta pairs of order 5(4) satisfying only the first column simplifying assumption," *Computers & Mathematics with Applications*, vol. 62, no. 2, pp. 770–775, 2011, doi: 10.1016/j.camwa.2011.06.002.
+[12] E. Hairer and G. Wanner, *Solving Ordinary Differential Equations II: Stiff and Differential-Algebraic Problems*, 2nd ed. Berlin, Germany: Springer-Verlag, 1996.
 
-[13] E. Hairer and G. Wanner, *Solving Ordinary Differential Equations II: Stiff and Differential-Algebraic Problems*, 2nd ed. Berlin, Germany: Springer-Verlag, 1996.
+[13] A. C. Hindmarsh, P. N. Brown, K. E. Grant, S. L. Lee, R. Serban, D. E. Shumaker, and C. S. Woodward, "SUNDIALS: Suite of Nonlinear and Differential/Algebraic Equation Solvers," *ACM Transactions on Mathematical Software*, vol. 31, no. 3, pp. 363–396, 2005, doi: 10.1145/1089014.1089020.
 
-[14] A. C. Hindmarsh, P. N. Brown, K. E. Grant, S. L. Lee, R. Serban, D. E. Shumaker, and C. S. Woodward, "SUNDIALS: Suite of Nonlinear and Differential/Algebraic Equation Solvers," *ACM Transactions on Mathematical Software*, vol. 31, no. 3, pp. 363–396, 2005, doi: 10.1145/1089014.1089020.
+[14] J. C. Butcher, *Numerical Methods for Ordinary Differential Equations*, 3rd ed. Chichester, UK: John Wiley & Sons, Ltd, 2016.
 
-[15] control-rs, "documentation/control-toolboxes/controls-tools-design.md," in *control-rs repository*, 2026. [Online]. Available: https://github.com/Dyse-Industries/control-rs/blob/main/documentation/control-toolboxes/controls-tools-design.md. Accessed: Aug. 26, 2026.
+[15] E. Hairer, S. P. N{\o}rsett, and G. Wanner, *Solving Ordinary Differential Equations I: Nonstiff Problems*, 2nd ed. Berlin, Germany: Springer-Verlag, 1993.
 
-[16] J. C. Butcher, *Numerical Methods for Ordinary Differential Equations*, 3rd ed. Chichester, UK: John Wiley & Sons, Ltd, 2016.
+[16] C. A. Kennedy and M. H. Carpenter, "Additive Runge-Kutta schemes for convection-diffusion-reaction equations," *Applied Numerical Mathematics*, vol. 44, no. 1–2, pp. 139–181, 2003, doi: 10.1016/S0168-9274(02)00138-1.
 
-[17] E. Hairer, S. P. N{\o}rsett, and G. Wanner, *Solving Ordinary Differential Equations I: Nonstiff Problems*, 2nd ed. Berlin, Germany: Springer-Verlag, 1993.
+[17] D. R. Reynolds, D. J. Gardner, C. S. Woodward, and R. Chinomona, "ARKODE: A flexible IVP solver infrastructure for one-step methods," *ACM Transactions on Mathematical Software*, vol. 49, no. 2, pp. 19:1–19:30, 2023, doi: 10.1145/3588970.
 
-[18] C. A. Kennedy and M. H. Carpenter, "Additive Runge-Kutta schemes for convection-diffusion-reaction equations," *Applied Numerical Mathematics*, vol. 44, no. 1–2, pp. 139–181, 2003, doi: 10.1016/S0168-9274(02)00138-1.
+[18] T.-G. Kim, *peroxide*: Comprehensive numerical computing library for Rust (Version 0.37.0). [Online]. Available: https://docs.rs/peroxide/latest/peroxide/. Accessed: Aug. 26, 2026.
 
-[19] D. R. Reynolds, D. J. Gardner, C. S. Woodward, and R. Chinomona, "ARKODE: A flexible IVP solver infrastructure for one-step methods," *ACM Transactions on Mathematical Software*, vol. 49, no. 2, pp. 19:1–19:30, 2023, doi: 10.1145/3588970.
-
-[20] T.-G. Kim, *peroxide*: Comprehensive numerical computing library for Rust (Version 0.37.0). [Online]. Available: https://docs.rs/peroxide/latest/peroxide/. Accessed: Aug. 26, 2026.
-
-[21] S. Renevey, *ode_solvers*: Numerical methods for solving ordinary differential equations in Rust (Version 0.6.2). [Online]. Available: https://docs.rs/ode_solvers/0.6.2/ode_solvers/. Accessed: Aug. 26, 2026.
+[19] S. Renevey, *ode_solvers*: Numerical methods for solving ordinary differential equations in Rust (Version 0.6.2). [Online]. Available: https://docs.rs/ode_solvers/0.6.2/ode_solvers/. Accessed: Aug. 26, 2026.

@@ -19,7 +19,6 @@ toward classical, modern, robust and nonlinear control design.
 External embedded-control tooling generally does not share this authoring
 model. Research into ETH Zurich's Control Toolbox (CT), acados, FORCES Pro,
 CVXGEN, SymForce, PX4, ArduPilot, ros2_control and Simulink Embedded Coder
-(`documentation/control-toolboxes/research/results/controls-tools.json`)
 shows a spectrum running from workstation research toolboxes, through
 symbolic-design/embedded-codegen pipelines, to native on-target authoring.
 This document records where `control-rs` sits on that spectrum and states
@@ -208,24 +207,20 @@ gate or ETS harness to build for this document itself.
 - **SIL/PIL numerical-equivalence gap.** `control-rs` has no analogue to
   Simulink's SIL/PIL numerical-equivalence testing between host-simulated
   and target-executed LTI responses. Value of extending `control-rs-ets` to
-  close this gap is unresolved (open question 2 in
-  `documentation/control-toolboxes/research/results/controls-tools.json`).
+  close this gap is unresolved.
 - **SymForce precedent applicability.** Whether SymForce's narrow
   symbolic-kernel-generation model is ever relevant to a future
-  `control-rs` Jacobian or linearization workflow is unresolved (open
-  question 3 in
-  `documentation/control-toolboxes/research/results/controls-tools.json`).
+  `control-rs` Jacobian or linearization workflow is unresolved.
 - **OpEn's Rust-codegen pattern.** Whether Optimization Engine's
   Python-formulation-to-generated-Rust-solver pattern (Sopasakis et al.,
-    2020) is a viable external integration point if users request
-          Python-driven controller synthesis is unresolved and out of scope for
-          this document (open question 4 in
-          `documentation/control-toolboxes/research/results/controls-tools.json`).
+  2020) is a viable external integration point if users request
+  Python-driven controller synthesis is unresolved and out of scope for
+  this document.
 - **Assumption:** this document assumes the four existing `src/`
   toolbox scaffolds (`classical_tools`, `modern_tools`, `robust_tools`,
   `nonlinear_tools`) are the intended scope of "future controls-toolbox
   modules" referenced in §2; this is inferred from the current repository
-  structure and is not itself sourced from the research file.
+  structure.
 
 ---
 
@@ -233,9 +228,9 @@ gate or ETS harness to build for this document itself.
 
 | Task / Feature          | Description                                                                                                                                                      | Estimated Effort    |
 |:------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------|:--------------------|
-| Positioning note review | Circulate this document for maintainer review and status update to Approved.                                                                                     | 0.5 Day             |
+| Positioning note review | Circulate this document for maintainer review.                                                                                                                   | 0.5 Day             |
 | Requirement propagation | Reference §2's constraints explicitly in the `classical_tools`, `modern_tools` and `robust_tools` design docs as they are drafted, rather than re-deriving them. | Ongoing, per-module |
-| Open-question triage    | Decide whether the SIL/PIL harness extension (§7) warrants its own research query before any `modern_tools`/`robust_tools` design doc that would depend on it.   | 0.5 Day             |
+| Open-question triage    | Decide whether the SIL/PIL harness extension (§7) needs its own design before any `modern_tools`/`robust_tools` design that would depend on it.                  | 0.5 Day             |
 
 ---
 

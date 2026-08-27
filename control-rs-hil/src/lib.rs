@@ -1,8 +1,8 @@
-//! Embedded Test Server (ETS) testing framework for `control-rs`.
+//! Hardware-in-the-Loop (HIL) testing framework for `control-rs`.
 //!
 //! # Description
 //!
-//! The `control-rs-ets` crate implements an Embedded Test Server (ETS) testing framework for
+//! The `control-rs-hil` crate implements a Hardware-in-the-Loop (HIL) testing framework for
 //! embedded control systems. It acts as the on-target server that communicates with a host machine
 //! over a structured packet-framed protocol, enabling remote test execution, settings configuration,
 //! and execution profiling (CPU cycles, timing and peak stack memory usage).
@@ -21,7 +21,7 @@
 //! # Usage
 //!
 //! ```
-//! use control_rs_ets::{ExecDescriptor, SuiteDescriptor, SettingsSlice};
+//! use control_rs_hil::{ExecDescriptor, SuiteDescriptor, SettingsSlice};
 //!
 //! // Define a mock test function
 //! fn dummy_test() {}
@@ -53,7 +53,7 @@
 //!
 //! # Limitations
 //!
-//! - **Single Threaded Execution**: ETS executes tests sequentially in a single-threaded
+//! - **Single Threaded Execution**: The HIL Server executes tests sequentially in a single-threaded
 //!   environment with global interrupts disabled.
 //! - **Hardware Dependency**: Access to low-level registers (`SysTick`, `DWT`, `CSRs`) assumes exclusive control
 //!   over target-specific profiling hardware.
@@ -89,7 +89,7 @@ pub mod util;
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::ExecDescriptor;
+/// use control_rs_hil::ExecDescriptor;
 /// fn my_test() {}
 /// let exec = ExecDescriptor {
 ///     description: "A simple unit test",
@@ -126,7 +126,7 @@ pub type SettingsSlice = &'static [&'static dyn Setting];
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::{ExecDescriptor, SuiteDescriptor};
+/// use control_rs_hil::{ExecDescriptor, SuiteDescriptor};
 /// fn test_a() {}
 /// static EXECS: &[ExecDescriptor] = &[
 ///     ExecDescriptor {

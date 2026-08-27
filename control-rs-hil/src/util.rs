@@ -2,7 +2,7 @@
 //!
 //! # Description
 //!
-//! This module provides auxiliary structures and functions to support ETS diagnostics,
+//! This module provides auxiliary structures and functions to support HIL server diagnostics,
 //! error reporting and hardware exception management. It includes a custom formatting writer
 //! for panic state telemetry construction, a suite table retriever and low-level failure/exception
 //! panic handlers.
@@ -11,7 +11,7 @@
 //!
 //! - **Panic Buffering**: `FailureBufWriter` formats dynamic panic messages into a statically allocated
 //!   byte buffer safely, preventing stack/heap corruption during critical failures.
-//! - **Boundary Retrieval**: `get_suites` extracts registered ETS test suites compiled in custom linker sections.
+//! - **Boundary Retrieval**: `get_suites` extracts registered HIL test suites compiled in custom linker sections.
 //! - **Divergent Error Handlers**: `handle_failure` and `handle_exception` isolate and report terminal target
 //!   crashes over the communication link before hard-resetting the CPU.
 
@@ -33,7 +33,7 @@ use core::str;
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::util::FailureBufWriter;
+/// use control_rs_hil::util::FailureBufWriter;
 /// use core::fmt::Write;
 ///
 /// let mut buf = [0u8; 12];
@@ -73,7 +73,7 @@ impl Write for FailureBufWriter<'_> {
 
 /// Reconstructs the slice of static test suites from the raw boundary pointers provided by the entrypoint.
 ///
-/// This safely aggregates all registered suites compiled into the `.ets_test_suites` custom ELF/binary section.
+/// This safely aggregates all registered suites compiled into the `.hil_test_suites` custom ELF/binary section.
 ///
 /// # Generic Arguments
 /// This function does not have generic arguments.
@@ -102,8 +102,8 @@ impl Write for FailureBufWriter<'_> {
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::util::get_suites;
-/// use control_rs_ets::SuiteDescriptor;
+/// use control_rs_hil::util::get_suites;
+/// use control_rs_hil::SuiteDescriptor;
 ///
 /// static S1: SuiteDescriptor = SuiteDescriptor {
 ///     name: "s1",
@@ -153,7 +153,7 @@ pub unsafe fn get_suites(
 /// This function directly manipulates hardware registers and resets the CPU. The caller MUST ensure the following conditions are met:
 ///
 /// * The system is in a controlled failure or panic state where terminating normal execution is safe.
-/// * `context` is a valid, reference-stable reference to ETS context.
+/// * `context` is a valid, reference-stable reference to the HIL server context.
 /// * Global interrupts are permanently disabled.
 /// * A target reset is performed at the end of the function (diverging control flow).
 /// * The system's hardware configurations required to send telemetry (e.g. UART clock) must remain stable until telemetry is sent.
@@ -165,10 +165,10 @@ pub unsafe fn get_suites(
 /// # Example
 /// ```should_panic
 /// # fn main() {
-/// use control_rs_ets::util::handle_failure;
-/// use control_rs_ets::server::Context;
-/// # use control_rs_ets::profiler::CPUProfiler;
-/// # use control_rs_ets::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// use control_rs_hil::util::handle_failure;
+/// use control_rs_hil::server::Context;
+/// # use control_rs_hil::profiler::CPUProfiler;
+/// # use control_rs_hil::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
 ///
 /// # struct MockComms;
 /// # impl HostComms for MockComms {
@@ -274,7 +274,7 @@ pub unsafe fn handle_failure<
 /// The caller MUST ensure the following conditions are met:
 ///
 /// * The processor is in an exception state and it is safe to permanently disable interrupts.
-/// * `context` is a valid, reference-stable reference to ETS context.
+/// * `context` is a valid, reference-stable reference to the HIL server context.
 /// * Global interrupts are permanently disabled and the target is reset.
 /// * The communication channel configuration must remain intact to allow sending exception reports.
 /// * The exception handler is not preempted by an even higher priority non-maskable interrupt (NMI).
@@ -285,10 +285,10 @@ pub unsafe fn handle_failure<
 /// # Example
 /// ```should_panic
 /// # fn main() {
-/// use control_rs_ets::util::handle_exception;
-/// use control_rs_ets::server::Context;
-/// # use control_rs_ets::profiler::CPUProfiler;
-/// # use control_rs_ets::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// use control_rs_hil::util::handle_exception;
+/// use control_rs_hil::server::Context;
+/// # use control_rs_hil::profiler::CPUProfiler;
+/// # use control_rs_hil::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
 ///
 /// # struct MockComms;
 /// # impl HostComms for MockComms {

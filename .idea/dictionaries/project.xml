@@ -37,6 +37,8 @@
       <w>Rapita</w>
       <w>Ratatui</w>
       <w>Renode</w>
+      <w>Scherer</w>
+      <w>Spiteri</w>
       <w>Syev</w>
       <w>Telem</w>
       <w>Tpmv</w>
@@ -50,6 +52,7 @@
       <w>blasfeo</w>
       <w>bluss</w>
       <w>bmatrix</w>
+      <w>bmod</w>
       <w>cblas</w>
       <w>cdot</w>
       <w>compensators</w>
@@ -60,6 +63,7 @@
       <w>dotu</w>
       <w>eabihf</w>
       <w>emami</w>
+      <w>faer</w>
       <w>gemm</w>
       <w>gemv</w>
       <w>geqrf</w>
@@ -80,10 +84,15 @@
       <w>jobz</w>
       <w>leftarrow</w>
       <w>leftrightarrow</w>
+      <w>linalg</w>
+      <w>linalg's</w>
       <w>mathbb</w>
+      <w>micromath</w>
+      <w>micromath's</w>
       <w>mult</w>
       <w>naeini</w>
       <w>nalgebra</w>
+      <w>nalgebra's</w>
       <w>ndarray</w>
       <w>ndarray's</w>
       <w>nrhs</w>
@@ -93,6 +102,7 @@
       <w>potrs</w>
       <w>pptrf</w>
       <w>pptrs</w>
+      <w>proptest</w>
       <w>roundtrip</w>
       <w>rscal</w>
       <w>rtic</w>

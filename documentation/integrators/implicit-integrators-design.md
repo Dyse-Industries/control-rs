@@ -37,8 +37,8 @@ This document establishes the architecture, requirement contract, and validation
 
 #### 2.3 Constraints
 
-- **C-1 — Native Rust Implementation**: Authored natively in Rust without C code generation (control-rs, 2026b).
-- **C-2 — Storage Decoupling**: State and matrix storage must use `control-rs::matrix::Owned` and `DenseStorage` (control-rs, 2026a).
+- **C-1 — Native Rust Implementation**: Authored natively in Rust without C code generation ([`controls-tools-design.md`](../control-toolboxes/controls-tools-design.md) C-1).
+- **C-2 — Storage Decoupling**: State and matrix storage must use `control-rs::matrix::Owned` and `DenseStorage` ([`matrix-design.md`](../numerical-models/matrix-design.md)).
 - **C-3 — Zero Virtual Dispatch**: Steppers must monomorphize over `Sys: SystemDynamics<T, NX, NU>`.
 
 ---
@@ -179,8 +179,4 @@ pub struct CrankNicolson;
 
 [6] D. R. Reynolds, D. J. Gardner, C. S. Woodward, and R. Chinomona, "ARKODE: A flexible IVP solver infrastructure for one-step methods," *ACM Transactions on Mathematical Software*, vol. 49, no. 2, pp. 19:1–19:30, 2023, doi: 10.1145/3588970.
 
-[7] control-rs, "documentation/control-toolboxes/controls-tools-design.md," in *control-rs repository*, 2026. [Online]. Available: https://github.com/Dyse-Industries/control-rs/blob/main/documentation/control-toolboxes/controls-tools-design.md. Accessed: Aug. 26, 2026.
-
-[8] control-rs, "src/state_space/mod.rs -- StateSpaceCore continuous/discrete models," in *control-rs repository*, 2026. [Online]. Available: https://github.com/Dyse-Industries/control-rs/blob/main/src/state_space/mod.rs. Accessed: Aug. 26, 2026.
-
-[9] T.-G. Kim, *peroxide*: Comprehensive numerical computing library for Rust (Version 0.37.0). [Online]. Available: https://docs.rs/peroxide/latest/peroxide/. Accessed: Aug. 26, 2026.
+[7] T.-G. Kim, *peroxide*: Comprehensive numerical computing library for Rust (Version 0.37.0). [Online]. Available: https://docs.rs/peroxide/latest/peroxide/. Accessed: Aug. 26, 2026.

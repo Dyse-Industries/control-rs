@@ -36,8 +36,8 @@ This document establishes the architecture, requirement contract, and validation
 
 #### 2.3 Constraints
 
-- **C-1 — Native Rust Implementation**: Authored natively in Rust without C code generation (control-rs, 2026b).
-- **C-2 — Storage Decoupling**: Vector storage must use `control-rs::matrix::Owned` and `DenseStorage` (control-rs, 2026a).
+- **C-1 — Native Rust Implementation**: Authored natively in Rust without C code generation ([`controls-tools-design.md`](../control-toolboxes/controls-tools-design.md) C-1).
+- **C-2 — Storage Decoupling**: Vector storage must use `control-rs::matrix::Owned` and `DenseStorage` ([`matrix-design.md`](../numerical-models/matrix-design.md)).
 - **C-3 — Zero Virtual Dispatch**: Steppers must monomorphize over `Sys: HamiltonianDynamics<T, NQ>`.
 
 ---
@@ -171,7 +171,3 @@ pub struct Yoshida6;
 [3] R. D. Ruth, "A Canonical Integration Technique," *IEEE Transactions on Nuclear Science*, vol. 30, no. 4, pp. 2669–2671, 1983, doi: 10.1109/TNS.1983.4332919.
 
 [4] H. Yoshida, "Construction of higher order symplectic integrators," *Physics Letters A*, vol. 150, no. 5–7, pp. 262–268, 1990, doi: 10.1016/0375-9601(90)90092-3.
-
-[5] control-rs, "documentation/control-toolboxes/controls-tools-design.md," in *control-rs repository*, 2026. [Online]. Available: https://github.com/Dyse-Industries/control-rs/blob/main/documentation/control-toolboxes/controls-tools-design.md. Accessed: Aug. 26, 2026.
-
-[6] control-rs, "src/state_space/mod.rs -- StateSpaceCore continuous/discrete models," in *control-rs repository*, 2026. [Online]. Available: https://github.com/Dyse-Industries/control-rs/blob/main/src/state_space/mod.rs. Accessed: Aug. 26, 2026.

@@ -1,4 +1,4 @@
-//! Host TUI and CI tooling for ETS and virtual ETS,
+//! Host testing and interactive TUI tooling for HIL (Hardware-in-the-Loop),
 //! built as an `xtask`-style task runner.
 #![allow(
     clippy::panic,

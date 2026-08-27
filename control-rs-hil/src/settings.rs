@@ -1,10 +1,10 @@
-//! Embedded Test Server (ETS) test suite configuration settings.
+//! Hardware-in-the-Loop (HIL) test suite configuration settings.
 //!
 //! # Description
 //!
 //! This module provides the `Setting` trait, value representations and thread-safe atomic wrappers
 //! to manage configurable parameters within a test suite. These parameters can be queried, listed,
-//! and updated dynamically by the host during ETS testing.
+//! and updated dynamically by the host during HIL testing.
 //!
 //! # Core Concepts
 //!
@@ -17,7 +17,7 @@
 //! # Usage
 //!
 //! ```
-//! use control_rs_ets::settings::{Setting, SettingValue, AtomicU32Setting};
+//! use control_rs_hil::settings::{Setting, SettingValue, AtomicU32Setting};
 //!
 //! // Define a setting with a default value of 100
 //! static CYCLE_LIMIT: AtomicU32Setting = AtomicU32Setting::new(
@@ -66,7 +66,7 @@ use core::sync::atomic::AtomicU64;
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::settings::{Setting, SettingValue, AtomicBoolSetting};
+/// use control_rs_hil::settings::{Setting, SettingValue, AtomicBoolSetting};
 ///
 /// let s = AtomicBoolSetting::new("my_flag", "A flag", false);
 /// assert_eq!(s.name(), "my_flag");
@@ -199,8 +199,8 @@ macro_rules! impl_setting {
             "Instantiating or accessing this struct does not panic.\n\n",
             "# Example\n",
             "```\n",
-            "use control_rs_ets::settings::{Setting, SettingValue};\n",
-            "let setting = control_rs_ets::settings::", stringify!($struct_name), "::new(\"test_setting\", \"A test setting\", ", stringify!($example_val), ");\n",
+            "use control_rs_hil::settings::{Setting, SettingValue};\n",
+            "let setting = control_rs_hil::settings::", stringify!($struct_name), "::new(\"test_setting\", \"A test setting\", ", stringify!($example_val), ");\n",
             "assert_eq!(setting.name(), \"test_setting\");\n",
             "assert_eq!(setting.get(), SettingValue::", stringify!($value_variant), "(", stringify!($example_val), "));\n",
             "```"
@@ -376,7 +376,7 @@ impl_setting!(
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::settings::{Setting, SettingValue, AtomicF32Setting};
+/// use control_rs_hil::settings::{Setting, SettingValue, AtomicF32Setting};
 ///
 /// let setting = AtomicF32Setting::new("cutoff_freq", "Lowpass cutoff frequency", 15.5);
 /// assert_eq!(setting.name(), "cutoff_freq");

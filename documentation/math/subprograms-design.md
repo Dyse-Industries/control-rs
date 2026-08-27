@@ -111,9 +111,7 @@ Software, 2026a).
   Lawson et al., 1979; Dongarra et al., 1988, 1990).
 
 FR-1–FR-7 remain one FR per BLAS/LAPACK level. Each named operation maps to a
-§6 oracle in the per-operation table in §6.1. FR-9 and FR-10 are retired:
-trait parameterization is §4.1; `#[inline(always)]` is NFR-3. FR-11 keeps
-its identifier.
+§6 oracle in the per-operation table in §6.1.
 
 #### 2.2 Non-Functional Requirements
 
@@ -124,8 +122,7 @@ its identifier.
       `cfg`, including `cfg(test)`. *Assumption to verify*: the host test
       harness
       links without the library itself naming `std`, so `cfg(test)` needs no
-      exemption. Supported by `src/` carrying no `extern crate std` prior to the
-      change that prompted this revision; confirm with
+      exemption. `src/` carries no `extern crate std`; confirm with
       `cargo test --lib` before the clause is enforced.
     - **NFR-1b — No mutable global state**: no `static mut`, no interior-mutable
       `static` (`AtomicUsize`, `Cell`, `thread_local!`) reachable from kernel
@@ -1061,7 +1058,7 @@ $\ge \frac{N}{2}\times$ throughput speedup over general dense `Gemv`
 
 #### 6.2 Validation Plan (Control Engineering Applications)
 
-Deferred until numerical-model designs are Approved and implemented. Success
+Deferred until numerical-model modules exist. Success
 criteria below are requirements for a **future** validation suite, not
 current unit tests. Present kernel smoke tests must not use Val-* names as
 success criteria.
@@ -1121,7 +1118,7 @@ Disassembly under `opt-level=3` (LLVM 22.1.6) on `x86_64-apple-darwin`,
   $O(N \cdot \text{EPS})$ tolerance thresholds while requiring exact bit-for-bit
   equality on integer and fixed-point paths (Arm Limited, 2022; Nuclei Software,
   2026a).
-- **Jacobi Budget as a Public Parameter (closed / bounded)**: $50 n^2$ is the
+- **Jacobi Budget as a Public Parameter**: $50 n^2$ is the
   fixed internal default (§4.3). A hard-real-time caller bounding worst-case
   execution time on an iterative eigensolver routes through the crate-private
   `syev_impl`/`heev_impl` seam. This default guarantees MCU stack safety and
@@ -1151,7 +1148,7 @@ Disassembly under `opt-level=3` (LLVM 22.1.6) on `x86_64-apple-darwin`,
 | **Phase 2: Packed BLAS**          | Implement `Spmv`, `Hpmv`, `Tpmv`, `Tpsv`, `Spr`/`Hpr`, `Pptrf` on `DefaultBlas`.                                                                                                                                                                                                                                                |   Complete    |
 | **Phase 3: Sparse BLAS (SpBLAS)** | Implement `Csrmv`, `Cscmv`, `Csrmm`, `SpDotu`, `SpDotc`, `SpAxpy` on `DefaultBlas`.                                                                                                                                                                                                                                             |   Complete    |
 | **Phase 4: LAPACK Solvers**       | Implement `Potrf`/`Potrs` (SPD & HPD), `Geqrf`/`Ormqr`/`Unmqr`, `Getrf`/`Getrs`, `Syev`/`Heev` (Jacobi) on `DefaultBlas` with typed workspaces and `LinAlgError`. `Syev`/`Heev` route through the crate-private `syev_impl`/`heev_impl` budget seam (§4.3).                                                                     | Trait surface |
-| **Phase 4b: §6 oracle closure**   | Close Right-side `Trsm`/`Ormqr`/`Unmqr`, Upper `Pptrf`, `Unmqr` \(Q^H\) conjugation, `Getrs` `ipiv` length, C-3 on `Cscmv` row dest, caller workspaces without a hidden `[T; 64]`, and the Level 2/3 oracles listed in this revision. Host CI green on untested stubs does not complete this phase.                             |       M       |
+| **Phase 4b: §6 oracle closure**   | Close Right-side `Trsm`/`Ormqr`/`Unmqr`, Upper `Pptrf`, `Unmqr` \(Q^H\) conjugation, `Getrs` `ipiv` length, C-3 on `Cscmv` row dest, caller workspaces without a hidden `[T; 64]`, and the Level 2/3 oracles listed in §6. Host CI green on untested stubs does not complete this phase.                                         |       M       |
 | **Phase 5: Example implementors** | Reference backend implementors under `examples/subprograms/`, each with an equivalence harness against `DefaultBlas` (§4.5.1). `src/` is unchanged by this phase. Specified in `subprograms-examples-proposal.md`.                                                                                                              |       S       |
 | **Phase 6: NFR-1 Enforcement**    | Add the source-level gate rejecting `extern crate std`, `thread_local`, `static mut` and interior-mutable `static` under `src/` (NFR-1a, NFR-1b), plus a host-vs-bare-metal public API diff for NFR-1c (§8).                                                                                                                    |       S       |
 

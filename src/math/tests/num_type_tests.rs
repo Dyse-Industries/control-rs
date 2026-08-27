@@ -1,38 +1,46 @@
 //! # Num Types
 //!
-//! Verifies compile-time translation from const-generic values into binary
-//! unsigned encodings, and covers addition, subtraction, multiplication,
-//! minimum and maximum.
+//! The tests must verify that the compiler accurately translates constant values into their
+//! corresponding Peano representations.
 //!
-//! Zero-byte footprint of the canonical types is asserted so compile-time
-//! mathematics does not inflate the compiled binary.
+//! The test suite must comprehensively cover the operations for addition, subtraction,
+//! multiplication, minimum and maximum behaviors.
 //!
-//! Addition commutativity is checked as type equality: `A + B` and `B + A`
-//! resolve to the same canonical type.
+//! A specialized testing sequence must assert that the memory footprint of these types remains
+//! strictly zero bytes, ensuring that compile-time mathematics does not inflate the compiled
+//! binary.
 //!
-//! Subtraction underflow is a `compile_fail` doctest on `num_types` itself
-//! (`U2 - U5`). This suite lives behind
-//! `#[cfg(any(test, feature = "ets"))]`, which `rustdoc`'s doctest extraction
-//! does not set, so `compile_fail` examples placed here never actually run.
+//! The static tests must verify the commutative property of this trait, proving that adding
+//! dimension A to dimension B results in the exact same type representation as adding B to A.
+//!
+//! ```compile_fail
+//!  fn test_subtraction_underflow() {
+//!      let _ = <U2 as DimSub<U5>>::Output::default();
+//!  }
+//! ```
+//!
+//! See `num_types`'s own module documentation for the regression
+//! characterizing arithmetic past the `U127` ceiling (this suite lives behind
+//! `#[cfg(any(test, feature = "hil"))]`, which `rustdoc`'s doctest extraction
+//! does not set, so `compile_fail` examples placed here never actually run).
 //!
 //! ## Functional Requirement Coverage (`num-types-design.md`)
 //!
 //! - **FR-1** (base dimension trait): dimension value/structure checks.
 //! - **FR-2** (type-level arithmetic): addition/subtraction/multiplication/
-//!   min/max tests, including the `U128 * U128` product pin.
-//! - **FR-3** (const-generic bridge): `Const<N>` hoisting and the static
-//!   concatenation helpers. No runtime constructor.
-//! - **FR-4** (named aliases `U0`..`U1024` plus extras): exercised as the
-//!   type arguments every other test in this suite uses.
+//!   min/max tests, including the pairwise recursion-limit regressions.
+//! - **FR-3** (const-generic bridge): `Const<N>` hoisting, `from_i8` and
+//!   the static-concatenation helpers.
+//! - **FR-4** (named aliases `U0`..`U127`): exercised incidentally as the
+//!   type arguments every other test in this suite uses, but has no test
+//!   dedicated to the alias-generation macro itself.
 //!
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod num_type_test_suite {
     use crate::math::num_types::{
-        B0, B1, Const, Dim, DimAdd, DimBitAnd, DimBitOr, DimBitXor, DimMax,
-        DimMin, DimMul, DimSub, U0, U1, U2, U3, U4, U5, U6, U7, U8, U10, U12,
-        U15, U16, U32, U63, U64, U126, U127, U128, U256, U1024, U16384, UInt,
-        UTerm,
+        Const, Dim, DimAdd, DimMax, DimMin, DimMul, DimSub, S, U0, U1, U2, U3,
+        U4, U5, U6, U10, U12, U15, U32, U63, U64, U125, U127, Z,
     };
     use core::marker::PhantomData;
     use core::mem;
@@ -40,20 +48,38 @@ pub mod num_type_test_suite {
     struct TestStorage<C: Dim>(PhantomData<C>);
 
     #[cfg_attr(test, test)]
-    /// Verifies that canonical unsigned structs compile down to a
+    /// Verifies that Peano representation structs compile down to a
     /// zero-byte memory footprint (NFR-1 of `num-types-design.md`).
     fn test_num_type_zero_byte_footprint() {
-        assert_eq!(mem::size_of::<UTerm>(), 0);
-        assert_eq!(mem::size_of::<UInt<UTerm, B1>>(), 0);
-        assert_eq!(mem::size_of::<UInt<UInt<UTerm, B1>, B0>>(), 0);
-        assert_eq!(mem::size_of::<Const<5>>(), 0);
+        assert_eq!(mem::size_of::<Z>(), 0);
+        assert_eq!(mem::size_of::<S<Z>>(), 0);
+        assert_eq!(mem::size_of::<S<S<Z>>>(), 0);
     }
 
     #[cfg_attr(test, test)]
     /// Verifies compile-time translation from standard const-generic values
-    /// into canonical unsigned types (FR-3 of `num-types-design.md`).
+    /// into Peano types (FR-3 of `num-types-design.md`).
     fn test_num_type_constant_generic_hoisting() {
-        let _: <Const<5> as Dim>::TypeNum = U5::default();
+        let _: <Const<5> as Dim>::PeanoTypeNum = U5::default();
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies `Const::from_i8` accepts both signs, matching on magnitude
+    /// (FR-3 of `num-types-design.md`, const-generic bridge).
+    fn test_num_type_const_from_i8() {
+        let _: Const<5> = Const::from_i8(5);
+        let _: Const<5> = Const::from_i8(-5);
+        let _: Const<0> = Const::from_i8(0);
+        // `i8::MIN.abs()` overflows; `saturating_abs()` clamps to `i8::MAX`.
+        let _: Const<127> = Const::from_i8(i8::MIN);
+    }
+
+    #[cfg(debug_assertions)]
+    #[cfg(test)]
+    #[test]
+    #[should_panic(expected = "n.saturating_abs() as usize == N")]
+    fn _test_num_type_const_from_i8_magnitude_mismatch() {
+        let _: Const<5> = Const::from_i8(4);
     }
 
     #[cfg_attr(test, test)]
@@ -68,23 +94,23 @@ pub mod num_type_test_suite {
     /// Verifies static dimension constants equal their runtime values
     /// (FR-1 of `num-types-design.md`, runtime `usize` exposure).
     fn test_num_type_dimension_values() {
-        assert_eq!(U0::USIZE, 0);
-        assert_eq!(U1::USIZE, 1);
-        assert_eq!(U15::USIZE, 15);
-        assert_eq!(U128::USIZE, 128);
-        assert_eq!(U256::USIZE, 256);
-        assert_eq!(U16384::USIZE, 16384);
+        assert_eq!(U0::DIM, 0);
+        assert_eq!(U1::DIM, 1);
+        assert_eq!(U15::DIM, 15);
+        assert_eq!(U127::DIM, 127);
     }
 
     #[cfg_attr(test, test)]
     /// Verifies type-level addition arithmetic at compile-time and runtime
     /// (FR-2 of `num-types-design.md`).
     fn test_num_type_addition() {
+        // Compile-time type structure assertions
         let _: U5 = <U2 as DimAdd<U3>>::Output::default();
         let _: U3 = <U0 as DimAdd<U3>>::Output::default();
         let _: U3 = <U3 as DimAdd<U0>>::Output::default();
 
-        assert_eq!(<<U10 as DimAdd<U5>>::Output as Dim>::USIZE, 15);
+        // Constant value assertions
+        assert_eq!(<<U10 as DimAdd<U5>>::Output as Dim>::DIM, 15);
     }
 
     #[cfg_attr(test, test)]
@@ -103,7 +129,7 @@ pub mod num_type_test_suite {
         let _: U0 = <U5 as DimSub<U5>>::Output::default();
         let _: U5 = <U5 as DimSub<U0>>::Output::default();
 
-        assert_eq!(<<U15 as DimSub<U10>>::Output as Dim>::USIZE, 5);
+        assert_eq!(<<U15 as DimSub<U10>>::Output as Dim>::DIM, 5);
     }
 
     #[cfg_attr(test, test)]
@@ -114,23 +140,31 @@ pub mod num_type_test_suite {
         let _: U0 = <U5 as DimMul<U0>>::Output::default();
         let _: U0 = <U0 as DimMul<U5>>::Output::default();
 
-        assert_eq!(<<U4 as DimMul<U5>>::Output as Dim>::USIZE, 20);
+        assert_eq!(<<U4 as DimMul<U5>>::Output as Dim>::DIM, 20);
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies `U128 * U128` resolves to `U16384` (FR-2 of
-    /// `num-types-design.md`).
-    fn test_num_type_large_product() {
-        let _: U16384 = <U128 as DimMul<U128>>::Output::default();
-        assert_eq!(<<U128 as DimMul<U128>>::Output as Dim>::USIZE, 16384);
+    /// Verifies that type-level multiplication recursion limits are
+    /// respected by the compiler (FR-2 of `num-types-design.md`).
+    fn test_num_type_multiplication_recursion_limit() {
+        // `DimMul`'s per-pair envelope is narrower than the U127 single-value
+        // ceiling (C-1): each recursive step re-resolves `Dim` on the
+        // multiplier, so `DimMul<U1>` overflows the trait solver's recursion
+        // limit above U125, not U127 (see C-2). U125 is the largest operand
+        // pinned here as a regression against that boundary shrinking further.
+        let _: U125 = <U125 as DimMul<U1>>::Output::default();
     }
 
     #[cfg_attr(test, test)]
-    /// Former Peano overflow pairs must compile under binary encoding.
-    fn test_num_type_former_peano_overflow_pairs() {
-        assert_eq!(<<U1 as DimAdd<U126>>::Output as Dim>::USIZE, 127);
-        assert_eq!(<<U126 as DimMul<U1>>::Output as Dim>::USIZE, 126);
-        assert_eq!(<<U127 as DimMul<U2>>::Output as Dim>::USIZE, 254);
+    /// Verifies type-level addition at the pairwise recursion boundary (C-2)
+    /// (FR-2 of `num-types-design.md`).
+    fn test_num_type_addition_recursion_limit() {
+        // `DimAdd`'s envelope is asymmetric, not bounded by the operand sum:
+        // `U63 + U64` resolves while `U1 + U126` (the same sum) overflows
+        // the trait solver — the failing side is pinned as a `compile_fail`
+        // doctest in `num_types`. This pins the passing side against the
+        // envelope shrinking.
+        let _: U127 = <U63 as DimAdd<U64>>::Output::default();
     }
 
     #[cfg_attr(test, test)]
@@ -141,7 +175,7 @@ pub mod num_type_test_suite {
         let _: U5 = <U5 as DimMax<U2>>::Output::default();
         let _: U5 = <U5 as DimMax<U5>>::Output::default();
 
-        assert_eq!(<<U12 as DimMax<U4>>::Output as Dim>::USIZE, 12);
+        assert_eq!(<<U12 as DimMax<U4>>::Output as Dim>::DIM, 12);
     }
 
     #[cfg_attr(test, test)]
@@ -152,13 +186,14 @@ pub mod num_type_test_suite {
         let _: U2 = <U5 as DimMin<U2>>::Output::default();
         let _: U5 = <U5 as DimMin<U5>>::Output::default();
 
-        assert_eq!(<<U12 as DimMin<U4>>::Output as Dim>::USIZE, 4);
+        assert_eq!(<<U12 as DimMin<U4>>::Output as Dim>::DIM, 4);
     }
 
     #[cfg_attr(test, test)]
     /// Verifies compile-time minimum and maximum bounds resolution on
     /// non-uniform dimensions (FR-2 of `num-types-design.md`).
     fn test_num_type_dynamic_min_max_bounding() {
+        // Use an operation to confirm that Max or Min bounds a dimension
         fn assert_bounds<A, B, Max, Min>()
         where
             A: DimMax<B, Output = Max> + DimMin<B, Output = Min>,
@@ -168,6 +203,8 @@ pub mod num_type_test_suite {
         {
         }
 
+        // Statically assert that type-level Min and Max traits correctly resolve bounding boxes
+        // for non-uniform tensor operations.
         let _: U5 = <U2 as DimMax<U5>>::Output::default();
         let _: U2 = <U2 as DimMin<U5>>::Output::default();
 
@@ -211,105 +248,5 @@ pub mod num_type_test_suite {
         let l_array_test: TestStorage<U3> =
             _concat_static_arrays([0.0], [0.0, 0.0]);
         assert_eq!(l3.0, l_array_test.0);
-    }
-
-    #[cfg_attr(test, test)]
-    /// Verifies that unnamed C-1 values implement Dim and arithmetic correctly
-    /// (C-1 and FR-3 of `num-types-design.md`).
-    fn test_num_type_unnamed_c1_constants() {
-        assert_eq!(<Const<200> as Dim>::USIZE, 200);
-        assert_eq!(<Const<750> as Dim>::USIZE, 750);
-        assert_eq!(<Const<1024> as Dim>::USIZE, 1024);
-        assert_eq!(
-            <<Const<200> as DimAdd<Const<300>>>::Output as Dim>::USIZE,
-            500
-        );
-        assert_eq!(
-            <<Const<750> as DimSub<Const<250>>>::Output as Dim>::USIZE,
-            500
-        );
-        assert_eq!(
-            <<Const<200> as DimMax<Const<750>>>::Output as Dim>::USIZE,
-            750
-        );
-        assert_eq!(
-            <<Const<200> as DimMin<Const<750>>>::Output as Dim>::USIZE,
-            200
-        );
-    }
-
-    #[cfg_attr(test, test)]
-    /// Verifies type-level bitwise AND operations and power-of-two invariants
-    /// (N & (N - 1) == 0) (FR-5 and V&V §6.1.2 of `num-types-design.md`).
-    fn test_num_type_bitwise_and() {
-        let _: U0 = <U1 as DimBitAnd<U0>>::Output::default();
-        let _: U0 = <U0 as DimBitAnd<U1>>::Output::default();
-        let _: U0 = <U2 as DimBitAnd<U1>>::Output::default();
-        let _: U0 = <U4 as DimBitAnd<U3>>::Output::default();
-        let _: U0 = <U8 as DimBitAnd<U7>>::Output::default();
-        let _: U0 = <U16 as DimBitAnd<U15>>::Output::default();
-        let _: U0 = <U128 as DimBitAnd<U127>>::Output::default();
-        let _: U10 = <U15 as DimBitAnd<U10>>::Output::default();
-        let _: U3 = <U7 as DimBitAnd<U3>>::Output::default();
-
-        assert_eq!(
-            <<Const<1024> as DimBitAnd<Const<1023>>>::Output as Dim>::USIZE,
-            0
-        );
-    }
-
-    #[cfg_attr(test, test)]
-    /// Verifies type-level bitwise OR operations and masking identity
-    /// (A | 0 == A) (FR-5 and V&V §6.1.2 of `num-types-design.md`).
-    fn test_num_type_bitwise_or() {
-        let _: U0 = <U0 as DimBitOr<U0>>::Output::default();
-        let _: U5 = <U5 as DimBitOr<U0>>::Output::default();
-        let _: U5 = <U0 as DimBitOr<U5>>::Output::default();
-        let _: U5 = <U5 as DimBitOr<U5>>::Output::default();
-        let _: U15 = <U10 as DimBitOr<U5>>::Output::default();
-        let _: U127 = <U64 as DimBitOr<U63>>::Output::default();
-
-        assert_eq!(
-            <<Const<1024> as DimBitOr<Const<1>>>::Output as Dim>::USIZE,
-            1025
-        );
-    }
-
-    #[cfg_attr(test, test)]
-    /// Verifies type-level bitwise XOR operations, self-cancellation (A ^ A == 0),
-    /// and identity (A ^ 0 == A) (FR-5 and V&V §6.1.2 of `num-types-design.md`).
-    fn test_num_type_bitwise_xor() {
-        let _: U0 = <U0 as DimBitXor<U0>>::Output::default();
-        let _: U0 = <U5 as DimBitXor<U5>>::Output::default();
-        let _: U0 = <U128 as DimBitXor<U128>>::Output::default();
-        let _: U5 = <U5 as DimBitXor<U0>>::Output::default();
-        let _: U5 = <U0 as DimBitXor<U5>>::Output::default();
-        let _: U5 = <U15 as DimBitXor<U10>>::Output::default();
-
-        assert_eq!(
-            <<Const<1024> as DimBitXor<Const<1024>>>::Output as Dim>::USIZE,
-            0
-        );
-    }
-
-    #[cfg_attr(test, test)]
-    /// Verifies in-bounds Const arithmetic for boundary values (Const<1024>, Const<16384>)
-    /// (V&V §6.1 item 6 of `num-types-design.md`).
-    fn test_num_type_in_bounds_const_arithmetic() {
-        assert_eq!(U1024::USIZE, 1024);
-        assert_eq!(<Const<1024> as Dim>::USIZE, 1024);
-        assert_eq!(<Const<16384> as Dim>::USIZE, 16384);
-        assert_eq!(
-            <<Const<1024> as DimAdd<Const<1024>>>::Output as Dim>::USIZE,
-            2048
-        );
-        assert_eq!(
-            <<Const<128> as DimMul<Const<128>>>::Output as Dim>::USIZE,
-            16384
-        );
-        assert_eq!(
-            <<Const<100> as DimMul<Const<100>>>::Output as Dim>::USIZE,
-            10000
-        );
     }
 }

@@ -1,7 +1,7 @@
-# control-rs-ets
+# control-rs-hil
 
-`control-rs-ets` is the target-side (embedded, `no_std`) core library for the
-Embedded Test Server (ETS) testing and benchmarking infrastructure of
+`control-rs-hil` is the target-side (embedded, `no_std`) core library for the
+Hardware-in-the-Loop (HIL) testing and benchmarking infrastructure of
 `control-rs`.
 
 ## Purpose
@@ -20,7 +20,7 @@ config:
   layout: fixed
 ---
 flowchart LR
- subgraph Target["Target MCU / QEMU (control-rs-ets)"]
+ subgraph Target["Target MCU / QEMU (control-rs-hil)"]
     direction TB
         CommsRx["HostComms"]
         Server["Server"]
@@ -44,7 +44,7 @@ flowchart LR
     classDef cpuNode stroke:#2962FF
 ```
 
-`control-rs-ets`:
+`control-rs-hil`:
 
 1. **Defines core abstractions** (`CPUProfiler` and `HostComms` traits) for
    hardware communication, timing and CPU profiling.
@@ -54,7 +54,7 @@ flowchart LR
 
 ## End-User Example
 
-Developers use `control-rs-ets` by defining a target-side transport (such as a
+Developers use `control-rs-hil` by defining a target-side transport (such as a
 UART interface) and CPU profiling utilities and then passing them into the
 Server's context.
 
@@ -64,10 +64,10 @@ Here is an example implementation:
 #![no_std]
 #![no_main]
 
-use control_rs_ets::comms::{Command, FrameReader, HostComms, Telemetry, frame_telemetry};
-use control_rs_ets::server::Context;
-use control_rs_ets::CPUProfiler;
-use control_rs_macros::{ets_setup, ets_suite};
+use control_rs_hil::comms::{Command, FrameReader, HostComms, Telemetry, frame_telemetry};
+use control_rs_hil::server::Context;
+use control_rs_hil::CPUProfiler;
+use control_rs_macros::{hil_setup, hil_suite};
 
 // 1. Define target-side communication channel (e.g., UART or Semihosting)
 struct UartComms {
@@ -140,7 +140,7 @@ fn get_nanoseconds() -> u64 { 0 }
 fn get_sp() -> usize { 0 }
 
 // 3. Declare a test suite
-#[ets_suite]
+#[hil_suite]
 pub mod pid_control_suite {
     pub static TARGET_HEADING: u32 = 180;
 
@@ -150,8 +150,8 @@ pub mod pid_control_suite {
     }
 }
 
-// 4. Initialize ETS
-#[ets_setup]
+// 4. Initialize HIL Server
+#[hil_setup]
 fn setup() -> Context<UartComms, SystemCPUUtils> {
     Context::new(
         UartComms { reader: FrameReader::new() },
@@ -171,14 +171,14 @@ Verify that the crate compiles successfully for the thumbv7em target
 architecture (configured in `Cargo.toml` / QEMU profile):
 
 ```bash
-cargo check --package control-rs-ets --target thumbv7em-none-eabihf
+cargo check --package control-rs-hil --target thumbv7em-none-eabihf
 ```
 
 ### Workspace Unit Tests
 
-Ensure ETS serialization/deserialization logic behaves correctly under host-side
+Ensure HIL serialization/deserialization logic behaves correctly under host-side
 unit testing:
 
 ```bash
-cargo test --package control-rs-ets
+cargo test --package control-rs-hil
 ```

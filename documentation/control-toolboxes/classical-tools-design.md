@@ -183,7 +183,7 @@ rejected. Beyond the `no_std`/no-FFI mismatch, `Slycot` itself remains
 GPLv2-licensed because relicensing requires sign-off from every past
 contributor, despite upstream SLICOT moving to BSD-3-Clause in December 2020
 (python-control, 2026b) — a licensing posture this crate's minimal-dependency
-convention (`CLAUDE.md`) does not want to inherit even indirectly.
+convention ([`CLAUDE.md`](../../CLAUDE.md)) does not want to inherit even indirectly.
 
 #### 5.4. Full Interactive Design Tool (`sisotool`-Equivalent)
 
@@ -203,7 +203,7 @@ surface, if built at all, belongs to a host-side companion tool consuming
    against `python-control` and/or Octave control-package reference outputs
    for a shared set of test transfer functions (`python-control`'s `margin`,
    Octave's `rlocus`/`margin` — python-control, 2026a; Octave-Forge, 2026),
-   per the crate's Solvers & Estimators testing standard (`CLAUDE.md`).
+   per the crate's Solvers & Estimators testing standard ([`CLAUDE.md`](../../CLAUDE.md)).
 2. **Property-Based Testing**: The Routh-array first-column sign-change
    count must equal the number of right-half-plane roots independently
    computed via companion-matrix root-finding, checked with `proptest` over
@@ -214,7 +214,7 @@ surface, if built at all, belongs to a host-side companion tool consuming
    `laglink` outputs for equivalent parameterizations (Octave-Forge, 2026).
 4. **No ETS Requirement**: `classical_tools` performs no hardware I/O and
    has no runtime target-side component; the crate's ETS mock-harness
-   requirement (`CLAUDE.md`) does not apply.
+   requirement ([`CLAUDE.md`](../../CLAUDE.md)) does not apply.
 
 ---
 

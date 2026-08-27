@@ -5,7 +5,10 @@
 
 use crate::math::{
     ArithmeticResult,
-    num_traits::{AdditiveGroup, Conjugate, Float, One, Scalar, Zero},
+    num_traits::{
+        AdditiveGroup, Exponential, Float, One, Radical, Scalar, Signed, Trig,
+        Zero,
+    },
     ops::{
         Add, Div, Mul, Neg, Sub, TryAdd, TryDiv, TryMul, TrySub, WrappingAdd,
         WrappingMul, WrappingSub,
@@ -43,6 +46,11 @@ impl<T> Complex<T> {
     }
 
     /// Creates a new complex number from real and imaginary parts.
+    ///
+    /// # Arguments
+    ///
+    /// * `re` - The real part.
+    /// * `im` - The imaginary part.
     #[must_use]
     pub const fn new(re: T, im: T) -> Self {
         Self { re, im }
@@ -53,12 +61,18 @@ impl<T> Complex<T> {
 
 impl<T: Zero> Complex<T> {
     /// Creates a new complex number from the imaginary part, with the real set to zero.
+    ///
+    /// # Arguments
+    /// * `im` - The imaginary component.
     #[must_use]
     pub fn from_imag(im: T) -> Self {
         Self::new(T::zero(), im)
     }
 
     /// Creates a complex number from the real part, with the imaginary part set to zero.
+    ///
+    /// # Arguments
+    /// * `re` - The real component.
     #[must_use]
     pub fn from_real(re: T) -> Self {
         Self::new(re, T::zero())
@@ -74,7 +88,11 @@ impl<T: Float> Complex<T> {
         self.im.atan2(self.re)
     }
 
-    /// Creates a new complex number from polar coordinates (`r`, `theta`).
+    /// Creates a new complex number from polar coordinates.
+    ///
+    /// # Arguments
+    /// * `r` - magnitude of the number.
+    /// * `theta` - phase of the number.
     #[must_use]
     #[allow(clippy::arithmetic_side_effects)]
     pub fn from_polar(r: T, theta: T) -> Self {
@@ -87,7 +105,11 @@ impl<T: Float> Complex<T> {
         self.re.hypot(self.im)
     }
 
-    /// Creates a pair of polar coordinates `(r, theta)` from self.
+    /// Creates a pair of polar coordinates from self.
+    ///
+    /// # Returns
+    /// * `r` - magnitude of the number.
+    /// * `theta` - phase of the number.
     #[must_use]
     pub fn to_polar(self) -> (T, T) {
         (self.clone().magnitude(), self.arg())
@@ -279,41 +301,16 @@ impl<T: Sub<T, Output = T> + TrySub<T, Output = T>> TrySub for Complex<T> {
 // Numerical traits for complex numbers
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Neg<Output = T>> Conjugate for Complex<T> {
-    #[allow(clippy::arithmetic_side_effects)]
-    #[inline(always)]
-    fn conj(self) -> Self {
-        Self::new(self.re, -self.im)
-    }
-}
+impl<T: Scalar> Scalar for Complex<T> {}
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T> Scalar for Complex<T>
-where
-    T: Scalar<Real = T> + Neg<Output = T> + PartialOrd,
-{
-    type Real = T;
-
-    #[allow(clippy::arithmetic_side_effects)]
-    #[inline(always)]
-    fn abs2(&self) -> Self::Real {
-        self.re.clone() * self.re.clone() + self.im.clone() * self.im.clone()
-    }
-
-    #[inline(always)]
-    fn from_real(re: Self::Real) -> Self {
-        Self::new(re, T::ZERO)
-    }
-
-    #[inline(always)]
-    fn im(&self) -> Self::Real {
-        self.im.clone()
-    }
-
-    #[inline(always)]
-    fn re(&self) -> Self::Real {
-        self.re.clone()
+impl<T: PartialOrd> PartialOrd for Complex<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        match self.re.partial_cmp(&other.re) {
+            Some(core::cmp::Ordering::Equal) => self.im.partial_cmp(&other.im),
+            ord => ord,
+        }
     }
 }
 
@@ -337,7 +334,15 @@ impl<T: Zero> Zero for Complex<T> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: AdditiveGroup + Neg<Output = T>> AdditiveGroup for Complex<T> {}
+impl<T: AdditiveGroup> AdditiveGroup for Complex<T> {}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl<T: Float> Float for Complex<T> {
+    fn epsilon() -> Self {
+        Self::from_real(T::epsilon())
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -350,113 +355,23 @@ impl<T: Neg<Output = T>> Neg for Complex<T> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Inherent Analytic & Transcendental Operations
+
+impl<T> Signed for Complex<T>
+where
+    T: Float,
+{
+    /// The complex absolute value: `|z|` as a purely real number, computed
+    /// via [`Complex::magnitude`] rather than element-wise.
+    fn abs(self) -> Self {
+        Self::from_real(self.magnitude())
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Float> Complex<T> {
-    /// The complex absolute value: `|z|` as a purely real number.
-    #[must_use]
-    pub fn abs(self) -> T {
-        self.magnitude()
-    }
-
-    /// Computes the inverse cosine (arccos) of the complex number.
-    #[must_use]
+impl<T: Float> Radical for Complex<T> {
     #[allow(clippy::arithmetic_side_effects)]
-    pub fn acos(self) -> Self {
-        let two = T::ONE + T::ONE;
-        Self::from_real(T::PI / two) - self.asin()
-    }
-
-    /// Computes the inverse sine (arcsin) of the complex number.
-    #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn asin(self) -> Self {
-        let i = Self::from_imag(T::ONE);
-        let one = Self::from_real(T::ONE);
-        let iz = i * self.clone();
-        let root = (one - (self.clone() * self)).sqrt();
-        Self::from_imag(T::ZERO - T::ONE) * (iz + root).ln()
-    }
-
-    /// Computes the inverse tangent (arctan) of the complex number.
-    #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn atan(self) -> Self {
-        let two = T::ONE + T::ONE;
-        let i = Self::from_imag(T::ONE);
-        let half_i = Self::from_imag(T::ONE / two);
-        half_i * ((i.clone() + self.clone()) / (i - self)).ln()
-    }
-
-    /// Computes the cosine of the complex number.
-    #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn cos(self) -> Self {
-        let (x, y) = (self.re, self.im);
-        let (sinh_y, cosh_y) = (y.clone().sinh(), y.cosh());
-        Self::new(x.clone().cos() * cosh_y, T::ZERO - (x.sin() * sinh_y))
-    }
-
-    /// Returns the machine epsilon for complex numbers of this precision.
-    #[must_use]
-    pub fn epsilon() -> Self {
-        Self::from_real(T::epsilon())
-    }
-
-    /// Computes $e^z$ for the complex number.
-    #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn exp(self) -> Self {
-        let exp_re = self.re.exp();
-        Self::new(
-            exp_re.clone() * self.im.clone().cos(),
-            exp_re * self.im.sin(),
-        )
-    }
-
-    /// Computes the principal natural logarithm $\ln(z)$ of the complex number.
-    #[must_use]
-    pub fn ln(self) -> Self {
-        Self::new(self.clone().magnitude().ln(), self.arg())
-    }
-
-    /// Computes the base-10 logarithm $\log_{10}(z)$ of the complex number.
-    #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn log10(self) -> Self {
-        let ln10 = T::from_usize(10).ln();
-        self.ln() / Self::from_real(ln10)
-    }
-
-    /// Computes $z^n$ for complex $z$ and complex $n$.
-    #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn pow(self, n: Self) -> Self {
-        if self.is_zero() {
-            return if n.is_zero() {
-                Self::one()
-            } else {
-                Self::zero()
-            };
-        }
-        (n * self.ln()).exp()
-    }
-
-    /// Computes the sine of the complex number.
-    #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn sin(self) -> Self {
-        let (x, y) = (self.re, self.im);
-        let sinh_y = y.clone().sinh();
-        let cosh_y = y.cosh();
-        Self::new(x.clone().sin() * cosh_y, x.cos() * sinh_y)
-    }
-
-    /// Computes the principal square root of the complex number.
-    #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn sqrt(self) -> Self {
+    fn sqrt(self) -> Self {
         if self.is_zero() {
             return Self::zero();
         }
@@ -476,11 +391,95 @@ impl<T: Float> Complex<T> {
             Self::new(im, sign * re)
         }
     }
+}
 
-    /// Computes the tangent of the complex number.
-    #[must_use]
+////////////////////////////////////////////////////////////////////////////////
+
+impl<T: Float> Trig for Complex<T> {
+    const PI: Self = Self {
+        re: T::PI,
+        im: T::ZERO,
+    };
     #[allow(clippy::arithmetic_side_effects)]
-    pub fn tan(self) -> Self {
+    fn acos(self) -> Self {
+        let two = T::ONE + T::ONE;
+        Self::from_real(T::PI / two) - self.asin()
+    }
+    #[allow(clippy::arithmetic_side_effects)]
+    fn asin(self) -> Self {
+        // asin(z) = -i * ln(iz + sqrt(1 - z^2))
+        let i = Self::from_imag(T::ONE);
+        let one = Self::from_real(T::ONE);
+        let iz = i * self.clone();
+        let root = (one - (self.clone() * self)).sqrt();
+        Self::from_imag(T::ZERO - T::ONE) * (iz + root).ln()
+    }
+    #[allow(clippy::arithmetic_side_effects)]
+    fn atan(self) -> Self {
+        // atan(z) = i/2 * ln((i+z)/(i-z))
+        let two = T::ONE + T::ONE;
+        let i = Self::from_imag(T::ONE);
+        let half_i = Self::from_imag(T::ONE / two);
+        half_i * ((i.clone() + self.clone()) / (i - self)).ln()
+    }
+    #[allow(clippy::arithmetic_side_effects)]
+    fn cos(self) -> Self {
+        // cos(z) = cos(x)cosh(y) - i sin(x)sinh(y)
+        let (x, y) = (self.re, self.im);
+        let (sinh_y, cosh_y) = (y.clone().sinh(), y.cosh());
+        Self::new(x.clone().cos() * cosh_y, T::ZERO - (x.sin() * sinh_y))
+    }
+    #[allow(clippy::arithmetic_side_effects)]
+    fn sin(self) -> Self {
+        // sin(z) = sin(x)cosh(y) + i cos(x)sinh(y)
+        let (x, y) = (self.re, self.im);
+        let sinh_y = y.clone().sinh();
+        let cosh_y = y.cosh();
+        Self::new(x.clone().sin() * cosh_y, x.cos() * sinh_y)
+    }
+    #[allow(clippy::arithmetic_side_effects)]
+    fn tan(self) -> Self {
         self.clone().sin() / self.cos()
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl<T: Float> Exponential for Complex<T> {
+    const E: Self = Self {
+        re: T::E,
+        im: T::ZERO,
+    };
+
+    #[allow(clippy::arithmetic_side_effects)]
+    fn exp(self) -> Self {
+        let exp_re = self.re.exp();
+        Self::new(
+            exp_re.clone() * self.im.clone().cos(),
+            exp_re * self.im.sin(),
+        )
+    }
+
+    fn ln(self) -> Self {
+        // ln(z) = ln|z| + i arg(z)
+        Self::new(self.clone().magnitude().ln(), self.arg())
+    }
+
+    #[allow(clippy::arithmetic_side_effects)]
+    fn log10(self) -> Self {
+        let ln10 = T::from_usize(10).ln();
+        self.ln() / Self::from_real(ln10)
+    }
+
+    #[allow(clippy::arithmetic_side_effects)]
+    fn pow(self, n: Self) -> Self {
+        if self.is_zero() {
+            return if n.is_zero() {
+                Self::one()
+            } else {
+                Self::zero()
+            };
+        }
+        (n * self.ln()).exp()
     }
 }

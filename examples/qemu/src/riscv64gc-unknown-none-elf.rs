@@ -3,12 +3,12 @@
 
 extern crate control_rs;
 
-use control_rs_ets::comms::{
+use control_rs_hil::comms::{
     frame_telemetry, Command, FrameReader, HostComms, Telemetry,
 };
-use control_rs_ets::server::Context;
-use control_rs_ets::RiscvProfiler;
-use control_rs_macros::ets_setup;
+use control_rs_hil::server::Context;
+use control_rs_hil::RiscvProfiler;
+use control_rs_macros::hil_setup;
 
 use semihosting::io::Write;
 
@@ -63,11 +63,8 @@ impl HostComms for RiscvSemihostingComms {
 // Force linking of the math test suites by referencing them
 #[allow(unused_imports)]
 pub use control_rs::math::tests::suites::*;
-// Force linking of the matrix test suites by referencing them
-#[allow(unused_imports)]
-pub use control_rs::matrix::tests::suites::*;
 
-#[ets_setup]
+#[hil_setup]
 #[allow(dead_code)]
 fn setup() -> Context<RiscvSemihostingComms, RiscvProfiler> {
     let comms = RiscvSemihostingComms {

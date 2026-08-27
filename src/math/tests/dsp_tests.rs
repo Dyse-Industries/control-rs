@@ -1,14 +1,12 @@
-//! Digital Signal Processing (DSP) mathematical ETS and unit test suite.
+//! Digital Signal Processing (DSP) mathematical HIL and unit test suite.
 //!
 //! `dsp.rs` has no dedicated design doc, so no functional-requirement
 //! citations apply here.
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod dsp_test_suite {
     use crate::math::{
-        Bijection, ConversionError, Map,
-        complex_num::Complex,
-        dsp::{Continuous, Convolution, Discrete, FFT},
+        Bijection, Map, complex_num::Complex, dsp::Convolution, dsp::FFT,
         num_traits::Trig,
     };
 
@@ -17,10 +15,6 @@ pub mod dsp_test_suite {
 
     struct TestConvolution;
     struct TestFFT;
-    struct DummyContinuous;
-    struct DummyDiscrete {
-        dt: f64,
-    }
 
     impl<T: crate::math::num_traits::Float> Convolution<T> for TestConvolution {}
 
@@ -34,26 +28,6 @@ pub mod dsp_test_suite {
     {
     }
 
-    impl Continuous<f64> for DummyContinuous {
-        type Discrete = DummyDiscrete;
-
-        fn discretize(&self, dt: f64) -> Self::Discrete {
-            DummyDiscrete { dt }
-        }
-    }
-
-    impl Discrete<f64> for DummyDiscrete {
-        type Continuous = DummyContinuous;
-
-        fn sampling_period(&self) -> f64 {
-            self.dt
-        }
-
-        fn to_continuous(&self) -> Self::Continuous {
-            DummyContinuous
-        }
-    }
-
     // --- Convolution Tests ---
 
     #[cfg_attr(test, test)]
@@ -62,7 +36,7 @@ pub mod dsp_test_suite {
         let input = [1.0, 2.0, 3.0];
         let kernel = [1.0];
         let mut output = [0.0f64; 3];
-        TestConvolution::convolve_input(&input, &kernel, &mut output).unwrap();
+        TestConvolution::convolve_input(&input, &kernel, &mut output);
         for (out_val, in_val) in output.iter().zip(input.iter()) {
             assert!((out_val - in_val).abs() < TOLERANCE);
         }
@@ -74,7 +48,7 @@ pub mod dsp_test_suite {
         let input = [1.0, 2.0, 3.0];
         let kernel = [0.0, 1.0, 0.0];
         let mut output = [0.0f64; 5];
-        TestConvolution::convolve_input(&input, &kernel, &mut output).unwrap();
+        TestConvolution::convolve_input(&input, &kernel, &mut output);
         let expected = [0.0, 1.0, 2.0, 3.0, 0.0];
         for (out_val, exp_val) in output.iter().zip(expected.iter()) {
             assert!((out_val - exp_val).abs() < TOLERANCE);
@@ -87,22 +61,21 @@ pub mod dsp_test_suite {
         let input = [1.0, 1.0];
         let kernel = [1.0, 1.0];
         let mut output = [0.0f64; 3];
-        TestConvolution::convolve_input(&input, &kernel, &mut output).unwrap();
+        TestConvolution::convolve_input(&input, &kernel, &mut output);
         let expected = [1.0, 2.0, 1.0];
         for (out_val, exp_val) in output.iter().zip(expected.iter()) {
             assert!((out_val - exp_val).abs() < TOLERANCE);
         }
     }
 
-    #[cfg_attr(test, test)]
-    fn test_dsp_convolve_dimension_mismatch() {
+    #[cfg(test)]
+    #[test]
+    #[should_panic(expected = "Convolution output buffer is too small")]
+    fn _test_convolve_buffer_panic() {
         let input = [1.0, 2.0];
         let kernel = [1.0, 1.0];
-        let mut output = [0.0; 1];
-        assert_eq!(
-            TestConvolution::convolve_input(&input, &kernel, &mut output),
-            Err(ConversionError::DimensionMismatch)
-        );
+        let mut output = [0.0; 1]; // Too small! Expected 2 + 2 - 1 = 3
+        TestConvolution::convolve_input(&input, &kernel, &mut output);
     }
 
     #[cfg_attr(test, test)]
@@ -111,13 +84,12 @@ pub mod dsp_test_suite {
         let input = [];
         let kernel = [1.0];
         let mut output = [];
-        TestConvolution::convolve_input(&input, &kernel, &mut output).unwrap();
+        TestConvolution::convolve_input(&input, &kernel, &mut output);
 
         let input2 = [1.0];
         let kernel2 = [];
         let mut output2 = [];
-        TestConvolution::convolve_input(&input2, &kernel2, &mut output2)
-            .unwrap();
+        TestConvolution::convolve_input(&input2, &kernel2, &mut output2);
     }
 
     // --- FFT / IFFT Tests ---
@@ -184,19 +156,5 @@ pub mod dsp_test_suite {
         let freq_signal = fft.evaluate(time_signal);
         let recovered: [f64; 4] = fft.evaluate_inverse(freq_signal);
         assert!((recovered[0] - 1.0_f64).abs() < 1e-6);
-    }
-
-    #[cfg_attr(test, test)]
-    /// Verifies Continuous/Discrete associated-type round-trip and Map wiring.
-    fn test_dsp_continuous_discrete_roundtrip() {
-        let plant = DummyContinuous;
-        let dt = 0.01_f64;
-        let sampled = plant.discretize(dt);
-        assert!((sampled.sampling_period() - dt).abs() < TOLERANCE);
-
-        let mapped: DummyDiscrete = plant.evaluate(dt);
-        assert!((mapped.sampling_period() - dt).abs() < TOLERANCE);
-
-        let _ = sampled.to_continuous();
     }
 }

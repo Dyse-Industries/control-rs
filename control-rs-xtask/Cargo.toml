@@ -13,7 +13,7 @@ serde = { version = "1.0", features = ["derive"] }
 postcard = { version = "1.0", features = ["alloc"] }
 ratatui = "0.30"
 crossterm = "0.29"
-control-rs-ets = { path = "../control-rs-ets" }
+control-rs-hil = { path = "../control-rs-hil" }
 serde_json = "1.0"
 serial2 = "0.2.37"
 crc = "3.4.0"

@@ -11,7 +11,7 @@ keywords = ["control", "robotics", "firmware", "autonomy"]
 [workspace]
 members = [
     ".",
-    "control-rs-ets",
+    "control-rs-hil",
     "control-rs-xtask",
     "control-rs-macros",
 ]
@@ -50,34 +50,14 @@ workspace = true
 [dependencies]
 libm = "0.2.16"
 control-rs-macros = { path = "control-rs-macros", optional = true }
-control-rs-ets = { path = "control-rs-ets", optional = true }
+control-rs-hil = { path = "control-rs-hil", optional = true }
 
 [features]
 std = []
-ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
+hil = ["dep:control-rs-macros", "dep:control-rs-hil"]
 
 [dev-dependencies]
 proptest = "1"
-
-[[example]]
-name = "matrix_example"
-path = "examples/numerical-models/matrix_example.rs"
-
-[[example]]
-name = "polynomial_example"
-path = "examples/numerical-models/polynomial_example.rs"
-
-[[example]]
-name = "state_space_example"
-path = "examples/numerical-models/state_space_example.rs"
-
-[[example]]
-name = "transfer_function_example"
-path = "examples/numerical-models/transfer_function_example.rs"
-
-[[example]]
-name = "tensor_example"
-path = "examples/numerical-models/tensor_example.rs"
 
 
 [profile.release]

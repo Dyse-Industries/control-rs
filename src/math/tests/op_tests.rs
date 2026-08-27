@@ -8,7 +8,7 @@
 //! `ConversionError`.
 #![allow(clippy::arbitrary_source_item_ordering)]
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
+#[cfg_attr(not(test), control_rs_macros::hil_suite)]
 pub mod op_test_suite {
     use crate::math::{
         ArithmeticError,

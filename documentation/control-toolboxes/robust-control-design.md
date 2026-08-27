@@ -28,10 +28,8 @@ that surveyed toolboxes leave dynamically sized (JuliaControl, 2026a), is in
 direct tension with control-rs's `no_std`, no-heap, const-generic-dimensioned
 `Matrix`/`StateSpace` model. This document scopes `robust_tools`'s initial
 architecture around that tension rather than around a full mu-synthesis
-feature list. It treats the `modern_tools`-vs-`robust_tools` packaging
-question already opened in
-`documentation/control-toolboxes/research/results/modern-control.json` as
-still unresolved (see §8) and out of scope for this pass, which addresses
+feature list. The `modern_tools`-vs-`robust_tools` packaging
+question remains unresolved (see §8). This document addresses
 uncertainty representation and robustness *analysis* only.
 
 ---
@@ -167,18 +165,14 @@ block" assumption and is exactly the structured-uncertainty case excluded by
 
 - **MOSEK**: Commercial solver used in dkpy's own DK-iteration example
   (Adams et al., 2025). Rejected on license and dependency-minimization
-  grounds (CLAUDE.md).
-- **Clarabel.rs**: The only Rust-native SDP/LMI-capable solver found in this
-  research — an Apache-2.0 interior-point solver for LP/QP/SOCP/SDP problems,
+  grounds ([`CLAUDE.md`](../../CLAUDE.md)).
+- **Clarabel.rs**: The only surveyed Rust-native SDP/LMI-capable solver —
+  an Apache-2.0 interior-point solver for LP/QP/SOCP/SDP problems,
   also available as a Julia package (Oxford Control, 2026; Goulart and Chen,
-  2024). No `no_std`/embedded support is documented for it anywhere in the
-  evidence collected. Adopting it would mean a host-only, feature-gated
-  dependency; that decision is deferred to a future design review rather than
-  made here.
-- **Broader Open-Source SDP Landscape (SCS, SDPT3, SeDuMi)**: The research
-  pass hit WebSearch rate-limiting before surveying these and recorded the
-  gap explicitly in its round-2 revision notes
-  (`documentation/control-toolboxes/research/queries/robust-control.json`).
+  2024). No `no_std`/embedded support is documented. Adopting it would mean
+  a host-only, feature-gated dependency; that decision is deferred rather
+  than made here.
+- **Broader Open-Source SDP Landscape (SCS, SDPT3, SeDuMi)**: Unsurveyed.
   No claim is made about their suitability here.
 
 #### 5.3. Packaging: `robust_tools` vs. `modern_tools`
@@ -189,11 +183,9 @@ MATLAB and Julia keep robust-control functionality in a separate
 product/package: MATLAB's Robust Control Toolbox is a distinct add-on
 product from the base Control System Toolbox (MathWorks, 2026d) and
 `RobustAndOptimalControl.jl` describes itself as "an extension to
-ControlSystems.jl" (JuliaControl, 2026b) rather than part of it. Since
-modern-control.json already opened this question without resolving it and
-`modern-control-design.md` (Draft) likewise carries it forward as an open
-risk rather than adjudicating it (its own §7), this document does not
-re-decide it either. `robust_tools` remains scoped to uncertainty representation
+ControlSystems.jl" (JuliaControl, 2026b) rather than part of it.
+`modern-control-design.md` §7 leaves the same question open. This document
+does not re-decide it. `robust_tools` remains scoped to uncertainty representation
 and robustness *analysis* only (FR4) — the narrower slice both packaging
 precedents agree belongs under a "robust" umbrella regardless of how the
 synthesis question is eventually resolved.
@@ -241,20 +233,12 @@ adopts a solver dependency.
 - **nu-Gap / Disk Margin as a Nearer-Term Target**: JuliaControl documents
   the nu-gap metric's stabilization guarantee and its `ncfmargin` relative
   (JuliaControl, 2026a), but no computational algorithm or closed form for
-  nu-gap was collected in the evidence base. Disk margin (`diskmargin`) was
-  named as a canonical survey target in the research query but no
-  algorithmic evidence for it was recorded in the results file. Both remain
-  open pending a follow-up research pass before either can be scoped into
-  `robust_tools`.
-- **`modern_tools` vs. `robust_tools` Packaging Boundary**: Carried forward,
-  unresolved, from `modern-control.json` (see §5.3). `modern-control-design.md`
-  (Draft) independently leaves this same boundary open in its own §7. Revisit
-  once either document is formally approved and adjudicates it.
-- **Unsurveyed SDP/Robotics Territory**: The research query's own round-2
-  revision notes record that WebSearch rate-limiting blocked further survey
-  of the broader open-source SDP solver landscape (SCS, SDPT3, SeDuMi) and
-  of robotics-specific structured-uncertainty applications
-  (`documentation/control-toolboxes/research/queries/robust-control.json`).
+  nu-gap is in evidence. Disk margin (`diskmargin`) likewise has no
+  algorithmic evidence. Both stay unscoped.
+- **`modern_tools` vs. `robust_tools` Packaging Boundary**: Unresolved
+  (see §5.3). `modern-control-design.md` §7 leaves the same boundary open.
+- **Unsurveyed SDP/Robotics Territory**: SCS, SDPT3, SeDuMi, and
+  robotics-specific structured-uncertainty applications are unsurveyed.
   No claims are made about either here.
 - **Skewed Parametric-Uncertainty Conditioning**: MathWorks documents that
   highly skewed `ureal` ranges cause poor numeric conditioning (MathWorks,

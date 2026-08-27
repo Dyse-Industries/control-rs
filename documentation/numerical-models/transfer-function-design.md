@@ -199,31 +199,6 @@ rather than a distinct error variant, matching how `python-control`'s
   There is no `from_slices(&[T], &[T])` constructor that pairs independent
   `N: Dim`/`D: Dim` with raw slices.
 
-##### 4.6.1 Data-Driven Transfer Function Factories [Proposal (not in evidence)]
-
-To enable dynamic plant identification from time-series and frequency-domain
-experimental datasets, dedicated data-driven **Object Factories** estimate
-rational transfer function representations without embedding matrix solvers
-into `TransferFunction` (Ljung & Chen, 2013; Steiglitz & McBride, 1965; Levy,
-1959; Sanathanan & Koerner, 1963; Drmač et al., 2015; Markovsky & Ossareh,
-2024; Eckhard, 2026):
-
-- **ARX Time-Domain Estimator (`ArxTransferFunctionEstimator`)**: Produces
-  discrete rational transfer function polynomials $G(z) = B(z)/A(z)$ from
-  sampled input-output sequences by minimizing equation error in closed form via
-  least-squares linear solving (Ljung & Chen, 2013).
-- **Levy Frequency Fitter (`LevyTransferFunctionFitter`)**: Fits continuous or
-  discrete rational transfer functions $H(j\omega) = B(j\omega)/A(j\omega)$ to
-  measured complex frequency response points $(\omega_k, H_k)$ by solving
-  linearized real/imaginary least-squares equations (Levy, 1959).
-- **Sanathanan–Koerner Iterative Fitter (`SanathananKoernerFitter`)**:
-  Iteratively re-weights frequency least-squares equations by
-  $|D^{(i-1)}(j\omega_k)|^{-1}$ to converge to optimal complex transfer function
-  approximations (Sanathanan & Koerner, 1963; Drmač et al., 2015).
-
-_Detailed standalone design and API signatures for these factories are
-specified in `documentation/control-toolboxes/sysid-design.md`._
-
 #### 4.7 Frequency Response Evaluation
 
 Evaluates frequency response $H(s)$ at $s = j\omega$ or $H(z)$
@@ -246,22 +221,8 @@ impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, R=N, C=Const<1>>, Sd: DenseStorage<T
 }
 ```
 
-**Near-Pole Conditioning**: Horner's method is backward-stable — the computed
-value is exact for a coefficient set perturbed by a relative error on the order
-of machine epsilon (Higham, 2002, Ch. 5). Backward stability does not imply
-uniform forward accuracy: the forward error at a given evaluation point $s$ is
-goverbed by that point's condition number, which grows as $s$ approaches a
-root of the polynomial being evaluated (Higham, 2002). Evaluating
-`evaluate_complex` at $s$ close to a pole (a root of the denominator) is
-therefore an inherently ill-conditioned operation — division by a
-near-zero, noise-dominated `den_val` amplifies the error further. This is
-expected behavior common to every reference implementation surveyed
-(`python-control`'s `warn_infinity` flag documents rather than suppresses the
-same issue at exact poles) and is not treated as a defect requiring
-compensation in the initial implementation. Compensated Horner algorithms
-(Graillat, Langlois, & Louvet, 2006) exist as a documented, roughly 2x-cost
-mitigation if measured near-pole Bode-sweep accuracy proves insufficient in a
-future revision.
+**Near-Pole Conditioning**: Horner's method is backward-stable. Evaluation
+near a pole is ill-conditioned (Higham, 2002, Ch. 5) and is not compensated.
 
 #### 4.8 System Interconnections
 
@@ -407,24 +368,27 @@ coefficients, since `num-traits-design.md` FR-5 restricts `Float` to
 ZOH admits two distinct computational paths with materially different
 numerical profiles:
 
-- **Transfer-function-direct (chosen)**: $G(z) = (1 - z^{-1})\,
+- **State-space-mediated**: convert to
+  controllable canonical form (§4.10), discretize via
+  `StateSpace::to_discrete_zoh` (Van Loan augmented matrix exponential),
+  convert back with the SISO formula $H(z) = C(zI-A)^{-1}B+D$. This path
+  inherits the companion-form conditioning caveat of §4.10 and is the public
+  `to_discrete_zoh` implementation because the crate has no general
+  eigensolver for transfer-function-direct partial fractions.
+
+```rust
+impl<T: Float + Copy, const N: usize, const D: usize> ArrayTransferFunction<T, N, D> {
+    pub fn to_discrete_zoh(&self, sample_time: T) -> LinAlgResult<Self> { /* ... */ }
+}
+```
+
+- **Transfer-function-direct (deferred)**: $G(z) = (1 - z^{-1})\,
   \mathcal{Z}\left[\mathcal{L}^{-1}\left\{\frac{G(s)}{s}\right\}\right]$,
   via partial-fraction expansion of $G(s)/s$ followed by table-based
-  $z$-transform of each term (Franklin et al., 1998). This path never forms a
-  state-space realization or a matrix exponential, so it does not inherit the
-  companion-form conditioning risk described in §4.10; its own numerical risk is
-  partial-fraction decomposition, which is itself ill-conditioned for
-  closely-spaced or repeated poles and must be bounded/documented at
-  implementation time.
-- **State-space-mediated (rejected for this path)**: convert to a canonical
-  realization, discretize $A$ via matrix exponential (Moler & Van Loan, 2003),
-  convert back. Rejected as the *default* ZOH path specifically because it
-  would silently inherit whatever conditioning risk the chosen state-space
-  realization carries — material for controllable/observable canonical form
-  per §4.10's finding. The state-space-mediated path remains available
-  independently through explicit use of §4.10's conversion plus a `StateSpace`
-  discretization method, for callers who already need a state-space
-  realization for other reasons.
+  $z$-transform of each term (Franklin et al., 1998). Deferred to §6.7 / §8
+  until a pole solver exists. The state-space-mediated path remains available
+  independently through explicit use of §4.10 plus a `StateSpace`
+  discretization method.
 
 #### 4.10 State-Space Canonical Conversions
 
@@ -443,24 +407,11 @@ In **Observable Canonical Form** (dual realization):
 $$\mathbf{A}_o = \mathbf{A}^T = \begin{bmatrix} 0 & 0 & \dots & -a_0 \\ 1 & 0 & \dots & -a_1 \\ 0 & 1 & \dots & -a_2 \\ \vdots & \vdots & \ddots & \vdots \\ 0 & 0 & \dots & -a_{n-1} \end{bmatrix}, \quad \mathbf{B}_o = \mathbf{C}^T = \begin{bmatrix} b_0 - b_n a_0 \\ b_1 - b_n a_1 \\ \vdots \\ b_{n-1} - b_n a_{n-1} \end{bmatrix}$$
 $$\mathbf{C}_o = \mathbf{B}^T = \begin{bmatrix} 0 & 0 & \dots & 1 \end{bmatrix}, \quad \mathbf{D}_o = \begin{bmatrix} b_n \end{bmatrix}$$
 
-**Conditioning Caveat**: Controllable/observable canonical (companion) form is
-structurally correct but numerically fragile above low system order. MathWorks
-documents that "the transformation to companion form is based on the
-controllability matrix, which is almost always numerically singular for
-mid-range orders" and marks its own direct companion-form realization command
-"Not recommended" in current product documentation (MathWorks, *Canonical
-State-Space Realizations*; MathWorks, `canon`). Formal analysis of
-companion-form controllability radii confirms this is a structural property of
-the form itself, not an implementation artifact (companion-form controllability
-radii literature) and recent work characterizes the condition number of the
-standard companion-form transformation as growing exponentially with system
-dimension, treating numerically reliable computation of it as an open problem
-(Yang & Jones, 2026). This design scopes §4.10 to controllable/observable
-canonical form for its structural value (explicit characteristic-polynomial
-coefficients in $\mathbf{A}$) and low-to-moderate system order; balanced or
-modal realization — MathWorks' own recommended numerically-preferred
-alternative — is left as future work (see §8 Risks & Open Questions) rather
-than implemented in the initial revision.
+**Conditioning Caveat**: Controllable/observable canonical form is
+numerically fragile above low system order (MathWorks, `canon`; Yang &
+Jones, 2026). This revision uses it for its structural value (characteristic
+polynomial coefficients explicit in $\mathbf{A}$); balanced or modal
+realization is future work (§8).
 
 ---
 
@@ -498,11 +449,11 @@ than implemented in the initial revision.
 | Compile-time shape check  | Type-level `Dim` sizing and `compile_fail` doctests                                           | FR-1, C-1, C-3, C-4      |
 | Requirements-based test   | `#[test]` unit tests over physical filter benchmarks and singular cases                       | FR-2, FR-3, FR-4, FR-5   |
 | Property-based test       | `proptest` suites verifying transfer function commutativity and feedback identities           | FR-3, FR-4               |
-| Doctest                   | Runnable rustdoc examples                                                                     | FR-2, FR-6               |
-| Back-to-back comparison   | `/cr-prototype numerical-models/transfer-function` and MATLAB `tf` / `python-control` oracles | FR-2, FR-4, FR-5         |
+| Doctest                   | Runnable rustdoc examples                                                                     | FR-2                     |
+| Back-to-back comparison   | `examples/prototypes/numerical-models/transfer-function/` and MATLAB `tf` / `python-control` oracles | FR-2, FR-4, FR-5         |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                        | NFR-1, NFR-2, C-2, C-4   |
-| On-target execution       | ETS suites under QEMU and Teensy hardware                                                     | NFR-3                    |
-| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                       | FR-1..FR-6, NFR-1..NFR-3 |
+| On-target execution       | ETS suites under QEMU and Teensy hardware                                                     | NFR-1                    |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                       | FR-1..FR-5, NFR-1..NFR-2 |
 
 #### 6.3. Acceptance Criteria
 
@@ -520,11 +471,11 @@ than implemented in the initial revision.
 
 | Requirement                                    | Method                                           | Artifact                                               |
 |:-----------------------------------------------|:-------------------------------------------------|:-------------------------------------------------------|
-| FR-1 — Rational SISO Transfer Function         | Compile-time shape check                         | `tests/tf_shape_fail.rs` (`compile_fail` doctests)     |
-| FR-2 — Frequency Response Evaluation           | Requirements-based test, Back-to-back comparison | `tests/tf_frequency.rs::test_bode_evaluation`          |
-| FR-3 — Rational System Algebra                 | Property-based test, Back-to-back comparison     | `tests/tf_algebra.rs::prop_tf_series_parallel`         |
-| FR-4 — System Discretization                   | Requirements-based test, Back-to-back comparison | `tests/tf_discretize.rs::test_tustin_prewarped`        |
-| FR-5 — State-Space Canonical Realization       | Requirements-based test                          | `tests/tf_state_space.rs::test_canonical_forms`        |
+| FR-1 — Rational SISO Transfer Function Representation | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/transfer_function/mod.rs` |
+| FR-2 — Frequency Response Evaluation           | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_frequency_response_continuous` |
+| FR-3 — Rational System Algebra                 | Property-based test, Back-to-back comparison     | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_series` |
+| FR-4 — System Discretization                   | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_tustin_prewarped` |
+| FR-5 — State-Space Canonical Realization       | Requirements-based test                          | `src/transfer_function/tests/transfer_function_tests.rs::test_controllable_canonical_form` |
 | NFR-1 — Deterministic Fixed-Memory Execution   | Resource usage evaluation                        | `#![no_std]` host allocator audit                      |
 | NFR-2 — Real-Time Frequency Sweep Throughput   | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                  |
 | C-1 — Properness Precondition                  | Compile-time shape check                         | Static properness shape assertions                     |
@@ -541,11 +492,11 @@ than implemented in the initial revision.
 
 #### 6.6. Validation
 
-- **Second-Order Low-Pass Filter**: Frequency sweep and Bode plot verification
-  for an analog Butterworth low-pass filter in `examples/butterworth_filter.rs`.
-- **Digital Notch Filter Execution**: Discretization and step-response
-  simulation of a 60 Hz notch filter for biomedical sensor filtering in
-  `examples/notch_filter.rs`.
+- **Frequency Response, Bode Analysis, & Realization**: Verification of given
+  2nd-order transfer function rational frequency evaluation $H(j\omega)$, Bode
+  magnitude/phase point generation, series cascade interconnection ($H_1 \cdot H_2$),
+  and controllable canonical state-space realization in
+  `examples/numerical-models/transfer_function_example.rs`.
 
 #### 6.7. Not Verified
 
@@ -553,6 +504,8 @@ than implemented in the initial revision.
   cancellation is deferred to future work.
 - Frequency evaluation at exact poles where $D(j\omega) = 0$ is mathematically
   undefined and not verified for numerical convergence.
+- Transfer-function-direct partial-fraction ZOH is not implemented; public
+  `to_discrete_zoh` uses controllable canonical form plus Van Loan ZOH (§4.9).
 
 ---
 
@@ -571,16 +524,16 @@ than implemented in the initial revision.
 
 - **Non-Minimal Realization Handling**: Series/parallel/feedback never cancel
   poles/zeros (§4.8). A `minreal`-equivalent capacity-reducing operation is not
-  yet scoped; whether and how to offer one is deferred to a future revision.
-- **Partial-Fraction Conditioning for ZOH**: The chosen transfer-function-direct
-  ZOH path (§4.9) requires partial-fraction decomposition, which is itself
-  ill-conditioned for closely-spaced or repeated poles. The implementation phase
-  must bound or document this explicitly rather than assume it away.
+  yet scoped; whether and how to offer one is deferred.
+- **Partial-Fraction Conditioning for ZOH**: Transfer-function-direct ZOH via
+  partial fractions is deferred until a pole solver exists (§4.9, §6.7). Public
+  `to_discrete_zoh` uses the state-space-mediated path and inherits §4.10
+  companion-form conditioning.
 - **Canonical Form Scope**: Controllable/observable canonical form (§4.10) is
   numerically fragile above low system order (Kenney & Laub, 1988; Yang & Jones,
   2026). Balanced or modal realization is identified as the
   numerically-preferred alternative used by reference implementations but is not
-  implemented in this revision.
+  implemented.
 - **Compensated Horner Evaluation**: Near-pole frequency-response evaluation (
   §4.7) is documented as inherently ill-conditioned rather than compensated. If
   measured Bode-sweep accuracy proves insufficient once implemented, compensated
@@ -603,7 +556,7 @@ than implemented in the initial revision.
 | **Phase 3: Algebra & DSP Convolution**      | Implement series, parallel and feedback connections using direct DSP convolution.                                                                                                                                 | 1.5 Days         |
 | **Phase 4: Discretization**                 | Bilinear (Tustin, with pre-warping) transform and transfer-function-direct ZOH, including partial-fraction decomposition (§8's closely-spaced/repeated-pole conditioning risk must be bounded, not assumed away). | 2.5 Days         |
 | **Phase 5: State-Space Conversion**         | Controllable and Observable Canonical Form conversions.                                                                                                                                                           | 1.5 Days         |
-| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites and cross-validation against two external reference implementations (MATLAB, `python-control`) per `vv-standards.md`.                                                               | 2.0 Days         |
+| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites and cross-validation against two external reference implementations (MATLAB, `python-control`) per [`vv-standards.md`](../vv-standards.md).                                                               | 2.0 Days         |
 
 ---
 
@@ -652,45 +605,6 @@ than implemented in the initial revision.
 13. **Yang, S., & Jones, C. N. (2026).** Numerically Reliable Brunovsky
     Transformations. — Exponential condition-number growth of the standard
     companion-form transformation with system dimension (§4.10).
-14. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool for
-    Random Testing of Haskell Programs. *ACM SIGPLAN Notices*, 35(9), 268–279. —
-    Property-based testing principles for algebraic invariants.
-15. **Rust Project Developers. (2024).** *The Rustonomicon: The Dark Arts of
-    Advanced and Unsafe Rust Programming*. — Memory-aliasing rules for
-    pointer-backed views.
-16. **ISO. (2018).** *ISO 26262-6:2018 Road vehicles — Functional safety — Part
-    6: Product development at the software level*.
-17. **RTCA / EUROCAE. (2011).** *DO-178C: Software Considerations in Airborne
-    Systems and Equipment Certification*.
-18. **Ljung, L., & Chen, T. (2013).** System identification - a frequency domain
-    approach, or is it a time domain approach? In *2013 9th Asian Control
-    Conference (ASCC)*, Istanbul, Turkey. — Time-domain ARX, OE, and PEM
-    rational
-    transfer function parameterizations.
-19. **Steiglitz, K., & McBride, L. E. (1965).** A technique for the
-    identification of linear systems. *IEEE Transactions on Automatic Control*,
-    10(4), 461–464, doi: 10.1109/TAC.1965.1106097. — Output-error polynomial
-    ratio iterative minimization.
-20. **Levy, E. C. (1959).** Complex-curve fitting. *IRE Transactions on
-    Automatic
-    Control*, AC-4(1), 37–43, doi: 10.1109/TAC.1959.1104841. — Linear
-    least-squares frequency-domain fitting of rational transfer functions.
-21. **Sanathanan, C. K., & Koerner, J. (1963).** Transfer function synthesis as
-    a ratio of two complex polynomials. *IEEE Transactions on Automatic
-    Control*, 8(1), 56–58, doi: 10.1109/TAC.1963.1105517. — Iterative weighted
-    least-squares frequency response fitting.
-22. **Drmač, Z., Gugercin, S., & Beattie, C. (2015).** Quadrature-Based Vector
-    Fitting for Discretized $\mathcal{H}_2$ Approximation. *SIAM Journal on
-    Scientific Computing*, 37(2), A625–A652, doi: 10.1137/140961511. — Vector
-    Fitting rational frequency-domain approximation.
-23. **Markovsky, I., & Ossareh, H. R. (2024).** Direct data-driven frequency
-    response estimation and its application to transfer function fitting.
-    *Automatica*, 159, 111351. — Nonparametric ETFE and direct data-driven
-    transfer function fitting.
-24. **Eckhard, D. (2026).** System identification in Python: The `pysib`
-    package.
-    *arXiv:2606.26376*. — Polynomial time-domain I/O model structures (ARX,
-    ARMAX, OE, Box-Jenkins).
 
 ---
 
@@ -703,3 +617,4 @@ than implemented in the initial revision.
 | 1.2      | August 25, 2026 | @MitchellDScott | System operations & algebra: added frequency response evaluation, series/parallel/feedback algebra, and bilinear/Tustin discretization. |
 | 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with frequency sweep tolerances and algebraic invariants.                                  |
 | 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<1>` dimensions.                                |
+| 1.5      | August 26, 2026 | @MitchellDScott | Trimmed near-pole and companion-form caveats; crate-wide standards cite `vv-standards.md`.                                            |

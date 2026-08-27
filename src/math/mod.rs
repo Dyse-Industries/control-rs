@@ -5,9 +5,7 @@
 //! ## Usage
 //!
 //! ```rust
-//! use control_rs::math::num_types::{Const, Dim};
-//! use control_rs::math::storage::{ArrayStorage, DenseStorage, DenseStorageMut};
-//! use control_rs::math::subprograms::level1::Axpy;
+//! use control_rs::math::subprograms::level1::AXPY;
 //! use control_rs::math::ArithmeticResult;
 //! use core::marker::PhantomData;
 //!
@@ -15,16 +13,15 @@
 //!     _marker: PhantomData<B>,
 //! }
 //!
-//! impl<B> Controller<B> {
+//! impl<B: AXPY<f32>> Controller<B> {
+//!     // the Generic argument N provides a zero-cost safety guarantee.
+//!     // (state.size() == input.size())
 //!     pub fn update<const N: usize>(
 //!         &self,
-//!         state: &mut ArrayStorage<f32, N, 1>,
-//!         input: &ArrayStorage<f32, N, 1>,
-//!         gain: f32,
+//!         state: &mut [f32; N],
+//!         input: &[f32; N],
+//!         gain: f32
 //!     ) -> ArithmeticResult<()>
-//!     where
-//!         Const<N>: Dim,
-//!         B: Axpy<f32, ArrayStorage<f32, N, 1>, ArrayStorage<f32, N, 1>>,
 //!     {
 //!         B::axpy(gain, input, state);
 //!         Ok(())
@@ -85,14 +82,13 @@
 pub mod assert;
 pub mod complex_num;
 pub mod dsp;
-pub mod fixed_num;
 pub mod num_traits;
 pub mod num_types;
 pub mod ops;
 pub mod storage;
 pub mod subprograms;
 
-#[cfg(any(test, feature = "ets"))]
+#[cfg(any(test, feature = "hil"))]
 /// Core mathematical unit tests.
 pub mod tests;
 
@@ -100,6 +96,17 @@ pub mod tests;
 ///
 /// This structure balances high-level control flow (overflow/underflow) with
 /// fixed-point specific signals (saturation/precision).
+///
+/// # Safety
+/// This enum does not use `unsafe` code.
+///
+/// # Example
+/// ```
+/// use control_rs::math::ArithmeticError;
+///
+/// let err = ArithmeticError::DivisionByZero;
+/// assert_eq!(format!("{}", err), "Division by zero");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArithmeticError {
     /// Attempted to divide by zero.
@@ -128,10 +135,24 @@ pub enum ArithmeticError {
 
 /// Representation and layout conversion errors, shared across `Matrix`,
 /// `Polynomial` and `Tensor` conversions.
+///
+/// # Safety
+/// This enum does not use `unsafe` code.
+///
+/// # Example
+/// ```
+/// use control_rs::math::ConversionError;
+///
+/// let err = ConversionError::NonMonicPolynomial;
+/// assert_eq!(format!("{}", err), "Polynomial is not monic");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConversionError {
     /// Dimension or capacity overflow/underflow during calculations.
     DimensionMismatch,
+
+    /// Rank or coordinate dimensions do not align between Matrix/Tensor.
+    LayoutMismatch,
 
     /// The polynomial is not monic (leading coefficient is not ONE),
     /// preventing companion matrix construction.
@@ -140,49 +161,6 @@ pub enum ConversionError {
 
 /// A specialized `Result` type for fallible representation/layout conversions.
 pub type ConversionResult<T> = Result<T, ConversionError>;
-
-/// Indexing, capacity, and structural-invariant failures on storage backends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StorageError {
-    /// `nnz` would exceed the compile-time `MAX_NNZ` of a stack sparse leaf.
-    CapacityExceeded,
-
-    /// Write to a unit-diagonal slot of `TriangularPackedStorage`.
-    ImmutableUnitDiagonal,
-
-    /// Write of a non-real value to a Hermitian diagonal slot.
-    InvalidHermitianDiagonal,
-
-    /// Write to an unallocated sparse coordinate, or a compressed buffer
-    /// that violates its offset/index contract.
-    InvalidStructuralInvariant,
-
-    /// Logical `(r, c)` (or packed `(i, j)`) exceeds the backend's dimensions.
-    OutOfBounds,
-}
-
-/// A specialized `Result` type for fallible storage backend operations.
-pub type StorageResult<T> = Result<T, StorageError>;
-
-/// Unified linear algebra errors, supplementing [`ArithmeticError`] for
-/// `Matrix` factorization, inversion and system-solving failures.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinAlgError {
-    /// Jacobi eigensolver (`Syev` / `Heev`) exhausted its iteration bound.
-    MaxIterationsReached,
-
-    /// Cholesky (`Potrf` / `Pptrf`) encountered a non-positive pivot.
-    NotPositiveDefinite,
-
-    /// LU (`Getrf`) or a triangular solve encountered an exact-zero pivot.
-    SingularMatrix,
-
-    /// Caller-provided `tau` / `work` / `ipiv` slice is shorter than required.
-    WorkspaceTooSmall,
-}
-
-/// A specialized `Result` type for fallible linear algebra operations.
-pub type LinAlgResult<T> = Result<T, LinAlgError>;
 
 /// Convenience enum representing the 2D Cartesian Plane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,6 +221,12 @@ pub enum CartesianQuadrant2D {
 /// ```
 pub trait Map<Domain, Codomain> {
     /// Evaluates the mapping $y = f(x)$ for a given input.
+    ///
+    /// # Arguments
+    /// * `x` - An element $x \in X$ from the function's domain.
+    ///
+    /// # Returns
+    /// * The evaluated element $y \in Y$ in the codomain.
     fn evaluate(&self, x: Domain) -> Codomain;
 }
 
@@ -252,6 +236,12 @@ pub trait Map<Domain, Codomain> {
 /// one element in the Codomain and vice versa.
 pub trait Bijection<Domain, Codomain>: Map<Domain, Codomain> {
     /// Evaluates the inverse mapping $x = f^{-1}(y)$.
+    ///
+    /// # Arguments
+    /// * `y` - An element $y \in Y$ from the function's codomain.
+    ///
+    /// # Returns
+    /// * The recovered element $x \in X$ in the domain.
     fn evaluate_inverse(&self, y: Codomain) -> Domain;
 }
 
@@ -266,6 +256,13 @@ pub trait Bijection<Domain, Codomain>: Map<Domain, Codomain> {
 /// * `Output` - The resulting state derivative or next state.
 pub trait StateEquation<State, Input, Output> {
     /// Evaluates the system dynamics for a given state and input.
+    ///
+    /// # Arguments
+    /// * `x` - The current state of the system $x$.
+    /// * `u` - The current control input $u$.
+    ///
+    /// # Returns
+    /// * The resulting state vector or state derivative.
     fn dynamics(&self, x: &State, u: &Input) -> Output;
 }
 
@@ -319,6 +316,9 @@ impl core::error::Error for ConversionError {}
 impl core::fmt::Display for ConversionError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::LayoutMismatch => {
+                write!(f, "Rank or coordinate dimensions do not align")
+            }
             Self::NonMonicPolynomial => {
                 write!(f, "Polynomial is not monic")
             }
@@ -331,63 +331,9 @@ impl core::fmt::Display for ConversionError {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl core::error::Error for StorageError {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl core::fmt::Display for StorageError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::OutOfBounds => write!(f, "Index out of bounds"),
-            Self::CapacityExceeded => {
-                write!(f, "Maximum sparse capacity exceeded")
-            }
-            Self::ImmutableUnitDiagonal => {
-                write!(f, "Unit diagonal entries cannot be modified")
-            }
-            Self::InvalidHermitianDiagonal => {
-                write!(
-                    f,
-                    "Hermitian diagonal entries must have zero imaginary part"
-                )
-            }
-            Self::InvalidStructuralInvariant => {
-                write!(f, "Storage structural invariant violated")
-            }
-        }
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl core::error::Error for LinAlgError {}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl core::fmt::Display for LinAlgError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::NotPositiveDefinite => {
-                write!(f, "Matrix is not positive definite")
-            }
-            Self::SingularMatrix => write!(f, "Matrix is singular"),
-            Self::WorkspaceTooSmall => {
-                write!(f, "Caller-provided workspace slice is too small")
-            }
-            Self::MaxIterationsReached => {
-                write!(f, "Maximum iterative solver iterations reached")
-            }
-        }
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
 #[cfg(test)]
 mod test {
-    use crate::math::{
-        ArithmeticError, ConversionError, LinAlgError, StorageError,
-    };
+    use crate::math::{ArithmeticError, ConversionError};
     use core::fmt::{self, Write};
 
     /// A simple helper to capture format output into a stack buffer
@@ -453,28 +399,6 @@ mod test {
         assert_eq!(writer.as_str(), expected_msg);
     }
 
-    /// A helper function to assert the `Display` output of a `StorageError`.
-    fn assert_storage_error_display(err: StorageError, expected_msg: &str) {
-        let mut buffer = [0u8; 128]; // Stack-allocated buffer
-        let mut writer = TestWriter::new(&mut buffer);
-
-        write!(writer, "{err}")
-            .expect("Buffer was too small for the error message");
-
-        assert_eq!(writer.as_str(), expected_msg);
-    }
-
-    /// A helper function to assert the `Display` output of a `LinAlgError`.
-    fn assert_lin_alg_error_display(err: LinAlgError, expected_msg: &str) {
-        let mut buffer = [0u8; 128]; // Stack-allocated buffer
-        let mut writer = TestWriter::new(&mut buffer);
-
-        write!(writer, "{err}")
-            .expect("Buffer was too small for the error message");
-
-        assert_eq!(writer.as_str(), expected_msg);
-    }
-
     #[test]
     fn test_display_division_by_zero() {
         assert_error_display(
@@ -524,6 +448,14 @@ mod test {
     }
 
     #[test]
+    fn test_display_layout_mismatch() {
+        assert_conversion_error_display(
+            ConversionError::LayoutMismatch,
+            "Rank or coordinate dimensions do not align",
+        );
+    }
+
+    #[test]
     fn test_display_non_monic_polynomial() {
         assert_conversion_error_display(
             ConversionError::NonMonicPolynomial,
@@ -536,50 +468,6 @@ mod test {
         assert_conversion_error_display(
             ConversionError::DimensionMismatch,
             "Dimension or capacity overflow/underflow",
-        );
-    }
-
-    #[test]
-    fn test_display_storage_errors() {
-        assert_storage_error_display(
-            StorageError::OutOfBounds,
-            "Index out of bounds",
-        );
-        assert_storage_error_display(
-            StorageError::CapacityExceeded,
-            "Maximum sparse capacity exceeded",
-        );
-        assert_storage_error_display(
-            StorageError::ImmutableUnitDiagonal,
-            "Unit diagonal entries cannot be modified",
-        );
-        assert_storage_error_display(
-            StorageError::InvalidHermitianDiagonal,
-            "Hermitian diagonal entries must have zero imaginary part",
-        );
-        assert_storage_error_display(
-            StorageError::InvalidStructuralInvariant,
-            "Storage structural invariant violated",
-        );
-    }
-
-    #[test]
-    fn test_display_lin_alg_errors() {
-        assert_lin_alg_error_display(
-            LinAlgError::NotPositiveDefinite,
-            "Matrix is not positive definite",
-        );
-        assert_lin_alg_error_display(
-            LinAlgError::SingularMatrix,
-            "Matrix is singular",
-        );
-        assert_lin_alg_error_display(
-            LinAlgError::WorkspaceTooSmall,
-            "Caller-provided workspace slice is too small",
-        );
-        assert_lin_alg_error_display(
-            LinAlgError::MaxIterationsReached,
-            "Maximum iterative solver iterations reached",
         );
     }
 

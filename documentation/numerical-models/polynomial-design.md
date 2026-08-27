@@ -202,9 +202,9 @@ Level 1 kernels take the typed storage operand directly
 (`subprograms-design.md` FR-9): shape comes from `S::R::USIZE` and
 addressing from `as_ptr()` plus the leaf's strides, both monomorphization
 constants on an owning array leaf, so LLVM folds the loop bounds
-(`storage-design.md` NFR-3). This removes the former
-`as_array::<N>() -> &[T; N]` accessor and its `DimMul` bound. `as_slice()`
-remains the inspection and FFI hand-off path, which is what lets
+(`storage-design.md` NFR-3), with no `as_array::<N>() -> &[T; N]` accessor
+or `DimMul` bound required at the call site. `as_slice()` is the inspection
+and FFI hand-off path, which is what lets
 `mul_with_conv` (§4.5) and `evaluate` (§4.6) pass into hardware DSP kernels
 without copying (NFR-1).
 
@@ -224,49 +224,18 @@ erased-length slice, and it is fallible with
 - `pub const fn constant(val: T) -> ArrayPolynomial<T, 1> where T: Copy`:
   Constructs a degree-0 polynomial containing a single coefficient.
 - `pub const fn line(c0: T, c1: T) -> ArrayPolynomial<T, 2> where T: Copy`:
-  Constructs a degree-1 linear polynomial $c_0 + c_1 x`.
--
-
-`pub const fn from_coefficients<const N: usize>(data: [T; N]) -> ArrayPolynomial<T, N>`:
-Constructs an owning stack polynomial from an array of coefficients.
-
+  Constructs a degree-1 linear polynomial $c_0 + c_1 x$.
+- `pub const fn from_coefficients<const N: usize>(data: [T; N]) -> ArrayPolynomial<T, N>`:
+  Constructs an owning stack polynomial from an array of coefficients.
 - `pub const fn from_storage(storage: S) -> Self`: Constructs a polynomial
   wrapping a custom storage backend `S`.
--
-
-`pub fn from_fn<const N: usize, F>(f: F) -> ArrayPolynomial<T, N> where F: FnMut(usize) -> T`:
-Generates coefficients via a mapping closure, mirroring `Matrix::from_fn`
-(`matrix-design.md` §4.4).
+- `pub fn from_fn<const N: usize, F>(f: F) -> ArrayPolynomial<T, N> where F: FnMut(usize) -> T`:
+  Generates coefficients via a mapping closure, mirroring `Matrix::from_fn`
+  (`matrix-design.md` §4.4).
 
 _Implementation Note_: All `const fn` constructors allow placing static
 polynomials directly in read-only Flash memory, matching `Matrix`'s
 constructor rationale (`matrix-design.md` §4.4).
-
-##### 4.4.1. Data-Driven Polynomial Factories [Proposal (not in evidence)]
-
-To support black-box dynamic modeling, ARX regressor fitting, and modal
-decomposition, dedicated data-driven **Object Factories** produce polynomial
-models directly from sampled data without embedding matrix factorization
-algorithms in the core `Polynomial` struct (Ljung, 2003; Almunif et al., 2020;
-Higham, 2021):
-
-- **Vandermonde Interpolation Factory (`VandermondePolynomialFactory`)**:
-  Produces an interpolating polynomial of degree $N-1$ from $N$ coordinate pairs
-  $(x_i, y_i)$ by solving the square Vandermonde linear system $V c = y$ via
-  $LU$ decomposition (Higham, 2021). Callers should note exponential
-  ill-conditioning for high degrees ($N \ge 8$) on the real line (Higham,
-  2021).
-- **Least-Squares Polynomial Fitter (`PolynomialLeastSquaresFitter`)**: Fits
-  polynomial coefficients of degree $N-1$ from $M$ coordinate pairs ($M \ge N$)
-  by setting up and solving the rectangular Vandermonde system via Householder
-  $QR$ decomposition (Higham, 2021; JuliaMath, 2026).
-- **Prony Characteristic Polynomial Factory (`PronyPolynomialFactory`)**:
-  Estimates the monic characteristic polynomial $A(z) = z^n - \sum_{i=1}^n a_i
-  z^{n-i}$ from free decay or impulse response sequences by least-squares
-  solution of a Hankel prediction system $H a \approx Y$ (Almunif et al., 2020).
-
-_Detailed standalone design and API signatures for system identification
-factories are specified in `documentation/control-toolboxes/sysid-design.md`._
 
 #### 4.5. Operator Overloading & Multiplication
 
@@ -327,6 +296,23 @@ provides two interfaces:
   $p$'s true coefficients, where $u$ is unit roundoff (Higham, 2002, Ch.
     5) — a small, degree-linear backward-error bound quantifying the
        "minimizes rounding error" claim above.
+- **Trajectory Splines & Bilinear Substitution (FR-6)**:
+  ```rust
+  impl<T: Copy + Zero + One> ArrayPolynomial<T, 4> {
+      /// Cubic Hermite segment on $t \in [0, 1]$ from endpoints
+      /// $(p_0, v_0)$ and $(p_1, v_1)$.
+      pub fn cubic(p0: T, p1: T, v0: T, v1: T) -> Self { /* ... */ }
+  }
+  impl<T: Copy + Zero + One> ArrayPolynomial<T, 6> {
+      /// Quintic Hermite segment on $t \in [0, 1]$ from endpoints
+      /// $(p_0, v_0, a_0)$ and $(p_1, v_1, a_1)$.
+      pub fn quintic(p0: T, p1: T, v0: T, v1: T, a0: T, a1: T) -> Self { /* ... */ }
+  }
+  impl<T: Float + Copy, const N: usize> ArrayPolynomial<T, N> {
+      /// Substitute $s = \frac{2}{T_s}\frac{z-1}{z+1}$ and clear $(z+1)^{N-1}$.
+      pub fn compose_bilinear(&self, sample_time: T) -> Self { /* ... */ }
+  }
+  ```
 - **Polynomial Division (`div_rem`)**: Computes quotient and remainder with
   statically checked degree bounds (`Q = N - M + 1`, `R = M - 1`):
   ```rust
@@ -367,11 +353,9 @@ $O(N)$-space companion-matrix QR rootfinding.
       // ...
   }
   ```
-  Unlike the inverse `Matrix` → `Polynomial` conversion
-  (`matrix-design.md` §4.8.1), which requires `T: Scalar + Div` for its
-  division-based Faddeev–LeVerrier recursion, this conversion only places
-  and negates coefficients into matrix cells — no division — so the
-  narrower `Signed` bound suffices.
+  This conversion only places and negates coefficients, so `T: Signed`
+  suffices; the inverse Faddeev–LeVerrier conversion is specified in
+  `matrix-design.md` §4.8.1.
 - **Behavior**: Coefficients are placed directly into the companion form
   (Bini et al., 2010 established the $O(N^2)$-time algorithm; Aurentz et
   al., 2015 reduced its storage from $O(N^2)$ to $O(N)$ while preserving
@@ -387,17 +371,6 @@ $O(N)$-space companion-matrix QR rootfinding.
   with that distinction in mind.
 - **Failure Condition**: Returns `ConversionError::NonMonicPolynomial` if
   the leading coefficient is not `T::ONE`.
-
-This conversion builds the companion matrix directly from coefficients — a
-different, better-conditioned operation than transforming a *general*
-state-space system into Controllable Canonical Form via its (often
-near-singular) controllability matrix (`state-space-design.md` §5.5's
-canonical-transformation realization path).
-
-The inverse conversion (`Matrix` → characteristic `Polynomial` via the
-Faddeev–LeVerrier algorithm) is specified in `matrix-design.md` §4.8.1,
-which shares this document's Faddeev & Faddeeva (1963) citation for that
-reason.
 
 ##### 4.7.2. Conversion to Tensor
 
@@ -421,7 +394,8 @@ Converts flat coefficient data into a 1D `Tensor<T, Layout, B>`, mirroring
   (`tensor-design.md` §4.1, `FlatBuffer<T>`).
 - **Infallible Compile-Time Bound**: Dimensions and rank are verified statically
   at compile time via `Layout: TensorLayout<Size = N>`.
-  `ConversionError::LayoutMismatch` no longer exists (`error-design.md` §3).
+  This conversion cannot produce `ConversionError::LayoutMismatch`
+  (`error-design.md` §3).
 
 #### 4.8. Error Handling & State Management
 
@@ -468,9 +442,9 @@ pub enum DivisionError {
   for floating-point, design-time use (e.g. offline controller synthesis,
   coefficient generation), not on-target fixed-point runtime paths.
 - **Panic Path in `mul_with_conv`'s Dependency**: shipped
-  `Convolution::convolve_input` (`src/math/dsp.rs:196-210`) panics via
+  `Convolution::convolve_input` ([`src/math/dsp.rs`](../../src/math/dsp.rs)) panics via
   `assert!` on an undersized caller-provided output buffer, violating the
-  crate's no-panic-outside-tests-and-examples rule (`CLAUDE.md`) and
+  crate's no-panic-outside-tests-and-examples rule ([`CLAUDE.md`](../../CLAUDE.md)) and
   `subprograms-design.md` NFR-3. `mul_with_conv` (§4.5) delegates to it
   directly. The correction (`assert!` → `debug_assert!`, matching the
   `debug_assert_eq!` precondition convention `Gemv`/`Gemm` already use in
@@ -494,9 +468,7 @@ the crate's fixed-operation-count posture — the same determinism-over-
 convergence-speed tradeoff `matrix-design.md` §5.5 applies when preferring
 $LDL^T$ over pivoted alternatives for embedded targets.
 
-#### 5.2. FFT-Based Polynomial Multiplication (rejected for `mul_poly`/
-
-`mul_with_conv`)
+#### 5.2. FFT-Based Polynomial Multiplication (rejected for `mul_poly`/`mul_with_conv`)
 
 Asymptotically faster than direct $O(N \times M)$ summation for large
 degree, but numerically stable only when both operands' coefficients are of
@@ -556,14 +528,14 @@ trigger.
 
 | Method                    | Mechanism                                                  | Requirements discharged  |
 |:--------------------------|:-----------------------------------------------------------|:-------------------------|
-| Compile-time shape check  | Type-level `Dim` sizing and `compile_fail` doctests        | FR-1, C-1, C-3, C-4      |
+| Compile-time shape check  | Type-level `Dim` sizing and `compile_fail` doctests        | FR-1, C-1                |
 | Requirements-based test   | `#[test]` unit tests over boundary conditions and division | FR-2, FR-4, FR-5, FR-6   |
 | Property-based test       | `proptest` suites verifying ring algebraic invariants      | FR-2, FR-3               |
 | Doctest                   | Runnable rustdoc examples                                  | FR-2, FR-5               |
-| Back-to-back comparison   | `/cr-prototype numerical-models/polynomial` oracle         | FR-2, FR-3, FR-6         |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis     | NFR-1, NFR-3, C-2, C-4   |
-| On-target execution       | ETS suites under QEMU and Teensy hardware                  | NFR-2                    |
-| Coverage measurement      | `cargo coverage` reporting statement and branch metrics    | FR-1..FR-6, NFR-1..NFR-3 |
+| Back-to-back comparison   | `examples/prototypes/numerical-models/polynomial/` oracle  | FR-2, FR-3, FR-6         |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis     | NFR-2, C-2               |
+| On-target execution       | ETS suites under QEMU and Teensy hardware                  | NFR-1                    |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics    | FR-1..FR-6, NFR-1..NFR-2 |
 
 #### 6.3. Acceptance Criteria
 
@@ -581,12 +553,12 @@ trigger.
 
 | Requirement                                     | Method                                       | Artifact                                                  |
 |:------------------------------------------------|:---------------------------------------------|:----------------------------------------------------------|
-| FR-1 — Ascending Degree Coefficient Indexing    | Compile-time shape check                     | `tests/poly_shape_fail.rs` (`compile_fail` doctests)      |
-| FR-2 — Real-Time Horner Evaluation              | Requirements-based test, Property-based test | `tests/polynomial_eval.rs::test_horner_accuracy`          |
-| FR-3 — Discrete Convolution Multiplication      | Property-based test, Back-to-back comparison | `tests/polynomial_algebra.rs::prop_poly_mul_distributive` |
-| FR-4 — Fallible Polynomial Division             | Requirements-based test                      | `tests/polynomial_division.rs::test_div_rem_identity`     |
-| FR-5 — Companion Matrix Realization             | Back-to-back comparison                      | `tests/polynomial_companion.rs::test_companion_matrix`    |
-| FR-6 — Discretization & Trajectory Transforms   | Requirements-based test, Doctest             | `tests/polynomial_calculus.rs::test_derivative_integral`  |
+| FR-1 — Ascending Degree Coefficient Indexing    | Compile-time shape check                     | rustdoc `compile_fail` doctests in `src/polynomial/mod.rs`            |
+| FR-2 — Real-Time Horner Evaluation              | Requirements-based test, Property-based test | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_evaluation` |
+| FR-3 — Discrete Convolution Multiplication      | Property-based test, Back-to-back comparison | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_multiplication` |
+| FR-4 — Fallible Polynomial Division             | Requirements-based test                      | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_div_rem`   |
+| FR-5 — Companion Matrix Realization             | Back-to-back comparison                      | `src/polynomial/tests/polynomial_tests.rs::test_companion_matrix`     |
+| FR-6 — Discretization & Trajectory Transforms   | Requirements-based test, Doctest             | `src/polynomial/tests/polynomial_tests.rs::test_cubic_quintic_bilinear` |
 | NFR-1 — Data-Independent Evaluation Latency     | On-target execution                          | ETS disassembly audit for zero panic landing pads         |
 | NFR-2 — Memory Footprint Predictability         | Resource usage evaluation                    | `#![no_std]` host allocator audit                         |
 | C-1 — Maximum Degree Bound                      | Compile-time shape check                     | `clippy::large_stack_arrays` CI check                     |
@@ -601,11 +573,11 @@ trigger.
 
 #### 6.6. Validation
 
-- **Cubic Spline Trajectory Generation**: Evaluation of pre-computed robotic
-  cubic spline trajectories $p(t) = c_0 + c_1 t + c_2 t^2 + c_3 t^3$ at fixed
-  time steps in `examples/cubic_trajectory.rs`.
-- **Digital Filter Transfer Function Polynomials**: Evaluation of FIR/IIR
-  numerator and denominator polynomials in audio filtering applications.
+- **Polynomial Evaluation, Calculus, & Companion Realization**: Verification of
+  degree-bounded polynomial construction, real and complex Horner evaluation,
+  analytical differentiation/integration, polynomial multiplication, Euclidean division,
+  and Frobenius companion matrix formulation in
+  `examples/numerical-models/polynomial_example.rs`.
 
 #### 6.7. Not Verified
 
@@ -636,24 +608,8 @@ trigger.
   accumulator back into the multiplicand at each step, requiring per-iteration
   scaling in fixed-point / Q-format representations.
 - **Root-Finding Precision Scope**: Polynomial root finding via companion matrix
-  QR iterations requires floating-point scalar support (`T: Float`); whether
-  and root extraction.
-
----
-
-### 7. Performance & Optimization
-
-Performance characteristics are anchored on Horner evaluation ($O(N)$ operations),
-direct convolution ($O(N \times M)$ operations), and zero heap allocation across
-all core representations.
-
----
-
-### 8. Risks & Mitigations
-
-- **Ill-Conditioning in Polynomial Root-Finding**: High-degree companion matrix
-  eigenvalue solving can be sensitive to numerical precision. Mitigated by
-  documenting degree limitations and validating with test matrices.
+  QR iterations requires floating-point scalar support (`T: Float`); integer
+  and fixed-point coefficient types are out of scope for eigenvalue extraction.
 
 ---
 
@@ -665,7 +621,7 @@ all core representations.
 | **Step 2: Core Arithmetic**                 | `Add`/`Sub`/`Neg` operator overloads, `mul_poly`, `mul_with_conv` via `Convolution<T>`.                                                                                                         | 2.0 Days         |
 | **Step 3: Evaluation, Calculus & Division** | Horner `evaluate`, derivative/integral methods, `div_rem` with `DivisionError` and the near-singular caveat.                                                                                    | 2.5 Days         |
 | **Step 4: Interoperability**                | Companion-`Matrix` `TryFrom` conversion, column-copy `From` conversion (§5.4), `Tensor` conversion, cross-check against `matrix-design.md`'s reverse Faddeev–LeVerrier conversion.              | 2.0 Days         |
-| **Step 5: Verification**                    | `proptest` algebraic invariants, host/qemu unit tests, release-codegen check that `evaluate` retains zero panic paths, cubic-spline trajectory validation example per `vv-standards.md`.        | 2.0 Days         |
+| **Step 5: Verification**                    | `proptest` algebraic invariants, host/qemu unit tests, release-codegen check that `evaluate` retains zero panic paths, cubic-spline trajectory validation example per [`vv-standards.md`](../vv-standards.md).        | 2.0 Days         |
 
 ---
 
@@ -690,20 +646,13 @@ all core representations.
    Zero-location theory underpinning root-finding correctness and region bounds.
 6. **Bini, D. A., Boito, P., Eidelman, Y., Gemignani, L., & Gohberg, I. (2010).
    ** A Fast Implicit QR Eigenvalue Algorithm for Companion Matrices. _Linear
-   Algebra and its Applications_, 432(8), 2006–2031. — Establishes the $O(N^2)$
-   -time companion-matrix rootfinder's storage from $O(N^2)$ to $O(N)$
-   while preserving backward stability. Complexity and backward-stability claims
-   corroborated via nhigham.com and Aurentz et al. (2018)'s own citation record;
-   the paper's own abstract was not independently retrieved this pass (
-   paywalled).
+   Algebra and its Applications_, 432(8), 2006–2031. — $O(N^2)$-time
+   companion-matrix QR exploiting unitary-plus-rank-one structure.
 7. **Aurentz, J. L., Mach, T., Vandebril, R., & Watkins, D. S. (2015).** Fast
    and Backward Stable Computation of Roots of Polynomials. _SIAM Journal on
-   Matrix Analysis and Applications_, 36(3), 942–973. — Reduces the Bini et
-   al. (2010) companion-matrix rootfinder's storage from $O(N^2)$ to $O(N)$
-   while preserving backward stability. Complexity and backward-stability claims
-   corroborated via nhigham.com and Aurentz et al. (2018)'s own citation record;
-   the paper's own abstract was not independently retrieved this pass (
-   paywalled).
+   Matrix Analysis and Applications_, 36(3), 942–973. — Reduces Bini et al.
+   (2010) companion-matrix storage from $O(N^2)$ to $O(N)$ while preserving
+   backward stability.
 8. **Aurentz, J. L., Mach, T., Vandebril, R., & Watkins, D. S. (2018).** Fast
    and Backward Stable Computation of Roots of Polynomials, Part II: Backward
    Error Analysis; Companion Matrix and Companion Pencil. _SIAM Journal on
@@ -729,22 +678,7 @@ all core representations.
 12. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool for
     Random Testing of Haskell Programs. _ACM SIGPLAN Notices_, 35(9), 268–279. —
     Property-based testing methodology framing `proptest` algebraic invariant
-    checks (§6.1); citation carried forward unverified (paywalled) per
-    `research/polynomial.json`.
-13. **Ljung, L. (2003).** Linear system identification as a curve fitting
-    problem, in *Model-based Identification and Control*, Lecture Notes in
-    Control and Information Sciences. — Equation-error ARX polynomial fitting
-    and regressor formulation.
-14. **Almunif, A., Fan, L., & Miao, Z. (2020).** A tutorial on data-driven
-    eigenvalue identification: Prony analysis, matrix pencil, and ERA. In
-    *2020 IEEE Power & Energy Society General Meeting (PESGM)*. —
-    Least-squares estimation of characteristic polynomial coefficients via
-    Prony analysis.
-15. **Higham, N. J. (2021).** What Is a Vandermonde Matrix? *Nick Higham
-    Blog*. [Online].
-    Available: https://nhigham.com/2021/06/15/what-is-a-vandermonde-matrix/.
-    Accessed: Aug. 25, 2026. — Vandermonde system formulation and exponential
-    monomial ill-conditioning.
+    checks (§6.1).
 
 ### 11. Revision History
 
@@ -756,3 +690,4 @@ all core representations.
 | 1.3      | August 24, 2026 | @MitchellDScott | Generic scalar bounds: generalized arithmetic to `T: Scalar` with complex coefficient support.                                        |
 | 1.4      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with backward error bounds ($\gamma_{2n}$).                                                 |
 | 1.5      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<1>` dimensions.                                |
+| 1.6      | August 26, 2026 | @MitchellDScott | Trimmed companion/Faddeev–LeVerrier comparison; de-duplicated Bini/Aurentz reference blurbs.                                          |

@@ -4,11 +4,7 @@
 //!   * [ ] remove index slicing
 
 use crate::math::{
-    Bijection, ConversionError, ConversionResult, Map,
-    complex_num::Complex,
-    num_traits::{Float, Scalar},
-    ops::Neg,
-    storage,
+    Bijection, Map, complex_num::Complex, num_traits::Float, ops::Neg, storage,
 };
 
 type ComplexArrayMut<T, const N: usize> = [Complex<T>; N];
@@ -25,7 +21,21 @@ type RealSliceMut<'a, T, const N: usize> = &'a mut [T; N];
 /// # Generic Arguments
 /// * `T` - The numeric type of the elements (must implement `Float`).
 pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
-    /// Computes the forward Fast Fourier Transform into `output` (frequency domain).
+    /// Computes the forward Fast Fourier Transform.
+    ///
+    /// # Arguments
+    /// * `input` - The input signal (time domain).
+    /// * `output` - The output buffer (frequency domain).
+    ///
+    /// # Returns
+    /// * `()` - Modifies `output` in place.
+    ///
+    /// # Panics
+    /// * Panics if input and output lengths do not match or are not powers of two.
+    ///
+    /// # Safety
+    /// This function does not use `unsafe` code.
+    #[allow(clippy::arithmetic_side_effects)]
     fn fft<const N: usize>(
         input: RealSlice<'_, T, N>,
         output: ComplexSliceMut<'_, T, N>,
@@ -43,10 +53,18 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
 
     /// Computes the forward Fast Fourier Transform on a complex signal, in-place.
     ///
+    /// # Arguments
+    /// * `data` - The complex signal to transform.
+    ///
+    /// # Returns
+    /// * `()` - Modifies `data` in place.
+    ///
+    /// # Panics
+    /// * Panics if the length of `data` is not a power of two.
+    ///
     /// # Safety
-    /// Uses pointer reads/writes; indices stay in `0..N` because `N` is a power
-    /// of two and the butterfly loops are bounded by `stage_len` and `step`.
-    // Case-by-case: Arithmetic side effects are unavoidable for Cooley-Tukey Radix-2 FFT.
+    /// This function uses `unsafe` code for performance reasons. It is safe because
+    /// the indices are guaranteed to be within bounds.
     #[allow(clippy::arithmetic_side_effects)]
     fn fft_complex<const N: usize>(data: ComplexSliceMut<'_, T, N>) {
         debug_assert!(N.is_power_of_two(), "FFT length must be a power of two");
@@ -107,7 +125,21 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
         }
     }
 
-    /// Computes the inverse Fast Fourier Transform into `output` (time domain).
+    /// Computes the inverse Fast Fourier Transform.
+    ///
+    /// # Arguments
+    /// * `input` - The input signal (frequency domain).
+    /// * `output` - The output buffer (time domain).
+    ///
+    /// # Returns
+    /// * `()` - Modifies `output` in place.
+    ///
+    /// # Panics
+    /// * Panics if input and output lengths do not match or are not powers of two.
+    ///
+    /// # Safety
+    /// This function does not use `unsafe` code.
+    #[allow(clippy::arithmetic_side_effects)]
     fn ifft<const N: usize>(
         input: ComplexSlice<'_, T, N>,
         output: RealSliceMut<'_, T, N>,
@@ -124,10 +156,7 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
 
         for (i, val) in temp_output.iter().enumerate() {
             if let Some(out) = output.get_mut(i) {
-                // Case-by-case: Float division is unavoidable here.
-                #[allow(clippy::arithmetic_side_effects)]
-                let val_divided = val.clone().conj().re / n_t.clone();
-                *out = val_divided;
+                *out = val.clone().conj().re / n_t.clone();
             }
         }
     }
@@ -138,40 +167,51 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
 /// This trait defines the interface for performing convolution between two signals.
 ///
 /// # Generic Arguments
-/// * `T` - The numeric type of the elements (must implement `Scalar`).
-pub trait Convolution<T: Scalar> {
-    /// Computes the convolution of two signals into `output`.
+/// * `T` - The numeric type of the elements.
+pub trait Convolution<T: Float> {
+    /// Computes the convolution of two signals.
     ///
-    /// Writes `input_len + kernel_len - 1` samples. Inner-loop indices stay in
-    /// range via `k_min`/`k_max`.
+    /// * Fewer Writes: By calculating `y\[n\]` directly using `k_min` and `k_max`, the method writes to the output
+    ///   array exactly `input_len + kernel_len - 1` times. Remaining indices are untouched.
+    /// * Bounds Safety: The indices for k (`k_min` and `k_max`) ensure that both k remains within
+    ///   `[0, input.len()]` and n - k remains within `[0, kernel.len()]`, guaranteeing no out-of-bounds
+    ///   panics during the inner loop computation.
+    /// * Traits: This assumes T: Float implies something akin to `num_traits::Float` (which provides
+    ///   `T::zero()` and standard operator overloading).
     ///
-    /// # Errors
-    /// Returns [`ConversionError::DimensionMismatch`] if `output` is shorter than
-    /// `input_len + kernel_len - 1`.
-    // Performance: Direct indexing is used to bypass bounds checking in performance-critical convolution loops.
-    #[allow(clippy::indexing_slicing)]
-    // Case-by-case: Arithmetic side effects are unavoidable for convolution math.
-    #[allow(clippy::arithmetic_side_effects)]
-    fn convolve_input(
-        input: &[T],
-        kernel: &[T],
-        output: &mut [T],
-    ) -> ConversionResult<()> {
+    /// # Arguments
+    /// * `input` - The input signal.
+    /// * `kernel` - The convolution kernel (impulse response).
+    /// * `output` - The output buffer.
+    ///
+    /// # Returns
+    /// * `()` - Modifies `output` in place.
+    ///
+    /// # Panics
+    /// * Panics if output length is not enough to hold the result.
+    ///
+    /// # Safety
+    /// This function does not use `unsafe` code.
+    #[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+    fn convolve_input(input: &[T], kernel: &[T], output: &mut [T]) {
         let input_len = input.len();
         let kernel_len = kernel.len();
 
         if input_len == 0 || kernel_len == 0 {
-            return Ok(());
+            return;
         }
 
         let expected_len = input_len + kernel_len - 1;
-        if output.len() < expected_len {
-            return Err(ConversionError::DimensionMismatch);
-        }
+        assert!(
+            output.len() >= expected_len,
+            "Convolution output buffer is too small. Expected at least {}, got {}",
+            expected_len,
+            output.len()
+        );
 
         // Calculate the convolution sum: y[n] = sum(x[k] * h[n-k])
         for n in 0..expected_len {
-            let mut sum = T::ZERO;
+            let mut sum = T::zero();
 
             // Determine the valid range for k to ensure indices stay within bounds
             let k_min = n.saturating_sub(kernel_len - 1);
@@ -183,41 +223,45 @@ pub trait Convolution<T: Scalar> {
 
             output[n] = sum;
         }
-        Ok(())
     }
 }
 
-/// A continuous-time system that can be sampled at interval `dt`.
-pub trait Continuous<T: Float> {
-    /// Discrete counterpart produced by [`Continuous::discretize`].
-    type Discrete: Discrete<T, Continuous = Self>;
-
-    /// Samples `self` at period `dt`.
-    fn discretize(&self, dt: T) -> Self::Discrete;
+/// Trait for Continuous-time systems.
+///
+/// This trait represents systems defined in the continuous time domain.
+pub trait Continuous<R: Float> {
+    /// Discretizes the continuous system to a discrete system.
+    ///
+    /// # Arguments
+    /// * `dt` - The sampling interval.
+    ///
+    /// # Returns
+    /// * `()` - This is a placeholder for the discretization logic.
+    ///
+    /// # Safety
+    /// This function does not use `unsafe` code.
+    fn discretize<D: Discrete<R>>(&self, dt: f32) -> D;
 }
 
-/// A discrete-time system obtained by sampling a [`Continuous`] plant.
+/// Trait for Discrete-time systems.
+///
+/// This trait represents systems defined in the discrete time domain.
+///
+/// # Generic Arguments
+/// * `T` - The numeric type of the elements.
 pub trait Discrete<T: Float> {
-    /// Continuous counterpart recovered by [`Discrete::to_continuous`].
-    type Continuous: Continuous<T, Discrete = Self>;
+    /// The sampling frequency of the system in Hertz.
+    const SAMPLING_FREQUENCY_HZ: T;
 
-    /// Sampling period used to produce this discrete system.
-    fn sampling_period(&self) -> T;
-
-    /// Recovers the continuous plant. Sampling is not invertible; this
-    /// returns the plant that was discretized, not a unique reconstruction.
-    fn to_continuous(&self) -> Self::Continuous;
+    /// Converts the discrete system back to a continuous representation (if possible).
+    ///
+    /// # Returns
+    /// * `()` - This is a placeholder for the reconstruction logic.
+    ///
+    /// # Safety
+    /// This function does not use `unsafe` code.
+    fn to_continuous<C: Continuous<T>>(&self) -> C;
 }
-
-/// Reference zero-dependency pure-Rust DSP engine implementing [`FFT`] and [`Convolution`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct DefaultDsp;
-
-impl<T: 'static + Clone + Float + Neg<Output = T> + Default> FFT<T>
-    for DefaultDsp
-{
-}
-impl<T: Scalar> Convolution<T> for DefaultDsp {}
 
 // Blanket implementation of `Map` for anything that implements `FFT`.
 impl<T, F, const N: usize> Map<[T; N], [Complex<T>; N]> for F
@@ -242,12 +286,5 @@ where
         let mut x = [T::default(); N];
         F::ifft(&y, &mut x);
         x
-    }
-}
-
-// Sampling interval `dt` maps a continuous plant onto its discrete form.
-impl<T: Float, C: Continuous<T>> Map<T, C::Discrete> for C {
-    fn evaluate(&self, dt: T) -> C::Discrete {
-        self.discretize(dt)
     }
 }

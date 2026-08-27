@@ -254,6 +254,12 @@ failure is blocking.
 * Coverage exclusions are named.
 * §6.7 lists at least one gap or states that the plan is exhaustive and why.
 
+# 11. Crate-wide citations
+
+ISO 26262-6 [15], DO-178C [16], IEEE Std 829-2008 [17], Claessen and Hughes
+(QuickCheck) [8], and the Rustonomicon [18] apply crate-wide. Module design
+documents cite this file; they do not duplicate those entries.
+
 # References
 
 [1] NASA, "SWE-028 - Verification Planning," NASA Software Engineering
@@ -303,3 +309,12 @@ Procedures and Software Requirements," NASA Software Engineering Handbook,
 
 [15] ISO, "Road vehicles - Functional safety - Part 6: Product development at
 the software level," ISO 26262-6:2018, ISO, Geneva, Switzerland, 2018.
+
+[16] RTCA / EUROCAE, *DO-178C: Software Considerations in Airborne Systems
+and Equipment Certification*, RTCA, Washington, DC, USA, 2011.
+
+[17] IEEE Computer Society, *IEEE Standard for Software and System Test
+Documentation*, IEEE Std 829-2008, IEEE, New York, NY, USA, 2008.
+
+[18] The Rust Project Developers, *The Rustonomicon: The Dark Arts of
+Advanced and Unsafe Rust Programming*, 2024.

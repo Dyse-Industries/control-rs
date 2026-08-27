@@ -79,4 +79,155 @@ pub mod tensor_test_suite {
         assert_almost_eq!(table.apply(0.5f32), 0.5f32, 1e-6);
         assert_almost_eq!(table.apply(-0.5f32), -0.5f32, 1e-6);
     }
+
+    #[cfg_attr(test, test)]
+    fn test_tensor_contract() {
+        use crate::matrix::Owned;
+        let a = ArrayTensor::<f64, 2, 3>::from_fn(|idx| {
+            let r = idx[0];
+            let c = idx[1];
+            (r * 3 + c) as f64
+        });
+        let b = ArrayTensor::<f64, 3, 2>::from_fn(|idx| {
+            (idx[0] + idx[1] * 2) as f64
+        });
+        let mut out = ArrayTensor::<f64, 2, 2>::zero();
+        a.contract_into(&b, &mut out);
+
+        let ma = Owned::<f64, 2, 3>::from_storage(*a.buffer());
+        let mb = Owned::<f64, 3, 2>::from_storage(*b.buffer());
+        let gemm = &ma * &mb;
+        for i in 0..2 {
+            for j in 0..2 {
+                assert_almost_eq!(
+                    out.get(&[i, j]).copied().unwrap(),
+                    gemm.get(i, j).copied().unwrap(),
+                    1e-12
+                );
+            }
+        }
+
+        let t = a.permute([1, 0]);
+        assert_eq!(t.get(&[0, 1]), a.get(&[1, 0]));
+        let back = t.permute([1, 0]);
+        assert_eq!(back.get(&[1, 2]), a.get(&[1, 2]));
+
+        let sum = &a + &a;
+        assert_almost_eq!(sum.get(&[0, 0]).copied().unwrap(), 0.0, 1e-12);
+        let scaled = &a * 2.0;
+        assert_almost_eq!(scaled.get(&[1, 0]).copied().unwrap(), 6.0, 1e-12);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_shape4d_and_view() {
+        use crate::tensor::{ArrayTensor4D, Shape4D, TensorLayout};
+        assert_eq!(Shape4D::<1, 2, 2, 2>::SIZE, 8);
+        let t4 = ArrayTensor4D::<f64, 1, 1, 1, 1, 1>::from_storage([3.0]);
+        assert_eq!(t4.get(&[0, 0, 0, 0]), Some(&3.0));
+        let mut grid =
+            ArrayTensor::<f64, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+        assert_eq!(grid.view().get(&[0, 0]), Some(&1.0));
+        {
+            let mut view = grid.view_mut();
+            if let Some(v) = view.get_mut(&[0, 0]) {
+                *v = 9.0;
+            }
+        }
+        assert_eq!(grid.get(&[0, 0]), Some(&9.0));
+        let m = grid.slice_matrix();
+        assert_eq!(m.get(0, 0), Some(&9.0));
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    fn test_tensor_shape_interpolate_and_table_edges() {
+        use crate::tensor::{
+            ArrayTensor3D, FlatBuffer, Shape1D, Shape3D, Shape4D, TensorLayout,
+        };
+        assert!(Shape1D::<2>::flat_offset(&[9]).is_none());
+        assert!(Shape1D::<2>::flat_offset(&[]).is_none());
+        let mut d1 = [0usize; 1];
+        Shape1D::<4>::dims(&mut d1);
+        assert_eq!(d1[0], 4);
+        Shape1D::<4>::dims(&mut []);
+
+        assert!(Shape3D::<2, 2, 2>::flat_offset(&[0, 0]).is_none());
+        assert!(Shape3D::<2, 2, 2>::flat_offset(&[0, 0, 9]).is_none());
+        assert_eq!(Shape3D::<2, 2, 2>::flat_offset(&[1, 1, 1]), Some(7));
+        let mut d3 = [0usize; 3];
+        Shape3D::<2, 3, 4>::dims(&mut d3);
+        assert_eq!(d3, [2, 3, 4]);
+        Shape3D::<2, 3, 4>::dims(&mut [0usize; 1]);
+
+        assert!(Shape4D::<2, 2, 2, 2>::flat_offset(&[0, 0, 0]).is_none());
+        assert!(Shape4D::<1, 1, 1, 1>::flat_offset(&[0, 0, 0, 1]).is_none());
+        assert_eq!(Shape4D::<1, 1, 1, 1>::flat_offset(&[0, 0, 0, 0]), Some(0));
+        let mut d4 = [0usize; 4];
+        Shape4D::<1, 2, 3, 4>::dims(&mut d4);
+        assert_eq!(d4, [1, 2, 3, 4]);
+        Shape4D::<1, 2, 3, 4>::dims(&mut [0usize; 2]);
+
+        let t3 = ArrayTensor3D::<f64, 2, 2, 2, 8>::from_storage([0.0; 8]);
+        assert!(t3.slice_matrix(&[9]).is_none());
+        assert!(t3.slice_matrix(&[]).is_none());
+        assert!(t3.slice_matrix(&[0]).is_some());
+
+        let grid = ArrayTensor::<f64, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+        let lo = grid.interpolate(&[-1.0, -1.0]);
+        assert_almost_eq!(lo, 1.0, 1e-12);
+        let hi = grid.interpolate(&[9.0, 9.0]);
+        assert_almost_eq!(hi, 4.0, 1e-12);
+        assert!(!grid.buffer().is_empty());
+        assert!(!grid.buffer().as_ptr().is_null());
+        let _ = grid.into_buffer();
+
+        let empty = TableActivation::<f64, 0> {
+            breakpoints: [],
+            values: [],
+        };
+        assert_eq!(empty.apply(1.0), 0.0);
+        let dup = TableActivation::<f64, 2> {
+            breakpoints: [0.0, 0.0],
+            values: [1.0, 2.0],
+        };
+        assert_eq!(dup.apply(0.0), 1.0);
+        let clamp_hi = TableActivation::<f64, 2> {
+            breakpoints: [0.0, 1.0],
+            values: [3.0, 5.0],
+        };
+        assert_eq!(clamp_hi.apply(-1.0), 3.0);
+        assert_eq!(clamp_hi.apply(2.0), 5.0);
+
+        // Test tensor subtraction and pointers
+        let t_a = ArrayTensor::<f64, 2, 2>::from_raw([[2.0, 4.0], [6.0, 8.0]]);
+        let t_b = ArrayTensor::<f64, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+        let diff = &t_a - &t_b;
+        assert_almost_eq!(diff.get(&[0, 0]).copied().unwrap(), 1.0, 1e-12);
+        assert_almost_eq!(diff.get(&[1, 1]).copied().unwrap(), 4.0, 1e-12);
+
+        use crate::math::storage::RowArrayStorage;
+        use crate::tensor::FlatBufferMut;
+        let mut row_buf =
+            RowArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [3.0, 4.0]]);
+        assert_eq!(FlatBuffer::len(&row_buf), 4);
+        assert_eq!(FlatBuffer::as_slice(&row_buf).len(), 4);
+        assert!(!FlatBuffer::as_ptr(&row_buf).is_null());
+        assert!(!FlatBufferMut::as_mut_ptr(&mut row_buf).is_null());
+
+        let arr = [1.0f64, 2.0, 3.0];
+        assert_eq!(FlatBuffer::len(&arr), 3);
+        assert_eq!(FlatBuffer::as_slice(&arr), &[1.0, 2.0, 3.0]);
+
+        let mut grid_for_view =
+            ArrayTensor::<f64, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+        let v = grid_for_view.view();
+        assert_eq!(FlatBuffer::len(v.buffer()), 4);
+        assert_eq!(FlatBuffer::as_slice(v.buffer()).len(), 4);
+
+        let vm = grid_for_view.view_mut();
+        let mut fvm = vm.into_buffer();
+        assert_eq!(FlatBuffer::len(&fvm), 4);
+        assert_eq!(FlatBuffer::as_slice(&fvm).len(), 4);
+        assert_eq!(FlatBufferMut::as_mut_slice(&mut fvm).len(), 4);
+    }
 }

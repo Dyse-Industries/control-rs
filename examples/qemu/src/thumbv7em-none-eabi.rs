@@ -3,11 +3,11 @@
 
 extern crate control_rs;
 
-use control_rs_ets::comms::{
+use control_rs_hil::comms::{
     frame_telemetry, Command, FrameReader, HostComms, Telemetry,
 };
-use control_rs_ets::server::Context;
-use control_rs_macros::ets_setup;
+use control_rs_hil::server::Context;
+use control_rs_macros::hil_setup;
 // --- Communication Implementation via Direct Semihosting Syscalls ---
 
 use core::sync::atomic::Ordering;
@@ -67,11 +67,8 @@ impl HostComms for SemihostingComms {
 // Force linking of the math test suites by referencing them
 #[allow(unused_imports)]
 pub use control_rs::math::tests::suites::*;
-// Force linking of the matrix test suites by referencing them
-#[allow(unused_imports)]
-pub use control_rs::matrix::tests::suites::*;
 
-use control_rs_ets::CortexMProfiler;
+use control_rs_hil::CortexMProfiler;
 use core::sync::atomic::AtomicU32;
 use cortex_m::peripheral::syst::SystClkSource;
 
@@ -98,7 +95,7 @@ fn enable_dwt_cycle_counter() {
     }
 }
 
-#[ets_setup]
+#[hil_setup]
 #[allow(dead_code)]
 fn setup() -> Context<SemihostingComms, CortexMProfiler> {
     let p = cortex_m::Peripherals::take().unwrap();

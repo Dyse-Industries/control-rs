@@ -7,12 +7,12 @@ use bsp::board;
 use bsp::hal::usbd::{BusAdapter, EndpointMemory, EndpointState, Speed};
 use teensy4_bsp as bsp;
 
-use control_rs_ets::comms::{
+use control_rs_hil::comms::{
     frame_telemetry, Command, FrameReader, HostComms, Telemetry,
 };
-use control_rs_ets::server::Context;
-use control_rs_ets::CortexMProfiler;
-use control_rs_macros::{ets_setup, ets_suite};
+use control_rs_hil::server::Context;
+use control_rs_hil::CortexMProfiler;
+use control_rs_macros::{hil_setup, hil_suite};
 #[allow(unused_imports)]
 use core::sync::atomic::{AtomicU32, Ordering};
 use cortex_m::peripheral::syst::SystClkSource;
@@ -34,7 +34,7 @@ fn SysTick() {
 
 // --- Communication Implementation ---
 //
-// The ETS testing framework uses the `HostComms` trait to define target-to-host 
+// The HIL testing framework uses the `HostComms` trait to define target-to-host 
 // communication. On the Teensy 4.0, we implement this using a USB CDC virtual serial 
 // port. Telemetry is serialized using Postcard and framed with `frame_telemetry`, 
 // then transmitted over USB. Incoming bytes are passed to `FrameReader` to reassemble 
@@ -127,16 +127,13 @@ impl HostComms for TeensyComms {
 // Force linking of the math test suites by referencing them
 #[allow(unused_imports)]
 pub use control_rs::math::tests::suites::*;
-// Force linking of the matrix test suites by referencing them
-#[allow(unused_imports)]
-pub use control_rs::matrix::tests::suites::*;
 
 // --- Test Suite Definition ---
 
-#[ets_suite]
+#[hil_suite]
 /// PID controller hardware-in-the-loop test suite.
 pub mod teensy_pid_suite {
-    use control_rs_ets::settings::{Setting, SettingValue};
+    use control_rs_hil::settings::{Setting, SettingValue};
 
     /// Proportional gain setting. Scales the magnitude of controller response to system error.
     pub static PROPORTIONAL_GAIN: u32 = 1500;
@@ -182,7 +179,7 @@ pub mod teensy_pid_suite {
 
 // --- Profiler Implementation for ARM Cortex-M ---
 //
-// We use the ETS crate's built-in `CortexMProfiler` to implement the target-agnostic 
+// We use the HIL crate's built-in `CortexMProfiler` to implement the target-agnostic 
 // `CPUProfiler` trait. It reads clock cycles from the ARM DWT cycle counter and tracks 
 // real-time duration using the ARM SysTick timer. It also paints/profiles stack space.
 
@@ -204,7 +201,7 @@ fn enable_dwt_cycle_counter() {
 
 // --- Main Setup Entrypoint ---
 
-#[ets_setup]
+#[hil_setup]
 #[allow(dead_code)]
 fn setup() -> Context<TeensyComms, CortexMProfiler> {
     let p = cortex_m::Peripherals::take().unwrap();
@@ -218,7 +215,7 @@ fn setup() -> Context<TeensyComms, CortexMProfiler> {
         usb, pins, gpio2, ..
     } = board::t40(d);
 
-    // 2. Set up the status LED (pin 13) to indicate ETS status
+    // 2. Set up the status LED (pin 13) to indicate HIL server status
     let mut gpio2 = gpio2;
     let led = board::led(&mut gpio2, pins.p13);
     led.set();
