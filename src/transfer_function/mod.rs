@@ -782,23 +782,58 @@ where
     }
 
     /// Tustin discretization $s = \frac{2}{T_s}\frac{z-1}{z+1}$ with optional pre-warp.
+    ///
+    /// Both numerator and denominator are cleared against $(z+1)^{D-1}$ so a
+    /// strictly proper continuous plant (relative degree $r > 0$) gains the
+    /// required $(z+1)^{r}$ numerator factor. The discrete result is therefore
+    /// biproper with coefficient capacities `(D, D)`, matching
+    /// [`Self::to_discrete_zoh`].
+    ///
+    /// # Arguments
+    ///
+    /// * `sample_time` — sampling interval $T_s > 0$.
+    /// * `prewarp_frequency` — optional critical frequency $\omega_c$ that
+    ///   replaces $\frac{2}{T_s}$ with $\frac{\omega_c}{\tan(\omega_c T_s / 2)}$.
+    ///
+    /// # Returns
+    ///
+    /// Discrete $H(z)$ with sample time `sample_time`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// let h = ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
+    /// let hz = h.to_discrete_tustin(0.1, None);
+    /// assert_eq!(hz.num_slice().len(), 2);
+    /// assert!(hz.is_discrete());
+    /// ```
     #[must_use]
     pub fn to_discrete_tustin(
         &self,
         sample_time: T,
         prewarp_frequency: Option<T>,
-    ) -> Self {
+    ) -> ArrayTransferFunction<T, D, D> {
         let two = T::ONE + T::ONE;
         let k = match prewarp_frequency {
             None => two / sample_time,
             Some(wc) => wc / (wc * sample_time / two).tan(),
         };
         let ts_eff = two / k;
-        let num = ArrayPolynomial::<T, N>::from_storage(self.num_storage)
+        // Embed the numerator in den-sized storage so compose_bilinear clears
+        // (z+1)^{D-1} on both polynomials (fills relative degree with (z+1)^r).
+        let mut num_coeffs = [T::ZERO; D];
+        let n_copy = core::cmp::min(N, D);
+        for i in 0..n_copy {
+            num_coeffs[i] =
+                self.num_storage.get(i, 0).copied().unwrap_or(T::ZERO);
+        }
+        let num = ArrayPolynomial::<T, D>::from_coefficients(num_coeffs)
             .compose_bilinear(ts_eff);
         let den = ArrayPolynomial::<T, D>::from_storage(self.den_storage)
             .compose_bilinear(ts_eff);
-        Self::from_storage(
+        ArrayTransferFunction::from_storage(
             num.into_storage(),
             den.into_storage(),
             Some(sample_time),

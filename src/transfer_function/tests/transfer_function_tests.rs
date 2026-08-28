@@ -235,6 +235,12 @@ pub mod transfer_function_test_suite {
         let dt = 0.1;
         let z_tustin = tf.to_discrete_tustin(dt, None);
         assert!(z_tustin.is_discrete());
+        // H(s)=1/(s+1), Ts=0.1 → H(z)=(z+1)/((21)z + (-19)) after clearing (z+1).
+        assert_eq!(z_tustin.num_slice().len(), 2);
+        assert_almost_eq!(z_tustin.num_slice()[0], 1.0, 1e-12);
+        assert_almost_eq!(z_tustin.num_slice()[1], 1.0, 1e-12);
+        assert_almost_eq!(z_tustin.den_slice()[0], -19.0, 1e-12);
+        assert_almost_eq!(z_tustin.den_slice()[1], 21.0, 1e-12);
         let z_zoh = tf.to_discrete_zoh::<1>(dt).unwrap();
         // Integrator-like lowpass ZOH: pole e^{-dt}
         assert_almost_eq!(
@@ -242,7 +248,6 @@ pub mod transfer_function_test_suite {
             -0.904_837_418_035_959_5, // -exp(-dt)
             1e-8
         );
-        let _ = z_tustin;
     }
 
     #[cfg_attr(test, test)]

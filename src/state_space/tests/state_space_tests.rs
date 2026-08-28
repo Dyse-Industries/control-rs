@@ -100,10 +100,29 @@ pub mod state_space_test_suite {
         let dt = 0.1;
         let sys_d = sys.to_discrete_tustin(dt).unwrap();
         let h = dt / 2.0;
-        let expected = (1.0 + h * -2.0) / (1.0 - h * -2.0);
+        let expected_a = (1.0 + h * -2.0) / (1.0 - h * -2.0);
+        let m_inv = 1.0 / (1.0 - h * -2.0);
+        let expected_b = m_inv * 1.0 * dt;
+        let expected_c = 1.0 * m_inv;
+        let expected_d = 0.0 + expected_c * 1.0 * h;
         assert_almost_eq!(
             sys_d.a().get(0, 0).copied().unwrap(),
-            expected,
+            expected_a,
+            1e-12
+        );
+        assert_almost_eq!(
+            sys_d.b().get(0, 0).copied().unwrap(),
+            expected_b,
+            1e-12
+        );
+        assert_almost_eq!(
+            sys_d.c().get(0, 0).copied().unwrap(),
+            expected_c,
+            1e-12
+        );
+        assert_almost_eq!(
+            sys_d.d().get(0, 0).copied().unwrap(),
+            expected_d,
             1e-12
         );
     }
