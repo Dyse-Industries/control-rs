@@ -367,4 +367,73 @@ pub mod transfer_function_test_suite {
             assert_almost_eq!(h1.im, -0.5, 1e-12);
         }
     }
+
+    #[cfg_attr(test, test)]
+    fn test_pole_zero_cancellation_bode() {
+        // H(s) = 1/(s+1). Multiply num/den by (s+2), a stable factor.
+        let h =
+            ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
+        let cancel = ArrayTransferFunction::<f64, 2, 2>::continuous(
+            [2.0, 1.0],
+            [2.0, 1.0],
+        );
+        let h_aug = h.series::<2, 2, 2, 3>(&cancel);
+
+        let omegas = [0.01_f64, 0.1, 1.0, 10.0, 100.0];
+        for &w in &omegas {
+            let (mag, phase) = h.bode_point(w);
+            let (mag_a, phase_a) = h_aug.bode_point(w);
+            let mag_ref = mag.max(f64::EPSILON);
+            assert!(
+                (mag - mag_a).abs() / mag_ref <= 1e-9
+                    || (mag - mag_a).abs() <= 1e-12,
+                "Bode mag ω={w}: {mag} vs {mag_a}"
+            );
+            let mut dphase = (phase - phase_a).abs();
+            if dphase > core::f64::consts::PI {
+                dphase = core::f64::consts::TAU - dphase;
+            }
+            assert!(dphase <= 1e-9, "Bode phase ω={w}: {phase} vs {phase_a}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod transfer_function_property_tests {
+    use crate::transfer_function::ArrayTransferFunction;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Multiplying numerator and denominator by a random stable first-order
+        /// factor does not change Bode magnitude or (wrapped) phase.
+        #[test]
+        fn prop_pole_zero_cancellation_bode(
+            a in 0.2_f64..8.0,
+        ) {
+            let h = ArrayTransferFunction::<f64, 1, 2>::continuous(
+                [1.0],
+                [1.0, 1.0],
+            );
+            let cancel = ArrayTransferFunction::<f64, 2, 2>::continuous(
+                [a, 1.0],
+                [a, 1.0],
+            );
+            let h_aug = h.series::<2, 2, 2, 3>(&cancel);
+            let omegas = [0.01_f64, 0.1, 1.0, 10.0, 100.0];
+            for &w in &omegas {
+                let (mag, phase) = h.bode_point(w);
+                let (mag_a, phase_a) = h_aug.bode_point(w);
+                let mag_ref = mag.max(f64::EPSILON);
+                prop_assert!(
+                    (mag - mag_a).abs() / mag_ref <= 1e-8
+                        || (mag - mag_a).abs() <= 1e-12
+                );
+                let mut dphase = (phase - phase_a).abs();
+                if dphase > core::f64::consts::PI {
+                    dphase = core::f64::consts::TAU - dphase;
+                }
+                prop_assert!(dphase <= 1e-8);
+            }
+        }
+    }
 }

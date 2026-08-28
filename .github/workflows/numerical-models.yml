@@ -2,7 +2,7 @@ name: Numerical Models V&V
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
     paths:
       - "examples/numerical-models/**"
       - "src/matrix/**"
@@ -11,9 +11,9 @@ on:
       - "src/transfer_function/**"
       - "src/tensor/**"
       - "src/math/**"
-      - ".github/workflows/numerical-models-vv.yml"
+      - ".github/workflows/numerical-models.yml"
   pull_request:
-    branches: ["main"]
+    branches: [ "main" ]
     paths:
       - "examples/numerical-models/**"
       - "src/matrix/**"
@@ -22,7 +22,7 @@ on:
       - "src/transfer_function/**"
       - "src/tensor/**"
       - "src/math/**"
-      - ".github/workflows/numerical-models-vv.yml"
+      - ".github/workflows/numerical-models.yml"
 
 jobs:
   vv:
@@ -51,10 +51,7 @@ jobs:
           done
 
       - name: Rust generators
-        run: |
-          for slug in matrix polynomial state_space transfer_function tensor; do
-            cargo run --example ${slug}
-          done
+        run: cargo run --release
 
       - name: Equivalence tests
         run: cargo test

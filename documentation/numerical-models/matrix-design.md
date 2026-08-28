@@ -949,9 +949,6 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
   stack memory consumption.
 - Demonstrate deterministic latency and absence of runtime panic landing pads
   across direct solvers and factorizations.
-- Demonstrate host-scale Hilbert and cache-stress agreement with SciPy goldens
-  under `numerical-models-design.md` §6.3. Cache-stress uses
-  `ArrayStorage` at `Const<1024>` (no heap) and does not discharge C-2.
 
 #### 6.2. Methods
 
@@ -961,8 +958,8 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | Requirements-based test   | `#[test]` unit tests over edge cases and singular inputs | FR-3, FR-4, FR-5, C-2    |
 | Property-based test       | `proptest` suites verifying algebraic invariants         | FR-2, FR-6               |
 | Doctest                   | Runnable doc examples in rustdoc                         | FR-2, FR-4               |
-| Back-to-back comparison   | `examples/prototypes/numerical-models/matrix/` oracle; host-scale Hilbert and $1024\times 1024$ cases per [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-2, FR-3               |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis; host `Instant` timing reported by umbrella §7 (not a CI gate)   | NFR-1, NFR-2, C-2, C-3   |
+| Back-to-back comparison   | `examples/numerical-models/python3/matrix.py` vs `src/matrix.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-2, FR-3               |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                       | NFR-1, NFR-2, C-2, C-3   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                | NFR-3                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics  | FR-1..FR-6, NFR-1..NFR-3 |
 
@@ -977,8 +974,6 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | Transposition identity          | $(AB)^T = B^T A^T$                  | Exact equality / Rel. error | $0$ (exact) / $\le 2\epsilon$                                          | Algebraic ring property over floating-point / integer scalars              |
 | Coordinate retrieval            | In-bounds / Out-of-bounds queries   | Exact equality              | `Some(v)` (exact) / `None`                                             | Structural indexing invariants across row/col dense and packed layouts     |
 | Singular matrix detection       | Known rank-deficient matrices       | Exact equality              | `Err(LinAlgError::SingularMatrix)`                                     | Determinant threshold / zero-pivot detection in factorization              |
-| Hilbert LU residual             | SciPy `lu` / manufactured $Ax=b$    | Residual test ratio         | $r < 20.0$ at $n$ where $\kappa\varepsilon$ crosses 1 and at $n=128$  | Same residual-ratio bound; Hilbert conditioning (Higham, 2002). Forward error vs SciPy uses umbrella $\tau\kappa\varepsilon$ |
-| Host $1024\times 1024$ GEMM/LU  | SciPy `matmul` / `solve`            | Relative error              | $\le \tau\,\kappa(A)\,\varepsilon$ per umbrella §6.3                  | Higham (2002). Host `ArrayStorage<_, 1024, 1024>` only; does not discharge C-2 |
 | Zero-allocation guarantee       | Host memory allocator interception  | Exact equality              | 0 heap allocations                                                     | NFR-1 `#![no_std]` invariant                                               |
 
 #### 6.4. Traceability
@@ -1010,10 +1005,11 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 #### 6.6. Validation
 
 - **Matrix Arithmetic, Linear Solves, & Inversion**: End-to-end numeric integrity
-  verification in `examples/numerical-models/examples/matrix_example.rs` executing matrix
+  verification in `examples/numerical-models/src/matrix.rs` executing matrix
   construction, arithmetic (`+`, `-`, `*`), transposition, $LU$ decomposition
-  solving $Ax = b$, and matrix inversion with identity check ($A \cdot A^{-1} = I$)
-  without dynamic heap allocation.
+  solving $Ax = b$, matrix inversion with identity check ($A \cdot A^{-1} = I$),
+  Hilbert $n=8$ solve/inverse (residual and $\tau\kappa\varepsilon$), and timed
+  GEMM $n=64$, without dynamic heap allocation.
 - **Hardware DSP Interoperability**: Slicing contiguous memory (`as_slice()`) to
   pass directly into CMSIS-DSP vector routines without intermediate buffers.
 
@@ -1023,10 +1019,10 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
   §8 open questions to dedicated sparse linear dynamics scoping).
 - Trans-architecture floating-point bitwise equivalence is not claimed across
   differing hardware FPU implementations (FMA vs non-FMA rounding differences).
-- Host-scale $1024 \times 1024$ GEMM/LU is not a C-2 MCU stack-cap test.
-  It uses `ArrayStorage` (no heap) and still discharges NFR-1. When
-  $\kappa\varepsilon \gtrsim 1$, Hilbert inversion is expected to fail the
-  umbrella forward-error bound; that failure is the acceptance case.
+- $1024\times 1024$ GEMM/LU cache-stress is not in the example crate; host
+  generators use Hilbert $n=8$ and GEMM $n=64$
+  ([`numerical-models-design.md`](numerical-models-design.md) §6.6). MCU C-2
+  ($R, C \le 128$) is unchanged.
 
 ---
 
@@ -1045,12 +1041,6 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 - **Worst-Case Execution Time (WCET)**: Subprogram invocations delegate directly
   to non-allocating unrolled loops without panic landing pads or runtime
   branching overhead.
-- **Host-scale timing**: $LU$ flop count $\frac{2}{3}N^3$ and GEMM $2N^3$
-  (Golub and Van Loan, 2013) feed the umbrella $T_{\mathrm{expected}}$ model
-  ([`numerical-models-design.md`](numerical-models-design.md) §7). Timing is a
-  host measurement, not a CI gate. C-2 remains $R, C \le 128$ for MCU
-  `ArrayStorage`. Host-scale cache-stress uses `ArrayStorage` at
-  `Const<1024>` (no heap).
 
 ---
 
@@ -1154,4 +1144,5 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | 1.7      | August 26, 2026 | @MitchellDScott | Collapsed subprogram inventory; crate-wide standards cite `vv-standards.md`.                                                                          |
 | 1.8      | August 28, 2026 | @MitchellDScott | Host-scale V&V: Hilbert and $1000\times 1000$ rows; umbrella $\tau\kappa\varepsilon$ and Instant timing. Caps unchanged.                             |
 | 1.9      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); C-2 MCU cap unchanged.                                                                        |
+| 1.10     | August 28, 2026 | @MitchellDScott | Example crate: Hilbert $n=8$ and timed GEMM $n=64$; $1024\times 1024$ remains out. Caps unchanged.                                                  |
 

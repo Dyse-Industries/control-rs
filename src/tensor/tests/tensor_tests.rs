@@ -230,4 +230,88 @@ pub mod tensor_test_suite {
         assert_eq!(FlatBuffer::as_slice(&fvm).len(), 4);
         assert_eq!(FlatBufferMut::as_mut_slice(&mut fvm).len(), 4);
     }
+
+    #[cfg_attr(test, test)]
+    fn test_quantization_roundtrip_half_lsb() {
+        type Q7 = Quantized<i8, 7>;
+        let step = 2.0_f64.powi(-7);
+        let half = step / 2.0;
+        let samples = [
+            0.0_f64,
+            0.25,
+            -0.5,
+            1.0 / 3.0,
+            core::f64::consts::FRAC_PI_4,
+            -0.75,
+            Q7::MAX.dequantize(),
+            Q7::MIN.dequantize(),
+        ];
+        let mut max_err = 0.0_f64;
+        for &x in &samples {
+            let err = (x - Q7::quantize(x).dequantize()).abs();
+            max_err = max_err.max(err);
+            assert!(
+                err <= half,
+                "Q7 round-trip |{x} - dequant(quant)|={err} exceeds {half}"
+            );
+        }
+        assert!(max_err <= half);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_quantization_monotonicity() {
+        type Q7 = Quantized<i8, 7>;
+        let pairs = [
+            (0.3_f64, 0.1),
+            (0.5, -0.5),
+            (0.8, 0.799),
+            (-0.1, -0.9),
+            (Q7::MAX.dequantize(), Q7::MIN.dequantize()),
+        ];
+        for (x, y) in pairs {
+            assert!(x > y);
+            let qx = Q7::quantize(x);
+            let qy = Q7::quantize(y);
+            assert!(
+                qx >= qy,
+                "quant({x})={:?} < quant({y})={:?}",
+                qx.raw(),
+                qy.raw()
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tensor_property_tests {
+    use crate::tensor::Quantized;
+    use proptest::prelude::*;
+
+    type Q7 = Quantized<i8, 7>;
+
+    proptest! {
+        /// Round-trip error never exceeds half the Q7 step on the closed
+        /// representable interval.
+        #[test]
+        fn prop_quantization_roundtrip_half_lsb(
+            x in -1.0_f64..Q7::MAX.dequantize(),
+        ) {
+            let half = 2.0_f64.powi(-7) / 2.0;
+            let err = (x - Q7::quantize(x).dequantize()).abs();
+            prop_assert!(
+                err <= half,
+                "Q7 round-trip {err} exceeds {half} for x={x}"
+            );
+        }
+
+        /// $x > y$ implies $\mathrm{quant}(x) \ge \mathrm{quant}(y)$.
+        #[test]
+        fn prop_quantization_monotonicity(
+            x in -4.0_f64..4.0,
+            y in -4.0_f64..4.0,
+        ) {
+            prop_assume!(x > y);
+            prop_assert!(Q7::quantize(x) >= Q7::quantize(y));
+        }
+    }
 }

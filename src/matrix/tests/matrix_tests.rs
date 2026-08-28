@@ -10,10 +10,11 @@
 //! - **FR-3** (core arithmetic): `test_add_sub_neg`, `test_mul_matrix_matrix`,
 //!   `test_mul_matrix_vector`.
 //! - **FR-4** (transposition, determinant, inversion):
-//!   `test_transpose_*`, `test_lu_determinant`, `test_lu_invert_round_trip`.
+//!   `test_transpose_*`, `test_lu_determinant`, `test_lu_invert_round_trip`,
+//!   `test_inverse_identity_roundtrip_cond_scaled`.
 //! - **FR-5** (structural specializations): `test_upper_lower_symmetric_*`,
 //!   `test_ldlt_*`, `test_cholesky_*`, `test_qr_*` (§4.7 decomposition
-//!   objects).
+//!   objects), `test_covariance_predict_symmetry`.
 //! - **FR-6** (coordinate-based instantiation): `test_from_fn`.
 //! - **FR-7** (concatenation): not implemented in this pass (not in scope —
 //!   see the design doc's Development Plan Step 4/7 split).
@@ -46,6 +47,9 @@ pub mod matrix_test_suite {
         LowerTriangular, Matrix, Owned, Symmetric, UpperTriangular,
     };
 
+    /// Residual-ratio factor $\tau$ in $\lVert AA^{-1}-I\rVert_\infty \le \tau\kappa\varepsilon$.
+    const INV_ROUNDTRIP_TAU: f64 = 20.0;
+
     /// Asserts every element of two same-shaped owned matrices is almost
     /// equal.
     fn _assert_matrix_almost_eq<const R: usize, const C: usize>(
@@ -58,6 +62,57 @@ pub mod matrix_test_suite {
         for i in 0..R {
             for j in 0..C {
                 assert_almost_eq!(*a.get(i, j).unwrap(), *b.get(i, j).unwrap());
+            }
+        }
+    }
+
+    /// $\lVert M - I\rVert_\infty$ for a square matrix.
+    fn inf_norm_from_identity<const N: usize>(m: &Owned<f64, N, N>) -> f64
+    where
+        Const<N>: Dim,
+    {
+        let ident = Owned::<f64, N, N>::identity();
+        let mut best = 0.0_f64;
+        for i in 0..N {
+            let mut row = 0.0_f64;
+            for j in 0..N {
+                row +=
+                    (*m.get(i, j).unwrap() - *ident.get(i, j).unwrap()).abs();
+            }
+            best = best.max(row);
+        }
+        best
+    }
+
+    /// $A A^{-1} = I$ with $\varepsilon$ scaled by $\kappa_\infty(A)$.
+    fn assert_inv_identity_roundtrip<const N: usize>(a: &Owned<f64, N, N>)
+    where
+        Const<N>: Dim,
+    {
+        let lu = a.into_lu().unwrap();
+        let inv = lu.inverse().unwrap();
+        let product = a * &inv;
+        let err = inf_norm_from_identity(&product);
+        let kappa = a.inf_norm() * inv.inf_norm();
+        let bound = INV_ROUNDTRIP_TAU * kappa * f64::EPSILON;
+        assert!(
+            err <= bound.max(f64::EPSILON),
+            "||A Ainv - I||_inf={err} exceeds tau*kappa*eps={bound} (kappa={kappa})"
+        );
+    }
+
+    /// Exact $M = M^T$ (bitwise), for operators that return a symmetric matrix.
+    fn assert_exactly_symmetric<const N: usize>(m: &Owned<f64, N, N>)
+    where
+        Const<N>: Dim,
+    {
+        for i in 0..N {
+            for j in 0..N {
+                assert_eq!(
+                    *m.get(i, j).unwrap(),
+                    *m.get(j, i).unwrap(),
+                    "symmetry ({i},{j})"
+                );
             }
         }
     }
@@ -273,6 +328,34 @@ pub mod matrix_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// $A A^{-1} = I$ with $\varepsilon$ scaled by $\kappa_\infty(A)$
+    /// (`matrix-design.md` §6.3 linear-solve / inversion residual).
+    fn test_inverse_identity_roundtrip_cond_scaled() {
+        let well: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
+            [[4.0, 3.0, 2.0], [1.0, 5.0, 3.0], [2.0, 1.0, 6.0]][i][j]
+        });
+        assert_inv_identity_roundtrip(&well);
+
+        let hilbert: Owned<f64, 4, 4> =
+            Matrix::from_fn(|i, j| 1.0 / ((i + j + 1) as f64));
+        assert_inv_identity_roundtrip(&hilbert);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Induced $\infty$-norm is sub-multiplicative: $\lVert AB\rVert_\infty
+    /// \le \lVert A\rVert_\infty \lVert B\rVert_\infty$ (FR-2).
+    fn test_inf_norm_submultiplicative() {
+        let a: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| [[2.0, -1.0], [0.5, 3.0]][i][j]);
+        let b: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| [[-1.0, 4.0], [2.0, 0.5]][i][j]);
+        let ab = &a * &b;
+        let lhs = ab.inf_norm();
+        let rhs = a.inf_norm() * b.inf_norm();
+        assert!(lhs <= rhs, "||AB||_∞={lhs} exceeds ||A||_∞||B||_∞={rhs}");
+    }
+
+    #[cfg_attr(test, test)]
     /// A singular matrix fails `LU` decomposition with
     /// `LinAlgError::SingularMatrix` rather than panicking (§4.9.3).
     fn test_lu_singular_matrix_errors() {
@@ -455,6 +538,31 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*updated.get(0, 1).unwrap(), 0.0);
         assert_almost_eq!(*updated.get(1, 0).unwrap(), -0.25);
         assert_almost_eq!(*updated.get(1, 1).unwrap(), 1.0);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Covariance time-update $P^- = A P A^T + Q$ and Joseph measurement
+    /// update return bitwise-symmetric $P$ (`matrix-design.md` §6.2.1).
+    fn test_covariance_predict_symmetry() {
+        let a: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| [[1.0, 0.5], [0.0, 1.0]][i][j]);
+        let p: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| [[4.0, 1.0], [1.0, 2.0]][i][j]);
+        let q: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| [[0.25, 0.0], [0.0, 0.5]][i][j]);
+        let ap = &a * &p;
+        let predicted = &(&ap * &a.transpose()) + &q;
+        assert_exactly_symmetric(&predicted);
+
+        let ident: Owned<f64, 2, 2> = Owned::identity();
+        let k: Owned<f64, 2, 1> = Matrix::from_fn(|i, _| [0.5, 0.25][i]);
+        let h: Owned<f64, 1, 2> = Matrix::from_fn(|_, j| [1.0, 0.0][j]);
+        let r: Owned<f64, 1, 1> = Matrix::from_fn(|_, _| 1.0);
+        let i_kh = &ident - &(&k * &h);
+        let joseph_left = &(&i_kh * &predicted) * &i_kh.transpose();
+        let kr = &k * &r;
+        let joseph = &joseph_left + &(&kr * &k.transpose());
+        assert_exactly_symmetric(&joseph);
     }
 
     #[cfg_attr(test, test)]
@@ -660,6 +768,64 @@ mod matrix_property_tests {
                     prop_assert!((l - r).abs() < 1e-6);
                 }
             }
+        }
+
+        /// $A A^{-1} = I$ for non-singular $A$, with $\varepsilon$ scaled by
+        /// $\kappa_\infty(A)$.
+        #[test]
+        fn prop_inverse_identity_roundtrip(
+            vals in proptest::collection::vec(-20.0..20.0_f64, 4),
+        ) {
+            let a: Owned<f64, 2, 2> = matrix_from_vec(&vals);
+            let Ok(lu) = a.into_lu() else {
+                return Ok(());
+            };
+            let Ok(inv) = lu.inverse() else {
+                return Ok(());
+            };
+            let product = &a * &inv;
+            let ident = Owned::<f64, 2, 2>::identity();
+            let mut err = 0.0_f64;
+            for i in 0..2 {
+                let mut row = 0.0_f64;
+                for j in 0..2 {
+                    row += (*product.get(i, j).unwrap()
+                        - *ident.get(i, j).unwrap())
+                    .abs();
+                }
+                err = err.max(row);
+            }
+            let kappa = a.inf_norm() * inv.inf_norm();
+            if !kappa.is_finite() {
+                return Ok(());
+            }
+            let bound = 20.0 * kappa * f64::EPSILON;
+            prop_assert!(
+                err <= bound.max(f64::EPSILON),
+                "||AAinv-I||_inf={err} exceeds tau*kappa*eps={bound} (kappa={kappa})"
+            );
+        }
+
+        /// $\lVert AB\rVert_\infty \le \lVert A\rVert_\infty \lVert B\rVert_\infty$
+        /// up to a $\gamma_n$ rounding factor on the computed product.
+        #[test]
+        fn prop_inf_norm_submultiplicative(
+            a_vals in proptest::collection::vec(-50.0..50.0_f64, 4),
+            b_vals in proptest::collection::vec(-50.0..50.0_f64, 4),
+        ) {
+            let a: Owned<f64, 2, 2> = matrix_from_vec(&a_vals);
+            let b: Owned<f64, 2, 2> = matrix_from_vec(&b_vals);
+            let ab = &a * &b;
+            let lhs = ab.inf_norm();
+            let rhs = a.inf_norm() * b.inf_norm();
+            let n = 2.0_f64;
+            let ke = n * f64::EPSILON;
+            let gamma = if ke >= 1.0 { f64::INFINITY } else { ke / (1.0 - ke) };
+            prop_assert!(
+                lhs <= rhs * (1.0 + gamma) || rhs == 0.0,
+                "||AB||_∞={lhs} exceeds ||A||||B||(1+γ₂)={}",
+                rhs * (1.0 + gamma)
+            );
         }
     }
 }

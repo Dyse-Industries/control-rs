@@ -456,9 +456,6 @@ is made independently by `transfer-function-design.md` §6 for
 - Demonstrate stability invariance under similarity transforms ($z = Tx$).
 - Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
   deterministic real-time latency.
-- Demonstrate host-scale stiff LTI plants (high $\kappa(A)$, widely separated
-  eigenvalues) within C-2 ($N_x \le 32$) against SciPy goldens under
-  `numerical-models-design.md` §6.3.
 
 #### 6.2. Methods
 
@@ -468,8 +465,8 @@ is made independently by `transfer-function-design.md` §6 for
 | Requirements-based test   | `#[test]` unit tests over standard physical models and singular cases            | FR-2, FR-3, FR-4, FR-5, FR-6 |
 | Property-based test       | `proptest` suites verifying interconnection identities and similarity invariants | FR-3, FR-5               |
 | Doctest                   | Runnable doc examples in rustdoc                                                 | FR-2                     |
-| Back-to-back comparison   | `examples/prototypes/numerical-models/state-space/` and MATLAB/`python-control` oracles; host-scale stiff LTI cases per [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-2, FR-4, FR-5         |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis; host `Instant` timing reported by umbrella §7 (not a CI gate)                           | NFR-1, NFR-2, C-2, C-3   |
+| Back-to-back comparison   | `examples/numerical-models/python3/state_space.py` vs `src/state_space.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-2, FR-4, FR-5         |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                   | NFR-1, NFR-2, C-2, C-3   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                                        | NFR-2                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics                          | FR-1..FR-6, NFR-1..NFR-2 |
 
@@ -480,7 +477,6 @@ is made independently by `transfer-function-design.md` §6 for
 | ZOH discretization residual        | Van Loan exact matrix exponential                 | Relative error | $\frac{\|\hat{A}_d - e^{A T_s}\|_\infty}{\|e^{A T_s}\|_\infty \epsilon} < 20.0$                   | Van Loan (1978) & Higham (2005) Padé scaling error bound    |
 | Step response propagation          | Closed-form analytic linear solution              | Absolute error | $\|x[k] - x_{\text{exact}}[k]\|_\infty \le k \gamma_{N_x} \|A\|_\infty^k \|x[0]\|_\infty$         | Matrix recurrence error propagation (Higham, 2002)          |
 | Similarity transform invariance    | Characteristic polynomial invariance              | Relative error | $\frac{\|\det(sI - A) - \det(sI - T A T^{-1})\|_\infty}{\|\det(sI - A)\|_\infty} \le 10 \epsilon$ | Spectral invariance under coordinate change (Ogata, 2010)   |
-| Stiff LTI ZOH / similarity         | SciPy `cont2discrete`; high $\kappa(A)$, separated eigenvalues | Residual ratio | $< 20.0$ within $N_x \le 32$                                                     | Van Loan (1978); Higham (2005). Forward error vs SciPy uses umbrella $\tau\kappa\varepsilon$ |
 | Feedback loop singularity          | Singular algebraic loop matrix $(I - \mathrm{sign}\, D_2 D_1)$ | Exact equality | `Err(StateSpaceError::SingularLoopMatrix)`                                                        | Precondition failure contract                               |
 | Tustin discretization singularity  | Singular bilinear operator $(I - \frac{T_s}{2}A)$ | Exact equality | `Err(StateSpaceError::SingularDiscretizationOperator)`                                            | Solvability precondition contract                           |
 | Long-horizon fixed-point recursion | Saturating recursion across $10^5$ steps          | Exact equality | Zero unbounded overflow drift / limit cycles                                                      | Mullis & Roberts (1976), Hwang (1977) fixed-point stability |
@@ -512,10 +508,11 @@ is made independently by `transfer-function-design.md` §6 for
 #### 6.6. Validation
 
 - **Continuous-Time Dynamics & ZOH Step Trajectory**: Verification of 2nd-order
-  continuous plant derivative evaluation, exact Zero-Order Hold (ZOH)
-  discretization via matrix exponential expansion, open-loop discrete unit step
-  response simulation, and similarity coordinate transformations in
-  `examples/numerical-models/examples/state_space_example.rs`.
+  continuous plant derivative evaluation, Zero-Order Hold (ZOH)
+  discretization via matrix exponential expansion, 200-step open-loop unit
+  step, similarity coordinate transformations, and a stiff diagonal plant
+  $A=\mathrm{diag}(-200,-0.5)$ in
+  `examples/numerical-models/src/state_space.rs`.
 
 #### 6.7. Not Verified
 
@@ -524,7 +521,8 @@ is made independently by `transfer-function-design.md` §6 for
 - MIMO transfer-function conversions using minimal McMillan-degree state
   realizations are deferred.
 - Transfer-function realization at denominator degree $> 32$ is not verified
-  against C-2 ($N_x \le 32$). Stiff host-scale cases stay inside that cap.
+  against C-2 ($N_x \le 32$). The example crate includes a 2-state stiff ZOH
+  case ([`numerical-models-design.md`](numerical-models-design.md) §6.6).
 
 ---
 
@@ -548,10 +546,7 @@ is made independently by `transfer-function-design.md` §6 for
   is bounded by the static capacity constraints of `DenseStorage`.
 - **Matrix Exponential Performance**: ZOH discretization of $A$ uses
   scaling-and-squaring Padé approximation using the Level 3 `Gemm` kernel (see
-  §4.8 for the specific Padé-degree and overscaling considerations). Host-scale
-  wall time uses those GEMM counts in the umbrella $T_{\mathrm{expected}}$
-  model ([`numerical-models-design.md`](numerical-models-design.md) §7).
-  Timing is not a CI gate.
+  §4.8 for the specific Padé-degree and overscaling considerations).
 
 ---
 
@@ -704,3 +699,4 @@ is made independently by `transfer-function-design.md` §6 for
 | 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `DenseStorage` traits.                                |
 | 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                          |
 | 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: stiff LTI (high $\kappa(A)$) within $N_x \le 32$; umbrella Instant timing. Caps unchanged.                             |
+| 1.7      | August 28, 2026 | @MitchellDScott | Example crate: 200-step tutorial trajectory, stiff ZOH plant, Instant timings. Caps unchanged.                                          |

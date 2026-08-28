@@ -483,9 +483,6 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
   `Quantized<Repr, SHIFT>`.
 - Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
   deterministic real-time latency.
-- Demonstrate host-scale large-grid interpolation against SciPy goldens under
-  `numerical-models-design.md` §6.3. Cache-stress uses `ArrayStorage` at
-  `Const<1024>` (no heap) and does not discharge the MCU element cap.
 
 #### 6.2. Methods
 
@@ -495,8 +492,8 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | Requirements-based test   | `#[test]` unit tests over grid boundaries, activations, and conversions                    | FR-2, FR-4, FR-5         |
 | Property-based test       | `proptest` suites verifying axis permutation round-trips and tensor contraction identities | FR-3                     |
 | Doctest                   | Runnable rustdoc examples                                                                  | FR-2, FR-4               |
-| Back-to-back comparison   | `examples/prototypes/numerical-models/tensor/` and SciPy/NumPy golden references; host-scale large-grid cases per [`numerical-models-design.md`](numerical-models-design.md) §6.3           | FR-3, FR-4               |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis; host `Instant` timing reported by umbrella §7 (not a CI gate)   | NFR-1, NFR-2, C-2, C-3   |
+| Back-to-back comparison   | `examples/numerical-models/python3/tensor.py` vs `src/tensor.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-3, FR-4               |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                    | NFR-1, NFR-2, C-2, C-3   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                                                  | NFR-2                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                    | FR-1..FR-5, NFR-1..NFR-2 |
 
@@ -507,7 +504,6 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | Contraction vs `Gemm` equivalence  | BLAS Level 3 `Gemm` reference                | Relative error / test ratio | $\frac{\|C_{\text{contract}} - C_{\text{gemm}}\|_\infty}{\|A\|_\infty \|B\|_\infty K \epsilon} < 20.0$ | Direct reduction of 2D tensor contraction to matrix product                |
 | Exact grid interpolation           | Stored vertex coordinates                    | Exact equality              | $0$ (exact)                                                                                            | Multilinear interpolation vertex consistency (Weiser & Zarantonello, 1988) |
 | Interior multilinear interpolation | Analytic piecewise linear model              | Absolute error              | $\|f(x) - \hat{f}(x)\| \le \frac{1}{8} \sum h_i^2 \|\frac{\partial^2 f}{\partial x_i^2}\|_\infty$      | Multilinear interpolation error bound (Weiser & Zarantonello, 1988)        |
-| Host large-grid interpolation      | SciPy `RegularGridInterpolator`              | Absolute error              | Same Weiser bound; $1024 \times 1024$ `ArrayStorage` per umbrella §4.3                                 | Weiser and Zarantonello (1988). Host `ArrayStorage` only (no heap); does not discharge MCU $S \le 1024$ |
 | Quantization round-trip            | Exact floating-point vs dequantized integer  | Absolute error              | $\|x - \text{dequantize}(\text{quantize}(x))\| \le 2^{-\text{SHIFT}-1}$                                | Half-LSB rounding bound for fixed-point quantization (Wu et al., 2020)     |
 | Permutation invertibility          | Permute and inverse permute axes             | Exact equality              | Inverted tensor == original tensor                                                                     | Exact structural permutation invariant                                     |
 | Activation lookup residual         | Exact nonlinear activation ($\tanh, \sigma$) | Absolute error              | $\|\hat{a}(x) - a(x)\|_\infty \le 2^{-7}$ for a 256-breakpoint Q7 table over $[-8, 8]$                  | Piecewise linear activation table approximation (Lai et al., 2018)         |
@@ -538,9 +534,10 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 #### 6.6. Validation
 
 - **Multilinear Grid Interpolation & Quantized Activation**: Verification of 2D
-  table multilinear continuous interpolation and fixed-point `Quantized<i8, 7>`
-  arithmetic with `Relu` activation in
-  `examples/numerical-models/examples/tensor_example.rs`.
+  table multilinear continuous interpolation (3×3 affine vertices and a
+  $16\times 16$ curved table on a 64-point cut) and fixed-point
+  `Quantized<i8, 7>` arithmetic with `Relu` on dyadic and non-dyadic inputs in
+  `examples/numerical-models/src/tensor.rs`.
 
 #### 6.7. Not Verified
 
@@ -548,8 +545,9 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
   are excluded.
 - Automatic deep learning framework graph import (ONNX/TFLite converter tools)
   is deferred to future tooling.
-- Host-scale grids sized to exceed L1 are not an MCU NFR-1 element-cap test.
-  A $1024 \times 1024$ table uses `ArrayStorage` (no heap).
+- Grids larger than NFR-1 $S\le 1024$ are not in the example crate; host
+  interpolation uses $16\times 16$
+  ([`numerical-models-design.md`](numerical-models-design.md) §6.6).
 
 ---
 
@@ -562,11 +560,6 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
   weight/activation RAM compared to `f32`.
 - **Zero-Copy Views**: `TensorView` and `TensorViewMut` operate over borrowed
   `FlatBuffer` pointers with rank metadata, avoiding tensor allocation.
-- **Host-scale timing**: Interpolation cost $O(2^K)$ corner evaluations (Kolda
-  and Bader, 2009) feeds the umbrella $T_{\mathrm{expected}}$ model
-  ([`numerical-models-design.md`](numerical-models-design.md) §7). Timing is
-  not a CI gate. MCU NFR-1 remains $S \le 1{,}024$ for stack-backed tensors.
-  Host-scale cache-stress uses `ArrayStorage` at `Const<1024>` (no heap).
 
 ---
 
@@ -654,3 +647,4 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                          |
 | 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: large-grid interpolation; umbrella Instant timing. NFR-1 cap unchanged.                                               |
 | 1.7      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); MCU element cap unchanged.                                                     |
+| 1.8      | August 28, 2026 | @MitchellDScott | Example crate: $16\times 16$ curved-grid interpolation and non-dyadic Q7. NFR-1 cap unchanged.                                          |

@@ -5,7 +5,8 @@ backends, and Embedded Test Server (ETS) firmware. The crate root
 [`README.md`](../README.md) is the project overview; this file is the
 operator's guide for everything under `examples/`.
 
-None of these packages are workspace members of `control-rs`. The numerical-model
+None of these packages are workspace members of `control-rs`. The
+numerical-model
 host crate, subprogram backends, QEMU, and Teensy packages each declare their
 own `[workspace]` so their toolchains and link flags stay out of the library
 graph.
@@ -14,29 +15,32 @@ graph.
 
 ## Directory index
 
-| Path | Kind | What it is | Run from |
-|:-----|:-----|:-----------|:---------|
-| [`numerical-models/`](numerical-models/) | Nested host crate | JSON V&V demos; Python oracles in `python/src/` | `examples/numerical-models/` |
-| [`subprograms/`](subprograms/) | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate |
-| [`qemu/`](qemu/) | Firmware package | Bare-metal ETS runners (Cortex-M7, RISC-V) | `examples/qemu/` or `cargo qemu` |
-| [`teensy4/`](teensy4/) | Firmware package | Teensy 4.0 ETS over USB CDC | `examples/teensy4/` or `cargo teensy` |
+| Path                                     | Kind              | What it is                                                           | Run from                              |
+|:-----------------------------------------|:------------------|:---------------------------------------------------------------------|:--------------------------------------|
+| [`numerical-models/`](numerical-models/) | Nested host crate | Demo generators + JSON V&V; Python in `python3/`                     | `examples/numerical-models/`          |
+| [`subprograms/`](subprograms/)           | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                     |
+| [`qemu/`](qemu/)                         | Firmware package  | Bare-metal ETS runners (Cortex-M7, RISC-V)                           | `examples/qemu/` or `cargo qemu`      |
+| [`teensy4/`](teensy4/)                   | Firmware package  | Teensy 4.0 ETS over USB CDC                                          | `examples/teensy4/` or `cargo teensy` |
 
 ---
 
 ## Prerequisites
 
 **Host numerical models** need a Rust toolchain that can build the workspace
-(see [`documentation/development-guide.md`](../documentation/development-guide.md))
+(see [
+`documentation/development-guide.md`](../documentation/development-guide.md))
 and Python ≥ 3.10 with NumPy/SciPy/matplotlib. The dedicated
-[`.github/workflows/numerical-models-vv.yml`](../.github/workflows/numerical-models-vv.yml)
+[
+`.github/workflows/numerical-models-vv.yml`](../.github/workflows/numerical-models.yml)
 workflow installs
-[`numerical-models/python/requirements.txt`](numerical-models/python/requirements.txt)
+[
+`numerical-models/python3/requirements.txt`](numerical-models/python3/requirements.txt)
 and runs V&V. Locally:
 
 ```bash
 python3.12 -m venv examples/numerical-models/.venv
 source examples/numerical-models/.venv/bin/activate
-pip install -r examples/numerical-models/python/requirements.txt
+pip install -r examples/numerical-models/python3/requirements.txt
 ```
 
 **QEMU ETS and the two `no_std` subprogram crates** additionally need:
@@ -63,38 +67,45 @@ subprogram crate.
 ## 1. Numerical models
 
 These binaries live in the nested crate [`numerical-models/`](numerical-models/)
-(not root `[[example]]` targets). Run them from **`examples/numerical-models/`**.
+(not root workspace targets). Run them from **`examples/numerical-models/`**.
 
-Each model is an independent vertical slice. Python and Rust **write** JSON
-artifacts under `results/<slug>/`; tests and plot scripts **read** them only.
+Python and Rust **write** JSON under `results/<slug>/`. Tests and `report.py`
+**read** those files only. Each artifact has `values` (tutorial plus compact
+stress payloads), `series`, `metrics` (residual / relative / $\kappa$), and
+`timings` (kernel-only min nanoseconds). `cargo test` gates on residual and
+relative bounds, not wall-clock. `report.py` writes slug-specific diagnostic
+plots (Hilbert relative-error heatmap and SE(3) 3D chain, Horner overlay,
+phase portrait, Nyquist contours, tensor surface) and Python vs Rust kernel
+times.
 
 ```bash
-pip install -r examples/numerical-models/python/requirements.txt
-cd examples/numerical-models
+pip install -r python3/requirements.txt
 
-# Emit all artifacts (Python + native JSON)
-cargo run --example all
+python3 python3/matrix.py
+python3 python3/polynomial.py
+python3 python3/state_space.py
+python3 python3/transfer_function.py
+python3 python3/tensor.py
+
+cargo run --release                  # all five native generators (kernel timings)
+# or: cargo run --release --bin matrix
 
 cargo test
-cargo test -- --ignored             # slow 1024² host-scale rows
-cargo run --example matrix_demo     # human transcript demo
+python3 python3/report.py          # optional plots from existing JSON
+python3 python3/report.py --force  # regenerate all JSON, then plot
 ```
 
-Per-slug emitters remain available (`cargo run --example matrix`, etc.).
-
-Optional plots: `python3 python/src/matrix_plot.py` (one script per slug).
-
-Schema: [`numerical-models/artifact.schema.json`](numerical-models/artifact.schema.json).
-
-The `numerical-models-vv` GitHub Actions workflow runs `cargo run --example all`,
-then `cargo test`, then the five `*_demo` smoke binaries.
+The `numerical-models` GitHub Actions workflow runs the generators, then
+`cargo test`. It is not part of `cargo ci`.
 
 | Command | Demonstrates |
 |:--------|:-------------|
-| `cargo run --example all` | Emits every Python and native JSON artifact |
-| `cargo run --example matrix_demo` | Dense `Matrix` transcript + local self-checks |
-| `cargo run --example matrix` | Writes `results/matrix/native.json` only |
-| `cargo test` | Compares JSON artifacts |
+| `python3 python3/matrix.py` | Writes `results/matrix/python.json` |
+| `cargo run --release` | All five native JSON files |
+| `cargo run --release --bin matrix` | Transcript + `results/matrix/native.json` |
+| `cargo test` | Compares the JSON pair |
+| `python3 python3/report.py` | Diagnostic plots (heatmap, phase portrait, Nyquist, 3D) and kernel time bars |
+| `python3 python3/report.py --force` | Regenerates all Python and Rust JSON, then plots |
 
 ---
 
@@ -105,12 +116,12 @@ Four standalone crates under [`subprograms/`](subprograms/). Each is a
 for one ISA. `src/` of `control-rs` is not modified. Copy the directory that
 matches the target; do not add these crates to the root workspace.
 
-| Crate | Marker | Default backend |
-|:------|:-------|:----------------|
-| [`subprograms/aarch64/`](subprograms/aarch64/) | `NeonBlas` | AArch64 NEON; optional `--features accelerate` |
-| [`subprograms/x86_64/`](subprograms/x86_64/) | `Avx2Blas` | AVX2+FMA after CPU detection; optional `--features cblas` |
-| [`subprograms/thumbv7em/`](subprograms/thumbv7em/) | `CmsisDspBlas` | CMSIS-DSP ABI, QEMU MPS2-AN500 |
-| [`subprograms/riscv32imac/`](subprograms/riscv32imac/) | `NmsisDspBlas` | NMSIS-DSP ABI, QEMU `virt` |
+| Crate                                                  | Marker         | Default backend                                           |
+|:-------------------------------------------------------|:---------------|:----------------------------------------------------------|
+| [`subprograms/aarch64/`](subprograms/aarch64/)         | `NeonBlas`     | AArch64 NEON; optional `--features accelerate`            |
+| [`subprograms/x86_64/`](subprograms/x86_64/)           | `Avx2Blas`     | AVX2+FMA after CPU detection; optional `--features cblas` |
+| [`subprograms/thumbv7em/`](subprograms/thumbv7em/)     | `CmsisDspBlas` | CMSIS-DSP ABI, QEMU MPS2-AN500                            |
+| [`subprograms/riscv32imac/`](subprograms/riscv32imac/) | `NmsisDspBlas` | NMSIS-DSP ABI, QEMU `virt`                                |
 
 **Always `cd` into the crate.** Each package has its own `[workspace]` and,
 for the `no_std` crates, a `.cargo/config.toml` that sets the target triple
