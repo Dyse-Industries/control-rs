@@ -4,8 +4,9 @@
 //! inner array is one column. NumPy `[[a, b], [c, d]]` is `[[a, c], [b, d]]`.
 
 use crate::{
-    ABS_F64, SOLVE_RESIDUAL_TAU, native_artifact, owned_to_rows, print_matrix,
-    save, solve_residual_ratio,
+    ABS_F64, SOLVE_RESIDUAL_TAU, col0, frobenius, inf_norm_mat,
+    native_artifact, owned_to_rows, print_matrix, save, solve_residual_ratio,
+    time_kernel, timing_entry,
 };
 use control_rs::math::num_types::Const;
 use control_rs::math::storage::ArrayStorage;
@@ -19,6 +20,15 @@ type Store<const R: usize, const C: usize> = ArrayStorage<f64, R, C>;
 type Blas = DefaultBlas;
 type Mat<const R: usize, const C: usize> =
     Matrix<f64, Const<R>, Const<C>, Store<R, C>>;
+
+const GEMM_N: usize = 64;
+const GEMM_ITERS: u32 = 200;
+const HILBERT_N: usize = 8;
+const SE3_N: usize = 40;
+const SE3_THETA: f64 = 0.15;
+const SE3_DX: f64 = 0.04;
+const SE3_DY: f64 = 0.01;
+const SE3_DZ: f64 = 0.03;
 
 pub fn main() {
     println!("=== Matrix Numerical Model Example ===");
@@ -101,6 +111,97 @@ pub fn main() {
         }
     }
 
+    println!("\n--- Hilbert n={HILBERT_N} ---");
+    let h = Mat::<8, 8>::from_fn(|i, j| 1.0 / ((i + j + 1) as f64));
+    let mut b_h = Mat::<8, 1>::zero();
+    let x_true = Mat::<8, 1>::from_fn(|_, _| 1.0);
+    h.mul_into_with::<Blas, Const<1>, _, _>(&x_true, &mut b_h);
+    let h_for_lu = Mat::<8, 8>::from_fn(|i, j| 1.0 / ((i + j + 1) as f64));
+    let lu_h =
+        LuDecomposition::decompose_with::<Blas>(h_for_lu).expect("Hilbert LU");
+    let mut x_h = b_h;
+    lu_h.solve_mut_with::<Blas, 1>(&mut x_h)
+        .expect("Hilbert solve");
+    let h_inv = lu_h.inverse_with::<Blas>().expect("Hilbert inverse");
+    let h_owned =
+        Owned::<f64, 8, 8>::from_fn(|i, j| 1.0 / ((i + j + 1) as f64));
+    let mut b_h_owned = Owned::<f64, 8, 1>::zero();
+    h_owned.mul_into(&Owned::<f64, 8, 1>::from_fn(|_, _| 1.0), &mut b_h_owned);
+    let x_h_owned =
+        Owned::<f64, 8, 1>::from_fn(|i, _| x_h.get(i, 0).copied().unwrap());
+    let residual_ratio_hilbert =
+        solve_residual_ratio(&h_owned, &x_h_owned, &b_h_owned);
+    let kappa_hilbert = inf_norm_mat(&h_owned) * inf_norm_mat(&h_inv);
+    println!("Hilbert residual ratio: {residual_ratio_hilbert:.6e}");
+    println!("Hilbert kappa_inf: {kappa_hilbert:.6e}");
+    assert!(
+        residual_ratio_hilbert < SOLVE_RESIDUAL_TAU,
+        "Hilbert residual ratio {residual_ratio_hilbert} exceeds {SOLVE_RESIDUAL_TAU}"
+    );
+
+    println!("\n--- Timed GEMM n={GEMM_N} ---");
+    let ga = Mat::<64, 64>::from_fn(|i, j| {
+        0.01 * ((i + 1) as f64) * ((j + 3) as f64) / 64.0
+    });
+    let gb = Mat::<64, 64>::from_fn(|i, j| {
+        0.02 * ((i + 2) as f64) * ((j + 1) as f64) / 64.0
+    });
+    let mut gc = Mat::<64, 64>::zero();
+    ga.mul_into_with::<Blas, Const<64>, _, _>(&gb, &mut gc);
+    let gemm00 = gc.get(0, 0).copied().unwrap();
+    let gemm_frob = frobenius(&gc);
+    let gemm_ns = time_kernel(GEMM_ITERS, || {
+        ga.mul_into_with::<Blas, Const<64>, _, _>(&gb, &mut gc);
+        gc.get(0, 0).copied()
+    });
+    println!("GEMM C[0,0] = {gemm00:.10e}");
+    println!("GEMM ||C||_F = {gemm_frob:.6e}");
+    println!("GEMM min ns ({GEMM_ITERS} iters): {gemm_ns}");
+
+    println!("\n--- SE(3) GEMM chain n={SE3_N} ---");
+    let (c_th, s_th) = (SE3_THETA.cos(), SE3_THETA.sin());
+    let t_se3 = Mat::<4, 4>::from_storage(Store::from_array([
+        [c_th, s_th, 0.0, 0.0],
+        [-s_th, c_th, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [SE3_DX, SE3_DY, SE3_DZ, 1.0],
+    ]));
+    let mut pose = Mat::<4, 4>::identity();
+    let mut se3_xyz = Vec::with_capacity(SE3_N);
+    let mut se3_r = Vec::with_capacity(SE3_N);
+    for _ in 0..SE3_N {
+        se3_xyz.push(vec![
+            pose.get(0, 3).copied().unwrap(),
+            pose.get(1, 3).copied().unwrap(),
+            pose.get(2, 3).copied().unwrap(),
+        ]);
+        let mut rot_rows = Vec::with_capacity(3);
+        for i in 0..3 {
+            rot_rows.push(vec![
+                pose.get(i, 0).copied().unwrap(),
+                pose.get(i, 1).copied().unwrap(),
+                pose.get(i, 2).copied().unwrap(),
+            ]);
+        }
+        se3_r.push(rot_rows);
+        let mut next = Mat::<4, 4>::zero();
+        t_se3.mul_into_with::<Blas, Const<4>, _, _>(&pose, &mut next);
+        pose = next;
+    }
+    println!(
+        "T^0 xyz = [{:.6}, {:.6}, {:.6}]",
+        se3_xyz[0][0], se3_xyz[0][1], se3_xyz[0][2]
+    );
+    println!(
+        "T^{} xyz = [{:.6}, {:.6}, {:.6}]",
+        SE3_N - 1,
+        se3_xyz[SE3_N - 1][0],
+        se3_xyz[SE3_N - 1][1],
+        se3_xyz[SE3_N - 1][2]
+    );
+
+    let hilbert_x = col0(&x_h);
+    let idx: Vec<f64> = (0..HILBERT_N).map(|i| i as f64).collect();
     let values = json!({
         "SUM": owned_to_rows(&sum),
         "DIFF": owned_to_rows(&diff),
@@ -108,10 +209,27 @@ pub fn main() {
         "TRANSPOSE": owned_to_rows(&trans),
         "X": owned_to_rows(&x),
         "A_INV": owned_to_rows(&a_inv),
+        "HILBERT_X": hilbert_x,
+        "HILBERT_A_INV": owned_to_rows(&h_inv),
+        "GEMM00": gemm00,
+        "SE3_T": owned_to_rows(&t_se3),
+        "SE3_XYZ": se3_xyz,
+        "SE3_R": se3_r,
+    });
+    let series = json!({
+        "hilbert_x": { "x": idx, "y": hilbert_x },
+    });
+    let metrics = json!({
         "residual_ratio": residual_ratio,
+        "residual_ratio_hilbert": residual_ratio_hilbert,
+        "kappa_hilbert": kappa_hilbert,
+        "gemm_frob": gemm_frob,
+    });
+    let timings = json!({
+        "gemm": timing_entry(GEMM_ITERS, gemm_ns),
     });
     save(
         "results/matrix/native.json",
-        &native_artifact("matrix", values, json!({})),
+        &native_artifact("matrix", values, series, metrics, timings),
     );
 }

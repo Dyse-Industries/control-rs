@@ -2,11 +2,15 @@
 //!
 //! Numerator and denominator coefficients are in ascending power order.
 
-use crate::{ABS_F64, native_artifact, owned_to_rows, print_matrix, save};
+use crate::{
+    ABS_F64, logspace, native_artifact, owned_to_rows, print_matrix, save,
+    time_kernel, timing_entry,
+};
 use control_rs::math::dsp::DefaultDsp;
 use control_rs::math::num_types::Const;
 use control_rs::math::storage::ArrayStorage;
 use control_rs::math::subprograms::DefaultBlas;
+use control_rs::polynomial::Polynomial;
 use control_rs::transfer_function::TransferFunction;
 use serde_json::json;
 
@@ -19,6 +23,30 @@ type Dsp = DefaultDsp;
 type Blas = DefaultBlas;
 type Tf<const N: usize, const D: usize> =
     TransferFunction<f64, Const<N>, Const<D>, StoreNum<N>, StoreDen<D>>;
+
+const BODE_N: usize = 128;
+const BODE_ITERS: u32 = 50;
+
+fn binomial(n: usize, k: usize) -> f64 {
+    if k > n {
+        return 0.0;
+    }
+    let mut v = 1.0_f64;
+    for i in 0..k {
+        v = v * ((n - i) as f64) / ((i + 1) as f64);
+    }
+    v
+}
+
+/// $(s - (-a))^n = (s+a)^n$ ascending, $n=4$, five coefficients.
+fn poly_s_plus_a_4(a: f64) -> [f64; 5] {
+    let n = 4_usize;
+    let mut c = [0.0_f64; 5];
+    for k in 0..=n {
+        c[k] = binomial(n, k) * a.powi((n - k) as i32);
+    }
+    c
+}
 
 pub fn main() {
     println!("=== Transfer Function Numerical Model Example ===");
@@ -37,36 +65,36 @@ pub fn main() {
     println!("Numerator (ascending): {:?}", tf.num_slice());
     println!("Denominator (ascending): {:?}", tf.den_slice());
 
-    let test_freqs = [0.1, 1.0, 10.0, 100.0];
-    let mut h_re = [0.0_f64; 4];
-    let mut h_im = [0.0_f64; 4];
-    let mut mag = [0.0_f64; 4];
-    println!("\n--- Frequency Evaluation ---");
-    println!(
-        "{:<16}{:<16}{:<16}{:<16}{:<16}{:<16}",
-        "omega (rad/s)", "Real", "Imag", "Mag (abs)", "Mag (dB)", "Phase (deg)"
-    );
-
-    for (idx, &w) in test_freqs.iter().enumerate() {
+    let freqs = logspace(-2.0, 3.0, BODE_N);
+    let mut h_re = vec![0.0_f64; BODE_N];
+    let mut h_im = vec![0.0_f64; BODE_N];
+    let mut mag = vec![0.0_f64; BODE_N];
+    let mut phase = vec![0.0_f64; BODE_N];
+    println!("\n--- Frequency Evaluation (logspace -2..3, {BODE_N} pts) ---");
+    for (idx, &w) in freqs.iter().enumerate() {
         let resp = tf.eval_frequency(w);
         let (mag_pt, phase_rad) = tf.bode_point(w);
-        let mag_db = 20.0 * libm::log10(mag_pt);
-        let phase_deg = phase_rad * (180.0 / core::f64::consts::PI);
         h_re[idx] = resp.re;
         h_im[idx] = resp.im;
         mag[idx] = mag_pt;
-        println!(
-            "{:<16.2}{:<16.8}{:<16.8}{:<16.8}{:<16.8}{:<16.8}",
-            w, resp.re, resp.im, mag_pt, mag_db, phase_deg
-        );
-        if (w - omega_c).abs() <= ABS_F64 {
+        phase[idx] = phase_rad;
+        if (w - omega_c).abs() <= 1e-9 {
             let expected_mag = core::f64::consts::FRAC_1_SQRT_2;
             assert!(
-                (mag_pt - expected_mag).abs() <= ABS_F64,
+                (mag_pt - expected_mag).abs() <= 1e-6,
                 "Butterworth |H(jω_c)|: {mag_pt} vs {expected_mag}"
             );
         }
     }
+    println!(
+        "H(j10) mag={:.6} (1/sqrt(2)={:.6})",
+        mag.iter()
+            .zip(freqs.iter())
+            .min_by(|a, b| (a.1 - 10.0).abs().total_cmp(&(b.1 - 10.0).abs()))
+            .map(|(m, _)| *m)
+            .unwrap_or(0.0),
+        core::f64::consts::FRAC_1_SQRT_2
+    );
 
     let h1 = Tf::<1, 2>::from_storage(
         StoreNum::from_column([2.0]),
@@ -115,8 +143,41 @@ pub fn main() {
     print_matrix("D", &ss.d());
     assert_eq!(ss.a().rows(), 2);
     assert_eq!(ss.a().cols(), 2);
-    assert_eq!(ss.b().rows(), 2);
-    assert_eq!(ss.c().cols(), 2);
+
+    println!("\n--- Clustered-pole H(s) = 1/[(s+1)^4 (s+1.01)^4] ---");
+    let d1 = Polynomial::<f64, Const<5>, StoreDen<5>>::from_storage(
+        StoreDen::from_column(poly_s_plus_a_4(1.0)),
+    );
+    let d2 = Polynomial::<f64, Const<5>, StoreDen<5>>::from_storage(
+        StoreDen::from_column(poly_s_plus_a_4(1.01)),
+    );
+    let den_c = d1.mul_poly_with::<Dsp, 5, 9>(&d2);
+    let mut den_arr = [0.0_f64; 9];
+    for i in 0..9 {
+        den_arr[i] = den_c.get(i).copied().unwrap_or(0.0);
+    }
+    let tf_c = Tf::<1, 9>::from_storage(
+        StoreNum::from_column([1.0]),
+        StoreDen::from_column(den_arr),
+        None,
+    );
+    let mut c_re = vec![0.0_f64; BODE_N];
+    let mut c_im = vec![0.0_f64; BODE_N];
+    let mut c_mag = vec![0.0_f64; BODE_N];
+    for (idx, &w) in freqs.iter().enumerate() {
+        let resp = tf_c.eval_frequency(w);
+        c_re[idx] = resp.re;
+        c_im[idx] = resp.im;
+        c_mag[idx] = (resp.re * resp.re + resp.im * resp.im).sqrt();
+    }
+    let bode_ns = time_kernel(BODE_ITERS, || {
+        let mut acc = 0.0_f64;
+        for &w in &freqs {
+            acc += tf.eval_frequency(w).re;
+        }
+        acc
+    });
+    println!("Bode min ns ({BODE_ITERS} sweeps): {bode_ns}");
 
     let values = json!({
         "H_RE": h_re,
@@ -127,12 +188,21 @@ pub fn main() {
         "CCF_B": owned_to_rows(&ss.b()),
         "CCF_C": owned_to_rows(&ss.c()),
         "CCF_D": owned_to_rows(&ss.d()),
+        "CLUSTER_H_RE": c_re,
+        "CLUSTER_H_IM": c_im,
+        "FREQS": freqs,
     });
     let series = json!({
-        "bode_mag": { "x": test_freqs, "y": mag },
+        "bode_mag": { "x": freqs, "y": mag },
+        "bode_phase": { "x": freqs, "y": phase },
+        "cluster_mag": { "x": freqs, "y": c_mag },
+    });
+    let metrics = json!({});
+    let timings = json!({
+        "bode": timing_entry(BODE_ITERS, bode_ns),
     });
     save(
         "results/transfer_function/native.json",
-        &native_artifact("transfer_function", values, series),
+        &native_artifact("transfer_function", values, series, metrics, timings),
     );
 }

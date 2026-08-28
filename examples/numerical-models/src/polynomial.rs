@@ -2,7 +2,10 @@
 //!
 //! Coefficients are stored in ascending power order (constant term first).
 
-use crate::{ABS_F64, native_artifact, owned_to_rows, print_matrix, save};
+use crate::{
+    ABS_F64, native_artifact, owned_to_rows, print_matrix, save, time_kernel,
+    timing_entry,
+};
 use control_rs::math::complex_num::Complex;
 use control_rs::math::dsp::DefaultDsp;
 use control_rs::math::num_types::{Const, Dim};
@@ -16,11 +19,45 @@ type Store<const N: usize> = ArrayStorage<f64, N, 1>;
 type Dsp = DefaultDsp;
 type Poly<const N: usize> = Polynomial<f64, Const<N>, Store<N>>;
 
+const SWEEP_N: usize = 128;
+const HORNER_ITERS: u32 = 10_000;
+const CLUSTER_X: f64 = 1.005;
+
 fn first_n<const N: usize>(p: &Poly<N>, n: usize) -> Vec<f64>
 where
     Const<N>: Dim,
 {
     (0..n).map(|i| p.get(i).copied().unwrap_or(0.0)).collect()
+}
+
+fn binomial(n: usize, k: usize) -> f64 {
+    if k > n {
+        return 0.0;
+    }
+    let mut v = 1.0_f64;
+    for i in 0..k {
+        v = v * ((n - i) as f64) / ((i + 1) as f64);
+    }
+    v
+}
+
+/// Coefficients of $(x - a)^8$, ascending.
+fn linear_pow8(a: f64) -> [f64; 9] {
+    let n = 8_usize;
+    let mut c = [0.0_f64; 9];
+    for k in 0..=n {
+        let sign = if (n - k) % 2 == 0 { 1.0 } else { -1.0 };
+        c[k] = binomial(n, k) * sign * a.powi((n - k) as i32);
+    }
+    c
+}
+
+fn abs_poly_eval(coeffs: &[f64], x_abs: f64) -> f64 {
+    let mut acc = 0.0_f64;
+    for &c in coeffs.iter().rev() {
+        acc = acc * x_abs + c.abs();
+    }
+    acc
 }
 
 pub fn main() {
@@ -90,6 +127,31 @@ pub fn main() {
     println!("Companion Matrix C:");
     print_matrix("C", &comp);
 
+    println!("\n--- Clustered-root Horner (x-1)^8 (x-1.01)^8 ---");
+    let left = Poly::<9>::from_storage(Store::from_column(linear_pow8(1.0)));
+    let right = Poly::<9>::from_storage(Store::from_column(linear_pow8(1.01)));
+    let cluster = left.mul_poly_with::<Dsp, 9, 17>(&right);
+    let cluster_coeffs: Vec<f64> = first_n(&cluster, 17);
+    let sweep_x: Vec<f64> = (0..SWEEP_N)
+        .map(|i| 0.9 + 0.2 * (i as f64) / ((SWEEP_N - 1) as f64))
+        .collect();
+    let cluster_y: Vec<f64> =
+        sweep_x.iter().map(|&x| cluster.evaluate(x)).collect();
+    let mut max_rel = 0.0_f64;
+    for (&x, &y) in sweep_x.iter().zip(cluster_y.iter()) {
+        let tilde = abs_poly_eval(&cluster_coeffs, x.abs());
+        let bound = crate::gamma(32.0) * tilde;
+        let rel = if y.abs() == 0.0 { 0.0 } else { bound / y.abs() };
+        if rel > max_rel {
+            max_rel = rel;
+        }
+    }
+    let horner_ns = time_kernel(HORNER_ITERS, || {
+        cluster.evaluate(core::hint::black_box(CLUSTER_X))
+    });
+    println!("Horner at x={CLUSTER_X}: {}", cluster.evaluate(CLUSTER_X));
+    println!("Horner min ns ({HORNER_ITERS} iters): {horner_ns}");
+
     let values = json!({
         "P_REAL": val_real,
         "P_C_RE": val_complex.re,
@@ -102,9 +164,21 @@ pub fn main() {
         "QUOT": first_n(&quot, 2),
         "REM": rem.get(0).copied().unwrap(),
         "COMPANION": owned_to_rows(&comp),
+        "CLUSTER_COEFFS": cluster_coeffs,
+        "CLUSTER_X": sweep_x,
+        "CLUSTER_Y": cluster_y,
+    });
+    let series = json!({
+        "horner": { "x": sweep_x, "y": cluster_y },
+    });
+    let metrics = json!({
+        "horner_bound_scale": max_rel,
+    });
+    let timings = json!({
+        "horner": timing_entry(HORNER_ITERS, horner_ns),
     });
     save(
         "results/polynomial/native.json",
-        &native_artifact("polynomial", values, json!({})),
+        &native_artifact("polynomial", values, series, metrics, timings),
     );
 }

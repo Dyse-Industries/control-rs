@@ -3,16 +3,17 @@
 
 from __future__ import annotations
 
-import json
 import math
-from pathlib import Path
 
 import numpy as np
-from numpy.polynomial.polynomial import polymul
+from numpy.polynomial.polynomial import polyfromroots, polymul
 from scipy import signal
 
-CRATE_ROOT = Path(__file__).resolve().parents[1]
+from vv import CRATE_ROOT, save_json, time_kernel, timing_entry
+
 OUT_PATH = CRATE_ROOT / "results" / "transfer_function" / "python.json"
+BODE_N = 128
+BODE_ITERS = 50
 
 
 def _ccf_from_scipy(num_asc: np.ndarray, den_asc: np.ndarray) -> tuple:
@@ -35,14 +36,16 @@ def _ccf_from_scipy(num_asc: np.ndarray, den_asc: np.ndarray) -> tuple:
     return a, b, c, d
 
 
-def scenario() -> dict[str, object]:
+def build_artifact() -> dict:
     omega_c = 10.0
     w_c2 = omega_c**2
     sqrt2_wc = math.sqrt(2.0) * omega_c
     num = np.array([w_c2], dtype=np.float64)
     den = np.array([w_c2, sqrt2_wc, 1.0], dtype=np.float64)
-    freqs = np.array([0.1, 1.0, 10.0, 100.0], dtype=np.float64)
+    freqs = np.logspace(-2.0, 3.0, BODE_N, dtype=np.float64)
     _w, h = signal.freqs(np.flip(num), np.flip(den), worN=freqs)
+    mag = np.abs(h)
+    phase = np.angle(h)
     h1_num, h1_den = np.array([2.0]), np.array([2.0, 1.0])
     h2_num, h2_den = np.array([5.0]), np.array([5.0, 1.0])
     num_ser = polymul(h1_num, h2_num)
@@ -50,46 +53,43 @@ def scenario() -> dict[str, object]:
     ccf_num = np.array([2.0, 3.0], dtype=np.float64)
     ccf_den = np.array([4.0, 5.0, 1.0], dtype=np.float64)
     a, b, c, d = _ccf_from_scipy(ccf_num, ccf_den)
-    mag = np.abs(h)
-    return {
-        "h_re": np.asarray(h.real, dtype=np.float64),
-        "h_im": np.asarray(h.imag, dtype=np.float64),
-        "num_ser": np.asarray(num_ser, dtype=np.float64),
-        "den_ser": np.asarray(den_ser, dtype=np.float64),
-        "ccf_a": a,
-        "ccf_b": b,
-        "ccf_c": c,
-        "ccf_d": d,
-        "freqs": freqs,
-        "mag": mag,
-    }
-
-
-def build_artifact() -> dict:
-    s = scenario()
+    den_c = polymul(polyfromroots(np.full(4, -1.0)), polyfromroots(np.full(4, -1.01)))
+    num_c = np.array([1.0], dtype=np.float64)
+    _wc, hc = signal.freqs(np.flip(num_c), np.flip(den_c), worN=freqs)
+    ns = time_kernel(
+        BODE_ITERS,
+        lambda: signal.freqs(np.flip(num), np.flip(den), worN=freqs),
+    )
     return {
         "slug": "transfer_function",
         "source": "python",
         "values": {
-            "H_RE": s["h_re"].tolist(),
-            "H_IM": s["h_im"].tolist(),
-            "NUM_SER": s["num_ser"].tolist(),
-            "DEN_SER": s["den_ser"].tolist(),
-            "CCF_A": s["ccf_a"].tolist(),
-            "CCF_B": s["ccf_b"].tolist(),
-            "CCF_C": s["ccf_c"].tolist(),
-            "CCF_D": s["ccf_d"].tolist(),
+            "H_RE": np.asarray(h.real, dtype=np.float64).tolist(),
+            "H_IM": np.asarray(h.imag, dtype=np.float64).tolist(),
+            "NUM_SER": np.asarray(num_ser, dtype=np.float64).tolist(),
+            "DEN_SER": np.asarray(den_ser, dtype=np.float64).tolist(),
+            "CCF_A": a.tolist(),
+            "CCF_B": b.tolist(),
+            "CCF_C": c.tolist(),
+            "CCF_D": d.tolist(),
+            "CLUSTER_H_RE": np.asarray(hc.real, dtype=np.float64).tolist(),
+            "CLUSTER_H_IM": np.asarray(hc.imag, dtype=np.float64).tolist(),
+            "FREQS": freqs.tolist(),
         },
         "series": {
-            "bode_mag": {
-                "x": s["freqs"].tolist(),
-                "y": s["mag"].tolist(),
-            }
+            "bode_mag": {"x": freqs.tolist(), "y": mag.tolist()},
+            "bode_phase": {"x": freqs.tolist(), "y": phase.tolist()},
+            "cluster_mag": {
+                "x": freqs.tolist(),
+                "y": np.abs(hc).tolist(),
+            },
+        },
+        "metrics": {},
+        "timings": {
+            "bode": timing_entry(BODE_ITERS, ns),
         },
     }
 
 
 if __name__ == "__main__":
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUT_PATH.write_text(json.dumps(build_artifact(), indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {OUT_PATH}")
+    save_json(OUT_PATH, build_artifact())

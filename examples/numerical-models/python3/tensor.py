@@ -3,14 +3,16 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
+import math
 
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
-CRATE_ROOT = Path(__file__).resolve().parents[1]
+from vv import CRATE_ROOT, save_json, time_kernel, timing_entry
+
 OUT_PATH = CRATE_ROOT / "results" / "tensor" / "python.json"
+CUT_N = 64
+INTERP_ITERS = 10_000
 
 
 def _q7_raw(val: float) -> int:
@@ -24,7 +26,7 @@ def _q7_raw(val: float) -> int:
     return int(scaled - 0.5)
 
 
-def scenario() -> dict[str, object]:
+def affine() -> dict:
     values = np.array(
         [[0.0, 1.0, 2.0], [2.0, 3.0, 4.0], [4.0, 5.0, 6.0]],
         dtype=np.float32,
@@ -45,46 +47,98 @@ def scenario() -> dict[str, object]:
         dtype=np.float32,
     )
     samples = np.asarray(interp(points), dtype=np.float32)
+    return {"points": points, "samples": samples}
+
+
+def curved() -> dict:
+    ii, jj = np.meshgrid(np.arange(16), np.arange(16), indexing="ij")
+    table = np.sin(np.pi * ii / 15.0) * np.cos(np.pi * jj / 15.0)
+    table = np.asarray(table, dtype=np.float32)
+    axes = (
+        np.arange(16, dtype=np.float32),
+        np.arange(16, dtype=np.float32),
+    )
+    interp = RegularGridInterpolator(
+        axes, table, method="linear", bounds_error=False, fill_value=None
+    )
+    cut_x = np.linspace(0.0, 15.0, CUT_N, dtype=np.float32)
+    pts = np.stack([cut_x, cut_x], axis=1)
+    samples = np.asarray(interp(pts), dtype=np.float32)
+    interior = np.array([[7.3, 8.1]], dtype=np.float32)
+    ns = time_kernel(INTERP_ITERS, lambda: interp(interior))
+    weiser = 0.125 * 2.0 * (math.pi / 15.0) ** 2
+    return {
+        "table": table,
+        "cut_x": cut_x,
+        "samples": samples,
+        "ns": ns,
+        "weiser": weiser,
+    }
+
+
+def q7() -> dict:
     float_inputs = np.array(
-        [-0.75, -0.25, 0.0, 0.25, 0.5, 0.75], dtype=np.float32
+        [
+            math.pi / 4.0,
+            1.0 / 3.0,
+            math.e - 2.0,
+            -0.75,
+            0.0,
+            0.5,
+        ],
+        dtype=np.float64,
     )
     q_raw = np.array([_q7_raw(float(v)) for v in float_inputs], dtype=np.int32)
-    dequant = q_raw.astype(np.float32) / 128.0
+    dequant = q_raw.astype(np.float64) / 128.0
     relu_raw = np.maximum(q_raw, 0)
-    relu_dequant = relu_raw.astype(np.float32) / 128.0
+    relu_dequant = relu_raw.astype(np.float64) / 128.0
+    quant_err = float(np.max(np.abs(float_inputs - dequant)))
     return {
-        "points": points,
-        "samples": samples,
         "q_raw": q_raw,
-        "dequant": dequant,
+        "dequant": dequant.astype(np.float32),
         "relu_raw": relu_raw,
-        "relu_dequant": relu_dequant,
+        "relu_dequant": relu_dequant.astype(np.float32),
+        "quant_err": quant_err,
     }
 
 
 def build_artifact() -> dict:
-    s = scenario()
-    pts = s["points"]
+    a = affine()
+    c = curved()
+    q = q7()
+    pts = a["points"]
     return {
         "slug": "tensor",
         "source": "python",
         "values": {
-            "SAMPLES": s["samples"].tolist(),
-            "Q_RAW": s["q_raw"].tolist(),
-            "DEQUANT": s["dequant"].tolist(),
-            "RELU_RAW": s["relu_raw"].tolist(),
-            "RELU_DEQUANT": s["relu_dequant"].tolist(),
+            "SAMPLES": a["samples"].tolist(),
+            "CURVED_SAMPLES": c["samples"].tolist(),
+            "CURVED_TABLE": c["table"].tolist(),
+            "CUT_X": c["cut_x"].tolist(),
+            "Q_RAW": q["q_raw"].tolist(),
+            "DEQUANT": q["dequant"].tolist(),
+            "RELU_RAW": q["relu_raw"].tolist(),
+            "RELU_DEQUANT": q["relu_dequant"].tolist(),
         },
         "series": {
             "interp": {
                 "x": [float(pts[i, 0]) for i in range(len(pts))],
-                "y": s["samples"].tolist(),
-            }
+                "y": a["samples"].tolist(),
+            },
+            "curved": {
+                "x": c["cut_x"].tolist(),
+                "y": c["samples"].tolist(),
+            },
+        },
+        "metrics": {
+            "quant_roundtrip_max": q["quant_err"],
+            "weiser_bound": c["weiser"],
+        },
+        "timings": {
+            "interp": timing_entry(INTERP_ITERS, c["ns"]),
         },
     }
 
 
 if __name__ == "__main__":
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUT_PATH.write_text(json.dumps(build_artifact(), indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {OUT_PATH}")
+    save_json(OUT_PATH, build_artifact())
