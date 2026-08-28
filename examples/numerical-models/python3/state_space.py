@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from scipy import signal
 
-CRATE_ROOT = Path(__file__).resolve().parents[2]
+CRATE_ROOT = Path(__file__).resolve().parents[1]
 OUT_PATH = CRATE_ROOT / "results" / "state_space" / "python.json"
 
 

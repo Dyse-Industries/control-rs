@@ -25,19 +25,17 @@
     missing_docs
 )]
 
-pub mod emit;
-pub mod host_scale_emit;
 pub mod matrix;
 pub mod polynomial;
 pub mod state_space;
 pub mod tensor;
 pub mod transfer_function;
 
-#[cfg(test)]
-mod host_scale;
+use std::path::Path;
 
 use control_rs::math::num_types::{Const, Dim};
 use control_rs::matrix::Owned;
+use serde_json::{Value, json};
 
 /// Absolute error bound for `f64` equivalence tables (umbrella §6.3).
 pub const ABS_F64: f64 = 1e-12;
@@ -47,16 +45,6 @@ pub const ABS_F32: f32 = 1e-6;
 pub const SOLVE_RESIDUAL_TAU: f64 = 20.0;
 /// ZOH `A_d` residual-ratio bound versus SciPy `e^{A T_s}` (state-space §6.3).
 pub const ZOH_AD_TAU: f64 = 20.0;
-
-#[cfg(test)]
-pub(crate) fn assert_f32(left: f32, right: f32, what: &str) {
-    control_rs::assert_almost_eq!(left, right, ABS_F32, "{}", what);
-}
-
-#[cfg(test)]
-pub(crate) fn assert_f64(left: f64, right: f64, what: &str) {
-    control_rs::assert_almost_eq!(left, right, ABS_F64, "{}", what);
-}
 
 /// Prints a dense `f64` matrix in row-major visual layout.
 pub fn print_matrix<const R: usize, const C: usize>(
@@ -80,9 +68,7 @@ pub fn print_matrix<const R: usize, const C: usize>(
 }
 
 /// ∞-norm of a dense `f64` matrix (maximum absolute row sum).
-pub fn inf_norm_mat<const R: usize, const C: usize>(
-    m: &Owned<f64, R, C>,
-) -> f64
+pub fn inf_norm_mat<const R: usize, const C: usize>(m: &Owned<f64, R, C>) -> f64
 where
     Const<R>: Dim,
     Const<C>: Dim,
@@ -131,24 +117,49 @@ where
         num = num.max(
             (ax.get(i, 0).copied().unwrap_or(0.0)
                 - b.get(i, 0).copied().unwrap_or(0.0))
-                .abs(),
+            .abs(),
         );
     }
     let den = inf_norm_mat(a) * inf_norm_col(x) * f64::EPSILON;
     if den == 0.0 { 0.0 } else { num / den }
 }
 
-/// ∞-norm of a square row slice (host-scale / state-space tests).
-pub(crate) fn inf_norm_rows<const N: usize>(rows: &[[f64; N]; N]) -> f64 {
-    let mut best = 0.0_f64;
-    for row in rows {
-        let mut s = 0.0_f64;
-        for &v in row {
-            s += v.abs();
+/// Row-major JSON array from a dense `Owned` matrix.
+pub fn owned_to_rows<const R: usize, const C: usize>(
+    m: &Owned<f64, R, C>,
+) -> Value
+where
+    Const<R>: Dim,
+    Const<C>: Dim,
+{
+    let mut rows = Vec::with_capacity(R);
+    for i in 0..R {
+        let mut row = Vec::with_capacity(C);
+        for j in 0..C {
+            row.push(m.get(i, j).copied().unwrap_or(0.0));
         }
-        if s > best {
-            best = s;
-        }
+        rows.push(Value::Array(row.into_iter().map(Value::from).collect()));
     }
-    best
+    Value::Array(rows)
+}
+
+/// Write a JSON artifact under the crate root (creates parent dirs).
+pub fn save(rel: impl AsRef<Path>, doc: &Value) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel.as_ref());
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create results dir");
+    }
+    let text = serde_json::to_string_pretty(doc).expect("serialize json");
+    std::fs::write(&path, format!("{text}\n")).expect("write artifact");
+    eprintln!("wrote {}", path.display());
+}
+
+/// Wrap native `values` / `series` as a V&V artifact.
+pub fn native_artifact(slug: &str, values: Value, series: Value) -> Value {
+    json!({
+        "slug": slug,
+        "source": "rust",
+        "values": values,
+        "series": series,
+    })
 }

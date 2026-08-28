@@ -16,7 +16,7 @@ from numpy.polynomial.polynomial import (
     polyval,
 )
 
-CRATE_ROOT = Path(__file__).resolve().parents[2]
+CRATE_ROOT = Path(__file__).resolve().parents[1]
 OUT_PATH = CRATE_ROOT / "results" / "polynomial" / "python.json"
 
 

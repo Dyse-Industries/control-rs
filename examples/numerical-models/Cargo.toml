@@ -5,6 +5,8 @@ edition = "2024"
 publish = false
 description = "Host numerical-model examples with JSON V&V artifacts."
 license = "MIT OR Apache-2.0"
+default-run = "all"
+autobins = false
 
 [workspace]
 
@@ -14,49 +16,25 @@ libm = "0.2.16"
 serde_json = "1.0.140"
 
 [[bin]]
-name = "tensor"
-path = "examples/tensor.rs"
-
-[[example]]
 name = "all"
-path = "examples/all.rs"
+path = "src/main.rs"
 
-[[example]]
+[[bin]]
 name = "matrix"
-path = "examples/matrix.rs"
+path = "src/bin/matrix.rs"
 
-[[example]]
-name = "matrix_demo"
-path = "examples/matrix_example.rs"
-
-[[example]]
+[[bin]]
 name = "polynomial"
-path = "examples/polynomial.rs"
+path = "src/bin/polynomial.rs"
 
-[[example]]
-name = "polynomial_demo"
-path = "examples/polynomial_example.rs"
-
-[[example]]
+[[bin]]
 name = "state_space"
-path = "examples/state_space.rs"
+path = "src/bin/state_space.rs"
 
-[[example]]
-name = "state_space_demo"
-path = "examples/state_space_example.rs"
-
-[[example]]
+[[bin]]
 name = "transfer_function"
-path = "examples/transfer_function.rs"
+path = "src/bin/transfer_function.rs"
 
-[[example]]
-name = "transfer_function_demo"
-path = "examples/transfer_function_example.rs"
-
-[[example]]
-name = "tensor_demo"
-path = "examples/tensor_example.rs"
-
-[[example]]
-name = "host_scale_emit"
-path = "examples/host_scale_emit.rs"
+[[bin]]
+name = "tensor"
+path = "src/bin/tensor.rs"

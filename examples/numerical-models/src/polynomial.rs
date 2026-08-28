@@ -1,116 +1,110 @@
-//! Polynomial native artifact and JSON equivalence test.
+//! Polynomial demo. Copy this file and point `Store` / `Dsp` at your backends.
+//!
+//! Coefficients are stored in ascending power order (constant term first).
 
+use crate::{ABS_F64, native_artifact, owned_to_rows, print_matrix, save};
 use control_rs::math::complex_num::Complex;
-use control_rs::polynomial::ArrayPolynomial;
-use serde_json::{Value, json};
+use control_rs::math::dsp::DefaultDsp;
+use control_rs::math::num_types::{Const, Dim};
+use control_rs::math::storage::ArrayStorage;
+use control_rs::polynomial::Polynomial;
+use serde_json::json;
 
-/// Native polynomial scenario matching `python/src/polynomial.py`.
-pub fn native_values() -> Value {
-    let p = ArrayPolynomial::<f64, 5>::from_coefficients([2.0, -3.0, 4.0, 1.0, 0.0]);
+/// Swap this for a custom coefficient backend.
+type Store<const N: usize> = ArrayStorage<f64, N, 1>;
+/// Swap this for a hardware convolution backend.
+type Dsp = DefaultDsp;
+type Poly<const N: usize> = Polynomial<f64, Const<N>, Store<N>>;
+
+fn first_n<const N: usize>(p: &Poly<N>, n: usize) -> Vec<f64>
+where
+    Const<N>: Dim,
+{
+    (0..n).map(|i| p.get(i).copied().unwrap_or(0.0)).collect()
+}
+
+pub fn main() {
+    println!("=== Polynomial Numerical Model Example ===");
+
+    let p =
+        Poly::<5>::from_storage(Store::from_column([2.0, -3.0, 4.0, 1.0, 0.0]));
+    println!("\n--- Polynomial Evaluation & Calculus ---");
+    println!("Coefficients (ascending): {:?}", p.as_slice());
+
     let x_test = 2.5;
-    let val_complex = p.evaluate_complex(Complex::new(1.0, 2.0));
+    let val_real = p.evaluate(x_test);
+    println!("p({x_test}) = {val_real:.10}");
+
+    let s_test = Complex::new(1.0, 2.0);
+    let val_complex = p.evaluate_complex(s_test);
+    println!(
+        "p({:.1} + {:.1}j) = {:.10} + {:.10}j",
+        s_test.re, s_test.im, val_complex.re, val_complex.im
+    );
+
     let dp = p.derivative();
+    println!("p'(x) coefficients: {:?}", dp.as_slice());
+    let dp_val = dp.evaluate(x_test);
+    println!("p'({x_test}) = {:.10}", dp_val);
+
     let integ = p.integral(5.0);
-    let p1 = ArrayPolynomial::<f64, 2>::from_coefficients([1.0, 2.0]);
-    let p2 = ArrayPolynomial::<f64, 2>::from_coefficients([3.0, 4.0]);
-    let prod = p1.mul_poly::<2, 3>(&p2);
+    println!("int p(x) dx (c0=5) coefficients: {:?}", integ.as_slice());
+    let integ_val = integ.evaluate(x_test);
+    println!("int_0^{x_test} p(t) dt + 5.0 = {:.10}", integ_val);
+
+    let p1 = Poly::<2>::from_storage(Store::from_column([1.0, 2.0]));
+    let p2 = Poly::<2>::from_storage(Store::from_column([3.0, 4.0]));
+    let prod = p1.mul_poly_with::<Dsp, 2, 3>(&p2);
+    println!("\n--- Polynomial Multiplication & Division ---");
+    println!("(1 + 2x) * (3 + 4x) = {:?}", prod.as_slice());
+
     let (quot, rem) = prod.div_rem::<2, 2, 1>(&p1).expect("div_rem");
-    let p_monic = ArrayPolynomial::<f64, 3>::from_coefficients([-6.0, -5.0, 1.0]);
-    let companion = p_monic.companion_matrix::<2>().expect("companion");
+    println!(
+        "Quotient of ({:?}) / ({:?}): {:?}",
+        prod.as_slice(),
+        p1.as_slice(),
+        quot.as_slice()
+    );
+    println!("Remainder: {:?}", rem.as_slice());
 
-    let mut deriv = [0.0_f64; 5];
-    let mut integ_c = [0.0_f64; 5];
-    let mut prod_c = [0.0_f64; 3];
-    let mut quot_c = [0.0_f64; 2];
-    for i in 0..5 {
-        deriv[i] = dp.get(i).copied().unwrap();
-        integ_c[i] = integ.get(i).copied().unwrap();
-    }
+    let recon = quot.mul_poly_with::<Dsp, 2, 3>(&p1);
     for i in 0..3 {
-        prod_c[i] = prod.get(i).copied().unwrap();
-    }
-    for i in 0..2 {
-        quot_c[i] = quot.get(i).copied().unwrap();
-    }
-
-    let mut companion_rows = Vec::with_capacity(2);
-    for i in 0..2 {
-        let mut row = Vec::with_capacity(2);
-        for j in 0..2 {
-            row.push(companion.get(i, j).copied().unwrap_or(0.0));
+        let mut got = recon.get(i).copied().unwrap();
+        if i == 0 {
+            got += rem.get(0).copied().unwrap();
         }
-        companion_rows.push(Value::Array(row.into_iter().map(Value::from).collect()));
+        let expected = prod.get(i).copied().unwrap();
+        assert!(
+            (got - expected).abs() <= ABS_F64,
+            "div_rem reconstruct coeff {i}: {got} vs {expected}"
+        );
     }
 
-    json!({
-        "P_REAL": p.evaluate(x_test),
+    let p_monic =
+        Poly::<3>::from_storage(Store::from_column([-6.0, -5.0, 1.0]));
+    println!("\n--- Monic Companion Matrix ---");
+    println!("Monic p(x) coefficients: {:?}", p_monic.as_slice());
+    assert!(p_monic.is_monic());
+
+    let comp = p_monic.companion_matrix::<2>().expect("companion");
+    println!("Companion Matrix C:");
+    print_matrix("C", &comp);
+
+    let values = json!({
+        "P_REAL": val_real,
         "P_C_RE": val_complex.re,
         "P_C_IM": val_complex.im,
-        "DERIV": deriv,
-        "P_DERIV": dp.evaluate(x_test),
-        "INTEG": integ_c,
-        "P_INTEG": integ.evaluate(x_test),
-        "PROD": prod_c,
-        "QUOT": quot_c,
+        "DERIV": first_n(&dp, 5),
+        "P_DERIV": dp_val,
+        "INTEG": first_n(&integ, 5),
+        "P_INTEG": integ_val,
+        "PROD": first_n(&prod, 3),
+        "QUOT": first_n(&quot, 2),
         "REM": rem.get(0).copied().unwrap(),
-        "COMPANION": companion_rows,
-    })
-}
-
-pub fn native_artifact() -> Value {
-    json!({
-        "slug": "polynomial",
-        "source": "rust",
-        "values": native_values(),
-        "series": {},
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use serde_json::Value;
-
-    use crate::assert_f64;
-
-    const PYTHON_JSON: &str = "results/polynomial/python.json";
-    const NATIVE_JSON: &str = "results/polynomial/native.json";
-
-    fn load_artifact(rel: &str, hint: &str) -> Value {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|_| {
-            panic!("missing artifact: {}\nrun: {}", path.display(), hint);
-        });
-        serde_json::from_str(&text).expect("parse json")
-    }
-
-    #[test]
-    fn polynomial_equiv() {
-        let python = load_artifact(PYTHON_JSON, "python3 python/src/polynomial.py");
-        let native = load_artifact(NATIVE_JSON, "cargo run --example polynomial");
-        let py = &python["values"];
-        let rs = &native["values"];
-        assert_f64(py["P_REAL"].as_f64().unwrap(), rs["P_REAL"].as_f64().unwrap(), "P_REAL");
-        assert_f64(py["P_C_RE"].as_f64().unwrap(), rs["P_C_RE"].as_f64().unwrap(), "P_C_RE");
-        assert_f64(py["P_C_IM"].as_f64().unwrap(), rs["P_C_IM"].as_f64().unwrap(), "P_C_IM");
-        assert_f64(py["P_DERIV"].as_f64().unwrap(), rs["P_DERIV"].as_f64().unwrap(), "P_DERIV");
-        assert_f64(py["P_INTEG"].as_f64().unwrap(), rs["P_INTEG"].as_f64().unwrap(), "P_INTEG");
-        assert_f64(py["REM"].as_f64().unwrap(), rs["REM"].as_f64().unwrap(), "REM");
-        for (i, key) in ["DERIV", "INTEG", "PROD", "QUOT"].into_iter().enumerate() {
-            let py_arr = py[key].as_array().unwrap();
-            let rs_arr = rs[key].as_array().unwrap();
-            for (j, (pv, rv)) in py_arr.iter().zip(rs_arr.iter()).enumerate() {
-                assert_f64(pv.as_f64().unwrap(), rv.as_f64().unwrap(), &format!("{key}[{j}]"));
-            }
-            let _ = i;
-        }
-        let py_c = py["COMPANION"].as_array().unwrap();
-        let rs_c = rs["COMPANION"].as_array().unwrap();
-        for (i, (pr, rr)) in py_c.iter().zip(rs_c.iter()).enumerate() {
-            for (j, (pv, rv)) in pr.as_array().unwrap().iter().zip(rr.as_array().unwrap().iter()).enumerate() {
-                assert_f64(pv.as_f64().unwrap(), rv.as_f64().unwrap(), &format!("COMPANION[{i}][{j}]"));
-            }
-        }
-    }
+        "COMPANION": owned_to_rows(&comp),
+    });
+    save(
+        "results/polynomial/native.json",
+        &native_artifact("polynomial", values, json!({})),
+    );
 }

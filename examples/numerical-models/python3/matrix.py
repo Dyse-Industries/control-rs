@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from scipy import linalg
 
-CRATE_ROOT = Path(__file__).resolve().parents[2]
+CRATE_ROOT = Path(__file__).resolve().parents[1]
 RESULTS = CRATE_ROOT / "results" / "matrix"
 OUT_PATH = RESULTS / "python.json"
 

@@ -27,6 +27,9 @@ on:
 jobs:
   vv:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/numerical-models
     steps:
       - uses: actions/checkout@v4
 
@@ -39,17 +42,19 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python oracles
-        run: pip install -r examples/numerical-models/python/requirements.txt
+        run: pip install -r python3/requirements.txt
 
-      - name: Emit JSON artifacts
-        run: cd examples/numerical-models && cargo run --example all
+      - name: Python generators
+        run: |
+          for slug in matrix polynomial state_space transfer_function tensor; do
+            python3 python3/${slug}.py
+          done
+
+      - name: Rust generators
+        run: |
+          for slug in matrix polynomial state_space transfer_function tensor; do
+            cargo run --example ${slug}
+          done
 
       - name: Equivalence tests
-        run: cd examples/numerical-models && cargo test
-
-      - name: Tutorial smoke binaries
-        run: |
-          cd examples/numerical-models
-          for ex in matrix_demo polynomial_demo state_space_demo transfer_function_demo tensor_demo; do
-            cargo run --example "$ex"
-          done
+        run: cargo test
