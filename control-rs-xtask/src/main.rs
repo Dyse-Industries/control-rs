@@ -284,7 +284,6 @@ fn run_ci_all_qemu() {
         lint_time,
         test_time,
     );
-
     // Save report
     if let Err(e) = utils::save_report("ci-report.md", &report_content) {
         eprintln!("\tFailed to write ci-report.md: {e}");

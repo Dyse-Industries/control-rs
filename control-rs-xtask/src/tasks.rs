@@ -549,10 +549,29 @@ pub fn run_fmt() -> (Result<(), usize>, String) {
         .output()
         .expect("Failed to run cargo fmt-check");
 
+    let nested_fmt = Command::new("cargo")
+        .args([
+            "fmt",
+            "--manifest-path",
+            "examples/numerical-models/Cargo.toml",
+            "--",
+            "--check",
+        ])
+        .output()
+        .expect("Failed to run nested numerical-model fmt-check");
+
     let stdout_str = String::from_utf8_lossy(&fmt_output.stdout);
     let stderr_str = String::from_utf8_lossy(&fmt_output.stderr);
-    let combined = format!("{stdout_str}{stderr_str}");
-    parse_fmt_output(&combined, fmt_output.status.success())
+    let nested_out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&nested_fmt.stdout),
+        String::from_utf8_lossy(&nested_fmt.stderr)
+    );
+    let combined = format!("{stdout_str}{stderr_str}{nested_out}");
+    parse_fmt_output(
+        &combined,
+        fmt_output.status.success() && nested_fmt.status.success(),
+    )
 }
 
 /// Task to run clippy check with JSON output formatting.

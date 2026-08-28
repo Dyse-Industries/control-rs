@@ -53,8 +53,6 @@ pub mod state_space_test_suite {
         let u = Owned::<f64, 1, 1>::zero();
 
         let (x_dot, y) = sys.derivative(&x, &u);
-        // Golden from examples/prototypes/numerical-models/state_space_prototype.py
-        // (mass-spring layout in this test uses column-major A).
         assert_almost_eq!(x_dot.get(0, 0).copied().unwrap(), 0.0, 1e-12); // vel = 0
         assert_almost_eq!(x_dot.get(1, 0).copied().unwrap(), -2.0, 1e-12); // accel = -k*x = -2
         assert_almost_eq!(y.get(0, 0).copied().unwrap(), 1.0, 1e-12);

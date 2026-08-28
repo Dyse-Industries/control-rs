@@ -523,6 +523,8 @@ trigger.
   and polynomial calculus.
 - Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
   deterministic real-time performance.
+- Demonstrate host-scale clustered-root Horner evaluation (degree $N > 50$)
+  against SciPy goldens under `numerical-models-design.md` §6.3.
 
 #### 6.2. Methods
 
@@ -532,8 +534,8 @@ trigger.
 | Requirements-based test   | `#[test]` unit tests over boundary conditions and division | FR-2, FR-4, FR-5, FR-6   |
 | Property-based test       | `proptest` suites verifying ring algebraic invariants      | FR-2, FR-3               |
 | Doctest                   | Runnable rustdoc examples                                  | FR-2, FR-5               |
-| Back-to-back comparison   | `examples/prototypes/numerical-models/polynomial/` oracle  | FR-2, FR-3, FR-6         |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis     | NFR-2, C-2               |
+| Back-to-back comparison   | `examples/prototypes/numerical-models/polynomial/` oracle; host-scale clustered-root cases per [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-2, FR-3, FR-6         |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis; host `Instant` timing reported by umbrella §7 (not a CI gate)     | NFR-2, C-2               |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                  | NFR-1                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics    | FR-1..FR-6, NFR-1..NFR-2 |
 
@@ -546,6 +548,7 @@ trigger.
 | Division remainder relation       | Identity $A(x) = Q(x)B(x) + R(x)$                  | Exact equality / Rel. error | $\|A - (QB + R)\|_\infty \le \max(N, M)\epsilon$                                                          | Euclidean division invariant                                   |
 | Polynomial derivative             | Analytic power rule $\frac{d}{dx} x^k = k x^{k-1}$ | Exact equality              | $0$ (exact for integer/fixed-point)                                                                       | Exact algebraic derivative definition                          |
 | Companion matrix eigenvalues      | Known root sets                                    | Absolute error              | $\|\lambda_i - r_i\| \le \mathcal{O}(\epsilon \kappa(p))$                                                 | Backward stable companion matrix pencil (Aurentz et al., 2018) |
+| Clustered-root Horner (degree $N>50$) | SciPy `polyval` / manufactured coefficients    | Relative error              | $\le \tau\,\kappa\,\varepsilon$ per umbrella §6.3                                                        | Higham (2002) coefficient sensitivity. In-cap ($N \le 1024$). Clustered-root fixture is umbrella §8 Proposal |
 | Zero leading denominator division | Divisor with zero leading coefficient              | Exact equality              | `Err(DivisionError::ZeroLeadingCoefficient)`                                                              | Precondition failure contract                                  |
 | Zero-allocation execution         | Host allocator interception                        | Exact equality              | 0 heap allocations                                                                                        | NFR-1 `#![no_std]` invariant                                   |
 
@@ -577,13 +580,16 @@ trigger.
   degree-bounded polynomial construction, real and complex Horner evaluation,
   analytical differentiation/integration, polynomial multiplication, Euclidean division,
   and Frobenius companion matrix formulation in
-  `examples/numerical-models/polynomial_example.rs`.
+  `examples/numerical-models/examples/polynomial_example.rs`.
 
 #### 6.7. Not Verified
 
 - Root finding for ill-conditioned polynomials with high multiplicity roots (
   where condition number $\kappa(p) \to \infty$) is not guaranteed to achieve
-  backward stability without multi-precision arithmetic.
+  backward stability without multi-precision arithmetic. Host-scale
+  **evaluation** of clustered-root polynomials is verified to the umbrella
+  $\tau\kappa\varepsilon$ bound; companion-matrix **root finding** at that
+  scale is not.
 - Fixed-point Horner evaluation without per-iteration dynamic scaling may suffer
   precision degradation for dynamic ranges $> 2^{16}$.
 
@@ -595,7 +601,10 @@ trigger.
   exactly $N \times \text{size\_of}(T)$ bytes on stack without heap overhead.
 - **Horner FLOP Count**: `evaluate` executes in exactly $N-1$ additions
   and $N-1$ multiplications (utilizing hardware FMA instructions on ARM
-  Cortex-M4/M7).
+  Cortex-M4/M7). Host-scale wall time uses this $2(N-1)$ count in the
+  umbrella $T_{\mathrm{expected}}$ model
+  ([`numerical-models-design.md`](numerical-models-design.md) §7). Timing is
+  not a CI gate.
 - **Zero-Copy Views**: `PolynomialView` and `PolynomialViewMut` occupy only 2
   pointer words plus stride metadata, avoiding buffer copying.
 
@@ -691,3 +700,4 @@ trigger.
 | 1.4      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with backward error bounds ($\gamma_{2n}$).                                                 |
 | 1.5      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<1>` dimensions.                                |
 | 1.6      | August 26, 2026 | @MitchellDScott | Trimmed companion/Faddeev–LeVerrier comparison; de-duplicated Bini/Aurentz reference blurbs.                                          |
+| 1.7      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-root Horner ($N>50$); umbrella $\tau\kappa\varepsilon$ and Instant timing. Caps unchanged.                 |

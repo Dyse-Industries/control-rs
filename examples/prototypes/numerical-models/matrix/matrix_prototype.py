@@ -32,7 +32,7 @@ def scenario() -> dict[str, np.ndarray]:
     }
 
 
-def goldens() -> dict[str, np.ndarray]:
+def equiv() -> dict[str, np.ndarray]:
     s = scenario()
     return {
         "SUM": s["sum"],

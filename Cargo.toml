@@ -56,27 +56,6 @@ ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
 [dev-dependencies]
 proptest = "1"
 
-[[example]]
-name = "matrix_example"
-path = "examples/numerical-models/matrix_example.rs"
-
-[[example]]
-name = "polynomial_example"
-path = "examples/numerical-models/polynomial_example.rs"
-
-[[example]]
-name = "state_space_example"
-path = "examples/numerical-models/state_space_example.rs"
-
-[[example]]
-name = "transfer_function_example"
-path = "examples/numerical-models/transfer_function_example.rs"
-
-[[example]]
-name = "tensor_example"
-path = "examples/numerical-models/tensor_example.rs"
-
-
 [profile.release]
 # Enable Link Time Optimization (LTO)
 lto = "fat" # or true for a simpler LTO, "fat" is more aggressive

@@ -441,6 +441,9 @@ realization is future work (§8).
   Observable Canonical Forms.
 - Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
   deterministic real-time performance.
+- Demonstrate host-scale clustered-pole frequency response (denominator
+  degree $N > 50$) against SciPy goldens under `numerical-models-design.md`
+  §6.3. Realization at that order is not a C-2 state-space claim.
 
 #### 6.2. Methods
 
@@ -450,8 +453,8 @@ realization is future work (§8).
 | Requirements-based test   | `#[test]` unit tests over physical filter benchmarks and singular cases                       | FR-2, FR-3, FR-4, FR-5   |
 | Property-based test       | `proptest` suites verifying transfer function commutativity and feedback identities           | FR-3, FR-4               |
 | Doctest                   | Runnable rustdoc examples                                                                     | FR-2                     |
-| Back-to-back comparison   | `examples/prototypes/numerical-models/transfer-function/` and MATLAB `tf` / `python-control` oracles | FR-2, FR-4, FR-5         |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                        | NFR-1, NFR-2, C-2, C-4   |
+| Back-to-back comparison   | `examples/prototypes/numerical-models/transfer-function/` and MATLAB `tf` / `python-control` oracles; host-scale clustered-pole cases per [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-2, FR-4, FR-5         |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis; host `Instant` timing reported by umbrella §7 (not a CI gate)                                        | NFR-1, NFR-2, C-2, C-4   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                                                     | NFR-1                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                       | FR-1..FR-5, NFR-1..NFR-2 |
 
@@ -463,6 +466,7 @@ realization is future work (§8).
 | Series multiplication                         | Discrete polynomial convolution                            | Absolute error | $\|(N_1 N_2)_k - \sum a_i b_{k-i}\|_\infty \le (N_1+N_2)\epsilon$                                                                         | Discrete convolution arithmetic bound (Oppenheim & Schafer, 2009) |
 | Tustin discretization frequency mapping       | $\omega_d = \frac{2}{T_s} \arctan(\frac{\omega_a T_s}{2})$ | Relative error | $\le 5\epsilon$                                                                                                                           | Bilinear mapping identity (Franklin et al., 1998)                 |
 | Canonical state-space eigenvalue equivalence  | Roots of denominator polynomial $D(s)$                     | Absolute error | $\|\lambda_i(A_c) - p_i\| \le \mathcal{O}(\epsilon \kappa(D))$                                                                            | Companion matrix spectral equivalence (Kenney & Laub, 1988)       |
+| Clustered-pole $H(j\omega)$ (degree $N>50$)   | SciPy `freqs`                                              | Relative error | $\le \tau\,\kappa\,\varepsilon$ per umbrella §6.3                                                                                         | Higham (2002) coefficient sensitivity. In-cap ($N,D \le 1024$). Clustered-root fixture is umbrella §8 Proposal |
 | Zero leading denominator validation           | Denominator with zero leading coefficient                  | Exact equality | `Err(TransferFunctionError::ZeroLeadingDenominator)`                                                                                      | Precondition failure contract                                     |
 | Strictly improper transfer function rejection | System with $N > D$ in strictly proper contexts            | Exact equality | `Err(TransferFunctionError::ImproperSystem)`                                                                                              | Properness contract                                               |
 | Zero-allocation execution                     | Host allocator interception                                | Exact equality | 0 heap allocations                                                                                                                        | NFR-1 `#![no_std]` invariant                                      |
@@ -496,7 +500,7 @@ realization is future work (§8).
   2nd-order transfer function rational frequency evaluation $H(j\omega)$, Bode
   magnitude/phase point generation, series cascade interconnection ($H_1 \cdot H_2$),
   and controllable canonical state-space realization in
-  `examples/numerical-models/transfer_function_example.rs`.
+  `examples/numerical-models/examples/transfer_function_example.rs`.
 
 #### 6.7. Not Verified
 
@@ -506,6 +510,9 @@ realization is future work (§8).
   undefined and not verified for numerical convergence.
 - Transfer-function-direct partial-fraction ZOH is not implemented; public
   `to_discrete_zoh` uses controllable canonical form plus Van Loan ZOH (§4.9).
+- Controllable-canonical realization at denominator degree $> 32$ is not
+  verified against `state-space-design.md` C-2 ($N_x \le 32$). Host-scale
+  clustered-pole cases verify $H(j\omega)$ evaluation, not that conversion.
 
 ---
 
@@ -517,6 +524,10 @@ realization is future work (§8).
   pointer references plus stride/length parameters, incurring zero allocation.
 - **Inline Operations**: Storage element accessors monomorphize into direct
   memory loads.
+- **Host-scale timing**: Frequency-response Horner cost follows the polynomial
+  sibling $2(N-1)$ count and feeds the umbrella $T_{\mathrm{expected}}$ model
+  ([`numerical-models-design.md`](numerical-models-design.md) §7). Timing is
+  not a CI gate.
 
 ---
 
@@ -618,3 +629,4 @@ realization is future work (§8).
 | 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with frequency sweep tolerances and algebraic invariants.                                  |
 | 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<1>` dimensions.                                |
 | 1.5      | August 26, 2026 | @MitchellDScott | Trimmed near-pole and companion-form caveats; crate-wide standards cite `vv-standards.md`.                                            |
+| 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-pole $H(j\omega)$ ($N>50$); realization at degree $>32$ stays in §6.7. Caps unchanged.                    |

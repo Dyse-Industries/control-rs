@@ -69,8 +69,18 @@ the target-side infrastructure:
   Cortex-M** (`thumbv7em-none-eabihf`) and **RISC-V**
   (`riscv32imac-unknown-none-elf`) targets.
 - **Code Quality Reporting**: Parses stdout/stderr from the available
-  cargo tooling (`fmt`, `clippy`, `test`, `tarpaulin`, `qemu`) and generates
-  a report (`ci-report.md`).
+  cargo tooling (`fmt`, `clippy`, `test`, `tarpaulin`, `qemu`) and generates a
+  report (`ci-report.md`).
+- **Numerical-model JSON V&V**: Separate workflow
+  [`.github/workflows/numerical-models-vv.yml`](../.github/workflows/numerical-models-vv.yml)
+  installs Python 3.12 and `examples/numerical-models/python/requirements.txt`,
+  then `cd examples/numerical-models && cargo run --example all`, `cargo test`,
+  and the five `*_demo` smoke binaries. Not part of `cargo ci`. Independently:
+  emit artifacts per `examples/README.md`, then
+  `cd examples/numerical-models && cargo test` (slow $1024^2$ rows:
+  `cargo test -- --ignored`). That nested crate is not a workspace member, so
+  `cargo fmt-all` does not cover it; `cargo ci` fmt-checks it via
+  `--manifest-path`.
 
 ---
 
@@ -153,7 +163,10 @@ parameters in real time.
 ## Continuous Integration & Verification
 
 Run the exact verification steps performed by the GitHub Actions pipeline
-locally (clippy, formatting, tarpaulin coverage and CI → virtual ETS).
+locally (clippy, formatting, tarpaulin coverage, and CI → virtual ETS).
+Numerical-model JSON V&V is a separate workflow; run
+`cd examples/numerical-models && cargo run --example all && cargo test` after
+`pip install -r examples/numerical-models/python/requirements.txt`.
 
 - **Run all checks (ARM & RISC-V QEMU):**
   ```bash

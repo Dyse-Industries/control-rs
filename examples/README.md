@@ -5,10 +5,10 @@ backends, and Embedded Test Server (ETS) firmware. The crate root
 [`README.md`](../README.md) is the project overview; this file is the
 operator's guide for everything under `examples/`.
 
-None of these packages are workspace members of `control-rs`. Host numerical
-models register as `[[example]]` targets on the root crate. Subprogram,
-QEMU, and Teensy packages each declare their own `[workspace]` so their
-toolchains and link flags stay out of the library graph.
+None of these packages are workspace members of `control-rs`. The numerical-model
+host crate, subprogram backends, QEMU, and Teensy packages each declare their
+own `[workspace]` so their toolchains and link flags stay out of the library
+graph.
 
 ---
 
@@ -16,8 +16,7 @@ toolchains and link flags stay out of the library graph.
 
 | Path | Kind | What it is | Run from |
 |:-----|:-----|:-----------|:---------|
-| [`numerical-models/`](numerical-models/) | Root `[[example]]` | `Matrix`, `Polynomial`, `StateSpace`, `Tensor`, `TransferFunction` demos | Repo root |
-| [`prototypes/numerical-models/`](prototypes/numerical-models/) | Python oracles | Same mathematics as the Rust demos, used as a host-side check | Repo root |
+| [`numerical-models/`](numerical-models/) | Nested host crate | JSON V&V demos; Python oracles in `python/src/` | `examples/numerical-models/` |
 | [`subprograms/`](subprograms/) | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate |
 | [`qemu/`](qemu/) | Firmware package | Bare-metal ETS runners (Cortex-M7, RISC-V) | `examples/qemu/` or `cargo qemu` |
 | [`teensy4/`](teensy4/) | Firmware package | Teensy 4.0 ETS over USB CDC | `examples/teensy4/` or `cargo teensy` |
@@ -26,10 +25,19 @@ toolchains and link flags stay out of the library graph.
 
 ## Prerequisites
 
-**Host numerical models and prototypes** need a Rust toolchain that can build
-the workspace (see [`documentation/development-guide.md`](../documentation/development-guide.md))
-and, for the Python oracles, Python 3. The oracles use the standard library
-only.
+**Host numerical models** need a Rust toolchain that can build the workspace
+(see [`documentation/development-guide.md`](../documentation/development-guide.md))
+and Python ≥ 3.10 with NumPy/SciPy/matplotlib. The dedicated
+[`.github/workflows/numerical-models-vv.yml`](../.github/workflows/numerical-models-vv.yml)
+workflow installs
+[`numerical-models/python/requirements.txt`](numerical-models/python/requirements.txt)
+and runs V&V. Locally:
+
+```bash
+python3.12 -m venv examples/numerical-models/.venv
+source examples/numerical-models/.venv/bin/activate
+pip install -r examples/numerical-models/python/requirements.txt
+```
 
 **QEMU ETS and the two `no_std` subprogram crates** additionally need:
 
@@ -54,42 +62,43 @@ subprogram crate.
 
 ## 1. Numerical models
 
-These binaries live in `examples/numerical-models/` and are wired in the root
-`Cargo.toml` as `[[example]]` targets. Run them from the **repository root**.
+These binaries live in the nested crate [`numerical-models/`](numerical-models/)
+(not root `[[example]]` targets). Run them from **`examples/numerical-models/`**.
+
+Each model is an independent vertical slice. Python and Rust **write** JSON
+artifacts under `results/<slug>/`; tests and plot scripts **read** them only.
+
+```bash
+pip install -r examples/numerical-models/python/requirements.txt
+cd examples/numerical-models
+
+# Emit all artifacts (Python + native JSON)
+cargo run --example all
+
+cargo test
+cargo test -- --ignored             # slow 1024² host-scale rows
+cargo run --example matrix_demo     # human transcript demo
+```
+
+Per-slug emitters remain available (`cargo run --example matrix`, etc.).
+
+Optional plots: `python3 python/src/matrix_plot.py` (one script per slug).
+
+Schema: [`numerical-models/artifact.schema.json`](numerical-models/artifact.schema.json).
+
+The `numerical-models-vv` GitHub Actions workflow runs `cargo run --example all`,
+then `cargo test`, then the five `*_demo` smoke binaries.
 
 | Command | Demonstrates |
 |:--------|:-------------|
-| `cargo run --example matrix_example` | Dense `Matrix`: LU solve, inverse, Kalman covariance update |
-| `cargo run --example polynomial_example` | Horner evaluation, calculus, Euclidean division, companion matrix |
-| `cargo run --example state_space_example` | Continuous LTI, Taylor ZOH discretization, step trajectory |
-| `cargo run --example tensor_example` | 2-D multilinear interpolation, Q7 quantization, ReLU |
-| `cargo run --example transfer_function_example` | Butterworth \(H(s)\), Bode samples, series cascade, controllable canonical form |
-
-Each process prints a titled transcript and exits 0. Source for a given model
-is `examples/numerical-models/<name>_example.rs`.
+| `cargo run --example all` | Emits every Python and native JSON artifact |
+| `cargo run --example matrix_demo` | Dense `Matrix` transcript + local self-checks |
+| `cargo run --example matrix` | Writes `results/matrix/native.json` only |
+| `cargo test` | Compares JSON artifacts |
 
 ---
 
-## 2. Host-side prototypes
-
-Python oracles under `examples/prototypes/numerical-models/` recompute the same
-scenarios as the Rust examples. They are the `/cr-prototype` artifacts for
-`numerical-models`, not a second implementation of the crate.
-
-```bash
-python3 examples/prototypes/numerical-models/matrix_prototype.py
-python3 examples/prototypes/numerical-models/polynomial_prototype.py
-python3 examples/prototypes/numerical-models/state_space_prototype.py
-python3 examples/prototypes/numerical-models/tensor_prototype.py
-python3 examples/prototypes/numerical-models/transfer_function_prototype.py
-```
-
-Use them to compare printed values against the matching `cargo run --example`
-output. They do not take a `--features` flag and do not link `control-rs`.
-
----
-
-## 3. Subprogram backends
+## 2. Subprogram backends
 
 Four standalone crates under [`subprograms/`](subprograms/). Each is a
 **copyable reference implementor**: a zero-sized marker type plus trait impls
@@ -126,7 +135,7 @@ QEMU.
 
 ---
 
-## 4. QEMU ETS firmware
+## 3. QEMU ETS firmware
 
 [`qemu/`](qemu/) is validation firmware for the Embedded Test Server, not a
 BLAS backend. It does not grow CMSIS/NMSIS link steps.
@@ -152,7 +161,7 @@ See [`qemu/README.md`](qemu/README.md).
 
 ---
 
-## 5. Teensy 4.0 ETS firmware
+## 4. Teensy 4.0 ETS firmware
 
 Physical Cortex-M7 board over USB CDC. Build and flash from
 `examples/teensy4/`; drive it from the host with `cargo teensy`. Full wiring,

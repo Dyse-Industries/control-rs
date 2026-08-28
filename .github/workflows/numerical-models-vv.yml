@@ -1,0 +1,55 @@
+name: Numerical Models V&V
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "examples/numerical-models/**"
+      - "src/matrix/**"
+      - "src/polynomial/**"
+      - "src/state_space/**"
+      - "src/transfer_function/**"
+      - "src/tensor/**"
+      - "src/math/**"
+      - ".github/workflows/numerical-models-vv.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "examples/numerical-models/**"
+      - "src/matrix/**"
+      - "src/polynomial/**"
+      - "src/state_space/**"
+      - "src/transfer_function/**"
+      - "src/tensor/**"
+      - "src/math/**"
+      - ".github/workflows/numerical-models-vv.yml"
+
+jobs:
+  vv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python oracles
+        run: pip install -r examples/numerical-models/python/requirements.txt
+
+      - name: Emit JSON artifacts
+        run: cd examples/numerical-models && cargo run --example all
+
+      - name: Equivalence tests
+        run: cd examples/numerical-models && cargo test
+
+      - name: Tutorial smoke binaries
+        run: |
+          cd examples/numerical-models
+          for ex in matrix_demo polynomial_demo state_space_demo transfer_function_demo tensor_demo; do
+            cargo run --example "$ex"
+          done
