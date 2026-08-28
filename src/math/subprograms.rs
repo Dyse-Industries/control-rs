@@ -5,7 +5,7 @@
 //! - **BLAS Level 2**: Matrix-vector kernels and rank-1/2 updates ([`level2`]).
 //! - **Packed BLAS**: Structured packed matrix-vector subprograms ([`packed`]).
 //! - **BLAS Level 3**: Matrix-matrix kernels and rank-$k$ updates ([`level3`]).
-//! - **Sparse BLAS (SpBLAS)**: Compressed row/column sparse kernels ([`sparse`]).
+//! - **Sparse BLAS (`SpBLAS`)**: Compressed row/column sparse kernels ([`sparse`]).
 //! - **LAPACK Direct Solvers**: Factorizations ($LU$, $QR$, Cholesky), triangular solvers, and eigensolvers ([`lapack`]).
 //!
 //! Provides [`DefaultBlas`] as a zero-cost reference implementation across all BLAS/LAPACK traits
@@ -39,17 +39,7 @@
 // Subprogram traits and implementations are grouped logically by BLAS Level 1/2/3 and LAPACK, rather than alphabetically.
 #![allow(clippy::arbitrary_source_item_ordering)]
 #![allow(clippy::needless_range_loop)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::match_same_arms)]
 #![allow(clippy::type_complexity)]
-#![allow(clippy::doc_markdown)]
-#![allow(clippy::wildcard_imports)]
-#![allow(clippy::match_like_matches_macro)]
-#![allow(clippy::eq_op)]
-#![allow(clippy::collapsible_if)]
-#![allow(clippy::use_self)]
-#![allow(clippy::needless_pass_by_ref_mut)]
 
 use crate::math::num_traits::{Float, One, Radical, Scalar, Zero};
 use crate::math::ops::Div;
@@ -65,7 +55,7 @@ use crate::math::{LinAlgError, LinAlgResult};
 
 /// Level 1 BLAS: Vector-vector subprograms.
 pub mod level1 {
-    use super::*;
+    use super::{DenseStorage, DenseStorageMut, Radical, Scalar};
 
     /// Scaled vector addition: $y \leftarrow \alpha x + y$.
     pub trait Axpy<T: Scalar, X: DenseStorage<T>, Y: DenseStorageMut<T>> {
@@ -85,21 +75,21 @@ pub mod level1 {
         fn real_scal(alpha: T::Real, x: &mut X);
     }
 
-    /// Unconjugated inner product: $x^T y = \sum_{i} x_i y_i$.
+    /// Unconjugated inner product: $x^T y = \sum_{i} x_{i} y_{i}$.
     pub trait Dotu<T: Scalar, X: DenseStorage<T>, Y: DenseStorage<T>> {
         /// Computes $x^T y$.
         fn dotu(x: &X, y: &Y) -> T;
     }
 
-    /// Conjugated inner product: $x^H y = \sum_{i} \overline{x_i} y_i$.
+    /// Conjugated inner product: $x^H y = \sum_{i} \overline{x_{i}} y_{i}$.
     pub trait Dotc<T: Scalar, X: DenseStorage<T>, Y: DenseStorage<T>> {
         /// Computes $x^H y$.
         fn dotc(x: &X, y: &Y) -> T;
     }
 
-    /// Sum of absolute values of real/imaginary components: $\sum (|re(x_i)| + |im(x_i)|)$.
+    /// Sum of absolute values of real/imaginary components: $\sum (|re(x_{i})| + |im(x_{i})|)$.
     pub trait Asum<T: Scalar, X: DenseStorage<T>> {
-        /// Computes $\sum (|re(x_i)| + |im(x_i)|)$.
+        /// Computes $\sum (|re(x_{i})| + |im(x_{i})|)$.
         fn asum(x: &X) -> T::Real;
     }
 
@@ -115,7 +105,7 @@ pub mod level1 {
         fn swap(x: &mut X, y: &mut Y);
     }
 
-    /// Euclidean 2-norm: $\|x\|_2 = \sqrt{\sum |x_i|^2}$.
+    /// Euclidean 2-norm: $\|x\|_2 = \sqrt{\sum |x_{i}|^2}$.
     pub trait Nrm2<T: Scalar, X: DenseStorage<T>>
     where
         T::Real: Radical,
@@ -125,7 +115,7 @@ pub mod level1 {
     }
 
     /// Applies a Givens plane rotation:
-    /// $\begin{bmatrix} x_i \\ y_i \end{bmatrix} \leftarrow \begin{bmatrix} c & s \\ -\overline{s} & c \end{bmatrix} \begin{bmatrix} x_i \\ y_i \end{bmatrix}$.
+    /// $\begin{bmatrix} x_{i} \\ y_{i} \end{bmatrix} \leftarrow \begin{bmatrix} c & s \\ -\overline{s} & c \end{bmatrix} \begin{bmatrix} x_{i} \\ y_{i} \end{bmatrix}$.
     pub trait Rot<T: Scalar, X: DenseStorageMut<T>, Y: DenseStorageMut<T>> {
         /// Applies Givens rotation in place.
         fn rot(x: &mut X, y: &mut Y, c: T::Real, s: T);
@@ -151,7 +141,10 @@ pub mod level1 {
 
 /// Level 2 BLAS: Matrix-vector subprograms.
 pub mod level2 {
-    use super::*;
+    use super::{
+        DenseStorage, DenseStorageMut, Diag, Div, LinAlgResult, Scalar, Trans,
+        UpLo,
+    };
 
     /// General matrix-vector multiplication: $y \leftarrow \alpha \text{op}(A) x + \beta y$.
     pub trait Gemv<
@@ -263,6 +256,9 @@ pub mod level2 {
     >
     {
         /// Solves $\text{op}(A) x = b$ in place.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::SingularMatrix`] if a non-unit diagonal pivot is zero.
         fn trsv(
             uplo: UpLo,
             trans: Trans,
@@ -292,7 +288,10 @@ pub mod level2 {
 
 /// Packed BLAS subprograms.
 pub mod packed {
-    use super::*;
+    use super::{
+        DenseStorage, DenseStorageMut, Diag, Div, LinAlgResult, PackedStorage,
+        PackedStorageMut, Scalar, Trans, UpLo,
+    };
 
     /// Symmetric packed matrix-vector multiplication: $y \leftarrow \alpha A_{pack} x + \beta y$.
     pub trait Spmv<
@@ -368,6 +367,9 @@ pub mod packed {
     >
     {
         /// Solves $\text{op}(A_{pack}) x = b$ in place.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::SingularMatrix`] if a non-unit diagonal pivot is zero.
         fn tpsv(
             uplo: UpLo,
             trans: Trans,
@@ -394,7 +396,10 @@ pub mod packed {
 
 /// Level 3 BLAS: Matrix-matrix subprograms.
 pub mod level3 {
-    use super::*;
+    use super::{
+        DenseStorage, DenseStorageMut, Diag, Div, LinAlgResult, Scalar, Side,
+        Trans, UpLo,
+    };
 
     /// General matrix-matrix multiplication: $C \leftarrow \alpha \text{op}(A) \text{op}(B) + \beta C$.
     pub trait Gemm<
@@ -537,6 +542,9 @@ pub mod level3 {
     >
     {
         /// Solves triangular matrix equations in place over $B$.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::SingularMatrix`] if a non-unit diagonal pivot is zero.
         fn trsm(
             side: Side,
             uplo: UpLo,
@@ -566,7 +574,10 @@ pub mod level3 {
 
 /// Sparse BLAS subprograms.
 pub mod sparse {
-    use super::*;
+    use super::{
+        CscStorage, CsrStorage, DenseStorage, DenseStorageMut, Scalar,
+        SparseVectorStorage,
+    };
 
     /// CSR matrix-vector multiplication: $y \leftarrow \alpha A_{csr} x + \beta y$.
     pub trait Csrmv<
@@ -651,7 +662,10 @@ pub enum JobZ {
 
 /// LAPACK direct solvers, factorizations, and spectral algorithms.
 pub mod lapack {
-    use super::*;
+    use super::{
+        DenseStorage, DenseStorageMut, Div, Float, JobZ, LinAlgResult,
+        PackedStorage, PackedStorageMut, Radical, Scalar, Side, Trans, UpLo,
+    };
 
     /// Cholesky factorization: $A = L L^T$ (or $U^T U$) for symmetric/Hermitian positive-definite matrices.
     pub trait Potrf<T: Scalar + Div<Output = T>, A: DenseStorageMut<T>>
@@ -659,6 +673,9 @@ pub mod lapack {
         T::Real: Radical,
     {
         /// Computes Cholesky factorization in place.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::NotPositiveDefinite`] if a pivot is non-positive.
         fn potrf(uplo: UpLo, a: &mut A) -> LinAlgResult<()>;
     }
 
@@ -670,6 +687,9 @@ pub mod lapack {
     >
     {
         /// Solves $A X = B$ in place.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::SingularMatrix`] if a diagonal pivot is zero.
         fn potrs(uplo: UpLo, a: &A, b: &mut B) -> LinAlgResult<()>;
     }
 
@@ -679,6 +699,9 @@ pub mod lapack {
         T::Real: Radical,
     {
         /// Computes packed Cholesky factorization in place.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::NotPositiveDefinite`] if a pivot is non-positive.
         fn pptrf(uplo: UpLo, ap: &mut AP) -> LinAlgResult<()>;
     }
 
@@ -690,12 +713,19 @@ pub mod lapack {
     >
     {
         /// Solves $A_{pack} X = B$ in place.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::SingularMatrix`] if a diagonal pivot is zero.
         fn pptrs(uplo: UpLo, ap: &AP, b: &mut B) -> LinAlgResult<()>;
     }
 
     /// General LU factorization with partial row pivoting: $P A = L U$.
     pub trait Getrf<T: Scalar + Div<Output = T>, A: DenseStorageMut<T>> {
         /// Computes $P A = L U$ in place.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::WorkspaceTooSmall`] if `ipiv` is shorter than
+        /// $\min(m, n)$, or [`super::LinAlgError::SingularMatrix`] if a pivot is zero.
         fn getrf(a: &mut A, ipiv: &mut [usize]) -> LinAlgResult<()>;
     }
 
@@ -707,6 +737,10 @@ pub mod lapack {
     >
     {
         /// Solves $A X = B$ in place.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::WorkspaceTooSmall`] if `ipiv` is shorter than $n$,
+        /// or [`super::LinAlgError::SingularMatrix`] if a diagonal pivot is zero.
         fn getrs(
             trans: Trans,
             a: &A,
@@ -721,6 +755,10 @@ pub mod lapack {
         T::Real: Radical,
     {
         /// Computes $A = Q R$ in place.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::WorkspaceTooSmall`] if `tau` or `work` is shorter
+        /// than required.
         fn geqrf(a: &mut A, tau: &mut [T], work: &mut [T]) -> LinAlgResult<()>;
     }
 
@@ -732,6 +770,10 @@ pub mod lapack {
     >
     {
         /// Multiplies by $Q$ or $Q^T$.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::WorkspaceTooSmall`] if `tau` or `work` is shorter
+        /// than required.
         fn ormqr(
             side: Side,
             trans: Trans,
@@ -750,6 +792,10 @@ pub mod lapack {
     >
     {
         /// Multiplies by $Q$ or $Q^H$.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::WorkspaceTooSmall`] if `tau` or `work` is shorter
+        /// than required.
         fn unmqr(
             side: Side,
             trans: Trans,
@@ -766,6 +812,11 @@ pub mod lapack {
         T::Real: Float,
     {
         /// Computes eigenvalues and optional eigenvectors using classical Jacobi rotations.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::WorkspaceTooSmall`] if `w` or `work` is shorter than
+        /// required, or [`super::LinAlgError::MaxIterationsReached`] if the iteration bound
+        /// is exhausted before convergence.
         fn syev(
             jobz: JobZ,
             uplo: UpLo,
@@ -781,6 +832,11 @@ pub mod lapack {
         T::Real: Float,
     {
         /// Computes eigenvalues and optional orthonormal eigenvectors of a complex Hermitian matrix.
+        ///
+        /// # Errors
+        /// Returns [`super::LinAlgError::WorkspaceTooSmall`] if `w` or `work` is shorter than
+        /// required, or [`super::LinAlgError::MaxIterationsReached`] if the iteration bound
+        /// is exhausted before convergence.
         fn heev(
             jobz: JobZ,
             uplo: UpLo,
@@ -1484,6 +1540,73 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorageMut<T>> level2::Trmv<T, A, X>
     }
 }
 
+#[inline(always)]
+const fn tri_is_upper(uplo: UpLo, trans: Trans) -> bool {
+    matches!(
+        (uplo, trans),
+        (UpLo::Upper, Trans::NoTrans)
+            | (UpLo::Lower, Trans::Trans | Trans::ConjTrans)
+    )
+}
+
+#[inline(always)]
+fn vec_coord<T: Scalar, X: DenseStorage<T>>(x: &X, i: usize) -> (usize, usize) {
+    if x.rows() >= x.cols() { (i, 0) } else { (0, i) }
+}
+
+#[inline(always)]
+fn trsv_row<T, A, X>(
+    trans: Trans,
+    diag: Diag,
+    a: &A,
+    x: &mut X,
+    i: usize,
+    j_start: usize,
+    j_end: usize,
+) -> LinAlgResult<()>
+where
+    T: Scalar + Div<Output = T>,
+    A: DenseStorage<T>,
+    X: DenseStorageMut<T>,
+{
+    let (rxi, cxi) = vec_coord(x, i);
+    let mut sum = unsafe { x.get_unchecked(rxi, cxi).clone() };
+    for j in j_start..j_end {
+        let (r, c) = match trans {
+            Trans::NoTrans => (i, j),
+            Trans::Trans | Trans::ConjTrans => (j, i),
+        };
+        let elem = unsafe { a.get_unchecked(r, c).clone() };
+        let a_val = if trans == Trans::ConjTrans {
+            elem.conj()
+        } else {
+            elem
+        };
+        let (rxj, cxj) = vec_coord(x, j);
+        let xj = unsafe { x.get_unchecked(rxj, cxj).clone() };
+        sum = sum - (a_val * xj);
+    }
+    if diag == Diag::Unit {
+        unsafe {
+            x.set_unchecked(rxi, cxi, sum);
+        }
+    } else {
+        let piv = unsafe { a.get_unchecked(i, i).clone() };
+        if piv.is_zero() {
+            return Err(LinAlgError::SingularMatrix);
+        }
+        let piv_val = if trans == Trans::ConjTrans {
+            piv.conj()
+        } else {
+            piv
+        };
+        unsafe {
+            x.set_unchecked(rxi, cxi, sum / piv_val);
+        }
+    }
+    Ok(())
+}
+
 impl<T: Scalar + Div<Output = T>, A: DenseStorage<T>, X: DenseStorageMut<T>>
     level2::Trsv<T, A, X> for DefaultBlas
 {
@@ -1496,92 +1619,14 @@ impl<T: Scalar + Div<Output = T>, A: DenseStorage<T>, X: DenseStorageMut<T>>
         x: &mut X,
     ) -> LinAlgResult<()> {
         let n = a.rows();
-        let is_upper = match (uplo, trans) {
-            (UpLo::Upper, Trans::NoTrans) => true,
-            (UpLo::Lower, Trans::Trans | Trans::ConjTrans) => true,
-            _ => false,
-        };
-
-        if is_upper {
+        if tri_is_upper(uplo, trans) {
             for k in 0..n {
                 let i = n - 1 - k;
-                let (rxi, cxi) =
-                    if x.rows() >= x.cols() { (i, 0) } else { (0, i) };
-                let mut sum = unsafe { x.get_unchecked(rxi, cxi).clone() };
-                for j in (i + 1)..n {
-                    let (r, c) = match trans {
-                        Trans::NoTrans => (i, j),
-                        Trans::Trans | Trans::ConjTrans => (j, i),
-                    };
-                    let elem = unsafe { a.get_unchecked(r, c).clone() };
-                    let a_val = if trans == Trans::ConjTrans {
-                        elem.conj()
-                    } else {
-                        elem
-                    };
-                    let (rxj, cxj) =
-                        if x.rows() >= x.cols() { (j, 0) } else { (0, j) };
-                    let xj = unsafe { x.get_unchecked(rxj, cxj).clone() };
-                    sum = sum - (a_val * xj);
-                }
-                if diag == Diag::Unit {
-                    unsafe {
-                        x.set_unchecked(rxi, cxi, sum);
-                    }
-                } else {
-                    let piv = unsafe { a.get_unchecked(i, i).clone() };
-                    if piv.is_zero() {
-                        return Err(LinAlgError::SingularMatrix);
-                    }
-                    let piv_val = if trans == Trans::ConjTrans {
-                        piv.conj()
-                    } else {
-                        piv
-                    };
-                    unsafe {
-                        x.set_unchecked(rxi, cxi, sum / piv_val);
-                    }
-                }
+                trsv_row(trans, diag, a, x, i, i + 1, n)?;
             }
         } else {
             for i in 0..n {
-                let (rxi, cxi) =
-                    if x.rows() >= x.cols() { (i, 0) } else { (0, i) };
-                let mut sum = unsafe { x.get_unchecked(rxi, cxi).clone() };
-                for j in 0..i {
-                    let (r, c) = match trans {
-                        Trans::NoTrans => (i, j),
-                        Trans::Trans | Trans::ConjTrans => (j, i),
-                    };
-                    let elem = unsafe { a.get_unchecked(r, c).clone() };
-                    let a_val = if trans == Trans::ConjTrans {
-                        elem.conj()
-                    } else {
-                        elem
-                    };
-                    let (rxj, cxj) =
-                        if x.rows() >= x.cols() { (j, 0) } else { (0, j) };
-                    let xj = unsafe { x.get_unchecked(rxj, cxj).clone() };
-                    sum = sum - (a_val * xj);
-                }
-                if diag == Diag::Unit {
-                    unsafe {
-                        x.set_unchecked(rxi, cxi, sum);
-                    }
-                } else {
-                    let piv = unsafe { a.get_unchecked(i, i).clone() };
-                    if piv.is_zero() {
-                        return Err(LinAlgError::SingularMatrix);
-                    }
-                    let piv_val = if trans == Trans::ConjTrans {
-                        piv.conj()
-                    } else {
-                        piv
-                    };
-                    unsafe {
-                        x.set_unchecked(rxi, cxi, sum / piv_val);
-                    }
-                }
+                trsv_row(trans, diag, a, x, i, 0, i)?;
             }
         }
         Ok(())
@@ -1870,6 +1915,59 @@ impl<T: Scalar, TP: PackedStorage<T>, X: DenseStorageMut<T>>
     }
 }
 
+#[inline(always)]
+fn tpsv_row<T, TP, X>(
+    trans: Trans,
+    diag: Diag,
+    tp: &TP,
+    x: &mut X,
+    i: usize,
+    j_start: usize,
+    j_end: usize,
+) -> LinAlgResult<()>
+where
+    T: Scalar + Div<Output = T>,
+    TP: PackedStorage<T>,
+    X: DenseStorageMut<T>,
+{
+    let (rxi, cxi) = vec_coord(x, i);
+    let mut sum = unsafe { x.get_unchecked(rxi, cxi).clone() };
+    for j in j_start..j_end {
+        let (r, c) = match trans {
+            Trans::NoTrans => (i, j),
+            Trans::Trans | Trans::ConjTrans => (j, i),
+        };
+        let elem = tp.value_unchecked(r, c);
+        let a_val = if trans == Trans::ConjTrans {
+            elem.conj()
+        } else {
+            elem
+        };
+        let (rxj, cxj) = vec_coord(x, j);
+        let xj = unsafe { x.get_unchecked(rxj, cxj).clone() };
+        sum = sum - (a_val * xj);
+    }
+    if diag == Diag::Unit {
+        unsafe {
+            x.set_unchecked(rxi, cxi, sum);
+        }
+    } else {
+        let piv = tp.value_unchecked(i, i);
+        if piv.is_zero() {
+            return Err(LinAlgError::SingularMatrix);
+        }
+        let piv_val = if trans == Trans::ConjTrans {
+            piv.conj()
+        } else {
+            piv
+        };
+        unsafe {
+            x.set_unchecked(rxi, cxi, sum / piv_val);
+        }
+    }
+    Ok(())
+}
+
 impl<T: Scalar + Div<Output = T>, TP: PackedStorage<T>, X: DenseStorageMut<T>>
     packed::Tpsv<T, TP, X> for DefaultBlas
 {
@@ -1882,92 +1980,14 @@ impl<T: Scalar + Div<Output = T>, TP: PackedStorage<T>, X: DenseStorageMut<T>>
         x: &mut X,
     ) -> LinAlgResult<()> {
         let n = tp.dim();
-        let is_upper = match (uplo, trans) {
-            (UpLo::Upper, Trans::NoTrans) => true,
-            (UpLo::Lower, Trans::Trans | Trans::ConjTrans) => true,
-            _ => false,
-        };
-
-        if is_upper {
+        if tri_is_upper(uplo, trans) {
             for k in 0..n {
                 let i = n - 1 - k;
-                let (rxi, cxi) =
-                    if x.rows() >= x.cols() { (i, 0) } else { (0, i) };
-                let mut sum = unsafe { x.get_unchecked(rxi, cxi).clone() };
-                for j in (i + 1)..n {
-                    let (r, c) = match trans {
-                        Trans::NoTrans => (i, j),
-                        Trans::Trans | Trans::ConjTrans => (j, i),
-                    };
-                    let elem = tp.value_unchecked(r, c);
-                    let a_val = if trans == Trans::ConjTrans {
-                        elem.conj()
-                    } else {
-                        elem
-                    };
-                    let (rxj, cxj) =
-                        if x.rows() >= x.cols() { (j, 0) } else { (0, j) };
-                    let xj = unsafe { x.get_unchecked(rxj, cxj).clone() };
-                    sum = sum - (a_val * xj);
-                }
-                if diag == Diag::Unit {
-                    unsafe {
-                        x.set_unchecked(rxi, cxi, sum);
-                    }
-                } else {
-                    let piv = tp.value_unchecked(i, i);
-                    if piv.is_zero() {
-                        return Err(LinAlgError::SingularMatrix);
-                    }
-                    let piv_val = if trans == Trans::ConjTrans {
-                        piv.conj()
-                    } else {
-                        piv
-                    };
-                    unsafe {
-                        x.set_unchecked(rxi, cxi, sum / piv_val);
-                    }
-                }
+                tpsv_row(trans, diag, tp, x, i, i + 1, n)?;
             }
         } else {
             for i in 0..n {
-                let (rxi, cxi) =
-                    if x.rows() >= x.cols() { (i, 0) } else { (0, i) };
-                let mut sum = unsafe { x.get_unchecked(rxi, cxi).clone() };
-                for j in 0..i {
-                    let (r, c) = match trans {
-                        Trans::NoTrans => (i, j),
-                        Trans::Trans | Trans::ConjTrans => (j, i),
-                    };
-                    let elem = tp.value_unchecked(r, c);
-                    let a_val = if trans == Trans::ConjTrans {
-                        elem.conj()
-                    } else {
-                        elem
-                    };
-                    let (rxj, cxj) =
-                        if x.rows() >= x.cols() { (j, 0) } else { (0, j) };
-                    let xj = unsafe { x.get_unchecked(rxj, cxj).clone() };
-                    sum = sum - (a_val * xj);
-                }
-                if diag == Diag::Unit {
-                    unsafe {
-                        x.set_unchecked(rxi, cxi, sum);
-                    }
-                } else {
-                    let piv = tp.value_unchecked(i, i);
-                    if piv.is_zero() {
-                        return Err(LinAlgError::SingularMatrix);
-                    }
-                    let piv_val = if trans == Trans::ConjTrans {
-                        piv.conj()
-                    } else {
-                        piv
-                    };
-                    unsafe {
-                        x.set_unchecked(rxi, cxi, sum / piv_val);
-                    }
-                }
+                tpsv_row(trans, diag, tp, x, i, 0, i)?;
             }
         }
         Ok(())
@@ -1975,6 +1995,88 @@ impl<T: Scalar + Div<Output = T>, TP: PackedStorage<T>, X: DenseStorageMut<T>>
 }
 
 // --- Level 3 Implementation over DenseStorage & DenseStorageMut ---
+
+#[inline(always)]
+const fn in_triangle(uplo: UpLo, i: usize, j: usize) -> bool {
+    match uplo {
+        UpLo::Upper => i <= j,
+        UpLo::Lower => i >= j,
+    }
+}
+
+#[inline(always)]
+const fn trans_idx(trans: Trans, row: usize, col: usize) -> (usize, usize) {
+    match trans {
+        Trans::NoTrans => (row, col),
+        _ => (col, row),
+    }
+}
+
+#[inline(always)]
+fn storage_elem<T: Scalar, S: DenseStorage<T>>(
+    s: &S,
+    r: usize,
+    c: usize,
+    conjugate: bool,
+) -> T {
+    let elem = unsafe { s.get_unchecked(r, c).clone() };
+    if conjugate { elem.conj() } else { elem }
+}
+
+#[inline(always)]
+fn scale_dense<T: Scalar, C: DenseStorageMut<T>>(c: &mut C, beta: &T) {
+    let m = c.rows();
+    let n = c.cols();
+    if beta.is_zero() {
+        for i in 0..m {
+            for j in 0..n {
+                unsafe {
+                    c.set_unchecked(i, j, T::ZERO);
+                }
+            }
+        }
+    } else if !beta.is_one() {
+        for i in 0..m {
+            for j in 0..n {
+                unsafe {
+                    let cv = c.get_unchecked(i, j).clone();
+                    c.set_unchecked(i, j, beta.clone() * cv);
+                }
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn scale_triangle<T: Scalar, C: DenseStorageMut<T>>(
+    c: &mut C,
+    uplo: UpLo,
+    beta: &T,
+) {
+    let n = c.rows();
+    if beta.is_zero() {
+        for i in 0..n {
+            for j in 0..n {
+                if in_triangle(uplo, i, j) {
+                    unsafe {
+                        c.set_unchecked(i, j, T::ZERO);
+                    }
+                }
+            }
+        }
+    } else if !beta.is_one() {
+        for i in 0..n {
+            for j in 0..n {
+                if in_triangle(uplo, i, j) {
+                    unsafe {
+                        let cv = c.get_unchecked(i, j).clone();
+                        c.set_unchecked(i, j, beta.clone() * cv);
+                    }
+                }
+            }
+        }
+    }
+}
 
 impl<T: Scalar, A: DenseStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
     level3::Gemm<T, A, B, C> for DefaultBlas
@@ -1994,25 +2096,7 @@ impl<T: Scalar, A: DenseStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
         debug_assert_eq!(n, c.cols());
         let k = k_a;
 
-        // NaN-safe beta scaling (C-3)
-        if beta.is_zero() {
-            for i in 0..m {
-                for j in 0..n {
-                    unsafe {
-                        c.set_unchecked(i, j, T::ZERO);
-                    }
-                }
-            }
-        } else if !beta.is_one() {
-            for i in 0..m {
-                for j in 0..n {
-                    unsafe {
-                        let cv = c.get_unchecked(i, j).clone();
-                        c.set_unchecked(i, j, beta.clone() * cv);
-                    }
-                }
-            }
-        }
+        scale_dense(c, &beta);
 
         for i in 0..m {
             for j in 0..n {
@@ -2051,6 +2135,90 @@ impl<T: Scalar, A: DenseStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
     }
 }
 
+#[inline(always)]
+fn symm_left<T, A, B, C>(uplo: UpLo, alpha: &T, a: &A, b: &B, c: &mut C)
+where
+    T: Scalar,
+    A: DenseStorage<T>,
+    B: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    let m = c.rows();
+    let n = c.cols();
+    for i in 0..m {
+        for j in 0..n {
+            let mut dot = T::ZERO;
+            for k in 0..m {
+                let (ar, ac) = match uplo {
+                    UpLo::Upper => {
+                        if i <= k {
+                            (i, k)
+                        } else {
+                            (k, i)
+                        }
+                    }
+                    UpLo::Lower => {
+                        if i >= k {
+                            (i, k)
+                        } else {
+                            (k, i)
+                        }
+                    }
+                };
+                let a_val = unsafe { a.get_unchecked(ar, ac).clone() };
+                let b_val = unsafe { b.get_unchecked(k, j).clone() };
+                dot = dot + (a_val * b_val);
+            }
+            unsafe {
+                let cv = c.get_unchecked(i, j).clone();
+                c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn symm_right<T, A, B, C>(uplo: UpLo, alpha: &T, a: &A, b: &B, c: &mut C)
+where
+    T: Scalar,
+    A: DenseStorage<T>,
+    B: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    let m = c.rows();
+    let n = c.cols();
+    for i in 0..m {
+        for j in 0..n {
+            let mut dot = T::ZERO;
+            for k in 0..n {
+                let (ar, ac) = match uplo {
+                    UpLo::Upper => {
+                        if k <= j {
+                            (k, j)
+                        } else {
+                            (j, k)
+                        }
+                    }
+                    UpLo::Lower => {
+                        if k >= j {
+                            (k, j)
+                        } else {
+                            (j, k)
+                        }
+                    }
+                };
+                let a_val = unsafe { a.get_unchecked(ar, ac).clone() };
+                let b_val = unsafe { b.get_unchecked(i, k).clone() };
+                dot = dot + (b_val * a_val);
+            }
+            unsafe {
+                let cv = c.get_unchecked(i, j).clone();
+                c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+            }
+        }
+    }
+}
+
 impl<T: Scalar, A: DenseStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
     level3::Symm<T, A, B, C> for DefaultBlas
 {
@@ -2064,96 +2232,91 @@ impl<T: Scalar, A: DenseStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
         beta: T,
         c: &mut C,
     ) {
-        let m = c.rows();
-        let n = c.cols();
+        scale_dense(c, &beta);
+        match side {
+            Side::Left => symm_left(uplo, &alpha, a, b, c),
+            Side::Right => symm_right(uplo, &alpha, a, b, c),
+        }
+    }
+}
 
-        if beta.is_zero() {
-            for i in 0..m {
-                for j in 0..n {
-                    unsafe {
-                        c.set_unchecked(i, j, T::ZERO);
+#[inline(always)]
+fn hemm_left<T, A, B, C>(uplo: UpLo, alpha: &T, a: &A, b: &B, c: &mut C)
+where
+    T: Scalar,
+    A: DenseStorage<T>,
+    B: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    let m = c.rows();
+    let n = c.cols();
+    for i in 0..m {
+        for j in 0..n {
+            let mut dot = T::ZERO;
+            for k in 0..m {
+                let a_val = match uplo {
+                    UpLo::Upper => {
+                        if i <= k {
+                            unsafe { a.get_unchecked(i, k).clone() }
+                        } else {
+                            unsafe { a.get_unchecked(k, i).clone().conj() }
+                        }
                     }
-                }
+                    UpLo::Lower => {
+                        if i >= k {
+                            unsafe { a.get_unchecked(i, k).clone() }
+                        } else {
+                            unsafe { a.get_unchecked(k, i).clone().conj() }
+                        }
+                    }
+                };
+                let b_val = unsafe { b.get_unchecked(k, j).clone() };
+                dot = dot + (a_val * b_val);
             }
-        } else if !beta.is_one() {
-            for i in 0..m {
-                for j in 0..n {
-                    unsafe {
-                        let cv = c.get_unchecked(i, j).clone();
-                        c.set_unchecked(i, j, beta.clone() * cv);
-                    }
-                }
+            unsafe {
+                let cv = c.get_unchecked(i, j).clone();
+                c.set_unchecked(i, j, cv + (alpha.clone() * dot));
             }
         }
+    }
+}
 
-        match side {
-            Side::Left => {
-                for i in 0..m {
-                    for j in 0..n {
-                        let mut dot = T::ZERO;
-                        for k in 0..m {
-                            let (ar, ac) = match uplo {
-                                UpLo::Upper => {
-                                    if i <= k {
-                                        (i, k)
-                                    } else {
-                                        (k, i)
-                                    }
-                                }
-                                UpLo::Lower => {
-                                    if i >= k {
-                                        (i, k)
-                                    } else {
-                                        (k, i)
-                                    }
-                                }
-                            };
-                            let a_val =
-                                unsafe { a.get_unchecked(ar, ac).clone() };
-                            let b_val =
-                                unsafe { b.get_unchecked(k, j).clone() };
-                            dot = dot + (a_val * b_val);
-                        }
-                        unsafe {
-                            let cv = c.get_unchecked(i, j).clone();
-                            c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+#[inline(always)]
+fn hemm_right<T, A, B, C>(uplo: UpLo, alpha: &T, a: &A, b: &B, c: &mut C)
+where
+    T: Scalar,
+    A: DenseStorage<T>,
+    B: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    let m = c.rows();
+    let n = c.cols();
+    for i in 0..m {
+        for j in 0..n {
+            let mut dot = T::ZERO;
+            for k in 0..n {
+                let a_val = match uplo {
+                    UpLo::Upper => {
+                        if k <= j {
+                            unsafe { a.get_unchecked(k, j).clone() }
+                        } else {
+                            unsafe { a.get_unchecked(j, k).clone().conj() }
                         }
                     }
-                }
+                    UpLo::Lower => {
+                        if k >= j {
+                            unsafe { a.get_unchecked(k, j).clone() }
+                        } else {
+                            unsafe { a.get_unchecked(j, k).clone().conj() }
+                        }
+                    }
+                };
+                let b_val = unsafe { b.get_unchecked(i, k).clone() };
+                dot = dot + (b_val * a_val);
             }
-            Side::Right => {
-                for i in 0..m {
-                    for j in 0..n {
-                        let mut dot = T::ZERO;
-                        for k in 0..n {
-                            let (ar, ac) = match uplo {
-                                UpLo::Upper => {
-                                    if k <= j {
-                                        (k, j)
-                                    } else {
-                                        (j, k)
-                                    }
-                                }
-                                UpLo::Lower => {
-                                    if k >= j {
-                                        (k, j)
-                                    } else {
-                                        (j, k)
-                                    }
-                                }
-                            };
-                            let a_val =
-                                unsafe { a.get_unchecked(ar, ac).clone() };
-                            let b_val =
-                                unsafe { b.get_unchecked(i, k).clone() };
-                            dot = dot + (b_val * a_val);
-                        }
-                        unsafe {
-                            let cv = c.get_unchecked(i, j).clone();
-                            c.set_unchecked(i, j, cv + (alpha.clone() * dot));
-                        }
-                    }
-                }
+            unsafe {
+                let cv = c.get_unchecked(i, j).clone();
+                c.set_unchecked(i, j, cv + (alpha.clone() * dot));
             }
         }
     }
@@ -2172,99 +2335,46 @@ impl<T: Scalar, A: DenseStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
         beta: T,
         c: &mut C,
     ) {
-        let m = c.rows();
-        let n = c.cols();
-
-        if beta.is_zero() {
-            for i in 0..m {
-                for j in 0..n {
-                    unsafe {
-                        c.set_unchecked(i, j, T::ZERO);
-                    }
-                }
-            }
-        } else if !beta.is_one() {
-            for i in 0..m {
-                for j in 0..n {
-                    unsafe {
-                        let cv = c.get_unchecked(i, j).clone();
-                        c.set_unchecked(i, j, beta.clone() * cv);
-                    }
-                }
-            }
-        }
-
+        scale_dense(c, &beta);
         match side {
-            Side::Left => {
-                for i in 0..m {
-                    for j in 0..n {
-                        let mut dot = T::ZERO;
-                        for k in 0..m {
-                            let a_val = match uplo {
-                                UpLo::Upper => {
-                                    if i <= k {
-                                        unsafe { a.get_unchecked(i, k).clone() }
-                                    } else {
-                                        unsafe {
-                                            a.get_unchecked(k, i).clone().conj()
-                                        }
-                                    }
-                                }
-                                UpLo::Lower => {
-                                    if i >= k {
-                                        unsafe { a.get_unchecked(i, k).clone() }
-                                    } else {
-                                        unsafe {
-                                            a.get_unchecked(k, i).clone().conj()
-                                        }
-                                    }
-                                }
-                            };
-                            let b_val =
-                                unsafe { b.get_unchecked(k, j).clone() };
-                            dot = dot + (a_val * b_val);
-                        }
-                        unsafe {
-                            let cv = c.get_unchecked(i, j).clone();
-                            c.set_unchecked(i, j, cv + (alpha.clone() * dot));
-                        }
-                    }
+            Side::Left => hemm_left(uplo, &alpha, a, b, c),
+            Side::Right => hemm_right(uplo, &alpha, a, b, c),
+        }
+    }
+}
+
+#[inline(always)]
+fn syrk_update<T, A, C>(uplo: UpLo, trans: Trans, alpha: &T, a: &A, c: &mut C)
+where
+    T: Scalar,
+    A: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    let n = c.rows();
+    let k = match trans {
+        Trans::NoTrans => a.cols(),
+        _ => a.rows(),
+    };
+    for i in 0..n {
+        for j in 0..n {
+            if in_triangle(uplo, i, j) {
+                let mut dot = T::ZERO;
+                for p in 0..k {
+                    let (a1_r, a1_c) = match trans {
+                        Trans::NoTrans => (i, p),
+                        _ => (p, i),
+                    };
+                    let (a2_r, a2_c) = match trans {
+                        Trans::NoTrans => (j, p),
+                        _ => (p, j),
+                    };
+                    let v1 = unsafe { a.get_unchecked(a1_r, a1_c).clone() };
+                    let v2 = unsafe { a.get_unchecked(a2_r, a2_c).clone() };
+                    dot = dot + (v1 * v2);
                 }
-            }
-            Side::Right => {
-                for i in 0..m {
-                    for j in 0..n {
-                        let mut dot = T::ZERO;
-                        for k in 0..n {
-                            let a_val = match uplo {
-                                UpLo::Upper => {
-                                    if k <= j {
-                                        unsafe { a.get_unchecked(k, j).clone() }
-                                    } else {
-                                        unsafe {
-                                            a.get_unchecked(j, k).clone().conj()
-                                        }
-                                    }
-                                }
-                                UpLo::Lower => {
-                                    if k >= j {
-                                        unsafe { a.get_unchecked(k, j).clone() }
-                                    } else {
-                                        unsafe {
-                                            a.get_unchecked(j, k).clone().conj()
-                                        }
-                                    }
-                                }
-                            };
-                            let b_val =
-                                unsafe { b.get_unchecked(i, k).clone() };
-                            dot = dot + (b_val * a_val);
-                        }
-                        unsafe {
-                            let cv = c.get_unchecked(i, j).clone();
-                            c.set_unchecked(i, j, cv + (alpha.clone() * dot));
-                        }
-                    }
+                unsafe {
+                    let cv = c.get_unchecked(i, j).clone();
+                    c.set_unchecked(i, j, cv + (alpha.clone() * dot));
                 }
             }
         }
@@ -2276,68 +2386,57 @@ impl<T: Scalar, A: DenseStorage<T>, C: DenseStorageMut<T>> level3::Syrk<T, A, C>
 {
     #[inline(always)]
     fn syrk(uplo: UpLo, trans: Trans, alpha: T, a: &A, beta: T, c: &mut C) {
-        let n = c.rows();
-        let k = match trans {
-            Trans::NoTrans => a.cols(),
-            _ => a.rows(),
-        };
+        scale_triangle(c, uplo, &beta);
+        syrk_update(uplo, trans, &alpha, a, c);
+    }
+}
 
-        if beta.is_zero() {
-            for i in 0..n {
-                for j in 0..n {
-                    let in_tri = match uplo {
-                        UpLo::Upper => i <= j,
-                        UpLo::Lower => i >= j,
+#[inline(always)]
+fn herk_update<T, A, C>(uplo: UpLo, trans: Trans, alpha: &T, a: &A, c: &mut C)
+where
+    T: Scalar,
+    A: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    let n = c.rows();
+    let k = match trans {
+        Trans::NoTrans => a.cols(),
+        _ => a.rows(),
+    };
+    for i in 0..n {
+        for j in 0..n {
+            if in_triangle(uplo, i, j) {
+                let mut dot = T::ZERO;
+                for p in 0..k {
+                    let (a1_r, a1_c) = match trans {
+                        Trans::NoTrans => (i, p),
+                        _ => (p, i),
                     };
-                    if in_tri {
-                        unsafe {
-                            c.set_unchecked(i, j, T::ZERO);
-                        }
-                    }
-                }
-            }
-        } else if !beta.is_one() {
-            for i in 0..n {
-                for j in 0..n {
-                    let in_tri = match uplo {
-                        UpLo::Upper => i <= j,
-                        UpLo::Lower => i >= j,
+                    let (a2_r, a2_c) = match trans {
+                        Trans::NoTrans => (j, p),
+                        _ => (p, j),
                     };
-                    if in_tri {
-                        unsafe {
-                            let cv = c.get_unchecked(i, j).clone();
-                            c.set_unchecked(i, j, beta.clone() * cv);
+                    let v1 = unsafe {
+                        let elem = a.get_unchecked(a1_r, a1_c).clone();
+                        if trans == Trans::ConjTrans {
+                            elem.conj()
+                        } else {
+                            elem
                         }
-                    }
+                    };
+                    let v2 = unsafe {
+                        let elem = a.get_unchecked(a2_r, a2_c).clone();
+                        if trans == Trans::NoTrans {
+                            elem.conj()
+                        } else {
+                            elem
+                        }
+                    };
+                    dot = dot + (v1 * v2);
                 }
-            }
-        }
-
-        for i in 0..n {
-            for j in 0..n {
-                let in_tri = match uplo {
-                    UpLo::Upper => i <= j,
-                    UpLo::Lower => i >= j,
-                };
-                if in_tri {
-                    let mut dot = T::ZERO;
-                    for p in 0..k {
-                        let (a1_r, a1_c) = match trans {
-                            Trans::NoTrans => (i, p),
-                            _ => (p, i),
-                        };
-                        let (a2_r, a2_c) = match trans {
-                            Trans::NoTrans => (j, p),
-                            _ => (p, j),
-                        };
-                        let v1 = unsafe { a.get_unchecked(a1_r, a1_c).clone() };
-                        let v2 = unsafe { a.get_unchecked(a2_r, a2_c).clone() };
-                        dot = dot + (v1 * v2);
-                    }
-                    unsafe {
-                        let cv = c.get_unchecked(i, j).clone();
-                        c.set_unchecked(i, j, cv + (alpha.clone() * dot));
-                    }
+                unsafe {
+                    let cv = c.get_unchecked(i, j).clone();
+                    c.set_unchecked(i, j, cv + (alpha.clone() * dot));
                 }
             }
         }
@@ -2356,84 +2455,62 @@ impl<T: Scalar, A: DenseStorage<T>, C: DenseStorageMut<T>> level3::Herk<T, A, C>
         beta: T::Real,
         c: &mut C,
     ) {
-        let n = c.rows();
-        let k = match trans {
-            Trans::NoTrans => a.cols(),
-            _ => a.rows(),
-        };
         let a_alpha = T::from_real(alpha);
-        let a_beta = T::from_real(beta.clone());
+        let a_beta = T::from_real(beta);
+        scale_triangle(c, uplo, &a_beta);
+        herk_update(uplo, trans, &a_alpha, a, c);
+    }
+}
 
-        if beta == <T::Real as Zero>::ZERO {
-            for i in 0..n {
-                for j in 0..n {
-                    let in_tri = match uplo {
-                        UpLo::Upper => i <= j,
-                        UpLo::Lower => i >= j,
+#[inline(always)]
+fn syr2k_update<T, A, B, C>(
+    uplo: UpLo,
+    trans: Trans,
+    alpha: &T,
+    a: &A,
+    b: &B,
+    c: &mut C,
+) where
+    T: Scalar,
+    A: DenseStorage<T>,
+    B: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    let n = c.rows();
+    let k = match trans {
+        Trans::NoTrans => a.cols(),
+        _ => a.rows(),
+    };
+    for i in 0..n {
+        for j in 0..n {
+            if in_triangle(uplo, i, j) {
+                let mut dot = T::ZERO;
+                for p in 0..k {
+                    let (ar, ac) = match trans {
+                        Trans::NoTrans => (i, p),
+                        _ => (p, i),
                     };
-                    if in_tri {
-                        unsafe {
-                            c.set_unchecked(i, j, T::ZERO);
-                        }
-                    }
-                }
-            }
-        } else if beta != <T::Real as One>::ONE {
-            for i in 0..n {
-                for j in 0..n {
-                    let in_tri = match uplo {
-                        UpLo::Upper => i <= j,
-                        UpLo::Lower => i >= j,
+                    let (br, bc) = match trans {
+                        Trans::NoTrans => (j, p),
+                        _ => (p, j),
                     };
-                    if in_tri {
-                        unsafe {
-                            let cv = c.get_unchecked(i, j).clone();
-                            c.set_unchecked(i, j, a_beta.clone() * cv);
-                        }
-                    }
+                    let a_val = unsafe { a.get_unchecked(ar, ac).clone() };
+                    let b_val = unsafe { b.get_unchecked(br, bc).clone() };
+                    let (ar2, ac2) = match trans {
+                        Trans::NoTrans => (j, p),
+                        _ => (p, j),
+                    };
+                    let (br2, bc2) = match trans {
+                        Trans::NoTrans => (i, p),
+                        _ => (p, i),
+                    };
+                    let a_val2 = unsafe { a.get_unchecked(ar2, ac2).clone() };
+                    let b_val2 = unsafe { b.get_unchecked(br2, bc2).clone() };
+                    dot = dot + (a_val * b_val) + (b_val2 * a_val2);
                 }
-            }
-        }
-
-        for i in 0..n {
-            for j in 0..n {
-                let in_tri = match uplo {
-                    UpLo::Upper => i <= j,
-                    UpLo::Lower => i >= j,
-                };
-                if in_tri {
-                    let mut dot = T::ZERO;
-                    for p in 0..k {
-                        let (a1_r, a1_c) = match trans {
-                            Trans::NoTrans => (i, p),
-                            _ => (p, i),
-                        };
-                        let (a2_r, a2_c) = match trans {
-                            Trans::NoTrans => (j, p),
-                            _ => (p, j),
-                        };
-                        let v1 = unsafe {
-                            let elem = a.get_unchecked(a1_r, a1_c).clone();
-                            if trans == Trans::ConjTrans {
-                                elem.conj()
-                            } else {
-                                elem
-                            }
-                        };
-                        let v2 = unsafe {
-                            let elem = a.get_unchecked(a2_r, a2_c).clone();
-                            if trans == Trans::NoTrans {
-                                elem.conj()
-                            } else {
-                                elem
-                            }
-                        };
-                        dot = dot + (v1 * v2);
-                    }
-                    unsafe {
-                        let cv = c.get_unchecked(i, j).clone();
-                        c.set_unchecked(i, j, cv + (a_alpha.clone() * dot));
-                    }
+                unsafe {
+                    let cv = c.get_unchecked(i, j).clone();
+                    c.set_unchecked(i, j, cv + (alpha.clone() * dot));
                 }
             }
         }
@@ -2453,82 +2530,73 @@ impl<T: Scalar, A: DenseStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
         beta: T,
         c: &mut C,
     ) {
-        let n = c.rows();
-        let k = match trans {
-            Trans::NoTrans => a.cols(),
-            _ => a.rows(),
-        };
+        scale_triangle(c, uplo, &beta);
+        syr2k_update(uplo, trans, &alpha, a, b, c);
+    }
+}
 
-        if beta.is_zero() {
-            for i in 0..n {
-                for j in 0..n {
-                    let in_tri = match uplo {
-                        UpLo::Upper => i <= j,
-                        UpLo::Lower => i >= j,
-                    };
-                    if in_tri {
-                        unsafe {
-                            c.set_unchecked(i, j, T::ZERO);
-                        }
-                    }
-                }
-            }
-        } else if !beta.is_one() {
-            for i in 0..n {
-                for j in 0..n {
-                    let in_tri = match uplo {
-                        UpLo::Upper => i <= j,
-                        UpLo::Lower => i >= j,
-                    };
-                    if in_tri {
-                        unsafe {
-                            let cv = c.get_unchecked(i, j).clone();
-                            c.set_unchecked(i, j, beta.clone() * cv);
-                        }
-                    }
-                }
-            }
-        }
+#[inline(always)]
+fn her2k_dot<T, A, B>(
+    trans: Trans,
+    alpha: &T,
+    alpha_conj: &T,
+    a: &A,
+    b: &B,
+    k: usize,
+    i: usize,
+    j: usize,
+) -> T
+where
+    T: Scalar,
+    A: DenseStorage<T>,
+    B: DenseStorage<T>,
+{
+    let mut dot = T::ZERO;
+    let conj_t = trans == Trans::ConjTrans;
+    let conj_n = trans == Trans::NoTrans;
+    for p in 0..k {
+        let (ar, ac) = trans_idx(trans, i, p);
+        let (br, bc) = trans_idx(trans, j, p);
+        let a_val = storage_elem(a, ar, ac, conj_t);
+        let b_val = storage_elem(b, br, bc, conj_n);
+        let (ar2, ac2) = trans_idx(trans, j, p);
+        let (br2, bc2) = trans_idx(trans, i, p);
+        let a_val2 = storage_elem(a, ar2, ac2, conj_n);
+        let b_val2 = storage_elem(b, br2, bc2, conj_t);
+        dot = dot
+            + (alpha.clone() * a_val * b_val)
+            + (alpha_conj.clone() * b_val2 * a_val2);
+    }
+    dot
+}
 
-        for i in 0..n {
-            for j in 0..n {
-                let in_tri = match uplo {
-                    UpLo::Upper => i <= j,
-                    UpLo::Lower => i >= j,
-                };
-                if in_tri {
-                    let mut dot = T::ZERO;
-                    for p in 0..k {
-                        let (ar, ac) = match trans {
-                            Trans::NoTrans => (i, p),
-                            _ => (p, i),
-                        };
-                        let (br, bc) = match trans {
-                            Trans::NoTrans => (j, p),
-                            _ => (p, j),
-                        };
-                        let a_val = unsafe { a.get_unchecked(ar, ac).clone() };
-                        let b_val = unsafe { b.get_unchecked(br, bc).clone() };
-
-                        let (ar2, ac2) = match trans {
-                            Trans::NoTrans => (j, p),
-                            _ => (p, j),
-                        };
-                        let (br2, bc2) = match trans {
-                            Trans::NoTrans => (i, p),
-                            _ => (p, i),
-                        };
-                        let a_val2 =
-                            unsafe { a.get_unchecked(ar2, ac2).clone() };
-                        let b_val2 =
-                            unsafe { b.get_unchecked(br2, bc2).clone() };
-
-                        dot = dot + (a_val * b_val) + (b_val2 * a_val2);
-                    }
-                    unsafe {
-                        let cv = c.get_unchecked(i, j).clone();
-                        c.set_unchecked(i, j, cv + (alpha.clone() * dot));
-                    }
+#[inline(always)]
+fn her2k_update<T, A, B, C>(
+    uplo: UpLo,
+    trans: Trans,
+    alpha: &T,
+    a: &A,
+    b: &B,
+    c: &mut C,
+) where
+    T: Scalar,
+    A: DenseStorage<T>,
+    B: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    let n = c.rows();
+    let k = match trans {
+        Trans::NoTrans => a.cols(),
+        _ => a.rows(),
+    };
+    let alpha_conj = alpha.clone().conj();
+    for i in 0..n {
+        for j in 0..n {
+            if in_triangle(uplo, i, j) {
+                let dot = her2k_dot(trans, alpha, &alpha_conj, a, b, k, i, j);
+                unsafe {
+                    let cv = c.get_unchecked(i, j).clone();
+                    c.set_unchecked(i, j, cv + dot);
                 }
             }
         }
@@ -2548,115 +2616,9 @@ impl<T: Scalar, A: DenseStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
         beta: T::Real,
         c: &mut C,
     ) {
-        let n = c.rows();
-        let k = match trans {
-            Trans::NoTrans => a.cols(),
-            _ => a.rows(),
-        };
-        let a_beta = T::from_real(beta.clone());
-        let alpha_conj = alpha.clone().conj();
-
-        if beta == <T::Real as Zero>::ZERO {
-            for i in 0..n {
-                for j in 0..n {
-                    let in_tri = match uplo {
-                        UpLo::Upper => i <= j,
-                        UpLo::Lower => i >= j,
-                    };
-                    if in_tri {
-                        unsafe {
-                            c.set_unchecked(i, j, T::ZERO);
-                        }
-                    }
-                }
-            }
-        } else if beta != <T::Real as One>::ONE {
-            for i in 0..n {
-                for j in 0..n {
-                    let in_tri = match uplo {
-                        UpLo::Upper => i <= j,
-                        UpLo::Lower => i >= j,
-                    };
-                    if in_tri {
-                        unsafe {
-                            let cv = c.get_unchecked(i, j).clone();
-                            c.set_unchecked(i, j, a_beta.clone() * cv);
-                        }
-                    }
-                }
-            }
-        }
-
-        for i in 0..n {
-            for j in 0..n {
-                let in_tri = match uplo {
-                    UpLo::Upper => i <= j,
-                    UpLo::Lower => i >= j,
-                };
-                if in_tri {
-                    let mut dot = T::ZERO;
-                    for p in 0..k {
-                        let (ar, ac) = match trans {
-                            Trans::NoTrans => (i, p),
-                            _ => (p, i),
-                        };
-                        let (br, bc) = match trans {
-                            Trans::NoTrans => (j, p),
-                            _ => (p, j),
-                        };
-                        let a_val = unsafe {
-                            let elem = a.get_unchecked(ar, ac).clone();
-                            if trans == Trans::ConjTrans {
-                                elem.conj()
-                            } else {
-                                elem
-                            }
-                        };
-                        let b_val = unsafe {
-                            let elem = b.get_unchecked(br, bc).clone();
-                            if trans == Trans::NoTrans {
-                                elem.conj()
-                            } else {
-                                elem
-                            }
-                        };
-
-                        let (ar2, ac2) = match trans {
-                            Trans::NoTrans => (j, p),
-                            _ => (p, j),
-                        };
-                        let (br2, bc2) = match trans {
-                            Trans::NoTrans => (i, p),
-                            _ => (p, i),
-                        };
-                        let a_val2 = unsafe {
-                            let elem = a.get_unchecked(ar2, ac2).clone();
-                            if trans == Trans::NoTrans {
-                                elem.conj()
-                            } else {
-                                elem
-                            }
-                        };
-                        let b_val2 = unsafe {
-                            let elem = b.get_unchecked(br2, bc2).clone();
-                            if trans == Trans::ConjTrans {
-                                elem.conj()
-                            } else {
-                                elem
-                            }
-                        };
-
-                        dot = dot
-                            + (alpha.clone() * a_val * b_val)
-                            + (alpha_conj.clone() * b_val2 * a_val2);
-                    }
-                    unsafe {
-                        let cv = c.get_unchecked(i, j).clone();
-                        c.set_unchecked(i, j, cv + dot);
-                    }
-                }
-            }
-        }
+        let a_beta = T::from_real(beta);
+        scale_triangle(c, uplo, &a_beta);
+        her2k_update(uplo, trans, &alpha, a, b, c);
     }
 }
 
@@ -3366,7 +3328,7 @@ where
         match uplo {
             UpLo::Lower => {
                 // Solve L Y = B
-                <DefaultBlas as level3::Trsm<T, A, B>>::trsm(
+                <Self as level3::Trsm<T, A, B>>::trsm(
                     Side::Left,
                     UpLo::Lower,
                     Trans::NoTrans,
@@ -3376,7 +3338,7 @@ where
                     b,
                 )?;
                 // Solve L^H X = Y
-                <DefaultBlas as level3::Trsm<T, A, B>>::trsm(
+                <Self as level3::Trsm<T, A, B>>::trsm(
                     Side::Left,
                     UpLo::Lower,
                     Trans::ConjTrans,
@@ -3388,7 +3350,7 @@ where
             }
             UpLo::Upper => {
                 // Solve U^T Y = B
-                <DefaultBlas as level3::Trsm<T, A, B>>::trsm(
+                <Self as level3::Trsm<T, A, B>>::trsm(
                     Side::Left,
                     UpLo::Upper,
                     Trans::ConjTrans,
@@ -3398,7 +3360,7 @@ where
                     b,
                 )?;
                 // Solve U X = Y
-                <DefaultBlas as level3::Trsm<T, A, B>>::trsm(
+                <Self as level3::Trsm<T, A, B>>::trsm(
                     Side::Left,
                     UpLo::Upper,
                     Trans::NoTrans,
@@ -3486,6 +3448,102 @@ where
     }
 }
 
+#[inline(always)]
+fn pptrs_lower<T, AP, B>(
+    ap: &AP,
+    b: &mut B,
+    n: usize,
+    nrhs: usize,
+) -> LinAlgResult<()>
+where
+    T: Scalar + Div<Output = T>,
+    AP: PackedStorage<T>,
+    B: DenseStorageMut<T>,
+{
+    for j in 0..nrhs {
+        for i in 0..n {
+            let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+            for k in 0..i {
+                sum = sum
+                    - (ap.value_unchecked(i, k)
+                        * unsafe { b.get_unchecked(k, j).clone() });
+            }
+            let piv = ap.value_unchecked(i, i);
+            if piv.is_zero() {
+                return Err(LinAlgError::SingularMatrix);
+            }
+            unsafe {
+                b.set_unchecked(i, j, sum / piv);
+            }
+        }
+        for k in 0..n {
+            let i = n - 1 - k;
+            let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+            for p in (i + 1)..n {
+                sum = sum
+                    - (ap.value_unchecked(p, i).conj()
+                        * unsafe { b.get_unchecked(p, j).clone() });
+            }
+            let piv = ap.value_unchecked(i, i);
+            if piv.is_zero() {
+                return Err(LinAlgError::SingularMatrix);
+            }
+            unsafe {
+                b.set_unchecked(i, j, sum / piv.conj());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn pptrs_upper<T, AP, B>(
+    ap: &AP,
+    b: &mut B,
+    n: usize,
+    nrhs: usize,
+) -> LinAlgResult<()>
+where
+    T: Scalar + Div<Output = T>,
+    AP: PackedStorage<T>,
+    B: DenseStorageMut<T>,
+{
+    for j in 0..nrhs {
+        for i in 0..n {
+            let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+            for k in 0..i {
+                sum = sum
+                    - (ap.value_unchecked(k, i).conj()
+                        * unsafe { b.get_unchecked(k, j).clone() });
+            }
+            let piv = ap.value_unchecked(i, i);
+            if piv.is_zero() {
+                return Err(LinAlgError::SingularMatrix);
+            }
+            unsafe {
+                b.set_unchecked(i, j, sum / piv.conj());
+            }
+        }
+        for k in 0..n {
+            let i = n - 1 - k;
+            let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+            for p in (i + 1)..n {
+                sum = sum
+                    - (ap.value_unchecked(i, p)
+                        * unsafe { b.get_unchecked(p, j).clone() });
+            }
+            let piv = ap.value_unchecked(i, i);
+            if piv.is_zero() {
+                return Err(LinAlgError::SingularMatrix);
+            }
+            unsafe {
+                b.set_unchecked(i, j, sum / piv);
+            }
+        }
+    }
+    Ok(())
+}
+
 impl<T, AP, B> lapack::Pptrs<T, AP, B> for DefaultBlas
 where
     T: Scalar + Div<Output = T>,
@@ -3496,77 +3554,10 @@ where
     fn pptrs(uplo: UpLo, ap: &AP, b: &mut B) -> LinAlgResult<()> {
         let n = ap.dim();
         let nrhs = b.cols();
-        for j in 0..nrhs {
-            match uplo {
-                UpLo::Lower => {
-                    for i in 0..n {
-                        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                        for k in 0..i {
-                            sum = sum
-                                - (ap.value_unchecked(i, k)
-                                    * unsafe { b.get_unchecked(k, j).clone() });
-                        }
-                        let piv = ap.value_unchecked(i, i);
-                        if piv.is_zero() {
-                            return Err(LinAlgError::SingularMatrix);
-                        }
-                        unsafe {
-                            b.set_unchecked(i, j, sum / piv);
-                        }
-                    }
-                    for k in 0..n {
-                        let i = n - 1 - k;
-                        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                        for p in (i + 1)..n {
-                            sum = sum
-                                - (ap.value_unchecked(p, i).conj()
-                                    * unsafe { b.get_unchecked(p, j).clone() });
-                        }
-                        let piv = ap.value_unchecked(i, i);
-                        if piv.is_zero() {
-                            return Err(LinAlgError::SingularMatrix);
-                        }
-                        unsafe {
-                            b.set_unchecked(i, j, sum / piv.conj());
-                        }
-                    }
-                }
-                UpLo::Upper => {
-                    for i in 0..n {
-                        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                        for k in 0..i {
-                            sum = sum
-                                - (ap.value_unchecked(k, i).conj()
-                                    * unsafe { b.get_unchecked(k, j).clone() });
-                        }
-                        let piv = ap.value_unchecked(i, i);
-                        if piv.is_zero() {
-                            return Err(LinAlgError::SingularMatrix);
-                        }
-                        unsafe {
-                            b.set_unchecked(i, j, sum / piv.conj());
-                        }
-                    }
-                    for k in 0..n {
-                        let i = n - 1 - k;
-                        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                        for p in (i + 1)..n {
-                            sum = sum
-                                - (ap.value_unchecked(i, p)
-                                    * unsafe { b.get_unchecked(p, j).clone() });
-                        }
-                        let piv = ap.value_unchecked(i, i);
-                        if piv.is_zero() {
-                            return Err(LinAlgError::SingularMatrix);
-                        }
-                        unsafe {
-                            b.set_unchecked(i, j, sum / piv);
-                        }
-                    }
-                }
-            }
+        match uplo {
+            UpLo::Lower => pptrs_lower(ap, b, n, nrhs),
+            UpLo::Upper => pptrs_upper(ap, b, n, nrhs),
         }
-        Ok(())
     }
 }
 
@@ -3632,6 +3623,132 @@ where
     }
 }
 
+#[inline(always)]
+fn getrs_swap_pivots<T: Scalar, B: DenseStorageMut<T>>(
+    ipiv: &[usize],
+    b: &mut B,
+    n: usize,
+    j: usize,
+    reverse: bool,
+) {
+    let apply = |k: usize, p: usize, b: &mut B| {
+        if p != k {
+            unsafe {
+                let vk = b.get_unchecked(k, j).clone();
+                let vp = b.get_unchecked(p, j).clone();
+                b.set_unchecked(k, j, vp);
+                b.set_unchecked(p, j, vk);
+            }
+        }
+    };
+    if reverse {
+        for k in (0..n).rev() {
+            apply(k, ipiv[k], b);
+        }
+    } else {
+        for (k, &p) in ipiv.iter().enumerate().take(n) {
+            apply(k, p, b);
+        }
+    }
+}
+
+#[inline(always)]
+fn getrs_notrans_col<T, A, B>(
+    a: &A,
+    ipiv: &[usize],
+    b: &mut B,
+    n: usize,
+    j: usize,
+) -> LinAlgResult<()>
+where
+    T: Scalar + Div<Output = T>,
+    A: DenseStorage<T>,
+    B: DenseStorageMut<T>,
+{
+    getrs_swap_pivots(ipiv, b, n, j, false);
+    for i in 0..n {
+        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+        for k in 0..i {
+            sum = sum
+                - (unsafe { a.get_unchecked(i, k).clone() }
+                    * unsafe { b.get_unchecked(k, j).clone() });
+        }
+        unsafe {
+            b.set_unchecked(i, j, sum);
+        }
+    }
+    for k in 0..n {
+        let i = n - 1 - k;
+        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+        for p in (i + 1)..n {
+            sum = sum
+                - (unsafe { a.get_unchecked(i, p).clone() }
+                    * unsafe { b.get_unchecked(p, j).clone() });
+        }
+        let piv = unsafe { a.get_unchecked(i, i).clone() };
+        if piv.is_zero() {
+            return Err(LinAlgError::SingularMatrix);
+        }
+        unsafe {
+            b.set_unchecked(i, j, sum / piv);
+        }
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn getrs_trans_ut<T, A, B>(
+    trans: Trans,
+    a: &A,
+    b: &mut B,
+    n: usize,
+    j: usize,
+) -> LinAlgResult<()>
+where
+    T: Scalar + Div<Output = T>,
+    A: DenseStorage<T>,
+    B: DenseStorageMut<T>,
+{
+    let conj = trans == Trans::ConjTrans;
+    for i in 0..n {
+        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+        for k in 0..i {
+            let a_val = storage_elem(a, k, i, conj);
+            sum = sum - (a_val * unsafe { b.get_unchecked(k, j).clone() });
+        }
+        let piv = unsafe { a.get_unchecked(i, i).clone() };
+        if piv.is_zero() {
+            return Err(LinAlgError::SingularMatrix);
+        }
+        let piv_val = if conj { piv.conj() } else { piv };
+        unsafe {
+            b.set_unchecked(i, j, sum / piv_val);
+        }
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn getrs_trans_lt<T, A, B>(trans: Trans, a: &A, b: &mut B, n: usize, j: usize)
+where
+    T: Scalar,
+    A: DenseStorage<T>,
+    B: DenseStorageMut<T>,
+{
+    let conj = trans == Trans::ConjTrans;
+    for k in 0..n {
+        let i = n - 1 - k;
+        let mut sum = unsafe { b.get_unchecked(i, j).clone() };
+        for p in (i + 1)..n {
+            let a_val = storage_elem(a, p, i, conj);
+            sum = sum - (a_val * unsafe { b.get_unchecked(p, j).clone() });
+        }
+        unsafe {
+            b.set_unchecked(i, j, sum);
+        }
+    }
+}
+
 impl<T, A, B> lapack::Getrs<T, A, B> for DefaultBlas
 where
     T: Scalar + Div<Output = T>,
@@ -3650,109 +3767,53 @@ where
         if ipiv.len() < n {
             return Err(LinAlgError::WorkspaceTooSmall);
         }
-
         for j in 0..nrhs {
             if trans == Trans::NoTrans {
-                for (k, &p) in ipiv.iter().enumerate().take(n) {
-                    if p != k {
-                        unsafe {
-                            let vk = b.get_unchecked(k, j).clone();
-                            let vp = b.get_unchecked(p, j).clone();
-                            b.set_unchecked(k, j, vp);
-                            b.set_unchecked(p, j, vk);
-                        }
-                    }
-                }
-
-                for i in 0..n {
-                    let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                    for k in 0..i {
-                        sum = sum
-                            - (unsafe { a.get_unchecked(i, k).clone() }
-                                * unsafe { b.get_unchecked(k, j).clone() });
-                    }
-                    unsafe {
-                        b.set_unchecked(i, j, sum);
-                    }
-                }
-
-                for k in 0..n {
-                    let i = n - 1 - k;
-                    let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                    for p in (i + 1)..n {
-                        sum = sum
-                            - (unsafe { a.get_unchecked(i, p).clone() }
-                                * unsafe { b.get_unchecked(p, j).clone() });
-                    }
-                    let piv = unsafe { a.get_unchecked(i, i).clone() };
-                    if piv.is_zero() {
-                        return Err(LinAlgError::SingularMatrix);
-                    }
-                    unsafe {
-                        b.set_unchecked(i, j, sum / piv);
-                    }
-                }
+                getrs_notrans_col(a, ipiv, b, n, j)?;
             } else {
-                for i in 0..n {
-                    let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                    for k in 0..i {
-                        let elem = unsafe { a.get_unchecked(k, i).clone() };
-                        let a_val = if trans == Trans::ConjTrans {
-                            elem.conj()
-                        } else {
-                            elem
-                        };
-                        sum = sum
-                            - (a_val
-                                * unsafe { b.get_unchecked(k, j).clone() });
-                    }
-                    let piv = unsafe { a.get_unchecked(i, i).clone() };
-                    if piv.is_zero() {
-                        return Err(LinAlgError::SingularMatrix);
-                    }
-                    let piv_val = if trans == Trans::ConjTrans {
-                        piv.conj()
-                    } else {
-                        piv
-                    };
-                    unsafe {
-                        b.set_unchecked(i, j, sum / piv_val);
-                    }
-                }
-
-                for k in 0..n {
-                    let i = n - 1 - k;
-                    let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-                    for p in (i + 1)..n {
-                        let elem = unsafe { a.get_unchecked(p, i).clone() };
-                        let a_val = if trans == Trans::ConjTrans {
-                            elem.conj()
-                        } else {
-                            elem
-                        };
-                        sum = sum
-                            - (a_val
-                                * unsafe { b.get_unchecked(p, j).clone() });
-                    }
-                    unsafe {
-                        b.set_unchecked(i, j, sum);
-                    }
-                }
-
-                for k in (0..n).rev() {
-                    let p = ipiv[k];
-                    if p != k {
-                        unsafe {
-                            let vk = b.get_unchecked(k, j).clone();
-                            let vp = b.get_unchecked(p, j).clone();
-                            b.set_unchecked(k, j, vp);
-                            b.set_unchecked(p, j, vk);
-                        }
-                    }
-                }
+                getrs_trans_ut(trans, a, b, n, j)?;
+                getrs_trans_lt(trans, a, b, n, j);
+                getrs_swap_pivots(ipiv, b, n, j, true);
             }
         }
         Ok(())
+    }
+}
+
+#[inline(always)]
+fn geqrf_apply_reflector<T, A>(
+    a: &mut A,
+    tau_k: &T,
+    k: usize,
+    m: usize,
+    n: usize,
+) where
+    T: Scalar,
+    A: DenseStorageMut<T>,
+{
+    for j in (k + 1)..n {
+        let mut dot = T::ZERO;
+        for i in k..m {
+            let v_i = if i == k {
+                T::ONE
+            } else {
+                unsafe { a.get_unchecked(i, k).clone() }
+            };
+            let a_ij = unsafe { a.get_unchecked(i, j).clone() };
+            dot = dot + (v_i.conj() * a_ij);
+        }
+        let scalar = tau_k.clone() * dot;
+        for i in k..m {
+            let v_i = if i == k {
+                T::ONE
+            } else {
+                unsafe { a.get_unchecked(i, k).clone() }
+            };
+            let a_ij = unsafe { a.get_unchecked(i, j).clone() };
+            unsafe {
+                a.set_unchecked(i, j, a_ij - (v_i * scalar.clone()));
+            }
+        }
     }
 }
 
@@ -3804,35 +3865,147 @@ where
                 }
             }
 
-            // Apply Householder reflector to remaining submatrix
-            for j in (k + 1)..n {
-                let mut dot = T::ZERO;
-                for i in k..m {
-                    let v_i = if i == k {
-                        T::ONE
-                    } else {
-                        unsafe { a.get_unchecked(i, k).clone() }
-                    };
-                    let a_ij = unsafe { a.get_unchecked(i, j).clone() };
-                    dot = dot + (v_i.conj() * a_ij);
-                }
-
-                let scalar = tau[k].clone() * dot;
-                for i in k..m {
-                    let v_i = if i == k {
-                        T::ONE
-                    } else {
-                        unsafe { a.get_unchecked(i, k).clone() }
-                    };
-                    let a_ij = unsafe { a.get_unchecked(i, j).clone() };
-                    unsafe {
-                        a.set_unchecked(i, j, a_ij - (v_i * scalar.clone()));
-                    }
-                }
-            }
+            geqrf_apply_reflector(a, &tau[k], k, m, n);
         }
         let _ = work;
         Ok(())
+    }
+}
+
+#[inline(always)]
+fn qr_apply_left_k<T, A, C>(
+    a: &A,
+    tau_k: &T,
+    c: &mut C,
+    k: usize,
+    m: usize,
+    n: usize,
+    conj_v: bool,
+) where
+    T: Scalar,
+    A: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    for j in 0..n {
+        let mut dot = unsafe { c.get_unchecked(k, j).clone() };
+        for i in (k + 1)..m {
+            let v_i = unsafe { a.get_unchecked(i, k).clone() };
+            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
+            if conj_v {
+                dot = dot + (v_i.conj() * c_ij);
+            } else {
+                dot = dot + (v_i * c_ij);
+            }
+        }
+        let scalar = tau_k.clone() * dot;
+        let c_kj = unsafe { c.get_unchecked(k, j).clone() };
+        unsafe {
+            c.set_unchecked(k, j, c_kj - scalar.clone());
+        }
+        for i in (k + 1)..m {
+            let v_i = unsafe { a.get_unchecked(i, k).clone() };
+            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
+            unsafe {
+                c.set_unchecked(i, j, c_ij - (v_i * scalar.clone()));
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn qr_apply_right_k<T, A, C>(
+    a: &A,
+    tau_k: &T,
+    c: &mut C,
+    k: usize,
+    m: usize,
+    n: usize,
+    conj_v: bool,
+) where
+    T: Scalar,
+    A: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    for i in 0..m {
+        let mut dot = unsafe { c.get_unchecked(i, k).clone() };
+        for j in (k + 1)..n {
+            let v_j = unsafe { a.get_unchecked(j, k).clone() };
+            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
+            dot = dot + (v_j * c_ij);
+        }
+        let scalar = tau_k.clone() * dot;
+        let c_ik = unsafe { c.get_unchecked(i, k).clone() };
+        unsafe {
+            c.set_unchecked(i, k, c_ik - scalar.clone());
+        }
+        for j in (k + 1)..n {
+            let v_j = unsafe { a.get_unchecked(j, k).clone() };
+            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
+            let v_apply = if conj_v { v_j.conj() } else { v_j };
+            unsafe {
+                c.set_unchecked(i, j, c_ij - (v_apply * scalar.clone()));
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn qr_apply_left<T, A, C>(
+    a: &A,
+    tau: &[T],
+    c: &mut C,
+    k_limit: usize,
+    reverse: bool,
+    conj_tau: bool,
+    conj_v: bool,
+) where
+    T: Scalar,
+    A: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    let m = c.rows();
+    let n = c.cols();
+    for t in 0..k_limit {
+        let k = if reverse { k_limit - 1 - t } else { t };
+        let tau_k = if conj_tau {
+            tau[k].clone().conj()
+        } else {
+            tau[k].clone()
+        };
+        if tau_k.is_zero() {
+            continue;
+        }
+        qr_apply_left_k(a, &tau_k, c, k, m, n, conj_v);
+    }
+}
+
+#[inline(always)]
+fn qr_apply_right<T, A, C>(
+    a: &A,
+    tau: &[T],
+    c: &mut C,
+    k_limit: usize,
+    reverse: bool,
+    conj_tau: bool,
+    conj_v: bool,
+) where
+    T: Scalar,
+    A: DenseStorage<T>,
+    C: DenseStorageMut<T>,
+{
+    let m = c.rows();
+    let n = c.cols();
+    for t in 0..k_limit {
+        let k = if reverse { k_limit - 1 - t } else { t };
+        let tau_k = if conj_tau {
+            tau[k].clone().conj()
+        } else {
+            tau[k].clone()
+        };
+        if tau_k.is_zero() {
+            continue;
+        }
+        qr_apply_right_k(a, &tau_k, c, k, m, n, conj_v);
     }
 }
 
@@ -3861,137 +4034,18 @@ where
         if tau.len() < k_limit || work.len() < min_work {
             return Err(LinAlgError::WorkspaceTooSmall);
         }
-
         match (side, trans) {
             (Side::Left, Trans::NoTrans) => {
-                // Q C = H_0 H_1 ... H_{k-1} C (applied backwards)
-                for k in (0..k_limit).rev() {
-                    let tau_k = tau[k].clone();
-                    if tau_k.is_zero() {
-                        continue;
-                    }
-                    for j in 0..n {
-                        let mut dot = unsafe { c.get_unchecked(k, j).clone() };
-                        for i in (k + 1)..m {
-                            let v_i = unsafe { a.get_unchecked(i, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            dot = dot + (v_i * c_ij);
-                        }
-                        let scalar = tau_k.clone() * dot;
-                        let c_kj = unsafe { c.get_unchecked(k, j).clone() };
-                        unsafe {
-                            c.set_unchecked(k, j, c_kj - scalar.clone());
-                        }
-                        for i in (k + 1)..m {
-                            let v_i = unsafe { a.get_unchecked(i, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            unsafe {
-                                c.set_unchecked(
-                                    i,
-                                    j,
-                                    c_ij - (v_i * scalar.clone()),
-                                );
-                            }
-                        }
-                    }
-                }
+                qr_apply_left(a, tau, c, k_limit, true, false, false);
             }
             (Side::Left, Trans::Trans | Trans::ConjTrans) => {
-                // Q^T C = H_{k-1} ... H_0 C (applied forwards)
-                for k in 0..k_limit {
-                    let tau_k = tau[k].clone();
-                    if tau_k.is_zero() {
-                        continue;
-                    }
-                    for j in 0..n {
-                        let mut dot = unsafe { c.get_unchecked(k, j).clone() };
-                        for i in (k + 1)..m {
-                            let v_i = unsafe { a.get_unchecked(i, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            dot = dot + (v_i * c_ij);
-                        }
-                        let scalar = tau_k.clone() * dot;
-                        let c_kj = unsafe { c.get_unchecked(k, j).clone() };
-                        unsafe {
-                            c.set_unchecked(k, j, c_kj - scalar.clone());
-                        }
-                        for i in (k + 1)..m {
-                            let v_i = unsafe { a.get_unchecked(i, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            unsafe {
-                                c.set_unchecked(
-                                    i,
-                                    j,
-                                    c_ij - (v_i * scalar.clone()),
-                                );
-                            }
-                        }
-                    }
-                }
+                qr_apply_left(a, tau, c, k_limit, false, false, false);
             }
             (Side::Right, Trans::NoTrans) => {
-                for k in 0..k_limit {
-                    let tau_k = tau[k].clone();
-                    if tau_k.is_zero() {
-                        continue;
-                    }
-                    for i in 0..m {
-                        let mut dot = unsafe { c.get_unchecked(i, k).clone() };
-                        for j in (k + 1)..n {
-                            let v_j = unsafe { a.get_unchecked(j, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            dot = dot + (v_j * c_ij);
-                        }
-                        let scalar = tau_k.clone() * dot;
-                        let c_ik = unsafe { c.get_unchecked(i, k).clone() };
-                        unsafe {
-                            c.set_unchecked(i, k, c_ik - scalar.clone());
-                        }
-                        for j in (k + 1)..n {
-                            let v_j = unsafe { a.get_unchecked(j, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            unsafe {
-                                c.set_unchecked(
-                                    i,
-                                    j,
-                                    c_ij - (v_j * scalar.clone()),
-                                );
-                            }
-                        }
-                    }
-                }
+                qr_apply_right(a, tau, c, k_limit, false, false, false);
             }
             (Side::Right, Trans::Trans | Trans::ConjTrans) => {
-                for k in (0..k_limit).rev() {
-                    let tau_k = tau[k].clone();
-                    if tau_k.is_zero() {
-                        continue;
-                    }
-                    for i in 0..m {
-                        let mut dot = unsafe { c.get_unchecked(i, k).clone() };
-                        for j in (k + 1)..n {
-                            let v_j = unsafe { a.get_unchecked(j, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            dot = dot + (v_j * c_ij);
-                        }
-                        let scalar = tau_k.clone() * dot;
-                        let c_ik = unsafe { c.get_unchecked(i, k).clone() };
-                        unsafe {
-                            c.set_unchecked(i, k, c_ik - scalar.clone());
-                        }
-                        for j in (k + 1)..n {
-                            let v_j = unsafe { a.get_unchecked(j, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            unsafe {
-                                c.set_unchecked(
-                                    i,
-                                    j,
-                                    c_ij - (v_j * scalar.clone()),
-                                );
-                            }
-                        }
-                    }
-                }
+                qr_apply_right(a, tau, c, k_limit, true, false, false);
             }
         }
         let _ = work;
@@ -4024,135 +4078,18 @@ where
         if tau.len() < k_limit || work.len() < min_work {
             return Err(LinAlgError::WorkspaceTooSmall);
         }
-
         match (side, trans) {
             (Side::Left, Trans::NoTrans) => {
-                for k in (0..k_limit).rev() {
-                    let tau_k = tau[k].clone();
-                    if tau_k.is_zero() {
-                        continue;
-                    }
-                    for j in 0..n {
-                        let mut dot = unsafe { c.get_unchecked(k, j).clone() };
-                        for i in (k + 1)..m {
-                            let v_i = unsafe { a.get_unchecked(i, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            dot = dot + (v_i.conj() * c_ij);
-                        }
-                        let scalar = tau_k.clone() * dot;
-                        let c_kj = unsafe { c.get_unchecked(k, j).clone() };
-                        unsafe {
-                            c.set_unchecked(k, j, c_kj - scalar.clone());
-                        }
-                        for i in (k + 1)..m {
-                            let v_i = unsafe { a.get_unchecked(i, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            unsafe {
-                                c.set_unchecked(
-                                    i,
-                                    j,
-                                    c_ij - (v_i * scalar.clone()),
-                                );
-                            }
-                        }
-                    }
-                }
+                qr_apply_left(a, tau, c, k_limit, true, false, true);
             }
             (Side::Left, Trans::ConjTrans | Trans::Trans) => {
-                for k in 0..k_limit {
-                    let tau_k = tau[k].clone().conj();
-                    if tau_k.is_zero() {
-                        continue;
-                    }
-                    for j in 0..n {
-                        let mut dot = unsafe { c.get_unchecked(k, j).clone() };
-                        for i in (k + 1)..m {
-                            let v_i = unsafe { a.get_unchecked(i, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            dot = dot + (v_i.conj() * c_ij);
-                        }
-                        let scalar = tau_k.clone() * dot;
-                        let c_kj = unsafe { c.get_unchecked(k, j).clone() };
-                        unsafe {
-                            c.set_unchecked(k, j, c_kj - scalar.clone());
-                        }
-                        for i in (k + 1)..m {
-                            let v_i = unsafe { a.get_unchecked(i, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            unsafe {
-                                c.set_unchecked(
-                                    i,
-                                    j,
-                                    c_ij - (v_i * scalar.clone()),
-                                );
-                            }
-                        }
-                    }
-                }
+                qr_apply_left(a, tau, c, k_limit, false, true, true);
             }
             (Side::Right, Trans::NoTrans) => {
-                for k in 0..k_limit {
-                    let tau_k = tau[k].clone();
-                    if tau_k.is_zero() {
-                        continue;
-                    }
-                    for i in 0..m {
-                        let mut dot = unsafe { c.get_unchecked(i, k).clone() };
-                        for j in (k + 1)..n {
-                            let v_j = unsafe { a.get_unchecked(j, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            dot = dot + (v_j.conj() * c_ij);
-                        }
-                        let scalar = tau_k.clone() * dot;
-                        let c_ik = unsafe { c.get_unchecked(i, k).clone() };
-                        unsafe {
-                            c.set_unchecked(i, k, c_ik - scalar.clone());
-                        }
-                        for j in (k + 1)..n {
-                            let v_j = unsafe { a.get_unchecked(j, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            unsafe {
-                                c.set_unchecked(
-                                    i,
-                                    j,
-                                    c_ij - (v_j * scalar.clone()),
-                                );
-                            }
-                        }
-                    }
-                }
+                qr_apply_right(a, tau, c, k_limit, false, false, true);
             }
             (Side::Right, Trans::ConjTrans | Trans::Trans) => {
-                for k in (0..k_limit).rev() {
-                    let tau_k = tau[k].clone().conj();
-                    if tau_k.is_zero() {
-                        continue;
-                    }
-                    for i in 0..m {
-                        let mut dot = unsafe { c.get_unchecked(i, k).clone() };
-                        for j in (k + 1)..n {
-                            let v_j = unsafe { a.get_unchecked(j, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            dot = dot + (v_j.conj() * c_ij);
-                        }
-                        let scalar = tau_k.clone() * dot;
-                        let c_ik = unsafe { c.get_unchecked(i, k).clone() };
-                        unsafe {
-                            c.set_unchecked(i, k, c_ik - scalar.clone());
-                        }
-                        for j in (k + 1)..n {
-                            let v_j = unsafe { a.get_unchecked(j, k).clone() };
-                            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-                            unsafe {
-                                c.set_unchecked(
-                                    i,
-                                    j,
-                                    c_ij - (v_j * scalar.clone()),
-                                );
-                            }
-                        }
-                    }
-                }
+                qr_apply_right(a, tau, c, k_limit, true, true, true);
             }
         }
         let _ = work;
@@ -4185,6 +4122,376 @@ fn uplo_entry<T: Scalar, A: DenseStorage<T>>(
     }
 }
 
+#[inline(always)]
+fn ev_init_vectors<T: Scalar>(jobz: JobZ, n: usize, work: &mut [T]) {
+    if jobz == JobZ::Vectors {
+        for i in 0..n {
+            for j in 0..n {
+                work[i * n + j] = if i == j { T::ONE } else { T::ZERO };
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn ev_max_offdiag<T, A>(a: &A, n: usize, uplo: UpLo) -> (T::Real, usize, usize)
+where
+    T: Scalar,
+    A: DenseStorage<T>,
+{
+    let mut max_off = <T::Real as Zero>::ZERO;
+    let mut p = 0;
+    let mut q = 1;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let val = uplo_entry(a, i, j, uplo).abs2();
+            if val > max_off || !val.eq(&val) {
+                max_off = val;
+                p = i;
+                q = j;
+            }
+        }
+    }
+    (max_off, p, q)
+}
+
+#[inline(always)]
+fn ev_should_stop<R: Float>(
+    max_off: &R,
+    iter: usize,
+    max_iter: usize,
+) -> LinAlgResult<bool> {
+    let eps = R::epsilon();
+    let converged = max_off.clone() <= eps;
+    if converged || iter >= max_iter {
+        if iter >= max_iter && !converged {
+            return Err(LinAlgError::MaxIterationsReached);
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+#[inline(always)]
+fn ev_store_w<T, A>(a: &A, w: &mut [T::Real], n: usize)
+where
+    T: Scalar,
+    A: DenseStorage<T>,
+{
+    for i in 0..n {
+        w[i] = unsafe { a.get_unchecked(i, i).re() };
+    }
+}
+
+#[inline(always)]
+fn ev_copy_vectors<T, A>(jobz: JobZ, a: &mut A, work: &[T], n: usize)
+where
+    T: Scalar,
+    A: DenseStorageMut<T>,
+{
+    if jobz == JobZ::Vectors {
+        for i in 0..n {
+            for j in 0..n {
+                unsafe {
+                    a.set_unchecked(i, j, work[i * n + j].clone());
+                }
+            }
+        }
+    }
+}
+
+/// Conjugate-transposes the Jacobi vector workspace so columns of the
+/// stored `U` satisfy `A U = U Λ` with `Λ` taken from the diagonal of `A`.
+/// The plane rotations accumulate `V^H` relative to that diagonal order.
+#[inline(always)]
+#[allow(clippy::indexing_slicing)]
+fn heev_conj_transpose_vectors<T: Scalar>(work: &mut [T], n: usize) {
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let aij = work[i * n + j].clone();
+            let aji = work[j * n + i].clone();
+            work[i * n + j] = aji.conj();
+            work[j * n + i] = aij.conj();
+        }
+        work[i * n + i] = work[i * n + i].clone().conj();
+    }
+}
+
+#[inline(always)]
+fn syev_jacobi_cs<T, A>(
+    a: &A,
+    p: usize,
+    q: usize,
+    uplo: UpLo,
+) -> (T, T, T::Real, T::Real)
+where
+    T: Scalar,
+    T::Real: Float,
+    A: DenseStorage<T>,
+{
+    let a_pp = uplo_entry(a, p, p, uplo).re();
+    let a_qq = uplo_entry(a, q, q, uplo).re();
+    let a_pq = uplo_entry(a, p, q, uplo).re();
+    let one = <T::Real as One>::ONE;
+    let two = one.clone() + one.clone();
+    let theta = (a_qq - a_pp) / two / a_pq;
+    let t = if theta >= <T::Real as Zero>::ZERO {
+        one.clone()
+            / (theta.clone() + (one.clone() + theta.clone() * theta).sqrt())
+    } else {
+        -one.clone()
+            / (-theta.clone() + (one.clone() + theta.clone() * theta).sqrt())
+    };
+    let c = one.clone() / (one + t.clone() * t.clone()).sqrt();
+    let s = t * c.clone();
+    (T::from_real(c.clone()), T::from_real(s.clone()), c, s)
+}
+
+#[inline(always)]
+fn syev_apply_offdiag<T, A>(
+    a: &mut A,
+    n: usize,
+    p: usize,
+    q: usize,
+    uplo: UpLo,
+    c_val: &T,
+    s_val: &T,
+) where
+    T: Scalar,
+    A: DenseStorageMut<T>,
+{
+    for k in 0..n {
+        if k != p && k != q {
+            let a_kp = uplo_entry(a, k, p, uplo);
+            let a_kq = uplo_entry(a, k, q, uplo);
+            let new_kp =
+                (c_val.clone() * a_kp.clone()) - (s_val.clone() * a_kq.clone());
+            let new_kq = (s_val.clone() * a_kp) + (c_val.clone() * a_kq);
+            unsafe {
+                a.set_unchecked(k, p, new_kp.clone());
+                a.set_unchecked(k, q, new_kq.clone());
+                a.set_unchecked(p, k, new_kp);
+                a.set_unchecked(q, k, new_kq);
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn syev_apply_2x2<T, A>(
+    a: &mut A,
+    p: usize,
+    q: usize,
+    uplo: UpLo,
+    c: T::Real,
+    s: T::Real,
+) where
+    T: Scalar,
+    A: DenseStorageMut<T>,
+{
+    let a_pp = uplo_entry(a, p, p, uplo).re();
+    let a_qq = uplo_entry(a, q, q, uplo).re();
+    let a_pq = uplo_entry(a, p, q, uplo).re();
+    let two_a_pq = a_pq.clone() + a_pq;
+    let c2 = c.clone() * c.clone();
+    let s2 = s.clone() * s.clone();
+    let cs = c * s;
+    let new_pp = (c2.clone() * a_pp.clone()) - (cs.clone() * two_a_pq.clone())
+        + (s2.clone() * a_qq.clone());
+    let new_qq = (s2 * a_pp) + (cs * two_a_pq) + (c2 * a_qq);
+    unsafe {
+        a.set_unchecked(p, p, T::from_real(new_pp));
+        a.set_unchecked(q, q, T::from_real(new_qq));
+        a.set_unchecked(p, q, T::ZERO);
+        a.set_unchecked(q, p, T::ZERO);
+    }
+}
+
+#[inline(always)]
+fn syev_apply_vectors<T: Scalar>(
+    work: &mut [T],
+    n: usize,
+    p: usize,
+    q: usize,
+    c_val: &T,
+    s_val: &T,
+) {
+    for k in 0..n {
+        let v_kp = work[k * n + p].clone();
+        let v_kq = work[k * n + q].clone();
+        work[k * n + p] =
+            (c_val.clone() * v_kp.clone()) - (s_val.clone() * v_kq.clone());
+        work[k * n + q] = (s_val.clone() * v_kp) + (c_val.clone() * v_kq);
+    }
+}
+
+#[inline(always)]
+fn syev_rotate<T, A>(
+    a: &mut A,
+    work: &mut [T],
+    n: usize,
+    p: usize,
+    q: usize,
+    jobz: JobZ,
+    uplo: UpLo,
+) where
+    T: Scalar,
+    T::Real: Float,
+    A: DenseStorageMut<T>,
+{
+    let (c_val, s_val, c, s) = syev_jacobi_cs(a, p, q, uplo);
+    syev_apply_offdiag(a, n, p, q, uplo, &c_val, &s_val);
+    syev_apply_2x2(a, p, q, uplo, c, s);
+    if jobz == JobZ::Vectors {
+        syev_apply_vectors(work, n, p, q, &c_val, &s_val);
+    }
+}
+
+#[inline(always)]
+fn heev_jacobi_cs<T, A>(
+    a: &A,
+    p: usize,
+    q: usize,
+    uplo: UpLo,
+) -> Option<(T, T, T)>
+where
+    T: Scalar + Div<Output = T>,
+    T::Real: Float,
+    A: DenseStorage<T>,
+{
+    let a_pp = uplo_entry(a, p, p, uplo).re();
+    let a_qq = uplo_entry(a, q, q, uplo).re();
+    let a_pq = uplo_entry(a, p, q, uplo);
+    let abs_a_pq = a_pq.abs2().sqrt();
+    if abs_a_pq.is_zero() {
+        return None;
+    }
+    let one = <T::Real as One>::ONE;
+    let two = one.clone() + one.clone();
+    let theta = (a_qq - a_pp) / (two * abs_a_pq.clone());
+    let t_real = if theta >= <T::Real as Zero>::ZERO {
+        one.clone()
+            / (theta.clone() + (one.clone() + theta.clone() * theta).sqrt())
+    } else {
+        -one.clone()
+            / (-theta.clone() + (one.clone() + theta.clone() * theta).sqrt())
+    };
+    let c_real = one.clone() / (one + t_real.clone() * t_real.clone()).sqrt();
+    let s_phase = a_pq / T::from_real(abs_a_pq);
+    let s = s_phase * T::from_real(t_real * c_real.clone());
+    let c = T::from_real(c_real);
+    let s_conj = s.clone().conj();
+    Some((c, s, s_conj))
+}
+
+#[inline(always)]
+fn heev_apply_offdiag<T, A>(
+    a: &mut A,
+    n: usize,
+    p: usize,
+    q: usize,
+    uplo: UpLo,
+    c: &T,
+    s: &T,
+    s_conj: &T,
+) where
+    T: Scalar,
+    A: DenseStorageMut<T>,
+{
+    for k in 0..n {
+        if k != p && k != q {
+            let a_kp = uplo_entry(a, k, p, uplo);
+            let a_kq = uplo_entry(a, k, q, uplo);
+            let new_kp =
+                (c.clone() * a_kp.clone()) - (s.clone() * a_kq.clone());
+            let new_kq = (s_conj.clone() * a_kp) + (c.clone() * a_kq);
+            unsafe {
+                a.set_unchecked(k, p, new_kp.clone());
+                a.set_unchecked(k, q, new_kq.clone());
+                a.set_unchecked(p, k, new_kp.conj());
+                a.set_unchecked(q, k, new_kq.conj());
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn heev_apply_2x2<T, A>(
+    a: &mut A,
+    p: usize,
+    q: usize,
+    uplo: UpLo,
+    c: &T,
+    s: &T,
+    s_conj: &T,
+) where
+    T: Scalar,
+    A: DenseStorageMut<T>,
+{
+    let a_pp_val = uplo_entry(a, p, p, uplo);
+    let a_qq_val = uplo_entry(a, q, q, uplo);
+    let a_pq_val = uplo_entry(a, p, q, uplo);
+    let new_pp = (c.clone() * c.clone() * a_pp_val.clone())
+        - (c.clone() * s.clone() * a_pq_val.clone().conj())
+        - (c.clone() * s_conj.clone() * a_pq_val.clone())
+        + (s.clone() * s_conj.clone() * a_qq_val.clone());
+    let new_qq = (s.clone() * s_conj.clone() * a_pp_val)
+        + (c.clone() * s_conj.clone() * a_pq_val.clone())
+        + (c.clone() * s.clone() * a_pq_val.conj())
+        + (c.clone() * c.clone() * a_qq_val);
+    unsafe {
+        a.set_unchecked(p, p, T::from_real(new_pp.re()));
+        a.set_unchecked(q, q, T::from_real(new_qq.re()));
+        a.set_unchecked(p, q, T::ZERO);
+        a.set_unchecked(q, p, T::ZERO);
+    }
+}
+
+#[inline(always)]
+fn heev_apply_vectors<T: Scalar>(
+    work: &mut [T],
+    n: usize,
+    p: usize,
+    q: usize,
+    c: &T,
+    s: &T,
+    s_conj: &T,
+) {
+    for k in 0..n {
+        let v_kp = work[k * n + p].clone();
+        let v_kq = work[k * n + q].clone();
+        work[k * n + p] =
+            (c.clone() * v_kp.clone()) - (s.clone() * v_kq.clone());
+        work[k * n + q] = (s_conj.clone() * v_kp) + (c.clone() * v_kq);
+    }
+}
+
+#[inline(always)]
+fn heev_rotate<T, A>(
+    a: &mut A,
+    work: &mut [T],
+    n: usize,
+    p: usize,
+    q: usize,
+    jobz: JobZ,
+    uplo: UpLo,
+) -> bool
+where
+    T: Scalar + Div<Output = T>,
+    T::Real: Float,
+    A: DenseStorageMut<T>,
+{
+    let Some((c, s, s_conj)) = heev_jacobi_cs(a, p, q, uplo) else {
+        return false;
+    };
+    heev_apply_offdiag(a, n, p, q, uplo, &c, &s, &s_conj);
+    heev_apply_2x2(a, p, q, uplo, &c, &s, &s_conj);
+    if jobz == JobZ::Vectors {
+        heev_apply_vectors(work, n, p, q, &c, &s, &s_conj);
+    }
+    true
+}
+
 /// Jacobi eigendecomposition of a real symmetric operand under an explicit
 /// sweep budget.
 ///
@@ -4207,135 +4514,25 @@ where
     T::Real: Float,
     A: DenseStorageMut<T>,
 {
-    {
-        let n = a.rows();
-        debug_assert_eq!(n, a.cols());
-        let min_work = if jobz == JobZ::Vectors { n * n } else { n };
-        if w.len() < n || work.len() < min_work {
-            return Err(LinAlgError::WorkspaceTooSmall);
-        }
-
-        if jobz == JobZ::Vectors {
-            for i in 0..n {
-                for j in 0..n {
-                    work[i * n + j] = if i == j { T::ONE } else { T::ZERO };
-                }
-            }
-        }
-
-        let mut iter = 0;
-        loop {
-            let mut max_off = <T::Real as Zero>::ZERO;
-            let mut p = 0;
-            let mut q = 1;
-
-            for i in 0..n {
-                for j in (i + 1)..n {
-                    let val = uplo_entry(a, i, j, uplo).abs2();
-                    if val > max_off || val != val {
-                        max_off = val;
-                        p = i;
-                        q = j;
-                    }
-                }
-            }
-
-            let eps = <T::Real as Float>::epsilon();
-            let converged = max_off <= eps;
-            if converged || iter >= max_iter {
-                if iter >= max_iter && !converged {
-                    return Err(LinAlgError::MaxIterationsReached);
-                }
-                break;
-            }
-
-            let a_pp = uplo_entry(a, p, p, uplo).re();
-            let a_qq = uplo_entry(a, q, q, uplo).re();
-            let a_pq = uplo_entry(a, p, q, uplo).re();
-
-            let one = <T::Real as One>::ONE;
-            let two = one.clone() + one.clone();
-            let theta = (a_qq.clone() - a_pp.clone()) / two / a_pq.clone();
-            let t = if theta >= <T::Real as Zero>::ZERO {
-                one.clone()
-                    / (theta.clone()
-                        + (one.clone() + theta.clone() * theta).sqrt())
-            } else {
-                -one.clone()
-                    / (-theta.clone()
-                        + (one.clone() + theta.clone() * theta).sqrt())
-            };
-            let c = one.clone() / (one + t.clone() * t.clone()).sqrt();
-            let s = t * c.clone();
-
-            let c_val = T::from_real(c.clone());
-            let s_val = T::from_real(s.clone());
-
-            for k in 0..n {
-                if k != p && k != q {
-                    let a_kp = uplo_entry(a, k, p, uplo);
-                    let a_kq = uplo_entry(a, k, q, uplo);
-
-                    let new_kp = (c_val.clone() * a_kp.clone())
-                        - (s_val.clone() * a_kq.clone());
-                    let new_kq =
-                        (s_val.clone() * a_kp) + (c_val.clone() * a_kq);
-
-                    unsafe {
-                        a.set_unchecked(k, p, new_kp.clone());
-                        a.set_unchecked(k, q, new_kq.clone());
-                        a.set_unchecked(p, k, new_kp);
-                        a.set_unchecked(q, k, new_kq);
-                    }
-                }
-            }
-
-            let two_a_pq = a_pq.clone() + a_pq;
-            let c2 = c.clone() * c.clone();
-            let s2 = s.clone() * s.clone();
-            let cs = c * s;
-            let new_pp = (c2.clone() * a_pp.clone())
-                - (cs.clone() * two_a_pq.clone())
-                + (s2.clone() * a_qq.clone());
-            let new_qq = (s2 * a_pp) + (cs * two_a_pq) + (c2 * a_qq);
-
-            unsafe {
-                a.set_unchecked(p, p, T::from_real(new_pp));
-                a.set_unchecked(q, q, T::from_real(new_qq));
-                a.set_unchecked(p, q, T::ZERO);
-                a.set_unchecked(q, p, T::ZERO);
-            }
-
-            if jobz == JobZ::Vectors {
-                for k in 0..n {
-                    let v_kp = work[k * n + p].clone();
-                    let v_kq = work[k * n + q].clone();
-                    work[k * n + p] = (c_val.clone() * v_kp.clone())
-                        - (s_val.clone() * v_kq.clone());
-                    work[k * n + q] =
-                        (s_val.clone() * v_kp) + (c_val.clone() * v_kq);
-                }
-            }
-
-            iter += 1;
-        }
-
-        for i in 0..n {
-            w[i] = unsafe { a.get_unchecked(i, i).re() };
-        }
-
-        if jobz == JobZ::Vectors {
-            for i in 0..n {
-                for j in 0..n {
-                    unsafe {
-                        a.set_unchecked(i, j, work[i * n + j].clone());
-                    }
-                }
-            }
-        }
-
-        Ok(())
+    let n = a.rows();
+    debug_assert_eq!(n, a.cols());
+    let min_work = if jobz == JobZ::Vectors { n * n } else { n };
+    if w.len() < n || work.len() < min_work {
+        return Err(LinAlgError::WorkspaceTooSmall);
     }
+    ev_init_vectors(jobz, n, work);
+    let mut iter = 0;
+    loop {
+        let (max_off, p, q) = ev_max_offdiag(a, n, uplo);
+        if ev_should_stop(&max_off, iter, max_iter)? {
+            break;
+        }
+        syev_rotate(a, work, n, p, q, jobz, uplo);
+        iter += 1;
+    }
+    ev_store_w(a, w, n);
+    ev_copy_vectors(jobz, a, work, n);
+    Ok(())
 }
 
 /// Jacobi eigendecomposition of a complex Hermitian operand under an explicit
@@ -4357,145 +4554,30 @@ where
     T::Real: Float,
     A: DenseStorageMut<T>,
 {
-    {
-        let n = a.rows();
-        debug_assert_eq!(n, a.cols());
-        let min_work = if jobz == JobZ::Vectors { n * n } else { n };
-        if w.len() < n || work.len() < min_work {
-            return Err(LinAlgError::WorkspaceTooSmall);
-        }
-
-        if jobz == JobZ::Vectors {
-            for i in 0..n {
-                for j in 0..n {
-                    work[i * n + j] = if i == j { T::ONE } else { T::ZERO };
-                }
-            }
-        }
-
-        let mut iter = 0;
-        loop {
-            let mut max_off = <T::Real as Zero>::ZERO;
-            let mut p = 0;
-            let mut q = 1;
-
-            for i in 0..n {
-                for j in (i + 1)..n {
-                    let val = uplo_entry(a, i, j, uplo).abs2();
-                    if val > max_off || val != val {
-                        max_off = val;
-                        p = i;
-                        q = j;
-                    }
-                }
-            }
-
-            let eps = <T::Real as Float>::epsilon();
-            let converged = max_off <= eps;
-            if converged || iter >= max_iter {
-                if iter >= max_iter && !converged {
-                    return Err(LinAlgError::MaxIterationsReached);
-                }
-                break;
-            }
-
-            let a_pp = uplo_entry(a, p, p, uplo).re();
-            let a_qq = uplo_entry(a, q, q, uplo).re();
-            let a_pq = uplo_entry(a, p, q, uplo);
-            let abs_a_pq = a_pq.abs2().sqrt();
-
-            if abs_a_pq.is_zero() {
-                break;
-            }
-
-            let one = <T::Real as One>::ONE;
-            let two = one.clone() + one.clone();
-            let theta =
-                (a_qq.clone() - a_pp.clone()) / (two * abs_a_pq.clone());
-            let t_real = if theta >= <T::Real as Zero>::ZERO {
-                one.clone()
-                    / (theta.clone()
-                        + (one.clone() + theta.clone() * theta).sqrt())
-            } else {
-                -one.clone()
-                    / (-theta.clone()
-                        + (one.clone() + theta.clone() * theta).sqrt())
-            };
-            let c_real =
-                one.clone() / (one + t_real.clone() * t_real.clone()).sqrt();
-            let s_phase = a_pq / T::from_real(abs_a_pq);
-            let s = s_phase * T::from_real(t_real * c_real.clone());
-            let c = T::from_real(c_real);
-            let s_conj = s.clone().conj();
-
-            for k in 0..n {
-                if k != p && k != q {
-                    let a_kp = uplo_entry(a, k, p, uplo);
-                    let a_kq = uplo_entry(a, k, q, uplo);
-
-                    let new_kp =
-                        (c.clone() * a_kp.clone()) - (s.clone() * a_kq.clone());
-                    let new_kq = (s_conj.clone() * a_kp) + (c.clone() * a_kq);
-
-                    unsafe {
-                        a.set_unchecked(k, p, new_kp.clone());
-                        a.set_unchecked(k, q, new_kq.clone());
-                        a.set_unchecked(p, k, new_kp.conj());
-                        a.set_unchecked(q, k, new_kq.conj());
-                    }
-                }
-            }
-
-            let a_pp_val = uplo_entry(a, p, p, uplo);
-            let a_qq_val = uplo_entry(a, q, q, uplo);
-            let a_pq_val = uplo_entry(a, p, q, uplo);
-
-            let new_pp = (c.clone() * c.clone() * a_pp_val.clone())
-                - (c.clone() * s.clone() * a_pq_val.clone().conj())
-                - (c.clone() * s_conj.clone() * a_pq_val.clone())
-                + (s.clone() * s_conj.clone() * a_qq_val.clone());
-            let new_qq = (s.clone() * s_conj.clone() * a_pp_val)
-                + (c.clone() * s_conj.clone() * a_pq_val.clone())
-                + (c.clone() * s.clone() * a_pq_val.conj())
-                + (c.clone() * c.clone() * a_qq_val);
-
-            unsafe {
-                a.set_unchecked(p, p, T::from_real(new_pp.re()));
-                a.set_unchecked(q, q, T::from_real(new_qq.re()));
-                a.set_unchecked(p, q, T::ZERO);
-                a.set_unchecked(q, p, T::ZERO);
-            }
-
-            if jobz == JobZ::Vectors {
-                for k in 0..n {
-                    let v_kp = work[k * n + p].clone();
-                    let v_kq = work[k * n + q].clone();
-                    work[k * n + p] =
-                        (c.clone() * v_kp.clone()) - (s.clone() * v_kq.clone());
-                    work[k * n + q] =
-                        (s_conj.clone() * v_kp) + (c.clone() * v_kq);
-                }
-            }
-
-            iter += 1;
-        }
-
-        for i in 0..n {
-            w[i] = unsafe { a.get_unchecked(i, i).re() };
-        }
-
-        if jobz == JobZ::Vectors {
-            for i in 0..n {
-                for j in 0..n {
-                    unsafe {
-                        a.set_unchecked(i, j, work[i * n + j].clone());
-                    }
-                }
-            }
-        }
-
-        Ok(())
+    let n = a.rows();
+    debug_assert_eq!(n, a.cols());
+    let min_work = if jobz == JobZ::Vectors { n * n } else { n };
+    if w.len() < n || work.len() < min_work {
+        return Err(LinAlgError::WorkspaceTooSmall);
     }
+    ev_init_vectors(jobz, n, work);
+    let mut iter = 0;
+    loop {
+        let (max_off, p, q) = ev_max_offdiag(a, n, uplo);
+        if ev_should_stop(&max_off, iter, max_iter)? {
+            break;
+        }
+        if !heev_rotate(a, work, n, p, q, jobz, uplo) {
+            break;
+        }
+        iter += 1;
+    }
+    ev_store_w(a, w, n);
+    if jobz == JobZ::Vectors {
+        heev_conj_transpose_vectors(work, n);
+    }
+    ev_copy_vectors(jobz, a, work, n);
+    Ok(())
 }
 
 impl<T, A> lapack::Syev<T, A> for DefaultBlas

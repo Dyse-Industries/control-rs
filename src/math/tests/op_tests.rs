@@ -80,6 +80,31 @@ pub mod op_test_suite {
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    fn _signed_try_add_int_checks<
+        T: Integer + Signed + TryAdd + core::fmt::Debug + PartialEq,
+    >(
+        rhs: T,
+        lhs: T,
+        expected: T,
+    ) {
+        assert_eq!(lhs.try_add(&rhs), Ok(expected));
+        assert_eq!(T::MAX.try_add(&T::ONE), Err(ArithmeticError::Overflow));
+        assert_eq!(T::MIN.try_add(&(-T::ONE)), Err(ArithmeticError::Overflow));
+    }
+
+    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    fn _unsigned_try_add_int_checks<
+        T: Integer + TryAdd + core::fmt::Debug + PartialEq,
+    >(
+        rhs: T,
+        lhs: T,
+        expected: T,
+    ) {
+        assert_eq!(lhs.try_add(&rhs), Ok(expected));
+        assert_eq!(T::MAX.try_add(&T::ONE), Err(ArithmeticError::Overflow));
+    }
+
+    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
     fn _signed_try_sub_int_checks<
         T: Integer + TrySub + core::fmt::Debug + PartialEq,
     >(
@@ -393,6 +418,24 @@ pub mod op_test_suite {
             0.0_f64.try_add(&(f64::MIN_POSITIVE / 2.0)),
             Err(ArithmeticError::Underflow)
         );
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies `try_add` (fallible addition) for signed integers.
+    fn test_ops_try_add_signed_integers() {
+        _signed_try_add_int_checks(1_i8, 2_i8, 3_i8);
+        _signed_try_add_int_checks(3_i16, 4_i16, 7_i16);
+        _signed_try_add_int_checks(5_i32, 6_i32, 11_i32);
+        _signed_try_add_int_checks(7_isize, 8_isize, 15_isize);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies `try_add` (fallible addition) for unsigned integers.
+    fn test_ops_try_add_unsigned_integers() {
+        _unsigned_try_add_int_checks(1_u8, 2_u8, 3_u8);
+        _unsigned_try_add_int_checks(3_u16, 4_u16, 7_u16);
+        _unsigned_try_add_int_checks(5_u32, 6_u32, 11_u32);
+        _unsigned_try_add_int_checks(7_usize, 8_usize, 15_usize);
     }
 
     #[cfg_attr(test, test)]

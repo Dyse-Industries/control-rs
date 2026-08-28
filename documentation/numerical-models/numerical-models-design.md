@@ -15,11 +15,13 @@ document does not restate it (C-4).
 
 Primary usage scenarios:
 
-1. **Standalone examples**: Executable binaries in `examples/numerical-models/`
-   that demonstrate idiomatic use of each Approved sibling type.
-2. **Host-side oracles**: Python (NumPy/SciPy/python-control) prototypes under
-   `examples/prototypes/numerical-models/` that produce golden scalars for
-   back-to-back comparison. MATLAB companions are optional.
+1. **Standalone examples**: A nested host crate in `examples/numerical-models/`
+   whose example binaries demonstrate idiomatic use of each Approved sibling
+   type and assert agreement with SciPy goldens generated at build time.
+2. **Host-side oracles**: Python (NumPy/SciPy) prototypes under
+   `examples/prototypes/numerical-models/<slug>/` that emit Rust const tables
+   into `OUT_DIR` during the example-crate build. MATLAB companions are
+   optional and unused.
 
 ---
 
@@ -33,10 +35,11 @@ Primary usage scenarios:
   evaluation, state-space simulation, transfer function frequency response,
   and tensor grid interpolation.
 - **FR-2 — Golden Model Numerical Prototypes**: The system shall provide
-  companion Python/MATLAB prototype scripts under
-  `examples/prototypes/numerical-models/` that compute identical
-  mathematical scenarios to generate golden verification outputs and
-  cross-validate Rust implementation accuracy.
+  companion NumPy/SciPy prototype scripts under
+  `examples/prototypes/numerical-models/<slug>/` that compute identical
+  mathematical scenarios. The nested example crate's `build.rs` runs those
+  scripts so generated Rust sources are present whenever the examples or
+  that crate's tests compile.
 
 #### 2.2 Non-Functional Requirements
 
@@ -126,14 +129,15 @@ Mat -->|system matrices A, B, C, D|SS
 end
 
 subgraph Host Prototypes ["Golden Oracles (examples/prototypes/numerical-models/)"]
-ProtoMat["matrix_prototype.py"]
-ProtoPoly["polynomial_prototype.py"]
-ProtoSS["state_space_prototype.py"]
-ProtoTF["transfer_function_prototype.py"]
-ProtoTens["tensor_prototype.py"]
+ProtoMat["matrix/matrix_prototype.py"]
+ProtoPoly["polynomial/polynomial_prototype.py"]
+ProtoSS["state-space/state_space_prototype.py"]
+ProtoTF["transfer-function/transfer_function_prototype.py"]
+ProtoTens["tensor/tensor_prototype.py"]
 end
 
-subgraph Example Binaries ["Standalone Applications (examples/numerical-models/)"]
+subgraph Example Crate ["Host crate examples/numerical-models/"]
+BuildRs["build.rs → generate_goldens.py → OUT_DIR"]
 ExMat["matrix_example"]
 ExPoly["polynomial_example"]
 ExSS["state_space_example"]
@@ -155,17 +159,28 @@ SS -.-> ExSS
 TF -.-> ExTF
 Tens -.-> ExTens
 
-ProtoMat -.->|cross - validation|ExMat
-ProtoPoly -.->|cross - validation|ExPoly
-ProtoSS -.->|cross - validation|ExSS
-ProtoTF -.->|cross - validation|ExTF
-ProtoTens -.->|cross - validation|ExTens
+BuildRs --> ExMat
+BuildRs --> ExPoly
+BuildRs --> ExSS
+BuildRs --> ExTF
+BuildRs --> ExTens
+ProtoMat --> BuildRs
+ProtoPoly --> BuildRs
+ProtoSS --> BuildRs
+ProtoTF --> BuildRs
+ProtoTens --> BuildRs
 ```
 
 #### 4.1 Standalone Example Architecture **[Proposal (not in evidence)]**
 
-The example suite is structured under `examples/numerical-models/` as an
-organized sub-workspace or module collection with dedicated example binaries:
+The example suite is a nested host crate (`control-rs-numerical-model-examples`)
+under `examples/numerical-models/` with its own `[workspace]`, matching
+`examples/qemu/` and `examples/subprograms/`. It is not a root workspace
+member, so `cargo test -p control-rs` and `cargo lint` do not require Python.
+`build.rs` invokes `generate_goldens.py --out-dir $OUT_DIR`. Example binaries
+`include!` the generated tables, print a transcript, and assert §6.3 bounds.
+Independent of CI: `cd examples/numerical-models && cargo test` or
+`cargo run --example <name>`. Dedicated example binaries:
 
 1. **`matrix_example.rs`**:
     - Demonstrates matrix creation (`from_array`, `identity`, `from_fn`).
@@ -212,25 +227,26 @@ organized sub-workspace or module collection with dedicated example binaries:
 
 #### 4.2 Numerical Prototype Oracles Architecture **[Proposal (not in evidence)]**
 
-To ensure mathematical correctness against established numerical standards,
-companion Python/MATLAB prototypes reside in
-`examples/prototypes/numerical-models/`:
+Companion NumPy/SciPy prototypes reside in
+`examples/prototypes/numerical-models/<slug>/`. They are independent of the
+Rust source. `generate_goldens.py --out-dir` writes `*_goldens.rs` into Cargo
+`OUT_DIR` (not committed). Pinned versions live in `requirements.txt`. CI
+installs that file; the example crate does not run `pip`.
 
-1. **`matrix_prototype.py`**: Uses NumPy and SciPy `scipy.linalg` (`lu_factor`,
-   `solve`, `inv`) to compute analytical matrix solutions and print step-by-step
-   matrix invariants.
-2. **`polynomial_prototype.py`**: Uses NumPy `numpy.polynomial` and
-   `scipy.linalg.companion` to compute reference Horner evaluations,
-   derivatives, integrals, and roots.
-3. **`state_space_prototype.py`**: Uses `scipy.signal` (`StateSpace`,
-   `cont2discrete` with `'zoh'`, `dlsim`) to compute baseline step response
-   trajectories and modal state transformations.
-4. **`transfer_function_prototype.py`**: Uses `scipy.signal` (
-   `TransferFunction`, `bode`, `series`, `tf2ss`) to produce exact Bode points
-   and canonical state-space realizations.
-5. **`tensor_prototype.py`**: Uses `scipy.interpolate.RegularGridInterpolator`
-   and fixed-point integer simulation to produce reference 2D table
-   interpolations and quantized activations.
+1. **`matrix/matrix_prototype.py`**: NumPy arithmetic and `scipy.linalg.solve` /
+   `inv`. Goldens are the solution $x$, $A^{-1}$, and arithmetic results, not
+   $L$/$U$ factors.
+2. **`polynomial/polynomial_prototype.py`**: `numpy.polynomial.polynomial` and
+   `numpy.polynomial.polynomial.polycompanion` (mapped to crate last-column
+   companion layout).
+3. **`state-space/state_space_prototype.py`**: `scipy.signal.cont2discrete`
+   with `'zoh'` and `dlsim`.
+4. **`transfer-function/transfer_function_prototype.py`**:
+   `scipy.signal.TransferFunction` / `freqs` for $H(j\omega)$ real/imag;
+   polynomial `series`; `tf2ss` remapped to crate controllable canonical form.
+5. **`tensor/tensor_prototype.py`**: `scipy.interpolate.RegularGridInterpolator`
+   on the crate's `[dim0, dim1]` grid; Q7 quantization with ReLU on the
+   integer raw value.
 
 ---
 
@@ -258,7 +274,7 @@ companion Python/MATLAB prototypes reside in
 
 | Method                    | Mechanism                                              | Requirements discharged      |
 |:--------------------------|:---------------------------------------------------------|:-----------------------------|
-| Back-to-back comparison   | Golden scalars copied from `examples/prototypes/`      | FR-2, NFR-2                  |
+| Back-to-back comparison   | Example binaries assert SciPy goldens from `OUT_DIR`   | FR-2, NFR-2                  |
 | Doctest                   | Runnable rustdoc examples                              | FR-1                         |
 | On-target execution       | ETS suites under QEMU                                  | NFR-3                        |
 | Static analysis           | `cargo lint`, `cargo clippy-ci`                        | C-2, C-3                     |
@@ -271,16 +287,17 @@ companion Python/MATLAB prototypes reside in
 |:------------------------------|:-------------------------------|:---------------|:-------------------------------------------|:---------------------------------|
 | Linear solve residual         | Manufactured $Ax=b$            | Residual norm  | $\le 10^{-14}$ for `f64`                   | Higham (2002)                    |
 | Horner / Bode / interpolation | Prototype scripts              | Absolute error | $\le 10^{-12}$ (`f64`), $\le 10^{-6}$ (`f32`) | Higham (2002)                |
+| ZOH $A_d$ vs SciPy $e^{A T_s}$ | `scipy.signal.cont2discrete` | Residual ratio | $< 20$                                     | Van Loan (1978); Higham (2005)   |
 | Zero-allocation examples      | Host allocator interception    | Exact equality | 0 heap allocations                         | NFR-1                            |
 
 #### 6.4 Traceability
 
 | Requirement                                      | Method                     | Artifact |
 |:--------------------------------------------------|:----------------------------|:---------|
-| FR-1 — Comprehensive Exemplary Applications       | Doctest, inspection         | `examples/numerical-models/*_example.rs` |
-| FR-2 — Golden Model Numerical Prototypes          | Back-to-back comparison     | `examples/prototypes/numerical-models/*_prototype.py` |
+| FR-1 — Comprehensive Exemplary Applications       | Inspection                  | `examples/numerical-models/examples/*_example.rs` |
+| FR-2 — Golden Model Numerical Prototypes          | Back-to-back comparison     | example binaries; `cd examples/numerical-models && cargo test` |
 | NFR-1 — Zero Dynamic Heap Allocation              | Resource usage evaluation   | `#![no_std]` ETS suites |
-| NFR-2 — Numerical Backward Stability & Precision  | Back-to-back comparison     | §6.3 bounds in unit tests |
+| NFR-2 — Numerical Backward Stability & Precision  | Back-to-back comparison     | §6.3 bounds in example asserts |
 | NFR-3 — Bare-Metal Portability                    | On-target execution         | QEMU ARM/RISC-V ETS |
 | C-1 — Compile-Time Dimension Verification         | Compile-time shape check    | Const-generic APIs |
 | C-2 — Native Rust Implementation                  | Static analysis             | No FFI in `src/{matrix,polynomial,state_space,transfer_function,tensor}` |
@@ -291,21 +308,25 @@ companion Python/MATLAB prototypes reside in
 
 - **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage via
   `cargo coverage`.
-- **Excluded**: Example `println!` formatting and prototype Python scripts.
+- **Excluded**: Example `println!` formatting, prototype Python scripts, and
+  generated `OUT_DIR` `*_goldens.rs` tables.
 
 #### 6.6 Validation
 
-- **Executable Model Blueprints**: Run all example binaries in
-  `examples/numerical-models/` against the analytical claims in §6.3.
-- **Prototype Oracles**: Host-side Python scripts under
-  `examples/prototypes/numerical-models/` supply golden scalars copied into
-  unit tests (Python is not executed in `cargo ci`).
+- **Executable Model Blueprints**: Run the five example binaries in the nested
+  crate `examples/numerical-models/` against the analytical claims in §6.3.
+- **Prototype Oracles**: `build.rs` runs NumPy/SciPy scripts and writes const
+  tables to `OUT_DIR`. `cargo ci` runs those example binaries (Python is not
+  invoked by xtask except through that crate's build). Library `cargo test`
+  and ETS suites do not execute Python.
 
 #### 6.7 Not Verified
 
-- Automated stdout diff of example binaries against live Python in CI is not
-  established; golden scalars are transcribed.
-- MATLAB companion scripts are optional and not required.
+- Automated stdout diff of example transcripts against live Python is not
+  established; comparison is typed const tables, not text.
+- MATLAB and `python-control` companion scripts are optional and not required.
+- Trans-architecture floating-point bitwise equivalence of SciPy goldens vs
+  on-target ETS is not claimed.
 
 ---
 
@@ -324,13 +345,13 @@ companion Python/MATLAB prototypes reside in
 
 ### 8. Risks & Open Questions
 
-- **[Proposal (not in evidence)] Example Runner Structure**: The layout of
-  `examples/numerical-models/` as individual standalone binaries runnable via
-  `cargo run --example <name>` provides maximum clarity and minimal build
-  friction.
-- **[Proposal (not in evidence)] Prototype Tooling Environment**: Providing
-  Python prototypes by default using NumPy/SciPy/Control, with optional MATLAB
-  companion scripts for control systems workflows.
+- **[Proposal (not in evidence)] Example Runner Structure**: Nested host crate
+  under `examples/numerical-models/` with `cargo run --example <name>` from that
+  directory. GitHub Actions installs `requirements.txt`; xtask does not run
+  `pip`.
+- **[Proposal (not in evidence)] Prototype Tooling Environment**: NumPy/SciPy
+  oracles with pinned `requirements.txt`. MATLAB and `python-control` remain
+  optional and unused.
 - **Fixed-Point Scaling Invariants**: Scaling fixed-point tensors requires
   careful selection of fractional bit shift parameters ($Q_7$, $Q_{15}$) to
   prevent overflow during intermediate accumulator products (ARM, 2025).
@@ -347,7 +368,7 @@ companion Python/MATLAB prototypes reside in
 | Step 4: State-Space Example (`state_space_example.rs`)             | Implement 2nd-order dynamical system simulation, ZOH discretization, and similarity transform example matching prototype output.                                                                                                    | 4                       |
 | Step 5: Transfer Function Example (`transfer_function_example.rs`) | Implement frequency response, Bode analysis, series cascade, and controllable canonical realization example matching prototype output.                                                                                              | 4                       |
 | Step 6: Tensor Example (`tensor_example.rs`)                       | Implement 2D multilinear grid lookup table interpolation and quantized fixed-point inference example matching prototype output.                                                                                                     | 3                       |
-| Step 7: Workspace Integration & CI Validation                      | Wire example targets into workspace manifests and cross-verify execution against prototype outputs in `cargo ci`.                                                                                                                   | 2                       |
+| Step 7: Workspace Integration & CI Validation                      | Nested example crate `build.rs` generates SciPy goldens; GitHub Actions installs `requirements.txt`; `cargo ci` runs the five example binaries. Independent check: `cd examples/numerical-models && cargo test`. | 2                       |
 
 ---
 
@@ -359,6 +380,7 @@ companion Python/MATLAB prototypes reside in
 | 1.1      | August 25, 2026 | @MitchellDScott | Verification oracles: added host-side prototype oracles (Python/MATLAB) under `examples/prototypes/numerical-models/`.              |
 | 1.2      | August 26, 2026 | @MitchellDScott | Scoped examples strictly to numerical model layer operations (removed higher-level control toolbox artifacts and migration plan).    |
 | 1.3      | August 26, 2026 | @MitchellDScott | Scoped §1 to examples/oracles; sibling capabilities are C-4. Dropped unused bibliography.                                         |
+| 1.4      | August 27, 2026 | @MitchellDScott | Nested example crate; SciPy goldens generated into `OUT_DIR` at build; `cargo ci` runs example binaries.                          |
 
 ---
 

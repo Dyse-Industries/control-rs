@@ -1,7 +1,4 @@
 //! Common Digital Signal Processing Operations
-//!
-//! TODO:
-//!   * [ ] remove index slicing
 
 use crate::math::{
     Bijection, ConversionError, ConversionResult, Map,
@@ -24,8 +21,15 @@ type RealSliceMut<'a, T, const N: usize> = &'a mut [T; N];
 ///
 /// # Generic Arguments
 /// * `T` - The numeric type of the elements (must implement `Float`).
+///
+/// # Contract
+/// `N` must be a power of two. Length is a `debug_assert` on every entry
+/// point (`fft`, `fft_complex`, `ifft`); it is not a [`Result`] path.
 pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
     /// Computes the forward Fast Fourier Transform into `output` (frequency domain).
+    ///
+    /// # Panics
+    /// Debug builds panic if `N` is not a power of two.
     fn fft<const N: usize>(
         input: RealSlice<'_, T, N>,
         output: ComplexSliceMut<'_, T, N>,
@@ -42,6 +46,9 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
     }
 
     /// Computes the forward Fast Fourier Transform on a complex signal, in-place.
+    ///
+    /// # Panics
+    /// Debug builds panic if `N` is not a power of two.
     ///
     /// # Safety
     /// Uses pointer reads/writes; indices stay in `0..N` because `N` is a power
@@ -108,11 +115,14 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
     }
 
     /// Computes the inverse Fast Fourier Transform into `output` (time domain).
+    ///
+    /// # Panics
+    /// Debug builds panic if `N` is not a power of two.
     fn ifft<const N: usize>(
         input: ComplexSlice<'_, T, N>,
         output: RealSliceMut<'_, T, N>,
     ) {
-        debug_assert!(N.is_power_of_two(), "Length must be power of two");
+        debug_assert!(N.is_power_of_two(), "FFT length must be a power of two");
 
         let n_t = T::from_const::<N>();
         // # Safety: The input iter has the same number of elements as the output.

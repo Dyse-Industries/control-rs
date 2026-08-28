@@ -22,7 +22,9 @@ missing-docs-in-crate-items = true
 # --- Item Ordering & Architecture ---
 
 # 1. Strict Item Grouping
-# Logical flow is prioritized: Imports -> Types -> Implementation -> Logic
+# Logical flow is prioritized: Imports -> Types -> Implementation -> Logic.
+# Aliases, enums, structs and traits share one PascalCase group so related
+# items can stay together (e.g. an error enum next to its Result alias).
 module-item-order-groupings = [
     ["extern_crates", ["extern_crate"]],
     ["use", ["use"]],
@@ -36,9 +38,13 @@ module-item-order-groupings = [
 ]
 
 # 2. Scope of ordering
-source-item-ordering = ["enum", "impl", "module", "struct", "trait"]
+# Module-level grouping only (see module-item-order-groupings). Do not
+# alphabetize enum variants, struct fields, trait items, or impl items:
+# those orders are layout-, ABI-, or documentation-significant.
+source-item-ordering = ["module"]
 
-# 3. Trait Item Order
+# 3. Trait associated-item kind order (const, then type, then fn) is a
+# convention, not a lint, unless "trait" is added to source-item-ordering.
 trait-assoc-item-kinds-order = ["const", "type", "fn"]
 
 # 4. Sorting within groupings

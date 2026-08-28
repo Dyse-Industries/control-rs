@@ -271,9 +271,6 @@ pub fn format_ets_summary(results: &[HeadlessTestResult]) -> String {
 
     let mut s = String::new();
     s.push_str("### ETS Results\n\n");
-    s.push_str(
-        "CI frontend; suite names record the backend (virtual ETS vs ETS).\n\n",
-    );
     s.push_str(&format!("**Tests Run:** {}\n", total));
     s.push_str(&format!("**Succeeded:** {}\n\n", succeeded));
 

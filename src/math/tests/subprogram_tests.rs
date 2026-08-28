@@ -13,7 +13,7 @@ pub mod subprogram_test_suite {
     use crate::math::LinAlgError;
     use crate::math::complex_num::{Complex, Complex32, Complex64};
     use crate::math::num_traits::{One, Scalar, Zero};
-    use crate::math::num_types::Const;
+    use crate::math::num_types::{Const, Dim};
     use crate::math::storage::{
         ArrayCooStorage, ArrayCscStorage, ArrayCsrStorage, ArraySparseVector,
         ArrayStorage, DenseStorage, DenseStorageMut, Diag,
@@ -49,6 +49,88 @@ pub mod subprogram_test_suite {
     fn _next_f32(state: &mut u32) -> f32 {
         *state = _rand_lcg(*state);
         (*state as f32) / (u32::MAX as f32)
+    }
+
+    fn _inf_norm_f64<const R: usize, const C: usize>(
+        a: &ArrayStorage<f64, R, C>,
+    ) -> f64
+    where
+        Const<R>: Dim,
+        Const<C>: Dim,
+    {
+        let mut max = 0.0f64;
+        for i in 0..R {
+            let mut sum = 0.0;
+            for j in 0..C {
+                sum += unsafe { a.get_unchecked(i, j) }.abs();
+            }
+            max = max.max(sum);
+        }
+        max
+    }
+
+    fn _residual_inf_f64<const R: usize, const C: usize>(
+        computed: &ArrayStorage<f64, R, C>,
+        exact: &ArrayStorage<f64, R, C>,
+    ) -> f64
+    where
+        Const<R>: Dim,
+        Const<C>: Dim,
+    {
+        let mut max = 0.0f64;
+        for i in 0..R {
+            let mut sum = 0.0;
+            for j in 0..C {
+                sum += (unsafe { *computed.get_unchecked(i, j) }
+                    - unsafe { *exact.get_unchecked(i, j) })
+                .abs();
+            }
+            max = max.max(sum);
+        }
+        max
+    }
+
+    fn _inf_norm_c64<const R: usize, const C: usize>(
+        a: &ArrayStorage<Complex64, R, C>,
+    ) -> f64
+    where
+        Const<R>: Dim,
+        Const<C>: Dim,
+    {
+        let mut max = 0.0f64;
+        for i in 0..R {
+            let mut sum = 0.0;
+            for j in 0..C {
+                sum += unsafe { a.get_unchecked(i, j) }.abs();
+            }
+            max = max.max(sum);
+        }
+        max
+    }
+
+    fn _residual_inf_c64<const R: usize, const C: usize>(
+        computed: &ArrayStorage<Complex64, R, C>,
+        exact: &ArrayStorage<Complex64, R, C>,
+    ) -> f64
+    where
+        Const<R>: Dim,
+        Const<C>: Dim,
+    {
+        let mut max = 0.0f64;
+        for i in 0..R {
+            let mut sum = 0.0;
+            for j in 0..C {
+                let d = *unsafe { computed.get_unchecked(i, j) }
+                    - *unsafe { exact.get_unchecked(i, j) };
+                sum += d.abs();
+            }
+            max = max.max(sum);
+        }
+        max
+    }
+
+    fn _higham_bound(n: f64, a_inf: f64, b_inf: f64) -> f64 {
+        n * f64::EPSILON * a_inf * b_inf
     }
 
     // --- Fuzzing Tests ---
@@ -261,6 +343,52 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// Verifies Hemv with NaN-safe beta = 0 scaling (C-3, §6.1.2).
+    fn test_subprograms_level2_hemv_nan_safe_beta_zero() {
+        let a = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(2.0, 0.0), Complex64::new(1.0, 1.0)],
+            [Complex64::new(1.0, -1.0), Complex64::new(3.0, 0.0)],
+        ]);
+        let x = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex64::ONE,
+            Complex64::ZERO,
+        ]]);
+        let mut y = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex64::new(f64::NAN, f64::NAN),
+            Complex64::new(f64::NAN, f64::NAN),
+        ]]);
+        DefaultBlas::hemv(
+            UpLo::Upper,
+            Complex64::ONE,
+            &a,
+            &x,
+            Complex64::ZERO,
+            &mut y,
+        );
+        assert_almost_eq!(y.get(0, 0).unwrap().re, 2.0);
+        assert_almost_eq!(y.get(0, 0).unwrap().im, 0.0);
+        assert_almost_eq!(y.get(1, 0).unwrap().re, 1.0);
+        assert_almost_eq!(y.get(1, 0).unwrap().im, 1.0);
+        assert!(y.get(0, 0).unwrap().re.is_finite());
+        assert!(y.get(1, 0).unwrap().im.is_finite());
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies Spmv with NaN-safe beta = 0 scaling (C-3, §6.1.2).
+    fn test_subprograms_packed_spmv_nan_safe_beta_zero() {
+        let ap = SymmetricPackedStorage::<f32, 2, 3>::new(
+            [2.0, 1.0, 3.0],
+            UpLo::Upper,
+        );
+        let x = ArrayStorage::<f32, 2, 1>::from_array([[1.0, 1.0]]);
+        let mut y =
+            ArrayStorage::<f32, 2, 1>::from_array([[f32::NAN, f32::NAN]]);
+        DefaultBlas::spmv(UpLo::Upper, 1.0, &ap, &x, 0.0, &mut y);
+        assert_almost_eq!(*y.get(0, 0).unwrap(), 3.0);
+        assert_almost_eq!(*y.get(1, 0).unwrap(), 4.0);
+    }
+
+    #[cfg_attr(test, test)]
     #[allow(clippy::too_many_lines)]
     /// Verifies Geru, Gerc, Symv, Hemv, Syr, Syr2, Her, Her2, Trmv, and Trsv Level 2 kernels.
     fn test_subprograms_level2_additional_kernels() {
@@ -295,6 +423,28 @@ pub mod subprogram_test_suite {
         DefaultBlas::symv(UpLo::Upper, 1.0, &sym_a, &x, 0.0, &mut sym_y);
         assert_almost_eq!(unsafe { *sym_y.get_unchecked(0, 0) }, 4.0);
         assert_almost_eq!(unsafe { *sym_y.get_unchecked(1, 0) }, 7.0);
+
+        let ha = ArrayStorage::<Complex32, 2, 2>::from_array([
+            [Complex32::new(2.0, 0.0), Complex32::new(1.0, 1.0)],
+            [Complex32::new(1.0, -1.0), Complex32::new(3.0, 0.0)],
+        ]);
+        let hx = ArrayStorage::<Complex32, 2, 1>::from_array([[
+            Complex32::new(1.0, 0.0),
+            Complex32::new(0.0, 0.0),
+        ]]);
+        let mut hy = ArrayStorage::<Complex32, 2, 1>::zeros();
+        DefaultBlas::hemv(
+            UpLo::Upper,
+            Complex32::ONE,
+            &ha,
+            &hx,
+            Complex32::ZERO,
+            &mut hy,
+        );
+        assert_almost_eq!(hy.get(0, 0).unwrap().re, 2.0);
+        assert_almost_eq!(hy.get(0, 0).unwrap().im, 0.0);
+        assert_almost_eq!(hy.get(1, 0).unwrap().re, 1.0);
+        assert_almost_eq!(hy.get(1, 0).unwrap().im, 1.0);
 
         // Syr & Syr2
         let mut syr_a = ArrayStorage::<f32, 2, 2>::zeros();
@@ -730,7 +880,6 @@ pub mod subprogram_test_suite {
         let mut tau = [0.0f64; 2];
         let mut work = [0.0f64; 4];
         DefaultBlas::geqrf(&mut a, &mut tau, &mut work).unwrap();
-        assert!(tau[0].abs() > 0.0);
 
         let mut c = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 0.0]]);
         DefaultBlas::ormqr(
@@ -1046,7 +1195,25 @@ pub mod subprogram_test_suite {
             Complex64::ZERO,
             &mut y_out,
         );
-        assert!(y_out.get(0, 0).unwrap().abs2() > 0.0);
+        let mut y_ref = ArrayStorage::<Complex64, 3, 1>::zeros();
+        DefaultBlas::gemv(
+            Trans::NoTrans,
+            Complex64::ONE,
+            &a,
+            &x,
+            Complex64::ZERO,
+            &mut y_ref,
+        );
+        for i in 0..3 {
+            assert_almost_eq!(
+                y_out.get(i, 0).unwrap().re,
+                y_ref.get(i, 0).unwrap().re
+            );
+            assert_almost_eq!(
+                y_out.get(i, 0).unwrap().im,
+                y_ref.get(i, 0).unwrap().im
+            );
+        }
 
         // Her: A = A + alpha * x * x^H
         DefaultBlas::her(UpLo::Upper, 2.0, &x, &mut a);
@@ -1247,6 +1414,54 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    /// GEMM residual `‖C_comp − C_exact‖_∞ ≤ N·EPS·‖A‖_∞‖B‖_∞` with no floor.
+    fn test_subprograms_residual_bounds_gemm() {
+        let a = ArrayStorage::<f64, 2, 2>::from_array([[1.0, 3.0], [2.0, 4.0]]);
+        let b = ArrayStorage::<f64, 2, 2>::from_array([[5.0, 7.0], [6.0, 8.0]]);
+        let mut c = ArrayStorage::<f64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::NoTrans,
+            Trans::NoTrans,
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+        );
+        let c_exact =
+            ArrayStorage::<f64, 2, 2>::from_array([[19.0, 43.0], [22.0, 50.0]]);
+        assert!(_residual_inf_f64(&c, &c_exact) <= 0.0);
+
+        let a_inexact = ArrayStorage::<f64, 2, 2>::from_array([
+            [1.0 / 3.0, 1.0 / 11.0],
+            [1.0 / 7.0, 1.0 / 13.0],
+        ]);
+        let b_inexact =
+            ArrayStorage::<f64, 2, 2>::from_array([[1.0, 3.0], [2.0, 4.0]]);
+        let mut c_inexact = ArrayStorage::<f64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::NoTrans,
+            Trans::NoTrans,
+            1.0,
+            &a_inexact,
+            &b_inexact,
+            0.0,
+            &mut c_inexact,
+        );
+        let c_ref = ArrayStorage::<f64, 2, 2>::from_array([
+            [1.0 / 3.0 + 3.0 / 7.0, 1.0 / 11.0 + 3.0 / 13.0],
+            [2.0 / 3.0 + 4.0 / 7.0, 2.0 / 11.0 + 4.0 / 13.0],
+        ]);
+        let bound = _higham_bound(
+            2.0,
+            _inf_norm_f64(&a_inexact),
+            _inf_norm_f64(&b_inexact),
+        );
+        assert!(_residual_inf_f64(&c_inexact, &c_ref) <= bound);
+    }
+
+    #[cfg_attr(test, test)]
     /// Verifies POTRF reconstruction residual against a Higham-style bound.
     fn test_subprograms_residual_bounds_potrf() {
         let a = ArrayStorage::<f64, 3, 3>::from_array([
@@ -1286,6 +1501,292 @@ pub mod subprogram_test_suite {
                 assert!(diff <= n * eps * a_inf_norm);
             }
         }
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    /// QR residual `‖A − QR‖_∞` and orthogonality `‖QᵀQ − I‖_∞` without a floor.
+    fn test_subprograms_residual_bounds_geqrf() {
+        let a = ArrayStorage::<f64, 2, 2>::from_array([[3.0, 4.0], [4.0, 3.0]]);
+        let mut qr = a;
+        let mut tau = [0.0f64; 2];
+        let mut work = [0.0f64; 4];
+        DefaultBlas::geqrf(&mut qr, &mut tau, &mut work).unwrap();
+
+        let mut r = ArrayStorage::<f64, 2, 2>::zeros();
+        for j in 0..2 {
+            for i in 0..=j {
+                unsafe {
+                    r.set_unchecked(i, j, *qr.get_unchecked(i, j));
+                }
+            }
+        }
+        let mut q =
+            ArrayStorage::<f64, 2, 2>::from_fn(
+                |i, j| {
+                    if i == j { 1.0 } else { 0.0 }
+                },
+            );
+        DefaultBlas::ormqr(
+            Side::Left,
+            Trans::NoTrans,
+            &qr,
+            &tau,
+            &mut q,
+            &mut work,
+        )
+        .unwrap();
+        let mut recon = ArrayStorage::<f64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::NoTrans,
+            Trans::NoTrans,
+            1.0,
+            &q,
+            &r,
+            0.0,
+            &mut recon,
+        );
+        let n = 2.0;
+        assert!(
+            _residual_inf_f64(&recon, &a)
+                <= _higham_bound(n, _inf_norm_f64(&a), 1.0)
+        );
+
+        let mut qtq = ArrayStorage::<f64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::Trans,
+            Trans::NoTrans,
+            1.0,
+            &q,
+            &q,
+            0.0,
+            &mut qtq,
+        );
+        let ident =
+            ArrayStorage::<f64, 2, 2>::from_fn(
+                |i, j| {
+                    if i == j { 1.0 } else { 0.0 }
+                },
+            );
+        assert!(_residual_inf_f64(&qtq, &ident) <= n * f64::EPSILON);
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    /// LU residual `‖PA − LU‖_∞` without a floor.
+    fn test_subprograms_residual_bounds_getrf() {
+        let a = ArrayStorage::<f64, 2, 2>::from_array([[2.0, 4.0], [1.0, 3.0]]);
+        let mut lu = a;
+        let mut ipiv = [0usize; 2];
+        DefaultBlas::getrf(&mut lu, &mut ipiv).unwrap();
+
+        let mut pa = a;
+        for (k, &p) in ipiv.iter().enumerate() {
+            if p != k {
+                for j in 0..2 {
+                    unsafe {
+                        let vk = *pa.get_unchecked(k, j);
+                        let vp = *pa.get_unchecked(p, j);
+                        pa.set_unchecked(k, j, vp);
+                        pa.set_unchecked(p, j, vk);
+                    }
+                }
+            }
+        }
+        let l = ArrayStorage::<f64, 2, 2>::from_fn(|i, j| match i.cmp(&j) {
+            core::cmp::Ordering::Equal => 1.0,
+            core::cmp::Ordering::Greater => unsafe { *lu.get_unchecked(i, j) },
+            core::cmp::Ordering::Less => 0.0,
+        });
+        let u = ArrayStorage::<f64, 2, 2>::from_fn(|i, j| {
+            if i <= j {
+                unsafe { *lu.get_unchecked(i, j) }
+            } else {
+                0.0
+            }
+        });
+        let mut recon = ArrayStorage::<f64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::NoTrans,
+            Trans::NoTrans,
+            1.0,
+            &l,
+            &u,
+            0.0,
+            &mut recon,
+        );
+        assert!(
+            _residual_inf_f64(&recon, &pa)
+                <= _higham_bound(2.0, _inf_norm_f64(&a), 1.0)
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    /// Symmetric eigen residual `‖AV − VΛ‖_∞` and `‖VᵀV − I‖_∞`.
+    fn test_subprograms_residual_bounds_syev() {
+        let a = ArrayStorage::<f64, 2, 2>::from_array([[2.0, 1.0], [1.0, 2.0]]);
+        let mut v = a;
+        let mut w = [0.0f64; 2];
+        let mut work = [0.0f64; 4];
+        DefaultBlas::syev(
+            JobZ::Vectors,
+            UpLo::Upper,
+            &mut v,
+            &mut w,
+            &mut work,
+        )
+        .unwrap();
+        let mut av = ArrayStorage::<f64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::NoTrans,
+            Trans::NoTrans,
+            1.0,
+            &a,
+            &v,
+            0.0,
+            &mut av,
+        );
+        let vl = ArrayStorage::<f64, 2, 2>::from_fn(|i, j| unsafe {
+            *v.get_unchecked(i, j) * w[j]
+        });
+        let n = 2.0;
+        assert!(
+            _residual_inf_f64(&av, &vl)
+                <= _higham_bound(n, _inf_norm_f64(&a), 1.0)
+        );
+        let mut vtv = ArrayStorage::<f64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::Trans,
+            Trans::NoTrans,
+            1.0,
+            &v,
+            &v,
+            0.0,
+            &mut vtv,
+        );
+        let ident =
+            ArrayStorage::<f64, 2, 2>::from_fn(
+                |i, j| {
+                    if i == j { 1.0 } else { 0.0 }
+                },
+            );
+        assert!(_residual_inf_f64(&vtv, &ident) <= n * f64::EPSILON);
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    /// Hermitian eigen residual `‖AU − UΛ‖_∞` and `‖UᴴU − I‖_∞`.
+    fn test_subprograms_residual_bounds_heev() {
+        let a = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(2.0, 0.0), Complex64::new(0.0, 1.0)],
+            [Complex64::new(0.0, -1.0), Complex64::new(2.0, 0.0)],
+        ]);
+        let mut u = a;
+        let mut w = [0.0f64; 2];
+        let mut work = [Complex64::ZERO; 4];
+        DefaultBlas::heev(
+            JobZ::Vectors,
+            UpLo::Upper,
+            &mut u,
+            &mut w,
+            &mut work,
+        )
+        .unwrap();
+        let mut au = ArrayStorage::<Complex64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::NoTrans,
+            Trans::NoTrans,
+            Complex64::ONE,
+            &a,
+            &u,
+            Complex64::ZERO,
+            &mut au,
+        );
+        let ul = ArrayStorage::<Complex64, 2, 2>::from_fn(|i, j| unsafe {
+            *u.get_unchecked(i, j) * Complex64::from_real(w[j])
+        });
+        let n = 2.0;
+        assert!(
+            _residual_inf_c64(&au, &ul)
+                <= _higham_bound(n, _inf_norm_c64(&a), 1.0)
+        );
+        let mut uhu = ArrayStorage::<Complex64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::ConjTrans,
+            Trans::NoTrans,
+            Complex64::ONE,
+            &u,
+            &u,
+            Complex64::ZERO,
+            &mut uhu,
+        );
+        let ident = ArrayStorage::<Complex64, 2, 2>::from_fn(|i, j| {
+            if i == j {
+                Complex64::ONE
+            } else {
+                Complex64::ZERO
+            }
+        });
+        assert!(_residual_inf_c64(&uhu, &ident) <= n * f64::EPSILON);
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    /// `Unmqr` `Side::Right` residual `C ← C Q` against formed `Q`.
+    fn test_subprograms_residual_bounds_unmqr_right() {
+        let a0 = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(3.0, 0.0), Complex64::new(4.0, 1.0)],
+            [Complex64::new(4.0, -1.0), Complex64::new(3.0, 0.0)],
+        ]);
+        let mut qr = a0;
+        let mut tau = [Complex64::ZERO; 2];
+        let mut work = [Complex64::ZERO; 4];
+        DefaultBlas::geqrf(&mut qr, &mut tau, &mut work).unwrap();
+        let mut q = ArrayStorage::<Complex64, 2, 2>::from_fn(|i, j| {
+            if i == j {
+                Complex64::ONE
+            } else {
+                Complex64::ZERO
+            }
+        });
+        DefaultBlas::unmqr(
+            Side::Left,
+            Trans::NoTrans,
+            &qr,
+            &tau,
+            &mut q,
+            &mut work,
+        )
+        .unwrap();
+        let c0 = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(1.0, 0.0), Complex64::new(3.0, 0.0)],
+            [Complex64::new(2.0, 0.0), Complex64::new(4.0, 0.0)],
+        ]);
+        let mut c_right = c0;
+        DefaultBlas::unmqr(
+            Side::Right,
+            Trans::NoTrans,
+            &qr,
+            &tau,
+            &mut c_right,
+            &mut work,
+        )
+        .unwrap();
+        let mut c_ref = ArrayStorage::<Complex64, 2, 2>::zeros();
+        DefaultBlas::gemm(
+            Trans::NoTrans,
+            Trans::NoTrans,
+            Complex64::ONE,
+            &c0,
+            &q,
+            Complex64::ZERO,
+            &mut c_ref,
+        );
+        assert!(
+            _residual_inf_c64(&c_right, &c_ref)
+                <= _higham_bound(2.0, _inf_norm_c64(&c0), _inf_norm_c64(&q))
+        );
     }
 
     #[cfg_attr(test, test)]
@@ -1529,8 +2030,9 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Val-1: Square-Root Kalman Filter — covariance propagation and measurement update.
-    fn test_subprograms_val1_square_root_kalman_filter() {
+    /// Kernel smoke: `Syrk` then `Potrf` on a 2×2 SPD Gram matrix.
+    /// Not a §6.2 Val-1 discharge (10k-step covariance is deferred).
+    fn test_subprograms_syrk_potrf_kernel_smoke() {
         let s = ArrayStorage::<f64, 2, 2>::from_array([[2.0, 0.0], [1.0, 1.5]]);
         let phi =
             ArrayStorage::<f64, 2, 2>::from_array([[1.0, 0.0], [0.1, 1.0]]);
@@ -1558,8 +2060,9 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Val-2: Real-Time Sparse MPC QP — condensed trajectory optimizer step.
-    fn test_subprograms_val2_real_time_sparse_mpc_qp() {
+    /// Kernel smoke: `Csrmv` on a small lower-bidiagonal CSR operand.
+    /// Not a §6.2 Val-2 discharge (Cortex-M7 timing is deferred).
+    fn test_subprograms_csrmv_kernel_smoke() {
         let mut coo = ArrayCooStorage::<f64, 3, 3, 5>::new();
         assert!(coo.push(0, 0, 1.0).is_ok());
         assert!(coo.push(1, 0, -0.8).is_ok());
@@ -1575,8 +2078,9 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Val-3: Complex MIMO Frequency Response — spectral singular value extraction.
-    fn test_subprograms_val3_complex_mimo_frequency_response() {
+    /// Kernel smoke: `Herk` then `Heev` on a 2×2 Gram matrix.
+    /// Not a §6.2 Val-3 discharge (MATLAB/SciPy spectra are deferred).
+    fn test_subprograms_herk_heev_kernel_smoke() {
         let g = ArrayStorage::<Complex64, 2, 2>::from_array([
             [Complex64::new(1.0, 1.0), Complex64::new(0.0, 1.0)],
             [Complex64::new(1.0, -1.0), Complex64::new(2.0, 0.0)],
@@ -1600,8 +2104,9 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Val-4: Decoupled Modal State Simulation — decoupled structural vibration ODE step.
-    fn test_subprograms_val4_decoupled_modal_state_simulation() {
+    /// Kernel smoke: `Scal` then `Axpy` on a length-4 state.
+    /// Not a §6.2 Val-4 discharge (O(N) scaling is deferred).
+    fn test_subprograms_scal_axpy_kernel_smoke() {
         let mut modal_state =
             ArrayStorage::<f64, 4, 1>::from_array([[1.0, 2.0, 3.0, 4.0]]);
         let modal_damping = 0.95f64;
@@ -1616,8 +2121,9 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Val-5: Mixed-Layout State Observer — combining row-major gains with col-major state.
-    fn test_subprograms_val5_mixed_layout_state_observer() {
+    /// Kernel smoke: `Gemv` with a row-major gain and column-major residual.
+    /// Not a §6.2 Val-5 discharge (observer workflow is deferred).
+    fn test_subprograms_gemv_mixed_layout_kernel_smoke() {
         let l_gain =
             RowArrayStorage::<f64, 2, 2>::from_array([[1.0, 0.0], [0.0, 2.0]]);
         let y_err = ArrayStorage::<f64, 2, 1>::from_array([[0.5, 0.25]]);
@@ -1700,7 +2206,7 @@ pub mod subprogram_test_suite {
             &mut work,
         )
         .unwrap();
-        assert!(c_right.get(0, 0).unwrap().abs2() > 0.0);
+        assert!(c_right.get(0, 0).unwrap().re.is_finite());
 
         let mut coo = ArrayCooStorage::<f32, 2, 2, 4>::new();
         coo.push(0, 0, 1.0).unwrap();

@@ -901,8 +901,9 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Val-1: Multi-Layout State Estimation — packed symmetric covariance with dense state.
-    fn test_storage_val1_kalman_packed_covariance() {
+    /// Layout smoke: packed symmetric covariance next to a dense state vector.
+    /// Not a §6.2 Val-1 discharge (numerical-model Kalman workflow is deferred).
+    fn test_storage_packed_symmetric_and_dense_layout_smoke() {
         let mut x = ArrayStorage::<f64, 3, 1>::zeros();
         unsafe {
             x.set_unchecked(0, 0, 10.0);
@@ -925,8 +926,9 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Val-2: Fixed-Capacity Sparse MPC — condensed horizon trajectory constraints on stack.
-    fn test_storage_val2_sparse_mpc_condensed_horizon() {
+    /// Layout smoke: COO band assembled into CSR.
+    /// Not a §6.2 Val-2 discharge (sparse MPC workflow is deferred).
+    fn test_storage_coo_csr_band_layout_smoke() {
         let mut coo = ArrayCooStorage::<f64, 4, 4, 8>::new();
         assert!(coo.push(0, 0, 1.0).is_ok());
         assert!(coo.push(0, 1, -0.5).is_ok());
@@ -945,8 +947,9 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Val-3: Zero-Copy Windowing — submatrix extraction from coupled block model without copies.
-    fn test_storage_val3_zero_copy_windowing() {
+    /// Layout smoke: strided 2×2 view over a 4×4 parent without copies.
+    /// Not a §6.2 Val-3 discharge (subsystem extraction workflow is deferred).
+    fn test_storage_submatrix_view_zero_copy_smoke() {
         let full = ArrayStorage::<f64, 4, 4>::from_array([
             [1.0, 3.0, 0.1, 0.3],
             [2.0, 4.0, 0.2, 0.4],
@@ -968,8 +971,9 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Val-4: Complex Frequency Response — MIMO G(jw) storage across discrete frequency grid.
-    fn test_storage_val4_complex_mimo_frequency_response() {
+    /// Layout smoke: complex dense storage plus transpose view.
+    /// Not a §6.2 Val-4 discharge (MIMO frequency-grid workflow is deferred).
+    fn test_storage_complex_matrix_transpose_view_smoke() {
         let g_jw = ArrayStorage::<Complex<f64>, 2, 2>::from_array([
             [Complex::new(0.5, -0.5), Complex::new(0.2, -0.1)],
             [Complex::ZERO, Complex::ONE],
@@ -1645,7 +1649,10 @@ pub mod storage_test_suite {
 mod storage_property_tests {
     use crate::math::num_types::Const;
     use crate::math::storage::{
-        ArrayStorage, ColMajor, DenseStorage, StaticStorageView, StorageInit,
+        ArrayCooStorage, ArrayCscStorage, ArrayCsrStorage, ArrayStorage,
+        ColMajor, DenseStorage, PackedStorage, SparseStorage,
+        StaticStorageView, StorageInit, SymmetricPackedStorage, ToCscStorage,
+        ToCsrStorage, UpLo,
     };
     use proptest::prelude::*;
 
@@ -1693,6 +1700,56 @@ mod storage_property_tests {
                     );
                 }
             }
+        }
+
+        /// Upper packed index `i + j(j+1)/2` round-trips `value` for every
+        /// stored triangle slot, and `packed_index` is `None` on the
+        /// unstored triangle and out of bounds.
+        #[test]
+        fn prop_symmetric_packed_upper_index_map(
+            vals in proptest::collection::vec(any::<i32>(), 6),
+        ) {
+            let data = [vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]];
+            let packed =
+                SymmetricPackedStorage::<i32, 3, 6>::new(data, UpLo::Upper);
+            for j in 0..3 {
+                for i in 0..=j {
+                    let idx = i + (j * (j + 1)) / 2;
+                    prop_assert_eq!(packed.packed_index(i, j), Some(idx));
+                    prop_assert_eq!(packed.value(i, j), Some(vals[idx]));
+                    prop_assert_eq!(packed.value(j, i), Some(vals[idx]));
+                }
+            }
+            prop_assert_eq!(packed.packed_index(1, 0), None);
+            prop_assert_eq!(packed.packed_index(2, 0), None);
+            prop_assert_eq!(packed.packed_index(3, 0), None);
+        }
+
+        /// COO → CSR/CSC preserves a fixed sparsity pattern's values.
+        #[test]
+        fn prop_coo_csr_csc_index_map(
+            v00 in any::<i32>(),
+            v11 in any::<i32>(),
+            v22 in any::<i32>(),
+            v02 in any::<i32>(),
+        ) {
+            let mut coo = ArrayCooStorage::<i32, 3, 3, 4>::new();
+            prop_assert!(coo.push(0, 0, v00).is_ok());
+            prop_assert!(coo.push(1, 1, v11).is_ok());
+            prop_assert!(coo.push(2, 2, v22).is_ok());
+            prop_assert!(coo.push(0, 2, v02).is_ok());
+            let csr: ArrayCsrStorage<i32, 3, 3, 4, 4> = coo.to_csr().unwrap();
+            let csc: ArrayCscStorage<i32, 3, 3, 4, 4> = coo.to_csc().unwrap();
+            prop_assert_eq!(csr.get(0, 0), Some(v00));
+            prop_assert_eq!(csr.get(1, 1), Some(v11));
+            prop_assert_eq!(csr.get(2, 2), Some(v22));
+            prop_assert_eq!(csr.get(0, 2), Some(v02));
+            prop_assert_eq!(csr.get(0, 1), Some(0));
+            prop_assert_eq!(csc.get(0, 0), Some(v00));
+            prop_assert_eq!(csc.get(1, 1), Some(v11));
+            prop_assert_eq!(csc.get(2, 2), Some(v22));
+            prop_assert_eq!(csc.get(0, 2), Some(v02));
+            prop_assert_eq!(csc.get(1, 0), Some(0));
         }
     }
 }
