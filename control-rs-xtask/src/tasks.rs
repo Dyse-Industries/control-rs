@@ -555,7 +555,7 @@ pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
 
 /// Task to run formatting check.
 pub fn run_fmt() -> (Result<(), usize>, String) {
-    utils::status("Running", "`cargo fmt-check`");
+    utils::status("Running", "`fmt-check`");
     let fmt_output = Command::new("cargo")
         .args(["fmt-check"])
         .env("CARGO_TERM_COLOR", "never")
@@ -590,7 +590,7 @@ pub fn run_fmt() -> (Result<(), usize>, String) {
 
 /// Task to run clippy check with JSON output formatting.
 pub fn run_clippy() -> (Result<(), usize>, String) {
-    utils::status("Running", "`cargo clippy-ci`");
+    utils::status("Running", "`clippy-ci`");
     let clippy_output = Command::new("cargo")
         .args(["clippy-ci"])
         .env("CARGO_TERM_COLOR", "never")
@@ -608,7 +608,7 @@ pub fn run_clippy() -> (Result<(), usize>, String) {
 
 /// Task to run tarpaulin test & coverage.
 pub fn run_tarpaulin() -> (Result<TarpaulinSummary, ()>, String) {
-    utils::status("Running", "`cargo coverage-ci`");
+    utils::status("Running", "`coverage-ci`");
     let tarpaulin_output = Command::new("cargo")
         .args(["coverage-ci"])
         .env("CARGO_TERM_COLOR", "never")
