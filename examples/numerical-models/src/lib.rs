@@ -1,4 +1,4 @@
-//! Host numerical-model examples and JSON file-based V&V tests.
+//! Host numerical-model examples: suite-driven validators and JSON V&V.
 //!
 //! ## Column-major matrix literals
 //!
@@ -31,13 +31,14 @@
     missing_docs
 )]
 
+pub mod compare;
 pub mod matrix;
 pub mod polynomial;
 pub mod state_space;
+pub mod suite;
 pub mod tensor;
 pub mod transfer_function;
 
-use std::path::Path;
 use std::time::Instant;
 
 use control_rs::math::num_types::{Const, Dim};
@@ -117,16 +118,16 @@ pub fn print_matrix<const R: usize, const C: usize>(
     Const<R>: Dim,
     Const<C>: Dim,
 {
-    println!("{name}:");
+    eprintln!("{name}:");
     for i in 0..R {
-        print!("  [");
+        eprint!("  [");
         for j in 0..C {
             if j > 0 {
-                print!(", ");
+                eprint!(", ");
             }
-            print!("{:12.6}", m.get(i, j).copied().unwrap_or(0.0));
+            eprint!("{:12.6}", m.get(i, j).copied().unwrap_or(0.0));
         }
-        println!("]");
+        eprintln!("]");
     }
 }
 
@@ -230,17 +231,6 @@ where
     (0..N)
         .map(|i| m.get(i, 0).copied().unwrap_or(0.0))
         .collect()
-}
-
-/// Write a JSON artifact under the crate root (creates parent dirs).
-pub fn save(rel: impl AsRef<Path>, doc: &Value) {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel.as_ref());
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).expect("create results dir");
-    }
-    let text = serde_json::to_string_pretty(doc).expect("serialize json");
-    std::fs::write(&path, format!("{text}\n")).expect("write artifact");
-    eprintln!("wrote {}", path.display());
 }
 
 /// Wrap native `values` / `series` / `metrics` / `timings` as a V&V artifact.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Polynomial numerical oracle — writes results/polynomial/python.json."""
+"""Polynomial numerical oracle — suite path in, result JSON on stdout."""
 
 from __future__ import annotations
 
@@ -14,28 +14,29 @@ from numpy.polynomial.polynomial import (
     polyval,
 )
 
-from vv import CRATE_ROOT, save_json, time_kernel, timing_entry
+from vv import case_inputs, require_int, run_cli, time_kernel, timing_entry
 
-OUT_PATH = CRATE_ROOT / "results" / "polynomial" / "python.json"
 SWEEP_N = 128
-HORNER_ITERS = 10_000
-CLUSTER_X = 1.005
 
 
-def tutorial() -> dict:
-    coeffs = np.array([2.0, -3.0, 4.0, 1.0, 0.0], dtype=np.float64)
-    x_test = 2.5
-    z = 1.0 + 2.0j
+def tutorial(suite: dict) -> dict:
+    inp = case_inputs(suite, "polynomial.host.tutorial")
+    coeffs = np.array(inp["coeffs"], dtype=np.float64)
+    x_test = float(inp["x_real"])
+    z = complex(inp["z_complex"]["re"], inp["z_complex"]["im"])
     deriv = polyder(coeffs)
     deriv5 = np.zeros(5, dtype=np.float64)
     deriv5[: deriv.size] = deriv
-    integ = polyint(coeffs, k=[5.0])
+    integ = polyint(coeffs, k=[float(inp["integral_c0"])])
     integ5 = integ[:5]
-    p1 = np.array([1.0, 2.0], dtype=np.float64)
-    p2 = np.array([3.0, 4.0], dtype=np.float64)
+    p1 = np.array(inp["p1"], dtype=np.float64)
+    p2 = np.array(inp["p2"], dtype=np.float64)
     prod = polymul(p1, p2)
     quot, rem = polydiv(prod, p1)
-    p_monic = np.array([-6.0, -5.0, 1.0], dtype=np.float64)
+    p_monic = np.array(inp["monic"], dtype=np.float64)
+    require_int(inp, "monic_degree", 12)
+    if p_monic.size != 13:
+        raise SystemExit(f"monic length {p_monic.size} != 13")
     companion = np.array(polycompanion(p_monic), dtype=np.float64)
     val_c = polyval(z, coeffs)
     return {
@@ -53,25 +54,33 @@ def tutorial() -> dict:
     }
 
 
-def clustered() -> dict:
+def clustered(suite: dict) -> dict:
+    inp = case_inputs(suite, "polynomial.host.clustered_horner")
+    require_int(inp, "degree", 16)
+    require_int(inp["sweep"], "n", SWEEP_N)
+    start = float(inp["sweep"]["start"])
+    stop = float(inp["sweep"]["stop"])
+    timed_x = float(inp["timed_x"])
+    iters = int(inp.get("iters", 10_000))
     roots = np.concatenate(
         [np.full(8, 1.0), np.full(8, 1.01)],
     ).astype(np.float64)
     coeffs = polyfromroots(roots)
-    sweep_x = np.linspace(0.9, 1.1, SWEEP_N, dtype=np.float64)
+    sweep_x = np.linspace(start, stop, SWEEP_N, dtype=np.float64)
     cluster_y = np.asarray(polyval(sweep_x, coeffs), dtype=np.float64)
-    ns = time_kernel(HORNER_ITERS, lambda: polyval(CLUSTER_X, coeffs))
+    ns = time_kernel(iters, lambda: polyval(timed_x, coeffs))
     return {
         "coeffs": np.asarray(coeffs, dtype=np.float64),
         "x": sweep_x,
         "y": cluster_y,
         "ns": ns,
+        "iters": iters,
     }
 
 
-def build_artifact() -> dict:
-    t = tutorial()
-    c = clustered()
+def build_artifact(suite: dict) -> dict:
+    t = tutorial(suite)
+    c = clustered(suite)
     return {
         "slug": "polynomial",
         "source": "python",
@@ -96,10 +105,10 @@ def build_artifact() -> dict:
         },
         "metrics": {},
         "timings": {
-            "horner": timing_entry(HORNER_ITERS, c["ns"]),
+            "horner": timing_entry(c["iters"], c["ns"]),
         },
     }
 
 
 if __name__ == "__main__":
-    save_json(OUT_PATH, build_artifact())
+    run_cli("polynomial", build_artifact)

@@ -1,0 +1,1068 @@
+{
+  "slug": "matrix",
+  "ets_suite": "matrix_test_suite",
+  "ets_source": "src/matrix/tests/matrix_tests.rs",
+  "equivalence_test": "src/compare.rs::matrix_equiv",
+  "validators": [
+    {
+      "source": "python",
+      "argv": [
+        "python3",
+        "python3/matrix.py"
+      ]
+    },
+    {
+      "source": "rust",
+      "bin": "matrix"
+    }
+  ],
+  "plots": [
+    {
+      "argv": [
+        "python3",
+        "python3/plot_matrix.py"
+      ]
+    }
+  ],
+  "conventions": {
+    "matrix_layout": "row-major (NumPy / design-doc). Rust ArrayStorage::from_array is column-major: NumPy [[a, b], [c, d]] is written [[a, c], [b, d]].",
+    "kinds": [
+      "host_tutorial",
+      "host_stress",
+      "host_visualization",
+      "ets",
+      "property"
+    ]
+  },
+  "bounds": {
+    "ABS_F64": 1e-12,
+    "ABS_F32": 1e-06,
+    "SOLVE_RESIDUAL_TAU": 20.0,
+    "ZOH_AD_TAU": 20.0,
+    "TAU_KAPPA": 20.0,
+    "QUANT_LSB": 0.00390625,
+    "stiff_zoh_relative": 1e-08
+  },
+  "cases": [
+    {
+      "id": "matrix.host.arithmetic",
+      "kind": "host_tutorial",
+      "name": "2x2 arithmetic and transpose",
+      "inputs": {
+        "M1": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            3.0,
+            4.0
+          ]
+        ],
+        "M2": [
+          [
+            5.0,
+            6.0
+          ],
+          [
+            7.0,
+            8.0
+          ]
+        ]
+      },
+      "operations": [
+        "add",
+        "sub",
+        "gemm",
+        "transpose"
+      ],
+      "json_keys": [
+        "SUM",
+        "DIFF",
+        "PROD",
+        "TRANSPOSE"
+      ],
+      "bound": {
+        "abs": 1e-12
+      }
+    },
+    {
+      "id": "matrix.host.lu_solve_inverse",
+      "kind": "host_tutorial",
+      "name": "3x3 LU solve Ax=b and inverse identity check",
+      "inputs": {
+        "A": [
+          [
+            3.0,
+            2.0,
+            -1.0
+          ],
+          [
+            2.0,
+            -2.0,
+            4.0
+          ],
+          [
+            -1.0,
+            0.5,
+            -1.0
+          ]
+        ],
+        "b": [
+          1.0,
+          -2.0,
+          0.0
+        ]
+      },
+      "operations": [
+        "lu_decompose",
+        "solve",
+        "inverse",
+        "A * Ainv == I"
+      ],
+      "json_keys": [
+        "X",
+        "A_INV"
+      ],
+      "metrics": [
+        "residual_ratio"
+      ],
+      "bound": {
+        "residual_ratio": 20.0,
+        "identity_abs": 1e-12
+      }
+    },
+    {
+      "id": "matrix.host.hilbert",
+      "kind": "host_stress",
+      "name": "Hilbert n=8 manufactured solve and inverse",
+      "inputs": {
+        "n": 8,
+        "H_ij": "1 / (i + j + 1)",
+        "x_true": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "b": "H @ x_true"
+      },
+      "operations": [
+        "lu_solve",
+        "inverse",
+        "kappa_inf"
+      ],
+      "json_keys": [
+        "HILBERT_X",
+        "HILBERT_A_INV"
+      ],
+      "metrics": [
+        "residual_ratio_hilbert",
+        "kappa_hilbert"
+      ],
+      "bound": {
+        "residual_ratio": 20.0,
+        "forward_error": "||xhat - 1||_inf < 20 * kappa_inf(H) * eps"
+      }
+    },
+    {
+      "id": "matrix.host.gemm",
+      "kind": "host_stress",
+      "name": "Timed GEMM n=64",
+      "inputs": {
+        "n": 64,
+        "A_ij": "0.01 * (i+1) * (j+3) / 64",
+        "B_ij": "0.02 * (i+2) * (j+1) / 64",
+        "iters": 200
+      },
+      "operations": [
+        "gemm"
+      ],
+      "json_keys": [
+        "GEMM00"
+      ],
+      "metrics": [
+        "gemm_frob"
+      ],
+      "timings": [
+        "gemm"
+      ],
+      "bound": {
+        "GEMM00_abs": 1e-09
+      },
+      "note": "Full 64x64 product is not dumped into JSON."
+    },
+    {
+      "id": "matrix.host.se3_chain",
+      "kind": "host_visualization",
+      "name": "SE(3) rigid GEMM chain T^k, k=0..39",
+      "inputs": {
+        "n": 40,
+        "theta": 0.15,
+        "t": [
+          0.04,
+          0.01,
+          0.03
+        ],
+        "T": "Rz(theta) with translation t, 4x4 homogeneous"
+      },
+      "operations": [
+        "repeated_gemm"
+      ],
+      "json_keys": [
+        "SE3_T",
+        "SE3_XYZ",
+        "SE3_R"
+      ],
+      "note": "Skipped by the blanket absolute compare in matrix_equiv."
+    },
+    {
+      "id": "matrix.ets.zero_identity_diagonal",
+      "kind": "ets",
+      "name": "test_zero_identity_diagonal_const_eval",
+      "inputs": {
+        "zero_shape": [
+          2,
+          3
+        ],
+        "identity_n": 3,
+        "diag": [
+          1.0,
+          2.0,
+          3.0
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.from_fn",
+      "kind": "ets",
+      "name": "test_from_fn",
+      "inputs": {
+        "shape": [
+          2,
+          3
+        ],
+        "A_ij": "10*i + j"
+      }
+    },
+    {
+      "id": "matrix.ets.add_sub_neg",
+      "kind": "ets",
+      "name": "test_add_sub_neg",
+      "inputs": {
+        "A": [
+          [
+            0.0,
+            1.0
+          ],
+          [
+            2.0,
+            3.0
+          ]
+        ],
+        "B": "I_2"
+      }
+    },
+    {
+      "id": "matrix.ets.mul_matrix_matrix",
+      "kind": "ets",
+      "name": "test_mul_matrix_matrix",
+      "inputs": {
+        "A": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            3.0,
+            4.0
+          ]
+        ],
+        "I": "I_2",
+        "D": [
+          [
+            2.0,
+            0.0
+          ],
+          [
+            0.0,
+            2.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.mul_matrix_vector",
+      "kind": "ets",
+      "name": "test_mul_matrix_vector",
+      "inputs": {
+        "A": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            3.0,
+            4.0
+          ]
+        ],
+        "x": [
+          1.0,
+          1.0
+        ]
+      },
+      "expected": {
+        "y": [
+          3.0,
+          7.0
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.transpose_non_square",
+      "kind": "ets",
+      "name": "test_transpose_non_square",
+      "inputs": {
+        "A": [
+          [
+            0.0,
+            1.0,
+            2.0
+          ],
+          [
+            3.0,
+            4.0,
+            5.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.transpose_mut_square",
+      "kind": "ets",
+      "name": "test_transpose_mut_square",
+      "inputs": {
+        "A": [
+          [
+            0.0,
+            1.0
+          ],
+          [
+            2.0,
+            3.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.lu_determinant",
+      "kind": "ets",
+      "name": "test_lu_determinant",
+      "inputs": {
+        "A": [
+          [
+            2.0,
+            1.0
+          ],
+          [
+            1.0,
+            3.0
+          ]
+        ],
+        "swapped": [
+          [
+            0.0,
+            1.0
+          ],
+          [
+            1.0,
+            0.0
+          ]
+        ]
+      },
+      "expected": {
+        "det_A": 5.0,
+        "det_swapped": -1.0
+      }
+    },
+    {
+      "id": "matrix.ets.lu_solve_mut",
+      "kind": "ets",
+      "name": "test_lu_solve_mut",
+      "inputs": {
+        "A": [
+          [
+            2.0,
+            1.0
+          ],
+          [
+            1.0,
+            3.0
+          ]
+        ],
+        "b": [
+          3.0,
+          5.0
+        ]
+      },
+      "expected": {
+        "x": [
+          0.8,
+          1.4
+        ]
+      },
+      "bound": {
+        "abs": 1e-09
+      }
+    },
+    {
+      "id": "matrix.ets.lu_decompose_undersized_pivots",
+      "kind": "ets",
+      "name": "test_lu_decompose_undersized_pivots",
+      "inputs": {
+        "A": [
+          [
+            2.0,
+            1.0
+          ],
+          [
+            1.0,
+            3.0
+          ]
+        ],
+        "pivots_len": 1
+      },
+      "expected": "LinAlgError::WorkspaceTooSmall"
+    },
+    {
+      "id": "matrix.ets.lu_invert_round_trip",
+      "kind": "ets",
+      "name": "test_lu_invert_round_trip",
+      "inputs": {
+        "A": [
+          [
+            4.0,
+            3.0,
+            2.0
+          ],
+          [
+            1.0,
+            5.0,
+            3.0
+          ],
+          [
+            2.0,
+            1.0,
+            6.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.inverse_identity_roundtrip_cond_scaled",
+      "kind": "ets",
+      "name": "test_inverse_identity_roundtrip_cond_scaled",
+      "inputs": {
+        "well": [
+          [
+            4.0,
+            3.0,
+            2.0
+          ],
+          [
+            1.0,
+            5.0,
+            3.0
+          ],
+          [
+            2.0,
+            1.0,
+            6.0
+          ]
+        ],
+        "hilbert_n": 4,
+        "H_ij": "1 / (i + j + 1)"
+      },
+      "bound": {
+        "||A Ainv - I||_inf": "20 * kappa_inf(A) * eps"
+      }
+    },
+    {
+      "id": "matrix.ets.inf_norm_submultiplicative",
+      "kind": "ets",
+      "name": "test_inf_norm_submultiplicative",
+      "inputs": {
+        "A": [
+          [
+            2.0,
+            -1.0
+          ],
+          [
+            0.5,
+            3.0
+          ]
+        ],
+        "B": [
+          [
+            -1.0,
+            4.0
+          ],
+          [
+            2.0,
+            0.5
+          ]
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.lu_singular",
+      "kind": "ets",
+      "name": "test_lu_singular_matrix_errors",
+      "inputs": {
+        "A": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            2.0,
+            4.0
+          ]
+        ]
+      },
+      "expected": "LinAlgError::SingularMatrix"
+    },
+    {
+      "id": "matrix.ets.upper_lower_construction",
+      "kind": "ets",
+      "name": "test_upper_lower_construction",
+      "inputs": {
+        "upper": [
+          [
+            1.0,
+            1.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ],
+        "lower": [
+          [
+            1.0,
+            0.0
+          ],
+          [
+            1.0,
+            1.0
+          ]
+        ],
+        "dense_ones": [
+          [
+            1.0,
+            1.0
+          ],
+          [
+            1.0,
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.solve_triangular",
+      "kind": "ets",
+      "name": "test_solve_triangular",
+      "inputs": {
+        "L": [
+          [
+            2.0,
+            0.0
+          ],
+          [
+            3.0,
+            4.0
+          ]
+        ],
+        "b_L": [
+          4.0,
+          23.0
+        ],
+        "U": [
+          [
+            2.0,
+            3.0
+          ],
+          [
+            0.0,
+            4.0
+          ]
+        ],
+        "b_U": [
+          23.0,
+          17.0
+        ]
+      },
+      "expected": {
+        "x_L": [
+          2.0,
+          4.25
+        ],
+        "x_U": [
+          5.125,
+          4.25
+        ]
+      },
+      "bound": {
+        "abs": 1e-09
+      }
+    },
+    {
+      "id": "matrix.ets.symmetric_construction",
+      "kind": "ets",
+      "name": "test_symmetric_construction",
+      "inputs": {
+        "sym": [
+          [
+            2.0,
+            1.0
+          ],
+          [
+            1.0,
+            3.0
+          ]
+        ],
+        "asym": [
+          [
+            2.0,
+            1.0
+          ],
+          [
+            5.0,
+            3.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.ldlt_determinant_and_solve",
+      "kind": "ets",
+      "name": "test_ldlt_determinant_and_solve",
+      "inputs": {
+        "A": [
+          [
+            4.0,
+            2.0
+          ],
+          [
+            2.0,
+            3.0
+          ]
+        ],
+        "b": [
+          6.0,
+          5.0
+        ]
+      },
+      "expected": {
+        "det": 8.0,
+        "x": [
+          1.0,
+          1.0
+        ]
+      },
+      "bound": {
+        "abs": 1e-09
+      }
+    },
+    {
+      "id": "matrix.ets.ldlt_singular",
+      "kind": "ets",
+      "name": "test_ldlt_singular_matrix_errors",
+      "inputs": {
+        "A": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "expected": "LinAlgError::SingularMatrix"
+    },
+    {
+      "id": "matrix.ets.cholesky_solve",
+      "kind": "ets",
+      "name": "test_cholesky_solve",
+      "inputs": {
+        "A": [
+          [
+            4.0,
+            2.0
+          ],
+          [
+            2.0,
+            3.0
+          ]
+        ],
+        "b": [
+          6.0,
+          5.0
+        ]
+      },
+      "expected": {
+        "x": [
+          1.0,
+          1.0
+        ]
+      },
+      "bound": {
+        "abs": 1e-09
+      }
+    },
+    {
+      "id": "matrix.ets.cholesky_indefinite",
+      "kind": "ets",
+      "name": "test_cholesky_not_positive_definite_errors",
+      "inputs": {
+        "A": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            2.0,
+            1.0
+          ]
+        ]
+      },
+      "expected": "LinAlgError::NotPositiveDefinite"
+    },
+    {
+      "id": "matrix.ets.qr_solve_residual",
+      "kind": "ets",
+      "name": "test_qr_solve_residual",
+      "inputs": {
+        "A": [
+          [
+            4.0,
+            3.0,
+            2.0
+          ],
+          [
+            1.0,
+            5.0,
+            3.0
+          ],
+          [
+            2.0,
+            1.0,
+            6.0
+          ]
+        ],
+        "b": [
+          1.0,
+          2.0,
+          3.0
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.qr_singular",
+      "kind": "ets",
+      "name": "test_qr_solve_singular_matrix_errors",
+      "inputs": {
+        "A": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            2.0,
+            4.0
+          ]
+        ],
+        "b": [
+          1.0,
+          2.0
+        ]
+      },
+      "expected": "LinAlgError::SingularMatrix"
+    },
+    {
+      "id": "matrix.ets.kalman_covariance_update",
+      "kind": "ets",
+      "name": "test_kalman_covariance_update",
+      "inputs": {
+        "P_pred": "I_2",
+        "K": [
+          0.5,
+          0.25
+        ],
+        "H": [
+          1.0,
+          0.0
+        ]
+      },
+      "operations": [
+        "P = (I - K H) P_pred"
+      ],
+      "expected": {
+        "P": [
+          [
+            0.5,
+            0.0
+          ],
+          [
+            -0.25,
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.covariance_predict_symmetry",
+      "kind": "ets",
+      "name": "test_covariance_predict_symmetry",
+      "inputs": {
+        "A": [
+          [
+            1.0,
+            0.5
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ],
+        "P": [
+          [
+            4.0,
+            1.0
+          ],
+          [
+            1.0,
+            2.0
+          ]
+        ],
+        "Q": [
+          [
+            0.25,
+            0.0
+          ],
+          [
+            0.0,
+            0.5
+          ]
+        ],
+        "K": [
+          0.5,
+          0.25
+        ],
+        "H": [
+          1.0,
+          0.0
+        ],
+        "R": [
+          [
+            1.0
+          ]
+        ]
+      },
+      "operations": [
+        "P- = A P A^T + Q",
+        "Joseph update"
+      ]
+    },
+    {
+      "id": "matrix.ets.coordinate_access",
+      "kind": "ets",
+      "name": "test_coordinate_access",
+      "inputs": {
+        "set": {
+          "i": 0,
+          "j": 1,
+          "v": 3.0
+        },
+        "oob": {
+          "i": 2,
+          "j": 0
+        }
+      }
+    },
+    {
+      "id": "matrix.ets.strided_submatrix",
+      "kind": "ets",
+      "name": "test_strided_submatrix",
+      "inputs": {
+        "A_ij": "3*i + j",
+        "shape": [
+          3,
+          3
+        ],
+        "sub": {
+          "origin": [
+            1,
+            1
+          ],
+          "shape": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "id": "matrix.ets.c_abi_layout",
+      "kind": "ets",
+      "name": "test_c_abi_layout",
+      "inputs": {
+        "A_colmajor_from_array": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            3.0,
+            4.0
+          ]
+        ]
+      },
+      "note": "from_array is column-major: columns [1,2] and [3,4]."
+    },
+    {
+      "id": "matrix.ets.lu_workspace_too_small",
+      "kind": "ets",
+      "name": "test_lu_workspace_too_small",
+      "inputs": {
+        "A": "I_2",
+        "pivots_len": 1
+      },
+      "expected": "LinAlgError::WorkspaceTooSmall"
+    },
+    {
+      "id": "matrix.ets.qr_rect_tall",
+      "kind": "ets",
+      "name": "test_qr_rect_tall",
+      "inputs": {
+        "A": [
+          [
+            1.0,
+            0.0
+          ],
+          [
+            1.0,
+            1.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "bound": {
+        "abs": 1e-09
+      }
+    },
+    {
+      "id": "matrix.ets.storage_views_and_mul_into",
+      "kind": "ets",
+      "name": "test_matrix_storage_views_and_mul_into",
+      "inputs": {
+        "diag": [
+          3.0,
+          4.0
+        ]
+      }
+    },
+    {
+      "id": "matrix.ets.scalar_mul_trace_expm_write_block",
+      "kind": "ets",
+      "name": "test_scalar_mul_trace_expm_write_block",
+      "inputs": {
+        "I": "I_2",
+        "scales": [
+          3.0,
+          2.0
+        ],
+        "expm": "zeros(2,2)",
+        "write_block_dest": "zeros(3,3)",
+        "write_block_origin": [
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "id": "matrix.prop.transpose_of_product",
+      "kind": "property",
+      "name": "prop_transpose_of_product",
+      "inputs": {
+        "A_shape": [
+          2,
+          3
+        ],
+        "B_shape": [
+          3,
+          2
+        ],
+        "entries": "-100 .. 100"
+      }
+    },
+    {
+      "id": "matrix.prop.distributivity",
+      "kind": "property",
+      "name": "prop_distributivity",
+      "inputs": {
+        "shape": [
+          2,
+          2
+        ],
+        "entries": "-100 .. 100"
+      }
+    },
+    {
+      "id": "matrix.prop.add_associativity",
+      "kind": "property",
+      "name": "prop_add_associativity",
+      "inputs": {
+        "shape": [
+          2,
+          2
+        ],
+        "entries": "-100 .. 100"
+      }
+    },
+    {
+      "id": "matrix.prop.inverse_identity_roundtrip",
+      "kind": "property",
+      "name": "prop_inverse_identity_roundtrip",
+      "inputs": {
+        "shape": [
+          2,
+          2
+        ],
+        "entries": "-20 .. 20"
+      }
+    },
+    {
+      "id": "matrix.prop.inf_norm_submultiplicative",
+      "kind": "property",
+      "name": "prop_inf_norm_submultiplicative",
+      "inputs": {
+        "shape": [
+          2,
+          2
+        ],
+        "entries": "-50 .. 50"
+      }
+    }
+  ]
+}

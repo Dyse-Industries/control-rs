@@ -3,16 +3,20 @@
 //! `Store::from_array` / `Owned::from_array` use **column-major** literals: each
 //! inner array is one column. NumPy `[[a, b], [c, d]]` is `[[a, c], [b, d]]`.
 
+use crate::suite::{
+    case_inputs, emit_stdout, json_f64, json_f64_vec, json_usize,
+    require_usize, storage_from_col, storage_from_rows,
+};
 use crate::{
     ABS_F64, SOLVE_RESIDUAL_TAU, col0, frobenius, inf_norm_mat,
-    native_artifact, owned_to_rows, print_matrix, save, solve_residual_ratio,
+    native_artifact, owned_to_rows, print_matrix, solve_residual_ratio,
     time_kernel, timing_entry,
 };
 use control_rs::math::num_types::Const;
 use control_rs::math::storage::ArrayStorage;
 use control_rs::math::subprograms::DefaultBlas;
 use control_rs::matrix::{LuDecomposition, Matrix, Owned};
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// Swap this for a custom dense backend.
 type Store<const R: usize, const C: usize> = ArrayStorage<f64, R, C>;
@@ -22,23 +26,17 @@ type Mat<const R: usize, const C: usize> =
     Matrix<f64, Const<R>, Const<C>, Store<R, C>>;
 
 const GEMM_N: usize = 64;
-const GEMM_ITERS: u32 = 200;
 const HILBERT_N: usize = 8;
 const SE3_N: usize = 40;
-const SE3_THETA: f64 = 0.15;
-const SE3_DX: f64 = 0.04;
-const SE3_DY: f64 = 0.01;
-const SE3_DZ: f64 = 0.03;
 
-pub fn main() {
-    println!("=== Matrix Numerical Model Example ===");
+pub fn run(suite: &Value) {
+    eprintln!("=== Matrix Numerical Model Example ===");
 
-    let m1 =
-        Mat::<2, 2>::from_storage(Store::from_array([[1.0, 3.0], [2.0, 4.0]]));
-    let m2 =
-        Mat::<2, 2>::from_storage(Store::from_array([[5.0, 7.0], [6.0, 8.0]]));
+    let arith = case_inputs(suite, "matrix.host.arithmetic");
+    let m1 = Mat::<2, 2>::from_storage(storage_from_rows(&arith["M1"]));
+    let m2 = Mat::<2, 2>::from_storage(storage_from_rows(&arith["M2"]));
 
-    println!("\n--- Matrix Construction & Basic Arithmetic ---");
+    eprintln!("\n--- Matrix Construction & Basic Arithmetic ---");
     print_matrix("M1", &m1);
     print_matrix("M2", &m2);
 
@@ -53,22 +51,13 @@ pub fn main() {
     print_matrix("M1 * M2", &prod);
     print_matrix("M1^T (Transpose)", &trans);
 
-    let a_ref = Mat::<3, 3>::from_storage(Store::from_array([
-        [3.0, 2.0, -1.0],
-        [2.0, -2.0, 0.5],
-        [-1.0, 4.0, -1.0],
-    ]));
-    let b_ref =
-        Mat::<3, 1>::from_storage(Store::from_array([[1.0, -2.0, 0.0]]));
-    let a = Mat::<3, 3>::from_storage(Store::from_array([
-        [3.0, 2.0, -1.0],
-        [2.0, -2.0, 0.5],
-        [-1.0, 4.0, -1.0],
-    ]));
-    let mut x =
-        Mat::<3, 1>::from_storage(Store::from_array([[1.0, -2.0, 0.0]]));
+    let lu_in = case_inputs(suite, "matrix.host.lu_solve_inverse");
+    let a_ref = Mat::<3, 3>::from_storage(storage_from_rows(&lu_in["A"]));
+    let b_ref = Mat::<3, 1>::from_storage(storage_from_col(&lu_in["b"]));
+    let a = Mat::<3, 3>::from_storage(storage_from_rows(&lu_in["A"]));
+    let mut x = Mat::<3, 1>::from_storage(storage_from_col(&lu_in["b"]));
 
-    println!("\n--- Linear System A * x = b ---");
+    eprintln!("\n--- Linear System A * x = b ---");
     print_matrix("A", &a_ref);
     print_matrix("b", &b_ref);
 
@@ -76,26 +65,24 @@ pub fn main() {
     lu.solve_mut_with::<Blas, 1>(&mut x).expect("LU solve");
     print_matrix("Solution x", &x);
 
-    let a_owned: Owned<f64, 3, 3> = Owned::from_array([
-        [3.0, 2.0, -1.0],
-        [2.0, -2.0, 0.5],
-        [-1.0, 4.0, -1.0],
-    ]);
-    let b_owned: Owned<f64, 3, 1> = Owned::from_array([[1.0, -2.0, 0.0]]);
+    let a_owned: Owned<f64, 3, 3> =
+        Owned::from_storage(storage_from_rows(&lu_in["A"]));
+    let b_owned: Owned<f64, 3, 1> =
+        Owned::from_storage(storage_from_col(&lu_in["b"]));
     let x_owned = Owned::<f64, 3, 1>::from_array([[
         x.get(0, 0).copied().unwrap(),
         x.get(1, 0).copied().unwrap(),
         x.get(2, 0).copied().unwrap(),
     ]]);
     let residual_ratio = solve_residual_ratio(&a_owned, &x_owned, &b_owned);
-    println!("Solve residual ratio: {residual_ratio:.6e}");
+    eprintln!("Solve residual ratio: {residual_ratio:.6e}");
     assert!(
         residual_ratio < SOLVE_RESIDUAL_TAU,
         "solve residual ratio {residual_ratio} exceeds {SOLVE_RESIDUAL_TAU}"
     );
 
     let a_inv = lu.inverse_with::<Blas>().expect("inverse");
-    println!("\n--- Matrix Inversion & Identity Check ---");
+    eprintln!("\n--- Matrix Inversion & Identity Check ---");
     print_matrix("A^-1", &a_inv);
     let mut ident = Mat::<3, 3>::zero();
     a_ref.mul_into_with::<Blas, Const<3>, _, _>(&a_inv, &mut ident);
@@ -111,7 +98,9 @@ pub fn main() {
         }
     }
 
-    println!("\n--- Hilbert n={HILBERT_N} ---");
+    let hilbert = case_inputs(suite, "matrix.host.hilbert");
+    require_usize(hilbert, "n", HILBERT_N);
+    eprintln!("\n--- Hilbert n={HILBERT_N} ---");
     let h = Mat::<8, 8>::from_fn(|i, j| 1.0 / ((i + j + 1) as f64));
     let mut b_h = Mat::<8, 1>::zero();
     let x_true = Mat::<8, 1>::from_fn(|_, _| 1.0);
@@ -132,14 +121,17 @@ pub fn main() {
     let residual_ratio_hilbert =
         solve_residual_ratio(&h_owned, &x_h_owned, &b_h_owned);
     let kappa_hilbert = inf_norm_mat(&h_owned) * inf_norm_mat(&h_inv);
-    println!("Hilbert residual ratio: {residual_ratio_hilbert:.6e}");
-    println!("Hilbert kappa_inf: {kappa_hilbert:.6e}");
+    eprintln!("Hilbert residual ratio: {residual_ratio_hilbert:.6e}");
+    eprintln!("Hilbert kappa_inf: {kappa_hilbert:.6e}");
     assert!(
         residual_ratio_hilbert < SOLVE_RESIDUAL_TAU,
         "Hilbert residual ratio {residual_ratio_hilbert} exceeds {SOLVE_RESIDUAL_TAU}"
     );
 
-    println!("\n--- Timed GEMM n={GEMM_N} ---");
+    let gemm = case_inputs(suite, "matrix.host.gemm");
+    require_usize(gemm, "n", GEMM_N);
+    let gemm_iters = json_usize(&gemm["iters"]).unwrap_or(200) as u32;
+    eprintln!("\n--- Timed GEMM n={GEMM_N} ---");
     let ga = Mat::<64, 64>::from_fn(|i, j| {
         0.01 * ((i + 1) as f64) * ((j + 3) as f64) / 64.0
     });
@@ -150,21 +142,25 @@ pub fn main() {
     ga.mul_into_with::<Blas, Const<64>, _, _>(&gb, &mut gc);
     let gemm00 = gc.get(0, 0).copied().unwrap();
     let gemm_frob = frobenius(&gc);
-    let gemm_ns = time_kernel(GEMM_ITERS, || {
+    let gemm_ns = time_kernel(gemm_iters, || {
         ga.mul_into_with::<Blas, Const<64>, _, _>(&gb, &mut gc);
         gc.get(0, 0).copied()
     });
-    println!("GEMM C[0,0] = {gemm00:.10e}");
-    println!("GEMM ||C||_F = {gemm_frob:.6e}");
-    println!("GEMM min ns ({GEMM_ITERS} iters): {gemm_ns}");
+    eprintln!("GEMM C[0,0] = {gemm00:.10e}");
+    eprintln!("GEMM ||C||_F = {gemm_frob:.6e}");
+    eprintln!("GEMM min ns ({gemm_iters} iters): {gemm_ns}");
 
-    println!("\n--- SE(3) GEMM chain n={SE3_N} ---");
-    let (c_th, s_th) = (SE3_THETA.cos(), SE3_THETA.sin());
+    let se3 = case_inputs(suite, "matrix.host.se3_chain");
+    require_usize(se3, "n", SE3_N);
+    let theta = json_f64(&se3["theta"]);
+    let tvec = json_f64_vec(&se3["t"]);
+    eprintln!("\n--- SE(3) GEMM chain n={SE3_N} ---");
+    let (c_th, s_th) = (theta.cos(), theta.sin());
     let t_se3 = Mat::<4, 4>::from_storage(Store::from_array([
         [c_th, s_th, 0.0, 0.0],
         [-s_th, c_th, 0.0, 0.0],
         [0.0, 0.0, 1.0, 0.0],
-        [SE3_DX, SE3_DY, SE3_DZ, 1.0],
+        [tvec[0], tvec[1], tvec[2], 1.0],
     ]));
     let mut pose = Mat::<4, 4>::identity();
     let mut se3_xyz = Vec::with_capacity(SE3_N);
@@ -188,11 +184,11 @@ pub fn main() {
         t_se3.mul_into_with::<Blas, Const<4>, _, _>(&pose, &mut next);
         pose = next;
     }
-    println!(
+    eprintln!(
         "T^0 xyz = [{:.6}, {:.6}, {:.6}]",
         se3_xyz[0][0], se3_xyz[0][1], se3_xyz[0][2]
     );
-    println!(
+    eprintln!(
         "T^{} xyz = [{:.6}, {:.6}, {:.6}]",
         SE3_N - 1,
         se3_xyz[SE3_N - 1][0],
@@ -226,10 +222,7 @@ pub fn main() {
         "gemm_frob": gemm_frob,
     });
     let timings = json!({
-        "gemm": timing_entry(GEMM_ITERS, gemm_ns),
+        "gemm": timing_entry(gemm_iters, gemm_ns),
     });
-    save(
-        "results/matrix/native.json",
-        &native_artifact("matrix", values, series, metrics, timings),
-    );
+    emit_stdout(&native_artifact("matrix", values, series, metrics, timings));
 }

@@ -3,9 +3,9 @@ name = "control-rs-numerical-model-examples"
 version = "0.0.0"
 edition = "2024"
 publish = false
-description = "Host numerical-model examples with JSON V&V artifacts."
+description = "Host numerical-model examples: suite validators, plots, and validate harness."
 license = "MIT OR Apache-2.0"
-default-run = "all"
+default-run = "validate"
 autobins = false
 
 [workspace]
@@ -16,8 +16,8 @@ libm = "0.2.16"
 serde_json = "1.0.140"
 
 [[bin]]
-name = "all"
-path = "src/main.rs"
+name = "validate"
+path = "src/bin/validate.rs"
 
 [[bin]]
 name = "matrix"

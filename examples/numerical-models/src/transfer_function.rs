@@ -2,8 +2,11 @@
 //!
 //! Numerator and denominator coefficients are in ascending power order.
 
+use crate::suite::{
+    case_inputs, col_array, emit_stdout, json_f64, json_usize, require_usize,
+};
 use crate::{
-    ABS_F64, logspace, native_artifact, owned_to_rows, print_matrix, save,
+    ABS_F64, logspace, native_artifact, owned_to_rows, print_matrix,
     time_kernel, timing_entry,
 };
 use control_rs::math::dsp::DefaultDsp;
@@ -12,7 +15,7 @@ use control_rs::math::storage::ArrayStorage;
 use control_rs::math::subprograms::DefaultBlas;
 use control_rs::polynomial::Polynomial;
 use control_rs::transfer_function::TransferFunction;
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// Swap these for custom coefficient backends.
 type StoreNum<const N: usize> = ArrayStorage<f64, N, 1>;
@@ -25,7 +28,6 @@ type Tf<const N: usize, const D: usize> =
     TransferFunction<f64, Const<N>, Const<D>, StoreNum<N>, StoreDen<D>>;
 
 const BODE_N: usize = 128;
-const BODE_ITERS: u32 = 50;
 
 fn binomial(n: usize, k: usize) -> f64 {
     if k > n {
@@ -48,29 +50,37 @@ fn poly_s_plus_a_4(a: f64) -> [f64; 5] {
     c
 }
 
-pub fn main() {
-    println!("=== Transfer Function Numerical Model Example ===");
+pub fn run(suite: &Value) {
+    eprintln!("=== Transfer Function Numerical Model Example ===");
 
-    let omega_c = 10.0;
-    let w_c2 = omega_c * omega_c;
-    let sqrt2_wc = core::f64::consts::SQRT_2 * omega_c;
+    let pair = case_inputs(suite, "transfer_function.host.complex_pair");
+    require_usize(&pair["freqs"], "n", BODE_N);
+    let omega_n = json_f64(&pair["omega_n"]);
+    let zeta = json_f64(&pair["zeta"]);
+    let num = col_array::<1>(&pair["num"]);
+    let den_c = col_array::<3>(&pair["den"]);
 
     let tf = Tf::<1, 3>::from_storage(
-        StoreNum::from_column([w_c2]),
-        StoreDen::from_column([w_c2, sqrt2_wc, 1.0]),
+        StoreNum::from_column(num),
+        StoreDen::from_column(den_c),
         None,
     );
 
-    println!("\n--- Butterworth Filter (omega_c = {omega_c} rad/s) ---");
-    println!("Numerator (ascending): {:?}", tf.num_slice());
-    println!("Denominator (ascending): {:?}", tf.den_slice());
+    eprintln!(
+        "\n--- Underdamped complex pair (ωn = {omega_n} rad/s, ζ = {zeta}) ---"
+    );
+    eprintln!("Numerator (ascending): {:?}", tf.num_slice());
+    eprintln!("Denominator (ascending): {:?}", tf.den_slice());
 
-    let freqs = logspace(-2.0, 3.0, BODE_N);
+    let start_log10 = json_f64(&pair["freqs"]["start_log10"]);
+    let stop_log10 = json_f64(&pair["freqs"]["stop_log10"]);
+    let freqs = logspace(start_log10, stop_log10, BODE_N);
     let mut h_re = vec![0.0_f64; BODE_N];
     let mut h_im = vec![0.0_f64; BODE_N];
     let mut mag = vec![0.0_f64; BODE_N];
     let mut phase = vec![0.0_f64; BODE_N];
-    println!("\n--- Frequency Evaluation (logspace -2..3, {BODE_N} pts) ---");
+    eprintln!("\n--- Frequency Evaluation (logspace -2..3, {BODE_N} pts) ---");
+    let expected_wn = 1.0 / (2.0 * zeta);
     for (idx, &w) in freqs.iter().enumerate() {
         let resp = tf.eval_frequency(w);
         let (mag_pt, phase_rad) = tf.bode_point(w);
@@ -78,40 +88,31 @@ pub fn main() {
         h_im[idx] = resp.im;
         mag[idx] = mag_pt;
         phase[idx] = phase_rad;
-        if (w - omega_c).abs() <= 1e-9 {
-            let expected_mag = core::f64::consts::FRAC_1_SQRT_2;
-            assert!(
-                (mag_pt - expected_mag).abs() <= 1e-6,
-                "Butterworth |H(jω_c)|: {mag_pt} vs {expected_mag}"
-            );
-        }
     }
-    println!(
-        "H(j10) mag={:.6} (1/sqrt(2)={:.6})",
-        mag.iter()
-            .zip(freqs.iter())
-            .min_by(|a, b| (a.1 - 10.0).abs().total_cmp(&(b.1 - 10.0).abs()))
-            .map(|(m, _)| *m)
-            .unwrap_or(0.0),
-        core::f64::consts::FRAC_1_SQRT_2
+    let h_at_wn = tf.bode_point(omega_n).0;
+    eprintln!("H(jωn) mag={h_at_wn:.6} (1/(2ζ)={expected_wn:.6})");
+    assert!(
+        (h_at_wn - expected_wn).abs() <= 1e-6,
+        "complex-pair |H(jωn)|: {h_at_wn} vs {expected_wn}"
     );
 
+    let ser = case_inputs(suite, "transfer_function.host.series");
     let h1 = Tf::<1, 2>::from_storage(
-        StoreNum::from_column([2.0]),
-        StoreDen::from_column([2.0, 1.0]),
+        StoreNum::from_column(col_array(&ser["H1"]["num"])),
+        StoreDen::from_column(col_array(&ser["H1"]["den"])),
         None,
     );
     let h2 = Tf::<1, 2>::from_storage(
-        StoreNum::from_column([5.0]),
-        StoreDen::from_column([5.0, 1.0]),
+        StoreNum::from_column(col_array(&ser["H2"]["num"])),
+        StoreDen::from_column(col_array(&ser["H2"]["den"])),
         None,
     );
     let h_series = h1.series_with::<Dsp, 1, 2, 1, 3>(&h2);
 
-    println!("\n--- Series Cascade H1 * H2 ---");
-    println!("H1(s): {:?} / {:?}", h1.num_slice(), h1.den_slice());
-    println!("H2(s): {:?} / {:?}", h2.num_slice(), h2.den_slice());
-    println!(
+    eprintln!("\n--- Series Cascade H1 * H2 ---");
+    eprintln!("H1(s): {:?} / {:?}", h1.num_slice(), h1.den_slice());
+    eprintln!("H2(s): {:?} / {:?}", h2.num_slice(), h2.den_slice());
+    eprintln!(
         "H_series: {:?} / {:?}",
         h_series.num_slice(),
         h_series.den_slice()
@@ -127,16 +128,17 @@ pub fn main() {
     assert!((den[1] - 7.0).abs() <= ABS_F64, "series den s^1");
     assert!((den[2] - 1.0).abs() <= ABS_F64, "series den s^2");
 
+    let ccf = case_inputs(suite, "transfer_function.host.ccf");
     let tf_realize = Tf::<2, 3>::from_storage(
-        StoreNum::from_column([2.0, 3.0]),
-        StoreDen::from_column([4.0, 5.0, 1.0]),
+        StoreNum::from_column(col_array(&ccf["num"])),
+        StoreDen::from_column(col_array(&ccf["den"])),
         None,
     );
     let ss = tf_realize
         .to_controllable_canonical_form_with::<Blas, 2>()
         .expect("CCF");
-    println!("\n--- Controllable Canonical Realization ---");
-    println!("H(s) = (2 + 3s) / (4 + 5s + s^2)");
+    eprintln!("\n--- Controllable Canonical Realization ---");
+    eprintln!("H(s) = (2 + 3s) / (4 + 5s + s^2)");
     print_matrix("A", &ss.a());
     print_matrix("B", &ss.b());
     print_matrix("C", &ss.c());
@@ -144,7 +146,9 @@ pub fn main() {
     assert_eq!(ss.a().rows(), 2);
     assert_eq!(ss.a().cols(), 2);
 
-    println!("\n--- Clustered-pole H(s) = 1/[(s+1)^4 (s+1.01)^4] ---");
+    let cl = case_inputs(suite, "transfer_function.host.clustered_poles");
+    require_usize(&cl["freqs"], "n", BODE_N);
+    eprintln!("\n--- Clustered-pole H(s) = 1/[(s+1)^4 (s+1.01)^4] ---");
     let d1 = Polynomial::<f64, Const<5>, StoreDen<5>>::from_storage(
         StoreDen::from_column(poly_s_plus_a_4(1.0)),
     );
@@ -157,7 +161,7 @@ pub fn main() {
         den_arr[i] = den_c.get(i).copied().unwrap_or(0.0);
     }
     let tf_c = Tf::<1, 9>::from_storage(
-        StoreNum::from_column([1.0]),
+        StoreNum::from_column(col_array(&cl["num"])),
         StoreDen::from_column(den_arr),
         None,
     );
@@ -170,14 +174,15 @@ pub fn main() {
         c_im[idx] = resp.im;
         c_mag[idx] = (resp.re * resp.re + resp.im * resp.im).sqrt();
     }
-    let bode_ns = time_kernel(BODE_ITERS, || {
+    let bode_iters = json_usize(&pair["iters"]).unwrap_or(50) as u32;
+    let bode_ns = time_kernel(bode_iters, || {
         let mut acc = 0.0_f64;
         for &w in &freqs {
             acc += tf.eval_frequency(w).re;
         }
         acc
     });
-    println!("Bode min ns ({BODE_ITERS} sweeps): {bode_ns}");
+    eprintln!("Bode min ns ({bode_iters} sweeps): {bode_ns}");
 
     let values = json!({
         "H_RE": h_re,
@@ -191,6 +196,8 @@ pub fn main() {
         "CLUSTER_H_RE": c_re,
         "CLUSTER_H_IM": c_im,
         "FREQS": freqs,
+        "OMEGA_N": omega_n,
+        "ZETA": zeta,
     });
     let series = json!({
         "bode_mag": { "x": freqs, "y": mag },
@@ -199,10 +206,13 @@ pub fn main() {
     });
     let metrics = json!({});
     let timings = json!({
-        "bode": timing_entry(BODE_ITERS, bode_ns),
+        "bode": timing_entry(bode_iters, bode_ns),
     });
-    save(
-        "results/transfer_function/native.json",
-        &native_artifact("transfer_function", values, series, metrics, timings),
-    );
+    emit_stdout(&native_artifact(
+        "transfer_function",
+        values,
+        series,
+        metrics,
+        timings,
+    ));
 }

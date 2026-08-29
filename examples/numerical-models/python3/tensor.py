@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""Tensor numerical oracle — writes results/tensor/python.json."""
+"""Tensor numerical oracle — suite path in, result JSON on stdout."""
 
 from __future__ import annotations
-
-import math
 
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
-from vv import CRATE_ROOT, save_json, time_kernel, timing_entry
+from vv import case_inputs, require_int, run_cli, time_kernel, timing_entry
 
-OUT_PATH = CRATE_ROOT / "results" / "tensor" / "python.json"
 CUT_N = 64
-INTERP_ITERS = 10_000
+CURVED_N = 16
 
 
 def _q7_raw(val: float) -> int:
@@ -26,68 +23,58 @@ def _q7_raw(val: float) -> int:
     return int(scaled - 0.5)
 
 
-def affine() -> dict:
-    values = np.array(
-        [[0.0, 1.0, 2.0], [2.0, 3.0, 4.0], [4.0, 5.0, 6.0]],
-        dtype=np.float32,
-    )
-    axes = (np.arange(3, dtype=np.float32), np.arange(3, dtype=np.float32))
+def affine(suite: dict) -> dict:
+    inp = case_inputs(suite, "tensor.host.affine_interp")
+    values = np.array(inp["table"], dtype=np.float32)
+    axes = tuple(np.array(ax, dtype=np.float32) for ax in inp["axes"])
     interp = RegularGridInterpolator(
         axes, values, method="linear", bounds_error=False, fill_value=None
     )
-    points = np.array(
-        [
-            [0.0, 0.0],
-            [1.0, 1.0],
-            [2.0, 2.0],
-            [0.5, 0.5],
-            [1.5, 0.5],
-            [0.2, 1.8],
-        ],
-        dtype=np.float32,
-    )
+    points = np.array(inp["points"], dtype=np.float32)
     samples = np.asarray(interp(points), dtype=np.float32)
     return {"points": points, "samples": samples}
 
 
-def curved() -> dict:
-    ii, jj = np.meshgrid(np.arange(16), np.arange(16), indexing="ij")
-    table = np.sin(np.pi * ii / 15.0) * np.cos(np.pi * jj / 15.0)
-    table = np.asarray(table, dtype=np.float32)
+def curved(suite: dict) -> dict:
+    inp = case_inputs(suite, "tensor.host.curved_grid")
+    require_int(inp, "n", CURVED_N)
+    require_int(inp["cut"], "n", CUT_N)
+    n = CURVED_N
+    center = float(inp["center"])
+    scale = float(inp["scale"])
+    ii, jj = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+    u = (ii - center) / scale
+    v = (jj - center) / scale
+    table = np.asarray(u * u - v * v, dtype=np.float32)
     axes = (
-        np.arange(16, dtype=np.float32),
-        np.arange(16, dtype=np.float32),
+        np.arange(n, dtype=np.float32),
+        np.arange(n, dtype=np.float32),
     )
     interp = RegularGridInterpolator(
         axes, table, method="linear", bounds_error=False, fill_value=None
     )
-    cut_x = np.linspace(0.0, 15.0, CUT_N, dtype=np.float32)
-    pts = np.stack([cut_x, cut_x], axis=1)
+    start = float(inp["cut"]["start"])
+    stop = float(inp["cut"]["stop"])
+    cut_x = np.linspace(start, stop, CUT_N, dtype=np.float32)
+    pts = np.stack([cut_x, np.full(CUT_N, center, dtype=np.float32)], axis=1)
     samples = np.asarray(interp(pts), dtype=np.float32)
-    interior = np.array([[7.3, 8.1]], dtype=np.float32)
-    ns = time_kernel(INTERP_ITERS, lambda: interp(interior))
-    weiser = 0.125 * 2.0 * (math.pi / 15.0) ** 2
+    interior = np.array([inp["timed_point"]], dtype=np.float32)
+    iters = int(inp.get("iters", 10_000))
+    ns = time_kernel(iters, lambda: interp(interior))
+    weiser = 0.125 * (2.0 / scale**2 + 2.0 / scale**2)
     return {
         "table": table,
         "cut_x": cut_x,
         "samples": samples,
         "ns": ns,
+        "iters": iters,
         "weiser": weiser,
     }
 
 
-def q7() -> dict:
-    float_inputs = np.array(
-        [
-            math.pi / 4.0,
-            1.0 / 3.0,
-            math.e - 2.0,
-            -0.75,
-            0.0,
-            0.5,
-        ],
-        dtype=np.float64,
-    )
+def q7(suite: dict) -> dict:
+    inp = case_inputs(suite, "tensor.host.q7_relu")
+    float_inputs = np.array(inp["float_inputs"], dtype=np.float64)
     q_raw = np.array([_q7_raw(float(v)) for v in float_inputs], dtype=np.int32)
     dequant = q_raw.astype(np.float64) / 128.0
     relu_raw = np.maximum(q_raw, 0)
@@ -102,10 +89,10 @@ def q7() -> dict:
     }
 
 
-def build_artifact() -> dict:
-    a = affine()
-    c = curved()
-    q = q7()
+def build_artifact(suite: dict) -> dict:
+    a = affine(suite)
+    c = curved(suite)
+    q = q7(suite)
     pts = a["points"]
     return {
         "slug": "tensor",
@@ -135,10 +122,10 @@ def build_artifact() -> dict:
             "weiser_bound": c["weiser"],
         },
         "timings": {
-            "interp": timing_entry(INTERP_ITERS, c["ns"]),
+            "interp": timing_entry(c["iters"], c["ns"]),
         },
     }
 
 
 if __name__ == "__main__":
-    save_json(OUT_PATH, build_artifact())
+    run_cli("tensor", build_artifact)

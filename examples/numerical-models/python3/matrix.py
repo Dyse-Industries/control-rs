@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
-"""Matrix numerical oracle — writes results/matrix/python.json."""
+"""Matrix numerical oracle — suite path in, result JSON on stdout."""
 
 from __future__ import annotations
 
 import numpy as np
 from scipy import linalg
 
-from vv import CRATE_ROOT, residual_ratio, save_json, time_kernel, timing_entry
+from vv import (
+    case_inputs,
+    require_int,
+    residual_ratio,
+    run_cli,
+    time_kernel,
+    timing_entry,
+)
 
-OUT_PATH = CRATE_ROOT / "results" / "matrix" / "python.json"
 GEMM_N = 64
-GEMM_ITERS = 200
 HILBERT_N = 8
 SE3_N = 40
-SE3_THETA = 0.15
-SE3_TVEC = (0.04, 0.01, 0.03)
 
 
-def tutorial() -> dict:
-    m1 = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64)
-    m2 = np.array([[5.0, 6.0], [7.0, 8.0]], dtype=np.float64)
-    a = np.array(
-        [[3.0, 2.0, -1.0], [2.0, -2.0, 4.0], [-1.0, 0.5, -1.0]],
-        dtype=np.float64,
-    )
-    b = np.array([1.0, -2.0, 0.0], dtype=np.float64)
-    # The general, symmetric, Hermitian and positive definite solutions are obtained via calling
-    # ?GESV, ?SYSV, ?HESV, and ?POSV routines of LAPACK respectively.
+def tutorial(suite: dict) -> dict:
+    arith = case_inputs(suite, "matrix.host.arithmetic")
+    lu_in = case_inputs(suite, "matrix.host.lu_solve_inverse")
+    m1 = np.array(arith["M1"], dtype=np.float64)
+    m2 = np.array(arith["M2"], dtype=np.float64)
+    a = np.array(lu_in["A"], dtype=np.float64)
+    b = np.array(lu_in["b"], dtype=np.float64)
     x = linalg.solve(a, b)
     a_inv = linalg.inv(a)
     return {
@@ -41,7 +41,9 @@ def tutorial() -> dict:
     }
 
 
-def hilbert_case() -> dict:
+def hilbert_case(suite: dict) -> dict:
+    inp = case_inputs(suite, "matrix.host.hilbert")
+    require_int(inp, "n", HILBERT_N)
     h = np.array(
         [
             [1.0 / (i + j + 1) for j in range(HILBERT_N)]
@@ -64,25 +66,32 @@ def hilbert_case() -> dict:
     }
 
 
-def gemm_case() -> dict:
+def gemm_case(suite: dict) -> dict:
+    inp = case_inputs(suite, "matrix.host.gemm")
+    require_int(inp, "n", GEMM_N)
+    gemm_iters = int(inp.get("iters", 200))
     i = np.arange(GEMM_N, dtype=np.float64)
     ii, jj = np.meshgrid(i, i, indexing="ij")
     ga = 0.01 * (ii + 1.0) * (jj + 3.0) / 64.0
     gb = 0.02 * (ii + 2.0) * (jj + 1.0) / 64.0
     with np.errstate(all="ignore"):
         gc = ga @ gb
-        ns = time_kernel(GEMM_ITERS, lambda: ga @ gb)
+        ns = time_kernel(gemm_iters, lambda: ga @ gb)
     return {
         "gemm00": float(gc[0, 0]),
         "gemm_frob": float(np.linalg.norm(gc, ord="fro")),
         "ns": ns,
+        "iters": gemm_iters,
     }
 
 
-def se3_chain() -> dict:
-    c = float(np.cos(SE3_THETA))
-    s = float(np.sin(SE3_THETA))
-    dx, dy, dz = SE3_TVEC
+def se3_chain(suite: dict) -> dict:
+    inp = case_inputs(suite, "matrix.host.se3_chain")
+    require_int(inp, "n", SE3_N)
+    theta = float(inp["theta"])
+    dx, dy, dz = (float(v) for v in inp["t"])
+    c = float(np.cos(theta))
+    s = float(np.sin(theta))
     t_mat = np.array(
         [
             [c, -s, 0.0, dx],
@@ -102,11 +111,11 @@ def se3_chain() -> dict:
     return {"t": t_mat, "xyz": xyz, "r": rot}
 
 
-def build_artifact() -> dict:
-    t = tutorial()
-    h = hilbert_case()
-    g = gemm_case()
-    se3 = se3_chain()
+def build_artifact(suite: dict) -> dict:
+    t = tutorial(suite)
+    h = hilbert_case(suite)
+    g = gemm_case(suite)
+    se3 = se3_chain(suite)
     idx = list(range(HILBERT_N))
     return {
         "slug": "matrix",
@@ -135,10 +144,10 @@ def build_artifact() -> dict:
             "gemm_frob": g["gemm_frob"],
         },
         "timings": {
-            "gemm": timing_entry(GEMM_ITERS, g["ns"]),
+            "gemm": timing_entry(g["iters"], g["ns"]),
         },
     }
 
 
 if __name__ == "__main__":
-    save_json(OUT_PATH, build_artifact())
+    run_cli("matrix", build_artifact)

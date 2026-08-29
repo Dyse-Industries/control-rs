@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""State-space numerical oracle — writes results/state_space/python.json."""
+"""State-space numerical oracle — suite path in, result JSON on stdout."""
 
 from __future__ import annotations
 
 import numpy as np
 from scipy import signal
 
-from vv import CRATE_ROOT, save_json, time_kernel, timing_entry
+from vv import case_inputs, require_int, run_cli, time_kernel, timing_entry
 
-OUT_PATH = CRATE_ROOT / "results" / "state_space" / "python.json"
 NUM_STEPS = 200
 STIFF_STEPS = 200
-ZOH_ITERS = 20
-STEP_ITERS = 20
 
 
 def zoh_step(a_c, b_c, c_c, d_c, dt, n_steps, u_val=1.0, x0=None):
@@ -35,28 +32,38 @@ def zoh_step(a_c, b_c, c_c, d_c, dt, n_steps, u_val=1.0, x0=None):
     }
 
 
-def tutorial() -> dict:
-    a_c = np.array([[0.0, 1.0], [-4.0, -0.8]], dtype=np.float64)
-    b_c = np.array([[0.0], [1.0]], dtype=np.float64)
-    c_c = np.array([[1.0, 0.0]], dtype=np.float64)
-    d_c = np.array([[0.0]], dtype=np.float64)
-    x_test = np.array([[1.0], [0.5]], dtype=np.float64)
+def tutorial(suite: dict) -> dict:
+    inp = case_inputs(suite, "state_space.host.tutorial_plant")
+    require_int(inp, "n_steps", NUM_STEPS)
+    a_c = np.array(inp["A"], dtype=np.float64)
+    b_c = np.array(inp["B"], dtype=np.float64)
+    c_c = np.array(inp["C"], dtype=np.float64)
+    d_c = np.array(inp["D"], dtype=np.float64)
+    x_test = np.array(inp["x_test"], dtype=np.float64).reshape(2, 1)
     x_dot = a_c @ x_test
     y_test = float((c_c @ x_test).item())
-    dt = 0.05
-    s = zoh_step(a_c, b_c, c_c, d_c, dt, NUM_STEPS)
-    free = zoh_step(a_c, b_c, c_c, d_c, dt, NUM_STEPS, u_val=0.0, x0=[1.0, 0.5])
-    tmat = np.array([[1.0, 1.0], [0.0, 1.0]], dtype=np.float64)
-    t_inv = np.array([[1.0, -1.0], [0.0, 1.0]], dtype=np.float64)
+    dt = float(inp["Ts"])
+    s = zoh_step(
+        a_c, b_c, c_c, d_c, dt, NUM_STEPS,
+        u_val=float(inp["step_u"]), x0=inp["step_x0"],
+    )
+    free = zoh_step(
+        a_c, b_c, c_c, d_c, dt, NUM_STEPS,
+        u_val=float(inp["free_u"]), x0=inp["free_x0"],
+    )
+    tmat = np.array(inp["T"], dtype=np.float64)
+    t_inv = np.linalg.inv(tmat)
     a_tilde = tmat @ s["ad"] @ t_inv
     b_tilde = tmat @ s["bd"]
     c_tilde = s["cd"] @ t_inv
+    zoh_iters = int(inp.get("zoh_iters", 20))
+    step_iters = int(inp.get("step_iters", 20))
     zoh_ns = time_kernel(
-        ZOH_ITERS,
+        zoh_iters,
         lambda: signal.cont2discrete((a_c, b_c, c_c, d_c), dt, method="zoh"),
     )
     step_ns = time_kernel(
-        STEP_ITERS,
+        step_iters,
         lambda: zoh_step(a_c, b_c, c_c, d_c, dt, NUM_STEPS),
     )
     return {
@@ -75,20 +82,27 @@ def tutorial() -> dict:
         "t": s["t"],
         "zoh_ns": zoh_ns,
         "step_ns": step_ns,
+        "zoh_iters": zoh_iters,
+        "step_iters": step_iters,
     }
 
 
-def stiff() -> dict:
-    a_c = np.array([[-200.0, 0.0], [0.0, -0.5]], dtype=np.float64)
-    b_c = np.array([[1.0], [1.0]], dtype=np.float64)
-    c_c = np.array([[1.0, 1.0]], dtype=np.float64)
-    d_c = np.array([[0.0]], dtype=np.float64)
-    return zoh_step(a_c, b_c, c_c, d_c, 0.01, STIFF_STEPS)
+def stiff(suite: dict) -> dict:
+    inp = case_inputs(suite, "state_space.host.stiff_zoh")
+    require_int(inp, "n_steps", STIFF_STEPS)
+    a_c = np.array(inp["A"], dtype=np.float64)
+    b_c = np.array(inp["B"], dtype=np.float64)
+    c_c = np.array(inp["C"], dtype=np.float64)
+    d_c = np.array(inp["D"], dtype=np.float64)
+    return zoh_step(
+        a_c, b_c, c_c, d_c, float(inp["Ts"]), STIFF_STEPS,
+        u_val=float(inp["u"]), x0=inp["x0"],
+    )
 
 
-def build_artifact() -> dict:
-    t = tutorial()
-    s = stiff()
+def build_artifact(suite: dict) -> dict:
+    t = tutorial(suite)
+    s = stiff(suite)
     return {
         "slug": "state_space",
         "source": "python",
@@ -117,11 +131,11 @@ def build_artifact() -> dict:
         },
         "metrics": {},
         "timings": {
-            "zoh": timing_entry(ZOH_ITERS, t["zoh_ns"]),
-            "step": timing_entry(STEP_ITERS, t["step_ns"]),
+            "zoh": timing_entry(t["zoh_iters"], t["zoh_ns"]),
+            "step": timing_entry(t["step_iters"], t["step_ns"]),
         },
     }
 
 
 if __name__ == "__main__":
-    save_json(OUT_PATH, build_artifact())
+    run_cli("state_space", build_artifact)

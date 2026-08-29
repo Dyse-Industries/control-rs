@@ -1,0 +1,480 @@
+{
+  "slug": "tensor",
+  "ets_suite": "tensor_test_suite",
+  "ets_source": "src/tensor/tests/tensor_tests.rs",
+  "equivalence_test": "src/compare.rs::tensor_equiv",
+  "validators": [
+    {
+      "source": "python",
+      "argv": [
+        "python3",
+        "python3/tensor.py"
+      ]
+    },
+    {
+      "source": "rust",
+      "bin": "tensor"
+    }
+  ],
+  "plots": [
+    {
+      "argv": [
+        "python3",
+        "python3/plot_tensor.py"
+      ]
+    }
+  ],
+  "conventions": {
+    "kinds": [
+      "host_tutorial",
+      "host_stress",
+      "host_visualization",
+      "ets",
+      "property"
+    ]
+  },
+  "bounds": {
+    "ABS_F64": 1e-12,
+    "ABS_F32": 1e-06,
+    "SOLVE_RESIDUAL_TAU": 20.0,
+    "ZOH_AD_TAU": 20.0,
+    "TAU_KAPPA": 20.0,
+    "QUANT_LSB": 0.00390625,
+    "stiff_zoh_relative": 1e-08
+  },
+  "cases": [
+    {
+      "id": "tensor.host.affine_interp",
+      "kind": "host_tutorial",
+      "name": "3x3 affine grid multilinear interpolation",
+      "inputs": {
+        "table": [
+          [
+            0.0,
+            1.0,
+            2.0
+          ],
+          [
+            2.0,
+            3.0,
+            4.0
+          ],
+          [
+            4.0,
+            5.0,
+            6.0
+          ]
+        ],
+        "axes": [
+          [
+            0.0,
+            1.0,
+            2.0
+          ],
+          [
+            0.0,
+            1.0,
+            2.0
+          ]
+        ],
+        "points": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            1.0,
+            1.0
+          ],
+          [
+            2.0,
+            2.0
+          ],
+          [
+            0.5,
+            0.5
+          ],
+          [
+            1.5,
+            0.5
+          ],
+          [
+            0.2,
+            1.8
+          ]
+        ]
+      },
+      "json_keys": [
+        "SAMPLES"
+      ],
+      "bound": {
+        "abs": 1e-06,
+        "vertex_exact": 0.0
+      }
+    },
+    {
+      "id": "tensor.host.curved_grid",
+      "kind": "host_stress",
+      "name": "16x16 saddle table cut through the critical point",
+      "inputs": {
+        "n": 16,
+        "table_ij": "((i-7.5)/7.5)^2 - ((j-7.5)/7.5)^2",
+        "center": 7.5,
+        "scale": 7.5,
+        "cut": {
+          "start": 0.0,
+          "stop": 15.0,
+          "n": 64,
+          "path": "i=t, j=7.5 (through saddle)"
+        },
+        "timed_point": [
+          7.3,
+          8.1
+        ],
+        "iters": 10000,
+        "weiser": "0.125 * (2/s^2 + 2/s^2), s=7.5, h=1"
+      },
+      "json_keys": [
+        "CURVED_SAMPLES",
+        "CURVED_TABLE",
+        "CUT_X"
+      ],
+      "metrics": [
+        "weiser_bound"
+      ],
+      "timings": [
+        "interp"
+      ],
+      "bound": {
+        "|py-rs|": "weiser_bound max 10*ABS_F32"
+      }
+    },
+    {
+      "id": "tensor.host.q7_relu",
+      "kind": "host_tutorial",
+      "name": "Q7 quantize / dequantize / ReLU",
+      "inputs": {
+        "format": "Quantized<i8, 7>",
+        "float_inputs": [
+          0.7853981633974483,
+          0.3333333333333333,
+          0.7182818284590451,
+          -0.75,
+          0.0,
+          0.5
+        ],
+        "note": "[pi/4, 1/3, e-2, -0.75, 0, 0.5]"
+      },
+      "json_keys": [
+        "Q_RAW",
+        "DEQUANT",
+        "RELU_RAW",
+        "RELU_DEQUANT"
+      ],
+      "metrics": [
+        "quant_roundtrip_max"
+      ],
+      "bound": {
+        "roundtrip_abs": 0.00390625
+      }
+    },
+    {
+      "id": "tensor.ets.indexing_and_storage",
+      "kind": "ets",
+      "name": "test_tensor_indexing_and_storage",
+      "inputs": {
+        "from_raw_columns": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            3.0,
+            4.0
+          ],
+          [
+            5.0,
+            6.0
+          ]
+        ]
+      },
+      "note": "from_raw is column-major: get([0,0])=1, get([1,0])=2, get([0,1])=3."
+    },
+    {
+      "id": "tensor.ets.grid_interpolation",
+      "kind": "ets",
+      "name": "test_tensor_grid_interpolation",
+      "inputs": {
+        "table": [
+          [
+            0.0,
+            2.0
+          ],
+          [
+            4.0,
+            6.0
+          ]
+        ],
+        "points": [
+          [
+            0.5,
+            0.5
+          ],
+          [
+            0.0,
+            0.0
+          ],
+          [
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0
+          ],
+          [
+            1.0,
+            1.0
+          ]
+        ]
+      },
+      "expected": {
+        "f(0.5,0.5)": 3.0,
+        "corners": [
+          0.0,
+          4.0,
+          2.0,
+          6.0
+        ]
+      },
+      "note": "from_raw([[0,4],[2,6]]) stores f(i,j) with columns [0,4] and [2,6]; comment in test is f = [[0,2],[4,6]] in (x,y) display."
+    },
+    {
+      "id": "tensor.ets.quantized_scalar_operations",
+      "kind": "ets",
+      "name": "test_quantized_scalar_operations",
+      "inputs": {
+        "format": "Quantized<i8, 7>",
+        "a": 0.5,
+        "b": 0.25
+      },
+      "expected": {
+        "a_raw": 64,
+        "b_raw": 32,
+        "sum": 0.75,
+        "prod": 0.125
+      },
+      "bound": {
+        "dequant_abs": 0.01
+      }
+    },
+    {
+      "id": "tensor.ets.activations",
+      "kind": "ets",
+      "name": "test_activations",
+      "inputs": {
+        "relu": [
+          3.5,
+          -2.0
+        ],
+        "table": {
+          "breakpoints": [
+            -1.0,
+            0.0,
+            1.0
+          ],
+          "values": [
+            -1.0,
+            0.0,
+            1.0
+          ],
+          "query": [
+            0.5,
+            -0.5
+          ]
+        }
+      }
+    },
+    {
+      "id": "tensor.ets.contract",
+      "kind": "ets",
+      "name": "test_tensor_contract",
+      "inputs": {
+        "A_ij": "3*i + j",
+        "A_shape": [
+          2,
+          3
+        ],
+        "B_ij": "i + 2*j",
+        "B_shape": [
+          3,
+          2
+        ]
+      }
+    },
+    {
+      "id": "tensor.ets.shape4d_and_view",
+      "kind": "ets",
+      "name": "test_shape4d_and_view",
+      "inputs": {
+        "t4": [
+          3.0
+        ],
+        "grid": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            3.0,
+            4.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "tensor.ets.shape_interpolate_and_table_edges",
+      "kind": "ets",
+      "name": "test_tensor_shape_interpolate_and_table_edges",
+      "inputs": {
+        "grid": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            3.0,
+            4.0
+          ]
+        ],
+        "clamp_lo": [
+          -1.0,
+          -1.0
+        ],
+        "clamp_hi": [
+          9.0,
+          9.0
+        ],
+        "sub_A": [
+          [
+            2.0,
+            4.0
+          ],
+          [
+            6.0,
+            8.0
+          ]
+        ],
+        "sub_B": [
+          [
+            1.0,
+            2.0
+          ],
+          [
+            3.0,
+            4.0
+          ]
+        ],
+        "table_empty": {
+          "breakpoints": [],
+          "values": []
+        },
+        "table_dup": {
+          "breakpoints": [
+            0.0,
+            0.0
+          ],
+          "values": [
+            1.0,
+            2.0
+          ]
+        },
+        "table_clamp": {
+          "breakpoints": [
+            0.0,
+            1.0
+          ],
+          "values": [
+            3.0,
+            5.0
+          ]
+        }
+      },
+      "expected": {
+        "interp_lo": 1.0,
+        "interp_hi": 4.0,
+        "empty_apply": 0.0,
+        "dup_apply_0": 1.0,
+        "clamp_lo": 3.0,
+        "clamp_hi": 5.0
+      }
+    },
+    {
+      "id": "tensor.ets.quantization_roundtrip_half_lsb",
+      "kind": "ets",
+      "name": "test_quantization_roundtrip_half_lsb",
+      "inputs": {
+        "format": "Quantized<i8, 7>",
+        "samples": [
+          0.0,
+          0.25,
+          -0.5,
+          0.3333333333333333,
+          0.7853981633974483,
+          -0.75,
+          "Q7::MAX.dequantize()",
+          "Q7::MIN.dequantize()"
+        ]
+      },
+      "bound": {
+        "abs": "1/256"
+      }
+    },
+    {
+      "id": "tensor.ets.quantization_monotonicity",
+      "kind": "ets",
+      "name": "test_quantization_monotonicity",
+      "inputs": {
+        "pairs": [
+          [
+            0.3,
+            0.1
+          ],
+          [
+            0.5,
+            -0.5
+          ],
+          [
+            0.8,
+            0.799
+          ],
+          [
+            -0.1,
+            -0.9
+          ],
+          [
+            "Q7::MAX.dequantize()",
+            "Q7::MIN.dequantize()"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "tensor.prop.quantization_roundtrip_half_lsb",
+      "kind": "property",
+      "name": "prop_quantization_roundtrip_half_lsb",
+      "inputs": {
+        "x": "-1 .. Q7::MAX.dequantize()"
+      }
+    },
+    {
+      "id": "tensor.prop.quantization_monotonicity",
+      "kind": "property",
+      "name": "prop_quantization_monotonicity",
+      "inputs": {
+        "x": "-4 .. 4",
+        "y": "-4 .. 4"
+      }
+    }
+  ]
+}
