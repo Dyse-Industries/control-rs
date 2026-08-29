@@ -180,7 +180,7 @@ jobs:
           echo "$EOF" >> "$GITHUB_OUTPUT"
 
       - name: Post PR Comment
-        if: github.event_name == 'pull_request' && matrix.rust == 'stable' && (success() || failure())
+        if: github.event_name == 'pull_request'
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
