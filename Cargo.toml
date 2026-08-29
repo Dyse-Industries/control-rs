@@ -11,7 +11,7 @@ keywords = ["control", "robotics", "firmware", "autonomy"]
 [workspace]
 members = [
     ".",
-    "control-rs-hil",
+    "control-rs-ets",
     "control-rs-xtask",
     "control-rs-macros",
 ]
@@ -26,20 +26,17 @@ rust_2018_idioms = "deny"
 todo = { level = "warn", priority = 1 }
 inline_always = { level = "allow", priority = 1 }
 
-panic = "deny"
-cargo = "deny"
-style = "deny"
-nursery = "deny"
+all = "deny"
 pedantic = "deny"
-suspicious = "deny"
-complexity = "deny"
+nursery = "deny"
+cargo = "deny"
+
+panic = "deny"
 unwrap_used = "deny"
 expect_used = "deny"
 unimplemented = "deny"
 big_endian_bytes = "deny"
 indexing_slicing = "deny"
-shadow_unrelated = "deny"
-large_stack_arrays = "deny"
 arithmetic_side_effects = "deny"
 empty_structs_with_brackets = "deny"
 arbitrary_source_item_ordering = "deny"
@@ -50,15 +47,14 @@ workspace = true
 [dependencies]
 libm = "0.2.16"
 control-rs-macros = { path = "control-rs-macros", optional = true }
-control-rs-hil = { path = "control-rs-hil", optional = true }
+control-rs-ets = { path = "control-rs-ets", optional = true }
 
 [features]
 std = []
-hil = ["dep:control-rs-macros", "dep:control-rs-hil"]
+ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
 
 [dev-dependencies]
 proptest = "1"
-
 
 [profile.release]
 # Enable Link Time Optimization (LTO)

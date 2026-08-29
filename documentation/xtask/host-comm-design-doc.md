@@ -197,7 +197,7 @@ space-expensive, bloating target flash memory with static templates and
 consuming excessive CPU cycles to interpolate values. The HostComms architecture
 plans deferred formatting via the **`defmt`** crate; this is not yet
 implemented — shipped telemetry is postcard enums with no on-target string
-formatting (see `hil-server-design-doc.md` §7):
+formatting (see `embedded-test-server-design.md` §7):
 
 ```rust
 #[derive(Debug, Clone)]
@@ -284,7 +284,7 @@ SWD/JTAG.
     `serial2` crate, already a `control-rs-xtask` dependency).
 > * **Standard Socket Input**: For networked targets, the DEMUX engine can
     connect to the target via standard TCP/UDP stream sockets.
-> * This ensures the HIL test harness remains fully portable to any hardware
+> * This ensures ETS remains fully portable to any hardware
     target that can export framed binary payloads over UART or Ethernet.
 
 ---
@@ -317,7 +317,7 @@ SWD/JTAG.
 * **Serialization Unit Tests**: Run unit tests on the host to verify that
   `Command` and `LogMessage` payloads are correctly serialized, framed,
   and reconstructed with 100% fidelity.
-* **Timing Checks**: Implement regression tests in the HIL Server to measure
+* **Timing Checks**: Implement regression tests in ETS to measure
   target execution jitter and confirm that telemetry operations do not violate
   real-time solver timing budgets.
 * **CI Integration**: Automated build verification testing to compile target
@@ -339,7 +339,7 @@ SWD/JTAG.
 
 ### 7. Performance & Resource Considerations
 
-* **Solver Timing Budget**: HIL solvers operate on strict millisecond steps. The
+* **Solver Timing Budget**: ETS solvers operate on strict millisecond steps. The
   entire target execution block—including controls, sensor reads and telemetry
   serialization—must complete before the solver step expires. Late responses are
   flagged as timing failures.
@@ -377,19 +377,18 @@ SWD/JTAG.
 
 | Task / Feature                                       | Description                                                                                                                                | Estimated Effort |
 |:-----------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Core Serialization & Framing** — *Shipped* | Postcard schemas, sync-header framing/deframing and CRC-16 verification, implemented in `control-rs-hil/src/comms.rs`.                     | Complete         |
+| **Step 1: Core Serialization & Framing** — *Shipped* | Postcard schemas, sync-header framing/deframing and CRC-16 verification, implemented in `control-rs-ets/src/comms.rs`.                     | Complete         |
 | **Step 2: Target Trait & Drivers**                   | Implement the `HostComms` trait on the target, writing drivers for Embassy UART DMA, SEGGER RTT buffers and smoltcp Ethernet.              | 2 weeks          |
 | **Step 3: Target Crash Handlers**                    | Integrate `panic-probe` and `panic-persist` handlers to write backtrace logs to active buffers and persistent RAM regions.                 | 1 week           |
 | **Step 4: Host-Side DEMUX & Decoder**                | Build the TUI state machine and integrate the `defmt-decoder` using ELF files, supporting direct inputs from serial ports and TCP sockets. | 2 weeks          |
-| **Step 5: Remote HIL Infrastructure**                | Set up the WebSocket-based `probe-rs` remote server, implement `postcard-rpc` commands and configure Docker cross-compilers.               | 2 weeks          |
+| **Step 5: Remote ETS Infrastructure**                | Set up the WebSocket-based `probe-rs` remote server, implement `postcard-rpc` commands and configure Docker cross-compilers.               | 2 weeks          |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                            |
-|:---------|:---------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 23, 2026   | @MitchellDScott | Initial draft outlining HostComm middleware trait.                                                                     |
-| 1.1      | July 18, 2026  | @MitchellDScott | Restructured to template; incorporated HIL, serialization, framing and remote-tooling research findings.               |
-| 1.2      | August 6, 2026 | @MitchellDScott | Consistency pass: removed COBS-as-chosen language, marked `defmt` planned, standardized on `serial2`, fixed numbering. |
-| 1.3      | August 9, 2026 | @MitchellDScott | Review and corrections.                                                                                                |
+| Revision | Date           | Author          | Description                                                                                                                           |
+|:---------|:---------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | May 23, 2026   | @MitchellDScott | Initial draft outlining the `HostComms` transport trait.                                                                               |
+| 1.1      | July 18, 2026  | @MitchellDScott | Protocol integration: added binary telemetry framing, serialization protocols, and remote tooling research.                           |
+| 1.2      | August 6, 2026  | @MitchellDScott | Transport standardization: standardized on `serial2` host transport, postcard payload schemas, and target crash handling.              |

@@ -1,35 +1,125 @@
 <component name="ProjectDictionaryState">
   <dictionary name="project">
     <words>
+      <w>Bischof</w>
+      <w>Blackford</w>
       <w>Boito</w>
       <w>Cholesky</w>
+      <w>Cscmv</w>
+      <w>Csrmm</w>
+      <w>Csrmv</w>
+      <w>Dabbelt</w>
+      <w>Demmel</w>
+      <w>Dongarra</w>
+      <w>Dotu</w>
       <w>Eidelman</w>
+      <w>Embench</w>
+      <w>Garlati</w>
       <w>Gemignani</w>
+      <w>Geqrf</w>
+      <w>Gerc</w>
+      <w>Getrf</w>
+      <w>Getrs</w>
+      <w>Heev</w>
+      <w>Hemm</w>
+      <w>Hemv</w>
+      <w>Herk</w>
+      <w>Hpmv</w>
+      <w>Madhusudan</w>
+      <w>Mudge</w>
+      <w>Netlib</w>
+      <w>Nmsis</w>
+      <w>Ormqr</w>
+      <w>Potrf</w>
+      <w>Potrs</w>
+      <w>Pptrf</w>
+      <w>Pptrs</w>
       <w>Rapita</w>
       <w>Ratatui</w>
       <w>Renode</w>
+      <w>Syev</w>
       <w>Telem</w>
+      <w>Tpmv</w>
+      <w>Tpsv</w>
       <w>Tukey</w>
+      <w>Unmqr</w>
       <w>Varints</w>
       <w>ardupilot</w>
+      <w>asum</w>
+      <w>axpy</w>
       <w>blasfeo</w>
+      <w>bluss</w>
+      <w>bmatrix</w>
+      <w>cblas</w>
       <w>cdot</w>
       <w>compensators</w>
+      <w>cscmv</w>
+      <w>csrmv</w>
+      <w>dimforge</w>
+      <w>dotc</w>
+      <w>dotu</w>
       <w>eabihf</w>
       <w>emami</w>
+      <w>gemm</w>
+      <w>gemv</w>
+      <w>geqrf</w>
+      <w>gerc</w>
+      <w>getrf</w>
+      <w>getrs</w>
       <w>golioth</w>
+      <w>heev</w>
+      <w>hemm</w>
+      <w>hemv</w>
+      <w>herk</w>
       <w>horner</w>
+      <w>hpmv</w>
+      <w>iamax</w>
       <w>ifft</w>
+      <w>infty</w>
+      <w>ipiv</w>
+      <w>jobz</w>
+      <w>leftarrow</w>
+      <w>leftrightarrow</w>
+      <w>mathbb</w>
+      <w>mult</w>
       <w>naeini</w>
+      <w>nalgebra</w>
+      <w>ndarray</w>
+      <w>ndarray's</w>
+      <w>nrhs</w>
+      <w>ormqr</w>
       <w>partialord</w>
+      <w>potrf</w>
+      <w>potrs</w>
+      <w>pptrf</w>
+      <w>pptrs</w>
       <w>roundtrip</w>
+      <w>rscal</w>
       <w>rtic</w>
+      <w>scal</w>
       <w>semihosting</w>
       <w>serde</w>
+      <w>spaxpy</w>
+      <w>spdotc</w>
+      <w>spdotu</w>
+      <w>spmv</w>
+      <w>strided</w>
+      <w>syev</w>
+      <w>symm</w>
+      <w>symv</w>
+      <w>syrk</w>
       <w>thumbv</w>
+      <w>tpmv</w>
+      <w>tpsv</w>
+      <w>trmm</w>
+      <w>trmv</w>
+      <w>trsm</w>
+      <w>trsv</w>
       <w>typenum</w>
       <w>ulps</w>
       <w>underflowed</w>
+      <w>unmqr</w>
+      <w>uplo</w>
       <w>virt</w>
       <w>xtask</w>
     </words>

@@ -1,0 +1,36 @@
+[package]
+name = "riscv32imac-subprograms"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[features]
+default = []
+c_nmsis = []
+
+[dependencies]
+# After copying this crate, point `path` at your control-rs checkout.
+control-rs = { path = "../../..", default-features = false }
+libm = "0.2.16"
+riscv = "0.10"
+riscv-rt = "0.12"
+semihosting = { version = "0.1", features = ["stdio", "args"] }
+riscv-semihosting = "0.1"
+
+[build-dependencies]
+cc = "1.0"
+
+[[bin]]
+name = "riscv32imac-subprograms"
+path = "src/main.rs"
+test = false
+
+[profile.dev]
+panic = "abort"
+lto = false
+
+[profile.release]
+panic = "abort"
+lto = true

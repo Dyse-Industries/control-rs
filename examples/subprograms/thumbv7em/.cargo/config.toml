@@ -1,0 +1,6 @@
+# `cargo run` from this directory targets Cortex-M7 and launches qemu-system-arm.
+[target.thumbv7em-none-eabihf]
+runner = "qemu-system-arm -cpu cortex-m7 -machine mps2-an500 -nographic -semihosting-config enable=on,target=native -kernel"
+
+[build]
+target = "thumbv7em-none-eabihf"

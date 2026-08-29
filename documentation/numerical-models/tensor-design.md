@@ -1,28 +1,31 @@
 # Tensor Type & Low-Cost Inference (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_2,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
 
 ### 1. Introduction
 
-The `Tensor` type provides an N-dimensional array parameterized over a
-compile-time shape layout and a pluggable memory storage backend, extending
-`control-rs`'s linear algebra beyond the 2-dimensional `Matrix` type. It
-shares its architectural foundation with `Matrix` — the same `Dim`/Peano
-sizing system and `Storage<T, R, C>` trait hierarchy — so a `Tensor` and a
-`Matrix` interoperate without copying.
+The `Tensor` module provides compile-time sized, N-dimensional tensor
+representations and evaluation primitives for multidimensional lookup tables,
+coordinate transformations, and embedded inference.
 
-Beyond static N-D storage, this revision extends `Tensor` toward two embedded
-target applications identified during retroactive research: high-dimensional
-static lookup tables (e.g., flight-control gain-scheduling tables) and
-low-cost inference for small, pre-trained neural-network controllers and
-classifiers on microcontrollers. Both applications are storage-and-evaluation
-problems, not training problems — `Tensor` remains a storage/inference
-primitive; on-device training and automatic differentiation are explicitly
-out of scope.
+Primary usage scenarios:
+
+- **Gain-Scheduled Flight Control Tables**: Evaluating N-dimensional aerodynamic
+  lookup grids (e.g., angle-of-attack, Mach number, dynamic pressure) via
+  multilinear grid interpolation in deterministic time without dynamic
+  allocation.
+- **Microcontroller Neural Network Inference**: Executing feedforward inference
+  for quantized (Q7/Q15/integer) pre-trained neural networks and TinyML state
+  estimators using tensor contractions.
+- **Multidimensional Physical State Modeling**: Representing higher-rank
+  physical tensors (such as rank-4 elasticity tensors or stress/strain fields)
+  and performing contractions along arbitrary tensor axes.
+- **Matrix Hyperplane Slicing**: Extracting 2-D matrix slices from
+  multidimensional tables for linear algebra operations without memory copies.
 
 ---
 
@@ -30,67 +33,59 @@ out of scope.
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Compile-Time Sizing**: Shape and rank are enforced entirely at
-  compile time via the `TensorLayout` trait and the crate's `Dim` system.
-- **FR-2 — Static Constructors**: Provide `zero`, `from_raw`, `from_fn`,
-  `from_storage`, `from_slice`/`from_mut_slice` for stack, ROM-constant and
-  zero-copy instantiation.
-- **FR-3 — Core Arithmetic**: Operator overloading for element-wise `Add`,
-  `Sub` and scalar `Mul`/`Div`.
-- **FR-4 — Tensor Operations**: Zero-copy sub-tensor views, Einstein-summation
-  contraction and axis permutation.
-- **FR-5 — Grid Interpolation**: A point-query evaluation over a `TensorLayout`
-  grid using piecewise-multilinear interpolation for gain-scheduled lookup
-  tables.
-- **FR-6 — Minimal Activation Function Support**: A small operator or trait for
-  applying a pointwise nonlinear function (ReLU, tanh/sigmoid) between
-  contracted layers.
-- **FR-7 — Type-Level Quantized Scalar Representation**: A fixed-point scalar
-  type encoding its quantization scale as const generic parameters, with no
-  additional runtime metadata.
-- **FR-8 — Type Conversions**: `TryFrom` conversions between `Tensor`, `Matrix`,
-  and `Polynomial` for compatible ranks and sizes.
+- **FR-1 — Multidimensional Array Representation**: Represents N-dimensional
+  tensors parameterized over compile-time rank, dimension extents, and memory
+  strides without runtime layout metadata overhead.
+- **FR-2 — Multilinear Grid Interpolation**: Evaluates fractional N-dimensional
+  coordinate queries across lookup grids via weighted multilinear interpolation
+  over the $2^{\text{RANK}}$ surrounding hypercube vertices (Weiser &
+  Zarantonello, 1988). Interpolation must execute without heap allocations for
+  gain-scheduled flight control tables.
+- **FR-3 — Tensor Contraction & Matrix Slicing**: Computes tensor contractions
+  along matching axes, producing an output tensor of
+  rank $\text{Rank}_A + \text{Rank}_B - 2$. Slicing 2-D hyperplanes from a
+  tensor must provide zero-copy `MatrixSlice` views when coordinates align with
+  layout strides.
+- **FR-4 — Quantized Fixed-Point Inference**: Performs tensor arithmetic and
+  activation functions over quantized integer representations (`SHIFT`
+  fixed-point scaling) without floating-point emulation or dynamic memory
+  allocation (Wu et al., 2020).
+- **FR-5 — Nonlinear Activation Functions**: Applies elementwise activation
+  functions (such as ReLU and piecewise-linear table activations) in-place over
+  tensor buffers for embedded TinyML controller evaluation (Lai et al., 2018).
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — Deterministic Execution**: All operations execute within
-  predictable, deterministic timeframes with no dynamic branching on unbounded
-  loops.
-- **NFR-2 — No Excessive Compile-Time Overhead**: `const fn` constructors and
-  shape/quantization-scale encoding must not cause outsized compile-time
-  increases relative to `Matrix`'s existing `Dim`/Peano system.
-- **NFR-3 — Zero-Cost Quantization**: A quantized `Tensor` carries no runtime
-  scale/zero-point fields; dequantization compiles down to a bit-shift or single
-  integer division.
+- **NFR-1 — Bounded Stack Allocation**: Total element storage per tensor is
+  capped at 1,024 elements ($\le 4\text{ KB}$ for 32-bit types) to protect
+  microcontroller stack bounds.
+- **NFR-2 — Real-Time Inference Latency**: Multilinear interpolation and tensor
+  contraction execute in bounded cycle counts without dynamic layout branching.
 
 #### 2.3. Constraints
 
-- **C-1 — No-Std Environment**: Must compile and run in `#![no_std]`
-  environments.
-- **C-2 — No Dynamic Allocation**: No heap allocator; all memory is static or
-  stack-based.
-- **C-3 — Memory Footprint**: Total element capacity across all dimensions is
-  capped at 1,024 elements, keeping a single stack tensor under 4KB (`f32`).
-- **C-4 — Type-Level Quantization Encoding**: Quantization-scale const generic
-  parameters must be plain integers, since Rust disallows floating-point const
-  generics.
-- **C-5 — Out of Scope**: On-device training, automatic differentiation and
-  trained-model import (TFLite/PyTorch Mobile/ONNX) are not addressed by this
-  design.
+- **C-1 — Out of Scope Capabilities**: On-device training, backpropagation,
+  automatic differentiation, and runtime model file parsers (ONNX/TFLite) are
+  explicitly out of scope.
+- **C-2 — Static Quantization Parameter Encoding**: Quantization-scale const
+  generic parameters must be plain integer shifts.
+- **C-3 — `#![no_std]` / Zero Heap Allocation**: All tensor representations and
+  operations execute strictly on stack-allocated arrays or borrowed memory
+  buffers.
 
 ---
 
 ### 3. Technical Overview
 
-`Tensor<T, Layout: TensorLayout, S: Storage<T, Layout::Size, U1>>` is a
-compile-time-shaped N-dimensional array built on the same generic-scalar,
-decoupled-storage foundation as `Matrix`. This revision adds three
-capabilities motivated by two concrete embedded use cases surfaced during
-research: gain-scheduled flight-control lookup tables (grid interpolation)
-and low-cost embedded neural-network inference (a minimal activation
-primitive and a type-level quantized scalar representation). All three are
-additive to the existing shape/storage/contraction architecture and require
-no change to `Tensor`'s own generic signature.
+`Tensor<T, Layout: TensorLayout, B: FlatBuffer<T>>` provides a statically sized
+N-dimensional array built on `control-rs`'s decoupled storage foundation and
+type-level dimension system.
+
+The module provides compile-time rank and stride mapping, multi-axis tensor
+contractions (delegating 2D operations to Level 3 `Gemm`), zero-copy 2D
+`MatrixSlice` hyperplane extraction, multilinear hypercube grid interpolation
+for flight-control gain scheduling tables, and fixed-point quantized neural
+network inference with lightweight activation functions.
 
 ---
 
@@ -98,7 +93,23 @@ no change to `Tensor`'s own generic signature.
 
 #### 4.1. Generics Foundation & Sizing
 
-A `Tensor` wraps a storage backend `S: Storage<T, Layout::Size, U1>`.
+A `Tensor` wraps a flat, padding-free storage backend. The crate-wide
+contiguity contract is `ContiguousStorage<T>` / `ContiguousStorageMut<T>`
+(FR-3), whose `as_slice()` / `as_mut_slice()` are exactly what a tensor
+needs. Those traits are declared as sub-traits of the 2-D
+`DenseStorage<T>`, so `Tensor` names a rank-neutral projection of them:
+
+```rust
+/// Rank-neutral flat-buffer contract. Blanket-implemented for every
+/// `ContiguousStorage<T>` leaf, so a rank-2 tensor reuses `ArrayStorage`
+/// directly (§7).
+pub unsafe trait FlatBuffer<T> {
+    const LEN: usize;
+    fn as_slice(&self) -> &[T];
+    fn as_ptr(&self) -> *const T;
+}
+```
+
 Coordinate mapping is delegated to a type implementing `TensorLayout`:
 
 ```rust
@@ -108,22 +119,22 @@ pub trait TensorLayout {
     fn dims() -> &'static [usize];
 }
 
-pub struct Tensor<
-    T,
-    Layout: TensorLayout,
-    S: Storage<T, Layout::Size, U1> = ArrayStorage<T, Layout::Size, U1>,
-> {
-    storage: S,
+pub struct Tensor<T, Layout: TensorLayout, B: FlatBuffer<T>> {
+    buffer: B,
     _marker: PhantomData<Layout>,
 }
 
-// Type aliases for common storage backends
-pub type ArrayTensor<T, Layout> =
-Tensor<T, Layout, ArrayStorage<T, <Layout as TensorLayout>::Size, U1>>;
+// Rank-2 owning tensors reuse `ArrayStorage` (`storage-design.md` FR-2),
+// which is contiguous and therefore a `FlatBuffer`.
+// `[T; Layout::Size::USIZE]` is not a valid default: that projection
+// requires `generic_const_exprs`. Higher-rank owning layouts supply their
+// own nested-array buffer; they do not project `Dim::USIZE` into `[T; N]`.
+pub type ArrayTensor<T, const R: usize, const C: usize> =
+Tensor<T, Shape2D<Const<R>, Const<C>>, ArrayStorage<T, R, C>>;
 pub type ViewTensor<'a, T, Layout> =
-Tensor<T, Layout, MatrixView<'a, T, <Layout as TensorLayout>::Size, U1>>;
+Tensor<T, Layout, FlatView<'a, T>>;
 pub type ViewMutTensor<'a, T, Layout> =
-Tensor<T, Layout, MatrixViewMut<'a, T, <Layout as TensorLayout>::Size, U1>>;
+Tensor<T, Layout, FlatViewMut<'a, T>>;
 ```
 
 Layout sizing verification uses type-level bounds (`Shape2D`, `Shape3D`, ...)
@@ -137,32 +148,38 @@ strides (first dimension varies fastest): $\text{flat\_index} = i_0 + i_1
 \prod_{j=0}^{m-1} D_j$.
 
 - **Decoupled Physical Storage**: Flat element access dispatches through
-  `Storage<T, Layout::Size, U1>` (`get_unchecked`, `ptr`, `ptr_mut`).
-- **Matrix Interoperability**: Column-major layout matches `Matrix`'s
-  layout, so 2D tensors interoperate with matrices without transposition or
-  copying.
+  `FlatBuffer<T>` / `FlatBufferMut<T>` (`as_slice`, `as_ptr`, `as_mut_slice`,
+  `as_mut_ptr`), which every `ContiguousStorage` leaf satisfies.
+- **Matrix Interoperability**: Column-major layout matches `ArrayStorage`'s
+  ordering ($RS = 1$, $CS = R$), so 2-D tensors interoperate with matrices
+  without transposition or copying. A `Matrix` over a strided `StorageView`
+  has no flat buffer and converts by element copy instead
+  (`matrix-design.md` §4.8.2).
 - **Flat Indexing Efficiency**: Element-wise operations iterate the
   underlying storage directly, bypassing multi-index arithmetic.
 
 #### 4.3. Memory Representation & Slicing
 
-`#[repr(C)]` guarantees a stable layout. Contiguous slice interfaces
-(`as_slice`, `as_mut_slice`) are gated behind the `ContiguousStorage`
-sub-traits, facilitating zero-copy casting to `&[T]` for BLAS-like
-subprogram routing when the storage backend supports it.
+`#[repr(C)]` guarantees a stable layout. Padding-free slice interfaces
+(`as_slice`, `as_mut_slice`) are gated behind `FlatBuffer`/`FlatBufferMut`,
+facilitifying zero-copy casting to `&[T]` for subprogram routing when the
+storage backend supports it. Tensor contraction reaching a 2-D kernel
+rewraps the slice as a `StorageView` and calls `Gemm`
+(`subprograms-design.md` FR-4) rather than defining its own inner loop.
 
 #### 4.4. Instantiation & Constructors
 
-- `zero() -> ArrayTensor<T, Layout>` (`T: Zero + Copy`): all-zero stack
+- `zero() -> ArrayTensor<T, R, C>` (`T: Zero + Copy`): all-zero rank-2 stack
   tensor.
-- `from_raw(data: [T; Layout::Size::DIM]) -> ArrayTensor<T, Layout>`:
-  direct `const fn` initialization from a flat array, the entry point for
-  ROM-resident constant tensors.
-- `from_fn<F>(f: F) -> ArrayTensor<T, Layout>` (`F: FnMut(&[usize]) -> T`):
+- `from_raw(data: [[T; R]; C]) -> ArrayTensor<T, R, C>`:
+  direct `const fn` initialization from `Array2`'s nested array, the entry
+  point for ROM-resident constant tensors.
+- `from_fn<F>(f: F) -> ArrayTensor<T, R, C>` (`F: FnMut(&[usize]) -> T`):
   coordinate-mapped construction.
-- `from_storage(storage: S) -> Tensor<T, Layout, S>`: wraps any custom
+- `from_storage(storage: B) -> Tensor<T, Layout, B>`: wraps any custom
   storage backend.
-- `from_slice`/`from_mut_slice`: non-allocating borrowed view construction.
+- Borrowed views: FR-6 constructors on an owning tensor (`view()` /
+  `view_mut()`), not `from_slice(&[T])` paired with an independent `Layout`.
 
 `const fn` initialization on stable Rust requires `T: Zero + One` from
 `crate::math::num_traits`, exposing `T::ZERO`/`T::ONE` as associated
@@ -171,12 +188,14 @@ constants.
 #### 4.5. Operator Overloading
 
 `Add`, `Sub` and scalar `Mul`/`Div` iterate directly over element storage
-and return an owning `ArrayTensor<T, Layout>`.
+and return an owning rank-2 `ArrayTensor<T, R, C>` when both operands are
+rank-2 owning tensors. Dim-generic `Tensor<T, Layout, B>` elementwise ops
+return `Tensor<T, Layout, B>` with the same buffer family.
 
 #### 4.6. Core Operations
 
 - **Zero-Copy Sub-Tensor Views**: `as_view`/`slice_inplace` extract
-  non-allocating `MatrixView`-backed sub-tensors.
+  non-allocating `Ref`-backed sub-tensors.
 - **`contract_into`**: Einstein-summation contraction along type-level axes
   (`AxisSelf`, `AxisOther`) into a caller-provided result buffer. Axis
   existence and dimension agreement are enforced at compile time via
@@ -189,29 +208,44 @@ and return an owning `ArrayTensor<T, Layout>`.
 #### 4.7. Grid Interpolation
 
 Motivated by gain-scheduled flight-control lookup tables (Koo & Sands,
-
 2024) and the general N-D table-interpolation problem formalized by Weiser &
-      Zarantonello (1988): a query at a fractional coordinate is evaluated as a
-      weighted sum over the $2^{\text{RANK}}$ hypercube corner vertices
-      surrounding it (the multilinear generalization of bilinear/trilinear
-      interpolation), reading directly through `Storage::get_unchecked` with no
-      intermediate allocation:
+Zarantonello (1988): a query at a fractional coordinate is evaluated as a
+weighted sum over the $2^{\text{RANK}}$ hypercube corner vertices
+surrounding it (the multilinear generalization of bilinear/trilinear
+interpolation), reading directly through `FlatBuffer::as_slice` with no
+intermediate allocation:
 
 ```rust
-impl<T, Layout: TensorLayout, S> Tensor<T, Layout, S>
+impl<T, Layout: TensorLayout, B> Tensor<T, Layout, B>
 where
-    S: Storage<T, Layout::Size, U1>,
+    B: FlatBuffer<T>,
     T: Float,
 {
     pub fn interpolate(&self, coords: &[T; Layout::RANK]) -> T { /* ... */ }
 }
 ```
 
-`Float` here is `num-traits-design.md`'s current (pivoted) hierarchy, used
-deliberately rather than the retired `Real` — this document already
-follows the new naming crate-wide (§4.4, §4.9). Per that document's own
-status, this remains provisional until it completes its own
-`/cr-research`/`/cr-design-doc` pass (§7).
+#### 4.8. Matrix Slicing & Extraction
+
+To support zero-copy matrix operations and gain-scheduled model extraction,
+`Tensor` provides matrix slicing methods:
+
+- **Exact Matrix Slicing**:
+  `slice_matrix<const R: usize, const C: usize>(&self, fixed_indices: &[usize]) -> MatrixSlice<'_, T, R, C>`
+  extracts a 2D zero-copy `Matrix` view along selected free axes.
+- **Interpolated Matrix Extraction**:
+  `slice_matrix_interpolated<const R: usize, const C: usize>(&self, query_coords: &[T]) -> ArrayMatrix<T, R, C>`
+  performs multilinear N-D interpolation across non-grid query coordinates to
+  yield an evaluated 2D `Matrix`.
+
+*Note*: Detailed N-D storage layout optimizations and tensor contraction
+subprogram acceleration need a dedicated storage/tensor design.
+
+`Float` here is [
+`num-traits-design.md`](../math/num-traits-design.md)'s
+hardware-aligned hierarchy (`Signed + One + Radical + Exponential + Trig +
+Div`), used deliberately rather than the retired `Real` — this document
+already follows that naming crate-wide (§4.4, §4.9).
 
 This is a distinct operation from `contract_into` (which contracts against
 another whole tensor) and from `as_view` (which extracts a whole sub-tensor
@@ -224,10 +258,10 @@ better $O(\text{RANK} \log \text{RANK})$ asymptotic scaling but is not
 adopted here (see §5.3) since no current target application exceeds rank
 ~4-5.
 
-The out-of-grid-bounds query policy (clamp vs. error) is not finalized in
-this revision — see §7.
+The out-of-grid-bounds query policy (clamp vs. error) is not finalized —
+see §7.
 
-#### 4.8. Minimal Activation Function Support
+#### 4.9. Minimal Activation Function Support
 
 CMSIS-NN's reference sigmoid/tanh implementation is itself a table lookup
 over a small int8 domain with linear interpolation between adjacent entries
@@ -255,12 +289,12 @@ required. This keeps the operator surface minimal, per the goal of
 supporting a hand-written small inference network without pulling in a full
 ML framework.
 
-#### 4.9. Type-Level Quantized Scalar Representation
+#### 4.10. Type-Level Quantized Scalar Representation
 
 Quantization is implemented as a property of the scalar type `T`, not of
-`Tensor` itself — `Tensor<T, Layout, S>` already accepts any `T` satisfying
+`Tensor` itself — `Tensor<T, Layout, B>` already accepts any `T` satisfying
 the crate's numeric traits, so a quantized tensor is simply
-`Tensor<Quantized<Repr, SHIFT>, Layout, S>` with no structural change to
+`Tensor<Quantized<Repr, SHIFT>, Layout, B>` with no structural change to
 `Tensor` (see §5.1 for why this was chosen over threading quantization
 parameters through `Tensor`'s own generics).
 
@@ -277,25 +311,45 @@ pub struct Quantized<Repr, const SHIFT: i32> {
 value as `raw * 2^-SHIFT`, mirroring the integer-exponent pattern already
 used by existing Rust fixed-point/decimal crates (`decimal-scaled`,
 `primitive_fixed_point_decimal`) for type-level scale. `Quantized`
-implements the crate's `Zero`/`One`/arithmetic `num_traits` so it plugs into
-every existing generic `Tensor`/`Matrix` code path unchanged.
+implements the crate's `Zero`, `One`, `Conjugate` and `Scalar`
+(`Zero + One + Sub + Mul + Conjugate`) traits —
+[`num-traits-design.md`](../math/num-traits-design.md)'s unified arithmetic
+target for generic `Tensor`/`Matrix` code paths — so it plugs into every
+existing generic call site unchanged. `Conjugate` is the identity on
+`Quantized`, which is real, and `Scalar::Real = Self` with `im()` returning
+`Real::ZERO` (`num-traits-design.md` FR-3, FR-4, §4.3). `Scalar`
+deliberately excludes `Div`; `Quantized`'s dequantization is a bit-shift,
+not a division, so this omission is not a gap, and integer division stays
+on `TryDiv`.
+
+`Quantized` also implements `SaturatingInteger` when `Repr` does
+(`num-traits-design.md` §4.1), which is the contract that makes Q-format
+overflow saturate rather than wrap. `num-traits-design.md` §3 states that
+`Quantized<Repr, SHIFT>` is defined with the tensor scalar type — that is,
+here — while the trait contract it must satisfy is specified there.
 
 An affine variant (`AffineQuantized<Repr, const SHIFT: i32, const
 ZERO_POINT: i32>`) is deferred future work for imported-model
-interoperability (§5.2) — not part of this revision's default path.
+interoperability (§5.2) — not part of the default path.
 
-#### 4.10. Interoperability & Conversions
+#### 4.11. Interoperability & Conversions
 
 `ConversionError` is defined once, canonically, in
-[`error-design.md`](../math/error-design.md) — shared with
-`Matrix` and `Polynomial`'s conversions — not restated here.
+[`error-design.md`](../math/error-design.md) (`DimensionMismatch`,
+`NonMonicPolynomial`).
+Because rank and shape dimensions are verified statically at compile time
+via `TensorLayout<Size = ...>`, cross-model layout conversions are
+infallible compile-time operations:
 
-- **To `Matrix`**: `TryFrom<Tensor<T, Layout, S>> for Matrix<T, R, C, S>`
-  when `Layout::RANK == 2` and dimensions match, preserving storage
-  zero-copy. Returns `ConversionError::LayoutMismatch` otherwise.
-- **To `Polynomial`**: `TryFrom<Tensor<T, Layout, S>> for Polynomial<T, N, S>`
-  when `Layout::RANK == 1` and size matches, preserving storage zero-copy.
-  Returns `ConversionError::LayoutMismatch` otherwise.
+- **To `Matrix`**:
+  `From<Tensor<T, Layout, B>> for Matrix<T, R, C, Dense<T, R, C, B>>`
+  when `Layout: TensorLayout<Size = <R as DimMul<C>>::Output>` and
+  `Layout::RANK == 2`,
+  preserving storage zero-copy.
+- **To `Polynomial`**:
+  `From<Tensor<T, Layout, B>> for Polynomial<T, N, Dense<T, N, Const<1>, B>>`
+  when `Layout: TensorLayout<Size = N>` and `Layout::RANK == 1`,
+  preserving storage zero-copy.
 
 System-identification outputs (Volterra/NARX kernels, N4SID state-space
 matrices) are, in practice, 2D (CP-decomposed factor matrices or state-space
@@ -304,7 +358,7 @@ this existing 2D conversion path is the relevant interoperability surface
 for that target application; no rank-N-specific system-identification API
 is required.
 
-#### 4.11. Error Handling & State Management
+#### 4.12. Error Handling & State Management
 
 - **Compile-Time Constraints**: Dimension and rank mismatches in
   contraction, permutation or layout conversion are compile-time type
@@ -315,14 +369,13 @@ is required.
 - **Interpolation Bounds**: A query coordinate outside the grid's valid
   range is a genuinely open question (§7) — whether it clamps to the
   boundary, extrapolates or returns `Result<T, InterpolationError>` is not
-  finalized in this revision.
+  finalized.
 
-#### 4.12. Structural Specializations & Future Extensions
+#### 4.13. Structural Specializations & Future Extensions
 
 - **Sparse Tensor Representations**, **ROM-Backed Static Storage
-  Backends** and **Matrix-Free Operators** remain noted future extensions
-  from the prior revision.
-- **Model-Import Codegen (future work, not implemented in this revision)**:
+  Backends** and **Matrix-Free Operators** remain noted future extensions.
+- **Model-Import Codegen (future work)**:
   A future ahead-of-time tool could import a trained TFLite/ExecuTorch/ONNX
   model as `ArrayTensor::from_raw` constants plus a fixed
   `contract_into`/`Activation` call sequence, following MicroFlow's proven
@@ -340,21 +393,21 @@ is required.
 #### 5.1. Quantization Metadata: Scalar-Level Type vs. Tensor-Level Const Generics vs. Runtime Fields
 
 - **Runtime Struct Fields (rejected)**: Storing scale/zero-point as ordinary
-  struct fields alongside a `Tensor<i8, Layout, S>` was the first
+  struct fields alongside a `Tensor<i8, Layout, B>` was the first
   candidate considered, but conflicts with the requirement that quantized
   and unquantized tensors carry identical runtime footprint and that shape
   information already lives entirely at the type level.
 - **`Tensor`-Level Const Generics (considered, rejected)**: Adding
-  `const SHIFT: i32` directly to `Tensor<T, Layout, S, SHIFT>` was
+  `const SHIFT: i32` directly to `Tensor<T, Layout, B, SHIFT>` was
   considered, but this conflates two orthogonal concerns — shape (`Layout`)
   and scalar representation (`SHIFT`) — inside one type and would require
   every existing `impl` block (`Add`, `contract_into`, conversions) to
   thread `SHIFT` arithmetic (e.g. rescaling when contracting two tensors
   with different shifts), a significant complexity increase to an
   already-generic type.
-- **Scalar-Level Type (selected)**: `Quantized<Repr, SHIFT>` (§4.9) makes
+- **Scalar-Level Type (selected)**: `Quantized<Repr, SHIFT>` (§4.10) makes
   quantization a property of `T`, requiring zero change to `Tensor`'s
-  existing generic signature — `Tensor<T, Layout, S>` already accepts any
+  existing generic signature — `Tensor<T, Layout, B>` already accepts any
   conforming `T`. This mirrors the `fixed` crate's `FixedI32<Frac>` pattern
   and keeps quantization orthogonal to shape.
 
@@ -380,10 +433,10 @@ unstabilized (§2.3).
 #### 5.3. Multilinear (Hypercube) vs. Simplex/Triangulated Interpolation
 
 - **Multilinear (selected)**: $O(2^{\text{RANK}})$ evaluation; matches
-  CMSIS-NN's LUT-based activation precedent (§4.8) and Weiser &
+  CMSIS-NN's LUT-based activation precedent (§4.9) and Weiser &
   Zarantonello's formalization. Adequate for the target applications (rank
   2-3 lookup tables, rank-1 activation tables).
-- **Simplex/Triangulated (rejected for this revision)**: $O(\text{RANK}
+- **Simplex/Triangulated (rejected)**: $O(\text{RANK}
   \log \text{RANK})$ asymptotic scaling, better for rank $>$ ~5-6 per
   Weiser & Zarantonello (1988), but adds triangulation complexity not
   justified by any current target application. Noted as a future extension
@@ -397,7 +450,7 @@ unstabilized (§2.3).
 - **Ad-Hoc Per-Function Methods (considered)**: Inherent methods
   (`relu()`, `tanh_lut()`) are simple but do not compose with a future
   model-import path that must select an activation generically per layer.
-- **Minimal Trait (selected)**: `Activation<T>` (§4.8), implemented per
+- **Minimal Trait (selected)**: `Activation<T>` (§4.9), implemented per
   function and reusing the interpolation primitive for table-driven
   variants, keeps the surface minimal while composing with a future codegen
   path.
@@ -408,202 +461,190 @@ As with `Matrix`, no existing crate combines `no_std`/no-alloc,
 compile-time (const-generic) tensor shapes and interoperability with a
 broader `Matrix`/`Polynomial` type system. MicroFlow is the closest analog
 but is a single-model NN inference engine with no general `Tensor<T,
-Layout, S>` abstraction; `tfmicro` requires a C++ toolchain. Building on
-`control-rs`'s existing `Dim`/`Storage` foundation (already justified in
-`matrix-design.md` §5.3) remains the only option meeting the audit-footprint
-and `const fn`-on-stable-Rust requirements.
+Layout, B>` abstraction; `tfmicro` requires a C++ toolchain. Building on
+`control-rs`'s existing `Dim` and contiguity foundation remains the only option
+meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 
 ---
 
 ### 6. Verification & Validation
 
-#### 6.1. Verification Strategy
+#### 6.1. Objectives
 
-1. **Compile-Time Verification**: Shape, rank and axis-index mismatches in
-   contraction, permutation and layout conversion are rejected by the type
-   system, matching `Matrix`'s `Dim`-based verification model.
-2. **Property & Unit Testing** (`proptest`, Claessen & Hughes, 2000):
-    - Stride index calculations and axis-permutation round trips (existing).
-    - Contraction equivalence to matrix multiplication for 2D slices
-      (existing).
-    - Interpolation correctness: the interpolated value at an exact grid
-      coordinate equals the stored value there; interpolated values between
-      grid points match the closed-form weighted-sum definition (§4.7).
-    - Quantized round-trip: `quantize` → `dequantize` error is bounded by
-      half an LSB of the chosen `SHIFT`, mirroring the fixed-point precision
-      bound already validated for `Matrix`.
-3. **Golden-Value Regression** (per the crate's testing standards for
-   invariant-heavy/numerical code): interpolation and quantized-inference
-   results checked against SciPy/NumPy or hand-derived closed-form
-   references for a small worked example (a 2D gain-scheduling table and a
-   toy 2-layer quantized MLP).
-4. **Host/Target Test Integration**: `cargo test` on host; QEMU
-   cross-compilation across `ArrayStorage`, `MatrixView`, `MatrixViewMut`,
-   and the new `Quantized<Repr, SHIFT>` scalar type.
-5. **Benchmarks and Quality Reporting**: Contraction, interpolation and
-   activation-function cycle counts benchmarked on ARM hardware; binary
-   size checks confirm unused shape/activation variants are dead-code
-   eliminated.
+- Demonstrate compile-time verification of tensor rank, axis extents, and
+  contraction index bounds.
+- Demonstrate mathematical exactness of multi-dimensional column-major
+  coordinate indexing and strided slicing.
+- Demonstrate equivalence of 2D tensor contractions against reference BLAS Level
+  3 `Gemm`.
+- Demonstrate numerical accuracy and interpolation bounds for multilinear grid
+  interpolation.
+- Demonstrate arithmetic exactness, rounding, and saturation invariants for
+  `Quantized<Repr, SHIFT>`.
+- Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
+  deterministic real-time latency.
 
-#### 6.2. Validation Strategy
+#### 6.2. Methods
 
-##### Spatial Heat Distribution Update
+| Method                    | Mechanism                                                                                  | Requirements discharged  |
+|:--------------------------|:-------------------------------------------------------------------------------------------|:-------------------------|
+| Compile-time shape check  | Type-level `Dim` rank assertions, `compile_fail` doctests                                  | FR-1, C-1, C-3           |
+| Requirements-based test   | `#[test]` unit tests over grid boundaries, activations, and conversions                    | FR-2, FR-4, FR-5         |
+| Property-based test       | `proptest` suites verifying axis permutation round-trips and tensor contraction identities | FR-3                     |
+| Doctest                   | Runnable rustdoc examples                                                                  | FR-2, FR-4               |
+| Back-to-back comparison   | `examples/numerical-models/python3/tensor.py` vs `src/tensor.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-3, FR-4               |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                    | NFR-1, NFR-2, C-2, C-3   |
+| On-target execution       | ETS suites under QEMU and Teensy hardware                                                  | NFR-2                    |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                    | FR-1..FR-5, NFR-1..NFR-2 |
 
-A 3D tensor representing a 2D spatial grid over time is updated by
-contracting it with a localized transition matrix (Kolda & Bader, 2009),
-validating the existing multi-variable-spatial-grid target application:
+#### 6.3. Acceptance Criteria
 
-```rust
-pub fn update_thermal_grid<T, Sa, Sx, Sy>(
-    transition_matrix: &Tensor<f32, Shape2D<U4, U4>, Sa>,
-    current_grid: &Tensor<f32, Shape3D<U4, U2, U2>, Sx>,
-    next_grid: &mut Tensor<f32, Shape3D<U4, U2, U2>, Sy>,
-)
-where
-    Sa: Storage<f32, <Shape2D<U4, U4> as TensorLayout>::Size, U1>,
-    Sx: Storage<f32, <Shape3D<U4, U2, U2> as TensorLayout>::Size, U1>,
-    Sy: StorageMut<f32, <Shape3D<U4, U2, U2> as TensorLayout>::Size, U1>,
-{
-    transition_matrix.contract_into::<U1, U0, _, _, _, _>(current_grid, next_grid);
-}
-```
+| Claim                              | Oracle                                       | Measure                     | Bound                                                                                                  | Justification                                                              |
+|:-----------------------------------|:---------------------------------------------|:----------------------------|:-------------------------------------------------------------------------------------------------------|:---------------------------------------------------------------------------|
+| Contraction vs `Gemm` equivalence  | BLAS Level 3 `Gemm` reference                | Relative error / test ratio | $\frac{\|C_{\text{contract}} - C_{\text{gemm}}\|_\infty}{\|A\|_\infty \|B\|_\infty K \epsilon} < 20.0$ | Direct reduction of 2D tensor contraction to matrix product                |
+| Exact grid interpolation           | Stored vertex coordinates                    | Exact equality              | $0$ (exact)                                                                                            | Multilinear interpolation vertex consistency (Weiser & Zarantonello, 1988) |
+| Interior multilinear interpolation | Analytic piecewise linear model              | Absolute error              | $\|f(x) - \hat{f}(x)\| \le \frac{1}{8} \sum h_i^2 \|\frac{\partial^2 f}{\partial x_i^2}\|_\infty$      | Multilinear interpolation error bound (Weiser & Zarantonello, 1988)        |
+| Quantization round-trip            | Exact floating-point vs dequantized integer  | Absolute error              | $\|x - \text{dequantize}(\text{quantize}(x))\| \le 2^{-\text{SHIFT}-1}$                                | Half-LSB rounding bound for fixed-point quantization (Wu et al., 2020)     |
+| Permutation invertibility          | Permute and inverse permute axes             | Exact equality              | Inverted tensor == original tensor                                                                     | Exact structural permutation invariant                                     |
+| Activation lookup residual         | Exact nonlinear activation ($\tanh, \sigma$) | Absolute error              | $\|\hat{a}(x) - a(x)\|_\infty \le 2^{-7}$ for a 256-breakpoint Q7 table over $[-8, 8]$                  | Piecewise linear activation table approximation (Lai et al., 2018)         |
+| Zero-allocation execution          | Host memory allocator interception           | Exact equality              | 0 heap allocations                                                                                     | NFR-1 `#![no_std]` invariant                                               |
 
-##### Flight-Control Gain-Scheduling Lookup Table
+#### 6.4. Traceability
 
-A 2D autopilot gain table indexed by Mach number and angle of attack (Koo &
-Sands, 2024), validating §4.7's interpolation primitive against a
-grid-in-between query:
+| Requirement                                         | Method                                           | Artifact                                                |
+|:----------------------------------------------------|:-------------------------------------------------|:--------------------------------------------------------|
+| FR-1 — Multidimensional Array Representation        | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/tensor/mod.rs`  |
+| FR-2 — Multilinear Grid Interpolation               | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_tensor_grid_interpolation` |
+| FR-3 — Tensor Contraction & Matrix Slicing          | Property-based test, Back-to-back comparison     | `src/tensor/tests/tensor_tests.rs::test_tensor_contract` |
+| FR-4 — Quantized Fixed-Point Inference              | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_quantized_scalar_operations` |
+| FR-5 — Nonlinear Activation Functions               | Requirements-based test                          | `src/tensor/tests/tensor_tests.rs::test_activations`    |
+| NFR-1 — Bounded Stack Allocation                    | Resource usage evaluation                        | `size_of` assertions; element cap $S \le 1024$          |
+| NFR-2 — Real-Time Inference Latency                 | On-target execution                              | ETS suite `tensor_test_suite`                           |
+| C-1 — Out of Scope Capabilities                     | Inspection                                       | Training/ONNX parsers absent from `src/tensor/`         |
+| C-2 — Static Quantization Parameter Encoding        | Compile-time shape check                         | `Quantized<Repr, SHIFT>` const generic                  |
+| C-3 — `#![no_std]` / Zero Heap Allocation           | Resource usage evaluation                        | Compilation under `#![no_std]` target triples           |
 
-```rust
-pub fn scheduled_gain(
-    gain_table: &ArrayTensor<f32, Shape2D<U8, U8>>,
-    mach: f32,
-    angle_of_attack: f32,
-) -> f32 {
-    gain_table.interpolate(&[mach, angle_of_attack])
-}
-```
+#### 6.5. Coverage
 
-##### Small Quantized Inference Network
+- **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage reported
+  via `cargo coverage`.
+- **Excluded**: Target-specific SIMD micro-kernels and debug formatting
+  routines (`core::fmt::Debug`).
 
-A hand-written 2-layer dense network (weights as `ArrayTensor::from_raw`
-constants, `contract_into` for the dense layer, `Relu` for the activation)
-demonstrates the API surface is sufficient for a small embedded NN
-controller end-to-end, without requiring the future-work import tooling
-(§4.12):
+#### 6.6. Validation
 
-```rust
-pub fn predict<Sw1, Sb1, Sw2, Sb2>(
-    input: &Tensor<Quantized<i8, 7>, Shape1D<U4>, impl Storage<Quantized<i8, 7>, U4, U1>>,
-    w1: &Tensor<Quantized<i8, 7>, Shape2D<U8, U4>, Sw1>,
-    b1: &Tensor<Quantized<i8, 7>, Shape1D<U8>, Sb1>,
-    w2: &Tensor<Quantized<i8, 7>, Shape2D<U1, U8>, Sw2>,
-    b2: &Tensor<Quantized<i8, 7>, Shape1D<U1>, Sb2>,
-) -> Quantized<i8, 7> {
-    // hidden = relu(w1 . input + b1); output = w2 . hidden + b2
-    // (contract_into + Add + Relu::apply, per §4.6/§4.8)
-    todo!()
-}
-```
+- **Multilinear Grid Interpolation & Quantized Activation**: Verification of 2D
+  table multilinear continuous interpolation (3×3 affine vertices and a
+  $16\times 16$ curved table on a 64-point cut) and fixed-point
+  `Quantized<i8, 7>` arithmetic with `Relu` on dyadic and non-dyadic inputs in
+  `examples/numerical-models/src/tensor.rs`.
+
+#### 6.7. Not Verified
+
+- Dynamic arbitrary-rank tensor contractions with runtime-determined dimensions
+  are excluded.
+- Automatic deep learning framework graph import (ONNX/TFLite converter tools)
+  is deferred to future tooling.
+- Grids larger than NFR-1 $S\le 1024$ are not in the example crate; host
+  interpolation uses $16\times 16$
+  ([`numerical-models-design.md`](numerical-models-design.md) §6.6).
 
 ---
 
-### 7. Risks & Open Questions
+### 7. Performance & Resource Considerations
+
+- **Stack Overhead**: Inline tensor capacities are bounded by the total element
+  ceiling $S \le 1{,}024$ ($4\text{ KB}$ for `f32`, $1\text{ KB}$ for
+  `Quantized<i8, 7>`), matching NFR-1.
+- **Memory Footprint**: `Quantized<i8, 7>` achieves a $4\times$ reduction in
+  weight/activation RAM compared to `f32`.
+- **Zero-Copy Views**: `TensorView` and `TensorViewMut` operate over borrowed
+  `FlatBuffer` pointers with rank metadata, avoiding tensor allocation.
+
+---
+
+### 8. Risks & Open Questions
 
 - **Interpolation Bounds Policy**: Whether an out-of-grid query clamps,
-  extrapolates or returns an error is not finalized (§4.11).
-- **Q-Format vs. Rational Scale Selection**: This revision defaults to
+  extrapolates or returns an error is not finalized (§4.12).
+- **Q-Format vs. Rational Scale Selection**: The default is
   power-of-two `SHIFT` (§5.2); whether/when the rational variant is needed
-  depends on the (future, out-of-scope) model-import path's accuracy
-  requirements.
+  depends on the future model-import path's accuracy requirements.
 - **Activation Table Resolution**: `TableActivation`'s breakpoint count and
-  domain range are not chosen in this revision; CMSIS-NN's `[-8, 8]`
-  precedent is a starting point, but the accuracy/size trade-off needs a
-  concrete target application before finalizing.
+  domain range are not chosen; CMSIS-NN's `[-8, 8]` precedent
+  is a starting point, but the accuracy/size trade-off needs a concrete target
+  application before finalizing.
 - **Const-Generic Compile-Time Complexity**: Adding `SHIFT`/rational const
   generics to the scalar type stacks on top of the compile-time-arithmetic
-  concerns already flagged for `Matrix`'s `Dim`/Peano system
-  (`matrix-design.md` §7); watch compile times as `Quantized<Repr, SHIFT>`
-  usage grows.
-- **Model-Import Tooling**: Recorded as future work only (§4.12); no risk
-  analysis is performed in this revision since it is not implemented.
-- **`num-traits-design.md` Dependency Is Provisional**: `T: Float` (§4.7)
-  and the `Zero`/`One` bounds on `Quantized<Repr, SHIFT>` (§4.9) follow
-  `num-traits-design.md`'s current hierarchy, which has not yet had its own
-  `/cr-research` or `/cr-design-doc` pass and remains Draft pending one —
-  matching the caveat `state-space-design.md` §9 and `matrix-design.md` §7
-  already carry for the same dependency.
+  concerns; watch compile times as `Quantized<Repr, SHIFT>` usage grows.
+- **Model-Import Tooling**: Recorded as future work only (§4.13); no risk
+  analysis is performed since it is not implemented.
 
 ---
 
-### 8. Development Plan
+### 9. Development Plan
 
-| Task / Feature                               | Description                                                                                                                                                                                                              | Estimated Effort |
-|:---------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Phase 1: Core Layout & Storage**           | `TensorLayout`, `Dim`-based sizing, `ArrayStorage`/view aliases, column-major stride mapping, `repr(C)` slicing.                                                                                                         | 2.0 Days         |
-| **Phase 2: Element Ops & Contraction**       | Operator overloads, `contract_into`/`contract_into_dynamic`, `permute`, `as_view`/`slice_inplace`.                                                                                                                       | 2.5 Days         |
-| **Phase 3: Grid Interpolation & Activation** | Multilinear `interpolate`, `Activation` trait, `Relu`, `TableActivation`.                                                                                                                                                | 2.5 Days         |
-| **Phase 4: Quantized Scalar Type**           | `Quantized<Repr, SHIFT>` with full `Zero`/`One`/`Scalar` arithmetic `num_traits` impls (correct rounding/saturation semantics), quantize/dequantize, integration across existing generic `T` paths in `Tensor`/`Matrix`. | 3.5 Days         |
-| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial`.                                                                      | 3.0 Days         |
+| Task / Feature                               | Description                                                                                                                                                                                                     | Estimated Effort |
+|:---------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Phase 1: Core Layout & Storage**           | `TensorLayout`, `Dim`-based sizing, `Array` storage/view aliases, column-major stride mapping, `repr(C)` slicing.                                                                                               | 2.0 Days         |
+| **Phase 2: Element Ops & Contraction**       | Operator overloads, `contract_into`/`contract_into_dynamic`, `permute`, `as_view`/`slice_inplace`.                                                                                                              | 2.5 Days         |
+| **Phase 3: Grid Interpolation & Activation** | Multilinear `interpolate`, `Activation` trait, `Relu`, `TableActivation`.                                                                                                                                       | 2.5 Days         |
+| **Phase 4: Quantized Scalar Type**           | `Quantized<Repr, SHIFT>` with full `Zero`/`One`/`Scalar` arithmetic `num_traits` impls (correct rounding/saturation semantics), quantize/dequantize, integration across existing generic `T` paths in `Tensor`. | 3.5 Days         |
+| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial` per [`vv-standards.md`](../vv-standards.md).                                       | 3.0 Days         |
 
 ---
 
-### 9. References
+### 10. References
 
 1. **Kolda, T. G., & Bader, B. W. (2009).** Tensor Decompositions and
    Applications. _SIAM Review_, 51(3), 455–500. — Tensor contraction and
    decomposition computational complexity.
-2. **Soro, S. (2021).** TinyML for Ubiquitous Edge AI. MITRE Technical
-   Report MTR200519, _arXiv:2102.01255_. — Memory-footprint and
-   inference-latency framing for microcontroller-class deployments.
+2. **Soro, S. (2021).** TinyML for Ubiquitous Edge AI. MITRE Technical Report
+   MTR200519, _arXiv:2102.01255_. — Memory-footprint and inference-latency
+   framing for microcontroller-class deployments.
 3. **Warden, P., & Situnayake, D. (2019).** _TinyML: Machine Learning with
-   TensorFlow Lite on Arduino and Ultra-Low-Power Microcontrollers_.
-   O'Reilly Media. — Weight/activation memory-budgeting guidelines.
-4. **David, R., Duke, J., Jain, A., Janapa Reddi, V., Jeffries, N., Li, J.,
-   Kreeger, N., Nappier, I., Natraj, M., Regev, S., Rhodes, R., Wang, T., &
-   Warden, P. (2021).** TensorFlow Lite Micro: Embedded Machine Learning on
-   TinyML Systems. _Proceedings of Machine Learning and Systems (MLSys) 3_.
-   — Static arena memory-planning precedent for embedded inference engines.
+   TensorFlow Lite on Arduino and Ultra-Low-Power Microcontrollers_. O'Reilly
+   Media. — Weight/activation memory-budgeting guidelines.
+4. **David, R., et al. (2021).** TensorFlow Lite Micro: Embedded Machine
+   Learning on TinyML Systems. _Proceedings of Machine Learning and Systems (
+   MLSys) 3_. — Static arena memory-planning precedent for embedded inference
+   engines.
 5. **Lai, L., Suda, N., & Chandra, V. (2018).** CMSIS-NN: Efficient Neural
    Network Kernels for Arm Cortex-M CPUs. _arXiv:1801.06601_. —
    Table-lookup-plus-interpolation activation-function kernel design.
-6. **Carnelos, M., Pasti, F., & Bellotto, N. (2024).** MicroFlow: An
-   Efficient Rust-Based Inference Engine for TinyML. _arXiv:2409.19432_. —
-   Ahead-of-time model-to-static-Rust-code compilation precedent (§4.12).
-7. **Weiser, A., & Zarantonello, S. E. (1988).** A Note on Piecewise Linear
-   and Multilinear Table Interpolation in Many Dimensions. _Mathematics of
-   Computation_, 50(181), 189–196. — Canonical formalization of the
-   multilinear grid-interpolation primitive (§4.7).
+6. **Carnelos, M., Pasti, F., & Bellotto, N. (2024).** MicroFlow: An Efficient
+   Rust-Based Inference Engine for TinyML. _arXiv:2409.19432_. — Ahead-of-time
+   model-to-static-Rust-code compilation precedent (§4.13).
+7. **Weiser, A., & Zarantonello, S. E. (1988).** A Note on Piecewise Linear and
+   Multilinear Table Interpolation in Many Dimensions. _Mathematics of
+   Computation_, 50(181), 189–196. — Canonical formalization of the multilinear
+   grid-interpolation primitive (§4.7).
 8. **Koo, S. M., & Sands, T. (2024).** Bilinear Interpolation of
    Three-Dimensional Gain-Scheduled Autopilots. _Sensors_, 24(1), 13. —
    Flight-control gain-scheduling lookup-table precedent.
-9. **Batselier, K., Chen, Z., & Wong, N. (2016).** Tensor Network
-   alternating linear scheme for MIMO Volterra system identification.
-   _arXiv:1607.00127_. — System-identification tensor shape/rank precedent.
+9. **Batselier, K., Chen, Z., & Wong, N. (2016).** Tensor Network alternating
+   linear scheme for MIMO Volterra system identification. _arXiv:1607.00127_. —
+   System-identification tensor shape/rank precedent.
 10. **Wu, H., Judd, P., Zhang, X., Isaev, M., & Micikevicius, P. (2020).**
-    Integer Quantization for Deep Learning Inference: Principles and
-    Empirical Evaluation. _arXiv:2004.09602_. — Affine int8 quantization
-    convention used by mainstream trained-model export formats.
-11. **Hennessy, J. L., & Patterson, D. A. (2017).** _Computer Architecture:
-    A Quantitative Approach_ (6th ed.). Morgan Kaufmann. — Cache and
+    Integer Quantization for Deep Learning Inference: Principles and Empirical
+    Evaluation. _arXiv:2004.09602_. — Affine int8 quantization convention used
+    by mainstream trained-model export formats.
+11. **Hennessy, J. L., & Patterson, D. A. (2017).** _Computer Architecture: A
+    Quantitative Approach_ (6th ed.). Morgan Kaufmann. — Cache and
     memory-hierarchy modeling for stride-based N-D indexing.
-12. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool
-    for Random Testing of Haskell Programs. _ACM SIGPLAN Notices_, 35(9),
-    268–279. — Property-based testing methodology (`proptest`).
-13. **Rust Project Developers. (2024).** _The Rustonomicon: The Dark Arts
-    of Advanced and Unsafe Rust Programming_. — Unsafe/aliasing rules for
-    tensor slice views.
-14. **ISO. (2018).** _ISO 26262-6:2018 Road vehicles — Functional safety —
-    Part 6: Product development at the software level_.
-15. **RTCA / EUROCAE. (2011).** _DO-178C: Software Considerations in
-    Airborne Systems and Equipment Certification_.
 
 ---
 
-### 10. Revision History
+### 11. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                        |
-|:---------|:---------------|:----------------|:-------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 26, 2026  | @MitchellDScott | Initial draft: `Storage` trait hierarchy, zero-copy views, stack `ArrayStorage` and inline citations.              |
-| 1.1      | August 2, 2026 | @MitchellDScott | Full overhaul after a research pass: added grid interpolation, an `Activation` trait and a quantized scalar type.  |
-| 1.2      | August 2, 2026 | @MitchellDScott | Relocated `ConversionError`; flagged `Float` dependency as provisional; revised development-plan estimates upward. |
+| Revision | Date            | Author          | Description                                                                                                                           |
+|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 26, 2026   | @MitchellDScott | Initial draft: N-dimensional storage layouts, indexing arithmetic, and zero-allocation views.                                          |
+| 1.1      | August 2, 2026   | @MitchellDScott | Grid interpolation & quantization: added multilinear lookup tables, `Activation` trait, and fixed-point quantized execution.          |
+| 1.2      | August 24, 2026 | @MitchellDScott | Rank-neutral buffer projection: integrated `FlatBuffer`/`FlatBufferMut` projection over `ContiguousStorage` backends.                 |
+| 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with multilinear interpolation tolerances and fixed-point quantization error bounds.       |
+| 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView` and `DenseStorage` traits.                                                 |
+| 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                          |
+| 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: large-grid interpolation; umbrella Instant timing. NFR-1 cap unchanged.                                               |
+| 1.7      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); MCU element cap unchanged.                                                     |
+| 1.8      | August 28, 2026 | @MitchellDScott | Example crate: $16\times 16$ curved-grid interpolation and non-dyadic Q7. NFR-1 cap unchanged.                                          |

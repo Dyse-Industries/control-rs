@@ -8,11 +8,11 @@ ci = ["xtask", "ci"]
 # Interactive TUI
 tui = ["xtask", "tui"]
 
-# HIL Test Infrastructure & Target Execution Aliases
+# On-target ETS infrastructure and target execution aliases
 qemu = ["tui", "qemu"]
 teensy = ["tui", "teensy"]
 
-# SIL Test Infrastructure & Target Execution Aliases
+# CI → virtual ETS (QEMU) and CI → ETS (board)
 qemu-ci = ["ci", "qemu"]
 teensy-ci = ["ci", "teensy"]
 

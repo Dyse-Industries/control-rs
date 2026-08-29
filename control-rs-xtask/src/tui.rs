@@ -1,4 +1,4 @@
-//! Interactive Terminal User Interface (TUI) for hardware-in-the-loop (HIL) testing.
+//! Interactive Terminal User Interface (TUI) for Embedded Test Server (ETS) testing.
 //! Allows running, stopping and filtering tests, as well as modifying settings dynamically.
 use std::io::stdout;
 use std::time::Duration;
@@ -21,8 +21,8 @@ use ratatui::{
 };
 
 use crate::bridge::{BridgeMessage, ServerBridge, Target};
-use control_rs_hil::comms::{Command, LogMessage, Telemetry, TestState};
-use control_rs_hil::settings::SettingValue;
+use control_rs_ets::comms::{Command, LogMessage, Telemetry, TestState};
+use control_rs_ets::settings::SettingValue;
 
 type TuiTerminal = Terminal<CrosstermBackend<std::io::Stdout>>;
 type TuiResult = Result<(), Box<dyn std::error::Error>>;
@@ -838,7 +838,7 @@ fn draw_ui(f: &mut ratatui::Frame<'_>, state: &mut AppState) {
     let header = Paragraph::new(header_text).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" control-rs HIL Console "),
+            .title(" control-rs ETS Console "),
     );
     f.render_widget(header, chunks[0]);
 
@@ -1186,10 +1186,10 @@ fn run_tui_loop(
 
             bridge = match target {
                 Target::QemuSemihosting { .. } => {
-                    ServerBridge::new(target.clone(), Some(elf_path))?
+                    ServerBridge::new(target.clone(), Some(elf_path), false)?
                 }
                 Target::Serial { .. } => {
-                    ServerBridge::new(target.clone(), None)?
+                    ServerBridge::new(target.clone(), None, false)?
                 }
             };
 
@@ -1237,7 +1237,7 @@ mod tests {
     #![allow(clippy::too_many_lines)]
 
     use super::*;
-    use control_rs_hil::comms::LogMessage;
+    use control_rs_ets::comms::LogMessage;
 
     fn make_exit_status() -> std::process::ExitStatus {
         std::process::Command::new("true")
@@ -2104,5 +2104,279 @@ mod tests {
         state.handle_key(KeyCode::Up, &mut cmd_tx);
         assert!(!state.show_details_modal);
         assert_eq!(state.selected_item_idx, 1);
+    }
+
+    #[test]
+    fn test_draw_ui_all_list_and_log_branches() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut state = AppState::new();
+        let mut cmd_tx = Vec::new();
+        state.target_info = "QEMU (cortex-m7)".to_string();
+        state.link_info = "Semihosting".to_string();
+        state.handle_telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite_zero",
+                description: "desc",
+                test_count: 4,
+                setting_count: 8,
+            },
+            &mut cmd_tx,
+        );
+        for (id, name, st) in [
+            (0u16, "pending", TestState::Pending),
+            (1, "running", TestState::Running),
+            (2, "passed", TestState::Passed),
+            (3, "failed", TestState::Failed),
+        ] {
+            state.handle_telemetry(
+                Telemetry::TestInfo {
+                    suite_id: 0,
+                    test_id: id,
+                    name,
+                    description: "",
+                },
+                &mut cmd_tx,
+            );
+            state.handle_telemetry(
+                Telemetry::TestStateChange {
+                    suite_id: 0,
+                    test_id: id,
+                    state: st,
+                },
+                &mut cmd_tx,
+            );
+        }
+        state.suites[0].tests[2].cycles = Some(10);
+        state.suites[0].tests[2].time_us = Some(20);
+        state.suites[0].tests[3].cycles = Some(11);
+        state.suites[0].tests[3].time_us = Some(21);
+        state.suites[0].tests[3].stack_peak = Some(64);
+
+        let settings = [
+            SettingValue::U8(1),
+            SettingValue::U16(2),
+            SettingValue::U32(3),
+            SettingValue::U64(4),
+            SettingValue::I8(-1),
+            SettingValue::I32(-2),
+            SettingValue::Bool(true),
+            SettingValue::F32(1.5),
+        ];
+        for (id, value) in settings.into_iter().enumerate() {
+            state.handle_telemetry(
+                Telemetry::SettingInfo {
+                    suite_id: 0,
+                    setting_id: u16::try_from(id).unwrap_or(0),
+                    name: "s",
+                    description: "",
+                    value,
+                },
+                &mut cmd_tx,
+            );
+        }
+        state.handle_telemetry(Telemetry::DiscoveryComplete, &mut cmd_tx);
+        state.add_log("[PASS] ok".to_string());
+        state.add_log("[FAIL] no".to_string());
+        state.add_log("[PANIC] boom".to_string());
+        state.add_log("[LOG] rtt".to_string());
+        state.add_log("plain".to_string());
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw_ui(f, &mut state)).unwrap();
+
+        state.suites[0].collapsed = true;
+        terminal.draw(|f| draw_ui(f, &mut state)).unwrap();
+        state.suites[0].collapsed = false;
+
+        state.is_filtering = true;
+        state.filter_query = "passed".to_string();
+        terminal.draw(|f| draw_ui(f, &mut state)).unwrap();
+        state.filter_query = "nomatch".to_string();
+        terminal.draw(|f| draw_ui(f, &mut state)).unwrap();
+        state.is_filtering = false;
+        state.filter_query.clear();
+
+        state.editing_setting = Some((0, 0));
+        state.setting_input = "9".to_string();
+        terminal.draw(|f| draw_ui(f, &mut state)).unwrap();
+        state.editing_setting = None;
+
+        state.show_details_modal = true;
+        terminal.draw(|f| draw_ui(f, &mut state)).unwrap();
+
+        state.selected_item_idx = 5;
+        state.activate_selected_item(&mut cmd_tx);
+        for i in 0..8u16 {
+            state.selected_item_idx = 5 + i as usize;
+            state.activate_selected_item(&mut cmd_tx);
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_setting_editing_all_types_and_errors() {
+        let mut state = AppState::new();
+        let mut cmd_tx = Vec::new();
+        state.handle_telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite",
+                description: "",
+                test_count: 0,
+                setting_count: 8,
+            },
+            &mut cmd_tx,
+        );
+        let settings = vec![
+            SettingValue::U8(1),
+            SettingValue::U16(2),
+            SettingValue::U32(3),
+            SettingValue::U64(4),
+            SettingValue::I8(-1),
+            SettingValue::I32(-2),
+            SettingValue::Bool(true),
+            SettingValue::F32(1.5),
+        ];
+        for (id, value) in settings.into_iter().enumerate() {
+            state.handle_telemetry(
+                Telemetry::SettingInfo {
+                    suite_id: 0,
+                    setting_id: u16::try_from(id).unwrap_or(0),
+                    name: "s",
+                    description: "",
+                    value,
+                },
+                &mut cmd_tx,
+            );
+        }
+        state.handle_telemetry(Telemetry::DiscoveryComplete, &mut cmd_tx);
+        cmd_tx.clear();
+
+        // 1. Edit U8 successfully
+        state.editing_setting = Some((0, 0));
+        state.setting_input = "42".to_string();
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert!(matches!(
+            cmd_tx.pop(),
+            Some(Command::SetSetting {
+                value: SettingValue::U8(42),
+                ..
+            })
+        ));
+
+        // 2. Edit U16
+        state.editing_setting = Some((0, 1));
+        state.setting_input = "1000".to_string();
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert!(matches!(
+            cmd_tx.pop(),
+            Some(Command::SetSetting {
+                value: SettingValue::U16(1000),
+                ..
+            })
+        ));
+
+        // 3. Edit U32
+        state.editing_setting = Some((0, 2));
+        state.setting_input = "100000".to_string();
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert!(matches!(
+            cmd_tx.pop(),
+            Some(Command::SetSetting {
+                value: SettingValue::U32(100_000),
+                ..
+            })
+        ));
+
+        // 4. Edit U64
+        state.editing_setting = Some((0, 3));
+        state.setting_input = "999999999".to_string();
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert!(matches!(
+            cmd_tx.pop(),
+            Some(Command::SetSetting {
+                value: SettingValue::U64(999_999_999),
+                ..
+            })
+        ));
+
+        // 5. Edit I8
+        state.editing_setting = Some((0, 4));
+        state.setting_input = "-12".to_string();
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert!(matches!(
+            cmd_tx.pop(),
+            Some(Command::SetSetting {
+                value: SettingValue::I8(-12),
+                ..
+            })
+        ));
+
+        // 6. Edit I32
+        state.editing_setting = Some((0, 5));
+        state.setting_input = "-12345".to_string();
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert!(matches!(
+            cmd_tx.pop(),
+            Some(Command::SetSetting {
+                value: SettingValue::I32(-12345),
+                ..
+            })
+        ));
+
+        // 7. Edit Bool
+        state.editing_setting = Some((0, 6));
+        state.setting_input = "false".to_string();
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert!(matches!(
+            cmd_tx.pop(),
+            Some(Command::SetSetting {
+                value: SettingValue::Bool(false),
+                ..
+            })
+        ));
+
+        // 8. Edit F32
+        state.editing_setting = Some((0, 7));
+        state.setting_input = "3.25".to_string();
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert!(matches!(
+            cmd_tx.pop(),
+            Some(Command::SetSetting {
+                value: SettingValue::F32(v),
+                ..
+            }) if (v - 3.25).abs() < 1e-6
+        ));
+
+        // 9. Parse error handling
+        state.editing_setting = Some((0, 0));
+        state.setting_input = "not_a_number".to_string();
+        state.handle_key(KeyCode::Enter, &mut cmd_tx);
+        assert!(cmd_tx.is_empty());
+        assert!(
+            state
+                .console_logs
+                .iter()
+                .any(|l| l.contains("Failed to parse value"))
+        );
+
+        // 10. Esc cancels editing
+        state.editing_setting = Some((0, 0));
+        state.setting_input = "123".to_string();
+        state.handle_key(KeyCode::Esc, &mut cmd_tx);
+        assert!(state.editing_setting.is_none());
+        assert_eq!(state.setting_input, "");
+
+        // 11. Backspace and digit inputs
+        state.editing_setting = Some((0, 0));
+        state.handle_key(KeyCode::Char('5'), &mut cmd_tx);
+        state.handle_key(KeyCode::Char('6'), &mut cmd_tx);
+        assert_eq!(state.setting_input, "56");
+        state.handle_key(KeyCode::Backspace, &mut cmd_tx);
+        assert_eq!(state.setting_input, "5");
     }
 }

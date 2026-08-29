@@ -1,11 +1,23 @@
 //! Utility functions and structures for `xtask`'s build and test-execution tasks.
 //! Contains formatting, git information collection and report generation helper functions.
 
-use control_rs_hil::comms::TestState;
+use control_rs_ets::comms::TestState;
 use regex::Regex;
 use std::env;
+use std::fmt;
 use std::fs;
+use std::io::{self, IsTerminal};
 use std::process::Command;
+
+/// Cargo status-line width: right-aligned verb plus a message on stderr.
+const CARGO_STATUS_WIDTH: usize = 12;
+
+/// Cargo HEADER/ERROR/WARN: bold, then bright green/red/yellow (`92`/`91`/`93`).
+const ANSI_BOLD: &str = "\x1b[1m";
+const ANSI_GREEN: &str = "\x1b[92m";
+const ANSI_RED: &str = "\x1b[91m";
+const ANSI_YELLOW: &str = "\x1b[93m";
+const ANSI_RESET: &str = "\x1b[0m";
 
 /// Summary of cargo tarpaulin test execution and line coverage.
 #[derive(Debug, Clone)]
@@ -24,7 +36,7 @@ pub struct TarpaulinSummary {
     pub total_lines: usize,
 }
 
-/// Results of a headlessly run SIL (Software-in-the-Loop) test.
+/// Results of a CI-driven ETS or virtual ETS run.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct HeadlessTestResult {
     /// The name of the test suite.
@@ -39,6 +51,82 @@ pub struct HeadlessTestResult {
     pub time_us: Option<u64>,
     /// Stack high-water mark in bytes if successful.
     pub stack_peak: Option<u32>,
+}
+
+/// Formats a cargo-style status line (`{status:>12} {msg}`), without color.
+pub fn format_status(status: &str, msg: impl fmt::Display) -> String {
+    format_status_with(status, msg, false)
+}
+
+/// Formats a cargo-style diagnostic (`error: {msg}`), not column-justified.
+pub fn format_error(msg: impl fmt::Display) -> String {
+    format_error_with(msg, false)
+}
+
+/// Prints a cargo-style status line to stderr (green bold verb when color is on).
+pub fn status(status: &str, msg: impl fmt::Display) {
+    eprintln!("{}", format_status_with(status, msg, color_wanted_stderr()));
+}
+
+/// Prints a cargo-style error diagnostic to stderr (red bold `error` when color is on).
+pub fn error(msg: impl fmt::Display) {
+    eprintln!("{}", format_error_with(msg, color_wanted_stderr()));
+}
+
+/// Prints a cargo-style warning diagnostic to stderr (yellow bold `warning` when color is on).
+pub fn warning(msg: impl fmt::Display) {
+    eprintln!("{}", format_warning_with(msg, color_wanted_stderr()));
+}
+
+/// Whether cargo-style color should be used for the given environment.
+fn color_wanted(
+    cargo_term_color: Option<&str>,
+    no_color: bool,
+    stderr_is_tty: bool,
+) -> bool {
+    match cargo_term_color {
+        Some("always") => true,
+        Some("never") => false,
+        _ if no_color => false,
+        _ => stderr_is_tty,
+    }
+}
+
+fn color_wanted_stderr() -> bool {
+    color_wanted(
+        env::var("CARGO_TERM_COLOR").ok().as_deref(),
+        env::var_os("NO_COLOR").is_some(),
+        io::stderr().is_terminal(),
+    )
+}
+
+fn format_status_with(
+    status: &str,
+    msg: impl fmt::Display,
+    color: bool,
+) -> String {
+    let verb = format!("{status:>CARGO_STATUS_WIDTH$}");
+    if color {
+        format!("{ANSI_BOLD}{ANSI_GREEN}{verb}{ANSI_RESET} {msg}")
+    } else {
+        format!("{verb} {msg}")
+    }
+}
+
+fn format_error_with(msg: impl fmt::Display, color: bool) -> String {
+    if color {
+        format!("{ANSI_BOLD}{ANSI_RED}error{ANSI_RESET}: {msg}")
+    } else {
+        format!("error: {msg}")
+    }
+}
+
+fn format_warning_with(msg: impl fmt::Display, color: bool) -> String {
+    if color {
+        format!("{ANSI_BOLD}{ANSI_YELLOW}warning{ANSI_RESET}: {msg}")
+    } else {
+        format!("warning: {msg}")
+    }
 }
 
 /// Helper function to format the issue summary section.
@@ -102,7 +190,7 @@ fn format_number(val: u64) -> String {
     result
 }
 
-fn format_sil_rows(results: &[&HeadlessTestResult]) -> String {
+fn format_ets_rows(results: &[&HeadlessTestResult]) -> String {
     let re = Regex::new(r"^(.*) \(([^)]+)\)$").unwrap();
 
     let mut targets = Vec::new();
@@ -260,8 +348,8 @@ fn format_sil_rows(results: &[&HeadlessTestResult]) -> String {
     s
 }
 
-/// Helper function to format the high-level summary of the headless SIL test execution.
-pub fn format_sil_summary(results: &[HeadlessTestResult]) -> String {
+/// Helper function to format the high-level summary of CI ETS results.
+pub fn format_ets_summary(results: &[HeadlessTestResult]) -> String {
     let total = results.len();
     let failed_tests: Vec<&HeadlessTestResult> = results
         .iter()
@@ -270,7 +358,7 @@ pub fn format_sil_summary(results: &[HeadlessTestResult]) -> String {
     let succeeded = total - failed_tests.len();
 
     let mut s = String::new();
-    s.push_str("### Headless SIL Test Results\n\n");
+    s.push_str("### ETS Results\n\n");
     s.push_str(&format!("**Tests Run:** {}\n", total));
     s.push_str(&format!("**Succeeded:** {}\n\n", succeeded));
 
@@ -283,16 +371,16 @@ pub fn format_sil_summary(results: &[HeadlessTestResult]) -> String {
                 failed_tests.len()
             ));
         }
-        s.push_str(&format_sil_rows(&failed_tests[..to_show]));
+        s.push_str(&format_ets_rows(&failed_tests[..to_show]));
         s.push('\n');
     }
     s
 }
 
-/// Helper function to format the headless SIL test results table.
-pub fn format_sil_results_table(results: &[HeadlessTestResult]) -> String {
+/// Helper function to format the CI ETS results table.
+pub fn format_ets_results_table(results: &[HeadlessTestResult]) -> String {
     let refs: Vec<&HeadlessTestResult> = results.iter().collect();
-    format_sil_rows(&refs)
+    format_ets_rows(&refs)
 }
 
 /// Helper function to collect version info of build tools and cargo dependency tree.
@@ -430,7 +518,7 @@ pub fn build_report(
     clippy_str: &str,
     tarp_summary: &TarpaulinSummary,
     tarp_str: &str,
-    sil_results: &Result<Vec<HeadlessTestResult>, String>,
+    ets_results: &Result<Vec<HeadlessTestResult>, String>,
     lint_time: f32,
     test_time: f32,
 ) -> String {
@@ -450,26 +538,26 @@ pub fn build_report(
         tarp_summary.total_lines,
     ));
 
-    match sil_results {
+    match ets_results {
         Ok(results) => {
-            report.push_str(&format_sil_summary(results));
+            report.push_str(&format_ets_summary(results));
 
             let artifact_link = if let (Ok(repo), Ok(run_id)) = (
                 std::env::var("GITHUB_REPOSITORY"),
                 std::env::var("GITHUB_RUN_ID"),
             ) {
                 format!(
-                    "Detailed SIL test results are available in the [sil-results.json](https://github.com/{}/actions/runs/{}) artifact.\n\n",
+                    "Detailed ETS results are available in the [ets-results.json](https://github.com/{}/actions/runs/{}) artifact.\n\n",
                     repo, run_id
                 )
             } else {
-                "Detailed SIL test results have been written to `sil-results.json`.\n\n".to_string()
+                "Detailed ETS results have been written to `ets-results.json`.\n\n".to_string()
             };
             report.push_str(&artifact_link);
         }
         Err(e) => {
             report.push_str(&format!(
-                "### Headless SIL Test Results\n\n**ERROR**: Failed to run SIL tests: {}\n\n",
+                "### ETS Results\n\n**ERROR**: Failed to run CI ETS: {}\n\n",
                 e
             ));
         }
@@ -478,11 +566,9 @@ pub fn build_report(
     report.push_str("<details>\n<summary>Detailed Logs</summary>\n\n");
     report.push_str(&collect_system_info());
 
-    if let Ok(results) = sil_results {
-        report.push_str(
-            "\n<details>\n<summary>SIL Test Results Log</summary>\n\n",
-        );
-        report.push_str(&format_sil_results_table(results));
+    if let Ok(results) = ets_results {
+        report.push_str("\n<details>\n<summary>ETS Results Log</summary>\n\n");
+        report.push_str(&format_ets_results_table(results));
         report.push_str("\n</details>\n");
     }
 
@@ -519,10 +605,47 @@ pub fn save_report(path: &str, content: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use control_rs_hil::comms::TestState;
+    use control_rs_ets::comms::TestState;
 
     #[test]
-    fn test_format_sil_rows_passed() {
+    fn cargo_status_is_12_column_and_error_is_not_justified() {
+        assert_eq!(
+            format_status("Checking", "formatting"),
+            "    Checking formatting"
+        );
+        assert_eq!(
+            format_status("Running", "tarpaulin"),
+            "     Running tarpaulin"
+        );
+        assert_eq!(
+            format_error("CI pipeline failed"),
+            "error: CI pipeline failed"
+        );
+    }
+
+    #[test]
+    fn cargo_status_color_wraps_verb_error_and_warning() {
+        assert_eq!(
+            format_status_with("Checking", "formatting", true),
+            "\x1b[1m\x1b[92m    Checking\x1b[0m formatting"
+        );
+        assert_eq!(
+            format_error_with("failed", true),
+            format!("{ANSI_BOLD}{ANSI_RED}error{ANSI_RESET}: failed")
+        );
+        assert_eq!(
+            format_warning_with("hook", true),
+            format!("{ANSI_BOLD}{ANSI_YELLOW}warning{ANSI_RESET}: hook")
+        );
+        assert!(color_wanted(Some("always"), true, false));
+        assert!(!color_wanted(Some("never"), false, true));
+        assert!(!color_wanted(None, true, true));
+        assert!(color_wanted(None, false, true));
+        assert!(!color_wanted(None, false, false));
+    }
+
+    #[test]
+    fn test_format_ets_rows_passed() {
         let results = [
             HeadlessTestResult {
                 suite_name: "SuiteA".to_string(),
@@ -542,7 +665,7 @@ mod tests {
             },
         ];
         let refs: Vec<&HeadlessTestResult> = results.iter().collect();
-        let formatted = format_sil_rows(&refs);
+        let formatted = format_ets_rows(&refs);
         assert!(formatted.contains("SuiteA"));
         assert!(formatted.contains("Test1"));
         assert!(formatted.contains("Pass"));
@@ -554,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn test_format_sil_summary_all_passed() {
+    fn test_format_ets_summary_all_passed() {
         let results = vec![HeadlessTestResult {
             suite_name: "SuiteA".to_string(),
             test_name: "Test1".to_string(),
@@ -563,15 +686,15 @@ mod tests {
             time_us: Some(10),
             stack_peak: Some(256),
         }];
-        let summary = format_sil_summary(&results);
-        assert!(summary.contains("### Headless SIL Test Results"));
+        let summary = format_ets_summary(&results);
+        assert!(summary.contains("### ETS Results"));
         assert!(summary.contains("**Tests Run:** 1"));
         assert!(summary.contains("**Succeeded:** 1"));
         assert!(!summary.contains("#### Failing Tests"));
     }
 
     #[test]
-    fn test_format_sil_summary_some_failed() {
+    fn test_format_ets_summary_some_failed() {
         let mut results = Vec::new();
         for i in 1..=12 {
             results.push(HeadlessTestResult {
@@ -587,7 +710,7 @@ mod tests {
                 stack_peak: None,
             });
         }
-        let summary = format_sil_summary(&results);
+        let summary = format_ets_summary(&results);
         assert!(summary.contains("**Tests Run:** 12"));
         assert!(summary.contains("**Succeeded:** 2"));
         assert!(summary.contains("#### Failing Tests"));
@@ -602,12 +725,12 @@ mod tests {
             time_us: None,
             stack_peak: None,
         });
-        let summary2 = format_sil_summary(&results);
+        let summary2 = format_ets_summary(&results);
         assert!(summary2.contains("*Showing first 10 of 11 failing tests:*"));
     }
 
     #[test]
-    fn test_format_sil_rows_multiple_targets() {
+    fn test_format_ets_rows_multiple_targets() {
         let results = [
             HeadlessTestResult {
                 suite_name: "SuiteA (ARM)".to_string(),
@@ -627,7 +750,7 @@ mod tests {
             },
         ];
         let refs: Vec<&HeadlessTestResult> = results.iter().collect();
-        let formatted = format_sil_rows(&refs);
+        let formatted = format_ets_rows(&refs);
         assert!(formatted.contains("SuiteA"));
         assert!(formatted.contains("Test1"));
         assert!(formatted.contains("ARM (Status / Time / Stack / Cycles)"));
@@ -688,7 +811,7 @@ mod tests {
             covered_lines: 75,
             total_lines: 100,
         };
-        let sil_results = Ok(std::vec![HeadlessTestResult {
+        let ets_results = Ok(std::vec![HeadlessTestResult {
             suite_name: "SuiteB".to_string(),
             test_name: "TestB".to_string(),
             state: TestState::Passed,
@@ -704,7 +827,7 @@ mod tests {
             "",
             &tarp_summary,
             "tarpaulin logs",
-            &sil_results,
+            &ets_results,
             1.0,
             2.0,
         );
@@ -718,5 +841,36 @@ mod tests {
         let read_res = std::fs::read_to_string(path).unwrap();
         assert_eq!(read_res, report);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_format_helpers_and_targeted_ets_rows() {
+        assert!(format_issue_summary(2, 3).contains("Formatting"));
+        assert!(format_performance(1.5, 2.25).contains("1.50s"));
+        assert!(format_test_summary(4, 1, 0).contains("Passed"));
+        assert!(format_coverage_summary("91.00", 91, 100).contains("91 / 100"));
+
+        let results = [
+            HeadlessTestResult {
+                suite_name: "SuiteA (ARM HF)".to_string(),
+                test_name: "Test1".to_string(),
+                state: TestState::Passed,
+                cycles: Some(1_234_567),
+                time_us: Some(10),
+                stack_peak: Some(256),
+            },
+            HeadlessTestResult {
+                suite_name: "SuiteA (RISC-V 32)".to_string(),
+                test_name: "Test1".to_string(),
+                state: TestState::Failed,
+                cycles: None,
+                time_us: None,
+                stack_peak: None,
+            },
+        ];
+        let refs: Vec<&HeadlessTestResult> = results.iter().collect();
+        let formatted = format_ets_rows(&refs);
+        assert!(formatted.contains("ARM HF"));
+        assert!(formatted.contains("1,234,567"));
     }
 }

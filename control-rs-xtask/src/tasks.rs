@@ -1,619 +1,18 @@
 //! Modules defining the test-execution and compilation tasks executed by `xtask`.
 //! Includes tasks for formatting check, clippy checks, coverage tracking with tarpaulin,
-//! and running headless/interactive tests.
+//! and running CI (virtual ETS / ETS) and interactive TUI tests.
 
 use regex::Regex;
 use std::fs;
+use std::path::Path;
 use std::process::{Command, exit};
 use std::time::{Duration, Instant};
 
-use crate::utils::{HeadlessTestResult, TarpaulinSummary};
+use crate::utils::{self, HeadlessTestResult, TarpaulinSummary};
 use control_rs_xtask::{bridge, tui};
 
-/// Representation of a single test case under discovery.
-struct TestItem {
-    /// Name of the test case.
-    name: String,
-    /// Current execution state of the test.
-    state: control_rs_hil::comms::TestState,
-}
-
-/// Representation of a configuration setting in a test suite.
-struct SettingItem {
-    /// Name of the setting.
-    name: String,
-    /// Current value of the setting.
-    value: control_rs_hil::settings::SettingValue,
-}
-
-/// Representation of a test suite containing tests and settings.
-struct SuiteItem {
-    /// Name of the suite.
-    name: String,
-    /// Collection of tests inside this suite.
-    tests: Vec<TestItem>,
-    /// Collection of config settings inside this suite.
-    settings: Vec<SettingItem>,
-}
-
-/// Represents individual file coverage summary from tarpaulin JSON output.
-#[derive(serde::Deserialize)]
-struct TarpaulinFile {
-    /// Number of covered lines.
-    covered: usize,
-    /// Number of coverable lines.
-    coverable: usize,
-}
-
-/// Represents the top-level structure of tarpaulin JSON output report.
-#[derive(serde::Deserialize)]
-struct TarpaulinReportJson {
-    /// List of file coverage statistics.
-    files: Vec<TarpaulinFile>,
-}
-
-/// Helper function to build the QEMU target ELF.
-pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
-    println!("\t* building QEMU target ELF for {:?}...", arch);
-    let (target_triple, bin_name) = match arch {
-        bridge::QemuArch::Thumbv7emNoneEabihf => (
-            "thumbv7em-none-eabihf",
-            "control-rs-qemu-thumbv7em-none-eabihf",
-        ),
-        bridge::QemuArch::Thumbv7emNoneEabi => {
-            ("thumbv7em-none-eabi", "control-rs-qemu-thumbv7em-none-eabi")
-        }
-        bridge::QemuArch::Riscv32imacUnknownNoneElf => (
-            "riscv32imac-unknown-none-elf",
-            "control-rs-qemu-riscv32imac-unknown-none-elf",
-        ),
-        bridge::QemuArch::Riscv64gcUnknownNoneElf => (
-            "riscv64gc-unknown-none-elf",
-            "control-rs-qemu-riscv64gc-unknown-none-elf",
-        ),
-    };
-
-    let mut command = Command::new("cargo");
-    command.current_dir("examples/qemu");
-    let build_status = command
-        .args([
-            "build",
-            "--bin",
-            bin_name,
-            "--target",
-            target_triple,
-            "--release",
-        ])
-        .status()
-        .expect("Failed to build QEMU target.");
-
-    if !build_status.success() {
-        eprintln!("\tFailed to compile QEMU target.");
-        exit(1);
-    }
-
-    format!(
-        "examples/qemu/target/{}/release/{}",
-        target_triple, bin_name
-    )
-}
-
-/// Task to run formatting check.
-pub fn run_fmt() -> (Result<(), usize>, String) {
-    println!("\t* formatting check...");
-    let fmt_output = Command::new("cargo")
-        .args(["fmt-check"])
-        .output()
-        .expect("Failed to run cargo fmt-check");
-
-    let stdout_str = String::from_utf8_lossy(&fmt_output.stdout);
-    let stderr_str = String::from_utf8_lossy(&fmt_output.stderr);
-    let combined = format!("{}{}", stdout_str, stderr_str);
-
-    let ansi_escape = Regex::new(r"\x1B\[[0-9;]*[mK]|\x1B\(B").unwrap();
-    let clean_str = ansi_escape.replace_all(&combined, "").into_owned();
-    let fmt_errors = clean_str.matches("Diff in").count();
-
-    let res = if fmt_output.status.success() && fmt_errors == 0 {
-        Ok(())
-    } else {
-        Err(fmt_errors)
-    };
-
-    (res, clean_str)
-}
-
-/// Task to run clippy check with JSON output formatting.
-pub fn run_clippy() -> (Result<(), usize>, String) {
-    println!("\t* clippy check...");
-    let clippy_output = Command::new("cargo")
-        .args(["clippy-ci"])
-        .output()
-        .expect("Failed to run cargo clippy-json");
-
-    let stdout_str = String::from_utf8_lossy(&clippy_output.stdout);
-    let stderr_str = String::from_utf8_lossy(&clippy_output.stderr);
-
-    let mut clippy_errors = 0;
-    let mut rendered_logs = String::new();
-
-    for line in stdout_str.lines() {
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-            if val.get("reason").and_then(|r| r.as_str())
-                == Some("compiler-message")
-            {
-                if let Some(msg) = val.get("message") {
-                    if msg.get("level").and_then(|l| l.as_str())
-                        == Some("error")
-                    {
-                        clippy_errors += 1;
-                    }
-                    if let Some(rendered) =
-                        msg.get("rendered").and_then(|r| r.as_str())
-                    {
-                        rendered_logs.push_str(rendered);
-                    }
-                }
-            }
-        }
-    }
-
-    // Include stderr in clippy logs if compilation failed completely
-    if !clippy_output.status.success() && rendered_logs.is_empty() {
-        rendered_logs.push_str(&stderr_str);
-    }
-
-    let ansi_escape = Regex::new(r"\x1B\[[0-9;]*[mK]|\x1B\(B").unwrap();
-    let clean_str = ansi_escape.replace_all(&rendered_logs, "").into_owned();
-
-    let success = clippy_output.status.success() && clippy_errors == 0;
-    let res = if success { Ok(()) } else { Err(clippy_errors) };
-
-    (res, clean_str)
-}
-
-/// Task to run tarpaulin test & coverage.
-pub fn run_tarpaulin() -> (Result<TarpaulinSummary, ()>, String) {
-    println!("\t* tarpaulin test & coverage...");
-    let tarpaulin_output = Command::new("cargo")
-        .args(["coverage-ci"])
-        .output()
-        .expect("Failed to run cargo coverage");
-
-    let tarp_str = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&tarpaulin_output.stderr),
-        String::from_utf8_lossy(&tarpaulin_output.stdout)
-    );
-
-    let ansi_escape = Regex::new(r"\x1B\[[0-9;]*[mK]|\x1B\(B").unwrap();
-    let clean_tarp_str = ansi_escape.replace_all(&tarp_str, "").into_owned();
-
-    // Parse test counts using regex from log
-    let re_passed = Regex::new(r"(\d+) passed").unwrap();
-    let re_failed = Regex::new(r"(\d+) failed").unwrap();
-    let re_ignored = Regex::new(r"(\d+) ignored").unwrap();
-
-    let passed: usize = re_passed
-        .captures_iter(&clean_tarp_str)
-        .filter_map(|c| c[1].parse::<usize>().ok())
-        .sum();
-    let failed: usize = re_failed
-        .captures_iter(&clean_tarp_str)
-        .filter_map(|c| c[1].parse::<usize>().ok())
-        .sum();
-    let ignored: usize = re_ignored
-        .captures_iter(&clean_tarp_str)
-        .filter_map(|c| c[1].parse::<usize>().ok())
-        .sum();
-
-    // Parse coverage from JSON report
-    let mut covered_lines = 0;
-    let mut total_lines = 0;
-    if let Ok(json_content) = fs::read_to_string("tarpaulin-report.json") {
-        if let Ok(report) =
-            serde_json::from_str::<TarpaulinReportJson>(&json_content)
-        {
-            for file in report.files {
-                covered_lines += file.covered;
-                total_lines += file.coverable;
-            }
-        }
-    }
-
-    let percent = if total_lines > 0 {
-        format!("{:.2}", (covered_lines as f64 / total_lines as f64) * 100.0)
-    } else {
-        "0.00".to_string()
-    };
-
-    let summary = TarpaulinSummary {
-        passed,
-        failed,
-        ignored,
-        coverage_percent: percent,
-        covered_lines,
-        total_lines,
-    };
-
-    let success = tarpaulin_output.status.success() && failed == 0;
-    let res = if success { Ok(summary) } else { Err(()) };
-
-    (res, clean_tarp_str)
-}
-
-/// Task to run headless SIL execution.
-pub fn run_headless_sil(
-    target: &bridge::Target,
-) -> (Result<Vec<HeadlessTestResult>, String>, String) {
-    use bridge::BridgeMessage;
-    use control_rs_hil::comms::{Command as CommCommand, Telemetry, TestState};
-
-    let mut logs = String::new();
-    let mut elf_path = String::new();
-
-    let mut bridge = {
-        if let bridge::Target::QemuSemihosting { arch } = target {
-            elf_path = build_qemu_elf(*arch);
-        }
-        let elf_opt = if elf_path.is_empty() {
-            None
-        } else {
-            Some(elf_path.as_str())
-        };
-        match bridge::ServerBridge::new(target.clone(), elf_opt) {
-            Ok(b) => b,
-            Err(e) => return (Err(e.to_string()), logs),
-        }
-    };
-
-    let mut log_and_print = |msg: &str| {
-        print!("{}", msg);
-        logs.push_str(msg);
-    };
-
-    log_and_print("\t* headless SIL tests...\n");
-
-    // Initial discovery
-    let mut last_send = Instant::now();
-    let _ = bridge.send_command(&CommCommand::ListSuites);
-
-    let mut suites: Vec<SuiteItem> = Vec::new();
-    let mut run_queue = Vec::new();
-    let mut results: Vec<HeadlessTestResult> = Vec::new();
-    let mut current_running = None;
-    let mut discovery_complete = false;
-    let mut exit_loop = false;
-
-    let start_time = Instant::now();
-    let timeout = Duration::from_secs(90);
-
-    while !exit_loop {
-        if start_time.elapsed() > timeout {
-            bridge.kill();
-            return (
-                Err("SIL execution timed out after 90s".to_string()),
-                logs,
-            );
-        }
-
-        if !discovery_complete
-            && last_send.elapsed() > Duration::from_millis(500)
-        {
-            let _ = bridge.send_command(&CommCommand::ListSuites);
-            last_send = Instant::now();
-        }
-
-        // Poll bridge messages
-        while let Ok(msg) = bridge.receiver().try_recv() {
-            match msg {
-                BridgeMessage::Telemetry(telemetry) => match telemetry {
-                    Telemetry::SuiteInfo { suite_id, name, .. } => {
-                        let id = suite_id as usize;
-                        while suites.len() <= id {
-                            suites.push(SuiteItem {
-                                name: String::new(),
-                                tests: Vec::new(),
-                                settings: Vec::new(),
-                            });
-                        }
-                        suites[id].name = name.to_string();
-                    }
-                    Telemetry::TestInfo {
-                        suite_id,
-                        test_id,
-                        name,
-                        ..
-                    } => {
-                        let s_id = suite_id as usize;
-                        let t_id = test_id as usize;
-                        while suites[s_id].tests.len() <= t_id {
-                            suites[s_id].tests.push(TestItem {
-                                name: String::new(),
-                                state: TestState::Pending,
-                            });
-                        }
-                        suites[s_id].tests[t_id].name = name.to_string();
-                    }
-                    Telemetry::SettingInfo {
-                        suite_id,
-                        setting_id,
-                        name,
-                        value,
-                        ..
-                    } => {
-                        let s_id = suite_id as usize;
-                        let set_id = setting_id as usize;
-                        while suites[s_id].settings.len() <= set_id {
-                            suites[s_id].settings.push(SettingItem {
-                                name: String::new(),
-                                value:
-                                    control_rs_hil::settings::SettingValue::U8(
-                                        0,
-                                    ),
-                            });
-                        }
-                        suites[s_id].settings[set_id].name = name.to_string();
-                        suites[s_id].settings[set_id].value = value;
-                    }
-                    Telemetry::DiscoveryComplete => {
-                        discovery_complete = true;
-                        run_queue.clear();
-                        for (s_idx, suite) in suites.iter().enumerate() {
-                            for (t_idx, test) in suite.tests.iter().enumerate()
-                            {
-                                let already_run = results.iter().any(|r| {
-                                    r.suite_name == suite.name
-                                        && r.test_name == test.name
-                                });
-                                if !already_run {
-                                    run_queue
-                                        .push((s_idx as u16, t_idx as u16));
-                                }
-                            }
-                        }
-                        if !run_queue.is_empty() {
-                            let (next_s, next_t) = run_queue.remove(0);
-                            current_running = Some((next_s, next_t));
-                            let _ = bridge.send_command(
-                                &CommCommand::RunExecutable {
-                                    suite_id: next_s,
-                                    test_id: next_t,
-                                },
-                            );
-                        } else {
-                            exit_loop = true;
-                        }
-                    }
-                    Telemetry::TestStateChange {
-                        suite_id,
-                        test_id,
-                        state: new_state,
-                    } => {
-                        let s_id = suite_id as usize;
-                        let t_id = test_id as usize;
-                        suites[s_id].tests[t_id].state = new_state;
-
-                        if new_state == TestState::Failed {
-                            results.push(HeadlessTestResult {
-                                suite_name: suites[s_id].name.clone(),
-                                test_name: suites[s_id].tests[t_id]
-                                    .name
-                                    .clone(),
-                                state: TestState::Failed,
-                                cycles: None,
-                                time_us: None,
-                                stack_peak: None,
-                            });
-
-                            current_running = None;
-                            if !run_queue.is_empty() {
-                                let (next_s, next_t) = run_queue.remove(0);
-                                current_running = Some((next_s, next_t));
-                                let _ = bridge.send_command(
-                                    &CommCommand::RunExecutable {
-                                        suite_id: next_s,
-                                        test_id: next_t,
-                                    },
-                                );
-                            } else {
-                                exit_loop = true;
-                            }
-                        }
-                    }
-                    Telemetry::MetricReport {
-                        suite_id,
-                        test_id,
-                        cycles,
-                        time_us,
-                        stack_peak,
-                    } => {
-                        let s_id = suite_id as usize;
-                        let t_id = test_id as usize;
-
-                        results.push(HeadlessTestResult {
-                            suite_name: suites[s_id].name.clone(),
-                            test_name: suites[s_id].tests[t_id].name.clone(),
-                            state: TestState::Passed,
-                            cycles: Some(cycles),
-                            time_us: Some(time_us),
-                            stack_peak: Some(stack_peak),
-                        });
-
-                        current_running = None;
-                        if !run_queue.is_empty() {
-                            let (next_s, next_t) = run_queue.remove(0);
-                            current_running = Some((next_s, next_t));
-                            let _ = bridge.send_command(
-                                &CommCommand::RunExecutable {
-                                    suite_id: next_s,
-                                    test_id: next_t,
-                                },
-                            );
-                        } else {
-                            exit_loop = true;
-                        }
-                    }
-                    Telemetry::Log(_) => {}
-                    Telemetry::TargetPanic {
-                        message,
-                        file,
-                        line,
-                    } => {
-                        let panic_msg = format!(
-                            "Target panicked: '{}' at {}:{}\n",
-                            message, file, line
-                        );
-                        log_and_print(&panic_msg);
-
-                        if let Some((s_id, t_id)) = current_running {
-                            let s_idx = s_id as usize;
-                            let t_idx = t_id as usize;
-                            if s_idx < suites.len()
-                                && t_idx < suites[s_idx].tests.len()
-                            {
-                                suites[s_idx].tests[t_idx].state =
-                                    TestState::Failed;
-                                results.push(HeadlessTestResult {
-                                    suite_name: suites[s_idx].name.clone(),
-                                    test_name: suites[s_idx].tests[t_idx]
-                                        .name
-                                        .clone(),
-                                    state: TestState::Failed,
-                                    cycles: None,
-                                    time_us: None,
-                                    stack_peak: None,
-                                });
-                            }
-                        }
-
-                        let _ = bridge.send_command(&CommCommand::TryReset);
-                        std::thread::sleep(Duration::from_millis(50));
-                        bridge.kill();
-                        std::thread::sleep(Duration::from_secs(1));
-
-                        current_running = None;
-                        discovery_complete = false;
-
-                        let remaining_to_run = suites.iter().any(|suite| {
-                            suite.tests.iter().any(|test| {
-                                !results.iter().any(|r| {
-                                    r.suite_name == suite.name
-                                        && r.test_name == test.name
-                                })
-                            })
-                        });
-
-                        if remaining_to_run {
-                            log_and_print(
-                                "Restarting target bridge to continue running tests...\n",
-                            );
-                            let elf_opt = if elf_path.is_empty() {
-                                None
-                            } else {
-                                Some(elf_path.as_str())
-                            };
-                            bridge = match bridge::ServerBridge::new(
-                                target.clone(),
-                                elf_opt,
-                            ) {
-                                Ok(b) => b,
-                                Err(e) => return (Err(e.to_string()), logs),
-                            };
-                            let _ =
-                                bridge.send_command(&CommCommand::ListSuites);
-                            last_send = Instant::now();
-                        } else {
-                            exit_loop = true;
-                        }
-                    }
-                },
-                BridgeMessage::RawConsole(line) => {
-                    log_and_print(&format!("[Target Console] {}\n", line));
-                }
-            }
-        }
-
-        if let Ok(Some(status)) = bridge.try_wait() {
-            if !discovery_complete
-                || current_running.is_some()
-                || !run_queue.is_empty()
-            {
-                bridge.kill();
-                return (
-                    Err(format!(
-                        "QEMU process exited unexpectedly: {}",
-                        status
-                    )),
-                    logs,
-                );
-            }
-            exit_loop = true;
-        }
-
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    bridge.kill();
-    (Ok(results), logs)
-}
-
-/// Task to start the interactive HIL TUI.
-pub fn run_hil_tui(target: &bridge::Target) {
-    let elf_path = match target {
-        bridge::Target::QemuSemihosting { arch } => build_qemu_elf(*arch),
-        bridge::Target::Serial { .. } => String::new(),
-    };
-    let elf_opt = if elf_path.is_empty() {
-        None
-    } else {
-        Some(elf_path.as_str())
-    };
-    let bridge = match bridge::ServerBridge::new(target.clone(), elf_opt) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("\tFailed to start bridge: {}", e);
-            exit(1);
-        }
-    };
-    if let Err(e) = tui::run_tui(bridge, target, &elf_path) {
-        eprintln!("\tTUI Error: {}", e);
-        exit(1);
-    }
-}
-
-/// Task to install git hooks in the local repository.
-pub fn install_hooks() {
-    println!("\t* installing pre-commit git hook...");
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir
-        .parent()
-        .expect("Failed to find workspace root directory");
-    let git_dir = workspace_root.join(".git");
-
-    if !git_dir.exists() {
-        eprintln!(
-            "\tError: .git directory not found at {}. Is this a git repository?",
-            git_dir.display()
-        );
-        exit(1);
-    }
-
-    let hooks_dir = git_dir.join("hooks");
-    if !hooks_dir.exists() {
-        if let Err(e) = std::fs::create_dir_all(&hooks_dir) {
-            eprintln!(
-                "\tError: Failed to create hooks directory {}: {}",
-                hooks_dir.display(),
-                e
-            );
-            exit(1);
-        }
-    }
-
-    let pre_commit_path = hooks_dir.join("pre-commit");
-
-    let hook_content = r#"#!/bin/bash
+/// Generated pre-commit hook installed by [`install_hooks`].
+const PRE_COMMIT_HOOK: &str = r#"#!/bin/bash
 # Pre-commit hook to format code and run cargo clippy
 # Automatically generated by cargo xtask install-hooks
 
@@ -653,36 +52,1069 @@ echo "========================================="
 exit 0
 "#;
 
-    if let Err(e) = std::fs::write(&pre_commit_path, hook_content) {
-        eprintln!(
-            "\tError: Failed to write pre-commit hook file {}: {}",
-            pre_commit_path.display(),
-            e
-        );
-        exit(1);
+/// Representation of a single test case under discovery.
+struct TestItem {
+    /// Name of the test case.
+    name: String,
+    /// Current execution state of the test.
+    state: control_rs_ets::comms::TestState,
+}
+
+/// Representation of a configuration setting in a test suite.
+struct SettingItem {
+    /// Name of the setting.
+    name: String,
+    /// Current value of the setting.
+    value: control_rs_ets::settings::SettingValue,
+}
+
+/// Representation of a test suite containing tests and settings.
+struct SuiteItem {
+    /// Name of the suite.
+    name: String,
+    /// Collection of tests inside this suite.
+    tests: Vec<TestItem>,
+    /// Collection of config settings inside this suite.
+    settings: Vec<SettingItem>,
+}
+
+/// Represents individual file coverage summary from tarpaulin JSON output.
+#[derive(serde::Deserialize)]
+struct TarpaulinFile {
+    /// Number of covered lines.
+    covered: usize,
+    /// Number of coverable lines.
+    coverable: usize,
+}
+
+/// Represents the top-level structure of tarpaulin JSON output report.
+#[derive(serde::Deserialize)]
+struct TarpaulinReportJson {
+    /// List of file coverage statistics.
+    files: Vec<TarpaulinFile>,
+}
+
+/// Host-side CI ETS session state (discovery, run queue, results).
+struct CiEtsState {
+    current_running: Option<(u16, u16)>,
+    discovery_complete: bool,
+    exit_loop: bool,
+    logs: String,
+    results: Vec<HeadlessTestResult>,
+    run_queue: Vec<(u16, u16)>,
+    suites: Vec<SuiteItem>,
+}
+
+/// Side effects requested by [`CiEtsState`] while processing bridge messages.
+enum CiEtsAction {
+    PanicRestart,
+    Send(control_rs_ets::comms::Command),
+}
+
+impl CiEtsState {
+    fn new() -> Self {
+        Self {
+            current_running: None,
+            discovery_complete: false,
+            exit_loop: false,
+            logs: String::new(),
+            results: Vec::new(),
+            run_queue: Vec::new(),
+            suites: Vec::new(),
+        }
     }
 
-    // Set file permissions to executable on Unix-like operating systems.
+    fn log(&mut self, msg: &str) {
+        self.logs.push_str(msg);
+    }
+
+    fn emit_status(&mut self, verb: &str, msg: impl std::fmt::Display) {
+        let msg = msg.to_string();
+        utils::status(verb, &msg);
+        self.log(&utils::format_status(verb, &msg));
+        self.log("\n");
+    }
+
+    fn emit_error(&mut self, msg: impl std::fmt::Display) {
+        let msg = msg.to_string();
+        utils::error(&msg);
+        self.log(&utils::format_error(&msg));
+        self.log("\n");
+    }
+
+    fn start_next_or_exit(&mut self) -> Option<CiEtsAction> {
+        self.current_running = None;
+        if self.run_queue.is_empty() {
+            self.exit_loop = true;
+            None
+        } else {
+            let (next_s, next_t) = self.run_queue.remove(0);
+            self.current_running = Some((next_s, next_t));
+            Some(CiEtsAction::Send(
+                control_rs_ets::comms::Command::RunExecutable {
+                    suite_id: next_s,
+                    test_id: next_t,
+                },
+            ))
+        }
+    }
+
+    fn handle_message(
+        &mut self,
+        msg: bridge::BridgeMessage,
+    ) -> Vec<CiEtsAction> {
+        use bridge::BridgeMessage;
+        use control_rs_ets::comms::{
+            Command as CommCommand, Telemetry, TestState,
+        };
+
+        match msg {
+            BridgeMessage::RawConsole(line) => {
+                self.emit_status("target", line);
+                Vec::new()
+            }
+            BridgeMessage::Telemetry(telemetry) => match telemetry {
+                Telemetry::SuiteInfo { suite_id, name, .. } => {
+                    let id = suite_id as usize;
+                    while self.suites.len() <= id {
+                        self.suites.push(SuiteItem {
+                            name: String::new(),
+                            tests: Vec::new(),
+                            settings: Vec::new(),
+                        });
+                    }
+                    self.suites[id].name = name.to_string();
+                    Vec::new()
+                }
+                Telemetry::TestInfo {
+                    suite_id,
+                    test_id,
+                    name,
+                    ..
+                } => {
+                    let s_id = suite_id as usize;
+                    let t_id = test_id as usize;
+                    while self.suites[s_id].tests.len() <= t_id {
+                        self.suites[s_id].tests.push(TestItem {
+                            name: String::new(),
+                            state: TestState::Pending,
+                        });
+                    }
+                    self.suites[s_id].tests[t_id].name = name.to_string();
+                    Vec::new()
+                }
+                Telemetry::SettingInfo {
+                    suite_id,
+                    setting_id,
+                    name,
+                    value,
+                    ..
+                } => {
+                    let s_id = suite_id as usize;
+                    let set_id = setting_id as usize;
+                    while self.suites[s_id].settings.len() <= set_id {
+                        self.suites[s_id].settings.push(SettingItem {
+                            name: String::new(),
+                            value: control_rs_ets::settings::SettingValue::U8(
+                                0,
+                            ),
+                        });
+                    }
+                    self.suites[s_id].settings[set_id].name = name.to_string();
+                    self.suites[s_id].settings[set_id].value = value;
+                    Vec::new()
+                }
+                Telemetry::DiscoveryComplete => {
+                    self.discovery_complete = true;
+                    self.run_queue.clear();
+                    for (s_idx, suite) in self.suites.iter().enumerate() {
+                        for (t_idx, test) in suite.tests.iter().enumerate() {
+                            let already_run = self.results.iter().any(|r| {
+                                r.suite_name == suite.name
+                                    && r.test_name == test.name
+                            });
+                            if !already_run {
+                                self.run_queue
+                                    .push((s_idx as u16, t_idx as u16));
+                            }
+                        }
+                    }
+                    self.start_next_or_exit().into_iter().collect()
+                }
+                Telemetry::TestStateChange {
+                    suite_id,
+                    test_id,
+                    state: new_state,
+                } => {
+                    let s_id = suite_id as usize;
+                    let t_id = test_id as usize;
+                    self.suites[s_id].tests[t_id].state = new_state;
+
+                    if new_state == TestState::Failed {
+                        self.results.push(HeadlessTestResult {
+                            suite_name: self.suites[s_id].name.clone(),
+                            test_name: self.suites[s_id].tests[t_id]
+                                .name
+                                .clone(),
+                            state: TestState::Failed,
+                            cycles: None,
+                            time_us: None,
+                            stack_peak: None,
+                        });
+                        self.start_next_or_exit().into_iter().collect()
+                    } else {
+                        Vec::new()
+                    }
+                }
+                Telemetry::MetricReport {
+                    suite_id,
+                    test_id,
+                    cycles,
+                    time_us,
+                    stack_peak,
+                } => {
+                    let s_id = suite_id as usize;
+                    let t_id = test_id as usize;
+                    self.results.push(HeadlessTestResult {
+                        suite_name: self.suites[s_id].name.clone(),
+                        test_name: self.suites[s_id].tests[t_id].name.clone(),
+                        state: TestState::Passed,
+                        cycles: Some(cycles),
+                        time_us: Some(time_us),
+                        stack_peak: Some(stack_peak),
+                    });
+                    self.start_next_or_exit().into_iter().collect()
+                }
+                Telemetry::Log(_) => Vec::new(),
+                Telemetry::TargetPanic {
+                    message,
+                    file,
+                    line,
+                } => {
+                    self.emit_error(format!(
+                        "target panicked: '{message}' at {file}:{line}"
+                    ));
+
+                    if let Some((s_id, t_id)) = self.current_running {
+                        let s_idx = s_id as usize;
+                        let t_idx = t_id as usize;
+                        if s_idx < self.suites.len()
+                            && t_idx < self.suites[s_idx].tests.len()
+                        {
+                            self.suites[s_idx].tests[t_idx].state =
+                                TestState::Failed;
+                            self.results.push(HeadlessTestResult {
+                                suite_name: self.suites[s_idx].name.clone(),
+                                test_name: self.suites[s_idx].tests[t_idx]
+                                    .name
+                                    .clone(),
+                                state: TestState::Failed,
+                                cycles: None,
+                                time_us: None,
+                                stack_peak: None,
+                            });
+                        }
+                    }
+
+                    self.current_running = None;
+                    self.discovery_complete = false;
+
+                    let remaining_to_run = self.suites.iter().any(|suite| {
+                        suite.tests.iter().any(|test| {
+                            !self.results.iter().any(|r| {
+                                r.suite_name == suite.name
+                                    && r.test_name == test.name
+                            })
+                        })
+                    });
+
+                    if remaining_to_run {
+                        self.emit_status(
+                            "Restarting",
+                            "target bridge to continue running tests",
+                        );
+                    } else {
+                        self.exit_loop = true;
+                    }
+                    vec![
+                        CiEtsAction::Send(CommCommand::TryReset),
+                        CiEtsAction::PanicRestart,
+                    ]
+                }
+            },
+        }
+    }
+}
+
+/// QEMU cargo `--target` triple and example binary name.
+fn qemu_elf_spec(arch: bridge::QemuArch) -> (&'static str, &'static str) {
+    match arch {
+        bridge::QemuArch::Thumbv7emNoneEabihf => (
+            "thumbv7em-none-eabihf",
+            "control-rs-qemu-thumbv7em-none-eabihf",
+        ),
+        bridge::QemuArch::Thumbv7emNoneEabi => {
+            ("thumbv7em-none-eabi", "control-rs-qemu-thumbv7em-none-eabi")
+        }
+        bridge::QemuArch::Riscv32imacUnknownNoneElf => (
+            "riscv32imac-unknown-none-elf",
+            "control-rs-qemu-riscv32imac-unknown-none-elf",
+        ),
+        bridge::QemuArch::Riscv64gcUnknownNoneElf => (
+            "riscv64gc-unknown-none-elf",
+            "control-rs-qemu-riscv64gc-unknown-none-elf",
+        ),
+    }
+}
+
+/// Release ELF path for a QEMU architecture.
+fn qemu_elf_path(arch: bridge::QemuArch) -> String {
+    let (target_triple, bin_name) = qemu_elf_spec(arch);
+    format!("examples/qemu/target/{target_triple}/release/{bin_name}")
+}
+
+/// Strip ANSI CSI sequences from cargo tool output.
+fn strip_ansi(input: &str) -> String {
+    let ansi_escape = Regex::new(r"\x1B\[[0-9;]*[mK]|\x1B\(B").unwrap();
+    ansi_escape.replace_all(input, "").into_owned()
+}
+
+/// Parse `cargo fmt-check` combined stdout/stderr.
+fn parse_fmt_output(
+    combined: &str,
+    success: bool,
+) -> (Result<(), usize>, String) {
+    let clean_str = strip_ansi(combined);
+    let fmt_errors = clean_str.matches("Diff in").count();
+    let res = if success && fmt_errors == 0 {
+        Ok(())
+    } else {
+        Err(fmt_errors)
+    };
+    (res, clean_str)
+}
+
+/// Parse `cargo clippy-ci` JSON lines into error count and rendered logs.
+fn parse_clippy_output(
+    stdout_str: &str,
+    stderr_str: &str,
+    success: bool,
+) -> (Result<(), usize>, String) {
+    let mut clippy_errors = 0;
+    let mut rendered_logs = String::new();
+
+    for line in stdout_str.lines() {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line)
+            && val.get("reason").and_then(|r| r.as_str())
+                == Some("compiler-message")
+            && let Some(msg) = val.get("message")
+        {
+            if msg.get("level").and_then(|l| l.as_str()) == Some("error") {
+                clippy_errors += 1;
+            }
+            if let Some(rendered) = msg.get("rendered").and_then(|r| r.as_str())
+            {
+                rendered_logs.push_str(rendered);
+            }
+        }
+    }
+
+    if !success && rendered_logs.is_empty() {
+        rendered_logs.push_str(stderr_str);
+    }
+
+    let clean_str = strip_ansi(&rendered_logs);
+    let ok = success && clippy_errors == 0;
+    let res = if ok { Ok(()) } else { Err(clippy_errors) };
+    (res, clean_str)
+}
+
+/// Parse tarpaulin logs and optional JSON coverage report.
+fn parse_tarpaulin_output(
+    tarp_str: &str,
+    json_content: Option<&str>,
+    cmd_success: bool,
+) -> (Result<TarpaulinSummary, ()>, String) {
+    let clean_tarp_str = strip_ansi(tarp_str);
+
+    let re_passed = Regex::new(r"(\d+) passed").unwrap();
+    let re_failed = Regex::new(r"(\d+) failed").unwrap();
+    let re_ignored = Regex::new(r"(\d+) ignored").unwrap();
+
+    let passed: usize = re_passed
+        .captures_iter(&clean_tarp_str)
+        .filter_map(|c| c[1].parse::<usize>().ok())
+        .sum();
+    let failed: usize = re_failed
+        .captures_iter(&clean_tarp_str)
+        .filter_map(|c| c[1].parse::<usize>().ok())
+        .sum();
+    let ignored: usize = re_ignored
+        .captures_iter(&clean_tarp_str)
+        .filter_map(|c| c[1].parse::<usize>().ok())
+        .sum();
+
+    let mut covered_lines = 0;
+    let mut total_lines = 0;
+    if let Some(json_content) = json_content
+        && let Ok(report) =
+            serde_json::from_str::<TarpaulinReportJson>(json_content)
+    {
+        for file in report.files {
+            covered_lines += file.covered;
+            total_lines += file.coverable;
+        }
+    }
+
+    let percent = if total_lines > 0 {
+        format!("{:.2}", (covered_lines as f64 / total_lines as f64) * 100.0)
+    } else {
+        "0.00".to_string()
+    };
+
+    let summary = TarpaulinSummary {
+        passed,
+        failed,
+        ignored,
+        coverage_percent: percent,
+        covered_lines,
+        total_lines,
+    };
+
+    let success = cmd_success && failed == 0;
+    let res = if success { Ok(summary) } else { Err(()) };
+    (res, clean_tarp_str)
+}
+
+/// Write the pre-commit hook into `git_dir/hooks/pre-commit`.
+fn write_pre_commit_hook(git_dir: &Path) -> Result<std::path::PathBuf, String> {
+    let hooks_dir = git_dir.join("hooks");
+    if !hooks_dir.exists() {
+        std::fs::create_dir_all(&hooks_dir).map_err(|e| {
+            format!(
+                "Failed to create hooks directory {}: {e}",
+                hooks_dir.display()
+            )
+        })?;
+    }
+
+    let pre_commit_path = hooks_dir.join("pre-commit");
+    std::fs::write(&pre_commit_path, PRE_COMMIT_HOOK).map_err(|e| {
+        format!(
+            "Failed to write pre-commit hook file {}: {e}",
+            pre_commit_path.display()
+        )
+    })?;
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if let Ok(metadata) = std::fs::metadata(&pre_commit_path) {
             let mut permissions = metadata.permissions();
-            permissions.set_mode(0o755); // rwxr-xr-x
+            permissions.set_mode(0o755);
             if let Err(e) =
                 std::fs::set_permissions(&pre_commit_path, permissions)
             {
-                eprintln!(
-                    "\tWarning: Failed to set executable permissions on {}: {}",
-                    pre_commit_path.display(),
-                    e
-                );
+                utils::warning(format!(
+                    "failed to set executable permissions on {}: {e}",
+                    pre_commit_path.display()
+                ));
             }
         }
     }
 
-    println!(
-        "\t* pre-commit git hook installed successfully at: {}",
-        pre_commit_path.display()
+    Ok(pre_commit_path)
+}
+
+/// Helper function to build the QEMU target ELF.
+pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
+    let (target_triple, bin_name) = qemu_elf_spec(arch);
+    utils::status("Compiling", format!("{bin_name:?} ({target_triple:?})"));
+
+    let mut command = Command::new("cargo");
+    command.current_dir("examples/qemu");
+    let build_status = command
+        .args([
+            "build",
+            "--bin",
+            bin_name,
+            "--target",
+            target_triple,
+            "--release",
+        ])
+        .status()
+        .expect("Failed to build QEMU target.");
+
+    if !build_status.success() {
+        utils::error("failed to compile QEMU target");
+        exit(1);
+    }
+
+    qemu_elf_path(arch)
+}
+
+/// Task to run formatting check.
+pub fn run_fmt() -> (Result<(), usize>, String) {
+    utils::status("Running", "`fmt-check`");
+    let fmt_output = Command::new("cargo")
+        .args(["fmt-check"])
+        .env("CARGO_TERM_COLOR", "never")
+        .output()
+        .expect("Failed to run cargo fmt-check");
+
+    let nested_fmt = Command::new("cargo")
+        .args([
+            "fmt",
+            "--manifest-path",
+            "examples/numerical-models/Cargo.toml",
+            "--",
+            "--check",
+        ])
+        .env("CARGO_TERM_COLOR", "never")
+        .output()
+        .expect("Failed to run nested numerical-model fmt-check");
+
+    let stdout_str = String::from_utf8_lossy(&fmt_output.stdout);
+    let stderr_str = String::from_utf8_lossy(&fmt_output.stderr);
+    let nested_out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&nested_fmt.stdout),
+        String::from_utf8_lossy(&nested_fmt.stderr)
     );
+    let combined = format!("{stdout_str}{stderr_str}{nested_out}");
+    parse_fmt_output(
+        &combined,
+        fmt_output.status.success() && nested_fmt.status.success(),
+    )
+}
+
+/// Task to run clippy check with JSON output formatting.
+pub fn run_clippy() -> (Result<(), usize>, String) {
+    utils::status("Running", "`clippy-ci`");
+    let clippy_output = Command::new("cargo")
+        .args(["clippy-ci"])
+        .env("CARGO_TERM_COLOR", "never")
+        .output()
+        .expect("Failed to run cargo clippy-json");
+
+    let stdout_str = String::from_utf8_lossy(&clippy_output.stdout);
+    let stderr_str = String::from_utf8_lossy(&clippy_output.stderr);
+    parse_clippy_output(
+        &stdout_str,
+        &stderr_str,
+        clippy_output.status.success(),
+    )
+}
+
+/// Task to run tarpaulin test & coverage.
+pub fn run_tarpaulin() -> (Result<TarpaulinSummary, ()>, String) {
+    utils::status("Running", "`coverage-ci`");
+    let tarpaulin_output = Command::new("cargo")
+        .args(["coverage-ci"])
+        .env("CARGO_TERM_COLOR", "never")
+        .output()
+        .expect("Failed to run cargo coverage");
+
+    let tarp_str = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&tarpaulin_output.stderr),
+        String::from_utf8_lossy(&tarpaulin_output.stdout)
+    );
+    let json_content = fs::read_to_string("tarpaulin-report.json").ok();
+    parse_tarpaulin_output(
+        &tarp_str,
+        json_content.as_deref(),
+        tarpaulin_output.status.success(),
+    )
+}
+
+/// CI frontend: drive ETS or virtual ETS through `ServerBridge` (no TUI).
+pub fn run_ci_ets(
+    target: &bridge::Target,
+) -> (Result<Vec<HeadlessTestResult>, String>, String) {
+    use control_rs_ets::comms::Command as CommCommand;
+
+    let mut state = CiEtsState::new();
+    let mut elf_path = String::new();
+
+    let mut bridge = {
+        if let bridge::Target::QemuSemihosting { arch } = target {
+            elf_path = build_qemu_elf(*arch);
+        }
+        let elf_opt = if elf_path.is_empty() {
+            None
+        } else {
+            Some(elf_path.as_str())
+        };
+        match bridge::ServerBridge::new(target.clone(), elf_opt, true) {
+            Ok(b) => b,
+            Err(e) => return (Err(e.to_string()), state.logs),
+        }
+    };
+
+    let backend = match target {
+        bridge::Target::QemuSemihosting { .. } => "virtual ETS",
+        bridge::Target::Serial { .. } => "ETS",
+    };
+    state.emit_status("Running", backend);
+
+    let mut last_send = Instant::now();
+    let _ = bridge.send_command(&CommCommand::ListSuites);
+
+    let start_time = Instant::now();
+    let timeout = Duration::from_secs(90);
+
+    while !state.exit_loop {
+        if start_time.elapsed() > timeout {
+            bridge.kill();
+            return (
+                Err("CI ETS execution timed out after 90s".to_string()),
+                state.logs,
+            );
+        }
+
+        if !state.discovery_complete
+            && last_send.elapsed() > Duration::from_millis(500)
+        {
+            let _ = bridge.send_command(&CommCommand::ListSuites);
+            last_send = Instant::now();
+        }
+
+        while let Ok(msg) = bridge.receiver().try_recv() {
+            for action in state.handle_message(msg) {
+                match action {
+                    CiEtsAction::Send(cmd) => {
+                        let _ = bridge.send_command(&cmd);
+                    }
+                    CiEtsAction::PanicRestart => {
+                        std::thread::sleep(Duration::from_millis(50));
+                        bridge.kill();
+                        std::thread::sleep(Duration::from_secs(1));
+                        if !state.exit_loop {
+                            let elf_opt = if elf_path.is_empty() {
+                                None
+                            } else {
+                                Some(elf_path.as_str())
+                            };
+                            bridge = match bridge::ServerBridge::new(
+                                target.clone(),
+                                elf_opt,
+                                true,
+                            ) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    return (Err(e.to_string()), state.logs);
+                                }
+                            };
+                            let _ =
+                                bridge.send_command(&CommCommand::ListSuites);
+                            last_send = Instant::now();
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Ok(Some(status)) = bridge.try_wait() {
+            if !state.discovery_complete
+                || state.current_running.is_some()
+                || !state.run_queue.is_empty()
+            {
+                bridge.kill();
+                return (
+                    Err(format!("QEMU process exited unexpectedly: {status}")),
+                    state.logs,
+                );
+            }
+            state.exit_loop = true;
+        }
+
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    bridge.kill();
+    (Ok(state.results), state.logs)
+}
+
+/// Task to start the interactive ETS TUI.
+pub fn run_ets_tui(target: &bridge::Target) {
+    let elf_path = match target {
+        bridge::Target::QemuSemihosting { arch } => build_qemu_elf(*arch),
+        bridge::Target::Serial { .. } => String::new(),
+    };
+    let elf_opt = if elf_path.is_empty() {
+        None
+    } else {
+        Some(elf_path.as_str())
+    };
+    let bridge = match bridge::ServerBridge::new(target.clone(), elf_opt, false)
+    {
+        Ok(b) => b,
+        Err(e) => {
+            utils::error(format!("failed to start bridge: {e}"));
+            exit(1);
+        }
+    };
+    if let Err(e) = tui::run_tui(bridge, target, &elf_path) {
+        utils::error(format!("TUI error: {e}"));
+        exit(1);
+    }
+}
+
+/// Task to install git hooks in the local repository.
+pub fn install_hooks() {
+    utils::status("Installing", "pre-commit git hook");
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir
+        .parent()
+        .expect("Failed to find workspace root directory");
+    let git_dir = workspace_root.join(".git");
+
+    if !git_dir.exists() {
+        utils::error(format!(
+            ".git directory not found at {}. Is this a git repository?",
+            git_dir.display()
+        ));
+        exit(1);
+    }
+
+    match write_pre_commit_hook(&git_dir) {
+        Ok(pre_commit_path) => {
+            utils::status(
+                "Finished",
+                format!("pre-commit git hook at {}", pre_commit_path.display()),
+            );
+        }
+        Err(e) => {
+            utils::error(e);
+            exit(1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use control_rs_ets::comms::{Command as CommCommand, Telemetry, TestState};
+    use control_rs_ets::settings::SettingValue;
+
+    fn discover_two_tests(state: &mut CiEtsState) {
+        let _ = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite",
+                description: "",
+                test_count: 2,
+                setting_count: 1,
+            },
+        ));
+        let _ = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "t0",
+                description: "",
+            },
+        ));
+        let _ = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 1,
+                name: "t1",
+                description: "",
+            },
+        ));
+        let _ = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::SettingInfo {
+                suite_id: 0,
+                setting_id: 0,
+                name: "gain",
+                description: "",
+                value: SettingValue::U8(3),
+            },
+        ));
+    }
+
+    #[test]
+    fn qemu_elf_spec_covers_all_arches() {
+        assert_eq!(
+            qemu_elf_spec(bridge::QemuArch::Thumbv7emNoneEabihf).0,
+            "thumbv7em-none-eabihf"
+        );
+        assert_eq!(
+            qemu_elf_spec(bridge::QemuArch::Thumbv7emNoneEabi).1,
+            "control-rs-qemu-thumbv7em-none-eabi"
+        );
+        assert!(
+            qemu_elf_path(bridge::QemuArch::Riscv32imacUnknownNoneElf)
+                .contains("riscv32imac")
+        );
+        assert!(
+            qemu_elf_path(bridge::QemuArch::Riscv64gcUnknownNoneElf)
+                .contains("riscv64gc")
+        );
+    }
+
+    #[test]
+    fn parse_fmt_counts_diffs_and_strips_ansi() {
+        let (ok, clean) = parse_fmt_output("ok", true);
+        assert!(ok.is_ok());
+        assert_eq!(clean, "ok");
+
+        let ansi = "\u{1b}[31mDiff in src/lib.rs\u{1b}[0m";
+        let (err, clean) = parse_fmt_output(ansi, false);
+        assert_eq!(err, Err(1));
+        assert!(clean.contains("Diff in"));
+        assert!(!clean.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn parse_clippy_counts_errors_and_falls_back_to_stderr() {
+        let error_line = r#"{"reason":"compiler-message","message":{"level":"error","rendered":"boom\n"}}"#;
+        let warn_line = r#"{"reason":"compiler-message","message":{"level":"warning","rendered":"meh\n"}}"#;
+        let (err, logs) = parse_clippy_output(
+            &format!("{error_line}\n{warn_line}"),
+            "",
+            true,
+        );
+        assert_eq!(err, Err(1));
+        assert!(logs.contains("boom"));
+        assert!(logs.contains("meh"));
+
+        let (ok, _) = parse_clippy_output(warn_line, "", true);
+        assert!(ok.is_ok());
+
+        let (err, logs) =
+            parse_clippy_output("not-json", "compile failed", false);
+        assert_eq!(err, Err(0));
+        assert!(logs.contains("compile failed"));
+    }
+
+    #[test]
+    fn parse_tarpaulin_sums_logs_and_json() {
+        let log = "3 passed; 1 failed; 2 ignored";
+        let json = r#"{"files":[{"covered":9,"coverable":10}]}"#;
+        let (err, clean) = parse_tarpaulin_output(log, Some(json), true);
+        assert!(err.is_err());
+        assert!(clean.contains("3 passed"));
+
+        let ok_log = "4 passed; 0 failed; 0 ignored";
+        let (ok, _) = parse_tarpaulin_output(ok_log, Some(json), true);
+        let summary = ok.unwrap();
+        assert_eq!(summary.passed, 4);
+        assert_eq!(summary.covered_lines, 9);
+        assert_eq!(summary.total_lines, 10);
+        assert_eq!(summary.coverage_percent, "90.00");
+
+        let (zero, _) = parse_tarpaulin_output("0 passed", None, true);
+        assert_eq!(zero.unwrap().coverage_percent, "0.00");
+    }
+
+    #[test]
+    fn ci_ets_state_runs_queue_and_records_pass_fail() {
+        let mut state = CiEtsState::new();
+        discover_two_tests(&mut state);
+
+        let actions = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert!(matches!(
+            actions.as_slice(),
+            [CiEtsAction::Send(CommCommand::RunExecutable {
+                suite_id: 0,
+                test_id: 0
+            })]
+        ));
+        assert_eq!(state.current_running, Some((0, 0)));
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+
+        let _ = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Running,
+            },
+        ));
+        let actions = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::MetricReport {
+                suite_id: 0,
+                test_id: 0,
+                cycles: 10,
+                time_us: 20,
+                stack_peak: 30,
+            },
+        ));
+        assert!(matches!(
+            actions.as_slice(),
+            [CiEtsAction::Send(CommCommand::RunExecutable {
+                suite_id: 0,
+                test_id: 1
+            })]
+        ));
+        assert_eq!(state.results[0].state, TestState::Passed);
+
+        let actions = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 1,
+                state: TestState::Failed,
+            },
+        ));
+        assert!(actions.is_empty());
+        assert!(state.exit_loop);
+        assert_eq!(state.results[1].state, TestState::Failed);
+
+        let _ = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::Log(control_rs_ets::comms::LogMessage {
+                timestamp_us: 1,
+                suite_id: 0,
+                test_id: 0,
+                payload: "hi",
+            }),
+        ));
+        let _ = state.handle_message(bridge::BridgeMessage::RawConsole(
+            "console".to_string(),
+        ));
+        assert!(state.logs.contains("      target console"));
+    }
+
+    #[test]
+    fn ci_ets_state_empty_discovery_and_panic_restart() {
+        let mut empty = CiEtsState::new();
+        let _ = empty.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "empty",
+                description: "",
+                test_count: 0,
+                setting_count: 0,
+            },
+        ));
+        let actions = empty.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert!(actions.is_empty());
+        assert!(empty.exit_loop);
+
+        let mut state = CiEtsState::new();
+        discover_two_tests(&mut state);
+        let _ = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        let actions = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::TargetPanic {
+                message: "boom",
+                file: "main.rs",
+                line: 9,
+            },
+        ));
+        assert!(state.logs.contains("target panicked"));
+        assert!(state.logs.contains("Restarting target bridge"));
+        assert!(!state.discovery_complete);
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                CiEtsAction::Send(CommCommand::TryReset),
+                CiEtsAction::PanicRestart
+            ]
+        ));
+
+        state.results.push(HeadlessTestResult {
+            suite_name: "suite".to_string(),
+            test_name: "t0".to_string(),
+            state: TestState::Failed,
+            cycles: None,
+            time_us: None,
+            stack_peak: None,
+        });
+        state.results.push(HeadlessTestResult {
+            suite_name: "suite".to_string(),
+            test_name: "t1".to_string(),
+            state: TestState::Failed,
+            cycles: None,
+            time_us: None,
+            stack_peak: None,
+        });
+        state.current_running = Some((0, 0));
+        let actions = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::TargetPanic {
+                message: "done",
+                file: "main.rs",
+                line: 1,
+            },
+        ));
+        assert!(state.exit_loop);
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                CiEtsAction::Send(CommCommand::TryReset),
+                CiEtsAction::PanicRestart
+            ]
+        ));
+    }
+
+    #[test]
+    fn write_pre_commit_hook_creates_executable() {
+        let dir = std::env::temp_dir()
+            .join(format!("control-rs-xtask-hooks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = write_pre_commit_hook(&dir).unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("cargo fmt --all"));
+        assert!(contents.contains("cargo clippy"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o111, 0o111);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ci_ets_state_telemetry_metrics_and_rediscovery() {
+        let mut state = CiEtsState::new();
+        discover_two_tests(&mut state);
+
+        // Pre-populate result for t0 to test re-discovery skip (lines 220-227)
+        state.results.push(HeadlessTestResult {
+            suite_name: "suite".to_string(),
+            test_name: "t0".to_string(),
+            state: TestState::Passed,
+            cycles: Some(100),
+            time_us: Some(10),
+            stack_peak: Some(32),
+        });
+
+        let actions = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert!(!actions.is_empty());
+        // run_queue should only have t1 since t0 is already in results
+        assert_eq!(state.run_queue.len(), 0); // start_next popped t1 as current_running
+        assert_eq!(state.current_running, Some((0, 1)));
+
+        // Handle MetricReport
+        let _ = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::MetricReport {
+                suite_id: 0,
+                test_id: 1,
+                cycles: 500,
+                time_us: 50,
+                stack_peak: 64,
+            },
+        ));
+
+        // Finish t1
+        let _ = state.handle_message(bridge::BridgeMessage::Telemetry(
+            Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 1,
+                state: TestState::Passed,
+            },
+        ));
+        assert!(state.exit_loop);
+        assert_eq!(state.results.len(), 2);
+    }
 }

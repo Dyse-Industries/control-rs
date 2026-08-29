@@ -36,6 +36,43 @@
 //! fn assert_additive_group<T: AdditiveGroup>() {}
 //! assert_additive_group::<u32>(); // u32 does not implement AdditiveGroup
 //! ```
+//!
+//! `Float` and `Signed` are withheld from `Complex<T>`:
+//!
+//! ```compile_fail
+//! use control_rs::math::complex_num::Complex;
+//! use control_rs::math::num_traits::Float;
+//!
+//! fn assert_float<T: Float>() {}
+//! assert_float::<Complex<f64>>();
+//! ```
+//!
+//! ```compile_fail
+//! use control_rs::math::complex_num::Complex;
+//! use control_rs::math::num_traits::Signed;
+//!
+//! fn assert_signed<T: Signed>() {}
+//! assert_signed::<Complex<f64>>();
+//! ```
+//!
+//! `Scalar` is withheld from `Complex<T>` when `T` does not implement `Neg`:
+//!
+//! ```compile_fail
+//! use control_rs::math::complex_num::Complex;
+//! use control_rs::math::num_traits::Scalar;
+//!
+//! fn assert_scalar<T: Scalar>() {}
+//! assert_scalar::<Complex<u8>>();
+//! ```
+//!
+//! `PartialOrd` is withheld from `Complex<T>`:
+//!
+//! ```compile_fail
+//! use control_rs::math::complex_num::Complex;
+//!
+//! fn assert_partial_ord<T: PartialOrd>() {}
+//! assert_partial_ord::<Complex<f64>>();
+//! ```
 
 use crate::math::CartesianQuadrant2D;
 use crate::math::ops::{
@@ -48,8 +85,6 @@ use crate::math::ops::{
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Provides access to the additive identity and a zero check.
-///
-/// # Safety
 /// `ZERO` must be a true additive identity.
 ///
 /// # Example
@@ -59,7 +94,7 @@ use crate::math::ops::{
 /// assert!(0i32.is_zero());
 /// assert!(!1i32.is_zero());
 /// ```
-pub trait Zero: Clone + PartialEq + PartialOrd + Add<Output = Self> {
+pub trait Zero: Clone + PartialEq + Add<Output = Self> {
     /// Constant additive identity element.
     const ZERO: Self;
     /// Returns `true` if the value equals the additive identity.
@@ -77,8 +112,6 @@ pub trait Zero: Clone + PartialEq + PartialOrd + Add<Output = Self> {
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Provides access to the multiplicative identity and a one check.
-///
-/// # Safety
 /// `ONE` must be a true multiplicative identity.
 ///
 /// # Example
@@ -88,7 +121,7 @@ pub trait Zero: Clone + PartialEq + PartialOrd + Add<Output = Self> {
 /// assert!(1i32.is_one());
 /// assert!(!0i32.is_one());
 /// ```
-pub trait One: Clone + PartialEq + PartialOrd + Mul<Output = Self> {
+pub trait One: Clone + PartialEq + Mul<Output = Self> {
     /// Constant multiplicative identity element.
     const ONE: Self;
     /// Returns `true` if the value equals the multiplicative identity.
@@ -104,6 +137,21 @@ pub trait One: Clone + PartialEq + PartialOrd + Mul<Output = Self> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// Conjugation Tier
+////////////////////////////////////////////////////////////////////////////////
+
+/// Reflexive and complex conjugation.
+///
+/// Implemented as the identity for all real scalars (integer primitives,
+/// `f32`, `f64`, `Quantized`). Implemented as imaginary negation for `Complex<T>`.
+/// A scalar value `x` is real if and only if `x == x.conj()`.
+pub trait Conjugate: Sized {
+    /// Returns the conjugate of `self`.
+    #[must_use]
+    fn conj(self) -> Self;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // Subtraction Tier
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -116,11 +164,8 @@ pub trait One: Clone + PartialEq + PartialOrd + Mul<Output = Self> {
 /// do implement it, but still overflow at the representation limits
 /// (e.g. `i32::MIN - 1`, a debug panic / release wrap) — the marker
 /// guarantees underflow-free semantics away from those limits, not full
-/// mathematical totality.
-///
-/// # Safety
-/// Implementors must guarantee `a - b` is well-defined for all `a`, `b`
-/// whose difference is representable in the type.
+/// mathematical totality. Implementors must guarantee `a - b` is well-defined
+/// for all `a`, `b` whose difference is representable in the type.
 pub trait AdditiveGroup: Zero + Sub<Output = Self> {}
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -186,11 +231,9 @@ pub trait Unsigned: Sized {}
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Defines a set with a mathematical sign (signed integers and
-/// floating/fixed-point types).
-///
-/// # Safety
-/// Values that implement `Neg` have a well-defined sign.
-pub trait Signed: AdditiveGroup + Neg<Output = Self> {
+/// floating/fixed-point types). Values that implement `Neg` have a
+/// well-defined sign.
+pub trait Signed: AdditiveGroup + Neg<Output = Self> + PartialOrd {
     /// Returns the absolute value.
     #[must_use]
     fn abs(self) -> Self;
@@ -216,11 +259,13 @@ pub trait Signed: AdditiveGroup + Neg<Output = Self> {
 pub trait Radical:
     Clone + PartialEq + PartialOrd + Add<Output = Self> + Mul<Output = Self>
 {
-    /// Computes the hypotenuse of a triangle with the given side lengths.
+    /// Computes the hypotenuse of a right triangle with legs `self` (`x`)
+    /// and `y`: $\sqrt{x^2 + y^2}$.
     #[must_use]
+    // Case-by-case: Arithmetic side effects are unavoidable for generic hypotenuse formula.
     #[allow(clippy::arithmetic_side_effects)]
-    fn hypot(self, rhs: Self) -> Self {
-        ((self.clone() * self) + (rhs.clone() * rhs)).sqrt()
+    fn hypot(self, y: Self) -> Self {
+        ((self.clone() * self) + (y.clone() * y)).sqrt()
     }
     /// Computes the square root of a number.
     #[must_use]
@@ -303,9 +348,10 @@ pub trait Trig: Clone + PartialEq + PartialOrd {
 /// assert!(!is_significantly_different(1.00000001f32, 1.0f32));
 /// ```
 pub trait Float:
-    Signed + One + Radical + Exponential + Trig + Div<Output = Self>
+    Scalar + Signed + Radical + Exponential + Trig + Div<Output = Self>
 {
-    /// Computes the four-quadrant inverse tangent of `y` and `x` in radians.
+    /// Computes the four-quadrant inverse tangent of `self` (`y`) and `x`
+    /// in radians.
     ///
     /// Unlike the standard `atan(y / x)`, this function uses the signs of both
     /// arguments to identify the correct quadrant and handles the case where `x` is zero.
@@ -329,16 +375,22 @@ pub trait Float:
     /// *Note: Many implementations return 0 for origin coordinates to avoid NaNs
     /// in real-time control loops.*
     #[must_use]
+    // Case-by-case: Arithmetic side effects are unavoidable for generic atan2 formula.
     #[allow(clippy::arithmetic_side_effects)]
-    fn atan2(self, rhs: Self) -> Self {
+    fn atan2(self, x: Self) -> Self {
         let two = Self::ONE + Self::ONE;
-        match CartesianQuadrant2D::from_coords(&rhs, &self) {
+        match CartesianQuadrant2D::from_coords(&x, &self) {
             CartesianQuadrant2D::Origin
-            | CartesianQuadrant2D::PositiveXAxis => Self::ZERO,
+            | CartesianQuadrant2D::PositiveXAxis
+            | CartesianQuadrant2D::Undefined => Self::ZERO,
             CartesianQuadrant2D::NegativeYAxis => -(Self::PI / two),
             CartesianQuadrant2D::NegativeXAxis => Self::PI,
             CartesianQuadrant2D::PositiveYAxis => Self::PI / two,
-            _ => Self::atan(self / rhs),
+            CartesianQuadrant2D::Q1 | CartesianQuadrant2D::Q4 => {
+                Self::atan(self / x)
+            }
+            CartesianQuadrant2D::Q2 => Self::atan(self / x) + Self::PI,
+            CartesianQuadrant2D::Q3 => Self::atan(self / x) - Self::PI,
         }
     }
     /// Computes the hyperbolic cosine of the number.
@@ -357,6 +409,7 @@ pub trait Float:
     /// Because this implementation relies on `.exp()`, evaluating this function for
     /// large inputs results in rapid overflow to infinity (e.g., around `x ~ 89.4` for `f32`).
     #[must_use]
+    // Case-by-case: Arithmetic side effects are unavoidable for generic cosh formula.
     #[allow(clippy::arithmetic_side_effects)]
     fn cosh(self) -> Self {
         let two = Self::ONE + Self::ONE;
@@ -370,6 +423,7 @@ pub trait Float:
         Self::sum([Self::ONE; N])
     }
     /// Initiate self from the given usize.
+    // Case-by-case: Arithmetic side effects are unavoidable when converting usize to Self via generic fold.
     #[allow(clippy::arithmetic_side_effects)]
     fn from_usize(n: usize) -> Self {
         (0..n).fold(Self::ZERO, |acc, _| acc.add(Self::ONE))
@@ -394,12 +448,14 @@ pub trait Float:
     /// consider overriding this default with a Taylor series expansion or an `expm1`
     /// based approach for $|x| < 1$.
     #[must_use]
+    // Case-by-case: Arithmetic side effects are unavoidable for generic sinh formula.
     #[allow(clippy::arithmetic_side_effects)]
     fn sinh(self) -> Self {
         let two = Self::ONE + Self::ONE;
         (self.clone().exp() - (Self::ZERO - self).exp()) / two
     }
     /// Sum the elements of an iterator.
+    // Case-by-case: Arithmetic side effects are unavoidable for generic sum of elements.
     #[allow(clippy::arithmetic_side_effects)]
     fn sum<I: IntoIterator<Item = Self>>(iter: I) -> Self {
         iter.into_iter().fold(Self::ZERO, |acc, x| acc + x)
@@ -410,28 +466,47 @@ pub trait Float:
 
 /// The unified target for control-loop arithmetic.
 ///
-/// `Zero + One + Sub + Mul`, implemented by every integer and float
-/// primitive, signed and unsigned. Deliberately excludes `Div`: integer
-/// division is not total (`/0` panics, `i32::MIN / -1` overflows), so
-/// requiring it here would reintroduce the panic surface this hierarchy
-/// exists to remove. Division stays on `Float`, where IEEE-754 semantics
-/// make it total.
+/// `Zero + One + Sub + Mul + Conjugate`, implemented by every integer and float
+/// primitive, signed and unsigned, and `Complex<T>` where `T: Scalar<Real = T> + Neg`.
+/// Deliberately excludes `Div`: integer division is not total (`/0` panics,
+/// `i32::MIN / -1` overflows), so requiring it here would reintroduce the
+/// panic surface this hierarchy exists to remove. Division stays on `Float`,
+/// where IEEE-754 semantics make it total.
 ///
 /// # Example
 /// ```
 /// use control_rs::math::num_traits::Scalar;
 ///
-/// fn clamp_to_unit<T: Scalar>(val: T) -> T {
+/// fn clamp_to_unit<T: Scalar + PartialOrd>(val: T) -> T {
 ///     val.clamp(T::ZERO, T::ONE)
 /// }
 ///
 /// assert_eq!(clamp_to_unit(5i32), 1);
 /// assert_eq!(clamp_to_unit(5u32), 1);
 /// ```
-pub trait Scalar: Zero + One + Sub<Output = Self> + Mul<Output = Self> {
+pub trait Scalar:
+    Zero + One + Sub<Output = Self> + Mul<Output = Self> + Conjugate
+{
+    /// The associated real scalar type for norms, eigenvalues, and projection.
+    /// Always ordered: clipping and 1-norms go through `Real`, not `Self`.
+    type Real: Scalar<Real = Self::Real> + PartialOrd;
+
+    /// Evaluates the squared modulus / Euclidean norm squared (`re^2 + im^2`),
+    /// without requiring a square root.
+    // Case-by-case: Arithmetic side effects are unavoidable for generic abs2 modulus.
+    #[allow(clippy::arithmetic_side_effects)]
+    fn abs2(&self) -> Self::Real {
+        let r = self.re();
+        let i = self.im();
+        r.clone() * r + i.clone() * i
+    }
+
     /// Restricts a value to a certain interval.
     #[must_use]
-    fn clamp(self, min: Self, max: Self) -> Self {
+    fn clamp(self, min: Self, max: Self) -> Self
+    where
+        Self: PartialOrd,
+    {
         if self < min {
             min
         } else if self > max {
@@ -440,11 +515,25 @@ pub trait Scalar: Zero + One + Sub<Output = Self> + Mul<Output = Self> {
             self
         }
     }
+
+    /// Constructs a scalar from its real component with zero imaginary component.
+    fn from_real(re: Self::Real) -> Self;
+
+    /// Returns the imaginary component of `self` (returns `Real::ZERO` on real scalars).
+    fn im(&self) -> Self::Real;
+
+    /// Returns the real component of `self`.
+    fn re(&self) -> Self::Real;
+
     /// Returns a number that represents the sign of self (`-ONE`, `ZERO`,
     /// or `ONE`); for unsigned types the negative branch is unreachable.
     #[must_use]
+    // Case-by-case: Arithmetic side effects are unavoidable for signum calculation.
     #[allow(clippy::arithmetic_side_effects)]
-    fn signum(self) -> Self {
+    fn signum(self) -> Self
+    where
+        Self: PartialOrd,
+    {
         if self.is_zero() {
             Self::ZERO
         } else if self.lt(&Self::ZERO) {
@@ -526,14 +615,47 @@ macro_rules! impl_additive_group {
     };
 }
 
-/// Implements the `Scalar` marker trait for a given type.
+/// Implements `Conjugate` (identity) and `Scalar` (`Real = Self`) for a given type.
 ///
 /// # Arguments
 /// - `$type`: The numeric type; must already implement `Zero + One + Sub + Mul`.
 #[macro_export]
 macro_rules! impl_scalar {
     ($type:ty) => {
-        impl Scalar for $type {}
+        impl Conjugate for $type {
+            #[inline(always)]
+            fn conj(self) -> Self {
+                self
+            }
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////
+
+        impl Scalar for $type {
+            type Real = Self;
+
+            // Case-by-case: Arithmetic side effects are unavoidable for primitive scalar abs2.
+            #[allow(clippy::arithmetic_side_effects)]
+            #[inline(always)]
+            fn abs2(&self) -> Self::Real {
+                *self * *self
+            }
+
+            #[inline(always)]
+            fn from_real(re: Self::Real) -> Self {
+                re
+            }
+
+            #[inline(always)]
+            fn im(&self) -> Self::Real {
+                Self::ZERO
+            }
+
+            #[inline(always)]
+            fn re(&self) -> Self::Real {
+                *self
+            }
+        }
 
         ////////////////////////////////////////////////////////////////////////////////
     };
@@ -634,8 +756,8 @@ macro_rules! impl_float {
 
         impl Float for $type {
             #[inline(always)]
-            fn atan2(self, rhs: Self) -> Self {
-                $atan2(self, rhs)
+            fn atan2(self, x: Self) -> Self {
+                $atan2(self, x)
             }
             #[inline(always)]
             fn epsilon() -> Self {
@@ -652,19 +774,9 @@ macro_rules! impl_float {
 ////////////////////////////////////////////////////////////////////////////////
 
 impl CartesianQuadrant2D {
-    /// Instantiate a `CartesianQuadrant2D` from 2D coordinate.
-    ///
-    /// # Generic Arguments
-    /// * `T` - Type of the coordinates.
-    ///
-    /// # Arguments
-    /// * `x` - The first coordinate value.
-    /// * `y` - The second coordinate value.
-    ///
-    /// # Returns
-    /// * `quadrant` - Variant of the `CartesianQuadrant2D` enum corresponding to the coordinates.
+    /// Instantiate a `CartesianQuadrant2D` from 2D coordinates.
     #[must_use]
-    pub fn from_coords<T: Zero>(x: &T, y: &T) -> Self {
+    pub fn from_coords<T: Zero + PartialOrd>(x: &T, y: &T) -> Self {
         match (x.partial_cmp(&T::ZERO), y.partial_cmp(&T::ZERO)) {
             (
                 Some(core::cmp::Ordering::Equal),

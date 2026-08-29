@@ -59,29 +59,20 @@ macro_rules! assert_almost_eq {
     });
 }
 
-/// Asserts that two floating-point numbers are almost equal.
+/// Asserts that two floating-point numbers are not almost equal.
 ///
-/// This macro compares two expressions, `$left` and `$right` and panics if they are not
-/// almost equal. The comparison is done using an absolute difference against the machine
-/// epsilon for the floating-point type.
-///
-/// # Usage
+/// Panics if `$left` and `$right` differ by less than the given (or machine)
+/// epsilon.
 ///
 /// ```
-/// # use control_rs::assert_almost_eq;
-/// let a = 0.1_f64 + 0.2_f64;
-/// let b = 0.3_f64;
-///
-/// // Does not panic
-/// assert_almost_eq!(a, b);
+/// # use control_rs::assert_not_almost_eq;
+/// assert_not_almost_eq!(0.1_f64, 0.4_f64);
 /// ```
 ///
 /// ```should_panic
-/// # use control_rs::assert_almost_eq;
-/// // Panics because the values are not almost equal.
-/// assert_almost_eq!(0.1_f32, 0.2_f32);
+/// # use control_rs::assert_not_almost_eq;
+/// assert_not_almost_eq!(0.1_f64, 0.1_f64);
 /// ```
-///
 #[macro_export]
 macro_rules! assert_not_almost_eq {
     ($left:expr, $right:expr) => ({
@@ -113,24 +104,11 @@ macro_rules! assert_not_almost_eq {
     });
 }
 
-/// Asserts that two floating-point numbers are almost equal.
-///
-/// This function compares two numbers `a` and `b` of a type `T` that implements
-/// the `Real` trait. It returns `true` if the absolute difference between `a` and `b`
-/// is less than the machine epsilon for that type.
-///
-/// # Generic Arguments
-/// - `T`: A type that implements `PartialOrd`, `PartialEq`, `TrySub<Output = T>` and `Real`.
-///
-/// # Arguments
-/// - `a`: The first value to compare.
-/// - `b`: The second value to compare.
-///
-/// # Returns
-/// `true` if `a` and `b` are almost equal, `false` otherwise.
+/// Returns `true` if `a` and `b` differ by less than `T::epsilon()`.
 ///
 /// # Errors
-/// Return `ArithmeticError` if the subtraction operation fails.
+/// Returns [`ArithmeticError`] if the subtraction fails (for example a domain
+/// violation on `NaN`).
 pub fn almost_eq<T>(a: &T, b: &T) -> ArithmeticResult<bool>
 where
     T: TrySub + TryMul + Signed + Float,
@@ -138,25 +116,11 @@ where
     almost_eq_eps(a, b, &T::epsilon())
 }
 
-/// Asserts that two floating-point numbers are almost equal with a custom epsilon.
-///
-/// This function compares two numbers `a` and `b` of a type `T` that implements
-/// the `Real` trait. It returns `true` if the absolute difference between `a` and `b`
-/// is less than `epsilon`.
-///
-/// # Generic Arguments
-/// - `T`: A type that implements `PartialOrd`, `PartialEq`, `TrySub<Output = T>` and `Real`.
-///
-/// # Arguments
-/// - `a`: The first value to compare.
-/// - `b`: The second value to compare.
-/// - `epsilon`: The tolerance threshold for equality.
-///
-/// # Returns
-/// `true` if `a` and `b` are almost equal within `epsilon`, `false` otherwise.
+/// Returns `true` if `a` and `b` differ by less than `epsilon`.
 ///
 /// # Errors
-/// Return `ArithmeticError` if the subtraction operation fails.
+/// Returns [`ArithmeticError`] if the subtraction fails (for example a domain
+/// violation on `NaN`).
 pub fn almost_eq_eps<T>(a: &T, b: &T, epsilon: &T) -> ArithmeticResult<bool>
 where
     T: TrySub + TryMul + Signed + Float,

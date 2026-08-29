@@ -1,12 +1,12 @@
 # teensy4
 
-A demonstration crate implementing the `control-rs` Hardware-in-the-Loop (HIL)
+A demonstration crate implementing the `control-rs` Embedded Test Server (ETS)
 test server on physical **Teensy 4.0** hardware over a native USB connection.
 
 ## Purpose
 
 The purpose of this example is to show how to integrate the target-side
-`control-rs-hil` event loop, clocks and macros into a real bare-metal embedded
+`control-rs-ets` event loop, clocks and macros into a real bare-metal embedded
 microcontroller environment. It exposes a live PID controller tuning suite where
 settings (Proportional, Integral and Derivative gains) can be read and set
 dynamically by the host TUI or CI runner over a native USB serial connection.
@@ -15,7 +15,7 @@ dynamically by the host TUI or CI runner over a native USB serial connection.
 
 ## Hardware Connection Setup
 
-Unlike standard UART-based HIL configurations, this example utilizes the Teensy
+Unlike standard UART-based ETS configurations, this example utilizes the Teensy
 4.0's native USB controller.
 
 ### Wiring Diagram
@@ -26,7 +26,7 @@ or USB-C) cable.
 ```text
   +------------------+                    +------------------+
   |     Host PC      | <================> |   Teensy 4.0     |
-  | (CLI / TUI / CI) |    USB Cable       |  (HIL Test Bed)  |
+  | (CLI / TUI / CI) |    USB Cable       |  (ETS Test Bed)  |
   +------------------+                    +------------------+
 ```
 
@@ -36,7 +36,7 @@ No external USB-to-UART serial adapters or custom wiring are needed!
 
 ## How it Works
 
-1. **Host-Target Communications**: The HIL server operates as a native **USB CDC
+1. **Host-Target Communications**: ETS operates as a native **USB CDC
    ACM (virtual COM port) device**. The `TeensyComms` struct polls the USB stack
    dynamically inside `poll_command()`, handling the USB enumeration,
    configuration states and bidirectional packet transmission seamlessly.
@@ -49,7 +49,7 @@ No external USB-to-UART serial adapters or custom wiring are needed!
    SysTick register countdown to provide microsecond-accurate timekeeping (
    `now_us()`).
 4. **Status Indicator**: The onboard LED on **Pin 13** turns on solid when the
-   HIL server is successfully initialized and ready to communicate with the
+   ETS is successfully initialized and ready to communicate with the
    host.
 
 ---
@@ -115,7 +115,7 @@ Press the program button on the Teensy 4 board and run:
 teensy_loader_cli -w -v --mcu=TEENSY40 teensy4.hex
 ```
 
-The status LED on Pin 13 will light up, indicating that the USB HIL server is
+The status LED on Pin 13 will light up, indicating that the USB ETS is
 active and waiting for a connection from the host.
 
 ### Alternative: Run/Flash via Cargo Alias
@@ -150,14 +150,14 @@ Run the cargo alias from the workspace root (defaults to `/dev/ttyACM0` and
 `115200` baud):
 
 ```bash
-cargo hil-teensy
+cargo teensy
 ```
 
 If your Teensy is assigned to a different serial port path (e.g.
 `/dev/ttyACM1`), pass it as an argument:
 
 ```bash
-cargo hil-teensy /dev/ttyACM1
+cargo teensy /dev/ttyACM1
 ```
 
 The TUI header will automatically update to display:

@@ -1,0 +1,655 @@
+{
+  "slug": "state_space",
+  "ets_suite": "state_space_test_suite",
+  "ets_source": "src/state_space/tests/state_space_tests.rs",
+  "equivalence_test": "src/compare.rs::state_space_equiv",
+  "validators": [
+    {
+      "source": "python",
+      "argv": [
+        "python3",
+        "python3/state_space.py"
+      ]
+    },
+    {
+      "source": "rust",
+      "bin": "state_space"
+    }
+  ],
+  "plots": [
+    {
+      "argv": [
+        "python3",
+        "python3/plot_state_space.py"
+      ]
+    }
+  ],
+  "conventions": {
+    "kinds": [
+      "host_tutorial",
+      "host_stress",
+      "host_visualization",
+      "ets",
+      "property"
+    ]
+  },
+  "bounds": {
+    "ABS_F64": 1e-12,
+    "ABS_F32": 1e-06,
+    "SOLVE_RESIDUAL_TAU": 20.0,
+    "ZOH_AD_TAU": 20.0,
+    "TAU_KAPPA": 20.0,
+    "QUANT_LSB": 0.00390625,
+    "stiff_zoh_relative": 1e-08
+  },
+  "cases": [
+    {
+      "id": "state_space.host.tutorial_plant",
+      "kind": "host_tutorial",
+      "name": "2nd-order spring-mass-damper ZOH step and free response",
+      "inputs": {
+        "A": [
+          [
+            0.0,
+            1.0
+          ],
+          [
+            -4.0,
+            -0.8
+          ]
+        ],
+        "B": [
+          [
+            0.0
+          ],
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            1.0,
+            0.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ]
+        ],
+        "x_test": [
+          1.0,
+          0.5
+        ],
+        "u_test": 0.0,
+        "Ts": 0.05,
+        "n_steps": 200,
+        "step_u": 1.0,
+        "step_x0": [
+          0.0,
+          0.0
+        ],
+        "free_u": 0.0,
+        "free_x0": [
+          1.0,
+          0.5
+        ],
+        "T": [
+          [
+            1.0,
+            1.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ],
+        "zoh_iters": 20,
+        "step_iters": 20
+      },
+      "note": "omega_n^2 = 4, 2 zeta omega_n = 0.8 => omega_n = 2, zeta = 0.2.",
+      "operations": [
+        "derivative",
+        "to_discrete_zoh",
+        "step_trajectory",
+        "free_response",
+        "similarity_transform"
+      ],
+      "json_keys": [
+        "X_DOT",
+        "Y_TEST",
+        "AD",
+        "BD",
+        "STEP_X1",
+        "STEP_X2",
+        "STEP_Y",
+        "FREE_X1",
+        "FREE_X2",
+        "A_TILDE",
+        "B_TILDE",
+        "C_TILDE"
+      ],
+      "timings": [
+        "zoh",
+        "step"
+      ],
+      "bound": {
+        "tutorial_keys_abs": 1e-12,
+        "ZOH_Ad_residual_ratio": 20.0,
+        "step_abs": "200 * gamma(2) * 10"
+      }
+    },
+    {
+      "id": "state_space.host.stiff_zoh",
+      "kind": "host_stress",
+      "name": "Stiff diagonal plant ZOH",
+      "inputs": {
+        "A": [
+          [
+            -200.0,
+            0.0
+          ],
+          [
+            0.0,
+            -0.5
+          ]
+        ],
+        "B": [
+          [
+            1.0
+          ],
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            1.0,
+            1.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ]
+        ],
+        "Ts": 0.01,
+        "n_steps": 200,
+        "u": 1.0,
+        "x0": [
+          0.0,
+          0.0
+        ]
+      },
+      "note": "||A Ts||_inf = 2; Pad\u00e9 without scaling.",
+      "json_keys": [
+        "STIFF_AD",
+        "STIFF_BD",
+        "STIFF_Y"
+      ],
+      "bound": {
+        "Ad_relative": 1e-08
+      }
+    },
+    {
+      "id": "state_space.ets.discrete_simulation_step",
+      "kind": "ets",
+      "name": "test_discrete_simulation_step",
+      "inputs": {
+        "A": [
+          [
+            0.5
+          ]
+        ],
+        "B": [
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            2.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ]
+        ],
+        "Ts": 0.01,
+        "x0": [
+          0.0
+        ],
+        "u": 1.0
+      },
+      "expected": {
+        "y0": 0.0,
+        "x1": 1.0,
+        "y1": 2.0,
+        "x2": 1.5
+      }
+    },
+    {
+      "id": "state_space.ets.continuous_derivative",
+      "kind": "ets",
+      "name": "test_continuous_derivative",
+      "inputs": {
+        "A": [
+          [
+            0.0,
+            1.0
+          ],
+          [
+            -2.0,
+            -1.0
+          ]
+        ],
+        "B": [
+          [
+            0.0
+          ],
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            1.0,
+            0.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ]
+        ],
+        "x": [
+          1.0,
+          0.0
+        ],
+        "u": 0.0
+      },
+      "expected": {
+        "x_dot": [
+          0.0,
+          -2.0
+        ],
+        "y": 1.0
+      }
+    },
+    {
+      "id": "state_space.ets.zoh_integrator",
+      "kind": "ets",
+      "name": "test_zoh_discretization",
+      "inputs": {
+        "A": [
+          [
+            0.0
+          ]
+        ],
+        "B": [
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            1.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ]
+        ],
+        "Ts": 0.1
+      },
+      "expected": {
+        "Ad": 1.0,
+        "Bd": 0.1
+      },
+      "bound": {
+        "abs": 1e-06
+      }
+    },
+    {
+      "id": "state_space.ets.zoh_vs_scalar_exp",
+      "kind": "ets",
+      "name": "test_zoh_vs_scalar_exp",
+      "inputs": {
+        "A": [
+          [
+            -2.0
+          ]
+        ],
+        "B": [
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            1.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ]
+        ],
+        "Ts": 0.05
+      },
+      "expected": {
+        "Ad": 0.9048374180359595
+      },
+      "bound": {
+        "abs": 1e-10
+      }
+    },
+    {
+      "id": "state_space.ets.tustin_scalar",
+      "kind": "ets",
+      "name": "test_tustin_scalar",
+      "inputs": {
+        "A": [
+          [
+            -2.0
+          ]
+        ],
+        "B": [
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            1.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ]
+        ],
+        "Ts": 0.1
+      },
+      "bound": {
+        "abs": 1e-12
+      }
+    },
+    {
+      "id": "state_space.ets.series_parallel_feedback",
+      "kind": "ets",
+      "name": "test_series_parallel_feedback",
+      "inputs": {
+        "G_H": {
+          "A": [
+            [
+              -1.0
+            ]
+          ],
+          "B": [
+            [
+              1.0
+            ]
+          ],
+          "C": [
+            [
+              1.0
+            ]
+          ],
+          "D": [
+            [
+              0.0
+            ]
+          ]
+        },
+        "sign": -1.0,
+        "identity_feedback_D": [
+          [
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "state_space.ets.ctrb_obsv_tf",
+      "kind": "ets",
+      "name": "test_ctrb_obsv_tf",
+      "inputs": {
+        "A": [
+          [
+            -2.0
+          ]
+        ],
+        "B": [
+          [
+            3.0
+          ]
+        ],
+        "C": [
+          [
+            4.0
+          ]
+        ],
+        "D": [
+          [
+            1.0
+          ]
+        ]
+      },
+      "expected": {
+        "H": "(s+14)/(s+2)",
+        "num": [
+          14.0,
+          1.0
+        ],
+        "den": [
+          2.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "state_space.ets.display_tustin_and_faddeev",
+      "kind": "ets",
+      "name": "test_state_space_display_tustin_and_faddeev",
+      "inputs": {
+        "A": [
+          [
+            0.0,
+            1.0
+          ],
+          [
+            -2.0,
+            -3.0
+          ]
+        ],
+        "B": [
+          [
+            0.0
+          ],
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            1.0,
+            0.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ]
+        ],
+        "discrete_Ts": 0.1,
+        "bad_tustin_A": [
+          [
+            2.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ]
+        ],
+        "bad_tustin_Ts": 1.0
+      },
+      "expected": {
+        "bad_tustin": "StateSpaceError::SingularDiscretizationOperator"
+      }
+    },
+    {
+      "id": "state_space.ets.view",
+      "kind": "ets",
+      "name": "test_state_space_view",
+      "inputs": {
+        "A": [
+          [
+            0.5
+          ]
+        ],
+        "B": [
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            2.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ]
+        ],
+        "Ts": 0.01,
+        "x0": [
+          0.0
+        ],
+        "u": 1.0
+      }
+    },
+    {
+      "id": "state_space.ets.similarity_transform_poles_and_step",
+      "kind": "ets",
+      "name": "test_similarity_transform_poles_and_step",
+      "inputs": {
+        "A": [
+          [
+            0.0,
+            1.0
+          ],
+          [
+            -4.0,
+            -0.8
+          ]
+        ],
+        "B": [
+          [
+            0.0
+          ],
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            1.0,
+            0.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ]
+        ],
+        "Ts": 0.05,
+        "T": [
+          [
+            1.0,
+            0.5
+          ],
+          [
+            0.25,
+            1.0
+          ]
+        ],
+        "n_step": 8
+      },
+      "bound": {
+        "charpoly_rel": "10 * eps",
+        "y_abs": 1e-12
+      }
+    },
+    {
+      "id": "state_space.ets.zoh_multi_step_matches_coarse_sample",
+      "kind": "ets",
+      "name": "test_zoh_multi_step_matches_coarse_sample",
+      "inputs": {
+        "A": [
+          [
+            0.0,
+            1.0
+          ],
+          [
+            -4.0,
+            -0.8
+          ]
+        ],
+        "B": [
+          [
+            0.0
+          ],
+          [
+            1.0
+          ]
+        ],
+        "C": [
+          [
+            1.0,
+            0.0
+          ]
+        ],
+        "D": [
+          [
+            0.0
+          ]
+        ],
+        "Ts_fine": 0.05,
+        "k": 4,
+        "u": 1.0,
+        "x0": [
+          0.0,
+          0.0
+        ]
+      },
+      "bound": {
+        "abs": 1e-09
+      }
+    },
+    {
+      "id": "state_space.prop.similarity_random_t",
+      "kind": "property",
+      "name": "prop_similarity_random_t",
+      "inputs": {
+        "plant_A": [
+          [
+            0.0,
+            1.0
+          ],
+          [
+            -4.0,
+            -0.8
+          ]
+        ],
+        "T_entries": "-5 .. 5",
+        "det_min": 0.05,
+        "n_step": 6
+      }
+    }
+  ]
+}

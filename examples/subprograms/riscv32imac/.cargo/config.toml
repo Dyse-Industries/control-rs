@@ -1,0 +1,6 @@
+# `cargo run` from this directory targets rv32imac and launches qemu-system-riscv32.
+[target.riscv32imac-unknown-none-elf]
+runner = "qemu-system-riscv32 -cpu rv32 -machine virt -nographic -bios none -semihosting -kernel"
+
+[build]
+target = "riscv32imac-unknown-none-elf"

@@ -1,7 +1,7 @@
 # Development Guide
 
 Reference for working on `control-rs`: model internals, workspace
-architecture, cargo aliases and CI/HIL verification workflows.
+architecture, cargo aliases and CI/ETS verification workflows.
 
 ---
 
@@ -46,9 +46,9 @@ flowchart LR
     style TargetEnv fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
 ```
 
-### 1. Hardware-In-The-Loop (`control-rs-hil`)
+### 1. Embedded Test Server (`control-rs-ets`)
 
-Located in [control-rs-hil](../control-rs-hil), this `no_std` crate provides
+Located in [control-rs-ets](../control-rs-ets), this `no_std` crate provides
 the target-side infrastructure:
 
 - **Interactive Test Server**: A lightweight event loop that executes test
@@ -58,19 +58,39 @@ the target-side infrastructure:
 
 ### 2. Host-Side (`control-rs-xtask`)
 
-- **Terminal User Interface (TUI)**: A terminal dashboard built with
-  `ratatui` to trigger live tests, tweak parameters and view logs.
-- **HIL Bridge**: Handles communication and telemetry between the TUI and
-  the hil server.
+- **Terminal User Interface (TUI)**: Interactive frontend for virtual ETS and
+  ETS.
+- **ServerBridge**: Host driver for TUI and CI against virtual Embedded Test
+  Server (virtual ETS) under QEMU or ETS on a board.
 
 ### 3. Continuous Integration (`.github/workflows/CI.yml`)
 
-- **Multi-Arch Emulation**: Spins up headless QEMU instances for both **ARM
+- **Multi-Arch Emulation**: CI → virtual ETS (QEMU) for both **ARM
   Cortex-M** (`thumbv7em-none-eabihf`) and **RISC-V**
   (`riscv32imac-unknown-none-elf`) targets.
 - **Code Quality Reporting**: Parses stdout/stderr from the available
-  cargo tooling (`fmt`, `clippy`, `test`, `tarpaulin`, `qemu`) and generates
-  a report (`ci-report.md`).
+  cargo tooling (`fmt`, `clippy`, `test`, `tarpaulin`, `qemu`) and generates a
+  report (`ci-report.md`).
+- **Numerical-model JSON V&V**: Separate workflow
+  [
+  `.github/workflows/numerical-models.yml`](../.github/workflows/numerical-models.yml)
+  installs Python 3.12 and `examples/numerical-models/python3/requirements.txt`,
+  then `cargo build --release` and
+  `cargo run --release --bin validate -- suites/`. Not part of `cargo ci`.
+  Suite files list validators (suite path in, JSON on stdout) and plotters
+  (results directory in). Artifacts include `metrics` (residual / $\tau\kappa\varepsilon$)
+  and `timings` (kernel Instant / `perf_counter_ns`). Plotters write
+  named PNGs under `results/<slug>/`; PNG pixels are not a numeric gate.
+  Additional native `source` names (`rust-row`, optional Apple
+  `rust-accelerate`) are extra validators, not a substitute for `source: rust`.
+  Each run uploads `results/` as the `numerical-models-results` Actions
+  artifact (30-day retention). Successful `main` runs also publish flattened
+  `{slug}-{name}.png` files to the rolling
+  [`plots`](https://github.com/Dyse-Industries/control-rs/releases/tag/plots)
+  release (not marked Latest, so `v*` crate publishes keep that badge). The
+  gallery is in [`examples/README.md`](../examples/README.md).
+  That nested crate is not a workspace member, so `cargo fmt-all` does not
+  cover it; `cargo ci` fmt-checks it via `--manifest-path`.
 
 ---
 
@@ -90,22 +110,22 @@ Helpful cargo aliases are configured
 in [.cargo/config.toml](../.cargo/config.toml)
 to simplify development, testing, formatting, linting and coverage reporting:
 
-| Category                               | Alias               | Underlying Command                                             | Description                                                         |
-|:---------------------------------------|:--------------------|:---------------------------------------------------------------|:--------------------------------------------------------------------|
-| **Development & UI**                   | `cargo xtask`       | `run --package control-rs-xtask --`                            | Runs the workspace's auxiliary build/test tasks.                    |
-|                                        | `cargo tui`         | `cargo xtask tui`                                              | Launches the interactive TUI console dashboard.                     |
-|                                        | `cargo ci`          | `cargo xtask ci`                                               | Runs the continuous integration suite locally.                      |
-| **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | Launches the interactive TUI console targeting QEMU emulation.      |
-|                                        | `cargo teensy`      | `cargo tui teensy`                                             | Launches the interactive TUI console targeting Teensy 4.0 hardware. |
-| **Target Execution (CI/Headless)**     | `cargo qemu-ci`     | `cargo ci qemu`                                                | Performs headless CI verification targeting QEMU emulation.         |
-|                                        | `cargo teensy-ci`   | `cargo ci teensy`                                              | Performs headless CI verification targeting Teensy 4.0 hardware.    |
-| **Formatting**                         | `cargo fmt-all`     | `fmt --all`                                                    | Automatically formats all Rust files in the workspace.              |
-|                                        | `cargo fmt-check`   | `fmt --all -- --check`                                         | Checks that all files conform to formatting rules.                  |
-| **Linting**                            | `cargo lint`        | `clippy --workspace --lib --bins --tests --examples --benches` | Runs Clippy lints across all packages and targets.                  |
-|                                        | `cargo clippy-json` | `cargo lint --message-format=json`                             | Runs Clippy lints and outputs findings in JSON format.              |
-|                                        | `cargo clippy-ci`   | `cargo clippy-json -- -D warnings`                             | Runs Clippy CI lints, treating all warnings as compiler errors.     |
-| **Coverage**                           | `cargo coverage`    | `tarpaulin --verbose --workspace`                              | Measures test code coverage via `cargo-tarpaulin`.                  |
-|                                        | `cargo coverage-ci` | `cargo coverage --color never --out Html --out Json`           | Runs coverage in CI mode, exporting reports in HTML and JSON.       |
+| Category                               | Alias               | Underlying Command                                             | Description                                                     |
+|:---------------------------------------|:--------------------|:---------------------------------------------------------------|:----------------------------------------------------------------|
+| **Development & UI**                   | `cargo xtask`       | `run --package control-rs-xtask --`                            | Runs the workspace's auxiliary build/test tasks.                |
+|                                        | `cargo tui`         | `cargo xtask tui`                                              | Launches the interactive TUI console dashboard.                 |
+|                                        | `cargo ci`          | `cargo xtask ci`                                               | Runs the continuous integration suite locally.                  |
+| **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | TUI → virtual ETS (QEMU).                                       |
+|                                        | `cargo teensy`      | `cargo tui teensy`                                             | TUI → ETS (Teensy 4.0).                                         |
+| **Target Execution (CI)**              | `cargo qemu-ci`     | `cargo ci qemu`                                                | CI → virtual ETS (QEMU).                                        |
+|                                        | `cargo teensy-ci`   | `cargo ci teensy`                                              | CI → ETS (Teensy 4.0).                                          |
+| **Formatting**                         | `cargo fmt-all`     | `fmt --all`                                                    | Automatically formats all Rust files in the workspace.          |
+|                                        | `cargo fmt-check`   | `fmt --all -- --check`                                         | Checks that all files conform to formatting rules.              |
+| **Linting**                            | `cargo lint`        | `clippy --workspace --lib --bins --tests --examples --benches` | Runs Clippy lints across all packages and targets.              |
+|                                        | `cargo clippy-json` | `cargo lint --message-format=json`                             | Runs Clippy lints and outputs findings in JSON format.          |
+|                                        | `cargo clippy-ci`   | `cargo clippy-json -- -D warnings`                             | Runs Clippy CI lints, treating all warnings as compiler errors. |
+| **Coverage**                           | `cargo coverage`    | `tarpaulin --verbose --workspace`                              | Measures test code coverage via `cargo-tarpaulin`.              |
+|                                        | `cargo coverage-ci` | `cargo coverage --color never --out Html --out Json`           | Runs coverage in CI mode, exporting reports in HTML and JSON.   |
 
 ---
 
@@ -117,7 +137,7 @@ parameters in real time.
 ```bash
   $> cargo tui
 
-┌ control-rs HIL Console ─────────────────────────────────────────────────────────────────────────────────────────────┐
+┌ control-rs ETS Console ─────────────────────────────────────────────────────────────────────────────────────────────┐
 │ TARGET: QEMU (cortex-m7) | LINK: Semihosting (mps2-an500)                                                           │
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ Test Suites & Config Settings ────────────────────────────────┐┌ Target Console / RTT Logs ─────────────────────────┐
@@ -153,7 +173,10 @@ parameters in real time.
 ## Continuous Integration & Verification
 
 Run the exact verification steps performed by the GitHub Actions pipeline
-locally (clippy, formatting, tarpaulin coverage and QEMU HIL tests).
+locally (clippy, formatting, tarpaulin coverage, and CI → virtual ETS).
+Numerical-model JSON V&V is a separate workflow; from
+`examples/numerical-models/` run `cargo run --release --bin validate -- suites/`
+after `pip install -r python3/requirements.txt`.
 
 - **Run all checks (ARM & RISC-V QEMU):**
   ```bash

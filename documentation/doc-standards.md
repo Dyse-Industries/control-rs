@@ -163,9 +163,9 @@ list below:
 /// Failure to adhere to these conditions will result in undefined behavior.
 ```
 
-# 4. HIL Test Suite Documentation
+# 4. ETS Test Suite Documentation
 
-Hardware-in-the-Loop (HIL) test suites are target-side verification suites meant
+Embedded Test Server (ETS) test suites are target-side verification suites meant
 to run on embedded hardware or emulators. They are internal test utilities and
 not part of the public-facing API. Therefore, they are subject to a much more
 lightweight and concise documentation standard.
@@ -173,13 +173,13 @@ lightweight and concise documentation standard.
 The goal is to provide the minimum information needed to understand the test
 logic and the settings it uses.
 
-## 4.1. Structuring HIL Docs
+## 4.1. Structuring ETS Docs
 
 * **Omit Formalities**: Do not include `# Detailed Summary`, `# Generic Args`,
   `# Returns` or `# Example`
-  sections in HIL documentation.
+  sections in ETS documentation.
 * **Suite-Level Docs**: Provide a brief one-sentence or two-sentence description
-  using outer doc comments (`///`) directly above the `#[hil_suite]` macro or
+  using outer doc comments (`///`) directly above the `#[ets_suite]` macro or
   the module definition (since these are typically defined within a main runner
   file or test module).
 * **Setting Docs**: For each settings static, write a brief, single-sentence
@@ -187,13 +187,13 @@ logic and the settings it uses.
 * **Test Functions**: Use a single line/sentence summary description of what
   behavior or condition the test validates.
 
-### Example of HIL suite docs
+### Example of ETS suite docs
 
 ```rust
-/// PID controller hardware-in-the-loop test suite.
-#[hil_suite]
+/// PID controller on-target ETS test suite.
+#[ets_suite]
 pub mod teensy_pid_suite {
-    use control_rs_hil::settings::{Setting, SettingValue};
+    use control_rs_ets::settings::{Setting, SettingValue};
 
     /// Proportional gain setting (dimensionless, scaled by 1000). Controls system error response.
     pub static PROPORTIONAL_GAIN: u32 = 1500;

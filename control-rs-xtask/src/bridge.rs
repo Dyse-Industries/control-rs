@@ -2,12 +2,12 @@
 //! Manages spawning and monitoring the execution environments (QEMU or Serial).
 
 use std::io::{Read, Write as IoWrite};
-use std::process::{Child, Command as StdCommand, Stdio};
+use std::process::{Child, ChildStdout, Command as StdCommand, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 
-use control_rs_hil::comms::{Command, FrameReader, LogMessage, Telemetry};
-use control_rs_hil::settings::SettingValue;
+use control_rs_ets::comms::{Command, FrameReader, LogMessage, Telemetry};
+use control_rs_ets::settings::SettingValue;
 
 type BridgeResult<T> = Result<T, Box<dyn std::error::Error>>;
 type WaitResult = Result<Option<std::process::ExitStatus>, std::io::Error>;
@@ -62,14 +62,14 @@ pub struct QemuTargetDetails {
 }
 
 /// Target execution platform.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
-    /// QEMU emulator target.
+    /// virtual ETS (QEMU) target.
     QemuSemihosting {
         /// Target architecture.
         arch: QemuArch,
     },
-    /// Serial connection target.
+    /// ETS (physical board) target.
     Serial {
         /// Serial port path (e.g. `/dev/ttyACM0`).
         port: String,
@@ -78,7 +78,7 @@ pub enum Target {
     },
 }
 
-/// Host bridge to manage the target execution environment (QEMU or Serial).
+/// Host driver (`ServerBridge`) for virtual ETS (QEMU) and ETS (board).
 pub struct ServerBridge {
     inner: BridgeInner,
     link_info: String,
@@ -138,6 +138,9 @@ impl ServerBridge {
 
     /// Spawns a new QEMU process or connects to a serial device.
     ///
+    /// When `inherit_stderr` is true, QEMU `cargo run` stderr is left on the
+    /// host terminal so cargo status lines are not captured as `RawConsole`.
+    ///
     /// # Errors
     ///
     /// Returns an error if opening the serial port fails after 5 attempts or if QEMU fails to start.
@@ -146,7 +149,11 @@ impl ServerBridge {
     ///
     /// Panics if the serial port reference is unexpectedly missing after loop execution.
     #[allow(clippy::too_many_lines)]
-    pub fn new(target: Target, elf_path: Option<&str>) -> BridgeResult<Self> {
+    pub fn new(
+        target: Target,
+        elf_path: Option<&str>,
+        inherit_stderr: bool,
+    ) -> BridgeResult<Self> {
         let (tx, rx) = channel();
 
         match target {
@@ -210,19 +217,23 @@ impl ServerBridge {
                 })
             }
             Target::QemuSemihosting { arch } => {
-                let elf =
-                    elf_path.ok_or("ELF path is required for QEMU target")?;
-                Self::new_qemu_inner(elf, arch, tx, rx)
+                elf_path.ok_or("ELF path is required for QEMU target")?;
+                Self::new_qemu_inner(arch, tx, rx, inherit_stderr)
             }
         }
     }
     fn new_qemu_inner(
-        _elf_path: &str,
         arch: QemuArch,
         tx: Sender<BridgeMessage>,
         rx: Receiver<BridgeMessage>,
+        inherit_stderr: bool,
     ) -> BridgeResult<Self> {
         let details = arch.details();
+        let stderr_stdio = if inherit_stderr {
+            Stdio::inherit()
+        } else {
+            Stdio::piped()
+        };
 
         let mut child = StdCommand::new("cargo")
             .current_dir("examples/qemu")
@@ -236,49 +247,33 @@ impl ServerBridge {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(stderr_stdio)
             .spawn()
             .map_err(|e| format!("Failed to spawn cargo run process: {e}"))?;
 
         let stdin = child.stdin.take().ok_or("Failed to open stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to open stdout")?;
-        let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
 
-        // Spawn stdout reader thread
-        let tx_stdout = tx.clone();
-        thread::spawn(move || {
-            let mut reader = FrameReader::new();
-            let mut raw_line_buf = Vec::new();
-            let mut byte_buf = [0u8; 1];
-            let mut stdout = stdout;
-
-            while matches!(stdout.read(&mut byte_buf), Ok(1)) {
-                let b = byte_buf[0];
-                process_incoming_byte(
-                    b,
-                    &mut reader,
-                    &mut raw_line_buf,
-                    &tx_stdout,
-                );
-            }
-        });
-
-        // Spawn stderr reader thread
-        let tx_stderr = tx;
-        thread::spawn(move || {
-            let mut reader = std::io::BufReader::new(stderr);
-            let mut line = String::new();
-            while let Ok(n) =
-                std::io::BufRead::read_line(&mut reader, &mut line)
-            {
-                if n == 0 {
-                    break;
+        if inherit_stderr {
+            spawn_qemu_stdout_reader(stdout, tx);
+        } else {
+            spawn_qemu_stdout_reader(stdout, tx.clone());
+            let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
+            thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(stderr);
+                let mut line = String::new();
+                while let Ok(n) =
+                    std::io::BufRead::read_line(&mut reader, &mut line)
+                {
+                    if n == 0 {
+                        break;
+                    }
+                    let trimmed = line.trim_end().to_string();
+                    let _ = tx.send(BridgeMessage::RawConsole(trimmed));
+                    line.clear();
                 }
-                let trimmed = line.trim_end().to_string();
-                let _ = tx_stderr.send(BridgeMessage::RawConsole(trimmed));
-                line.clear();
-            }
-        });
+            });
+        }
 
         Ok(Self {
             inner: BridgeInner::Qemu { child, stdin },
@@ -586,6 +581,28 @@ fn make_telemetry_owned(tel: &Telemetry<'_>) -> Telemetry<'static> {
     }
 }
 
+/// Reads QEMU `cargo run` stdout and forwards framed telemetry plus raw lines.
+fn spawn_qemu_stdout_reader(
+    mut stdout: ChildStdout,
+    tx_stdout: Sender<BridgeMessage>,
+) {
+    thread::spawn(move || {
+        let mut reader = FrameReader::new();
+        let mut raw_line_buf = Vec::new();
+        let mut byte_buf = [0u8; 1];
+
+        while matches!(stdout.read(&mut byte_buf), Ok(1)) {
+            let b = byte_buf[0];
+            process_incoming_byte(
+                b,
+                &mut reader,
+                &mut raw_line_buf,
+                &tx_stdout,
+            );
+        }
+    });
+}
+
 /// Processes a single byte received from the target device.
 fn process_incoming_byte(
     b: u8,
@@ -816,12 +833,12 @@ mod tests {
             make_telemetry_owned(&Telemetry::TestStateChange {
                 suite_id: 1,
                 test_id: 2,
-                state: control_rs_hil::comms::TestState::Passed
+                state: control_rs_ets::comms::TestState::Passed
             }),
             Telemetry::TestStateChange {
                 suite_id: 1,
                 test_id: 2,
-                state: control_rs_hil::comms::TestState::Passed
+                state: control_rs_ets::comms::TestState::Passed
             }
         ));
         assert!(matches!(
@@ -907,7 +924,7 @@ mod tests {
         }
 
         let mut buf = [0u8; 128];
-        let size = control_rs_hil::comms::frame_telemetry(
+        let size = control_rs_ets::comms::frame_telemetry(
             &Telemetry::DiscoveryComplete,
             &mut buf,
         )
@@ -921,5 +938,156 @@ mod tests {
             msg2,
             BridgeMessage::Telemetry(Telemetry::DiscoveryComplete)
         ));
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_target_helpers_and_remaining_parse_arches() {
+        assert!(matches!(
+            Target::qemu_arm(),
+            Target::QemuSemihosting {
+                arch: QemuArch::Thumbv7emNoneEabihf
+            }
+        ));
+        assert!(matches!(
+            Target::qemu_arm_soft(),
+            Target::QemuSemihosting {
+                arch: QemuArch::Thumbv7emNoneEabi
+            }
+        ));
+        assert!(matches!(
+            Target::qemu_riscv(),
+            Target::QemuSemihosting {
+                arch: QemuArch::Riscv32imacUnknownNoneElf
+            }
+        ));
+        assert!(matches!(
+            Target::qemu_riscv64(),
+            Target::QemuSemihosting {
+                arch: QemuArch::Riscv64gcUnknownNoneElf
+            }
+        ));
+        let serial = Target::serial("/dev/ttyUSB1".to_string(), 57600);
+        assert!(matches!(serial, Target::Serial { baud: 57600, .. }));
+
+        let arm_sf = Target::parse(
+            &[
+                "bin".to_string(),
+                "ci".to_string(),
+                "qemu".to_string(),
+                "arm-sf".to_string(),
+            ],
+            "arm",
+            "/dev/ttyACM0",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            arm_sf,
+            Target::QemuSemihosting {
+                arch: QemuArch::Thumbv7emNoneEabi
+            }
+        ));
+
+        let rv32 = Target::parse(
+            &[
+                "bin".to_string(),
+                "ci".to_string(),
+                "qemu".to_string(),
+                "risc-v".to_string(),
+            ],
+            "arm",
+            "/dev/ttyACM0",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            rv32,
+            Target::QemuSemihosting {
+                arch: QemuArch::Riscv32imacUnknownNoneElf
+            }
+        ));
+
+        let rv64 = Target::parse(
+            &[
+                "bin".to_string(),
+                "ci".to_string(),
+                "qemu".to_string(),
+                "risc-v64".to_string(),
+            ],
+            "arm",
+            "/dev/ttyACM0",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(
+            rv64,
+            Target::QemuSemihosting {
+                arch: QemuArch::Riscv64gcUnknownNoneElf
+            }
+        ));
+
+        let teensy_default = Target::parse(
+            &["bin".to_string(), "ci".to_string(), "teensy".to_string()],
+            "arm",
+            "/dev/teensy",
+        )
+        .unwrap()
+        .unwrap();
+        if let Target::Serial { port, baud } = teensy_default {
+            assert_eq!(port, "/dev/teensy");
+            assert_eq!(baud, 115_200);
+        } else {
+            panic!("expected serial");
+        }
+
+        assert_eq!(
+            QemuArch::Thumbv7emNoneEabi.details().target_triple,
+            "thumbv7em-none-eabi"
+        );
+        assert_eq!(
+            QemuArch::Riscv64gcUnknownNoneElf.details().target_triple,
+            "riscv64gc-unknown-none-elf"
+        );
+    }
+
+    #[test]
+    fn test_process_incoming_byte_corrupted_payload_and_special_chars() {
+        let (tx, rx) = channel();
+        let mut reader = FrameReader::new();
+        let mut raw_buf = Vec::new();
+
+        // 1. Send invalid postcard payload inside a valid frame
+        let invalid_payload = [0xFF, 0xFF, 0xFF];
+        let len = u16::try_from(invalid_payload.len()).unwrap();
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+        let crc_val = crc.checksum(&invalid_payload);
+        let mut frame = vec![0xAA, 0x55, (len >> 8) as u8, (len & 0xFF) as u8];
+        frame.extend_from_slice(&invalid_payload);
+        frame.push((crc_val >> 8) as u8);
+        frame.push((crc_val & 0xFF) as u8);
+
+        for b in frame {
+            process_incoming_byte(b, &mut reader, &mut raw_buf, &tx);
+        }
+
+        let msg = rx.try_recv().unwrap();
+        if let BridgeMessage::RawConsole(err) = msg {
+            assert!(err.contains("Postcard decode failed"));
+        } else {
+            panic!("expected raw console error");
+        }
+
+        // 2. Send \r and \t and newline
+        process_incoming_byte(b'a', &mut reader, &mut raw_buf, &tx);
+        process_incoming_byte(b'\r', &mut reader, &mut raw_buf, &tx);
+        process_incoming_byte(b'\t', &mut reader, &mut raw_buf, &tx);
+        process_incoming_byte(b'\n', &mut reader, &mut raw_buf, &tx);
+        let msg2 = rx.try_recv().unwrap();
+        if let BridgeMessage::RawConsole(line) = msg2 {
+            assert_eq!(line, "a\t");
+        } else {
+            panic!("expected raw console line");
+        }
     }
 }
