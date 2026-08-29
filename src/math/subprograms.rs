@@ -4200,23 +4200,6 @@ where
     }
 }
 
-/// Conjugate-transposes the Jacobi vector workspace so columns of the
-/// stored `U` satisfy `A U = U Λ` with `Λ` taken from the diagonal of `A`.
-/// The plane rotations accumulate `V^H` relative to that diagonal order.
-#[inline(always)]
-#[allow(clippy::indexing_slicing)]
-fn heev_conj_transpose_vectors<T: Scalar>(work: &mut [T], n: usize) {
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let aij = work[i * n + j].clone();
-            let aji = work[j * n + i].clone();
-            work[i * n + j] = aji.conj();
-            work[j * n + i] = aij.conj();
-        }
-        work[i * n + i] = work[i * n + i].clone().conj();
-    }
-}
-
 #[inline(always)]
 fn syev_jacobi_cs<T, A>(
     a: &A,
@@ -4402,9 +4385,11 @@ fn heev_apply_offdiag<T, A>(
         if k != p && k != q {
             let a_kp = uplo_entry(a, k, p, uplo);
             let a_kq = uplo_entry(a, k, q, uplo);
+            // Right-multiply by R = [[c, s], [-s̄, c]]: column update
+            // a'_*p = c a_*p − s̄ a_*q,  a'_*q = s a_*p + c a_*q.
             let new_kp =
-                (c.clone() * a_kp.clone()) - (s.clone() * a_kq.clone());
-            let new_kq = (s_conj.clone() * a_kp) + (c.clone() * a_kq);
+                (c.clone() * a_kp.clone()) - (s_conj.clone() * a_kq.clone());
+            let new_kq = (s.clone() * a_kp) + (c.clone() * a_kq);
             unsafe {
                 a.set_unchecked(k, p, new_kp.clone());
                 a.set_unchecked(k, q, new_kq.clone());
@@ -4457,12 +4442,15 @@ fn heev_apply_vectors<T: Scalar>(
     s: &T,
     s_conj: &T,
 ) {
+    // Accumulate V ← V R with the same R as `heev_apply_2x2` /
+    // `heev_apply_offdiag` so columns of `work` are eigenvectors of the
+    // original operand (`A V = V Λ`). Do not conjugate-transpose afterward.
     for k in 0..n {
         let v_kp = work[k * n + p].clone();
         let v_kq = work[k * n + q].clone();
         work[k * n + p] =
-            (c.clone() * v_kp.clone()) - (s.clone() * v_kq.clone());
-        work[k * n + q] = (s_conj.clone() * v_kp) + (c.clone() * v_kq);
+            (c.clone() * v_kp.clone()) - (s_conj.clone() * v_kq.clone());
+        work[k * n + q] = (s.clone() * v_kp) + (c.clone() * v_kq);
     }
 }
 
@@ -4573,9 +4561,6 @@ where
         iter += 1;
     }
     ev_store_w(a, w, n);
-    if jobz == JobZ::Vectors {
-        heev_conj_transpose_vectors(work, n);
-    }
     ev_copy_vectors(jobz, a, work, n);
     Ok(())
 }
