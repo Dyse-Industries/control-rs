@@ -6,23 +6,35 @@ bare-metal embedded platforms.
 
 ## Features
 
-- **Static Math Types & Traits** — Type-level dimensions ([`Dim`], [`Const<N>`]), zero-cost numeric traits ([`Float`], [`Scalar`], [`Radical`], etc.), fixed-point arithmetic with convergent rounding ([`Fixed`], [`Quantized`]), and complex numbers ([`Complex`]).
-- **Storage Subsystem** — Decoupled storage backends ([`ArrayStorage`], [`RowArrayStorage`], [`StaticStorageView`], [`TriangularPackedStorage`], [`CsrStorage`]) providing zero-copy column-major, row-major, packed, and sparse layouts in `#![no_std]`.
-- **Hardware-Accelerable Subprograms** — Full BLAS Level 1/2/3, Packed BLAS, Sparse BLAS, and LAPACK direct solvers ([`DefaultBlas`]), ready for CMSIS/NMSIS drop-in acceleration via generic engine traits.
-- **Core Numerical Models** — Zero-alloc [`Matrix`], [`Polynomial`], [`Tensor`], [`TransferFunction`], and [`StateSpace`] with static dimension checking and unified storage.
-- **Host Tests and Embedded Test Server (ETS)** — Comprehensive host test suite and property tests, plus bare-metal runner across ARM Cortex-M and RISC-V targets via [`control-rs-ets`](control-rs-ets).
+- **Static Math Types & Traits** — Type-level dimensions ([`Dim`], [
+  `Const<N>`]), zero-cost numeric traits ([`Float`], [`Scalar`], [`Radical`],
+  etc.), fixed-point arithmetic with convergent rounding ([`Fixed`], [
+  `Quantized`]), and complex numbers ([`Complex`]).
+- **Storage Subsystem** — Decoupled storage backends ([`ArrayStorage`], [
+  `RowArrayStorage`], [`StaticStorageView`], [`TriangularPackedStorage`], [
+  `CsrStorage`]) providing zero-copy column-major, row-major, packed, and sparse
+  layouts in `#![no_std]`.
+- **Hardware-Accelerable Subprograms** — Full BLAS Level 1/2/3, Packed BLAS,
+  Sparse BLAS, and LAPACK direct solvers ([`DefaultBlas`]), ready for
+  CMSIS/NMSIS drop-in acceleration via generic engine traits.
+- **Core Numerical Models** — Zero-alloc [`Matrix`], [`Polynomial`], [
+  `Tensor`], [`TransferFunction`], and [`StateSpace`] with static dimension
+  checking and unified storage.
+- **Host Tests and Embedded Test Server (ETS)** — Comprehensive host test suite
+  and property tests, plus bare-metal runner across ARM Cortex-M and RISC-V
+  targets via [`control-rs-ets`](control-rs-ets).
 
 ## Models
 
 `control-rs` is built around five storage-backed numerical primitives.
 
-| Model                | Storage & Capacity       | Applications                            | Key Capabilities & Algorithms                                      |
-|:---------------------|:-------------------------|:----------------------------------------|:-------------------------------------------------------------------|
-| **Matrix**           | `Storage<T, R, C>` (128×128) | State-space, Kalman filtering, MIMO     | BLAS Level 1/3 operators, LU, LDL^T, Cholesky, Householder QR      |
-| **Polynomial**       | `Storage<T, N, 1>` (1024) | Filtering, trajectories, root-finding   | Horner evaluation, calculus (deriv/integ), DSP convolution, companion matrix |
-| **Tensor**           | `FlatBuffer<T>` (1024)   | Flight lookup tables, Edge AI inference | Multilinear grid interpolation, convergent `Quantized` fixed-point, activations |
-| **TransferFunction** | Polynomial-backed        | SISO $H(s)$, $H(z)$ control loops       | Series, parallel, frequency response (Bode), controllable canonical form |
-| **StateSpace**       | Matrix-backed            | Continuous/discrete LTI, observers      | Step simulation, continuous derivative, Taylor ZOH discretization, similarity transforms |
+| Model                | Storage & Capacity           | Applications                            | Key Capabilities & Algorithms                                                            |
+|:---------------------|:-----------------------------|:----------------------------------------|:-----------------------------------------------------------------------------------------|
+| **Matrix**           | `Storage<T, R, C>` (128×128) | State-space, Kalman filtering, MIMO     | BLAS Level 1/3 operators, LU, LDL^T, Cholesky, Householder QR                            |
+| **Polynomial**       | `Storage<T, N, 1>` (1024)    | Filtering, trajectories, root-finding   | Horner evaluation, calculus (deriv/integ), DSP convolution, companion matrix             |
+| **Tensor**           | `FlatBuffer<T>` (1024)       | Flight lookup tables, Edge AI inference | Multilinear grid interpolation, convergent `Quantized` fixed-point, activations          |
+| **TransferFunction** | Polynomial-backed            | SISO $H(s)$, $H(z)$ control loops       | Series, parallel, frequency response (Bode), controllable canonical form                 |
+| **StateSpace**       | Matrix-backed                | Continuous/discrete LTI, observers      | Step simulation, continuous derivative, Taylor ZOH discretization, similarity transforms |
 
 ### Crate Architecture
 
@@ -39,13 +51,7 @@ flowchart TB
         FixedNum["fixed_num (Fixed, Quantized)"]:::external
         DspCore["dsp (FFT, Convolution)"]:::external
         Subprograms["subprograms (BLAS 1/2/3, LAPACK, DefaultBlas)"]:::external
-
-        subgraph Storage["storage (src/math/storage)"]
-            direction TB
-            ArrayStorage["ArrayStorage / RowArrayStorage"]:::storage
-            StorageView["StorageView / StaticStorageView"]:::storage
-            PackedSparse["Packed & Sparse Storage"]:::storage
-        end
+        Storage["storage (Dense, Packed, View)"]:::external
     end
 
     subgraph Models["Numerical Models"]
@@ -66,14 +72,11 @@ flowchart TB
 
     Math --> Models
     Models --> Tools
-
     classDef core fill: #0f172a, stroke: #38bdf8, stroke-width: 2px, color: #f8fafc
-    classDef storage fill: #042f2e, stroke: #2dd4bf, stroke-width: 2px, color: #ccfbf1
     classDef external fill: #312e81, stroke: #a78bfa, stroke-width: 2px, color: #f5f3ff
     classDef tools fill: #1e1b4b, stroke: #818cf8, stroke-width: 2px, color: #e0e7ff
     style Models fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
     style Math fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
-    style Storage fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
     style Tools fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
 ```
 
