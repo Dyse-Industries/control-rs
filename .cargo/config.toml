@@ -2,6 +2,9 @@
 
 # Development tools
 xtask = ["run", "--package", "control-rs-xtask", "--"]
+# Git-hooks setup
+install-hooks = ["xtask", "install-hooks"]
+
 
 # Continuous Integration
 ci = ["xtask", "ci"]
