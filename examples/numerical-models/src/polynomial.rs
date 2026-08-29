@@ -31,28 +31,6 @@ where
     (0..n).map(|i| p.get(i).copied().unwrap_or(0.0)).collect()
 }
 
-fn binomial(n: usize, k: usize) -> f64 {
-    if k > n {
-        return 0.0;
-    }
-    let mut v = 1.0_f64;
-    for i in 0..k {
-        v = v * ((n - i) as f64) / ((i + 1) as f64);
-    }
-    v
-}
-
-/// Coefficients of $(x - a)^8$, ascending.
-fn linear_pow8(a: f64) -> [f64; 9] {
-    let n = 8_usize;
-    let mut c = [0.0_f64; 9];
-    for k in 0..=n {
-        let sign = if (n - k) % 2 == 0 { 1.0 } else { -1.0 };
-        c[k] = binomial(n, k) * sign * a.powi((n - k) as i32);
-    }
-    c
-}
-
 fn abs_poly_eval(coeffs: &[f64], x_abs: f64) -> f64 {
     let mut acc = 0.0_f64;
     for &c in coeffs.iter().rev() {

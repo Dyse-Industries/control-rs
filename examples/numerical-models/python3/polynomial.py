@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import mpmath
 import numpy as np
 from numpy.polynomial.polynomial import (
     polycompanion,

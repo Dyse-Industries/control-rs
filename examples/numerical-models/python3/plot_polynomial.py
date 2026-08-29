@@ -8,14 +8,10 @@ import numpy as np
 from matplotlib.colors import SymLogNorm
 
 from plot_util import (
-    BOUND,
     PY,
     RS,
-    abs_poly_eval,
     apply_style,
     as_f64,
-    flatten_numbers,
-    gamma,
     heatmap,
     load_artifacts,
     pair,
