@@ -2,7 +2,7 @@
 //! Manages spawning and monitoring the execution environments (QEMU or Serial).
 
 use std::io::{Read, Write as IoWrite};
-use std::process::{Child, Command as StdCommand, Stdio};
+use std::process::{Child, ChildStdout, Command as StdCommand, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 
@@ -138,6 +138,9 @@ impl ServerBridge {
 
     /// Spawns a new QEMU process or connects to a serial device.
     ///
+    /// When `inherit_stderr` is true, QEMU `cargo run` stderr is left on the
+    /// host terminal so cargo status lines are not captured as `RawConsole`.
+    ///
     /// # Errors
     ///
     /// Returns an error if opening the serial port fails after 5 attempts or if QEMU fails to start.
@@ -146,7 +149,11 @@ impl ServerBridge {
     ///
     /// Panics if the serial port reference is unexpectedly missing after loop execution.
     #[allow(clippy::too_many_lines)]
-    pub fn new(target: Target, elf_path: Option<&str>) -> BridgeResult<Self> {
+    pub fn new(
+        target: Target,
+        elf_path: Option<&str>,
+        inherit_stderr: bool,
+    ) -> BridgeResult<Self> {
         let (tx, rx) = channel();
 
         match target {
@@ -210,19 +217,23 @@ impl ServerBridge {
                 })
             }
             Target::QemuSemihosting { arch } => {
-                let elf =
-                    elf_path.ok_or("ELF path is required for QEMU target")?;
-                Self::new_qemu_inner(elf, arch, tx, rx)
+                elf_path.ok_or("ELF path is required for QEMU target")?;
+                Self::new_qemu_inner(arch, tx, rx, inherit_stderr)
             }
         }
     }
     fn new_qemu_inner(
-        _elf_path: &str,
         arch: QemuArch,
         tx: Sender<BridgeMessage>,
         rx: Receiver<BridgeMessage>,
+        inherit_stderr: bool,
     ) -> BridgeResult<Self> {
         let details = arch.details();
+        let stderr_stdio = if inherit_stderr {
+            Stdio::inherit()
+        } else {
+            Stdio::piped()
+        };
 
         let mut child = StdCommand::new("cargo")
             .current_dir("examples/qemu")
@@ -236,49 +247,33 @@ impl ServerBridge {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(stderr_stdio)
             .spawn()
             .map_err(|e| format!("Failed to spawn cargo run process: {e}"))?;
 
         let stdin = child.stdin.take().ok_or("Failed to open stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to open stdout")?;
-        let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
 
-        // Spawn stdout reader thread
-        let tx_stdout = tx.clone();
-        thread::spawn(move || {
-            let mut reader = FrameReader::new();
-            let mut raw_line_buf = Vec::new();
-            let mut byte_buf = [0u8; 1];
-            let mut stdout = stdout;
-
-            while matches!(stdout.read(&mut byte_buf), Ok(1)) {
-                let b = byte_buf[0];
-                process_incoming_byte(
-                    b,
-                    &mut reader,
-                    &mut raw_line_buf,
-                    &tx_stdout,
-                );
-            }
-        });
-
-        // Spawn stderr reader thread
-        let tx_stderr = tx;
-        thread::spawn(move || {
-            let mut reader = std::io::BufReader::new(stderr);
-            let mut line = String::new();
-            while let Ok(n) =
-                std::io::BufRead::read_line(&mut reader, &mut line)
-            {
-                if n == 0 {
-                    break;
+        if inherit_stderr {
+            spawn_qemu_stdout_reader(stdout, tx);
+        } else {
+            spawn_qemu_stdout_reader(stdout, tx.clone());
+            let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
+            thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(stderr);
+                let mut line = String::new();
+                while let Ok(n) =
+                    std::io::BufRead::read_line(&mut reader, &mut line)
+                {
+                    if n == 0 {
+                        break;
+                    }
+                    let trimmed = line.trim_end().to_string();
+                    let _ = tx.send(BridgeMessage::RawConsole(trimmed));
+                    line.clear();
                 }
-                let trimmed = line.trim_end().to_string();
-                let _ = tx_stderr.send(BridgeMessage::RawConsole(trimmed));
-                line.clear();
-            }
-        });
+            });
+        }
 
         Ok(Self {
             inner: BridgeInner::Qemu { child, stdin },
@@ -584,6 +579,28 @@ fn make_telemetry_owned(tel: &Telemetry<'_>) -> Telemetry<'static> {
             line,
         } => make_target_panic(message, file, line),
     }
+}
+
+/// Reads QEMU `cargo run` stdout and forwards framed telemetry plus raw lines.
+fn spawn_qemu_stdout_reader(
+    mut stdout: ChildStdout,
+    tx_stdout: Sender<BridgeMessage>,
+) {
+    thread::spawn(move || {
+        let mut reader = FrameReader::new();
+        let mut raw_line_buf = Vec::new();
+        let mut byte_buf = [0u8; 1];
+
+        while matches!(stdout.read(&mut byte_buf), Ok(1)) {
+            let b = byte_buf[0];
+            process_incoming_byte(
+                b,
+                &mut reader,
+                &mut raw_line_buf,
+                &tx_stdout,
+            );
+        }
+    });
 }
 
 /// Processes a single byte received from the target device.

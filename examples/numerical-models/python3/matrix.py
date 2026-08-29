@@ -25,6 +25,8 @@ def tutorial() -> dict:
         dtype=np.float64,
     )
     b = np.array([1.0, -2.0, 0.0], dtype=np.float64)
+    # The general, symmetric, Hermitian and positive definite solutions are obtained via calling
+    # ?GESV, ?SYSV, ?HESV, and ?POSV routines of LAPACK respectively.
     x = linalg.solve(a, b)
     a_inv = linalg.inv(a)
     return {

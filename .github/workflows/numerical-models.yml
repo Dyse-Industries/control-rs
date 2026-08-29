@@ -1,4 +1,4 @@
-name: Numerical Models V&V
+name: Numerical Model Validator
 
 on:
   push:
@@ -25,7 +25,7 @@ on:
       - ".github/workflows/numerical-models.yml"
 
 jobs:
-  vv:
+  setup:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -44,6 +44,12 @@ jobs:
       - name: Install Python oracles
         run: pip install -r python3/requirements.txt
 
+  run-examples:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/numerical-models
+    steps:
       - name: Python generators
         run: |
           for slug in matrix polynomial state_space transfer_function tensor; do
@@ -53,5 +59,11 @@ jobs:
       - name: Rust generators
         run: cargo run --release
 
+  validate-results:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/numerical-models
+    steps:
       - name: Equivalence tests
         run: cargo test

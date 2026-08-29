@@ -1217,7 +1217,11 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[allow(clippy::too_many_lines, clippy::float_cmp)]
+    #[allow(
+        clippy::too_many_lines,
+        clippy::float_cmp,
+        clippy::cognitive_complexity
+    )]
     fn test_storage_row_major_packed_views_sparse_leaves() {
         let row = ArrayStorage::<i32, 1, 3>::from_row([1, 2, 3]);
         assert_eq!(row.get(0, 2), Some(&3));

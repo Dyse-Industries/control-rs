@@ -389,7 +389,7 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     /// Verifies Geru, Gerc, Symv, Hemv, Syr, Syr2, Her, Her2, Trmv, and Trsv Level 2 kernels.
     fn test_subprograms_level2_additional_kernels() {
         let mut a = ArrayStorage::<f32, 2, 2>::zeros();

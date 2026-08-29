@@ -4,8 +4,20 @@
 use control_rs_ets::comms::TestState;
 use regex::Regex;
 use std::env;
+use std::fmt;
 use std::fs;
+use std::io::{self, IsTerminal};
 use std::process::Command;
+
+/// Cargo status-line width: right-aligned verb plus a message on stderr.
+const CARGO_STATUS_WIDTH: usize = 12;
+
+/// Cargo HEADER/ERROR/WARN: bold, then bright green/red/yellow (`92`/`91`/`93`).
+const ANSI_BOLD: &str = "\x1b[1m";
+const ANSI_GREEN: &str = "\x1b[92m";
+const ANSI_RED: &str = "\x1b[91m";
+const ANSI_YELLOW: &str = "\x1b[93m";
+const ANSI_RESET: &str = "\x1b[0m";
 
 /// Summary of cargo tarpaulin test execution and line coverage.
 #[derive(Debug, Clone)]
@@ -39,6 +51,82 @@ pub struct HeadlessTestResult {
     pub time_us: Option<u64>,
     /// Stack high-water mark in bytes if successful.
     pub stack_peak: Option<u32>,
+}
+
+/// Formats a cargo-style status line (`{status:>12} {msg}`), without color.
+pub fn format_status(status: &str, msg: impl fmt::Display) -> String {
+    format_status_with(status, msg, false)
+}
+
+/// Formats a cargo-style diagnostic (`error: {msg}`), not column-justified.
+pub fn format_error(msg: impl fmt::Display) -> String {
+    format_error_with(msg, false)
+}
+
+/// Prints a cargo-style status line to stderr (green bold verb when color is on).
+pub fn status(status: &str, msg: impl fmt::Display) {
+    eprintln!("{}", format_status_with(status, msg, color_wanted_stderr()));
+}
+
+/// Prints a cargo-style error diagnostic to stderr (red bold `error` when color is on).
+pub fn error(msg: impl fmt::Display) {
+    eprintln!("{}", format_error_with(msg, color_wanted_stderr()));
+}
+
+/// Prints a cargo-style warning diagnostic to stderr (yellow bold `warning` when color is on).
+pub fn warning(msg: impl fmt::Display) {
+    eprintln!("{}", format_warning_with(msg, color_wanted_stderr()));
+}
+
+/// Whether cargo-style color should be used for the given environment.
+fn color_wanted(
+    cargo_term_color: Option<&str>,
+    no_color: bool,
+    stderr_is_tty: bool,
+) -> bool {
+    match cargo_term_color {
+        Some("always") => true,
+        Some("never") => false,
+        _ if no_color => false,
+        _ => stderr_is_tty,
+    }
+}
+
+fn color_wanted_stderr() -> bool {
+    color_wanted(
+        env::var("CARGO_TERM_COLOR").ok().as_deref(),
+        env::var_os("NO_COLOR").is_some(),
+        io::stderr().is_terminal(),
+    )
+}
+
+fn format_status_with(
+    status: &str,
+    msg: impl fmt::Display,
+    color: bool,
+) -> String {
+    let verb = format!("{status:>CARGO_STATUS_WIDTH$}");
+    if color {
+        format!("{ANSI_BOLD}{ANSI_GREEN}{verb}{ANSI_RESET} {msg}")
+    } else {
+        format!("{verb} {msg}")
+    }
+}
+
+fn format_error_with(msg: impl fmt::Display, color: bool) -> String {
+    if color {
+        format!("{ANSI_BOLD}{ANSI_RED}error{ANSI_RESET}: {msg}")
+    } else {
+        format!("error: {msg}")
+    }
+}
+
+fn format_warning_with(msg: impl fmt::Display, color: bool) -> String {
+    if color {
+        format!("{ANSI_BOLD}{ANSI_YELLOW}warning{ANSI_RESET}: {msg}")
+    } else {
+        format!("warning: {msg}")
+    }
 }
 
 /// Helper function to format the issue summary section.
@@ -518,6 +606,43 @@ pub fn save_report(path: &str, content: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use control_rs_ets::comms::TestState;
+
+    #[test]
+    fn cargo_status_is_12_column_and_error_is_not_justified() {
+        assert_eq!(
+            format_status("Checking", "formatting"),
+            "    Checking formatting"
+        );
+        assert_eq!(
+            format_status("Running", "tarpaulin"),
+            "     Running tarpaulin"
+        );
+        assert_eq!(
+            format_error("CI pipeline failed"),
+            "error: CI pipeline failed"
+        );
+    }
+
+    #[test]
+    fn cargo_status_color_wraps_verb_error_and_warning() {
+        assert_eq!(
+            format_status_with("Checking", "formatting", true),
+            "\x1b[1m\x1b[92m    Checking\x1b[0m formatting"
+        );
+        assert_eq!(
+            format_error_with("failed", true),
+            format!("{ANSI_BOLD}{ANSI_RED}error{ANSI_RESET}: failed")
+        );
+        assert_eq!(
+            format_warning_with("hook", true),
+            format!("{ANSI_BOLD}{ANSI_YELLOW}warning{ANSI_RESET}: hook")
+        );
+        assert!(color_wanted(Some("always"), true, false));
+        assert!(!color_wanted(Some("never"), false, true));
+        assert!(!color_wanted(None, true, true));
+        assert!(color_wanted(None, false, true));
+        assert!(!color_wanted(None, false, false));
+    }
 
     #[test]
     fn test_format_ets_rows_passed() {

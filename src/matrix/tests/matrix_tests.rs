@@ -67,7 +67,7 @@ pub mod matrix_test_suite {
     }
 
     /// $\lVert M - I\rVert_\infty$ for a square matrix.
-    fn inf_norm_from_identity<const N: usize>(m: &Owned<f64, N, N>) -> f64
+    fn _inf_norm_from_identity<const N: usize>(m: &Owned<f64, N, N>) -> f64
     where
         Const<N>: Dim,
     {
@@ -85,14 +85,14 @@ pub mod matrix_test_suite {
     }
 
     /// $A A^{-1} = I$ with $\varepsilon$ scaled by $\kappa_\infty(A)$.
-    fn assert_inv_identity_roundtrip<const N: usize>(a: &Owned<f64, N, N>)
+    fn _assert_inv_identity_roundtrip<const N: usize>(a: &Owned<f64, N, N>)
     where
         Const<N>: Dim,
     {
         let lu = a.into_lu().unwrap();
         let inv = lu.inverse().unwrap();
         let product = a * &inv;
-        let err = inf_norm_from_identity(&product);
+        let err = _inf_norm_from_identity(&product);
         let kappa = a.inf_norm() * inv.inf_norm();
         let bound = INV_ROUNDTRIP_TAU * kappa * f64::EPSILON;
         assert!(
@@ -102,7 +102,7 @@ pub mod matrix_test_suite {
     }
 
     /// Exact $M = M^T$ (bitwise), for operators that return a symmetric matrix.
-    fn assert_exactly_symmetric<const N: usize>(m: &Owned<f64, N, N>)
+    fn _assert_exactly_symmetric<const N: usize>(m: &Owned<f64, N, N>)
     where
         Const<N>: Dim,
     {
@@ -334,11 +334,11 @@ pub mod matrix_test_suite {
         let well: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
             [[4.0, 3.0, 2.0], [1.0, 5.0, 3.0], [2.0, 1.0, 6.0]][i][j]
         });
-        assert_inv_identity_roundtrip(&well);
+        _assert_inv_identity_roundtrip(&well);
 
         let hilbert: Owned<f64, 4, 4> =
             Matrix::from_fn(|i, j| 1.0 / ((i + j + 1) as f64));
-        assert_inv_identity_roundtrip(&hilbert);
+        _assert_inv_identity_roundtrip(&hilbert);
     }
 
     #[cfg_attr(test, test)]
@@ -552,7 +552,7 @@ pub mod matrix_test_suite {
             Matrix::from_fn(|i, j| [[0.25, 0.0], [0.0, 0.5]][i][j]);
         let ap = &a * &p;
         let predicted = &(&ap * &a.transpose()) + &q;
-        assert_exactly_symmetric(&predicted);
+        _assert_exactly_symmetric(&predicted);
 
         let ident: Owned<f64, 2, 2> = Owned::identity();
         let k: Owned<f64, 2, 1> = Matrix::from_fn(|i, _| [0.5, 0.25][i]);
@@ -562,7 +562,7 @@ pub mod matrix_test_suite {
         let joseph_left = &(&i_kh * &predicted) * &i_kh.transpose();
         let kr = &k * &r;
         let joseph = &joseph_left + &(&kr * &k.transpose());
-        assert_exactly_symmetric(&joseph);
+        _assert_exactly_symmetric(&joseph);
     }
 
     #[cfg_attr(test, test)]

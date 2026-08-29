@@ -93,7 +93,7 @@ fn main() {
         Ok(Subcommand::InstallHooks) => tasks::install_hooks(),
         Ok(Subcommand::Usage) => print_usage_and_exit(),
         Err(e) => {
-            eprintln!("\t{e}");
+            utils::error(e);
             exit(1);
         }
     }
@@ -104,8 +104,8 @@ fn print_usage_and_exit() -> ! {
     eprintln!(
         "Usage: cargo control-rs-xtask <task> [target] [port/arch] [baud]"
     );
-    eprintln!("\tTasks: ci, tui [qemu|teensy], install-hooks");
-    eprintln!("\tTargets: qemu [arm|risc-v|all], teensy [port] [baud]");
+    eprintln!("    Tasks: ci, tui [qemu|teensy], install-hooks");
+    eprintln!("    Targets: qemu [arm|risc-v|all], teensy [port] [baud]");
     exit(1);
 }
 
@@ -113,7 +113,6 @@ fn print_usage_and_exit() -> ! {
 fn run_ci_all_qemu() {
     unsafe {
         env::set_var("RUST_BACKTRACE", "full");
-        env::set_var("CARGO_TERM_COLOR", "never");
     }
 
     let mut ci_success = true;
@@ -167,7 +166,10 @@ fn run_ci_all_qemu() {
     let start_arm_hf = Instant::now();
     let (arm_hf_ets_res, _arm_hf_logs) = tasks::run_ci_ets(&arm_hf_target);
     let arm_hf_ets_time = start_arm_hf.elapsed().as_secs_f32();
-    println!("\t* ARM HF virtual ETS completed in {arm_hf_ets_time:.2}s.");
+    utils::status(
+        "Finished",
+        format!("virtual ETS (ARM HF) in {arm_hf_ets_time:.2}s"),
+    );
 
     match arm_hf_ets_res {
         Ok(mut results) => {
@@ -193,7 +195,10 @@ fn run_ci_all_qemu() {
     let start_arm_sf = Instant::now();
     let (arm_sf_ets_res, _arm_sf_logs) = tasks::run_ci_ets(&arm_sf_target);
     let arm_sf_ets_time = start_arm_sf.elapsed().as_secs_f32();
-    println!("\t* ARM SF virtual ETS completed in {arm_sf_ets_time:.2}s.");
+    utils::status(
+        "Finished",
+        format!("virtual ETS (ARM SF) in {arm_sf_ets_time:.2}s"),
+    );
 
     match arm_sf_ets_res {
         Ok(mut results) => {
@@ -219,7 +224,10 @@ fn run_ci_all_qemu() {
     let start_riscv32 = Instant::now();
     let (riscv32_ets_res, _riscv32_logs) = tasks::run_ci_ets(&riscv32_target);
     let riscv32_ets_time = start_riscv32.elapsed().as_secs_f32();
-    println!("\t* RISC-V 32 virtual ETS completed in {riscv32_ets_time:.2}s.");
+    utils::status(
+        "Finished",
+        format!("virtual ETS (RISC-V 32) in {riscv32_ets_time:.2}s"),
+    );
 
     match riscv32_ets_res {
         Ok(mut results) => {
@@ -245,7 +253,10 @@ fn run_ci_all_qemu() {
     let start_riscv64 = Instant::now();
     let (riscv64_ets_res, _riscv64_logs) = tasks::run_ci_ets(&riscv64_target);
     let riscv64_ets_time = start_riscv64.elapsed().as_secs_f32();
-    println!("\t* RISC-V 64 virtual ETS completed in {riscv64_ets_time:.2}s.");
+    utils::status(
+        "Finished",
+        format!("virtual ETS (RISC-V 64) in {riscv64_ets_time:.2}s"),
+    );
 
     match riscv64_ets_res {
         Ok(mut results) => {
@@ -286,7 +297,7 @@ fn run_ci_all_qemu() {
     );
     // Save report
     if let Err(e) = utils::save_report("ci-report.md", &report_content) {
-        eprintln!("\tFailed to write ci-report.md: {e}");
+        utils::error(format!("failed to write ci-report.md: {e}"));
         exit(1);
     }
 
@@ -296,17 +307,17 @@ fn run_ci_all_qemu() {
             if let Err(e) =
                 utils::save_report("ets-results.json", &json_content)
             {
-                eprintln!("\tFailed to write ets-results.json: {e}");
+                utils::error(format!("failed to write ets-results.json: {e}"));
                 exit(1);
             }
         }
     }
 
     if !ci_success {
-        println!("CI pipeline failed. Check ci-report.md for details.");
+        utils::error("CI pipeline failed. Check ci-report.md for details.");
         exit(1);
     }
-    println!("CI pipeline passed. Report written to ci-report.md.");
+    utils::status("Finished", "CI pipeline");
 }
 
 /// Executes the full CI validation pipeline for a single target, including
@@ -314,7 +325,6 @@ fn run_ci_all_qemu() {
 fn run_ci_single(target: &bridge::Target) {
     unsafe {
         env::set_var("RUST_BACKTRACE", "full");
-        env::set_var("CARGO_TERM_COLOR", "never");
     }
 
     let mut ci_success = true;
@@ -383,7 +393,7 @@ fn run_ci_single(target: &bridge::Target) {
         bridge::Target::QemuSemihosting { .. } => "virtual ETS",
         bridge::Target::Serial { .. } => "ETS",
     };
-    println!("\tCI → {backend} completed in {ets_time:.2}s.");
+    utils::status("Finished", format!("{backend} in {ets_time:.2}s"));
 
     // Generate Markdown report
     let report_content = utils::build_report(
@@ -400,15 +410,15 @@ fn run_ci_single(target: &bridge::Target) {
 
     // Save report
     if let Err(e) = utils::save_report("ci-report.md", &report_content) {
-        eprintln!("\tFailed to write ci-report.md: {e}");
+        utils::error(format!("failed to write ci-report.md: {e}"));
         exit(1);
     }
 
     if !ci_success {
-        println!("CI pipeline failed. Check ci-report.md for details.");
+        utils::error("CI pipeline failed. Check ci-report.md for details.");
         exit(1);
     }
-    println!("CI pipeline passed. Results written to ci-report.md.");
+    utils::status("Finished", "CI pipeline");
 }
 
 #[cfg(test)]

@@ -107,12 +107,15 @@ fn process_static_setting(item_static: &mut ItemStatic) -> Option<syn::Ident> {
     None
 }
 
-/// If the function is a test executable (does not start with `_`),
+/// If the function is a test executable (`fn()` and does not start with `_`),
 /// extracts its identifier and doc comments.
+///
+/// Parameterized functions are helpers: `ExecDescriptor::test_fn` is `fn()`, so
+/// registering them fails QEMU/`no_std` compilation with E0308.
 fn process_test_fn(item_fn: &ItemFn) -> Option<TestFnInfo> {
     let fn_name = &item_fn.sig.ident;
     let fn_name_str = fn_name.to_string();
-    if fn_name_str.starts_with('_') {
+    if fn_name_str.starts_with('_') || !item_fn.sig.inputs.is_empty() {
         None
     } else {
         let test_doc = extract_doc_string(&item_fn.attrs);
@@ -531,6 +534,22 @@ mod tests {
         assert_eq!(doc, "a case");
     }
 
+    /// Regression: helpers with arguments used to be registered as ETS tests
+    /// (`fn()`), which failed QEMU compile (E0308) on PR #47.
+    #[test]
+    fn process_test_fn_skips_parameterized_helpers() {
+        let helper: ItemFn = parse_quote! {
+            fn inf_norm_from_identity(m: &u8) -> f64 {
+                0.0
+            }
+        };
+        assert!(process_test_fn(&helper).is_none());
+        let generic: ItemFn = parse_quote! {
+            fn assert_inv_identity_roundtrip<const N: usize>(a: &u8) {}
+        };
+        assert!(process_test_fn(&generic).is_none());
+    }
+
     #[test]
     fn process_static_setting_rewrites_supported_types() {
         let mut item: ItemStatic = parse_quote! {
@@ -588,12 +607,20 @@ mod tests {
                 /// gain
                 static GAIN: u32 = 3;
                 fn case_a() {}
+                fn inf_norm_from_identity(m: &u8) -> f64 {
+                    0.0
+                }
                 const SKIP: u8 = 0;
             }
         });
         let text = expanded.to_string();
         assert!(text.contains("SUITE_DESCRIPTOR"));
         assert!(text.contains("case_a"));
+        assert!(
+            !text.contains("test_fn : inf_norm_from_identity")
+                && !text.contains("test_fn: inf_norm_from_identity"),
+            "parameterized helpers must not be ETS executables: {text}"
+        );
 
         let err = ets_suite_impl(quote::quote! {
             mod external;

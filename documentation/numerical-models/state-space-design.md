@@ -282,7 +282,9 @@ Two operations are fallible:
   genuine closed-loop ill-posedness, not an internal error.
 - **Tustin Discretization (§4.8)**: solves against $(I - \frac{T_s}{2}A)$,
   singular exactly when $\frac{2}{T_s}$ is an eigenvalue of $A$ (MathWorks,
-  *Continuous-Discrete Conversion Methods*).
+  *Continuous-Discrete Conversion Methods*). The discrete quadruple is
+  $A_d = M^{-1}(I + hA)$, $B_d = M^{-1} B T_s$, $C_d = C M^{-1}$,
+  $D_d = D + C_d B h$ with $M = I - hA$ and $h = T_s/2$.
 
 ```rust
 #[derive(Debug, thiserror::Error)]
@@ -406,6 +408,9 @@ Loan, 1978).
 ##### Bilinear (Tustin) Transform
 
 Approximates $s \approx \frac{2}{T_s} \frac{z-1}{z+1}$ algebraically.
+With $h = T_s/2$ and $M = I - hA$,
+$A_d = M^{-1}(I + hA)$, $B_d = M^{-1} B T_s$, $C_d = C M^{-1}$,
+$D_d = D + C_d B h$.
 
 #### 4.9 Canonical Transformations & Transfer Function Equivalences
 
@@ -699,4 +704,4 @@ is made independently by `transfer-function-design.md` §6 for
 | 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `DenseStorage` traits.                                |
 | 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                          |
 | 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: stiff LTI (high $\kappa(A)$) within $N_x \le 32$; umbrella Instant timing. Caps unchanged.                             |
-| 1.7      | August 28, 2026 | @MitchellDScott | Example crate: 200-step tutorial trajectory, stiff ZOH plant, Instant timings. Caps unchanged.                                          |
+| 1.8      | August 28, 2026 | @MitchellDScott | Tustin four-block map: $C_d = C M^{-1}$, $D_d = D + C_d B h$.                                                                          |

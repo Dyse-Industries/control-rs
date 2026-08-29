@@ -721,7 +721,20 @@ where
         Self::discrete(ad, bd, self.c(), self.d(), dt)
     }
 
-    /// Bilinear (Tustin) discretization. Solves $(I - T_s/2 A)$.
+    /// Bilinear (Tustin) discretization.
+    ///
+    /// Solves against $M = I - \frac{T_s}{2} A$ and returns
+    /// $$
+    /// A_d = M^{-1}(I + \tfrac{T_s}{2} A),\quad
+    /// B_d = M^{-1} B T_s,\quad
+    /// C_d = C M^{-1},\quad
+    /// D_d = D + C_d B \tfrac{T_s}{2}.
+    /// $$
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateSpaceError::SingularDiscretizationOperator`] when $M$ is
+    /// singular to working precision.
     pub fn to_discrete_tustin(&self, dt: T) -> StateSpaceResult<Self> {
         let two = T::ONE + T::ONE;
         let h = dt / two;
@@ -743,13 +756,14 @@ where
         }
         let lu = LuDecomposition::decompose(i_minus)
             .map_err(|_| StateSpaceError::SingularDiscretizationOperator)?;
-        let mut ad = i_plus;
-        lu.solve_mut(&mut ad)
+        let m_inv = lu
+            .inverse()
             .map_err(|_| StateSpaceError::SingularDiscretizationOperator)?;
-        let mut bd = &b * dt;
-        lu.solve_mut(&mut bd)
-            .map_err(|_| StateSpaceError::SingularDiscretizationOperator)?;
-        Ok(Self::discrete(ad, bd, self.c(), self.d(), dt))
+        let ad = &m_inv * &i_plus;
+        let bd = &m_inv * &(&b * dt);
+        let cd = &self.c() * &m_inv;
+        let dd = &self.d() + &(&(&cd * &b) * h);
+        Ok(Self::discrete(ad, bd, cd, dd, dt))
     }
 
     /// Performs similarity coordinate transformation $z = T x$:

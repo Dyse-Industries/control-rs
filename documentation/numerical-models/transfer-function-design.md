@@ -336,7 +336,9 @@ $$\frac{2}{T_s} \leftarrow \frac{\omega_c}{\tan(\omega_c T_s / 2)}$$
 Tustin without pre-warping "introduces a frequency shift that is unacceptable
 for many applications" (MathWorks, *Discretize a Compensator*), remedied by
 specifying a critical frequency to match exactly under the transform (Ogata,
-2010; Franklin et al., 1998).
+2010; Franklin et al., 1998). Clearing $(z+1)^{D-1}$ on both polynomials
+fills relative degree $r > 0$ with $(z+1)^r$, so the discrete result is
+biproper with capacities `(D, D)`, matching ZOH.
 
 ```rust
 impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, R=N, C=Const<1>>, Sd: DenseStorage<T, R=D, C=Const<1>>> TransferFunction<T, N, D, Sn, Sd> {
@@ -344,7 +346,7 @@ impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, R=N, C=Const<1>>, Sd: DenseStorage<T
         &self,
         sample_time: T,
         prewarp_frequency: Option<T>,
-    ) -> ArrayTransferFunction<T, N, D>
+    ) -> ArrayTransferFunction<T, D, D>
     where
         T: Scalar + Div<Output=T>,
         T::Real: Trig,
@@ -624,4 +626,4 @@ realization is future work (§8).
 | 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<1>` dimensions.                                |
 | 1.5      | August 26, 2026 | @MitchellDScott | Trimmed near-pole and companion-form caveats; crate-wide standards cite `vv-standards.md`.                                            |
 | 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-pole $H(j\omega)$ ($N>50$); realization at degree $>32$ stays in §6.7. Caps unchanged.                    |
-| 1.7      | August 28, 2026 | @MitchellDScott | Example crate: 128-point Bode and clustered-pole $H(s)=1/[(s+1)^4(s+1.01)^4]$. Caps unchanged.                                                       |
+| 1.8      | August 28, 2026 | @MitchellDScott | Tustin returns biproper `(D, D)` after clearing $(z+1)^{D-1}$ (matches ZOH).                                                         |

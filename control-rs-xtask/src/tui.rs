@@ -1186,10 +1186,10 @@ fn run_tui_loop(
 
             bridge = match target {
                 Target::QemuSemihosting { .. } => {
-                    ServerBridge::new(target.clone(), Some(elf_path))?
+                    ServerBridge::new(target.clone(), Some(elf_path), false)?
                 }
                 Target::Serial { .. } => {
-                    ServerBridge::new(target.clone(), None)?
+                    ServerBridge::new(target.clone(), None, false)?
                 }
             };
 
@@ -2369,7 +2369,7 @@ mod tests {
         state.setting_input = "123".to_string();
         state.handle_key(KeyCode::Esc, &mut cmd_tx);
         assert!(state.editing_setting.is_none());
-        assert!(state.setting_input.is_empty());
+        assert_eq!(state.setting_input, "");
 
         // 11. Backspace and digit inputs
         state.editing_setting = Some((0, 0));

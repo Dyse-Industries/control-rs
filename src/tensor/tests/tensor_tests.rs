@@ -139,7 +139,7 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     fn test_tensor_shape_interpolate_and_table_edges() {
         use crate::tensor::{
             ArrayTensor3D, FlatBuffer, Shape1D, Shape3D, Shape4D, TensorLayout,
@@ -234,7 +234,7 @@ pub mod tensor_test_suite {
     #[cfg_attr(test, test)]
     fn test_quantization_roundtrip_half_lsb() {
         type Q7 = Quantized<i8, 7>;
-        let step = 2.0_f64.powi(-7);
+        let step = 1.0 / 128.0;
         let half = step / 2.0;
         let samples = [
             0.0_f64,
@@ -296,7 +296,7 @@ mod tensor_property_tests {
         fn prop_quantization_roundtrip_half_lsb(
             x in -1.0_f64..Q7::MAX.dequantize(),
         ) {
-            let half = 2.0_f64.powi(-7) / 2.0;
+            let half = (1.0 / 128.0) / 2.0;
             let err = (x - Q7::quantize(x).dequantize()).abs();
             prop_assert!(
                 err <= half,

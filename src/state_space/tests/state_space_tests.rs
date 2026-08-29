@@ -100,10 +100,29 @@ pub mod state_space_test_suite {
         let dt = 0.1;
         let sys_d = sys.to_discrete_tustin(dt).unwrap();
         let h = dt / 2.0;
-        let expected = (1.0 + h * -2.0) / (1.0 - h * -2.0);
+        let expected_a = (1.0 + h * -2.0) / (1.0 - h * -2.0);
+        let m_inv = 1.0 / (1.0 - h * -2.0);
+        let expected_b = m_inv * 1.0 * dt;
+        let expected_c = 1.0 * m_inv;
+        let expected_d = 0.0 + expected_c * 1.0 * h;
         assert_almost_eq!(
             sys_d.a().get(0, 0).copied().unwrap(),
-            expected,
+            expected_a,
+            1e-12
+        );
+        assert_almost_eq!(
+            sys_d.b().get(0, 0).copied().unwrap(),
+            expected_b,
+            1e-12
+        );
+        assert_almost_eq!(
+            sys_d.c().get(0, 0).copied().unwrap(),
+            expected_c,
+            1e-12
+        );
+        assert_almost_eq!(
+            sys_d.d().get(0, 0).copied().unwrap(),
+            expected_d,
             1e-12
         );
     }
@@ -239,7 +258,7 @@ pub mod state_space_test_suite {
 
     /// Characteristic polynomial coefficients $(-\mathrm{tr}\,A, \det A)$ of a
     /// $2\times 2$ state matrix (roots are the poles).
-    fn charpoly_2(a: &Owned<f64, 2, 2>) -> (f64, f64) {
+    fn _charpoly_2(a: &Owned<f64, 2, 2>) -> (f64, f64) {
         let a00 = *a.get(0, 0).unwrap();
         let a01 = *a.get(0, 1).unwrap();
         let a10 = *a.get(1, 0).unwrap();
@@ -249,7 +268,7 @@ pub mod state_space_test_suite {
         (-tr, det)
     }
 
-    fn step_y(
+    fn _step_y(
         sys: &ArrayStateSpace<f64, 2, 1, 1>,
         x0: &Owned<f64, 2, 1>,
         n: usize,
@@ -277,15 +296,15 @@ pub mod state_space_test_suite {
         let t = Owned::<f64, 2, 2>::from_array([[1.0, 0.25], [0.5, 1.0]]);
         let sys_t = sys_d.similarity_transform(&t).unwrap();
 
-        let (c0, c1) = charpoly_2(&sys_d.a());
-        let (c0_t, c1_t) = charpoly_2(&sys_t.a());
+        let (c0, c1) = _charpoly_2(&sys_d.a());
+        let (c0_t, c1_t) = _charpoly_2(&sys_t.a());
         let scale = c0.abs().max(c1.abs()).max(1.0);
         assert!((c0 - c0_t).abs() / scale <= 10.0 * f64::EPSILON);
         assert!((c1 - c1_t).abs() / scale <= 10.0 * f64::EPSILON);
 
         let x0 = Owned::<f64, 2, 1>::zero();
-        let y = step_y(&sys_d, &x0, 8);
-        let y_t = step_y(&sys_t, &x0, 8);
+        let y = _step_y(&sys_d, &x0, 8);
+        let y_t = _step_y(&sys_t, &x0, 8);
         for k in 0..8 {
             assert_almost_eq!(y[k], y_t[k], 1e-12);
         }

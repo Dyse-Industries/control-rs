@@ -782,23 +782,35 @@ where
     }
 
     /// Tustin discretization $s = \frac{2}{T_s}\frac{z-1}{z+1}$ with optional pre-warp.
+    ///
+    /// Both numerator and denominator are cleared against $(z+1)^{D-1}$ so a
+    /// strictly proper continuous plant (relative degree $r > 0$) gains the
+    /// required $(z+1)^{r}$ numerator factor. The discrete result is therefore
+    /// biproper with coefficient capacities `(D, D)`, matching
+    /// [`Self::to_discrete_zoh`].
     #[must_use]
     pub fn to_discrete_tustin(
         &self,
         sample_time: T,
         prewarp_frequency: Option<T>,
-    ) -> Self {
+    ) -> ArrayTransferFunction<T, D, D> {
         let two = T::ONE + T::ONE;
         let k = match prewarp_frequency {
             None => two / sample_time,
             Some(wc) => wc / (wc * sample_time / two).tan(),
         };
         let ts_eff = two / k;
-        let num = ArrayPolynomial::<T, N>::from_storage(self.num_storage)
+        let mut num_coeffs = [T::ZERO; D];
+        let n_copy = core::cmp::min(N, D);
+        for i in 0..n_copy {
+            num_coeffs[i] =
+                self.num_storage.get(i, 0).copied().unwrap_or(T::ZERO);
+        }
+        let num = ArrayPolynomial::<T, D>::from_coefficients(num_coeffs)
             .compose_bilinear(ts_eff);
         let den = ArrayPolynomial::<T, D>::from_storage(self.den_storage)
             .compose_bilinear(ts_eff);
-        Self::from_storage(
+        ArrayTransferFunction::from_storage(
             num.into_storage(),
             den.into_storage(),
             Some(sample_time),

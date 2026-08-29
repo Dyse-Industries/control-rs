@@ -8,7 +8,7 @@ use std::path::Path;
 use std::process::{Command, exit};
 use std::time::{Duration, Instant};
 
-use crate::utils::{HeadlessTestResult, TarpaulinSummary};
+use crate::utils::{self, HeadlessTestResult, TarpaulinSummary};
 use control_rs_xtask::{bridge, tui};
 
 /// Generated pre-commit hook installed by [`install_hooks`].
@@ -125,8 +125,21 @@ impl CiEtsState {
     }
 
     fn log(&mut self, msg: &str) {
-        print!("{msg}");
         self.logs.push_str(msg);
+    }
+
+    fn emit_status(&mut self, verb: &str, msg: impl std::fmt::Display) {
+        let msg = msg.to_string();
+        utils::status(verb, &msg);
+        self.log(&utils::format_status(verb, &msg));
+        self.log("\n");
+    }
+
+    fn emit_error(&mut self, msg: impl std::fmt::Display) {
+        let msg = msg.to_string();
+        utils::error(&msg);
+        self.log(&utils::format_error(&msg));
+        self.log("\n");
     }
 
     fn start_next_or_exit(&mut self) -> Option<CiEtsAction> {
@@ -157,8 +170,7 @@ impl CiEtsState {
 
         match msg {
             BridgeMessage::RawConsole(line) => {
-                let formatted = format!("[Target Console] {line}\n");
-                self.log(&formatted);
+                self.emit_status("target", line);
                 Vec::new()
             }
             BridgeMessage::Telemetry(telemetry) => match telemetry {
@@ -279,10 +291,9 @@ impl CiEtsState {
                     file,
                     line,
                 } => {
-                    let panic_msg = format!(
-                        "Target panicked: '{message}' at {file}:{line}\n"
-                    );
-                    self.log(&panic_msg);
+                    self.emit_error(format!(
+                        "target panicked: '{message}' at {file}:{line}"
+                    ));
 
                     if let Some((s_id, t_id)) = self.current_running {
                         let s_idx = s_id as usize;
@@ -318,8 +329,9 @@ impl CiEtsState {
                     });
 
                     if remaining_to_run {
-                        self.log(
-                            "Restarting target bridge to continue running tests...\n",
+                        self.emit_status(
+                            "Restarting",
+                            "target bridge to continue running tests",
                         );
                     } else {
                         self.exit_loop = true;
@@ -503,10 +515,10 @@ fn write_pre_commit_hook(git_dir: &Path) -> Result<std::path::PathBuf, String> {
             if let Err(e) =
                 std::fs::set_permissions(&pre_commit_path, permissions)
             {
-                eprintln!(
-                    "\tWarning: Failed to set executable permissions on {}: {e}",
+                utils::warning(format!(
+                    "failed to set executable permissions on {}: {e}",
                     pre_commit_path.display()
-                );
+                ));
             }
         }
     }
@@ -516,8 +528,8 @@ fn write_pre_commit_hook(git_dir: &Path) -> Result<std::path::PathBuf, String> {
 
 /// Helper function to build the QEMU target ELF.
 pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
-    println!("\t* building QEMU target ELF for {arch:?}...");
     let (target_triple, bin_name) = qemu_elf_spec(arch);
+    utils::status("Compiling", format!("{bin_name:?} ({target_triple:?})"));
 
     let mut command = Command::new("cargo");
     command.current_dir("examples/qemu");
@@ -534,7 +546,7 @@ pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
         .expect("Failed to build QEMU target.");
 
     if !build_status.success() {
-        eprintln!("\tFailed to compile QEMU target.");
+        utils::error("failed to compile QEMU target");
         exit(1);
     }
 
@@ -543,9 +555,10 @@ pub fn build_qemu_elf(arch: bridge::QemuArch) -> String {
 
 /// Task to run formatting check.
 pub fn run_fmt() -> (Result<(), usize>, String) {
-    println!("\t* formatting check...");
+    utils::status("Running", "`cargo fmt-check`");
     let fmt_output = Command::new("cargo")
         .args(["fmt-check"])
+        .env("CARGO_TERM_COLOR", "never")
         .output()
         .expect("Failed to run cargo fmt-check");
 
@@ -557,6 +570,7 @@ pub fn run_fmt() -> (Result<(), usize>, String) {
             "--",
             "--check",
         ])
+        .env("CARGO_TERM_COLOR", "never")
         .output()
         .expect("Failed to run nested numerical-model fmt-check");
 
@@ -576,9 +590,10 @@ pub fn run_fmt() -> (Result<(), usize>, String) {
 
 /// Task to run clippy check with JSON output formatting.
 pub fn run_clippy() -> (Result<(), usize>, String) {
-    println!("\t* clippy check...");
+    utils::status("Running", "`cargo clippy-ci`");
     let clippy_output = Command::new("cargo")
         .args(["clippy-ci"])
+        .env("CARGO_TERM_COLOR", "never")
         .output()
         .expect("Failed to run cargo clippy-json");
 
@@ -593,9 +608,10 @@ pub fn run_clippy() -> (Result<(), usize>, String) {
 
 /// Task to run tarpaulin test & coverage.
 pub fn run_tarpaulin() -> (Result<TarpaulinSummary, ()>, String) {
-    println!("\t* tarpaulin test & coverage...");
+    utils::status("Running", "`cargo coverage-ci`");
     let tarpaulin_output = Command::new("cargo")
         .args(["coverage-ci"])
+        .env("CARGO_TERM_COLOR", "never")
         .output()
         .expect("Failed to run cargo coverage");
 
@@ -630,7 +646,7 @@ pub fn run_ci_ets(
         } else {
             Some(elf_path.as_str())
         };
-        match bridge::ServerBridge::new(target.clone(), elf_opt) {
+        match bridge::ServerBridge::new(target.clone(), elf_opt, true) {
             Ok(b) => b,
             Err(e) => return (Err(e.to_string()), state.logs),
         }
@@ -640,7 +656,7 @@ pub fn run_ci_ets(
         bridge::Target::QemuSemihosting { .. } => "virtual ETS",
         bridge::Target::Serial { .. } => "ETS",
     };
-    state.log(&format!("\t* CI → {backend}...\n"));
+    state.emit_status("Running", backend);
 
     let mut last_send = Instant::now();
     let _ = bridge.send_command(&CommCommand::ListSuites);
@@ -683,6 +699,7 @@ pub fn run_ci_ets(
                             bridge = match bridge::ServerBridge::new(
                                 target.clone(),
                                 elf_opt,
+                                true,
                             ) {
                                 Ok(b) => b,
                                 Err(e) => {
@@ -730,22 +747,23 @@ pub fn run_ets_tui(target: &bridge::Target) {
     } else {
         Some(elf_path.as_str())
     };
-    let bridge = match bridge::ServerBridge::new(target.clone(), elf_opt) {
+    let bridge = match bridge::ServerBridge::new(target.clone(), elf_opt, false)
+    {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("\tFailed to start bridge: {e}");
+            utils::error(format!("failed to start bridge: {e}"));
             exit(1);
         }
     };
     if let Err(e) = tui::run_tui(bridge, target, &elf_path) {
-        eprintln!("\tTUI Error: {e}");
+        utils::error(format!("TUI error: {e}"));
         exit(1);
     }
 }
 
 /// Task to install git hooks in the local repository.
 pub fn install_hooks() {
-    println!("\t* installing pre-commit git hook...");
+    utils::status("Installing", "pre-commit git hook");
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir
         .parent()
@@ -753,22 +771,22 @@ pub fn install_hooks() {
     let git_dir = workspace_root.join(".git");
 
     if !git_dir.exists() {
-        eprintln!(
-            "\tError: .git directory not found at {}. Is this a git repository?",
+        utils::error(format!(
+            ".git directory not found at {}. Is this a git repository?",
             git_dir.display()
-        );
+        ));
         exit(1);
     }
 
     match write_pre_commit_hook(&git_dir) {
         Ok(pre_commit_path) => {
-            println!(
-                "\t* pre-commit git hook installed successfully at: {}",
-                pre_commit_path.display()
+            utils::status(
+                "Finished",
+                format!("pre-commit git hook at {}", pre_commit_path.display()),
             );
         }
         Err(e) => {
-            eprintln!("\tError: {e}");
+            utils::error(e);
             exit(1);
         }
     }
@@ -957,7 +975,7 @@ mod tests {
         let _ = state.handle_message(bridge::BridgeMessage::RawConsole(
             "console".to_string(),
         ));
-        assert!(state.logs.contains("[Target Console] console"));
+        assert!(state.logs.contains("      target console"));
     }
 
     #[test]
@@ -990,7 +1008,7 @@ mod tests {
                 line: 9,
             },
         ));
-        assert!(state.logs.contains("Target panicked"));
+        assert!(state.logs.contains("target panicked"));
         assert!(state.logs.contains("Restarting target bridge"));
         assert!(!state.discovery_complete);
         assert!(matches!(
