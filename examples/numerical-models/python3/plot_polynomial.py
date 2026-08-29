@@ -56,26 +56,6 @@ def plot_horner(results_dir, py: dict, rs: dict) -> None:
             label=r"$|$python $-$ rust$|$",
         )
         ax_e.set_yscale("log")
-    coeffs = flatten_numbers(rs_vals.get("CLUSTER_COEFFS") or py_vals.get("CLUSTER_COEFFS"))
-    if coeffs:
-        g = gamma(32.0)
-        bound = np.array([g * abs_poly_eval(coeffs, abs(float(v))) for v in x[:n]])
-        ax.fill_between(
-            x[:n],
-            -bound,
-            bound,
-            color=BOUND,
-            alpha=0.22,
-            label=r"Higham $\gamma_{32}\tilde{p}$",
-        )
-        ax_e.semilogy(
-            x[:n],
-            np.maximum(bound, 1e-18),
-            "--",
-            color=BOUND,
-            lw=1.4,
-            label=r"Higham $\gamma_{32}\tilde{p}$",
-        )
     ax.set_ylabel(r"$p(x)$")
     ax.set_title(r"clustered-root Horner, $\mathrm{roots}=\{1\}^8\cup\{1.01\}^8$")
     ax.legend(frameon=False)

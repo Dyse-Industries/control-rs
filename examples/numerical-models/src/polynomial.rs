@@ -6,15 +6,15 @@ use crate::suite::{
     case_inputs, col_array, emit_stdout, json_f64, json_usize, require_usize,
 };
 use crate::{
-    ABS_F64, native_artifact, owned_to_rows, print_matrix, time_kernel,
-    timing_entry,
+    native_artifact, owned_to_rows, print_matrix, time_kernel, timing_entry,
+    ABS_F64,
 };
 use control_rs::math::complex_num::Complex;
 use control_rs::math::dsp::DefaultDsp;
 use control_rs::math::num_types::{Const, Dim};
 use control_rs::math::storage::ArrayStorage;
 use control_rs::polynomial::Polynomial;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// Swap this for a custom coefficient backend.
 type Store<const N: usize> = ArrayStorage<f64, N, 1>;
@@ -144,9 +144,44 @@ pub fn run(suite: &Value) {
     let horner_iters =
         json_usize(&cluster_in["iters"]).unwrap_or(10_000) as u32;
     eprintln!("\n--- Clustered-root Horner (x-1)^8 (x-1.01)^8 ---");
-    let left = Poly::<9>::from_storage(Store::from_column(linear_pow8(1.0)));
-    let right = Poly::<9>::from_storage(Store::from_column(linear_pow8(1.01)));
-    let cluster = left.mul_poly_with::<Dsp, 9, 17>(&right);
+    // let left = Poly::<9>::from_storage(Store::from_column(linear_pow8(1.0)));
+    // let right = Poly::<9>::from_storage(Store::from_column(linear_pow8(1.01)));
+    // let cluster = left.mul_poly_with::<Dsp, 9, 17>(&right);
+    let cluster = Poly::<17>::from_storage(Store::from_column([
+        20922789888000.0,
+        -70734282393600.0,
+        102992244837120.0,
+        -87077748875904.0,
+        48366009233424.0,
+        -18861567058880.0,
+        5374523477960.0,
+        -1146901283528.0,
+        185953177553.0,
+        -23057159840.0,
+        2185031420.0,
+        -156952432.0,
+        8394022.0,
+        -323680.0,
+        8500.0,
+        -136.0,
+        1.0, // 1.0,
+             // -136.0,
+             // 8500.0,
+             // -323680.0,
+             // 8394022.0,
+             // -156952432.0,
+             // 2185031420.0,
+             // -23057159840.0,
+             // 185953177553.0,
+             // -1146901283528.0,
+             // 5374523477960.0,
+             // -18861567058880.0,
+             // 48366009233424.0,
+             // -87077748875904.0,
+             // 102992244837120.0,
+             // -70734282393600.0,
+             // 20922789888000.0,
+    ]));
     let cluster_coeffs: Vec<f64> = first_n(&cluster, 17);
     let sweep_x: Vec<f64> = (0..SWEEP_N)
         .map(|i| {

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import mpmath
 import numpy as np
 from numpy.polynomial.polynomial import (
     polycompanion,
@@ -54,6 +55,23 @@ def tutorial(suite: dict) -> dict:
     }
 
 
+def generate_exact_y(coeffs, x_values):
+    """
+    Evaluates the polynomial at each x using arbitrary precision.
+    Note: mpmath.polyval expects `coeffs` ordered [c_n, ..., c_1, c_0]
+    (highest degree first). Reverse your list if your implementation differs.
+    """
+    exact_y = []
+    for x in x_values:
+        # mpmath.polyval evaluates using the high-precision environment
+        val = mpmath.polyval(list(coeffs), x)
+
+        # Cast back to a standard Python float for your JSON output
+        exact_y.append(float(val))
+
+    return np.asarray(exact_y, dtype=np.float64)
+
+
 def clustered(suite: dict) -> dict:
     inp = case_inputs(suite, "polynomial.host.clustered_horner")
     require_int(inp, "degree", 16)
@@ -62,9 +80,10 @@ def clustered(suite: dict) -> dict:
     stop = float(inp["sweep"]["stop"])
     timed_x = float(inp["timed_x"])
     iters = int(inp.get("iters", 10_000))
-    roots = np.concatenate(
-        [np.full(8, 1.0), np.full(8, 1.01)],
-    ).astype(np.float64)
+    roots = np.arange(1, 17, dtype=np.float64)
+    # roots = np.concatenate(
+    #     [np.full(8, 1.0), np.full(8, 1.01)],
+    # ).astype(np.float64)
     coeffs = polyfromroots(roots)
     sweep_x = np.linspace(start, stop, SWEEP_N, dtype=np.float64)
     cluster_y = np.asarray(polyval(sweep_x, coeffs), dtype=np.float64)

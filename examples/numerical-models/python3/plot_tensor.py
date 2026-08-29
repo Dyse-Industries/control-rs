@@ -95,11 +95,6 @@ def plot_curved_cut(results_dir, py: dict, rs: dict) -> None:
         true = ((x - 7.5) / 7.5) ** 2
         ax.plot(x, true, color="0.45", lw=1.2, zorder=2, label=r"$u^{2}$ ($v=0$)")
         ax.legend(frameon=False)
-    weiser = float(
-        (rs.get("metrics") or {}).get("weiser_bound")
-        or (py.get("metrics") or {}).get("weiser_bound")
-        or 0.0
-    )
     if y_rs.size and y_py.size:
         n = min(x.size, y_py.size, y_rs.size)
         ax_e.scatter(
@@ -111,8 +106,6 @@ def plot_curved_cut(results_dir, py: dict, rs: dict) -> None:
             label=r"$|$python $-$ rust$|$",
         )
         ax_e.set_yscale("log")
-    if weiser > 0.0:
-        ax_e.axhline(weiser, color=BOUND, ls="--", lw=1.4, label="Weiser bound")
     ax_e.set_xlabel(r"cut coordinate $s$")
     ax_e.set_ylabel("abs error")
     ax_e.set_title("interpolation disagreement vs Weiser bound")
