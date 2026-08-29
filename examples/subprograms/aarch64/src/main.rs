@@ -5,10 +5,10 @@ use control_rs::math::num_types::Const;
 use control_rs::math::storage::{
     ArrayStorage, RowArrayStorage, StorageView, Trans,
 };
+use control_rs::math::subprograms::DefaultBlas;
 use control_rs::math::subprograms::level1::{Axpy, Dotu, Nrm2, Scal};
 use control_rs::math::subprograms::level2::Gemv;
 use control_rs::math::subprograms::level3::Gemm;
-use control_rs::math::subprograms::DefaultBlas;
 
 #[cfg(feature = "accelerate")]
 use aarch64_subprograms::AccelerateBlas;

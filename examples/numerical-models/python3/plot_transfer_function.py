@@ -123,11 +123,12 @@ def plot_cluster_mag(results_dir, py: dict, rs: dict) -> None:
 def main() -> None:
     apply_style()
     results_dir = results_dir_from_argv("plot_transfer_function.py")
-    py, rs = pair(load_artifacts(results_dir), "transfer_function")
+    artifacts = load_artifacts(results_dir)
+    py, rs = pair(artifacts, "transfer_function")
     plot_bode(results_dir, py, rs)
     plot_nyquist_pair(results_dir, py, rs)
     plot_cluster_mag(results_dir, py, rs)
-    timings_figure(results_dir, py, rs, "transfer_function")
+    timings_figure(results_dir, artifacts, "transfer_function")
 
 
 if __name__ == "__main__":

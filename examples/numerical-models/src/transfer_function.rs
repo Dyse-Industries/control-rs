@@ -210,6 +210,7 @@ pub fn run(suite: &Value) {
     });
     emit_stdout(&native_artifact(
         "transfer_function",
+        "rust",
         values,
         series,
         metrics,

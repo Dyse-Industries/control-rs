@@ -8,10 +8,10 @@
 use core::arch::aarch64::*;
 
 use control_rs::math::storage::{DenseStorage, DenseStorageMut, Trans};
+use control_rs::math::subprograms::DefaultBlas;
 use control_rs::math::subprograms::level1::{Axpy, Dotu, Nrm2, Scal};
 use control_rs::math::subprograms::level2::Gemv;
 use control_rs::math::subprograms::level3::Gemm;
-use control_rs::math::subprograms::DefaultBlas;
 
 /// Zero-sized marker type for the ARM NEON accelerated subprogram backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -21,15 +21,25 @@ pub struct NeonBlas;
 // Level 1: Axpy
 // =============================================================================
 
-impl<X: DenseStorage<f32>, Y: DenseStorageMut<f32>> Axpy<f32, X, Y> for NeonBlas {
+impl<X: DenseStorage<f32>, Y: DenseStorageMut<f32>> Axpy<f32, X, Y>
+    for NeonBlas
+{
     #[inline(always)]
     fn axpy(alpha: f32, x: &X, y: &mut Y) {
         #[cfg(target_arch = "aarch64")]
         {
             let n = x.rows() * x.cols();
             debug_assert_eq!(n, y.rows() * y.cols());
-            let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-            let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+            let x_stride = if x.rows() >= x.cols() {
+                x.r_stride()
+            } else {
+                x.c_stride()
+            };
+            let y_stride = if y.rows() >= y.cols() {
+                y.r_stride()
+            } else {
+                y.c_stride()
+            };
 
             if x_stride == 1 && y_stride == 1 {
                 let chunks = n / 4;
@@ -61,15 +71,25 @@ impl<X: DenseStorage<f32>, Y: DenseStorageMut<f32>> Axpy<f32, X, Y> for NeonBlas
     }
 }
 
-impl<X: DenseStorage<f64>, Y: DenseStorageMut<f64>> Axpy<f64, X, Y> for NeonBlas {
+impl<X: DenseStorage<f64>, Y: DenseStorageMut<f64>> Axpy<f64, X, Y>
+    for NeonBlas
+{
     #[inline(always)]
     fn axpy(alpha: f64, x: &X, y: &mut Y) {
         #[cfg(target_arch = "aarch64")]
         {
             let n = x.rows() * x.cols();
             debug_assert_eq!(n, y.rows() * y.cols());
-            let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-            let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+            let x_stride = if x.rows() >= x.cols() {
+                x.r_stride()
+            } else {
+                x.c_stride()
+            };
+            let y_stride = if y.rows() >= y.cols() {
+                y.r_stride()
+            } else {
+                y.c_stride()
+            };
 
             if x_stride == 1 && y_stride == 1 {
                 let chunks = n / 2;
@@ -111,7 +131,11 @@ impl<X: DenseStorageMut<f32>> Scal<f32, X> for NeonBlas {
         #[cfg(target_arch = "aarch64")]
         {
             let n = x.rows() * x.cols();
-            let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
+            let x_stride = if x.rows() >= x.cols() {
+                x.r_stride()
+            } else {
+                x.c_stride()
+            };
             if x_stride == 1 {
                 let chunks = n / 4;
                 let rem = n % 4;
@@ -144,7 +168,11 @@ impl<X: DenseStorageMut<f64>> Scal<f64, X> for NeonBlas {
         #[cfg(target_arch = "aarch64")]
         {
             let n = x.rows() * x.cols();
-            let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
+            let x_stride = if x.rows() >= x.cols() {
+                x.r_stride()
+            } else {
+                x.c_stride()
+            };
             if x_stride == 1 {
                 let chunks = n / 2;
                 let rem = n % 2;
@@ -182,8 +210,16 @@ impl<X: DenseStorage<f32>, Y: DenseStorage<f32>> Dotu<f32, X, Y> for NeonBlas {
         {
             let n = x.rows() * x.cols();
             debug_assert_eq!(n, y.rows() * y.cols());
-            let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-            let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+            let x_stride = if x.rows() >= x.cols() {
+                x.r_stride()
+            } else {
+                x.c_stride()
+            };
+            let y_stride = if y.rows() >= y.cols() {
+                y.r_stride()
+            } else {
+                y.c_stride()
+            };
 
             if x_stride == 1 && y_stride == 1 {
                 let chunks = n / 4;
@@ -220,8 +256,16 @@ impl<X: DenseStorage<f64>, Y: DenseStorage<f64>> Dotu<f64, X, Y> for NeonBlas {
         {
             let n = x.rows() * x.cols();
             debug_assert_eq!(n, y.rows() * y.cols());
-            let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-            let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+            let x_stride = if x.rows() >= x.cols() {
+                x.r_stride()
+            } else {
+                x.c_stride()
+            };
+            let y_stride = if y.rows() >= y.cols() {
+                y.r_stride()
+            } else {
+                y.c_stride()
+            };
 
             if x_stride == 1 && y_stride == 1 {
                 let chunks = n / 2;
@@ -261,7 +305,11 @@ impl<X: DenseStorage<f32>> Nrm2<f32, X> for NeonBlas {
         #[cfg(target_arch = "aarch64")]
         {
             let n = x.rows() * x.cols();
-            let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
+            let x_stride = if x.rows() >= x.cols() {
+                x.r_stride()
+            } else {
+                x.c_stride()
+            };
 
             if x_stride == 1 {
                 let chunks = n / 4;
@@ -296,7 +344,11 @@ impl<X: DenseStorage<f64>> Nrm2<f64, X> for NeonBlas {
         #[cfg(target_arch = "aarch64")]
         {
             let n = x.rows() * x.cols();
-            let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
+            let x_stride = if x.rows() >= x.cols() {
+                x.r_stride()
+            } else {
+                x.c_stride()
+            };
 
             if x_stride == 1 {
                 let chunks = n / 2;
@@ -340,11 +392,23 @@ impl<A: DenseStorage<f32>, X: DenseStorage<f32>, Y: DenseStorageMut<f32>>
                 Trans::NoTrans => (a.rows(), a.cols()),
                 Trans::Trans | Trans::ConjTrans => (a.cols(), a.rows()),
             };
-            let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-            let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+            let x_stride = if x.rows() >= x.cols() {
+                x.r_stride()
+            } else {
+                x.c_stride()
+            };
+            let y_stride = if y.rows() >= y.cols() {
+                y.r_stride()
+            } else {
+                y.c_stride()
+            };
 
             // Accelerated fast path: NoTrans with row-major A and contiguous vectors
-            if trans == Trans::NoTrans && a.c_stride() == 1 && x_stride == 1 && y_stride == 1 {
+            if trans == Trans::NoTrans
+                && a.c_stride() == 1
+                && x_stride == 1
+                && y_stride == 1
+            {
                 let chunks = n / 4;
                 let rem = n % 4;
                 let x_ptr = x.as_ptr();
@@ -354,7 +418,8 @@ impl<A: DenseStorage<f32>, X: DenseStorage<f32>, Y: DenseStorageMut<f32>>
 
                 for i in 0..m {
                     let mut acc_vec = unsafe { vdupq_n_f32(0.0) };
-                    let row_ptr = unsafe { a_ptr.offset(i.cast_signed() * lda) };
+                    let row_ptr =
+                        unsafe { a_ptr.offset(i.cast_signed() * lda) };
 
                     for k in 0..chunks {
                         unsafe {
@@ -372,7 +437,11 @@ impl<A: DenseStorage<f32>, X: DenseStorage<f32>, Y: DenseStorageMut<f32>>
                     }
 
                     unsafe {
-                        let y_val = if beta == 0.0 { 0.0 } else { *y_ptr.add(i) * beta };
+                        let y_val = if beta == 0.0 {
+                            0.0
+                        } else {
+                            *y_ptr.add(i) * beta
+                        };
                         *y_ptr.add(i) = alpha * dot + y_val;
                     }
                 }
@@ -394,10 +463,22 @@ impl<A: DenseStorage<f64>, X: DenseStorage<f64>, Y: DenseStorageMut<f64>>
                 Trans::NoTrans => (a.rows(), a.cols()),
                 Trans::Trans | Trans::ConjTrans => (a.cols(), a.rows()),
             };
-            let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-            let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+            let x_stride = if x.rows() >= x.cols() {
+                x.r_stride()
+            } else {
+                x.c_stride()
+            };
+            let y_stride = if y.rows() >= y.cols() {
+                y.r_stride()
+            } else {
+                y.c_stride()
+            };
 
-            if trans == Trans::NoTrans && a.c_stride() == 1 && x_stride == 1 && y_stride == 1 {
+            if trans == Trans::NoTrans
+                && a.c_stride() == 1
+                && x_stride == 1
+                && y_stride == 1
+            {
                 let chunks = n / 2;
                 let rem = n % 2;
                 let x_ptr = x.as_ptr();
@@ -407,7 +488,8 @@ impl<A: DenseStorage<f64>, X: DenseStorage<f64>, Y: DenseStorageMut<f64>>
 
                 for i in 0..m {
                     let mut acc_vec = unsafe { vdupq_n_f64(0.0) };
-                    let row_ptr = unsafe { a_ptr.offset(i.cast_signed() * lda) };
+                    let row_ptr =
+                        unsafe { a_ptr.offset(i.cast_signed() * lda) };
 
                     for k in 0..chunks {
                         unsafe {
@@ -425,7 +507,11 @@ impl<A: DenseStorage<f64>, X: DenseStorage<f64>, Y: DenseStorageMut<f64>>
                     }
 
                     unsafe {
-                        let y_val = if beta == 0.0 { 0.0 } else { *y_ptr.add(i) * beta };
+                        let y_val = if beta == 0.0 {
+                            0.0
+                        } else {
+                            *y_ptr.add(i) * beta
+                        };
                         *y_ptr.add(i) = alpha * dot + y_val;
                     }
                 }
@@ -440,11 +526,9 @@ impl<A: DenseStorage<f64>, X: DenseStorage<f64>, Y: DenseStorageMut<f64>>
 // Level 3: Gemm
 // =============================================================================
 
-impl<
-    A: DenseStorage<f32>,
-    B: DenseStorage<f32>,
-    C: DenseStorageMut<f32>,
-> Gemm<f32, A, B, C> for NeonBlas {
+impl<A: DenseStorage<f32>, B: DenseStorage<f32>, C: DenseStorageMut<f32>>
+    Gemm<f32, A, B, C> for NeonBlas
+{
     #[inline(always)]
     fn gemm(
         ta: Trans,
@@ -487,28 +571,36 @@ impl<
 
                 // Scale C by beta (NaN-safe)
                 for i in 0..m {
-                    let c_row = unsafe { c_ptr.offset(i.cast_signed() * c_ldc) };
+                    let c_row =
+                        unsafe { c_ptr.offset(i.cast_signed() * c_ldc) };
                     if beta == 0.0 {
                         for j in 0..n {
-                            unsafe { *c_row.add(j) = 0.0; }
+                            unsafe {
+                                *c_row.add(j) = 0.0;
+                            }
                         }
                     } else if beta != 1.0 {
                         for j in 0..n {
-                            unsafe { *c_row.add(j) *= beta; }
+                            unsafe {
+                                *c_row.add(j) *= beta;
+                            }
                         }
                     }
                 }
 
                 // Vectorized row update: C[i, :] += alpha * A[i, p] * B[p, :]
                 for i in 0..m {
-                    let a_row = unsafe { a_ptr.offset(i.cast_signed() * a_lda) };
-                    let c_row = unsafe { c_ptr.offset(i.cast_signed() * c_ldc) };
+                    let a_row =
+                        unsafe { a_ptr.offset(i.cast_signed() * a_lda) };
+                    let c_row =
+                        unsafe { c_ptr.offset(i.cast_signed() * c_ldc) };
 
                     for p in 0..k {
                         let a_ip = unsafe { *a_row.add(p) };
                         let scale = alpha * a_ip;
                         let scale_vec = unsafe { vdupq_n_f32(scale) };
-                        let b_row = unsafe { b_ptr.offset(p.cast_signed() * b_ldb) };
+                        let b_row =
+                            unsafe { b_ptr.offset(p.cast_signed() * b_ldb) };
 
                         for j in 0..n_chunks {
                             unsafe {
@@ -533,11 +625,9 @@ impl<
     }
 }
 
-impl<
-    A: DenseStorage<f64>,
-    B: DenseStorage<f64>,
-    C: DenseStorageMut<f64>,
-> Gemm<f64, A, B, C> for NeonBlas {
+impl<A: DenseStorage<f64>, B: DenseStorage<f64>, C: DenseStorageMut<f64>>
+    Gemm<f64, A, B, C> for NeonBlas
+{
     #[inline(always)]
     fn gemm(
         ta: Trans,
@@ -578,27 +668,35 @@ impl<
                 let n_rem = n % 2;
 
                 for i in 0..m {
-                    let c_row = unsafe { c_ptr.offset(i.cast_signed() * c_ldc) };
+                    let c_row =
+                        unsafe { c_ptr.offset(i.cast_signed() * c_ldc) };
                     if beta == 0.0 {
                         for j in 0..n {
-                            unsafe { *c_row.add(j) = 0.0; }
+                            unsafe {
+                                *c_row.add(j) = 0.0;
+                            }
                         }
                     } else if beta != 1.0 {
                         for j in 0..n {
-                            unsafe { *c_row.add(j) *= beta; }
+                            unsafe {
+                                *c_row.add(j) *= beta;
+                            }
                         }
                     }
                 }
 
                 for i in 0..m {
-                    let a_row = unsafe { a_ptr.offset(i.cast_signed() * a_lda) };
-                    let c_row = unsafe { c_ptr.offset(i.cast_signed() * c_ldc) };
+                    let a_row =
+                        unsafe { a_ptr.offset(i.cast_signed() * a_lda) };
+                    let c_row =
+                        unsafe { c_ptr.offset(i.cast_signed() * c_ldc) };
 
                     for p in 0..k {
                         let a_ip = unsafe { *a_row.add(p) };
                         let scale = alpha * a_ip;
                         let scale_vec = unsafe { vdupq_n_f64(scale) };
-                        let b_row = unsafe { b_ptr.offset(p.cast_signed() * b_ldb) };
+                        let b_row =
+                            unsafe { b_ptr.offset(p.cast_signed() * b_ldb) };
 
                         for j in 0..n_chunks {
                             unsafe {

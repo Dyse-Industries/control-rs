@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::exit;
 
 use control_rs::math::num_types::{Const, Dim};
-use control_rs::math::storage::ArrayStorage;
+use control_rs::math::storage::{ArrayStorage, StorageInit};
 use serde_json::Value;
 
 /// Helper to print to stderr and exit 1.
@@ -107,6 +107,26 @@ pub fn json_rows(v: &Value) -> Vec<Vec<f64>> {
         .iter()
         .map(json_f64_vec)
         .collect()
+}
+
+/// Dense storage from a row-major JSON matrix via logical `(i, j)` coordinates.
+#[must_use]
+pub fn storage_from_rows_init<S, const R: usize, const C: usize>(v: &Value) -> S
+where
+    S: StorageInit<f64, Const<R>, Const<C>>,
+    Const<R>: Dim,
+    Const<C>: Dim,
+{
+    let rows = json_rows(v);
+    if rows.len() != R {
+        fatal(&format!("matrix has {} rows, expected {R}", rows.len()));
+    }
+    for (i, row) in rows.iter().enumerate() {
+        if row.len() != C {
+            fatal(&format!("row {i} has {} cols, expected {C}", row.len()));
+        }
+    }
+    S::from_fn(|i, j| rows[i][j])
 }
 
 /// Column-major `ArrayStorage` from a row-major JSON matrix.

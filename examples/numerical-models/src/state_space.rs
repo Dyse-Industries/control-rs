@@ -223,6 +223,7 @@ pub fn run(suite: &Value) {
     });
     emit_stdout(&native_artifact(
         "state_space",
+        "rust",
         values,
         series,
         metrics,

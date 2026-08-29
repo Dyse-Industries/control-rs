@@ -14,6 +14,10 @@ autobins = false
 control-rs = { path = "../.." }
 libm = "0.2.16"
 serde_json = "1.0.140"
+aarch64-subprograms = { path = "../subprograms/aarch64", optional = true }
+
+[features]
+accelerate = ["dep:aarch64-subprograms", "aarch64-subprograms/accelerate"]
 
 [[bin]]
 name = "validate"
@@ -22,6 +26,15 @@ path = "src/bin/validate.rs"
 [[bin]]
 name = "matrix"
 path = "src/bin/matrix.rs"
+
+[[bin]]
+name = "matrix-row"
+path = "src/bin/matrix_row.rs"
+
+[[bin]]
+name = "matrix-accelerate"
+path = "src/bin/matrix_accelerate.rs"
+required-features = ["accelerate"]
 
 [[bin]]
 name = "polynomial"

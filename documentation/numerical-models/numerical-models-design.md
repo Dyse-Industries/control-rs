@@ -71,7 +71,8 @@ MCU sibling caps are unchanged; these binaries run on the host.
 - **NFR-4 — Kernel Wall-Time**: Generators shall record kernel-only
   `std::time::Instant` / `time.perf_counter_ns` samples (warmup, then
   minimum of a fixed iteration count) under JSON `timings`. Times are
-  informational for per-slug plotters; crate tests do not fail on wall-clock.
+  informational for per-slug plotters (one bar per `source`); crate tests
+  do not fail on wall-clock.
 
 #### 2.3 Constraints
 
@@ -79,10 +80,11 @@ MCU sibling caps are unchanged; these binaries run on the host.
   state-space, and transfer function dimensions shall be verified at compile
   time using constant generics and dimension type traits to prevent runtime
   dimension mismatch panics.
-- **C-2 — Native Rust Implementation**: All algorithms and numerical models
-  shall be native Rust implementations without relying on C foreign function
-  interfaces (FFI), host-to-target code generation pipelines, or external
-  linear algebra libraries.
+- **C-2 — Native Rust Implementation**: Library algorithms and the default
+  tutorial validator (`source: rust`) shall be native Rust without C FFI,
+  host-to-target codegen, or external linear-algebra libraries. Optional host
+  validators may attach copyable markers from `examples/subprograms/` and
+  emit additional `source` names; they are not the C-2 default path.
 - **C-3 — Deterministic Execution & Fallibility**: Library functions shall not
   invoke `unwrap()`, `expect()`, or `panic!()`, returning explicit crate-local
   `Result<T, Error>` types for ill-conditioned or singular system operations.
@@ -118,7 +120,8 @@ core models:
 The nested host crate `examples/numerical-models/` holds one validator binary
 per model, matching Python validators under `python3/`, and `validate` as
 the V&V entrypoint. Suite files under `suites/` list inputs, validator argv,
-and plot argv.
+and plot argv. A suite may list extra native specializations (`rust-row`,
+`rust-accelerate`, …) as additional validators.
 
 ---
 
@@ -308,7 +311,8 @@ scatter; continuous-time frequency response stays as polylines.
    quantization with ReLU on the integer raw value. The $16\times 16$ node
    table is a visualization key.
 
-JSON shape: `slug`, `source` (`"python"` or `"rust"`), `values` (tutorial
+JSON shape: `slug`, `source` (`"python"`, `"rust"`, or another native
+specialization such as `"rust-row"` / `"rust-accelerate"`), `values` (tutorial
 keys plus compact stress payloads), `series` (plot data), `metrics`
 (residual / relative / $\kappa$), `timings` (`iters`, `ns` per kernel).
 
@@ -389,7 +393,7 @@ cases against closed-form oracles; they do not execute Python.
 | NFR-3 — Bare-Metal Portability                   | On-target execution       | QEMU ARM/RISC-V ETS                                                      |
 | NFR-4 — Kernel Wall-Time                       | Inspection                | `timings` in JSON; `python3/plot_<slug>.py`                           |
 | C-1 — Compile-Time Dimension Verification        | Compile-time shape check  | Const-generic APIs                                                       |
-| C-2 — Native Rust Implementation                 | Static analysis           | No FFI in `src/{matrix,polynomial,state_space,transfer_function,tensor}` |
+| C-2 — Native Rust Implementation                 | Static analysis           | No FFI in library `src/{matrix,polynomial,state_space,transfer_function,tensor}` or the default `source: rust` validator |
 | C-3 — Deterministic Execution & Fallibility      | Requirements-based test   | `Result` error paths; no library panics                                  |
 | C-4 — Sibling Capabilities Out of Scope          | N/A                       | See each sibling design doc's own §6.4                                   |
 
@@ -466,6 +470,12 @@ cases against closed-form oracles; they do not execute Python.
   stdout. `validate` writes `results/<slug>/<source>.json` and compares.
   Plotters take the results directory. Reserved `source` values include
   `rust-accelerate`, `rust-cblas`, `cpp`, `matlab`, `julia`.
+- **[Proposal (not in evidence)] Optional host BLAS validators**: Extra
+  matrix binaries may path-depend on `examples/subprograms/*` markers
+  (`AccelerateBlas` on Apple Silicon with `RowArrayStorage`) so GEMM wall-time
+  can be compared to NumPy `@`. Suites mark those validators `optional` with
+  a `when` host predicate. The default `rust` validator stays
+  `ArrayStorage` + `DefaultBlas` (C-2). Timings remain informational (NFR-4).
 - **Fixed-Point Scaling Invariants**: Scaling fixed-point tensors requires
   careful selection of fractional bit shift parameters ($Q_7$, $Q_{15}$) to
   prevent overflow during intermediate accumulator products (ARM, 2025).
@@ -509,6 +519,7 @@ cases against closed-form oracles; they do not execute Python.
 | 1.12     | August 28, 2026 | @MitchellDScott | Per-slug plotters (`python3/plot_<slug>.py`) write a named PNG set under `results/<slug>/`. |
 | 1.13     | August 28, 2026 | @MitchellDScott | Degree-12 companion; underdamped complex-pair Bode; saddle table; discrete samples as scatter. |
 | 1.14     | August 28, 2026 | @MitchellDScott | §6.3/§6.4: Python-vs-native bounds gated by `validate`/`compare.rs`, not library `cargo test`. |
+| 1.15     | August 28, 2026 | @MitchellDScott | Multi-source validators: `rust-row`, optional Apple `rust-accelerate` GEMM; C-2 default path unchanged. |
 
 ---
 

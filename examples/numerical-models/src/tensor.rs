@@ -207,7 +207,9 @@ pub fn run(suite: &Value) {
     let timings = json!({
         "interp": timing_entry(interp_iters, interp_ns),
     });
-    emit_stdout(&native_artifact("tensor", values, series, metrics, timings));
+    emit_stdout(&native_artifact(
+        "tensor", "rust", values, series, metrics, timings,
+    ));
 }
 
 fn storage_from_rows_f32(v: &Value) -> ArrayStorage<f32, 3, 3> {

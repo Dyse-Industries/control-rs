@@ -81,6 +81,8 @@ the target-side infrastructure:
   (results directory in). Artifacts include `metrics` (residual / $\tau\kappa\varepsilon$)
   and `timings` (kernel Instant / `perf_counter_ns`). Plotters write
   named PNGs under `results/<slug>/`; PNG pixels are not a numeric gate.
+  Additional native `source` names (`rust-row`, optional Apple
+  `rust-accelerate`) are extra validators, not a substitute for `source: rust`.
   Each run uploads `results/` as the `numerical-models-results` Actions
   artifact (30-day retention). Successful `main` runs also publish flattened
   `{slug}-{name}.png` files to the rolling

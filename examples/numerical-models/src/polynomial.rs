@@ -199,6 +199,7 @@ pub fn run(suite: &Value) {
     });
     emit_stdout(&native_artifact(
         "polynomial",
+        "rust",
         values,
         series,
         metrics,

@@ -135,11 +135,12 @@ def plot_stiff(results_dir, py: dict, rs: dict) -> None:
 def main() -> None:
     apply_style()
     results_dir = results_dir_from_argv("plot_state_space.py")
-    py, rs = pair(load_artifacts(results_dir), "state_space")
+    artifacts = load_artifacts(results_dir)
+    py, rs = pair(artifacts, "state_space")
     plot_free_response(results_dir, py, rs)
     plot_step(results_dir, py, rs)
     plot_stiff(results_dir, py, rs)
-    timings_figure(results_dir, py, rs, "state_space")
+    timings_figure(results_dir, artifacts, "state_space")
 
 
 if __name__ == "__main__":

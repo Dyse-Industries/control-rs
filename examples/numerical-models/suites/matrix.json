@@ -14,6 +14,21 @@
     {
       "source": "rust",
       "bin": "matrix"
+    },
+    {
+      "source": "rust-row",
+      "bin": "matrix-row"
+    },
+    {
+      "source": "rust-accelerate",
+      "bin": "matrix-accelerate",
+      "features": [
+        "accelerate"
+      ],
+      "optional": true,
+      "when": {
+        "target_vendor": "apple"
+      }
     }
   ],
   "plots": [

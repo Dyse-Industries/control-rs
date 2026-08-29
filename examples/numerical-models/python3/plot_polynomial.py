@@ -121,10 +121,11 @@ def plot_companion(results_dir, py: dict, rs: dict) -> None:
 def main() -> None:
     apply_style()
     results_dir = results_dir_from_argv("plot_polynomial.py")
-    py, rs = pair(load_artifacts(results_dir), "polynomial")
+    artifacts = load_artifacts(results_dir)
+    py, rs = pair(artifacts, "polynomial")
     plot_horner(results_dir, py, rs)
     plot_companion(results_dir, py, rs)
-    timings_figure(results_dir, py, rs, "polynomial")
+    timings_figure(results_dir, artifacts, "polynomial")
 
 
 if __name__ == "__main__":

@@ -187,12 +187,13 @@ def plot_affine(results_dir, py: dict, rs: dict) -> None:
 def main() -> None:
     apply_style()
     results_dir = results_dir_from_argv("plot_tensor.py")
-    py, rs = pair(load_artifacts(results_dir), "tensor")
+    artifacts = load_artifacts(results_dir)
+    py, rs = pair(artifacts, "tensor")
     plot_curved_surface(results_dir, py, rs)
     plot_curved_cut(results_dir, py, rs)
     plot_affine(results_dir, py, rs)
     plot_q7(results_dir, py, rs)
-    timings_figure(results_dir, py, rs, "tensor")
+    timings_figure(results_dir, artifacts, "tensor")
 
 
 if __name__ == "__main__":

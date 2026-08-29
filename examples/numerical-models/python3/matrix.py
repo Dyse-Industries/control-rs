@@ -111,6 +111,21 @@ def se3_chain(suite: dict) -> dict:
     return {"t": t_mat, "xyz": xyz, "r": rot}
 
 
+def numpy_blas_name() -> str:
+    show = getattr(getattr(np, "__config__", None), "show", None)
+    if not callable(show):
+        return "unknown"
+    try:
+        cfg = show(mode="dicts")
+    except TypeError:
+        return "unknown"
+    blas = (cfg.get("Build Dependencies") or {}).get("blas") or {}
+    name = blas.get("name") or blas.get("lib")
+    if isinstance(name, list):
+        name = ",".join(str(x) for x in name)
+    return str(name) if name else "unknown"
+
+
 def build_artifact(suite: dict) -> dict:
     t = tutorial(suite)
     h = hilbert_case(suite)
@@ -142,6 +157,7 @@ def build_artifact(suite: dict) -> dict:
             "residual_ratio_hilbert": h["residual_ratio"],
             "kappa_hilbert": h["kappa"],
             "gemm_frob": g["gemm_frob"],
+            "numpy_blas": numpy_blas_name(),
         },
         "timings": {
             "gemm": timing_entry(g["iters"], g["ns"]),

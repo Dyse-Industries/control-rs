@@ -17,11 +17,13 @@ from plot_util import (
     as_f64,
     heatmap,
     load_artifacts,
+    native_docs,
     pair,
     relative_error_matrix,
     results_dir_from_argv,
     save_fig,
     series_xy,
+    source_style,
     timings_figure,
 )
 
@@ -46,7 +48,7 @@ def plot_hilbert_inverse(results_dir, py: dict, rs: dict) -> None:
     save_fig(fig, results_dir, "hilbert_inverse")
 
 
-def plot_hilbert_solve(results_dir, py: dict, rs: dict) -> None:
+def plot_hilbert_solve(results_dir, artifacts: dict, py: dict, rs: dict) -> None:
     py_vals = py.get("values") or {}
     rs_vals = rs.get("values") or {}
     x_idx, y_py = series_xy(py, "hilbert_x")
@@ -74,6 +76,23 @@ def plot_hilbert_solve(results_dir, py: dict, rs: dict) -> None:
             ms=7,
             label="rust",
         )
+    for src, doc in native_docs(artifacts):
+        if src == "rust":
+            continue
+        y = as_f64((doc.get("values") or {}).get("HILBERT_X"))
+        if y.size == 0:
+            continue
+        st = source_style(src)
+        m = min(n, y.size)
+        ax.plot(
+            x_idx[:m],
+            y[:m] - 1.0,
+            marker=st["marker"],
+            ls=st["ls"],
+            color=st["color"],
+            ms=6,
+            label=src,
+        )
     ax.set_ylabel(r"$\hat{x}_i - 1$")
     ax.set_title("Hilbert $n=8$ manufactured solve")
     ax.legend(frameon=False)
@@ -88,6 +107,22 @@ def plot_hilbert_solve(results_dir, py: dict, rs: dict) -> None:
             color=RS,
             label=r"rust $|\hat{x}-1|$",
         )
+    for src, doc in native_docs(artifacts):
+        if src == "rust":
+            continue
+        y = as_f64((doc.get("values") or {}).get("HILBERT_X"))
+        if y.size == 0:
+            continue
+        st = source_style(src)
+        m = min(n, y.size)
+        ax_e.semilogy(
+            x_idx[:m],
+            np.maximum(np.abs(y[:m] - 1.0), 1e-18),
+            color=st["color"],
+            ls=st["ls"],
+            marker=st["marker"],
+            label=rf"{src} $|\hat{{x}}-1|$",
+        )
     if bound > 0.0:
         ax_e.axhline(bound, color=BOUND, ls="--", lw=1.4, label=r"$\tau\kappa\varepsilon$")
     ax_e.set_xlabel("component")
@@ -97,7 +132,7 @@ def plot_hilbert_solve(results_dir, py: dict, rs: dict) -> None:
     save_fig(fig, results_dir, "hilbert_solve")
 
 
-def plot_se3(results_dir, py: dict, rs: dict) -> None:
+def plot_se3(results_dir, artifacts: dict, py: dict, rs: dict) -> None:
     py_vals = py.get("values") or {}
     rs_vals = rs.get("values") or {}
     xyz_py = as_f64(py_vals.get("SE3_XYZ") or [])
@@ -129,6 +164,21 @@ def plot_se3(results_dir, py: dict, rs: dict) -> None:
             lw=1.4,
             label="rust",
         )
+    for src, doc in native_docs(artifacts):
+        if src == "rust":
+            continue
+        xyz = as_f64((doc.get("values") or {}).get("SE3_XYZ") or [])
+        if xyz.ndim == 2 and xyz.shape[1] == 3:
+            st = source_style(src)
+            ax.plot(
+                xyz[:, 0],
+                xyz[:, 1],
+                xyz[:, 2],
+                st["ls"],
+                color=st["color"],
+                lw=1.2,
+                label=src,
+            )
     ax.scatter(*xyz_py[0], color=PY, s=28, zorder=5)
     ax.scatter(*xyz_py[-1], color=PY, s=36, marker="s", zorder=5)
     span = float(np.ptp(xyz_py, axis=0).max()) if xyz_py.size else 0.05
@@ -169,11 +219,12 @@ def plot_se3(results_dir, py: dict, rs: dict) -> None:
 def main() -> None:
     apply_style()
     results_dir = results_dir_from_argv("plot_matrix.py")
-    py, rs = pair(load_artifacts(results_dir), "matrix")
+    artifacts = load_artifacts(results_dir)
+    py, rs = pair(artifacts, "matrix")
     plot_hilbert_inverse(results_dir, py, rs)
-    plot_hilbert_solve(results_dir, py, rs)
-    plot_se3(results_dir, py, rs)
-    timings_figure(results_dir, py, rs, "matrix")
+    plot_hilbert_solve(results_dir, artifacts, py, rs)
+    plot_se3(results_dir, artifacts, py, rs)
+    timings_figure(results_dir, artifacts, "matrix")
 
 
 if __name__ == "__main__":

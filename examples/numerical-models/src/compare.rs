@@ -191,6 +191,13 @@ fn matrix_equiv(
         check_tolerance(p, r, &format!("matrix/{src} GEMM00"), 1e-9, errs);
     }
 
+    if let (Some(p), Some(r)) = (
+        metric_f64(python, "gemm_frob"),
+        metric_f64(native, "gemm_frob"),
+    ) {
+        check_tolerance(p, r, &format!("matrix/{src} gemm_frob"), 1e-9, errs);
+    }
+
     for (label, doc) in [("native", native), ("python", python)] {
         if let Some(rr) = metric_f64(doc, "residual_ratio")
             && rr >= SOLVE_RESIDUAL_TAU

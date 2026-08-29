@@ -16,6 +16,27 @@ PY = "#0072B2"
 RS = "#D55E00"
 BOUND = "#009E73"
 GRAY = "#6C6C6C"
+ROW = "#CC79A7"
+ACC = "#E69F00"
+
+SOURCE_STYLE = {
+    "python": {"color": PY, "marker": "o", "ls": "-"},
+    "rust": {"color": RS, "marker": "x", "ls": "--"},
+    "rust-row": {"color": ROW, "marker": "+", "ls": ":"},
+    "rust-accelerate": {"color": ACC, "marker": "s", "ls": "-."},
+}
+_FALLBACK_COLORS = ("#56B4E9", "#F0E442", "#009E73", "#000000")
+
+
+def source_style(source: str) -> dict:
+    if source in SOURCE_STYLE:
+        return dict(SOURCE_STYLE[source])
+    color = _FALLBACK_COLORS[hash(source) % len(_FALLBACK_COLORS)]
+    return {"color": color, "marker": "d", "ls": "-."}
+
+
+def native_docs(artifacts: dict[str, dict]) -> list[tuple[str, dict]]:
+    return [(s, d) for s, d in artifacts.items() if s != "python"]
 
 
 def apply_style() -> None:
@@ -139,35 +160,46 @@ def overlay(
     title: str,
     yscale: str = "linear",
     kind: str = "line",
+    others: dict | None = None,
 ) -> None:
     x = as_f64(x)
     y_py = as_f64(y_py)
-    y_rs = as_f64(y_rs)
+    series = [("python", y_py), ("rust", as_f64(y_rs))]
+    if others:
+        for src, y in others.items():
+            series.append((src, as_f64(y)))
     n_py = min(x.size, y_py.size)
-    n = min(x.size, y_rs.size)
     if kind == "scatter":
-        ax.scatter(
-            x[:n_py],
-            y_py[:n_py],
-            s=16,
-            color=PY,
-            zorder=3,
-            label="python",
-        )
-        if n:
+        for src, y in series:
+            n = min(x.size, y.size)
+            if n == 0 and src != "python":
+                continue
+            st = source_style(src)
             ax.scatter(
-                x[:n],
-                y_rs[:n],
-                s=22,
-                marker="x",
-                color=RS,
-                zorder=4,
-                label="rust",
+                x[: n if src != "python" else n_py],
+                y[: n if src != "python" else n_py],
+                s=16 if src == "python" else 22,
+                marker=st["marker"],
+                color=st["color"],
+                zorder=3 if src == "python" else 4,
+                label=src,
             )
     else:
-        ax.plot(x[:n_py], y_py[:n_py], color=PY, label="python")
-        if n:
-            ax.plot(x[:n], y_rs[:n], "--", color=RS, label="rust")
+        for src, y in series:
+            n = min(x.size, y.size)
+            if n == 0 and src != "python":
+                continue
+            st = source_style(src)
+            take = n_py if src == "python" else n
+            ax.plot(
+                x[:take],
+                y[:take],
+                color=st["color"],
+                ls=st["ls"],
+                marker=st["marker"] if src != "python" else None,
+                markevery=max(take // 16, 1) if src != "python" else None,
+                label=src,
+            )
     if yscale == "log":
         ax.set_yscale("log")
     ax.set_xlabel(xlabel)
@@ -206,24 +238,43 @@ def heatmap(ax, err: np.ndarray, title: str, cbar_label: str = "relative error")
     return im
 
 
-def timings_figure(results_dir: Path, py: dict, rs: dict, title: str) -> None:
-    py_t = py.get("timings") or {}
-    rs_t = rs.get("timings") or {}
-    names = sorted(set(py_t) | set(rs_t))
+def timings_figure(results_dir: Path, artifacts: dict, title: str) -> None:
+    sources = list(artifacts)
+    sources.sort(key=lambda s: (s != "python", s != "rust", s))
+    names = sorted(
+        set().union(
+            *(set((artifacts[s].get("timings") or {})) for s in sources)
+        )
+        if sources
+        else set()
+    )
     fig, ax = plt.subplots(figsize=(6.6, 4.2), layout="constrained")
     if not names:
         ax.set_title(f"{title}: no timings")
         save_fig(fig, results_dir, "timings")
         return
     x = np.arange(len(names))
-    py_ns = [max(float(py_t.get(k, {}).get("ns", 0) or 0), 1.0) for k in names]
-    rs_ns = [max(float(rs_t.get(k, {}).get("ns", 0) or 0), 1.0) for k in names]
-    w = 0.36
-    ax.bar(x - w / 2, py_ns, w, color=PY, label="python")
-    ax.bar(x + w / 2, rs_ns, w, color=RS, label="rust")
+    nsrc = max(len(sources), 1)
+    w = 0.8 / nsrc
+    for i, src in enumerate(sources):
+        t = artifacts[src].get("timings") or {}
+        ns = [max(float((t.get(k) or {}).get("ns", 0) or 0), 1.0) for k in names]
+        ax.bar(
+            x + (i - (nsrc - 1) / 2) * w,
+            ns,
+            w,
+            color=source_style(src)["color"],
+            label=src,
+        )
     ax.set_xticks(x, names)
     ax.set_ylabel("min kernel time (ns)")
-    ax.set_title(f"{title}: kernel wall-time (informational)")
+    blas = ((artifacts.get("python") or {}).get("metrics") or {}).get(
+        "numpy_blas"
+    )
+    caption = f"{title}: kernel wall-time (informational)"
+    if blas:
+        caption = f"{caption}; NumPy BLAS: {blas}"
+    ax.set_title(caption)
     ax.set_yscale("log")
     ax.legend(frameon=False)
     save_fig(fig, results_dir, "timings")

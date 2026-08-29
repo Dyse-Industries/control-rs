@@ -58,50 +58,123 @@ fn running_release() -> bool {
         .is_some_and(|p| p.contains("/release/") || p.contains("\\release\\"))
 }
 
-fn collect_bin_names(suite_paths: &[PathBuf]) -> Vec<String> {
-    let mut names = Vec::new();
+fn host_vendor() -> &'static str {
+    if cfg!(target_vendor = "apple") {
+        "apple"
+    } else {
+        "other"
+    }
+}
+
+fn when_matches(entry: &Value) -> bool {
+    let Some(when) = entry.get("when") else {
+        return true;
+    };
+    if let Some(want) = when["target_vendor"].as_str()
+        && want != host_vendor()
+    {
+        return false;
+    }
+    true
+}
+
+fn is_optional(entry: &Value) -> bool {
+    entry["optional"].as_bool() == Some(true)
+}
+
+fn validator_features(entry: &Value) -> Vec<String> {
+    entry["features"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn collect_active_validators(suite_paths: &[PathBuf]) -> Vec<Value> {
+    let mut out = Vec::new();
     for path in suite_paths {
         let suite = load_suite(path);
         let Some(validators) = suite["validators"].as_array() else {
             continue;
         };
         for v in validators {
-            if let Some(bin) = v["bin"].as_str()
-                && !names.iter().any(|n| n == bin)
-            {
-                names.push(bin.to_string());
+            if when_matches(v) {
+                out.push(v.clone());
             }
         }
     }
-    names
+    out
 }
 
 /// `cargo run --bin validate` does not rebuild sibling validator bins.
-fn rebuild_bins(bins: &[String]) {
-    if bins.is_empty() {
-        return;
+fn rebuild_validators(entries: &[Value]) -> Vec<String> {
+    let mut skipped = Vec::new();
+    let mut groups: Vec<(Vec<String>, Vec<(String, bool)>)> = Vec::new();
+    for v in entries {
+        let Some(bin) = v["bin"].as_str() else {
+            continue;
+        };
+        let features = validator_features(v);
+        let optional = is_optional(v);
+        if let Some((_, bins)) = groups.iter_mut().find(|(f, _)| *f == features)
+        {
+            if !bins.iter().any(|(b, _)| b == bin) {
+                bins.push((bin.to_string(), optional));
+            }
+        } else {
+            groups.push((features, vec![(bin.to_string(), optional)]));
+        }
     }
+
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let mut cmd = Command::new(&cargo);
-    cmd.arg("build")
-        .arg("--manifest-path")
-        .arg(crate_root().join("Cargo.toml"))
-        .arg("--quiet");
-    if running_release() {
-        cmd.arg("--release");
+    let manifest = crate_root().join("Cargo.toml");
+    for (features, bins) in groups {
+        if bins.is_empty() {
+            continue;
+        }
+        let mut cmd = Command::new(&cargo);
+        cmd.arg("build")
+            .arg("--manifest-path")
+            .arg(&manifest)
+            .arg("--quiet");
+        if running_release() {
+            cmd.arg("--release");
+        }
+        if !features.is_empty() {
+            cmd.arg("--features").arg(features.join(","));
+        }
+        for (bin, _) in &bins {
+            cmd.arg("--bin").arg(bin);
+        }
+        cmd.current_dir(crate_root());
+        let status = cmd.status().unwrap_or_else(|e| {
+            eprintln!("failed to spawn cargo build: {e}");
+            exit(1);
+        });
+        if !status.success() {
+            let all_optional = bins.iter().all(|(_, o)| *o);
+            if all_optional {
+                eprintln!(
+                    "optional cargo build failed (features {:?}); skipping {}",
+                    features,
+                    bins.iter()
+                        .map(|(b, _)| b.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                for (bin, _) in bins {
+                    skipped.push(bin);
+                }
+            } else {
+                eprintln!("cargo build of validator bins failed");
+                exit(1);
+            }
+        }
     }
-    for bin in bins {
-        cmd.arg("--bin").arg(bin);
-    }
-    cmd.current_dir(crate_root());
-    let status = cmd.status().unwrap_or_else(|e| {
-        eprintln!("failed to spawn cargo build: {e}");
-        exit(1);
-    });
-    if !status.success() {
-        eprintln!("cargo build of validator bins failed");
-        exit(1);
-    }
+    skipped
 }
 
 fn stdout_preview(text: &str) -> String {
@@ -202,7 +275,11 @@ fn spawn_plotter(
     Ok(())
 }
 
-fn run_suite(suite_path: &Path, cwd: &Path) -> Result<(), Vec<String>> {
+fn run_suite(
+    suite_path: &Path,
+    cwd: &Path,
+    skipped_bins: &[String],
+) -> Result<(), Vec<String>> {
     let suite = load_suite(suite_path);
     let slug = suite["slug"].as_str().unwrap_or("unknown").to_string();
     let results_dir = cwd.join("results").join(&slug);
@@ -218,6 +295,18 @@ fn run_suite(suite_path: &Path, cwd: &Path) -> Result<(), Vec<String>> {
     let mut artifacts = Vec::new();
     let mut spawn_errs = Vec::new();
     for v in &validators {
+        if !when_matches(v) {
+            let src = v["source"].as_str().unwrap_or("?");
+            eprintln!("skip {src}: when clause not matched on this host");
+            continue;
+        }
+        if let Some(bin) = v["bin"].as_str()
+            && skipped_bins.iter().any(|b| b == bin)
+        {
+            let src = v["source"].as_str().unwrap_or("?");
+            eprintln!("skip {src}: optional bin `{bin}` was not built");
+            continue;
+        }
         match spawn_validator(v, suite_path, cwd) {
             Ok((source, doc)) => {
                 let dest = results_dir.join(format!("{source}.json"));
@@ -230,7 +319,14 @@ fn run_suite(suite_path: &Path, cwd: &Path) -> Result<(), Vec<String>> {
                 }
                 artifacts.push(doc);
             }
-            Err(e) => spawn_errs.push(e),
+            Err(e) => {
+                if is_optional(v) {
+                    let src = v["source"].as_str().unwrap_or("?");
+                    eprintln!("skip {src}: {e}");
+                } else {
+                    spawn_errs.push(e);
+                }
+            }
         }
     }
     if !spawn_errs.is_empty() {
@@ -270,11 +366,11 @@ fn main() {
             .join(arg)
     };
     let paths = collect_suite_paths(&arg);
-    rebuild_bins(&collect_bin_names(&paths));
+    let skipped_bins = rebuild_validators(&collect_active_validators(&paths));
     let mut failed = false;
     for path in &paths {
         eprintln!("=== {} ===", path.display());
-        match run_suite(path, &cwd) {
+        match run_suite(path, &cwd, &skipped_bins) {
             Ok(()) => eprintln!("{}: PASS", path.display()),
             Err(errs) => {
                 failed = true;

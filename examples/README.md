@@ -96,6 +96,8 @@ workflow lands.
 |:--------|:-------------|
 | `python3 python3/matrix.py suites/matrix.json` | Matrix oracle JSON on stdout |
 | `cargo run --release --bin matrix -- suites/matrix.json` | Native matrix JSON on stdout (tutorial on stderr) |
+| `cargo run --release --bin matrix-row -- suites/matrix.json` | Row-major `DefaultBlas` matrix JSON (`source: rust-row`) |
+| `cargo run --release --bin matrix-accelerate --features accelerate -- suites/matrix.json` | Apple Accelerate GEMM JSON (`source: rust-accelerate`; macOS) |
 | `cargo run --release --bin validate -- suites/` | Spawn all validators and plotters, compare bounds |
 | `python3 python3/plot_matrix.py results/matrix/` | Matrix diagnostic plots (listed in the suite file) |
 

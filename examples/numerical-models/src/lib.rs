@@ -42,7 +42,8 @@ pub mod transfer_function;
 use std::time::Instant;
 
 use control_rs::math::num_types::{Const, Dim};
-use control_rs::matrix::Owned;
+use control_rs::math::storage::Storage;
+use control_rs::matrix::{Matrix, Owned};
 use serde_json::{Value, json};
 
 /// Absolute error bound for `f64` tutorial keys (umbrella §6.3).
@@ -111,12 +112,13 @@ pub fn logspace(start_log10: f64, stop_log10: f64, n: usize) -> Vec<f64> {
 }
 
 /// Prints a dense `f64` matrix in row-major visual layout.
-pub fn print_matrix<const R: usize, const C: usize>(
+pub fn print_matrix<const R: usize, const C: usize, S>(
     name: &str,
-    m: &Owned<f64, R, C>,
+    m: &Matrix<f64, Const<R>, Const<C>, S>,
 ) where
     Const<R>: Dim,
     Const<C>: Dim,
+    S: Storage<f64, Const<R>, Const<C>>,
 {
     eprintln!("{name}:");
     for i in 0..R {
@@ -132,10 +134,13 @@ pub fn print_matrix<const R: usize, const C: usize>(
 }
 
 /// ∞-norm of a dense `f64` matrix (maximum absolute row sum).
-pub fn inf_norm_mat<const R: usize, const C: usize>(m: &Owned<f64, R, C>) -> f64
+pub fn inf_norm_mat<const R: usize, const C: usize, S>(
+    m: &Matrix<f64, Const<R>, Const<C>, S>,
+) -> f64
 where
     Const<R>: Dim,
     Const<C>: Dim,
+    S: Storage<f64, Const<R>, Const<C>>,
 {
     let mut best = 0.0_f64;
     for i in 0..R {
@@ -151,9 +156,12 @@ where
 }
 
 /// ∞-norm of a dense `f64` column vector.
-pub fn inf_norm_col<const N: usize>(m: &Owned<f64, N, 1>) -> f64
+pub fn inf_norm_col<const N: usize, S>(
+    m: &Matrix<f64, Const<N>, Const<1>, S>,
+) -> f64
 where
     Const<N>: Dim,
+    S: Storage<f64, Const<N>, Const<1>>,
 {
     let mut best = 0.0_f64;
     for i in 0..N {
@@ -166,10 +174,13 @@ where
 }
 
 /// Frobenius norm of a dense `f64` matrix.
-pub fn frobenius<const R: usize, const C: usize>(m: &Owned<f64, R, C>) -> f64
+pub fn frobenius<const R: usize, const C: usize, S>(
+    m: &Matrix<f64, Const<R>, Const<C>, S>,
+) -> f64
 where
     Const<R>: Dim,
     Const<C>: Dim,
+    S: Storage<f64, Const<R>, Const<C>>,
 {
     let mut s = 0.0_f64;
     for i in 0..R {
@@ -204,13 +215,14 @@ where
     if den == 0.0 { 0.0 } else { num / den }
 }
 
-/// Row-major JSON array from a dense `Owned` matrix.
-pub fn owned_to_rows<const R: usize, const C: usize>(
-    m: &Owned<f64, R, C>,
+/// Row-major JSON array from a dense matrix.
+pub fn owned_to_rows<const R: usize, const C: usize, S>(
+    m: &Matrix<f64, Const<R>, Const<C>, S>,
 ) -> Value
 where
     Const<R>: Dim,
     Const<C>: Dim,
+    S: Storage<f64, Const<R>, Const<C>>,
 {
     let mut rows = Vec::with_capacity(R);
     for i in 0..R {
@@ -236,6 +248,7 @@ where
 /// Wrap native `values` / `series` / `metrics` / `timings` as a V&V artifact.
 pub fn native_artifact(
     slug: &str,
+    source: &str,
     values: Value,
     series: Value,
     metrics: Value,
@@ -243,7 +256,7 @@ pub fn native_artifact(
 ) -> Value {
     json!({
         "slug": slug,
-        "source": "rust",
+        "source": source,
         "values": values,
         "series": series,
         "metrics": metrics,
