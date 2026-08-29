@@ -2817,4 +2817,96 @@ pub mod subprogram_test_suite {
         )
         .unwrap();
     }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    fn test_herk_unmqr_trans_distinct_from_conjtrans() {
+        // HERK: Trans must preserve a real Hermitian diagonal (coerced to AᴴA).
+        let a = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex64::new(1.0, 1.0),
+            Complex64::new(2.0, -1.0),
+        ]]);
+        let mut c_t = ArrayStorage::<Complex64, 2, 2>::zeros();
+        let mut c_c = ArrayStorage::<Complex64, 2, 2>::zeros();
+        DefaultBlas::herk(UpLo::Lower, Trans::Trans, 1.0, &a, 0.0, &mut c_t);
+        DefaultBlas::herk(
+            UpLo::Lower,
+            Trans::ConjTrans,
+            1.0,
+            &a,
+            0.0,
+            &mut c_c,
+        );
+        let t00 = *c_t.get(0, 0).unwrap();
+        let c00 = *c_c.get(0, 0).unwrap();
+        // |1+i|² + |2−i|² = 7
+        assert_almost_eq!(c00.re, 7.0, 1e-12);
+        assert_almost_eq!(c00.im, 0.0, 1e-12);
+        assert_almost_eq!(t00.re, 7.0, 1e-12);
+        assert_almost_eq!(t00.im, 0.0, 1e-12);
+
+        // UNMQR: Trans applies Qᵀ, ConjTrans applies Qᴴ — distinct for complex Q.
+        let mut qr = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(1.0, 2.0), Complex64::new(0.5, 0.25)],
+            [Complex64::new(3.0, -1.0), Complex64::new(2.0, 1.0)],
+        ]);
+        let mut tau = [Complex64::ZERO; 2];
+        let mut work = [Complex64::ZERO; 4];
+        DefaultBlas::geqrf(&mut qr, &mut tau, &mut work).unwrap();
+
+        let mut q = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::ONE, Complex64::ZERO],
+            [Complex64::ZERO, Complex64::ONE],
+        ]);
+        DefaultBlas::unmqr(
+            Side::Left,
+            Trans::NoTrans,
+            &qr,
+            &tau,
+            &mut q,
+            &mut work,
+        )
+        .unwrap();
+
+        let mut i_t = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::ONE, Complex64::ZERO],
+            [Complex64::ZERO, Complex64::ONE],
+        ]);
+        let mut i_c = i_t;
+        DefaultBlas::unmqr(
+            Side::Left,
+            Trans::Trans,
+            &qr,
+            &tau,
+            &mut i_t,
+            &mut work,
+        )
+        .unwrap();
+        DefaultBlas::unmqr(
+            Side::Left,
+            Trans::ConjTrans,
+            &qr,
+            &tau,
+            &mut i_c,
+            &mut work,
+        )
+        .unwrap();
+
+        for i in 0..2 {
+            for j in 0..2 {
+                let q_ji = *q.get(j, i).unwrap();
+                let qh_ij = q_ji.conj();
+                let qt_ij = q_ji; // Qᵀ[i,j] = Q[j,i]
+                let got_h = *i_c.get(i, j).unwrap();
+                let got_t = *i_t.get(i, j).unwrap();
+                assert_almost_eq!(got_h.re, qh_ij.re, 1e-10);
+                assert_almost_eq!(got_h.im, qh_ij.im, 1e-10);
+                assert_almost_eq!(got_t.re, qt_ij.re, 1e-10);
+                assert_almost_eq!(got_t.im, qt_ij.im, 1e-10);
+            }
+        }
+        // Sanity: Qᵀ ≠ Qᴴ for this complex factor.
+        let diff = (*i_t.get(0, 1).unwrap() - *i_c.get(0, 1).unwrap()).abs();
+        assert!(diff > 1e-6);
+    }
 }

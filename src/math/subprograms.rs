@@ -2416,9 +2416,11 @@ where
                         Trans::NoTrans => (j, p),
                         _ => (p, j),
                     };
+                    // HERK admits only NoTrans (A A^H) and ConjTrans (A^H A).
+                    // Trans is coerced to ConjTrans so the update stays Hermitian.
                     let v1 = unsafe {
                         let elem = a.get_unchecked(a1_r, a1_c).clone();
-                        if trans == Trans::ConjTrans {
+                        if matches!(trans, Trans::ConjTrans | Trans::Trans) {
                             elem.conj()
                         } else {
                             elem
@@ -2552,7 +2554,8 @@ where
     B: DenseStorage<T>,
 {
     let mut dot = T::ZERO;
-    let conj_t = trans == Trans::ConjTrans;
+    // HER2K admits only NoTrans / ConjTrans; coerce Trans → ConjTrans.
+    let conj_t = matches!(trans, Trans::ConjTrans | Trans::Trans);
     let conj_n = trans == Trans::NoTrans;
     for p in 0..k {
         let (ar, ac) = trans_idx(trans, i, p);
@@ -3872,6 +3875,43 @@ where
     }
 }
 
+#[derive(Clone, Copy)]
+struct QrApplyConj {
+    tau: bool,
+    dot: bool,
+    update: bool,
+}
+
+const QR_CONJ_NONE: QrApplyConj = QrApplyConj {
+    tau: false,
+    dot: false,
+    update: false,
+};
+/// Apply $H = I - \tau v v^H$ (also right-multiply by $H^T$).
+const QR_CONJ_H: QrApplyConj = QrApplyConj {
+    tau: false,
+    dot: true,
+    update: false,
+};
+/// Apply $H^H = I - \overline{\tau} v v^H$.
+const QR_CONJ_H_ADJ: QrApplyConj = QrApplyConj {
+    tau: true,
+    dot: true,
+    update: false,
+};
+/// Apply $H^T$ from the left, or right-multiply by $H$.
+const QR_CONJ_H_TRANS: QrApplyConj = QrApplyConj {
+    tau: false,
+    dot: false,
+    update: true,
+};
+/// Right-multiply by $H^H$.
+const QR_CONJ_H_ADJ_RIGHT: QrApplyConj = QrApplyConj {
+    tau: true,
+    dot: false,
+    update: true,
+};
+
 #[inline(always)]
 fn qr_apply_left_k<T, A, C>(
     a: &A,
@@ -3880,7 +3920,7 @@ fn qr_apply_left_k<T, A, C>(
     k: usize,
     m: usize,
     n: usize,
-    conj_v: bool,
+    conj: QrApplyConj,
 ) where
     T: Scalar,
     A: DenseStorage<T>,
@@ -3891,11 +3931,8 @@ fn qr_apply_left_k<T, A, C>(
         for i in (k + 1)..m {
             let v_i = unsafe { a.get_unchecked(i, k).clone() };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-            if conj_v {
-                dot = dot + (v_i.conj() * c_ij);
-            } else {
-                dot = dot + (v_i * c_ij);
-            }
+            let v_d = if conj.dot { v_i.conj() } else { v_i };
+            dot = dot + (v_d * c_ij);
         }
         let scalar = tau_k.clone() * dot;
         let c_kj = unsafe { c.get_unchecked(k, j).clone() };
@@ -3904,9 +3941,10 @@ fn qr_apply_left_k<T, A, C>(
         }
         for i in (k + 1)..m {
             let v_i = unsafe { a.get_unchecked(i, k).clone() };
+            let v_u = if conj.update { v_i.conj() } else { v_i };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
             unsafe {
-                c.set_unchecked(i, j, c_ij - (v_i * scalar.clone()));
+                c.set_unchecked(i, j, c_ij - (v_u * scalar.clone()));
             }
         }
     }
@@ -3920,7 +3958,7 @@ fn qr_apply_right_k<T, A, C>(
     k: usize,
     m: usize,
     n: usize,
-    conj_v: bool,
+    conj: QrApplyConj,
 ) where
     T: Scalar,
     A: DenseStorage<T>,
@@ -3931,7 +3969,8 @@ fn qr_apply_right_k<T, A, C>(
         for j in (k + 1)..n {
             let v_j = unsafe { a.get_unchecked(j, k).clone() };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-            dot = dot + (v_j * c_ij);
+            let v_d = if conj.dot { v_j.conj() } else { v_j };
+            dot = dot + (v_d * c_ij);
         }
         let scalar = tau_k.clone() * dot;
         let c_ik = unsafe { c.get_unchecked(i, k).clone() };
@@ -3940,10 +3979,10 @@ fn qr_apply_right_k<T, A, C>(
         }
         for j in (k + 1)..n {
             let v_j = unsafe { a.get_unchecked(j, k).clone() };
+            let v_u = if conj.update { v_j.conj() } else { v_j };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-            let v_apply = if conj_v { v_j.conj() } else { v_j };
             unsafe {
-                c.set_unchecked(i, j, c_ij - (v_apply * scalar.clone()));
+                c.set_unchecked(i, j, c_ij - (v_u * scalar.clone()));
             }
         }
     }
@@ -3956,8 +3995,7 @@ fn qr_apply_left<T, A, C>(
     c: &mut C,
     k_limit: usize,
     reverse: bool,
-    conj_tau: bool,
-    conj_v: bool,
+    conj: QrApplyConj,
 ) where
     T: Scalar,
     A: DenseStorage<T>,
@@ -3967,7 +4005,7 @@ fn qr_apply_left<T, A, C>(
     let n = c.cols();
     for t in 0..k_limit {
         let k = if reverse { k_limit - 1 - t } else { t };
-        let tau_k = if conj_tau {
+        let tau_k = if conj.tau {
             tau[k].clone().conj()
         } else {
             tau[k].clone()
@@ -3975,7 +4013,7 @@ fn qr_apply_left<T, A, C>(
         if tau_k.is_zero() {
             continue;
         }
-        qr_apply_left_k(a, &tau_k, c, k, m, n, conj_v);
+        qr_apply_left_k(a, &tau_k, c, k, m, n, conj);
     }
 }
 
@@ -3986,8 +4024,7 @@ fn qr_apply_right<T, A, C>(
     c: &mut C,
     k_limit: usize,
     reverse: bool,
-    conj_tau: bool,
-    conj_v: bool,
+    conj: QrApplyConj,
 ) where
     T: Scalar,
     A: DenseStorage<T>,
@@ -3997,7 +4034,7 @@ fn qr_apply_right<T, A, C>(
     let n = c.cols();
     for t in 0..k_limit {
         let k = if reverse { k_limit - 1 - t } else { t };
-        let tau_k = if conj_tau {
+        let tau_k = if conj.tau {
             tau[k].clone().conj()
         } else {
             tau[k].clone()
@@ -4005,7 +4042,7 @@ fn qr_apply_right<T, A, C>(
         if tau_k.is_zero() {
             continue;
         }
-        qr_apply_right_k(a, &tau_k, c, k, m, n, conj_v);
+        qr_apply_right_k(a, &tau_k, c, k, m, n, conj);
     }
 }
 
@@ -4034,18 +4071,19 @@ where
         if tau.len() < k_limit || work.len() < min_work {
             return Err(LinAlgError::WorkspaceTooSmall);
         }
+        // Real path: conjugation is a no-op; Trans and ConjTrans coincide.
         match (side, trans) {
             (Side::Left, Trans::NoTrans) => {
-                qr_apply_left(a, tau, c, k_limit, true, false, false);
+                qr_apply_left(a, tau, c, k_limit, true, QR_CONJ_NONE);
             }
             (Side::Left, Trans::Trans | Trans::ConjTrans) => {
-                qr_apply_left(a, tau, c, k_limit, false, false, false);
+                qr_apply_left(a, tau, c, k_limit, false, QR_CONJ_NONE);
             }
             (Side::Right, Trans::NoTrans) => {
-                qr_apply_right(a, tau, c, k_limit, false, false, false);
+                qr_apply_right(a, tau, c, k_limit, false, QR_CONJ_NONE);
             }
             (Side::Right, Trans::Trans | Trans::ConjTrans) => {
-                qr_apply_right(a, tau, c, k_limit, true, false, false);
+                qr_apply_right(a, tau, c, k_limit, true, QR_CONJ_NONE);
             }
         }
         let _ = work;
@@ -4078,18 +4116,26 @@ where
         if tau.len() < k_limit || work.len() < min_work {
             return Err(LinAlgError::WorkspaceTooSmall);
         }
+        // Complex Householder $H = I - \tau v v^H$.
+        // NoTrans → $H$, ConjTrans → $H^H$, Trans → $H^T$ (LAPACK CUNMQR).
         match (side, trans) {
             (Side::Left, Trans::NoTrans) => {
-                qr_apply_left(a, tau, c, k_limit, true, false, true);
+                qr_apply_left(a, tau, c, k_limit, true, QR_CONJ_H);
             }
-            (Side::Left, Trans::ConjTrans | Trans::Trans) => {
-                qr_apply_left(a, tau, c, k_limit, false, true, true);
+            (Side::Left, Trans::ConjTrans) => {
+                qr_apply_left(a, tau, c, k_limit, false, QR_CONJ_H_ADJ);
+            }
+            (Side::Left, Trans::Trans) => {
+                qr_apply_left(a, tau, c, k_limit, false, QR_CONJ_H_TRANS);
             }
             (Side::Right, Trans::NoTrans) => {
-                qr_apply_right(a, tau, c, k_limit, false, false, true);
+                qr_apply_right(a, tau, c, k_limit, false, QR_CONJ_H_TRANS);
             }
-            (Side::Right, Trans::ConjTrans | Trans::Trans) => {
-                qr_apply_right(a, tau, c, k_limit, true, true, true);
+            (Side::Right, Trans::ConjTrans) => {
+                qr_apply_right(a, tau, c, k_limit, true, QR_CONJ_H_ADJ_RIGHT);
+            }
+            (Side::Right, Trans::Trans) => {
+                qr_apply_right(a, tau, c, k_limit, true, QR_CONJ_H);
             }
         }
         let _ = work;
