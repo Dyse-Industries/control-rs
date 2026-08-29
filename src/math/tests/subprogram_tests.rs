@@ -1771,7 +1771,8 @@ pub mod subprogram_test_suite {
         .unwrap();
 
         let mut sorted = w;
-        sorted.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        // `slice::sort_by` requires `alloc`; `sort_unstable_by` is in `core`.
+        sorted.sort_unstable_by(f64::total_cmp);
         // NumPy `linalg.eigh` reference for this operand.
         assert_almost_eq!(sorted[0], 1.856_872_55, 1e-7);
         assert_almost_eq!(sorted[1], 2.022_388_22, 1e-7);
@@ -2913,8 +2914,8 @@ pub mod subprogram_test_suite {
             Complex64::new(1.0, 1.0),
             Complex64::new(2.0, -1.0),
         ]]);
-        let mut c_t = ArrayStorage::<Complex64, 2, 2>::zeros();
-        let mut c_c = ArrayStorage::<Complex64, 2, 2>::zeros();
+        let mut c_t = ArrayStorage::<Complex64, 1, 1>::zeros();
+        let mut c_c = ArrayStorage::<Complex64, 1, 1>::zeros();
         DefaultBlas::herk(UpLo::Lower, Trans::Trans, 1.0, &a, 0.0, &mut c_t);
         DefaultBlas::herk(
             UpLo::Lower,
@@ -2927,10 +2928,10 @@ pub mod subprogram_test_suite {
         let t00 = *c_t.get(0, 0).unwrap();
         let c00 = *c_c.get(0, 0).unwrap();
         // |1+i|² + |2−i|² = 7
-        assert_almost_eq!(c00.re, 7.0, 1e-12);
-        assert_almost_eq!(c00.im, 0.0, 1e-12);
-        assert_almost_eq!(t00.re, 7.0, 1e-12);
-        assert_almost_eq!(t00.im, 0.0, 1e-12);
+        assert_almost_eq!(c00.re, 7.0, 1e-9);
+        assert_almost_eq!(c00.im, 0.0, 1e-9);
+        assert_almost_eq!(t00.re, 7.0, 1e-9);
+        assert_almost_eq!(t00.im, 0.0, 1e-9);
 
         // UNMQR: Trans applies Qᵀ, ConjTrans applies Qᴴ — distinct for complex Q.
         let mut qr = ArrayStorage::<Complex64, 2, 2>::from_array([

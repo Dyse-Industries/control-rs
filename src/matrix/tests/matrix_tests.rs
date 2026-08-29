@@ -172,7 +172,7 @@ pub mod matrix_test_suite {
             Owned::<f64, 3, 3>::diagonal([1.0, 2.0, 3.0]);
         for i in 0..3 {
             for j in 0..3 {
-                let expected = if i == j { [1.0, 2.0, 3.0][i] } else { 0.0 };
+                let expected = if i == j { (i + 1) as f64 } else { 0.0 };
                 assert_almost_eq!(*DIAG.get(i, j).unwrap(), expected);
             }
         }

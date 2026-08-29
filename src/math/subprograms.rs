@@ -2403,42 +2403,59 @@ where
         Trans::NoTrans => a.cols(),
         _ => a.rows(),
     };
-    for i in 0..n {
-        for j in 0..n {
-            if in_triangle(uplo, i, j) {
-                let mut dot = T::ZERO;
-                for p in 0..k {
-                    let (a1_r, a1_c) = match trans {
-                        Trans::NoTrans => (i, p),
-                        _ => (p, i),
-                    };
-                    let (a2_r, a2_c) = match trans {
-                        Trans::NoTrans => (j, p),
-                        _ => (p, j),
-                    };
-                    // HERK admits only NoTrans (A A^H) and ConjTrans (A^H A).
-                    // Trans is coerced to ConjTrans so the update stays Hermitian.
-                    let v1 = unsafe {
-                        let elem = a.get_unchecked(a1_r, a1_c).clone();
-                        if matches!(trans, Trans::ConjTrans | Trans::Trans) {
-                            elem.conj()
-                        } else {
-                            elem
+
+    // Hoist the trans branch to the top level for maximum inner-loop performance
+    match trans {
+        Trans::NoTrans => {
+            // A * A^H
+            for i in 0..n {
+                let j_start = if matches!(uplo, UpLo::Upper) { i } else { 0 };
+                let j_end = if matches!(uplo, UpLo::Upper) {
+                    n
+                } else {
+                    i + 1
+                };
+
+                for j in j_start..j_end {
+                    let mut dot = T::ZERO;
+                    for p in 0..k {
+                        unsafe {
+                            let v1 = a.get_unchecked(i, p).clone();
+                            let v2 = a.get_unchecked(j, p).clone().conj();
+                            dot = dot + (v1 * v2);
                         }
-                    };
-                    let v2 = unsafe {
-                        let elem = a.get_unchecked(a2_r, a2_c).clone();
-                        if trans == Trans::NoTrans {
-                            elem.conj()
-                        } else {
-                            elem
-                        }
-                    };
-                    dot = dot + (v1 * v2);
+                    }
+                    unsafe {
+                        let cv = c.get_unchecked(i, j).clone();
+                        c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+                    }
                 }
-                unsafe {
-                    let cv = c.get_unchecked(i, j).clone();
-                    c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+            }
+        }
+        Trans::ConjTrans | Trans::Trans => {
+            // A^H * A
+            // Note: Trans is coerced to ConjTrans so the update stays Hermitian.
+            for i in 0..n {
+                let j_start = if matches!(uplo, UpLo::Upper) { i } else { 0 };
+                let j_end = if matches!(uplo, UpLo::Upper) {
+                    n
+                } else {
+                    i + 1
+                };
+
+                for j in j_start..j_end {
+                    let mut dot = T::ZERO;
+                    for p in 0..k {
+                        unsafe {
+                            let v1 = a.get_unchecked(p, i).clone().conj();
+                            let v2 = a.get_unchecked(p, j).clone();
+                            dot = dot + (v1 * v2);
+                        }
+                    }
+                    unsafe {
+                        let cv = c.get_unchecked(i, j).clone();
+                        c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+                    }
                 }
             }
         }

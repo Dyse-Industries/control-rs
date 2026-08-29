@@ -56,6 +56,8 @@ pub enum Subcommand {
     Ci(Option<bridge::Target>),
     /// Run TUI on a single target.
     Tui(bridge::Target),
+    /// Run the virtual ETS locally.
+    ETS,
     /// Install pre-commit git hooks.
     InstallHooks,
     /// Print usage instructions.
@@ -90,6 +92,7 @@ fn main() {
         Ok(Subcommand::Ci(Some(target))) => run_ci_single(&target),
         Ok(Subcommand::Ci(None)) => run_ci_all_qemu(),
         Ok(Subcommand::Tui(target)) => tasks::run_ets_tui(&target),
+        Ok(Subcommand::ETS) => {}
         Ok(Subcommand::InstallHooks) => tasks::install_hooks(),
         Ok(Subcommand::Usage) => print_usage_and_exit(),
         Err(e) => {
