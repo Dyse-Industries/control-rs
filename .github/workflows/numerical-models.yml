@@ -178,11 +178,11 @@ jobs:
           
           # 4. Close the multi-line output block
           echo "$EOF" >> "$GITHUB_OUTPUT"
-          
-          - name: Post PR Comment
-            if: github.event_name == 'pull_request' && matrix.rust == 'stable' && (success() || failure())
-            uses: peter-evans/create-or-update-comment@v4
-            with:
-              issue-number: ${{ github.event.pull_request.number }}
-              # 5. Changed `body-path` to `body` and referenced the exact ID and output name
-              body: ${{ steps.summary_generator.outputs.report_data }}
+
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request' && matrix.rust == 'stable' && (success() || failure())
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          # 5. Changed `body-path` to `body` and referenced the exact ID and output name
+          body: ${{ steps.summary_generator.outputs.report_data }}
