@@ -1733,6 +1733,93 @@ pub mod subprogram_test_suite {
 
     #[cfg_attr(test, test)]
     #[allow(clippy::too_many_lines)]
+    /// 3×3 Hermitian Heev: eigenvalues and `‖AU − UΛ‖_∞` (catches `s`/`s̄` swap).
+    ///
+    /// The prior residual oracle used a 2×2 with purely imaginary off-diagonal,
+    /// where the off-diag Jacobi update is a no-op and a mistaken conjugate
+    /// transpose of the vector workspace can still pass. A non-trivial 3×3
+    /// with mixed complex couplings exposes both the eigenvalue drift and the
+    /// broken `A U = U Λ` residual.
+    fn test_subprograms_heev_3x3_complex_coupling() {
+        let a = ArrayStorage::<Complex64, 3, 3>::from_array([
+            [
+                Complex64::new(4.0, 0.0),
+                Complex64::new(1.0, -1.0),
+                Complex64::new(0.5, 0.0),
+            ],
+            [
+                Complex64::new(1.0, 1.0),
+                Complex64::new(3.0, 0.0),
+                Complex64::new(0.2, 0.3),
+            ],
+            [
+                Complex64::new(0.5, 0.0),
+                Complex64::new(0.2, -0.3),
+                Complex64::new(2.0, 0.0),
+            ],
+        ]);
+        let mut u = a;
+        let mut w = [0.0f64; 3];
+        let mut work = [Complex64::ZERO; 9];
+        DefaultBlas::heev(
+            JobZ::Vectors,
+            UpLo::Upper,
+            &mut u,
+            &mut w,
+            &mut work,
+        )
+        .unwrap();
+
+        let mut sorted = w;
+        sorted.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        // NumPy `linalg.eigh` reference for this operand.
+        assert_almost_eq!(sorted[0], 1.856_872_55, 1e-7);
+        assert_almost_eq!(sorted[1], 2.022_388_22, 1e-7);
+        assert_almost_eq!(sorted[2], 5.120_739_22, 1e-7);
+
+        let mut au = ArrayStorage::<Complex64, 3, 3>::zeros();
+        DefaultBlas::gemm(
+            Trans::NoTrans,
+            Trans::NoTrans,
+            Complex64::ONE,
+            &a,
+            &u,
+            Complex64::ZERO,
+            &mut au,
+        );
+        let ul = ArrayStorage::<Complex64, 3, 3>::from_fn(|i, j| unsafe {
+            *u.get_unchecked(i, j) * Complex64::from_real(w[j])
+        });
+        let n = 3.0;
+        let resid = _residual_inf_c64(&au, &ul);
+        // Pre-fix residual was O(1); Jacobi FP accumulation for this 3×3 is ~1e-12.
+        assert!(
+            resid <= 1e-9,
+            "‖AU − UΛ‖_∞ too large: resid={resid} w={w:?}"
+        );
+
+        let mut uhu = ArrayStorage::<Complex64, 3, 3>::zeros();
+        DefaultBlas::gemm(
+            Trans::ConjTrans,
+            Trans::NoTrans,
+            Complex64::ONE,
+            &u,
+            &u,
+            Complex64::ZERO,
+            &mut uhu,
+        );
+        let ident = ArrayStorage::<Complex64, 3, 3>::from_fn(|i, j| {
+            if i == j {
+                Complex64::ONE
+            } else {
+                Complex64::ZERO
+            }
+        });
+        assert!(_residual_inf_c64(&uhu, &ident) <= n * f64::EPSILON * 10.0);
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
     /// `Unmqr` `Side::Right` residual `C ← C Q` against formed `Q`.
     fn test_subprograms_residual_bounds_unmqr_right() {
         let a0 = ArrayStorage::<Complex64, 2, 2>::from_array([
@@ -2816,5 +2903,97 @@ pub mod subprogram_test_suite {
             &mut workc,
         )
         .unwrap();
+    }
+
+    #[cfg_attr(test, test)]
+    #[allow(clippy::too_many_lines)]
+    fn test_herk_unmqr_trans_distinct_from_conjtrans() {
+        // HERK: Trans must preserve a real Hermitian diagonal (coerced to AᴴA).
+        let a = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex64::new(1.0, 1.0),
+            Complex64::new(2.0, -1.0),
+        ]]);
+        let mut c_t = ArrayStorage::<Complex64, 2, 2>::zeros();
+        let mut c_c = ArrayStorage::<Complex64, 2, 2>::zeros();
+        DefaultBlas::herk(UpLo::Lower, Trans::Trans, 1.0, &a, 0.0, &mut c_t);
+        DefaultBlas::herk(
+            UpLo::Lower,
+            Trans::ConjTrans,
+            1.0,
+            &a,
+            0.0,
+            &mut c_c,
+        );
+        let t00 = *c_t.get(0, 0).unwrap();
+        let c00 = *c_c.get(0, 0).unwrap();
+        // |1+i|² + |2−i|² = 7
+        assert_almost_eq!(c00.re, 7.0, 1e-12);
+        assert_almost_eq!(c00.im, 0.0, 1e-12);
+        assert_almost_eq!(t00.re, 7.0, 1e-12);
+        assert_almost_eq!(t00.im, 0.0, 1e-12);
+
+        // UNMQR: Trans applies Qᵀ, ConjTrans applies Qᴴ — distinct for complex Q.
+        let mut qr = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(1.0, 2.0), Complex64::new(0.5, 0.25)],
+            [Complex64::new(3.0, -1.0), Complex64::new(2.0, 1.0)],
+        ]);
+        let mut tau = [Complex64::ZERO; 2];
+        let mut work = [Complex64::ZERO; 4];
+        DefaultBlas::geqrf(&mut qr, &mut tau, &mut work).unwrap();
+
+        let mut q = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::ONE, Complex64::ZERO],
+            [Complex64::ZERO, Complex64::ONE],
+        ]);
+        DefaultBlas::unmqr(
+            Side::Left,
+            Trans::NoTrans,
+            &qr,
+            &tau,
+            &mut q,
+            &mut work,
+        )
+        .unwrap();
+
+        let mut i_t = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::ONE, Complex64::ZERO],
+            [Complex64::ZERO, Complex64::ONE],
+        ]);
+        let mut i_c = i_t;
+        DefaultBlas::unmqr(
+            Side::Left,
+            Trans::Trans,
+            &qr,
+            &tau,
+            &mut i_t,
+            &mut work,
+        )
+        .unwrap();
+        DefaultBlas::unmqr(
+            Side::Left,
+            Trans::ConjTrans,
+            &qr,
+            &tau,
+            &mut i_c,
+            &mut work,
+        )
+        .unwrap();
+
+        for i in 0..2 {
+            for j in 0..2 {
+                let q_ji = *q.get(j, i).unwrap();
+                let qh_ij = q_ji.conj();
+                let qt_ij = q_ji; // Qᵀ[i,j] = Q[j,i]
+                let got_h = *i_c.get(i, j).unwrap();
+                let got_t = *i_t.get(i, j).unwrap();
+                assert_almost_eq!(got_h.re, qh_ij.re, 1e-10);
+                assert_almost_eq!(got_h.im, qh_ij.im, 1e-10);
+                assert_almost_eq!(got_t.re, qt_ij.re, 1e-10);
+                assert_almost_eq!(got_t.im, qt_ij.im, 1e-10);
+            }
+        }
+        // Sanity: Qᵀ ≠ Qᴴ for this complex factor.
+        let diff = (*i_t.get(0, 1).unwrap() - *i_c.get(0, 1).unwrap()).abs();
+        assert!(diff > 1e-6);
     }
 }

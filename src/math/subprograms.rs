@@ -2416,9 +2416,11 @@ where
                         Trans::NoTrans => (j, p),
                         _ => (p, j),
                     };
+                    // HERK admits only NoTrans (A A^H) and ConjTrans (A^H A).
+                    // Trans is coerced to ConjTrans so the update stays Hermitian.
                     let v1 = unsafe {
                         let elem = a.get_unchecked(a1_r, a1_c).clone();
-                        if trans == Trans::ConjTrans {
+                        if matches!(trans, Trans::ConjTrans | Trans::Trans) {
                             elem.conj()
                         } else {
                             elem
@@ -2552,7 +2554,8 @@ where
     B: DenseStorage<T>,
 {
     let mut dot = T::ZERO;
-    let conj_t = trans == Trans::ConjTrans;
+    // HER2K admits only NoTrans / ConjTrans; coerce Trans → ConjTrans.
+    let conj_t = matches!(trans, Trans::ConjTrans | Trans::Trans);
     let conj_n = trans == Trans::NoTrans;
     for p in 0..k {
         let (ar, ac) = trans_idx(trans, i, p);
@@ -3872,6 +3875,43 @@ where
     }
 }
 
+#[derive(Clone, Copy)]
+struct QrApplyConj {
+    tau: bool,
+    dot: bool,
+    update: bool,
+}
+
+const QR_CONJ_NONE: QrApplyConj = QrApplyConj {
+    tau: false,
+    dot: false,
+    update: false,
+};
+/// Apply $H = I - \tau v v^H$ (also right-multiply by $H^T$).
+const QR_CONJ_H: QrApplyConj = QrApplyConj {
+    tau: false,
+    dot: true,
+    update: false,
+};
+/// Apply $H^H = I - \overline{\tau} v v^H$.
+const QR_CONJ_H_ADJ: QrApplyConj = QrApplyConj {
+    tau: true,
+    dot: true,
+    update: false,
+};
+/// Apply $H^T$ from the left, or right-multiply by $H$.
+const QR_CONJ_H_TRANS: QrApplyConj = QrApplyConj {
+    tau: false,
+    dot: false,
+    update: true,
+};
+/// Right-multiply by $H^H$.
+const QR_CONJ_H_ADJ_RIGHT: QrApplyConj = QrApplyConj {
+    tau: true,
+    dot: false,
+    update: true,
+};
+
 #[inline(always)]
 fn qr_apply_left_k<T, A, C>(
     a: &A,
@@ -3880,7 +3920,7 @@ fn qr_apply_left_k<T, A, C>(
     k: usize,
     m: usize,
     n: usize,
-    conj_v: bool,
+    conj: QrApplyConj,
 ) where
     T: Scalar,
     A: DenseStorage<T>,
@@ -3891,11 +3931,8 @@ fn qr_apply_left_k<T, A, C>(
         for i in (k + 1)..m {
             let v_i = unsafe { a.get_unchecked(i, k).clone() };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-            if conj_v {
-                dot = dot + (v_i.conj() * c_ij);
-            } else {
-                dot = dot + (v_i * c_ij);
-            }
+            let v_d = if conj.dot { v_i.conj() } else { v_i };
+            dot = dot + (v_d * c_ij);
         }
         let scalar = tau_k.clone() * dot;
         let c_kj = unsafe { c.get_unchecked(k, j).clone() };
@@ -3904,9 +3941,10 @@ fn qr_apply_left_k<T, A, C>(
         }
         for i in (k + 1)..m {
             let v_i = unsafe { a.get_unchecked(i, k).clone() };
+            let v_u = if conj.update { v_i.conj() } else { v_i };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
             unsafe {
-                c.set_unchecked(i, j, c_ij - (v_i * scalar.clone()));
+                c.set_unchecked(i, j, c_ij - (v_u * scalar.clone()));
             }
         }
     }
@@ -3920,7 +3958,7 @@ fn qr_apply_right_k<T, A, C>(
     k: usize,
     m: usize,
     n: usize,
-    conj_v: bool,
+    conj: QrApplyConj,
 ) where
     T: Scalar,
     A: DenseStorage<T>,
@@ -3931,7 +3969,8 @@ fn qr_apply_right_k<T, A, C>(
         for j in (k + 1)..n {
             let v_j = unsafe { a.get_unchecked(j, k).clone() };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-            dot = dot + (v_j * c_ij);
+            let v_d = if conj.dot { v_j.conj() } else { v_j };
+            dot = dot + (v_d * c_ij);
         }
         let scalar = tau_k.clone() * dot;
         let c_ik = unsafe { c.get_unchecked(i, k).clone() };
@@ -3940,10 +3979,10 @@ fn qr_apply_right_k<T, A, C>(
         }
         for j in (k + 1)..n {
             let v_j = unsafe { a.get_unchecked(j, k).clone() };
+            let v_u = if conj.update { v_j.conj() } else { v_j };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
-            let v_apply = if conj_v { v_j.conj() } else { v_j };
             unsafe {
-                c.set_unchecked(i, j, c_ij - (v_apply * scalar.clone()));
+                c.set_unchecked(i, j, c_ij - (v_u * scalar.clone()));
             }
         }
     }
@@ -3956,8 +3995,7 @@ fn qr_apply_left<T, A, C>(
     c: &mut C,
     k_limit: usize,
     reverse: bool,
-    conj_tau: bool,
-    conj_v: bool,
+    conj: QrApplyConj,
 ) where
     T: Scalar,
     A: DenseStorage<T>,
@@ -3967,7 +4005,7 @@ fn qr_apply_left<T, A, C>(
     let n = c.cols();
     for t in 0..k_limit {
         let k = if reverse { k_limit - 1 - t } else { t };
-        let tau_k = if conj_tau {
+        let tau_k = if conj.tau {
             tau[k].clone().conj()
         } else {
             tau[k].clone()
@@ -3975,7 +4013,7 @@ fn qr_apply_left<T, A, C>(
         if tau_k.is_zero() {
             continue;
         }
-        qr_apply_left_k(a, &tau_k, c, k, m, n, conj_v);
+        qr_apply_left_k(a, &tau_k, c, k, m, n, conj);
     }
 }
 
@@ -3986,8 +4024,7 @@ fn qr_apply_right<T, A, C>(
     c: &mut C,
     k_limit: usize,
     reverse: bool,
-    conj_tau: bool,
-    conj_v: bool,
+    conj: QrApplyConj,
 ) where
     T: Scalar,
     A: DenseStorage<T>,
@@ -3997,7 +4034,7 @@ fn qr_apply_right<T, A, C>(
     let n = c.cols();
     for t in 0..k_limit {
         let k = if reverse { k_limit - 1 - t } else { t };
-        let tau_k = if conj_tau {
+        let tau_k = if conj.tau {
             tau[k].clone().conj()
         } else {
             tau[k].clone()
@@ -4005,7 +4042,7 @@ fn qr_apply_right<T, A, C>(
         if tau_k.is_zero() {
             continue;
         }
-        qr_apply_right_k(a, &tau_k, c, k, m, n, conj_v);
+        qr_apply_right_k(a, &tau_k, c, k, m, n, conj);
     }
 }
 
@@ -4034,18 +4071,19 @@ where
         if tau.len() < k_limit || work.len() < min_work {
             return Err(LinAlgError::WorkspaceTooSmall);
         }
+        // Real path: conjugation is a no-op; Trans and ConjTrans coincide.
         match (side, trans) {
             (Side::Left, Trans::NoTrans) => {
-                qr_apply_left(a, tau, c, k_limit, true, false, false);
+                qr_apply_left(a, tau, c, k_limit, true, QR_CONJ_NONE);
             }
             (Side::Left, Trans::Trans | Trans::ConjTrans) => {
-                qr_apply_left(a, tau, c, k_limit, false, false, false);
+                qr_apply_left(a, tau, c, k_limit, false, QR_CONJ_NONE);
             }
             (Side::Right, Trans::NoTrans) => {
-                qr_apply_right(a, tau, c, k_limit, false, false, false);
+                qr_apply_right(a, tau, c, k_limit, false, QR_CONJ_NONE);
             }
             (Side::Right, Trans::Trans | Trans::ConjTrans) => {
-                qr_apply_right(a, tau, c, k_limit, true, false, false);
+                qr_apply_right(a, tau, c, k_limit, true, QR_CONJ_NONE);
             }
         }
         let _ = work;
@@ -4078,18 +4116,26 @@ where
         if tau.len() < k_limit || work.len() < min_work {
             return Err(LinAlgError::WorkspaceTooSmall);
         }
+        // Complex Householder $H = I - \tau v v^H$.
+        // NoTrans → $H$, ConjTrans → $H^H$, Trans → $H^T$ (LAPACK CUNMQR).
         match (side, trans) {
             (Side::Left, Trans::NoTrans) => {
-                qr_apply_left(a, tau, c, k_limit, true, false, true);
+                qr_apply_left(a, tau, c, k_limit, true, QR_CONJ_H);
             }
-            (Side::Left, Trans::ConjTrans | Trans::Trans) => {
-                qr_apply_left(a, tau, c, k_limit, false, true, true);
+            (Side::Left, Trans::ConjTrans) => {
+                qr_apply_left(a, tau, c, k_limit, false, QR_CONJ_H_ADJ);
+            }
+            (Side::Left, Trans::Trans) => {
+                qr_apply_left(a, tau, c, k_limit, false, QR_CONJ_H_TRANS);
             }
             (Side::Right, Trans::NoTrans) => {
-                qr_apply_right(a, tau, c, k_limit, false, false, true);
+                qr_apply_right(a, tau, c, k_limit, false, QR_CONJ_H_TRANS);
             }
-            (Side::Right, Trans::ConjTrans | Trans::Trans) => {
-                qr_apply_right(a, tau, c, k_limit, true, true, true);
+            (Side::Right, Trans::ConjTrans) => {
+                qr_apply_right(a, tau, c, k_limit, true, QR_CONJ_H_ADJ_RIGHT);
+            }
+            (Side::Right, Trans::Trans) => {
+                qr_apply_right(a, tau, c, k_limit, true, QR_CONJ_H);
             }
         }
         let _ = work;
@@ -4197,23 +4243,6 @@ where
                 }
             }
         }
-    }
-}
-
-/// Conjugate-transposes the Jacobi vector workspace so columns of the
-/// stored `U` satisfy `A U = U Λ` with `Λ` taken from the diagonal of `A`.
-/// The plane rotations accumulate `V^H` relative to that diagonal order.
-#[inline(always)]
-#[allow(clippy::indexing_slicing)]
-fn heev_conj_transpose_vectors<T: Scalar>(work: &mut [T], n: usize) {
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let aij = work[i * n + j].clone();
-            let aji = work[j * n + i].clone();
-            work[i * n + j] = aji.conj();
-            work[j * n + i] = aij.conj();
-        }
-        work[i * n + i] = work[i * n + i].clone().conj();
     }
 }
 
@@ -4402,9 +4431,11 @@ fn heev_apply_offdiag<T, A>(
         if k != p && k != q {
             let a_kp = uplo_entry(a, k, p, uplo);
             let a_kq = uplo_entry(a, k, q, uplo);
+            // Right-multiply by R = [[c, s], [-s̄, c]]: column update
+            // a'_*p = c a_*p − s̄ a_*q,  a'_*q = s a_*p + c a_*q.
             let new_kp =
-                (c.clone() * a_kp.clone()) - (s.clone() * a_kq.clone());
-            let new_kq = (s_conj.clone() * a_kp) + (c.clone() * a_kq);
+                (c.clone() * a_kp.clone()) - (s_conj.clone() * a_kq.clone());
+            let new_kq = (s.clone() * a_kp) + (c.clone() * a_kq);
             unsafe {
                 a.set_unchecked(k, p, new_kp.clone());
                 a.set_unchecked(k, q, new_kq.clone());
@@ -4457,12 +4488,15 @@ fn heev_apply_vectors<T: Scalar>(
     s: &T,
     s_conj: &T,
 ) {
+    // Accumulate V ← V R with the same R as `heev_apply_2x2` /
+    // `heev_apply_offdiag` so columns of `work` are eigenvectors of the
+    // original operand (`A V = V Λ`). Do not conjugate-transpose afterward.
     for k in 0..n {
         let v_kp = work[k * n + p].clone();
         let v_kq = work[k * n + q].clone();
         work[k * n + p] =
-            (c.clone() * v_kp.clone()) - (s.clone() * v_kq.clone());
-        work[k * n + q] = (s_conj.clone() * v_kp) + (c.clone() * v_kq);
+            (c.clone() * v_kp.clone()) - (s_conj.clone() * v_kq.clone());
+        work[k * n + q] = (s.clone() * v_kp) + (c.clone() * v_kq);
     }
 }
 
@@ -4573,9 +4607,6 @@ where
         iter += 1;
     }
     ev_store_w(a, w, n);
-    if jobz == JobZ::Vectors {
-        heev_conj_transpose_vectors(work, n);
-    }
     ev_copy_vectors(jobz, a, work, n);
     Ok(())
 }
