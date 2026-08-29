@@ -91,6 +91,7 @@ jobs:
           gh release upload plots plot-assets/*.png --clobber
 
       - name: Results summary
+        id: summary_generator # 1. Added an ID to reference later
         if: always()
         working-directory: ${{ github.workspace }}
         env:
@@ -100,6 +101,11 @@ jobs:
           PLOTS_TAG: "https://github.com/${{ github.repository }}/releases/tag/plots"
         run: |
           set -euo pipefail
+          
+          # 2. Generate a random EOF delimiter for safe multi-line output
+          EOF=$(openssl rand -hex 8)
+          echo "report_data<<$EOF" >> "$GITHUB_OUTPUT"
+          
           {
             echo "## Numerical-model results"
             echo
@@ -154,4 +160,15 @@ jobs:
               echo
               echo "![Saddle cut](${PLOTS_BASE}/tensor-curved_cut.png)"
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY" >> "$GITHUB_OUTPUT" # 3. Tee sends the block to both targets
+          
+          # 4. Close the multi-line output block
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request' && matrix.rust == 'stable' && (success() || failure())
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          # 5. Changed `body-path` to `body` and referenced the exact ID and output name
+          body: ${{ steps.summary_generator.outputs.report_data }}
