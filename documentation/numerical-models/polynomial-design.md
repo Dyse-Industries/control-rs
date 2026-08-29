@@ -554,7 +554,7 @@ trigger.
 | Requirement                                     | Method                                       | Artifact                                                  |
 |:------------------------------------------------|:---------------------------------------------|:----------------------------------------------------------|
 | FR-1 — Ascending Degree Coefficient Indexing    | Compile-time shape check                     | rustdoc `compile_fail` doctests in `src/polynomial/mod.rs`            |
-| FR-2 — Real-Time Horner Evaluation              | Requirements-based test, Property-based test | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_evaluation` |
+| FR-2 — Real-Time Horner Evaluation              | Requirements-based test, Property-based test | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_evaluation`, `test_horner_backward_error` |
 | FR-3 — Discrete Convolution Multiplication      | Property-based test, Back-to-back comparison | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_multiplication` |
 | FR-4 — Fallible Polynomial Division             | Requirements-based test                      | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_div_rem`   |
 | FR-5 — Companion Matrix Realization             | Back-to-back comparison                      | `src/polynomial/tests/polynomial_tests.rs::test_companion_matrix`     |
@@ -697,3 +697,4 @@ trigger.
 | 1.6      | August 26, 2026 | @MitchellDScott | Trimmed companion/Faddeev–LeVerrier comparison; de-duplicated Bini/Aurentz reference blurbs.                                          |
 | 1.7      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-root Horner ($N>50$); umbrella $\tau\kappa\varepsilon$ and Instant timing. Caps unchanged.                 |
 | 1.8      | August 28, 2026 | @MitchellDScott | Example crate: clustered-root Horner degree 16 (128-point sweep) and Instant timings. Caps unchanged.                                |
+| 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-2 includes `test_horner_backward_error`; companion eigenvalues vs known roots in `test_companion_matrix`.                 |

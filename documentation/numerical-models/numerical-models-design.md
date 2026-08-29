@@ -16,15 +16,14 @@ document does not restate it (C-4).
 Primary usage scenarios:
 
 1. **Standalone examples**: A nested host crate in `examples/numerical-models/`
-   whose example binaries demonstrate idiomatic use of each Approved sibling
-   type and write native JSON results. One binary per model.
-2. **Host-side oracles**: Python (NumPy/SciPy) generators under
-   `examples/numerical-models/python3/` that compute the same scenarios and
-   write Python JSON results. A single `report.py` plots those files.
-3. **File-based equivalence**: Crate tests and `report.py` are read-only
-   leaves. They compare or plot `results/<slug>/{python,native}.json` after
-   the generators have run. They do not recompute the models and do not
-   spawn subprocesses.
+   whose per-model binaries take a suite JSON path and emit native result JSON
+   on stdout. Tutorial text goes to stderr.
+2. **Host-side oracles**: Python (NumPy/SciPy) validators under
+   `examples/numerical-models/python3/` with the same contract. Suite files
+   list plot argv (`python3/plot_<slug>.py` plus a results directory).
+3. **Harness**: `validate` reads `suites/<slug>.json`, spawns listed validators,
+   writes `results/<slug>/<source>.json`, compares §6.3 bounds, then spawns
+   listed plotters.
 
 Host generators include a copy-paste tutorial and a discriminating
 ill-conditioned case (Hilbert, clustered-root Horner, stiff ZOH, clustered-pole
@@ -42,12 +41,12 @@ MCU sibling caps are unchanged; these binaries run on the host.
   demonstrating end-to-end execution of matrix linear solving, polynomial
   evaluation, state-space simulation, transfer function frequency response,
   and tensor grid interpolation.
-- **FR-2 — Numerical Prototype Equivalence**: Python and Rust generators
-  shall write `results/<slug>/python.json` and `results/<slug>/native.json`
-  for identical mathematical scenarios. Crate tests shall compare those
-  files to the bounds in §6.3. `report.py` shall read the same files for
-  plots. Missing artifacts fail with a run hint. Tests and `report.py` do
-  not recompute the scenario and do not invoke generators.
+- **FR-2 — Numerical Prototype Equivalence**: Validators listed in
+  `suites/<slug>.json` shall take that suite path and emit one result JSON
+  document on stdout for identical host cases. `validate` shall write
+  `results/<slug>/<source>.json` and compare those artifacts to the bounds in
+  §6.3. Plotters listed in the same file take the results directory. Missing
+  artifacts fail with a run hint.
 - **FR-3 — Discriminating Host Cases**: Each generator shall include an
   ill-conditioned or algorithmically independent case (Hilbert $n=8$,
   clustered-root Horner of degree 16, stiff ZOH plant, clustered-pole Bode,
@@ -72,7 +71,7 @@ MCU sibling caps are unchanged; these binaries run on the host.
 - **NFR-4 — Kernel Wall-Time**: Generators shall record kernel-only
   `std::time::Instant` / `time.perf_counter_ns` samples (warmup, then
   minimum of a fixed iteration count) under JSON `timings`. Times are
-  informational for `report.py`; crate tests do not fail on wall-clock.
+  informational for per-slug plotters; crate tests do not fail on wall-clock.
 
 #### 2.3 Constraints
 
@@ -116,9 +115,10 @@ core models:
    supporting fast multilinear grid interpolation and fixed-point quantized
    scalar inference.
 
-The nested host crate `examples/numerical-models/` holds one generator binary
-per model and matching Python generators under `python3/`. Crate tests and
-`python3/report.py` consume the JSON those generators write.
+The nested host crate `examples/numerical-models/` holds one validator binary
+per model, matching Python validators under `python3/`, and `validate` as
+the V&V entrypoint. Suite files under `suites/` list inputs, validator argv,
+and plot argv.
 
 ---
 
@@ -140,7 +140,7 @@ TF["TransferFunction"]
 Tens["Tensor"]
 end
 
-subgraph Gens ["Generators write results"]
+subgraph Gens ["Validators stdout JSON"]
 PyMat["python3/matrix.py"]
 PyPoly["python3/polynomial.py"]
 PySS["python3/state_space.py"]
@@ -151,12 +151,12 @@ ExPoly["src/polynomial.rs"]
 ExSS["src/state_space.rs"]
 ExTF["src/transfer_function.rs"]
 ExTens["src/tensor.rs"]
-Json["results/slug python.json native.json"]
+Harness["validate bin"]
+Json["results/slug/source.json"]
 end
 
-subgraph Leaves ["Leaves read only"]
-Tests["tests/equivalence.rs"]
-Report["python3/report.py"]
+subgraph Leaves ["Plots from suite argv"]
+Report["python3/plot_slug.py"]
 end
 
 Storage --> Mat
@@ -171,6 +171,8 @@ Poly --> ExPoly
 SS --> ExSS
 TF --> ExTF
 Tens --> ExTens
+Harness --> PyMat
+Harness --> ExMat
 PyMat --> Json
 PyPoly --> Json
 PySS --> Json
@@ -181,8 +183,9 @@ ExPoly --> Json
 ExSS --> Json
 ExTF --> Json
 ExTens --> Json
-Json --> Tests
+Harness --> Json
 Json --> Report
+Harness --> Report
 ```
 
 #### 4.1 Standalone Example Architecture
@@ -192,22 +195,18 @@ under `examples/numerical-models/` with its own `[workspace]`, matching
 `examples/qemu/` and `examples/subprograms/`. It is not a root workspace
 member, so `cargo test -p control-rs` and `cargo lint` do not require Python.
 
-Each model has one `src/<slug>.rs` module with `pub fn main()`.
-`src/bin/<slug>.rs` is the per-model binary (`cargo run --bin <slug>`).
-`src/main.rs` calls every slug `main` (`cargo run`). Each generator prints a
-transcript and writes `results/<slug>/native.json`. **Proposal (not in
-evidence)**: JSON via `serde_json` is the interchange format between
-generators and leaves.
+Each model has one `src/<slug>.rs` module with `pub fn run`.
+`src/bin/<slug>.rs` is the per-model validator (`cargo run --bin <slug> -- suites/<slug>.json`).
+`validate` (`default-run`) reads suite files, spawns listed validators and
+plotters, and compares §6.3. Tutorial transcripts go to stderr. **Proposal
+(not in evidence)**: JSON via `serde_json` is the interchange format.
 
 Independent of CI:
 
 ```bash
 cd examples/numerical-models
-python3 python3/<slug>.py
-cargo run --bin <slug>
-cargo test
-python3 python3/report.py          # plots existing JSON
-python3 python3/report.py --force  # regenerate all generators, then plot
+cargo build --release
+cargo run --release --bin validate -- suites/
 ```
 
 Dedicated example binaries:
@@ -227,7 +226,8 @@ Dedicated example binaries:
     - Performs real and complex Horner evaluation ($p(x)$ and $p(j\omega)$).
     - Computes exact analytical derivative $p'(x)$ and integral $\int p(x) dx$.
     - Performs polynomial multiplication and Euclidean division.
-    - Formulates the controllable Frobenius companion matrix $C(p)$.
+    - Formulates the $12\times 12$ controllable Frobenius companion of
+      $p(x)=(x+1)^{12}$.
     - Evaluates clustered-root $p(x)=(x-1)^8(x-1.01)^8$ on a 128-point sweep.
 
 3. **`state_space.rs`**:
@@ -244,8 +244,10 @@ Dedicated example binaries:
       $T_s=0.01$.
 
 4. **`transfer_function.rs`**:
-    - Defines a continuous 2nd-order lowpass Butterworth transfer
-      function $H(s) = \frac{\omega_c^2}{s^2 + \sqrt{2}\omega_c s + \omega_c^2}$.
+    - Defines an underdamped complex-pole pair
+      $H(s)=\omega_n^2/(s^2+2\zeta\omega_n s+\omega_n^2)$ with
+      $\omega_n=10$, $\zeta=0.2$ so Bode magnitude shows a resonant peak
+      $|H(j\omega_n)|=1/(2\zeta)$.
     - Evaluates frequency response $H(j\omega)$ on $\mathrm{logspace}(-2,3,128)$.
     - Computes Bode magnitude $|H(j\omega)|_{\text{dB}}$ and
       phase $\angle H(j\omega)$.
@@ -261,9 +263,10 @@ Dedicated example binaries:
       `Tensor<f32, Shape2D<R, C>, ArrayStorage>`.
     - Evaluates continuous multilinear interpolation for off-grid
       angle-of-attack coordinates.
-    - Interpolates a $16\times 16$ curved table
-      $\sin(\pi i/15)\cos(\pi j/15)$ on a 64-point diagonal cut and emits the
-      $16\times 16$ node table for the surface plot.
+    - Interpolates a $16\times 16$ saddle table
+      $u^2-v^2$ ($u=(i-7.5)/7.5$, $v=(j-7.5)/7.5$) on a 64-point cut
+      through the critical point ($j=7.5$) and emits the node table for
+      the surface plot.
     - Implements a fixed-point quantized inference layer using
       `Quantized<i8, 7>` and `Relu` activation, including non-dyadic inputs.
 
@@ -274,13 +277,16 @@ NumPy/SciPy generators reside in `examples/numerical-models/python3/`. Each
 `python3/requirements.txt`. The V&V workflow installs that file; `cargo ci`
 does not run `pip` and does not invoke these scripts.
 
-`python3/report.py` reads the Python and native JSON pair and writes
-slug-specific diagnostic plots (Hilbert relative-error heatmap and
-matplotlib 3D $\mathrm{SE}(3)$ chain; Horner overlay with Higham band;
-free-response phase portrait; Butterworth and clustered Nyquist contours;
-$16\times 16$ table surface and relative-error heatmap; kernel-time bars).
-It is a leaf, not a generator. ``--force`` / ``-f`` is an operator shortcut
-that runs every `python3/<slug>.py` and `cargo run` first, then plots.
+Each suite lists `python3/plot_<slug>.py` in `plots` argv. The plotter
+takes the slug results directory and writes a named PNG set there
+(Hilbert heatmap, manufactured-solve error, and $\mathrm{SE}(3)$ chain;
+Horner samples with Higham band plus $12\times 12$ companion heatmap;
+free-response phase portrait, step, and stiff ZOH as discrete samples;
+underdamped complex-pair Bode/Nyquist and clustered contours;
+$16\times 16$ saddle surface, cut, and Q7 round-trip; kernel-time
+bars). Plotters do not spawn validators. Discrete host samples (ZOH
+trajectories, Horner sweep, interpolation queries) are drawn as
+scatter; continuous-time frequency response stays as polylines.
 
 1. **`matrix.py`**: NumPy arithmetic and `scipy.linalg.solve` / `inv` /
    `hilbert`. Equivalence tables are tutorial $x$, $A^{-1}$, Hilbert $x$,
@@ -296,9 +302,9 @@ that runs every `python3/<slug>.py` and `cargo run` first, then plots.
 4. **`transfer_function.py`**: `scipy.signal.freqs` for
    $H(j\omega)$ real/imag on 128 log-spaced points; polynomial `series`;
    `tf2ss` remapped to crate controllable canonical form; clustered-pole sweep.
-   `report.py` plots Nyquist contours from those real/imag values.
+   `plot_transfer_function.py` plots Bode and Nyquist from those real/imag values.
 5. **`tensor.py`**: `scipy.interpolate.RegularGridInterpolator` on the
-   crate's `[dim0, dim1]` grid (3×3 affine and $16\times 16$ curved); Q7
+   crate's `[dim0, dim1]` grid (3×3 affine and $16\times 16$ saddle); Q7
    quantization with ReLU on the integer raw value. The $16\times 16$ node
    table is a visualization key.
 
@@ -345,8 +351,8 @@ acceptance model. Stress keys are gated by the residual/relative rows below.
 
 | Method                    | Mechanism                                                                                    | Requirements discharged |
 |:--------------------------|:---------------------------------------------------------------------------------------------|:------------------------|
-| Back-to-back comparison   | Crate tests read `results/<slug>/python.json` and `native.json` after generators write them  | FR-2, FR-3, NFR-2       |
-| Kernel wall-time         | Generators write `timings`; `report.py` plots them; tests do not gate on `ns`             | NFR-4                   |
+| Back-to-back comparison   | `validate` compares `results/<slug>/<source>.json` after spawning suite validators | FR-2, FR-3, NFR-2       |
+| Kernel wall-time         | Validators write `timings`; plotters read them; compare does not gate on `ns` | NFR-4                   |
 | Doctest                   | Runnable rustdoc examples                                                                    | FR-1                    |
 | On-target execution       | ETS suites under QEMU                                                                        | NFR-3                   |
 | Resource usage evaluation | `no_alloc` on tutorial and ETS paths                                                         | NFR-1                   |
@@ -357,8 +363,10 @@ acceptance model. Stress keys are gated by the residual/relative rows below.
 #### 6.3 Acceptance Criteria
 
 Tutorial binaries may use a static absolute self-check (`ABS_F64` /
-`ABS_F32`). Formal crate-test claims use the rows below. Tutorial JSON keys
-may be compared at `ABS_*`; stress keys are not.
+`ABS_F32`). Formal Python-vs-native claims use the rows below and are gated
+by `validate` via `src/compare.rs`. Tutorial JSON keys may be compared at
+`ABS_*`; stress keys are not. Sibling crate / ETS suites verify well-conditioned
+cases against closed-form oracles; they do not execute Python.
 
 | Claim                          | Oracle                       | Measure             | Bound                                                                                           | Justification                                                       |
 |:-------------------------------|:-----------------------------|:--------------------|:------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------|
@@ -374,12 +382,12 @@ may be compared at `ABS_*`; stress keys are not.
 | Requirement                                      | Method                    | Artifact                                                                 |
 |:-------------------------------------------------|:--------------------------|:-------------------------------------------------------------------------|
 | FR-1 — Comprehensive Exemplary Applications      | Inspection                | `examples/numerical-models/src/<slug>.rs`                                |
-| FR-2 — Numerical Prototype Equivalence           | Back-to-back comparison   | `results/<slug>/{python,native}.json`; `tests/equivalence.rs`            |
+| FR-2 — Numerical Prototype Equivalence           | Back-to-back comparison   | `suites/<slug>.json`; `results/<slug>/<source>.json`; `validate`         |
 | FR-3 — Discriminating Host Cases                | Back-to-back comparison   | Stress keys and `metrics` in the same JSON pair                         |
 | NFR-1 — Zero Dynamic Heap Allocation             | Resource usage evaluation | `#![no_std]` ETS suites; tutorial binaries                               |
-| NFR-2 — Numerical Backward Stability & Precision | Back-to-back comparison   | §6.3 bounds in crate tests                                               |
+| NFR-2 — Numerical Backward Stability & Precision | Back-to-back comparison   | §6.3 bounds in `validate` / `src/compare.rs`                         |
 | NFR-3 — Bare-Metal Portability                   | On-target execution       | QEMU ARM/RISC-V ETS                                                      |
-| NFR-4 — Kernel Wall-Time                       | Inspection                | `timings` in JSON; `python3/report.py`                                 |
+| NFR-4 — Kernel Wall-Time                       | Inspection                | `timings` in JSON; `python3/plot_<slug>.py`                           |
 | C-1 — Compile-Time Dimension Verification        | Compile-time shape check  | Const-generic APIs                                                       |
 | C-2 — Native Rust Implementation                 | Static analysis           | No FFI in `src/{matrix,polynomial,state_space,transfer_function,tensor}` |
 | C-3 — Deterministic Execution & Fallibility      | Requirements-based test   | `Result` error paths; no library panics                                  |
@@ -389,27 +397,24 @@ may be compared at `ABS_*`; stress keys are not.
 
 - **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage via
   `cargo coverage`.
-- **Excluded**: Example `println!` formatting, Python generators, `report.py`,
+- **Excluded**: Example `println!` formatting, Python generators, `plot_*.py`,
   and gitignored `results/` JSON. Structural coverage is not an acceptance
   criterion for a numerical claim
   ([`vv-standards.md`](../vv-standards.md) §7).
 
 #### 6.6 Validation
 
-- **Executable Model Blueprints**: Run the five example binaries in
-  `examples/numerical-models/` (transcript plus native JSON). Run the five
-  Python generators. Then `cargo test` compares files. Optional
-  `python3/report.py` plots Hilbert relative-error heatmaps, $\mathrm{SE}(3)$
-  trajectories, phase portraits, Nyquist contours, tensor surfaces, and
-  kernel times.
+- **Executable Model Blueprints**: `cargo run --release --bin validate -- suites/`
+  spawns validators and plotters listed in each suite file. Tutorial
+  transcripts go to stderr. Plotters write named PNGs under `results/<slug>/`.
 - **Prototype Oracles**: The `numerical-models-vv` GitHub Actions workflow
-  installs `python3/requirements.txt`, runs the generators, then `cargo test`.
-  That workflow is not part of `cargo ci`. Library `cargo test` and ETS
-  suites do not execute Python.
+  installs `python3/requirements.txt`, then runs `validate`. That workflow
+  is not part of `cargo ci`. Library `cargo test` and ETS suites do not
+  execute Python.
 - **Discriminating cases**: Hilbert $n=8$ LU/solve/inverse; GEMM $n=64$
   (timed, not dumped); clustered-root Horner (128-point sweep); 200-step
   tutorial trajectory plus stiff ZOH; 128-point Bode plus clustered-pole
-  $H(s)=1/[(s+1)^4(s+1.01)^4]$; $16\times 16$ curved grid and non-dyadic Q7. Tutorial
+  $H(s)=1/[(s+1)^4(s+1.01)^4]$; $16\times 16$ saddle $u^2-v^2$ and non-dyadic Q7. Tutorial
   ZOH $A_d$ uses residual ratio $< 20$. Stiff $A=\mathrm{diag}(-200,-0.5)$
   at $T_s=0.01$ ($\|A T_s\|_\infty=2$, Padé without scaling) is checked at
   relative error $< 10^{-8}$.
@@ -457,8 +462,10 @@ may be compared at `ABS_*`; stress keys are not.
 - **[Proposal (not in evidence)] Prototype Tooling Environment**: NumPy/SciPy
   oracles with pinned `requirements.txt`. MATLAB and `python-control` remain
   optional and unused.
-- **[Proposal (not in evidence)] JSON interchange**: Generators write
-  `results/<slug>/{python,native}.json` via `serde_json`. Leaves only read.
+- **[Proposal (not in evidence)] JSON interchange**: Validators emit JSON on
+  stdout. `validate` writes `results/<slug>/<source>.json` and compares.
+  Plotters take the results directory. Reserved `source` values include
+  `rust-accelerate`, `rust-cblas`, `cpp`, `matlab`, `julia`.
 - **Fixed-Point Scaling Invariants**: Scaling fixed-point tensors requires
   careful selection of fractional bit shift parameters ($Q_7$, $Q_{15}$) to
   prevent overflow during intermediate accumulator products (ARM, 2025).
@@ -477,9 +484,9 @@ may be compared at `ABS_*`; stress keys are not.
 | Step 3: Polynomial example                 | Horner, calculus, companion; clustered-root 128-point sweep.                                  | 3                       |
 | Step 4: State-space example                | ZOH, 200-step trajectory, similarity, stiff plant.                                              | 4                       |
 | Step 5: Transfer-function example          | 128-point Bode, series, CCF, clustered-pole sweep.                                             | 4                       |
-| Step 6: Tensor example                     | Affine 3×3, $16\times 16$ curved grid, non-dyadic Q7.                                           | 3                       |
-| Step 7: Equivalence tests and report       | `tests/equivalence.rs` (§6.3 bounds) and `python3/report.py` (slug-specific diagnostic plots). | 3                       |
-| Step 8: V&V workflow                       | `numerical-models-vv.yml` runs generators then `cargo test`. Not `cargo ci`.                         | 2                       |
+| Step 6: Tensor example                     | Affine 3×3, $16\times 16$ saddle $u^2-v^2$, non-dyadic Q7.                                      | 3                       |
+| Step 7: Equivalence tests and report       | `src/compare.rs` (§6.3 bounds via `validate`); `tests/equivalence.rs` harness errors only; `python3/plot_<slug>.py`. | 3                       |
+| Step 8: V&V workflow                       | `validate` reads `suites/`; CI runs `cargo run --release --bin validate -- suites/`. Not `cargo ci`. | 2                       |
 
 ---
 
@@ -498,6 +505,10 @@ may be compared at `ABS_*`; stress keys are not.
 | 1.8      | August 28, 2026 | @MitchellDScott | Generators write JSON; tests and `report.py` read only. Host-scale FR-3/NFR-4 deferred. Dropped `build.rs`/`OUT_DIR`.               |
 | 1.9      | August 28, 2026 | @MitchellDScott | Restored discriminating host cases, $\tau\kappa\varepsilon$, Instant `timings`. Hilbert $n=8$, GEMM $n=64$; $1024\times 1024$ still out. |
 | 1.10     | August 28, 2026 | @MitchellDScott | Diagnostic plots: Hilbert heatmap, SE(3) 3D chain, phase portrait, Nyquist, tensor surface. Numeric gates unchanged. |
+| 1.11     | August 28, 2026 | @MitchellDScott | Suite files (`suites/`); validators stdout JSON; `validate` spawns validators and plotters. |
+| 1.12     | August 28, 2026 | @MitchellDScott | Per-slug plotters (`python3/plot_<slug>.py`) write a named PNG set under `results/<slug>/`. |
+| 1.13     | August 28, 2026 | @MitchellDScott | Degree-12 companion; underdamped complex-pair Bode; saddle table; discrete samples as scatter. |
+| 1.14     | August 28, 2026 | @MitchellDScott | §6.3/§6.4: Python-vs-native bounds gated by `validate`/`compare.rs`, not library `cargo test`. |
 
 ---
 

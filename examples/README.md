@@ -31,7 +31,7 @@ graph.
 `documentation/development-guide.md`](../documentation/development-guide.md))
 and Python ≥ 3.10 with NumPy/SciPy/matplotlib. The dedicated
 [
-`.github/workflows/numerical-models-vv.yml`](../.github/workflows/numerical-models.yml)
+`.github/workflows/numerical-models.yml`](../.github/workflows/numerical-models.yml)
 workflow installs
 [
 `numerical-models/python3/requirements.txt`](numerical-models/python3/requirements.txt)
@@ -69,43 +69,67 @@ subprogram crate.
 These binaries live in the nested crate [`numerical-models/`](numerical-models/)
 (not root workspace targets). Run them from **`examples/numerical-models/`**.
 
-Python and Rust **write** JSON under `results/<slug>/`. Tests and `report.py`
-**read** those files only. Each artifact has `values` (tutorial plus compact
-stress payloads), `series`, `metrics` (residual / relative / $\kappa$), and
-`timings` (kernel-only min nanoseconds). `cargo test` gates on residual and
-relative bounds, not wall-clock. `report.py` writes slug-specific diagnostic
-plots (Hilbert relative-error heatmap and SE(3) 3D chain, Horner overlay,
-phase portrait, Nyquist contours, tensor surface) and Python vs Rust kernel
-times.
+Suite files under `suites/<slug>.json` hold host inputs, validator argv, and
+plot argv. Each validator takes the suite path and prints one result JSON
+document on stdout. `cargo run --release --bin validate -- suites/` spawns
+those validators, writes `results/<slug>/<source>.json`, compares §6.3
+bounds, then runs listed plotters with the results directory.
 
 ```bash
 pip install -r python3/requirements.txt
-
-python3 python3/matrix.py
-python3 python3/polynomial.py
-python3 python3/state_space.py
-python3 python3/transfer_function.py
-python3 python3/tensor.py
-
-cargo run --release                  # all five native generators (kernel timings)
-# or: cargo run --release --bin matrix
-
-cargo test
-python3 python3/report.py          # optional plots from existing JSON
-python3 python3/report.py --force  # regenerate all JSON, then plot
+cargo build --release
+cargo run --release --bin validate -- suites/
+# or one slug:
+cargo run --release --bin validate -- suites/matrix.json
 ```
 
-The `numerical-models` GitHub Actions workflow runs the generators, then
-`cargo test`. It is not part of `cargo ci`.
+The `numerical-models` GitHub Actions workflow runs `validate`. It is not
+part of `cargo ci`. Each run uploads the full `results/` tree as the
+`numerical-models-results` artifact (JSON plus all PNGs, 30-day retention).
+On `main`, PNGs are also published to the rolling
+[`plots`](https://github.com/Dyse-Industries/control-rs/releases/tag/plots)
+release as `{slug}-{name}.png`. PNG pixels are not a numeric gate. The
+gallery below 404s until the first successful `main` run after that
+workflow lands.
 
 | Command | Demonstrates |
 |:--------|:-------------|
-| `python3 python3/matrix.py` | Writes `results/matrix/python.json` |
-| `cargo run --release` | All five native JSON files |
-| `cargo run --release --bin matrix` | Transcript + `results/matrix/native.json` |
-| `cargo test` | Compares the JSON pair |
-| `python3 python3/report.py` | Diagnostic plots (heatmap, phase portrait, Nyquist, 3D) and kernel time bars |
-| `python3 python3/report.py --force` | Regenerates all Python and Rust JSON, then plots |
+| `python3 python3/matrix.py suites/matrix.json` | Matrix oracle JSON on stdout |
+| `cargo run --release --bin matrix -- suites/matrix.json` | Native matrix JSON on stdout (tutorial on stderr) |
+| `cargo run --release --bin validate -- suites/` | Spawn all validators and plotters, compare bounds |
+| `python3 python3/plot_matrix.py results/matrix/` | Matrix diagnostic plots (listed in the suite file) |
+
+### Diagnostic plots
+
+#### Matrix
+
+![Hilbert inverse relative error](https://github.com/Dyse-Industries/control-rs/releases/download/plots/matrix-hilbert_inverse.png)
+
+![SE(3) rigid GEMM chain](https://github.com/Dyse-Industries/control-rs/releases/download/plots/matrix-se3_chain.png)
+
+#### Polynomial
+
+![Clustered-root Horner](https://github.com/Dyse-Industries/control-rs/releases/download/plots/polynomial-horner.png)
+
+![Companion heatmap](https://github.com/Dyse-Industries/control-rs/releases/download/plots/polynomial-companion.png)
+
+#### State space
+
+![Free-response phase portrait](https://github.com/Dyse-Industries/control-rs/releases/download/plots/state_space-free_response.png)
+
+![Stiff ZOH](https://github.com/Dyse-Industries/control-rs/releases/download/plots/state_space-stiff_zoh.png)
+
+#### Transfer function
+
+![Underdamped Bode](https://github.com/Dyse-Industries/control-rs/releases/download/plots/transfer_function-bode.png)
+
+![Nyquist complex pair](https://github.com/Dyse-Industries/control-rs/releases/download/plots/transfer_function-nyquist_complex_pair.png)
+
+#### Tensor
+
+![Saddle surface](https://github.com/Dyse-Industries/control-rs/releases/download/plots/tensor-curved_surface.png)
+
+![Saddle cut](https://github.com/Dyse-Industries/control-rs/releases/download/plots/tensor-curved_cut.png)
 
 ---
 

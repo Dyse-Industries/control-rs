@@ -73,15 +73,20 @@ the target-side infrastructure:
   report (`ci-report.md`).
 - **Numerical-model JSON V&V**: Separate workflow
   [
-  `.github/workflows/numerical-models-vv.yml`](../.github/workflows/numerical-models.yml)
+  `.github/workflows/numerical-models.yml`](../.github/workflows/numerical-models.yml)
   installs Python 3.12 and `examples/numerical-models/python3/requirements.txt`,
-  then runs the five Python generators, `cargo run --release` (all native generators),
-  and `cargo test`. Not part of `cargo ci`. Independently: emit artifacts per
-  `examples/README.md`, then `cd examples/numerical-models && cargo test`.
-  Artifacts include `metrics` (residual / $\tau\kappa\varepsilon$) and
-  `timings` (kernel Instant / `perf_counter_ns`); `python3/report.py` writes
-  slug-specific diagnostic plots locally and is not a CI gate. `python3 python3/report.py --force`
-  regenerates all JSON then plots.
+  then `cargo build --release` and
+  `cargo run --release --bin validate -- suites/`. Not part of `cargo ci`.
+  Suite files list validators (suite path in, JSON on stdout) and plotters
+  (results directory in). Artifacts include `metrics` (residual / $\tau\kappa\varepsilon$)
+  and `timings` (kernel Instant / `perf_counter_ns`). Plotters write
+  named PNGs under `results/<slug>/`; PNG pixels are not a numeric gate.
+  Each run uploads `results/` as the `numerical-models-results` Actions
+  artifact (30-day retention). Successful `main` runs also publish flattened
+  `{slug}-{name}.png` files to the rolling
+  [`plots`](https://github.com/Dyse-Industries/control-rs/releases/tag/plots)
+  release (not marked Latest, so `v*` crate publishes keep that badge). The
+  gallery is in [`examples/README.md`](../examples/README.md).
   That nested crate is not a workspace member, so `cargo fmt-all` does not
   cover it; `cargo ci` fmt-checks it via `--manifest-path`.
 
@@ -168,8 +173,8 @@ parameters in real time.
 Run the exact verification steps performed by the GitHub Actions pipeline
 locally (clippy, formatting, tarpaulin coverage, and CI → virtual ETS).
 Numerical-model JSON V&V is a separate workflow; from
-`examples/numerical-models/` run the Python and Rust generators, then
-`cargo test`, after `pip install -r python3/requirements.txt`.
+`examples/numerical-models/` run `cargo run --release --bin validate -- suites/`
+after `pip install -r python3/requirements.txt`.
 
 - **Run all checks (ARM & RISC-V QEMU):**
   ```bash

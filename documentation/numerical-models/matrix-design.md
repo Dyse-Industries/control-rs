@@ -982,9 +982,9 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 |:------------------------------------------------|:-------------------------------------------------|:-------------------------------------------------------|
 | FR-1 — Compile-Time Shape Verification          | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/matrix/mod.rs`              |
 | FR-2 — Matrix Algebra & Linear Transformations  | Property-based test, Back-to-back comparison     | `src/matrix/tests/matrix_tests.rs::prop_add_associativity`          |
-| FR-3 — Fallible Factorizations & Direct Solvers | Requirements-based test, Back-to-back comparison | `src/matrix/tests/matrix_tests.rs::test_lu_solve_mut`               |
+| FR-3 — Fallible Factorizations & Direct Solvers | Requirements-based test, Back-to-back comparison | `src/matrix/tests/matrix_tests.rs::test_lu_solve_mut`, `test_lu_factor_residual`, `test_cholesky_factor_residual`, `test_qr_orthogonality` |
 | FR-4 — Coordinate Element Access                | Requirements-based test                          | `src/matrix/tests/matrix_tests.rs::test_coordinate_access`          |
-| FR-5 — Structural Specializations               | Property-based test, Requirements-based test     | `src/matrix/tests/matrix_tests.rs::test_symmetric_packed`           |
+| FR-5 — Structural Specializations               | Property-based test, Requirements-based test     | `src/matrix/tests/matrix_tests.rs::test_symmetric_construction`        |
 | FR-6 — Zero-Copy Submatrix Views                | Property-based test, Requirements-based test     | `src/matrix/tests/matrix_tests.rs::test_strided_submatrix`          |
 | NFR-1 — Zero-Allocation Deterministic Execution | Resource usage evaluation                        | `#![no_std]` host check & `size_of` assertions                      |
 | NFR-2 — Interoperable C-ABI Layout              | Resource usage evaluation                        | `src/matrix/tests/matrix_tests.rs::test_c_abi_layout`               |
@@ -1145,4 +1145,5 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | 1.8      | August 28, 2026 | @MitchellDScott | Host-scale V&V: Hilbert and $1000\times 1000$ rows; umbrella $\tau\kappa\varepsilon$ and Instant timing. Caps unchanged.                             |
 | 1.9      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); C-2 MCU cap unchanged.                                                                        |
 | 1.10     | August 28, 2026 | @MitchellDScott | Example crate: Hilbert $n=8$ and timed GEMM $n=64$; $1024\times 1024$ remains out. Caps unchanged.                                                  |
+| 1.11     | August 28, 2026 | @MitchellDScott | §6.4 FR-5 artifact is `test_symmetric_construction`; packed storage remains in `storage_tests.rs`. Factor residuals live in `matrix_test_suite`. |
 

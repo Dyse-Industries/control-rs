@@ -493,9 +493,9 @@ is made independently by `transfer-function-design.md` §6 for
 |:--------------------------------------------------------|:-------------------------------------------------|:----------------------------------------------------------------------|
 | FR-1 — Continuous & Discrete LTI Representation         | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/state_space/mod.rs`           |
 | FR-2 — Deterministic State Propagation                  | Requirements-based test, Back-to-back comparison | `src/state_space/tests/state_space_tests.rs::test_discrete_simulation_step` |
-| FR-3 — System Interconnection Algebra                   | Property-based test, Back-to-back comparison     | `src/state_space/tests/state_space_tests.rs::test_series_parallel_feedback` |
+| FR-3 — System Interconnection Algebra                   | Property-based test, Back-to-back comparison     | `src/state_space/tests/state_space_tests.rs::test_series_parallel_feedback`, `test_feedback_singular_loop_matrix` |
 | FR-4 — Continuous-to-Discrete Discretization            | Requirements-based test, Back-to-back comparison | `src/state_space/tests/state_space_tests.rs::test_zoh_discretization`  |
-| FR-5 — Coordinate Similarity Transformations            | Property-based test, Requirements-based test     | `src/state_space/tests/state_space_tests.rs::test_similarity_transform` |
+| FR-5 — Coordinate Similarity Transformations            | Property-based test, Requirements-based test     | `src/state_space/tests/state_space_tests.rs::test_similarity_transform_poles_and_step` |
 | FR-6 — Controllability, Observability & TF Conversion   | Requirements-based test                          | `src/state_space/tests/state_space_tests.rs::test_ctrb_obsv_tf`        |
 | NFR-1 — Single-Step Execution Complexity                | Resource usage evaluation                        | `size_of` assertions and `#![no_std]` host check                      |
 | NFR-2 — Bounded Stack Overhead                          | On-target execution                              | ETS suite `state_space_test_suite`                                    |
@@ -705,3 +705,4 @@ is made independently by `transfer-function-design.md` §6 for
 | 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                          |
 | 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: stiff LTI (high $\kappa(A)$) within $N_x \le 32$; umbrella Instant timing. Caps unchanged.                             |
 | 1.8      | August 28, 2026 | @MitchellDScott | Tustin four-block map: $C_d = C M^{-1}$, $D_d = D + C_d B h$.                                                                          |
+| 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-5 artifact is `test_similarity_transform_poles_and_step`; FR-3 includes `test_feedback_singular_loop_matrix`.                |

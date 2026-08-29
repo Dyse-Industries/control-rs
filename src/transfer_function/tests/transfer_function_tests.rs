@@ -13,6 +13,7 @@
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod transfer_function_test_suite {
     use crate::assert_almost_eq;
+    use crate::math::num_traits::Radical;
     use crate::transfer_function::{
         ArrayTransferFunction, TransferFunctionError,
     };
@@ -192,6 +193,39 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// $\lambda_i(A_c)$ match the roots of $D(s)$ (`transfer-function-design.md` §6.3).
+    fn test_ccf_eigenvalues_match_denominator_roots() {
+        // D(s) = 4 + 5s + s^2 = (s+1)(s+4); A = [[0, 1], [-4, -5]].
+        let tf = ArrayTransferFunction::<f64, 2, 3>::continuous(
+            [2.0, 3.0],
+            [4.0, 5.0, 1.0],
+        );
+        let ss = tf.to_controllable_canonical_form::<2>().unwrap();
+        let a00 = *ss.a().get(0, 0).unwrap();
+        let a01 = *ss.a().get(0, 1).unwrap();
+        let a10 = *ss.a().get(1, 0).unwrap();
+        let a11 = *ss.a().get(1, 1).unwrap();
+        let tr = a00 + a11;
+        let det = a00 * a11 - a01 * a10;
+        let disc = Radical::sqrt(tr * tr - 4.0 * det);
+        let mut lam = [f64::midpoint(tr, disc), f64::midpoint(tr, -disc)];
+        if lam[0] < lam[1] {
+            lam.swap(0, 1);
+        }
+        let bound = 20.0 * f64::EPSILON * (1.0 + 4.0);
+        assert!(
+            (lam[0] + 1.0).abs() <= bound,
+            "CCF eigenvalue {} vs pole -1",
+            lam[0]
+        );
+        assert!(
+            (lam[1] + 4.0).abs() <= bound,
+            "CCF eigenvalue {} vs pole -4",
+            lam[1]
+        );
+    }
+
+    #[cfg_attr(test, test)]
     fn test_controllable_canonical_form_with_feedthrough() {
         // Proper but not strictly: H(s) = (2 + 3s + s^2) / (4 + 5s + s^2)
         // => d = 1, β = (2-4, 3-5) = (-2, -2)
@@ -247,6 +281,26 @@ pub mod transfer_function_test_suite {
             z_zoh.den_slice()[0] / z_zoh.den_slice()[1],
             -0.904_837_418_035_959_5, // -exp(-dt)
             1e-8
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    /// Pre-warped Tustin maps $H_c(j\omega_c)$ to $H_d(e^{j\omega_c T_s})$
+    /// within $5\varepsilon$ (`transfer-function-design.md` §6.3).
+    fn test_tustin_prewarped() {
+        let tf =
+            ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
+        let dt = 0.1_f64;
+        let wc = 1.0_f64;
+        let z = tf.to_discrete_tustin(dt, Some(wc));
+        let h_c = tf.eval_frequency(wc);
+        let h_d = z.eval_frequency(wc);
+        let mag = Radical::hypot(h_c.re, h_c.im).max(f64::EPSILON);
+        let err = Radical::hypot(h_c.re - h_d.re, h_c.im - h_d.im);
+        let rel = err / mag;
+        assert!(
+            rel <= 5.0 * f64::EPSILON || err <= 1e-12,
+            "pre-warp H match rel={rel} err={err}"
         );
     }
 

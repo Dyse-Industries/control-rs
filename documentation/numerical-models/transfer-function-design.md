@@ -477,7 +477,7 @@ realization is future work (§8).
 | FR-2 — Frequency Response Evaluation           | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_frequency_response_continuous` |
 | FR-3 — Rational System Algebra                 | Property-based test, Back-to-back comparison     | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_series` |
 | FR-4 — System Discretization                   | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_tustin_prewarped` |
-| FR-5 — State-Space Canonical Realization       | Requirements-based test                          | `src/transfer_function/tests/transfer_function_tests.rs::test_controllable_canonical_form` |
+| FR-5 — State-Space Canonical Realization       | Requirements-based test                          | `src/transfer_function/tests/transfer_function_tests.rs::test_controllable_canonical_form`, `test_ccf_eigenvalues_match_denominator_roots` |
 | NFR-1 — Deterministic Fixed-Memory Execution   | Resource usage evaluation                        | `#![no_std]` host allocator audit                      |
 | NFR-2 — Real-Time Frequency Sweep Throughput   | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                  |
 | C-1 — Properness Precondition                  | Compile-time shape check                         | Static properness shape assertions                     |
@@ -627,3 +627,4 @@ realization is future work (§8).
 | 1.5      | August 26, 2026 | @MitchellDScott | Trimmed near-pole and companion-form caveats; crate-wide standards cite `vv-standards.md`.                                            |
 | 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-pole $H(j\omega)$ ($N>50$); realization at degree $>32$ stays in §6.7. Caps unchanged.                    |
 | 1.8      | August 28, 2026 | @MitchellDScott | Tustin returns biproper `(D, D)` after clearing $(z+1)^{D-1}$ (matches ZOH).                                                         |
+| 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-4 `test_tustin_prewarped` and FR-5 CCF eigenvalue match live in `transfer_function_test_suite`.                            |

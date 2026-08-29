@@ -2,29 +2,21 @@
 //!
 //! ## Functional Requirement Coverage (`matrix-design.md`)
 //!
-//! - **FR-1** (compile-time dimension enforcement): every test below is
-//!   parameterized on `Const<N>`/plain `const usize` shapes; a dimension
-//!   mismatch (e.g. adding a `2x2` to a `3x3`) is a *compile* error, not a
-//!   runtime one, so it isn't exercised as a passing test case (§4.9.1).
-//! - **FR-2** (static constructors): `test_zero_identity_diagonal_const_eval`.
-//! - **FR-3** (core arithmetic): `test_add_sub_neg`, `test_mul_matrix_matrix`,
-//!   `test_mul_matrix_vector`.
-//! - **FR-4** (transposition, determinant, inversion):
-//!   `test_transpose_*`, `test_lu_determinant`, `test_lu_invert_round_trip`,
-//!   `test_inverse_identity_roundtrip_cond_scaled`.
-//! - **FR-5** (structural specializations): `test_upper_lower_symmetric_*`,
-//!   `test_ldlt_*`, `test_cholesky_*`, `test_qr_*` (§4.7 decomposition
-//!   objects), `test_covariance_predict_symmetry`.
-//! - **FR-6** (coordinate-based instantiation): `test_from_fn`.
-//! - **FR-7** (concatenation): not implemented in this pass (not in scope —
-//!   see the design doc's Development Plan Step 4/7 split).
-//! - **FR-8** (Polynomial/Tensor interop): covered in sibling polynomial and tensor test suites.
+//! - **FR-1** (compile-time shape verification): tests are parameterized on
+//!   `Const<N>`; a dimension mismatch is a compile error (`compile_fail` in
+//!   `src/matrix/mod.rs`).
+//! - **FR-2** (matrix algebra): `test_add_sub_neg`, `test_mul_matrix_matrix`,
+//!   `test_mul_matrix_vector`, `test_kalman_covariance_update`,
+//!   `prop_add_associativity`.
+//! - **FR-3** (fallible factorizations and solvers): `test_lu_*`,
+//!   `test_cholesky_*`, `test_qr_*`, `test_lu_factor_residual`,
+//!   `test_cholesky_factor_residual`, `test_qr_orthogonality`.
+//! - **FR-4** (coordinate element access): `test_coordinate_access`.
+//! - **FR-5** (structural specializations): `test_symmetric_construction`,
+//!   `test_upper_lower_construction`, `test_ldlt_*`.
+//! - **FR-6** (zero-copy submatrix views): `test_strided_submatrix`.
 //!
 //! Companion-matrix construction is implemented in `Polynomial::companion_matrix`.
-//!
-//! §6.1.4's `127 x 127` stack-bounds ceiling is a compile-time type bound
-//! (`Const<N>: Dim` for `N` up to 127), not something a runtime unit test
-//! exercises — no test instantiates near that size.
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
@@ -49,6 +41,8 @@ pub mod matrix_test_suite {
 
     /// Residual-ratio factor $\tau$ in $\lVert AA^{-1}-I\rVert_\infty \le \tau\kappa\varepsilon$.
     const INV_ROUNDTRIP_TAU: f64 = 20.0;
+    /// LAPACK residual-ratio threshold $\tau$ for $A-LU$ / $A-LL^T$ (`matrix-design.md` §6.3).
+    const FACTOR_RESIDUAL_TAU: f64 = 20.0;
 
     /// Asserts every element of two same-shaped owned matrices is almost
     /// equal.
@@ -99,6 +93,42 @@ pub mod matrix_test_suite {
             err <= bound.max(f64::EPSILON),
             "||A Ainv - I||_inf={err} exceeds tau*kappa*eps={bound} (kappa={kappa})"
         );
+    }
+
+    /// $\lVert A - B\rVert_\infty / (N \lVert A\rVert_\infty \varepsilon)$.
+    fn _factor_residual_ratio<const N: usize>(
+        a: &Owned<f64, N, N>,
+        recon: &Owned<f64, N, N>,
+    ) -> f64
+    where
+        Const<N>: Dim,
+    {
+        let mut num = 0.0_f64;
+        for i in 0..N {
+            let mut row = 0.0_f64;
+            for j in 0..N {
+                row +=
+                    (*a.get(i, j).unwrap() - *recon.get(i, j).unwrap()).abs();
+            }
+            num = num.max(row);
+        }
+        let den = (N as f64) * a.inf_norm() * f64::EPSILON;
+        if den == 0.0 { 0.0 } else { num / den }
+    }
+
+    fn _swap_rows<const N: usize>(m: &mut Owned<f64, N, N>, i: usize, j: usize)
+    where
+        Const<N>: Dim,
+    {
+        if i == j {
+            return;
+        }
+        for c in 0..N {
+            let vi = *m.get(i, c).unwrap();
+            let vj = *m.get(j, c).unwrap();
+            *m.get_mut(i, c).unwrap() = vj;
+            *m.get_mut(j, c).unwrap() = vi;
+        }
     }
 
     /// Exact $M = M^T$ (bitwise), for operators that return a symmetric matrix.
@@ -296,6 +326,41 @@ pub mod matrix_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// Packed $PA = LU$ residual ratio $< 20$ (`matrix-design.md` §6.3).
+    fn test_lu_factor_residual() {
+        let a: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
+            [[4.0, 3.0, 2.0], [1.0, 5.0, 3.0], [2.0, 1.0, 6.0]][i][j]
+        });
+        let mut packed = a;
+        let mut pivots = [0usize; 3];
+        packed.lu_decompose_mut(&mut pivots).unwrap();
+
+        let mut pa = a;
+        for k in 0..3 {
+            _swap_rows(&mut pa, k, pivots[k]);
+        }
+
+        let mut l = Owned::<f64, 3, 3>::identity();
+        let mut u = Owned::<f64, 3, 3>::zero();
+        for i in 0..3 {
+            for j in 0..3 {
+                let v = *packed.get(i, j).unwrap();
+                if i > j {
+                    *l.get_mut(i, j).unwrap() = v;
+                } else {
+                    *u.get_mut(i, j).unwrap() = v;
+                }
+            }
+        }
+        let lu = &l * &u;
+        let ratio = _factor_residual_ratio(&pa, &lu);
+        assert!(
+            ratio < FACTOR_RESIDUAL_TAU,
+            "||PA - LU|| residual ratio {ratio} >= {FACTOR_RESIDUAL_TAU}"
+        );
+    }
+
+    #[cfg_attr(test, test)]
     /// Undersized pivot scratch returns `WorkspaceTooSmall` instead of panicking.
     fn test_lu_decompose_undersized_pivots() {
         let mut a: Owned<f64, 2, 2> =
@@ -472,6 +537,22 @@ pub mod matrix_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// $A - L L^T$ residual ratio $< 20$ (`matrix-design.md` §6.3).
+    fn test_cholesky_factor_residual() {
+        let a: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| [[4.0, 2.0], [2.0, 3.0]][i][j]);
+        let mut sym = Symmetric::from_owned(a).unwrap();
+        sym.cholesky_decompose_mut().unwrap();
+        let l = *sym.as_matrix();
+        let llt = &l * &l.transpose();
+        let ratio = _factor_residual_ratio(&a, &llt);
+        assert!(
+            ratio < FACTOR_RESIDUAL_TAU,
+            "||A - LL^T|| residual ratio {ratio} >= {FACTOR_RESIDUAL_TAU}"
+        );
+    }
+
+    #[cfg_attr(test, test)]
     /// A symmetric but indefinite matrix (eigenvalues `3` and `-1`, not
     /// positive definite) fails Cholesky decomposition with
     /// `LinAlgError::NotPositiveDefinite` rather than panicking on a negative
@@ -505,6 +586,21 @@ pub mod matrix_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// $\lVert Q^T Q - I\rVert_\infty < N\varepsilon$ (`matrix-design.md` §6.3).
+    fn test_qr_orthogonality() {
+        let a: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
+            [[4.0, 3.0, 2.0], [1.0, 5.0, 3.0], [2.0, 1.0, 6.0]][i][j]
+        });
+        let mut r = a;
+        let mut q = Owned::<f64, 3, 3>::zero();
+        r.qr_decompose_mut(&mut q);
+        let qtq = &q.transpose() * &q;
+        let err = _inf_norm_from_identity(&qtq);
+        let bound = 3.0 * f64::EPSILON;
+        assert!(err < bound, "||Q^T Q - I||_inf={err} exceeds N eps={bound}");
+    }
+
+    #[cfg_attr(test, test)]
     /// Unlike `LU`/`LDL^T`, `into_qr` itself never fails on a rank-deficient
     /// matrix (`matrix-design.md` §5.5) — the resulting `R` factor simply
     /// carries a near-zero pivot, which `solve_mut` reports as
@@ -524,7 +620,7 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// End-to-end numeric integrity check mirroring §6.2.1's discrete
     /// Kalman filter covariance update `P = (I - K*H) * P_pred`.
-    fn test_kalman_covariance_update_validation() {
+    fn test_kalman_covariance_update() {
         let p_pred: Owned<f64, 2, 2> = Owned::identity();
         let k: Owned<f64, 2, 1> = Matrix::from_fn(|i, _| [0.5, 0.25][i]);
         let h: Owned<f64, 1, 2> = Matrix::from_fn(|_, j| [1.0, 0.0][j]);

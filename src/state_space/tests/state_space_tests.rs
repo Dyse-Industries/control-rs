@@ -15,7 +15,7 @@ pub mod state_space_test_suite {
     use crate::assert_almost_eq;
     use crate::math::storage::DenseStorage;
     use crate::matrix::Owned;
-    use crate::state_space::ArrayStateSpace;
+    use crate::state_space::{ArrayStateSpace, StateSpaceError};
 
     #[cfg_attr(test, test)]
     fn test_discrete_simulation_step() {
@@ -155,6 +155,21 @@ pub mod state_space_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// Algebraic loop $I - D_2 D_1$ singular (`state-space-design.md` §6.3).
+    fn test_feedback_singular_loop_matrix() {
+        let a = Owned::<f64, 1, 1>::from_fn(|_, _| -1.0);
+        let b = Owned::<f64, 1, 1>::from_fn(|_, _| 1.0);
+        let c = Owned::<f64, 1, 1>::from_fn(|_, _| 1.0);
+        let d = Owned::<f64, 1, 1>::from_fn(|_, _| 1.0);
+        let g = ArrayStateSpace::continuous(a, b, c, d);
+        let h = ArrayStateSpace::continuous(a, b, c, d);
+        assert_eq!(
+            g.feedback::<1, 2>(&h, 1.0),
+            Err(StateSpaceError::SingularLoopMatrix)
+        );
+    }
+
+    #[cfg_attr(test, test)]
     fn test_ctrb_obsv_tf() {
         let a = Owned::<f64, 1, 1>::from_fn(|_, _| -2.0);
         let b = Owned::<f64, 1, 1>::from_fn(|_, _| 3.0);
@@ -176,7 +191,6 @@ pub mod state_space_test_suite {
 
     #[cfg_attr(test, test)]
     fn test_state_space_display_tustin_and_faddeev() {
-        use crate::state_space::StateSpaceError;
         use core::fmt::Write;
 
         struct StackBuf([u8; 192], usize);

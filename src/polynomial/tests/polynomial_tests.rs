@@ -1,4 +1,4 @@
-//! # Polynomial Unit and Property Tests
+//! # Polynomial Unit Tests
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
@@ -14,6 +14,7 @@
 pub mod polynomial_test_suite {
     use crate::assert_almost_eq;
     use crate::math::complex_num::Complex;
+    use crate::math::num_traits::Radical;
     use crate::matrix::Owned;
     use crate::polynomial::{ArrayPolynomial, DivisionError};
     use core::convert::TryFrom;
@@ -33,6 +34,38 @@ pub mod polynomial_test_suite {
         assert_almost_eq!(p.evaluate(2.0), 17.0, 1e-12);
         // At x = -1: p(-1) = 1 - 2 + 3 = 2
         assert_almost_eq!(p.evaluate(-1.0), 2.0, 1e-12);
+    }
+
+    /// Higham $\gamma_k = k\varepsilon / (1 - k\varepsilon)$.
+    fn _gamma(k: f64) -> f64 {
+        let ke = k * f64::EPSILON;
+        if ke >= 1.0 {
+            f64::INFINITY
+        } else {
+            ke / (1.0 - ke)
+        }
+    }
+
+    #[cfg_attr(test, test)]
+    /// Horner backward error $\lvert p(x)-\hat p(x)\rvert \le \gamma_{2n}\tilde p(\lvert x\rvert)$
+    /// (`polynomial-design.md` §6.3).
+    fn test_horner_backward_error() {
+        // p(x) = 1 + x + x^2 + x^3; n = 3; closed form (1 - x^4)/(1 - x).
+        let p =
+            ArrayPolynomial::<f64, 4>::from_coefficients([1.0, 1.0, 1.0, 1.0]);
+        let x = 1.0 / 3.0;
+        let exact = (1.0 - x * x * x * x) / (1.0 - x);
+        let hat = p.evaluate(x);
+        let tilde = [1.0, 1.0, 1.0, 1.0]
+            .iter()
+            .rev()
+            .fold(0.0_f64, |acc, &c| acc * x.abs() + c);
+        let bound = _gamma(6.0) * tilde;
+        let err = (exact - hat).abs();
+        assert!(
+            err <= bound.max(f64::EPSILON),
+            "Horner |p-hat|={err} exceeds gamma_6 tilde_p={bound}"
+        );
     }
 
     #[cfg_attr(test, test)]
@@ -134,6 +167,30 @@ pub mod polynomial_test_suite {
         let via_try = Owned::<f64, 2, 2>::try_from(&p).unwrap();
         assert_eq!(via_try.get(0, 1), Some(&6.0));
         assert_eq!(via_try.get(1, 1), Some(&5.0));
+
+        // Charpoly of C is p: eigenvalues are the known roots 6 and -1.
+        let a00 = *comp.get(0, 0).unwrap();
+        let a01 = *comp.get(0, 1).unwrap();
+        let a10 = *comp.get(1, 0).unwrap();
+        let a11 = *comp.get(1, 1).unwrap();
+        let tr = a00 + a11;
+        let det = a00 * a11 - a01 * a10;
+        let disc = Radical::sqrt(tr * tr - 4.0 * det);
+        let mut lam = [f64::midpoint(tr, disc), f64::midpoint(tr, -disc)];
+        if lam[0] < lam[1] {
+            lam.swap(0, 1);
+        }
+        let bound = 20.0 * f64::EPSILON * (1.0 + 6.0);
+        assert!(
+            (lam[0] - 6.0).abs() <= bound,
+            "companion eigenvalue {} vs root 6",
+            lam[0]
+        );
+        assert!(
+            (lam[1] + 1.0).abs() <= bound,
+            "companion eigenvalue {} vs root -1",
+            lam[1]
+        );
     }
 
     #[cfg_attr(test, test)]
