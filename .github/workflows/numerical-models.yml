@@ -70,6 +70,7 @@ jobs:
         id: plots-release
         # Removed the restriction to 'refs/heads/main'
         if: success()
+        working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
@@ -89,7 +90,7 @@ jobs:
           done
           assets=(plot-assets/*.png)
           if [ "${#assets[@]}" -eq 0 ]; then
-            echo "no PNGs under examples/numerical-models/results/"
+            echo "no PNGs under examples/numerical-models-validation/results/"
             exit 1
           fi
           
@@ -131,11 +132,6 @@ jobs:
           else
            echo "No \`numerical-models-results\` artifact URL (missing \`results/\` or upload skipped)."
           fi
-          echo
-          echo "PNG pixels are not a numeric gate."
-          echo
-          echo "### Files"
-          echo
           if [ -d examples/numerical-models-validation/results ]; then
            find examples/numerical-models-validation/results -type f | sort | sed 's/^/- `/' | sed 's/$/`/'
           else
