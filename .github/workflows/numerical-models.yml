@@ -70,7 +70,6 @@ jobs:
         id: plots-release
         # Removed the restriction to 'refs/heads/main'
         if: success()
-        working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
