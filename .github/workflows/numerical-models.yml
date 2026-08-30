@@ -51,7 +51,7 @@ jobs:
         run: cargo build --release
 
       - name: Validate suites
-        run: cargo test
+        run: cargo run --release
 
       - name: Generate Plots
         run: python3 python3/plot_models.py
