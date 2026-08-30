@@ -52,7 +52,7 @@ pub mod transfer_function_test_suite {
         assert_eq!(h_ser.num_slice(), &[2.0]);
         assert_eq!(h_ser.den_slice(), &[2.0, 3.0, 1.0]);
 
-        // Series cascade matching examples/prototypes/numerical-models/transfer-function/.
+        // Series cascade matching examples/prototypes/numerical-models-validation/transfer-function/.
         let p1 =
             ArrayTransferFunction::<f64, 1, 2>::continuous([2.0], [2.0, 1.0]);
         let p2 =

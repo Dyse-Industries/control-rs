@@ -566,7 +566,7 @@ pub fn run_fmt() -> (Result<(), usize>, String) {
         .args([
             "fmt",
             "--manifest-path",
-            "examples/numerical-models/Cargo.toml",
+            "examples/numerical-models-validation/Cargo.toml",
             "--",
             "--check",
         ])

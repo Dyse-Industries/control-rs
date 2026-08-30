@@ -9,104 +9,192 @@ Outputs JSON results to stdout for cross-language validation with Rust.
 from __future__ import annotations
 
 import json
-import time
 
 import numpy as np
+import time
 from scipy import signal
 
-NUM_STEPS = 200
-STIFF_STEPS = 200
+
+class PendulumSim:
+    """
+    State-space pendulum simulation model.
+    State vector x = [theta, theta_dot]^T
+    dx/dt = A_c * x + B_c * u
+    Discretized via Zero-Order Hold (ZOH).
+    """
+
+    def __init__(self, omega0: float = 2.0, b: float = 0.8, dt: float = 0.05):
+        self.omega0_sq = omega0 ** 2
+        self.b = b
+        self.dt = dt
+
+        # Continuous state-space matrices for pendulum dynamics
+        self.a_c = np.array([[0.0, 1.0], [-self.omega0_sq, -self.b]], dtype=np.float64)
+        self.b_c = np.array([[0.0], [1.0]], dtype=np.float64)
+        self.c_c = np.array([[1.0, 0.0]], dtype=np.float64)
+        self.d_c = np.array([[0.0]], dtype=np.float64)
+
+        # Discretize continuous dynamics using Zero-Order Hold (ZOH)
+        self.ad, self.bd, self.cd, self.dd, _ = signal.cont2discrete(
+            (self.a_c, self.b_c, self.c_c, self.d_c), self.dt, method="zoh"
+        )
+
+    def simulate(
+            self,
+            x0: tuple[float, float] | list[float] | np.ndarray,
+            n_steps: int = 200,
+            u_val: float = 0.0,
+    ) -> tuple[list[float], list[float]]:
+        """Simulate discrete pendulum trajectory over n_steps."""
+        x_k = np.asarray(x0, dtype=np.float64).reshape(2, 1)
+        u_k = np.array([[u_val]], dtype=np.float64)
+
+        theta = []
+        theta_dot = []
+
+        for _ in range(n_steps):
+            theta.append(float(x_k[0, 0]))
+            theta_dot.append(float(x_k[1, 0]))
+            x_k = self.ad @ x_k + self.bd @ u_k
+
+        return theta, theta_dot
 
 
-def zoh_step(a_c, b_c, c_c, d_c, dt, n_steps, u_val=1.0, x0=None):
-    ad, bd, cd, dd, _ = signal.cont2discrete((a_c, b_c, c_c, d_c), dt, method="zoh")
-    u = np.full((n_steps, 1), u_val, dtype=np.float64)
-    t = np.arange(n_steps, dtype=np.float64) * dt
-    x0 = np.zeros(2, dtype=np.float64) if x0 is None else np.asarray(x0, dtype=np.float64)
-    sys_d = signal.dlti(ad, bd, cd, dd, dt=dt)
-    _tout, yout, xout = signal.dlsim(sys_d, u, t=t, x0=x0)
+def generate_state_space_correctness_data() -> dict:
+    sim = PendulumSim(omega0=2.0, b=0.8, dt=0.05)
+    theta, theta_dot = sim.simulate(x0=[np.pi - 0.15, 0.5], n_steps=200, u_val=0.0)
+
     return {
-        "ad": np.asarray(ad, dtype=np.float64),
-        "bd": np.asarray(bd, dtype=np.float64),
-        "cd": np.asarray(cd, dtype=np.float64),
-        "x1": np.asarray(xout[:n_steps, 0], dtype=np.float64),
-        "x2": np.asarray(xout[:n_steps, 1], dtype=np.float64),
-        "y": np.asarray(yout[:n_steps, 0], dtype=np.float64),
-        "t": t,
+        "phase_portrait": {
+            "theta": theta,
+            "theta_dot": theta_dot
+        }
+    }
+
+
+def benchmark_discretization_scaling() -> dict:
+    state_sizes = [2, 4, 8, 16, 32, 64, 128]
+    zoh_times = []
+
+    for N in state_sizes:
+        A = np.zeros((N, N), dtype=np.float64)
+        B = np.zeros((N, 1), dtype=np.float64)
+        C = np.zeros((1, N), dtype=np.float64)
+        D = np.zeros((1, 1), dtype=np.float64)
+
+        for i in range(N):
+            for j in range(N):
+                A[i, j] = -0.5 * (i + 1) if i == j else 0.1 / (i + j + 1)
+            B[i, 0] = 1.0 / (i + 1)
+            C[0, i] = 1.0 / (i + 1)
+
+        t0 = time.perf_counter_ns()
+        _ad, _bd, _, _, _ = signal.cont2discrete((A, B, C, D), 0.05, method="zoh")
+        zoh_time = float(time.perf_counter_ns() - t0)
+
+        zoh_times.append(zoh_time)
+
+    return {
+        "scaling": {
+            "state_size": state_sizes,
+            "zoh_time_ns": zoh_times
+        }
+    }
+
+
+def benchmark_step_response_jitter() -> dict:
+    sim = PendulumSim(omega0=2.0, b=0.8, dt=0.05)
+
+    x_k = np.zeros((2, 1), dtype=np.float64)
+    u_k = np.array([[1.0]], dtype=np.float64)
+
+    iterations = 100
+    step_times = []
+    inputs = []
+    step_data = []
+
+    for _ in range(iterations):
+        t0 = time.perf_counter_ns()
+        y_k = sim.cd @ x_k + sim.dd @ u_k
+        x_next = sim.ad @ x_k + sim.bd @ u_k
+        t_elapsed = float(time.perf_counter_ns() - t0)
+
+        step_times.append(t_elapsed)
+        inputs.append(1.0)
+        step_data.append(float(y_k.item()))
+
+        x_k = x_next
+
+    return {
+        "jitter": {
+            "step_compute_times_ns": step_times,
+            "input": inputs,
+            "step_data": step_data,
+            "step-data": step_data
+        }
+    }
+
+
+def benchmark_controllability_observability() -> dict:
+    state_sizes = [2, 4, 8, 16, 32, 64, 128]
+    ctrb_times = []
+    obsv_times = []
+
+    for N in state_sizes:
+        A = np.zeros((N, N), dtype=np.float64)
+        B = np.zeros((N, 1), dtype=np.float64)
+        C = np.zeros((1, N), dtype=np.float64)
+
+        for i in range(N):
+            for j in range(N):
+                A[i, j] = -0.5 * (i + 1) if i == j else 0.1 / (i + j + 1)
+            B[i, 0] = 1.0 / (i + 1)
+            C[0, i] = 1.0 / (i + 1)
+
+        # Controllability matrix
+        t0 = time.perf_counter_ns()
+        cols = [B]
+        curr_b = B
+        for _ in range(1, N):
+            curr_b = A @ curr_b
+            cols.append(curr_b)
+        _ctrb_mat = np.hstack(cols)
+        ctrb_time = float(time.perf_counter_ns() - t0)
+
+        # Observability matrix
+        t0 = time.perf_counter_ns()
+        rows = [C]
+        curr_c = C
+        for _ in range(1, N):
+            curr_c = curr_c @ A
+            rows.append(curr_c)
+        _obsv_mat = np.vstack(rows)
+        obsv_time = float(time.perf_counter_ns() - t0)
+
+        ctrb_times.append(ctrb_time)
+        obsv_times.append(obsv_time)
+
+    return {
+        "state_size": state_sizes,
+        "controllability_time_ns": ctrb_times,
+        "observability_time_ns": obsv_times
     }
 
 
 def run_state_space_oracle() -> dict:
-    a_c = np.array([[0.0, 1.0], [-4.0, -0.8]], dtype=np.float64)
-    b_c = np.array([[0.0], [1.0]], dtype=np.float64)
-    c_c = np.array([[1.0, 0.0]], dtype=np.float64)
-    d_c = np.array([[0.0]], dtype=np.float64)
-
-    x_test = np.array([[1.0], [0.5]], dtype=np.float64)
-
-    t0 = time.perf_counter_ns()
-    x_dot = a_c @ x_test
-    y_test = float((c_c @ x_test).item())
-    deriv_time_ns = float(time.perf_counter_ns() - t0)
-
-    dt = 0.05
-
-    t0 = time.perf_counter_ns()
-    ad, bd, cd, dd, _ = signal.cont2discrete((a_c, b_c, c_c, d_c), dt, method="zoh")
-    zoh_time_ns = float(time.perf_counter_ns() - t0)
-
-    t0 = time.perf_counter_ns()
-    s = zoh_step(a_c, b_c, c_c, d_c, dt, NUM_STEPS, u_val=1.0, x0=[0.0, 0.0])
-    step_time_ns = float(time.perf_counter_ns() - t0)
-
-    free = zoh_step(a_c, b_c, c_c, d_c, dt, NUM_STEPS, u_val=0.0, x0=[1.0, 0.5])
-
-    tmat = np.array([[1.0, 1.0], [0.0, 1.0]], dtype=np.float64)
-
-    t0 = time.perf_counter_ns()
-    t_inv = np.linalg.inv(tmat)
-    a_tilde = tmat @ s["ad"] @ t_inv
-    b_tilde = tmat @ s["bd"]
-    c_tilde = s["cd"] @ t_inv
-    similarity_time_ns = float(time.perf_counter_ns() - t0)
-
-    # 2. Stiff plant
-    a_s = np.array([[-200.0, 0.0], [0.0, -0.5]], dtype=np.float64)
-    b_s = np.array([[1.0], [1.0]], dtype=np.float64)
-    c_s = np.array([[1.0, 1.0]], dtype=np.float64)
-    d_s = np.array([[0.0]], dtype=np.float64)
-
-    t0 = time.perf_counter_ns()
-    stiff_ad, stiff_bd, _, _, _ = signal.cont2discrete((a_s, b_s, c_s, d_s), 0.01, method="zoh")
-    stiff_zoh_time_ns = float(time.perf_counter_ns() - t0)
-
-    stiff_res = zoh_step(a_s, b_s, c_s, d_s, 0.01, STIFF_STEPS, u_val=1.0, x0=[0.0, 0.0])
+    q1 = generate_state_space_correctness_data()
+    q2 = benchmark_discretization_scaling()
+    q3 = benchmark_step_response_jitter()
+    q4 = benchmark_controllability_observability()
 
     return {
-        "tutorial": {
-            "x_dot": x_dot.tolist(),
-            "y_test": y_test,
-            "ad": s["ad"].tolist(),
-            "bd": s["bd"].tolist(),
-            "step_x1": s["x1"].tolist(),
-            "step_x2": s["x2"].tolist(),
-            "step_y": s["y"].tolist(),
-            "free_x1": free["x1"].tolist(),
-            "free_x2": free["x2"].tolist(),
-            "a_tilde": a_tilde.tolist(),
-            "b_tilde": b_tilde.tolist(),
-            "c_tilde": c_tilde.tolist(),
-            "deriv_time_ns": deriv_time_ns,
-            "zoh_time_ns": zoh_time_ns,
-            "step_time_ns": step_time_ns,
-            "similarity_time_ns": similarity_time_ns,
-        },
-        "stiff": {
-            "ad": stiff_res["ad"].tolist(),
-            "bd": stiff_res["bd"].tolist(),
-            "y": stiff_res["y"].tolist(),
-            "stiff_zoh_time_ns": stiff_zoh_time_ns,
-        },
+        "phase_portrait": q1["phase_portrait"],
+        "scaling": q2["scaling"],
+        "jitter": q3["jitter"],
+        "control_loop": q4,
+        "state_size": q4["state_size"],
+        "controllability_time_ns": q4["controllability_time_ns"],
+        "observability_time_ns": q4["observability_time_ns"]
     }
 
 

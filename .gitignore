@@ -47,6 +47,6 @@ tarpaulin-report.*
 documentation/**/research/*
 
 # Generated V&V JSON/plots for numerical-model examples
-examples/numerical-models/results/
+examples/numerical-models-validation/results/
 
 **/*.rlib

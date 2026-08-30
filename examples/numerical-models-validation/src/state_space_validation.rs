@@ -4,179 +4,258 @@
 //! Computes outputs natively in Rust, spawns Python oracle subprocess,
 //! and emits the combined results payload to results/state_space.json.
 
-use serde_json::{json, Value};
+use control_rs::math::num_types::Const;
+use control_rs::math::storage::ArrayStorage;
+use control_rs::matrix::Matrix;
+use control_rs::state_space::ArrayStateSpace;
+use serde_json::{Value, json};
 use std::fs;
 use std::process::Command;
 use std::time::Instant;
 
-use control_rs::math::num_types::{Const, Dim};
-use control_rs::math::storage::{ArrayStorage, Storage};
-use control_rs::matrix::Matrix;
-use control_rs::state_space::ArrayStateSpace;
-
 type Store<const R: usize, const C: usize> = ArrayStorage<f64, R, C>;
-type Mat<const R: usize, const C: usize> = Matrix<f64, Const<R>, Const<C>, Store<R, C>>;
+type Mat<const R: usize, const C: usize> =
+    Matrix<f64, Const<R>, Const<C>, Store<R, C>>;
 
-const NUM_STEPS: usize = 200;
-const STIFF_STEPS: usize = 200;
-
-fn to_rows<S, const R: usize, const C: usize>(
-    mat: &Matrix<f64, Const<R>, Const<C>, S>,
-) -> Vec<Vec<f64>>
-where
-    Const<R>: Dim,
-    Const<C>: Dim,
-    S: Storage<f64, Const<R>, Const<C>>,
-{
-    (0..R)
-        .map(|i| {
-            (0..C)
-                .map(|j| mat.get(i, j).copied().unwrap_or(0.0))
-                .collect()
-        })
-        .collect()
+/// Explicit Pendulum State-Space Simulation Model.
+pub struct PendulumSim {
+    pub sys_d: ArrayStateSpace<f64, 2, 1, 1>,
 }
 
-fn run_traj(
-    sys_d: &ArrayStateSpace<f64, 2, 1, 1>,
-    n: usize,
-    x0: [f64; 2],
-    u: f64,
-) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-    let mut x_k = Mat::<2, 1>::from_storage(Store::from_array([[x0[0], x0[1]]]));
-    let u_k = Mat::<1, 1>::from_fn(|_, _| u);
-    let mut traj_x1 = vec![0.0_f64; n];
-    let mut traj_x2 = vec![0.0_f64; n];
-    let mut traj_y = vec![0.0_f64; n];
-    for k in 0..n {
-        let pos = x_k.get(0, 0).copied().unwrap_or(0.0);
-        let vel = x_k.get(1, 0).copied().unwrap_or(0.0);
-        let (x_next, y_k) = sys_d.step(&x_k, &u_k);
-        let y_out = y_k.get(0, 0).copied().unwrap_or(0.0);
-        traj_x1[k] = pos;
-        traj_x2[k] = vel;
-        traj_y[k] = y_out;
+impl PendulumSim {
+    pub fn new(omega0: f64, b: f64, dt: f64) -> Self {
+        let omega0_sq = omega0 * omega0;
+        let a_c = Mat::<2, 2>::from_storage(Store::from_array([
+            [0.0, -omega0_sq],
+            [1.0, -b],
+        ]));
+        let b_c = Mat::<2, 1>::from_storage(Store::from_array([[0.0, 1.0]]));
+        let c_c = Mat::<1, 2>::from_storage(Store::from_array([[1.0], [0.0]]));
+        let d_c = Mat::<1, 1>::from_storage(Store::from_array([[0.0]]));
+
+        let sys_c = ArrayStateSpace::continuous(a_c, b_c, c_c, d_c);
+        let sys_d = sys_c.to_discrete_zoh(dt);
+        Self { sys_d }
+    }
+
+    pub fn simulate(
+        &self,
+        x0: [f64; 2],
+        n_steps: usize,
+        u_val: f64,
+    ) -> (Vec<f64>, Vec<f64>) {
+        let mut x_k =
+            Mat::<2, 1>::from_storage(Store::from_array([[x0[0], x0[1]]]));
+        let u_k = Mat::<1, 1>::from_fn(|_, _| u_val);
+
+        let mut theta = Vec::with_capacity(n_steps);
+        let mut theta_dot = Vec::with_capacity(n_steps);
+
+        for _ in 0..n_steps {
+            let th = x_k.get(0, 0).copied().unwrap_or(0.0);
+            let th_dot = x_k.get(1, 0).copied().unwrap_or(0.0);
+            theta.push(th);
+            theta_dot.push(th_dot);
+            let (x_next, _) = self.sys_d.step(&x_k, &u_k);
+            x_k = x_next;
+        }
+
+        (theta, theta_dot)
+    }
+}
+
+fn generate_state_space_correctness_data() -> Value {
+    let sim = PendulumSim::new(2.0, 0.8, 0.05);
+    let (theta, theta_dot) =
+        sim.simulate([std::f64::consts::PI - 0.15, 0.5], 200, 0.0);
+
+    json!({
+        "phase_portrait": {
+            "theta": theta,
+            "theta_dot": theta_dot
+        }
+    })
+}
+
+macro_rules! bench_dim {
+    ($N:expr) => {{
+        let mut a = Mat::<$N, $N>::zero();
+        let mut b = Mat::<$N, 1>::zero();
+        let mut c = Mat::<1, $N>::zero();
+        let d = Mat::<1, 1>::zero();
+
+        for i in 0..$N {
+            for j in 0..$N {
+                let val = if i == j {
+                    -0.5 * ((i + 1) as f64)
+                } else {
+                    0.1 / ((i + j + 1) as f64)
+                };
+                if let Some(target) = a.get_mut(i, j) {
+                    *target = val;
+                }
+            }
+            if let Some(target) = b.get_mut(i, 0) {
+                *target = 1.0 / ((i + 1) as f64);
+            }
+            if let Some(target) = c.get_mut(0, i) {
+                *target = 1.0 / ((i + 1) as f64);
+            }
+        }
+
+        let sys_c = ArrayStateSpace::continuous(a, b, c, d);
+
+        let t_zoh = Instant::now();
+        let _sys_d = sys_c.to_discrete_zoh(0.05);
+        let zoh_time_ns = t_zoh.elapsed().as_nanos() as f64;
+
+        let t_ctrb = Instant::now();
+        let _ctrb = sys_c.controllability_matrix::<$N>();
+        let ctrb_time_ns = t_ctrb.elapsed().as_nanos() as f64;
+
+        let t_obsv = Instant::now();
+        let _obsv = sys_c.observability_matrix::<$N>();
+        let obsv_time_ns = t_obsv.elapsed().as_nanos() as f64;
+
+        (zoh_time_ns, ctrb_time_ns, obsv_time_ns)
+    }};
+}
+
+fn benchmark_discretization_scaling() -> (Value, Vec<f64>, Vec<f64>) {
+    let (zoh2, ctrb2, obsv2) = bench_dim!(2);
+    let (zoh4, ctrb4, obsv4) = bench_dim!(4);
+    let (zoh8, ctrb8, obsv8) = bench_dim!(8);
+    let (zoh16, ctrb16, obsv16) = bench_dim!(16);
+    let (zoh32, ctrb32, obsv32) = bench_dim!(32);
+    let (zoh64, ctrb64, obsv64) = bench_dim!(64);
+    let (zoh128, ctrb128, obsv128) = bench_dim!(128);
+
+    let state_size = vec![2, 4, 8, 16, 32, 64, 128];
+    let zoh_time_ns = vec![zoh2, zoh4, zoh8, zoh16, zoh32, zoh64, zoh128];
+    let ctrb_time_ns = vec![ctrb2, ctrb4, ctrb8, ctrb16, ctrb32, ctrb64, ctrb128];
+    let obsv_time_ns = vec![obsv2, obsv4, obsv8, obsv16, obsv32, obsv64, obsv128];
+
+    let scaling_json = json!({
+        "scaling": {
+            "state_size": state_size,
+            "zoh_time_ns": zoh_time_ns
+        }
+    });
+
+    (scaling_json, ctrb_time_ns, obsv_time_ns)
+}
+
+fn benchmark_step_response_jitter() -> Value {
+    let sim = PendulumSim::new(2.0, 0.8, 0.05);
+
+    let mut x_k = Mat::<2, 1>::zero();
+    let u_k = Mat::<1, 1>::from_fn(|_, _| 1.0);
+
+    let iterations = 100;
+    let mut step_compute_times_ns = Vec::with_capacity(iterations);
+    let mut input = Vec::with_capacity(iterations);
+    let mut step_data = Vec::with_capacity(iterations);
+
+    for _ in 0..iterations {
+        let t_start = Instant::now();
+        let (x_next, y_k) = sim.sys_d.step(&x_k, &u_k);
+        let elapsed = t_start.elapsed().as_nanos() as f64;
+
+        step_compute_times_ns.push(elapsed);
+        input.push(1.0);
+        let y_val = y_k.get(0, 0).copied().unwrap_or(0.0);
+        step_data.push(y_val);
+
         x_k = x_next;
     }
-    (traj_x1, traj_x2, traj_y)
+
+    json!({
+        "jitter": {
+            "step_compute_times_ns": step_compute_times_ns,
+            "input": input,
+            "step_data": step_data.clone(),
+            "step-data": step_data
+        }
+    })
+}
+
+fn track_control_loop_allocations(
+    ctrb_time_ns: Vec<f64>,
+    obsv_time_ns: Vec<f64>,
+) -> Value {
+    json!({
+        "state_size": vec![2, 4, 8, 16, 32, 64, 128],
+        "controllability_time_ns": ctrb_time_ns,
+        "observability_time_ns": obsv_time_ns
+    })
 }
 
 fn run_validation_default() -> Value {
-    let a_c = Mat::<2, 2>::from_storage(Store::from_array([[0.0, -4.0], [1.0, -0.8]]));
-    let b_c = Mat::<2, 1>::from_storage(Store::from_array([[0.0, 1.0]]));
-    let c_c = Mat::<1, 2>::from_storage(Store::from_array([[1.0], [0.0]]));
-    let d_c = Mat::<1, 1>::from_storage(Store::from_array([[0.0]]));
-
-    let sys_c = ArrayStateSpace::continuous(a_c, b_c, c_c, d_c);
-
-    let x_test = Mat::<2, 1>::from_storage(Store::from_array([[1.0, 0.5]]));
-    let u_test = Mat::<1, 1>::from_fn(|_, _| 0.0);
-
-    let t_deriv = Instant::now();
-    let (x_dot, y_test) = sys_c.derivative(&x_test, &u_test);
-    let deriv_time_ns = t_deriv.elapsed().as_nanos() as f64;
-    let y_val = y_test.get(0, 0).copied().unwrap_or(0.0);
-
-    let dt = 0.05;
-    let t_zoh = Instant::now();
-    let sys_d = sys_c.to_discrete_zoh(dt);
-    let zoh_time_ns = t_zoh.elapsed().as_nanos() as f64;
-
-    let t_step = Instant::now();
-    let (step_x1, step_x2, step_y) = run_traj(&sys_d, NUM_STEPS, [0.0, 0.0], 1.0);
-    let step_time_ns = t_step.elapsed().as_nanos() as f64;
-
-    let (free_x1, free_x2, _) = run_traj(&sys_d, NUM_STEPS, [1.0, 0.5], 0.0);
-
-    let t = Mat::<2, 2>::from_storage(Store::from_array([[1.0, 0.0], [1.0, 1.0]]));
-    let t_sim = Instant::now();
-    let sys_transformed = sys_d.similarity_transform(&t).expect("similarity transform");
-    let similarity_time_ns = t_sim.elapsed().as_nanos() as f64;
-
-    // 2. Stiff Plant Setup
-    let a_s = Mat::<2, 2>::from_storage(Store::from_array([[-200.0, 0.0], [0.0, -0.5]]));
-    let b_s = Mat::<2, 1>::from_storage(Store::from_array([[1.0, 1.0]]));
-    let c_s = Mat::<1, 2>::from_storage(Store::from_array([[1.0], [1.0]]));
-    let d_s = Mat::<1, 1>::from_storage(Store::from_array([[0.0]]));
-    let sys_s = ArrayStateSpace::continuous(a_s, b_s, c_s, d_s);
-    let dt_s = 0.01;
-
-    let t_stiff_zoh = Instant::now();
-    let sys_sd = sys_s.to_discrete_zoh(dt_s);
-    let stiff_zoh_time_ns = t_stiff_zoh.elapsed().as_nanos() as f64;
-
-    let (_, _, stiff_y) = run_traj(&sys_sd, STIFF_STEPS, [0.0, 0.0], 1.0);
+    let q1 = generate_state_space_correctness_data();
+    let (q2, ctrb_times, obsv_times) = benchmark_discretization_scaling();
+    let q3 = benchmark_step_response_jitter();
+    let q4 =
+        track_control_loop_allocations(ctrb_times.clone(), obsv_times.clone());
 
     json!({
-        "tutorial": {
-            "x_dot": to_rows(&x_dot),
-            "y_test": y_val,
-            "ad": to_rows(&sys_d.a()),
-            "bd": to_rows(&sys_d.b()),
-            "step_x1": step_x1,
-            "step_x2": step_x2,
-            "step_y": step_y,
-            "free_x1": free_x1,
-            "free_x2": free_x2,
-            "a_tilde": to_rows(&sys_transformed.a()),
-            "b_tilde": to_rows(&sys_transformed.b()),
-            "c_tilde": to_rows(&sys_transformed.c()),
-            "deriv_time_ns": deriv_time_ns,
-            "zoh_time_ns": zoh_time_ns,
-            "step_time_ns": step_time_ns,
-            "similarity_time_ns": similarity_time_ns,
-        },
-        "stiff": {
-            "ad": to_rows(&sys_sd.a()),
-            "bd": to_rows(&sys_sd.b()),
-            "y": stiff_y,
-            "stiff_zoh_time_ns": stiff_zoh_time_ns,
-        }
+        "phase_portrait": q1["phase_portrait"],
+        "scaling": q2["scaling"],
+        "jitter": q3["jitter"],
+        "control_loop": q4,
+        "state_size": vec![2, 4, 8, 16, 32, 64, 128],
+        "controllability_time_ns": ctrb_times,
+        "observability_time_ns": obsv_times
     })
 }
 
 pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
-    let check_f64 = |key: &str, r: f64, p: f64, tol: f64, errs: &mut Vec<String>| {
-        if (r - p).abs() > tol {
-            errs.push(format!("{key}: rust {r} vs python {p} (tol {tol})"));
-        }
-    };
-
-    if let (Some(r), Some(p)) = (
-        rust["tutorial"]["y_test"].as_f64(),
-        python["tutorial"]["y_test"].as_f64(),
+    if let (Some(r_th), Some(p_th)) = (
+        rust["phase_portrait"]["theta"].as_array(),
+        python["phase_portrait"]["theta"].as_array(),
     ) {
-        check_f64("y_test", r, p, 1e-12, &mut errs);
-    }
-
-    if let (Some(r_y), Some(p_y)) = (
-        rust["tutorial"]["step_y"].as_array(),
-        python["tutorial"]["step_y"].as_array(),
-    ) {
-        for (i, (r, p)) in r_y.iter().zip(p_y.iter()).enumerate() {
+        for (i, (r, p)) in r_th.iter().zip(p_th.iter()).enumerate() {
             let rv = r.as_f64().unwrap_or(0.0);
             let pv = p.as_f64().unwrap_or(0.0);
             if (rv - pv).abs() > 1e-6 {
-                errs.push(format!("step_y[{i}]: rust {rv} vs python {pv}"));
+                errs.push(format!(
+                    "phase_portrait.theta[{i}]: rust {rv} vs python {pv}"
+                ));
             }
         }
+    } else {
+        errs.push("Missing phase_portrait.theta in payload".to_string());
     }
 
-    if let (Some(r_ad), Some(p_ad)) = (
-        rust["tutorial"]["ad"].as_array(),
-        python["tutorial"]["ad"].as_array(),
+    if let (Some(r_thd), Some(p_thd)) = (
+        rust["phase_portrait"]["theta_dot"].as_array(),
+        python["phase_portrait"]["theta_dot"].as_array(),
     ) {
-        for (i, (r_row, p_row)) in r_ad.iter().zip(p_ad.iter()).enumerate() {
-            if let (Some(r_cols), Some(p_cols)) = (r_row.as_array(), p_row.as_array()) {
-                for (j, (rv, pv)) in r_cols.iter().zip(p_cols.iter()).enumerate() {
-                    let r_val = rv.as_f64().unwrap_or(0.0);
-                    let p_val = pv.as_f64().unwrap_or(0.0);
-                    if (r_val - p_val).abs() > 1e-12 {
-                        errs.push(format!("ad[{i}][{j}]: rust {r_val} vs python {p_val}"));
-                    }
-                }
+        for (i, (r, p)) in r_thd.iter().zip(p_thd.iter()).enumerate() {
+            let rv = r.as_f64().unwrap_or(0.0);
+            let pv = p.as_f64().unwrap_or(0.0);
+            if (rv - pv).abs() > 1e-6 {
+                errs.push(format!(
+                    "phase_portrait.theta_dot[{i}]: rust {rv} vs python {pv}"
+                ));
+            }
+        }
+    } else {
+        errs.push("Missing phase_portrait.theta_dot in payload".to_string());
+    }
+
+    if let (Some(r_sd), Some(p_sd)) = (
+        rust["jitter"]["step_data"].as_array(),
+        python["jitter"]["step_data"].as_array(),
+    ) {
+        for (i, (r, p)) in r_sd.iter().zip(p_sd.iter()).enumerate() {
+            let rv = r.as_f64().unwrap_or(0.0);
+            let pv = p.as_f64().unwrap_or(0.0);
+            if (rv - pv).abs() > 1e-6 {
+                errs.push(format!(
+                    "jitter.step_data[{i}]: rust {rv} vs python {pv}"
+                ));
             }
         }
     }

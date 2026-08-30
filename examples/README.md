@@ -15,12 +15,12 @@ graph.
 
 ## Directory index
 
-| Path                                     | Kind              | What it is                                                           | Run from                              |
-|:-----------------------------------------|:------------------|:---------------------------------------------------------------------|:--------------------------------------|
-| [`numerical-models/`](numerical-models/) | Nested host crate | Demo generators + JSON V&V; Python in `python3/`                     | `examples/numerical-models/`          |
-| [`subprograms/`](subprograms/)           | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                     |
-| [`qemu/`](qemu/)                         | Firmware package  | Bare-metal ETS runners (Cortex-M7, RISC-V)                           | `examples/qemu/` or `cargo qemu`      |
-| [`teensy4/`](teensy4/)                   | Firmware package  | Teensy 4.0 ETS over USB CDC                                          | `examples/teensy4/` or `cargo teensy` |
+| Path                                                | Kind              | What it is                                                           | Run from                              |
+|:----------------------------------------------------|:------------------|:---------------------------------------------------------------------|:--------------------------------------|
+| [`numerical-models/`](numerical-models-validation/) | Nested host crate | Demo generators + JSON V&V; Python in `python3/`                     | `examples/numerical-models/`          |
+| [`subprograms/`](subprograms/)                      | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                     |
+| [`qemu/`](qemu/)                                    | Firmware package  | Bare-metal ETS runners (Cortex-M7, RISC-V)                           | `examples/qemu/` or `cargo qemu`      |
+| [`teensy4/`](teensy4/)                              | Firmware package  | Teensy 4.0 ETS over USB CDC                                          | `examples/teensy4/` or `cargo teensy` |
 
 ---
 
@@ -34,13 +34,13 @@ and Python ≥ 3.10 with NumPy/SciPy/matplotlib. The dedicated
 `.github/workflows/numerical-models.yml`](../.github/workflows/numerical-models.yml)
 workflow installs
 [
-`numerical-models/python3/requirements.txt`](numerical-models/python3/requirements.txt)
+`numerical-models/python3/requirements.txt`](numerical-models-validation/python3/requirements.txt)
 and runs V&V. Locally:
 
 ```bash
-python3.12 -m venv examples/numerical-models/.venv
-source examples/numerical-models/.venv/bin/activate
-pip install -r examples/numerical-models/python3/requirements.txt
+python3.12 -m venv examples/numerical-models-validation/.venv
+source examples/numerical-models-validation/.venv/bin/activate
+pip install -r examples/numerical-models-validation/python3/requirements.txt
 ```
 
 **QEMU ETS and the two `no_std` subprogram crates** additionally need:
@@ -66,40 +66,31 @@ subprogram crate.
 
 ## 1. Numerical models
 
-These binaries live in the nested crate [`numerical-models/`](numerical-models/)
-(not root workspace targets). Run them from **`examples/numerical-models/`**.
+These binaries live in the nested crate [
+`numerical-models-validation/`](numerical-models-validation/)
+(not root workspace targets). Run them from **`examples/numerical-models-validation/`**.
 
-Suite files under `suites/<slug>.json` hold host inputs, validator argv, and
-plot argv. Each validator takes the suite path and prints one result JSON
-document on stdout. `cargo run --release --bin validate -- suites/` spawns
-those validators, writes `results/<slug>/<source>.json`, compares §6.3
-bounds, then runs listed plotters with the results directory.
+Each model has a standalone Rust validator binary and Python companion oracle script. Running `cargo run` (or `cargo run --bin validate`) executes all model validations in-process, measures tight nanosecond timings, cross-references Rust and Python outputs via built-in `cross_validate()`, and writes combined payload JSON files under `results/<model>.json`.
 
 ```bash
 pip install -r python3/requirements.txt
-cargo build --release
-cargo run --release --bin validate -- suites/
-# or one slug:
-cargo run --release --bin validate -- suites/matrix.json
+cargo run
+# or run a single model binary:
+cargo run --bin matrix
+cargo run --bin polynomial
+cargo run --bin state_space
+cargo run --bin transfer_function
+cargo run --bin tensor
 ```
 
-The `numerical-models` GitHub Actions workflow runs `validate`. It is not
-part of `cargo ci`. Each run uploads the full `results/` tree as the
-`numerical-models-results` artifact (JSON plus all PNGs, 30-day retention).
-On `main`, PNGs are also published to the rolling
-[`plots`](https://github.com/Dyse-Industries/control-rs/releases/tag/plots)
-release as `{slug}-{name}.png`. PNG pixels are not a numeric gate. The
-gallery below 404s until the first successful `main` run after that
-workflow lands.
-
 | Command | Demonstrates |
-|:--------|:-------------|
-| `python3 python3/matrix.py suites/matrix.json` | Matrix oracle JSON on stdout |
-| `cargo run --release --bin matrix -- suites/matrix.json` | Native matrix JSON on stdout (tutorial on stderr) |
-| `cargo run --release --bin matrix-row -- suites/matrix.json` | Row-major `DefaultBlas` matrix JSON (`source: rust-row`) |
-| `cargo run --release --bin matrix-accelerate --features accelerate -- suites/matrix.json` | Apple Accelerate GEMM JSON (`source: rust-accelerate`; macOS) |
-| `cargo run --release --bin validate -- suites/` | Spawn all validators and plotters, compare bounds |
-| `python3 python3/plot_matrix.py results/matrix/` | Matrix diagnostic plots (listed in the suite file) |
+|:------------------------------------|:------------------------------------------------------------------------------|
+| `cargo run` | Execute full in-process validation suite for all 5 models |
+| `cargo run --bin matrix` | Execute standalone Matrix numerical validator and cross-check Python oracle |
+| `cargo run --bin polynomial` | Execute standalone Polynomial numerical validator and cross-check Python oracle |
+| `cargo run --bin state_space` | Execute standalone State-Space numerical validator and cross-check Python oracle |
+| `cargo run --bin transfer_function` | Execute standalone Transfer Function numerical validator and cross-check Python oracle |
+| `cargo run --bin tensor` | Execute standalone Tensor numerical validator and cross-check Python oracle |
 
 ### Diagnostic plots
 

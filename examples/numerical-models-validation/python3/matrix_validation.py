@@ -2,7 +2,7 @@
 """
 python3/matrix_validation.py
 
-Executes NumPy/SciPy equivalents of the matrix numerical models.
+Executes NumPy/SciPy equivalents of the matrix numerical models (EKF focus).
 Outputs JSON results to stdout for cross-language validation with Rust.
 """
 
@@ -12,84 +12,178 @@ import json
 import time
 
 import numpy as np
-from scipy.linalg import hilbert, inv, lu_factor, lu_solve
+from scipy.linalg import cholesky, hilbert, inv, lu_factor, lu_solve, qr, solve_triangular, svd
 
 
-def compute_backward_stability(a: np.ndarray) -> tuple[np.ndarray, float, float]:
-    n = a.shape[0]
-    x_true = np.ones((n, 1))
-    b = a @ x_true
+def generate_matrix_correctness_data() -> dict:
+    n = 8
+    # Initial 8x8 state covariance matrix P_0
+    i_idx, j_idx = np.ogrid[:n, :n]
+    diff = i_idx - j_idx
+    p_0 = np.exp(-0.25 * (diff ** 2)) + 0.1 * np.eye(n)
 
-    start_time = time.perf_counter_ns()
-    lu, piv = lu_factor(a)
-    x_hat = lu_solve((lu, piv), b)
-    elapsed_ns = float(time.perf_counter_ns() - start_time)
+    # Measurement matrix H, Kalman gain K, Noise R
+    h = np.eye(n)
+    k = 0.01 * np.ones((n, n))
+    np.fill_diagonal(k, 0.4)
 
-    a_norm = np.linalg.norm(a, np.inf)
-    x_hat_norm = np.linalg.norm(x_hat, np.inf)
-    residual = (a @ x_hat) - b
-    residual_norm = np.linalg.norm(residual, np.inf)
+    r = 0.05 * np.eye(n)
 
-    eps = np.finfo(float).eps
-    residual_ratio = residual_norm / (a_norm * x_hat_norm * eps)
+    kh = k @ h
+    eye = np.eye(n)
+    i_minus_kh = eye - kh
 
-    return x_hat, float(residual_ratio), elapsed_ns
+    krk_t = k @ r @ k.T
+    p_current = p_0.copy()
 
+    for _ in range(100):
+        p_update1 = i_minus_kh @ p_current @ i_minus_kh.T
+        p_current = p_update1 + krk_t
 
-def compute_matmul_chain(m_init: np.ndarray, k: np.ndarray, iterations: int) -> tuple[np.ndarray, float]:
-    m_current = m_init.copy()
-
-    start_time = time.perf_counter_ns()
-    for _ in range(iterations):
-        m_current = m_current @ k
-    elapsed_ns = float(time.perf_counter_ns() - start_time)
-
-    return m_current, elapsed_ns
+    return {
+        "covariance_heatmap": {
+            "py_matrix": p_current.tolist()
+        }
+    }
 
 
-def compute_matrix_inverse(a: np.ndarray) -> tuple[np.ndarray, float, float]:
-    start_time = time.perf_counter_ns()
-    a_inv = inv(a)
-    elapsed_ns = float(time.perf_counter_ns() - start_time)
+def benchmark_matrix_scaling() -> dict:
+    dims = [2, 4, 8, 16, 32, 64]
+    iters = 1000
+    means = []
+    stddevs = []
 
-    ident = a @ a_inv
-    identity_error = np.max(np.abs(ident - np.eye(a.shape[0])))
+    for n in dims:
+        a = np.zeros((n, n))
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    a[i, j] = 2.0 * (i + 1)
+                else:
+                    a[i, j] = 0.5 / (i + j + 1)
 
-    return a_inv, float(identity_error), elapsed_ns
+        times = []
+        for _ in range(iters):
+            t0 = time.perf_counter_ns()
+            _inv = inv(a)
+            t1 = time.perf_counter_ns()
+            times.append(float(t1 - t0))
+
+        arr = np.array(times)
+        means.append(float(np.mean(arr)))
+        stddevs.append(float(np.std(arr)))
+
+    return {
+        "scaling": {
+            "N": dims,
+            "inversion_time_ns": means,
+            "inversion_stddev_ns": stddevs
+        }
+    }
+
+
+def benchmark_ekf_update_jitter() -> dict:
+    n = 32
+    iters = 1000
+    h_mat = hilbert(n)
+    b = np.ones((n, 1))
+
+    lu, piv = lu_factor(h_mat)
+    times = []
+
+    for _ in range(iters):
+        t0 = time.perf_counter_ns()
+        _x = lu_solve((lu, piv), b)
+        t1 = time.perf_counter_ns()
+        times.append(float(t1 - t0))
+
+    return {
+        "jitter": {
+            "hilbert_solve_times_ns": times
+        }
+    }
+
+
+def benchmark_decompositions() -> dict:
+    n = 16
+    iters = 1000
+
+    # Symmetric positive-definite matrix for Cholesky
+    spd = np.zeros((n, n))
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                spd[i, j] = 10.0 + i
+            else:
+                spd[i, j] = 1.0 / (i + j + 2)
+
+    b = np.ones((n, 1))
+
+    # 1. Cholesky
+    t_chol_start = time.perf_counter_ns()
+    for _ in range(iters):
+        c_factor = cholesky(spd, lower=True)
+        y = solve_triangular(c_factor, b, lower=True)
+        _x = solve_triangular(c_factor.T, y, lower=False)
+    t_chol = float(time.perf_counter_ns() - t_chol_start) / iters
+
+    # 2. LU Solve
+    a_lu = np.zeros((n, n))
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                a_lu[i, j] = 5.0 + i
+            else:
+                a_lu[i, j] = 0.2 * (i + j + 1)
+
+    t_lu_start = time.perf_counter_ns()
+    for _ in range(iters):
+        lu, piv = lu_factor(a_lu)
+        _x = lu_solve((lu, piv), b)
+    t_lu = float(time.perf_counter_ns() - t_lu_start) / iters
+
+    # 3. QR Decomposition
+    a_qr = np.zeros((n, n))
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                a_qr[i, j] = 3.0 + i
+            else:
+                a_qr[i, j] = 0.1 * (i + j)
+
+    t_qr_start = time.perf_counter_ns()
+    for _ in range(iters):
+        _q, _r = qr(a_qr)
+    t_qr = float(time.perf_counter_ns() - t_qr_start) / iters
+
+    # 4. SVD Decomposition
+    a_svd = a_lu.copy()
+    t_svd_start = time.perf_counter_ns()
+    for _ in range(iters):
+        _u, _s, _vh = svd(a_svd)
+    t_svd = float(time.perf_counter_ns() - t_svd_start) / iters
+
+    return {
+        "decomp_times_ns": {
+            "cholesky": t_chol,
+            "lu_solve": t_lu,
+            "qr_decomp": t_qr,
+            "svd": t_svd
+        }
+    }
 
 
 def run_python_oracle() -> dict:
-    h = hilbert(8)
-    h_x_hat, h_ratio, h_time_ns = compute_backward_stability(h)
-
-    m_init = np.eye(64)
-    k = np.zeros((64, 64))
-    for i in range(64):
-        for j in range(64):
-            k[i, j] = 0.01 * (i + 1) * (j + 3) / 64.0
-
-    gemm_final, gemm_time_ns = compute_matmul_chain(m_init, k, 200)
-
-    a_inv_test = np.full((3, 3), 0.5)
-    np.fill_diagonal(a_inv_test, 2.0)
-    a_inv, identity_error, inv_time_ns = compute_matrix_inverse(a_inv_test)
+    q1 = generate_matrix_correctness_data()
+    q2 = benchmark_matrix_scaling()
+    q3 = benchmark_ekf_update_jitter()
+    q4 = benchmark_decompositions()
 
     return {
-        "hilbert": {
-            "x_hat": h_x_hat.tolist(),
-            "residual_ratio": h_ratio,
-            "time_ns": h_time_ns,
-        },
-        "matmul_chain": {
-            "final_matrix": gemm_final.tolist(),
-            "final_norm": float(np.linalg.norm(gemm_final, np.inf)),
-            "time_ns": gemm_time_ns,
-        },
-        "inversion": {
-            "a_inv": a_inv.tolist(),
-            "identity_error": identity_error,
-            "time_ns": inv_time_ns,
-        },
+        "covariance_heatmap": q1["covariance_heatmap"],
+        "scaling": q2["scaling"],
+        "jitter": q3["jitter"],
+        "decomp_times_ns": q4["decomp_times_ns"]
     }
 
 
