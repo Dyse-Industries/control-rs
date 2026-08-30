@@ -352,19 +352,22 @@ pub fn run() -> Value {
         "python3": py_combined
     });
 
-    let out_dirs = ["results", "examples/numerical-models-validation/results"];
-    for dir in &out_dirs {
-        if let Ok(_) = fs::create_dir_all(dir) {
-            let out_path = format!("{dir}/matrix.json");
-            let _ = fs::write(
-                &out_path,
-                serde_json::to_string_pretty(&combined_results).unwrap(),
-            );
-        }
-    }
+    let out_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| std::path::PathBuf::from(d).join("results"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("examples/numerical-models-validation/results"));
+
+    fs::create_dir_all(&out_dir).expect("Failed to create results directory");
+    let out_path = out_dir.join("matrix.json");
+
+    fs::write(
+        &out_path,
+        serde_json::to_string_pretty(&combined_results).unwrap(),
+    )
+    .expect("Failed to write results file");
 
     println!(
-        "Success: Matrix cross-validation passed! Payload saved to results/matrix.json"
+        "Success: Matrix cross-validation passed! Payload saved to {}",
+        out_path.display()
     );
 
     combined_results

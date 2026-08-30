@@ -1,46 +1,44 @@
 //! src/transfer_function_validation.rs
 //!
 //! Standalone validation runner for transfer function numerical models.
-//! Computes outputs natively in Rust, spawns Python oracle subprocess,
-//! and emits the combined results payload to results/transfer_function.json.
+//! Executes four core benchmark simulations:
+//! 1 & 2. Discretization Method Error (Flexible Structure Modal System with Resonant Notch Filter via synthesize_resonant_notch_system, Tustin vs ZOH Bode magnitude & phase near Nyquist)
+//! 3. Nyquist Stability Criterion & Margins (Polar curve, (-1, 0j) point, gain & phase margins)
+//! 4. Filter Topology Stability (6th-order Butterworth f32 Direct Form vs Biquad SOS)
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::process::Command;
 use std::time::Instant;
 
-use control_rs::math::dsp::DefaultDsp;
-use control_rs::math::num_types::{Const, Dim};
-use control_rs::math::storage::{ArrayStorage, Storage};
-use control_rs::math::subprograms::DefaultBlas;
-use control_rs::matrix::Matrix;
-use control_rs::polynomial::Polynomial;
+use control_rs::math::complex_num::Complex;
+use control_rs::math::num_types::Const;
+use control_rs::math::storage::ArrayStorage;
 use control_rs::transfer_function::TransferFunction;
 
 type StoreNum<const N: usize> = ArrayStorage<f64, N, 1>;
 type StoreDen<const D: usize> = ArrayStorage<f64, D, 1>;
-type Dsp = DefaultDsp;
-type Blas = DefaultBlas;
 type Tf<const N: usize, const D: usize> =
     TransferFunction<f64, Const<N>, Const<D>, StoreNum<N>, StoreDen<D>>;
 
-const BODE_N: usize = 128;
+/// Script-level constructor for Proposal 1: Flexible Structure Modal System with Resonant Notch Filter.
+/// G(s) = (s^2 + 2*zeta_z*wn*s + wn^2) / (s^2 + 2*zeta_p*wn*s + wn^2) * (wc / (s + wc))
+fn synthesize_resonant_notch_system(
+    fn_hz: f64,
+    zeta_z: f64,
+    zeta_p: f64,
+    fc_hz: f64,
+) -> Tf<3, 4> {
+    let wn = 2.0 * std::f64::consts::PI * fn_hz;
+    let wc = 2.0 * std::f64::consts::PI * fc_hz;
 
-fn to_rows<S, const R: usize, const C: usize>(
-    mat: &Matrix<f64, Const<R>, Const<C>, S>,
-) -> Vec<Vec<f64>>
-where
-    Const<R>: Dim,
-    Const<C>: Dim,
-    S: Storage<f64, Const<R>, Const<C>>,
-{
-    (0..R)
-        .map(|i| {
-            (0..C)
-                .map(|j| mat.get(i, j).copied().unwrap_or(0.0))
-                .collect()
-        })
-        .collect()
+    let notch = Tf::<3, 3>::continuous(
+        [wn * wn, 2.0 * zeta_z * wn, 1.0],
+        [wn * wn, 2.0 * zeta_p * wn, 1.0],
+    );
+    let lowpass = Tf::<1, 2>::continuous([wc], [wc, 1.0]);
+
+    notch.series::<1, 2, 3, 4>(&lowpass)
 }
 
 fn logspace(start_log10: f64, stop_log10: f64, n: usize) -> Vec<f64> {
@@ -52,140 +50,275 @@ fn logspace(start_log10: f64, stop_log10: f64, n: usize) -> Vec<f64> {
     }
     let den = (n - 1) as f64;
     (0..n)
-        .map(|i| 10.0_f64.powf(start_log10 + (stop_log10 - start_log10) * (i as f64) / den))
+        .map(|i| {
+            10.0_f64.powf(
+                start_log10 + (stop_log10 - start_log10) * (i as f64) / den,
+            )
+        })
         .collect()
 }
 
-fn binomial(n: usize, k: usize) -> f64 {
-    if k > n {
-        return 0.0;
+// -----------------------------------------------------------------------------
+// 1 & 2. Discretization Method Error (Bode Magnitude & Phase Warping)
+// -----------------------------------------------------------------------------
+fn benchmark_discretization_error() -> Value {
+    // Proposal 1: Flexible Structure Modal System with Resonant Notch Filter
+    let fn_hz = 25.0_f64;
+    let zeta_z = 0.01_f64;
+    let zeta_p = 0.25_f64;
+    let fc_hz = 40.0_f64;
+    let tf_cont = synthesize_resonant_notch_system(fn_hz, zeta_z, zeta_p, fc_hz);
+
+    let dt = 0.005; // Fs = 200 Hz, Nyquist = 100 Hz
+    let tf_tustin = tf_cont.to_discrete_tustin(dt, None);
+    let tf_zoh = tf_cont
+        .to_discrete_zoh::<3>(dt)
+        .expect("ZOH conversion failed");
+
+    let num_freqs = 1000;
+    let freqs_hz: Vec<f64> = (0..num_freqs)
+        .map(|i| 0.1 + 99.4 * (i as f64) / ((num_freqs - 1) as f64))
+        .collect();
+
+    let mut cont_mag_db = Vec::with_capacity(num_freqs);
+    let mut cont_phase_deg = Vec::with_capacity(num_freqs);
+    let mut tustin_mag_db = Vec::with_capacity(num_freqs);
+    let mut tustin_phase_deg = Vec::with_capacity(num_freqs);
+    let mut zoh_mag_db = Vec::with_capacity(num_freqs);
+    let mut zoh_phase_deg = Vec::with_capacity(num_freqs);
+
+    let t0 = Instant::now();
+    for &f_hz in &freqs_hz {
+        let w = 2.0 * std::f64::consts::PI * f_hz;
+
+        let (c_mag, c_phase) = tf_cont.bode_point(w);
+        cont_mag_db.push(20.0 * c_mag.log10());
+        cont_phase_deg.push(c_phase * 180.0 / std::f64::consts::PI);
+
+        let (t_mag, t_phase) = tf_tustin.bode_point(w);
+        tustin_mag_db.push(20.0 * t_mag.log10());
+        tustin_phase_deg.push(t_phase * 180.0 / std::f64::consts::PI);
+
+        let (z_mag, z_phase) = tf_zoh.bode_point(w);
+        zoh_mag_db.push(20.0 * z_mag.log10());
+        zoh_phase_deg.push(z_phase * 180.0 / std::f64::consts::PI);
     }
-    let mut v = 1.0_f64;
-    for i in 0..k {
-        v = v * ((n - i) as f64) / ((i + 1) as f64);
-    }
-    v
+    let bode_time_ns = t0.elapsed().as_nanos() as f64;
+
+    json!({
+        "freqs_hz": freqs_hz,
+        "cont_mag_db": cont_mag_db,
+        "cont_phase_deg": cont_phase_deg,
+        "tustin_mag_db": tustin_mag_db,
+        "tustin_phase_deg": tustin_phase_deg,
+        "zoh_mag_db": zoh_mag_db,
+        "zoh_phase_deg": zoh_phase_deg,
+        "bode_time_ns": bode_time_ns,
+    })
 }
 
-fn poly_s_plus_a_4(a: f64) -> [f64; 5] {
-    let n = 4_usize;
-    let mut c = [0.0_f64; 5];
-    for k in 0..=n {
-        c[k] = binomial(n, k) * a.powi((n - k) as i32);
+// -----------------------------------------------------------------------------
+// 3. Nyquist Stability Criterion & Stability Margins
+// -----------------------------------------------------------------------------
+fn benchmark_nyquist_criterion() -> Value {
+    // Open-loop transfer function H(s) = 50*(s + 2) / (s * (s^2 + 2s + 25))
+    // H(s) = (100 + 50s) / (0 + 25s + 2s^2 + s^3)
+    // Ascending: num = [100.0, 50.0], den = [0.0, 25.0, 2.0, 1.0]
+    let tf_open = Tf::<2, 4>::continuous([100.0, 50.0], [0.0, 25.0, 2.0, 1.0]);
+
+    let freqs = logspace(-2.0, 3.0, 250);
+    let mut h_re = Vec::with_capacity(freqs.len());
+    let mut h_im = Vec::with_capacity(freqs.len());
+
+    let mut gain_crossover_w = 0.0;
+    let mut phase_crossover_w = 0.0;
+
+    let mut min_mag_diff = f64::MAX;
+    let mut min_im_diff = f64::MAX;
+
+    for &w in &freqs {
+        let resp = tf_open.eval_frequency(w);
+        h_re.push(resp.re);
+        h_im.push(resp.im);
+        let mag = (resp.re * resp.re + resp.im * resp.im).sqrt();
+        if (mag - 1.0).abs() < min_mag_diff {
+            min_mag_diff = (mag - 1.0).abs();
+            gain_crossover_w = w;
+        }
+
+        if resp.im.abs() < min_im_diff && resp.re < 0.0 {
+            min_im_diff = resp.im.abs();
+            phase_crossover_w = w;
+        }
     }
-    c
+
+    let gc_resp = tf_open.eval_frequency(gain_crossover_w);
+    let phase_margin_rad = std::f64::consts::PI + gc_resp.im.atan2(gc_resp.re);
+    let phase_margin_deg = phase_margin_rad * 180.0 / std::f64::consts::PI;
+
+    let pc_resp = tf_open.eval_frequency(phase_crossover_w);
+    let pc_mag = (pc_resp.re * pc_resp.re + pc_resp.im * pc_resp.im).sqrt();
+    let gain_margin_db = -20.0 * pc_mag.log10();
+
+    json!({
+        "freqs": freqs,
+        "h_re": h_re,
+        "h_im": h_im,
+        "critical_point": [-1.0, 0.0],
+        "gain_crossover_w": gain_crossover_w,
+        "phase_crossover_w": phase_crossover_w,
+        "phase_margin_deg": phase_margin_deg,
+        "gain_margin_db": gain_margin_db,
+    })
+}
+
+// -----------------------------------------------------------------------------
+// 4. Filter Topology Stability (Catastrophic Cancellation in f32)
+// -----------------------------------------------------------------------------
+fn benchmark_topology_stability() -> Value {
+    // 6th-order continuous Butterworth lowpass filter fc = 35 Hz
+    let cutoff_hz = 35.0_f64;
+    let wc = 2.0 * std::f64::consts::PI * cutoff_hz;
+    let dt = 0.01_f64;
+
+    // Continuous s-domain poles for 6th-order Butterworth
+    let mut s_poles = Vec::with_capacity(6);
+    for k in 0..6 {
+        let angle = std::f64::consts::PI * (2.0 * (k as f64) + 7.0) / 12.0;
+        s_poles.push(Complex::new(wc * angle.cos(), wc * angle.sin()));
+    }
+
+    // Tustin discrete mapping: z = (1 + s*dt/2) / (1 - s*dt/2)
+    let mut gt_z_poles = Vec::with_capacity(6);
+    for &s in &s_poles {
+        let num = Complex::new(1.0, 0.0) + s * Complex::new(dt / 2.0, 0.0);
+        let den = Complex::new(1.0, 0.0) - s * Complex::new(dt / 2.0, 0.0);
+        gt_z_poles.push(num / den);
+    }
+
+    let gt_re: Vec<f64> = gt_z_poles.iter().map(|p| p.re).collect();
+    let gt_im: Vec<f64> = gt_z_poles.iter().map(|p| p.im).collect();
+
+    // Direct Form f32 Polynomial Expansion
+    let mut df_poly_f32 = vec![1.0f32];
+    for pair_idx in 0..3 {
+        let p1 = gt_z_poles[2 * pair_idx];
+        let p2 = gt_z_poles[2 * pair_idx + 1];
+        let b1 = -(p1.re + p2.re) as f32;
+        let b0 = (p1.re * p2.re + p1.im * p1.im) as f32;
+
+        let mut next_poly = vec![0.0f32; df_poly_f32.len() + 2];
+        for i in 0..df_poly_f32.len() {
+            next_poly[i + 2] += df_poly_f32[i];
+            next_poly[i + 1] += df_poly_f32[i] * b1;
+            next_poly[i] += df_poly_f32[i] * b0;
+        }
+        df_poly_f32 = next_poly;
+    }
+
+    // Solve Direct Form f32 roots using Durand-Kerner
+    let solve_df_roots = |c: &[f32]| -> Vec<Complex<f64>> {
+        let mut z = vec![
+            Complex::new(0.6, 0.8),
+            Complex::new(0.6, -0.8),
+            Complex::new(-0.6, 0.8),
+            Complex::new(-0.6, -0.8),
+            Complex::new(1.1, 0.3),
+            Complex::new(1.1, -0.3),
+        ];
+
+        let eval_poly = |z_val: Complex<f64>| -> Complex<f64> {
+            let mut acc = Complex::new(c[6] as f64, 0.0);
+            for i in (0..6).rev() {
+                acc = acc * z_val + Complex::new(c[i] as f64, 0.0);
+            }
+            acc
+        };
+
+        for _ in 0..60 {
+            let mut z_next = z.clone();
+            for i in 0..6 {
+                let p_val = eval_poly(z[i]);
+                let mut denom = Complex::new(c[6] as f64, 0.0);
+                for j in 0..6 {
+                    if i != j {
+                        denom = denom * (z[i] - z[j]);
+                    }
+                }
+                if denom.re.abs() + denom.im.abs() > 1e-12 {
+                    z_next[i] = z[i] - p_val / denom;
+                }
+            }
+            z = z_next;
+        }
+        z
+    };
+
+    let df_roots = solve_df_roots(&df_poly_f32);
+    let df_re: Vec<f64> = df_roots.iter().map(|p| p.re).collect();
+    let df_im: Vec<f64> = df_roots.iter().map(|p| p.im).collect();
+
+    // Biquad (SOS) f32 Roots
+    let mut biquad_re = Vec::with_capacity(6);
+    let mut biquad_im = Vec::with_capacity(6);
+    for pair_idx in 0..3 {
+        let p1 = gt_z_poles[2 * pair_idx];
+        let p2 = gt_z_poles[2 * pair_idx + 1];
+        let b1 = -(p1.re + p2.re) as f32;
+        let b0 = (p1.re * p2.re + p1.im * p1.im) as f32;
+
+        let disc = (b1 * b1 - 4.0 * b0) as f64;
+        if disc < 0.0 {
+            let re = (-b1 / 2.0) as f64;
+            let im = ((-disc).sqrt() / 2.0) as f64;
+            biquad_re.push(re);
+            biquad_im.push(im);
+            biquad_re.push(re);
+            biquad_im.push(-im);
+        } else {
+            let r1 = ((-b1 as f64) + disc.sqrt()) / 2.0;
+            let r2 = ((-b1 as f64) - disc.sqrt()) / 2.0;
+            biquad_re.push(r1);
+            biquad_im.push(0.0);
+            biquad_re.push(r2);
+            biquad_im.push(0.0);
+        }
+    }
+
+    json!({
+        "ground_truth_re": gt_re,
+        "ground_truth_im": gt_im,
+        "direct_form_re": df_re,
+        "direct_form_im": df_im,
+        "biquad_re": biquad_re,
+        "biquad_im": biquad_im,
+    })
 }
 
 fn run_validation_default() -> Value {
-    let omega_n = 10.0;
-    let zeta = 0.2;
-    let tf = Tf::<1, 3>::from_storage(
-        StoreNum::from_column([100.0]),
-        StoreDen::from_column([100.0, 4.0, 1.0]),
-        None,
-    );
+    let discretization = benchmark_discretization_error();
+    let nyquist = benchmark_nyquist_criterion();
+    let topology = benchmark_topology_stability();
 
-    let freqs = logspace(-2.0, 3.0, BODE_N);
-    let mut h_re = vec![0.0_f64; BODE_N];
-    let mut h_im = vec![0.0_f64; BODE_N];
-    let mut mag = vec![0.0_f64; BODE_N];
-    let mut phase = vec![0.0_f64; BODE_N];
-
-    let t_bode = Instant::now();
-    for (idx, &w) in freqs.iter().enumerate() {
-        let resp = tf.eval_frequency(w);
-        let (mag_pt, phase_rad) = tf.bode_point(w);
-        h_re[idx] = resp.re;
-        h_im[idx] = resp.im;
-        mag[idx] = mag_pt;
-        phase[idx] = phase_rad;
-    }
-    let bode_time_ns = t_bode.elapsed().as_nanos() as f64;
-
-    let h1 = Tf::<1, 2>::from_storage(
-        StoreNum::from_column([2.0]),
-        StoreDen::from_column([2.0, 1.0]),
-        None,
-    );
-    let h2 = Tf::<1, 2>::from_storage(
-        StoreNum::from_column([5.0]),
-        StoreDen::from_column([5.0, 1.0]),
-        None,
-    );
-
-    let t_series = Instant::now();
-    let h_series = h1.series_with::<Dsp, 1, 2, 1, 3>(&h2);
-    let series_time_ns = t_series.elapsed().as_nanos() as f64;
-
+    // Legacy tutorial payload fields
     let tf_realize = Tf::<2, 3>::from_storage(
         StoreNum::from_column([2.0, 3.0]),
         StoreDen::from_column([4.0, 5.0, 1.0]),
         None,
     );
-
-    let t_ccf = Instant::now();
     let ss = tf_realize
-        .to_controllable_canonical_form_with::<Blas, 2>()
+        .to_controllable_canonical_form::<2>()
         .expect("CCF failed");
-    let ccf_time_ns = t_ccf.elapsed().as_nanos() as f64;
-
-    let d1 = Polynomial::<f64, Const<5>, StoreDen<5>>::from_storage(
-        StoreDen::from_column(poly_s_plus_a_4(1.0)),
-    );
-    let d2 = Polynomial::<f64, Const<5>, StoreDen<5>>::from_storage(
-        StoreDen::from_column(poly_s_plus_a_4(1.01)),
-    );
-    let den_c = d1.mul_poly_with::<Dsp, 5, 9>(&d2);
-    let mut den_arr = [0.0_f64; 9];
-    for i in 0..9 {
-        den_arr[i] = den_c.get(i).copied().unwrap_or(0.0);
-    }
-    let tf_c = Tf::<1, 9>::from_storage(
-        StoreNum::from_column([1.0]),
-        StoreDen::from_column(den_arr),
-        None,
-    );
-    let mut c_re = vec![0.0_f64; BODE_N];
-    let mut c_im = vec![0.0_f64; BODE_N];
-    let mut c_mag = vec![0.0_f64; BODE_N];
-
-    let t_c_bode = Instant::now();
-    for (idx, &w) in freqs.iter().enumerate() {
-        let resp = tf_c.eval_frequency(w);
-        c_re[idx] = resp.re;
-        c_im[idx] = resp.im;
-        c_mag[idx] = (resp.re * resp.re + resp.im * resp.im).sqrt();
-    }
-    let cluster_bode_time_ns = t_c_bode.elapsed().as_nanos() as f64;
 
     json!({
-        "complex_pair": {
-            "h_re": h_re,
-            "h_im": h_im,
-            "freqs": freqs,
-            "mag": mag,
-            "phase": phase,
-            "omega_n": omega_n,
-            "zeta": zeta,
-            "bode_time_ns": bode_time_ns,
-        },
-        "series": {
-            "num_ser": [h_series.num_slice()[0]],
-            "den_ser": [h_series.den_slice()[0], h_series.den_slice()[1], h_series.den_slice()[2]],
-            "series_time_ns": series_time_ns,
-        },
-        "ccf": {
-            "a": to_rows(&ss.a()),
-            "b": to_rows(&ss.b()),
-            "c": to_rows(&ss.c()),
-            "d": to_rows(&ss.d()),
-            "ccf_time_ns": ccf_time_ns,
-        },
-        "clustered": {
-            "h_re": c_re,
-            "h_im": c_im,
-            "mag": c_mag,
-            "cluster_bode_time_ns": cluster_bode_time_ns,
+        "discretization_error": discretization,
+        "nyquist_criterion": nyquist,
+        "topology_stability": topology,
+        "tutorial": {
+            "a00": ss.a().get(0, 0).copied().unwrap_or(0.0),
+            "a01": ss.a().get(0, 1).copied().unwrap_or(0.0),
+            "a10": ss.a().get(1, 0).copied().unwrap_or(0.0),
+            "a11": ss.a().get(1, 1).copied().unwrap_or(0.0),
         }
     })
 }
@@ -193,44 +326,35 @@ fn run_validation_default() -> Value {
 pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
-    if let (Some(r_re), Some(p_re)) = (
-        rust["complex_pair"]["h_re"].as_array(),
-        python["complex_pair"]["h_re"].as_array(),
-    ) {
-        for (i, (r, p)) in r_re.iter().zip(p_re.iter()).enumerate() {
-            let rv = r.as_f64().unwrap_or(0.0);
-            let pv = p.as_f64().unwrap_or(0.0);
-            if (rv - pv).abs() > 1e-6 {
-                errs.push(format!("complex_pair h_re[{i}]: rust {rv} vs python {pv}"));
+    let check_f64 =
+        |key: &str, r: f64, p: f64, tol: f64, errs: &mut Vec<String>| {
+            if (r - p).abs() > tol {
+                errs.push(format!("{key}: rust {r} vs python {p} (tol {tol})"));
             }
-        }
+        };
+
+    if let (Some(r), Some(p)) = (
+        rust["tutorial"]["a00"].as_f64(),
+        python["tutorial"]["a00"].as_f64(),
+    ) {
+        check_f64("tutorial a00", r, p, 1e-12, &mut errs);
     }
 
-    if let (Some(r_num), Some(p_num)) = (
-        rust["series"]["num_ser"].as_array(),
-        python["series"]["num_ser"].as_array(),
-    ) {
-        for (i, (r, p)) in r_num.iter().zip(p_num.iter()).enumerate() {
-            let rv = r.as_f64().unwrap_or(0.0);
-            let pv = p.as_f64().unwrap_or(0.0);
-            if (rv - pv).abs() > 1e-12 {
-                errs.push(format!("series num_ser[{i}]: rust {rv} vs python {pv}"));
+    let check_array = |key: &str, rust_arr: Option<&Vec<Value>>, py_arr: Option<&Vec<Value>>, tol: f64, errs: &mut Vec<String>| {
+        if let (Some(r_slice), Some(p_slice)) = (rust_arr, py_arr) {
+            for (i, (r, p)) in r_slice.iter().zip(p_slice.iter()).enumerate() {
+                let rv = r.as_f64().unwrap_or(0.0);
+                let pv = p.as_f64().unwrap_or(0.0);
+                if (rv - pv).abs() > tol {
+                    errs.push(format!("{key}[{i}]: rust {rv} vs python {pv} (tol {tol})"));
+                }
             }
         }
-    }
+    };
 
-    if let (Some(r_den), Some(p_den)) = (
-        rust["series"]["den_ser"].as_array(),
-        python["series"]["den_ser"].as_array(),
-    ) {
-        for (i, (r, p)) in r_den.iter().zip(p_den.iter()).enumerate() {
-            let rv = r.as_f64().unwrap_or(0.0);
-            let pv = p.as_f64().unwrap_or(0.0);
-            if (rv - pv).abs() > 1e-12 {
-                errs.push(format!("series den_ser[{i}]: rust {rv} vs python {pv}"));
-            }
-        }
-    }
+    check_array("cont_mag_db", rust["discretization_error"]["cont_mag_db"].as_array(), python["discretization_error"]["cont_mag_db"].as_array(), 1e-3, &mut errs);
+    check_array("tustin_mag_db", rust["discretization_error"]["tustin_mag_db"].as_array(), python["discretization_error"]["tustin_mag_db"].as_array(), 1e-3, &mut errs);
+    check_array("zoh_mag_db", rust["discretization_error"]["zoh_mag_db"].as_array(), python["discretization_error"]["zoh_mag_db"].as_array(), 1e-3, &mut errs);
 
     if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
@@ -269,18 +393,26 @@ pub fn run() -> Value {
         "python3": py_results
     });
 
-    fs::create_dir_all("results").expect("Failed to create results directory");
-    let out_path = "results/transfer_function.json";
+    let out_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| std::path::PathBuf::from(d).join("results"))
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(
+                "examples/numerical-models-validation/results",
+            )
+        });
+
+    fs::create_dir_all(&out_dir).expect("Failed to create results directory");
+    let out_path = out_dir.join("transfer_function.json");
 
     fs::write(
-        out_path,
+        &out_path,
         serde_json::to_string_pretty(&combined_results).unwrap(),
     )
     .expect("Failed to write results file");
 
     println!(
         "Success: Transfer Function cross-validation passed! Payload saved to {}",
-        out_path
+        out_path.display()
     );
 
     combined_results

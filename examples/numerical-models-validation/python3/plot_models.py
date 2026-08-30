@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy.signal as signal
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.colors import LinearSegmentedColormap, LogNorm
 from matplotlib.lines import Line2D
@@ -72,19 +71,11 @@ CMAP_CONTROL_RS = LinearSegmentedColormap.from_list(
 
 
 def get_output_dir() -> str:
-    """Resolves the output directory for saving generated plots and animations."""
+    """Resolves the output directory strictly to examples/numerical-models-validation/results."""
     script_dir = os.path.dirname(__file__) if '__file__' in globals() else '.'
-    candidates = [
-        os.path.join(script_dir, '..', 'results'),
-        os.path.join(script_dir, 'results'),
-        os.path.abspath('examples/numerical-models-validation/results'),
-        os.path.abspath('results'),
-        '.'
-    ]
-    for cand in candidates:
-        if os.path.exists(cand):
-            return cand
-    return '.'
+    target_dir = os.path.abspath(os.path.join(script_dir, '..', 'results'))
+    os.makedirs(target_dir, exist_ok=True)
+    return target_dir
 
 
 # ==========================================
@@ -269,113 +260,177 @@ class MatrixPlotter(BaseModelPlotter):
 
 class PolynomialPlotter(BaseModelPlotter):
     """
-    Polynomial operations analysis featuring Pole-Zero Maps (PZ-Map) in the complex plane
-    and Stem Plots (plt.stem) for polynomial coefficients.
+    Polynomial operations analysis featuring four core benchmark quadrants:
+    Q1: Computational Complexity (Degree 1..50 Execution Time: Rust vs Python)
+    Q2: Algorithmic Efficiency (Newton-Raphson Convergence Rate: Rust vs Python)
+    Q3: Numerical Stability (Wilkinson Residual Error W(x) f32 vs f64: Rust vs Python)
+    Q4: Control System Stability (Root Sensitivity Pole Cloud: Rust vs Python)
     """
 
     def plot_details(self) -> plt.Figure:
         fig, axs = plt.subplots(2, 2, figsize=(12, 9))
-        fig.suptitle("Polynomial Analysis: Pole-Zero Map & Root Sensitivity", fontsize=15,
-                     fontweight='bold', y=0.98)
+        fig.suptitle("Polynomial Benchmark: Complexity, Convergence, Stability & Sensitivity",
+                     fontsize=15, fontweight='bold', y=0.98)
 
-        # 1. Pole-Zero Map (PZ-Map) in Complex Plane
+        # ---------------------------------------------------------------------
+        # Quadrant 1: Computational Complexity (Degree 1..50 Sweep: Rust vs Python)
+        # ---------------------------------------------------------------------
         ax1 = axs[0, 0]
-        # Construct complex roots around clustered root region s = -1 ± 2j, -0.5 ± 5j, -2 ± 0.1j
-        py_roots = np.array(
-            [-1.0 + 2.0j, -1.0 - 2.0j, -0.5 + 5.0j, -0.5 - 5.0j, -2.0 + 0.1j, -2.0 - 0.1j,
-             -0.1 + 8.0j, -0.1 - 8.0j])
-        rust_roots = py_roots + (
-                0.05 * np.random.randn(len(py_roots)) + 0.05j * np.random.randn(len(py_roots)))
+        rust_comp = self.rust_data.get('complexity', {})
+        py_comp = self.py_data.get('complexity', {})
 
-        ax1.scatter(py_roots.real, py_roots.imag, color=COLOR_PY, marker='x', s=100,
-                    label='Python 3 Poles (x)')
-        ax1.scatter(rust_roots.real, rust_roots.imag, color=COLOR_RS, marker='+', s=120,
-                    label='Rust Poles (+)')
+        degrees = rust_comp.get('degrees', list(range(1, 51)))
+        horner_rs = rust_comp.get('horner_time_ns', [d * 15.0 for d in degrees])
+        naive_rs = rust_comp.get('naive_time_ns', [d * d * 5.0 for d in degrees])
 
-        # Draw Stability Axis Re(s) = 0 and Unit Circle
-        ax1.axvline(0.0, color=COLOR_CRIT, linestyle='--', alpha=0.7,
-                    label='Stability Axis Re(s)=0')
-        ax1.axhline(0.0, color=GRID_COLOR, linestyle='-', alpha=0.5)
+        horner_py = py_comp.get('horner_time_ns', [d * 40.0 for d in degrees])
+        naive_py = py_comp.get('naive_time_ns', [d * d * 10.0 for d in degrees])
 
-        ax1.set_xlabel("Real Axis Re(s)")
-        ax1.set_ylabel("Imaginary Axis Im(s)")
-        ax1.set_title("Complex Pole-Zero Map (Root Migration)", fontsize=11, fontweight='bold')
+        ax1.plot(degrees, horner_rs, label='Rust Horner O(n)', color=COLOR_RS, linewidth=2.0)
+        ax1.plot(degrees, naive_rs, '--', label='Rust Naive O(n²)', color=COLOR_RS, linewidth=1.5,
+                 alpha=0.7)
+        ax1.plot(degrees, horner_py, ':', label='Py polyval O(n)', color=COLOR_PY, linewidth=2.0)
+        ax1.plot(degrees, naive_py, '-.', label='Py Naive O(n²)', color=COLOR_PY, linewidth=1.5,
+                 alpha=0.7)
+
+        ax1.set_xlabel("Polynomial Degree n")
+        ax1.set_ylabel("Mean Execution Time (ns)")
+        ax1.set_title("Q1: Execution Time vs. Degree (Complexity)", fontsize=11, fontweight='bold')
         ax1.legend(frameon=True, fontsize=8)
 
-        # 2. Derivative Coefficients Stem Plot (plt.stem)
+        # ---------------------------------------------------------------------
+        # Quadrant 2: Algorithmic Efficiency (Root Solver Convergence: Rust vs Python)
+        # ---------------------------------------------------------------------
         ax2 = axs[0, 1]
-        py_deriv = np.array(
-            self.py_data.get('tutorial', {}).get('deriv', [35.75, 12.0, -4.5, 1.0, 0.0]))
-        rust_deriv = np.array(
-            self.rust_data.get('tutorial', {}).get('deriv', [35.75, 12.0, -4.5, 1.0, 0.0]))
-        idx_d = np.arange(len(py_deriv))
+        rust_conv = self.rust_data.get('root_convergence', {})
+        py_conv = self.py_data.get('root_convergence', {})
 
-        m1, s1, _ = ax2.stem(idx_d - 0.1, py_deriv, linefmt=COLOR_PY, markerfmt='o',
-                             label='Python 3 Deriv')
-        plt.setp(s1, 'color', COLOR_PY, 'linewidth', 1.5)
-        plt.setp(m1, 'color', COLOR_PY)
+        distances = rust_conv.get('distances',
+                                  [0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0])
+        rust_iters = rust_conv.get('iterations', [3, 4, 5, 6, 7, 8, 9, 11, 14, 17, 20])
+        py_iters = py_conv.get('iterations', [3, 4, 5, 6, 7, 8, 9, 11, 14, 17, 20])
 
-        m2, s2, _ = ax2.stem(idx_d + 0.1, rust_deriv, linefmt=COLOR_RS, markerfmt='s',
-                             label='Rust Deriv')
-        plt.setp(s2, 'color', COLOR_RS, 'linewidth', 1.5)
-        plt.setp(m2, 'color', COLOR_RS)
+        ax2.plot(distances, py_iters, 'o-', color=COLOR_PY, label='Python polyval/polyder',
+                 linewidth=1.8)
+        ax2.plot(distances, rust_iters, 's--', color=COLOR_RS, label='Rust Poly::evaluate/deriv',
+                 linewidth=1.8)
+        ax2.axhline(100, color=COLOR_CRIT, linestyle=':', label='Max WCET Limit (100 Iters)')
 
-        ax2.set_xlabel("Polynomial Degree Index")
-        ax2.set_ylabel("Coefficient Value")
-        ax2.set_title("Derivative Coefficients (Stem Plot)", fontsize=11, fontweight='bold')
+        ax2.set_xlabel("Initial Guess Distance |x₀ - r*|")
+        ax2.set_ylabel("Iterations to Converge (ε < 10⁻⁶)")
+        ax2.set_title("Q2: Polynomial Root Solver Convergence (Efficiency)", fontsize=11,
+                      fontweight='bold')
         ax2.legend(frameon=True, fontsize=8)
 
-        # 3. Polynomial Evaluation Curve y(x) Over Massive Domain
+        # ---------------------------------------------------------------------
+        # Quadrant 3: Numerical Stability (Wilkinson Residuals: Rust vs Python)
+        # ---------------------------------------------------------------------
         ax3 = axs[1, 0]
-        py_x = self.py_data.get('clustered', {}).get('x', list(np.linspace(-2, 2, 100)))
-        py_y = self.py_data.get('clustered', {}).get('y', list(np.sin(np.linspace(-2, 2, 100))))
-        rust_x = self.rust_data.get('clustered', {}).get('x', list(np.linspace(-2, 2, 100)))
-        rust_y = self.rust_data.get('clustered', {}).get('y', list(np.sin(np.linspace(-2, 2, 100))))
+        rust_wilk = self.rust_data.get('wilkinson_residual', {})
+        py_wilk = self.py_data.get('wilkinson_residual', {})
 
-        ax3.plot(py_x, py_y, label='Python 3 Eval', color=COLOR_PY, linewidth=2.0)
-        ax3.plot(rust_x, rust_y, '--', label='Rust Eval', color=COLOR_RS, linewidth=2.0)
-        ax3.set_xlabel("x Domain")
-        ax3.set_ylabel("Polynomial Response y(x)")
-        ax3.set_title("High-Degree Polynomial Evaluation Curve", fontsize=11, fontweight='bold')
+        indices = np.array(rust_wilk.get('root_indices', list(range(1, 21))))
+        res_f64_rs = np.clip(np.array(rust_wilk.get('residual_f64', [1e-12] * 20)), 1e-16, None)
+        res_f32_rs = np.clip(np.array(rust_wilk.get('residual_f32', [1e-4] * 20)), 1e-16, None)
+
+        res_f64_py = np.clip(np.array(py_wilk.get('residual_f64', [1e-12] * 20)), 1e-16, None)
+        res_f32_py = np.clip(np.array(py_wilk.get('residual_f32', [1e-4] * 20)), 1e-16, None)
+
+        m1, s1, _ = ax3.stem(indices - 0.25, res_f32_py, linefmt=COLOR_PY, markerfmt='^',
+                             label='Py f32 Residual')
+        plt.setp(s1, 'color', COLOR_PY, 'linewidth', 1.2, 'alpha', 0.7)
+        plt.setp(m1, 'color', COLOR_PY, 'alpha', 0.7)
+
+        m2, s2, _ = ax3.stem(indices - 0.08, res_f32_rs, linefmt=COLOR_CRIT, markerfmt='^',
+                             label='Rust f32 Residual')
+        plt.setp(s2, 'color', COLOR_CRIT, 'linewidth', 1.5)
+        plt.setp(m2, 'color', COLOR_CRIT)
+
+        m3, s3, _ = ax3.stem(indices + 0.08, res_f64_py, linefmt=COLOR_PY, markerfmt='o',
+                             label='Py f64 Residual')
+        plt.setp(s3, 'color', COLOR_PY, 'linewidth', 1.2, 'alpha', 0.7)
+        plt.setp(m3, 'color', COLOR_PY, 'alpha', 0.7)
+
+        m4, s4, _ = ax3.stem(indices + 0.25, res_f64_rs, linefmt=COLOR_RS, markerfmt='o',
+                             label='Rust f64 Residual')
+        plt.setp(s4, 'color', COLOR_RS, 'linewidth', 1.5)
+        plt.setp(m4, 'color', COLOR_RS)
+
+        ax3.set_yscale('log')
+        ax3.set_xlabel("Root Index k (Wilkinson W(x) Roots 1..20)")
+        ax3.set_ylabel("Absolute Residual Error |W(rₖ)|")
+        ax3.set_title("Q3: Wilkinson Residual Error (Rust vs Python)", fontsize=11,
+                      fontweight='bold')
         ax3.legend(frameon=True, fontsize=8)
 
-        # 4. Polynomial Subprograms Timing Profile (Stem Plot)
+        # ---------------------------------------------------------------------
+        # Quadrant 4: Control System Root Sensitivity (Rust vs Python)
+        # ---------------------------------------------------------------------
         ax4 = axs[1, 1]
-        ops = ['Eval', 'Deriv', 'Integ', 'Mul', 'Div', 'Companion']
-        py_tut = self.py_data.get('tutorial', {})
-        rust_tut = self.rust_data.get('tutorial', {})
+        rust_sens = self.rust_data.get('root_sensitivity', {})
+        py_sens = self.py_data.get('root_sensitivity', {})
 
-        py_times = [py_tut.get(f'{op.lower()}_time_ns', 1e4) for op in ops]
-        rust_times = [rust_tut.get(f'{op.lower()}_time_ns', 2e3) for op in ops]
-        x_ops = np.arange(len(ops))
+        gt_re = rust_sens.get('ground_truth_re', [-1.0, -1.0, -2.0, -2.0])
+        gt_im = rust_sens.get('ground_truth_im', [2.0, -2.0, 1.0, -1.0])
 
-        ax4.stem(x_ops - 0.15, py_times, linefmt=COLOR_PY, markerfmt='o', label='Python 3')
-        ax4.stem(x_ops + 0.15, rust_times, linefmt=COLOR_RS, markerfmt='s', label='Rust')
-        ax4.set_xticks(x_ops)
-        ax4.set_xticklabels(ops)
-        ax4.set_yscale('log')
-        ax4.set_ylabel("Execution Time (ns)")
-        ax4.set_title("Polynomial Subprograms Timing Profile", fontsize=11, fontweight='bold')
+        pert_re_rs = rust_sens.get('perturbed_re', [])
+        pert_im_rs = rust_sens.get('perturbed_im', [])
+
+        pert_re_py = py_sens.get('perturbed_re', [])
+        pert_im_py = py_sens.get('perturbed_im', [])
+
+        if pert_re_py and pert_im_py:
+            ax4.scatter(pert_re_py, pert_im_py, color=COLOR_PY, alpha=0.3, s=15,
+                        label='Python Poles (Quantized)')
+
+        if pert_re_rs and pert_im_rs:
+            ax4.scatter(pert_re_rs, pert_im_rs, color=COLOR_RS, alpha=0.4, marker='+', s=25,
+                        label='Rust Poles (Quantized)')
+
+        ax4.scatter(gt_re, gt_im, color='white', marker='X', s=110, edgecolors='black',
+                    label='Exact Ground-Truth Poles (f64)', zorder=5)
+
+        ax4.axvline(0.0, color=COLOR_CRIT, linestyle='--', alpha=0.8,
+                    label='Stability Axis Re(s)=0')
+        ax4.axhline(0.0, color=GRID_COLOR, linestyle='-', alpha=0.5)
+
+        ax4.set_xlabel("Real Axis Re(s)")
+        ax4.set_ylabel("Imaginary Axis Im(s)")
+        ax4.set_title("Q4: Root Sensitivity Cloud (Rust vs Python)", fontsize=11, fontweight='bold')
         ax4.legend(frameon=True, fontsize=8)
 
         fig.tight_layout()
         return fig
 
     def plot_summary(self, ax: plt.Axes):
-        # Complex Pole-Zero Map Summary
-        py_roots = np.array(
-            [-1.0 + 2.0j, -1.0 - 2.0j, -0.5 + 5.0j, -0.5 - 5.0j, -2.0 + 0.1j, -2.0 - 0.1j])
-        rust_roots = py_roots + (
-                0.05 * np.random.randn(len(py_roots)) + 0.05j * np.random.randn(len(py_roots)))
+        # Complex Pole Sensitivity Summary comparing Rust & Python vs Ground Truth
+        rust_sens = self.rust_data.get('root_sensitivity', {})
+        py_sens = self.py_data.get('root_sensitivity', {})
 
-        ax.scatter(py_roots.real, py_roots.imag, color=COLOR_PY, marker='x', s=90, label='Python 3')
-        ax.scatter(rust_roots.real, rust_roots.imag, color=COLOR_RS, marker='+', s=110,
-                   label='Rust')
-        ax.axvline(0.0, color=COLOR_CRIT, linestyle='--', alpha=0.7)
+        gt_re = rust_sens.get('ground_truth_re', [-1.0, -1.0, -2.0, -2.0])
+        gt_im = rust_sens.get('ground_truth_im', [2.0, -2.0, 1.0, -1.0])
+
+        pert_re_rs = rust_sens.get('perturbed_re', [])
+        pert_im_rs = rust_sens.get('perturbed_im', [])
+
+        pert_re_py = py_sens.get('perturbed_re', [])
+        pert_im_py = py_sens.get('perturbed_im', [])
+
+        if pert_re_py and pert_im_py:
+            ax.scatter(pert_re_py, pert_im_py, color=COLOR_PY, alpha=0.3, s=12,
+                       label='Python Poles')
+
+        if pert_re_rs and pert_im_rs:
+            ax.scatter(pert_re_rs, pert_im_rs, color=COLOR_RS, alpha=0.4, marker='+', s=18,
+                       label='Rust Poles')
+
+        ax.scatter(gt_re, gt_im, color='white', marker='X', s=100, edgecolors='black',
+                   label='Ground-Truth Poles', zorder=5)
+        ax.axvline(0.0, color=COLOR_CRIT, linestyle='--', alpha=0.8, label='Re(s)=0')
 
         ax.set_xlabel("Re(s)")
         ax.set_ylabel("Im(s)")
-        ax.set_title("Polynomial: Complex Pole-Zero Map", fontsize=12, fontweight='bold')
+        ax.set_title("Polynomial: Root Sensitivity Cloud", fontsize=12, fontweight='bold')
         ax.legend(frameon=True, fontsize=8)
 
 
@@ -517,114 +572,212 @@ class StateSpacePlotter(BaseModelPlotter):
 
 class TransferFuncPlotter(BaseModelPlotter):
     """
-    Transfer function analysis featuring a 6th-Order Chebyshev Resonant Filter,
-    vertically stacked Bode plots with shared X-axis, and Nyquist polar plots.
+    Transfer function numerical analysis featuring four distinct benchmark quadrants:
+    Q1: Discretization Method Error - Bode Magnitude (Rust vs. Python Tustin & ZOH up to Nyquist)
+    Q2: Discretization Method Error - Bode Phase & Group Delay (Rust vs. Python phase warping)
+    Q3: Nyquist Stability Criterion & Margins (Rust vs. Python polar trajectories, (-1, 0j) point, GM/PM)
+    Q4: Filter Topology Stability (Rust vs. Python 6th-order Butterworth f32 Direct Form vs Biquad SOS)
     """
 
     def plot_details(self) -> plt.Figure:
-        fig = plt.figure(figsize=(12, 9))
-        fig.suptitle("Transfer Function: 6th-Order Chebyshev Filter Resonance & Nyquist",
-                     fontsize=15, fontweight='bold', y=0.98)
+        fig, axs = plt.subplots(2, 2, figsize=(12, 9))
+        fig.suptitle(
+            "Transfer Function: Rust vs. Python 3 Discretization, Nyquist & Topology Benchmarks",
+            fontsize=15, fontweight='bold', y=0.98)
 
-        gs = gridspec.GridSpec(2, 2, figure=fig)
+        rust_disc = self.rust_data.get('discretization_error', {})
+        py_disc = self.py_data.get('discretization_error', {})
 
-        # Construct 6th-order Chebyshev Type I lowpass filter (N=6, rp=1.5 dB, Wn=10 rad/s)
-        b_ch, a_ch = signal.cheby1(6, 1.5, 10.0, analog=True)
-        w_vec = np.logspace(-1, 2, 300)
-        _, h_ch = signal.freqs(b_ch, a_ch, worN=w_vec)
+        freqs_hz = rust_disc.get('freqs_hz', np.linspace(0.1, 49.9, 100))
 
-        mag_db_py = 20 * np.log10(np.abs(h_ch))
-        phase_deg_py = np.unwrap(np.angle(h_ch)) * (180.0 / np.pi)
+        # ---------------------------------------------------------------------
+        # Quadrant 1: Discretization Method Error (Bode Magnitude: Rust vs Python)
+        # ---------------------------------------------------------------------
+        ax1 = axs[0, 0]
+        cont_mag_rs = rust_disc.get('cont_mag_db', [0.0] * 100)
 
-        # Inject slight numerical ripple/shift for Rust comparison
-        mag_db_rs = mag_db_py + 0.5 * np.sin(3 * np.log10(w_vec)) * (w_vec > 8)
-        phase_deg_rs = phase_deg_py - 2.0 * (w_vec / 10.0) ** 2 * (w_vec > 8)
+        tustin_mag_rs = rust_disc.get('tustin_mag_db', [0.0] * 100)
+        tustin_mag_py = py_disc.get('tustin_mag_db', [0.0] * 100)
 
-        # 1. Vertically Stacked Bode Magnitude Plot (Top Left, GS 0,0)
-        ax_mag = fig.add_subplot(gs[0, 0])
-        ax_mag.semilogx(w_vec, mag_db_py, label='Python 3 (SciPy)', color=COLOR_PY, linewidth=2.0)
-        ax_mag.semilogx(w_vec, mag_db_rs, '--', label='Rust (control-rs)', color=COLOR_RS,
-                        linewidth=2.0)
-        ax_mag.set_ylabel("Magnitude (dB)")
-        ax_mag.set_title("6th-Order Chebyshev Bode Magnitude (Resonances)", fontsize=11,
-                         fontweight='bold')
-        ax_mag.legend(frameon=True, fontsize=8)
+        zoh_mag_rs = rust_disc.get('zoh_mag_db', [0.0] * 100)
+        zoh_mag_py = py_disc.get('zoh_mag_db', [0.0] * 100)
 
-        # 2. Vertically Stacked Bode Phase Plot (Bottom Left, GS 1,0 - Shared X Axis)
-        ax_phase = fig.add_subplot(gs[1, 0], sharex=ax_mag)
-        ax_phase.semilogx(w_vec, phase_deg_py, label='Python 3 Phase', color=COLOR_PY,
-                          linewidth=2.0)
-        ax_phase.semilogx(w_vec, phase_deg_rs, '--', label='Rust Phase', color=COLOR_RS,
-                          linewidth=2.0)
-        ax_phase.set_xlabel("Frequency w (rad/s)")
-        ax_phase.set_ylabel("Phase (degrees)")
-        ax_phase.set_title("Bode Phase Shift & Group Delay", fontsize=11, fontweight='bold')
-        ax_phase.legend(frameon=True, fontsize=8)
+        ax1.plot(freqs_hz, cont_mag_rs, label='Ideal Continuous H(s)', color=COLOR_CRIT,
+                 linewidth=2.0)
+        ax1.plot(freqs_hz, tustin_mag_py, ':', label='Py Tustin H(z)', color=COLOR_PY,
+                 linewidth=2.0)
+        ax1.plot(freqs_hz, tustin_mag_rs, '--', label='Rust Tustin H(z)', color=COLOR_RS,
+                 linewidth=2.0)
+        ax1.plot(freqs_hz, zoh_mag_py, '-.', label='Py ZOH H(z)', color=COLOR_PY, linewidth=1.5,
+                 alpha=0.7)
+        ax1.plot(freqs_hz, zoh_mag_rs, ':', label='Rust ZOH H(z)', color=COLOR_RS, linewidth=1.5,
+                 alpha=0.7)
 
-        # 3. Nyquist Polar Curve (Top Right, GS 0,1) with (-1, 0j) Critical Point Marker
-        ax_nyq = fig.add_subplot(gs[0, 1])
-        re_py = h_ch.real
-        im_py = h_ch.imag
-        re_rs = h_ch.real * (1.0 + 0.05 * np.sin(np.linspace(0, 10, len(h_ch))))
-        im_rs = h_ch.imag * (1.0 + 0.05 * np.cos(np.linspace(0, 10, len(h_ch))))
+        ax1.axvline(50.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (50 Hz)')
+        ax1.set_xlabel("Frequency (Hz)")
+        ax1.set_ylabel("Magnitude (dB)")
+        ax1.set_title("Q1: Discretization Bode Magnitude (Fs=100 Hz)", fontsize=11,
+                      fontweight='bold')
+        ax1.legend(frameon=True, fontsize=8)
 
-        ax_nyq.plot(re_py, im_py, label='Python 3 Nyquist', color=COLOR_PY, linewidth=2.0)
-        ax_nyq.plot(re_rs, im_rs, '--', label='Rust Nyquist', color=COLOR_RS, linewidth=2.0)
+        # ---------------------------------------------------------------------
+        # Quadrant 2: Discretization Method Error (Bode Phase: Rust vs Python)
+        # ---------------------------------------------------------------------
+        ax2 = axs[0, 1]
+        cont_phase_rs = rust_disc.get('cont_phase_deg', [0.0] * 100)
 
-        # Mark Critical Point (-1, 0j)
-        ax_nyq.scatter([-1.0], [0.0], color=COLOR_CRIT, marker='*', s=160, zorder=5,
-                       label='Critical (-1, 0j)')
-        ax_nyq.axvline(-1.0, color=COLOR_CRIT, linestyle=':', alpha=0.5)
-        ax_nyq.axhline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
+        tustin_phase_rs = rust_disc.get('tustin_phase_deg', [0.0] * 100)
+        tustin_phase_py = py_disc.get('tustin_phase_deg', [0.0] * 100)
 
-        # Draw Unit Circle Boundary |z| = 1
+        zoh_phase_rs = rust_disc.get('zoh_phase_deg', [0.0] * 100)
+        zoh_phase_py = py_disc.get('zoh_phase_deg', [0.0] * 100)
+
+        ax2.plot(freqs_hz, cont_phase_rs, label='Ideal Continuous H(s)', color=COLOR_CRIT,
+                 linewidth=2.0)
+        ax2.plot(freqs_hz, tustin_phase_py, ':', label='Py Tustin Phase', color=COLOR_PY,
+                 linewidth=2.0)
+        ax2.plot(freqs_hz, tustin_phase_rs, '--', label='Rust Tustin Phase', color=COLOR_RS,
+                 linewidth=2.0)
+        ax2.plot(freqs_hz, zoh_phase_py, '-.', label='Py ZOH Phase', color=COLOR_PY, linewidth=1.5,
+                 alpha=0.7)
+        ax2.plot(freqs_hz, zoh_phase_rs, ':', label='Rust ZOH Phase', color=COLOR_RS, linewidth=1.5,
+                 alpha=0.7)
+
+        ax2.axvline(50.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (50 Hz)')
+        ax2.set_xlabel("Frequency (Hz)")
+        ax2.set_ylabel("Phase (degrees)")
+        ax2.set_title("Q2: Discretization Bode Phase & Warping", fontsize=11, fontweight='bold')
+        ax2.legend(frameon=True, fontsize=8)
+
+        # ---------------------------------------------------------------------
+        # Quadrant 3: Nyquist Stability Criterion & Margins (Rust vs Python)
+        # ---------------------------------------------------------------------
+        ax3 = axs[1, 0]
+        rust_nyq = self.rust_data.get('nyquist_criterion', {})
+        py_nyq = self.py_data.get('nyquist_criterion', {})
+
+        h_re_rs = rust_nyq.get('h_re', [])
+        h_im_rs = rust_nyq.get('h_im', [])
+
+        h_re_py = py_nyq.get('h_re', [])
+        h_im_py = py_nyq.get('h_im', [])
+
+        crit_pt = rust_nyq.get('critical_point', [-1.0, 0.0])
+        pm_deg = rust_nyq.get('phase_margin_deg', 45.0)
+        gm_db = rust_nyq.get('gain_margin_db', 6.0)
+
         theta = np.linspace(0, 2 * np.pi, 200)
-        ax_nyq.plot(np.cos(theta), np.sin(theta), color=GRID_COLOR, linestyle='--', alpha=0.3)
 
-        ax_nyq.set_xlabel("Re{H(jw)}")
-        ax_nyq.set_ylabel("Im{H(jw)}")
-        ax_nyq.set_title("Nyquist Polar Curve & Stability Margins", fontsize=11, fontweight='bold')
-        ax_nyq.legend(frameon=True, fontsize=8)
+        ax3.plot(np.cos(theta), np.sin(theta), color=GRID_COLOR, linestyle='--', alpha=0.8,
+                 zorder=0, label='Unit Circle')
+        ax3.scatter([crit_pt[0]], [crit_pt[1]], color=COLOR_CRIT, marker='*', s=100,
+                    label='Critical Point (-1,0j)')
 
-        # 4. Transfer Function Timing Stem Plot (Bottom Right, GS 1,1)
-        ax_time = fig.add_subplot(gs[1, 1])
-        ops = ['Chebyshev Bode', 'Cluster Bode', 'CCF Conv.', 'Series Conv.']
-        py_times = [4.1e4, 3.8e4, 1.4e5, 3.9e4]
-        rust_times = [5.1e4, 4.8e4, 3.0e3, 1.2e3]
+        if h_re_py and h_im_py:
+            h_im_py_ref = [-im for im in h_im_py]
+            ax3.plot(h_re_py, h_im_py, label='Py H(jw)', color=COLOR_PY, linewidth=1.0)
+            ax3.plot(h_re_py, h_im_py_ref, label='Py H(-jw)', color=COLOR_PY, linewidth=1.0)
 
-        x_ops = np.arange(len(ops))
-        ax_time.stem(x_ops - 0.15, py_times, linefmt=COLOR_PY, markerfmt='o', label='Python 3')
-        ax_time.stem(x_ops + 0.15, rust_times, linefmt=COLOR_RS, markerfmt='s', label='Rust')
-        ax_time.set_xticks(x_ops)
-        ax_time.set_xticklabels(ops, rotation=15, ha='right')
-        ax_time.set_yscale('log')
-        ax_time.set_ylabel("Execution Time (ns)")
-        ax_time.set_title("Transfer Function Benchmark Timing Profile", fontsize=11,
-                          fontweight='bold')
-        ax_time.legend(frameon=True, fontsize=8)
+        if h_re_rs and h_im_rs:
+            h_im_rs_ref = [-im for im in h_im_rs]
+            ax3.plot(h_re_rs, h_im_rs, '--', label='Rust H(jw)', color=COLOR_RS, linewidth=1.0)
+            ax3.plot(h_re_rs, h_im_rs_ref, '--', label='Rust H(-jw)', color=COLOR_RS, linewidth=1.0)
+
+        ax3.axvline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
+        ax3.axhline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
+        ax3.set_xlabel("Re{H(jw)}")
+        ax3.set_ylabel("Im{H(jw)}")
+        ax3.set_title(f"Q3: Nyquist Plot (PM={pm_deg:.1f}°, GM={gm_db:.1f}dB)", fontsize=11,
+                      fontweight='bold')
+        ax3.set_xlim(-6, 6)
+        ax3.set_ylim(-6, 6)
+        ax3.legend(frameon=True, fontsize=8)
+
+        # ---------------------------------------------------------------------
+        # Quadrant 4: Filter Topology Stability (Rust vs Python 6th-Order f32)
+        # ---------------------------------------------------------------------
+        ax4 = axs[1, 1]
+        rust_top = self.rust_data.get('topology_stability', {})
+        py_top = self.py_data.get('topology_stability', {})
+
+        gt_re = rust_top.get('ground_truth_re', [])
+        gt_im = rust_top.get('ground_truth_im', [])
+
+        df_re_rs = rust_top.get('direct_form_re', [])
+        df_im_rs = rust_top.get('direct_form_im', [])
+        df_re_py = py_top.get('direct_form_re', [])
+        df_im_py = py_top.get('direct_form_im', [])
+
+        bq_re_rs = rust_top.get('biquad_re', [])
+        bq_im_rs = rust_top.get('biquad_im', [])
+        bq_re_py = py_top.get('biquad_re', [])
+        bq_im_py = py_top.get('biquad_im', [])
+
+        # Draw Unit Circle |z| = 1
+        ax4.plot(np.cos(theta), np.sin(theta), color=COLOR_CRIT, linestyle='--', alpha=0.8,
+                 label='Unit Circle |z|=1')
+
+        if gt_re and gt_im:
+            ax4.scatter(gt_re, gt_im, color='white', marker='X', s=60, edgecolors='black',
+                        label='Ground-Truth Poles', zorder=3)
+
+        if df_re_py and df_im_py:
+            ax4.scatter(df_re_py, df_im_py, color=COLOR_PY, marker='^', s=40,
+                        label='Py f32 Direct Form', zorder=4)
+        if df_re_rs and df_im_rs:
+            ax4.scatter(df_re_rs, df_im_rs, color='#EF4444', marker='^', s=40,
+                        label='Rust f32 Direct Form (Unstable)', zorder=4)
+
+        if bq_re_py and bq_im_py:
+            ax4.scatter(bq_re_py, bq_im_py, color=COLOR_PY, marker='s', s=30,
+                        label='Py f32 Biquad SOS', zorder=4)
+        if bq_re_rs and bq_im_rs:
+            ax4.scatter(bq_re_rs, bq_im_rs, color=COLOR_RS, marker='o', s=20,
+                        label='Rust f32 Biquad SOS (Stable)', zorder=4)
+
+        ax4.axvline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
+        ax4.axhline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
+        ax4.set_xlim(-3, 3)
+        ax4.set_ylim(-3, 3)
+        ax4.set_xlabel("Re(z)")
+        ax4.set_ylabel("Im(z)")
+        ax4.set_title("Q4: Filter Topology Stability (6th-Order f32)", fontsize=11,
+                      fontweight='bold')
+        ax4.legend(frameon=True, fontsize=8)
 
         fig.tight_layout()
         return fig
 
     def plot_summary(self, ax: plt.Axes):
-        # Nyquist Plot Summary with (-1, 0j) Critical Point
-        b_ch, a_ch = signal.cheby1(6, 1.5, 10.0, analog=True)
-        w_vec = np.logspace(-1, 2, 200)
-        _, h_ch = signal.freqs(b_ch, a_ch, worN=w_vec)
+        # Nyquist Plot Summary comparing Rust & Python vs Critical Point
+        rust_nyq = self.rust_data.get('nyquist_criterion', {})
+        py_nyq = self.py_data.get('nyquist_criterion', {})
 
-        re_py = h_ch.real
-        im_py = h_ch.imag
-        re_rs = re_py * (1.0 + 0.05 * np.sin(np.linspace(0, 10, len(h_ch))))
-        im_rs = im_py * (1.0 + 0.05 * np.cos(np.linspace(0, 10, len(h_ch))))
+        h_re_rs = rust_nyq.get('h_re', [])
+        h_im_rs = rust_nyq.get('h_im', [])
 
-        ax.plot(re_py, im_py, label='Python 3', color=COLOR_PY, linewidth=2.0)
-        ax.plot(re_rs, im_rs, '--', label='Rust', color=COLOR_RS, linewidth=2.0)
+        h_re_py = py_nyq.get('h_re', [])
+        h_im_py = py_nyq.get('h_im', [])
+
+        if h_re_py and h_im_py:
+            h_im_py_ref = [-im for im in h_im_py]
+            ax.plot(h_re_py, h_im_py, label='Python 3 (SciPy)', color=COLOR_PY, linewidth=2.0)
+            ax.plot(h_re_py, h_im_py_ref, ':', color=COLOR_PY, linewidth=1.5, alpha=0.6)
+        if h_re_rs and h_im_rs:
+            h_im_rs_ref = [-im for im in h_im_rs]
+            ax.plot(h_re_rs, h_im_rs, '--', label='Rust (control-rs)', color=COLOR_RS,
+                    linewidth=2.0)
+            ax.plot(h_re_rs, h_im_rs_ref, ':', color=COLOR_RS, linewidth=1.5, alpha=0.6)
+
+        theta = np.linspace(0, 2 * np.pi, 200)
+        ax.plot(np.cos(theta), np.sin(theta), color=GRID_COLOR, linestyle='--', alpha=0.4)
         ax.scatter([-1.0], [0.0], color=COLOR_CRIT, marker='*', s=140, zorder=5,
                    label='Critical (-1,0j)')
 
         ax.set_xlabel("Re{H(jw)}")
         ax.set_ylabel("Im{H(jw)}")
-        ax.set_title("Transfer Function: Nyquist Polar Curve", fontsize=12, fontweight='bold')
+        ax.set_title("Transfer Function: Nyquist Criterion", fontsize=12, fontweight='bold')
+        ax.set_aspect('equal', adjustable='datalim')
         ax.legend(frameon=True, fontsize=8)
 
 
@@ -934,24 +1087,16 @@ def generate_inverted_pendulum_gif(out_dir: str, py_data: dict = None, rust_data
 # 5. Main Coordinator & Dashboard GridSpec
 # ==========================================
 def load_json(filename: str) -> dict:
-    """Helper to safely load a JSON file with fallback search paths."""
-    script_dir = os.path.dirname(__file__) if '__file__' in globals() else '.'
-    search_paths = [
-        filename,
-        os.path.join(script_dir, filename),
-        os.path.join(script_dir, '..', 'results', filename),
-        os.path.join(script_dir, 'results', filename),
-        os.path.join('examples', 'numerical-models-validation', 'results', filename),
-        os.path.join('results', filename)
-    ]
-    for path in search_paths:
-        if os.path.exists(path):
-            try:
-                with open(path, 'r') as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"Error reading {path}: {e}")
-    print(f"Warning: {filename} not found in search paths. Returning empty dict.")
+    """Helper to load a JSON file strictly from examples/numerical-models-validation/results."""
+    out_dir = get_output_dir()
+    path = os.path.join(out_dir, filename)
+    if os.path.exists(path):
+        try:
+            with open(path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error reading {path}: {e}")
+    print(f"Warning: {filename} not found at {path}. Returning empty dict.")
     return {}
 
 

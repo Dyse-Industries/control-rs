@@ -2,8 +2,11 @@
 """
 python3/polynomial_validation.py
 
-Executes NumPy equivalents for polynomial numerical models.
-Outputs JSON results to stdout for cross-language validation with Rust.
+Executes NumPy equivalents for polynomial numerical models across four benchmark domains:
+1. Execution Time vs. Polynomial Degree (Computational Complexity: Horner vs Naive)
+2. Convergence Rate of Root-Finding Algorithms (Algorithmic Efficiency)
+3. Residual Error on Ill-Conditioned Polynomials (Wilkinson's Polynomial W(x))
+4. Root Sensitivity and Quantization Bounds (Control System Pole Migration)
 """
 
 from __future__ import annotations
@@ -12,17 +15,136 @@ import json
 import time
 
 import numpy as np
-from numpy.polynomial.polynomial import (
-    polycompanion,
-    polyder,
-    polydiv,
-    polyfromroots,
-    polyint,
-    polymul,
-    polyval,
-)
+from numpy.polynomial.polynomial import polyder, polyfromroots, polyval
 
-SWEEP_N = 128
+
+def benchmark_complexity() -> dict:
+    degrees = list(range(1, 51))
+    num_points = 1000
+    eval_points = np.linspace(-1.0, 1.0, num_points, dtype=np.float64)
+
+    horner_times_ns = []
+    naive_times_ns = []
+
+    for deg in degrees:
+        coeffs = 1.0 / np.arange(1, deg + 2, dtype=np.float64)
+
+        # Horner evaluation via polyval
+        t0 = time.perf_counter_ns()
+        horner_res = polyval(eval_points, coeffs)
+        horner_elapsed = float(time.perf_counter_ns() - t0)
+
+        # Naive direct evaluation via powers
+        t1 = time.perf_counter_ns()
+        naive_res = np.zeros(num_points, dtype=np.float64)
+        for i in range(deg + 1):
+            naive_res += coeffs[i] * (eval_points**i)
+        naive_elapsed = float(time.perf_counter_ns() - t1)
+
+        horner_times_ns.append(horner_elapsed)
+        naive_times_ns.append(naive_elapsed)
+
+    return {
+        "degrees": degrees,
+        "horner_time_ns": horner_times_ns,
+        "naive_time_ns": naive_times_ns,
+    }
+
+
+def benchmark_root_convergence() -> dict:
+    # Target polynomial P(x) = x^3 - 4x^2 - 11x + 30
+    # Ascending order: [30.0, -11.0, -4.0, 1.0]
+    p_coeffs = np.array([30.0, -11.0, -4.0, 1.0], dtype=np.float64)
+    dp_coeffs = polyder(p_coeffs)
+
+    target_root = 2.0
+    distances = [0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0]
+    iterations_list = []
+
+    for dist in distances:
+        x = target_root + dist
+        iters = 0
+        max_iters = 100
+
+        while iters < max_iters:
+            fx = float(polyval(x, p_coeffs))
+            if abs(fx) < 1e-6:
+                break
+            fpx = float(polyval(x, dp_coeffs))
+            if abs(fpx) < 1e-12:
+                break
+            next_x = x - fx / fpx
+            if abs(next_x - x) < 1e-6:
+                iters += 1
+                break
+            x = next_x
+            iters += 1
+
+        iterations_list.append(iters)
+
+    return {
+        "target_root": target_root,
+        "distances": distances,
+        "iterations": iterations_list,
+    }
+
+
+def benchmark_wilkinson() -> dict:
+    root_targets = np.arange(1, 21, dtype=np.float64)
+    coeffs_f64 = polyfromroots(root_targets)
+    coeffs_f32 = coeffs_f64.astype(np.float32)
+
+    root_indices = list(range(1, 21))
+    residual_f64 = []
+    residual_f32 = []
+
+    for k in root_indices:
+        rk_64 = float(k)
+        res_64 = float(abs(polyval(rk_64, coeffs_f64)))
+        residual_f64.append(res_64)
+
+        rk_32 = float(k)
+        res_32 = float(abs(polyval(rk_32, coeffs_f32)))
+        residual_f32.append(res_32)
+
+    return {
+        "root_indices": root_indices,
+        "residual_f64": residual_f64,
+        "residual_f32": residual_f32,
+    }
+
+
+def benchmark_root_sensitivity() -> dict:
+    # Ground truth poles s = -1 ± 2j, -2 ± 1j
+    ground_truth_roots_re = [-1.0, -1.0, -2.0, -2.0]
+    ground_truth_roots_im = [2.0, -2.0, 1.0, -1.0]
+
+    ground_truth_coeffs = np.array([25.0, 30.0, 18.0, 6.0, 1.0], dtype=np.float64)
+
+    num_trials = 250
+    np.random.seed(42)
+    noise_scale = 0.015
+
+    perturbed_re = []
+    perturbed_im = []
+
+    for _ in range(num_trials):
+        p_coeffs = ground_truth_coeffs.copy()
+        noise = np.random.uniform(-1.0, 1.0, size=4) * noise_scale
+        p_coeffs[:4] *= 1.0 + noise
+
+        # np.roots expects descending powers (c4*x^4 + c3*x^3 + ...)
+        roots = np.roots(p_coeffs[::-1])
+        for r in roots:
+            perturbed_re.append(float(r.real))
+            perturbed_im.append(float(r.imag))
+
+    return {
+        "ground_truth_re": ground_truth_roots_re,
+        "ground_truth_im": ground_truth_roots_im,
+        "perturbed_re": perturbed_re,
+        "perturbed_im": perturbed_im,
+    }
 
 
 def run_polynomial_oracle() -> dict:
@@ -30,105 +152,25 @@ def run_polynomial_oracle() -> dict:
     x_test = 2.5
     z = complex(1.0, 2.0)
 
-    t0 = time.perf_counter_ns()
     p_real = float(polyval(x_test, coeffs))
-    eval_time_ns = float(time.perf_counter_ns() - t0)
-
-    t0 = time.perf_counter_ns()
     val_c = polyval(z, coeffs)
-    complex_eval_time_ns = float(time.perf_counter_ns() - t0)
     p_c_re = float(val_c.real)
     p_c_im = float(val_c.imag)
 
-    t0 = time.perf_counter_ns()
-    deriv = polyder(coeffs)
-    p_deriv = float(polyval(x_test, deriv))
-    deriv_time_ns = float(time.perf_counter_ns() - t0)
-
-    deriv5 = np.zeros(5, dtype=np.float64)
-    deriv5[: deriv.size] = deriv
-
-    t0 = time.perf_counter_ns()
-    integ = polyint(coeffs, k=[5.0])
-    p_integ = float(polyval(x_test, integ))
-    integ_time_ns = float(time.perf_counter_ns() - t0)
-
-    integ5 = np.zeros(5, dtype=np.float64)
-    integ5[: min(5, integ.size)] = integ[:5]
-
-    p1 = np.array([1.0, 2.0], dtype=np.float64)
-    p2 = np.array([3.0, 4.0], dtype=np.float64)
-
-    t0 = time.perf_counter_ns()
-    prod = polymul(p1, p2)
-    mul_time_ns = float(time.perf_counter_ns() - t0)
-
-    t0 = time.perf_counter_ns()
-    quot, rem = polydiv(prod, p1)
-    div_time_ns = float(time.perf_counter_ns() - t0)
-
-    p_monic = np.array(
-        [
-            1.0,
-            12.0,
-            66.0,
-            220.0,
-            495.0,
-            792.0,
-            924.0,
-            792.0,
-            495.0,
-            220.0,
-            66.0,
-            12.0,
-            1.0,
-        ],
-        dtype=np.float64,
-    )
-
-    t0 = time.perf_counter_ns()
-    companion = np.array(polycompanion(p_monic), dtype=np.float64)
-    companion_time_ns = float(time.perf_counter_ns() - t0)
-
-    # 2. Clustered-root setup
-    roots = np.arange(1, 17, dtype=np.float64)
-    cluster_coeffs = polyfromroots(roots)
-    sweep_x = np.linspace(0.9, 1.1, SWEEP_N, dtype=np.float64)
-    cluster_y = np.asarray(polyval(sweep_x, cluster_coeffs), dtype=np.float64)
-
-    timed_x = 1.005
-    iters = 10_000
-    start = time.perf_counter_ns()
-    for _ in range(iters):
-        polyval(timed_x, cluster_coeffs)
-    elapsed_ns = float(time.perf_counter_ns() - start)
+    complexity = benchmark_complexity()
+    root_convergence = benchmark_root_convergence()
+    wilkinson = benchmark_wilkinson()
+    root_sensitivity = benchmark_root_sensitivity()
 
     return {
+        "complexity": complexity,
+        "root_convergence": root_convergence,
+        "wilkinson_residual": wilkinson,
+        "root_sensitivity": root_sensitivity,
         "tutorial": {
             "p_real": p_real,
             "p_c_re": p_c_re,
             "p_c_im": p_c_im,
-            "deriv": deriv5.tolist(),
-            "p_deriv": p_deriv,
-            "integ": integ5.tolist(),
-            "p_integ": p_integ,
-            "prod": prod.tolist(),
-            "quot": np.asarray(quot, dtype=np.float64).tolist(),
-            "rem": float(np.asarray(rem).reshape(-1)[0]),
-            "companion": companion.tolist(),
-            "eval_time_ns": eval_time_ns,
-            "complex_eval_time_ns": complex_eval_time_ns,
-            "deriv_time_ns": deriv_time_ns,
-            "integ_time_ns": integ_time_ns,
-            "mul_time_ns": mul_time_ns,
-            "div_time_ns": div_time_ns,
-            "companion_time_ns": companion_time_ns,
-        },
-        "clustered": {
-            "coeffs": cluster_coeffs.tolist(),
-            "x": sweep_x.tolist(),
-            "y": cluster_y.tolist(),
-            "time_ns": elapsed_ns,
         },
     }
 

@@ -211,18 +211,22 @@ pub fn run() -> Value {
         "python3": py_results
     });
 
-    fs::create_dir_all("results").expect("Failed to create results directory");
-    let out_path = "results/tensor.json";
+    let out_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| std::path::PathBuf::from(d).join("results"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("examples/numerical-models-validation/results"));
+
+    fs::create_dir_all(&out_dir).expect("Failed to create results directory");
+    let out_path = out_dir.join("tensor.json");
 
     fs::write(
-        out_path,
+        &out_path,
         serde_json::to_string_pretty(&combined_results).unwrap(),
     )
     .expect("Failed to write results file");
 
     println!(
         "Success: Tensor cross-validation passed! Payload saved to {}",
-        out_path
+        out_path.display()
     );
 
     combined_results
