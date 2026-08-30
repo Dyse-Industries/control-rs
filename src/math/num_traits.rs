@@ -763,6 +763,11 @@ macro_rules! impl_float {
             fn epsilon() -> Self {
                 $epsilon
             }
+            #[inline(always)]
+            #[allow(clippy::cast_precision_loss)]
+            fn from_usize(n: usize) -> Self {
+                n as Self
+            }
         }
 
         ////////////////////////////////////////////////////////////////////////////////

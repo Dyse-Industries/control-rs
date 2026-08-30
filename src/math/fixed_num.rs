@@ -93,14 +93,14 @@ mod private {
 
 /// Sealed marker trait indicating that $1.0$ is strictly representable at this scale.
 pub trait OneRepresentable: private::SealedMarker {
-    /// Multiplicative identity ($1.0$) for this fixed-point format.
-    const ONE: Self;
+    /// Multiplicative identity ($1.0$) value for this fixed-point format.
+    const REPRESENTED_ONE: Self;
 }
 
 /// Sealed marker trait indicating that $2.0$ is strictly representable at this scale.
 pub trait TwoRepresentable: OneRepresentable {
-    /// Multiplicative constant ($2.0$) for this fixed-point format.
-    const TWO: Self;
+    /// Multiplicative constant ($2.0$) value for this fixed-point format.
+    const REPRESENTED_TWO: Self;
 }
 
 #[inline]
@@ -764,16 +764,16 @@ macro_rules! impl_representable_markers {
         $(
             impl private::SealedMarker for Fixed<$t, $shift_two> {}
             impl OneRepresentable for Fixed<$t, $shift_two> {
-                const ONE: Self = Self { raw: (1 as $t) << ($shift_two as u32) };
+                const REPRESENTED_ONE: Self = Self { raw: (1 as $t) << ($shift_two as u32) };
             }
             impl TwoRepresentable for Fixed<$t, $shift_two> {
-                const TWO: Self = Self { raw: (1 as $t) << (($shift_two + 1) as u32) };
+                const REPRESENTED_TWO: Self = Self { raw: (1 as $t) << (($shift_two + 1) as u32) };
             }
         )*
         $(
             impl private::SealedMarker for Fixed<$t, $shift_one_only> {}
             impl OneRepresentable for Fixed<$t, $shift_one_only> {
-                const ONE: Self = Self { raw: (1 as $t) << ($shift_one_only as u32) };
+                const REPRESENTED_ONE: Self = Self { raw: (1 as $t) << ($shift_one_only as u32) };
             }
         )*
     };
@@ -834,7 +834,7 @@ where
     Self: OneRepresentable,
 {
     /// Multiplicative identity ($1.0$), gated to scales where $1.0$ is representable.
-    pub const ONE: Self = <Self as OneRepresentable>::ONE;
+    pub const ONE: Self = <Self as OneRepresentable>::REPRESENTED_ONE;
 }
 
 impl<Repr: FixedRepr, const SHIFT: i32> Fixed<Repr, SHIFT>
@@ -842,14 +842,14 @@ where
     Self: TwoRepresentable,
 {
     /// Multiplicative constant ($2.0$), gated to scales where $2.0$ is representable.
-    pub const TWO: Self = <Self as TwoRepresentable>::TWO;
+    pub const TWO: Self = <Self as TwoRepresentable>::REPRESENTED_TWO;
 }
 
 impl<Repr: FixedRepr, const SHIFT: i32> One for Fixed<Repr, SHIFT>
 where
     Self: OneRepresentable,
 {
-    const ONE: Self = <Self as OneRepresentable>::ONE;
+    const ONE: Self = <Self as OneRepresentable>::REPRESENTED_ONE;
 
     #[inline(always)]
     fn is_one(&self) -> bool {

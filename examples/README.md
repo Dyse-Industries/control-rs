@@ -102,9 +102,12 @@ cargo run --bin tensor
 
 #### Polynomial
 
-![Clustered-root Horner](https://github.com/Dyse-Industries/control-rs/releases/download/plots/polynomial-horner.png)
+The polynomial validation runner evaluates 4 core numerical & performance benchmarks:
+- **Degree Complexity**: Execution time scaling across degrees $n = 1 \dots 50$ comparing Horner's method ($O(n)$) against naive power sum evaluation ($O(n^2)$).
+- **Algorithmic Convergence**: Iteration bounds for Newton-Raphson root solvers across initial guess distances $|x_0 - r^*|$.
+- **Wilkinson Numerical Stability**: Precision loss and residual error $|W(r_k)|$ on 20th-degree Wilkinson polynomials comparing `f32` vs `f64`.
+- **Root Sensitivity & Quantization**: Complex-plane pole clouds under coefficient truncation noise against the $\text{Re}(s) = 0$ stability boundary.
 
-![Companion heatmap](https://github.com/Dyse-Industries/control-rs/releases/download/plots/polynomial-companion.png)
 
 #### State space
 
