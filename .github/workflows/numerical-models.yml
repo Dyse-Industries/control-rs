@@ -82,7 +82,7 @@ jobs:
           
           mkdir -p plot-assets
           shopt -s nullglob
-          for png in examples/numerical-models-validation/results/*/*.png; do
+          for png in examples/numerical-models-validation/results/*.png; do
             slug="$(basename "$(dirname "$png")")"
             name="$(basename "$png")"
             cp "$png" "plot-assets/${slug}-${name}"
