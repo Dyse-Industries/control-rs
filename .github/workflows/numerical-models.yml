@@ -51,7 +51,10 @@ jobs:
         run: cargo build --release
 
       - name: Validate suites
-        run: cargo run --release
+        run: cargo test
+
+      - name: Generate Plots
+        run: python3 python3/plot_models.py
 
       - name: Upload results artifact
         id: results
