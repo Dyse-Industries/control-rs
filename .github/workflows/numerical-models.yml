@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - "../../examples/numerical-models-validation/**"
+      - "examples/numerical-models-validation/**"
       - "src/matrix/**"
       - "src/polynomial/**"
       - "src/state_space/**"
@@ -15,7 +15,7 @@ on:
   pull_request:
     branches: [ "main" ]
     paths:
-      - "../../examples/numerical-models-validation/**"
+      - "examples/numerical-models-validation/**"
       - "src/matrix/**"
       - "src/polynomial/**"
       - "src/state_space/**"
@@ -147,11 +147,9 @@ jobs:
            echo
            echo "![Polynomial](${PLOTS_BASE}/polynomial_details.png)"
            echo
-           echo "![Free-response phase portrait](${PLOTS_BASE}/state_space-free_response.png)"
+           echo "![TF](${PLOTS_BASE}/transfer_function_details.png)"
            echo
            echo "![State_space](${PLOTS_BASE}/state_space_details.png)"
-           echo
-           echo "![TF](${PLOTS_BASE}/transfer_function_details.png)"
            echo
            echo "![Tensor](${PLOTS_BASE}/tensor_details.png)"
           fi
