@@ -136,8 +136,8 @@ jobs:
           echo
           echo "### Files"
           echo
-          if [ -d examples/numerical-models/results ]; then
-           find examples/numerical-models/results -type f | sort | sed 's/^/- `/' | sed 's/$/`/'
+          if [ -d examples/numerical-models-validation/results ]; then
+           find examples/numerical-models-validation/results -type f | sort | sed 's/^/- `/' | sed 's/$/`/'
           else
            echo "_no results directory_"
           fi
@@ -147,35 +147,17 @@ jobs:
            echo
            echo "Published to the rolling [\`plots\`](${PLOTS_TAG}) release."
            echo
-           echo "#### Matrix"
+           echo "![Matrix](${PLOTS_BASE}/matrix_details.png)"
            echo
-           echo "![Hilbert inverse relative error](${PLOTS_BASE}/matrix-hilbert_inverse.png)"
-           echo
-           echo "![SE(3) rigid GEMM chain](${PLOTS_BASE}/matrix-se3_chain.png)"
-           echo
-           echo "#### Polynomial"
-           echo
-           echo "![Clustered-root Horner](${PLOTS_BASE}/polynomial-horner.png)"
-           echo
-           echo "![Companion heatmap](${PLOTS_BASE}/polynomial-companion.png)"
-           echo
-           echo "#### State space"
+           echo "![Polynomial](${PLOTS_BASE}/polynomial_details.png)"
            echo
            echo "![Free-response phase portrait](${PLOTS_BASE}/state_space-free_response.png)"
            echo
-           echo "![Stiff ZOH](${PLOTS_BASE}/state_space-stiff_zoh.png)"
+           echo "![State_space](${PLOTS_BASE}/state_space_details.png)"
            echo
-           echo "#### Transfer function"
+           echo "![TF](${PLOTS_BASE}/transfer_function_details.png)"
            echo
-           echo "![Underdamped Bode](${PLOTS_BASE}/transfer_function-bode.png)"
-           echo
-           echo "![Nyquist complex pair](${PLOTS_BASE}/transfer_function-nyquist_complex_pair.png)"
-           echo
-           echo "#### Tensor"
-           echo
-           echo "![Saddle surface](${PLOTS_BASE}/tensor-curved_surface.png)"
-           echo
-           echo "![Saddle cut](${PLOTS_BASE}/tensor-curved_cut.png)"
+           echo "![Tensor](${PLOTS_BASE}/tensor_details.png)"
           fi
           } | tee -a "$GITHUB_STEP_SUMMARY" >> "$GITHUB_OUTPUT" # 3. Tee sends the block to both targets
           
