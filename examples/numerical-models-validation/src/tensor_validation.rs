@@ -7,7 +7,7 @@
 //! Panel 3: Quantized Precision Boundaries (Quantized<i8, 7> edge-case scaling & saturation)
 //! Panel 4: Bare-Metal Timing Profile (Zero-copy stack vs dynamic heap allocation baselines)
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::process::Command;
 use std::time::Instant;
@@ -78,7 +78,8 @@ fn benchmark_interpolation_manifold() -> (Value, Tensor16x16) {
 // -----------------------------------------------------------------------------
 // Panel 2: Tensor Contraction Relative Error (ArrayTensor::contract_into)
 // -----------------------------------------------------------------------------
-fn benchmark_tensor_contraction() -> (Value, Tensor16x16, Tensor16x16, Tensor16x16) {
+fn benchmark_tensor_contraction()
+-> (Value, Tensor16x16, Tensor16x16, Tensor16x16) {
     let tensor_a = Tensor16x16::from_fn(|idx| {
         let i = idx[0] as f32;
         let j = idx[1] as f32;
@@ -120,8 +121,8 @@ fn benchmark_tensor_contraction() -> (Value, Tensor16x16, Tensor16x16, Tensor16x
 // -----------------------------------------------------------------------------
 fn benchmark_quantized_boundaries() -> Value {
     let float_inputs = [
-        -1.5_f32, -1.0, -0.75, -0.5, -0.125, -0.0078125, 0.0,
-        0.0078125, 0.125, 0.5, 0.75, 0.9921875, 1.0, 1.5,
+        -1.5_f32, -1.0, -0.75, -0.5, -0.125, -0.0078125, 0.0, 0.0078125, 0.125,
+        0.5, 0.75, 0.9921875, 1.0, 1.5,
     ];
 
     let n = float_inputs.len();
@@ -174,14 +175,16 @@ fn benchmark_timing_profile(grid: &Tensor16x16) -> Value {
     for _ in 0..interp_iters {
         let _ = core::hint::black_box(grid.interpolate(&point));
     }
-    let interp_time_ns = (t_interp.elapsed().as_nanos() as f64) / (interp_iters as f64);
+    let interp_time_ns =
+        (t_interp.elapsed().as_nanos() as f64) / (interp_iters as f64);
 
     let quant_iters = 100_000;
     let t_quant = Instant::now();
     for _ in 0..quant_iters {
         let _ = core::hint::black_box(Q7::quantize(0.785_398_163_397_448_3));
     }
-    let quant_time_ns = (t_quant.elapsed().as_nanos() as f64) / (quant_iters as f64);
+    let quant_time_ns =
+        (t_quant.elapsed().as_nanos() as f64) / (quant_iters as f64);
 
     let sizes = [4, 8, 16, 32, 64];
     let t_4 = benchmark_contract_n::<4>(100_000);
@@ -202,7 +205,8 @@ fn benchmark_timing_profile(grid: &Tensor16x16) -> Value {
 
 fn run_validation_default() -> Value {
     let (manifold, grid) = benchmark_interpolation_manifold();
-    let (contraction, _tensor_a, _tensor_b, _tensor_c) = benchmark_tensor_contraction();
+    let (contraction, _tensor_a, _tensor_b, _tensor_c) =
+        benchmark_tensor_contraction();
     let boundaries = benchmark_quantized_boundaries();
     let timing = benchmark_timing_profile(&grid);
 
@@ -222,9 +226,14 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         rust["manifold"]["interp_mesh"].as_array(),
         python["manifold"]["interp_mesh"].as_array(),
     ) {
-        for (i, (r_row, p_row)) in r_mesh.iter().zip(p_mesh.iter()).enumerate() {
-            if let (Some(r_vals), Some(p_vals)) = (r_row.as_array(), p_row.as_array()) {
-                for (j, (rv, pv)) in r_vals.iter().zip(p_vals.iter()).enumerate() {
+        for (i, (r_row, p_row)) in r_mesh.iter().zip(p_mesh.iter()).enumerate()
+        {
+            if let (Some(r_vals), Some(p_vals)) =
+                (r_row.as_array(), p_row.as_array())
+            {
+                for (j, (rv, pv)) in
+                    r_vals.iter().zip(p_vals.iter()).enumerate()
+                {
                     let r_num = rv.as_f64().unwrap_or(0.0);
                     let p_num = pv.as_f64().unwrap_or(0.0);
                     if (r_num - p_num).abs() > 1e-4 {
@@ -241,8 +250,12 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         python["contraction"]["mat_c"].as_array(),
     ) {
         for (i, (r_row, p_row)) in r_mat.iter().zip(p_mat.iter()).enumerate() {
-            if let (Some(r_vals), Some(p_vals)) = (r_row.as_array(), p_row.as_array()) {
-                for (j, (rv, pv)) in r_vals.iter().zip(p_vals.iter()).enumerate() {
+            if let (Some(r_vals), Some(p_vals)) =
+                (r_row.as_array(), p_row.as_array())
+            {
+                for (j, (rv, pv)) in
+                    r_vals.iter().zip(p_vals.iter()).enumerate()
+                {
                     let r_num = rv.as_f64().unwrap_or(0.0);
                     let p_num = pv.as_f64().unwrap_or(0.0);
                     let rel_err = (r_num - p_num).abs() / (p_num.abs() + 1e-12);
@@ -307,7 +320,11 @@ pub fn run() -> Value {
 
     let out_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map(|d| std::path::PathBuf::from(d).join("results"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("examples/numerical-models-validation/results"));
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(
+                "examples/numerical-models-validation/results",
+            )
+        });
 
     fs::create_dir_all(&out_dir).expect("Failed to create results directory");
     let out_path = out_dir.join("tensor.json");

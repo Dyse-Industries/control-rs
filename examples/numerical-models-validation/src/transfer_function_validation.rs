@@ -67,7 +67,8 @@ fn benchmark_discretization_error() -> Value {
     let zeta_z = 0.01_f64;
     let zeta_p = 0.25_f64;
     let fc_hz = 40.0_f64;
-    let tf_cont = synthesize_resonant_notch_system(fn_hz, zeta_z, zeta_p, fc_hz);
+    let tf_cont =
+        synthesize_resonant_notch_system(fn_hz, zeta_z, zeta_p, fc_hz);
 
     let dt = 0.005; // Fs = 200 Hz, Nyquist = 100 Hz
     let tf_tustin = tf_cont.to_discrete_tustin(dt, None);
@@ -340,21 +341,45 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         check_f64("tutorial a00", r, p, 1e-12, &mut errs);
     }
 
-    let check_array = |key: &str, rust_arr: Option<&Vec<Value>>, py_arr: Option<&Vec<Value>>, tol: f64, errs: &mut Vec<String>| {
+    let check_array = |key: &str,
+                       rust_arr: Option<&Vec<Value>>,
+                       py_arr: Option<&Vec<Value>>,
+                       tol: f64,
+                       errs: &mut Vec<String>| {
         if let (Some(r_slice), Some(p_slice)) = (rust_arr, py_arr) {
             for (i, (r, p)) in r_slice.iter().zip(p_slice.iter()).enumerate() {
                 let rv = r.as_f64().unwrap_or(0.0);
                 let pv = p.as_f64().unwrap_or(0.0);
                 if (rv - pv).abs() > tol {
-                    errs.push(format!("{key}[{i}]: rust {rv} vs python {pv} (tol {tol})"));
+                    errs.push(format!(
+                        "{key}[{i}]: rust {rv} vs python {pv} (tol {tol})"
+                    ));
                 }
             }
         }
     };
 
-    check_array("cont_mag_db", rust["discretization_error"]["cont_mag_db"].as_array(), python["discretization_error"]["cont_mag_db"].as_array(), 1e-3, &mut errs);
-    check_array("tustin_mag_db", rust["discretization_error"]["tustin_mag_db"].as_array(), python["discretization_error"]["tustin_mag_db"].as_array(), 1e-3, &mut errs);
-    check_array("zoh_mag_db", rust["discretization_error"]["zoh_mag_db"].as_array(), python["discretization_error"]["zoh_mag_db"].as_array(), 1e-3, &mut errs);
+    check_array(
+        "cont_mag_db",
+        rust["discretization_error"]["cont_mag_db"].as_array(),
+        python["discretization_error"]["cont_mag_db"].as_array(),
+        1e-3,
+        &mut errs,
+    );
+    check_array(
+        "tustin_mag_db",
+        rust["discretization_error"]["tustin_mag_db"].as_array(),
+        python["discretization_error"]["tustin_mag_db"].as_array(),
+        1e-3,
+        &mut errs,
+    );
+    check_array(
+        "zoh_mag_db",
+        rust["discretization_error"]["zoh_mag_db"].as_array(),
+        python["discretization_error"]["zoh_mag_db"].as_array(),
+        1e-3,
+        &mut errs,
+    );
 
     if errs.is_empty() { Ok(()) } else { Err(errs) }
 }

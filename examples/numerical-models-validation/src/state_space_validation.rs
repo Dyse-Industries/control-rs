@@ -132,8 +132,10 @@ fn benchmark_discretization_scaling() -> (Value, Vec<f64>, Vec<f64>) {
 
     let state_size = vec![2, 4, 8, 16, 32, 64, 128];
     let zoh_time_ns = vec![zoh2, zoh4, zoh8, zoh16, zoh32, zoh64, zoh128];
-    let ctrb_time_ns = vec![ctrb2, ctrb4, ctrb8, ctrb16, ctrb32, ctrb64, ctrb128];
-    let obsv_time_ns = vec![obsv2, obsv4, obsv8, obsv16, obsv32, obsv64, obsv128];
+    let ctrb_time_ns =
+        vec![ctrb2, ctrb4, ctrb8, ctrb16, ctrb32, ctrb64, ctrb128];
+    let obsv_time_ns =
+        vec![obsv2, obsv4, obsv8, obsv16, obsv32, obsv64, obsv128];
 
     let scaling_json = json!({
         "scaling": {
@@ -299,7 +301,11 @@ pub fn run() -> Value {
 
     let out_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map(|d| std::path::PathBuf::from(d).join("results"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("examples/numerical-models-validation/results"));
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(
+                "examples/numerical-models-validation/results",
+            )
+        });
 
     fs::create_dir_all(&out_dir).expect("Failed to create results directory");
     let out_path = out_dir.join("state_space.json");

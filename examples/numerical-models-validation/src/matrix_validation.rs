@@ -6,7 +6,7 @@
 //! 2. Quadrant 2 (Algorithmic Scaling): O(N^3) Matrix Inversion Scaling (1,000 iterations mean/stddev)
 //! 3. Quadrant 3 (Determinism): 32x32 Hilbert Solve Latency Jitter (1,000 iterations)
 //! 4. Quadrant 4 (Speedup Factor): Decomposition Speedup Factors vs. Python
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::process::Command;
 use std::time::Instant;
@@ -64,7 +64,9 @@ fn generate_matrix_correctness_data() -> Value {
     let k_t = Owned::<f64, N, N>::from_fn(|i, j| k.get(j, i).copied().unwrap());
     let kr = &k * &r;
     let krk_t = &kr * &k_t;
-    let i_minus_kh_t = Owned::<f64, N, N>::from_fn(|i, j| i_minus_kh.get(j, i).copied().unwrap());
+    let i_minus_kh_t = Owned::<f64, N, N>::from_fn(|i, j| {
+        i_minus_kh.get(j, i).copied().unwrap()
+    });
 
     let mut p_current = p_0;
     for _ in 0..100 {
@@ -97,13 +99,15 @@ macro_rules! bench_inversion_dim {
         let mut times = Vec::with_capacity($iters);
         for _ in 0..$iters {
             let start = Instant::now();
-            let lu = LuDecomposition::decompose(a).expect("LU decompose failed");
+            let lu =
+                LuDecomposition::decompose(a).expect("LU decompose failed");
             let _inv = lu.inverse().expect("LU inverse failed");
             times.push(start.elapsed().as_nanos() as f64);
         }
 
         let mean = times.iter().sum::<f64>() / ($iters as f64);
-        let variance = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / ($iters as f64);
+        let variance = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>()
+            / ($iters as f64);
         let stddev = variance.sqrt();
         (mean, stddev)
     }};
@@ -138,7 +142,8 @@ fn benchmark_ekf_update_jitter() -> Value {
     let h = Owned::<f64, N, N>::from_fn(|i, j| 1.0 / ((i + j + 1) as f64));
     let b = Owned::<f64, N, 1>::from_fn(|_, _| 1.0);
 
-    let lu = LuDecomposition::decompose(h).expect("Hilbert LU decomposition failed");
+    let lu =
+        LuDecomposition::decompose(h).expect("Hilbert LU decomposition failed");
     let mut solve_times_ns = Vec::with_capacity(ITERS);
 
     for _ in 0..ITERS {
@@ -171,7 +176,8 @@ fn benchmark_decompositions() -> (f64, f64, f64) {
             1.0 / ((i + j + 2) as f64)
         }
     });
-    let spd = Symmetric::<f64, N>::from_owned(spd_owned).expect("Symmetric creation failed");
+    let spd = Symmetric::<f64, N>::from_owned(spd_owned)
+        .expect("Symmetric creation failed");
 
     let b = Owned::<f64, N, 1>::from_fn(|_, _| 1.0);
 
@@ -253,9 +259,14 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         rust["covariance_heatmap"]["rs_matrix"].as_array(),
         python["covariance_heatmap"]["py_matrix"].as_array(),
     ) {
-        for (i, (r_row, p_row)) in rs_cov.iter().zip(py_cov.iter()).enumerate() {
-            if let (Some(r_cols), Some(p_cols)) = (r_row.as_array(), p_row.as_array()) {
-                for (j, (rv, pv)) in r_cols.iter().zip(p_cols.iter()).enumerate() {
+        for (i, (r_row, p_row)) in rs_cov.iter().zip(py_cov.iter()).enumerate()
+        {
+            if let (Some(r_cols), Some(p_cols)) =
+                (r_row.as_array(), p_row.as_array())
+            {
+                for (j, (rv, pv)) in
+                    r_cols.iter().zip(p_cols.iter()).enumerate()
+                {
                     let r_val = rv.as_f64().unwrap_or(0.0);
                     let p_val = pv.as_f64().unwrap_or(0.0);
                     let diff = (r_val - p_val).abs();
@@ -270,19 +281,47 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     }
 
     // Quadrant 2 check: scaling data presence
-    if rust["scaling"]["inversion_time_ns"].as_array().map_or(0, |a| a.len()) != 6 {
-        errs.push("Rust scaling inversion_time_ns does not have 6 entries".to_string());
+    if rust["scaling"]["inversion_time_ns"]
+        .as_array()
+        .map_or(0, |a| a.len())
+        != 6
+    {
+        errs.push(
+            "Rust scaling inversion_time_ns does not have 6 entries"
+                .to_string(),
+        );
     }
-    if python["scaling"]["inversion_time_ns"].as_array().map_or(0, |a| a.len()) != 6 {
-        errs.push("Python scaling inversion_time_ns does not have 6 entries".to_string());
+    if python["scaling"]["inversion_time_ns"]
+        .as_array()
+        .map_or(0, |a| a.len())
+        != 6
+    {
+        errs.push(
+            "Python scaling inversion_time_ns does not have 6 entries"
+                .to_string(),
+        );
     }
 
     // Quadrant 3 check: jitter data presence (1000 samples)
-    if rust["jitter"]["hilbert_solve_times_ns"].as_array().map_or(0, |a| a.len()) != 1000 {
-        errs.push("Rust jitter hilbert_solve_times_ns does not have 1000 entries".to_string());
+    if rust["jitter"]["hilbert_solve_times_ns"]
+        .as_array()
+        .map_or(0, |a| a.len())
+        != 1000
+    {
+        errs.push(
+            "Rust jitter hilbert_solve_times_ns does not have 1000 entries"
+                .to_string(),
+        );
     }
-    if python["jitter"]["hilbert_solve_times_ns"].as_array().map_or(0, |a| a.len()) != 1000 {
-        errs.push("Python jitter hilbert_solve_times_ns does not have 1000 entries".to_string());
+    if python["jitter"]["hilbert_solve_times_ns"]
+        .as_array()
+        .map_or(0, |a| a.len())
+        != 1000
+    {
+        errs.push(
+            "Python jitter hilbert_solve_times_ns does not have 1000 entries"
+                .to_string(),
+        );
     }
 
     if errs.is_empty() { Ok(()) } else { Err(errs) }
@@ -327,11 +366,21 @@ pub fn run() -> Value {
     }
 
     // Compute Quadrant 4 speedup ratios: T_python / T_rust
-    let chol_py = py_results["decomp_times_ns"]["cholesky"].as_f64().unwrap_or(0.0);
-    let lu_py = py_results["decomp_times_ns"]["lu_solve"].as_f64().unwrap_or(0.0);
-    let qr_py = py_results["decomp_times_ns"]["qr_decomp"].as_f64().unwrap_or(0.0);
+    let chol_py = py_results["decomp_times_ns"]["cholesky"]
+        .as_f64()
+        .unwrap_or(0.0);
+    let lu_py = py_results["decomp_times_ns"]["lu_solve"]
+        .as_f64()
+        .unwrap_or(0.0);
+    let qr_py = py_results["decomp_times_ns"]["qr_decomp"]
+        .as_f64()
+        .unwrap_or(0.0);
 
-    let speedup_chol = if chol_rs > 0.0 { chol_py / chol_rs } else { 0.0 };
+    let speedup_chol = if chol_rs > 0.0 {
+        chol_py / chol_rs
+    } else {
+        0.0
+    };
     let speedup_lu = if lu_rs > 0.0 { lu_py / lu_rs } else { 0.0 };
     let speedup_qr = if qr_rs > 0.0 { qr_py / qr_rs } else { 0.0 };
 
@@ -354,7 +403,11 @@ pub fn run() -> Value {
 
     let out_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map(|d| std::path::PathBuf::from(d).join("results"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("examples/numerical-models-validation/results"));
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(
+                "examples/numerical-models-validation/results",
+            )
+        });
 
     fs::create_dir_all(&out_dir).expect("Failed to create results directory");
     let out_path = out_dir.join("matrix.json");

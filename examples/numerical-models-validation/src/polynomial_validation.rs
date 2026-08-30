@@ -7,7 +7,7 @@
 //! 3. Residual Error on Ill-Conditioned Polynomials (Wilkinson's Polynomial W(x))
 //! 4. Root Sensitivity and Quantization Bounds (Control System Pole Migration)
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::process::Command;
 use std::time::Instant;
@@ -31,7 +31,10 @@ impl Lcg {
     }
 
     fn next_f64(&mut self) -> f64 {
-        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.state = self
+            .state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let val = (self.state >> 33) as f64 / (1u64 << 31) as f64; // [0, 1)
         val * 2.0 - 1.0 // [-1, 1)
     }
@@ -65,11 +68,9 @@ fn bench_horner_eval(deg: usize, coeffs: &[f64], eval_points: &[f64]) -> f64 {
     }
 
     dispatch!(
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-        11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-        21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-        31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-        41, 42, 43, 44, 45, 46, 47, 48, 49, 50
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
+        39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50
     )
 }
 
@@ -116,7 +117,6 @@ fn benchmark_complexity() -> Value {
     })
 }
 
-
 // -----------------------------------------------------------------------------
 // 2. Root-Finding Convergence Rate (Using Polynomial & Derivative)
 // -----------------------------------------------------------------------------
@@ -127,7 +127,8 @@ fn benchmark_root_convergence() -> Value {
     let dp = p.derivative();
 
     let target_root = 2.0;
-    let distances = vec![0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0];
+    let distances =
+        vec![0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0];
     let mut iterations_list = Vec::with_capacity(distances.len());
 
     for &dist in &distances {
@@ -233,7 +234,10 @@ fn benchmark_root_sensitivity() -> Value {
             let z2 = z * z;
             let z3 = z2 * z;
             let z4 = z3 * z;
-            z4 + z3 * Complex::new(a3, 0.0) + z2 * Complex::new(a2, 0.0) + z * Complex::new(a1, 0.0) + Complex::new(a0, 0.0)
+            z4 + z3 * Complex::new(a3, 0.0)
+                + z2 * Complex::new(a2, 0.0)
+                + z * Complex::new(a1, 0.0)
+                + Complex::new(a0, 0.0)
         };
 
         // Initial Durand-Kerner seeds
@@ -298,7 +302,8 @@ fn run_validation_default() -> Value {
     let root_sensitivity = benchmark_root_sensitivity();
 
     // Legacy compatibility fields
-    let p = Poly::<5>::from_storage(Store::from_column([2.0, -3.0, 4.0, 1.0, 0.0]));
+    let p =
+        Poly::<5>::from_storage(Store::from_column([2.0, -3.0, 4.0, 1.0, 0.0]));
     let val_real = p.evaluate(2.5);
     let val_complex = p.evaluate_complex(Complex::new(1.0, 2.0));
     let dp = p.derivative();
@@ -321,11 +326,12 @@ fn run_validation_default() -> Value {
 pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
-    let check_f64 = |key: &str, r: f64, p: f64, tol: f64, errs: &mut Vec<String>| {
-        if (r - p).abs() > tol {
-            errs.push(format!("{key}: rust {r} vs python {p} (tol {tol})"));
-        }
-    };
+    let check_f64 =
+        |key: &str, r: f64, p: f64, tol: f64, errs: &mut Vec<String>| {
+            if (r - p).abs() > tol {
+                errs.push(format!("{key}: rust {r} vs python {p} (tol {tol})"));
+            }
+        };
 
     if let (Some(r), Some(p)) = (
         rust["tutorial"]["p_real"].as_f64(),
@@ -340,7 +346,9 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         rust["wilkinson_residual"]["residual_f32"].as_array(),
     ) {
         if r_f64.len() != 20 || r_f32.len() != 20 {
-            errs.push("Wilkinson residual length mismatch in Rust output".to_string());
+            errs.push(
+                "Wilkinson residual length mismatch in Rust output".to_string(),
+            );
         }
         // At k=20, f32 residual should be significantly larger due to precision loss
         let last_f64 = r_f64[19].as_f64().unwrap_or(0.0);
@@ -349,7 +357,9 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
             errs.push(format!("Expected f32 residual ({last_f32}) > f64 residual ({last_f64}) for Wilkinson polynomial"));
         }
     } else {
-        errs.push("Missing wilkinson_residual arrays in Rust payload".to_string());
+        errs.push(
+            "Missing wilkinson_residual arrays in Rust payload".to_string(),
+        );
     }
 
     if errs.is_empty() { Ok(()) } else { Err(errs) }
@@ -391,7 +401,11 @@ pub fn run() -> Value {
 
     let out_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map(|d| std::path::PathBuf::from(d).join("results"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("examples/numerical-models-validation/results"));
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(
+                "examples/numerical-models-validation/results",
+            )
+        });
 
     fs::create_dir_all(&out_dir).expect("Failed to create results directory");
     let out_path = out_dir.join("polynomial.json");
