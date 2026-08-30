@@ -143,15 +143,15 @@ jobs:
            echo
            echo "Published to the rolling [\`plots\`](${PLOTS_TAG}) release."
            echo
-           echo "![Matrix](${PLOTS_BASE}/matrix_details.png)"
+           echo "![Matrix](${PLOTS_BASE}/results-matrix_details.png)"
            echo
-           echo "![Polynomial](${PLOTS_BASE}/polynomial_details.png)"
+           echo "![Polynomial](${PLOTS_BASE}/results-polynomial_details.png)"
            echo
-           echo "![TF](${PLOTS_BASE}/transfer_function_details.png)"
+           echo "![TF](${PLOTS_BASE}/results-transfer_function_details.png)"
            echo
-           echo "![State_space](${PLOTS_BASE}/state_space_details.png)"
+           echo "![State_space](${PLOTS_BASE}/results-state_space_details.png)"
            echo
-           echo "![Tensor](${PLOTS_BASE}/tensor_details.png)"
+           echo "![Tensor](${PLOTS_BASE}/results-tensor_details.png)"
           fi
           } | tee -a "$GITHUB_STEP_SUMMARY" >> "$GITHUB_OUTPUT" # 3. Tee sends the block to both targets
           
