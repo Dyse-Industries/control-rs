@@ -62,7 +62,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: numerical-models-validation-results
-          path: examples/numerical-models-validation/results
+          path: control-rs/examples/numerical-models-validation/results
           if-no-files-found: warn
           retention-days: 30
 
