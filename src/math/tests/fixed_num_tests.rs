@@ -344,6 +344,45 @@ pub mod fixed_num_test_suite {
     }
 }
 
+#[cfg(test)]
+mod fixed_num_scale_bound_tests {
+    use crate::math::fixed_num::Fixed;
+
+    /// `Dim` admits `R` through 1024, but C-3 requires `R <= BITS`. Oversized
+    /// destination scales must panic at `rescale` rather than deferring failure
+    /// into a later unsigned `Mul`.
+    #[test]
+    #[should_panic(expected = "exceeds representation bit width")]
+    fn rescale_rejects_destination_scale_above_bits() {
+        let a = Fixed::<u8, 4>::from_num(0.5);
+        let _: Fixed<u8, 16> = a.rescale();
+    }
+
+    /// Invalid `SHIFT > Wide::BITS` constructed via `from_bits` must not panic
+    /// on unsigned `Mul`. Pre-fix native `$w << n` / `$w >> n` panicked in
+    /// debug and silently masked the shift count in release.
+    #[test]
+    fn unsigned_mul_with_oversized_shift_does_not_panic() {
+        let a = Fixed::<u8, 16>::from_bits(255);
+        let b = Fixed::<u8, 16>::from_bits(255);
+        // 255*255 = 65025; shift-16 convergent round yields 1 (rem > half).
+        // Pre-fix release builds masked `>> 16` to `>> 0`, returning ~65025
+        // narrowed to 255 — catastrophic product corruption.
+        let prod = a * b;
+        assert_eq!(prod.to_bits(), 1);
+    }
+
+    #[test]
+    fn unsigned_try_mul_with_oversized_shift_does_not_panic() {
+        use crate::math::ops::TryMul;
+        let a = Fixed::<u8, 16>::from_bits(200);
+        let b = Fixed::<u8, 16>::from_bits(200);
+        // 200*200 = 40000; shift-16 rem=40000 > half=32768 → round to 1.
+        let prod = a.try_mul(&b).expect("checked mul must succeed or Overflow");
+        assert_eq!(prod.to_bits(), 1);
+    }
+}
+
 // Property-based coverage of product exactness and rescale round-tripping
 // (§6.1 items 3 and 4 of `fixed-num-design.md`). Kept outside the
 // `#[ets_suite]`-wrapped module: `proptest` is a host-only dev-dependency.

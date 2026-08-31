@@ -492,18 +492,36 @@ macro_rules! impl_unsigned_repr {
                 if shift == 0 {
                     return Self::narrow_saturating(prod);
                 }
-                let mask = (1u128.checked_shl(shift as u32).unwrap_or(0))
-                    .wrapping_sub(1) as $w;
-                let half = (1 as $w) << (shift.saturating_sub(1));
-                let rem = prod & mask;
-                let truncated = prod >> (shift as u32);
+                // Round in `u128` so shift amounts are well-defined even when
+                // `SHIFT` exceeds `Wide::BITS` (invalid scales via `from_bits`).
+                // Native `$w << n` / `$w >> n` panics in debug and silently
+                // masks the shift count in release, corrupting the product.
+                let prod_u128 = prod as u128;
+                let mask = 1u128
+                    .checked_shl(shift as u32)
+                    .unwrap_or(0)
+                    .wrapping_sub(1);
+                let half = 1u128
+                    .checked_shl((shift.saturating_sub(1)) as u32)
+                    .unwrap_or(0);
+                let rem = prod_u128 & mask;
+                let truncated = if shift >= 128 {
+                    0u128
+                } else {
+                    prod_u128 >> (shift as u32)
+                };
                 let rounded =
                     if rem > half || (rem == half && (truncated & 1) != 0) {
                         truncated.saturating_add(1)
                     } else {
                         truncated
                     };
-                Self::narrow_saturating(rounded)
+                let rounded_w = if rounded > <$w>::MAX as u128 {
+                    <$w>::MAX
+                } else {
+                    rounded as $w
+                };
+                Self::narrow_saturating(rounded_w)
             }
 
             #[inline]
@@ -566,11 +584,20 @@ macro_rules! impl_unsigned_repr {
                         Some(w_prod as $t)
                     }
                 } else {
-                    let mask = (1u128.checked_shl(shift as u32).unwrap_or(0))
-                        .wrapping_sub(1) as $w;
-                    let half = (1 as $w) << (shift.saturating_sub(1));
-                    let rem = w_prod & mask;
-                    let truncated = w_prod >> (shift as u32);
+                    let prod_u128 = w_prod as u128;
+                    let mask = 1u128
+                        .checked_shl(shift as u32)
+                        .unwrap_or(0)
+                        .wrapping_sub(1);
+                    let half = 1u128
+                        .checked_shl((shift.saturating_sub(1)) as u32)
+                        .unwrap_or(0);
+                    let rem = prod_u128 & mask;
+                    let truncated = if shift >= 128 {
+                        0u128
+                    } else {
+                        prod_u128 >> (shift as u32)
+                    };
                     let rounded = if rem > half
                         || (rem == half && (truncated & 1) != 0)
                     {
@@ -578,7 +605,7 @@ macro_rules! impl_unsigned_repr {
                     } else {
                         truncated
                     };
-                    if rounded > $t::MAX as $w {
+                    if rounded > $t::MAX as u128 {
                         None
                     } else {
                         Some(rounded as $t)
@@ -752,6 +779,41 @@ impl<Repr: FixedRepr, const SHIFT: usize> Fixed<Repr, SHIFT> {
     }
 
     /// Rescales this value to a new scale exponent `R` with convergent rounding.
+    ///
+    /// Converts `Fixed<Repr, SHIFT>` to `Fixed<Repr, R>` by a left shift of
+    /// $R - \text{SHIFT}$ or a right shift of $\text{SHIFT} - R$, applying
+    /// round-ties-to-even when scaling down. Overflow saturates to the
+    /// destination representation extrema.
+    ///
+    /// # Generic Arguments
+    ///
+    /// * `R` — Destination scale exponent. Must satisfy
+    ///   $0 \le R \le \text{Repr::BITS}$ (C-3 / FR-5).
+    ///
+    /// # Returns
+    ///
+    /// A `Fixed<Repr, R>` value at the destination scale.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `SHIFT > Repr::BITS` or `R > Repr::BITS`. The `Dim` bound
+    /// admits scales through 1024; without this check, an oversized `R`
+    /// would construct an invalid Q-format whose subsequent `Mul` could
+    /// panic (debug) or silently corrupt the product (release) on unsigned
+    /// representations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use control_rs::math::fixed_num::Fixed;
+    ///
+    /// type Q8 = Fixed<i16, 8>;
+    /// type Q4 = Fixed<i16, 4>;
+    ///
+    /// let q8 = Q8::from_num(1.5);
+    /// let q4: Q4 = q8.rescale();
+    /// assert!((q4.to_num() - 1.5).abs() < 0.1);
+    /// ```
     #[inline]
     #[must_use]
     pub fn rescale<const R: usize>(self) -> Fixed<Repr, R>
@@ -759,6 +821,16 @@ impl<Repr: FixedRepr, const SHIFT: usize> Fixed<Repr, SHIFT> {
         Const<SHIFT>: Dim,
         Const<R>: Dim,
     {
+        assert!(
+            SHIFT <= Repr::BITS as usize,
+            "SHIFT ({SHIFT}) exceeds representation bit width ({})",
+            Repr::BITS
+        );
+        assert!(
+            R <= Repr::BITS as usize,
+            "destination scale R ({R}) exceeds representation bit width ({})",
+            Repr::BITS
+        );
         Fixed {
             raw: Repr::rescale_value(self.raw, SHIFT, R),
         }
