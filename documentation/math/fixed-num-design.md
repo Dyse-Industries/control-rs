@@ -16,7 +16,7 @@ high-rate feedback loops (ARM, 1996).
 
 The [`src/math/fixed_num.rs`](../../src/math/fixed_num.rs) module introduces the
 canonical fixed-point scalar
-type `Fixed<Repr, const SHIFT: i32>` (alongside the `Quantized<Repr, SHIFT>`
+type `Fixed<Repr, const SHIFT: usize>` (alongside the `Quantized<Repr, SHIFT>`
 type alias), representing numbers in binary Q-format where each value is
 $x = \text{raw} \cdot 2^{-\text{SHIFT}}$ with fixed quantization step
 $\Delta = 2^{-\text{SHIFT}}$ (ARM, 1996; Spiteri, 2026a).
@@ -98,7 +98,7 @@ The fixed-point module is implemented in `src/math/fixed_num.rs`, exposed via
 `pub mod fixed_num;` in `src/math/mod.rs`, and tested in
 `src/math/tests/fixed_num_tests.rs`.
 
-The module defines the primary struct `Fixed<Repr, const SHIFT: i32>` and the
+The module defines the primary struct `Fixed<Repr, const SHIFT: usize>` and the
 canonical type alias `Quantized<Repr, SHIFT>`, supported by the sealed trait
 `FixedRepr` that parameterizes widening and narrowing behaviors across primitive
 integer widths.
@@ -178,12 +178,12 @@ FR-6._
 ```rust
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Fixed<Repr, const SHIFT: i32> {
+pub struct Fixed<Repr, const SHIFT: usize> {
     raw: Repr,
 }
 
 /// Canonical type alias for downstream numerical models.
-pub type Quantized<Repr, const SHIFT: i32> = Fixed<Repr, SHIFT>;
+pub type Quantized<Repr, const SHIFT: usize> = Fixed<Repr, SHIFT>;
 ```
 
 The underlying field `raw` is private to preserve scale invariants. Values are
@@ -287,7 +287,7 @@ pairs that satisfy each bound:
 pub trait OneRepresentable {}   // SHIFT <= BITS-2 signed, BITS-1 unsigned
 pub trait TwoRepresentable {}   // SHIFT <= BITS-3 signed, BITS-2 unsigned
 
-impl<Repr: FixedRepr, const SHIFT: i32> One for Fixed<Repr, SHIFT>
+impl<Repr: FixedRepr, const SHIFT: usize> One for Fixed<Repr, SHIFT>
 where
     Self: OneRepresentable
 { /* ... */ }
@@ -420,7 +420,7 @@ pub type UQ63 = Fixed<u64, 63>;
 5. **Type Naming (`Fixed` vs. `Quantized`)**:
     - _Considered_: Exclusive naming as `Quantized` (model quantization) versus
       `Fixed` (representation).
-    - _Decision_: Adopt `Fixed<Repr, const SHIFT: i32>` as the canonical
+    - _Decision_: Adopt `Fixed<Repr, const SHIFT: usize>` as the canonical
       struct name matching arithmetic naming conventions, and export
       `pub type Quantized<Repr, SHIFT> = Fixed<Repr, SHIFT>;` for drop-in
       compatibility with downstream model and tensor specifications.

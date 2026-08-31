@@ -485,15 +485,25 @@ where
 
     /// Permute rank-2 axes by transposing into $C \times R$.
     #[must_use]
-    pub fn permute(&self, _axes: [usize; 2]) -> ArrayTensor<T, C, R>
+    pub fn permute(&self, axes: [usize; 2]) -> ArrayTensor<T, C, R>
     where
         T: Copy + Zero,
     {
-        ArrayTensor::from_storage(
-            Owned::<T, R, C>::from_storage(self.buffer)
-                .transpose()
-                .into_storage(),
-        )
+        assert!(
+            axes == [1, 0] || (axes == [0, 1] && R == C),
+            "invalid permutation axes {axes:?} for rank-2 tensor with shape [{R}, {C}]"
+        );
+        if axes == [1, 0] {
+            ArrayTensor::from_storage(
+                Owned::<T, R, C>::from_storage(self.buffer)
+                    .transpose()
+                    .into_storage(),
+            )
+        } else {
+            ArrayTensor::from_fn(|idx| {
+                self.get(&[idx[0], idx[1]]).copied().unwrap_or(T::ZERO)
+            })
+        }
     }
 }
 

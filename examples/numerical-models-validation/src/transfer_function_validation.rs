@@ -327,43 +327,98 @@ fn run_validation_default() -> Value {
 pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
-    let check_f64 =
-        |key: &str, r: f64, p: f64, tol: f64, errs: &mut Vec<String>| {
-            if (r - p).abs() > tol {
-                errs.push(format!("{key}: rust {r} vs python {p} (tol {tol})"));
+    if python.as_object().map_or(true, |o| o.is_empty()) {
+        errs.push("Python oracle returned an empty payload".to_string());
+        return Err(errs);
+    }
+
+    let mut check_f64 =
+        |key: &str, r_opt: Option<f64>, p_opt: Option<f64>, tol: f64, errs: &mut Vec<String>| {
+            match (r_opt, p_opt) {
+                (Some(r), Some(p)) => {
+                    if (r - p).abs() > tol {
+                        errs.push(format!("{key}: rust {r} vs python {p} (tol {tol})"));
+                    }
+                }
+                _ => {
+                    errs.push(format!("Missing {key} in payload"));
+                }
             }
         };
 
-    if let (Some(r), Some(p)) = (
+    check_f64(
+        "tutorial a00",
         rust["tutorial"]["a00"].as_f64(),
         python["tutorial"]["a00"].as_f64(),
-    ) {
-        check_f64("tutorial a00", r, p, 1e-12, &mut errs);
-    }
+        1e-12,
+        &mut errs,
+    );
+    check_f64(
+        "tutorial a01",
+        rust["tutorial"]["a01"].as_f64(),
+        python["tutorial"]["a01"].as_f64(),
+        1e-12,
+        &mut errs,
+    );
+    check_f64(
+        "tutorial a10",
+        rust["tutorial"]["a10"].as_f64(),
+        python["tutorial"]["a10"].as_f64(),
+        1e-12,
+        &mut errs,
+    );
+    check_f64(
+        "tutorial a11",
+        rust["tutorial"]["a11"].as_f64(),
+        python["tutorial"]["a11"].as_f64(),
+        1e-12,
+        &mut errs,
+    );
 
-    let check_array = |key: &str,
+    let mut check_array = |key: &str,
                        rust_arr: Option<&Vec<Value>>,
                        py_arr: Option<&Vec<Value>>,
                        tol: f64,
                        errs: &mut Vec<String>| {
-        if let (Some(r_slice), Some(p_slice)) = (rust_arr, py_arr) {
-            for (i, (r, p)) in r_slice.iter().zip(p_slice.iter()).enumerate() {
-                let rv = r.as_f64().unwrap_or(0.0);
-                let pv = p.as_f64().unwrap_or(0.0);
-                if (rv - pv).abs() > tol {
+        match (rust_arr, py_arr) {
+            (Some(r_slice), Some(p_slice)) => {
+                if r_slice.len() != p_slice.len() || r_slice.is_empty() {
                     errs.push(format!(
-                        "{key}[{i}]: rust {rv} vs python {pv} (tol {tol})"
+                        "{key} length mismatch: rust {} vs python {}",
+                        r_slice.len(),
+                        p_slice.len()
                     ));
+                } else {
+                    for (i, (r, p)) in r_slice.iter().zip(p_slice.iter()).enumerate() {
+                        let rv = r.as_f64().unwrap_or(0.0);
+                        let pv = p.as_f64().unwrap_or(0.0);
+                        if (rv - pv).abs() > tol {
+                            errs.push(format!(
+                                "{key}[{i}]: rust {rv} vs python {pv} (tol {tol})"
+                            ));
+                        }
+                    }
                 }
+            }
+            _ => {
+                errs.push(format!("Missing {key} array in payload"));
             }
         }
     };
 
+    // Discretization error (Bode magnitude and phase)
     check_array(
         "cont_mag_db",
         rust["discretization_error"]["cont_mag_db"].as_array(),
         python["discretization_error"]["cont_mag_db"].as_array(),
         1e-3,
+        &mut errs,
+    );
+    check_array(
+        "cont_phase_deg",
+        rust["discretization_error"]["cont_phase_deg"].as_array(),
+        python["discretization_error"]["cont_phase_deg"].as_array(),
+        1e-2,
         &mut errs,
     );
     check_array(
@@ -374,10 +429,54 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         &mut errs,
     );
     check_array(
+        "tustin_phase_deg",
+        rust["discretization_error"]["tustin_phase_deg"].as_array(),
+        python["discretization_error"]["tustin_phase_deg"].as_array(),
+        1e-2,
+        &mut errs,
+    );
+    check_array(
         "zoh_mag_db",
         rust["discretization_error"]["zoh_mag_db"].as_array(),
         python["discretization_error"]["zoh_mag_db"].as_array(),
         1e-3,
+        &mut errs,
+    );
+    check_array(
+        "zoh_phase_deg",
+        rust["discretization_error"]["zoh_phase_deg"].as_array(),
+        python["discretization_error"]["zoh_phase_deg"].as_array(),
+        1e-2,
+        &mut errs,
+    );
+
+    // Nyquist criterion arrays and margins
+    check_array(
+        "nyquist h_re",
+        rust["nyquist_criterion"]["h_re"].as_array(),
+        python["nyquist_criterion"]["h_re"].as_array(),
+        1e-3,
+        &mut errs,
+    );
+    check_array(
+        "nyquist h_im",
+        rust["nyquist_criterion"]["h_im"].as_array(),
+        python["nyquist_criterion"]["h_im"].as_array(),
+        1e-3,
+        &mut errs,
+    );
+    check_f64(
+        "nyquist phase_margin_deg",
+        rust["nyquist_criterion"]["phase_margin_deg"].as_f64(),
+        python["nyquist_criterion"]["phase_margin_deg"].as_f64(),
+        0.5,
+        &mut errs,
+    );
+    check_f64(
+        "nyquist gain_margin_db",
+        rust["nyquist_criterion"]["gain_margin_db"].as_f64(),
+        python["nyquist_criterion"]["gain_margin_db"].as_f64(),
+        0.5,
         &mut errs,
     );
 

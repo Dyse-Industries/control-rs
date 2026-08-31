@@ -280,6 +280,60 @@ pub mod tensor_test_suite {
             );
         }
     }
+
+    #[cfg_attr(test, test)]
+    fn test_tensor_permute_axes() {
+        // 1. Square matrix identity permutation [0, 1]
+        let square =
+            ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+        let id = square.permute([0, 1]);
+        assert_eq!(id.get(&[0, 0]), Some(&1.0));
+        assert_eq!(id.get(&[1, 0]), Some(&2.0));
+        assert_eq!(id.get(&[0, 1]), Some(&3.0));
+        assert_eq!(id.get(&[1, 1]), Some(&4.0));
+
+        // 2. Square matrix transpose permutation [1, 0]
+        let tr = square.permute([1, 0]);
+        assert_eq!(tr.get(&[0, 0]), Some(&1.0));
+        assert_eq!(tr.get(&[1, 0]), Some(&3.0));
+        assert_eq!(tr.get(&[0, 1]), Some(&2.0));
+        assert_eq!(tr.get(&[1, 1]), Some(&4.0));
+
+        // 3. Rectangular matrix transpose permutation [1, 0]
+        let rect = ArrayTensor::<f32, 2, 3>::from_raw([
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+        ]);
+        let rect_tr = rect.permute([1, 0]);
+        assert_eq!(rect_tr.get(&[0, 0]), Some(&1.0));
+        assert_eq!(rect_tr.get(&[1, 0]), Some(&3.0));
+        assert_eq!(rect_tr.get(&[2, 0]), Some(&5.0));
+        assert_eq!(rect_tr.get(&[0, 1]), Some(&2.0));
+        assert_eq!(rect_tr.get(&[1, 1]), Some(&4.0));
+        assert_eq!(rect_tr.get(&[2, 1]), Some(&6.0));
+    }
+
+    #[cfg(test)]
+    #[test]
+    #[should_panic(expected = "invalid permutation axes")]
+    fn test_tensor_permute_invalid_axes() {
+        let square =
+            ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+        let _ = square.permute([0, 0]);
+    }
+
+    #[cfg(test)]
+    #[test]
+    #[should_panic(expected = "invalid permutation axes")]
+    fn test_tensor_permute_non_square_identity_panic() {
+        let rect = ArrayTensor::<f32, 2, 3>::from_raw([
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+        ]);
+        let _ = rect.permute([0, 1]);
+    }
 }
 
 #[cfg(test)]

@@ -254,30 +254,59 @@ fn run_validation_default() -> (Value, f64, f64, f64) {
 pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
+    if python.as_object().map_or(true, |o| o.is_empty()) {
+        errs.push("Python oracle returned an empty payload".to_string());
+        return Err(errs);
+    }
+
     // Quadrant 1 check: covariance heatmap agreement
-    if let (Some(rs_cov), Some(py_cov)) = (
+    match (
         rust["covariance_heatmap"]["rs_matrix"].as_array(),
         python["covariance_heatmap"]["py_matrix"].as_array(),
     ) {
-        for (i, (r_row, p_row)) in rs_cov.iter().zip(py_cov.iter()).enumerate()
-        {
-            if let (Some(r_cols), Some(p_cols)) =
-                (r_row.as_array(), p_row.as_array())
-            {
-                for (j, (rv, pv)) in
-                    r_cols.iter().zip(p_cols.iter()).enumerate()
+        (Some(rs_cov), Some(py_cov)) => {
+            if rs_cov.len() != py_cov.len() || rs_cov.is_empty() {
+                errs.push(format!(
+                    "covariance_heatmap row count mismatch: rust {} vs python {}",
+                    rs_cov.len(),
+                    py_cov.len()
+                ));
+            } else {
+                for (i, (r_row, p_row)) in rs_cov.iter().zip(py_cov.iter()).enumerate()
                 {
-                    let r_val = rv.as_f64().unwrap_or(0.0);
-                    let p_val = pv.as_f64().unwrap_or(0.0);
-                    let diff = (r_val - p_val).abs();
-                    if diff > 1e-4 {
-                        errs.push(format!("covariance_heatmap[{i}][{j}]: rust {r_val} vs python {pv} (diff {diff})"));
+                    match (r_row.as_array(), p_row.as_array()) {
+                        (Some(r_cols), Some(p_cols)) => {
+                            if r_cols.len() != p_cols.len() || r_cols.is_empty() {
+                                errs.push(format!(
+                                    "covariance_heatmap[{i}] col count mismatch: rust {} vs python {}",
+                                    r_cols.len(),
+                                    p_cols.len()
+                                ));
+                            } else {
+                                for (j, (rv, pv)) in
+                                    r_cols.iter().zip(p_cols.iter()).enumerate()
+                                {
+                                    let r_val = rv.as_f64().unwrap_or(0.0);
+                                    let p_val = pv.as_f64().unwrap_or(0.0);
+                                    let diff = (r_val - p_val).abs();
+                                    if diff > 1e-4 {
+                                        errs.push(format!("covariance_heatmap[{i}][{j}]: rust {r_val} vs python {pv} (diff {diff})"));
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            errs.push(format!(
+                                "Missing covariance_heatmap[{i}] row array in payload"
+                            ));
+                        }
                     }
                 }
             }
         }
-    } else {
-        errs.push("Missing covariance_heatmap arrays in payload".to_string());
+        _ => {
+            errs.push("Missing covariance_heatmap arrays in payload".to_string());
+        }
     }
 
     // Quadrant 2 check: scaling data presence

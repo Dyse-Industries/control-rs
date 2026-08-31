@@ -213,52 +213,92 @@ fn run_validation_default() -> Value {
 pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
-    if let (Some(r_th), Some(p_th)) = (
+    if python.as_object().map_or(true, |o| o.is_empty()) {
+        errs.push("Python oracle returned an empty payload".to_string());
+        return Err(errs);
+    }
+
+    match (
         rust["phase_portrait"]["theta"].as_array(),
         python["phase_portrait"]["theta"].as_array(),
     ) {
-        for (i, (r, p)) in r_th.iter().zip(p_th.iter()).enumerate() {
-            let rv = r.as_f64().unwrap_or(0.0);
-            let pv = p.as_f64().unwrap_or(0.0);
-            if (rv - pv).abs() > 1e-6 {
+        (Some(r_th), Some(p_th)) => {
+            if r_th.len() != p_th.len() || r_th.is_empty() {
                 errs.push(format!(
-                    "phase_portrait.theta[{i}]: rust {rv} vs python {pv}"
+                    "phase_portrait.theta length mismatch: rust {} vs python {}",
+                    r_th.len(),
+                    p_th.len()
                 ));
+            } else {
+                for (i, (r, p)) in r_th.iter().zip(p_th.iter()).enumerate() {
+                    let rv = r.as_f64().unwrap_or(0.0);
+                    let pv = p.as_f64().unwrap_or(0.0);
+                    if (rv - pv).abs() > 1e-6 {
+                        errs.push(format!(
+                            "phase_portrait.theta[{i}]: rust {rv} vs python {pv}"
+                        ));
+                    }
+                }
             }
         }
-    } else {
-        errs.push("Missing phase_portrait.theta in payload".to_string());
+        _ => {
+            errs.push("Missing phase_portrait.theta in payload".to_string());
+        }
     }
 
-    if let (Some(r_thd), Some(p_thd)) = (
+    match (
         rust["phase_portrait"]["theta_dot"].as_array(),
         python["phase_portrait"]["theta_dot"].as_array(),
     ) {
-        for (i, (r, p)) in r_thd.iter().zip(p_thd.iter()).enumerate() {
-            let rv = r.as_f64().unwrap_or(0.0);
-            let pv = p.as_f64().unwrap_or(0.0);
-            if (rv - pv).abs() > 1e-6 {
+        (Some(r_thd), Some(p_thd)) => {
+            if r_thd.len() != p_thd.len() || r_thd.is_empty() {
                 errs.push(format!(
-                    "phase_portrait.theta_dot[{i}]: rust {rv} vs python {pv}"
+                    "phase_portrait.theta_dot length mismatch: rust {} vs python {}",
+                    r_thd.len(),
+                    p_thd.len()
                 ));
+            } else {
+                for (i, (r, p)) in r_thd.iter().zip(p_thd.iter()).enumerate() {
+                    let rv = r.as_f64().unwrap_or(0.0);
+                    let pv = p.as_f64().unwrap_or(0.0);
+                    if (rv - pv).abs() > 1e-6 {
+                        errs.push(format!(
+                            "phase_portrait.theta_dot[{i}]: rust {rv} vs python {pv}"
+                        ));
+                    }
+                }
             }
         }
-    } else {
-        errs.push("Missing phase_portrait.theta_dot in payload".to_string());
+        _ => {
+            errs.push("Missing phase_portrait.theta_dot in payload".to_string());
+        }
     }
 
-    if let (Some(r_sd), Some(p_sd)) = (
+    match (
         rust["jitter"]["step_data"].as_array(),
         python["jitter"]["step_data"].as_array(),
     ) {
-        for (i, (r, p)) in r_sd.iter().zip(p_sd.iter()).enumerate() {
-            let rv = r.as_f64().unwrap_or(0.0);
-            let pv = p.as_f64().unwrap_or(0.0);
-            if (rv - pv).abs() > 1e-6 {
+        (Some(r_sd), Some(p_sd)) => {
+            if r_sd.len() != p_sd.len() || r_sd.is_empty() {
                 errs.push(format!(
-                    "jitter.step_data[{i}]: rust {rv} vs python {pv}"
+                    "jitter.step_data length mismatch: rust {} vs python {}",
+                    r_sd.len(),
+                    p_sd.len()
                 ));
+            } else {
+                for (i, (r, p)) in r_sd.iter().zip(p_sd.iter()).enumerate() {
+                    let rv = r.as_f64().unwrap_or(0.0);
+                    let pv = p.as_f64().unwrap_or(0.0);
+                    if (rv - pv).abs() > 1e-6 {
+                        errs.push(format!(
+                            "jitter.step_data[{i}]: rust {rv} vs python {pv}"
+                        ));
+                    }
+                }
             }
+        }
+        _ => {
+            errs.push("Missing jitter.step_data in payload".to_string());
         }
     }
 

@@ -302,7 +302,7 @@ The default (v1) representation is power-of-two Q-format, matching the
 `CMSIS-DSP` Q7/Q15/Q31 convention already validated for `Matrix`:
 
 ```rust
-pub struct Quantized<Repr, const SHIFT: i32> {
+pub struct Quantized<Repr, const SHIFT: usize> {
     raw: Repr, // e.g. i8, i16, i32
 }
 ```

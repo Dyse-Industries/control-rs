@@ -326,40 +326,123 @@ fn run_validation_default() -> Value {
 pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
-    let check_f64 =
-        |key: &str, r: f64, p: f64, tol: f64, errs: &mut Vec<String>| {
-            if (r - p).abs() > tol {
-                errs.push(format!("{key}: rust {r} vs python {p} (tol {tol})"));
+    if python.as_object().map_or(true, |o| o.is_empty()) {
+        errs.push("Python oracle returned an empty payload".to_string());
+        return Err(errs);
+    }
+
+    let mut check_f64 =
+        |key: &str, r_opt: Option<f64>, p_opt: Option<f64>, tol: f64, errs: &mut Vec<String>| {
+            match (r_opt, p_opt) {
+                (Some(r), Some(p)) => {
+                    if (r - p).abs() > tol {
+                        errs.push(format!("{key}: rust {r} vs python {p} (tol {tol})"));
+                    }
+                }
+                _ => {
+                    errs.push(format!("Missing {key} in payload"));
+                }
             }
         };
 
-    if let (Some(r), Some(p)) = (
+    // 1. Tutorial values
+    check_f64(
+        "tutorial p_real",
         rust["tutorial"]["p_real"].as_f64(),
         python["tutorial"]["p_real"].as_f64(),
+        1e-12,
+        &mut errs,
+    );
+    check_f64(
+        "tutorial p_c_re",
+        rust["tutorial"]["p_c_re"].as_f64(),
+        python["tutorial"]["p_c_re"].as_f64(),
+        1e-12,
+        &mut errs,
+    );
+    check_f64(
+        "tutorial p_c_im",
+        rust["tutorial"]["p_c_im"].as_f64(),
+        python["tutorial"]["p_c_im"].as_f64(),
+        1e-12,
+        &mut errs,
+    );
+
+    // 2. Root convergence iterations cross-check
+    match (
+        rust["root_convergence"]["iterations"].as_array(),
+        python["root_convergence"]["iterations"].as_array(),
     ) {
-        check_f64("p_real", r, p, 1e-12, &mut errs);
+        (Some(r_iters), Some(p_iters)) => {
+            if r_iters.len() != p_iters.len() || r_iters.is_empty() {
+                errs.push(format!(
+                    "root_convergence iterations length mismatch: rust {} vs python {}",
+                    r_iters.len(),
+                    p_iters.len()
+                ));
+            } else {
+                for (i, (r, p)) in r_iters.iter().zip(p_iters.iter()).enumerate() {
+                    let rv = r.as_i64().unwrap_or(0);
+                    let pv = p.as_i64().unwrap_or(0);
+                    if (rv - pv).abs() > 1 {
+                        errs.push(format!(
+                            "root_convergence iterations[{i}]: rust {rv} vs python {pv}"
+                        ));
+                    }
+                }
+            }
+        }
+        _ => {
+            errs.push("Missing root_convergence.iterations array in payload".to_string());
+        }
     }
 
-    // Verify Wilkinson residual structural lengths and precision loss ratio (f32 residual >> f64 residual)
-    if let (Some(r_f64), Some(r_f32)) = (
+    // 3. Wilkinson residual cross-check and precision loss validation
+    match (
         rust["wilkinson_residual"]["residual_f64"].as_array(),
+        python["wilkinson_residual"]["residual_f64"].as_array(),
         rust["wilkinson_residual"]["residual_f32"].as_array(),
+        python["wilkinson_residual"]["residual_f32"].as_array(),
     ) {
-        if r_f64.len() != 20 || r_f32.len() != 20 {
+        (Some(r_f64), Some(p_f64), Some(r_f32), Some(p_f32)) => {
+            if r_f64.len() != 20 || p_f64.len() != 20 || r_f32.len() != 20 || p_f32.len() != 20 {
+                errs.push(format!(
+                    "Wilkinson residual length mismatch: rust f64 ({}), py f64 ({}), rust f32 ({}), py f32 ({}) (expected 20)",
+                    r_f64.len(),
+                    p_f64.len(),
+                    r_f32.len(),
+                    p_f32.len()
+                ));
+            } else {
+                for i in 0..20 {
+                    let rv64 = r_f64[i].as_f64().unwrap_or(0.0);
+                    let pv64 = p_f64[i].as_f64().unwrap_or(0.0);
+                    let rel_err64 = (rv64 - pv64).abs() / (pv64.abs() + 1.0);
+                    if rel_err64 > 1e-4 {
+                        errs.push(format!("wilkinson residual_f64[{i}]: rust {rv64} vs python {pv64} (rel {rel_err64})"));
+                    }
+
+                    let rv32 = r_f32[i].as_f64().unwrap_or(0.0);
+                    let pv32 = p_f32[i].as_f64().unwrap_or(0.0);
+                    let rel_err32 = (rv32 - pv32).abs() / (pv32.abs() + 1.0);
+                    if rel_err32 > 1e-4 {
+                        errs.push(format!("wilkinson residual_f32[{i}]: rust {rv32} vs python {pv32} (rel {rel_err32})"));
+                    }
+                }
+
+                // At k=20, f32 residual should be significantly larger due to precision loss
+                let last_f64 = r_f64[19].as_f64().unwrap_or(0.0);
+                let last_f32 = r_f32[19].as_f64().unwrap_or(0.0);
+                if last_f32 <= last_f64 {
+                    errs.push(format!("Expected f32 residual ({last_f32}) > f64 residual ({last_f64}) for Wilkinson polynomial"));
+                }
+            }
+        }
+        _ => {
             errs.push(
-                "Wilkinson residual length mismatch in Rust output".to_string(),
+                "Missing wilkinson_residual arrays in Rust or Python payload".to_string(),
             );
         }
-        // At k=20, f32 residual should be significantly larger due to precision loss
-        let last_f64 = r_f64[19].as_f64().unwrap_or(0.0);
-        let last_f32 = r_f32[19].as_f64().unwrap_or(0.0);
-        if last_f32 <= last_f64 {
-            errs.push(format!("Expected f32 residual ({last_f32}) > f64 residual ({last_f64}) for Wilkinson polynomial"));
-        }
-    } else {
-        errs.push(
-            "Missing wilkinson_residual arrays in Rust payload".to_string(),
-        );
     }
 
     if errs.is_empty() { Ok(()) } else { Err(errs) }

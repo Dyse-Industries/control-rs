@@ -221,63 +221,137 @@ fn run_validation_default() -> Value {
 pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
+    if python.as_object().map_or(true, |o| o.is_empty()) {
+        errs.push("Python oracle returned an empty payload".to_string());
+        return Err(errs);
+    }
+
     // 1. Manifold interpolation sample agreement
-    if let (Some(r_mesh), Some(p_mesh)) = (
+    match (
         rust["manifold"]["interp_mesh"].as_array(),
         python["manifold"]["interp_mesh"].as_array(),
     ) {
-        for (i, (r_row, p_row)) in r_mesh.iter().zip(p_mesh.iter()).enumerate()
-        {
-            if let (Some(r_vals), Some(p_vals)) =
-                (r_row.as_array(), p_row.as_array())
-            {
-                for (j, (rv, pv)) in
-                    r_vals.iter().zip(p_vals.iter()).enumerate()
+        (Some(r_mesh), Some(p_mesh)) => {
+            if r_mesh.len() != p_mesh.len() || r_mesh.len() != MESH_N {
+                errs.push(format!(
+                    "manifold interp_mesh row count mismatch: rust {} vs python {} (expected {MESH_N})",
+                    r_mesh.len(),
+                    p_mesh.len()
+                ));
+            } else {
+                for (i, (r_row, p_row)) in
+                    r_mesh.iter().zip(p_mesh.iter()).enumerate()
                 {
-                    let r_num = rv.as_f64().unwrap_or(0.0);
-                    let p_num = pv.as_f64().unwrap_or(0.0);
-                    if (r_num - p_num).abs() > 1e-4 {
-                        errs.push(format!("manifold interp[{i}][{j}]: rust {r_num} vs python {p_num}"));
+                    match (r_row.as_array(), p_row.as_array()) {
+                        (Some(r_vals), Some(p_vals)) => {
+                            if r_vals.len() != p_vals.len() || r_vals.len() != MESH_N {
+                                errs.push(format!(
+                                    "manifold interp_mesh[{i}] col count mismatch: rust {} vs python {} (expected {MESH_N})",
+                                    r_vals.len(),
+                                    p_vals.len()
+                                ));
+                            } else {
+                                for (j, (rv, pv)) in
+                                    r_vals.iter().zip(p_vals.iter()).enumerate()
+                                {
+                                    let r_num = rv.as_f64().unwrap_or(0.0);
+                                    let p_num = pv.as_f64().unwrap_or(0.0);
+                                    if (r_num - p_num).abs() > 1e-4 {
+                                        errs.push(format!("manifold interp[{i}][{j}]: rust {r_num} vs python {p_num}"));
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            errs.push(format!(
+                                "Missing manifold interp_mesh[{i}] row array in payload"
+                            ));
+                        }
                     }
                 }
             }
+        }
+        _ => {
+            errs.push("Missing manifold.interp_mesh array in payload".to_string());
         }
     }
 
     // 2. Contraction relative error agreement
-    if let (Some(r_mat), Some(p_mat)) = (
+    match (
         rust["contraction"]["mat_c"].as_array(),
         python["contraction"]["mat_c"].as_array(),
     ) {
-        for (i, (r_row, p_row)) in r_mat.iter().zip(p_mat.iter()).enumerate() {
-            if let (Some(r_vals), Some(p_vals)) =
-                (r_row.as_array(), p_row.as_array())
-            {
-                for (j, (rv, pv)) in
-                    r_vals.iter().zip(p_vals.iter()).enumerate()
+        (Some(r_mat), Some(p_mat)) => {
+            if r_mat.len() != p_mat.len() || r_mat.len() != 16 {
+                errs.push(format!(
+                    "contraction mat_c row count mismatch: rust {} vs python {} (expected 16)",
+                    r_mat.len(),
+                    p_mat.len()
+                ));
+            } else {
+                for (i, (r_row, p_row)) in
+                    r_mat.iter().zip(p_mat.iter()).enumerate()
                 {
-                    let r_num = rv.as_f64().unwrap_or(0.0);
-                    let p_num = pv.as_f64().unwrap_or(0.0);
-                    let rel_err = (r_num - p_num).abs() / (p_num.abs() + 1e-12);
-                    if rel_err > 1e-4 {
-                        errs.push(format!("contraction mat_c[{i}][{j}]: rust {r_num} vs python {p_num} (rel {rel_err})"));
+                    match (r_row.as_array(), p_row.as_array()) {
+                        (Some(r_vals), Some(p_vals)) => {
+                            if r_vals.len() != p_vals.len() || r_vals.len() != 16 {
+                                errs.push(format!(
+                                    "contraction mat_c[{i}] col count mismatch: rust {} vs python {} (expected 16)",
+                                    r_vals.len(),
+                                    p_vals.len()
+                                ));
+                            } else {
+                                for (j, (rv, pv)) in
+                                    r_vals.iter().zip(p_vals.iter()).enumerate()
+                                {
+                                    let r_num = rv.as_f64().unwrap_or(0.0);
+                                    let p_num = pv.as_f64().unwrap_or(0.0);
+                                    let rel_err =
+                                        (r_num - p_num).abs() / (p_num.abs() + 1e-12);
+                                    if rel_err > 1e-4 {
+                                        errs.push(format!("contraction mat_c[{i}][{j}]: rust {r_num} vs python {p_num} (rel {rel_err})"));
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            errs.push(format!(
+                                "Missing contraction mat_c[{i}] row array in payload"
+                            ));
+                        }
                     }
                 }
             }
         }
+        _ => {
+            errs.push("Missing contraction.mat_c array in payload".to_string());
+        }
     }
 
     // 3. Q7 Raw fixed-point byte exactness
-    if let (Some(r_raw), Some(p_raw)) = (
+    match (
         rust["boundaries"]["q_raw"].as_array(),
         python["boundaries"]["q_raw"].as_array(),
     ) {
-        for (i, (r, p)) in r_raw.iter().zip(p_raw.iter()).enumerate() {
-            let rv = r.as_i64().unwrap_or(0);
-            let pv = p.as_i64().unwrap_or(0);
-            if rv != pv {
-                errs.push(format!("q7 q_raw[{i}]: rust {rv} vs python {pv}"));
+        (Some(r_raw), Some(p_raw)) => {
+            if r_raw.len() != p_raw.len() || r_raw.is_empty() {
+                errs.push(format!(
+                    "boundaries q_raw length mismatch: rust {} vs python {}",
+                    r_raw.len(),
+                    p_raw.len()
+                ));
+            } else {
+                for (i, (r, p)) in r_raw.iter().zip(p_raw.iter()).enumerate() {
+                    let rv = r.as_i64().unwrap_or(0);
+                    let pv = p.as_i64().unwrap_or(0);
+                    if rv != pv {
+                        errs.push(format!("q7 q_raw[{i}]: rust {rv} vs python {pv}"));
+                    }
+                }
             }
+        }
+        _ => {
+            errs.push("Missing boundaries.q_raw array in payload".to_string());
         }
     }
 
