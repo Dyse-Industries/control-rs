@@ -20,6 +20,9 @@ use control_rs::polynomial::Polynomial;
 type Store<const N: usize> = ArrayStorage<f64, N, 1>;
 type Poly<const N: usize> = Polynomial<f64, Const<N>, Store<N>>;
 
+pub type ValidationResult = Result<(), Vec<String>>;
+type ComplexRoots = Vec<Complex<f64>>;
+
 // Simple LCG PRNG for reproducible perturbation noise
 struct Lcg {
     state: u64,
@@ -86,8 +89,8 @@ fn benchmark_complexity() -> Value {
 
     for &deg in &degrees {
         let mut coeffs_buf = vec![0.0; deg + 1];
-        for i in 0..=deg {
-            coeffs_buf[i] = 1.0 / ((i + 1) as f64);
+        for (i, coeff) in coeffs_buf.iter_mut().enumerate() {
+            *coeff = 1.0 / ((i + 1) as f64);
         }
 
         // Benchmark Horner evaluation using Poly::<deg+1>::evaluate()
@@ -98,8 +101,8 @@ fn benchmark_complexity() -> Value {
         let mut naive_sum = 0.0;
         for &x in &eval_points {
             let mut acc = 0.0;
-            for i in 0..=deg {
-                acc += coeffs_buf[i] * x.powi(i as i32);
+            for (i, &coeff) in coeffs_buf.iter().enumerate() {
+                acc += coeff * x.powi(i as i32);
             }
             naive_sum += acc;
         }
@@ -224,7 +227,7 @@ fn benchmark_root_sensitivity() -> Value {
     let ground_truth_roots_im = vec![2.0, -2.0, 1.0, -1.0];
 
     // Durand-Kerner complex root finder for 4th degree monic polynomial
-    let solve_quartic_roots = |c: &[f64]| -> Vec<Complex<f64>> {
+    let solve_quartic_roots = |c: &[f64]| -> ComplexRoots {
         let a0 = c[0] / c[4];
         let a1 = c[1] / c[4];
         let a2 = c[2] / c[4];
@@ -276,9 +279,9 @@ fn benchmark_root_sensitivity() -> Value {
 
     for _ in 0..num_trials {
         let mut p_coeffs = ground_truth_coeffs.clone();
-        for i in 0..4 {
+        for coeff in p_coeffs.iter_mut().take(4) {
             let noise = lcg.next_f64() * noise_scale;
-            p_coeffs[i] *= 1.0 + noise;
+            *coeff *= 1.0 + noise;
         }
         let roots = solve_quartic_roots(&p_coeffs);
         for r in roots {
@@ -323,10 +326,10 @@ fn run_validation_default() -> Value {
     })
 }
 
-pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
+pub fn cross_validate(rust: &Value, python: &Value) -> ValidationResult {
     let mut errs = Vec::new();
 
-    if python.as_object().map_or(true, |o| o.is_empty()) {
+    if python.as_object().is_none_or(|o| o.is_empty()) {
         errs.push("Python oracle returned an empty payload".to_string());
         return Err(errs);
     }
@@ -469,13 +472,10 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
 /// working precision). Flint's residuals serve as a high-precision ground truth for
 /// Wilkinson's polynomial: they should sit at (numerically) zero, in contrast to the large
 /// f64 residuals both Rust and SciPy see from catastrophic cancellation near k=20.
-pub fn cross_validate_flint(
-    rust: &Value,
-    flint: &Value,
-) -> Result<(), Vec<String>> {
+pub fn cross_validate_flint(rust: &Value, flint: &Value) -> ValidationResult {
     let mut errs = Vec::new();
 
-    if flint.as_object().map_or(true, |o| o.is_empty()) {
+    if flint.as_object().is_none_or(|o| o.is_empty()) {
         errs.push("Flint oracle returned an empty payload".to_string());
         return Err(errs);
     }
@@ -490,7 +490,7 @@ pub fn cross_validate_flint(
             } else {
                 for (i, v) in residuals.iter().enumerate() {
                     let val = v.as_f64().unwrap_or(f64::NAN);
-                    if !(val.abs() < 1e-6) {
+                    if !val.is_finite() || val.abs() >= 1e-6 {
                         errs.push(format!(
                             "Flint wilkinson residual_f64_flint[{i}] = {val} exceeds ground-truth tolerance 1e-6"
                         ));

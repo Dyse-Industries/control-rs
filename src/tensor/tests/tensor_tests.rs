@@ -282,10 +282,11 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    fn test_tensor_permute_axes() {
-        // 1. Square matrix identity permutation [0, 1]
+    fn test_tensor_permute_square_matrix() {
         let square =
             ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+
+        // 1. Square matrix identity permutation [0, 1]
         let id = square.permute(Axes2D::Identity);
         assert_eq!(id.get(&[0, 0]), Some(&1.0));
         assert_eq!(id.get(&[1, 0]), Some(&2.0));
@@ -298,8 +299,11 @@ pub mod tensor_test_suite {
         assert_eq!(tr.get(&[1, 0]), Some(&3.0));
         assert_eq!(tr.get(&[0, 1]), Some(&2.0));
         assert_eq!(tr.get(&[1, 1]), Some(&4.0));
+    }
 
-        // 3. Rectangular matrix transpose permutation [1, 0]
+    #[cfg_attr(test, test)]
+    fn test_tensor_permute_rectangular_matrix() {
+        // Rectangular matrix transpose permutation [1, 0]
         let rect = ArrayTensor::<f32, 2, 3>::from_raw([
             [1.0, 2.0],
             [3.0, 4.0],
@@ -312,8 +316,10 @@ pub mod tensor_test_suite {
         assert_eq!(rect_tr.get(&[0, 1]), Some(&2.0));
         assert_eq!(rect_tr.get(&[1, 1]), Some(&4.0));
         assert_eq!(rect_tr.get(&[2, 1]), Some(&6.0));
+    }
 
-        // 4. Conversion and helper tests
+    #[cfg_attr(test, test)]
+    fn test_axes2d_conversions_and_helpers() {
         assert_eq!(Axes2D::try_from([0, 1]), Ok(Axes2D::Identity));
         assert_eq!(Axes2D::try_from([1, 0]), Ok(Axes2D::Transpose));
         assert_eq!(Axes2D::try_from(0), Ok(Axes2D::Identity));

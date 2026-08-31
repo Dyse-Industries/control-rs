@@ -29,17 +29,18 @@ graph.
 **Host numerical models** need a Rust toolchain that can build the workspace
 (see [
 `documentation/development-guide.md`](../documentation/development-guide.md))
-and Python ≥ 3.10 with NumPy/SciPy/matplotlib. The dedicated
+and **Python 3.12**. The virtualenv is `.venv` at the **crate root**, not
+under `examples/`. The dedicated
 [
 `.github/workflows/numerical-models.yml`](../.github/workflows/numerical-models.yml)
 workflow installs
 [
 `numerical-models-validation/python3/requirements.txt`](numerical-models-validation/python3/requirements.txt)
-and runs V&V. Locally:
+and runs V&V. Locally, from the crate root:
 
 ```bash
-python3.12 -m venv examples/numerical-models-validation/.venv
-source examples/numerical-models-validation/.venv/bin/activate
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -r examples/numerical-models-validation/python3/requirements.txt
 ```
 
@@ -68,12 +69,16 @@ subprogram crate.
 
 These binaries live in the nested crate [
 `numerical-models-validation/`](numerical-models-validation/)
-(not root workspace targets). Run them from **`examples/numerical-models-validation/`**.
+(not root workspace targets). Activate the crate-root `.venv`, then **`cd
+examples/numerical-models-validation/`** before any `cargo run` / `cargo
+test`. Oracle subprocesses use paths relative to that crate (`python3
+python3/<model>_validation.py`).
 
 Each model has a standalone Rust validator binary and Python companion oracle script. Running `cargo run` (or `cargo run --bin validate`) executes all model validations in-process, measures tight nanosecond timings, cross-references Rust and Python outputs via built-in `cross_validate()`, and writes combined payload JSON files under `results/<model>.json`.
 
 ```bash
-pip install -r python3/requirements.txt
+# crate-root .venv already created and activated (see Prerequisites)
+cd examples/numerical-models-validation
 cargo run
 # or run a single model binary:
 cargo run --bin matrix

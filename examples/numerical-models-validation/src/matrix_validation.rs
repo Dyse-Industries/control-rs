@@ -15,6 +15,13 @@ use control_rs::math::num_types::{Const, Dim};
 use control_rs::math::storage::Storage;
 use control_rs::matrix::{LuDecomposition, Matrix, Owned, Symmetric};
 
+pub type ValidationResult = Result<(), Vec<String>>;
+type DecompTimes = (f64, f64, f64);
+type ValidationDefaultResult = (Value, f64, f64, f64);
+type GenericMatrix<const R: usize, const C: usize, S> =
+    Matrix<f64, Const<R>, Const<C>, S>;
+type NestedRows = Vec<Vec<f64>>;
+
 // ============================================================================
 // Serialization Helpers
 // ============================================================================
@@ -22,8 +29,8 @@ use control_rs::matrix::{LuDecomposition, Matrix, Owned, Symmetric};
 /// Converts any generic Matrix backend into a standard nested Rust Vec
 /// for JSON serialization.
 fn to_rows<S, const R: usize, const C: usize>(
-    mat: &Matrix<f64, Const<R>, Const<C>, S>,
-) -> Vec<Vec<f64>>
+    mat: &GenericMatrix<R, C, S>,
+) -> NestedRows
 where
     Const<R>: Dim,
     Const<C>: Dim,
@@ -164,7 +171,7 @@ fn benchmark_ekf_update_jitter() -> Value {
 // Quadrant 4: Decomposition Speedup Factor
 // ============================================================================
 
-fn benchmark_decompositions() -> (f64, f64, f64) {
+fn benchmark_decompositions() -> DecompTimes {
     const N: usize = 16;
     const ITERS: usize = 1000;
 
@@ -231,7 +238,7 @@ fn benchmark_decompositions() -> (f64, f64, f64) {
 // Variant Runners & Orchestration
 // ============================================================================
 
-fn run_validation_default() -> (Value, f64, f64, f64) {
+fn run_validation_default() -> ValidationDefaultResult {
     let q1 = generate_matrix_correctness_data();
     let q2 = benchmark_matrix_scaling();
     let q3 = benchmark_ekf_update_jitter();
@@ -251,10 +258,10 @@ fn run_validation_default() -> (Value, f64, f64, f64) {
     (rust_payload, chol_time, lu_time, qr_time)
 }
 
-pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
+pub fn cross_validate(rust: &Value, python: &Value) -> ValidationResult {
     let mut errs = Vec::new();
 
-    if python.as_object().map_or(true, |o| o.is_empty()) {
+    if python.as_object().is_none_or(|o| o.is_empty()) {
         errs.push("Python oracle returned an empty payload".to_string());
         return Err(errs);
     }
@@ -364,13 +371,10 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
 /// CPU backend, x64 enabled). JAX's CPU linalg ops lower to the same LAPACK routine family
 /// SciPy calls (dgetrf/dpotrf/dgeqrf via jaxlib's bundled LAPACK build), so this checks
 /// agreement rather than independence of the underlying algorithm.
-pub fn cross_validate_jax(
-    rust: &Value,
-    jax: &Value,
-) -> Result<(), Vec<String>> {
+pub fn cross_validate_jax(rust: &Value, jax: &Value) -> ValidationResult {
     let mut errs = Vec::new();
 
-    if jax.as_object().map_or(true, |o| o.is_empty()) {
+    if jax.as_object().is_none_or(|o| o.is_empty()) {
         errs.push("JAX oracle returned an empty payload".to_string());
         return Err(errs);
     }
@@ -393,14 +397,23 @@ pub fn cross_validate_jax(
                 {
                     match (r_row.as_array(), j_row.as_array()) {
                         (Some(r_cols), Some(j_cols)) => {
-                            for (j, (rv, jv)) in
-                                r_cols.iter().zip(j_cols.iter()).enumerate()
+                            if r_cols.len() != j_cols.len() || r_cols.is_empty()
                             {
-                                let r_val = rv.as_f64().unwrap_or(0.0);
-                                let j_val = jv.as_f64().unwrap_or(0.0);
-                                let diff = (r_val - j_val).abs();
-                                if diff > 1e-6 {
-                                    errs.push(format!("covariance_heatmap[{i}][{j}]: rust {r_val} vs jax {j_val} (diff {diff})"));
+                                errs.push(format!(
+                                    "covariance_heatmap[{i}] col count mismatch: rust {} vs jax {}",
+                                    r_cols.len(),
+                                    j_cols.len()
+                                ));
+                            } else {
+                                for (j, (rv, jv)) in
+                                    r_cols.iter().zip(j_cols.iter()).enumerate()
+                                {
+                                    let r_val = rv.as_f64().unwrap_or(0.0);
+                                    let j_val = jv.as_f64().unwrap_or(0.0);
+                                    let diff = (r_val - j_val).abs();
+                                    if diff > 1e-6 {
+                                        errs.push(format!("covariance_heatmap[{i}][{j}]: rust {r_val} vs jax {j_val} (diff {diff})"));
+                                    }
                                 }
                             }
                         }

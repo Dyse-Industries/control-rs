@@ -21,6 +21,10 @@ type StoreDen<const D: usize> = ArrayStorage<f64, D, 1>;
 type Tf<const N: usize, const D: usize> =
     TransferFunction<f64, Const<N>, Const<D>, StoreNum<N>, StoreDen<D>>;
 
+pub type ValidationResult = Result<(), Vec<String>>;
+type ComplexRoots = Vec<Complex<f64>>;
+type ValueArray<'a> = Option<&'a Vec<Value>>;
+
 /// Script-level constructor for Proposal 1: Flexible Structure Modal System with Resonant Notch Filter.
 /// G(s) = (s^2 + 2*zeta_z*wn*s + wn^2) / (s^2 + 2*zeta_p*wn*s + wn^2) * (wc / (s + wc))
 fn synthesize_resonant_notch_system(
@@ -218,7 +222,7 @@ fn benchmark_topology_stability() -> Value {
     }
 
     // Solve Direct Form f32 roots using Durand-Kerner
-    let solve_df_roots = |c: &[f32]| -> Vec<Complex<f64>> {
+    let solve_df_roots = |c: &[f32]| -> ComplexRoots {
         let mut z = vec![
             Complex::new(0.6, 0.8),
             Complex::new(0.6, -0.8),
@@ -271,7 +275,7 @@ fn benchmark_topology_stability() -> Value {
         let disc = (b1 * b1 - 4.0 * b0) as f64;
         if disc < 0.0 {
             let re = (-b1 / 2.0) as f64;
-            let im = ((-disc).sqrt() / 2.0) as f64;
+            let im = (-disc).sqrt() / 2.0;
             biquad_re.push(re);
             biquad_im.push(im);
             biquad_re.push(re);
@@ -324,10 +328,10 @@ fn run_validation_default() -> Value {
     })
 }
 
-pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
+pub fn cross_validate(rust: &Value, python: &Value) -> ValidationResult {
     let mut errs = Vec::new();
 
-    if python.as_object().map_or(true, |o| o.is_empty()) {
+    if python.as_object().is_none_or(|o| o.is_empty()) {
         errs.push("Python oracle returned an empty payload".to_string());
         return Err(errs);
     }
@@ -381,8 +385,8 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     );
 
     let check_array = |key: &str,
-                       rust_arr: Option<&Vec<Value>>,
-                       py_arr: Option<&Vec<Value>>,
+                       rust_arr: ValueArray,
+                       py_arr: ValueArray,
                        tol: f64,
                        errs: &mut Vec<String>| {
         match (rust_arr, py_arr) {
@@ -494,20 +498,17 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
 /// frequency response, Tustin/ZOH discretization). Mirrors the SciPy check with the same
 /// tolerances, since harold agrees with SciPy to ~1e-10 dB once evaluated with matching
 /// frequency-unit conventions.
-pub fn cross_validate_harold(
-    rust: &Value,
-    harold: &Value,
-) -> Result<(), Vec<String>> {
+pub fn cross_validate_harold(rust: &Value, harold: &Value) -> ValidationResult {
     let mut errs = Vec::new();
 
-    if harold.as_object().map_or(true, |o| o.is_empty()) {
+    if harold.as_object().is_none_or(|o| o.is_empty()) {
         errs.push("Harold oracle returned an empty payload".to_string());
         return Err(errs);
     }
 
     let check_array = |key: &str,
-                       rust_arr: Option<&Vec<Value>>,
-                       h_arr: Option<&Vec<Value>>,
+                       rust_arr: ValueArray,
+                       h_arr: ValueArray,
                        tol: f64,
                        errs: &mut Vec<String>| {
         match (rust_arr, h_arr) {

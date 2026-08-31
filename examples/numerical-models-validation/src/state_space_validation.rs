@@ -17,6 +17,11 @@ type Store<const R: usize, const C: usize> = ArrayStorage<f64, R, C>;
 type Mat<const R: usize, const C: usize> =
     Matrix<f64, Const<R>, Const<C>, Store<R, C>>;
 
+pub type ValidationResult = Result<(), Vec<String>>;
+type Trajectory = (Vec<f64>, Vec<f64>);
+type ScalingResult = (Value, Vec<f64>, Vec<f64>);
+type ValueArray<'a> = Option<&'a Vec<Value>>;
+
 /// Explicit Pendulum State-Space Simulation Model.
 pub struct PendulumSim {
     pub sys_d: ArrayStateSpace<f64, 2, 1, 1>,
@@ -43,7 +48,7 @@ impl PendulumSim {
         x0: [f64; 2],
         n_steps: usize,
         u_val: f64,
-    ) -> (Vec<f64>, Vec<f64>) {
+    ) -> Trajectory {
         let mut x_k =
             Mat::<2, 1>::from_storage(Store::from_array([[x0[0], x0[1]]]));
         let u_k = Mat::<1, 1>::from_fn(|_, _| u_val);
@@ -121,7 +126,7 @@ macro_rules! bench_dim {
     }};
 }
 
-fn benchmark_discretization_scaling() -> (Value, Vec<f64>, Vec<f64>) {
+fn benchmark_discretization_scaling() -> ScalingResult {
     let (zoh2, ctrb2, obsv2) = bench_dim!(2);
     let (zoh4, ctrb4, obsv4) = bench_dim!(4);
     let (zoh8, ctrb8, obsv8) = bench_dim!(8);
@@ -210,10 +215,10 @@ fn run_validation_default() -> Value {
     })
 }
 
-pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
+pub fn cross_validate(rust: &Value, python: &Value) -> ValidationResult {
     let mut errs = Vec::new();
 
-    if python.as_object().map_or(true, |o| o.is_empty()) {
+    if python.as_object().is_none_or(|o| o.is_empty()) {
         errs.push("Python oracle returned an empty payload".to_string());
         return Err(errs);
     }
@@ -310,20 +315,17 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
 /// Cross-validates against the harold oracle (State model + ZOH discretization via
 /// harold.discretize, phase portrait via manual recursion on harold's discretized
 /// matrices, step response via harold.simulate_linear_system).
-pub fn cross_validate_harold(
-    rust: &Value,
-    harold: &Value,
-) -> Result<(), Vec<String>> {
+pub fn cross_validate_harold(rust: &Value, harold: &Value) -> ValidationResult {
     let mut errs = Vec::new();
 
-    if harold.as_object().map_or(true, |o| o.is_empty()) {
+    if harold.as_object().is_none_or(|o| o.is_empty()) {
         errs.push("Harold oracle returned an empty payload".to_string());
         return Err(errs);
     }
 
     let check_series = |key: &str,
-                        rust_arr: Option<&Vec<Value>>,
-                        harold_arr: Option<&Vec<Value>>,
+                        rust_arr: ValueArray,
+                        harold_arr: ValueArray,
                         errs: &mut Vec<String>| {
         match (rust_arr, harold_arr) {
             (Some(r_arr), Some(h_arr)) => {

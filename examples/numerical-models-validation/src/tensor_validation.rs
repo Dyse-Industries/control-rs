@@ -17,6 +17,8 @@ use control_rs::tensor::ArrayTensor;
 
 type Tensor16x16 = ArrayTensor<f32, 16, 16>;
 type Q7 = Quantized<i8, 7>;
+pub type ValidationResult = Result<(), Vec<String>>;
+type ContractionBenchResult = (Value, Tensor16x16, Tensor16x16, Tensor16x16);
 
 const MESH_N: usize = 40;
 
@@ -34,12 +36,13 @@ fn benchmark_interpolation_manifold() -> (Value, Tensor16x16) {
         (x * x - y * y) as f32
     });
 
-    let mut grid_table = vec![vec![0.0_f32; 16]; 16];
-    for i in 0..16 {
-        for j in 0..16 {
-            grid_table[i][j] = grid.get(&[i, j]).copied().unwrap_or(0.0);
-        }
-    }
+    let grid_table = (0..16)
+        .map(|i| {
+            (0..16)
+                .map(|j| grid.get(&[i, j]).copied().unwrap_or(0.0))
+                .collect::<Vec<f32>>()
+        })
+        .collect::<Vec<_>>();
 
     // Dense 40x40 fractional evaluation mesh over [0.0, 15.0]
     let mut interp_mesh = vec![vec![0.0_f32; MESH_N]; MESH_N];
@@ -78,8 +81,7 @@ fn benchmark_interpolation_manifold() -> (Value, Tensor16x16) {
 // -----------------------------------------------------------------------------
 // Panel 2: Tensor Contraction Relative Error (ArrayTensor::contract_into)
 // -----------------------------------------------------------------------------
-fn benchmark_tensor_contraction()
--> (Value, Tensor16x16, Tensor16x16, Tensor16x16) {
+fn benchmark_tensor_contraction() -> ContractionBenchResult {
     let tensor_a = Tensor16x16::from_fn(|idx| {
         let i = idx[0] as f32;
         let j = idx[1] as f32;
@@ -214,7 +216,8 @@ fn benchmark_timing_profile(grid: &Tensor16x16) -> Value {
     let quant_iters = 100_000;
     let t_quant = Instant::now();
     for _ in 0..quant_iters {
-        let _ = core::hint::black_box(Q7::quantize(0.785_398_163_397_448_3));
+        let _ =
+            core::hint::black_box(Q7::quantize(core::f64::consts::FRAC_PI_4));
     }
     let quant_time_ns =
         (t_quant.elapsed().as_nanos() as f64) / (quant_iters as f64);
@@ -251,10 +254,10 @@ fn run_validation_default() -> Value {
     })
 }
 
-pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
+pub fn cross_validate(rust: &Value, python: &Value) -> ValidationResult {
     let mut errs = Vec::new();
 
-    if python.as_object().map_or(true, |o| o.is_empty()) {
+    if python.as_object().is_none_or(|o| o.is_empty()) {
         errs.push("Python oracle returned an empty payload".to_string());
         return Err(errs);
     }

@@ -539,7 +539,7 @@ pub fn run_fmt() -> (Result<(), usize>, String) {
         .output()
         .expect("Failed to run cargo fmt-check");
 
-    let nested_fmt = Command::new("cargo")
+    let examples_fmt = Command::new("cargo")
         .args([
             "fmt",
             "--manifest-path",
@@ -553,15 +553,15 @@ pub fn run_fmt() -> (Result<(), usize>, String) {
 
     let stdout_str = String::from_utf8_lossy(&fmt_output.stdout);
     let stderr_str = String::from_utf8_lossy(&fmt_output.stderr);
-    let nested_out = format!(
+    let examples_out = format!(
         "{}{}",
-        String::from_utf8_lossy(&nested_fmt.stdout),
-        String::from_utf8_lossy(&nested_fmt.stderr)
+        String::from_utf8_lossy(&examples_fmt.stdout),
+        String::from_utf8_lossy(&examples_fmt.stderr)
     );
-    let combined = format!("{stdout_str}{stderr_str}{nested_out}");
+    let combined = format!("{stdout_str}{stderr_str}{examples_out}");
     parse_fmt_output(
         &combined,
-        fmt_output.status.success() && nested_fmt.status.success(),
+        fmt_output.status.success() && examples_fmt.status.success(),
     )
 }
 
@@ -574,12 +574,31 @@ pub fn run_clippy() -> (Result<(), usize>, String) {
         .output()
         .expect("Failed to run cargo clippy-json");
 
-    let stdout_str = String::from_utf8_lossy(&clippy_output.stdout);
-    let stderr_str = String::from_utf8_lossy(&clippy_output.stderr);
+    let examples_clippy = Command::new("cargo")
+        .args([
+            "clippy",
+            "--manifest-path",
+            "examples/numerical-models-validation/Cargo.toml",
+            "--message-format=json",
+        ])
+        .env("CARGO_TERM_COLOR", "never")
+        .output()
+        .expect("Failed to run nested numerical-model clippy");
+
+    let stdout_str = format!(
+        "{}{}",
+        String::from_utf8_lossy(&clippy_output.stdout),
+        String::from_utf8_lossy(&examples_clippy.stdout)
+    );
+    let stderr_str = format!(
+        "{}{}",
+        String::from_utf8_lossy(&clippy_output.stderr),
+        String::from_utf8_lossy(&examples_clippy.stderr)
+    );
     parse_clippy_output(
         &stdout_str,
         &stderr_str,
-        clippy_output.status.success(),
+        clippy_output.status.success() && examples_clippy.status.success(),
     )
 }
 
