@@ -2,7 +2,7 @@
 """
 python3/tensor_validation.py
 
-Executes NumPy/SciPy equivalents for tensor and fixed-point numerical models.
+Executes NumPy/SciPy/TFLite/ONNX Runtime equivalents for tensor and fixed-point numerical models.
 Outputs JSON results to stdout for cross-language validation with Rust.
 """
 
@@ -10,9 +10,17 @@ from __future__ import annotations
 
 import json
 import time
+import os
+
+# Suppress TensorFlow logging warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
+import tensorflow as tf
+import onnx
+import onnxruntime as ort
+from onnx import helper, TensorProto
 
 MESH_N = 40
 
@@ -63,6 +71,18 @@ def benchmark_interpolation_manifold() -> dict:
     }
 
 
+def build_onnx_matmul() -> bytes:
+    # Build a simple float MatMul ONNX model
+    a = helper.make_tensor_value_info('A', TensorProto.FLOAT, [16, 16])
+    b = helper.make_tensor_value_info('B', TensorProto.FLOAT, [16, 16])
+    c = helper.make_tensor_value_info('C', TensorProto.FLOAT, [16, 16])
+
+    node = helper.make_node('MatMul', inputs=['A', 'B'], outputs=['C'])
+    graph = helper.make_graph([node], 'matmul_graph', [a, b], [c])
+    model = helper.make_model(graph, producer_name='onnx-test', opset_imports=[helper.make_operatorsetid('', 21)])
+    return model.SerializeToString()
+
+
 def benchmark_tensor_contraction() -> dict:
     ii, jj = np.meshgrid(np.arange(16), np.arange(16), indexing="ij")
     i_f = ii.astype(np.float32)
@@ -71,7 +91,10 @@ def benchmark_tensor_contraction() -> dict:
     mat_a = np.asarray(np.sin(i_f * 0.5 + j_f * 0.3) * 10.0, dtype=np.float32)
     mat_b = np.asarray(np.cos(i_f * 0.3 - j_f * 0.4) * 5.0, dtype=np.float32)
 
-    mat_c = np.matmul(mat_a, mat_b).astype(np.float32)
+    # Run matrix multiplication via ONNX Runtime
+    model_bytes = build_onnx_matmul()
+    session = ort.InferenceSession(model_bytes)
+    mat_c = session.run(['C'], {'A': mat_a, 'B': mat_b})[0]
 
     return {
         "mat_a": mat_a.tolist(),
@@ -80,7 +103,31 @@ def benchmark_tensor_contraction() -> dict:
     }
 
 
+def _build_quant_tflite_tanh() -> bytes:
+    class QuantizedActivationModel(tf.Module):
+        @tf.function(input_signature=[tf.TensorSpec(shape=[1, 1], dtype=tf.float32)])
+        def __call__(self, x):
+            return tf.math.tanh(x)
+
+    converter = tf.lite.TFLiteConverter.from_concrete_functions(
+        [QuantizedActivationModel().__call__.get_concrete_function()],
+        QuantizedActivationModel()
+    )
+    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+    def representative_data_gen():
+        for _ in range(100):
+            yield [np.random.uniform(-3.0, 3.0, size=(1, 1)).astype(np.float32)]
+
+    converter.representative_dataset = representative_data_gen
+    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+    converter.inference_input_type = tf.int8
+    converter.inference_output_type = tf.int8
+    return converter.convert()
+
+
 def benchmark_quantized_boundaries() -> dict:
+    # 1. Inputs for basic quantization validation
     float_inputs = np.array(
         [
             -1.5, -1.0, -0.75, -0.5, -0.125, -0.0078125, 0.0,
@@ -89,18 +136,43 @@ def benchmark_quantized_boundaries() -> dict:
         dtype=np.float64,
     )
 
-    t0 = time.perf_counter_ns()
     q_raw = np.array([_q7_raw(float(val)) for val in float_inputs], dtype=np.int32)
     dequant = q_raw.astype(np.float64) / 128.0
     quant_err = np.abs(float_inputs - dequant)
-    q7_time_ns = float(time.perf_counter_ns() - t0)
+
+    # 2. Sweep for TableActivation Tanh validation (61 breakpoints, 121 evaluation points)
+    act_inputs = np.linspace(-3.0, 3.0, 121, dtype=np.float32)
+    act_exact = np.tanh(act_inputs)
+
+    # Build and run quantized TFLite Tanh model
+    tflite_model_bytes = _build_quant_tflite_tanh()
+    interpreter = tf.lite.Interpreter(model_content=tflite_model_bytes)
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()[0]
+    output_details = interpreter.get_output_details()[0]
+
+    in_scale, in_zp = input_details['quantization']
+    out_scale, out_zp = output_details['quantization']
+
+    tflite_outputs_int8 = []
+    for val in act_inputs:
+        q_in = np.clip(np.round(val / in_scale) + in_zp, -128, 127).astype(np.int8)
+        interpreter.set_tensor(input_details['index'], np.array([[q_in]], dtype=np.int8))
+        interpreter.invoke()
+        q_out = interpreter.get_tensor(output_details['index'])[0][0]
+        tflite_outputs_int8.append(int(q_out))
+
+    tflite_dequant = np.array(tflite_outputs_int8, dtype=np.float32) * out_scale
 
     return {
         "float_inputs": float_inputs.tolist(),
         "q_raw": q_raw.tolist(),
-        "dequant": dequant.astype(np.float32).tolist(),
-        "quant_err": quant_err.astype(np.float32).tolist(),
-        "q7_time_ns": q7_time_ns,
+        "dequant": dequant.tolist(),
+        "quant_err": quant_err.tolist(),
+        "act_inputs": act_inputs.tolist(),
+        "act_exact": act_exact.tolist(),
+        "tflite_outputs_int8": tflite_outputs_int8,
+        "tflite_dequant": tflite_dequant.tolist(),
     }
 
 

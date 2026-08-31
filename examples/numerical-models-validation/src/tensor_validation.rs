@@ -120,6 +120,8 @@ fn benchmark_tensor_contraction()
 // Panel 3: Quantized Precision Boundaries (Quantized<i8, 7>)
 // -----------------------------------------------------------------------------
 fn benchmark_quantized_boundaries() -> Value {
+    use control_rs::tensor::{Activation, TableActivation};
+
     let float_inputs = [
         -1.5_f32, -1.0, -0.75, -0.5, -0.125, -0.0078125, 0.0, 0.0078125, 0.125,
         0.5, 0.75, 0.9921875, 1.0, 1.5,
@@ -138,11 +140,42 @@ fn benchmark_quantized_boundaries() -> Value {
         quant_err[idx] = (f_in - dq).abs();
     }
 
+    // Sweep for TableActivation Tanh validation (61 breakpoints, 121 evaluation points)
+    let mut breakpoints = [0.0f32; 61];
+    let mut values = [0.0f32; 61];
+    for i in 0..61 {
+        let x = -3.0f32 + (i as f32) * 0.1f32;
+        breakpoints[i] = x;
+        values[i] = x.tanh();
+    }
+    let tanh_lut = TableActivation {
+        breakpoints,
+        values,
+    };
+
+    let mut act_inputs = vec![0.0f32; 121];
+    let mut act_outputs = vec![0.0f32; 121];
+    let mut act_outputs_q_raw = vec![0i32; 121];
+
+    for i in 0..121 {
+        let x = -3.0f32 + (i as f32) * 0.05f32;
+        act_inputs[i] = x;
+        let y = tanh_lut.apply(x);
+        act_outputs[i] = y;
+
+        // Quantize back to Q7 to compare against TFLite's int8 outputs
+        let q_y = Q7::quantize(y as f64);
+        act_outputs_q_raw[i] = i32::from(q_y.raw());
+    }
+
     json!({
         "float_inputs": float_inputs,
         "q_raw": q_raw,
         "dequant": dequant,
         "quant_err": quant_err,
+        "act_inputs": act_inputs,
+        "act_outputs": act_outputs,
+        "act_outputs_q_raw": act_outputs_q_raw,
     })
 }
 
@@ -355,6 +388,62 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         }
     }
 
+    // 4. TableActivation float closeness to SciPy exact Tanh
+    match (
+        rust["boundaries"]["act_outputs"].as_array(),
+        python["boundaries"]["act_exact"].as_array(),
+    ) {
+        (Some(r_act), Some(p_act)) => {
+            if r_act.len() != p_act.len() || r_act.is_empty() {
+                errs.push(format!(
+                    "boundaries act_outputs length mismatch: rust {} vs python {}",
+                    r_act.len(),
+                    p_act.len()
+                ));
+            } else {
+                for (i, (r, p)) in r_act.iter().zip(p_act.iter()).enumerate() {
+                    let rv = r.as_f64().unwrap_or(0.0);
+                    let pv = p.as_f64().unwrap_or(0.0);
+                    let diff = (rv - pv).abs();
+                    if diff > 1e-3 {
+                        errs.push(format!("TableActivation vs SciPy index {i}: rust {rv} vs python {pv} (diff {diff} exceeds 1e-3)"));
+                    }
+                }
+            }
+        }
+        _ => {
+            errs.push("Missing act_outputs or act_exact in payload".to_string());
+        }
+    }
+
+    // 5. TableActivation quantized closeness to TFLite interpreter
+    match (
+        rust["boundaries"]["act_outputs_q_raw"].as_array(),
+        python["boundaries"]["tflite_outputs_int8"].as_array(),
+    ) {
+        (Some(r_q), Some(p_q)) => {
+            if r_q.len() != p_q.len() || r_q.is_empty() {
+                errs.push(format!(
+                    "boundaries act_outputs_q_raw length mismatch: rust {} vs python {}",
+                    r_q.len(),
+                    p_q.len()
+                ));
+            } else {
+                for (i, (r, p)) in r_q.iter().zip(p_q.iter()).enumerate() {
+                    let rv = r.as_i64().unwrap_or(0);
+                    let pv = p.as_i64().unwrap_or(0);
+                    let diff = (rv - pv).abs();
+                    if diff > 2 {
+                        errs.push(format!("TableActivation vs TFLite index {i}: rust {rv} vs python {pv} (diff {diff} exceeds 2 LSB)"));
+                    }
+                }
+            }
+        }
+        _ => {
+            errs.push("Missing act_outputs_q_raw or tflite_outputs_int8 in payload".to_string());
+        }
+    }
+
     if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
 
@@ -388,8 +477,18 @@ pub fn run() -> Value {
     }
 
     let combined_results = json!({
-        "rust": rust_results,
-        "python3": py_results
+        "metadata": {
+            "domain": "tensor",
+            "timestamp": "2026-08-30T22:30:28-06:00"
+        },
+        "sources": {
+            "rust": {
+                "default": rust_results
+            },
+            "python3": {
+                "scipy": py_results
+            }
+        }
     });
 
     let out_dir = std::env::var("CARGO_MANIFEST_DIR")

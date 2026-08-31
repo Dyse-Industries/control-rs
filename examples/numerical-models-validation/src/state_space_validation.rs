@@ -335,8 +335,18 @@ pub fn run() -> Value {
     }
 
     let combined_results = json!({
-        "rust": rust_results,
-        "python3": py_results
+        "metadata": {
+            "domain": "state_space",
+            "timestamp": "2026-08-30T22:30:28-06:00"
+        },
+        "sources": {
+            "rust": {
+                "default": rust_results
+            },
+            "python3": {
+                "scipy": py_results
+            }
+        }
     });
 
     let out_dir = std::env::var("CARGO_MANIFEST_DIR")

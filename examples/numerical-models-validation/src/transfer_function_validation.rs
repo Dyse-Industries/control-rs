@@ -6,7 +6,7 @@
 //! 3. Nyquist Stability Criterion & Margins (Polar curve, (-1, 0j) point, gain & phase margins)
 //! 4. Filter Topology Stability (6th-order Butterworth f32 Direct Form vs Biquad SOS)
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs;
 use std::process::Command;
 use std::time::Instant;
@@ -332,19 +332,24 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         return Err(errs);
     }
 
-    let mut check_f64 =
-        |key: &str, r_opt: Option<f64>, p_opt: Option<f64>, tol: f64, errs: &mut Vec<String>| {
-            match (r_opt, p_opt) {
-                (Some(r), Some(p)) => {
-                    if (r - p).abs() > tol {
-                        errs.push(format!("{key}: rust {r} vs python {p} (tol {tol})"));
-                    }
-                }
-                _ => {
-                    errs.push(format!("Missing {key} in payload"));
+    let check_f64 = |key: &str,
+                     r_opt: Option<f64>,
+                     p_opt: Option<f64>,
+                     tol: f64,
+                     errs: &mut Vec<String>| {
+        match (r_opt, p_opt) {
+            (Some(r), Some(p)) => {
+                if (r - p).abs() > tol {
+                    errs.push(format!(
+                        "{key}: rust {r} vs python {p} (tol {tol})"
+                    ));
                 }
             }
-        };
+            _ => {
+                errs.push(format!("Missing {key} in payload"));
+            }
+        }
+    };
 
     check_f64(
         "tutorial a00",
@@ -375,7 +380,7 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         &mut errs,
     );
 
-    let mut check_array = |key: &str,
+    let check_array = |key: &str,
                        rust_arr: Option<&Vec<Value>>,
                        py_arr: Option<&Vec<Value>>,
                        tol: f64,
@@ -389,7 +394,9 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
                         p_slice.len()
                     ));
                 } else {
-                    for (i, (r, p)) in r_slice.iter().zip(p_slice.iter()).enumerate() {
+                    for (i, (r, p)) in
+                        r_slice.iter().zip(p_slice.iter()).enumerate()
+                    {
                         let rv = r.as_f64().unwrap_or(0.0);
                         let pv = p.as_f64().unwrap_or(0.0);
                         if (rv - pv).abs() > tol {
@@ -513,8 +520,18 @@ pub fn run() -> Value {
     }
 
     let combined_results = json!({
-        "rust": rust_results,
-        "python3": py_results
+        "metadata": {
+            "domain": "transfer_function",
+            "timestamp": "2026-08-30T22:30:28-06:00"
+        },
+        "sources": {
+            "rust": {
+                "default": rust_results
+            },
+            "python3": {
+                "scipy": py_results
+            }
+        }
     });
 
     let out_dir = std::env::var("CARGO_MANIFEST_DIR")

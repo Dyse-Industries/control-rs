@@ -42,7 +42,7 @@ def generate_matrix_correctness_data() -> dict:
 
     return {
         "covariance_heatmap": {
-            "py_matrix": p_current.tolist()
+            "matrix": p_current.tolist()
         }
     }
 

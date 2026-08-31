@@ -78,6 +78,30 @@ def get_output_dir() -> str:
     return target_dir
 
 
+STYLING_PALETTE = {
+    "python3": (COLOR_PY, "o", "-"),
+    "rust": (COLOR_RS, "s", "--"),
+    "c": ("#3B82F6", "d", "-."),
+    "julia": ("#EF4444", "^", ":"),
+    "fortran": ("#F97316", "v", "-")
+}
+
+
+def get_style(lang: str, impl: str, index: int):
+    if lang in STYLING_PALETTE:
+        color, marker, ls = STYLING_PALETTE[lang]
+    else:
+        colors = ["#10B981", "#EC4899", "#84CC16", "#06B6D4", "#6366F1"]
+        markers = ["o", "s", "d", "^", "v"]
+        linestyles = ["-", "--", "-.", ":"]
+        color = colors[index % len(colors)]
+        marker = markers[index % len(markers)]
+        ls = linestyles[index % len(linestyles)]
+    if impl not in ("default", "scipy"):
+        ls = ":" if ls == "-" else "-"
+    return color, marker, ls
+
+
 # ==========================================
 # 2. Abstract Base Class
 # ==========================================
@@ -86,9 +110,10 @@ class BaseModelPlotter(ABC):
     Abstract base class enforcing a strict contract for all model plotters.
     """
 
-    def __init__(self, py_data: dict, rust_data: dict):
-        self.py_data = py_data
-        self.rust_data = rust_data
+    def __init__(self, sources: dict):
+        self.sources = sources
+        self.rust_data = sources.get('rust', {}).get('default', {})
+        self.py_data = sources.get('python3', {}).get('scipy', {})
 
     @abstractmethod
     def plot_details(self) -> plt.Figure:
@@ -121,15 +146,15 @@ class MatrixPlotter(BaseModelPlotter):
 
     def plot_details(self) -> plt.Figure:
         fig, axs = plt.subplots(2, 2, figsize=(12, 9))
-        fig.suptitle("Matrix Operations: EKF 4-Quadrant Performance & Determinism", fontsize=15,
+        fig.suptitle("Matrix Validation: EKF Benchmarks", fontsize=15,
                      fontweight='bold', y=0.98)
 
         # ---------------------------------------------------------------------
         # Quadrant 1: Correctness Anchor - 2D Relative Error Heatmap
         # ---------------------------------------------------------------------
         ax1 = axs[0, 0]
-        py_cov = np.array(self.py_data.get('covariance_heatmap', {}).get('py_matrix', []))
-        rust_cov = np.array(self.rust_data.get('covariance_heatmap', {}).get('rs_matrix', []))
+        py_cov = np.array(self.py_data.get('covariance_heatmap', {}).get('matrix', []))
+        rust_cov = np.array(self.rust_data.get('covariance_heatmap', {}).get('matrix', []))
 
         if py_cov.size > 0 and rust_cov.size == py_cov.size:
             err_matrix = np.abs(py_cov - rust_cov) / (np.abs(py_cov) + 1e-15)
@@ -144,7 +169,7 @@ class MatrixPlotter(BaseModelPlotter):
                          interpolation='nearest', aspect='auto')
         cbar1 = fig.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
         cbar1.set_label("Relative Error E", color=TEXT_COLOR, fontsize=8)
-        ax1.set_title("Q1: Covariance Update Error Heatmap (1k Iterations)", fontsize=11,
+        ax1.set_title("EKF Covariance Relative Error", fontsize=11,
                       fontweight='bold')
         ax1.set_xlabel("State Col Index")
         ax1.set_ylabel("State Row Index")
@@ -153,20 +178,24 @@ class MatrixPlotter(BaseModelPlotter):
         # Quadrant 2: Algorithmic Scaling O(N^3) with Error Bars
         # ---------------------------------------------------------------------
         ax2 = axs[0, 1]
-        py_scaling = self.py_data.get('scaling', {})
-        rust_scaling = self.rust_data.get('scaling', {})
+        n_dims = [2, 4, 8, 16, 32, 64]
 
-        n_dims = py_scaling.get('N', [2, 4, 8, 16, 32, 64])
-        py_means = py_scaling.get('inversion_time_ns', [1e2, 5e2, 2e3, 1e4, 8e4, 6e5])
-        py_stds = py_scaling.get('inversion_stddev_ns', [10, 50, 200, 1000, 8000, 60000])
-
-        rust_means = rust_scaling.get('inversion_time_ns', [50, 200, 800, 4e3, 3e4, 2e5])
-        rust_stds = rust_scaling.get('inversion_stddev_ns', [5, 20, 80, 400, 3000, 20000])
-
-        ax2.errorbar(n_dims, py_means, yerr=py_stds, fmt='o-', color=COLOR_PY,
-                     ecolor=COLOR_PY, elinewidth=1.5, capsize=4, label='Python 3 (SciPy)')
-        ax2.errorbar(n_dims, rust_means, yerr=rust_stds, fmt='s--', color=COLOR_RS,
-                     ecolor=COLOR_RS, elinewidth=1.5, capsize=4, label='Rust (control-rs)')
+        idx = 0
+        for lang, impls in self.sources.items():
+            for impl, impl_data in impls.items():
+                scaling = impl_data.get('scaling', {})
+                if not scaling:
+                    continue
+                n_dims_impl = scaling.get('N', n_dims)
+                means = scaling.get('inversion_time_ns', [])
+                stds = scaling.get('inversion_stddev_ns', [])
+                if not means:
+                    continue
+                color, marker, ls = get_style(lang, impl, idx)
+                label = f"{lang} ({impl})"
+                ax2.errorbar(n_dims_impl, means, yerr=stds if stds else None, fmt=f"{marker}{ls}",
+                             color=color, ecolor=color, elinewidth=1.5, capsize=4, label=label)
+                idx += 1
 
         ax2.set_xscale('log', base=2)
         ax2.set_yscale('log')
@@ -174,7 +203,7 @@ class MatrixPlotter(BaseModelPlotter):
         ax2.set_xticklabels([f"N={n}" for n in n_dims])
         ax2.set_xlabel("Matrix Dimension N")
         ax2.set_ylabel("Inversion Time (ns)")
-        ax2.set_title("Q2: Algorithmic Scaling O(N³) (1k Iterations)", fontsize=11,
+        ax2.set_title("Inversion Time Scaling vs. N", fontsize=11,
                       fontweight='bold')
         ax2.legend(frameon=True, fontsize=8)
 
@@ -182,25 +211,22 @@ class MatrixPlotter(BaseModelPlotter):
         # Quadrant 3: Determinism - 32x32 Hilbert Solve Latency Scatter Plot
         # ---------------------------------------------------------------------
         ax3 = axs[1, 0]
-        py_jitter = self.py_data.get('jitter', {}).get('hilbert_solve_times_ns', [])
-        rust_jitter = self.rust_data.get('jitter', {}).get('hilbert_solve_times_ns', [])
-
-        if not py_jitter:
-            py_jitter = list(np.random.normal(50000, 5000, 1000))
-        if not rust_jitter:
-            rust_jitter = list(np.random.normal(8000, 500, 1000))
-
-        iters_py = np.arange(len(py_jitter))
-        iters_rs = np.arange(len(rust_jitter))
-
-        ax3.scatter(iters_py, py_jitter, color=COLOR_PY, alpha=0.4, s=12, label='Python 3 (SciPy)')
-        ax3.scatter(iters_rs, rust_jitter, color=COLOR_RS, alpha=0.7, s=12,
-                    label='Rust (control-rs)')
+        idx = 0
+        for lang, impls in self.sources.items():
+            for impl, impl_data in impls.items():
+                jitter = impl_data.get('jitter', {}).get('hilbert_solve_times_ns', [])
+                if not jitter:
+                    continue
+                iters = np.arange(len(jitter))
+                color, marker, _ = get_style(lang, impl, idx)
+                alpha = 0.4 if lang == "python3" else 0.7
+                ax3.scatter(iters, jitter, color=color, alpha=alpha, s=12, label=f"{lang} ({impl})")
+                idx += 1
 
         ax3.set_yscale('log')
         ax3.set_xlabel("Iteration k")
         ax3.set_ylabel("Solve Time (ns)")
-        ax3.set_title("Q3: 32x32 Hilbert Solve Latency Jitter (1k Runs)", fontsize=11,
+        ax3.set_title("Hilbert Solve Latency Jitter", fontsize=11,
                       fontweight='bold')
         ax3.legend(frameon=True, fontsize=8)
 
@@ -208,38 +234,53 @@ class MatrixPlotter(BaseModelPlotter):
         # Quadrant 4: Side-by-Side Execution Time Bar Chart (16x16 State Matrix)
         # ---------------------------------------------------------------------
         ax4 = axs[1, 1]
-        py_decomp = self.py_data.get('decomp_times_ns', {})
-        rust_decomp = self.rust_data.get('decomp_times_ns', {})
-
         algos = ['Cholesky', 'LU Solve', 'QR Decomp', 'SVD']
         keys = ['cholesky', 'lu_solve', 'qr_decomp', 'svd']
 
-        py_times = [py_decomp.get(k, 0.0) for k in keys]
-        rust_times = [rust_decomp.get(k, 0.0) for k in keys]
+        impl_times = []
+        labels = []
+        colors = []
 
-        x_pos = np.arange(len(algos))
-        width = 0.35
+        idx = 0
+        for lang, impls in self.sources.items():
+            for impl, impl_data in impls.items():
+                decomp = impl_data.get('decomp_times_ns', {})
+                if not decomp:
+                    continue
+                times = [decomp.get(k, 0.0) for k in keys]
+                if all(t is None or t == 0.0 for t in times):
+                    continue
+                impl_times.append(times)
+                labels.append(f"{lang} ({impl})")
+                color, _, _ = get_style(lang, impl, idx)
+                colors.append(color)
+                idx += 1
 
-        ax4.bar(x_pos - width / 2, py_times, width, label='Python 3 (SciPy)', color=COLOR_PY,
-                alpha=0.85)
-        ax4.bar(x_pos + width / 2, rust_times, width, label='Rust (control-rs)', color=COLOR_RS,
-                alpha=0.85)
+        num_impls = len(impl_times)
+        if num_impls > 0:
+            x_pos = np.arange(len(algos))
+            total_width = 0.8
+            width = total_width / num_impls
+            for i, times in enumerate(impl_times):
+                offset = (i - (num_impls - 1) / 2) * width
+                ax4.bar(x_pos + offset, times, width, label=labels[i], color=colors[i], alpha=0.85)
 
-        ax4.set_xticks(x_pos)
-        ax4.set_xticklabels(algos)
+            ax4.set_xticks(x_pos)
+            ax4.set_xticklabels(algos)
+
         ax4.set_yscale('log')
         ax4.set_ylabel("Execution Time (ns)")
-        ax4.set_title("Q4: Decomposition Execution Time (16x16 State)", fontsize=11,
+        ax4.set_title("Matrix Decomposition Times", fontsize=11,
                       fontweight='bold')
         ax4.legend(frameon=True, fontsize=8)
 
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
         return fig
 
     def plot_summary(self, ax: plt.Axes):
         # 2D Heatmap Summary of EKF Covariance Relative Error
-        py_cov = np.array(self.py_data.get('covariance_heatmap', {}).get('py_matrix', []))
-        rust_cov = np.array(self.rust_data.get('covariance_heatmap', {}).get('rs_matrix', []))
+        py_cov = np.array(self.py_data.get('covariance_heatmap', {}).get('matrix', []))
+        rust_cov = np.array(self.rust_data.get('covariance_heatmap', {}).get('matrix', []))
 
         if py_cov.size > 0 and rust_cov.size == py_cov.size:
             err_matrix = np.abs(py_cov - rust_cov) / (np.abs(py_cov) + 1e-15)
@@ -253,7 +294,7 @@ class MatrixPlotter(BaseModelPlotter):
         im = ax.imshow(err_matrix, cmap=CMAP_CONTROL_RS, norm=LogNorm(vmin=vmin, vmax=vmax),
                        interpolation='nearest', aspect='auto')
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        ax.set_title("Matrix: EKF Covariance Error Heatmap", fontsize=12, fontweight='bold')
+        ax.set_title("EKF Covariance Relative Error", fontsize=12, fontweight='bold')
         ax.set_xlabel("State Col")
         ax.set_ylabel("State Row")
 
@@ -269,7 +310,7 @@ class PolynomialPlotter(BaseModelPlotter):
 
     def plot_details(self) -> plt.Figure:
         fig, axs = plt.subplots(2, 2, figsize=(12, 9))
-        fig.suptitle("Polynomial Benchmark: Complexity, Convergence, Stability & Sensitivity",
+        fig.suptitle("Polynomial Operations Validation",
                      fontsize=15, fontweight='bold', y=0.98)
 
         # ---------------------------------------------------------------------
@@ -295,7 +336,7 @@ class PolynomialPlotter(BaseModelPlotter):
 
         ax1.set_xlabel("Polynomial Degree n")
         ax1.set_ylabel("Mean Execution Time (ns)")
-        ax1.set_title("Q1: Execution Time vs. Degree (Complexity)", fontsize=11, fontweight='bold')
+        ax1.set_title("Evaluation Time vs. Degree", fontsize=11, fontweight='bold')
         ax1.legend(frameon=True, fontsize=8)
 
         # ---------------------------------------------------------------------
@@ -318,7 +359,7 @@ class PolynomialPlotter(BaseModelPlotter):
 
         ax2.set_xlabel("Initial Guess Distance |x₀ - r*|")
         ax2.set_ylabel("Iterations to Converge (ε < 10⁻⁶)")
-        ax2.set_title("Q2: Polynomial Root Solver Convergence (Efficiency)", fontsize=11,
+        ax2.set_title("Newton-Raphson Convergence", fontsize=11,
                       fontweight='bold')
         ax2.legend(frameon=True, fontsize=8)
 
@@ -336,30 +377,30 @@ class PolynomialPlotter(BaseModelPlotter):
         res_f64_py = np.clip(np.array(py_wilk.get('residual_f64', [1e-12] * 20)), 1e-16, None)
         res_f32_py = np.clip(np.array(py_wilk.get('residual_f32', [1e-4] * 20)), 1e-16, None)
 
-        m1, s1, _ = ax3.stem(indices - 0.25, res_f32_py, linefmt=COLOR_PY, markerfmt='^',
-                             label='Py f32 Residual')
-        plt.setp(s1, 'color', COLOR_PY, 'linewidth', 1.2, 'alpha', 0.7)
-        plt.setp(m1, 'color', COLOR_PY, 'alpha', 0.7)
+        # Plot valid assertion limits
+        bound_f32 = 1e12 + 100.0 * np.minimum(res_f32_py, res_f32_rs)
+        bound_f64 = 1e5 + 100.0 * np.minimum(res_f64_py, res_f64_rs)
 
-        m2, s2, _ = ax3.stem(indices - 0.08, res_f32_rs, linefmt=COLOR_CRIT, markerfmt='^',
-                             label='Rust f32 Residual')
-        plt.setp(s2, 'color', COLOR_CRIT, 'linewidth', 1.5)
-        plt.setp(m2, 'color', COLOR_CRIT)
+        ax3.plot(indices, bound_f32, color=COLOR_CRIT, linestyle='--', alpha=0.6,
+                 linewidth=1.2, label='f32 Assertion Bound')
+        ax3.plot(indices, bound_f64, color='#F59E0B', linestyle='--', alpha=0.6,
+                 linewidth=1.2, label='f64 Assertion Bound')
 
-        m3, s3, _ = ax3.stem(indices + 0.08, res_f64_py, linefmt=COLOR_PY, markerfmt='o',
-                             label='Py f64 Residual')
-        plt.setp(s3, 'color', COLOR_PY, 'linewidth', 1.2, 'alpha', 0.7)
-        plt.setp(m3, 'color', COLOR_PY, 'alpha', 0.7)
+        # Plot actual residuals
+        ax3.plot(indices, res_f32_py, color=COLOR_PY, marker='^', markersize=5,
+                 linestyle=':', alpha=0.7, label='Py f32 Residual')
+        ax3.plot(indices, res_f32_rs, color=COLOR_RS, marker='^', markersize=5,
+                 linestyle='-', linewidth=1.5, label='Rust f32 Residual')
 
-        m4, s4, _ = ax3.stem(indices + 0.25, res_f64_rs, linefmt=COLOR_RS, markerfmt='o',
-                             label='Rust f64 Residual')
-        plt.setp(s4, 'color', COLOR_RS, 'linewidth', 1.5)
-        plt.setp(m4, 'color', COLOR_RS)
+        ax3.plot(indices, res_f64_py, color=COLOR_PY, marker='o', markersize=5,
+                 linestyle=':', alpha=0.7, label='Py f64 Residual')
+        ax3.plot(indices, res_f64_rs, color=COLOR_RS, marker='o', markersize=5,
+                 linestyle='-', linewidth=1.5, label='Rust f64 Residual')
 
         ax3.set_yscale('log')
         ax3.set_xlabel("Root Index k (Wilkinson W(x) Roots 1..20)")
         ax3.set_ylabel("Absolute Residual Error |W(rₖ)|")
-        ax3.set_title("Q3: Wilkinson Residual Error (Rust vs Python)", fontsize=11,
+        ax3.set_title("Wilkinson Polynomial Residuals", fontsize=11,
                       fontweight='bold')
         ax3.legend(frameon=True, fontsize=8)
 
@@ -396,10 +437,10 @@ class PolynomialPlotter(BaseModelPlotter):
 
         ax4.set_xlabel("Real Axis Re(s)")
         ax4.set_ylabel("Imaginary Axis Im(s)")
-        ax4.set_title("Q4: Root Sensitivity Cloud (Rust vs Python)", fontsize=11, fontweight='bold')
+        ax4.set_title("Pole Sensitivity Under Perturbation", fontsize=11, fontweight='bold')
         ax4.legend(frameon=True, fontsize=8)
 
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
         return fig
 
     def plot_summary(self, ax: plt.Axes):
@@ -430,7 +471,7 @@ class PolynomialPlotter(BaseModelPlotter):
 
         ax.set_xlabel("Re(s)")
         ax.set_ylabel("Im(s)")
-        ax.set_title("Polynomial: Root Sensitivity Cloud", fontsize=12, fontweight='bold')
+        ax.set_title("Pole Sensitivity Under Perturbation", fontsize=12, fontweight='bold')
         ax.legend(frameon=True, fontsize=8)
 
 
@@ -443,7 +484,7 @@ class StateSpacePlotter(BaseModelPlotter):
 
     def plot_details(self) -> plt.Figure:
         fig, axs = plt.subplots(2, 2, figsize=(12, 9))
-        fig.suptitle("State Space: Pendulum Recovery & Benchmarks", fontsize=15,
+        fig.suptitle("State Space Validation", fontsize=15,
                      fontweight='bold', y=0.98)
 
         py_pp = self.py_data.get('phase_portrait', {})
@@ -475,7 +516,7 @@ class StateSpacePlotter(BaseModelPlotter):
                     label='Equilibrium (0,0)')
         ax1.set_xlabel("Angle θ (rad)")
         ax1.set_ylabel("Angular Rate dθ/dt (rad/s)")
-        ax1.set_title("Pendulum Recovery Phase Portrait", fontsize=11, fontweight='bold')
+        ax1.set_title("Inverted Pendulum Phase Space", fontsize=11, fontweight='bold')
         ax1.legend(frameon=True, fontsize=8)
 
         # Subplot 2: Quadrant 2 (Algorithmic Scaling) - ZOH Discretization Scaling vs State Size
@@ -515,7 +556,7 @@ class StateSpacePlotter(BaseModelPlotter):
         ax3.set_yscale('log')
         ax3.set_xlabel("Iteration k")
         ax3.set_ylabel("Compute Time (ns)")
-        ax3.set_title("Step Response Determinism (100 Iterations)", fontsize=11, fontweight='bold')
+        ax3.set_title("Single-Step Computation Jitter", fontsize=11, fontweight='bold')
         ax3.legend(frameon=True, fontsize=8)
 
         # Subplot 4: Quadrant 4 (The Controllable, Observable) - Controllability & Observability
@@ -542,10 +583,10 @@ class StateSpacePlotter(BaseModelPlotter):
         ax4.set_yscale('log')
         ax4.set_xlabel("State Dimension N")
         ax4.set_ylabel("Matrix Construction Time (ns)")
-        ax4.set_title("Controllability & Observability Scaling", fontsize=11, fontweight='bold')
+        ax4.set_title("Ctrb/Obsv Construction Scaling", fontsize=11, fontweight='bold')
         ax4.legend(frameon=True, fontsize=8)
 
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
         return fig
 
     def plot_summary(self, ax: plt.Axes):
@@ -566,7 +607,7 @@ class StateSpacePlotter(BaseModelPlotter):
         ax.scatter([0.0], [0.0], color=COLOR_CRIT, marker='*', s=120, label='Origin (0,0)')
         ax.set_xlabel("Angle θ (rad)")
         ax.set_ylabel("Angular Velocity dθ/dt")
-        ax.set_title("State Space: Pendulum Phase Portrait", fontsize=12, fontweight='bold')
+        ax.set_title("Inverted Pendulum Phase Space", fontsize=12, fontweight='bold')
         ax.legend(frameon=True, fontsize=8)
 
 
@@ -582,7 +623,7 @@ class TransferFuncPlotter(BaseModelPlotter):
     def plot_details(self) -> plt.Figure:
         fig, axs = plt.subplots(2, 2, figsize=(12, 9))
         fig.suptitle(
-            "Transfer Function: Rust vs. Python 3 Discretization, Nyquist & Topology Benchmarks",
+            "Transfer Function Validation",
             fontsize=15, fontweight='bold', y=0.98)
 
         rust_disc = self.rust_data.get('discretization_error', {})
@@ -616,7 +657,7 @@ class TransferFuncPlotter(BaseModelPlotter):
         ax1.axvline(50.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (50 Hz)')
         ax1.set_xlabel("Frequency (Hz)")
         ax1.set_ylabel("Magnitude (dB)")
-        ax1.set_title("Q1: Discretization Bode Magnitude (Fs=100 Hz)", fontsize=11,
+        ax1.set_title("Bode Magnitude (Fs = 100 Hz)", fontsize=11,
                       fontweight='bold')
         ax1.legend(frameon=True, fontsize=8)
 
@@ -646,7 +687,7 @@ class TransferFuncPlotter(BaseModelPlotter):
         ax2.axvline(50.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (50 Hz)')
         ax2.set_xlabel("Frequency (Hz)")
         ax2.set_ylabel("Phase (degrees)")
-        ax2.set_title("Q2: Discretization Bode Phase & Warping", fontsize=11, fontweight='bold')
+        ax2.set_title("Bode Phase & Frequency Warping", fontsize=11, fontweight='bold')
         ax2.legend(frameon=True, fontsize=8)
 
         # ---------------------------------------------------------------------
@@ -687,7 +728,7 @@ class TransferFuncPlotter(BaseModelPlotter):
         ax3.axhline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
         ax3.set_xlabel("Re{H(jw)}")
         ax3.set_ylabel("Im{H(jw)}")
-        ax3.set_title(f"Q3: Nyquist Plot (PM={pm_deg:.1f}°, GM={gm_db:.1f}dB)", fontsize=11,
+        ax3.set_title(f"Nyquist Plot (GM = {gm_db:.1f} dB, PM = {pm_deg:.1f}°)", fontsize=11,
                       fontweight='bold')
         ax3.set_xlim(-6, 6)
         ax3.set_ylim(-6, 6)
@@ -741,11 +782,11 @@ class TransferFuncPlotter(BaseModelPlotter):
         ax4.set_ylim(-3, 3)
         ax4.set_xlabel("Re(z)")
         ax4.set_ylabel("Im(z)")
-        ax4.set_title("Q4: Filter Topology Stability (6th-Order f32)", fontsize=11,
+        ax4.set_title("6th-Order Pole Locations (z-Plane)", fontsize=11,
                       fontweight='bold')
         ax4.legend(frameon=True, fontsize=8)
 
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
         return fig
 
     def plot_summary(self, ax: plt.Axes):
@@ -782,7 +823,7 @@ class TransferFuncPlotter(BaseModelPlotter):
         ax.axhline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
         ax.set_xlabel("Re{H(jw)}")
         ax.set_ylabel("Im{H(jw)}")
-        ax.set_title(f"Transfer Function: Nyquist (PM={pm_deg:.1f}°, GM={gm_db:.1f}dB)",
+        ax.set_title(f"Nyquist (GM = {gm_db:.1f} dB, PM = {pm_deg:.1f}°)",
                      fontsize=10, fontweight='bold')
         ax.set_xlim(-6, 6)
         ax.set_ylim(-6, 6)
@@ -801,7 +842,7 @@ class TensorPlotter(BaseModelPlotter):
 
     def plot_details(self) -> plt.Figure:
         fig = plt.figure(figsize=(12, 9))
-        fig.suptitle("Tensor Operations: Multilinear Manifold, Contraction Error & Q7 Boundaries",
+        fig.suptitle("Tensor Operations Validation",
                      fontsize=15,
                      fontweight='bold', y=0.98)
 
@@ -829,7 +870,7 @@ class TensorPlotter(BaseModelPlotter):
         ax1.set_xlabel("Grid Axis U", color=TEXT_COLOR, fontsize=8)
         ax1.set_ylabel("Grid Axis V", color=TEXT_COLOR, fontsize=8)
         ax1.set_zlabel("Surface Height Z", color=TEXT_COLOR, fontsize=8)
-        ax1.set_title("Q1: Interpolation Manifold (3D Saddle z = x² - y²)", fontsize=11,
+        ax1.set_title("3D Saddle Surface Manifold", fontsize=11,
                       fontweight='bold', color=TEXT_COLOR)
 
         # ---------------------------------------------------------------------
@@ -851,45 +892,58 @@ class TensorPlotter(BaseModelPlotter):
                          interpolation='nearest', aspect='auto')
         cbar2 = fig.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
         cbar2.set_label("Relative Error E_ij", color=TEXT_COLOR, fontsize=8)
-        ax2.set_title("Q2: Tensor Contraction Relative Error E_ij", fontsize=11, fontweight='bold')
+        ax2.set_title("Contraction Relative Error", fontsize=11, fontweight='bold')
         ax2.set_xlabel("Matrix Column j")
         ax2.set_ylabel("Matrix Row i")
 
         # ---------------------------------------------------------------------
-        # Quadrant 3: Quantized Precision Boundaries (Q7 Fixed-Point Edge Cases)
+        # Quadrant 3: Quantized Precision Boundaries (Tanh LUT: Rust vs TFLite vs SciPy)
         # ---------------------------------------------------------------------
         ax3 = fig.add_subplot(2, 2, 3)
         rust_bound = self.rust_data.get('boundaries', {})
         py_bound = self.py_data.get('boundaries', {})
 
-        float_inputs = np.array(
-            rust_bound.get('float_inputs', [-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5]))
-        dequant_rs = np.array(rust_bound.get('dequant', float_inputs))
-        dequant_py = np.array(py_bound.get('dequant', float_inputs))
-        indices = np.arange(len(float_inputs))
+        act_inputs = np.array(rust_bound.get('act_inputs', np.linspace(-3.0, 3.0, 121)))
+        act_exact = np.array(py_bound.get('act_exact', np.tanh(act_inputs)))
 
-        ax3.plot(indices, float_inputs, ':', color=GRID_COLOR, linewidth=1.5,
-                 label='Input Continuous Float')
+        # Rust float outputs and quantized outputs
+        act_outputs = np.array(rust_bound.get('act_outputs', act_exact))
+        act_outputs_q_raw = np.array(rust_bound.get('act_outputs_q_raw', [0] * 121))
+        rust_dequant = act_outputs_q_raw.astype(np.float32) / 128.0
 
-        m1, s1, _ = ax3.stem(indices - 0.1, dequant_py, linefmt=COLOR_PY, markerfmt='o',
-                             label='Py Q7 Dequantized')
-        plt.setp(s1, 'color', COLOR_PY, 'linewidth', 1.2, 'alpha', 0.7)
-        plt.setp(m1, 'color', COLOR_PY, 'alpha', 0.7)
+        # Python TFLite reference outputs
+        tflite_dequant = np.array(py_bound.get('tflite_dequant', act_exact))
 
-        m2, s2, _ = ax3.stem(indices + 0.1, dequant_rs, linefmt=COLOR_RS, markerfmt='s',
-                             label='Rust Q7 Dequantized')
-        plt.setp(s2, 'color', COLOR_RS, 'linewidth', 1.5)
-        plt.setp(m2, 'color', COLOR_RS)
+        # Plot Tanh Curves on Left Y-Axis
+        line1, = ax3.plot(act_inputs, act_exact, '-', color='#CCCCCC', linewidth=2.0,
+                          label='SciPy Exact Tanh (f32)')
+        line2 = ax3.step(act_inputs, tflite_dequant, where='mid', color=COLOR_PY, linestyle=':',
+                         linewidth=1.5, label='TFLite Quantized (Q7)')
+        line3 = ax3.step(act_inputs, rust_dequant, where='mid', color=COLOR_RS, linestyle='--',
+                         linewidth=1.5, label='Rust TableActivation (Q7)')
 
-        ax3.axhline(1.0, color=COLOR_CRIT, linestyle='--', alpha=0.7,
-                    label='Q7 Saturation Bound [±1.0]')
-        ax3.axhline(-1.0, color=COLOR_CRIT, linestyle='--', alpha=0.7)
-
-        ax3.set_xlabel("Edge Case Float Index k")
-        ax3.set_ylabel("Dequantized Value")
-        ax3.set_title("Q3: Quantized Precision Boundaries & Saturation (Q7)", fontsize=11,
+        ax3.set_xlabel("Input Value x")
+        ax3.set_ylabel("Activation Output")
+        ax3.set_title("Q3: Quantized Tanh Activation (Rust vs TFLite vs SciPy)", fontsize=11,
                       fontweight='bold')
-        ax3.legend(frameon=True, fontsize=8)
+
+        # Plot Errors on Right Y-Axis (twinx)
+        ax3_err = ax3.twinx()
+        err_scipy = np.abs(act_outputs - act_exact)
+        err_tflite = np.abs(rust_dequant - tflite_dequant)
+
+        line4, = ax3_err.plot(act_inputs, err_scipy, color=COLOR_ALT, linestyle='-.', alpha=0.6,
+                              label='|Rust - SciPy| (Approx Error)')
+        line5, = ax3_err.plot(act_inputs, err_tflite, color=COLOR_CRIT, linestyle='-', alpha=0.6,
+                              label='|Rust - TFLite| (Divergence)')
+
+        ax3_err.set_ylabel("Absolute Error", color=COLOR_ALT)
+        ax3_err.tick_params(axis='y', labelcolor=COLOR_ALT)
+
+        # Unified legend
+        lines = [line1, line2[0], line3[0], line4, line5]
+        labels = [l.get_label() for l in lines]
+        ax3.legend(lines, labels, frameon=True, fontsize=7, loc='upper left', framealpha=0.6)
 
         # ---------------------------------------------------------------------
         # Quadrant 4: Tensor Contraction Scaling Profile (Rust vs Python 3)
@@ -913,7 +967,7 @@ class TensorPlotter(BaseModelPlotter):
         ax4.get_xaxis().set_major_formatter(plt.ScalarFormatter())
         ax4.set_xlabel("Tensor Dimension N (N x N Matrix)")
         ax4.set_ylabel("Execution Time per Op (ns)")
-        ax4.set_title("Q4: Contraction Scaling vs Tensor Size N x N", fontsize=11,
+        ax4.set_title("Contraction Scaling vs. N", fontsize=11,
                       fontweight='bold')
         ax4.legend(frameon=True, fontsize=8)
 
@@ -930,7 +984,7 @@ class TensorPlotter(BaseModelPlotter):
                  bbox=dict(boxstyle='round,pad=0.3', facecolor=PANEL_BG, edgecolor=GRID_COLOR,
                            alpha=0.9))
 
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
         return fig
 
     def plot_summary(self, ax: plt.Axes):
@@ -953,7 +1007,7 @@ class TensorPlotter(BaseModelPlotter):
         plt.colorbar(contour, ax=ax, fraction=0.046, pad=0.04)
         ax.set_xlabel("U")
         ax.set_ylabel("V")
-        ax.set_title("Tensor: 3D Saddle Surface", fontsize=12, fontweight='bold')
+        ax.set_title("3D Saddle Surface Contour", fontsize=12, fontweight='bold')
 
 
 # ==========================================
@@ -974,7 +1028,7 @@ def generate_covariance_collapse_gif(out_dir: str):
     cbar = fig.colorbar(cax, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label("Covariance Magnitude P_ij", color=TEXT_COLOR, fontsize=9)
 
-    ax.set_title("EKF Covariance Collapse (Step k=0)", color=TEXT_COLOR, fontsize=11,
+    ax.set_title("EKF Covariance Collapse (k = 0)", color=TEXT_COLOR, fontsize=11,
                  fontweight='bold')
     ax.set_xlabel("State Col Index", color=TEXT_COLOR)
     ax.set_ylabel("State Row Index", color=TEXT_COLOR)
@@ -984,7 +1038,7 @@ def generate_covariance_collapse_gif(out_dir: str):
         decay = np.exp(-0.15 * k)
         P_k = P_0 * (decay + 0.05) + 1e-5 * np.eye(dim)
         cax.set_array(P_k)
-        ax.set_title(f"EKF Covariance Collapse (Step k={k})", color=TEXT_COLOR, fontsize=11,
+        ax.set_title(f"EKF Covariance Collapse (k = {k})", color=TEXT_COLOR, fontsize=11,
                      fontweight='bold')
         return [cax]
 
@@ -1032,7 +1086,7 @@ def generate_inverted_pendulum_gif(out_dir: str, py_data: dict = None, rust_data
 
     fig, (ax_phys, ax_phase) = plt.subplots(1, 2, figsize=(11, 5))
     fig.suptitle(
-        "StateSpace Pendulum Simulation: Rust vs Python Overlay (Opacity 0.2)",
+        "Pendulum Sim: Python vs. Rust",
         color=TEXT_COLOR, fontsize=13, fontweight='bold')
 
     # 1. Physical Pendulum Setup (Left Panel)
@@ -1079,7 +1133,7 @@ def generate_inverted_pendulum_gif(out_dir: str, py_data: dict = None, rust_data
 
     ax_phase.set_xlabel("Angle θ (rad)", color=TEXT_COLOR)
     ax_phase.set_ylabel("Angular Rate dθ/dt (rad/s)", color=TEXT_COLOR)
-    ax_phase.set_title("Phase Space: Recovery Trajectory", color=TEXT_COLOR, fontsize=11,
+    ax_phase.set_title("Phase Space (θ vs. dθ/dt)", color=TEXT_COLOR, fontsize=11,
                        fontweight='bold')
     ax_phase.legend(frameon=True, fontsize=8, loc='upper right')
 
@@ -1121,7 +1175,7 @@ def generate_inverted_pendulum_gif(out_dir: str, py_data: dict = None, rust_data
         curr_state_rs.set_data([th_rs], [th_dot_rs])
 
         ax_phys.set_title(
-            f"Pendulum Sim (k={k})\nRust: θ = {th_rs:.2f} rad, dθ/dt = {th_dot_rs:.2f} rad/s",
+            f"Step k = {k}\nθ = {th_rs:.2f} rad, dθ/dt = {th_dot_rs:.2f} rad/s",
             color=TEXT_COLOR, fontsize=10, fontweight='bold')
         return [
             bob_trail_py, pole_line_py, bob_point_py, phase_trail_py, curr_state_py,
@@ -1175,12 +1229,11 @@ def main():
     print(f"Output directory resolved to: {out_dir}")
 
     plotters = {
-        "matrix": MatrixPlotter(matrix_data.get('python3', {}), matrix_data.get('rust', {})),
-        "polynomial": PolynomialPlotter(poly_data.get('python3', {}), poly_data.get('rust', {})),
-        "state_space": StateSpacePlotter(state_data.get('python3', {}), state_data.get('rust', {})),
-        "transfer_function": TransferFuncPlotter(tf_data.get('python3', {}),
-                                                 tf_data.get('rust', {})),
-        "tensor": TensorPlotter(tensor_data.get('python3', {}), tensor_data.get('rust', {}))
+        "matrix": MatrixPlotter(matrix_data.get('sources', {})),
+        "polynomial": PolynomialPlotter(poly_data.get('sources', {})),
+        "state_space": StateSpacePlotter(state_data.get('sources', {})),
+        "transfer_function": TransferFuncPlotter(tf_data.get('sources', {})),
+        "tensor": TensorPlotter(tensor_data.get('sources', {}))
     }
 
     # 3. Generate Details PNGs
@@ -1188,7 +1241,7 @@ def main():
     for name, plotter in plotters.items():
         fig = plotter.plot_details()
         filename = os.path.join(out_dir, f"{name}_details.png")
-        fig.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
         fig.savefig(filename, dpi=300)
         plt.close(fig)
         print(f" Saved {filename}")
@@ -1196,13 +1249,27 @@ def main():
     # 4. Generate Animated GIFs
     if os.getenv("MAKE_VALIDATION_GIFS"):
         generate_covariance_collapse_gif(out_dir)
-        generate_inverted_pendulum_gif(out_dir, state_data.get('python3', {}),
-                                       state_data.get('rust', {}))
+        state_sources = state_data.get('sources', {})
+        generate_inverted_pendulum_gif(out_dir,
+                                       state_sources.get('python3', {}).get('scipy', {}),
+                                       state_sources.get('rust', {}).get('default', {}))
 
     # 5. Generate Overview Dashboard (GridSpec 3x3)
+    # Extract backward-compatible dictionaries for the overview dashboard
+    matrix_data = {"python3": matrix_data.get('sources', {}).get('python3', {}).get('scipy', {}),
+                   "rust": matrix_data.get('sources', {}).get('rust', {}).get('default', {})}
+    poly_data = {"python3": poly_data.get('sources', {}).get('python3', {}).get('scipy', {}),
+                 "rust": poly_data.get('sources', {}).get('rust', {}).get('default', {})}
+    state_data = {"python3": state_data.get('sources', {}).get('python3', {}).get('scipy', {}),
+                  "rust": state_data.get('sources', {}).get('rust', {}).get('default', {})}
+    tf_data = {"python3": tf_data.get('sources', {}).get('python3', {}).get('scipy', {}),
+               "rust": tf_data.get('sources', {}).get('rust', {}).get('default', {})}
+    tensor_data = {"python3": tensor_data.get('sources', {}).get('python3', {}).get('scipy', {}),
+                   "rust": tensor_data.get('sources', {}).get('rust', {}).get('default', {})}
+
     print("Generating overview dashboard with latest benchmark panels...")
     fig_over = plt.figure(figsize=(14, 10))
-    fig_over.suptitle("control-rs Numerical Models Benchmark Dashboard: Python 3 vs Rust",
+    fig_over.suptitle("control-rs Numerical Validation & Performance Dashboard",
                       fontsize=16, fontweight='bold', color=TEXT_COLOR, y=0.98)
 
     gs = gridspec.GridSpec(3, 3, figure=fig_over, height_ratios=[1.1, 1.1, 1.0])
@@ -1227,7 +1294,7 @@ def main():
     ax_mat_q2.set_xticklabels([f"N={n}" for n in n_dims], rotation=25, fontsize=7)
     ax_mat_q2.set_xlabel("Matrix Dimension N", fontsize=8)
     ax_mat_q2.set_ylabel("Inversion Time (ns)", fontsize=8)
-    ax_mat_q2.set_title("Matrix Q2: Algorithmic Scaling O(N³)", fontsize=10, fontweight='bold')
+    ax_mat_q2.set_title("Matrix Inversion scaling", fontsize=10, fontweight='bold')
     ax_mat_q2.legend(frameon=True, fontsize=7)
 
     ax_mat_q4 = fig_over.add_subplot(gs[0, 1])
@@ -1250,12 +1317,12 @@ def main():
     ax_mat_q4.set_xticklabels(algos, fontsize=7)
     ax_mat_q4.set_yscale('log')
     ax_mat_q4.set_ylabel("Execution Time (ns)", fontsize=8)
-    ax_mat_q4.set_title("Matrix Q4: Decomposition Time (16x16)", fontsize=10, fontweight='bold')
+    ax_mat_q4.set_title("Matrix Decomposition times (16x16)", fontsize=10, fontweight='bold')
     ax_mat_q4.legend(frameon=True, fontsize=7)
 
     ax_tf_q3 = fig_over.add_subplot(gs[0, 2])
     plotters["transfer_function"].plot_summary(ax_tf_q3)
-    ax_tf_q3.set_title("Transfer Function Q3: Nyquist Plot", fontsize=10, fontweight='bold')
+    ax_tf_q3.set_title("Transfer Function Nyquist", fontsize=10, fontweight='bold')
 
     # Row 1: StateSpace Q1, StateSpace Q2, Tensor Q1 (3D Surface)
     ax_ss_q1 = fig_over.add_subplot(gs[1, 0])
@@ -1271,7 +1338,7 @@ def main():
                      label='Origin (0,0)')
     ax_ss_q1.set_xlabel("Angle θ (rad)", fontsize=8)
     ax_ss_q1.set_ylabel("Rate dθ/dt (rad/s)", fontsize=8)
-    ax_ss_q1.set_title("State-Space Q1: Pendulum Phase Portrait", fontsize=10, fontweight='bold')
+    ax_ss_q1.set_title("State-Space Phase Portrait", fontsize=10, fontweight='bold')
     ax_ss_q1.legend(frameon=True, fontsize=7)
 
     ax_ss_q2 = fig_over.add_subplot(gs[1, 1])
@@ -1291,7 +1358,7 @@ def main():
     ax_ss_q2.set_yscale('log')
     ax_ss_q2.set_xlabel("State Size N", fontsize=8)
     ax_ss_q2.set_ylabel("ZOH Time (ns)", fontsize=8)
-    ax_ss_q2.set_title("State-Space Q2: ZOH Discretization Scaling", fontsize=10, fontweight='bold')
+    ax_ss_q2.set_title("ZOH Discretization scaling", fontsize=10, fontweight='bold')
     ax_ss_q2.legend(frameon=True, fontsize=7)
 
     ax_tens_q1 = fig_over.add_subplot(gs[1, 2], projection='3d')
@@ -1313,7 +1380,7 @@ def main():
     ax_tens_q1.set_xlabel("U", fontsize=7);
     ax_tens_q1.set_ylabel("V", fontsize=7);
     ax_tens_q1.set_zlabel("Z", fontsize=7)
-    ax_tens_q1.set_title("Tensor Q1: Interpolation 3D Saddle", fontsize=10, fontweight='bold')
+    ax_tens_q1.set_title("Tensor 3D Saddle Interpolation", fontsize=10, fontweight='bold')
 
     # Row 2: Polynomial Q4 / Q1 (Execution Time vs Degree) & Brand Card
     ax_poly_q4 = fig_over.add_subplot(gs[2, 0:2])
@@ -1333,7 +1400,7 @@ def main():
                     alpha=0.7)
     ax_poly_q4.set_xlabel("Polynomial Degree n", fontsize=8)
     ax_poly_q4.set_ylabel("Execution Time (ns)", fontsize=8)
-    ax_poly_q4.set_title("Polynomial Q4: Execution Time vs. Degree (Complexity Sweep)", fontsize=10,
+    ax_poly_q4.set_title("Horner vs. Naive Evaluation", fontsize=10,
                          fontweight='bold')
     ax_poly_q4.legend(frameon=True, fontsize=7, ncol=2)
 
@@ -1355,7 +1422,7 @@ def main():
     ax_card.legend(handles=legend_elements, loc='lower center', fontsize=8, frameon=True,
                    facecolor=PANEL_BG, edgecolor=GRID_COLOR)
 
-    fig_over.tight_layout()
+    fig_over.tight_layout(rect=[0, 0, 1, 0.93])
     overview_path = os.path.join(out_dir, "overview_summary.png")
     fig_over.savefig(overview_path, dpi=300)
     plt.close(fig_over)

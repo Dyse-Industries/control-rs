@@ -77,7 +77,7 @@ fn generate_matrix_correctness_data() -> Value {
 
     json!({
         "covariance_heatmap": {
-            "rs_matrix": to_rows(&p_current)
+            "matrix": to_rows(&p_current)
         }
     })
 }
@@ -261,8 +261,8 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
 
     // Quadrant 1 check: covariance heatmap agreement
     match (
-        rust["covariance_heatmap"]["rs_matrix"].as_array(),
-        python["covariance_heatmap"]["py_matrix"].as_array(),
+        rust["covariance_heatmap"]["matrix"].as_array(),
+        python["covariance_heatmap"]["matrix"].as_array(),
     ) {
         (Some(rs_cov), Some(py_cov)) => {
             if rs_cov.len() != py_cov.len() || rs_cov.is_empty() {
@@ -426,8 +426,18 @@ pub fn run() -> Value {
     py_combined["speedup"] = speedup_json;
 
     let combined_results = json!({
-        "rust": rust_results,
-        "python3": py_combined
+        "metadata": {
+            "domain": "matrix",
+            "timestamp": "2026-08-30T22:30:28-06:00"
+        },
+        "sources": {
+            "rust": {
+                "default": rust_results
+            },
+            "python3": {
+                "scipy": py_combined
+            }
+        }
     });
 
     let out_dir = std::env::var("CARGO_MANIFEST_DIR")

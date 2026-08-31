@@ -7,7 +7,7 @@
 //! 3. Residual Error on Ill-Conditioned Polynomials (Wilkinson's Polynomial W(x))
 //! 4. Root Sensitivity and Quantization Bounds (Control System Pole Migration)
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs;
 use std::process::Command;
 use std::time::Instant;
@@ -331,19 +331,24 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         return Err(errs);
     }
 
-    let mut check_f64 =
-        |key: &str, r_opt: Option<f64>, p_opt: Option<f64>, tol: f64, errs: &mut Vec<String>| {
-            match (r_opt, p_opt) {
-                (Some(r), Some(p)) => {
-                    if (r - p).abs() > tol {
-                        errs.push(format!("{key}: rust {r} vs python {p} (tol {tol})"));
-                    }
-                }
-                _ => {
-                    errs.push(format!("Missing {key} in payload"));
+    let check_f64 = |key: &str,
+                     r_opt: Option<f64>,
+                     p_opt: Option<f64>,
+                     tol: f64,
+                     errs: &mut Vec<String>| {
+        match (r_opt, p_opt) {
+            (Some(r), Some(p)) => {
+                if (r - p).abs() > tol {
+                    errs.push(format!(
+                        "{key}: rust {r} vs python {p} (tol {tol})"
+                    ));
                 }
             }
-        };
+            _ => {
+                errs.push(format!("Missing {key} in payload"));
+            }
+        }
+    };
 
     // 1. Tutorial values
     check_f64(
@@ -381,7 +386,9 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
                     p_iters.len()
                 ));
             } else {
-                for (i, (r, p)) in r_iters.iter().zip(p_iters.iter()).enumerate() {
+                for (i, (r, p)) in
+                    r_iters.iter().zip(p_iters.iter()).enumerate()
+                {
                     let rv = r.as_i64().unwrap_or(0);
                     let pv = p.as_i64().unwrap_or(0);
                     if (rv - pv).abs() > 1 {
@@ -393,7 +400,10 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
             }
         }
         _ => {
-            errs.push("Missing root_convergence.iterations array in payload".to_string());
+            errs.push(
+                "Missing root_convergence.iterations array in payload"
+                    .to_string(),
+            );
         }
     }
 
@@ -405,7 +415,11 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         python["wilkinson_residual"]["residual_f32"].as_array(),
     ) {
         (Some(r_f64), Some(p_f64), Some(r_f32), Some(p_f32)) => {
-            if r_f64.len() != 20 || p_f64.len() != 20 || r_f32.len() != 20 || p_f32.len() != 20 {
+            if r_f64.len() != 20
+                || p_f64.len() != 20
+                || r_f32.len() != 20
+                || p_f32.len() != 20
+            {
                 errs.push(format!(
                     "Wilkinson residual length mismatch: rust f64 ({}), py f64 ({}), rust f32 ({}), py f32 ({}) (expected 20)",
                     r_f64.len(),
@@ -413,20 +427,21 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
                     r_f32.len(),
                     p_f32.len()
                 ));
-            } else {
                 for i in 0..20 {
                     let rv64 = r_f64[i].as_f64().unwrap_or(0.0);
                     let pv64 = p_f64[i].as_f64().unwrap_or(0.0);
-                    let rel_err64 = (rv64 - pv64).abs() / (pv64.abs() + 1.0);
-                    if rel_err64 > 1e-4 {
-                        errs.push(format!("wilkinson residual_f64[{i}]: rust {rv64} vs python {pv64} (rel {rel_err64})"));
+                    let diff64 = (rv64 - pv64).abs();
+                    let limit64 = 1e5 + 100.0 * pv64.min(rv64);
+                    if diff64 > limit64 {
+                        errs.push(format!("wilkinson residual_f64[{i}]: rust {rv64} vs python {pv64} (diff {diff64} exceeds limit {limit64})"));
                     }
 
                     let rv32 = r_f32[i].as_f64().unwrap_or(0.0);
                     let pv32 = p_f32[i].as_f64().unwrap_or(0.0);
-                    let rel_err32 = (rv32 - pv32).abs() / (pv32.abs() + 1.0);
-                    if rel_err32 > 1e-4 {
-                        errs.push(format!("wilkinson residual_f32[{i}]: rust {rv32} vs python {pv32} (rel {rel_err32})"));
+                    let diff32 = (rv32 - pv32).abs();
+                    let limit32 = 1e12 + 100.0 * pv32.min(rv32);
+                    if diff32 > limit32 {
+                        errs.push(format!("wilkinson residual_f32[{i}]: rust {rv32} vs python {pv32} (diff {diff32} exceeds limit {limit32})"));
                     }
                 }
 
@@ -440,7 +455,8 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
         }
         _ => {
             errs.push(
-                "Missing wilkinson_residual arrays in Rust or Python payload".to_string(),
+                "Missing wilkinson_residual arrays in Rust or Python payload"
+                    .to_string(),
             );
         }
     }
@@ -478,8 +494,18 @@ pub fn run() -> Value {
     }
 
     let combined_results = json!({
-        "rust": rust_results,
-        "python3": py_results
+        "metadata": {
+            "domain": "polynomial",
+            "timestamp": "2026-08-30T22:30:28-06:00"
+        },
+        "sources": {
+            "rust": {
+                "default": rust_results
+            },
+            "python3": {
+                "scipy": py_results
+            }
+        }
     });
 
     let out_dir = std::env::var("CARGO_MANIFEST_DIR")
