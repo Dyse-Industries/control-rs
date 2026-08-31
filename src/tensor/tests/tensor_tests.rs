@@ -314,19 +314,17 @@ pub mod tensor_test_suite {
         assert_eq!(rect_tr.get(&[2, 1]), Some(&6.0));
     }
 
-    #[cfg(test)]
     #[test]
     #[should_panic(expected = "invalid permutation axes")]
-    fn test_tensor_permute_invalid_axes() {
+    fn _test_tensor_permute_invalid_axes_panics() {
         let square =
             ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
         let _ = square.permute([0, 0]);
     }
 
-    #[cfg(test)]
     #[test]
     #[should_panic(expected = "invalid permutation axes")]
-    fn test_tensor_permute_non_square_identity_panic() {
+    fn _test_tensor_permute_non_square_identity_panic() {
         let rect = ArrayTensor::<f32, 2, 3>::from_raw([
             [1.0, 2.0],
             [3.0, 4.0],

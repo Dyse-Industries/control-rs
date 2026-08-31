@@ -162,7 +162,9 @@ def benchmark_quantized_boundaries() -> dict:
         q_out = interpreter.get_tensor(output_details['index'])[0][0]
         tflite_outputs_int8.append(int(q_out))
 
-    tflite_dequant = np.array(tflite_outputs_int8, dtype=np.float32) * out_scale
+    tflite_dequant = (
+        (np.array(tflite_outputs_int8, dtype=np.float32) - out_zp) * out_scale
+    ).tolist()
 
     return {
         "float_inputs": float_inputs.tolist(),
@@ -172,7 +174,7 @@ def benchmark_quantized_boundaries() -> dict:
         "act_inputs": act_inputs.tolist(),
         "act_exact": act_exact.tolist(),
         "tflite_outputs_int8": tflite_outputs_int8,
-        "tflite_dequant": tflite_dequant.tolist(),
+        "tflite_dequant": tflite_dequant,
     }
 
 
@@ -236,4 +238,4 @@ def run_tensor_oracle() -> dict:
 
 if __name__ == "__main__":
     results = run_tensor_oracle()
-    print(json.dumps(results))
+    print(json.dumps({"scipy": results}))

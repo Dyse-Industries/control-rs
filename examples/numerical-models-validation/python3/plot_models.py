@@ -215,7 +215,7 @@ class MatrixPlotter(BaseModelPlotter):
         for lang, impls in self.sources.items():
             for impl, impl_data in impls.items():
                 jitter = impl_data.get('jitter', {}).get('hilbert_solve_times_ns', [])
-                if not jitter:
+                if not jitter or all(v == 0.0 for v in jitter):
                     continue
                 iters = np.arange(len(jitter))
                 color, marker, _ = get_style(lang, impl, idx)
@@ -378,15 +378,6 @@ class PolynomialPlotter(BaseModelPlotter):
         res_f64_py = np.clip(np.array(py_wilk.get('residual_f64', [1e-12] * 20)), 1e-16, None)
         res_f32_py = np.clip(np.array(py_wilk.get('residual_f32', [1e-4] * 20)), 1e-16, None)
         res_flint = np.clip(np.array(flint_wilk.get('residual_f64_flint', [1e-16] * 20)), 1e-16, None)
-
-        # Plot valid assertion limits
-        bound_f32 = 1e12 + 100.0 * np.minimum(res_f32_py, res_f32_rs)
-        bound_f64 = 1e5 + 100.0 * np.minimum(res_f64_py, res_f64_rs)
-
-        ax3.plot(indices, bound_f32, color=COLOR_CRIT, linestyle='--', alpha=0.6,
-                 linewidth=1.2, label='f32 Assertion Bound')
-        ax3.plot(indices, bound_f64, color='#F59E0B', linestyle='--', alpha=0.6,
-                 linewidth=1.2, label='f64 Assertion Bound')
 
         # Plot actual residuals
         ax3.plot(indices, res_f32_py, color=COLOR_PY, marker='^', markersize=5,
@@ -581,8 +572,9 @@ class StateSpacePlotter(BaseModelPlotter):
         rust_ctrb = rust_cl.get('controllability_time_ns', [])
         py_obsv = py_cl.get('observability_time_ns', [])
         rust_obsv = rust_cl.get('observability_time_ns', [])
-        harold_ctrb = harold_data.get('controllability_time_ns', [])
-        harold_obsv = harold_data.get('observability_time_ns', [])
+        harold_cl = harold_data.get('control_loop', harold_data)
+        harold_ctrb = harold_cl.get('controllability_time_ns', [])
+        harold_obsv = harold_cl.get('observability_time_ns', [])
 
         x4 = np.arange(len(cl_sizes))
 
@@ -687,10 +679,10 @@ class TransferFuncPlotter(BaseModelPlotter):
             ax1.plot(freqs_hz, zoh_mag_ha, color='#EC4899', linewidth=1.2, alpha=0.9,
                      label='Harold ZOH H(z)')
 
-        ax1.axvline(50.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (50 Hz)')
+        ax1.axvline(100.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (100 Hz)')
         ax1.set_xlabel("Frequency (Hz)")
         ax1.set_ylabel("Magnitude (dB)")
-        ax1.set_title("Bode Magnitude (Fs = 100 Hz)", fontsize=11,
+        ax1.set_title("Bode Magnitude (Fs = 200 Hz)", fontsize=11,
                       fontweight='bold')
         ax1.legend(frameon=True, fontsize=8)
 
@@ -725,10 +717,10 @@ class TransferFuncPlotter(BaseModelPlotter):
             ax2.plot(freqs_hz, zoh_phase_ha, color='#EC4899', linewidth=1.2, alpha=0.9,
                      label='Harold ZOH Phase')
 
-        ax2.axvline(50.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (50 Hz)')
+        ax2.axvline(100.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (100 Hz)')
         ax2.set_xlabel("Frequency (Hz)")
         ax2.set_ylabel("Phase (degrees)")
-        ax2.set_title("Bode Phase & Frequency Warping", fontsize=11, fontweight='bold')
+        ax2.set_title("Bode Phase & Frequency Warping (Fs = 200 Hz)", fontsize=11, fontweight='bold')
         ax2.legend(frameon=True, fontsize=8)
 
         # ---------------------------------------------------------------------
@@ -1289,7 +1281,6 @@ def main():
     for name, plotter in plotters.items():
         fig = plotter.plot_details()
         filename = os.path.join(out_dir, f"{name}_details.png")
-        fig.tight_layout(rect=[0, 0, 1, 0.93])
         fig.savefig(filename, dpi=300)
         plt.close(fig)
         print(f" Saved {filename}")

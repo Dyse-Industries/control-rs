@@ -15,12 +15,12 @@ graph.
 
 ## Directory index
 
-| Path                                                | Kind              | What it is                                                           | Run from                              |
-|:----------------------------------------------------|:------------------|:---------------------------------------------------------------------|:--------------------------------------|
-| [`numerical-models/`](numerical-models-validation/) | Nested host crate | Demo generators + JSON V&V; Python in `python3/`                     | `examples/numerical-models/`          |
-| [`subprograms/`](subprograms/)                      | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                     |
-| [`qemu/`](qemu/)                                    | Firmware package  | Bare-metal ETS runners (Cortex-M7, RISC-V)                           | `examples/qemu/` or `cargo qemu`      |
-| [`teensy4/`](teensy4/)                              | Firmware package  | Teensy 4.0 ETS over USB CDC                                          | `examples/teensy4/` or `cargo teensy` |
+| Path                                                           | Kind              | What it is                                                           | Run from                                 |
+|:---------------------------------------------------------------|:------------------|:---------------------------------------------------------------------|:-----------------------------------------|
+| [`numerical-models-validation/`](numerical-models-validation/) | Nested host crate | Demo generators + JSON V&V; Python in `python3/`                     | `examples/numerical-models-validation/`  |
+| [`subprograms/`](subprograms/)                                 | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                        |
+| [`qemu/`](qemu/)                                               | Firmware package  | Bare-metal ETS runners (Cortex-M7, RISC-V)                           | `examples/qemu/` or `cargo qemu`         |
+| [`teensy4/`](teensy4/)                                         | Firmware package  | Teensy 4.0 ETS over USB CDC                                          | `examples/teensy4/` or `cargo teensy`    |
 
 ---
 
@@ -34,7 +34,7 @@ and Python ≥ 3.10 with NumPy/SciPy/matplotlib. The dedicated
 `.github/workflows/numerical-models.yml`](../.github/workflows/numerical-models.yml)
 workflow installs
 [
-`numerical-models/python3/requirements.txt`](numerical-models-validation/python3/requirements.txt)
+`numerical-models-validation/python3/requirements.txt`](numerical-models-validation/python3/requirements.txt)
 and runs V&V. Locally:
 
 ```bash
@@ -94,38 +94,14 @@ cargo run --bin tensor
 
 ### Diagnostic plots
 
-#### Matrix
+The Python plotting suite (`python3/plot_models.py`) generates high-resolution 4-quadrant benchmark figures under `results/*_details.png` and a multi-panel overview summary under `results/overview_summary.png`:
 
-![Hilbert inverse relative error](https://github.com/Dyse-Industries/control-rs/releases/download/plots/matrix-hilbert_inverse.png)
-
-![SE(3) rigid GEMM chain](https://github.com/Dyse-Industries/control-rs/releases/download/plots/matrix-se3_chain.png)
-
-#### Polynomial
-
-The polynomial validation runner evaluates 4 core numerical & performance benchmarks:
-- **Degree Complexity**: Execution time scaling across degrees $n = 1 \dots 50$ comparing Horner's method ($O(n)$) against naive power sum evaluation ($O(n^2)$).
-- **Algorithmic Convergence**: Iteration bounds for Newton-Raphson root solvers across initial guess distances $|x_0 - r^*|$.
-- **Wilkinson Numerical Stability**: Precision loss and residual error $|W(r_k)|$ on 20th-degree Wilkinson polynomials comparing `f32` vs `f64`.
-- **Root Sensitivity & Quantization**: Complex-plane pole clouds under coefficient truncation noise against the $\text{Re}(s) = 0$ stability boundary.
-
-
-#### State space
-
-![Free-response phase portrait](https://github.com/Dyse-Industries/control-rs/releases/download/plots/state_space-free_response.png)
-
-![Stiff ZOH](https://github.com/Dyse-Industries/control-rs/releases/download/plots/state_space-stiff_zoh.png)
-
-#### Transfer function
-
-![Underdamped Bode](https://github.com/Dyse-Industries/control-rs/releases/download/plots/transfer_function-bode.png)
-
-![Nyquist complex pair](https://github.com/Dyse-Industries/control-rs/releases/download/plots/transfer_function-nyquist_complex_pair.png)
-
-#### Tensor
-
-![Saddle surface](https://github.com/Dyse-Industries/control-rs/releases/download/plots/tensor-curved_surface.png)
-
-![Saddle cut](https://github.com/Dyse-Industries/control-rs/releases/download/plots/tensor-curved_cut.png)
+- **Overview Dashboard**: `results/overview_summary.png`
+- **Matrix Benchmarks**: `results/matrix_details.png` (EKF covariance relative error heatmap, $O(N^3)$ inversion scaling, Hilbert solve latency jitter, decomposition speedups)
+- **Polynomial Benchmarks**: `results/polynomial_details.png` (Horner vs naive evaluation scaling, Newton-Raphson convergence, Wilkinson polynomial residuals with 256-bit Flint ground truth, complex root perturbation sensitivity)
+- **State-Space Benchmarks**: `results/state_space_details.png` (Inverted pendulum phase portrait, ZOH scaling, step computation jitter, controllability/observability construction scaling)
+- **Transfer Function Benchmarks**: `results/transfer_function_details.png` (Bode magnitude & phase frequency warping up to Nyquist, Nyquist polar trajectory with gain/phase margins, Butterworth direct form vs biquad SOS topology stability)
+- **Tensor Benchmarks**: `results/tensor_details.png` (3D saddle interpolation manifold, tensor contraction relative error heatmap, quantized Tanh activation vs TFLite vs SciPy, contraction scaling)
 
 ---
 

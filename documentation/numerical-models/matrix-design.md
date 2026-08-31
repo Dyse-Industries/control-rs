@@ -958,7 +958,7 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | Requirements-based test   | `#[test]` unit tests over edge cases and singular inputs | FR-3, FR-4, FR-5, C-2    |
 | Property-based test       | `proptest` suites verifying algebraic invariants         | FR-2, FR-6               |
 | Doctest                   | Runnable doc examples in rustdoc                         | FR-2, FR-4               |
-| Back-to-back comparison   | `examples/numerical-models/python3/matrix.py` vs `src/matrix.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-2, FR-3               |
+| Back-to-back comparison   | `examples/numerical-models-validation/python3/matrix_validation.py` vs `src/matrix_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-3               |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                       | NFR-1, NFR-2, C-2, C-3   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                | NFR-3                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics  | FR-1..FR-6, NFR-1..NFR-3 |
@@ -974,6 +974,7 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | Transposition identity          | $(AB)^T = B^T A^T$                  | Exact equality / Rel. error | $0$ (exact) / $\le 2\epsilon$                                          | Algebraic ring property over floating-point / integer scalars              |
 | Coordinate retrieval            | In-bounds / Out-of-bounds queries   | Exact equality              | `Some(v)` (exact) / `None`                                             | Structural indexing invariants across row/col dense and packed layouts     |
 | Singular matrix detection       | Known rank-deficient matrices       | Exact equality              | `Err(LinAlgError::SingularMatrix)`                                     | Determinant threshold / zero-pivot detection in factorization              |
+| Covariance heatmap recursion    | SciPy & JAX x64 (`jax.scipy.linalg`)| Absolute error              | $\le 10^{-4}$ (SciPy), $\le 10^{-6}$ (JAX)                              | 100-iteration EKF covariance propagation and inversion scaling agreement   |
 | Zero-allocation guarantee       | Host memory allocator interception  | Exact equality              | 0 heap allocations                                                     | NFR-1 `#![no_std]` invariant                                               |
 
 #### 6.4. Traceability
@@ -1005,11 +1006,12 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 #### 6.6. Validation
 
 - **Matrix Arithmetic, Linear Solves, & Inversion**: End-to-end numeric integrity
-  verification in `examples/numerical-models/src/matrix.rs` executing matrix
+  verification in `examples/numerical-models-validation/src/matrix_validation.rs` executing matrix
   construction, arithmetic (`+`, `-`, `*`), transposition, $LU$ decomposition
   solving $Ax = b$, matrix inversion with identity check ($A \cdot A^{-1} = I$),
-  Hilbert $n=8$ solve/inverse (residual and $\tau\kappa\varepsilon$), and timed
-  GEMM $n=64$, without dynamic heap allocation.
+  Hilbert $n=8$ solve/inverse (residual and $\tau\kappa\varepsilon$), timed
+  GEMM $n=64$, and multi-source cross-validation against SciPy and JAX x64 oracles,
+  without dynamic heap allocation.
 - **Hardware DSP Interoperability**: Slicing contiguous memory (`as_slice()`) to
   pass directly into CMSIS-DSP vector routines without intermediate buffers.
 
@@ -1146,4 +1148,5 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | 1.9      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); C-2 MCU cap unchanged.                                                                        |
 | 1.10     | August 28, 2026 | @MitchellDScott | Example crate: Hilbert $n=8$ and timed GEMM $n=64$; $1024\times 1024$ remains out. Caps unchanged.                                                  |
 | 1.11     | August 28, 2026 | @MitchellDScott | §6.4 FR-5 artifact is `test_symmetric_construction`; packed storage remains in `storage_tests.rs`. Factor residuals live in `matrix_test_suite`. |
+| 1.12     | August 31, 2026 | @MitchellDScott | Added JAX x64 multi-source cross-validation oracle, updated validation crate paths, and reconciled EKF covariance heatmap tolerances.                 |
 

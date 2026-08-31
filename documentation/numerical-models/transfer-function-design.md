@@ -460,7 +460,7 @@ realization is future work (§8).
 | Requirements-based test   | `#[test]` unit tests over physical filter benchmarks and singular cases                                                                                      | FR-2, FR-3, FR-4, FR-5   |
 | Property-based test       | `proptest` suites verifying transfer function commutativity and feedback identities                                                                          | FR-3, FR-4               |
 | Doctest                   | Runnable rustdoc examples                                                                                                                                    | FR-2                     |
-| Back-to-back comparison   | `examples/numerical-models/python3/transfer_function.py` vs `src/transfer_function.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-2, FR-4, FR-5         |
+| Back-to-back comparison   | `examples/numerical-models-validation/python3/transfer_function_validation.py` vs `src/transfer_function_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-4, FR-5         |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                                                                       | NFR-1, NFR-2, C-2, C-4   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                                                                                                                    | NFR-1                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                                                                                      | FR-1..FR-5, NFR-1..NFR-2 |
@@ -470,6 +470,7 @@ realization is future work (§8).
 | Claim                                         | Oracle                                                     | Measure        | Bound                                                                                                                                 | Justification                                                     |
 |:----------------------------------------------|:-----------------------------------------------------------|:---------------|:--------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------|
 | Frequency response $H(j\omega)$ residual      | Analytic rational function                                 | Relative error | $\frac{\|\hat{H}(j\omega) - H_{\text{analytic}}(j\omega)\|}{\|H_{\text{analytic}}(j\omega)\|} \le \gamma_{2(D-1)} \kappa(H(j\omega))$ | Rational Horner evaluation backward stability (Higham, 2002)      |
+| Continuous & discretized response             | harold `Transfer` / `frequency_response`                   | Mag / Phase    | Magnitude $\le 10^{-3}$ dB, phase $\le 10^{-2}$ deg, Nyquist locus $\le 10^{-3}$                                                      | Cross-toolbox frequency response (Misra-Patel) & Tustin/ZOH agreement |
 | Series multiplication                         | Discrete polynomial convolution                            | Absolute error | $\|(N_1 N_2)_k - \sum a_i b_{k-i}\|_\infty \le (N_1+N_2)\epsilon$                                                                     | Discrete convolution arithmetic bound (Oppenheim & Schafer, 2009) |
 | Tustin discretization frequency mapping       | $\omega_d = \frac{2}{T_s} \arctan(\frac{\omega_a T_s}{2})$ | Relative error | $\le 5\epsilon$                                                                                                                       | Bilinear mapping identity (Franklin et al., 1998)                 |
 | Canonical state-space eigenvalue equivalence  | Roots of denominator polynomial $D(s)$                     | Absolute error | $\|\lambda_i(A_c) - p_i\| \le \mathcal{O}(\epsilon \kappa(D))$                                                                        | Companion matrix spectral equivalence (Kenney & Laub, 1988)       |
@@ -511,9 +512,9 @@ coefficient error assertion |
 - **Frequency Response, Bode Analysis, & Realization**: Verification of given
   2nd-order transfer function rational frequency evaluation $H(j\omega)$ on
   $\mathrm{logspace}(-2,3,128)$, Bode magnitude/phase, series cascade
-  ($H_1 \cdot H_2$), controllable canonical realization, and clustered-pole
-  $H(s)=1/[(s+1)^4(s+1.01)^4]$ in
-  `examples/numerical-models/src/transfer_function.rs`.
+  ($H_1 \cdot H_2$), controllable canonical realization, clustered-pole
+  $H(s)=1/[(s+1)^4(s+1.01)^4]$, and multi-source cross-validation against
+  SciPy and harold oracles in `examples/numerical-models-validation/src/transfer_function_validation.rs`.
 
 #### 6.7. Not Verified
 
@@ -643,3 +644,4 @@ coefficient error assertion |
 | 1.8      | August 28, 2026 | @MitchellDScott | Tustin returns biproper `(D, D)` after clearing $(z+1)^{D-1}$ (matches ZOH).                                                            |
 | 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-4 `test_tustin_prewarped` and FR-5 CCF eigenvalue match live in `transfer_function_test_suite`.                                 |
 | 2.0      | August 30, 2026 | @MitchellDScott | Reverted Butterworth constructor from `transfer_function` module; deferred filter synthesis to future `filters/` crate module.          |
+| 2.1      | August 31, 2026 | @MitchellDScott | Added harold multi-source frequency response / discretization cross-validation oracle and updated validation crate paths.                |

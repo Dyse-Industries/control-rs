@@ -7,7 +7,7 @@
 //! 3. Residual Error on Ill-Conditioned Polynomials (Wilkinson's Polynomial W(x))
 //! 4. Root Sensitivity and Quantization Bounds (Control System Pole Migration)
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::process::Command;
 use std::time::Instant;
@@ -427,6 +427,7 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
                     r_f32.len(),
                     p_f32.len()
                 ));
+            } else {
                 for i in 0..20 {
                     let rv64 = r_f64[i].as_f64().unwrap_or(0.0);
                     let pv64 = p_f64[i].as_f64().unwrap_or(0.0);
@@ -468,7 +469,10 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
 /// working precision). Flint's residuals serve as a high-precision ground truth for
 /// Wilkinson's polynomial: they should sit at (numerically) zero, in contrast to the large
 /// f64 residuals both Rust and SciPy see from catastrophic cancellation near k=20.
-pub fn cross_validate_flint(rust: &Value, flint: &Value) -> Result<(), Vec<String>> {
+pub fn cross_validate_flint(
+    rust: &Value,
+    flint: &Value,
+) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
     if flint.as_object().map_or(true, |o| o.is_empty()) {
@@ -523,7 +527,9 @@ pub fn cross_validate_flint(rust: &Value, flint: &Value) -> Result<(), Vec<Strin
                 ));
             }
         }
-        _ => errs.push("Missing tutorial p_real / p_real_flint in payload".to_string()),
+        _ => errs.push(
+            "Missing tutorial p_real / p_real_flint in payload".to_string(),
+        ),
     }
 
     if errs.is_empty() { Ok(()) } else { Err(errs) }
@@ -571,7 +577,7 @@ pub fn run() -> Value {
     let combined_results = json!({
         "metadata": {
             "domain": "polynomial",
-            "timestamp": "2026-08-30T22:30:28-06:00"
+            "timestamp": chrono::Utc::now().to_rfc3339()
         },
         "sources": {
             "rust": {

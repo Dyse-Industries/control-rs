@@ -74,7 +74,7 @@ the target-side infrastructure:
 - **Numerical-model JSON V&V**: Separate workflow
   [
   `.github/workflows/numerical-models.yml`](../.github/workflows/numerical-models.yml)
-  installs Python 3.12 and `examples/numerical-models/python3/requirements.txt`,
+  installs Python 3.12 and `examples/numerical-models-validation/python3/requirements.txt`,
   then `cargo build --release` and
   `cargo run --release --bin validate -- suites/`. Not part of `cargo ci`.
   Suite files list validators (suite path in, JSON on stdout) and plotters
@@ -175,7 +175,7 @@ parameters in real time.
 Run the exact verification steps performed by the GitHub Actions pipeline
 locally (clippy, formatting, tarpaulin coverage, and CI → virtual ETS).
 Numerical-model JSON V&V is a separate workflow; from
-`examples/numerical-models/` run `cargo run --release --bin validate -- suites/`
+`examples/numerical-models-validation/` run `cargo run --release --bin validate`
 after `pip install -r python3/requirements.txt`.
 
 - **Run all checks (ARM & RISC-V QEMU):**

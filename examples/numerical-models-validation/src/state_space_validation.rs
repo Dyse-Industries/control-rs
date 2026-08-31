@@ -270,7 +270,9 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
             }
         }
         _ => {
-            errs.push("Missing phase_portrait.theta_dot in payload".to_string());
+            errs.push(
+                "Missing phase_portrait.theta_dot in payload".to_string(),
+            );
         }
     }
 
@@ -308,7 +310,10 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
 /// Cross-validates against the harold oracle (State model + ZOH discretization via
 /// harold.discretize, phase portrait via manual recursion on harold's discretized
 /// matrices, step response via harold.simulate_linear_system).
-pub fn cross_validate_harold(rust: &Value, harold: &Value) -> Result<(), Vec<String>> {
+pub fn cross_validate_harold(
+    rust: &Value,
+    harold: &Value,
+) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
     if harold.as_object().map_or(true, |o| o.is_empty()) {
@@ -329,11 +334,15 @@ pub fn cross_validate_harold(rust: &Value, harold: &Value) -> Result<(), Vec<Str
                         h_arr.len()
                     ));
                 } else {
-                    for (i, (r, h)) in r_arr.iter().zip(h_arr.iter()).enumerate() {
+                    for (i, (r, h)) in
+                        r_arr.iter().zip(h_arr.iter()).enumerate()
+                    {
                         let rv = r.as_f64().unwrap_or(0.0);
                         let hv = h.as_f64().unwrap_or(0.0);
                         if (rv - hv).abs() > 1e-6 {
-                            errs.push(format!("{key}[{i}]: rust {rv} vs harold {hv}"));
+                            errs.push(format!(
+                                "{key}[{i}]: rust {rv} vs harold {hv}"
+                            ));
                         }
                     }
                 }
@@ -361,7 +370,11 @@ pub fn cross_validate_harold(rust: &Value, harold: &Value) -> Result<(), Vec<Str
         &mut errs,
     );
 
-    for key in ["state_size", "controllability_time_ns", "observability_time_ns"] {
+    for key in [
+        "state_size",
+        "controllability_time_ns",
+        "observability_time_ns",
+    ] {
         if harold[key].as_array().map_or(0, |a| a.len()) != 7 {
             errs.push(format!("Harold {key} does not have 7 entries"));
         }
@@ -412,7 +425,7 @@ pub fn run() -> Value {
     let combined_results = json!({
         "metadata": {
             "domain": "state_space",
-            "timestamp": "2026-08-30T22:30:28-06:00"
+            "timestamp": chrono::Utc::now().to_rfc3339()
         },
         "sources": {
             "rust": {

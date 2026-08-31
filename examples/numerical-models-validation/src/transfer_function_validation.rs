@@ -6,7 +6,7 @@
 //! 3. Nyquist Stability Criterion & Margins (Polar curve, (-1, 0j) point, gain & phase margins)
 //! 4. Filter Topology Stability (6th-order Butterworth f32 Direct Form vs Biquad SOS)
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::process::Command;
 use std::time::Instant;
@@ -494,7 +494,10 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
 /// frequency response, Tustin/ZOH discretization). Mirrors the SciPy check with the same
 /// tolerances, since harold agrees with SciPy to ~1e-10 dB once evaluated with matching
 /// frequency-unit conventions.
-pub fn cross_validate_harold(rust: &Value, harold: &Value) -> Result<(), Vec<String>> {
+pub fn cross_validate_harold(
+    rust: &Value,
+    harold: &Value,
+) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
     if harold.as_object().map_or(true, |o| o.is_empty()) {
@@ -516,7 +519,9 @@ pub fn cross_validate_harold(rust: &Value, harold: &Value) -> Result<(), Vec<Str
                         h_slice.len()
                     ));
                 } else {
-                    for (i, (r, h)) in r_slice.iter().zip(h_slice.iter()).enumerate() {
+                    for (i, (r, h)) in
+                        r_slice.iter().zip(h_slice.iter()).enumerate()
+                    {
                         let rv = r.as_f64().unwrap_or(0.0);
                         let hv = h.as_f64().unwrap_or(0.0);
                         if (rv - hv).abs() > tol {
@@ -597,7 +602,9 @@ pub fn cross_validate_harold(rust: &Value, harold: &Value) -> Result<(), Vec<Str
         match (r_opt, h_opt) {
             (Some(r), Some(h)) => {
                 if (r - h).abs() > tol {
-                    errs.push(format!("{key}: rust {r} vs harold {h} (tol {tol})"));
+                    errs.push(format!(
+                        "{key}: rust {r} vs harold {h} (tol {tol})"
+                    ));
                 }
             }
             _ => errs.push(format!("Missing {key} in payload")),
@@ -623,7 +630,7 @@ pub fn cross_validate_harold(rust: &Value, harold: &Value) -> Result<(), Vec<Str
 }
 
 pub fn run() -> Value {
-    println!("Executing Rust transfer-function validator...");
+    println!("Executing Rust transfer function validator...");
     let rust_results = run_validation_default();
 
     println!("Spawning Python oracle subprocess...");
@@ -664,7 +671,7 @@ pub fn run() -> Value {
     let combined_results = json!({
         "metadata": {
             "domain": "transfer_function",
-            "timestamp": "2026-08-30T22:30:28-06:00"
+            "timestamp": chrono::Utc::now().to_rfc3339()
         },
         "sources": {
             "rust": {

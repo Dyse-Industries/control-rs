@@ -23,6 +23,7 @@ echo "========================================="
 # 1. Format code
 echo "Running cargo fmt --all..."
 cargo fmt --all
+cargo fmt --all --manifest-path=examples/numerical-models-validation/Cargo.toml
 
 # Auto-stage any formatting changes on already-staged Rust files
 staged_rust_files=$(git diff --name-only --cached --diff-filter=d | grep '\.rs$')

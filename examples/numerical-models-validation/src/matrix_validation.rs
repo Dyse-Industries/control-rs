@@ -272,11 +272,13 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
                     py_cov.len()
                 ));
             } else {
-                for (i, (r_row, p_row)) in rs_cov.iter().zip(py_cov.iter()).enumerate()
+                for (i, (r_row, p_row)) in
+                    rs_cov.iter().zip(py_cov.iter()).enumerate()
                 {
                     match (r_row.as_array(), p_row.as_array()) {
                         (Some(r_cols), Some(p_cols)) => {
-                            if r_cols.len() != p_cols.len() || r_cols.is_empty() {
+                            if r_cols.len() != p_cols.len() || r_cols.is_empty()
+                            {
                                 errs.push(format!(
                                     "covariance_heatmap[{i}] col count mismatch: rust {} vs python {}",
                                     r_cols.len(),
@@ -305,7 +307,9 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
             }
         }
         _ => {
-            errs.push("Missing covariance_heatmap arrays in payload".to_string());
+            errs.push(
+                "Missing covariance_heatmap arrays in payload".to_string(),
+            );
         }
     }
 
@@ -360,7 +364,10 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
 /// CPU backend, x64 enabled). JAX's CPU linalg ops lower to the same LAPACK routine family
 /// SciPy calls (dgetrf/dpotrf/dgeqrf via jaxlib's bundled LAPACK build), so this checks
 /// agreement rather than independence of the underlying algorithm.
-pub fn cross_validate_jax(rust: &Value, jax: &Value) -> Result<(), Vec<String>> {
+pub fn cross_validate_jax(
+    rust: &Value,
+    jax: &Value,
+) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
 
     if jax.as_object().map_or(true, |o| o.is_empty()) {
@@ -381,7 +388,9 @@ pub fn cross_validate_jax(rust: &Value, jax: &Value) -> Result<(), Vec<String>> 
                     jx_cov.len()
                 ));
             } else {
-                for (i, (r_row, j_row)) in rs_cov.iter().zip(jx_cov.iter()).enumerate() {
+                for (i, (r_row, j_row)) in
+                    rs_cov.iter().zip(jx_cov.iter()).enumerate()
+                {
                     match (r_row.as_array(), j_row.as_array()) {
                         (Some(r_cols), Some(j_cols)) => {
                             for (j, (rv, jv)) in
@@ -402,7 +411,9 @@ pub fn cross_validate_jax(rust: &Value, jax: &Value) -> Result<(), Vec<String>> 
                 }
             }
         }
-        _ => errs.push("Missing covariance_heatmap arrays in JAX payload".to_string()),
+        _ => errs.push(
+            "Missing covariance_heatmap arrays in JAX payload".to_string(),
+        ),
     }
 
     // Scaling and decomposition timings: presence/shape only, not a numerical comparison.
@@ -411,11 +422,15 @@ pub fn cross_validate_jax(rust: &Value, jax: &Value) -> Result<(), Vec<String>> 
         .map_or(0, |a| a.len())
         != 6
     {
-        errs.push("JAX scaling inversion_time_ns does not have 6 entries".to_string());
+        errs.push(
+            "JAX scaling inversion_time_ns does not have 6 entries".to_string(),
+        );
     }
     for key in ["cholesky", "lu_solve", "qr_decomp"] {
         if jax["decomp_times_ns"][key].as_f64().is_none() {
-            errs.push(format!("JAX decomp_times_ns.{key} missing or not numeric"));
+            errs.push(format!(
+                "JAX decomp_times_ns.{key} missing or not numeric"
+            ));
         }
     }
 
@@ -504,7 +519,7 @@ pub fn run() -> Value {
     let combined_results = json!({
         "metadata": {
             "domain": "matrix",
-            "timestamp": "2026-08-30T22:30:28-06:00"
+            "timestamp": chrono::Utc::now().to_rfc3339()
         },
         "sources": {
             "rust": {

@@ -254,12 +254,6 @@ def run_harold_oracle() -> dict:
             "phase_margin_deg": phase_margin_deg,
             "gain_margin_db": gain_margin_db,
         },
-        "tutorial": {
-            "a00": 0.0,
-            "a01": 1.0,
-            "a10": -4.0,
-            "a11": -5.0,
-        },
     }
 
 

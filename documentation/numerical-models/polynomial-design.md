@@ -532,7 +532,7 @@ trigger.
 | Requirements-based test   | `#[test]` unit tests over boundary conditions and division | FR-2, FR-4, FR-5, FR-6   |
 | Property-based test       | `proptest` suites verifying ring algebraic invariants      | FR-2, FR-3               |
 | Doctest                   | Runnable rustdoc examples                                  | FR-2, FR-5               |
-| Back-to-back comparison   | `examples/numerical-models/python3/polynomial.py` vs `src/polynomial.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-2, FR-3, FR-6         |
+| Back-to-back comparison   | `examples/numerical-models-validation/python3/polynomial_validation.py` vs `src/polynomial_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-3, FR-6         |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                           | NFR-2, C-2               |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                  | NFR-1                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics    | FR-1..FR-6, NFR-1..NFR-2 |
@@ -546,6 +546,7 @@ trigger.
 | Division remainder relation       | Identity $A(x) = Q(x)B(x) + R(x)$                  | Exact equality / Rel. error | $\|A - (QB + R)\|_\infty \le \max(N, M)\epsilon$                                                          | Euclidean division invariant                                   |
 | Polynomial derivative             | Analytic power rule $\frac{d}{dx} x^k = k x^{k-1}$ | Exact equality              | $0$ (exact for integer/fixed-point)                                                                       | Exact algebraic derivative definition                          |
 | Companion matrix eigenvalues      | Known root sets                                    | Absolute error              | $\|\lambda_i - r_i\| \le \mathcal{O}(\epsilon \kappa(p))$                                                 | Backward stable companion matrix pencil (Aurentz et al., 2018) |
+| Arbitrary-precision ball oracle   | python-flint `arb_poly` (256-bit)                  | Absolute error / Residual   | $\le 10^{-9}$ (tutorial); ground truth $\le 10^{-6}$ for Wilkinson ($k=1..19$; flint $\ll$ f64 at $k=20$)  | High-precision ball arithmetic validating catastrophic cancellation bounds |
 | Zero leading denominator division | Divisor with zero leading coefficient              | Exact equality              | `Err(DivisionError::ZeroLeadingCoefficient)`                                                              | Precondition failure contract                                  |
 | Zero-allocation execution         | Host allocator interception                        | Exact equality              | 0 heap allocations                                                                                        | NFR-1 `#![no_std]` invariant                                   |
 
@@ -573,12 +574,13 @@ trigger.
 
 #### 6.6. Validation
 
-- **Polynomial Evaluation, Calculus, & Companion Realization**: Verification of
+- **Polynomial Evaluation, Calculus, Companion Realization, & Ball Arithmetic**: Verification of
   degree-bounded polynomial construction, real and complex Horner evaluation,
   analytical differentiation/integration, polynomial multiplication, Euclidean division,
-  Frobenius companion matrix formulation, and clustered-root Horner
-  $p(x)=(x-1)^8(x-1.01)^8$ on a 128-point sweep in
-  `examples/numerical-models/src/polynomial.rs`.
+  Frobenius companion matrix formulation, clustered-root Horner
+  $p(x)=(x-1)^8(x-1.01)^8$ on a 128-point sweep, and multi-precision cross-validation
+  against NumPy and python-flint 256-bit `arb_poly` in
+  `examples/numerical-models-validation/src/polynomial_validation.rs`.
 
 #### 6.7. Not Verified
 
@@ -698,3 +700,4 @@ trigger.
 | 1.7      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-root Horner ($N>50$); umbrella $\tau\kappa\varepsilon$ and Instant timing. Caps unchanged.                 |
 | 1.8      | August 28, 2026 | @MitchellDScott | Example crate: clustered-root Horner degree 16 (128-point sweep) and Instant timings. Caps unchanged.                                |
 | 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-2 includes `test_horner_backward_error`; companion eigenvalues vs known roots in `test_companion_matrix`.                 |
+| 1.10     | August 31, 2026 | @MitchellDScott | Added python-flint 256-bit arb ball arithmetic multi-precision oracle and updated validation crate paths.                             |

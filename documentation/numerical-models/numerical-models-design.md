@@ -18,7 +18,7 @@ Primary usage scenarios:
    `examples/numerical-models-validation/src/<model>_validation.rs` that execute
    computations natively, measure tight nanosecond timing, spawn their Python
    companion oracle, and run embedded cross-validation tolerance checks.
-2. **Host-Side Oracles**: Standalone Python (NumPy/SciPy) companion scripts in
+2. **Host-Side Oracles**: Standalone Python (NumPy/SciPy, JAX, python-flint, harold) companion scripts in
    `examples/numerical-models-validation/python3/<model>_validation.py` that
    calculate
    equivalent oracle outputs with nanosecond performance timing and return JSON
@@ -78,10 +78,11 @@ The architecture uses a **Self-Contained Model Validator Pattern**:
   both `run()` for in-process execution and `main()` for standalone target
   execution (`cargo run --bin <model>`).
 * **Python Oracles**: Located at `python3/<model>_validation.py`. Invoked
-  directly by the Rust validator as a subprocess, returning NumPy/SciPy
-  reference values with tight nanosecond timing via `stdout`.
-* **Cross-Validation**: Performed by `cross_validate(&rust, &python)` in each
-  Rust module, verifying that Rust results match Python oracle calculations
+  directly by the Rust validator as a subprocess, returning NumPy/SciPy, JAX,
+  python-flint, and harold reference values with tight nanosecond timing via `stdout`.
+* **Cross-Validation**: Performed by `cross_validate(&rust, &python)` (and companion
+  `cross_validate_jax`, `cross_validate_flint`, `cross_validate_harold` routines)
+  in each Rust module, verifying that Rust results match Python oracle calculations
   within prescribed tolerances.
 * **Results Storage**: Saves combined Rust and Python payloads to
   `results/<model>.json`.
@@ -146,18 +147,24 @@ graph TD
 
 #### 5.1 Tolerance & Acceptance Criteria
 
-| Model                 | Operation                         | Oracle                                  | Tolerance Bound                                                                             |
-|-----------------------|-----------------------------------|-----------------------------------------|---------------------------------------------------------------------------------------------|
-| **Matrix**            | Backward Stability Solve          | SciPy `lu_solve`                        | $\lVert Ax-b\rVert_\infty / (\lVert A\rVert_\infty \lVert x\rVert_\infty \varepsilon) < 20$ |
-| **Matrix**            | Matrix Inversion                  | SciPy `inv`                             | Absolute error $\le 10^{-12}$, $\lVert AA^{-1} - I\rVert_\infty \le 10^{-12}$               |
-| **Polynomial**        | Real / Complex Horner & Calculus  | NumPy `polyval` / `polyder` / `polyint` | Absolute error $\le 10^{-12}$                                                               |
-| **Polynomial**        | Clustered-root Sweep              | NumPy `polyval`                         | Relative error $\le 10^{-6}$                                                                |
-| **State-Space**       | Derivative & ZOH ($A_d, B_d$)     | SciPy `signal.cont2discrete`            | Absolute error $\le 10^{-12}$                                                               |
-| **State-Space**       | Trajectories (`step_y`, `free_x`) | SciPy `signal.dlsim`                    | Absolute error $\le 10^{-6}$                                                                |
-| **Transfer Function** | Bode Frequency Response           | SciPy `signal.freqs`                    | Absolute error $\le 10^{-6}$                                                                |
-| **Transfer Function** | CCF Realization                   | SciPy `signal.tf2ss`                    | Absolute error $\le 10^{-12}$                                                               |
-| **Tensor**            | 2D Affine & Saddle Grid Interp    | SciPy `RegularGridInterpolator`         | Absolute error $\le 10^{-6}$ (Affine), $\le 10^{-4}$ (Saddle)                               |
-| **Tensor**            | Fixed-Point Q7 Quantization       | Python bit-exact oracle                 | Exact raw representation; dequantization error $\le 1/256$                                  |
+| Model                 | Operation                             | Oracle                                  | Tolerance Bound                                                                             |
+|-----------------------|---------------------------------------|-----------------------------------------|---------------------------------------------------------------------------------------------|
+| **Matrix**            | Backward Stability Solve              | SciPy `lu_solve`                        | $\lVert Ax-b\rVert_\infty / (\lVert A\rVert_\infty \lVert x\rVert_\infty \varepsilon) < 20$ |
+| **Matrix**            | Matrix Inversion                      | SciPy `inv`                             | Absolute error $\le 10^{-12}$, $\lVert AA^{-1} - I\rVert_\infty \le 10^{-12}$               |
+| **Matrix**            | Covariance Heatmap (100-step EKF)     | SciPy `linalg` / NumPy                  | Absolute error $\le 10^{-4}$                                                                |
+| **Matrix**            | Covariance Heatmap (100-step EKF)     | JAX x64 (`jax.scipy.linalg`)            | Absolute error $\le 10^{-6}$                                                                |
+| **Polynomial**        | Real / Complex Horner & Calculus      | NumPy `polyval` / `polyder` / `polyint` | Absolute error $\le 10^{-12}$                                                               |
+| **Polynomial**        | Tutorial Polynomial Evaluation        | python-flint `arb_poly` (256-bit)       | Absolute error $\le 10^{-9}$                                                                |
+| **Polynomial**        | Wilkinson Clustered-root Sweep        | python-flint `arb_poly` (256-bit)       | Ground-truth residual $\le 10^{-6}$ (flint residual $\ll$ Rust/SciPy f64 at $k=20$)         |
+| **Polynomial**        | Clustered-root Sweep                  | NumPy `polyval`                         | Relative error $\le 10^{-6}$                                                                |
+| **State-Space**       | Derivative & ZOH ($A_d, B_d$)         | SciPy `signal.cont2discrete`            | Absolute error $\le 10^{-12}$                                                               |
+| **State-Space**       | Trajectories (`step_y`, `free_x`)     | SciPy `signal.dlsim`                    | Absolute error $\le 10^{-6}$                                                                |
+| **State-Space**       | Phase Portrait & Step Response        | harold `State` / `discretize` / `sim`   | Absolute error $\le 10^{-4}$                                                                |
+| **Transfer Function** | Bode Frequency Response               | SciPy `signal.freqs`                    | Absolute error $\le 10^{-6}$                                                                |
+| **Transfer Function** | CCF Realization                       | SciPy `signal.tf2ss`                    | Absolute error $\le 10^{-12}$                                                               |
+| **Transfer Function** | Frequency Response & Discretization   | harold `Transfer` / `frequency_response`| Magnitude $\le 10^{-3}$ dB, phase $\le 10^{-2}$ deg, Nyquist locus $\le 10^{-3}$            |
+| **Tensor**            | 2D Affine & Saddle Grid Interp        | SciPy `RegularGridInterpolator`         | Absolute error $\le 10^{-6}$ (Affine), $\le 10^{-4}$ (Saddle)                               |
+| **Tensor**            | Fixed-Point Q7 Quantization           | Python bit-exact oracle                 | Exact raw representation; dequantization error $\le 1/256$                                  |
 
 ---
 
@@ -167,4 +174,5 @@ graph TD
 |----------|---------------------|---------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 1.15     | August 28, 2026     | @MitchellDScott     | Multi-source validators (`rust-row`, Apple `rust-accelerate`).                                                                                                                                                                                                      |
 | 1.16     | August 29, 2026     | @MitchellDScott     | Overhauled validation architecture to use Universal Orchestrator (`validate.rs`).                                                                                                                                                                                   |
-| **1.17** | **August 29, 2026** | **@MitchellDScott** | **Migrated to self-contained model validators (`src/<model>_validation.rs` & `python3/<model>_validation.py`), added central in-process `src/main.rs` orchestrator, integrated strict `cross_validation()` checking, and added tight nanosecond operation timers.** |
+| 1.17     | August 29, 2026     | @MitchellDScott     | Migrated to self-contained model validators (`src/<model>_validation.rs` & `python3/<model>_validation.py`), added central in-process `src/main.rs` orchestrator, integrated strict `cross_validation()` checking, and added tight nanosecond operation timers. |
+| **1.18** | **August 31, 2026** | **@MitchellDScott** | **Added alternative-library oracles (JAX x64, python-flint 256-bit arb ball arithmetic, and harold LTI toolbox) across cross-validation suites, reconciled covariance heatmap vs direct inversion tolerances, and updated validation paths.**                      |

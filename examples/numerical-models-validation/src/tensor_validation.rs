@@ -277,7 +277,9 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
                 {
                     match (r_row.as_array(), p_row.as_array()) {
                         (Some(r_vals), Some(p_vals)) => {
-                            if r_vals.len() != p_vals.len() || r_vals.len() != MESH_N {
+                            if r_vals.len() != p_vals.len()
+                                || r_vals.len() != MESH_N
+                            {
                                 errs.push(format!(
                                     "manifold interp_mesh[{i}] col count mismatch: rust {} vs python {} (expected {MESH_N})",
                                     r_vals.len(),
@@ -305,7 +307,9 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
             }
         }
         _ => {
-            errs.push("Missing manifold.interp_mesh array in payload".to_string());
+            errs.push(
+                "Missing manifold.interp_mesh array in payload".to_string(),
+            );
         }
     }
 
@@ -327,7 +331,9 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
                 {
                     match (r_row.as_array(), p_row.as_array()) {
                         (Some(r_vals), Some(p_vals)) => {
-                            if r_vals.len() != p_vals.len() || r_vals.len() != 16 {
+                            if r_vals.len() != p_vals.len()
+                                || r_vals.len() != 16
+                            {
                                 errs.push(format!(
                                     "contraction mat_c[{i}] col count mismatch: rust {} vs python {} (expected 16)",
                                     r_vals.len(),
@@ -339,8 +345,8 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
                                 {
                                     let r_num = rv.as_f64().unwrap_or(0.0);
                                     let p_num = pv.as_f64().unwrap_or(0.0);
-                                    let rel_err =
-                                        (r_num - p_num).abs() / (p_num.abs() + 1e-12);
+                                    let rel_err = (r_num - p_num).abs()
+                                        / (p_num.abs() + 1e-12);
                                     if rel_err > 1e-4 {
                                         errs.push(format!("contraction mat_c[{i}][{j}]: rust {r_num} vs python {p_num} (rel {rel_err})"));
                                     }
@@ -378,7 +384,9 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
                     let rv = r.as_i64().unwrap_or(0);
                     let pv = p.as_i64().unwrap_or(0);
                     if rv != pv {
-                        errs.push(format!("q7 q_raw[{i}]: rust {rv} vs python {pv}"));
+                        errs.push(format!(
+                            "q7 q_raw[{i}]: rust {rv} vs python {pv}"
+                        ));
                     }
                 }
             }
@@ -412,35 +420,44 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
             }
         }
         _ => {
-            errs.push("Missing act_outputs or act_exact in payload".to_string());
+            errs.push(
+                "Missing act_outputs or act_exact in payload".to_string(),
+            );
         }
     }
 
-    // 5. TableActivation quantized closeness to TFLite interpreter
+    // 5. TableActivation float closeness to TFLite interpreter (in dequantized float space)
     match (
-        rust["boundaries"]["act_outputs_q_raw"].as_array(),
-        python["boundaries"]["tflite_outputs_int8"].as_array(),
+        rust["boundaries"]["act_outputs"].as_array(),
+        python["boundaries"]["tflite_dequant"].as_array(),
     ) {
-        (Some(r_q), Some(p_q)) => {
-            if r_q.len() != p_q.len() || r_q.is_empty() {
+        (Some(r_act), Some(t_dequant)) => {
+            if r_act.len() != t_dequant.len() || r_act.is_empty() {
                 errs.push(format!(
-                    "boundaries act_outputs_q_raw length mismatch: rust {} vs python {}",
-                    r_q.len(),
-                    p_q.len()
+                    "boundaries act_outputs vs tflite_dequant length mismatch: rust {} vs python {}",
+                    r_act.len(),
+                    t_dequant.len()
                 ));
             } else {
-                for (i, (r, p)) in r_q.iter().zip(p_q.iter()).enumerate() {
-                    let rv = r.as_i64().unwrap_or(0);
-                    let pv = p.as_i64().unwrap_or(0);
-                    let diff = (rv - pv).abs();
-                    if diff > 2 {
-                        errs.push(format!("TableActivation vs TFLite index {i}: rust {rv} vs python {pv} (diff {diff} exceeds 2 LSB)"));
+                for (i, (r, t)) in
+                    r_act.iter().zip(t_dequant.iter()).enumerate()
+                {
+                    let rv = r.as_f64().unwrap_or(0.0);
+                    let tv = t.as_f64().unwrap_or(0.0);
+                    let diff = (rv - tv).abs();
+                    // int8 quantization resolution is ~0.008-0.02, plus linear LUT approximation error
+                    if diff > 0.05 {
+                        errs.push(format!(
+                            "TableActivation vs TFLite index {i}: rust {rv} vs tflite dequant {tv} (diff {diff} exceeds 0.05)"
+                        ));
                     }
                 }
             }
         }
         _ => {
-            errs.push("Missing act_outputs_q_raw or tflite_outputs_int8 in payload".to_string());
+            errs.push(
+                "Missing act_outputs or tflite_dequant in payload".to_string(),
+            );
         }
     }
 
@@ -465,8 +482,13 @@ pub fn run() -> Value {
         std::process::exit(1);
     }
 
-    let py_results: Value = serde_json::from_slice(&py_output.stdout)
+    let py_payload: Value = serde_json::from_slice(&py_output.stdout)
         .expect("Failed to parse Python JSON stdout");
+    let py_results = if py_payload.get("scipy").is_some() {
+        py_payload["scipy"].clone()
+    } else {
+        py_payload.clone()
+    };
 
     if let Err(errs) = cross_validate(&rust_results, &py_results) {
         eprintln!("Tensor Cross-Validation Errors:");
@@ -479,7 +501,7 @@ pub fn run() -> Value {
     let combined_results = json!({
         "metadata": {
             "domain": "tensor",
-            "timestamp": "2026-08-30T22:30:28-06:00"
+            "timestamp": chrono::Utc::now().to_rfc3339()
         },
         "sources": {
             "rust": {

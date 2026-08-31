@@ -257,6 +257,11 @@ def run_harold_oracle() -> dict:
     return {
         "phase_portrait": {"theta": theta, "theta_dot": theta_dot},
         "jitter": {"step_data": step_data},
+        "control_loop": {
+            "state_size": state_sizes,
+            "controllability_time_ns": ctrb_times,
+            "observability_time_ns": obsv_times,
+        },
         "state_size": state_sizes,
         "controllability_time_ns": ctrb_times,
         "observability_time_ns": obsv_times,

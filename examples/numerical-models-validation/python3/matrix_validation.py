@@ -275,7 +275,7 @@ def run_jax_oracle() -> dict:
     t_lu_start = time.perf_counter_ns()
     for _ in range(1000):
         p, l, u = jsl.lu(jlu)
-        jsl.solve_triangular(u, jsl.solve_triangular(l, jb, lower=True)).block_until_ready()
+        jsl.solve_triangular(u, jsl.solve_triangular(l, p.T @ jb, lower=True), lower=False).block_until_ready()
     t_lu = float(time.perf_counter_ns() - t_lu_start) / 1000
 
     # QR
@@ -297,7 +297,7 @@ def run_jax_oracle() -> dict:
             "inversion_time_ns": means,
             "inversion_stddev_ns": stddevs,
         },
-        "jitter": {"hilbert_solve_times_ns": [0.0] * 1000},  # not applicable to JAX path
+        "jitter": {},  # not applicable to JAX path
         "decomp_times_ns": {
             "cholesky": t_chol,
             "lu_solve": t_lu,
