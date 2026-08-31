@@ -198,6 +198,72 @@ def run_state_space_oracle() -> dict:
     }
 
 
+def run_harold_oracle() -> dict:
+    import harold
+
+    omega0, b, dt = 2.0, 0.8, 0.05
+    A_c = np.array([[0., 1.], [-omega0 ** 2, -b]])
+    B_c = np.array([[0.], [1.]])
+    C_c = np.array([[1., 0.]])
+    D_c = np.array([[0.]])
+
+    sys_c = harold.State(A_c, B_c, C_c, D_c)
+    sys_d = harold.discretize(sys_c, dt, method='zoh')
+
+    # Phase portrait: manual state recursion with the discretized matrices
+    Ad = np.array(sys_d.a)
+    Bd = np.array(sys_d.b)
+    Cd = np.array(sys_d.c)
+    x_k = np.array([[np.pi - 0.15], [0.5]])
+    u_k = np.zeros((1, 1))
+
+    theta = []
+    theta_dot = []
+    for _ in range(200):
+        theta.append(float(x_k[0, 0]))
+        theta_dot.append(float(x_k[1, 0]))
+        x_k = Ad @ x_k + Bd @ u_k
+
+    # Step response: 100 steps with unit input
+    u_step = np.ones((100, 1))
+    y_step, t_step = harold.simulate_linear_system(sys_d, u_step)
+    step_data = y_step.flatten().tolist()
+
+    # Controllability and observability timing across sizes
+    state_sizes = [2, 4, 8, 16, 32, 64, 128]
+    ctrb_times = []
+    obsv_times = []
+
+    for N in state_sizes:
+        A = np.zeros((N, N))
+        B = np.zeros((N, 1))
+        C = np.zeros((1, N))
+        D = np.zeros((1, 1))
+        for i in range(N):
+            for j in range(N):
+                A[i, j] = -0.5 * (i + 1) if i == j else 0.1 / (i + j + 1)
+            B[i, 0] = 1.0 / (i + 1)
+            C[0, i] = 1.0 / (i + 1)
+        sys_n = harold.State(A, B, C, D)
+
+        t0 = time.perf_counter_ns()
+        harold.controllability_matrix(sys_n)
+        ctrb_times.append(float(time.perf_counter_ns() - t0))
+
+        t0 = time.perf_counter_ns()
+        harold.observability_matrix(sys_n)
+        obsv_times.append(float(time.perf_counter_ns() - t0))
+
+    return {
+        "phase_portrait": {"theta": theta, "theta_dot": theta_dot},
+        "jitter": {"step_data": step_data},
+        "state_size": state_sizes,
+        "controllability_time_ns": ctrb_times,
+        "observability_time_ns": obsv_times,
+    }
+
+
 if __name__ == "__main__":
-    results = run_state_space_oracle()
-    print(json.dumps(results))
+    scipy_results = run_state_space_oracle()
+    harold_results = run_harold_oracle()
+    print(json.dumps({"scipy": scipy_results, "harold": harold_results}))

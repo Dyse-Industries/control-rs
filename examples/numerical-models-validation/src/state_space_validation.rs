@@ -305,6 +305,71 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
 
+/// Cross-validates against the harold oracle (State model + ZOH discretization via
+/// harold.discretize, phase portrait via manual recursion on harold's discretized
+/// matrices, step response via harold.simulate_linear_system).
+pub fn cross_validate_harold(rust: &Value, harold: &Value) -> Result<(), Vec<String>> {
+    let mut errs = Vec::new();
+
+    if harold.as_object().map_or(true, |o| o.is_empty()) {
+        errs.push("Harold oracle returned an empty payload".to_string());
+        return Err(errs);
+    }
+
+    let check_series = |key: &str,
+                        rust_arr: Option<&Vec<Value>>,
+                        harold_arr: Option<&Vec<Value>>,
+                        errs: &mut Vec<String>| {
+        match (rust_arr, harold_arr) {
+            (Some(r_arr), Some(h_arr)) => {
+                if r_arr.len() != h_arr.len() || r_arr.is_empty() {
+                    errs.push(format!(
+                        "{key} length mismatch: rust {} vs harold {}",
+                        r_arr.len(),
+                        h_arr.len()
+                    ));
+                } else {
+                    for (i, (r, h)) in r_arr.iter().zip(h_arr.iter()).enumerate() {
+                        let rv = r.as_f64().unwrap_or(0.0);
+                        let hv = h.as_f64().unwrap_or(0.0);
+                        if (rv - hv).abs() > 1e-6 {
+                            errs.push(format!("{key}[{i}]: rust {rv} vs harold {hv}"));
+                        }
+                    }
+                }
+            }
+            _ => errs.push(format!("Missing {key} in payload")),
+        }
+    };
+
+    check_series(
+        "phase_portrait.theta",
+        rust["phase_portrait"]["theta"].as_array(),
+        harold["phase_portrait"]["theta"].as_array(),
+        &mut errs,
+    );
+    check_series(
+        "phase_portrait.theta_dot",
+        rust["phase_portrait"]["theta_dot"].as_array(),
+        harold["phase_portrait"]["theta_dot"].as_array(),
+        &mut errs,
+    );
+    check_series(
+        "jitter.step_data",
+        rust["jitter"]["step_data"].as_array(),
+        harold["jitter"]["step_data"].as_array(),
+        &mut errs,
+    );
+
+    for key in ["state_size", "controllability_time_ns", "observability_time_ns"] {
+        if harold[key].as_array().map_or(0, |a| a.len()) != 7 {
+            errs.push(format!("Harold {key} does not have 7 entries"));
+        }
+    }
+
+    if errs.is_empty() { Ok(()) } else { Err(errs) }
+}
+
 pub fn run() -> Value {
     println!("Executing Rust state-space validator...");
     let rust_results = run_validation_default();
@@ -323,11 +388,21 @@ pub fn run() -> Value {
         std::process::exit(1);
     }
 
-    let py_results: Value = serde_json::from_slice(&py_output.stdout)
+    let py_payload: Value = serde_json::from_slice(&py_output.stdout)
         .expect("Failed to parse Python JSON stdout");
+    let py_results = py_payload["scipy"].clone();
+    let harold_results = py_payload["harold"].clone();
 
     if let Err(errs) = cross_validate(&rust_results, &py_results) {
-        eprintln!("State-Space Cross-Validation Errors:");
+        eprintln!("State-Space Cross-Validation Errors (scipy):");
+        for e in &errs {
+            eprintln!("  - {e}");
+        }
+        std::process::exit(1);
+    }
+
+    if let Err(errs) = cross_validate_harold(&rust_results, &harold_results) {
+        eprintln!("State-Space Cross-Validation Errors (harold):");
         for e in &errs {
             eprintln!("  - {e}");
         }
@@ -344,7 +419,8 @@ pub fn run() -> Value {
                 "default": rust_results
             },
             "python3": {
-                "scipy": py_results
+                "scipy": py_results,
+                "harold": harold_results
             }
         }
     });

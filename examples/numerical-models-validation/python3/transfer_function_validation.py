@@ -181,6 +181,89 @@ def run_transfer_function_oracle() -> dict:
     }
 
 
+def run_harold_oracle() -> dict:
+    import harold
+
+    fn_hz = 25.0
+    zeta_z = 0.01
+    zeta_p = 0.25
+    fc_hz = 40.0
+    wn = 2.0 * np.pi * fn_hz
+    wc = 2.0 * np.pi * fc_hz
+    dt = 0.005
+
+    num_notch = np.array([1.0, 2.0 * zeta_z * wn, wn * wn])
+    den_notch = np.array([1.0, 2.0 * zeta_p * wn, wn * wn])
+    num_lp = np.array([wc])
+    den_lp = np.array([1.0, wc])
+    num_s = np.polymul(num_notch, num_lp)
+    den_s = np.polymul(den_notch, den_lp)
+
+    # Continuous frequency response via harold (Misra-Patel Hessenberg algorithm)
+    tf_cont = harold.Transfer(num_s.tolist(), den_s.tolist())
+    num_freqs = 1000
+    freqs_hz = np.linspace(0.1, 99.5, num_freqs)
+    w_vec = 2.0 * np.pi * freqs_hz  # rad/s
+
+    H_cont, w_out = harold.frequency_response(tf_cont, w=w_vec, w_unit='rad/s', output_unit='rad/s')
+    cont_mag_db = (20.0 * np.log10(np.abs(H_cont))).tolist()
+    cont_phase_deg = (np.angle(H_cont) * 180.0 / np.pi).tolist()
+
+    # Tustin discretization then freq response.
+    # harold internally scales w by the system's SamplingPeriod when w_unit='rad/s',
+    # so pass the raw rad/s vector here (not pre-multiplied by dt as SciPy's
+    # dfreqresp requires) or the effective evaluation frequency collapses toward DC.
+    sys_tustin = harold.discretize(tf_cont, dt, method='tustin')
+    H_tustin, _ = harold.frequency_response(sys_tustin, w=w_vec, w_unit='rad/s', output_unit='rad/s')
+    tustin_mag_db = (20.0 * np.log10(np.abs(H_tustin))).tolist()
+    tustin_phase_deg = (np.angle(H_tustin) * 180.0 / np.pi).tolist()
+
+    # ZOH discretization then freq response
+    sys_zoh = harold.discretize(tf_cont, dt, method='zoh')
+    H_zoh, _ = harold.frequency_response(sys_zoh, w=w_vec, w_unit='rad/s', output_unit='rad/s')
+    zoh_mag_db = (20.0 * np.log10(np.abs(H_zoh))).tolist()
+    zoh_phase_deg = (np.angle(H_zoh) * 180.0 / np.pi).tolist()
+
+    # Nyquist: open-loop TF G(s) = (50s + 100) / (s^3 + 2s^2 + 25s)
+    tf_nyq = harold.Transfer([50.0, 100.0], [1.0, 2.0, 25.0, 0.0])
+    freqs_nyq = np.logspace(-2.0, 3.0, 250)
+    H_nyq, _ = harold.frequency_response(tf_nyq, w=freqs_nyq, w_unit='rad/s', output_unit='rad/s')
+
+    mag_nyq = np.abs(H_nyq)
+    phase_nyq = np.angle(H_nyq)
+
+    idx_gc = np.argmin(np.abs(mag_nyq - 1.0))
+    phase_margin_deg = float(180.0 + phase_nyq[idx_gc] * 180.0 / np.pi)
+    idx_pc = np.argmin(np.abs(np.abs(phase_nyq) - np.pi))
+    gain_margin_db = float(-20.0 * np.log10(mag_nyq[idx_pc]))
+
+    return {
+        "discretization_error": {
+            "freqs_hz": freqs_hz.tolist(),
+            "cont_mag_db": cont_mag_db,
+            "cont_phase_deg": cont_phase_deg,
+            "tustin_mag_db": tustin_mag_db,
+            "tustin_phase_deg": tustin_phase_deg,
+            "zoh_mag_db": zoh_mag_db,
+            "zoh_phase_deg": zoh_phase_deg,
+        },
+        "nyquist_criterion": {
+            "freqs": freqs_nyq.tolist(),
+            "h_re": H_nyq.real.tolist(),
+            "h_im": H_nyq.imag.tolist(),
+            "phase_margin_deg": phase_margin_deg,
+            "gain_margin_db": gain_margin_db,
+        },
+        "tutorial": {
+            "a00": 0.0,
+            "a01": 1.0,
+            "a10": -4.0,
+            "a11": -5.0,
+        },
+    }
+
+
 if __name__ == "__main__":
-    results = run_transfer_function_oracle()
-    print(json.dumps(results))
+    scipy_results = run_transfer_function_oracle()
+    harold_results = run_harold_oracle()
+    print(json.dumps({"scipy": scipy_results, "harold": harold_results}))

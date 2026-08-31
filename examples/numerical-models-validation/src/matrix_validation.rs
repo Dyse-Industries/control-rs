@@ -356,6 +356,72 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
 
+/// Cross-validates the Rust results against the JAX oracle (jax.numpy / jax.scipy.linalg,
+/// CPU backend, x64 enabled). JAX's CPU linalg ops lower to the same LAPACK routine family
+/// SciPy calls (dgetrf/dpotrf/dgeqrf via jaxlib's bundled LAPACK build), so this checks
+/// agreement rather than independence of the underlying algorithm.
+pub fn cross_validate_jax(rust: &Value, jax: &Value) -> Result<(), Vec<String>> {
+    let mut errs = Vec::new();
+
+    if jax.as_object().map_or(true, |o| o.is_empty()) {
+        errs.push("JAX oracle returned an empty payload".to_string());
+        return Err(errs);
+    }
+
+    // Covariance heatmap: JAX runs the same 100-iteration EKF recursion in f64.
+    match (
+        rust["covariance_heatmap"]["matrix"].as_array(),
+        jax["covariance_heatmap"]["matrix"].as_array(),
+    ) {
+        (Some(rs_cov), Some(jx_cov)) => {
+            if rs_cov.len() != jx_cov.len() || rs_cov.is_empty() {
+                errs.push(format!(
+                    "covariance_heatmap row count mismatch: rust {} vs jax {}",
+                    rs_cov.len(),
+                    jx_cov.len()
+                ));
+            } else {
+                for (i, (r_row, j_row)) in rs_cov.iter().zip(jx_cov.iter()).enumerate() {
+                    match (r_row.as_array(), j_row.as_array()) {
+                        (Some(r_cols), Some(j_cols)) => {
+                            for (j, (rv, jv)) in
+                                r_cols.iter().zip(j_cols.iter()).enumerate()
+                            {
+                                let r_val = rv.as_f64().unwrap_or(0.0);
+                                let j_val = jv.as_f64().unwrap_or(0.0);
+                                let diff = (r_val - j_val).abs();
+                                if diff > 1e-6 {
+                                    errs.push(format!("covariance_heatmap[{i}][{j}]: rust {r_val} vs jax {j_val} (diff {diff})"));
+                                }
+                            }
+                        }
+                        _ => errs.push(format!(
+                            "Missing covariance_heatmap[{i}] row array in JAX payload"
+                        )),
+                    }
+                }
+            }
+        }
+        _ => errs.push("Missing covariance_heatmap arrays in JAX payload".to_string()),
+    }
+
+    // Scaling and decomposition timings: presence/shape only, not a numerical comparison.
+    if jax["scaling"]["inversion_time_ns"]
+        .as_array()
+        .map_or(0, |a| a.len())
+        != 6
+    {
+        errs.push("JAX scaling inversion_time_ns does not have 6 entries".to_string());
+    }
+    for key in ["cholesky", "lu_solve", "qr_decomp"] {
+        if jax["decomp_times_ns"][key].as_f64().is_none() {
+            errs.push(format!("JAX decomp_times_ns.{key} missing or not numeric"));
+        }
+    }
+
+    if errs.is_empty() { Ok(()) } else { Err(errs) }
+}
+
 pub fn run() -> Value {
     println!("Executing Rust matrix validator...");
     let (mut rust_results, chol_rs, lu_rs, qr_rs) = run_validation_default();
@@ -383,11 +449,21 @@ pub fn run() -> Value {
         std::process::exit(1);
     }
 
-    let py_results: Value = serde_json::from_slice(&py_output.stdout)
+    let py_payload: Value = serde_json::from_slice(&py_output.stdout)
         .expect("Failed to parse Python JSON stdout");
+    let py_results = py_payload["scipy"].clone();
+    let jax_results = py_payload["jax"].clone();
 
     if let Err(errs) = cross_validate(&rust_results, &py_results) {
-        eprintln!("Matrix Cross-Validation Errors:");
+        eprintln!("Matrix Cross-Validation Errors (scipy):");
+        for e in &errs {
+            eprintln!("  - {e}");
+        }
+        std::process::exit(1);
+    }
+
+    if let Err(errs) = cross_validate_jax(&rust_results, &jax_results) {
+        eprintln!("Matrix Cross-Validation Errors (jax):");
         for e in &errs {
             eprintln!("  - {e}");
         }
@@ -435,7 +511,8 @@ pub fn run() -> Value {
                 "default": rust_results
             },
             "python3": {
-                "scipy": py_combined
+                "scipy": py_combined,
+                "jax": jax_results
             }
         }
     });

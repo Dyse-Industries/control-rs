@@ -175,6 +175,42 @@ def run_polynomial_oracle() -> dict:
     }
 
 
+def run_flint_oracle() -> dict:
+    import flint
+
+    flint.ctx.prec = 256  # ~77 decimal digits of working precision
+
+    # Build W(x) = product((x - k), k=1..20) using arb_poly ball arithmetic
+    w = flint.arb_poly([1])
+    for k in range(1, 21):
+        w = w * flint.arb_poly([-k, 1])
+
+    root_indices = list(range(1, 21))
+    residual_f64_flint = []
+    for k in root_indices:
+        val = w(flint.arb(k))
+        # Extract ball midpoint (should be exactly 0 for integer roots)
+        residual_f64_flint.append(abs(float(val.mid())))
+
+    # Tutorial polynomial: 2 + (-3)x + 4x^2 + x^3 (ascending coefficients)
+    # Evaluate at x=2.5 using arb_poly
+    tut_poly = flint.arb_poly([2, -3, 4, 1])
+    tut_val = tut_poly(flint.arb("2.5"))
+    tut_mid = float(tut_val.mid())
+
+    return {
+        "wilkinson_residual": {
+            "root_indices": root_indices,
+            "residual_f64_flint": residual_f64_flint,
+        },
+        "tutorial": {
+            "p_real_flint": tut_mid,
+        },
+    }
+
+
 if __name__ == "__main__":
-    results = run_polynomial_oracle()
-    print(json.dumps(results))
+    scipy_results = run_polynomial_oracle()
+    flint_results = run_flint_oracle()
+    print(json.dumps({"scipy": scipy_results, "flint": flint_results}))
+

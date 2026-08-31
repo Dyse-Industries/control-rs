@@ -464,6 +464,71 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
 
+/// Cross-validates against the python-flint oracle (arb_poly ball arithmetic at 256-bit
+/// working precision). Flint's residuals serve as a high-precision ground truth for
+/// Wilkinson's polynomial: they should sit at (numerically) zero, in contrast to the large
+/// f64 residuals both Rust and SciPy see from catastrophic cancellation near k=20.
+pub fn cross_validate_flint(rust: &Value, flint: &Value) -> Result<(), Vec<String>> {
+    let mut errs = Vec::new();
+
+    if flint.as_object().map_or(true, |o| o.is_empty()) {
+        errs.push("Flint oracle returned an empty payload".to_string());
+        return Err(errs);
+    }
+
+    match flint["wilkinson_residual"]["residual_f64_flint"].as_array() {
+        Some(residuals) => {
+            if residuals.len() != 20 {
+                errs.push(format!(
+                    "Flint wilkinson residual_f64_flint length mismatch: expected 20, got {}",
+                    residuals.len()
+                ));
+            } else {
+                for (i, v) in residuals.iter().enumerate() {
+                    let val = v.as_f64().unwrap_or(f64::NAN);
+                    if !(val.abs() < 1e-6) {
+                        errs.push(format!(
+                            "Flint wilkinson residual_f64_flint[{i}] = {val} exceeds ground-truth tolerance 1e-6"
+                        ));
+                    }
+                }
+
+                // At k=20 the f64 residual is catastrophically ill-conditioned; flint's
+                // 256-bit ground truth should be many orders of magnitude smaller.
+                let rust_last = rust["wilkinson_residual"]["residual_f64"][19]
+                    .as_f64()
+                    .unwrap_or(0.0);
+                let flint_last = residuals[19].as_f64().unwrap_or(0.0);
+                if flint_last >= rust_last {
+                    errs.push(format!(
+                        "Expected flint ground-truth residual ({flint_last}) << rust f64 residual ({rust_last}) at k=20"
+                    ));
+                }
+            }
+        }
+        None => errs.push(
+            "Missing wilkinson_residual.residual_f64_flint array in Flint payload".to_string(),
+        ),
+    }
+
+    match (
+        rust["tutorial"]["p_real"].as_f64(),
+        flint["tutorial"]["p_real_flint"].as_f64(),
+    ) {
+        (Some(r), Some(f)) => {
+            let diff = (r - f).abs();
+            if diff > 1e-9 {
+                errs.push(format!(
+                    "tutorial p_real vs flint p_real_flint: rust {r} vs flint {f} (diff {diff})"
+                ));
+            }
+        }
+        _ => errs.push("Missing tutorial p_real / p_real_flint in payload".to_string()),
+    }
+
+    if errs.is_empty() { Ok(()) } else { Err(errs) }
+}
+
 pub fn run() -> Value {
     println!("Executing Rust polynomial validator...");
     let rust_results = run_validation_default();
@@ -482,11 +547,21 @@ pub fn run() -> Value {
         std::process::exit(1);
     }
 
-    let py_results: Value = serde_json::from_slice(&py_output.stdout)
+    let py_payload: Value = serde_json::from_slice(&py_output.stdout)
         .expect("Failed to parse Python JSON stdout");
+    let py_results = py_payload["scipy"].clone();
+    let flint_results = py_payload["flint"].clone();
 
     if let Err(errs) = cross_validate(&rust_results, &py_results) {
-        eprintln!("Polynomial Cross-Validation Errors:");
+        eprintln!("Polynomial Cross-Validation Errors (scipy):");
+        for e in &errs {
+            eprintln!("  - {e}");
+        }
+        std::process::exit(1);
+    }
+
+    if let Err(errs) = cross_validate_flint(&rust_results, &flint_results) {
+        eprintln!("Polynomial Cross-Validation Errors (flint):");
         for e in &errs {
             eprintln!("  - {e}");
         }
@@ -503,7 +578,8 @@ pub fn run() -> Value {
                 "default": rust_results
             },
             "python3": {
-                "scipy": py_results
+                "scipy": py_results,
+                "flint": flint_results
             }
         }
     });

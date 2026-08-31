@@ -247,7 +247,7 @@ class MatrixPlotter(BaseModelPlotter):
                 decomp = impl_data.get('decomp_times_ns', {})
                 if not decomp:
                     continue
-                times = [decomp.get(k, 0.0) for k in keys]
+                times = [decomp.get(k, 0.0) or 0.0 for k in keys]
                 if all(t is None or t == 0.0 for t in times):
                     continue
                 impl_times.append(times)
@@ -369,6 +369,7 @@ class PolynomialPlotter(BaseModelPlotter):
         ax3 = axs[1, 0]
         rust_wilk = self.rust_data.get('wilkinson_residual', {})
         py_wilk = self.py_data.get('wilkinson_residual', {})
+        flint_wilk = self.sources.get('python3', {}).get('flint', {}).get('wilkinson_residual', {})
 
         indices = np.array(rust_wilk.get('root_indices', list(range(1, 21))))
         res_f64_rs = np.clip(np.array(rust_wilk.get('residual_f64', [1e-12] * 20)), 1e-16, None)
@@ -376,6 +377,7 @@ class PolynomialPlotter(BaseModelPlotter):
 
         res_f64_py = np.clip(np.array(py_wilk.get('residual_f64', [1e-12] * 20)), 1e-16, None)
         res_f32_py = np.clip(np.array(py_wilk.get('residual_f32', [1e-4] * 20)), 1e-16, None)
+        res_flint = np.clip(np.array(flint_wilk.get('residual_f64_flint', [1e-16] * 20)), 1e-16, None)
 
         # Plot valid assertion limits
         bound_f32 = 1e12 + 100.0 * np.minimum(res_f32_py, res_f32_rs)
@@ -396,6 +398,11 @@ class PolynomialPlotter(BaseModelPlotter):
                  linestyle=':', alpha=0.7, label='Py f64 Residual')
         ax3.plot(indices, res_f64_rs, color=COLOR_RS, marker='o', markersize=5,
                  linestyle='-', linewidth=1.5, label='Rust f64 Residual')
+
+        # Flint 256-bit arb_poly ball arithmetic: exact ground truth, ~0 at every
+        # integer root, in contrast to the f64 catastrophic cancellation above.
+        ax3.plot(indices, res_flint, color=COLOR_ALT, marker='*', markersize=8,
+                 linestyle='-', linewidth=1.5, label='Flint 256-bit Ground Truth')
 
         ax3.set_yscale('log')
         ax3.set_xlabel("Root Index k (Wilkinson W(x) Roots 1..20)")
@@ -499,18 +506,26 @@ class StateSpacePlotter(BaseModelPlotter):
         py_cl = self.py_data.get('control_loop', {})
         rust_cl = self.rust_data.get('control_loop', {})
 
+        harold_data = self.sources.get('python3', {}).get('harold', {})
+        harold_pp = harold_data.get('phase_portrait', {})
+
         # Subplot 1: Quadrant 1 (Correctness Anchor) - Pendulum Disturbance Rejection Phase Portrait (theta vs theta_dot)
         ax1 = axs[0, 0]
         theta_py = py_pp.get('theta', [])
         theta_dot_py = py_pp.get('theta_dot', [])
         theta_rs = rust_pp.get('theta', [])
         theta_dot_rs = rust_pp.get('theta_dot', [])
+        theta_ha = harold_pp.get('theta', [])
+        theta_dot_ha = harold_pp.get('theta_dot', [])
 
         if theta_py and theta_dot_py:
-            ax1.plot(theta_py, theta_dot_py, label='Python 3', color=COLOR_PY, linewidth=2.0)
+            ax1.plot(theta_py, theta_dot_py, label='Python 3 (scipy)', color=COLOR_PY, linewidth=2.0)
         if theta_rs and theta_dot_rs:
             ax1.plot(theta_rs, theta_dot_rs, '--', label='Rust', color=COLOR_RS,
                      linewidth=2.0)
+        if theta_ha and theta_dot_ha:
+            ax1.plot(theta_ha, theta_dot_ha, ':', label='Python 3 (harold)', color='#F59E0B',
+                     linewidth=1.5)
 
         ax1.scatter([0.0], [0.0], color=COLOR_CRIT, marker='*', s=150, zorder=5,
                     label='Equilibrium (0,0)')
@@ -566,6 +581,8 @@ class StateSpacePlotter(BaseModelPlotter):
         rust_ctrb = rust_cl.get('controllability_time_ns', [])
         py_obsv = py_cl.get('observability_time_ns', [])
         rust_obsv = rust_cl.get('observability_time_ns', [])
+        harold_ctrb = harold_data.get('controllability_time_ns', [])
+        harold_obsv = harold_data.get('observability_time_ns', [])
 
         x4 = np.arange(len(cl_sizes))
 
@@ -577,6 +594,12 @@ class StateSpacePlotter(BaseModelPlotter):
             ax4.plot(x4, py_obsv, '^:', label='Py Obsv', color=COLOR_ALT, linewidth=1.8)
         if rust_obsv:
             ax4.plot(x4, rust_obsv, 'd-.', label='Rust Obsv', color=COLOR_CRIT, linewidth=1.8)
+        if harold_ctrb:
+            ax4.plot(x4[:len(harold_ctrb)], harold_ctrb, 'x:', label='Harold Ctrb',
+                     color='#F59E0B', linewidth=1.5)
+        if harold_obsv:
+            ax4.plot(x4[:len(harold_obsv)], harold_obsv, '+:', label='Harold Obsv',
+                     color='#EC4899', linewidth=1.5)
 
         ax4.set_xticks(x4)
         ax4.set_xticklabels([f"N={n}" for n in cl_sizes])
@@ -628,6 +651,8 @@ class TransferFuncPlotter(BaseModelPlotter):
 
         rust_disc = self.rust_data.get('discretization_error', {})
         py_disc = self.py_data.get('discretization_error', {})
+        harold_data = self.sources.get('python3', {}).get('harold', {})
+        harold_disc = harold_data.get('discretization_error', {})
 
         freqs_hz = rust_disc.get('freqs_hz', np.linspace(0.1, 49.9, 100))
 
@@ -639,9 +664,11 @@ class TransferFuncPlotter(BaseModelPlotter):
 
         tustin_mag_rs = rust_disc.get('tustin_mag_db', [0.0] * 100)
         tustin_mag_py = py_disc.get('tustin_mag_db', [0.0] * 100)
+        tustin_mag_ha = harold_disc.get('tustin_mag_db', [])
 
         zoh_mag_rs = rust_disc.get('zoh_mag_db', [0.0] * 100)
         zoh_mag_py = py_disc.get('zoh_mag_db', [0.0] * 100)
+        zoh_mag_ha = harold_disc.get('zoh_mag_db', [])
 
         ax1.plot(freqs_hz, cont_mag_rs, label='Ideal Continuous H(s)', color=COLOR_CRIT,
                  linewidth=2.0)
@@ -653,6 +680,12 @@ class TransferFuncPlotter(BaseModelPlotter):
                  alpha=0.7)
         ax1.plot(freqs_hz, zoh_mag_rs, ':', label='Rust ZOH H(z)', color=COLOR_RS, linewidth=1.5,
                  alpha=0.7)
+        if tustin_mag_ha:
+            ax1.plot(freqs_hz, tustin_mag_ha, color='#F59E0B', linewidth=1.2, alpha=0.9,
+                     label='Harold Tustin H(z)')
+        if zoh_mag_ha:
+            ax1.plot(freqs_hz, zoh_mag_ha, color='#EC4899', linewidth=1.2, alpha=0.9,
+                     label='Harold ZOH H(z)')
 
         ax1.axvline(50.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (50 Hz)')
         ax1.set_xlabel("Frequency (Hz)")
@@ -669,9 +702,11 @@ class TransferFuncPlotter(BaseModelPlotter):
 
         tustin_phase_rs = rust_disc.get('tustin_phase_deg', [0.0] * 100)
         tustin_phase_py = py_disc.get('tustin_phase_deg', [0.0] * 100)
+        tustin_phase_ha = harold_disc.get('tustin_phase_deg', [])
 
         zoh_phase_rs = rust_disc.get('zoh_phase_deg', [0.0] * 100)
         zoh_phase_py = py_disc.get('zoh_phase_deg', [0.0] * 100)
+        zoh_phase_ha = harold_disc.get('zoh_phase_deg', [])
 
         ax2.plot(freqs_hz, cont_phase_rs, label='Ideal Continuous H(s)', color=COLOR_CRIT,
                  linewidth=2.0)
@@ -683,6 +718,12 @@ class TransferFuncPlotter(BaseModelPlotter):
                  alpha=0.7)
         ax2.plot(freqs_hz, zoh_phase_rs, ':', label='Rust ZOH Phase', color=COLOR_RS, linewidth=1.5,
                  alpha=0.7)
+        if tustin_phase_ha:
+            ax2.plot(freqs_hz, tustin_phase_ha, color='#F59E0B', linewidth=1.2, alpha=0.9,
+                     label='Harold Tustin Phase')
+        if zoh_phase_ha:
+            ax2.plot(freqs_hz, zoh_phase_ha, color='#EC4899', linewidth=1.2, alpha=0.9,
+                     label='Harold ZOH Phase')
 
         ax2.axvline(50.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (50 Hz)')
         ax2.set_xlabel("Frequency (Hz)")
@@ -702,6 +743,10 @@ class TransferFuncPlotter(BaseModelPlotter):
 
         h_re_py = py_nyq.get('h_re', [])
         h_im_py = py_nyq.get('h_im', [])
+
+        harold_nyq = harold_data.get('nyquist_criterion', {})
+        h_re_ha = harold_nyq.get('h_re', [])
+        h_im_ha = harold_nyq.get('h_im', [])
 
         crit_pt = rust_nyq.get('critical_point', [-1.0, 0.0])
         pm_deg = rust_nyq.get('phase_margin_deg', 45.0)
@@ -723,6 +768,9 @@ class TransferFuncPlotter(BaseModelPlotter):
             h_im_rs_ref = [-im for im in h_im_rs]
             ax3.plot(h_re_rs, h_im_rs, '--', label='Rust H(jw)', color=COLOR_RS, linewidth=1.0)
             ax3.plot(h_re_rs, h_im_rs_ref, '--', label='Rust H(-jw)', color=COLOR_RS, linewidth=1.0)
+
+        if h_re_ha and h_im_ha:
+            ax3.plot(h_re_ha, h_im_ha, ':', label='Harold H(jw)', color='#F59E0B', linewidth=1.0)
 
         ax3.axvline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
         ax3.axhline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
@@ -915,16 +963,16 @@ class TensorPlotter(BaseModelPlotter):
         tflite_dequant = np.array(py_bound.get('tflite_dequant', act_exact))
 
         # Plot Tanh Curves on Left Y-Axis
-        line1, = ax3.plot(act_inputs, act_exact, '-', color='#CCCCCC', linewidth=2.0,
-                          label='SciPy Exact Tanh (f32)')
-        line2 = ax3.step(act_inputs, tflite_dequant, where='mid', color=COLOR_PY, linestyle=':',
+        line2 = ax3.step(act_inputs, tflite_dequant, where='mid', color=COLOR_PY,
                          linewidth=1.5, label='TFLite Quantized (Q7)')
-        line3 = ax3.step(act_inputs, rust_dequant, where='mid', color=COLOR_RS, linestyle='--',
+        line3 = ax3.step(act_inputs, rust_dequant, where='mid', color=COLOR_RS,
                          linewidth=1.5, label='Rust TableActivation (Q7)')
+        line1, = ax3.plot(act_inputs, act_exact, color='#CCCCCC', linewidth=1.0,
+                          label='SciPy Exact Tanh (f32)', zorder=10)
 
         ax3.set_xlabel("Input Value x")
         ax3.set_ylabel("Activation Output")
-        ax3.set_title("Q3: Quantized Tanh Activation (Rust vs TFLite vs SciPy)", fontsize=11,
+        ax3.set_title("Quantized Tanh Activation", fontsize=11,
                       fontweight='bold')
 
         # Plot Errors on Right Y-Axis (twinx)
@@ -932,9 +980,9 @@ class TensorPlotter(BaseModelPlotter):
         err_scipy = np.abs(act_outputs - act_exact)
         err_tflite = np.abs(rust_dequant - tflite_dequant)
 
-        line4, = ax3_err.plot(act_inputs, err_scipy, color=COLOR_ALT, linestyle='-.', alpha=0.6,
+        line4, = ax3_err.plot(act_inputs, err_scipy, color=COLOR_ALT, linewidth=1.5, alpha=0.6,
                               label='|Rust - SciPy| (Approx Error)')
-        line5, = ax3_err.plot(act_inputs, err_tflite, color=COLOR_CRIT, linestyle='-', alpha=0.6,
+        line5, = ax3_err.plot(act_inputs, err_tflite, color=COLOR_CRIT, linewidth=1.5, alpha=0.6,
                               label='|Rust - TFLite| (Divergence)')
 
         ax3_err.set_ylabel("Absolute Error", color=COLOR_ALT)

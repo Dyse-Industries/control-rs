@@ -490,6 +490,138 @@ pub fn cross_validate(rust: &Value, python: &Value) -> Result<(), Vec<String>> {
     if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
 
+/// Cross-validates against the harold oracle (Transfer model, Misra-Patel Hessenberg
+/// frequency response, Tustin/ZOH discretization). Mirrors the SciPy check with the same
+/// tolerances, since harold agrees with SciPy to ~1e-10 dB once evaluated with matching
+/// frequency-unit conventions.
+pub fn cross_validate_harold(rust: &Value, harold: &Value) -> Result<(), Vec<String>> {
+    let mut errs = Vec::new();
+
+    if harold.as_object().map_or(true, |o| o.is_empty()) {
+        errs.push("Harold oracle returned an empty payload".to_string());
+        return Err(errs);
+    }
+
+    let check_array = |key: &str,
+                       rust_arr: Option<&Vec<Value>>,
+                       h_arr: Option<&Vec<Value>>,
+                       tol: f64,
+                       errs: &mut Vec<String>| {
+        match (rust_arr, h_arr) {
+            (Some(r_slice), Some(h_slice)) => {
+                if r_slice.len() != h_slice.len() || r_slice.is_empty() {
+                    errs.push(format!(
+                        "{key} length mismatch: rust {} vs harold {}",
+                        r_slice.len(),
+                        h_slice.len()
+                    ));
+                } else {
+                    for (i, (r, h)) in r_slice.iter().zip(h_slice.iter()).enumerate() {
+                        let rv = r.as_f64().unwrap_or(0.0);
+                        let hv = h.as_f64().unwrap_or(0.0);
+                        if (rv - hv).abs() > tol {
+                            errs.push(format!(
+                                "{key}[{i}]: rust {rv} vs harold {hv} (tol {tol})"
+                            ));
+                        }
+                    }
+                }
+            }
+            _ => errs.push(format!("Missing {key} array in payload")),
+        }
+    };
+
+    check_array(
+        "cont_mag_db",
+        rust["discretization_error"]["cont_mag_db"].as_array(),
+        harold["discretization_error"]["cont_mag_db"].as_array(),
+        1e-3,
+        &mut errs,
+    );
+    check_array(
+        "cont_phase_deg",
+        rust["discretization_error"]["cont_phase_deg"].as_array(),
+        harold["discretization_error"]["cont_phase_deg"].as_array(),
+        1e-2,
+        &mut errs,
+    );
+    check_array(
+        "tustin_mag_db",
+        rust["discretization_error"]["tustin_mag_db"].as_array(),
+        harold["discretization_error"]["tustin_mag_db"].as_array(),
+        1e-3,
+        &mut errs,
+    );
+    check_array(
+        "tustin_phase_deg",
+        rust["discretization_error"]["tustin_phase_deg"].as_array(),
+        harold["discretization_error"]["tustin_phase_deg"].as_array(),
+        1e-2,
+        &mut errs,
+    );
+    check_array(
+        "zoh_mag_db",
+        rust["discretization_error"]["zoh_mag_db"].as_array(),
+        harold["discretization_error"]["zoh_mag_db"].as_array(),
+        1e-3,
+        &mut errs,
+    );
+    check_array(
+        "zoh_phase_deg",
+        rust["discretization_error"]["zoh_phase_deg"].as_array(),
+        harold["discretization_error"]["zoh_phase_deg"].as_array(),
+        1e-2,
+        &mut errs,
+    );
+
+    check_array(
+        "nyquist h_re",
+        rust["nyquist_criterion"]["h_re"].as_array(),
+        harold["nyquist_criterion"]["h_re"].as_array(),
+        1e-3,
+        &mut errs,
+    );
+    check_array(
+        "nyquist h_im",
+        rust["nyquist_criterion"]["h_im"].as_array(),
+        harold["nyquist_criterion"]["h_im"].as_array(),
+        1e-3,
+        &mut errs,
+    );
+
+    let check_f64 = |key: &str,
+                     r_opt: Option<f64>,
+                     h_opt: Option<f64>,
+                     tol: f64,
+                     errs: &mut Vec<String>| {
+        match (r_opt, h_opt) {
+            (Some(r), Some(h)) => {
+                if (r - h).abs() > tol {
+                    errs.push(format!("{key}: rust {r} vs harold {h} (tol {tol})"));
+                }
+            }
+            _ => errs.push(format!("Missing {key} in payload")),
+        }
+    };
+
+    check_f64(
+        "nyquist phase_margin_deg",
+        rust["nyquist_criterion"]["phase_margin_deg"].as_f64(),
+        harold["nyquist_criterion"]["phase_margin_deg"].as_f64(),
+        0.5,
+        &mut errs,
+    );
+    check_f64(
+        "nyquist gain_margin_db",
+        rust["nyquist_criterion"]["gain_margin_db"].as_f64(),
+        harold["nyquist_criterion"]["gain_margin_db"].as_f64(),
+        0.5,
+        &mut errs,
+    );
+
+    if errs.is_empty() { Ok(()) } else { Err(errs) }
+}
+
 pub fn run() -> Value {
     println!("Executing Rust transfer-function validator...");
     let rust_results = run_validation_default();
@@ -508,11 +640,21 @@ pub fn run() -> Value {
         std::process::exit(1);
     }
 
-    let py_results: Value = serde_json::from_slice(&py_output.stdout)
+    let py_payload: Value = serde_json::from_slice(&py_output.stdout)
         .expect("Failed to parse Python JSON stdout");
+    let py_results = py_payload["scipy"].clone();
+    let harold_results = py_payload["harold"].clone();
 
     if let Err(errs) = cross_validate(&rust_results, &py_results) {
-        eprintln!("Transfer Function Cross-Validation Errors:");
+        eprintln!("Transfer Function Cross-Validation Errors (scipy):");
+        for e in &errs {
+            eprintln!("  - {e}");
+        }
+        std::process::exit(1);
+    }
+
+    if let Err(errs) = cross_validate_harold(&rust_results, &harold_results) {
+        eprintln!("Transfer Function Cross-Validation Errors (harold):");
         for e in &errs {
             eprintln!("  - {e}");
         }
@@ -529,7 +671,8 @@ pub fn run() -> Value {
                 "default": rust_results
             },
             "python3": {
-                "scipy": py_results
+                "scipy": py_results,
+                "harold": harold_results
             }
         }
     });
