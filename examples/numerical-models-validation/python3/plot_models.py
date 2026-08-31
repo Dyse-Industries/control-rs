@@ -762,7 +762,9 @@ class TransferFuncPlotter(BaseModelPlotter):
             ax3.plot(h_re_rs, h_im_rs_ref, '--', label='Rust H(-jw)', color=COLOR_RS, linewidth=1.0)
 
         if h_re_ha and h_im_ha:
+            h_im_ha_ref = [-im for im in h_im_ha]
             ax3.plot(h_re_ha, h_im_ha, ':', label='Harold H(jw)', color='#F59E0B', linewidth=1.0)
+            ax3.plot(h_re_ha, h_im_ha_ref, ':', label='Harold H(jw)', color='#F59E0B', linewidth=1.0)
 
         ax3.axvline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
         ax3.axhline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)

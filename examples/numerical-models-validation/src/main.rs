@@ -10,10 +10,7 @@ mod tensor_validation;
 mod transfer_function_validation;
 
 fn main() {
-    println!("============================================================");
-    println!("=== Cross-Language Numerical Model Validation Suite ===");
-    println!("============================================================\n");
-
+    println!();
     println!("--- [1/5] Matrix Validation ---");
     matrix_validation::run();
     println!();
@@ -33,8 +30,4 @@ fn main() {
     println!("--- [5/5] Tensor Validation ---");
     tensor_validation::run();
     println!();
-
-    println!("============================================================");
-    println!("=== All numerical model cross-validations PASSED! ===");
-    println!("============================================================");
 }
