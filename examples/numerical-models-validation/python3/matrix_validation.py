@@ -82,7 +82,7 @@ def benchmark_matrix_scaling() -> dict:
     }
 
 
-def benchmark_ekf_update_jitter() -> dict:
+def benchmark_hilbert_solve() -> dict:
     n = 32
     iters = 1000
     h_mat = hilbert(n)
@@ -176,7 +176,7 @@ def benchmark_decompositions() -> dict:
 def run_python_oracle() -> dict:
     q1 = generate_matrix_correctness_data()
     q2 = benchmark_matrix_scaling()
-    q3 = benchmark_ekf_update_jitter()
+    q3 = benchmark_hilbert_solve()
     q4 = benchmark_decompositions()
 
     return {

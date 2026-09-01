@@ -208,12 +208,13 @@ return `Tensor<T, Layout, B>` with the same buffer family.
 #### 4.7. Grid Interpolation
 
 Motivated by gain-scheduled flight-control lookup tables (Koo & Sands,
+
 2024) and the general N-D table-interpolation problem formalized by Weiser &
-Zarantonello (1988): a query at a fractional coordinate is evaluated as a
-weighted sum over the $2^{\text{RANK}}$ hypercube corner vertices
-surrounding it (the multilinear generalization of bilinear/trilinear
-interpolation), reading directly through `FlatBuffer::as_slice` with no
-intermediate allocation:
+      Zarantonello (1988): a query at a fractional coordinate is evaluated as a
+      weighted sum over the $2^{\text{RANK}}$ hypercube corner vertices
+      surrounding it (the multilinear generalization of bilinear/trilinear
+      interpolation), reading directly through `FlatBuffer::as_slice` with no
+      intermediate allocation:
 
 ```rust
 impl<T, Layout: TensorLayout, B> Tensor<T, Layout, B>
@@ -289,50 +290,7 @@ required. This keeps the operator surface minimal, per the goal of
 supporting a hand-written small inference network without pulling in a full
 ML framework.
 
-#### 4.10. Type-Level Quantized Scalar Representation
-
-Quantization is implemented as a property of the scalar type `T`, not of
-`Tensor` itself — `Tensor<T, Layout, B>` already accepts any `T` satisfying
-the crate's numeric traits, so a quantized tensor is simply
-`Tensor<Quantized<Repr, SHIFT>, Layout, B>` with no structural change to
-`Tensor` (see §5.1 for why this was chosen over threading quantization
-parameters through `Tensor`'s own generics).
-
-The default (v1) representation is power-of-two Q-format, matching the
-`CMSIS-DSP` Q7/Q15/Q31 convention already validated for `Matrix`:
-
-```rust
-pub struct Quantized<Repr, const SHIFT: usize> {
-    raw: Repr, // e.g. i8, i16, i32
-}
-```
-
-`SHIFT` is a plain integer const generic — never a float — encoding the
-value as `raw * 2^-SHIFT`, mirroring the integer-exponent pattern already
-used by existing Rust fixed-point/decimal crates (`decimal-scaled`,
-`primitive_fixed_point_decimal`) for type-level scale. `Quantized`
-implements the crate's `Zero`, `One`, `Conjugate` and `Scalar`
-(`Zero + One + Sub + Mul + Conjugate`) traits —
-[`num-traits-design.md`](../math/num-traits-design.md)'s unified arithmetic
-target for generic `Tensor`/`Matrix` code paths — so it plugs into every
-existing generic call site unchanged. `Conjugate` is the identity on
-`Quantized`, which is real, and `Scalar::Real = Self` with `im()` returning
-`Real::ZERO` (`num-traits-design.md` FR-3, FR-4, §4.3). `Scalar`
-deliberately excludes `Div`; `Quantized`'s dequantization is a bit-shift,
-not a division, so this omission is not a gap, and integer division stays
-on `TryDiv`.
-
-`Quantized` also implements `SaturatingInteger` when `Repr` does
-(`num-traits-design.md` §4.1), which is the contract that makes Q-format
-overflow saturate rather than wrap. `num-traits-design.md` §3 states that
-`Quantized<Repr, SHIFT>` is defined with the tensor scalar type — that is,
-here — while the trait contract it must satisfy is specified there.
-
-An affine variant (`AffineQuantized<Repr, const SHIFT: i32, const
-ZERO_POINT: i32>`) is deferred future work for imported-model
-interoperability (§5.2) — not part of the default path.
-
-#### 4.11. Interoperability & Conversions
+#### 4.10. Interoperability & Conversions
 
 `ConversionError` is defined once, canonically, in
 [`error-design.md`](../math/error-design.md) (`DimensionMismatch`,
@@ -358,7 +316,7 @@ this existing 2D conversion path is the relevant interoperability surface
 for that target application; no rank-N-specific system-identification API
 is required.
 
-#### 4.12. Error Handling & State Management
+#### 4.11. Error Handling & State Management
 
 - **Compile-Time Constraints**: Dimension and rank mismatches in
   contraction, permutation or layout conversion are compile-time type
@@ -371,7 +329,7 @@ is required.
   boundary, extrapolates or returns `Result<T, InterpolationError>` is not
   finalized.
 
-#### 4.13. Structural Specializations & Future Extensions
+#### 4.12. Structural Specializations & Future Extensions
 
 - **Sparse Tensor Representations**, **ROM-Backed Static Storage
   Backends** and **Matrix-Free Operators** remain noted future extensions.
@@ -486,16 +444,16 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 
 #### 6.2. Methods
 
-| Method                    | Mechanism                                                                                  | Requirements discharged  |
-|:--------------------------|:-------------------------------------------------------------------------------------------|:-------------------------|
-| Compile-time shape check  | Type-level `Dim` rank assertions, `compile_fail` doctests                                  | FR-1, C-1, C-3           |
-| Requirements-based test   | `#[test]` unit tests over grid boundaries, activations, and conversions                    | FR-2, FR-4, FR-5         |
-| Property-based test       | `proptest` suites verifying axis permutation round-trips and tensor contraction identities | FR-3                     |
-| Doctest                   | Runnable rustdoc examples                                                                  | FR-2, FR-4               |
+| Method                    | Mechanism                                                                                                                                                               | Requirements discharged  |
+|:--------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------|
+| Compile-time shape check  | Type-level `Dim` rank assertions, `compile_fail` doctests                                                                                                               | FR-1, C-1, C-3           |
+| Requirements-based test   | `#[test]` unit tests over grid boundaries, activations, and conversions                                                                                                 | FR-2, FR-4, FR-5         |
+| Property-based test       | `proptest` suites verifying axis permutation round-trips and tensor contraction identities                                                                              | FR-3                     |
+| Doctest                   | Runnable rustdoc examples                                                                                                                                               | FR-2, FR-4               |
 | Back-to-back comparison   | `examples/numerical-models-validation/python3/tensor_validation.py` vs `src/tensor_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-3, FR-4               |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                    | NFR-1, NFR-2, C-2, C-3   |
-| On-target execution       | ETS suites under QEMU and Teensy hardware                                                  | NFR-2                    |
-| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                    | FR-1..FR-5, NFR-1..NFR-2 |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                                                                                  | NFR-1, NFR-2, C-2, C-3   |
+| On-target execution       | ETS suites under QEMU and Teensy hardware                                                                                                                               | NFR-2                    |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                                                                                                 | FR-1..FR-5, NFR-1..NFR-2 |
 
 #### 6.3. Acceptance Criteria
 
@@ -506,23 +464,23 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | Interior multilinear interpolation | Analytic piecewise linear model              | Absolute error              | $\|f(x) - \hat{f}(x)\| \le \frac{1}{8} \sum h_i^2 \|\frac{\partial^2 f}{\partial x_i^2}\|_\infty$      | Multilinear interpolation error bound (Weiser & Zarantonello, 1988)        |
 | Quantization round-trip            | Exact floating-point vs dequantized integer  | Absolute error              | $\|x - \text{dequantize}(\text{quantize}(x))\| \le 2^{-\text{SHIFT}-1}$                                | Half-LSB rounding bound for fixed-point quantization (Wu et al., 2020)     |
 | Permutation invertibility          | Permute and inverse permute axes             | Exact equality              | Inverted tensor == original tensor                                                                     | Exact structural permutation invariant                                     |
-| Activation lookup residual         | Exact nonlinear activation ($\tanh, \sigma$) | Absolute error              | $\|\hat{a}(x) - a(x)\|_\infty \le 2^{-7}$ for a 256-breakpoint Q7 table over $[-8, 8]$                  | Piecewise linear activation table approximation (Lai et al., 2018)         |
+| Activation lookup residual         | Exact nonlinear activation ($\tanh, \sigma$) | Absolute error              | $\|\hat{a}(x) - a(x)\|_\infty \le 2^{-7}$ for a 256-breakpoint Q7 table over $[-8, 8]$                 | Piecewise linear activation table approximation (Lai et al., 2018)         |
 | Zero-allocation execution          | Host memory allocator interception           | Exact equality              | 0 heap allocations                                                                                     | NFR-1 `#![no_std]` invariant                                               |
 
 #### 6.4. Traceability
 
-| Requirement                                         | Method                                           | Artifact                                                |
-|:----------------------------------------------------|:-------------------------------------------------|:--------------------------------------------------------|
-| FR-1 — Multidimensional Array Representation        | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/tensor/mod.rs`  |
-| FR-2 — Multilinear Grid Interpolation               | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_tensor_grid_interpolation` |
-| FR-3 — Tensor Contraction & Matrix Slicing          | Property-based test, Back-to-back comparison     | `src/tensor/tests/tensor_tests.rs::test_tensor_contract` |
-| FR-4 — Quantized Fixed-Point Inference              | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_quantized_scalar_operations` |
-| FR-5 — Nonlinear Activation Functions               | Requirements-based test                          | `src/tensor/tests/tensor_tests.rs::test_activations`    |
-| NFR-1 — Bounded Stack Allocation                    | Resource usage evaluation                        | `size_of` assertions; element cap $S \le 1024$          |
-| NFR-2 — Real-Time Inference Latency                 | On-target execution                              | ETS suite `tensor_test_suite`                           |
-| C-1 — Out of Scope Capabilities                     | Inspection                                       | Training/ONNX parsers absent from `src/tensor/`         |
-| C-2 — Static Quantization Parameter Encoding        | Compile-time shape check                         | `Quantized<Repr, SHIFT>` const generic                  |
-| C-3 — `#![no_std]` / Zero Heap Allocation           | Resource usage evaluation                        | Compilation under `#![no_std]` target triples           |
+| Requirement                                  | Method                                           | Artifact                                                             |
+|:---------------------------------------------|:-------------------------------------------------|:---------------------------------------------------------------------|
+| FR-1 — Multidimensional Array Representation | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/tensor/mod.rs`               |
+| FR-2 — Multilinear Grid Interpolation        | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_tensor_grid_interpolation`   |
+| FR-3 — Tensor Contraction & Matrix Slicing   | Property-based test, Back-to-back comparison     | `src/tensor/tests/tensor_tests.rs::test_tensor_contract`             |
+| FR-4 — Quantized Fixed-Point Inference       | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_quantized_scalar_operations` |
+| FR-5 — Nonlinear Activation Functions        | Requirements-based test                          | `src/tensor/tests/tensor_tests.rs::test_activations`                 |
+| NFR-1 — Bounded Stack Allocation             | Resource usage evaluation                        | `size_of` assertions; element cap $S \le 1024$                       |
+| NFR-2 — Real-Time Inference Latency          | On-target execution                              | ETS suite `tensor_test_suite`                                        |
+| C-1 — Out of Scope Capabilities              | Inspection                                       | Training/ONNX parsers absent from `src/tensor/`                      |
+| C-2 — Static Quantization Parameter Encoding | Compile-time shape check                         | `Quantized<Repr, SHIFT>` const generic                               |
+| C-3 — `#![no_std]` / Zero Heap Allocation    | Resource usage evaluation                        | Compilation under `#![no_std]` target triples                        |
 
 #### 6.5. Coverage
 
@@ -590,7 +548,7 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | **Phase 2: Element Ops & Contraction**       | Operator overloads, `contract_into`/`contract_into_dynamic`, `permute`, `as_view`/`slice_inplace`.                                                                                                              | 2.5 Days         |
 | **Phase 3: Grid Interpolation & Activation** | Multilinear `interpolate`, `Activation` trait, `Relu`, `TableActivation`.                                                                                                                                       | 2.5 Days         |
 | **Phase 4: Quantized Scalar Type**           | `Quantized<Repr, SHIFT>` with full `Zero`/`One`/`Scalar` arithmetic `num_traits` impls (correct rounding/saturation semantics), quantize/dequantize, integration across existing generic `T` paths in `Tensor`. | 3.5 Days         |
-| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial` per [`vv-standards.md`](../vv-standards.md).                                       | 3.0 Days         |
+| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial` per [`vv-standards.md`](../vv-standards.md).                 | 3.0 Days         |
 
 ---
 
@@ -637,15 +595,15 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 
 ### 11. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                           |
-|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 26, 2026   | @MitchellDScott | Initial draft: N-dimensional storage layouts, indexing arithmetic, and zero-allocation views.                                          |
-| 1.1      | August 2, 2026   | @MitchellDScott | Grid interpolation & quantization: added multilinear lookup tables, `Activation` trait, and fixed-point quantized execution.          |
-| 1.2      | August 24, 2026 | @MitchellDScott | Rank-neutral buffer projection: integrated `FlatBuffer`/`FlatBufferMut` projection over `ContiguousStorage` backends.                 |
-| 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with multilinear interpolation tolerances and fixed-point quantization error bounds.       |
-| 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView` and `DenseStorage` traits.                                                 |
-| 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                          |
-| 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: large-grid interpolation; umbrella Instant timing. NFR-1 cap unchanged.                                               |
-| 1.7      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); MCU element cap unchanged.                                                     |
-| 1.8      | August 28, 2026 | @MitchellDScott | Example crate: $16\times 16$ curved-grid interpolation and non-dyadic Q7. NFR-1 cap unchanged.                                          |
-| 1.9      | August 31, 2026 | @MitchellDScott | Updated numerical-models validation crate and script paths to `examples/numerical-models-validation/`.                                 |
+| Revision | Date            | Author          | Description                                                                                                                    |
+|:---------|:----------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 26, 2026   | @MitchellDScott | Initial draft: N-dimensional storage layouts, indexing arithmetic, and zero-allocation views.                                  |
+| 1.1      | August 2, 2026  | @MitchellDScott | Grid interpolation & quantization: added multilinear lookup tables, `Activation` trait, and fixed-point quantized execution.   |
+| 1.2      | August 24, 2026 | @MitchellDScott | Rank-neutral buffer projection: integrated `FlatBuffer`/`FlatBufferMut` projection over `ContiguousStorage` backends.          |
+| 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with multilinear interpolation tolerances and fixed-point quantization error bounds. |
+| 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView` and `DenseStorage` traits.                                          |
+| 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                   |
+| 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: large-grid interpolation; umbrella Instant timing. NFR-1 cap unchanged.                                        |
+| 1.7      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); MCU element cap unchanged.                                              |
+| 1.8      | August 28, 2026 | @MitchellDScott | Example crate: $16\times 16$ curved-grid interpolation and non-dyadic Q7. NFR-1 cap unchanged.                                 |
+| 1.9      | August 31, 2026 | @MitchellDScott | Updated numerical-models validation crate and script paths to `examples/numerical-models-validation/`.                         |

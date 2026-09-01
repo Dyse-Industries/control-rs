@@ -8,35 +8,12 @@
 
 ### 1. Introduction
 
-Embedded control applications executing on integer microcontroller units (MCUs)
-without floating-point hardware require deterministic fixed-point arithmetic
-(ARM, 1996; Analog Devices, 2015). Software emulation of floating-point
-operations incurs severe execution cycle penalties and substantial code bloat in
-high-rate feedback loops (ARM, 1996).
-
 The [`src/math/fixed_num.rs`](../../src/math/fixed_num.rs) module introduces the
-canonical fixed-point scalar
-type `Fixed<Repr, const SHIFT: usize>` (alongside the `Quantized<Repr, SHIFT>`
-type alias), representing numbers in binary Q-format where each value is
-$x = \text{raw} \cdot 2^{-\text{SHIFT}}$ with fixed quantization step
-$\Delta = 2^{-\text{SHIFT}}$ (ARM, 1996; Spiteri, 2026a).
-
-Key design features include:
-
-- **Compile-Time Scale Parametrization (FR-1, FR-2)**: Zero runtime memory
-  footprint overhead; `Fixed<Repr, SHIFT>` occupies the identical size and
-  alignment as its underlying integer representation (`Repr`).
-- **Exact Widening Product & Convergent Rounding (FR-4)**: Multiplications
-  widen intermediate products to prevent precision loss, followed by
-  round-ties-to-even (convergent rounding) rescaling and saturating narrowing
-  (IEEE, 2019; AMD, 2024; MathWorks, 2026).
-- **Total Saturating Arithmetic (FR-3, FR-5)**: Prevents catastrophic
-  limit-cycle
-  overflow oscillation in feedback control laws by clamping at representation
-  extrema.
-- **Representability-Gated Trait Realization (FR-6, FR-7)**: Explicitly gates
-  implementations of `One`, `Scalar`, and `SaturatingInteger` to scales where
-  unity and required algebraic constants are strictly representable.
+canonical fixed-point scalar type `Fixed<Repr, const SHIFT: usize>` (alongside
+the `Quantized<Repr, SHIFT>` type alias), representing numbers in binary
+Q-format where each value is $x = \text{raw} \cdot 2^{-\text{SHIFT}}$ with
+fixed quantization step $\Delta = 2^{-\text{SHIFT}}$ (ARM, 1996; Spiteri,
+2026a).
 
 ---
 
@@ -45,15 +22,15 @@ Key design features include:
 #### 2.1 Functional Requirements
 
 - **FR-1 — Compile-Time Scale**: The scale exponent `SHIFT` is a const generic
-  type parameter validated at compile time via `Dim` trait bounds (`DimMax`). It is not stored at runtime.
+  type parameter validated at compile time via `Dim` trait bounds (`DimMax`). It
+  is not stored at runtime.
 - **FR-2 — Binary Power-of-Two Scale**: A value with scale `SHIFT` is
   `raw · 2^(−SHIFT)`. Adjacent values differ by a constant `Δ = 2^(−SHIFT)`.
   Decimal (power-of-ten) scales are out of scope.
 - **FR-3 — Total Saturating Arithmetic**: `Add`, `Sub`, `Mul` and `Neg` always
-  return a
-  value of the type. Overflow saturates to min or max; it does not wrap or
-  panic. Overflow detection is provided via the `math::ops` `Try*` traits, which
-  return `Result`.
+  return a value of the type. Overflow saturates to min or max; it does not wrap
+  or panic. Overflow detection is provided via the `math::ops` `Try*` traits,
+  which return `Result`.
 - **FR-4 — Exact Product Rescale**: `Mul` forms the full product in a wider
   integer, then rescales to `SHIFT`. A same-width multiply is not used.
 - **FR-5 — Scale Conversion**: `rescale` converts `Fixed<Repr, Q>` to
@@ -66,11 +43,7 @@ Key design features include:
   `Radical`, `Exponential`, or `Trig`.
 - **FR-7 — Representable-Constant Gating**: A trait is implemented only when
   its properties hold. Do not implement `One` when `1` is not representable:
-  then `1 * n ≠ n`. `SaturatingInteger` also requires `2`. The gate is the
-  absence of the impl, observable as generic code bounded on the trait
-  failing to compile via `DimMax` bounds. A constant whose evaluation fails is not a gate: the
-  bound still admits the type, so admission depends on whether a call path
-  happens to name the constant. The `SHIFT` bounds are §4.4.
+  then `1 * n ≠ n`. `SaturatingInteger` also requires `2`.
 
 #### 2.2 Non-Functional Requirements
 
@@ -86,7 +59,8 @@ Key design features include:
 - **C-2 — No New Dependencies**: No new crate dependencies. Width and scale
   use const generics and `math::num_types` already in this crate.
 - **C-3 — Scale Range**: `SHIFT` is in `0..=BITS`, where `BITS` is the bit
-  width of `Repr`, enforced as a compile-time dimension bound (`Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>`).
+  width of `Repr`, enforced as a compile-time dimension bound (
+  `Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>`).
 - **C-4 — No Bare Primitive Arithmetic**: No operator uses a bare primitive
   `+`, `-`, or `*`. Arithmetic goes through `saturating_*` or `checked_*`.
 
@@ -192,9 +166,12 @@ pub type Quantized<Repr, const SHIFT: usize> = Fixed<Repr, SHIFT>;
 
 The underlying field `raw` is private to preserve scale invariants. Values are
 instantiated via explicit raw integer conversions (`from_bits`, `to_bits`) or
-host-side float conversions (`from_num`, `to_num`). Const generic dimension validation
-ensures `SHIFT` remains within valid bounds ($0 \le \text{SHIFT} \le \text{BITS}$)
-at compile time via `Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>`.
+host-side float conversions (`from_num`, `to_num`). Const generic dimension
+validation
+ensures `SHIFT` remains within valid
+bounds ($0 \le \text{SHIFT} \le \text{BITS}$)
+at compile time via
+`Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>`.
 
 #### 4.2 Sealed Representation Trait (`FixedRepr`)
 
@@ -204,14 +181,14 @@ doubled-width widening and saturating narrowing:
 
 ```rust
 pub trait FixedRepr:
-    private::Sealed
-    + Copy
-    + Eq
-    + Ord
-    + core::fmt::Display
-    + core::fmt::Debug
-    + Sized
-    + 'static
+private::Sealed
++ Copy
++ Eq
++ Ord
++ core::fmt::Display
++ core::fmt::Debug
++ Sized
++ 'static
 {
     /// Bit width of this primitive integer representation.
     const BITS: u32;
@@ -245,13 +222,18 @@ The trait is implemented for signed (`i8`, `i16`, `i32`, `i64`) and unsigned
 - `i8`: `BitsDim = U8`, `OneMaxShift = U6`, `TwoMaxShift = U5`, `Wide = i16`
 - `i16`: `BitsDim = U16`, `OneMaxShift = U14`, `TwoMaxShift = U13`, `Wide = i32`
 - `i32`: `BitsDim = U32`, `OneMaxShift = U30`, `TwoMaxShift = U29`, `Wide = i64`
-- `i64`: `BitsDim = U64`, `OneMaxShift = U62`, `TwoMaxShift = U61`, `Wide = i128`
+- `i64`: `BitsDim = U64`, `OneMaxShift = U62`, `TwoMaxShift = U61`,
+  `Wide = i128`
 - `u8`: `BitsDim = U8`, `OneMaxShift = U7`, `TwoMaxShift = U6`, `Wide = u16`
 - `u16`: `BitsDim = U16`, `OneMaxShift = U15`, `TwoMaxShift = U14`, `Wide = u32`
 - `u32`: `BitsDim = U32`, `OneMaxShift = U31`, `TwoMaxShift = U30`, `Wide = u64`
-- `u64`: `BitsDim = U64`, `OneMaxShift = U63`, `TwoMaxShift = U62`, `Wide = u128`
+- `u64`: `BitsDim = U64`, `OneMaxShift = U63`, `TwoMaxShift = U62`,
+  `Wide = u128`
 
-Core rescaling and rounding algorithms (convergent round-ties-to-even and cross-scale shifting) are implemented as shared integer helper routines operating over wide representations, eliminating code duplication across representations.
+Core rescaling and rounding algorithms (convergent round-ties-to-even and
+cross-scale shifting) are implemented as shared integer helper routines
+operating over wide representations, eliminating code duplication across
+representations.
 
 #### 4.3 Arithmetic Operations
 
@@ -298,7 +280,8 @@ $\text{half} = 2^{\text{SHIFT}-1}$, values with $\text{rem} > \text{half}$ round
 away from zero, values with $\text{rem} < \text{half}$ round toward zero.
 Exact ties ($\text{rem} = \text{half}$) round to the nearest even integer. This
 is followed by sign restoration and saturating narrowing into the
-destination width. Internal algorithm invariants are verified with `debug_assert!`
+destination width. Internal algorithm invariants are verified with
+`debug_assert!`
 to ensure zero branching penalty in release MCU builds.
 
 #### 4.4 Representability Gating (FR-7)
@@ -309,19 +292,21 @@ $$\text{MIN} = -\frac{2^{n-1}}{2^{\text{SHIFT}}}, \quad \text{MAX} = \frac{2^{n-
 
 Associated constants and trait bounds are gated as follows:
 
-| Constant                          | Raw Value                | Signed Gate                          | Unsigned Gate                        | Type-Level Bound                      |
-|:----------------------------------|:-------------------------|:-------------------------------------|:-------------------------------------|:--------------------------------------|
-| `ZERO`                            | `0`                      | $0 \le \text{SHIFT} \le \text{BITS}$ | $0 \le \text{SHIFT} \le \text{BITS}$ | `Const<SHIFT>: DimMax<Repr::BitsDim, Output = Repr::BitsDim>`  |
-| `DELTA` / `MIN_POSITIVE`          | `1`                      | $0 \le \text{SHIFT} \le \text{BITS}$ | $0 \le \text{SHIFT} \le \text{BITS}$ | `Const<SHIFT>: DimMax<Repr::BitsDim, Output = Repr::BitsDim>`  |
-| `MIN`, `MAX`                      | `Repr::MIN`, `Repr::MAX` | $0 \le \text{SHIFT} \le \text{BITS}$ | $0 \le \text{SHIFT} \le \text{BITS}$ | `Const<SHIFT>: DimMax<Repr::BitsDim, Output = Repr::BitsDim>`  |
+| Constant                          | Raw Value                | Signed Gate                          | Unsigned Gate                        | Type-Level Bound                                                      |
+|:----------------------------------|:-------------------------|:-------------------------------------|:-------------------------------------|:----------------------------------------------------------------------|
+| `ZERO`                            | `0`                      | $0 \le \text{SHIFT} \le \text{BITS}$ | $0 \le \text{SHIFT} \le \text{BITS}$ | `Const<SHIFT>: DimMax<Repr::BitsDim, Output = Repr::BitsDim>`         |
+| `DELTA` / `MIN_POSITIVE`          | `1`                      | $0 \le \text{SHIFT} \le \text{BITS}$ | $0 \le \text{SHIFT} \le \text{BITS}$ | `Const<SHIFT>: DimMax<Repr::BitsDim, Output = Repr::BitsDim>`         |
+| `MIN`, `MAX`                      | `Repr::MIN`, `Repr::MAX` | $0 \le \text{SHIFT} \le \text{BITS}$ | $0 \le \text{SHIFT} \le \text{BITS}$ | `Const<SHIFT>: DimMax<Repr::BitsDim, Output = Repr::BitsDim>`         |
 | `ONE` (gates `One` & `Scalar`)    | `1 << SHIFT`             | $\text{SHIFT} \le \text{BITS} - 2$   | $\text{SHIFT} \le \text{BITS} - 1$   | `Const<SHIFT>: DimMax<Repr::OneMaxShift, Output = Repr::OneMaxShift>` |
 | `TWO` (gates `SaturatingInteger`) | `1 << (SHIFT + 1)`       | $\text{SHIFT} \le \text{BITS} - 3$   | $\text{SHIFT} \le \text{BITS} - 2$   | `Const<SHIFT>: DimMax<Repr::TwoMaxShift, Output = Repr::TwoMaxShift>` |
 
 ##### Gate Realization
 
 The scale bounds above ($A \le B \iff \max(A, B) = B$) are expressed using the
-existing compile-time dimension maximum trait `DimMax` (`math::num_types::DimMax`),
-bridging `Const<SHIFT>` with representation limits without runtime overhead or new traits:
+existing compile-time dimension maximum trait `DimMax` (
+`math::num_types::DimMax`),
+bridging `Const<SHIFT>` with representation limits without runtime overhead or
+new traits:
 
 ```rust
 pub trait OneRepresentable {}
@@ -329,12 +314,12 @@ pub trait TwoRepresentable: OneRepresentable {}
 
 impl<Repr: FixedRepr, const SHIFT: usize> OneRepresentable for Fixed<Repr, SHIFT>
 where
-    Const<SHIFT>: Dim + DimMax<Repr::OneMaxShift, Output = Repr::OneMaxShift>,
+    Const<SHIFT>: Dim + DimMax<Repr::OneMaxShift, Output=Repr::OneMaxShift>,
 {}
 
 impl<Repr: FixedRepr, const SHIFT: usize> TwoRepresentable for Fixed<Repr, SHIFT>
 where
-    Const<SHIFT>: Dim + DimMax<Repr::TwoMaxShift, Output = Repr::TwoMaxShift>,
+    Const<SHIFT>: Dim + DimMax<Repr::TwoMaxShift, Output=Repr::TwoMaxShift>,
 {}
 
 impl<Repr: FixedRepr, const SHIFT: usize> One for Fixed<Repr, SHIFT>
@@ -343,13 +328,18 @@ where
 { /* ... */ }
 ```
 
-A scale outside the valid range does not satisfy the `DimMax<Limit, Output = Limit>` bound
-and has no marker impl, so the numeric trait has no impl, rejecting the type at the call site
-at compile time. This matches the dimension system where `Const<N>: Dim` holds for supported dimensions
+A scale outside the valid range does not satisfy the
+`DimMax<Limit, Output = Limit>` bound
+and has no marker impl, so the numeric trait has no impl, rejecting the type at
+the call site
+at compile time. This matches the dimension system where `Const<N>: Dim` holds
+for supported dimensions
 (`num-types-design.md` §6.1 item 6, "Out-of-bounds immediate failure").
 
-Inherent constants (`ZERO`, `DELTA`, `MIN`, `MAX`) and constructors are gated by base scale
-well-formedness (`Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>`),
+Inherent constants (`ZERO`, `DELTA`, `MIN`, `MAX`) and constructors are gated by
+base scale
+well-formedness (
+`Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>`),
 guaranteeing compile-time validity while removing panicking assertions.
 
 ##### DSP Interchange Formats vs. Computational Scalars
@@ -413,11 +403,11 @@ pub type UQ63 = Fixed<u64, 63>;
 
 #### 4.7 File Impact & Repository Placement
 
-| File Path                                          | Description of Changes                                                                                              |
-|:---------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------|
-| [`fixed_num.rs`](../../src/math/fixed_num.rs)      | New module: `Fixed<Repr, SHIFT>`, `Quantized` alias, `FixedRepr` sealed trait, operators, trait impls.              |
-| [`mod.rs`](../../src/math/mod.rs)                  | Register `pub mod fixed_num;` and re-export `Fixed`, `Quantized`, and Q-aliases.                                     |
-| [`tests/fixed_num_tests.rs`](../../src/math/tests) | Comprehensive unit, proptest, and `compile_fail` test suites.                                                       |
+| File Path                                          | Description of Changes                                                                                 |
+|:---------------------------------------------------|:-------------------------------------------------------------------------------------------------------|
+| [`fixed_num.rs`](../../src/math/fixed_num.rs)      | New module: `Fixed<Repr, SHIFT>`, `Quantized` alias, `FixedRepr` sealed trait, operators, trait impls. |
+| [`mod.rs`](../../src/math/mod.rs)                  | Register `pub mod fixed_num;` and re-export `Fixed`, `Quantized`, and Q-aliases.                       |
+| [`tests/fixed_num_tests.rs`](../../src/math/tests) | Comprehensive unit, proptest, and `compile_fail` test suites.                                          |
 
 ---
 
@@ -649,7 +639,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | 1.0      | August 24, 2026 | @MitchellDScott | Initial specification for `math::fixed_num`: `Fixed<Repr, SHIFT>` representation, sealed `FixedRepr` trait, and widening multiplication.  |
 | 1.1      | August 24, 2026 | @MitchellDScott | Convergent rounding & architecture: grounded rescaling in IEEE 754-2019/DSP standards and established `Fixed` with `Quantized` alias.     |
 | 1.2      | August 25, 2026 | @MitchellDScott | Representability gating: established sealed `OneRepresentable` / `TwoRepresentable` marker traits with compile-time failure verification. |
-| 1.3      | August 31, 2026 | @MitchellDScott | Dim trait bound integration: formalize type-level `DimMax` bounds, streamline `FixedRepr`, and unify compile-time scale gating. |
+| 1.3      | August 31, 2026 | @MitchellDScott | Dim trait bound integration: formalize type-level `DimMax` bounds, streamline `FixedRepr`, and unify compile-time scale gating.           |
 
 ---
 
