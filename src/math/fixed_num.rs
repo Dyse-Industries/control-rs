@@ -44,6 +44,15 @@
 //! ```
 //!
 //! ```compile_fail
+//! use control_rs::math::num_traits::Zero;
+//! use control_rs::math::fixed_num::Fixed;
+//!
+//! fn assert_zero<T: Zero>() {}
+//! // Fixed<i16, 17> exceeds 16-bit word length; trait bound Zero is withheld
+//! assert_zero::<Fixed<i16, 17>>();
+//! ```
+//!
+//! ```compile_fail
 //! use control_rs::math::num_traits::Float;
 //! use control_rs::math::fixed_num::Fixed;
 //!
@@ -71,7 +80,10 @@ use crate::math::{
         AdditiveGroup, Conjugate, One, SaturatingInteger, Scalar, Signed,
         Unsigned, Zero,
     },
-    num_types::{Const, Dim},
+    num_types::{
+        Const, Dim, DimMax, U5, U6, U7, U8, U13, U14, U15, U16, U29, U30, U31,
+        U32, U61, U62, U63, U64,
+    },
     ops::{
         Add, AddAssign, Mul, MulAssign, Neg, SaturatingAdd, SaturatingMul,
         SaturatingSub, Sub, SubAssign, TryAdd, TryMul, TryNeg, TrySub,
@@ -90,19 +102,18 @@ mod private {
     impl Sealed for u64 {}
 
     pub trait SealedMarker {}
+
+    pub trait FixedShiftVal<const SHIFT: usize> {
+        const ONE_RAW: Self;
+        const TWO_RAW: Self;
+    }
 }
 
 /// Sealed marker trait indicating that $1.0$ is strictly representable at this scale.
-pub trait OneRepresentable: private::SealedMarker {
-    /// Multiplicative identity ($1.0$) value for this fixed-point format.
-    const REPRESENTED_ONE: Self;
-}
+pub trait OneRepresentable: private::SealedMarker {}
 
 /// Sealed marker trait indicating that $2.0$ is strictly representable at this scale.
-pub trait TwoRepresentable: OneRepresentable {
-    /// Multiplicative constant ($2.0$) value for this fixed-point format.
-    const REPRESENTED_TWO: Self;
-}
+pub trait TwoRepresentable: OneRepresentable {}
 
 #[inline]
 #[allow(clippy::arithmetic_side_effects)]
@@ -132,6 +143,15 @@ pub trait FixedRepr:
 
     /// Whether this primitive type is signed.
     const IS_SIGNED: bool;
+
+    /// Type-level bit-width dimension (e.g. `U8`, `U16`, `U32`, `U64`).
+    type BitsDim: Dim;
+
+    /// Maximum scale exponent where 1.0 is strictly representable.
+    type OneMaxShift: Dim;
+
+    /// Maximum scale exponent where 2.0 is strictly representable.
+    type TwoMaxShift: Dim;
 
     /// Doubled-width intermediate integer type for exact products and rescaling.
     type Wide: Copy + Eq + Ord + Sized + 'static;
@@ -195,10 +215,26 @@ pub trait FixedRepr:
 }
 
 macro_rules! impl_signed_repr {
-    ($t:ident, $w:ident, $bits:expr) => {
+    ($t:ident, $w:ident, $bits:expr, $bits_dim:ident, $one_max:ident, $two_max:ident) => {
+        impl<const SHIFT: usize> private::FixedShiftVal<SHIFT> for $t {
+            const ONE_RAW: Self = if SHIFT < $bits {
+                (1 as $t).wrapping_shl(SHIFT as u32)
+            } else {
+                0
+            };
+            const TWO_RAW: Self = if SHIFT + 1 < $bits {
+                (1 as $t).wrapping_shl((SHIFT + 1) as u32)
+            } else {
+                0
+            };
+        }
+
         impl FixedRepr for $t {
             const BITS: u32 = $bits;
             const IS_SIGNED: bool = true;
+            type BitsDim = $bits_dim;
+            type OneMaxShift = $one_max;
+            type TwoMaxShift = $two_max;
             type Wide = $w;
 
             #[inline(always)]
@@ -453,16 +489,32 @@ macro_rules! impl_signed_repr {
     };
 }
 
-impl_signed_repr!(i8, i16, 8);
-impl_signed_repr!(i16, i32, 16);
-impl_signed_repr!(i32, i64, 32);
-impl_signed_repr!(i64, i128, 64);
+impl_signed_repr!(i8, i16, 8, U8, U6, U5);
+impl_signed_repr!(i16, i32, 16, U16, U14, U13);
+impl_signed_repr!(i32, i64, 32, U32, U30, U29);
+impl_signed_repr!(i64, i128, 64, U64, U62, U61);
 
 macro_rules! impl_unsigned_repr {
-    ($t:ident, $w:ident, $bits:expr) => {
+    ($t:ident, $w:ident, $bits:expr, $bits_dim:ident, $one_max:ident, $two_max:ident) => {
+        impl<const SHIFT: usize> private::FixedShiftVal<SHIFT> for $t {
+            const ONE_RAW: Self = if SHIFT < $bits {
+                (1 as $t).wrapping_shl(SHIFT as u32)
+            } else {
+                0
+            };
+            const TWO_RAW: Self = if SHIFT + 1 < $bits {
+                (1 as $t).wrapping_shl((SHIFT + 1) as u32)
+            } else {
+                0
+            };
+        }
+
         impl FixedRepr for $t {
             const BITS: u32 = $bits;
             const IS_SIGNED: bool = false;
+            type BitsDim = $bits_dim;
+            type OneMaxShift = $one_max;
+            type TwoMaxShift = $two_max;
             type Wide = $w;
 
             #[inline(always)]
@@ -642,10 +694,10 @@ macro_rules! impl_unsigned_repr {
     };
 }
 
-impl_unsigned_repr!(u8, u16, 8);
-impl_unsigned_repr!(u16, u32, 16);
-impl_unsigned_repr!(u32, u64, 32);
-impl_unsigned_repr!(u64, u128, 64);
+impl_unsigned_repr!(u8, u16, 8, U8, U7, U6);
+impl_unsigned_repr!(u16, u32, 16, U16, U15, U14);
+impl_unsigned_repr!(u32, u64, 32, U32, U31, U30);
+impl_unsigned_repr!(u64, u128, 64, U64, U63, U62);
 
 /// Fixed-point scalar type in Q-format representation.
 ///
@@ -665,32 +717,20 @@ impl<Repr: FixedRepr, const SHIFT: usize> Fixed<Repr, SHIFT> {
     pub const SHIFT: usize = SHIFT;
 
     /// Bit resolution (quantization step $\Delta = 2^{-\text{SHIFT}}$).
-    pub const DELTA: Self = {
-        assert!(SHIFT <= Repr::BITS as usize);
-        Self { raw: Repr::ONE_RAW }
-    };
+    pub const DELTA: Self = Self { raw: Repr::ONE_RAW };
 
     /// Minimum positive representable step $\Delta = 2^{-\text{SHIFT}}$.
     pub const MIN_POSITIVE: Self = Self::DELTA;
 
     /// Minimum representable value.
-    pub const MIN: Self = {
-        assert!(SHIFT <= Repr::BITS as usize);
-        Self { raw: Repr::MIN_RAW }
-    };
+    pub const MIN: Self = Self { raw: Repr::MIN_RAW };
 
     /// Maximum representable value.
-    pub const MAX: Self = {
-        assert!(SHIFT <= Repr::BITS as usize);
-        Self { raw: Repr::MAX_RAW }
-    };
+    pub const MAX: Self = Self { raw: Repr::MAX_RAW };
 
     /// Additive identity ($0.0$).
-    pub const ZERO: Self = {
-        assert!(SHIFT <= Repr::BITS as usize);
-        Self {
-            raw: Repr::ZERO_RAW,
-        }
+    pub const ZERO: Self = Self {
+        raw: Repr::ZERO_RAW,
     };
 
     /// Constructs a fixed-point number from its raw scaled integer representation.
@@ -765,97 +805,59 @@ impl<Repr: FixedRepr, const SHIFT: usize> Fixed<Repr, SHIFT> {
     }
 }
 
-macro_rules! impl_representable_markers {
-    ($t:ty, [$($shift_two:expr),* $(,)?], [$($shift_one_only:expr),* $(,)?]) => {
-        $(
-            impl private::SealedMarker for Fixed<$t, $shift_two> {}
-            impl OneRepresentable for Fixed<$t, $shift_two> {
-                const REPRESENTED_ONE: Self = Self { raw: (1 as $t) << ($shift_two as u32) };
-            }
-            impl TwoRepresentable for Fixed<$t, $shift_two> {
-                const REPRESENTED_TWO: Self = Self { raw: (1 as $t) << (($shift_two + 1) as u32) };
-            }
-        )*
-        $(
-            impl private::SealedMarker for Fixed<$t, $shift_one_only> {}
-            impl OneRepresentable for Fixed<$t, $shift_one_only> {
-                const REPRESENTED_ONE: Self = Self { raw: (1 as $t) << ($shift_one_only as u32) };
-            }
-        )*
-    };
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    private::SealedMarker for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::OneMaxShift, Output = Repr::OneMaxShift>,
+{
 }
 
-impl_representable_markers!(i8, [0, 1, 2, 3, 4, 5], [6]);
-impl_representable_markers!(
-    i16,
-    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
-    [14]
-);
-impl_representable_markers!(
-    i32,
-    [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-        20, 21, 22, 23, 24, 25, 26, 27, 28, 29
-    ],
-    [30]
-);
-impl_representable_markers!(
-    i64,
-    [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
-        38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
-        56, 57, 58, 59, 60, 61
-    ],
-    [62]
-);
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    OneRepresentable for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::OneMaxShift, Output = Repr::OneMaxShift>,
+{
+}
 
-impl_representable_markers!(u8, [0, 1, 2, 3, 4, 5, 6], [7]);
-impl_representable_markers!(
-    u16,
-    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
-    [15]
-);
-impl_representable_markers!(
-    u32,
-    [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30
-    ],
-    [31]
-);
-impl_representable_markers!(
-    u64,
-    [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
-        38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
-        56, 57, 58, 59, 60, 61, 62
-    ],
-    [63]
-);
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    TwoRepresentable for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim
+        + DimMax<Repr::TwoMaxShift, Output = Repr::TwoMaxShift>
+        + DimMax<Repr::OneMaxShift, Output = Repr::OneMaxShift>,
+{
+}
 
-impl<Repr: FixedRepr, const SHIFT: usize> Fixed<Repr, SHIFT>
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    Fixed<Repr, SHIFT>
 where
     Self: OneRepresentable,
 {
     /// Multiplicative identity ($1.0$), gated to scales where $1.0$ is representable.
-    pub const ONE: Self = <Self as OneRepresentable>::REPRESENTED_ONE;
+    pub const ONE: Self = Self {
+        raw: <Repr as private::FixedShiftVal<SHIFT>>::ONE_RAW,
+    };
 }
 
-impl<Repr: FixedRepr, const SHIFT: usize> Fixed<Repr, SHIFT>
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    Fixed<Repr, SHIFT>
 where
     Self: TwoRepresentable,
 {
     /// Multiplicative constant ($2.0$), gated to scales where $2.0$ is representable.
-    pub const TWO: Self = <Self as TwoRepresentable>::REPRESENTED_TWO;
+    pub const TWO: Self = Self {
+        raw: <Repr as private::FixedShiftVal<SHIFT>>::TWO_RAW,
+    };
 }
 
-impl<Repr: FixedRepr, const SHIFT: usize> One for Fixed<Repr, SHIFT>
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize> One
+    for Fixed<Repr, SHIFT>
 where
     Self: OneRepresentable,
 {
-    const ONE: Self = <Self as OneRepresentable>::REPRESENTED_ONE;
+    const ONE: Self = Self {
+        raw: <Repr as private::FixedShiftVal<SHIFT>>::ONE_RAW,
+    };
 
     #[inline(always)]
     fn is_one(&self) -> bool {
@@ -991,7 +993,10 @@ impl<Repr: FixedRepr, const SHIFT: usize> SaturatingMul for Fixed<Repr, SHIFT> {
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: usize> Zero for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> Zero for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     const ZERO: Self = Self::ZERO;
 
     #[inline(always)]
@@ -1007,9 +1012,11 @@ impl<Repr: FixedRepr, const SHIFT: usize> Conjugate for Fixed<Repr, SHIFT> {
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: usize> Scalar for Fixed<Repr, SHIFT>
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize> Scalar
+    for Fixed<Repr, SHIFT>
 where
     Self: OneRepresentable,
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
 {
     type Real = Self;
 
@@ -1034,15 +1041,30 @@ where
     }
 }
 
-impl<const SHIFT: usize> AdditiveGroup for Fixed<i8, SHIFT> {}
-impl<const SHIFT: usize> AdditiveGroup for Fixed<i16, SHIFT> {}
-impl<const SHIFT: usize> AdditiveGroup for Fixed<i32, SHIFT> {}
-impl<const SHIFT: usize> AdditiveGroup for Fixed<i64, SHIFT> {}
+impl<const SHIFT: usize> AdditiveGroup for Fixed<i8, SHIFT> where
+    Const<SHIFT>: Dim + DimMax<U8, Output = U8>
+{
+}
+impl<const SHIFT: usize> AdditiveGroup for Fixed<i16, SHIFT> where
+    Const<SHIFT>: Dim + DimMax<U16, Output = U16>
+{
+}
+impl<const SHIFT: usize> AdditiveGroup for Fixed<i32, SHIFT> where
+    Const<SHIFT>: Dim + DimMax<U32, Output = U32>
+{
+}
+impl<const SHIFT: usize> AdditiveGroup for Fixed<i64, SHIFT> where
+    Const<SHIFT>: Dim + DimMax<U64, Output = U64>
+{
+}
 
 macro_rules! impl_signed_fixed {
-    ($($t:ty),+) => {
+    ($($t:ty, $dim:ident),+) => {
         $(
-            impl<const SHIFT: usize> Signed for Fixed<$t, SHIFT> {
+            impl<const SHIFT: usize> Signed for Fixed<$t, SHIFT>
+            where
+                Const<SHIFT>: Dim + DimMax<$dim, Output = $dim>,
+            {
                 #[inline(always)]
                 fn abs(self) -> Self {
                     Self { raw: self.raw.saturating_abs() }
@@ -1052,17 +1074,18 @@ macro_rules! impl_signed_fixed {
     };
 }
 
-impl_signed_fixed!(i8, i16, i32, i64);
+impl_signed_fixed!(i8, U8, i16, U16, i32, U32, i64, U64);
 
 impl<const SHIFT: usize> Unsigned for Fixed<u8, SHIFT> {}
 impl<const SHIFT: usize> Unsigned for Fixed<u16, SHIFT> {}
 impl<const SHIFT: usize> Unsigned for Fixed<u32, SHIFT> {}
 impl<const SHIFT: usize> Unsigned for Fixed<u64, SHIFT> {}
 
-impl<Repr: FixedRepr, const SHIFT: usize> SaturatingInteger
-    for Fixed<Repr, SHIFT>
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    SaturatingInteger for Fixed<Repr, SHIFT>
 where
     Self: TwoRepresentable,
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
 {
 }
 
