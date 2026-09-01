@@ -230,7 +230,15 @@ pub mod fixed_num_test_suite {
     #[cfg_attr(test, test)]
     /// Verifies unsigned fixed-point representations.
     fn test_unsigned_fixed_point() {
+        use crate::math::num_traits::Unsigned;
         type UQ14 = Fixed<u16, 14>;
+
+        fn assert_unsigned<T: Unsigned>() {}
+        assert_unsigned::<UQ7>();
+        assert_unsigned::<UQ15>();
+        assert_unsigned::<UQ31>();
+        assert_unsigned::<UQ63>();
+        assert_unsigned::<UQ14>();
 
         let u_one = UQ14::ONE;
         assert_eq!(u_one.to_bits(), 1 << 14);
@@ -250,6 +258,13 @@ pub mod fixed_num_test_suite {
 
         let prod = a * b;
         assert!((prod.to_num() - 0.75).abs() < 1e-4);
+
+        // Checked multiplication and boundary rescale
+        let try_p = a.try_mul(&b).unwrap();
+        assert_eq!(try_p.to_bits(), prod.to_bits());
+
+        let rescaled: Fixed<u16, 8> = a.rescale();
+        assert!((rescaled.to_num() - 1.5).abs() < 1e-2);
     }
 
     #[cfg_attr(test, test)]
