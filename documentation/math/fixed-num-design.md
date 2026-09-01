@@ -346,7 +346,7 @@ where
 A scale outside the valid range does not satisfy the `DimMax<Limit, Output = Limit>` bound
 and has no marker impl, so the numeric trait has no impl, rejecting the type at the call site
 at compile time. This matches the dimension system where `Const<N>: Dim` holds for supported dimensions
-(`num-types-design.md` §6.1 item 7).
+(`num-types-design.md` §6.1 item 6, "Out-of-bounds immediate failure").
 
 Inherent constants (`ZERO`, `DELTA`, `MIN`, `MAX`) and constructors are gated by base scale
 well-formedness (`Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>`),

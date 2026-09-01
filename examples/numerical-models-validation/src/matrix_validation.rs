@@ -563,7 +563,7 @@ pub fn run() -> Value {
     .expect("Failed to write results file");
 
     println!(
-        "Success: Matrix cross-validation passed! Payload saved to {}",
+        "Success: Matrix cross-validation passed!\nResults saved to {}",
         out_path.display()
     );
 

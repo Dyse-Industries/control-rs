@@ -458,7 +458,7 @@ pub fn run() -> Value {
     .expect("Failed to write results file");
 
     println!(
-        "Success: State-Space cross-validation passed! Payload saved to {}",
+        "Success: State-Space cross-validation passed!\nResults saved to {}",
         out_path.display()
     );
 

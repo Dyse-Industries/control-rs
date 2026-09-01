@@ -608,7 +608,7 @@ pub fn run() -> Value {
     .expect("Failed to write results file");
 
     println!(
-        "Success: Polynomial cross-validation passed! Payload saved to {}",
+        "Success: Polynomial cross-validation passed!\nResults saved to {}",
         out_path.display()
     );
 
