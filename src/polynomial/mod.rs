@@ -70,6 +70,13 @@ pub enum DivisionError {
     DegreeMismatch,
 }
 
+/// Errors returned by [`Polynomial::roots_quadratic`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuadraticRootError {
+    /// The leading coefficient ($c_2$) is zero; the polynomial is degenerate or linear.
+    ZeroLeadingCoefficient,
+}
+
 /// Statically-typed polynomial over coefficient storage backend `S`.
 ///
 /// `N` represents the maximum coefficient capacity (maximum degree $N - 1$).
@@ -592,6 +599,65 @@ where
 
     fn try_from(poly: &ArrayPolynomial<T, N>) -> Result<Self, Self::Error> {
         poly.companion_matrix::<DEG>()
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Low-Degree Root Solvers & Trajectory Splines
+////////////////////////////////////////////////////////////////////////////////
+
+impl<T: Float + Copy, S: Storage<T, Const<3>, Const<1>>>
+    Polynomial<T, Const<3>, S>
+{
+    /// Solves for the two complex roots of the quadratic polynomial $c_0 + c_1 x + c_2 x^2 = 0$.
+    ///
+    /// # Numerical Stability
+    /// Implements the Muller/Higham stabilized quadratic formulation to eliminate
+    /// catastrophic subtractive cancellation when $c_1^2 \gg 4 c_0 c_2$:
+    ///
+    /// $$q = -\frac{1}{2}\left(c_1 + \operatorname{sgn}(c_1)\sqrt{c_1^2 - 4 c_0 c_2}\right)$$
+    /// $$r_1 = \frac{q}{c_2}, \quad r_2 = \frac{c_0}{q}$$
+    ///
+    /// For complex conjugate roots ($c_1^2 - 4 c_0 c_2 < 0$), roots are computed as:
+    /// $$r_{1, 2} = -\frac{c_1}{2 c_2} \pm j \frac{\sqrt{4 c_0 c_2 - c_1^2}}{2 c_2}$$
+    ///
+    /// # Errors
+    /// Returns [`QuadraticRootError::ZeroLeadingCoefficient`] if the leading coefficient ($c_2$) is zero.
+    pub fn roots_quadratic(
+        &self,
+    ) -> Result<[Complex<T>; 2], QuadraticRootError> {
+        let c0 = *self.get(0).unwrap_or(&T::ZERO);
+        let c1 = *self.get(1).unwrap_or(&T::ZERO);
+        let c2 = *self.get(2).unwrap_or(&T::ZERO);
+
+        if c2 == T::ZERO {
+            return Err(QuadraticRootError::ZeroLeadingCoefficient);
+        }
+
+        let two = T::ONE + T::ONE;
+        let four = two + two;
+        let disc = c1 * c1 - four * c0 * c2;
+
+        if disc >= T::ZERO {
+            let sqrt_disc = disc.sqrt();
+            let sgn_c1 = if c1 >= T::ZERO { T::ONE } else { -T::ONE };
+            let q = -(c1 + sgn_c1 * sqrt_disc) / two;
+
+            let r1 = Complex::new(q / c2, T::ZERO);
+            let r2 = if q == T::ZERO {
+                Complex::new(T::ZERO, T::ZERO)
+            } else {
+                Complex::new(c0 / q, T::ZERO)
+            };
+            Ok([r1, r2])
+        } else {
+            let real_part = -c1 / (two * c2);
+            let imag_part = (-disc).sqrt() / (two * c2.abs());
+            Ok([
+                Complex::new(real_part, imag_part),
+                Complex::new(real_part, -imag_part),
+            ])
+        }
     }
 }
 

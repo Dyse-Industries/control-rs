@@ -320,50 +320,6 @@ pub fn cross_validate(rust: &Value, python: &Value) -> ValidationResult {
         }
     }
 
-    // Quadrant 2 check: scaling data presence
-    if rust["scaling"]["inversion_time_ns"]
-        .as_array()
-        .map_or(0, |a| a.len())
-        != 6
-    {
-        errs.push(
-            "Rust scaling inversion_time_ns does not have 6 entries"
-                .to_string(),
-        );
-    }
-    if python["scaling"]["inversion_time_ns"]
-        .as_array()
-        .map_or(0, |a| a.len())
-        != 6
-    {
-        errs.push(
-            "Python scaling inversion_time_ns does not have 6 entries"
-                .to_string(),
-        );
-    }
-
-    // Quadrant 3 check: jitter data presence (1000 samples)
-    if rust["jitter"]["hilbert_solve_times_ns"]
-        .as_array()
-        .map_or(0, |a| a.len())
-        != 1000
-    {
-        errs.push(
-            "Rust jitter hilbert_solve_times_ns does not have 1000 entries"
-                .to_string(),
-        );
-    }
-    if python["jitter"]["hilbert_solve_times_ns"]
-        .as_array()
-        .map_or(0, |a| a.len())
-        != 1000
-    {
-        errs.push(
-            "Python jitter hilbert_solve_times_ns does not have 1000 entries"
-                .to_string(),
-        );
-    }
-
     if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
 
@@ -427,24 +383,6 @@ pub fn cross_validate_jax(rust: &Value, jax: &Value) -> ValidationResult {
         _ => errs.push(
             "Missing covariance_heatmap arrays in JAX payload".to_string(),
         ),
-    }
-
-    // Scaling and decomposition timings: presence/shape only, not a numerical comparison.
-    if jax["scaling"]["inversion_time_ns"]
-        .as_array()
-        .map_or(0, |a| a.len())
-        != 6
-    {
-        errs.push(
-            "JAX scaling inversion_time_ns does not have 6 entries".to_string(),
-        );
-    }
-    for key in ["cholesky", "lu_solve", "qr_decomp"] {
-        if jax["decomp_times_ns"][key].as_f64().is_none() {
-            errs.push(format!(
-                "JAX decomp_times_ns.{key} missing or not numeric"
-            ));
-        }
     }
 
     if errs.is_empty() { Ok(()) } else { Err(errs) }

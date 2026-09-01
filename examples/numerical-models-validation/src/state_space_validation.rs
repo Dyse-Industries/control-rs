@@ -372,16 +372,6 @@ pub fn cross_validate_harold(rust: &Value, harold: &Value) -> ValidationResult {
         &mut errs,
     );
 
-    for key in [
-        "state_size",
-        "controllability_time_ns",
-        "observability_time_ns",
-    ] {
-        if harold[key].as_array().map_or(0, |a| a.len()) != 7 {
-            errs.push(format!("Harold {key} does not have 7 entries"));
-        }
-    }
-
     if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
 

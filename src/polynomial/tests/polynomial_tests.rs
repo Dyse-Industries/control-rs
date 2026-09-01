@@ -16,7 +16,9 @@ pub mod polynomial_test_suite {
     use crate::math::complex_num::Complex;
     use crate::math::num_traits::Radical;
     use crate::matrix::Owned;
-    use crate::polynomial::{ArrayPolynomial, DivisionError};
+    use crate::polynomial::{
+        ArrayPolynomial, DivisionError, QuadraticRootError,
+    };
     use core::convert::TryFrom;
 
     #[cfg_attr(test, test)]
@@ -260,5 +262,86 @@ pub mod polynomial_test_suite {
             }
         }
         assert_almost_eq!(p.evaluate(2.0), 20.0, 1e-12);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_quadratic_roots() {
+        let order_pair = |a: f64, b: f64| -> (f64, f64) {
+            if a <= b { (a, b) } else { (b, a) }
+        };
+
+        // Distinct real roots: (x - 2)(x - 3) = 6 - 5x + x^2
+        let p_real =
+            ArrayPolynomial::<f64, 3>::from_coefficients([6.0, -5.0, 1.0]);
+        let roots = p_real.roots_quadratic().unwrap();
+        let (r_min, r_max) = order_pair(roots[0].re, roots[1].re);
+        assert_almost_eq!(r_min, 2.0, 1e-12);
+        assert_almost_eq!(r_max, 3.0, 1e-12);
+        assert_almost_eq!(roots[0].im, 0.0, 1e-12);
+        assert_almost_eq!(roots[1].im, 0.0, 1e-12);
+
+        // Repeated real roots: (x - 4)^2 = 16 - 8x + x^2
+        let p_rep =
+            ArrayPolynomial::<f64, 3>::from_coefficients([16.0, -8.0, 1.0]);
+        let roots_rep = p_rep.roots_quadratic().unwrap();
+        assert_almost_eq!(roots_rep[0].re, 4.0, 1e-12);
+        assert_almost_eq!(roots_rep[1].re, 4.0, 1e-12);
+        assert_almost_eq!(roots_rep[0].im, 0.0, 1e-12);
+        assert_almost_eq!(roots_rep[1].im, 0.0, 1e-12);
+
+        // Complex conjugate roots: s^2 + 2s + 5 = 0 -> s = -1 ± 2j
+        let p_c = ArrayPolynomial::<f64, 3>::from_coefficients([5.0, 2.0, 1.0]);
+        let roots_c = p_c.roots_quadratic().unwrap();
+        assert_almost_eq!(roots_c[0].re, -1.0, 1e-12);
+        assert_almost_eq!(roots_c[1].re, -1.0, 1e-12);
+        let (im_min, im_max) = order_pair(roots_c[0].im, roots_c[1].im);
+        assert_almost_eq!(im_min, -2.0, 1e-12);
+        assert_almost_eq!(im_max, 2.0, 1e-12);
+
+        // Negative leading coefficient: -2x^2 + 6x - 4 = 0 -> roots 1, 2
+        let p_neg =
+            ArrayPolynomial::<f64, 3>::from_coefficients([-4.0, 6.0, -2.0]);
+        let roots_neg = p_neg.roots_quadratic().unwrap();
+        let (neg_min, neg_max) = order_pair(roots_neg[0].re, roots_neg[1].re);
+        assert_almost_eq!(neg_min, 1.0, 1e-12);
+        assert_almost_eq!(neg_max, 2.0, 1e-12);
+
+        // Degenerate zero leading coefficient: c2 = 0
+        let p_degen =
+            ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 2.0, 0.0]);
+        assert_eq!(
+            p_degen.roots_quadratic().err(),
+            Some(QuadraticRootError::ZeroLeadingCoefficient)
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_quadratic_cancellation() {
+        let order_pair = |a: f64, b: f64| -> (f64, f64) {
+            if a <= b { (a, b) } else { (b, a) }
+        };
+
+        // (x - 1e7)(x - 1e-7) = x^2 - (1e7 + 1e-7)x + 1
+        let r1_exact = 1e7_f64;
+        let r2_exact = 1e-7_f64;
+        let p = ArrayPolynomial::<f64, 3>::from_coefficients([
+            1.0,
+            -(r1_exact + r2_exact),
+            1.0,
+        ]);
+        let roots = p.roots_quadratic().unwrap();
+        let (r_min, r_max) = order_pair(roots[0].re, roots[1].re);
+
+        let rel_err1 = (r_min - r2_exact).abs() / r2_exact;
+        let rel_err2 = (r_max - r1_exact).abs() / r1_exact;
+
+        assert!(
+            rel_err1 < 1e-12,
+            "Small root relative error {rel_err1} exceeds threshold (subtractive cancellation occurred)"
+        );
+        assert!(
+            rel_err2 < 1e-12,
+            "Large root relative error {rel_err2} exceeds threshold"
+        );
     }
 }

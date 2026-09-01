@@ -251,4 +251,82 @@ mod cross_validate_gate_tests {
             "col count mismatch",
         );
     }
+
+    #[test]
+    fn polynomial_wilkinson_higham_bound_violation_fails() {
+        let zeros20 = vec![0.0_f64; 20];
+        let mut huge_f64 = vec![0.0_f64; 20];
+        huge_f64[0] = 1e25; // Exceeds Higham bound for k=1 (~4.5e5)
+        let rust = json!({
+            "tutorial": {"p_real": 1.0, "p_c_re": 0.0, "p_c_im": 0.0},
+            "root_convergence": {"iterations": vec![1; 11]},
+            "wilkinson_residual": {
+                "residual_f64": huge_f64,
+                "residual_f32": vec![1e26_f64; 20]
+            }
+        });
+        let python = json!({
+            "tutorial": {"p_real": 1.0, "p_c_re": 0.0, "p_c_im": 0.0},
+            "root_convergence": {"iterations": vec![1; 11]},
+            "wilkinson_residual": {
+                "residual_f64": zeros20,
+                "residual_f32": vec![1e26_f64; 20]
+            }
+        });
+        assert_err_contains(
+            super::polynomial_validation::cross_validate(&rust, &python),
+            "exceeds Higham backward error bound",
+        );
+    }
+
+    #[test]
+    fn polynomial_wilkinson_f32_precision_inversion_fails() {
+        let rust = json!({
+            "tutorial": {"p_real": 1.0, "p_c_re": 0.0, "p_c_im": 0.0},
+            "root_convergence": {"iterations": vec![1; 11]},
+            "wilkinson_residual": {
+                "residual_f64": vec![1000.0_f64; 20],
+                "residual_f32": vec![10.0_f64; 20] // f32 < f64 precision inversion
+            }
+        });
+        let python = json!({
+            "tutorial": {"p_real": 1.0, "p_c_re": 0.0, "p_c_im": 0.0},
+            "root_convergence": {"iterations": vec![1; 11]},
+            "wilkinson_residual": {
+                "residual_f64": vec![1000.0_f64; 20],
+                "residual_f32": vec![10.0_f64; 20]
+            }
+        });
+        assert_err_contains(
+            super::polynomial_validation::cross_validate(&rust, &python),
+            "expected precision loss in f32",
+        );
+    }
+
+    #[test]
+    fn polynomial_wilkinson_log_scale_mismatch_fails() {
+        let mut rust_f64 = vec![1e8_f64; 20];
+        let py_f64 = vec![1e8_f64; 20];
+        rust_f64[15] = 1e12; // 4 orders of magnitude larger than python at k=16
+        let rust = json!({
+            "tutorial": {"p_real": 1.0, "p_c_re": 0.0, "p_c_im": 0.0},
+            "root_convergence": {"iterations": vec![1; 11]},
+            "wilkinson_residual": {
+                "residual_f64": rust_f64,
+                "residual_f32": vec![1e20_f64; 20]
+            }
+        });
+        let python = json!({
+            "tutorial": {"p_real": 1.0, "p_c_re": 0.0, "p_c_im": 0.0},
+            "root_convergence": {"iterations": vec![1; 11]},
+            "wilkinson_residual": {
+                "residual_f64": py_f64,
+                "residual_f32": vec![1e20_f64; 20]
+            }
+        });
+        assert_err_contains(
+            super::polynomial_validation::cross_validate(&rust, &python),
+            "scale mismatch",
+        );
+    }
 }

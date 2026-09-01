@@ -168,15 +168,23 @@ def run_transfer_function_oracle() -> dict:
     nyquist = benchmark_nyquist_criterion()
     topology = benchmark_topology_stability()
 
+    # Dynamic Controllable Canonical Form (CCF) derivation for H(s) = (2s + 3)/(s^2 + 5s + 4)
+    den_tut = np.array([1.0, 5.0, 4.0], dtype=np.float64)  # s^2 + a_1*s + a_0
+    a_norm = den_tut / den_tut[0]
+    a_matrix = np.array([
+        [0.0, 1.0],
+        [-a_norm[2], -a_norm[1]]
+    ], dtype=np.float64)
+
     return {
         "discretization_error": discretization,
         "nyquist_criterion": nyquist,
         "topology_stability": topology,
         "tutorial": {
-            "a00": 0.0,
-            "a01": 1.0,
-            "a10": -4.0,
-            "a11": -5.0,
+            "a00": float(a_matrix[0, 0]),
+            "a01": float(a_matrix[0, 1]),
+            "a10": float(a_matrix[1, 0]),
+            "a11": float(a_matrix[1, 1]),
         },
     }
 

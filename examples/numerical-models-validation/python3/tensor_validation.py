@@ -9,8 +9,8 @@ Outputs JSON results to stdout for cross-language validation with Rust.
 from __future__ import annotations
 
 import json
-import time
 import os
+import time
 
 # Suppress TensorFlow logging warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -43,7 +43,7 @@ def benchmark_interpolation_manifold() -> dict:
     ii, jj = np.meshgrid(np.arange(16), np.arange(16), indexing="ij")
     x_grid = (ii - center) / scale
     y_grid = (jj - center) / scale
-    grid_table = np.asarray(x_grid**2 - y_grid**2, dtype=np.float32)
+    grid_table = np.asarray(x_grid ** 2 - y_grid ** 2, dtype=np.float32)
 
     axes = (np.arange(16, dtype=np.float32), np.arange(16, dtype=np.float32))
     interp_func = RegularGridInterpolator(
@@ -60,7 +60,7 @@ def benchmark_interpolation_manifold() -> dict:
 
     xx = (uu - center) / scale
     yy = (vv - center) / scale
-    exact_vals = np.asarray(xx**2 - yy**2, dtype=np.float32)
+    exact_vals = np.asarray(xx ** 2 - yy ** 2, dtype=np.float32)
 
     return {
         "grid_table": grid_table.tolist(),
@@ -163,7 +163,7 @@ def benchmark_quantized_boundaries() -> dict:
         tflite_outputs_int8.append(int(q_out))
 
     tflite_dequant = (
-        (np.array(tflite_outputs_int8, dtype=np.float32) - out_zp) * out_scale
+            (np.array(tflite_outputs_int8, dtype=np.float32) - out_zp) * out_scale
     ).tolist()
 
     return {

@@ -226,35 +226,19 @@ fn benchmark_root_sensitivity() -> Value {
     let ground_truth_roots_re = vec![-1.0, -1.0, -2.0, -2.0];
     let ground_truth_roots_im = vec![2.0, -2.0, 1.0, -1.0];
 
-    // Durand-Kerner complex root finder for 4th degree monic polynomial
-    let solve_quartic_roots = |c: &[f64]| -> ComplexRoots {
-        let a0 = c[0] / c[4];
-        let a1 = c[1] / c[4];
-        let a2 = c[2] / c[4];
-        let a3 = c[3] / c[4];
-
-        let eval_poly = |z: Complex<f64>| -> Complex<f64> {
-            let z2 = z * z;
-            let z3 = z2 * z;
-            let z4 = z3 * z;
-            z4 + z3 * Complex::new(a3, 0.0)
-                + z2 * Complex::new(a2, 0.0)
-                + z * Complex::new(a1, 0.0)
-                + Complex::new(a0, 0.0)
-        };
-
-        // Initial Durand-Kerner seeds
+    // Durand-Kerner complex root finder using Poly::<5> and evaluate_complex
+    let solve_quartic_roots = |poly: &Poly<5>| -> ComplexRoots {
         let mut z = vec![
             Complex::new(0.4, 0.9),
             Complex::new(0.4, -0.9),
             Complex::new(-0.4, 0.9),
             Complex::new(-0.4, -0.9),
         ];
-
         for _ in 0..40 {
             let mut z_next = z.clone();
             for i in 0..4 {
-                let p_val = eval_poly(z[i]);
+                // Evaluates P(z[i]) using the library's Horner complex evaluation
+                let p_val = poly.evaluate_complex(z[i]);
                 let mut denom = Complex::new(1.0, 0.0);
                 for j in 0..4 {
                     if i != j {
@@ -278,12 +262,27 @@ fn benchmark_root_sensitivity() -> Value {
     let mut perturbed_im = Vec::with_capacity(num_trials * 4);
 
     for _ in 0..num_trials {
-        let mut p_coeffs = ground_truth_coeffs.clone();
+        let mut p_coeffs = [
+            ground_truth_coeffs[0],
+            ground_truth_coeffs[1],
+            ground_truth_coeffs[2],
+            ground_truth_coeffs[3],
+            ground_truth_coeffs[4],
+        ];
         for coeff in p_coeffs.iter_mut().take(4) {
             let noise = lcg.next_f64() * noise_scale;
             *coeff *= 1.0 + noise;
         }
-        let roots = solve_quartic_roots(&p_coeffs);
+        // Normalize to monic polynomial and instantiate Poly::<5>
+        let c4 = p_coeffs[4];
+        let poly = Poly::<5>::from_coefficients([
+            p_coeffs[0] / c4,
+            p_coeffs[1] / c4,
+            p_coeffs[2] / c4,
+            p_coeffs[3] / c4,
+            1.0,
+        ]);
+        let roots = solve_quartic_roots(&poly);
         for r in roots {
             perturbed_re.push(r.re);
             perturbed_im.push(r.im);
@@ -324,6 +323,21 @@ fn run_validation_default() -> Value {
             "p_deriv": dp_val,
         }
     })
+}
+
+/// Computes Higham's backward error factor $\gamma_k = \frac{k\epsilon}{1 - k\epsilon}$.
+fn gamma_bound(k: f64, eps: f64) -> f64 {
+    let ke = k * eps;
+    ke / (1.0 - ke)
+}
+
+/// Evaluates $\widetilde{W}(x) = \sum |a_j| x^j = \prod_{j=1}^{20} (x + j)$ for Wilkinson's polynomial.
+fn wilkinson_tilde_p(x: f64) -> f64 {
+    let mut prod = 1.0;
+    for j in 1..=20 {
+        prod *= x + (j as f64);
+    }
+    prod
 }
 
 pub fn cross_validate(rust: &Value, python: &Value) -> ValidationResult {
@@ -431,29 +445,67 @@ pub fn cross_validate(rust: &Value, python: &Value) -> ValidationResult {
                     p_f32.len()
                 ));
             } else {
+                let gamma_40_f64 = gamma_bound(40.0, f64::EPSILON);
+                let gamma_40_f32 = gamma_bound(40.0, f32::EPSILON as f64);
+
                 for i in 0..20 {
+                    let k = (i + 1) as f64;
                     let rv64 = r_f64[i].as_f64().unwrap_or(0.0);
                     let pv64 = p_f64[i].as_f64().unwrap_or(0.0);
-                    let diff64 = (rv64 - pv64).abs();
-                    let limit64 = 1e5 + 100.0 * pv64.min(rv64);
-                    if diff64 > limit64 {
-                        errs.push(format!("wilkinson residual_f64[{i}]: rust {rv64} vs python {pv64} (diff {diff64} exceeds limit {limit64})"));
-                    }
-
                     let rv32 = r_f32[i].as_f64().unwrap_or(0.0);
                     let pv32 = p_f32[i].as_f64().unwrap_or(0.0);
-                    let diff32 = (rv32 - pv32).abs();
-                    let limit32 = 1e12 + 100.0 * pv32.min(rv32);
-                    if diff32 > limit32 {
-                        errs.push(format!("wilkinson residual_f32[{i}]: rust {rv32} vs python {pv32} (diff {diff32} exceeds limit {limit32})"));
-                    }
-                }
 
-                // At k=20, f32 residual should be significantly larger due to precision loss
-                let last_f64 = r_f64[19].as_f64().unwrap_or(0.0);
-                let last_f32 = r_f32[19].as_f64().unwrap_or(0.0);
-                if last_f32 <= last_f64 {
-                    errs.push(format!("Expected f32 residual ({last_f32}) > f64 residual ({last_f64}) for Wilkinson polynomial"));
+                    let tilde_w = wilkinson_tilde_p(k);
+                    let bound_f64 = gamma_40_f64 * tilde_w;
+                    let bound_f32 = gamma_40_f32 * tilde_w;
+
+                    // 1. Higham backward error bound verification
+                    if rv64 > bound_f64 {
+                        errs.push(format!(
+                            "wilkinson residual_f64[{i}] ({rv64:.4e}) exceeds Higham backward error bound ({bound_f64:.4e})"
+                        ));
+                    }
+                    if rv32 > bound_f32 {
+                        errs.push(format!(
+                            "wilkinson residual_f32[{i}] ({rv32:.4e}) exceeds Higham backward error bound ({bound_f32:.4e})"
+                        ));
+                    }
+                    if pv32 > bound_f32 {
+                        errs.push(format!(
+                            "python wilkinson residual_f32[{i}] ({pv32:.4e}) exceeds Higham backward error bound ({bound_f32:.4e})"
+                        ));
+                    }
+
+                    // 2. Precision loss hierarchy verification
+                    if rv32 < rv64 {
+                        errs.push(format!(
+                            "wilkinson residual_f32[{i}] ({rv32:.4e}) < residual_f64[{i}] ({rv64:.4e}): expected precision loss in f32"
+                        ));
+                    }
+                    if i >= 9 && rv32 < 1e6 * rv64 {
+                        errs.push(format!(
+                            "wilkinson residual_f32[{i}] ({rv32:.4e}) < 1e6 * residual_f64[{i}] ({rv64:.4e}): insufficient precision gap at ill-conditioned root k={}",
+                            i + 1
+                        ));
+                    }
+
+                    // 3. Logarithmic order-of-magnitude oracle consistency with NumPy
+                    if i < 5 {
+                        if rv64 > 1e7 {
+                            errs.push(format!(
+                                "wilkinson residual_f64[{i}] ({rv64:.4e}) exceeds well-conditioned threshold 1e7"
+                            ));
+                        }
+                    } else {
+                        let log_r = (rv64 + 1.0).log10();
+                        let log_p = (pv64 + 1.0).log10();
+                        let log_diff = (log_r - log_p).abs();
+                        if log_diff > 2.0 {
+                            errs.push(format!(
+                                "wilkinson residual_f64[{i}] scale mismatch: rust log10({rv64:.4e})={log_r:.2} vs python log10({pv64:.4e})={log_p:.2} (diff {log_diff:.2} > 2.0)"
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -497,16 +549,19 @@ pub fn cross_validate_flint(rust: &Value, flint: &Value) -> ValidationResult {
                     }
                 }
 
-                // At k=20 the f64 residual is catastrophically ill-conditioned; flint's
-                // 256-bit ground truth should be many orders of magnitude smaller.
-                let rust_last = rust["wilkinson_residual"]["residual_f64"][19]
-                    .as_f64()
-                    .unwrap_or(0.0);
-                let flint_last = residuals[19].as_f64().unwrap_or(0.0);
-                if flint_last >= rust_last {
-                    errs.push(format!(
-                        "Expected flint ground-truth residual ({flint_last}) << rust f64 residual ({rust_last}) at k=20"
-                    ));
+                // At ill-conditioned roots (k >= 10), flint's 256-bit ground truth must be
+                // orders of magnitude smaller than Rust f64 residual exhibiting precision collapse.
+                for i in 9..20 {
+                    let rust_val = rust["wilkinson_residual"]["residual_f64"][i]
+                        .as_f64()
+                        .unwrap_or(0.0);
+                    let flint_val = residuals[i].as_f64().unwrap_or(0.0);
+                    if flint_val >= rust_val {
+                        errs.push(format!(
+                            "Expected flint ground-truth residual ({flint_val}) < rust f64 residual ({rust_val}) at k={}",
+                            i + 1
+                        ));
+                    }
                 }
             }
         }

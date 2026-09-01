@@ -916,6 +916,18 @@ class TensorPlotter(BaseModelPlotter):
         ax1.set_title("3D Saddle Surface Manifold", fontsize=11,
                       fontweight='bold', color=TEXT_COLOR)
 
+        # Inset text detailing Interpolation speeds
+        rust_time = self.rust_data.get('timing', {})
+        py_time = self.py_data.get('timing', {})
+        r_interp = rust_time.get('interp_time_ns', 12.0)
+        p_interp = py_time.get('interp_time_ns', 150000.0)
+
+        info_text = (f"Grid Interp: Rust {r_interp:.0f}ns vs Py {p_interp / 1e3:.0f}µs\n")
+        ax1.text2D(0.04, 0.95, info_text, transform=ax1.transAxes, verticalalignment='top',
+                   fontsize=7,
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor=PANEL_BG, edgecolor=GRID_COLOR,
+                             alpha=0.9))
+
         # ---------------------------------------------------------------------
         # Quadrant 2: Tensor Contraction Relative Error Heatmap (contract_into)
         # ---------------------------------------------------------------------
@@ -1013,19 +1025,6 @@ class TensorPlotter(BaseModelPlotter):
         ax4.set_title("Contraction Scaling vs. N", fontsize=11,
                       fontweight='bold')
         ax4.legend(frameon=True, fontsize=8)
-
-        # Inset text detailing Interpolation & Quantization speeds
-        r_interp = rust_time.get('interp_time_ns', 12.0)
-        p_interp = py_time.get('interp_time_ns', 150000.0)
-        r_quant = rust_time.get('quant_time_ns', 1.5)
-        p_quant = py_time.get('quant_time_ns', 32000.0)
-
-        info_text = (f"Grid Interp: Rust {r_interp:.0f}ns vs Py {p_interp / 1e3:.0f}µs\n"
-                     f"Q7 Fixed-Pt: Rust {r_quant:.1f}ns vs Py {p_quant / 1e3:.0f}µs")
-        ax4.text(0.04, 0.95, info_text, transform=ax4.transAxes, verticalalignment='top',
-                 fontsize=7,
-                 bbox=dict(boxstyle='round,pad=0.3', facecolor=PANEL_BG, edgecolor=GRID_COLOR,
-                           alpha=0.9))
 
         fig.tight_layout(rect=[0, 0, 1, 0.93])
         return fig
