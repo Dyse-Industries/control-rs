@@ -27,7 +27,6 @@ type RealSliceMut<'a, T, const N: usize> = &'a mut [T; N];
 /// point (`fft`, `fft_complex`, `ifft`); it is not a [`Result`] path.
 pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
     /// Computes the forward Fast Fourier Transform into `output` (frequency domain).
-    ///
     /// # Panics
     /// Debug builds panic if `N` is not a power of two.
     fn fft<const N: usize>(
@@ -46,7 +45,6 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
     }
 
     /// Computes the forward Fast Fourier Transform on a complex signal, in-place.
-    ///
     /// # Panics
     /// Debug builds panic if `N` is not a power of two.
     ///

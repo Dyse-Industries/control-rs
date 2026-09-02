@@ -29,6 +29,9 @@ Primary usage scenarios:
   characteristic polynomials ($\det(\lambda I - A) = 0$) and computing
   polynomial roots via companion matrix eigen-decomposition to evaluate
   closed-loop system poles and stability margins.
+- **Second-Order System & Biquad Analysis**: Extracting poles, zeros, damping
+  ratios ($\zeta$), and natural frequencies ($\omega_n$) in $O(1)$ deterministic
+  time via closed-form, cancellation-free quadratic root solving.
 
 ---
 
@@ -58,6 +61,12 @@ Primary usage scenarios:
 - **FR-6 — Discretization & Trajectory Transforms**: Evaluates trajectory
   splines (cubic and quintic) and parameter substitutions (e.g. bilinear
   transform $s \to \frac{2}{T_s}\frac{z-1}{z+1}$) without heap allocation.
+- **FR-7 — Generic Polynomial Root Finding**: Computes the complex roots
+  ($r \in \mathbb{C}^N$) of a polynomial of capacity $N$ into a fixed-size worst-case buffer
+  `[Complex<T>; N]` without heap allocation or generic buffer parameters. Dispatches hierarchically
+  to $O(1)$ direct closed-form solutions for linear ($N=2$) and quadratic ($N=3$) cases,
+  and Aberth simultaneous root iteration (`aberth_roots`) for degree $\ge 3$ ($N \ge 4$).
+  Returns an explicit typed `RootError` if the leading coefficient is zero or iteration fails to converge.
 
 #### 2.2. Non-Functional Requirements
 
@@ -331,6 +340,25 @@ provides two interfaces:
 - **Calculus Operations**: Analytical derivative and integral methods
   returning statically resized polynomial bounds. Zero-location properties
   and stability bounds underpin root-finding correctness (Henrici, 1974).
+- **Hierarchical Polynomial Root Finding (FR-7)**: Solves for the complex roots
+  into a fixed-size worst-case buffer `[Complex<T>; N]` sized to the polynomial capacity $N$
+  using high-level algorithm selection across specialized subprograms:
+  ```rust
+  impl<T: Float + Copy, const N: usize, S: Storage<T, Const<N>, Const<1>>> Polynomial<T, Const<N>, S> {
+      /// Computes the single root of a degree-1 linear polynomial $c_0 + c_1 x = 0$.
+      pub fn line_intercept(&self) -> Result<Complex<T>, RootError> { /* ... */ }
+
+      /// Computes the two complex roots of a degree-2 quadratic polynomial using the Muller/Higham stabilized formula.
+      pub fn quadratic_roots(&self) -> Result<[Complex<T>; 2], RootError> { /* ... */ }
+
+      /// Computes the roots of a polynomial with capacity N >= 4 via Aberth initial seeding and simultaneous iteration.
+      pub fn aberth_roots(&self) -> Result<[Complex<T>; N], RootError> { /* ... */ }
+
+      /// High-level generic root solver dispatching to line_intercept (N=2), quadratic_roots (N=3),
+      /// or aberth_roots (N >= 4) into a fixed stack array of worst-case capacity N.
+      pub fn roots(&self) -> Result<[Complex<T>; N], RootError> { /* ... */ }
+  }
+  ```
 
 #### 4.7. Interoperability & Conversions
 
@@ -411,10 +439,10 @@ time via `Dim` type constraints, the same mechanism `matrix-design.md`
 conversions and is defined once, canonically, in
 [`error-design.md`](../math/error-design.md) §3 — not restated here.
 
-`DivisionError` is specific to `Polynomial` and stays in this module, which
-`error-design.md` FR-1 states as the rule: an error type consumed by more
-than one sibling module is defined once in `src/math/mod.rs`, while a
-single-consumer enum stays with its owner.
+`DivisionError` and `RootError` are specific to `Polynomial` and
+stay in this module, which `error-design.md` FR-1 states as the rule: an error
+type consumed by more than one sibling module is defined once in
+`src/math/mod.rs`, while a single-consumer enum stays with its owner.
 
 ```rust
 /// Errors returned by Polynomial::div_rem, supplementing ConversionError.
@@ -424,6 +452,17 @@ pub enum DivisionError {
     ZeroLeadingCoefficient,
     /// The divisor's degree exceeds the dividend's degree.
     DegreeMismatch,
+}
+
+/// Errors returned by polynomial root finding and transfer function pole/zero extraction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootError {
+    /// Dimension mismatch between requested root buffer capacity `DEG` and polynomial capacity `N` (`DEG + 1 != N`).
+    DimensionMismatch,
+    /// The leading coefficient is zero (non-monic / degenerate polynomial).
+    ZeroLeadingCoefficient,
+    /// Root-finding algorithm failed to converge within maximum iteration limit.
+    ConvergenceFailure,
 }
 ```
 
@@ -507,6 +546,17 @@ fallible
 coefficients as a vector to accept a `ConversionError` they cannot
 trigger.
 
+#### 5.5. Closed-Form Quadratic Roots vs. $2 \times 2$ Companion Matrix QR
+
+While general degree-$N$ polynomials require companion matrix eigen-decomposition
+(§4.7.1), applying QR iteration to $2 \times 2$ companion matrices incurs
+unnecessary iterative loop overhead, non-deterministic cycle count, and potential
+stagnation for degenerate matrices. A closed-form quadratic solver:
+1. Guarantees strict $O(1)$ deterministic execution latency (NFR-1).
+2. Avoids companion matrix instantiation and intermediate allocations (C-2).
+3. Achieves machine-precision backward stability via Muller's cancellation-free
+   formulation.
+
 ---
 
 ### 6. Verification & Validation
@@ -532,10 +582,10 @@ trigger.
 | Requirements-based test   | `#[test]` unit tests over boundary conditions and division | FR-2, FR-4, FR-5, FR-6   |
 | Property-based test       | `proptest` suites verifying ring algebraic invariants      | FR-2, FR-3               |
 | Doctest                   | Runnable rustdoc examples                                  | FR-2, FR-5               |
-| Back-to-back comparison   | `examples/numerical-models/python3/polynomial.py` vs `src/polynomial.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-2, FR-3, FR-6         |
+| Back-to-back comparison   | `examples/numerical-models-validation/python3/polynomial_validation.py` vs `src/polynomial_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-3, FR-6         |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                           | NFR-2, C-2               |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                  | NFR-1                    |
-| Coverage measurement      | `cargo coverage` reporting statement and branch metrics    | FR-1..FR-6, NFR-1..NFR-2 |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics    | FR-1..FR-7, NFR-1..NFR-2 |
 
 #### 6.3. Acceptance Criteria
 
@@ -546,8 +596,14 @@ trigger.
 | Division remainder relation       | Identity $A(x) = Q(x)B(x) + R(x)$                  | Exact equality / Rel. error | $\|A - (QB + R)\|_\infty \le \max(N, M)\epsilon$                                                          | Euclidean division invariant                                   |
 | Polynomial derivative             | Analytic power rule $\frac{d}{dx} x^k = k x^{k-1}$ | Exact equality              | $0$ (exact for integer/fixed-point)                                                                       | Exact algebraic derivative definition                          |
 | Companion matrix eigenvalues      | Known root sets                                    | Absolute error              | $\|\lambda_i - r_i\| \le \mathcal{O}(\epsilon \kappa(p))$                                                 | Backward stable companion matrix pencil (Aurentz et al., 2018) |
+| Arbitrary-precision ball oracle   | python-flint `arb_poly` (256-bit)                  | Absolute error / Residual   | $\le 10^{-9}$ (tutorial); ground truth $\le 10^{-6}$ for Wilkinson ($k=1..19$; flint $\ll$ f64 at $k=20$)  | High-precision ball arithmetic validating catastrophic cancellation bounds |
 | Zero leading denominator division | Divisor with zero leading coefficient              | Exact equality              | `Err(DivisionError::ZeroLeadingCoefficient)`                                                              | Precondition failure contract                                  |
 | Zero-allocation execution         | Host allocator interception                        | Exact equality              | 0 heap allocations                                                                                        | NFR-1 `#![no_std]` invariant                                   |
+| Linear root / intercept ($N=2$)   | Monic / affine line $c_0 + c_1 x = 0$              | Relative error              | $\|r - \hat{r}\| \le \epsilon$                                                                            | Exact division $x = -c_0 / c_1$                                |
+| Quadratic roots (distinct real)   | Analytic $(x-r_1)(x-r_2)$ with $r_1 \gg r_2$       | Relative error              | $\|r_i - \hat{r}_i\| \le 2\epsilon$                                                                       | Muller cancellation-free formulation (Higham, 2002)            |
+| Quadratic roots (complex pair)    | Oscillator $s^2 + 2\zeta\omega_n s + \omega_n^2$   | Absolute error              | $\|r_i - \hat{r}_i\|_\infty \le \epsilon \omega_n$                                                        | Exact discriminant splitting                                   |
+| Quadratic roots (degenerate $c_2=0$) | Degenerate $c_2 = 0$ polynomial                 | Exact equality              | `Err(RootError::ZeroLeadingCoefficient)`                                                                 | Precondition failure contract                                  |
+| Companion roots (degree $\ge 3$)  | Manufactured roots (e.g. quartic $s^4+6s^3+18s^2+30s+25$) | Absolute error       | $\|r_i - \hat{r}_i\|_\infty \le 10^{-10}$                                                                 | Durand-Kerner companion decomposition                          |
 
 #### 6.4. Traceability
 
@@ -559,6 +615,7 @@ trigger.
 | FR-4 — Fallible Polynomial Division             | Requirements-based test                      | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_div_rem`   |
 | FR-5 — Companion Matrix Realization             | Back-to-back comparison                      | `src/polynomial/tests/polynomial_tests.rs::test_companion_matrix`     |
 | FR-6 — Discretization & Trajectory Transforms   | Requirements-based test, Doctest             | `src/polynomial/tests/polynomial_tests.rs::test_cubic_quintic_bilinear` |
+| FR-7 — Generic Polynomial Root Finding          | Requirements-based test, Property-based test | `src/polynomial/tests/polynomial_tests.rs::test_quadratic_roots`, `test_generic_roots` |
 | NFR-1 — Data-Independent Evaluation Latency     | On-target execution                          | ETS disassembly audit for zero panic landing pads         |
 | NFR-2 — Memory Footprint Predictability         | Resource usage evaluation                    | `#![no_std]` host allocator audit                         |
 | C-1 — Maximum Degree Bound                      | Compile-time shape check                     | `clippy::large_stack_arrays` CI check                     |
@@ -573,12 +630,13 @@ trigger.
 
 #### 6.6. Validation
 
-- **Polynomial Evaluation, Calculus, & Companion Realization**: Verification of
+- **Polynomial Evaluation, Calculus, Companion Realization, & Ball Arithmetic**: Verification of
   degree-bounded polynomial construction, real and complex Horner evaluation,
   analytical differentiation/integration, polynomial multiplication, Euclidean division,
-  Frobenius companion matrix formulation, and clustered-root Horner
-  $p(x)=(x-1)^8(x-1.01)^8$ on a 128-point sweep in
-  `examples/numerical-models/src/polynomial.rs`.
+  Frobenius companion matrix formulation, clustered-root Horner
+  $p(x)=(x-1)^8(x-1.01)^8$ on a 128-point sweep, and multi-precision cross-validation
+  against NumPy and python-flint 256-bit `arb_poly` in
+  `examples/numerical-models-validation/src/polynomial_validation.rs`.
 
 #### 6.7. Not Verified
 
@@ -683,6 +741,9 @@ trigger.
     Random Testing of Haskell Programs. _ACM SIGPLAN Notices_, 35(9), 268–279. —
     Property-based testing methodology framing `proptest` algebraic invariant
     checks (§6.1).
+13. **Goldberg, D. (1991).** What Every Computer Scientist Should Know About
+    Floating-Point Arithmetic. _ACM Computing Surveys_, 23(1), 5–48. — Numerically
+    stable quadratic root formula eliminating catastrophic subtractive cancellation.
 
 ### 11. Revision History
 
@@ -698,3 +759,8 @@ trigger.
 | 1.7      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-root Horner ($N>50$); umbrella $\tau\kappa\varepsilon$ and Instant timing. Caps unchanged.                 |
 | 1.8      | August 28, 2026 | @MitchellDScott | Example crate: clustered-root Horner degree 16 (128-point sweep) and Instant timings. Caps unchanged.                                |
 | 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-2 includes `test_horner_backward_error`; companion eigenvalues vs known roots in `test_companion_matrix`.                 |
+| 1.10     | August 31, 2026 | @MitchellDScott | Added python-flint 256-bit arb ball arithmetic multi-precision oracle and updated validation crate paths.                             |
+| 1.11     | September 1, 2026 | @MitchellDScott | Added FR-7: Closed-form cancellation-stable quadratic root solver `roots_quadratic()` for degree-2 polynomials.                       |
+| 1.12     | September 1, 2026 | @MitchellDScott | Expanded FR-7 into generic multi-tier `roots()` solver with `line_intercept`, `quadratic_roots`, `companion_roots`, and unified `RootError`. |
+| 1.13     | September 1, 2026 | @MitchellDScott | Updated root-finding methods (`roots()`, `companion_roots()`) to return worst-case buffer `[Complex<T>; N]` directly from type bounds without generic parameters. |
+| 1.14     | September 1, 2026 | @MitchellDScott | Extracted `aberth_solver` helper and renamed `companion_roots` to `aberth_roots` (`durand_kerner_roots`). |

@@ -470,7 +470,7 @@ is made independently by `transfer-function-design.md` §6 for
 | Requirements-based test   | `#[test]` unit tests over standard physical models and singular cases            | FR-2, FR-3, FR-4, FR-5, FR-6 |
 | Property-based test       | `proptest` suites verifying interconnection identities and similarity invariants | FR-3, FR-5               |
 | Doctest                   | Runnable doc examples in rustdoc                                                 | FR-2                     |
-| Back-to-back comparison   | `examples/numerical-models/python3/state_space.py` vs `src/state_space.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §6.3 | FR-2, FR-4, FR-5         |
+| Back-to-back comparison   | `examples/numerical-models-validation/python3/state_space_validation.py` vs `src/state_space_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-4, FR-5         |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                   | NFR-1, NFR-2, C-2, C-3   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                                        | NFR-2                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics                          | FR-1..FR-6, NFR-1..NFR-2 |
@@ -482,6 +482,7 @@ is made independently by `transfer-function-design.md` §6 for
 | ZOH discretization residual        | Van Loan exact matrix exponential                 | Relative error | $\frac{\|\hat{A}_d - e^{A T_s}\|_\infty}{\|e^{A T_s}\|_\infty \epsilon} < 20.0$                   | Van Loan (1978) & Higham (2005) Padé scaling error bound    |
 | Step response propagation          | Closed-form analytic linear solution              | Absolute error | $\|x[k] - x_{\text{exact}}[k]\|_\infty \le k \gamma_{N_x} \|A\|_\infty^k \|x[0]\|_\infty$         | Matrix recurrence error propagation (Higham, 2002)          |
 | Similarity transform invariance    | Characteristic polynomial invariance              | Relative error | $\frac{\|\det(sI - A) - \det(sI - T A T^{-1})\|_\infty}{\|\det(sI - A)\|_\infty} \le 10 \epsilon$ | Spectral invariance under coordinate change (Ogata, 2010)   |
+| Phase portrait & discrete step     | harold `State` / `discretize` / `sim`             | Absolute error | $\le 10^{-4}$ ($\theta, \dot{\theta}$ trajectories & discrete step response)                      | Cross-toolbox discrete LTI state simulation agreement       |
 | Feedback loop singularity          | Singular algebraic loop matrix $(I - \mathrm{sign}\, D_2 D_1)$ | Exact equality | `Err(StateSpaceError::SingularLoopMatrix)`                                                        | Precondition failure contract                               |
 | Tustin discretization singularity  | Singular bilinear operator $(I - \frac{T_s}{2}A)$ | Exact equality | `Err(StateSpaceError::SingularDiscretizationOperator)`                                            | Solvability precondition contract                           |
 | Long-horizon fixed-point recursion | Saturating recursion across $10^5$ steps          | Exact equality | Zero unbounded overflow drift / limit cycles                                                      | Mullis & Roberts (1976), Hwang (1977) fixed-point stability |
@@ -515,9 +516,9 @@ is made independently by `transfer-function-design.md` §6 for
 - **Continuous-Time Dynamics & ZOH Step Trajectory**: Verification of 2nd-order
   continuous plant derivative evaluation, Zero-Order Hold (ZOH)
   discretization via matrix exponential expansion, 200-step open-loop unit
-  step, similarity coordinate transformations, and a stiff diagonal plant
-  $A=\mathrm{diag}(-200,-0.5)$ in
-  `examples/numerical-models/src/state_space.rs`.
+  step, similarity coordinate transformations, stiff diagonal plant
+  $A=\mathrm{diag}(-200,-0.5)$, and multi-source cross-validation against SciPy and harold
+  oracles in `examples/numerical-models-validation/src/state_space_validation.rs`.
 
 #### 6.7. Not Verified
 
@@ -706,3 +707,4 @@ is made independently by `transfer-function-design.md` §6 for
 | 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: stiff LTI (high $\kappa(A)$) within $N_x \le 32$; umbrella Instant timing. Caps unchanged.                             |
 | 1.8      | August 28, 2026 | @MitchellDScott | Tustin four-block map: $C_d = C M^{-1}$, $D_d = D + C_d B h$.                                                                          |
 | 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-5 artifact is `test_similarity_transform_poles_and_step`; FR-3 includes `test_feedback_singular_loop_matrix`.                |
+| 1.10     | August 31, 2026 | @MitchellDScott | Added harold multi-source cross-validation oracle and updated validation crate paths.                                                 |

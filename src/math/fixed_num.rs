@@ -44,6 +44,47 @@
 //! ```
 //!
 //! ```compile_fail
+//! use control_rs::math::num_traits::Zero;
+//! use control_rs::math::fixed_num::Fixed;
+//!
+//! fn assert_zero<T: Zero>() {}
+//! // Fixed<i16, 17> exceeds 16-bit word length; trait bound Zero is withheld
+//! assert_zero::<Fixed<i16, 17>>();
+//! ```
+//!
+//! ```compile_fail
+//! use control_rs::math::num_traits::Unsigned;
+//! use control_rs::math::fixed_num::Fixed;
+//!
+//! fn assert_unsigned<T: Unsigned>() {}
+//! // Fixed<u8, 200> exceeds 8-bit word length; trait bound Unsigned is withheld
+//! assert_unsigned::<Fixed<u8, 200>>();
+//! ```
+//!
+//! ```compile_fail
+//! use control_rs::math::fixed_num::Fixed;
+//!
+//! // Fixed<i16, 17> exceeds 16-bit word length; inherent constructor fails at compile time
+//! let _ = Fixed::<i16, 17>::from_bits(0);
+//! ```
+//!
+//! ```compile_fail
+//! use control_rs::math::fixed_num::Fixed;
+//!
+//! let x = Fixed::<i16, 8>::from_bits(100);
+//! // Destination scale 17 exceeds 16-bit word length; rescale fails at compile time
+//! let _ = x.rescale::<17>();
+//! ```
+//!
+//! ```compile_fail
+//! use control_rs::math::fixed_num::Fixed;
+//!
+//! // Fixed<i16, 17> has no Mul implementation
+//! fn multiply<T: core::ops::Mul<Output = T>>(a: T, b: T) -> T { a * b }
+//! multiply(Fixed::<i16, 17>::from_bits(1), Fixed::<i16, 17>::from_bits(1));
+//! ```
+//!
+//! ```compile_fail
 //! use control_rs::math::num_traits::Float;
 //! use control_rs::math::fixed_num::Fixed;
 //!
@@ -71,6 +112,10 @@ use crate::math::{
         AdditiveGroup, Conjugate, One, SaturatingInteger, Scalar, Signed,
         Unsigned, Zero,
     },
+    num_types::{
+        Const, Dim, DimMax, U5, U6, U7, U8, U13, U14, U15, U16, U29, U30, U31,
+        U32, U61, U62, U63, U64,
+    },
     ops::{
         Add, AddAssign, Mul, MulAssign, Neg, SaturatingAdd, SaturatingMul,
         SaturatingSub, Sub, SubAssign, TryAdd, TryMul, TryNeg, TrySub,
@@ -89,23 +134,22 @@ mod private {
     impl Sealed for u64 {}
 
     pub trait SealedMarker {}
+
+    pub trait FixedShiftVal<const SHIFT: usize> {
+        const ONE_RAW: Self;
+        const TWO_RAW: Self;
+    }
 }
 
 /// Sealed marker trait indicating that $1.0$ is strictly representable at this scale.
-pub trait OneRepresentable: private::SealedMarker {
-    /// Multiplicative identity ($1.0$) for this fixed-point format.
-    const ONE: Self;
-}
+pub trait OneRepresentable: private::SealedMarker {}
 
 /// Sealed marker trait indicating that $2.0$ is strictly representable at this scale.
-pub trait TwoRepresentable: OneRepresentable {
-    /// Multiplicative constant ($2.0$) for this fixed-point format.
-    const TWO: Self;
-}
+pub trait TwoRepresentable: OneRepresentable {}
 
 #[inline]
 #[allow(clippy::arithmetic_side_effects)]
-fn scale_to_f64_factor(shift: i32) -> f64 {
+fn scale_to_f64_factor(shift: usize) -> f64 {
     if shift <= 62 {
         (1u64 << (shift as u32)) as f64
     } else if shift == 63 {
@@ -132,6 +176,15 @@ pub trait FixedRepr:
     /// Whether this primitive type is signed.
     const IS_SIGNED: bool;
 
+    /// Type-level bit-width dimension (e.g. `U8`, `U16`, `U32`, `U64`).
+    type BitsDim: Dim;
+
+    /// Maximum scale exponent where 1.0 is strictly representable.
+    type OneMaxShift: Dim;
+
+    /// Maximum scale exponent where 2.0 is strictly representable.
+    type TwoMaxShift: Dim;
+
     /// Doubled-width intermediate integer type for exact products and rescaling.
     type Wide: Copy + Eq + Ord + Sized + 'static;
 
@@ -145,10 +198,10 @@ pub trait FixedRepr:
     fn narrow_saturating(val: Self::Wide) -> Self;
 
     /// Rescale a doubled-width product (in $2Q$ scale) down to $Q$ scale using convergent rounding (round-ties-to-even).
-    fn rescale_product_down(prod: Self::Wide, shift: i32) -> Self;
+    fn rescale_product_down(prod: Self::Wide, shift: usize) -> Self;
 
     /// Rescale from scale $Q$ to scale $R$.
-    fn rescale_value(self, q: i32, r: i32) -> Self;
+    fn rescale_value(self, q: usize, r: usize) -> Self;
 
     /// Checked addition.
     fn checked_add_repr(self, rhs: Self) -> Option<Self>;
@@ -157,7 +210,7 @@ pub trait FixedRepr:
     fn checked_sub_repr(self, rhs: Self) -> Option<Self>;
 
     /// Checked multiplication (in $Q$ scale, widening and rescaling).
-    fn checked_mul_repr(self, rhs: Self, shift: i32) -> Option<Self>;
+    fn checked_mul_repr(self, rhs: Self, shift: usize) -> Option<Self>;
 
     /// Checked negation.
     fn checked_neg_repr(self) -> Option<Self>;
@@ -187,17 +240,33 @@ pub trait FixedRepr:
     const ONE_RAW: Self;
 
     /// Convert from `f64` at the specified scale.
-    fn from_f64(val: f64, shift: i32) -> Self;
+    fn from_f64(val: f64, shift: usize) -> Self;
 
     /// Convert to `f64` at the specified scale.
-    fn to_f64(self, shift: i32) -> f64;
+    fn to_f64(self, shift: usize) -> f64;
 }
 
 macro_rules! impl_signed_repr {
-    ($t:ident, $w:ident, $bits:expr) => {
+    ($t:ident, $w:ident, $bits:expr, $bits_dim:ident, $one_max:ident, $two_max:ident) => {
+        impl<const SHIFT: usize> private::FixedShiftVal<SHIFT> for $t {
+            const ONE_RAW: Self = if SHIFT < $bits {
+                (1 as $t).wrapping_shl(SHIFT as u32)
+            } else {
+                0
+            };
+            const TWO_RAW: Self = if SHIFT + 1 < $bits {
+                (1 as $t).wrapping_shl((SHIFT + 1) as u32)
+            } else {
+                0
+            };
+        }
+
         impl FixedRepr for $t {
             const BITS: u32 = $bits;
             const IS_SIGNED: bool = true;
+            type BitsDim = $bits_dim;
+            type OneMaxShift = $one_max;
+            type TwoMaxShift = $two_max;
             type Wide = $w;
 
             #[inline(always)]
@@ -226,7 +295,7 @@ macro_rules! impl_signed_repr {
             #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_possible_wrap)]
-            fn rescale_product_down(prod: Self::Wide, shift: i32) -> Self {
+            fn rescale_product_down(prod: Self::Wide, shift: usize) -> Self {
                 if shift == 0 {
                     return Self::narrow_saturating(prod);
                 }
@@ -237,10 +306,12 @@ macro_rules! impl_signed_repr {
                 let abs_val = prod.unsigned_abs();
                 let mask = (1u128.checked_shl(shift as u32).unwrap_or(0))
                     .wrapping_sub(1) as u128;
-                let half = 1u128.checked_shl((shift - 1) as u32).unwrap_or(0);
+                let half = 1u128
+                    .checked_shl((shift.saturating_sub(1)) as u32)
+                    .unwrap_or(0);
                 let abs_u128 = abs_val as u128;
                 let rem = abs_u128 & mask;
-                let truncated = abs_u128 >> (shift as u32);
+                let truncated = abs_u128.checked_shr(shift as u32).unwrap_or(0);
                 let rounded_abs =
                     if rem > half || (rem == half && (truncated & 1) != 0) {
                         truncated.saturating_add(1)
@@ -268,7 +339,7 @@ macro_rules! impl_signed_repr {
             #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_possible_wrap)]
-            fn rescale_value(self, q: i32, r: i32) -> Self {
+            fn rescale_value(self, q: usize, r: usize) -> Self {
                 if r == q {
                     self
                 } else if r > q {
@@ -342,7 +413,7 @@ macro_rules! impl_signed_repr {
             #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_possible_wrap)]
-            fn checked_mul_repr(self, rhs: Self, shift: i32) -> Option<Self> {
+            fn checked_mul_repr(self, rhs: Self, shift: usize) -> Option<Self> {
                 let w_a = self as $w;
                 let w_b = rhs as $w;
                 let w_prod = w_a.checked_mul(w_b)?;
@@ -360,11 +431,13 @@ macro_rules! impl_signed_repr {
                     let abs_val = w_prod.unsigned_abs();
                     let mask = (1u128.checked_shl(shift as u32).unwrap_or(0))
                         .wrapping_sub(1) as u128;
-                    let half =
-                        1u128.checked_shl((shift - 1) as u32).unwrap_or(0);
+                    let half = 1u128
+                        .checked_shl((shift.saturating_sub(1)) as u32)
+                        .unwrap_or(0);
                     let abs_u128 = abs_val as u128;
                     let rem = abs_u128 & mask;
-                    let truncated = abs_u128 >> (shift as u32);
+                    let truncated =
+                        abs_u128.checked_shr(shift as u32).unwrap_or(0);
                     let rounded_abs = if rem > half
                         || (rem == half && (truncated & 1) != 0)
                     {
@@ -425,7 +498,7 @@ macro_rules! impl_signed_repr {
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
-            fn from_f64(val: f64, shift: i32) -> Self {
+            fn from_f64(val: f64, shift: usize) -> Self {
                 let factor = scale_to_f64_factor(shift);
                 let scaled = val * factor;
                 if scaled >= $t::MAX as f64 {
@@ -441,7 +514,7 @@ macro_rules! impl_signed_repr {
 
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
-            fn to_f64(self, shift: i32) -> f64 {
+            fn to_f64(self, shift: usize) -> f64 {
                 let factor = scale_to_f64_factor(shift);
                 (self as f64) / factor
             }
@@ -449,16 +522,32 @@ macro_rules! impl_signed_repr {
     };
 }
 
-impl_signed_repr!(i8, i16, 8);
-impl_signed_repr!(i16, i32, 16);
-impl_signed_repr!(i32, i64, 32);
-impl_signed_repr!(i64, i128, 64);
+impl_signed_repr!(i8, i16, 8, U8, U6, U5);
+impl_signed_repr!(i16, i32, 16, U16, U14, U13);
+impl_signed_repr!(i32, i64, 32, U32, U30, U29);
+impl_signed_repr!(i64, i128, 64, U64, U62, U61);
 
 macro_rules! impl_unsigned_repr {
-    ($t:ident, $w:ident, $bits:expr) => {
+    ($t:ident, $w:ident, $bits:expr, $bits_dim:ident, $one_max:ident, $two_max:ident) => {
+        impl<const SHIFT: usize> private::FixedShiftVal<SHIFT> for $t {
+            const ONE_RAW: Self = if SHIFT < $bits {
+                (1 as $t).wrapping_shl(SHIFT as u32)
+            } else {
+                0
+            };
+            const TWO_RAW: Self = if SHIFT + 1 < $bits {
+                (1 as $t).wrapping_shl((SHIFT + 1) as u32)
+            } else {
+                0
+            };
+        }
+
         impl FixedRepr for $t {
             const BITS: u32 = $bits;
             const IS_SIGNED: bool = false;
+            type BitsDim = $bits_dim;
+            type OneMaxShift = $one_max;
+            type TwoMaxShift = $two_max;
             type Wide = $w;
 
             #[inline(always)]
@@ -484,28 +573,36 @@ macro_rules! impl_unsigned_repr {
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
-            fn rescale_product_down(prod: Self::Wide, shift: i32) -> Self {
+            fn rescale_product_down(prod: Self::Wide, shift: usize) -> Self {
                 if shift == 0 {
                     return Self::narrow_saturating(prod);
                 }
+                let prod_u128 = prod as u128;
                 let mask = (1u128.checked_shl(shift as u32).unwrap_or(0))
-                    .wrapping_sub(1) as $w;
-                let half = (1 as $w) << (shift - 1);
-                let rem = prod & mask;
-                let truncated = prod >> (shift as u32);
+                    .wrapping_sub(1) as u128;
+                let half = 1u128
+                    .checked_shl((shift.saturating_sub(1)) as u32)
+                    .unwrap_or(0);
+                let rem = prod_u128 & mask;
+                let truncated =
+                    prod_u128.checked_shr(shift as u32).unwrap_or(0);
                 let rounded =
                     if rem > half || (rem == half && (truncated & 1) != 0) {
                         truncated.saturating_add(1)
                     } else {
                         truncated
                     };
-                Self::narrow_saturating(rounded)
+                if rounded >= $t::MAX as u128 {
+                    $t::MAX
+                } else {
+                    rounded as $t
+                }
             }
 
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
-            fn rescale_value(self, q: i32, r: i32) -> Self {
+            fn rescale_value(self, q: usize, r: usize) -> Self {
                 if r == q {
                     self
                 } else if r > q {
@@ -551,7 +648,7 @@ macro_rules! impl_unsigned_repr {
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
-            fn checked_mul_repr(self, rhs: Self, shift: i32) -> Option<Self> {
+            fn checked_mul_repr(self, rhs: Self, shift: usize) -> Option<Self> {
                 let w_a = self as $w;
                 let w_b = rhs as $w;
                 let w_prod = w_a.checked_mul(w_b)?;
@@ -562,11 +659,15 @@ macro_rules! impl_unsigned_repr {
                         Some(w_prod as $t)
                     }
                 } else {
+                    let prod_u128 = w_prod as u128;
                     let mask = (1u128.checked_shl(shift as u32).unwrap_or(0))
-                        .wrapping_sub(1) as $w;
-                    let half = (1 as $w) << (shift - 1);
-                    let rem = w_prod & mask;
-                    let truncated = w_prod >> (shift as u32);
+                        .wrapping_sub(1) as u128;
+                    let half = 1u128
+                        .checked_shl((shift.saturating_sub(1)) as u32)
+                        .unwrap_or(0);
+                    let rem = prod_u128 & mask;
+                    let truncated =
+                        prod_u128.checked_shr(shift as u32).unwrap_or(0);
                     let rounded = if rem > half
                         || (rem == half && (truncated & 1) != 0)
                     {
@@ -574,7 +675,7 @@ macro_rules! impl_unsigned_repr {
                     } else {
                         truncated
                     };
-                    if rounded > $t::MAX as $w {
+                    if rounded > $t::MAX as u128 {
                         None
                     } else {
                         Some(rounded as $t)
@@ -615,7 +716,7 @@ macro_rules! impl_unsigned_repr {
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
-            fn from_f64(val: f64, shift: i32) -> Self {
+            fn from_f64(val: f64, shift: usize) -> Self {
                 if val <= 0.0 {
                     return 0;
                 }
@@ -630,7 +731,7 @@ macro_rules! impl_unsigned_repr {
 
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
-            fn to_f64(self, shift: i32) -> f64 {
+            fn to_f64(self, shift: usize) -> f64 {
                 let factor = scale_to_f64_factor(shift);
                 (self as f64) / factor
             }
@@ -638,10 +739,10 @@ macro_rules! impl_unsigned_repr {
     };
 }
 
-impl_unsigned_repr!(u8, u16, 8);
-impl_unsigned_repr!(u16, u32, 16);
-impl_unsigned_repr!(u32, u64, 32);
-impl_unsigned_repr!(u64, u128, 64);
+impl_unsigned_repr!(u8, u16, 8, U8, U7, U6);
+impl_unsigned_repr!(u16, u32, 16, U16, U15, U14);
+impl_unsigned_repr!(u32, u64, 32, U32, U31, U30);
+impl_unsigned_repr!(u64, u128, 64, U64, U63, U62);
 
 /// Fixed-point scalar type in Q-format representation.
 ///
@@ -649,44 +750,35 @@ impl_unsigned_repr!(u64, u128, 64);
 /// $\Delta = 2^{-\text{SHIFT}}$.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct Fixed<Repr, const SHIFT: i32> {
+pub struct Fixed<Repr, const SHIFT: usize> {
     raw: Repr,
 }
 
 /// Canonical type alias for downstream numerical models.
-pub type Quantized<Repr, const SHIFT: i32> = Fixed<Repr, SHIFT>;
+pub type Quantized<Repr, const SHIFT: usize> = Fixed<Repr, SHIFT>;
 
-impl<Repr: FixedRepr, const SHIFT: i32> Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     /// Scale exponent in bits.
-    pub const SHIFT: i32 = SHIFT;
+    pub const SHIFT: usize = SHIFT;
 
     /// Bit resolution (quantization step $\Delta = 2^{-\text{SHIFT}}$).
-    pub const DELTA: Self = {
-        assert!(0 <= SHIFT && (SHIFT as u32) <= Repr::BITS);
-        Self { raw: Repr::ONE_RAW }
-    };
+    pub const DELTA: Self = Self { raw: Repr::ONE_RAW };
 
     /// Minimum positive representable step $\Delta = 2^{-\text{SHIFT}}$.
     pub const MIN_POSITIVE: Self = Self::DELTA;
 
     /// Minimum representable value.
-    pub const MIN: Self = {
-        assert!(0 <= SHIFT && (SHIFT as u32) <= Repr::BITS);
-        Self { raw: Repr::MIN_RAW }
-    };
+    pub const MIN: Self = Self { raw: Repr::MIN_RAW };
 
     /// Maximum representable value.
-    pub const MAX: Self = {
-        assert!(0 <= SHIFT && (SHIFT as u32) <= Repr::BITS);
-        Self { raw: Repr::MAX_RAW }
-    };
+    pub const MAX: Self = Self { raw: Repr::MAX_RAW };
 
     /// Additive identity ($0.0$).
-    pub const ZERO: Self = {
-        assert!(0 <= SHIFT && (SHIFT as u32) <= Repr::BITS);
-        Self {
-            raw: Repr::ZERO_RAW,
-        }
+    pub const ZERO: Self = Self {
+        raw: Repr::ZERO_RAW,
     };
 
     /// Constructs a fixed-point number from its raw scaled integer representation.
@@ -750,106 +842,70 @@ impl<Repr: FixedRepr, const SHIFT: i32> Fixed<Repr, SHIFT> {
     /// Rescales this value to a new scale exponent `R` with convergent rounding.
     #[inline]
     #[must_use]
-    pub fn rescale<const R: i32>(self) -> Fixed<Repr, R> {
-        assert!(0 <= SHIFT && (SHIFT as u32) <= Repr::BITS);
-        assert!(0 <= R && (R as u32) <= Repr::BITS);
+    pub fn rescale<const R: usize>(self) -> Fixed<Repr, R>
+    where
+        Const<R>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+    {
         Fixed {
             raw: Repr::rescale_value(self.raw, SHIFT, R),
         }
     }
 }
 
-macro_rules! impl_representable_markers {
-    ($t:ty, [$($shift_two:expr),* $(,)?], [$($shift_one_only:expr),* $(,)?]) => {
-        $(
-            impl private::SealedMarker for Fixed<$t, $shift_two> {}
-            impl OneRepresentable for Fixed<$t, $shift_two> {
-                const ONE: Self = Self { raw: (1 as $t) << ($shift_two as u32) };
-            }
-            impl TwoRepresentable for Fixed<$t, $shift_two> {
-                const TWO: Self = Self { raw: (1 as $t) << (($shift_two + 1) as u32) };
-            }
-        )*
-        $(
-            impl private::SealedMarker for Fixed<$t, $shift_one_only> {}
-            impl OneRepresentable for Fixed<$t, $shift_one_only> {
-                const ONE: Self = Self { raw: (1 as $t) << ($shift_one_only as u32) };
-            }
-        )*
-    };
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    private::SealedMarker for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::OneMaxShift, Output = Repr::OneMaxShift>,
+{
 }
 
-impl_representable_markers!(i8, [0, 1, 2, 3, 4, 5], [6]);
-impl_representable_markers!(
-    i16,
-    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
-    [14]
-);
-impl_representable_markers!(
-    i32,
-    [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-        20, 21, 22, 23, 24, 25, 26, 27, 28, 29
-    ],
-    [30]
-);
-impl_representable_markers!(
-    i64,
-    [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
-        38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
-        56, 57, 58, 59, 60, 61
-    ],
-    [62]
-);
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    OneRepresentable for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::OneMaxShift, Output = Repr::OneMaxShift>,
+{
+}
 
-impl_representable_markers!(u8, [0, 1, 2, 3, 4, 5, 6], [7]);
-impl_representable_markers!(
-    u16,
-    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
-    [15]
-);
-impl_representable_markers!(
-    u32,
-    [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30
-    ],
-    [31]
-);
-impl_representable_markers!(
-    u64,
-    [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
-        38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
-        56, 57, 58, 59, 60, 61, 62
-    ],
-    [63]
-);
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    TwoRepresentable for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim
+        + DimMax<Repr::TwoMaxShift, Output = Repr::TwoMaxShift>
+        + DimMax<Repr::OneMaxShift, Output = Repr::OneMaxShift>,
+{
+}
 
-impl<Repr: FixedRepr, const SHIFT: i32> Fixed<Repr, SHIFT>
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    Fixed<Repr, SHIFT>
 where
     Self: OneRepresentable,
 {
     /// Multiplicative identity ($1.0$), gated to scales where $1.0$ is representable.
-    pub const ONE: Self = <Self as OneRepresentable>::ONE;
+    pub const ONE: Self = Self {
+        raw: <Repr as private::FixedShiftVal<SHIFT>>::ONE_RAW,
+    };
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> Fixed<Repr, SHIFT>
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    Fixed<Repr, SHIFT>
 where
     Self: TwoRepresentable,
 {
     /// Multiplicative constant ($2.0$), gated to scales where $2.0$ is representable.
-    pub const TWO: Self = <Self as TwoRepresentable>::TWO;
+    pub const TWO: Self = Self {
+        raw: <Repr as private::FixedShiftVal<SHIFT>>::TWO_RAW,
+    };
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> One for Fixed<Repr, SHIFT>
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize> One
+    for Fixed<Repr, SHIFT>
 where
     Self: OneRepresentable,
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
 {
-    const ONE: Self = <Self as OneRepresentable>::ONE;
+    const ONE: Self = Self {
+        raw: <Repr as private::FixedShiftVal<SHIFT>>::ONE_RAW,
+    };
 
     #[inline(always)]
     fn is_one(&self) -> bool {
@@ -857,15 +913,20 @@ where
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> core::fmt::Display
+impl<Repr: FixedRepr, const SHIFT: usize> core::fmt::Display
     for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Fixed({}, Q{})", self.raw, SHIFT)
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> Add for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> Add for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     type Output = Self;
     #[inline(always)]
     fn add(self, rhs: Self) -> Self {
@@ -875,14 +936,20 @@ impl<Repr: FixedRepr, const SHIFT: i32> Add for Fixed<Repr, SHIFT> {
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> AddAssign for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> AddAssign for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     #[inline(always)]
     fn add_assign(&mut self, rhs: Self) {
         *self = *self + rhs;
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> Sub for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> Sub for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     type Output = Self;
     #[inline(always)]
     fn sub(self, rhs: Self) -> Self {
@@ -892,14 +959,20 @@ impl<Repr: FixedRepr, const SHIFT: i32> Sub for Fixed<Repr, SHIFT> {
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> SubAssign for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> SubAssign for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     #[inline(always)]
     fn sub_assign(&mut self, rhs: Self) {
         *self = *self - rhs;
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> Neg for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> Neg for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     type Output = Self;
     #[inline(always)]
     fn neg(self) -> Self {
@@ -909,7 +982,10 @@ impl<Repr: FixedRepr, const SHIFT: i32> Neg for Fixed<Repr, SHIFT> {
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> Mul for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> Mul for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
@@ -921,14 +997,20 @@ impl<Repr: FixedRepr, const SHIFT: i32> Mul for Fixed<Repr, SHIFT> {
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> MulAssign for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> MulAssign for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     #[inline(always)]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> TryAdd for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> TryAdd for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     #[inline]
     fn try_add(&self, v: &Self) -> ArithmeticResult<Self> {
         Repr::checked_add_repr(self.raw, v.raw)
@@ -937,7 +1019,10 @@ impl<Repr: FixedRepr, const SHIFT: i32> TryAdd for Fixed<Repr, SHIFT> {
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> TrySub for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> TrySub for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     #[inline]
     fn try_sub(&self, v: &Self) -> ArithmeticResult<Self> {
         Repr::checked_sub_repr(self.raw, v.raw)
@@ -946,7 +1031,10 @@ impl<Repr: FixedRepr, const SHIFT: i32> TrySub for Fixed<Repr, SHIFT> {
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> TryMul for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> TryMul for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     #[inline]
     fn try_mul(&self, v: &Self) -> ArithmeticResult<Self> {
         Repr::checked_mul_repr(self.raw, v.raw, SHIFT)
@@ -955,7 +1043,10 @@ impl<Repr: FixedRepr, const SHIFT: i32> TryMul for Fixed<Repr, SHIFT> {
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> TryNeg for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> TryNeg for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     #[inline]
     fn try_neg(&self) -> ArithmeticResult<Self> {
         Repr::checked_neg_repr(self.raw)
@@ -964,28 +1055,40 @@ impl<Repr: FixedRepr, const SHIFT: i32> TryNeg for Fixed<Repr, SHIFT> {
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> SaturatingAdd for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> SaturatingAdd for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     #[inline(always)]
     fn saturating_add(&self, v: &Self) -> Self {
         *self + *v
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> SaturatingSub for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> SaturatingSub for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     #[inline(always)]
     fn saturating_sub(&self, v: &Self) -> Self {
         *self - *v
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> SaturatingMul for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> SaturatingMul for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     #[inline(always)]
     fn saturating_mul(&self, v: &Self) -> Self {
         *self * *v
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> Zero for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> Zero for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     const ZERO: Self = Self::ZERO;
 
     #[inline(always)]
@@ -994,16 +1097,21 @@ impl<Repr: FixedRepr, const SHIFT: i32> Zero for Fixed<Repr, SHIFT> {
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> Conjugate for Fixed<Repr, SHIFT> {
+impl<Repr: FixedRepr, const SHIFT: usize> Conjugate for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
     #[inline(always)]
     fn conj(self) -> Self {
         self
     }
 }
 
-impl<Repr: FixedRepr, const SHIFT: i32> Scalar for Fixed<Repr, SHIFT>
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize> Scalar
+    for Fixed<Repr, SHIFT>
 where
     Self: OneRepresentable,
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
 {
     type Real = Self;
 
@@ -1028,15 +1136,30 @@ where
     }
 }
 
-impl<const SHIFT: i32> AdditiveGroup for Fixed<i8, SHIFT> {}
-impl<const SHIFT: i32> AdditiveGroup for Fixed<i16, SHIFT> {}
-impl<const SHIFT: i32> AdditiveGroup for Fixed<i32, SHIFT> {}
-impl<const SHIFT: i32> AdditiveGroup for Fixed<i64, SHIFT> {}
+impl<const SHIFT: usize> AdditiveGroup for Fixed<i8, SHIFT> where
+    Const<SHIFT>: Dim + DimMax<U8, Output = U8>
+{
+}
+impl<const SHIFT: usize> AdditiveGroup for Fixed<i16, SHIFT> where
+    Const<SHIFT>: Dim + DimMax<U16, Output = U16>
+{
+}
+impl<const SHIFT: usize> AdditiveGroup for Fixed<i32, SHIFT> where
+    Const<SHIFT>: Dim + DimMax<U32, Output = U32>
+{
+}
+impl<const SHIFT: usize> AdditiveGroup for Fixed<i64, SHIFT> where
+    Const<SHIFT>: Dim + DimMax<U64, Output = U64>
+{
+}
 
 macro_rules! impl_signed_fixed {
-    ($($t:ty),+) => {
+    ($($t:ty, $dim:ident),+) => {
         $(
-            impl<const SHIFT: i32> Signed for Fixed<$t, SHIFT> {
+            impl<const SHIFT: usize> Signed for Fixed<$t, SHIFT>
+            where
+                Const<SHIFT>: Dim + DimMax<$dim, Output = $dim>,
+            {
                 #[inline(always)]
                 fn abs(self) -> Self {
                     Self { raw: self.raw.saturating_abs() }
@@ -1046,15 +1169,27 @@ macro_rules! impl_signed_fixed {
     };
 }
 
-impl_signed_fixed!(i8, i16, i32, i64);
+impl_signed_fixed!(i8, U8, i16, U16, i32, U32, i64, U64);
 
-impl<const SHIFT: i32> Unsigned for Fixed<u8, SHIFT> {}
-impl<const SHIFT: i32> Unsigned for Fixed<u16, SHIFT> {}
-impl<const SHIFT: i32> Unsigned for Fixed<u32, SHIFT> {}
-impl<const SHIFT: i32> Unsigned for Fixed<u64, SHIFT> {}
+macro_rules! impl_unsigned_fixed {
+    ($($t:ty, $dim:ident),+) => {
+        $(
+            impl<const SHIFT: usize> Unsigned for Fixed<$t, SHIFT>
+            where
+                Const<SHIFT>: Dim + DimMax<$dim, Output = $dim>,
+            {
+            }
+        )+
+    };
+}
 
-impl<Repr: FixedRepr, const SHIFT: i32> SaturatingInteger for Fixed<Repr, SHIFT> where
-    Self: TwoRepresentable
+impl_unsigned_fixed!(u8, U8, u16, U16, u32, U32, u64, U64);
+
+impl<Repr: FixedRepr + private::FixedShiftVal<SHIFT>, const SHIFT: usize>
+    SaturatingInteger for Fixed<Repr, SHIFT>
+where
+    Self: TwoRepresentable,
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
 {
 }
 

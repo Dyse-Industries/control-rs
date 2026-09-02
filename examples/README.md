@@ -15,12 +15,12 @@ graph.
 
 ## Directory index
 
-| Path                                     | Kind              | What it is                                                           | Run from                              |
-|:-----------------------------------------|:------------------|:---------------------------------------------------------------------|:--------------------------------------|
-| [`numerical-models/`](numerical-models/) | Nested host crate | Demo generators + JSON V&V; Python in `python3/`                     | `examples/numerical-models/`          |
-| [`subprograms/`](subprograms/)           | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                     |
-| [`qemu/`](qemu/)                         | Firmware package  | Bare-metal ETS runners (Cortex-M7, RISC-V)                           | `examples/qemu/` or `cargo qemu`      |
-| [`teensy4/`](teensy4/)                   | Firmware package  | Teensy 4.0 ETS over USB CDC                                          | `examples/teensy4/` or `cargo teensy` |
+| Path                                                           | Kind              | What it is                                                           | Run from                                 |
+|:---------------------------------------------------------------|:------------------|:---------------------------------------------------------------------|:-----------------------------------------|
+| [`numerical-models-validation/`](numerical-models-validation/) | Nested host crate | Demo generators + JSON V&V; Python in `python3/`                     | `examples/numerical-models-validation/`  |
+| [`subprograms/`](subprograms/)                                 | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                        |
+| [`qemu/`](qemu/)                                               | Firmware package  | Bare-metal ETS runners (Cortex-M7, RISC-V)                           | `examples/qemu/` or `cargo qemu`         |
+| [`teensy4/`](teensy4/)                                         | Firmware package  | Teensy 4.0 ETS over USB CDC                                          | `examples/teensy4/` or `cargo teensy`    |
 
 ---
 
@@ -29,18 +29,19 @@ graph.
 **Host numerical models** need a Rust toolchain that can build the workspace
 (see [
 `documentation/development-guide.md`](../documentation/development-guide.md))
-and Python ≥ 3.10 with NumPy/SciPy/matplotlib. The dedicated
+and **Python 3.12**. The virtualenv is `.venv` at the **crate root**, not
+under `examples/`. The dedicated
 [
 `.github/workflows/numerical-models.yml`](../.github/workflows/numerical-models.yml)
 workflow installs
 [
-`numerical-models/python3/requirements.txt`](numerical-models/python3/requirements.txt)
-and runs V&V. Locally:
+`numerical-models-validation/python3/requirements.txt`](numerical-models-validation/python3/requirements.txt)
+and runs V&V. Locally, from the crate root:
 
 ```bash
-python3.12 -m venv examples/numerical-models/.venv
-source examples/numerical-models/.venv/bin/activate
-pip install -r examples/numerical-models/python3/requirements.txt
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r examples/numerical-models-validation/python3/requirements.txt
 ```
 
 **QEMU ETS and the two `no_std` subprogram crates** additionally need:
@@ -66,72 +67,46 @@ subprogram crate.
 
 ## 1. Numerical models
 
-These binaries live in the nested crate [`numerical-models/`](numerical-models/)
-(not root workspace targets). Run them from **`examples/numerical-models/`**.
+These binaries live in the nested crate [
+`numerical-models-validation/`](numerical-models-validation/)
+(not root workspace targets). Activate the crate-root `.venv`, then **`cd
+examples/numerical-models-validation/`** before any `cargo run` / `cargo
+test`. Oracle subprocesses use paths relative to that crate (`python3
+python3/<model>_validation.py`).
 
-Suite files under `suites/<slug>.json` hold host inputs, validator argv, and
-plot argv. Each validator takes the suite path and prints one result JSON
-document on stdout. `cargo run --release --bin validate -- suites/` spawns
-those validators, writes `results/<slug>/<source>.json`, compares §6.3
-bounds, then runs listed plotters with the results directory.
+Each model has a standalone Rust validator binary and Python companion oracle script. Running `cargo run` (or `cargo run --bin validate`) executes all model validations in-process, measures tight nanosecond timings, cross-references Rust and Python outputs via built-in `cross_validate()`, and writes combined payload JSON files under `results/<model>.json`.
 
 ```bash
-pip install -r python3/requirements.txt
-cargo build --release
-cargo run --release --bin validate -- suites/
-# or one slug:
-cargo run --release --bin validate -- suites/matrix.json
+# crate-root .venv already created and activated (see Prerequisites)
+cd examples/numerical-models-validation
+cargo run
+# or run a single model binary:
+cargo run --bin matrix
+cargo run --bin polynomial
+cargo run --bin state_space
+cargo run --bin transfer_function
+cargo run --bin tensor
 ```
 
-The `numerical-models` GitHub Actions workflow runs `validate`. It is not
-part of `cargo ci`. Each run uploads the full `results/` tree as the
-`numerical-models-results` artifact (JSON plus all PNGs, 30-day retention).
-On `main`, PNGs are also published to the rolling
-[`plots`](https://github.com/Dyse-Industries/control-rs/releases/tag/plots)
-release as `{slug}-{name}.png`. PNG pixels are not a numeric gate. The
-gallery below 404s until the first successful `main` run after that
-workflow lands.
-
 | Command | Demonstrates |
-|:--------|:-------------|
-| `python3 python3/matrix.py suites/matrix.json` | Matrix oracle JSON on stdout |
-| `cargo run --release --bin matrix -- suites/matrix.json` | Native matrix JSON on stdout (tutorial on stderr) |
-| `cargo run --release --bin matrix-row -- suites/matrix.json` | Row-major `DefaultBlas` matrix JSON (`source: rust-row`) |
-| `cargo run --release --bin matrix-accelerate --features accelerate -- suites/matrix.json` | Apple Accelerate GEMM JSON (`source: rust-accelerate`; macOS) |
-| `cargo run --release --bin validate -- suites/` | Spawn all validators and plotters, compare bounds |
-| `python3 python3/plot_matrix.py results/matrix/` | Matrix diagnostic plots (listed in the suite file) |
+|:------------------------------------|:------------------------------------------------------------------------------|
+| `cargo run` | Execute full in-process validation suite for all 5 models |
+| `cargo run --bin matrix` | Execute standalone Matrix numerical validator and cross-check Python oracle |
+| `cargo run --bin polynomial` | Execute standalone Polynomial numerical validator and cross-check Python oracle |
+| `cargo run --bin state_space` | Execute standalone State-Space numerical validator and cross-check Python oracle |
+| `cargo run --bin transfer_function` | Execute standalone Transfer Function numerical validator and cross-check Python oracle |
+| `cargo run --bin tensor` | Execute standalone Tensor numerical validator and cross-check Python oracle |
 
 ### Diagnostic plots
 
-#### Matrix
+The Python plotting suite (`python3/plot_models.py`) generates high-resolution 4-quadrant benchmark figures under `results/*_details.png` and a multi-panel overview summary under `results/overview_summary.png`:
 
-![Hilbert inverse relative error](https://github.com/Dyse-Industries/control-rs/releases/download/plots/matrix-hilbert_inverse.png)
-
-![SE(3) rigid GEMM chain](https://github.com/Dyse-Industries/control-rs/releases/download/plots/matrix-se3_chain.png)
-
-#### Polynomial
-
-![Clustered-root Horner](https://github.com/Dyse-Industries/control-rs/releases/download/plots/polynomial-horner.png)
-
-![Companion heatmap](https://github.com/Dyse-Industries/control-rs/releases/download/plots/polynomial-companion.png)
-
-#### State space
-
-![Free-response phase portrait](https://github.com/Dyse-Industries/control-rs/releases/download/plots/state_space-free_response.png)
-
-![Stiff ZOH](https://github.com/Dyse-Industries/control-rs/releases/download/plots/state_space-stiff_zoh.png)
-
-#### Transfer function
-
-![Underdamped Bode](https://github.com/Dyse-Industries/control-rs/releases/download/plots/transfer_function-bode.png)
-
-![Nyquist complex pair](https://github.com/Dyse-Industries/control-rs/releases/download/plots/transfer_function-nyquist_complex_pair.png)
-
-#### Tensor
-
-![Saddle surface](https://github.com/Dyse-Industries/control-rs/releases/download/plots/tensor-curved_surface.png)
-
-![Saddle cut](https://github.com/Dyse-Industries/control-rs/releases/download/plots/tensor-curved_cut.png)
+- **Overview Dashboard**: `results/overview_summary.png`
+- **Matrix Benchmarks**: `results/matrix_details.png` (EKF covariance relative error heatmap, $O(N^3)$ inversion scaling, Hilbert solve latency jitter, decomposition speedups)
+- **Polynomial Benchmarks**: `results/polynomial_details.png` (Horner vs naive evaluation scaling, Newton-Raphson convergence, Wilkinson polynomial residuals with 256-bit Flint ground truth, complex root perturbation sensitivity)
+- **State-Space Benchmarks**: `results/state_space_details.png` (Inverted pendulum phase portrait, ZOH scaling, step computation jitter, controllability/observability construction scaling)
+- **Transfer Function Benchmarks**: `results/transfer_function_details.png` (Bode magnitude & phase frequency warping up to Nyquist, Nyquist polar trajectory with gain/phase margins, Butterworth direct form vs biquad SOS topology stability)
+- **Tensor Benchmarks**: `results/tensor_details.png` (3D saddle interpolation manifold, tensor contraction relative error heatmap, quantized Tanh activation vs TFLite vs SciPy, contraction scaling)
 
 ---
 

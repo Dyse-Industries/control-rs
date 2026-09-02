@@ -14,7 +14,7 @@
 pub mod tensor_test_suite {
     use crate::assert_almost_eq;
     use crate::tensor::{
-        Activation, ArrayTensor, Quantized, Relu, TableActivation,
+        Activation, ArrayTensor, Axes2D, Quantized, Relu, TableActivation,
     };
 
     #[cfg_attr(test, test)]
@@ -107,9 +107,9 @@ pub mod tensor_test_suite {
             }
         }
 
-        let t = a.permute([1, 0]);
+        let t = a.permute(Axes2D::Transpose);
         assert_eq!(t.get(&[0, 1]), a.get(&[1, 0]));
-        let back = t.permute([1, 0]);
+        let back = t.permute(Axes2D::Transpose);
         assert_eq!(back.get(&[1, 2]), a.get(&[1, 2]));
 
         let sum = &a + &a;
@@ -279,6 +279,76 @@ pub mod tensor_test_suite {
                 qy.raw()
             );
         }
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_tensor_permute_square_matrix() {
+        let square =
+            ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+
+        // 1. Square matrix identity permutation [0, 1]
+        let id = square.permute(Axes2D::Identity);
+        assert_eq!(id.get(&[0, 0]), Some(&1.0));
+        assert_eq!(id.get(&[1, 0]), Some(&2.0));
+        assert_eq!(id.get(&[0, 1]), Some(&3.0));
+        assert_eq!(id.get(&[1, 1]), Some(&4.0));
+
+        // 2. Square matrix transpose permutation [1, 0]
+        let tr = square.permute(Axes2D::Transpose);
+        assert_eq!(tr.get(&[0, 0]), Some(&1.0));
+        assert_eq!(tr.get(&[1, 0]), Some(&3.0));
+        assert_eq!(tr.get(&[0, 1]), Some(&2.0));
+        assert_eq!(tr.get(&[1, 1]), Some(&4.0));
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_tensor_permute_rectangular_matrix() {
+        // Rectangular matrix transpose permutation [1, 0]
+        let rect = ArrayTensor::<f32, 2, 3>::from_raw([
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+        ]);
+        let rect_tr = rect.permute(Axes2D::Transpose);
+        assert_eq!(rect_tr.get(&[0, 0]), Some(&1.0));
+        assert_eq!(rect_tr.get(&[1, 0]), Some(&3.0));
+        assert_eq!(rect_tr.get(&[2, 0]), Some(&5.0));
+        assert_eq!(rect_tr.get(&[0, 1]), Some(&2.0));
+        assert_eq!(rect_tr.get(&[1, 1]), Some(&4.0));
+        assert_eq!(rect_tr.get(&[2, 1]), Some(&6.0));
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_axes2d_conversions_and_helpers() {
+        assert_eq!(Axes2D::try_from([0, 1]), Ok(Axes2D::Identity));
+        assert_eq!(Axes2D::try_from([1, 0]), Ok(Axes2D::Transpose));
+        assert_eq!(Axes2D::try_from(0), Ok(Axes2D::Identity));
+        assert_eq!(Axes2D::try_from(1), Ok(Axes2D::Transpose));
+        assert_eq!(Axes2D::from(false), Axes2D::Identity);
+        assert_eq!(Axes2D::from(true), Axes2D::Transpose);
+        assert_eq!(Axes2D::Identity.as_array(), [0, 1]);
+        assert_eq!(Axes2D::Transpose.as_array(), [1, 0]);
+        assert!(Axes2D::Identity.is_identity());
+        assert!(!Axes2D::Identity.is_transpose());
+        assert!(Axes2D::Transpose.is_transpose());
+        assert!(!Axes2D::Transpose.is_identity());
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid permutation axes")]
+    fn _test_tensor_permute_invalid_axes_panics() {
+        let _ = Axes2D::try_from([0, 0]).expect("invalid permutation axes");
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid permutation axes")]
+    fn _test_tensor_permute_non_square_identity_panic() {
+        let rect = ArrayTensor::<f32, 2, 3>::from_raw([
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+        ]);
+        let _ = rect.permute(Axes2D::Identity);
     }
 }
 

@@ -150,6 +150,190 @@ where
     }
 }
 
+impl<T: Copy, const R: usize, const C: usize> Owned<T, R, C>
+where
+    Const<R>: Dim,
+    Const<C>: Dim,
+{
+    /// Constructs an owned matrix from row-major nested array literals.
+    ///
+    /// Converts the input `[[T; C]; R]` row-major data into the underlying column-major
+    /// storage format `[[T; R]; C]` at compile time or runtime without dynamic allocation.
+    ///
+    /// # Generic Arguments
+    /// * `T` - Scalar element type (must implement [`Copy`]).
+    /// * `R` - Number of rows.
+    /// * `C` - Number of columns.
+    ///
+    /// # Arguments
+    /// * `data` - Row-major nested arrays `[[T; C]; R]`.
+    ///
+    /// # Returns
+    /// * `Self` - The constructed matrix backed by contiguous stack array storage.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::matrix::Owned;
+    ///
+    /// let mat = Owned::<f64, 2, 3>::from_row_arrays([
+    ///     [1.0, 2.0, 3.0],
+    ///     [4.0, 5.0, 6.0],
+    /// ]);
+    /// assert_eq!(mat.get(0, 0), Some(&1.0));
+    /// assert_eq!(mat.get(0, 2), Some(&3.0));
+    /// assert_eq!(mat.get(1, 0), Some(&4.0));
+    /// ```
+    #[must_use]
+    pub const fn from_row_arrays(data: [[T; C]; R]) -> Self {
+        let mut col_major = [[data[0][0]; R]; C];
+        let mut i = 0;
+        while i < R {
+            let mut j = 0;
+            while j < C {
+                col_major[j][i] = data[i][j];
+                j += 1;
+            }
+            i += 1;
+        }
+        Self::from_array(col_major)
+    }
+
+    /// Returns the matrix contents as column-major nested arrays.
+    ///
+    /// Returns a copy of the underlying `[[T; R]; C]` storage buffer.
+    ///
+    /// # Returns
+    /// * `[[T; R]; C]` - The matrix elements organized in column-major order.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::matrix::Owned;
+    ///
+    /// let mat = Owned::<f64, 2, 2>::from_row_arrays([[1.0, 2.0], [3.0, 4.0]]);
+    /// assert_eq!(mat.to_array(), [[1.0, 3.0], [2.0, 4.0]]);
+    /// ```
+    #[must_use]
+    pub const fn to_array(&self) -> [[T; R]; C] {
+        self.storage.to_array()
+    }
+
+    /// Returns the matrix contents as standard row-major nested arrays.
+    ///
+    /// Transposes the internal column-major data into a row-major `[[T; C]; R]` array
+    /// without heap allocation, suitable for serialization and display.
+    ///
+    /// # Returns
+    /// * `[[T; C]; R]` - The matrix elements organized in row-major order.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::matrix::Owned;
+    ///
+    /// let mat = Owned::<f64, 2, 2>::from_array([[1.0, 3.0], [2.0, 4.0]]);
+    /// assert_eq!(mat.to_row_arrays(), [[1.0, 2.0], [3.0, 4.0]]);
+    /// ```
+    #[must_use]
+    pub const fn to_row_arrays(&self) -> [[T; C]; R] {
+        let col_data = self.storage.as_array();
+        let mut row_major = [[col_data[0][0]; C]; R];
+        let mut i = 0;
+        while i < R {
+            let mut j = 0;
+            while j < C {
+                row_major[i][j] = col_data[j][i];
+                j += 1;
+            }
+            i += 1;
+        }
+        row_major
+    }
+}
+
+impl<T, const N: usize> Owned<T, N, 1>
+where
+    Const<N>: Dim,
+{
+    /// Constructs an $N \times 1$ column vector from a 1D array.
+    ///
+    /// # Generic Arguments
+    /// * `T` - Scalar element type.
+    /// * `N` - Dimension (number of rows) of the column vector.
+    ///
+    /// # Arguments
+    /// * `data` - A fixed-size 1D array `[T; N]` containing column elements.
+    ///
+    /// # Returns
+    /// * `Self` - An $N \times 1$ column vector matrix.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::matrix::Owned;
+    ///
+    /// let col = Owned::<f64, 3, 1>::from_column([1.0, 2.0, 3.0]);
+    /// assert_eq!(col.get(0, 0), Some(&1.0));
+    /// assert_eq!(col.get(2, 0), Some(&3.0));
+    /// ```
+    #[must_use]
+    pub const fn from_column(data: [T; N]) -> Self {
+        Self::from_storage(ArrayStorage::from_column(data))
+    }
+}
+
+impl<T: Copy, const N: usize> Owned<T, 1, N>
+where
+    Const<N>: Dim,
+{
+    /// Constructs a $1 \times N$ row vector from a 1D array.
+    ///
+    /// # Generic Arguments
+    /// * `T` - Scalar element type (must implement [`Copy`]).
+    /// * `N` - Dimension (number of columns) of the row vector.
+    ///
+    /// # Arguments
+    /// * `data` - A fixed-size 1D array `[T; N]` containing row elements.
+    ///
+    /// # Returns
+    /// * `Self` - A $1 \times N$ row vector matrix.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::matrix::Owned;
+    ///
+    /// let row = Owned::<f64, 1, 3>::from_row([1.0, 2.0, 3.0]);
+    /// assert_eq!(row.get(0, 0), Some(&1.0));
+    /// assert_eq!(row.get(0, 2), Some(&3.0));
+    /// ```
+    #[must_use]
+    pub const fn from_row(data: [T; N]) -> Self {
+        Self::from_storage(ArrayStorage::from_row(data))
+    }
+}
+
+impl<T: Copy> Owned<T, 1, 1> {
+    /// Constructs a $1 \times 1$ scalar matrix.
+    ///
+    /// # Generic Arguments
+    /// * `T` - Scalar element type (must implement [`Copy`]).
+    ///
+    /// # Arguments
+    /// * `val` - The single scalar value.
+    ///
+    /// # Returns
+    /// * `Self` - A $1 \times 1$ matrix wrapping `val`.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::matrix::Owned;
+    ///
+    /// let s = Owned::<f64, 1, 1>::scalar(42.0);
+    /// assert_eq!(s.get(0, 0), Some(&42.0));
+    /// ```
+    #[must_use]
+    pub const fn scalar(val: T) -> Self {
+        Self::from_array([[val]])
+    }
+}
+
 impl<T, const D: usize> Owned<T, D, D>
 where
     Const<D>: Dim,

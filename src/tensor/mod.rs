@@ -389,6 +389,77 @@ pub type ArrayTensor4D<
     const TOTAL: usize,
 > = Tensor<T, Shape4D<D0, D1, D2, D3>, [T; TOTAL]>;
 
+/// Permutation axis ordering for a rank-2 tensor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Axes2D {
+    /// Identity axis ordering `[0, 1]`.
+    #[default]
+    Identity,
+    /// Transposed axis ordering `[1, 0]`.
+    Transpose,
+}
+
+impl Axes2D {
+    /// Returns the axes as a 2-element array `[usize; 2]`.
+    #[must_use]
+    pub const fn as_array(self) -> [usize; 2] {
+        match self {
+            Self::Identity => [0, 1],
+            Self::Transpose => [1, 0],
+        }
+    }
+
+    /// Returns `true` if the permutation is identity (`[0, 1]`).
+    #[must_use]
+    pub const fn is_identity(self) -> bool {
+        matches!(self, Self::Identity)
+    }
+
+    /// Returns `true` if the permutation is transpose (`[1, 0]`).
+    #[must_use]
+    pub const fn is_transpose(self) -> bool {
+        matches!(self, Self::Transpose)
+    }
+}
+
+impl From<bool> for Axes2D {
+    fn from(transpose: bool) -> Self {
+        if transpose {
+            Self::Transpose
+        } else {
+            Self::Identity
+        }
+    }
+}
+
+impl TryFrom<[usize; 2]> for Axes2D {
+    type Error = &'static str;
+
+    fn try_from(axes: [usize; 2]) -> Result<Self, Self::Error> {
+        match axes {
+            [0, 1] => Ok(Self::Identity),
+            [1, 0] => Ok(Self::Transpose),
+            _ => Err(
+                "invalid permutation axes for rank-2 tensor; expected [0, 1] or [1, 0]",
+            ),
+        }
+    }
+}
+
+impl TryFrom<usize> for Axes2D {
+    type Error = &'static str;
+
+    fn try_from(val: usize) -> Result<Self, Self::Error> {
+        match val {
+            0 => Ok(Self::Identity),
+            1 => Ok(Self::Transpose),
+            _ => Err(
+                "invalid permutation axis indicator; expected 0 (identity) or 1 (transpose)",
+            ),
+        }
+    }
+}
+
 impl<T, const R: usize, const C: usize> ArrayTensor<T, R, C>
 where
     Const<R>: Dim,
@@ -413,6 +484,61 @@ where
             buffer: ArrayStorage::from_array(data),
             _marker: PhantomData,
         }
+    }
+
+    /// Returns the 2D tensor contents as column-major nested arrays.
+    ///
+    /// Provides direct access to the underlying `[[T; R]; C]` array buffer.
+    ///
+    /// # Returns
+    /// * `[[T; R]; C]` - The tensor data in column-major nested arrays.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::tensor::ArrayTensor;
+    ///
+    /// let t = ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+    /// assert_eq!(t.to_arrays(), [[1.0, 2.0], [3.0, 4.0]]);
+    /// ```
+    #[must_use]
+    pub const fn to_arrays(&self) -> [[T; R]; C]
+    where
+        T: Copy,
+    {
+        self.buffer.to_array()
+    }
+
+    /// Returns the 2D tensor contents as standard row-major nested arrays.
+    ///
+    /// Transposes the column-major buffer into a row-major `[[T; C]; R]` array without heap allocation.
+    ///
+    /// # Returns
+    /// * `[[T; C]; R]` - The tensor data in row-major nested arrays.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::tensor::ArrayTensor;
+    ///
+    /// let t = ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 3.0], [2.0, 4.0]]);
+    /// assert_eq!(t.to_row_arrays(), [[1.0, 2.0], [3.0, 4.0]]);
+    /// ```
+    #[must_use]
+    pub const fn to_row_arrays(&self) -> [[T; C]; R]
+    where
+        T: Copy,
+    {
+        let col_data = self.buffer.as_array();
+        let mut row_major = [[col_data[0][0]; C]; R];
+        let mut i = 0;
+        while i < R {
+            let mut j = 0;
+            while j < C {
+                row_major[i][j] = col_data[j][i];
+                j += 1;
+            }
+            i += 1;
+        }
+        row_major
     }
 
     /// Coordinate-mapped construction: `f(&[row, col])`.
@@ -471,7 +597,7 @@ where
         );
     }
 
-    /// Contracts this $R \times K$ tensor with `other` ($K \times P`) via [`crate::math::subprograms::level3::Gemm`].
+    /// Contracts this $R \times K$ tensor with `other` ($K \times P$) via [`crate::math::subprograms::level3::Gemm`].
     pub fn contract_into<const P: usize>(
         &self,
         other: &ArrayTensor<T, C, P>,
@@ -484,16 +610,32 @@ where
     }
 
     /// Permute rank-2 axes by transposing into $C \times R$.
+    ///
+    /// When `axes` is [`Axes2D::Transpose`], elements are transposed across dimensions.
+    /// When `axes` is [`Axes2D::Identity`], dimensions $R$ and $C$ must match ($R = C$).
     #[must_use]
-    pub fn permute(&self, _axes: [usize; 2]) -> ArrayTensor<T, C, R>
+    pub fn permute(&self, axes: Axes2D) -> ArrayTensor<T, C, R>
     where
         T: Copy + Zero,
     {
-        ArrayTensor::from_storage(
-            Owned::<T, R, C>::from_storage(self.buffer)
-                .transpose()
-                .into_storage(),
-        )
+        assert!(
+            axes == Axes2D::Transpose
+                || (axes == Axes2D::Identity
+                    && Const::<R>::USIZE == Const::<C>::USIZE),
+            "invalid permutation axes {axes:?} for rank-2 tensor with shape [{r}, {c}]",
+            r = Const::<R>::USIZE,
+            c = Const::<C>::USIZE,
+        );
+        match axes {
+            Axes2D::Transpose => ArrayTensor::from_storage(
+                Owned::<T, R, C>::from_storage(self.buffer)
+                    .transpose()
+                    .into_storage(),
+            ),
+            Axes2D::Identity => ArrayTensor::from_fn(|idx| {
+                self.get(&[idx[0], idx[1]]).copied().unwrap_or(T::ZERO)
+            }),
+        }
     }
 }
 
