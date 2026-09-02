@@ -11,39 +11,11 @@ use std::fs;
 use std::process::Command;
 use std::time::Instant;
 
-use control_rs::math::num_types::{Const, Dim};
-use control_rs::math::storage::Storage;
-use control_rs::matrix::{LuDecomposition, Matrix, Owned, Symmetric};
+use control_rs::matrix::{LuDecomposition, Owned, Symmetric};
 
 pub type ValidationResult = Result<(), Vec<String>>;
 type DecompTimes = (f64, f64, f64);
 type ValidationDefaultResult = (Value, f64, f64, f64);
-type GenericMatrix<const R: usize, const C: usize, S> =
-    Matrix<f64, Const<R>, Const<C>, S>;
-type NestedRows = Vec<Vec<f64>>;
-
-// ============================================================================
-// Serialization Helpers
-// ============================================================================
-
-/// Converts any generic Matrix backend into a standard nested Rust Vec
-/// for JSON serialization.
-fn to_rows<S, const R: usize, const C: usize>(
-    mat: &GenericMatrix<R, C, S>,
-) -> NestedRows
-where
-    Const<R>: Dim,
-    Const<C>: Dim,
-    S: Storage<f64, Const<R>, Const<C>>,
-{
-    (0..R)
-        .map(|i| {
-            (0..C)
-                .map(|j| mat.get(i, j).copied().unwrap_or(0.0))
-                .collect()
-        })
-        .collect()
-}
 
 // ============================================================================
 // Quadrant 1: Correctness Anchor (EKF Covariance Update)
@@ -68,12 +40,10 @@ fn generate_matrix_correctness_data() -> Value {
     let eye = Owned::<f64, N, N>::identity();
     let i_minus_kh = &eye - &kh;
 
-    let k_t = Owned::<f64, N, N>::from_fn(|i, j| k.get(j, i).copied().unwrap());
+    let k_t = k.transpose();
     let kr = &k * &r;
     let krk_t = &kr * &k_t;
-    let i_minus_kh_t = Owned::<f64, N, N>::from_fn(|i, j| {
-        i_minus_kh.get(j, i).copied().unwrap()
-    });
+    let i_minus_kh_t = i_minus_kh.transpose();
 
     let mut p_current = p_0;
     for _ in 0..100 {
@@ -84,7 +54,7 @@ fn generate_matrix_correctness_data() -> Value {
 
     json!({
         "covariance_heatmap": {
-            "matrix": to_rows(&p_current)
+            "matrix": p_current.to_row_arrays()
         }
     })
 }

@@ -150,9 +150,6 @@ class MatrixPlotter(BaseModelPlotter):
         fig.suptitle("Matrix Validation: EKF Benchmarks", fontsize=15,
                      fontweight='bold', y=0.98)
 
-        # ---------------------------------------------------------------------
-        # Quadrant 1: Correctness Anchor - 2D Relative Error Heatmap
-        # ---------------------------------------------------------------------
         ax1 = axs[0, 0]
         py_cov = np.array(self.py_data.get('covariance_heatmap', {}).get('matrix', []))
         rust_cov = np.array(self.rust_data.get('covariance_heatmap', {}).get('matrix', []))
@@ -175,9 +172,6 @@ class MatrixPlotter(BaseModelPlotter):
         ax1.set_xlabel("State Col Index")
         ax1.set_ylabel("State Row Index")
 
-        # ---------------------------------------------------------------------
-        # Quadrant 2: Algorithmic Scaling O(N^3) with Error Bars
-        # ---------------------------------------------------------------------
         ax2 = axs[0, 1]
         n_dims = [2, 4, 8, 16, 32, 64]
 
@@ -208,9 +202,6 @@ class MatrixPlotter(BaseModelPlotter):
                       fontweight='bold')
         ax2.legend(frameon=True, fontsize=8)
 
-        # ---------------------------------------------------------------------
-        # Quadrant 3: Determinism - 32x32 Hilbert Solve Latency Scatter Plot
-        # ---------------------------------------------------------------------
         ax3 = axs[1, 0]
         idx = 0
         for lang, impls in self.sources.items():
@@ -231,9 +222,6 @@ class MatrixPlotter(BaseModelPlotter):
                       fontweight='bold')
         ax3.legend(frameon=True, fontsize=8)
 
-        # ---------------------------------------------------------------------
-        # Quadrant 4: Side-by-Side Execution Time Bar Chart (16x16 State Matrix)
-        # ---------------------------------------------------------------------
         ax4 = axs[1, 1]
         algos = ['Cholesky', 'LU Solve', 'QR Decomp', 'SVD']
         keys = ['cholesky', 'lu_solve', 'qr_decomp', 'svd']
@@ -314,9 +302,6 @@ class PolynomialPlotter(BaseModelPlotter):
         fig.suptitle("Polynomial Operations Validation",
                      fontsize=15, fontweight='bold', y=0.98)
 
-        # ---------------------------------------------------------------------
-        # Quadrant 1: Computational Complexity (Degree 1..50 Sweep: Rust vs Python)
-        # ---------------------------------------------------------------------
         ax1 = axs[0, 0]
         rust_comp = self.rust_data.get('complexity', {})
         py_comp = self.py_data.get('complexity', {})
@@ -340,9 +325,6 @@ class PolynomialPlotter(BaseModelPlotter):
         ax1.set_title("Evaluation Time vs. Degree", fontsize=11, fontweight='bold')
         ax1.legend(frameon=True, fontsize=8)
 
-        # ---------------------------------------------------------------------
-        # Quadrant 2: Algorithmic Efficiency (Root Solver Convergence: Rust vs Python)
-        # ---------------------------------------------------------------------
         ax2 = axs[0, 1]
         rust_conv = self.rust_data.get('root_convergence', {})
         py_conv = self.py_data.get('root_convergence', {})
@@ -364,9 +346,6 @@ class PolynomialPlotter(BaseModelPlotter):
                       fontweight='bold')
         ax2.legend(frameon=True, fontsize=8)
 
-        # ---------------------------------------------------------------------
-        # Quadrant 3: Numerical Stability (Wilkinson Residuals: Rust vs Python)
-        # ---------------------------------------------------------------------
         ax3 = axs[1, 0]
         rust_wilk = self.rust_data.get('wilkinson_residual', {})
         py_wilk = self.py_data.get('wilkinson_residual', {})
@@ -403,9 +382,6 @@ class PolynomialPlotter(BaseModelPlotter):
                       fontweight='bold')
         ax3.legend(frameon=True, fontsize=8)
 
-        # ---------------------------------------------------------------------
-        # Quadrant 4: Control System Root Sensitivity (Rust vs Python)
-        # ---------------------------------------------------------------------
         ax4 = axs[1, 1]
         rust_sens = self.rust_data.get('root_sensitivity', {})
         py_sens = self.py_data.get('root_sensitivity', {})
@@ -637,7 +613,7 @@ class TransferFuncPlotter(BaseModelPlotter):
     """
 
     def plot_details(self) -> plt.Figure:
-        fig, axs = plt.subplots(2, 2, figsize=(12, 9))
+        fig, axs = plt.subplots(2, 2, figsize=(13, 10))
         fig.suptitle(
             "Transfer Function Validation",
             fontsize=15, fontweight='bold', y=0.98)
@@ -649,9 +625,6 @@ class TransferFuncPlotter(BaseModelPlotter):
 
         freqs_hz = rust_disc.get('freqs_hz', np.linspace(0.1, 49.9, 100))
 
-        # ---------------------------------------------------------------------
-        # Quadrant 1: Discretization Method Error (Bode Magnitude: Rust vs Python)
-        # ---------------------------------------------------------------------
         ax1 = axs[0, 0]
         cont_mag_rs = rust_disc.get('cont_mag_db', [0.0] * 100)
 
@@ -683,13 +656,11 @@ class TransferFuncPlotter(BaseModelPlotter):
         ax1.axvline(100.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (100 Hz)')
         ax1.set_xlabel("Frequency (Hz)")
         ax1.set_ylabel("Magnitude (dB)")
-        ax1.set_title("Bode Magnitude (Fs = 200 Hz)", fontsize=11,
-                      fontweight='bold')
-        ax1.legend(frameon=True, fontsize=8)
+        ax1.set_title("Bode Magnitude (Fs = 200 Hz)\n"
+                      r"Model: Modal Notch ($f_n=25\,\mathrm{Hz}$) + LP ($f_c=40\,\mathrm{Hz}$) | Tustin vs ZOH Gain",
+                      fontsize=9.5, fontweight='bold', pad=8)
+        ax1.legend(frameon=True, fontsize=7.5, loc='lower center')
 
-        # ---------------------------------------------------------------------
-        # Quadrant 2: Discretization Method Error (Bode Phase: Rust vs Python)
-        # ---------------------------------------------------------------------
         ax2 = axs[0, 1]
         cont_phase_rs = rust_disc.get('cont_phase_deg', [0.0] * 100)
 
@@ -721,12 +692,11 @@ class TransferFuncPlotter(BaseModelPlotter):
         ax2.axvline(100.0, color=GRID_COLOR, linestyle='--', label='Nyquist Limit (100 Hz)')
         ax2.set_xlabel("Frequency (Hz)")
         ax2.set_ylabel("Phase (degrees)")
-        ax2.set_title("Bode Phase & Frequency Warping (Fs = 200 Hz)", fontsize=11, fontweight='bold')
-        ax2.legend(frameon=True, fontsize=8)
+        ax2.set_title("Bode Phase & Frequency Warping (Fs = 200 Hz)\n"
+                      r"Model: Modal Notch ($f_n=25\,\mathrm{Hz}$) + LP ($f_c=40\,\mathrm{Hz}$) | Bilinear Warping near Nyquist",
+                      fontsize=9.5, fontweight='bold', pad=8)
+        ax2.legend(frameon=True, fontsize=7.5, loc='upper right')
 
-        # ---------------------------------------------------------------------
-        # Quadrant 3: Nyquist Stability Criterion & Margins (Rust vs Python)
-        # ---------------------------------------------------------------------
         ax3 = axs[1, 0]
         rust_nyq = self.rust_data.get('nyquist_criterion', {})
         py_nyq = self.py_data.get('nyquist_criterion', {})
@@ -771,15 +741,13 @@ class TransferFuncPlotter(BaseModelPlotter):
         ax3.axhline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
         ax3.set_xlabel("Re{H(jw)}")
         ax3.set_ylabel("Im{H(jw)}")
-        ax3.set_title(f"Nyquist Plot (GM = {gm_db:.1f} dB, PM = {pm_deg:.1f}°)", fontsize=11,
-                      fontweight='bold')
+        ax3.set_title(f"Nyquist Plot (GM = {gm_db:.1f} dB, PM = {pm_deg:.1f}°)\n"
+                      r"Model: Open-Loop Plant $H(s) = \frac{50(s+2)}{s(s^2+2s+25)}$ | Margins vs (-1, 0j)",
+                      fontsize=9.5, fontweight='bold', pad=8)
         ax3.set_xlim(-6, 6)
         ax3.set_ylim(-6, 6)
-        ax3.legend(frameon=True, fontsize=8)
+        ax3.legend(frameon=True, fontsize=7.5, loc='upper right')
 
-        # ---------------------------------------------------------------------
-        # Quadrant 4: Filter Topology Stability (Rust vs Python 6th-Order f32)
-        # ---------------------------------------------------------------------
         ax4 = axs[1, 1]
         rust_top = self.rust_data.get('topology_stability', {})
         py_top = self.py_data.get('topology_stability', {})
@@ -825,11 +793,12 @@ class TransferFuncPlotter(BaseModelPlotter):
         ax4.set_ylim(-3, 3)
         ax4.set_xlabel("Re(z)")
         ax4.set_ylabel("Im(z)")
-        ax4.set_title("6th-Order Pole Locations (z-Plane)", fontsize=11,
-                      fontweight='bold')
-        ax4.legend(frameon=True, fontsize=8)
+        ax4.set_title("6th-Order Pole Locations (z-Plane)\n"
+                      r"Model: Butterworth LP ($f_c = 35\,\mathrm{Hz}$, f32) | Direct Form vs Biquad SOS",
+                      fontsize=9.5, fontweight='bold', pad=8)
+        ax4.legend(frameon=True, fontsize=7.5, loc='upper right')
 
-        fig.tight_layout(rect=[0, 0, 1, 0.93])
+        fig.tight_layout(rect=[0, 0, 1, 0.94], h_pad=2.8, w_pad=2.5)
         return fig
 
     def plot_summary(self, ax: plt.Axes):
@@ -866,12 +835,13 @@ class TransferFuncPlotter(BaseModelPlotter):
         ax.axhline(0.0, color=GRID_COLOR, linestyle=':', alpha=0.5)
         ax.set_xlabel("Re{H(jw)}")
         ax.set_ylabel("Im{H(jw)}")
-        ax.set_title(f"Nyquist (GM = {gm_db:.1f} dB, PM = {pm_deg:.1f}°)",
-                     fontsize=10, fontweight='bold')
+        ax.set_title(f"Nyquist (GM = {gm_db:.1f} dB, PM = {pm_deg:.1f}°)\n"
+                     r"Open-Loop $H(s) = \frac{50(s+2)}{s(s^2+2s+25)}$",
+                     fontsize=9.5, fontweight='bold', pad=6)
         ax.set_xlim(-6, 6)
         ax.set_ylim(-6, 6)
         ax.set_aspect('equal', adjustable='datalim')
-        ax.legend(frameon=True, fontsize=7)
+        ax.legend(frameon=True, fontsize=7, loc='upper right')
 
 
 class TensorPlotter(BaseModelPlotter):
@@ -889,9 +859,6 @@ class TensorPlotter(BaseModelPlotter):
                      fontsize=15,
                      fontweight='bold', y=0.98)
 
-        # ---------------------------------------------------------------------
-        # Quadrant 1: Multilinear Interpolation Manifold (3D Saddle z = x² - y²)
-        # ---------------------------------------------------------------------
         ax1 = fig.add_subplot(2, 2, 1, projection='3d')
         ax1.set_facecolor(PANEL_BG)
 
@@ -928,9 +895,6 @@ class TensorPlotter(BaseModelPlotter):
                    bbox=dict(boxstyle='round,pad=0.3', facecolor=PANEL_BG, edgecolor=GRID_COLOR,
                              alpha=0.9))
 
-        # ---------------------------------------------------------------------
-        # Quadrant 2: Tensor Contraction Relative Error Heatmap (contract_into)
-        # ---------------------------------------------------------------------
         ax2 = fig.add_subplot(2, 2, 2)
         rust_c = np.array(self.rust_data.get('contraction', {}).get('mat_c', []))
         py_c = np.array(self.py_data.get('contraction', {}).get('mat_c', []))
@@ -951,9 +915,6 @@ class TensorPlotter(BaseModelPlotter):
         ax2.set_xlabel("Matrix Column j")
         ax2.set_ylabel("Matrix Row i")
 
-        # ---------------------------------------------------------------------
-        # Quadrant 3: Quantized Precision Boundaries (Tanh LUT: Rust vs TFLite vs SciPy)
-        # ---------------------------------------------------------------------
         ax3 = fig.add_subplot(2, 2, 3)
         rust_bound = self.rust_data.get('boundaries', {})
         py_bound = self.py_data.get('boundaries', {})
@@ -1000,9 +961,6 @@ class TensorPlotter(BaseModelPlotter):
         labels = [l.get_label() for l in lines]
         ax3.legend(lines, labels, frameon=True, fontsize=7, loc='upper left', framealpha=0.6)
 
-        # ---------------------------------------------------------------------
-        # Quadrant 4: Tensor Contraction Scaling Profile (Rust vs Python 3)
-        # ---------------------------------------------------------------------
         ax4 = fig.add_subplot(2, 2, 4)
         rust_time = self.rust_data.get('timing', {})
         py_time = self.py_data.get('timing', {})
@@ -1363,7 +1321,7 @@ def main():
 
     ax_tf_q3 = fig_over.add_subplot(gs[0, 2])
     plotters["transfer_function"].plot_summary(ax_tf_q3)
-    ax_tf_q3.set_title("Transfer Function Nyquist", fontsize=10, fontweight='bold')
+    ax_tf_q3.set_title(r"Transfer Function Nyquist (Open-Loop $H(s)$)", fontsize=10, fontweight='bold')
 
     # Row 1: StateSpace Q1, StateSpace Q2, Tensor Q1 (3D Surface)
     ax_ss_q1 = fig_over.add_subplot(gs[1, 0])

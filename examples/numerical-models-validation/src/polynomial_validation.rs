@@ -21,7 +21,6 @@ type Store<const N: usize> = ArrayStorage<f64, N, 1>;
 type Poly<const N: usize> = Polynomial<f64, Const<N>, Store<N>>;
 
 pub type ValidationResult = Result<(), Vec<String>>;
-type ComplexRoots = Vec<Complex<f64>>;
 
 // Simple LCG PRNG for reproducible perturbation noise
 struct Lcg {
@@ -88,8 +87,8 @@ fn benchmark_complexity() -> Value {
     let mut naive_times_ns = Vec::with_capacity(degrees.len());
 
     for &deg in &degrees {
-        let mut coeffs_buf = vec![0.0; deg + 1];
-        for (i, coeff) in coeffs_buf.iter_mut().enumerate() {
+        let mut coeffs_buf = [0.0; 51];
+        for (i, coeff) in coeffs_buf.iter_mut().take(deg + 1).enumerate() {
             *coeff = 1.0 / ((i + 1) as f64);
         }
 
@@ -101,7 +100,7 @@ fn benchmark_complexity() -> Value {
         let mut naive_sum = 0.0;
         for &x in &eval_points {
             let mut acc = 0.0;
-            for (i, &coeff) in coeffs_buf.iter().enumerate() {
+            for (i, &coeff) in coeffs_buf.iter().take(deg + 1).enumerate() {
                 acc += coeff * x.powi(i as i32);
             }
             naive_sum += acc;
@@ -130,11 +129,11 @@ fn benchmark_root_convergence() -> Value {
     let dp = p.derivative();
 
     let target_root = 2.0;
-    let distances =
-        vec![0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0];
-    let mut iterations_list = Vec::with_capacity(distances.len());
+    const DISTANCES: [f64; 11] =
+        [0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0];
+    let mut iterations_list = [0usize; 11];
 
-    for &dist in &distances {
+    for (idx, &dist) in DISTANCES.iter().enumerate() {
         let x0 = target_root + dist;
         let mut x = x0;
         let mut iters = 0;
@@ -158,12 +157,12 @@ fn benchmark_root_convergence() -> Value {
             iters += 1;
         }
 
-        iterations_list.push(iters);
+        iterations_list[idx] = iters;
     }
 
     json!({
         "target_root": target_root,
-        "distances": distances,
+        "distances": DISTANCES,
         "iterations": iterations_list,
     })
 }
@@ -173,39 +172,31 @@ fn benchmark_root_convergence() -> Value {
 // -----------------------------------------------------------------------------
 fn benchmark_wilkinson() -> Value {
     // W(x) = \prod_{i=1}^{20} (x - i)
-    let mut coeffs = vec![1.0];
-    for root in 1..=20 {
-        let r = root as f64;
-        let mut next_coeffs = vec![0.0; coeffs.len() + 1];
-        for i in 0..coeffs.len() {
-            next_coeffs[i + 1] += coeffs[i];
-            next_coeffs[i] -= r * coeffs[i];
-        }
-        coeffs = next_coeffs;
+    let mut roots_64 = [0.0_f64; 21];
+    let mut roots_32 = [0.0_f32; 21];
+    for i in 0..20 {
+        roots_64[i] = (i + 1) as f64;
+        roots_32[i] = (i + 1) as f32;
     }
 
-    let mut buf_64 = [0.0; 21];
-    buf_64.copy_from_slice(&coeffs[..21]);
-    let poly_64 = Poly::<21>::from_coefficients(buf_64);
+    let poly_64 = Poly::<21>::from_roots(roots_64);
+    let poly_32 =
+        Polynomial::<f32, Const<21>, ArrayStorage<f32, 21, 1>>::from_roots(
+            roots_32,
+        );
 
-    let mut buf_32 = [0.0f32; 21];
-    for i in 0..21 {
-        buf_32[i] = coeffs[i] as f32;
-    }
-    let poly_32 = Polynomial::<f32, Const<21>, ArrayStorage<f32, 21, 1>>::from_coefficients(buf_32);
+    let root_indices: [usize; 20] = core::array::from_fn(|i| i + 1);
+    let mut residual_f64 = [0.0_f64; 20];
+    let mut residual_f32 = [0.0_f64; 20];
 
-    let root_indices: Vec<usize> = (1..=20).collect();
-    let mut residual_f64 = Vec::with_capacity(20);
-    let mut residual_f32 = Vec::with_capacity(20);
-
-    for &k in &root_indices {
+    for (idx, &k) in root_indices.iter().enumerate() {
         let r_64 = k as f64;
         let val_64 = poly_64.evaluate(r_64);
-        residual_f64.push(val_64.abs());
+        residual_f64[idx] = val_64.abs();
 
         let r_32 = k as f32;
         let val_32 = poly_32.evaluate(r_32);
-        residual_f32.push(val_32.abs() as f64);
+        residual_f32[idx] = val_32.abs() as f64;
     }
 
     json!({
@@ -222,37 +213,9 @@ fn benchmark_root_sensitivity() -> Value {
     // Stable system poles s = -1 ± 2j, -2 ± 1j
     // Ground truth polynomial (s^2 + 2s + 5)(s^2 + 4s + 5) = s^4 + 6s^3 + 18s^2 + 30s + 25
     // Ascending order: [25.0, 30.0, 18.0, 6.0, 1.0]
-    let ground_truth_coeffs = vec![25.0, 30.0, 18.0, 6.0, 1.0];
-    let ground_truth_roots_re = vec![-1.0, -1.0, -2.0, -2.0];
-    let ground_truth_roots_im = vec![2.0, -2.0, 1.0, -1.0];
-
-    // Durand-Kerner complex root finder using Poly::<5> and evaluate_complex
-    let solve_quartic_roots = |poly: &Poly<5>| -> ComplexRoots {
-        let mut z = vec![
-            Complex::new(0.4, 0.9),
-            Complex::new(0.4, -0.9),
-            Complex::new(-0.4, 0.9),
-            Complex::new(-0.4, -0.9),
-        ];
-        for _ in 0..40 {
-            let mut z_next = z.clone();
-            for i in 0..4 {
-                // Evaluates P(z[i]) using the library's Horner complex evaluation
-                let p_val = poly.evaluate_complex(z[i]);
-                let mut denom = Complex::new(1.0, 0.0);
-                for j in 0..4 {
-                    if i != j {
-                        denom = denom * (z[i] - z[j]);
-                    }
-                }
-                if denom.re.abs() + denom.im.abs() > 1e-12 {
-                    z_next[i] = z[i] - p_val / denom;
-                }
-            }
-            z = z_next;
-        }
-        z
-    };
+    let ground_truth_coeffs = [25.0, 30.0, 18.0, 6.0, 1.0];
+    let ground_truth_roots_re = [-1.0, -1.0, -2.0, -2.0];
+    let ground_truth_roots_im = [2.0, -2.0, 1.0, -1.0];
 
     let num_trials = 250;
     let mut lcg = Lcg::new(42);
@@ -262,13 +225,7 @@ fn benchmark_root_sensitivity() -> Value {
     let mut perturbed_im = Vec::with_capacity(num_trials * 4);
 
     for _ in 0..num_trials {
-        let mut p_coeffs = [
-            ground_truth_coeffs[0],
-            ground_truth_coeffs[1],
-            ground_truth_coeffs[2],
-            ground_truth_coeffs[3],
-            ground_truth_coeffs[4],
-        ];
+        let mut p_coeffs = ground_truth_coeffs;
         for coeff in p_coeffs.iter_mut().take(4) {
             let noise = lcg.next_f64() * noise_scale;
             *coeff *= 1.0 + noise;
@@ -282,10 +239,11 @@ fn benchmark_root_sensitivity() -> Value {
             p_coeffs[3] / c4,
             1.0,
         ]);
-        let roots = solve_quartic_roots(&poly);
-        for r in roots {
-            perturbed_re.push(r.re);
-            perturbed_im.push(r.im);
+        if let Ok(roots) = poly.roots() {
+            for r in &roots[0..4] {
+                perturbed_re.push(r.re);
+                perturbed_im.push(r.im);
+            }
         }
     }
 

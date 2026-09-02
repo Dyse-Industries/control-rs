@@ -22,7 +22,6 @@ type Tf<const N: usize, const D: usize> =
     TransferFunction<f64, Const<N>, Const<D>, StoreNum<N>, StoreDen<D>>;
 
 pub type ValidationResult = Result<(), Vec<String>>;
-type ComplexRoots = Vec<Complex<f64>>;
 type ValueArray<'a> = Option<&'a Vec<Value>>;
 
 /// Script-level constructor for Proposal 1: Flexible Structure Modal System with Resonant Notch Filter.
@@ -187,108 +186,55 @@ fn benchmark_topology_stability() -> Value {
     let dt = 0.01_f64;
 
     // Continuous s-domain poles for 6th-order Butterworth
-    let mut s_poles = Vec::with_capacity(6);
-    for k in 0..6 {
+    let s_poles = core::array::from_fn::<_, 6, _>(|k| {
         let angle = std::f64::consts::PI * (2.0 * (k as f64) + 7.0) / 12.0;
-        s_poles.push(Complex::new(wc * angle.cos(), wc * angle.sin()));
-    }
+        Complex::new(wc * angle.cos(), wc * angle.sin())
+    });
 
     // Tustin discrete mapping: z = (1 + s*dt/2) / (1 - s*dt/2)
-    let mut gt_z_poles = Vec::with_capacity(6);
-    for &s in &s_poles {
+    let gt_z_poles = core::array::from_fn::<_, 6, _>(|k| {
+        let s = s_poles[k];
         let num = Complex::new(1.0, 0.0) + s * Complex::new(dt / 2.0, 0.0);
         let den = Complex::new(1.0, 0.0) - s * Complex::new(dt / 2.0, 0.0);
-        gt_z_poles.push(num / den);
-    }
+        num / den
+    });
 
-    let gt_re: Vec<f64> = gt_z_poles.iter().map(|p| p.re).collect();
-    let gt_im: Vec<f64> = gt_z_poles.iter().map(|p| p.im).collect();
+    let gt_re: [f64; 6] = core::array::from_fn(|i| gt_z_poles[i].re);
+    let gt_im: [f64; 6] = core::array::from_fn(|i| gt_z_poles[i].im);
 
-    // Direct Form f32 Polynomial Expansion
-    let mut df_poly_f32 = vec![1.0f32];
-    for pair_idx in 0..3 {
+    // Construct 3 discrete biquads as TransferFunction instances in f32
+    let biquads = core::array::from_fn::<_, 3, _>(|pair_idx| {
         let p1 = gt_z_poles[2 * pair_idx];
         let p2 = gt_z_poles[2 * pair_idx + 1];
         let b1 = -(p1.re + p2.re) as f32;
         let b0 = (p1.re * p2.re + p1.im * p1.im) as f32;
+        TransferFunction::discrete([b0], [b0, b1, 1.0f32], dt as f32)
+    });
 
-        let mut next_poly = vec![0.0f32; df_poly_f32.len() + 2];
-        for i in 0..df_poly_f32.len() {
-            next_poly[i + 2] += df_poly_f32[i];
-            next_poly[i + 1] += df_poly_f32[i] * b1;
-            next_poly[i] += df_poly_f32[i] * b0;
-        }
-        df_poly_f32 = next_poly;
-    }
-
-    // Solve Direct Form f32 roots using Durand-Kerner
-    let solve_df_roots = |c: &[f32]| -> ComplexRoots {
-        let mut z = vec![
-            Complex::new(0.6, 0.8),
-            Complex::new(0.6, -0.8),
-            Complex::new(-0.6, 0.8),
-            Complex::new(-0.6, -0.8),
-            Complex::new(1.1, 0.3),
-            Complex::new(1.1, -0.3),
-        ];
-
-        let eval_poly = |z_val: Complex<f64>| -> Complex<f64> {
-            let mut acc = Complex::new(c[6] as f64, 0.0);
-            for i in (0..6).rev() {
-                acc = acc * z_val + Complex::new(c[i] as f64, 0.0);
-            }
-            acc
-        };
-
-        for _ in 0..60 {
-            let mut z_next = z.clone();
-            for i in 0..6 {
-                let p_val = eval_poly(z[i]);
-                let mut denom = Complex::new(c[6] as f64, 0.0);
-                for j in 0..6 {
-                    if i != j {
-                        denom = denom * (z[i] - z[j]);
-                    }
-                }
-                if denom.re.abs() + denom.im.abs() > 1e-12 {
-                    z_next[i] = z[i] - p_val / denom;
+    // Extract Biquad (SOS) f32 roots via TransferFunction::poles() (invoking Polynomial::roots)
+    let mut biquad_re = [0.0f64; 6];
+    let mut biquad_im = [0.0f64; 6];
+    let mut root_idx = 0;
+    for bq in &biquads {
+        if let Ok(roots) = bq.poles() {
+            for r in &roots[0..2] {
+                if root_idx < 6 {
+                    biquad_re[root_idx] = r.re as f64;
+                    biquad_im[root_idx] = r.im as f64;
+                    root_idx += 1;
                 }
             }
-            z = z_next;
-        }
-        z
-    };
-
-    let df_roots = solve_df_roots(&df_poly_f32);
-    let df_re: Vec<f64> = df_roots.iter().map(|p| p.re).collect();
-    let df_im: Vec<f64> = df_roots.iter().map(|p| p.im).collect();
-
-    // Biquad (SOS) f32 Roots
-    let mut biquad_re = Vec::with_capacity(6);
-    let mut biquad_im = Vec::with_capacity(6);
-    for pair_idx in 0..3 {
-        let p1 = gt_z_poles[2 * pair_idx];
-        let p2 = gt_z_poles[2 * pair_idx + 1];
-        let b1 = -(p1.re + p2.re) as f32;
-        let b0 = (p1.re * p2.re + p1.im * p1.im) as f32;
-
-        let disc = (b1 * b1 - 4.0 * b0) as f64;
-        if disc < 0.0 {
-            let re = (-b1 / 2.0) as f64;
-            let im = (-disc).sqrt() / 2.0;
-            biquad_re.push(re);
-            biquad_im.push(im);
-            biquad_re.push(re);
-            biquad_im.push(-im);
-        } else {
-            let r1 = ((-b1 as f64) + disc.sqrt()) / 2.0;
-            let r2 = ((-b1 as f64) - disc.sqrt()) / 2.0;
-            biquad_re.push(r1);
-            biquad_im.push(0.0);
-            biquad_re.push(r2);
-            biquad_im.push(0.0);
         }
     }
+
+    // Direct Form f32: Cascade all three biquads via TransferFunction::series
+    let df_stage1 = biquads[0].series::<1, 3, 1, 5>(&biquads[1]);
+    let df_tf = df_stage1.series::<1, 3, 1, 7>(&biquads[2]);
+
+    // Extract Direct Form roots via TransferFunction::poles() (invoking Polynomial::roots)
+    let df_roots = df_tf.poles().unwrap_or([Complex::new(0.0, 0.0); 7]);
+    let df_re: [f64; 6] = core::array::from_fn(|i| df_roots[i].re as f64);
+    let df_im: [f64; 6] = core::array::from_fn(|i| df_roots[i].im as f64);
 
     json!({
         "ground_truth_re": gt_re,
@@ -306,11 +252,7 @@ fn run_validation_default() -> Value {
     let topology = benchmark_topology_stability();
 
     // Legacy tutorial payload fields
-    let tf_realize = Tf::<2, 3>::from_storage(
-        StoreNum::from_column([2.0, 3.0]),
-        StoreDen::from_column([4.0, 5.0, 1.0]),
-        None,
-    );
+    let tf_realize = Tf::<2, 3>::continuous([2.0, 3.0], [4.0, 5.0, 1.0]);
     let ss = tf_realize
         .to_controllable_canonical_form::<2>()
         .expect("CCF failed");

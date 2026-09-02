@@ -60,10 +60,12 @@ use crate::math::subprograms::{
 };
 use crate::math::{LinAlgError, LinAlgResult};
 use crate::matrix::Owned;
-use crate::polynomial::ArrayPolynomial;
+use crate::polynomial::{ArrayPolynomial, Polynomial};
 use crate::state_space::StateSpace;
 use core::fmt;
 use core::marker::PhantomData;
+
+pub use crate::polynomial::RootError;
 
 /// Errors from validating constructors and canonical conversions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -408,6 +410,108 @@ impl<
         let mag = (resp.re * resp.re + resp.im * resp.im).sqrt();
         let phase = resp.im.atan2(resp.re);
         (mag, phase)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Pole & Zero Extraction
+////////////////////////////////////////////////////////////////////////////////
+
+impl<
+    T: Float + Copy,
+    const N: usize,
+    const D: usize,
+    Sn: DenseStorage<T, R = Const<N>, C = Const<1>>,
+    Sd: DenseStorage<T, R = Const<D>, C = Const<1>>,
+> TransferFunction<T, Const<N>, Const<D>, Sn, Sd>
+where
+    Const<N>: Dim,
+    Const<D>: Dim,
+{
+    /// Computes the complex poles of the transfer function.
+    ///
+    /// Evaluates the roots of the denominator polynomial using zero-allocation companion
+    /// matrix eigenvalue decomposition. Returns a fixed-size array `[Complex<T>; D]` representing
+    /// the worst-case pole buffer.
+    ///
+    /// # Returns
+    /// * `Ok([Complex<T>; D])` - Array of computed complex poles.
+    ///
+    /// # Errors
+    /// * [`RootError::ZeroLeadingCoefficient`] - If the leading denominator coefficient is zero.
+    ///
+    /// # Safety
+    /// This function uses safe abstractions over the underlying storage view.
+    ///
+    ///
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// // H(s) = 1 / (s + 2) -> pole at s = -2
+    /// let tf = ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [2.0, 1.0]);
+    /// let poles = tf.poles()?;
+    /// assert_eq!(poles[0].re, -2.0);
+    /// # Ok::<(), control_rs::transfer_function::RootError>(())
+    /// ```
+    pub fn poles(&self) -> Result<[Complex<T>; D], RootError> {
+        let den_storage: StorageView<'_, T, Const<D>, Const<1>> = unsafe {
+            StorageView::new_with_strides_unchecked(
+                self.den_storage.as_ptr(),
+                self.den_storage.r_stride(),
+                self.den_storage.c_stride(),
+            )
+        };
+        let den_poly: Polynomial<
+            T,
+            Const<D>,
+            StorageView<'_, T, Const<D>, Const<1>>,
+        > = Polynomial::from_storage(den_storage);
+        den_poly.roots()
+    }
+
+    /// Computes the complex zeros of the transfer function.
+    ///
+    /// Evaluates the roots of the numerator polynomial using zero-allocation companion
+    /// matrix eigenvalue decomposition. Returns a fixed-size array `[Complex<T>; N]` representing
+    /// the worst-case zero buffer.
+    ///
+    /// # Returns
+    /// * `Ok([Complex<T>; N])` - Array of computed complex zeros.
+    ///
+    /// # Errors
+    /// * [`RootError::ZeroLeadingCoefficient`] - If the leading numerator coefficient is zero.
+    ///
+    /// # Safety
+    /// This function uses safe abstractions over the underlying storage view.
+    ///
+    ///
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// // H(s) = (s + 3) / (s + 2) -> zero at s = -3
+    /// let tf = ArrayTransferFunction::<f64, 2, 2>::continuous([3.0, 1.0], [2.0, 1.0]);
+    /// let zeros = tf.zeros()?;
+    /// assert_eq!(zeros[0].re, -3.0);
+    /// # Ok::<(), control_rs::transfer_function::RootError>(())
+    /// ```
+    pub fn zeros(&self) -> Result<[Complex<T>; N], RootError> {
+        let num_storage: StorageView<'_, T, Const<N>, Const<1>> = unsafe {
+            StorageView::new_with_strides_unchecked(
+                self.num_storage.as_ptr(),
+                self.num_storage.r_stride(),
+                self.num_storage.c_stride(),
+            )
+        };
+        let num_poly: Polynomial<
+            T,
+            Const<N>,
+            StorageView<'_, T, Const<N>, Const<1>>,
+        > = Polynomial::from_storage(num_storage);
+        num_poly.roots()
     }
 }
 

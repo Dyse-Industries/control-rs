@@ -70,12 +70,38 @@ pub enum DivisionError {
     DegreeMismatch,
 }
 
-/// Errors returned by [`Polynomial::roots_quadratic`].
+/// Errors returned by polynomial root finding and transfer function pole/zero extraction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuadraticRootError {
-    /// The leading coefficient ($c_2$) is zero; the polynomial is degenerate or linear.
+pub enum RootError {
+    /// Dimension mismatch between requested root buffer capacity `DEG` and polynomial capacity `N` (`DEG + 1 != N`).
+    DimensionMismatch,
+    /// The leading coefficient is zero (non-monic / degenerate polynomial).
     ZeroLeadingCoefficient,
+    /// Root-finding algorithm failed to converge within maximum iteration limit.
+    ConvergenceFailure,
 }
+
+impl core::fmt::Display for RootError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::DimensionMismatch => write!(
+                f,
+                "requested root capacity DEG does not match polynomial degree capacity (N - 1)"
+            ),
+            Self::ZeroLeadingCoefficient => {
+                write!(f, "leading polynomial coefficient is zero")
+            }
+            Self::ConvergenceFailure => {
+                write!(f, "root finding algorithm failed to converge")
+            }
+        }
+    }
+}
+
+impl core::error::Error for RootError {}
+
+/// Alias for backwards compatibility with earlier quadratic root solving API.
+pub type QuadraticRootError = RootError;
 
 /// Statically-typed polynomial over coefficient storage backend `S`.
 ///
@@ -150,6 +176,86 @@ where
             )
         };
         Polynomial::from_storage(storage)
+    }
+
+    /// Returns the polynomial coefficients as a fixed-size array in ascending order of powers.
+    ///
+    /// Extracts the `[T; N]` array of coefficients where index `k` corresponds to $c_k x^k$.
+    ///
+    /// # Returns
+    /// * `[T; N]` - The coefficient array in ascending degree order.
+    ///
+    ///
+    ///
+    ///
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::polynomial::ArrayPolynomial;
+    ///
+    /// let p = ArrayPolynomial::<f64, 3>::from_coefficients([3.0, 2.0, 1.0]);
+    /// assert_eq!(p.to_coefficients(), [3.0, 2.0, 1.0]);
+    /// ```
+    #[must_use]
+    pub const fn to_coefficients(&self) -> [T; N]
+    where
+        T: Copy,
+    {
+        self.storage.to_array()[0]
+    }
+}
+
+impl<T: Float + Copy, const N: usize> ArrayPolynomial<T, N>
+where
+    Const<N>: Dim,
+{
+    /// Builds a monic polynomial from its roots via zero-allocation convolution.
+    ///
+    /// Constructs the monic polynomial expansion:
+    /// $$P(x) = \prod_{k=0}^{N-2} (x - r_k)$$
+    /// using in-place polynomial multiplication on a stack-allocated buffer of length `N`.
+    /// The input array length `N` is bound directly to the polynomial capacity, mirroring
+    /// [`Self::roots`].
+    ///
+    /// # Generic Arguments
+    /// * `T` - Floating-point scalar type implementing [`Float`] and [`Copy`].
+    /// * `N` - Capacity (maximum degree + 1) of the polynomial.
+    ///
+    /// # Arguments
+    /// * `roots` - A fixed-size array `[T; N]` where indices `0..(N - 1)` contain the real roots.
+    ///
+    /// # Returns
+    /// * `Self` - The expanded monic polynomial with coefficients in ascending power order.
+    ///
+    ///
+    ///
+    ///
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::polynomial::ArrayPolynomial;
+    ///
+    /// // (x - 2)(x - 3) = x^2 - 5x + 6, capacity N=3
+    /// let p = ArrayPolynomial::<f64, 3>::from_roots([2.0, 3.0, 0.0]);
+    /// assert_eq!(p.to_coefficients(), [6.0, -5.0, 1.0]);
+    /// ```
+    #[must_use]
+    pub fn from_roots(roots: [T; N]) -> Self {
+        let mut coeffs = [T::ZERO; N];
+        if N == 0 {
+            return Self::from_coefficients(coeffs);
+        }
+        coeffs[0] = T::ONE;
+        let deg = N.saturating_sub(1);
+        for k in 0..deg {
+            let r = roots[k];
+            coeffs[k + 1] = coeffs[k];
+            for i in (1..=k).rev() {
+                coeffs[i] = coeffs[i - 1] - r * coeffs[i];
+            }
+            coeffs[0] = -r * coeffs[0];
+        }
+        Self::from_coefficients(coeffs)
     }
 }
 
@@ -606,10 +712,28 @@ where
 // Low-Degree Root Solvers & Trajectory Splines
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Float + Copy, S: Storage<T, Const<3>, Const<1>>>
-    Polynomial<T, Const<3>, S>
+impl<T: Float + Copy, const N: usize, S: Storage<T, Const<N>, Const<1>>>
+    Polynomial<T, Const<N>, S>
+where
+    Const<N>: Dim,
 {
-    /// Solves for the two complex roots of the quadratic polynomial $c_0 + c_1 x + c_2 x^2 = 0$.
+    /// Solves for the root of a degree-1 linear polynomial $c_0 + c_1 x = 0$.
+    ///
+    /// # Errors
+    /// Returns [`RootError::ZeroLeadingCoefficient`] if $c_1 == 0$, or [`RootError::DimensionMismatch`] if $N < 2$.
+    pub fn line_intercept(&self) -> Result<Complex<T>, RootError> {
+        if N < 2 {
+            return Err(RootError::DimensionMismatch);
+        }
+        let c0 = *self.get(0).unwrap_or(&T::ZERO);
+        let c1 = *self.get(1).unwrap_or(&T::ZERO);
+        if c1 == T::ZERO {
+            return Err(RootError::ZeroLeadingCoefficient);
+        }
+        Ok(Complex::new(-c0 / c1, T::ZERO))
+    }
+
+    /// Solves for the two complex roots of a degree-2 quadratic polynomial $c_0 + c_1 x + c_2 x^2 = 0$.
     ///
     /// # Numerical Stability
     /// Implements the Muller/Higham stabilized quadratic formulation to eliminate
@@ -622,16 +746,17 @@ impl<T: Float + Copy, S: Storage<T, Const<3>, Const<1>>>
     /// $$r_{1, 2} = -\frac{c_1}{2 c_2} \pm j \frac{\sqrt{4 c_0 c_2 - c_1^2}}{2 c_2}$$
     ///
     /// # Errors
-    /// Returns [`QuadraticRootError::ZeroLeadingCoefficient`] if the leading coefficient ($c_2$) is zero.
-    pub fn roots_quadratic(
-        &self,
-    ) -> Result<[Complex<T>; 2], QuadraticRootError> {
+    /// Returns [`RootError::ZeroLeadingCoefficient`] if $c_2 == 0$, or [`RootError::DimensionMismatch`] if $N < 3$.
+    pub fn quadratic_roots(&self) -> Result<[Complex<T>; 2], RootError> {
+        if N < 3 {
+            return Err(RootError::DimensionMismatch);
+        }
         let c0 = *self.get(0).unwrap_or(&T::ZERO);
         let c1 = *self.get(1).unwrap_or(&T::ZERO);
         let c2 = *self.get(2).unwrap_or(&T::ZERO);
 
         if c2 == T::ZERO {
-            return Err(QuadraticRootError::ZeroLeadingCoefficient);
+            return Err(RootError::ZeroLeadingCoefficient);
         }
 
         let two = T::ONE + T::ONE;
@@ -658,6 +783,157 @@ impl<T: Float + Copy, S: Storage<T, Const<3>, Const<1>>>
                 Complex::new(real_part, -imag_part),
             ])
         }
+    }
+
+    /// Solves for the roots of a degree $\ge 3$ polynomial via companion-form Durand-Kerner decomposition.
+    ///
+    /// # Numerical Stability
+    /// Uses Durand-Kerner simultaneous iteration seeded on Aberth's complex circle,
+    /// evaluating $P(z)$ via complex Horner evaluation without heap allocations.
+    ///
+    /// # Errors
+    /// Solves for the roots of a polynomial of capacity $N$ (degree $N - 1 \ge 3$)
+    /// using Aberth circle initial seeding and simultaneous root iteration.
+    ///
+    /// The computed $N - 1$ roots are stored in indices `0..(N - 1)` of the returned
+    /// worst-case buffer `[Complex<T>; N]`, with the trailing slot padded with zero.
+    ///
+    /// # Errors
+    /// Returns [`RootError::ZeroLeadingCoefficient`] if the leading coefficient is zero.
+    pub fn aberth_roots(&self) -> Result<[Complex<T>; N], RootError> {
+        let deg = N.saturating_sub(1);
+        let leading = *self.get(deg).unwrap_or(&T::ZERO);
+        if leading == T::ZERO {
+            return Err(RootError::ZeroLeadingCoefficient);
+        }
+
+        let initial_seeds = self.aberth_initial_seeds(deg, leading);
+        Ok(self.aberth_solver(initial_seeds, deg, leading))
+    }
+
+    /// Alias for [`Self::aberth_roots`].
+    #[inline]
+    pub fn durand_kerner_roots(&self) -> Result<[Complex<T>; N], RootError> {
+        self.aberth_roots()
+    }
+
+    fn aberth_initial_seeds(&self, deg: usize, leading: T) -> [Complex<T>; N] {
+        let mut out = [Complex::new(T::ZERO, T::ZERO); N];
+        let mut max_ratio = T::ZERO;
+        for i in 0..deg {
+            let coeff = (*self.get(i).unwrap_or(&T::ZERO) / leading).abs();
+            if coeff > max_ratio {
+                max_ratio = coeff;
+            }
+        }
+        let radius = T::ONE + max_ratio;
+        let mut deg_t = T::ZERO;
+        for _ in 0..deg {
+            deg_t = deg_t + T::ONE;
+        }
+        let pi = T::PI;
+        let two_pi = pi + pi;
+        let offset = pi / (deg_t + deg_t + deg_t + deg_t); // pi / 4*n
+
+        for k in 0..deg {
+            let mut k_t = T::ZERO;
+            for _ in 0..k {
+                k_t = k_t + T::ONE;
+            }
+            let theta = (two_pi * k_t) / deg_t + offset;
+            out[k] = Complex::new(radius * theta.cos(), radius * theta.sin());
+        }
+        out
+    }
+
+    fn aberth_solver(
+        &self,
+        mut z: [Complex<T>; N],
+        deg: usize,
+        leading: T,
+    ) -> [Complex<T>; N] {
+        let tol = T::epsilon() * (T::ONE + T::ONE + T::ONE + T::ONE);
+        let max_iters = 80;
+
+        for _ in 0..max_iters {
+            let mut z_next = z;
+            let mut max_step = T::ZERO;
+
+            for i in 0..deg {
+                let p_val = self.evaluate_complex(z[i])
+                    / Complex::new(leading, T::ZERO);
+                let mut denom = Complex::new(T::ONE, T::ZERO);
+                for j in 0..deg {
+                    if i != j {
+                        let diff = z[i] - z[j];
+                        denom = Complex::new(
+                            denom.re * diff.re - denom.im * diff.im,
+                            denom.re * diff.im + denom.im * diff.re,
+                        );
+                    }
+                }
+                let denom_mag = denom.re * denom.re + denom.im * denom.im;
+                if denom_mag > T::epsilon() * T::epsilon() {
+                    let delta = p_val / denom;
+                    let step_mag = delta.re * delta.re + delta.im * delta.im;
+                    if step_mag > max_step {
+                        max_step = step_mag;
+                    }
+                    z_next[i] = z[i] - delta;
+                }
+            }
+            z = z_next;
+            if max_step < tol * tol {
+                return z;
+            }
+        }
+
+        z
+    }
+
+    /// Generic multi-tier polynomial root solver.
+    ///
+    /// Automatically returns a worst-case buffer `[Complex<T>; N]` sized to the polynomial's capacity `N`.
+    /// Hierarchically dispatches to:
+    /// - `line_intercept()` when $N = 2$ (degree 1)
+    /// - `quadratic_roots()` when $N = 3$ (degree 2)
+    /// - `aberth_roots()` when $N \ge 4$ (degree $\ge 3$)
+    ///
+    /// # Errors
+    /// Returns [`RootError::ZeroLeadingCoefficient`] if the leading coefficient is zero.
+    pub fn roots(&self) -> Result<[Complex<T>; N], RootError> {
+        let mut out = [Complex::new(T::ZERO, T::ZERO); N];
+        match N {
+            0 | 1 => Ok(out),
+            2 => {
+                let r = self.line_intercept()?;
+                out[0] = r;
+                Ok(out)
+            }
+            3 => {
+                let r = self.quadratic_roots()?;
+                out[0] = r[0];
+                out[1] = r[1];
+                Ok(out)
+            }
+            _ => self.aberth_roots(),
+        }
+    }
+}
+
+impl<T: Float + Copy, S: Storage<T, Const<3>, Const<1>>>
+    Polynomial<T, Const<3>, S>
+{
+    /// Solves for the two complex roots of the quadratic polynomial $c_0 + c_1 x + c_2 x^2 = 0$.
+    ///
+    /// # Numerical Stability
+    /// Implements the Muller/Higham stabilized quadratic formulation to eliminate
+    /// catastrophic subtractive cancellation when $c_1^2 \gg 4 c_0 c_2$.
+    ///
+    /// # Errors
+    /// Returns [`RootError::ZeroLeadingCoefficient`] if the leading coefficient ($c_2$) is zero.
+    pub fn roots_quadratic(&self) -> Result<[Complex<T>; 2], RootError> {
+        self.quadratic_roots()
     }
 }
 

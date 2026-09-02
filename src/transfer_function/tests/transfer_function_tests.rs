@@ -455,6 +455,93 @@ pub mod transfer_function_test_suite {
             assert!(dphase <= 1e-9, "Bode phase ω={w}: {phase} vs {phase_a}");
         }
     }
+
+    #[cfg_attr(test, test)]
+    fn test_transfer_function_poles_and_zeros_orders() {
+        // Order-1 system: H(s) = (3) / (s + 2) -> pole at -2, D=2
+        let tf1 =
+            ArrayTransferFunction::<f64, 1, 2>::continuous([3.0], [2.0, 1.0]);
+        let poles1 = tf1.poles().unwrap();
+        assert_eq!(poles1.len(), 2);
+        assert_almost_eq!(poles1[0].re, -2.0, 1e-12);
+        assert_almost_eq!(poles1[0].im, 0.0, 1e-12);
+        assert_almost_eq!(poles1[1].re, 0.0, 1e-12);
+
+        // Order-2 notch filter: H(s) = (s^2 + 4) / (s^2 + 2s + 5), N=3, D=3
+        // Zeros: s^2 + 4 = 0 -> ±2j; Poles: s^2 + 2s + 5 = 0 -> -1 ± 2j
+        let tf_notch = ArrayTransferFunction::<f64, 3, 3>::continuous(
+            [4.0, 0.0, 1.0],
+            [5.0, 2.0, 1.0],
+        );
+        let zeros_notch = tf_notch.zeros().unwrap();
+        assert_eq!(zeros_notch.len(), 3);
+        let mut z_im = [zeros_notch[0].im, zeros_notch[1].im];
+        if z_im[0] > z_im[1] {
+            z_im.swap(0, 1);
+        }
+        assert_almost_eq!(zeros_notch[0].re, 0.0, 1e-12);
+        assert_almost_eq!(zeros_notch[1].re, 0.0, 1e-12);
+        assert_almost_eq!(z_im[0], -2.0, 1e-12);
+        assert_almost_eq!(z_im[1], 2.0, 1e-12);
+        assert_almost_eq!(zeros_notch[2].re, 0.0, 1e-12);
+
+        let poles_notch = tf_notch.poles().unwrap();
+        assert_eq!(poles_notch.len(), 3);
+        let mut p_im = [poles_notch[0].im, poles_notch[1].im];
+        if p_im[0] > p_im[1] {
+            p_im.swap(0, 1);
+        }
+        assert_almost_eq!(poles_notch[0].re, -1.0, 1e-12);
+        assert_almost_eq!(poles_notch[1].re, -1.0, 1e-12);
+        assert_almost_eq!(p_im[0], -2.0, 1e-12);
+        assert_almost_eq!(p_im[1], 2.0, 1e-12);
+        assert_almost_eq!(poles_notch[2].re, 0.0, 1e-12);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_transfer_function_poles_discrete_and_cascade() {
+        use crate::polynomial::RootError;
+
+        // Discretized biquad poles via to_discrete_tustin
+        let tf_notch = ArrayTransferFunction::<f64, 3, 3>::continuous(
+            [4.0, 0.0, 1.0],
+            [5.0, 2.0, 1.0],
+        );
+        let dt = 0.01_f64;
+        let tf_notch_z = tf_notch.to_discrete_tustin(dt, None);
+        let poles_z = tf_notch_z.poles().unwrap();
+        assert_eq!(poles_z.len(), 3);
+        for p in &poles_z[0..2] {
+            assert!(
+                (p.re * p.re + p.im * p.im) < 1.0,
+                "Discrete pole must be strictly within unit disk for stable continuous pole"
+            );
+        }
+
+        // Order-4 cascade: H(s) = H1(s) * H2(s), D=5
+        let tf_b1 = ArrayTransferFunction::<f64, 1, 3>::continuous(
+            [5.0],
+            [5.0, 2.0, 1.0],
+        );
+        let tf_b2 = ArrayTransferFunction::<f64, 1, 3>::continuous(
+            [5.0],
+            [5.0, 4.0, 1.0],
+        );
+        let tf_cascade: ArrayTransferFunction<f64, 1, 5> =
+            tf_b1.series::<1, 3, 1, 5>(&tf_b2);
+        let poles4 = tf_cascade.poles().unwrap();
+        assert_eq!(poles4.len(), 5);
+
+        // Error checking: leading coefficient is zero
+        let tf_degen = ArrayTransferFunction::<f64, 2, 3>::continuous(
+            [1.0, 1.0],
+            [1.0, 2.0, 0.0],
+        );
+        assert_eq!(
+            tf_degen.poles().err(),
+            Some(RootError::ZeroLeadingCoefficient)
+        );
+    }
 }
 
 #[cfg(test)]

@@ -36,43 +36,50 @@ fn benchmark_interpolation_manifold() -> (Value, Tensor16x16) {
         (x * x - y * y) as f32
     });
 
-    let grid_table = (0..16)
-        .map(|i| {
-            (0..16)
-                .map(|j| grid.get(&[i, j]).copied().unwrap_or(0.0))
-                .collect::<Vec<f32>>()
-        })
-        .collect::<Vec<_>>();
+    let grid_table = grid.to_row_arrays();
 
     // Dense 40x40 fractional evaluation mesh over [0.0, 15.0]
-    let mut interp_mesh = vec![vec![0.0_f32; MESH_N]; MESH_N];
-    let mut exact_mesh = vec![vec![0.0_f32; MESH_N]; MESH_N];
-    let mut mesh_u = vec![0.0_f32; MESH_N];
-    let mut mesh_v = vec![0.0_f32; MESH_N];
+    let mut mesh_u = [0.0_f32; MESH_N];
+    let mut mesh_v = [0.0_f32; MESH_N];
+
+    let interp_mesh = ArrayTensor::<f32, MESH_N, MESH_N>::from_fn(|idx| {
+        let i = idx[0];
+        let j = idx[1];
+        let u = 15.0_f64 * (i as f64) / ((MESH_N - 1) as f64);
+        let v = 15.0_f64 * (j as f64) / ((MESH_N - 1) as f64);
+        grid.interpolate(&[u as f32, v as f32])
+    });
+
+    let exact_mesh = ArrayTensor::<f32, MESH_N, MESH_N>::from_fn(|idx| {
+        let i = idx[0];
+        let j = idx[1];
+        let u = 15.0_f64 * (i as f64) / ((MESH_N - 1) as f64);
+        let v = 15.0_f64 * (j as f64) / ((MESH_N - 1) as f64);
+        let x = (u - center) / scale;
+        let y = (v - center) / scale;
+        (x * x - y * y) as f32
+    });
 
     for i in 0..MESH_N {
         let u = 15.0_f64 * (i as f64) / ((MESH_N - 1) as f64);
         mesh_u[i] = u as f32;
-        let x = (u - center) / scale;
-
-        for j in 0..MESH_N {
-            let v = 15.0_f64 * (j as f64) / ((MESH_N - 1) as f64);
-            if i == 0 {
-                mesh_v[j] = v as f32;
-            }
-            let y = (v - center) / scale;
-
-            interp_mesh[i][j] = grid.interpolate(&[u as f32, v as f32]);
-            exact_mesh[i][j] = (x * x - y * y) as f32;
-        }
+        let v = 15.0_f64 * (i as f64) / ((MESH_N - 1) as f64);
+        mesh_v[i] = v as f32;
     }
+
+    let interp_arr = interp_mesh.to_row_arrays();
+    let exact_arr = exact_mesh.to_row_arrays();
+    let interp_slices =
+        core::array::from_fn::<_, MESH_N, _>(|i| &interp_arr[i][..]);
+    let exact_slices =
+        core::array::from_fn::<_, MESH_N, _>(|i| &exact_arr[i][..]);
 
     let payload = json!({
         "grid_table": grid_table,
-        "mesh_u": mesh_u,
-        "mesh_v": mesh_v,
-        "interp_mesh": interp_mesh,
-        "exact_mesh": exact_mesh,
+        "mesh_u": &mesh_u[..],
+        "mesh_v": &mesh_v[..],
+        "interp_mesh": &interp_slices[..],
+        "exact_mesh": &exact_slices[..],
     });
 
     (payload, grid)
@@ -97,17 +104,9 @@ fn benchmark_tensor_contraction() -> ContractionBenchResult {
     let mut tensor_c = Tensor16x16::zero();
     tensor_a.contract_into(&tensor_b, &mut tensor_c);
 
-    let mut mat_a = vec![vec![0.0_f32; 16]; 16];
-    let mut mat_b = vec![vec![0.0_f32; 16]; 16];
-    let mut mat_c = vec![vec![0.0_f32; 16]; 16];
-
-    for i in 0..16 {
-        for j in 0..16 {
-            mat_a[i][j] = tensor_a.get(&[i, j]).copied().unwrap_or(0.0);
-            mat_b[i][j] = tensor_b.get(&[i, j]).copied().unwrap_or(0.0);
-            mat_c[i][j] = tensor_c.get(&[i, j]).copied().unwrap_or(0.0);
-        }
-    }
+    let mat_a = tensor_a.to_row_arrays();
+    let mat_b = tensor_b.to_row_arrays();
+    let mat_c = tensor_c.to_row_arrays();
 
     let payload = json!({
         "mat_a": mat_a,
@@ -129,10 +128,9 @@ fn benchmark_quantized_boundaries() -> Value {
         0.5, 0.75, 0.9921875, 1.0, 1.5,
     ];
 
-    let n = float_inputs.len();
-    let mut q_raw = vec![0i32; n];
-    let mut dequant = vec![0.0_f32; n];
-    let mut quant_err = vec![0.0_f32; n];
+    let mut q_raw = [0i32; 14];
+    let mut dequant = [0.0_f32; 14];
+    let mut quant_err = [0.0_f32; 14];
 
     for (idx, &f_in) in float_inputs.iter().enumerate() {
         let q = Q7::quantize(f_in as f64);
@@ -155,9 +153,9 @@ fn benchmark_quantized_boundaries() -> Value {
         values,
     };
 
-    let mut act_inputs = vec![0.0f32; 121];
-    let mut act_outputs = vec![0.0f32; 121];
-    let mut act_outputs_q_raw = vec![0i32; 121];
+    let mut act_inputs = [0.0f32; 121];
+    let mut act_outputs = [0.0f32; 121];
+    let mut act_outputs_q_raw = [0i32; 121];
 
     for i in 0..121 {
         let x = -3.0f32 + (i as f32) * 0.05f32;
@@ -171,13 +169,13 @@ fn benchmark_quantized_boundaries() -> Value {
     }
 
     json!({
-        "float_inputs": float_inputs,
-        "q_raw": q_raw,
-        "dequant": dequant,
-        "quant_err": quant_err,
-        "act_inputs": act_inputs,
-        "act_outputs": act_outputs,
-        "act_outputs_q_raw": act_outputs_q_raw,
+        "float_inputs": &float_inputs[..],
+        "q_raw": &q_raw[..],
+        "dequant": &dequant[..],
+        "quant_err": &quant_err[..],
+        "act_inputs": &act_inputs[..],
+        "act_outputs": &act_outputs[..],
+        "act_outputs_q_raw": &act_outputs_q_raw[..],
     })
 }
 

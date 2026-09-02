@@ -486,6 +486,69 @@ where
         }
     }
 
+    /// Returns the 2D tensor contents as column-major nested arrays.
+    ///
+    /// Provides direct access to the underlying `[[T; R]; C]` array buffer.
+    ///
+    /// # Returns
+    /// * `[[T; R]; C]` - The tensor data in column-major nested arrays.
+    ///
+    ///
+    ///
+    ///
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::tensor::ArrayTensor;
+    ///
+    /// let t = ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+    /// assert_eq!(t.to_arrays(), [[1.0, 2.0], [3.0, 4.0]]);
+    /// ```
+    #[must_use]
+    pub const fn to_arrays(&self) -> [[T; R]; C]
+    where
+        T: Copy,
+    {
+        self.buffer.to_array()
+    }
+
+    /// Returns the 2D tensor contents as standard row-major nested arrays.
+    ///
+    /// Transposes the column-major buffer into a row-major `[[T; C]; R]` array without heap allocation.
+    ///
+    /// # Returns
+    /// * `[[T; C]; R]` - The tensor data in row-major nested arrays.
+    ///
+    ///
+    ///
+    ///
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::tensor::ArrayTensor;
+    ///
+    /// let t = ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 3.0], [2.0, 4.0]]);
+    /// assert_eq!(t.to_row_arrays(), [[1.0, 2.0], [3.0, 4.0]]);
+    /// ```
+    #[must_use]
+    pub const fn to_row_arrays(&self) -> [[T; C]; R]
+    where
+        T: Copy,
+    {
+        let col_data = self.buffer.as_array();
+        let mut row_major = [[col_data[0][0]; C]; R];
+        let mut i = 0;
+        while i < R {
+            let mut j = 0;
+            while j < C {
+                row_major[i][j] = col_data[j][i];
+                j += 1;
+            }
+            i += 1;
+        }
+        row_major
+    }
+
     /// Coordinate-mapped construction: `f(&[row, col])`.
     pub fn from_fn(mut f: impl FnMut(&[usize]) -> T) -> Self {
         Self::from_storage(ArrayStorage::from_fn(|r, c| f(&[r, c])))

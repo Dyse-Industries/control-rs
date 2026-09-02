@@ -344,4 +344,75 @@ pub mod polynomial_test_suite {
             "Large root relative error {rel_err2} exceeds threshold"
         );
     }
+
+    #[cfg_attr(test, test)]
+    fn test_generic_roots() {
+        use crate::polynomial::RootError;
+
+        // Degree 1 (Linear, N=2): 6 + 2x = 0 -> root -3
+        let p_lin = ArrayPolynomial::<f64, 2>::from_coefficients([6.0, 2.0]);
+        let root_lin = p_lin.line_intercept().unwrap();
+        assert_almost_eq!(root_lin.re, -3.0, 1e-12);
+        assert_almost_eq!(root_lin.im, 0.0, 1e-12);
+        let roots_gen1 = p_lin.roots().unwrap();
+        assert_eq!(roots_gen1.len(), 2);
+        assert_almost_eq!(roots_gen1[0].re, -3.0, 1e-12);
+        assert_almost_eq!(roots_gen1[1].re, 0.0, 1e-12);
+
+        // Degree 2 (Quadratic, N=3): 6 - 5x + x^2 = 0 -> roots 2, 3
+        let p_quad =
+            ArrayPolynomial::<f64, 3>::from_coefficients([6.0, -5.0, 1.0]);
+        let roots_gen2 = p_quad.roots().unwrap();
+        assert_eq!(roots_gen2.len(), 3);
+        let mut re_parts = [roots_gen2[0].re, roots_gen2[1].re];
+        if re_parts[0] > re_parts[1] {
+            re_parts.swap(0, 1);
+        }
+        assert_almost_eq!(re_parts[0], 2.0, 1e-12);
+        assert_almost_eq!(re_parts[1], 3.0, 1e-12);
+        assert_almost_eq!(roots_gen2[2].re, 0.0, 1e-12);
+
+        // Degree 3 (Cubic, N=4): (x-1)(x-2)(x-3) = -6 + 11x - 6x^2 + x^3 = 0
+        let p_cubic = ArrayPolynomial::<f64, 4>::from_coefficients([
+            -6.0, 11.0, -6.0, 1.0,
+        ]);
+        let roots_cubic = p_cubic.roots().unwrap();
+        assert_eq!(roots_cubic.len(), 4);
+        let mut re_cubic =
+            [roots_cubic[0].re, roots_cubic[1].re, roots_cubic[2].re];
+        // Sort roots
+        for i in 0..3 {
+            for j in (i + 1)..3 {
+                if re_cubic[i] > re_cubic[j] {
+                    re_cubic.swap(i, j);
+                }
+            }
+        }
+        assert_almost_eq!(re_cubic[0], 1.0, 1e-8);
+        assert_almost_eq!(re_cubic[1], 2.0, 1e-8);
+        assert_almost_eq!(re_cubic[2], 3.0, 1e-8);
+        assert_almost_eq!(roots_cubic[3].re, 0.0, 1e-12);
+
+        // Degree 4 (Quartic, N=5): (s^2 + 2s + 5)(s^2 + 4s + 5) = 25 + 30s + 18s^2 + 6s^3 + s^4
+        let p_quartic = ArrayPolynomial::<f64, 5>::from_coefficients([
+            25.0, 30.0, 18.0, 6.0, 1.0,
+        ]);
+        let roots_quartic = p_quartic.roots().unwrap();
+        assert_eq!(roots_quartic.len(), 5);
+        for r in &roots_quartic[0..4] {
+            let p_eval = p_quartic.evaluate_complex(*r);
+            assert!(
+                (p_eval.re * p_eval.re + p_eval.im * p_eval.im).sqrt() < 1e-8,
+                "Quartic root residual exceeds bound"
+            );
+        }
+
+        // Zero leading coefficient error
+        let p_degen =
+            ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 2.0, 0.0]);
+        assert_eq!(
+            p_degen.roots().err(),
+            Some(RootError::ZeroLeadingCoefficient)
+        );
+    }
 }

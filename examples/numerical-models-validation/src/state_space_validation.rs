@@ -4,22 +4,16 @@
 //! Computes outputs natively in Rust, spawns Python oracle subprocess,
 //! and emits the combined results payload to results/state_space.json.
 
-use control_rs::math::num_types::Const;
-use control_rs::math::storage::ArrayStorage;
-use control_rs::matrix::Matrix;
+use control_rs::matrix::Owned;
 use control_rs::state_space::ArrayStateSpace;
 use serde_json::{Value, json};
 use std::fs;
 use std::process::Command;
 use std::time::Instant;
 
-type Store<const R: usize, const C: usize> = ArrayStorage<f64, R, C>;
-type Mat<const R: usize, const C: usize> =
-    Matrix<f64, Const<R>, Const<C>, Store<R, C>>;
-
 pub type ValidationResult = Result<(), Vec<String>>;
 type Trajectory = (Vec<f64>, Vec<f64>);
-type ScalingResult = (Value, Vec<f64>, Vec<f64>);
+type ScalingResult = (Value, [f64; 7], [f64; 7]);
 type ValueArray<'a> = Option<&'a Vec<Value>>;
 
 /// Explicit Pendulum State-Space Simulation Model.
@@ -30,13 +24,11 @@ pub struct PendulumSim {
 impl PendulumSim {
     pub fn new(omega0: f64, b: f64, dt: f64) -> Self {
         let omega0_sq = omega0 * omega0;
-        let a_c = Mat::<2, 2>::from_storage(Store::from_array([
-            [0.0, -omega0_sq],
-            [1.0, -b],
-        ]));
-        let b_c = Mat::<2, 1>::from_storage(Store::from_array([[0.0, 1.0]]));
-        let c_c = Mat::<1, 2>::from_storage(Store::from_array([[1.0], [0.0]]));
-        let d_c = Mat::<1, 1>::from_storage(Store::from_array([[0.0]]));
+        let a_c =
+            Owned::<f64, 2, 2>::from_row_arrays([[0.0, 1.0], [-omega0_sq, -b]]);
+        let b_c = Owned::<f64, 2, 1>::from_column([0.0, 1.0]);
+        let c_c = Owned::<f64, 1, 2>::from_row([1.0, 0.0]);
+        let d_c = Owned::<f64, 1, 1>::scalar(0.0);
 
         let sys_c = ArrayStateSpace::continuous(a_c, b_c, c_c, d_c);
         let sys_d = sys_c.to_discrete_zoh(dt);
@@ -49,9 +41,8 @@ impl PendulumSim {
         n_steps: usize,
         u_val: f64,
     ) -> Trajectory {
-        let mut x_k =
-            Mat::<2, 1>::from_storage(Store::from_array([[x0[0], x0[1]]]));
-        let u_k = Mat::<1, 1>::from_fn(|_, _| u_val);
+        let mut x_k = Owned::<f64, 2, 1>::from_column(x0);
+        let u_k = Owned::<f64, 1, 1>::scalar(u_val);
 
         let mut theta = Vec::with_capacity(n_steps);
         let mut theta_dot = Vec::with_capacity(n_steps);
@@ -84,29 +75,16 @@ fn generate_state_space_correctness_data() -> Value {
 
 macro_rules! bench_dim {
     ($N:expr) => {{
-        let mut a = Mat::<$N, $N>::zero();
-        let mut b = Mat::<$N, 1>::zero();
-        let mut c = Mat::<1, $N>::zero();
-        let d = Mat::<1, 1>::zero();
-
-        for i in 0..$N {
-            for j in 0..$N {
-                let val = if i == j {
-                    -0.5 * ((i + 1) as f64)
-                } else {
-                    0.1 / ((i + j + 1) as f64)
-                };
-                if let Some(target) = a.get_mut(i, j) {
-                    *target = val;
-                }
+        let a = Owned::<f64, $N, $N>::from_fn(|i, j| {
+            if i == j {
+                -0.5 * ((i + 1) as f64)
+            } else {
+                0.1 / ((i + j + 1) as f64)
             }
-            if let Some(target) = b.get_mut(i, 0) {
-                *target = 1.0 / ((i + 1) as f64);
-            }
-            if let Some(target) = c.get_mut(0, i) {
-                *target = 1.0 / ((i + 1) as f64);
-            }
-        }
+        });
+        let b = Owned::<f64, $N, 1>::from_fn(|i, _| 1.0 / ((i + 1) as f64));
+        let c = Owned::<f64, 1, $N>::from_fn(|_, j| 1.0 / ((j + 1) as f64));
+        let d = Owned::<f64, 1, 1>::scalar(0.0);
 
         let sys_c = ArrayStateSpace::continuous(a, b, c, d);
 
@@ -135,12 +113,10 @@ fn benchmark_discretization_scaling() -> ScalingResult {
     let (zoh64, ctrb64, obsv64) = bench_dim!(64);
     let (zoh128, ctrb128, obsv128) = bench_dim!(128);
 
-    let state_size = vec![2, 4, 8, 16, 32, 64, 128];
-    let zoh_time_ns = vec![zoh2, zoh4, zoh8, zoh16, zoh32, zoh64, zoh128];
-    let ctrb_time_ns =
-        vec![ctrb2, ctrb4, ctrb8, ctrb16, ctrb32, ctrb64, ctrb128];
-    let obsv_time_ns =
-        vec![obsv2, obsv4, obsv8, obsv16, obsv32, obsv64, obsv128];
+    let state_size = [2, 4, 8, 16, 32, 64, 128];
+    let zoh_time_ns = [zoh2, zoh4, zoh8, zoh16, zoh32, zoh64, zoh128];
+    let ctrb_time_ns = [ctrb2, ctrb4, ctrb8, ctrb16, ctrb32, ctrb64, ctrb128];
+    let obsv_time_ns = [obsv2, obsv4, obsv8, obsv16, obsv32, obsv64, obsv128];
 
     let scaling_json = json!({
         "scaling": {
@@ -155,8 +131,8 @@ fn benchmark_discretization_scaling() -> ScalingResult {
 fn benchmark_step_response_jitter() -> Value {
     let sim = PendulumSim::new(2.0, 0.8, 0.05);
 
-    let mut x_k = Mat::<2, 1>::zero();
-    let u_k = Mat::<1, 1>::from_fn(|_, _| 1.0);
+    let mut x_k = Owned::<f64, 2, 1>::zero();
+    let u_k = Owned::<f64, 1, 1>::scalar(1.0);
 
     let iterations = 100;
     let mut step_compute_times_ns = Vec::with_capacity(iterations);
@@ -187,11 +163,11 @@ fn benchmark_step_response_jitter() -> Value {
 }
 
 fn track_control_loop_allocations(
-    ctrb_time_ns: Vec<f64>,
-    obsv_time_ns: Vec<f64>,
+    ctrb_time_ns: [f64; 7],
+    obsv_time_ns: [f64; 7],
 ) -> Value {
     json!({
-        "state_size": vec![2, 4, 8, 16, 32, 64, 128],
+        "state_size": [2, 4, 8, 16, 32, 64, 128],
         "controllability_time_ns": ctrb_time_ns,
         "observability_time_ns": obsv_time_ns
     })
@@ -201,15 +177,14 @@ fn run_validation_default() -> Value {
     let q1 = generate_state_space_correctness_data();
     let (q2, ctrb_times, obsv_times) = benchmark_discretization_scaling();
     let q3 = benchmark_step_response_jitter();
-    let q4 =
-        track_control_loop_allocations(ctrb_times.clone(), obsv_times.clone());
+    let q4 = track_control_loop_allocations(ctrb_times, obsv_times);
 
     json!({
         "phase_portrait": q1["phase_portrait"],
         "scaling": q2["scaling"],
         "jitter": q3["jitter"],
         "control_loop": q4,
-        "state_size": vec![2, 4, 8, 16, 32, 64, 128],
+        "state_size": [2, 4, 8, 16, 32, 64, 128],
         "controllability_time_ns": ctrb_times,
         "observability_time_ns": obsv_times
     })

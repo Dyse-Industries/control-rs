@@ -27,6 +27,8 @@ Primary usage scenarios:
 - **Canonical State-Space Realization**: Converting rational transfer functions
   into controllable, observable, or modal canonical state-space realizations for
   time-domain simulation and state estimation.
+- **Pole & Zero Extraction**: Computing exact complex poles and zeros across
+  arbitrary system dimensions by invoking `Polynomial::roots()`.
 
 ---
 
@@ -54,6 +56,10 @@ Primary usage scenarios:
 - **FR-5 — State-Space Canonical Realization**: Converts transfer functions into
   equivalent controllable canonical or observable canonical `StateSpace` models
   with state dimension equal to the denominator degree $n = D - 1$.
+- **FR-6 — Generic Pole and Zero Extraction**: Computes the complex poles
+  ($p \in \mathbb{C}^D$) and zeros ($z \in \mathbb{C}^N$) returning fixed-size worst-case buffers
+  `[Complex<T>; D]` and `[Complex<T>; N]` by delegating directly
+  to `Polynomial::roots()` on the underlying denominator and numerator polynomial models.
 
 #### 2.2. Non-Functional Requirements
 
@@ -452,18 +458,84 @@ realization is future work (§8).
 - Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
   deterministic real-time performance.
 
+#### 4.11 Pole and Zero Extraction
+
+Computes exact complex poles and zeros by delegating directly to
+[`Polynomial::roots`](../numerical-models/polynomial-design.md) on the
+denominator and numerator storage memory:
+
+```rust
+impl<
+    T: Float + Copy,
+    const N: usize,
+    const D: usize,
+    Sn: DenseStorage<T, R = Const<N>, C = Const<1>>,
+    Sd: DenseStorage<T, R = Const<D>, C = Const<1>>,
+> TransferFunction<T, Const<N>, Const<D>, Sn, Sd>
+where
+    Const<N>: Dim,
+    Const<D>: Dim,
+{
+    /// Computes the complex poles of the transfer function for denominator capacity D.
+    pub fn poles(&self) -> Result<[Complex<T>; D], RootError> {
+        let den_storage: StorageView<'_, T, Const<D>, Const<1>> = unsafe {
+            StorageView::new_with_strides_unchecked(
+                self.den_storage.as_ptr(),
+                self.den_storage.r_stride(),
+                self.den_storage.c_stride(),
+            )
+        };
+        let den_poly: Polynomial<T, Const<D>, StorageView<'_, T, Const<D>, Const<1>>> =
+            Polynomial::from_storage(den_storage);
+        den_poly.roots()
+    }
+
+    /// Computes the complex zeros of the transfer function for numerator capacity N.
+    pub fn zeros(&self) -> Result<[Complex<T>; N], RootError> {
+        let num_storage: StorageView<'_, T, Const<N>, Const<1>> = unsafe {
+            StorageView::new_with_strides_unchecked(
+                self.num_storage.as_ptr(),
+                self.num_storage.r_stride(),
+                self.num_storage.c_stride(),
+            )
+        };
+        let num_poly: Polynomial<T, Const<N>, StorageView<'_, T, Const<N>, Const<1>>> =
+            Polynomial::from_storage(num_storage);
+        num_poly.roots()
+    }
+}
+```
+
+---
+
+### 5. Implementation Alternatives
+
+#### 5.1 Evaluated Alternatives
+
+- **Transfer-Function-Direct Partial Fraction Expansion vs State-Space Mediation for ZOH**:
+  Direct partial-fraction ZOH requires finding exact complex poles and calculating residue coefficients. Delegating pole finding directly to `Polynomial::roots()` enables closed-form $\mathcal{O}(1)$ pole extraction for second-order systems ($D=3$) while preserving companion-form state-space conversion for higher degrees ($D > 3$).
+
+---
+
+### 6. Verification and Validation
+
+#### 6.1. Principles
+
+The verification approach aligns with [`vv-standards.md`](../vv-standards.md).
+Validation compares against NumPy / SciPy / harold reference models.
+
 #### 6.2. Methods
 
 | Method                    | Mechanism                                                                                                                                                    | Requirements discharged  |
 |:--------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------|
 | Compile-time shape check  | Type-level `Dim` sizing and `compile_fail` doctests                                                                                                          | FR-1, C-1, C-3, C-4      |
-| Requirements-based test   | `#[test]` unit tests over physical filter benchmarks and singular cases                                                                                      | FR-2, FR-3, FR-4, FR-5   |
+| Requirements-based test   | `#[test]` unit tests over physical filter benchmarks and singular cases                                                                                      | FR-2, FR-3, FR-4, FR-5, FR-6 |
 | Property-based test       | `proptest` suites verifying transfer function commutativity and feedback identities                                                                          | FR-3, FR-4               |
 | Doctest                   | Runnable rustdoc examples                                                                                                                                    | FR-2                     |
-| Back-to-back comparison   | `examples/numerical-models-validation/python3/transfer_function_validation.py` vs `src/transfer_function_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-4, FR-5         |
+| Back-to-back comparison   | `examples/numerical-models-validation/python3/transfer_function_validation.py` vs `src/transfer_function_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-4, FR-5, FR-6   |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                                                                       | NFR-1, NFR-2, C-2, C-4   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                                                                                                                    | NFR-1                    |
-| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                                                                                      | FR-1..FR-5, NFR-1..NFR-2 |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                                                                                      | FR-1..FR-6, NFR-1..NFR-2 |
 
 #### 6.3. Acceptance Criteria
 
@@ -474,6 +546,8 @@ realization is future work (§8).
 | Series multiplication                         | Discrete polynomial convolution                            | Absolute error | $\|(N_1 N_2)_k - \sum a_i b_{k-i}\|_\infty \le (N_1+N_2)\epsilon$                                                                     | Discrete convolution arithmetic bound (Oppenheim & Schafer, 2009) |
 | Tustin discretization frequency mapping       | $\omega_d = \frac{2}{T_s} \arctan(\frac{\omega_a T_s}{2})$ | Relative error | $\le 5\epsilon$                                                                                                                       | Bilinear mapping identity (Franklin et al., 1998)                 |
 | Canonical state-space eigenvalue equivalence  | Roots of denominator polynomial $D(s)$                     | Absolute error | $\|\lambda_i(A_c) - p_i\| \le \mathcal{O}(\epsilon \kappa(D))$                                                                        | Companion matrix spectral equivalence (Kenney & Laub, 1988)       |
+| 2nd-order transfer function poles and zeros   | Analytic quadratic roots via `Polynomial::roots`           | Absolute error | $\|p_i - \hat{p}_i\|_\infty \le \epsilon \omega_n$                                                                                    | Muller/Higham stabilized quadratic formulation                    |
+| Higher-order poles and zeros                  | Companion-form Durand-Kerner roots via `Polynomial::roots` | Absolute error | $\|p_i - \hat{p}_i\|_\infty \le 10^{-10}$                                                                                             | Multi-tier generic polynomial root solver                         |
 | Zero leading denominator validation           | Denominator with zero leading coefficient                  | Exact equality | `Err(TransferFunctionError::ZeroLeadingDenominator)`                                                                                  | Precondition failure contract                                     |
 | Strictly improper transfer function rejection | System with $N > D$ in strictly proper contexts            | Exact equality | `Err(TransferFunctionError::ImproperSystem)`                                                                                          | Properness contract                                               |
 | Zero-allocation execution                     | Host allocator interception                                | Exact equality | 0 heap allocations                                                                                                                    | NFR-1 `#![no_std]` invariant                                      |
@@ -487,6 +561,7 @@ realization is future work (§8).
 | FR-3 — Rational System Algebra                        | Property-based test, Back-to-back comparison     | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_series`                                                    |
 | FR-4 — System Discretization                          | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_tustin_prewarped`                                                            |
 | FR-5 — State-Space Canonical Realization              | Requirements-based test                          | `src/transfer_function/tests/transfer_function_tests.rs::test_controllable_canonical_form`, `test_ccf_eigenvalues_match_denominator_roots` |
+| FR-6 — Generic Pole and Zero Extraction               | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_poles_and_zeros`                                            |
 
 | NFR-1 — Deterministic Fixed-Memory Execution | Resource usage evaluation |
 `#![no_std]` host allocator audit |
@@ -645,3 +720,5 @@ coefficient error assertion |
 | 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-4 `test_tustin_prewarped` and FR-5 CCF eigenvalue match live in `transfer_function_test_suite`.                                 |
 | 2.0      | August 30, 2026 | @MitchellDScott | Reverted Butterworth constructor from `transfer_function` module; deferred filter synthesis to future `filters/` crate module.          |
 | 2.1      | August 31, 2026 | @MitchellDScott | Added harold multi-source frequency response / discretization cross-validation oracle and updated validation crate paths.                |
+| 2.2      | September 1, 2026 | @MitchellDScott | Added FR-6: Generic pole and zero extraction `poles<const ORDER>()` and `zeros<const DEG>()` delegating to `Polynomial::roots()`.        |
+| 2.3      | September 1, 2026 | @MitchellDScott | Updated `poles()` and `zeros()` to return worst-case buffers `[Complex<T>; D]` and `[Complex<T>; N]` directly from type bounds without generic parameters. |

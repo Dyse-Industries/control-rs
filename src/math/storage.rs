@@ -907,6 +907,56 @@ impl<T, const R: usize, const C: usize> ArrayStorage<T, R, C> {
     {
         Self::from_array([[T::ZERO; R]; C])
     }
+
+    /// Copies the stored data into a column-major nested array.
+    ///
+    /// This method returns a copy of the underlying `[[T; R]; C]` buffer, where the outer
+    /// array index represents the column and the inner array index represents the row.
+    ///
+    /// # Returns
+    /// * `ColMajorArray<T, R, C>` - The column-major `[[T; R]; C]` nested array.
+    ///
+    ///
+    ///
+    ///
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::math::storage::ArrayStorage;
+    ///
+    /// let storage = ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [3.0, 4.0]]);
+    /// assert_eq!(storage.to_array(), [[1.0, 2.0], [3.0, 4.0]]);
+    /// ```
+    #[must_use]
+    pub const fn to_array(&self) -> ColMajorArray<T, R, C>
+    where
+        T: Copy,
+    {
+        self.data
+    }
+
+    /// Returns a shared reference to the underlying column-major nested array.
+    ///
+    /// This method provides zero-copy read access to the internal `[[T; R]; C]` buffer.
+    ///
+    /// # Returns
+    /// * `&ColMajorArray<T, R, C>` - A shared reference to the column-major buffer.
+    ///
+    ///
+    ///
+    ///
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::math::storage::ArrayStorage;
+    ///
+    /// let storage = ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [3.0, 4.0]]);
+    /// assert_eq!(storage.as_array(), &[[1.0, 2.0], [3.0, 4.0]]);
+    /// ```
+    #[must_use]
+    pub const fn as_array(&self) -> &ColMajorArray<T, R, C> {
+        &self.data
+    }
 }
 
 impl<T, const N: usize> ArrayStorage<T, N, 1> {
