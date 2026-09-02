@@ -916,10 +916,6 @@ impl<T, const R: usize, const C: usize> ArrayStorage<T, R, C> {
     /// # Returns
     /// * `ColMajorArray<T, R, C>` - The column-major `[[T; R]; C]` nested array.
     ///
-    ///
-    ///
-    ///
-    ///
     /// # Example
     /// ```
     /// use control_rs::math::storage::ArrayStorage;
@@ -941,10 +937,6 @@ impl<T, const R: usize, const C: usize> ArrayStorage<T, R, C> {
     ///
     /// # Returns
     /// * `&ColMajorArray<T, R, C>` - A shared reference to the column-major buffer.
-    ///
-    ///
-    ///
-    ///
     ///
     /// # Example
     /// ```

@@ -185,10 +185,6 @@ where
     /// # Returns
     /// * `[T; N]` - The coefficient array in ascending degree order.
     ///
-    ///
-    ///
-    ///
-    ///
     /// # Example
     /// ```
     /// use control_rs::polynomial::ArrayPolynomial;
@@ -226,10 +222,6 @@ where
     ///
     /// # Returns
     /// * `Self` - The expanded monic polynomial with coefficients in ascending power order.
-    ///
-    ///
-    ///
-    ///
     ///
     /// # Example
     /// ```

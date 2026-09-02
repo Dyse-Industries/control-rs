@@ -171,10 +171,6 @@ where
     /// # Returns
     /// * `Self` - The constructed matrix backed by contiguous stack array storage.
     ///
-    ///
-    ///
-    ///
-    ///
     /// # Example
     /// ```
     /// use control_rs::matrix::Owned;
@@ -209,10 +205,6 @@ where
     /// # Returns
     /// * `[[T; R]; C]` - The matrix elements organized in column-major order.
     ///
-    ///
-    ///
-    ///
-    ///
     /// # Example
     /// ```
     /// use control_rs::matrix::Owned;
@@ -232,10 +224,6 @@ where
     ///
     /// # Returns
     /// * `[[T; C]; R]` - The matrix elements organized in row-major order.
-    ///
-    ///
-    ///
-    ///
     ///
     /// # Example
     /// ```
@@ -277,10 +265,6 @@ where
     /// # Returns
     /// * `Self` - An $N \times 1$ column vector matrix.
     ///
-    ///
-    ///
-    ///
-    ///
     /// # Example
     /// ```
     /// use control_rs::matrix::Owned;
@@ -311,10 +295,6 @@ where
     /// # Returns
     /// * `Self` - A $1 \times N$ row vector matrix.
     ///
-    ///
-    ///
-    ///
-    ///
     /// # Example
     /// ```
     /// use control_rs::matrix::Owned;
@@ -340,10 +320,6 @@ impl<T: Copy> Owned<T, 1, 1> {
     ///
     /// # Returns
     /// * `Self` - A $1 \times 1$ matrix wrapping `val`.
-    ///
-    ///
-    ///
-    ///
     ///
     /// # Example
     /// ```

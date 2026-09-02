@@ -493,10 +493,6 @@ where
     /// # Returns
     /// * `[[T; R]; C]` - The tensor data in column-major nested arrays.
     ///
-    ///
-    ///
-    ///
-    ///
     /// # Example
     /// ```
     /// use control_rs::tensor::ArrayTensor;
@@ -518,10 +514,6 @@ where
     ///
     /// # Returns
     /// * `[[T; C]; R]` - The tensor data in row-major nested arrays.
-    ///
-    ///
-    ///
-    ///
     ///
     /// # Example
     /// ```
