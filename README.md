@@ -6,39 +6,6 @@ systems, robotics, and bare-metal embedded flight computers.
 
 ---
 
-## Features
-
-- **Static Math Types & Trait Hierarchy** — Type-level dimension arithmetic
-  ([`Dim`], [`Const<N>`] via canonical binary type trees), zero-cost algebraic
-  traits ([`Float`], [`Scalar`], [`Radical`], [`Conjugate`], etc.), float
-  underflow/precision-loss detection, fixed-point arithmetic with IEEE 754
-  convergent rounding ([`Fixed`], [`Quantized`]), and complex numbers
-  ([`Complex`]).
-- **Decoupled Storage Subsystem** — Unified storage abstractions across
-  stack-allocated owned buffers ([`ArrayStorage`], [`RowArrayStorage`]),
-  zero-copy strided views ([`StorageView`], [`StorageViewMut`],
-  [`StaticStorageView`]), packed triangular/symmetric layouts
-  ([`TriangularPackedStorage`], [`SymmetricPackedStorage`],
-  [`HermitianPackedStorage`]), and sparse formats ([`ArrayCsrStorage`],
-  [`ArrayCscStorage`], [`ArrayCooStorage`]) in pure `#![no_std]`.
-- **Hardware-Accelerable Subprograms** — Standardized trait hierarchy covering
-  BLAS Level 1/2/3, Packed BLAS, Sparse BLAS, and LAPACK direct solvers
-  ([`DefaultBlas`]), ready for zero-cost hardware acceleration (ARM NEON,
-  CMSIS-DSP, RISC-V NMSIS-DSP, AVX2/FMA, Apple Accelerate).
-- **Core Numerical Models** — Zero-alloc [`Matrix`], [`Polynomial`],
-  [`Tensor`], [`TransferFunction`], and [`StateSpace`] with static dimension
-  checking, zero-copy submatrix/slice views, and unified storage backends.
-- **Robust Algorithms & Numerical Stability** — Muller/Higham stabilized
-  quadratic root solving, Aberth–Ehrlich polynomial root finding, Padé [6/6]
-  scaling-and-squaring matrix exponential ([`expm`]), invariant-enforcing
-  triangular/symmetric wrappers, and Van Loan exact ZOH series integration.
-- **Cross-Language Validation & ETS** — Comprehensive 4-quadrant verification
-  suite cross-checking 100% agreement against Python oracles (NumPy, SciPy,
-  JAX, Harold, and 256-bit ball arithmetic via Python-Flint), plus bare-metal
-  runners on ARM Cortex-M and RISC-V via [`control-rs-ets`](control-rs-ets).
-
----
-
 ## Numerical Models
 
 `control-rs` is built around five storage-backed numerical primitives:
