@@ -24,7 +24,7 @@ fmt-check = ["fmt", "--all", "--", "--check"]
 fmt-all = ["fmt", "--all"]
 
 # Clippy Helper
-lint = ["clippy", "--workspace", "--lib", "--bins", "--tests", "--examples", "--benches", ]
+lint = ["clippy", "--workspace", "--lib", "--bins", "--tests", "--examples", "--benches"]
 clippy-json = ["lint", "--message-format=json"]
 clippy-ci = ["clippy-json", "--", "-D", "warnings"]
 

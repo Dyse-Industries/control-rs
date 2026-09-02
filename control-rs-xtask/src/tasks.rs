@@ -580,6 +580,7 @@ pub fn run_clippy() -> (Result<(), usize>, String) {
             "--manifest-path",
             "examples/numerical-models-validation/Cargo.toml",
             "--message-format=json",
+            "--all-targets",
         ])
         .env("CARGO_TERM_COLOR", "never")
         .output()
