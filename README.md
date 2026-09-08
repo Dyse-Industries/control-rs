@@ -57,12 +57,12 @@ flowchart TB
 
     Math --> Models
     Models --> Tools
-    classDef core fill: #0f172a, stroke: #38bdf8, stroke-width: 2px, color: #f8fafc
-    classDef external fill: #312e81, stroke: #a78bfa, stroke-width: 2px, color: #f5f3ff
-    classDef tools fill: #1e1b4b, stroke: #818cf8, stroke-width: 2px, color: #e0e7ff
-    style Models fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
-    style Math fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
-    style Tools fill: transparent, stroke: #475569, stroke-width: 1px, stroke-dasharray: 3 3
+    classDef core fill: #0d1b2a, stroke: #778da9, stroke-width: 2px, color: #e0e1dd
+    classDef external fill: #1b263b, stroke: #8d99ae, stroke-width: 2px, color: #edf2f4
+    classDef tools fill: #415a77, stroke: #a3b1c6, stroke-width: 2px, color: #ffffff
+    style Models fill: transparent, stroke: #778da9, stroke-width: 1px, stroke-dasharray: 3 3
+    style Math fill: transparent, stroke: #778da9, stroke-width: 1px, stroke-dasharray: 3 3
+    style Tools fill: transparent, stroke: #778da9, stroke-width: 1px, stroke-dasharray: 3 3
 ```
 
 ---
