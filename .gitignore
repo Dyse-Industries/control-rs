@@ -40,7 +40,10 @@ tarpaulin-report.*
 
 **/.agent
 **/.claude
-**/.cursor
+**/.cursor/*
+# Track the Cloud Agent development-environment configuration.
+!.cursor/environment.json
+!.cursor/install.sh
 
 **/CLAUDE.md
 
