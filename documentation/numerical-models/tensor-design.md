@@ -1,7 +1,7 @@
 # Tensor Type & Low-Cost Inference (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-September_15,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -89,7 +89,7 @@ network inference with lightweight activation functions.
 
 ---
 
-### 4. Core Architecture
+### 4. Architecture
 
 #### 4.1. Generics Foundation & Sizing
 
@@ -171,9 +171,18 @@ rewraps the slice as a `StorageView` and calls `Gemm`
 
 - `zero() -> ArrayTensor<T, R, C>` (`T: Zero + Copy`): all-zero rank-2 stack
   tensor.
-- `from_raw(data: [[T; R]; C]) -> ArrayTensor<T, R, C>`:
+- `from_cols(data: [[T; R]; C]) -> ArrayTensor<T, R, C>`:
   direct `const fn` initialization from `Array2`'s nested array, the entry
   point for ROM-resident constant tensors.
+- `from_rows(data: [[T; C]; R]) -> ArrayTensor<T, R, C>`: the same tensor
+  written row-major, transposed in a `const` loop. `to_cols` and `to_rows`
+  are the inverses. Names match `matrix-design.md` §4.4, so one rule covers
+  both types.
+- `from_array(data: [T; TOTAL]) -> ArrayTensor3D<T, D0, D1, D2, TOTAL>` and
+  the rank-4 counterpart: flat-buffer initialization with `TOTAL` checked
+  against $\prod_k D_k$ in a `const` block, so a mismatched capacity is a
+  compile error rather than a coordinate that silently misreads. The flat
+  index of $(i_0, \dots)$ is $\sum_k i_k \prod_{m<k} D_m$.
 - `from_fn<F>(f: F) -> ArrayTensor<T, R, C>` (`F: FnMut(&[usize]) -> T`):
   coordinate-mapped construction.
 - `from_storage(storage: B) -> Tensor<T, Layout, B>`: wraps any custom
@@ -427,7 +436,7 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 
 ### 6. Verification & Validation
 
-#### 6.1. Objectives
+#### 6.1 Approach
 
 - Demonstrate compile-time verification of tensor rank, axis extents, and
   contraction index bounds.
@@ -442,20 +451,26 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 - Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
   deterministic real-time latency.
 
-#### 6.2. Methods
+| Method                    | Mechanism                                                                                                                                                               |
+|:--------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Compile-time shape check  | Type-level `Dim` rank assertions, `compile_fail` doctests                                                                                                               |
+| Inspection                | Design inspection                                                                                                                       |
+| Requirements-based test   | `#[test]` unit tests over grid boundaries, activations, and conversions                                                                                                 |
+| Property-based test       | `proptest` suites verifying axis permutation round-trips and tensor contraction identities                                                                              |
+| Doctest                   | Runnable rustdoc examples                                                                                                                                               |
+| Back-to-back comparison   | `control-rs-validation/python3/tensor_oracle.py` vs `control-rs-validation/src/tensor.rs` HDF5; [`numerical-models-design.md`](numerical-models-design.md) §6.2 |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                                                                                  |
+| On-target execution       | ETS suites under QEMU and Teensy hardware                                                                                                                               |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                                                                                                 |
 
-| Method                    | Mechanism                                                                                                                                                               | Requirements discharged  |
-|:--------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------|
-| Compile-time shape check  | Type-level `Dim` rank assertions, `compile_fail` doctests                                                                                                               | FR-1, C-1, C-3           |
-| Requirements-based test   | `#[test]` unit tests over grid boundaries, activations, and conversions                                                                                                 | FR-2, FR-4, FR-5         |
-| Property-based test       | `proptest` suites verifying axis permutation round-trips and tensor contraction identities                                                                              | FR-3                     |
-| Doctest                   | Runnable rustdoc examples                                                                                                                                               | FR-2, FR-4               |
-| Back-to-back comparison   | `examples/numerical-models-validation/python3/tensor_validation.py` vs `src/tensor_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-3, FR-4               |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                                                                                  | NFR-1, NFR-2, C-2, C-3   |
-| On-target execution       | ETS suites under QEMU and Teensy hardware                                                                                                                               | NFR-2                    |
-| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                                                                                                 | FR-1..FR-5, NFR-1..NFR-2 |
+- **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage reported
+  via `cargo coverage`.
+- **Excluded**: Target-specific SIMD micro-kernels and debug formatting
+  routines (`core::fmt::Debug`).
 
-#### 6.3. Acceptance Criteria
+- **Manifold interpolation, contraction, Q7 bytes, table activations, and TFLite dequant (fail-closed host gate)**: keys `nmv.tensor.manifold.interp_mesh`, `nmv.tensor.contraction.mat_c`, `nmv.tensor.boundaries.q_raw`, `nmv.tensor.boundaries.act_outputs`, and `nmv.tensor.boundaries.tflite_dequant`. SciPy `tanh` and TFLite dequant share the `act_outputs` signal stem under different variant suffixes (`.scipy` vs `.tflite`). The `examples/*.rs` cargo examples are pedagogical (not B2B). `benches/numerical_models.rs` measures kernel latency with criterion and is not a numerical key.
+
+#### 6.2 Acceptance
 
 | Claim                              | Oracle                                       | Measure                     | Bound                                                                                                  | Justification                                                              |
 |:-----------------------------------|:---------------------------------------------|:----------------------------|:-------------------------------------------------------------------------------------------------------|:---------------------------------------------------------------------------|
@@ -467,37 +482,13 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | Activation lookup residual         | Exact nonlinear activation ($\tanh, \sigma$) | Absolute error              | $\|\hat{a}(x) - a(x)\|_\infty \le 2^{-7}$ for a 256-breakpoint Q7 table over $[-8, 8]$                 | Piecewise linear activation table approximation (Lai et al., 2018)         |
 | Zero-allocation execution          | Host memory allocator interception           | Exact equality              | 0 heap allocations                                                                                     | NFR-1 `#![no_std]` invariant                                               |
 
-#### 6.4. Traceability
+Cross-language host bounds are parent keys `nmv.tensor.manifold.interp_mesh`,
+`nmv.tensor.contraction.mat_c`, `nmv.tensor.boundaries.q_raw`,
+`nmv.tensor.boundaries.act_outputs`, and `nmv.tensor.boundaries.tflite_dequant`
+in [`numerical-models-design.md`](numerical-models-design.md) §6.2. This
+module does not restate those numeric values.
 
-| Requirement                                  | Method                                           | Artifact                                                             |
-|:---------------------------------------------|:-------------------------------------------------|:---------------------------------------------------------------------|
-| FR-1 — Multidimensional Array Representation | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/tensor/mod.rs`               |
-| FR-2 — Multilinear Grid Interpolation        | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_tensor_grid_interpolation`   |
-| FR-3 — Tensor Contraction & Matrix Slicing   | Property-based test, Back-to-back comparison     | `src/tensor/tests/tensor_tests.rs::test_tensor_contract`             |
-| FR-4 — Quantized Fixed-Point Inference       | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_quantized_scalar_operations` |
-| FR-5 — Nonlinear Activation Functions        | Requirements-based test                          | `src/tensor/tests/tensor_tests.rs::test_activations`                 |
-| NFR-1 — Bounded Stack Allocation             | Resource usage evaluation                        | `size_of` assertions; element cap $S \le 1024$                       |
-| NFR-2 — Real-Time Inference Latency          | On-target execution                              | ETS suite `tensor_test_suite`                                        |
-| C-1 — Out of Scope Capabilities              | Inspection                                       | Training/ONNX parsers absent from `src/tensor/`                      |
-| C-2 — Static Quantization Parameter Encoding | Compile-time shape check                         | `Quantized<Repr, SHIFT>` const generic                               |
-| C-3 — `#![no_std]` / Zero Heap Allocation    | Resource usage evaluation                        | Compilation under `#![no_std]` target triples                        |
-
-#### 6.5. Coverage
-
-- **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage reported
-  via `cargo coverage`.
-- **Excluded**: Target-specific SIMD micro-kernels and debug formatting
-  routines (`core::fmt::Debug`).
-
-#### 6.6. Validation
-
-- **Multilinear Grid Interpolation & Quantized Activation**: Verification of 2D
-  table multilinear continuous interpolation (3×3 affine vertices and a
-  $16\times 16$ curved table on a 64-point cut) and fixed-point
-  `Quantized<i8, 7>` arithmetic with `Relu` on dyadic and non-dyadic inputs in
-  `examples/numerical-models-validation/src/tensor_validation.rs`.
-
-#### 6.7. Not Verified
+#### 6.3 Limits
 
 - Dynamic arbitrary-rank tensor contractions with runtime-determined dimensions
   are excluded.
@@ -506,6 +497,11 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 - Grids larger than NFR-1 $S\le 1024$ are not in the example crate; host
   interpolation uses $16\times 16$
   ([`numerical-models-design.md`](numerical-models-design.md) §6.6).
+- NFR-2 (Real-Time Inference Latency): On-target ETS execution under QEMU (`thumbv7em`, `riscv32imac`, `riscv64gc`) and
+  Teensy hardware (`thumbv7em`) has not yet run in firmware binaries;
+  `#[ets_suite]` modules exist in the source tree, but target firmware builds
+  only link `math` and `matrix` test suites to respect flash-footprint limits on
+  embedded targets.
 
 ---
 
@@ -548,11 +544,32 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | **Phase 2: Element Ops & Contraction**       | Operator overloads, `contract_into`/`contract_into_dynamic`, `permute`, `as_view`/`slice_inplace`.                                                                                                              | 2.5 Days         |
 | **Phase 3: Grid Interpolation & Activation** | Multilinear `interpolate`, `Activation` trait, `Relu`, `TableActivation`.                                                                                                                                       | 2.5 Days         |
 | **Phase 4: Quantized Scalar Type**           | `Quantized<Repr, SHIFT>` with full `Zero`/`One`/`Scalar` arithmetic `num_traits` impls (correct rounding/saturation semantics), quantize/dequantize, integration across existing generic `T` paths in `Tensor`. | 3.5 Days         |
-| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial` per [`vv-standards.md`](../vv-standards.md).                 | 3.0 Days         |
+| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial`.                 | 3.0 Days         |
 
 ---
 
-### 10. References
+### 10. Revision History
+
+| Revision | Date              | Author          | Description                                                                                                                    |
+|:---------|:------------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 26, 2026     | @MitchellDScott | Initial draft: N-dimensional storage layouts, indexing arithmetic, and zero-allocation views.                                  |
+| 1.1      | August 2, 2026    | @MitchellDScott | Grid interpolation & quantization: added multilinear lookup tables, `Activation` trait, and fixed-point quantized execution.   |
+| 1.2      | August 24, 2026   | @MitchellDScott | Rank-neutral buffer projection: integrated `FlatBuffer`/`FlatBufferMut` projection over `ContiguousStorage` backends.          |
+| 1.3      | August 25, 2026   | @MitchellDScott | V&V standardization: aligned test oracles with multilinear interpolation tolerances and fixed-point quantization error bounds. |
+| 1.4      | August 26, 2026   | @MitchellDScott | Storage view retarget: updated references to `StorageView` and `DenseStorage` traits.                                          |
+| 1.5      | August 26, 2026   | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                   |
+| 1.6      | August 28, 2026   | @MitchellDScott | Host-scale V&V: large-grid interpolation; umbrella Instant timing. NFR-1 cap unchanged.                                        |
+| 1.7      | August 28, 2026   | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); MCU element cap unchanged.                                              |
+| 1.8      | August 28, 2026   | @MitchellDScott | Example crate: $16\times 16$ curved-grid interpolation and non-dyadic Q7. NFR-1 cap unchanged.                                 |
+| 1.9      | August 31, 2026   | @MitchellDScott | Updated numerical-models validation crate and script paths to `control-rs-validation/`.                         |
+| 1.10     | September 9, 2026 | @MitchellDScott | Structural hardening: added Inspection to §6.2, standardized reference ordering.                                               |
+| 1.11     | September 15, 2026 | @MitchellDScott | Retarget host validation paths to `control-rs-validation`; split host surfaces into validation/, examples/, and bench/. |
+| 1.12     | September 15, 2026 | @MitchellDScott | Coverage measurement discharges nothing; parent tolerance keys named in §6.3. |
+| 1.13     | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: dropped the §9 pointer; `design-template.md` §6 is the V&V contract. |
+
+---
+
+## References
 
 1. **Kolda, T. G., & Bader, B. W. (2009).** Tensor Decompositions and
    Applications. _SIAM Review_, 51(3), 455–500. — Tensor contraction and
@@ -590,20 +607,3 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 11. **Hennessy, J. L., & Patterson, D. A. (2017).** _Computer Architecture: A
     Quantitative Approach_ (6th ed.). Morgan Kaufmann. — Cache and
     memory-hierarchy modeling for stride-based N-D indexing.
-
----
-
-### 11. Revision History
-
-| Revision | Date            | Author          | Description                                                                                                                    |
-|:---------|:----------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 26, 2026   | @MitchellDScott | Initial draft: N-dimensional storage layouts, indexing arithmetic, and zero-allocation views.                                  |
-| 1.1      | August 2, 2026  | @MitchellDScott | Grid interpolation & quantization: added multilinear lookup tables, `Activation` trait, and fixed-point quantized execution.   |
-| 1.2      | August 24, 2026 | @MitchellDScott | Rank-neutral buffer projection: integrated `FlatBuffer`/`FlatBufferMut` projection over `ContiguousStorage` backends.          |
-| 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with multilinear interpolation tolerances and fixed-point quantization error bounds. |
-| 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView` and `DenseStorage` traits.                                          |
-| 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                   |
-| 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: large-grid interpolation; umbrella Instant timing. NFR-1 cap unchanged.                                        |
-| 1.7      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); MCU element cap unchanged.                                              |
-| 1.8      | August 28, 2026 | @MitchellDScott | Example crate: $16\times 16$ curved-grid interpolation and non-dyadic Q7. NFR-1 cap unchanged.                                 |
-| 1.9      | August 31, 2026 | @MitchellDScott | Updated numerical-models validation crate and script paths to `examples/numerical-models-validation/`.                         |

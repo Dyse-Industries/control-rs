@@ -1,7 +1,7 @@
 # Fixed-Point Scalar Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-September_10,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -12,8 +12,7 @@ The [`src/math/fixed_num.rs`](../../src/math/fixed_num.rs) module introduces the
 canonical fixed-point scalar type `Fixed<Repr, const SHIFT: usize>` (alongside
 the `Quantized<Repr, SHIFT>` type alias), representing numbers in binary
 Q-format where each value is $x = \text{raw} \cdot 2^{-\text{SHIFT}}$ with
-fixed quantization step $\Delta = 2^{-\text{SHIFT}}$ (ARM, 1996; Spiteri,
-2026a).
+fixed quantization step $\Delta = 2^{-\text{SHIFT}}$ [1]–[3].
 
 ---
 
@@ -21,47 +20,47 @@ fixed quantization step $\Delta = 2^{-\text{SHIFT}}$ (ARM, 1996; Spiteri,
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Compile-Time Scale**: The scale exponent `SHIFT` is a const generic
+- **FR-1 — Compile-time scale exponent**: The scale exponent `SHIFT` is a const generic
   type parameter validated at compile time via `Dim` trait bounds (`DimMax`). It
   is not stored at runtime.
-- **FR-2 — Binary Power-of-Two Scale**: A value with scale `SHIFT` is
+- **FR-2 — Binary power-of-two scale**: A value with scale `SHIFT` is
   `raw · 2^(−SHIFT)`. Adjacent values differ by a constant `Δ = 2^(−SHIFT)`.
   Decimal (power-of-ten) scales are out of scope.
-- **FR-3 — Total Saturating Arithmetic**: `Add`, `Sub`, `Mul` and `Neg` always
+- **FR-3 — Total saturating arithmetic**: `Add`, `Sub`, `Mul` and `Neg` always
   return a value of the type. Overflow saturates to min or max; it does not wrap
   or panic. Overflow detection is provided via the `math::ops` `Try*` traits,
   which return `Result`.
-- **FR-4 — Exact Product Rescale**: `Mul` forms the full product in a wider
+- **FR-4 — Exact product rescale**: `Mul` forms the full product in a wider
   integer, then rescales to `SHIFT`. A same-width multiply is not used.
-- **FR-5 — Scale Conversion**: `rescale` converts `Fixed<Repr, Q>` to
+- **FR-5 — Scale conversion**: `rescale` converts `Fixed<Repr, Q>` to
   `Fixed<Repr, R>` by a left shift of `R − Q` or a right shift of
   `Q − R`. It always returns a value of the destination type. Overflow
   saturates to min or max.
-- **FR-6 — Numeric Trait Participation**: The type implements `Zero`, `One`,
+- **FR-6 — Numeric trait participation**: The type implements `Zero`, `One`,
   `Conjugate` (identity), `Scalar` with `Real = Self`, and
   `SaturatingInteger`, subject to FR-7. It does not implement `Float`,
   `Radical`, `Exponential`, or `Trig`.
-- **FR-7 — Representable-Constant Gating**: A trait is implemented only when
+- **FR-7 — Representable-constant gating**: A trait is implemented only when
   its properties hold. Do not implement `One` when `1` is not representable:
   then `1 * n ≠ n`. `SaturatingInteger` also requires `2`.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Single-Word Footprint**: `Fixed<Repr, SHIFT>` has the size
+- **NFR-1 — Single-word footprint**: `Fixed<Repr, SHIFT>` has the size
   and alignment of `Repr`. `SHIFT` occupies no storage.
-- **NFR-2 — Zero-Cost Arithmetic**: Each operator compiles to the integer
+- **NFR-2 — Zero-cost arithmetic**: Each operator compiles to the integer
   instructions a hand-scaled `Repr` implementation would emit. There is no
   runtime scale bookkeeping and no call trampoline.
 
 #### 2.3 Constraints
 
-- **C-1 — `no_std`**: `core` only. No allocation. No `std`.
-- **C-2 — No New Dependencies**: No new crate dependencies. Width and scale
+- **C-1 — `#![no_std]` compatibility**: `core` only. No allocation. No `std`.
+- **C-2 — No new dependencies**: No new crate dependencies. Width and scale
   use const generics and `math::num_types` already in this crate.
-- **C-3 — Scale Range**: `SHIFT` is in `0..=BITS`, where `BITS` is the bit
+- **C-3 — Scale range**: `SHIFT` is in `0..=BITS`, where `BITS` is the bit
   width of `Repr`, enforced as a compile-time dimension bound (
   `Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>`).
-- **C-4 — No Bare Primitive Arithmetic**: No operator uses a bare primitive
+- **C-4 — No bare primitive arithmetic**: No operator uses a bare primitive
   `+`, `-`, or `*`. Arithmetic goes through `saturating_*` or `checked_*`.
 
 ---
@@ -246,13 +245,12 @@ representation bounds (FR-3):
 - $\text{Sub}(a, b) = \text{saturating\_sub}(a_{\text{raw}}, b_{\text{raw}})$
 - $\text{Neg}(a) = \text{saturating\_neg}(a_{\text{raw}})$
 
-Because operands share identical scaling factors, no rescaling is required (ARM,
-1996).
+Because operands share identical scaling factors, no rescaling is required [1].
 
 ##### Widening Multiplication
 
 Multiplying two numbers with scale factor $2^{-\text{SHIFT}}$ produces an
-intermediate product with scale $2^{-2\text{SHIFT}}$ (ARM, 1996). To prevent
+intermediate product with scale $2^{-2\text{SHIFT}}$ [1]. To prevent
 overflow and retain precision prior to rescaling, multiplication executes across
 four steps:
 
@@ -273,8 +271,7 @@ precision prior to convergent rounding and saturating narrowing._
 ##### Rescaling & Convergent Rounding
 
 Right-shifting the widened product discards fractional bits. Narrowing applies
-**round-ties-to-even** (convergent rounding) to eliminate systematic bias (IEEE,
-2019; AMD, 2024; MathWorks, 2026; Spiteri, 2026b). For fractional remainder
+**round-ties-to-even** (convergent rounding) to eliminate systematic bias [4]–[7]. For fractional remainder
 $\text{rem} = |x| \bmod 2^{\text{SHIFT}}$ and half-scale threshold
 $\text{half} = 2^{\text{SHIFT}-1}$, values with $\text{rem} > \text{half}$ round
 away from zero, values with $\text{rem} < \text{half}$ round toward zero.
@@ -334,7 +331,7 @@ and has no marker impl, so the numeric trait has no impl, rejecting the type at
 the call site
 at compile time. This matches the dimension system where `Const<N>: Dim` holds
 for supported dimensions
-(`num-types-design.md` §6.1 item 6, "Out-of-bounds immediate failure").
+(`num-types-design.md` §6.3, "Out-of-bounds dimension rejection").
 
 Inherent constants (`ZERO`, `DELTA`, `MIN`, `MAX`) and constructors are gated by
 base scale
@@ -385,9 +382,7 @@ before participating in generic linear algebra kernels.
 
 Named aliases correspond to standard Q notation where $Qm.n$ designates a format
 with $n$ fractional bits (and implicit sign bit in the Texas Instruments
-notation),
-yielding resolution $\Delta = 2^{-n}$ (Wikipedia, 2026; secondary,
-uncorroborated):
+notation), yielding resolution $\Delta = 2^{-n}$ [8]:
 
 ```rust
 pub type Q7 = Fixed<i8, 7>;
@@ -407,7 +402,7 @@ pub type UQ63 = Fixed<u64, 63>;
 |:---------------------------------------------------|:-------------------------------------------------------------------------------------------------------|
 | [`fixed_num.rs`](../../src/math/fixed_num.rs)      | New module: `Fixed<Repr, SHIFT>`, `Quantized` alias, `FixedRepr` sealed trait, operators, trait impls. |
 | [`mod.rs`](../../src/math/mod.rs)                  | Register `pub mod fixed_num;` and re-export `Fixed`, `Quantized`, and Q-aliases.                       |
-| [`tests/fixed_num_tests.rs`](../../src/math/tests) | Comprehensive unit, proptest, and `compile_fail` test suites.                                          |
+| [`src/math/tests/fixed_num_tests.rs`](../../src/math/tests/fixed_num_tests.rs) | Comprehensive unit, proptest, and `compile_fail` test suites.                                          |
 
 ---
 
@@ -415,9 +410,9 @@ pub type UQ63 = Fixed<u64, 63>;
 
 1. **Depend on the reference `fixed` crate**:
     - _Considered_: Taking `FixedI8`…`FixedI128`/`FixedU8`…`FixedU128`
-      directly (Spiteri, 2026a) instead of defining a type.
+      directly [3] instead of defining a type.
     - _Rejected_: It pulls `az` and `typenum` as normal dependencies
-      (Spiteri, 2026a), against C-2, and `typenum` duplicates the type-level
+      [3], against C-2, and `typenum` duplicates the type-level
       integer tower `num-types-design.md` already specifies. Its
       representation is also a family of twelve concrete types rather than
       one type generic over `Repr`, which does not compose with the crate's
@@ -428,7 +423,7 @@ pub type UQ63 = Fixed<u64, 63>;
     - _Considered_: Parameterizing on a type-level unsigned in the reference
       crate's style, where the fractional-bit count is a `typenum` type
       bounded by a per-width trait such as `LeEqU32`, "implemented for all
-      `Unsigned` integers ≤ 32" (Spiteri, 2026c).
+      `Unsigned` integers ≤ 32" [9].
     - _Rejected_: That bound encoding predates stable integer const generics
       and carries the scale itself as a type parameter, which appears on
       every signature that mentions the format. Const generics combined with
@@ -438,17 +433,17 @@ pub type UQ63 = Fixed<u64, 63>;
 3. **Same-Width Multiply**:
     - _Considered_: Multiplying `raw` values directly and shifting, with no
       widening step.
-    - _Rejected_: The product is in `2q`-form (ARM, 1996), so the exact
+    - _Rejected_: The product is in `2q`-form [1], so the exact
       result does not fit the representation and the high half is lost before
       the rescale can recover it. The alternative to widening is choosing `q`
       as the largest value for which intermediate calculations cannot
-      overflow (ARM, 1996), which pushes the analysis onto every call site
+      overflow [1], which pushes the analysis onto every call site
       and costs fractional precision everywhere to protect one product.
 4. **Runtime Scale Field**:
     - _Considered_: Storing the exponent beside the mantissa so one type
       covers every scale.
     - _Rejected_: An exponent held in a register and unknown at compile time
-      is the definition of a floating-point number (ARM, 1996). It also
+      is the definition of a floating-point number [1]. It also
       breaks NFR-1 and moves every scale check to runtime.
 5. **Type Naming (`Fixed` vs. `Quantized`)**:
     - _Considered_: Exclusive naming as `Quantized` (model quantization) versus
@@ -461,10 +456,10 @@ pub type UQ63 = Fixed<u64, 63>;
     - _Considered_: A power-of-ten scale, so authored decimal constants are
       exact.
     - _Rejected_: Binary fractions such as `1/2^4` are exactly representable
-      and decimal fractions such as `0.001 = 1/10^3` are not (Spiteri,
-      2026a); a power-of-ten scale inverts that, replacing every shift with a
-      multiply or divide by a power of ten. Control quantities originate at
-      converters whose scale is binary.
+      and decimal fractions such as `0.001 = 1/10^3` are not [3]; a power-of-ten
+      scale inverts that, replacing every shift with a multiply or divide by a
+      power of ten. Control quantities originate at converters whose scale is
+      binary.
 7. **Const Assertion on the Gated Constant**:
     - _Considered_: Implementing `One`, `Scalar` and `SaturatingInteger`
       unconditionally, and placing the representability check inside the
@@ -485,86 +480,56 @@ pub type UQ63 = Fixed<u64, 63>;
       instantiates a kernel over `Fixed`. Stable `DimMax` trait bounds provide
       the same guarantee cleanly on stable Rust.
 
-Overflow policy is not re-litigated here. `num-traits-design.md`
-Alternative 4 already evaluated expressing wrapping and saturating behavior
-through wrapper types, the pattern the reference implementation uses for its
-`Strict` and `Wrapping` structs (Spiteri, 2026a), and rejected it in favor
-of method-level traits. This design inherits that decision.
+Overflow semantics follow the method-level trait architecture specified in
+`num-traits-design.md` §5 (Alternative 4); wrapper-type overloading (`Strict`
+and `Wrapping` structs [3]) is not adopted.
 
 ---
 
 ### 6. Verification & Validation
 
-#### 6.1 Verification
+#### 6.1 Approach
 
-1. **Constant and Range Unit Tests** (`fixed_num_tests.rs`): `DELTA`
-   equals `from_bits(1)` and its `f64` value equals `2^(−SHIFT)`; `MIN` and
-   `MAX` equal `from_bits(Repr::MIN)`/`from_bits(Repr::MAX)` and match
-   `−2^(n−1)/2^SHIFT` and `(2^(n−1) − 1)/2^SHIFT` (Spiteri, 2026b); `ONE`
-   and `TWO` round-trip through `to_num` exactly at every gated `SHIFT`.
-2. **Saturation Oracles**: `MAX + ONE == MAX`, `MIN - ONE == MIN`,
-   `MAX * TWO == MAX` and `Neg` at `MIN` saturate rather than wrap or panic
-   (FR-3). The `Try*` forms return the error arm on the same inputs.
-3. **Product Exactness** (proptest, host): for random raw pairs, the
-   §4.3 result equals the `f64` reference product rounded to the grid with
-   round-ties-to-even, with error bounded by `DELTA/2`. This is the oracle
-   that catches a lost high half (FR-4).
-4. **Rescale Round-Trip** (proptest, host): `rescale` from `q` to `r` and
-   back is the identity when `r ≥ q` and within `DELTA/2` when `r < q`
-   (FR-5).
-5. **Compile-Time Gates**: rustdoc `compile_fail` doctests on the module
-   docs, matching the placement rule in `num-traits-design.md` §6.1.2.
-   Each negative oracle is a **trait bound**, not const-eval of an
-   associated
-   constant. The §4.4 marker realization is what makes these discharge:
-   under a const-assertion gate every one of them compiles, and the
-   `compile_fail` block fails because the code inside it succeeds.
+The implementation must produce evidence that `Fixed<Repr, SHIFT>` preserves
+single-word footprint and alignment; that arithmetic operations saturate without
+wrapping or panic; that multiplication performs exact widening before
+convergent ties-to-even rescaling within a $\Delta/2$ bound; and that invalid
+scale bounds and unrepresentable identity traits fail at compile time.
 
-| Oracle                              | Form                         <br/>                           | Gate |
-|:------------------------------------|:-------------------------------------------------------------|:-----|
-| `Fixed<i16, 15>: One`               | `fn assert_one<T: One>() {}` <br/>then `assert_one::<Q15>()` | ONE  |
-| `Fixed<i16, 15>: Scalar`            | `assert_scalar::<Fixed<i16, <br/>15>>()`                     | ONE  |
-| `Fixed<i16, 14>: SaturatingInteger` | `assert_sat_int::<Fixed<i16, <br/>14>>()`                    | TWO  |
-| `Fixed<i16, 17>: Zero`              | `assert_zero::<Fixed<i16, <br/>17>>()`                       | C-3  |
-| `Fixed<i32, 16>: Float`             | `assert_float::<Fixed<i32, <br/>16>>()`                      | FR-6 |
+| Method | Mechanism |
+|:-------|:----------|
+| Compile-time shape check | Type-level `DimMax` scale bounds; rustdoc `compile_fail` doctests on trait admission |
+| Requirements-based test | `#[test]` unit tests covering constants (`DELTA`, `MIN`, `MAX`), saturating operators, and `Try*` APIs |
+| Property-based test | `proptest` over widening multiplication against `f64` and rescale round-trips |
+| Resource usage evaluation | `size_of` and alignment assertions across all supported `FixedRepr` integer primitives |
+| Static analysis | `cargo clippy-ci`, source inspection verifying direct integer instructions without trampolines |
+| On-target execution | `#[ets_suite]` target execution on FPU-less Cortex-M and RISC-V targets |
 
-`let _ = <Q15 as One>::ONE` does not discharge FR-7: it is the const-eval
-form §5 Alternative 7 rejects, and it passes against either mechanism.
-The `Fixed<i16, 14>` row is the boundary pin that separates the two gates:
-$14 \le 16-2$ so `One` and `Scalar` hold, and $14 > 16-3$ so
-`SaturatingInteger` does not. An implementation that routes
-`SaturatingInteger` through `where Self: One` fails this row.
-Positive markers assert `Scalar`, `Conjugate` and
-`SaturatingInteger` on gate-satisfying instantiations, and
-`AdditiveGroup`/`Signed` withheld from unsigned `Repr`.
-A signed product tie (raw product $-3$, `SHIFT = 1`) rounds to $-2$
-(ties-to-even), not $-1$.
+Target: 95% statement coverage of `src/math/fixed_num.rs`, measured via `cargo coverage`.
+Excluded: Debug-only formatting and panic paths inside internal const assertion helpers.
 
-6. **Footprint**: `size_of::<Fixed<Repr, SHIFT>>() ==
-   size_of::<Repr>()` and equal alignment, for every `FixedRepr` width
-   (NFR-1).
-7. **ETS**: the §4.3 product and rescale paths are wrapped in
-   `#[ets_suite]` and executed on an FPU-less target. Fixed-point exists
-   because integer cores simulate floating-point operations in software
-   (ARM, 1996); host execution cannot confirm that the emitted sequence is
-   integer-only. The suite covers runtime arithmetic only, not the §6.1.5
-   type-level gates.
+1. **Generic Kernel Integration**: A `Matrix` and a `Tensor` instantiated over a gate-satisfying `Fixed` compile and run through the `T: Scalar` ring kernels of `subprograms-design.md` with no kernel modification.
+2. **Interchange Path**: A Q15 sample stream converts through `rescale` into a `Scalar`-capable representation, executes filtering subprograms, and converts back.
+3. **Precision Comparison**: The same digital filter executed in `Fixed` and `f64`, recording and validating the quantization noise floor against theoretical precision boundaries.
 
-#### 6.2 Validation
+#### 6.2 Acceptance
 
-- **Generic Kernel Integration**: a `Matrix` and a `Tensor` instantiated
-  over a gate-satisfying `Fixed` compile and run through the
-  `T: Scalar` ring kernels of `subprograms-design.md` with no kernel change,
-  confirming FR-6 delivers the drop-in property `tensor-design.md` §4.10
-  assumes.
-- **Interchange Path**: a Q15 sample stream converts through `rescale` into
-  a `Scalar`-capable instantiation, runs a filter, and converts back,
-  demonstrating the §4.4 interchange-versus-compute split on a realistic
-  signal path.
-- **Precision Comparison**: the same filter run in `Fixed` and in `f64`,
-  with the error reported against the `f64` reference. This documents the
-  precision cost the representation trades for integer-hardware execution
-  (Analog Devices, 2015) rather than asserting equivalence.
+| Claim | Oracle | Measure | Bound |
+|:------|:-------|:--------|:------|
+| Quantization step | Closed-form $2^{-\text{SHIFT}}$ | Absolute difference from `from_bits(1)` | $0$, bit-identical |
+| Range extrema | Analytical closed-form [7] | Comparison with `from_bits(MIN)` and `from_bits(MAX)` | $0$, bit-identical |
+| Saturation invariance | Boundary definitions | `MAX + ONE == MAX`, `MIN - ONE == MIN`, `MAX * TWO == MAX` | $0$, bit-identical |
+| Negative extreme saturation | Negation of minimum | `Neg` at `MIN` | Evaluates to `MAX`, saturating |
+| Product exactness | `f64` product with ties-to-even rounding | Error $\|x_{\text{fixed}} - x_{\text{f64}}\|_\infty$ | $\le \Delta/2$ |
+| Rescale round-trip | Identity or grid truncation | `rescale` from $q \to r \to q$ | Exact if $r \ge q$; error $\le \Delta_q/2$ if $r < q$ |
+| Trait admission gating | Compile-time trait satisfaction | rustdoc `compile_fail` doctest | Compiles iff scale admits constant (`One`, `SaturatingInteger`) |
+| Memory footprint | Size of `Repr` primitive | `size_of::<Fixed<Repr, SHIFT>>()` vs `size_of::<Repr>()` | Exact equality and matching alignment |
+
+#### 6.3 Limits
+
+- **128-bit fixed-point arithmetic**: Widening multiplication on 128-bit representations requires 256-bit software arithmetic, which is excluded from current bare-metal scope and unverified.
+- **Negative scale parameters**: Negative `SHIFT` values (representing numbers with step size coarser than unity) are deferred and not supported in this revision.
+- **Floating-point transcendental traits**: Traits `Float`, `Trig`, `Exp`, and `Radical` are intentionally omitted from `Fixed` and not verified.
 
 ---
 
@@ -573,10 +538,10 @@ A signed product tie (raw product $-3$, `SHIFT = 1`) rounds to $-2$
 `Fixed<Repr, SHIFT>` is a single-field struct over `Repr` and
 monomorphizes to the bare integer (NFR-1). `Add`, `Sub` and `Neg` are one
 saturating integer instruction. `Mul` is a widening multiply, a
-round-ties-to-even rescale (per IEEE, 2019; AMD, 2024) and a saturating narrow:
+round-ties-to-even rescale [4], [5] and a saturating narrow:
 more than a floating-point
 multiply on a part with an FPU, and far less than the software floating-point
-sequence an integer core would otherwise run (ARM, 1996).
+sequence an integer core would otherwise run [1].
 
 ---
 
@@ -608,15 +573,16 @@ sequence an integer core would otherwise run (ARM, 1996).
    compile-time problem, so the risk is assumed low, but neither figure has
    been measured. If it does become material, the enumeration can be narrowed
    to the widths downstream models actually instantiate.
-7. **Marker Visibility**: `OneRepresentable` and `TwoRepresentable` are sealed
-   and exist to carry a predicate, not to be named by callers. Whether they
-   are `pub` (appearing in rustdoc and in every `Scalar` bound's `where`
-   clause) or crate-private is unresolved; crate-private is preferred if the
-   public `Scalar` impl can still be written.
-8. **Proposals (Not in Evidence)**:
-    - Sign-aware convergent rounding on signed `Wide` products (§4.3).
-    - Accumulator narrowing rules in hardware DSP extensions (ARM CMSIS-DSP,
-      RISC-V NMSIS).
+7. **Marker Visibility (frozen)**: `OneRepresentable` and `TwoRepresentable` are
+   public traits sealed by crate-private supertrait `private::SealedMarker`
+   (`pub trait OneRepresentable: private::SealedMarker {}`). This allows them to
+   appear in public `where` bounds (such as for `One`, `Scalar`, and
+   `SaturatingInteger`) while preventing external downstream crates from
+   implementing them on unauthorized scales.
+8. **Sign-Aware Convergent Rounding**: Signed `Wide` intermediate product
+   rounding requires verifying symmetry across positive and negative tie cases (§4.3).
+9. **Hardware Accumulator Narrowing**: Mapping narrowing rules to target-specific
+   DSP hardware instructions (ARM CMSIS-DSP, RISC-V NMSIS).
 
 ---
 
@@ -624,10 +590,10 @@ sequence an integer core would otherwise run (ARM, 1996).
 
 | Phase                                    | Description                                                                                                                                                                                               | Estimated Effort |
 |:-----------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------:|
-| **Phase 1: Representation & Core Type**  | Implement `Fixed<Repr, SHIFT>`, `Quantized` alias, sealed `FixedRepr` trait for `i8`–`i64` / `u8`–`u64`, `from_bits`/`to_bits`/`from_num`/`to_num`, and Q-format aliases.                                 |      Medium      |
-| **Phase 2: Total Saturating Arithmetic** | Implement saturating `Add`, `Sub`, `Neg`, widening `Mul` with convergent rounding, `rescale`, and fallible `Try*` ops.                                                                                    |      Medium      |
-| **Phase 3: Numeric Trait Integration**   | Implement sealed `OneRepresentable` / `TwoRepresentable` markers and their macro enumeration (§4.4), then `Zero`, `One`, `Conjugate`, `Scalar`, `Signed`, and `SaturatingInteger` gated on those markers. |      Medium      |
-| **Phase 4: Verification Suite**          | Implement unit tests, proptest oracles, `compile_fail` doctests, memory footprint assertions, and `#[ets_suite]` verification.                                                                            |      Medium      |
+| **Phase 1: Representation & Core Type**  | Implement `Fixed<Repr, SHIFT>`, `Quantized` alias, sealed `FixedRepr` trait for `i8`–`i64` / `u8`–`u64`, `from_bits`/`to_bits`/`from_num`/`to_num`, and Q-format aliases.                                 |     Complete     |
+| **Phase 2: Total Saturating Arithmetic** | Implement saturating `Add`, `Sub`, `Neg`, widening `Mul` with convergent rounding, `rescale`, and fallible `Try*` ops.                                                                                    |     Complete     |
+| **Phase 3: Numeric Trait Integration**   | Implement sealed `OneRepresentable` / `TwoRepresentable` markers and their macro enumeration (§4.4), then `Zero`, `One`, `Conjugate`, `Scalar`, `Signed`, and `SaturatingInteger` gated on those markers. |     Complete     |
+| **Phase 4: Verification Suite**          | Implement unit tests, proptest oracles, `compile_fail` doctests, memory footprint assertions, and `#[ets_suite]` verification.                                                                            |     Complete     |
 | **Phase 5: Downstream Model Validation** | Validate generic instantiation in matrix and tensor kernels across control toolboxes.                                                                                                                     |      Small       |
 
 ---
@@ -640,50 +606,30 @@ sequence an integer core would otherwise run (ARM, 1996).
 | 1.1      | August 24, 2026 | @MitchellDScott | Convergent rounding & architecture: grounded rescaling in IEEE 754-2019/DSP standards and established `Fixed` with `Quantized` alias.     |
 | 1.2      | August 25, 2026 | @MitchellDScott | Representability gating: established sealed `OneRepresentable` / `TwoRepresentable` marker traits with compile-time failure verification. |
 | 1.3      | August 31, 2026 | @MitchellDScott | Dim trait bound integration: formalize type-level `DimMax` bounds, streamline `FixedRepr`, and unify compile-time scale gating.           |
+| 1.4      | September 9, 2026 | @MitchellDScott | Hardening: convert verification to standard 6.1–6.7 structure with acceptance criteria and bidirectional traceability tables.       |
+| 1.5      | September 9, 2026 | @MitchellDScott | Hardening: sentence-case requirement titles, convert in-text citations to standard IEEE numeric format [1]–[9], and clean reference formatting. |
+| 1.6      | September 10, 2026 | @MitchellDScott | Verification grounding & review closure: frozen marker trait visibility in §8, updated §9 Phase 1–4 to Complete, grounded §6.4 traceability locators to real tests in `src/math/tests/fixed_num_tests.rs`. |
+| 1.7      | September 10, 2026 | @MitchellDScott | Retarget §4.4 num-types out-of-bounds pointer from retired §6.1 item 6 to §6.3 acceptance criterion. |
+| 1.8      | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: §6 authoring rules are `design-template.md` §6. |
 
 ---
 
 ## References
 
-[1] Advanced RISC Machines Limited, "Fixed Point Arithmetic on the ARM,"
-Advanced RISC Machines Limited, Cambridge, UK, Rep. no. ARM DAI 0033A, 1996.
-[Online]. Available:
-https://documentation-service.arm.com/static/5ed0fdc1ca06a95ce53f84b8.
-Accessed: Aug. 12, 2026.
+[1] Advanced RISC Machines Limited, "Fixed Point Arithmetic on the ARM," Advanced RISC Machines Limited, Cambridge, UK, Rep. no. ARM DAI 0033A, 1996. [Online]. Available: https://documentation-service.arm.com/static/5ed0fdc1ca06a95ce53f84b8. Accessed: Aug. 12, 2026.
 
-[2] Analog Devices, Inc., "Fixed-Point vs. Floating-Point Digital Signal
-Processing," *Analog Devices Technical Articles*, 2015. [Online]. Available:
-https://www.analog.com/en/resources/technical-articles/fixedpoint-vs-floatingpoint-dsp.html.
-Accessed: Aug. 12, 2026.
+[2] Analog Devices, Inc., "Fixed-Point vs. Floating-Point Digital Signal Processing," *Analog Devices Technical Articles*, 2015. [Online]. Available: https://www.analog.com/en/resources/technical-articles/fixedpoint-vs-floatingpoint-dsp.html. Accessed: Aug. 12, 2026.
 
-[3] T. Spiteri, *fixed*: fixed-point numbers (Version 1.31.0). [Online].
-Available: https://docs.rs/fixed/latest/fixed/. Accessed: Aug. 12, 2026.
+[3] T. Spiteri, *fixed*: fixed-point numbers (Version 1.31.0). [Online]. Available: https://docs.rs/fixed/latest/fixed/. Accessed: Aug. 12, 2026.
 
-[4] IEEE, "IEEE Standard for Floating-Point Arithmetic," Institute of
-Electrical and Electronics Engineers, Standard IEEE Std 754-2019, 2019.
-[Online]. Available: https://standards.ieee.org/standard/754-2019.html.
-Accessed: Aug. 24, 2026.
+[4] IEEE, "IEEE Standard for Floating-Point Arithmetic," Institute of Electrical and Electronics Engineers, Standard IEEE Std 754-2019, 2019. [Online]. Available: https://standards.ieee.org/standard/754-2019.html. Accessed: Aug. 24, 2026.
 
-[5] AMD, "Rounding," in *Complex Multiplier LogiCORE IP Product Guide*,
-Advanced Micro Devices, Product Guide PG104, Version 6.0, 2024. [Online].
-Available: https://docs.amd.com/r/en-US/pg104-cmpy/Rounding. Accessed: Aug.
-24, 2026.
+[5] AMD, "Rounding," in *Complex Multiplier LogiCORE IP Product Guide*, Advanced Micro Devices, Product Guide PG104, Version 6.0, 2024. [Online]. Available: https://docs.amd.com/r/en-US/pg104-cmpy/Rounding. Accessed: Aug. 24, 2026.
 
-[6] The MathWorks, Inc., "Rounding Modes," *MATLAB & Simulink Documentation*,
+[6] The MathWorks, Inc., "Rounding Modes," *MATLAB & Simulink Documentation*, 2026. [Online]. Available: https://www.mathworks.com/help/fixedpoint/ug/rounding.html. Accessed: Aug. 24, 2026.
 
-2026. [Online]. Available:
-      https://www.mathworks.com/help/fixedpoint/ug/rounding.html. Accessed: Aug.
-      24, 2026.
+[7] T. Spiteri, "FixedI32," in *fixed::FixedI32* (Version 1.31.0). [Online]. Available: https://docs.rs/fixed/latest/fixed/struct.FixedI32.html. Accessed: Aug. 12, 2026.
 
-[7] T. Spiteri, "FixedI32," in *fixed::FixedI32* (Version 1.31.0). [Online].
-Available: https://docs.rs/fixed/latest/fixed/struct.FixedI32.html.
-Accessed: Aug. 12, 2026.
+[8] Wikipedia contributors, "Q (number format)," *Wikipedia*. [Online]. Available: https://en.wikipedia.org/wiki/Q_(number_format). Accessed: Aug. 12, 2026.
 
-[8] Wikipedia contributors, "Q (number format)," *Wikipedia*. [Online].
-Available: https://en.wikipedia.org/wiki/Q_(number_format). Accessed: Aug.
-12, 2026.
-
-[9] T. Spiteri, "fixed::types::extra," in *fixed::types::extra* (Version
-1.31.0). [Online]. Available:
-https://docs.rs/fixed/latest/fixed/types/extra/index.html. Accessed: Aug.
-12, 2026.
+[9] T. Spiteri, "fixed::types::extra," in *fixed::types::extra* (Version 1.31.0). [Online]. Available: https://docs.rs/fixed/latest/fixed/types/extra/index.html. Accessed: Aug. 12, 2026.

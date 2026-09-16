@@ -1,12 +1,25 @@
 # 64-bit Application-Class Targets for the virtual ETS (Proposal)
 
-**Date:** August 26, 2026
-**Status:** Proposal. Not a pipeline artifact. Does not set `Reviewed` or `Approved`.
-**Design:** `documentation/xtask/embedded-test-server-design.md`,
-`documentation/xtask/control-rs-ets-overview.md` §2.5,
-`documentation/xtask/cpu-profile-utils-design-doc.md`
+![Date Badge](https://img.shields.io/badge/Date-September_9,_2026-blue)
+![Type Badge](https://img.shields.io/badge/Type-Proposal-lightgrey)
+![Status Badge](https://img.shields.io/badge/status-shelved-lightgrey)
+![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+
+> **Status: Shelved.** Per architectural decision D6 (September 9, 2026),
+> 64-bit application-class virtual ETS targets (`aarch64-unknown-none`,
+> `x86_64-unknown-none`) are shelved to keep the Tier 1 CI matrix focused
+> strictly on embedded microcontroller targets (`thumbv7em`, `riscv32`,
+> `riscv64`).
+
+This document is a proposal. It does not follow
+`documentation/design-template.md` and carries no design status badge.
+
+**Design:** `documentation/ets/embedded-test-server-design.md`,
+`documentation/ets/ets-overview.md` §2 item 5,
+`documentation/ets/cpu-profiler-design.md`
 **Scope:** `examples/qemu/`, `control-rs-ets/src/profiler.rs`,
-`control-rs-xtask/src/{bridge,tasks,main}.rs`, `.github/workflows/`
+`control-rs-ets-host/src/{bridge,target}.rs`, `control-rs-ci/src/main.rs`,
+`.github/workflows/`
 
 ---
 
@@ -185,7 +198,7 @@ geometry:
    checksum and the five address fields, all resolved from linker symbols.
 2. `rust-objcopy -O binary` converts the ELF to the flat image inside the
    cargo runner, matching the pattern already used by the Teensy runner in
-   `documentation/xtask/control-rs-ets-overview.md` §4.3.
+   `documentation/ets/ets-overview.md` §4.3.
 3. A `global_asm!` stub entered in 32-bit protected mode builds a PML4 and
    a page directory identity-mapping the low 1 GiB with 2 MiB pages, sets
    `CR4.PAE`, `EFER.LME` and `CR0.PG`, loads a 64-bit GDT, far-jumps to
@@ -354,9 +367,9 @@ phase in §10.
 | `control-rs-ets/src/lib.rs` | Two `pub use` re-exports behind the same cfgs | edit |
 | `control-rs-macros/src/lib.rs` (`ets_entrypoint`) | Entry-symbol arm for targets without an `-rt` crate (D-9) | edit |
 | `control-rs-macros/src/lib.rs` (`ets_exception`) | AArch64 vector table and x86-64 IDT fault reporting (D-10) | edit |
-| `control-rs-xtask/src/bridge.rs` | Two `QemuArch` variants, `details()` arms, `parse()` aliases, constructors | edit |
-| `control-rs-xtask/src/tasks.rs` | Two `build_qemu_elf` match arms | edit |
-| `control-rs-xtask/src/main.rs` | `run_ci_all_qemu` table refactor (see below) | edit |
+| `control-rs-ets-host/src/bridge.rs` | Two `QemuArch` variants, `details()` arms, `parse()` aliases, constructors | edit |
+| `control-rs-ets-host/src/target.rs` | Two `build_qemu_elf` match arms | edit |
+| `control-rs-ci/src/main.rs` | `run_ci_all_qemu` table refactor (see below) | edit |
 | `.github/workflows/CI.yml` | Add both triples to `rustup target add` | edit |
 
 `run_ci_all_qemu` currently repeats a 26-line block per target, four times.
@@ -387,7 +400,7 @@ requirement.
   substitutes firmware services for bare metal, which is the property the
   ETS exists to test, and it adds an OVMF image to CI.
 - **A-3 `bootloader` crate producing a bootable disk image.** Rejected on the
-  `CLAUDE.md` dependency-minimization rule: it pulls a build-time crate
+  dependency-minimization rule: it pulls a build-time crate
   graph and an extra artifact stage to replace roughly 80 lines of
   `global_asm!`.
 - **A-4 32-bit multiboot stub crate linked beside a 64-bit payload.**
@@ -489,3 +502,4 @@ scope for the stable MSRV row.
 | Date | Author | Change |
 |:--|:--|:--|
 | August 26, 2026 | @mitchelldscott | Initial proposal |
+| September 9, 2026 | @MitchellDScott | Proposal shelved per decision D6 to retain focused microcontroller CI matrix. |

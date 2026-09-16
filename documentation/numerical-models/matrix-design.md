@@ -1,7 +1,7 @@
 # Matrix Type & Structural Specializations (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-September_15,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -34,40 +34,37 @@ Primary usage scenarios:
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Compile-Time Shape Verification**: Matrix operations validate operand
-  dimension compatibility at compile time before execution. A dimension
-  mismatch (such as multiplying a $2 \times 2$ matrix by a $3 \times 1$ vector)
-  must prevent compilation rather than panicking at runtime in embedded control
-  loops.
-- **FR-2 — Matrix Algebra & Linear Transformations**: Matrices provide standard
-  matrix-vector and matrix-matrix
-  products ($y = \alpha A x + \beta y$, $C = \alpha A B + \beta C$), addition,
-  subtraction, negation, transposition, and scaling. Operations must
-  mathematically match standard linear algebra without requiring intermediate
-  heap buffers.
-- **FR-3 — Fallible Factorizations & Direct Solvers**: Direct linear system
-  solvers ($A x = b$), triangular solvers, and matrix factorizations (LU,
-  Cholesky, $LDL^T$, QR) return explicit error variants (`LinAlgError`) when
-  inputs are singular, rank-deficient, or non-positive-definite (Anderson et
-  al., 1999). Numerical failures must never panic or silently corrupt downstream
-  state estimates.
-- **FR-4 — Coordinate Element Access**: Element indexing by 2D
+- **FR-1 — Compile-time shape check**: Matrix operations validate operand
+  dimension compatibility at compile time. A dimension mismatch must prevent
+  compilation rather than panicking at runtime.
+- **FR-2 — Basic matrix arithmetic**: Matrices provide elementwise addition,
+  subtraction, negation, transposition, and scalar scaling matching standard linear
+  algebra axioms without intermediate heap buffers.
+- **FR-3 — Fallible factorizations and direct solvers**: Direct linear system
+  solvers, triangular solvers, and matrix factorizations return a fallible
+  result when inputs are singular, rank-deficient, or non-positive-definite.
+  Numerical failures must never panic or silently corrupt downstream state
+  estimates.
+- **FR-4 — Coordinate element access**: Element indexing by 2D
   coordinates $(i, j)$ accesses the correct logical entry for both row-major and
-  column-major representations. Out-of-bounds indices return `None` on checked
-  access and fail at compile time for fixed-index lookups.
-- **FR-5 — Structural Specializations**: Symmetric, Hermitian, triangular, and
-  diagonal matrix structures provide element access and tailored algebraic
-  operations that exploit symmetry and sparsity without allocating full dense
-  storage.
+  column-major representations. Out-of-bounds indices return a fallible miss on
+  checked access and fail at compile time for fixed-index lookups.
+- **FR-5 — Structural Matrix Types**: Dedicated structural types for symmetric,
+  Hermitian, triangular, and diagonal matrices provide coordinate element access
+  and specialized operations that exploit symmetry and sparsity without
+  allocating redundant dense storage.
 - **FR-6 — Zero-Copy Submatrix Views**: Callers can extract rectangular
   sub-windows, row slices, and column vectors without copying underlying matrix
   data. Slices preserve stride semantics for zero-copy kernel execution.
+- **FR-7 — Linear Transformations and Matrix Products**: Matrices provide
+  standard matrix-vector and matrix-matrix products ($y = \alpha A x + \beta y$,
+  $C = \alpha A B + \beta C$) with compile-time inner dimension validation.
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — Zero-Allocation Deterministic Execution**: Matrix operations and
-  factorizations over statically sized dimensions execute entirely on stack or
-  borrowed memory without dynamic allocation.
+- **NFR-1 — Deterministic Stack Execution**: Matrix operations and
+  factorizations over statically sized dimensions operate within predictable
+  stack bounds and deterministic loop counts suitable for real-time control loops.
 - **NFR-2 — Interoperable C-ABI Layout**: Contiguous matrix layouts expose flat
   slice views conforming to standard C-ABI contiguous array layouts for hardware
   DMA and vendor DSP library interoperability.
@@ -82,8 +79,8 @@ Primary usage scenarios:
 - **C-2 — Stack Footprint Limit**: Matrix dimension capacities are statically
   bounded ($R, C \le 128$) to ensure stack allocations do not exceed embedded
   microcontroller memory limits.
-- **C-3 — `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
-  standard library dependencies.
+- **C-3 — `#![no_std]` and zero dynamic allocation**: Core-only; no heap
+  allocation.
 - **C-4 — In-Place Factorization Mutability**: In-place matrix decompositions
   require mutable dense storage and cannot be executed over immutable or
   packed-view backends.
@@ -126,19 +123,26 @@ pub type ArrayMatrix<T, const R: usize, const C: usize> =
 Matrix<T, Const<R>, Const<C>, ArrayStorage<T, R, C>>;
 pub type Owned<T, const R: usize, const C: usize> = ArrayMatrix<T, R, C>;
 
-pub type MatrixSlice<'a, T, R, C> = Matrix<T, R, C, StorageView<'a, T, R, C>>;
-pub type MatrixSliceMut<'a, T, R, C> =
+// Vector Aliases
+pub type ColVector<T, const N: usize> = Owned<T, N, 1>;
+pub type RowVector<T, const N: usize> = Owned<T, 1, N>;
+
+// Contiguous views, parameterized by layout marker `O` (default ColMajor);
+// one alias pair covers both orderings, so no row-major slice alias exists.
+pub type MatrixSlice<'a, T, R, C, O = ColMajor> =
+Matrix<T, R, C, StaticStorageView<'a, T, R, C, O>>;
+pub type MatrixSliceMut<'a, T, R, C, O = ColMajor> =
+Matrix<T, R, C, StaticStorageViewMut<'a, T, R, C, O>>;
+
+// Strided (possibly non-contiguous) views.
+pub type MatrixView<'a, T, R, C> = Matrix<T, R, C, StorageView<'a, T, R, C>>;
+pub type MatrixViewMut<'a, T, R, C> =
 Matrix<T, R, C, StorageViewMut<'a, T, R, C>>;
 
 // Row-Major Dense Matrix Aliases
 pub type RowArrayMatrix<T, const R: usize, const C: usize> =
 Matrix<T, Const<R>, Const<C>, RowArrayStorage<T, R, C>>;
 pub type RowOwned<T, const R: usize, const C: usize> = RowArrayMatrix<T, R, C>;
-
-pub type RowMatrixSlice<'a, T, R, C> =
-Matrix<T, R, C, StorageView<'a, T, R, C>>;
-pub type RowMatrixSliceMut<'a, T, R, C> =
-Matrix<T, R, C, StorageViewMut<'a, T, R, C>>;
 
 // Packed and Structured Matrix Aliases
 pub type PackedMatrix<T, const N: usize, S> =
@@ -166,6 +170,14 @@ reversed windows without a separate alias per ordering.
 
 The point of decoupling storage is to have one single `Matrix` struct
 implementation that works across every dense, strided, and packed storage leaf.
+The struct therefore carries **no** bound on `S`: a bound there would gate the
+whole type on dense access and make every packed and sparse alias above
+uninstantiable. Capability bounds live on the `impl` blocks (§4.1.1).
+
+Arithmetic returns column-major `Owned` for every operand layout (§4.5), so
+`RowOwned` is an input and interop shape rather than an arithmetic result
+type. It carries the same constructor set, and its `as_slice()` is the
+row-major buffer a C library or sensor raster expects.
 
 ##### 4.1.1. Storage Capabilities and Trait Bounds
 
@@ -288,6 +300,41 @@ panels.
 
 #### 4.4. Instantiation & Constructors
 
+A constructor names its argument. `from_rows` and `from_cols` take nested
+arrays in the named order; `from_column` and `from_row` take a flat 1-D array
+and exist only on the matching vector shape, so a mismatched spelling is a
+compile error rather than a silent transposition. `from_storage` is the escape
+hatch and is not the documented path for any shape a named constructor covers.
+
+- `pub const fn from_rows(data: [[T; C]; R]) -> Self where T: Copy`:
+  Row-major nested arrays, written in the order the matrix is written on
+  paper. Transposition into the column-major buffer runs in a `const` loop.
+- `pub const fn from_cols(data: [[T; R]; C]) -> Self`: Column-major nested
+  arrays, matching the `ArrayStorage` buffer exactly, so no elements move.
+- `pub const fn to_rows(&self) -> [[T; C]; R]` and
+  `pub const fn to_cols(&self) -> [[T; R]; C]`: the inverses of the two
+  above.
+- `pub fn try_from_row_slice(data: &[T]) -> ConversionResult<Self>` and
+  `pub fn try_from_col_slice(data: &[T]) -> ConversionResult<Self>`: flat
+  slice entry points for DMA buffers, sensor rasters and serialized gain
+  tables. A slice carries no compile-time extent, so a length other than
+  `R * C` returns `ConversionError::DimensionMismatch`
+  (`error-design.md`).
+- `pub const fn from_column(data: [T; N]) -> ColVector<T, N>` and
+  `pub const fn from_row(data: [T; N]) -> RowVector<T, N>`: flat 1-D vector
+  constructors.
+- `pub const fn scalar(val: T) -> Owned<T, 1, 1> where T: Copy`.
+- `impl From<[[T; C]; R]> for Owned<T, R, C>` (row-major) and
+  `impl From<[T; N]> for Owned<T, N, 1>` (column vector): non-`const` sugar,
+  which is what lets a model constructor take `impl Into<Owned<..>>` and
+  accept a bare array literal. `From<[T; N]> for Owned<T, 1, N>` cannot also
+  exist: it overlaps the column-vector impl at `N == 1`, where both target
+  `Owned<T, 1, 1>`.
+
+Every extent-zero case is total. A constructor that seeds a nested array from
+`data[0][0]` guards the seed, because `[[T; R]; C]` is zero-sized when either
+extent is zero.
+
 - `pub const fn zero() -> Self where T: Zero + Copy`: Instantiates an all-zero
   matrix using `T::ZERO` as the constant initialization value.
 - `pub const fn identity() -> Self where T: Zero + One + Copy`: Instantiates an
@@ -299,10 +346,15 @@ panels.
   Constructs a dense $D \times D$ matrix from the provided diagonal values,
   filling off-diagonal elements with `T::ZERO`. The $O(D^2)$-space dense
   form is what level-2/3 kernels can consume directly.
-- `pub const fn packed_diagonal<const D: usize>(val: [T; D])
-  -> DiagonalMatrix<T, D>`: Constructs the $O(D)$-space `DiagonalStorage`
-  leaf as a `DiagonalMatrix` alias (§4.1.1). Off-diagonal coordinates are
-  unstored
+- `pub const fn from_diagonal<const N: usize>(values: [T; N])
+  -> DiagonalMatrix<T, N>`: Constructs the $O(N)$-space `DiagonalStorage`
+  leaf as a `DiagonalMatrix` alias (§4.1.1). Named for its argument like
+  every other constructor here, and defined on the alias rather than on
+  `Owned`. The packed triangle leaves follow the same shape:
+  `SymmetricPacked::from_packed(data, uplo)`,
+  `HermitianPacked::from_packed(data, uplo)` and
+  `TriangularPacked::from_packed(data, uplo, diag)`. Off-diagonal
+  coordinates are unstored
   and evaluate algebraically to `T::ZERO` (§4.9.2). This backend reaches no
   dense Level 2/3 kernel, because it implements `PackedStorage`, not
   `DenseStorage`; packed operands instead reach the packed kernels
@@ -937,7 +989,7 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 
 ### 6. Verification & Validation
 
-#### 6.1. Objectives
+#### 6.1 Approach
 
 - Demonstrate compile-time rejection of mismatched operand dimensions.
 - Demonstrate numerical accuracy and backward stability across matrix
@@ -950,20 +1002,27 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 - Demonstrate deterministic latency and absence of runtime panic landing pads
   across direct solvers and factorizations.
 
-#### 6.2. Methods
+| Method                    | Mechanism                                                |
+|:--------------------------|:---------------------------------------------------------|
+| Compile-time shape check  | Type-level `Dim` assertions, `compile_fail` doctests     |
+| Requirements-based test   | `#[test]` unit tests over edge cases and singular inputs |
+| Property-based test       | `proptest` suites verifying algebraic invariants         |
+| Doctest                   | Runnable doc examples in rustdoc                         |
+| Back-to-back comparison   | `control-rs-validation/python3/matrix_oracle.py` vs `control-rs-validation/src/matrix.rs` HDF5; [`numerical-models-design.md`](numerical-models-design.md) §6.2 |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                       |
+| On-target execution       | ETS suites under QEMU and Teensy hardware                |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics  |
 
-| Method                    | Mechanism                                                | Requirements discharged  |
-|:--------------------------|:---------------------------------------------------------|:-------------------------|
-| Compile-time shape check  | Type-level `Dim` assertions, `compile_fail` doctests     | FR-1, C-1, C-4           |
-| Requirements-based test   | `#[test]` unit tests over edge cases and singular inputs | FR-3, FR-4, FR-5, C-2    |
-| Property-based test       | `proptest` suites verifying algebraic invariants         | FR-2, FR-6               |
-| Doctest                   | Runnable doc examples in rustdoc                         | FR-2, FR-4               |
-| Back-to-back comparison   | `examples/numerical-models-validation/python3/matrix_validation.py` vs `src/matrix_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-3               |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                       | NFR-1, NFR-2, C-2, C-3   |
-| On-target execution       | ETS suites under QEMU and Teensy hardware                | NFR-3                    |
-| Coverage measurement      | `cargo coverage` reporting statement and branch metrics  | FR-1..FR-6, NFR-1..NFR-3 |
+- **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage reported
+  via `cargo coverage`.
+- **Excluded**: Target-specific ARM assembly branches tested exclusively under
+  on-target ETS execution, and non-functional `core::fmt::Debug`
+  implementations.
 
-#### 6.3. Acceptance Criteria
+- **Host back-to-back (fail-closed)**: `control-rs-validation` writes `/rust/{covariance_heatmap,hilbert_solve,inverse,gemm,lu_solve}` and compares against SciPy and JAX under the `nmv.matrix.*` keys in [`numerical-models-design.md`](numerical-models-design.md) §6.2. Covariance is the 100-step EKF heatmap; Hilbert is the $n=8$ solve; inverse is well-conditioned $n=8$; GEMM is $A A$ at $n=64$; LU is the $n=16$ well-conditioned solve. Nanosecond inversion / Hilbert jitter / decomposition timings are recorded for NFR inspection and are not numerical keys. The `examples/*.rs` cargo examples are pedagogical (not B2B). `benches/numerical_models.rs` measures kernel latency with criterion and is not a numerical key.
+- **Hardware DSP Interoperability**: Slicing contiguous memory (`as_slice()`) to pass directly into CMSIS-DSP vector routines without intermediate buffers.
+
+#### 6.2 Acceptance
 
 | Claim                           | Oracle                              | Measure                     | Bound                                                                  | Justification                                                              |
 |:--------------------------------|:------------------------------------|:----------------------------|:-----------------------------------------------------------------------|:---------------------------------------------------------------------------|
@@ -974,56 +1033,22 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | Transposition identity          | $(AB)^T = B^T A^T$                  | Exact equality / Rel. error | $0$ (exact) / $\le 2\epsilon$                                          | Algebraic ring property over floating-point / integer scalars              |
 | Coordinate retrieval            | In-bounds / Out-of-bounds queries   | Exact equality              | `Some(v)` (exact) / `None`                                             | Structural indexing invariants across row/col dense and packed layouts     |
 | Singular matrix detection       | Known rank-deficient matrices       | Exact equality              | `Err(LinAlgError::SingularMatrix)`                                     | Determinant threshold / zero-pivot detection in factorization              |
-| Covariance heatmap recursion    | SciPy & JAX x64 (`jax.scipy.linalg`)| Absolute error              | $\le 10^{-4}$ (SciPy), $\le 10^{-6}$ (JAX)                              | 100-iteration EKF covariance propagation and inversion scaling agreement   |
-| Zero-allocation guarantee       | Host memory allocator interception  | Exact equality              | 0 heap allocations                                                     | NFR-1 `#![no_std]` invariant                                               |
+| Covariance heatmap recursion    | SciPy & JAX x64 (`jax.scipy.linalg`)| Absolute error              | Parent key `nmv.matrix.hilbert_residual.scipy` | 100-iteration EKF covariance propagation; bound in [`numerical-models-design.md`](numerical-models-design.md) §6.2 |
+| Hilbert $n=10$ solve            | SciPy `linalg.solve`                | Relative $\ell_2$           | Parent key `nmv.matrix.hilbert_solve.scipy`    | Direct solver on a known ill-conditioned Hilbert matrix |
+| Vandermonde $n=8$               | SciPy                               | Relative $\ell_2$           | Parent key `nmv.matrix.vandermonde_solve.scipy` | Runge coefficients on equispaced nodes |
+| Inverse residual $n=8$          | SciPy                               | Absolute error              | Parent key `nmv.matrix.inverse_residual.scipy` | Explicit Hilbert inverse residual |
+| Cholesky spread                 | SciPy                               | Relative $\ell_2$           | Parent key `nmv.matrix.cholesky_spread.scipy`  | Solve across a $10^{10}$ eigenvalue spread |
+| QR orthogonality                | SciPy                               | Absolute error              | Parent key `nmv.matrix.qr_orthogonality.scipy` | Frobenius orthogonality loss |
+| Zero-allocation guarantee       | Host memory allocator interception  | Exact equality              | 0 heap allocations                             | NFR-1 `#![no_std]` invariant |
 
-#### 6.4. Traceability
-
-| Requirement                                     | Method                                           | Artifact                                               |
-|:------------------------------------------------|:-------------------------------------------------|:-------------------------------------------------------|
-| FR-1 — Compile-Time Shape Verification          | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/matrix/mod.rs`              |
-| FR-2 — Matrix Algebra & Linear Transformations  | Property-based test, Back-to-back comparison     | `src/matrix/tests/matrix_tests.rs::prop_add_associativity`          |
-| FR-3 — Fallible Factorizations & Direct Solvers | Requirements-based test, Back-to-back comparison | `src/matrix/tests/matrix_tests.rs::test_lu_solve_mut`, `test_lu_factor_residual`, `test_cholesky_factor_residual`, `test_qr_orthogonality` |
-| FR-4 — Coordinate Element Access                | Requirements-based test                          | `src/matrix/tests/matrix_tests.rs::test_coordinate_access`          |
-| FR-5 — Structural Specializations               | Property-based test, Requirements-based test     | `src/matrix/tests/matrix_tests.rs::test_symmetric_construction`        |
-| FR-6 — Zero-Copy Submatrix Views                | Property-based test, Requirements-based test     | `src/matrix/tests/matrix_tests.rs::test_strided_submatrix`          |
-| NFR-1 — Zero-Allocation Deterministic Execution | Resource usage evaluation                        | `#![no_std]` host check & `size_of` assertions                      |
-| NFR-2 — Interoperable C-ABI Layout              | Resource usage evaluation                        | `src/matrix/tests/matrix_tests.rs::test_c_abi_layout`               |
-| NFR-3 — Predictable Real-Time Latency           | On-target execution                              | ETS suite `matrix_test_suite`                                       |
-| C-1 — Stable Rust Toolchain                     | Compile-time shape check                         | Workspace build on `stable` Rust                       |
-| C-2 — Stack Footprint Limit                     | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                  |
-| C-3 — `#![no_std]` Environment                  | Resource usage evaluation                        | Compilation under `#![no_std]` target triples          |
-| C-4 — In-Place Factorization Mutability         | Compile-time shape check                         | Type bound verification on `DenseStorageMut`           |
-
-#### 6.5. Coverage
-
-- **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage reported
-  via `cargo coverage`.
-- **Excluded**: Target-specific ARM assembly branches tested exclusively under
-  on-target ETS execution, and non-functional `core::fmt::Debug`
-  implementations.
-
-#### 6.6. Validation
-
-- **Matrix Arithmetic, Linear Solves, & Inversion**: End-to-end numeric integrity
-  verification in `examples/numerical-models-validation/src/matrix_validation.rs` executing matrix
-  construction, arithmetic (`+`, `-`, `*`), transposition, $LU$ decomposition
-  solving $Ax = b$, matrix inversion with identity check ($A \cdot A^{-1} = I$),
-  Hilbert $n=8$ solve/inverse (residual and $\tau\kappa\varepsilon$), timed
-  GEMM $n=64$, and multi-source cross-validation against SciPy and JAX x64 oracles,
-  without dynamic heap allocation.
-- **Hardware DSP Interoperability**: Slicing contiguous memory (`as_slice()`) to
-  pass directly into CMSIS-DSP vector routines without intermediate buffers.
-
-#### 6.7. Not Verified
+#### 6.3 Limits
 
 - Dynamic sparse linear solves are not verified in this document (deferred per
   §8 open questions to dedicated sparse linear dynamics scoping).
 - Trans-architecture floating-point bitwise equivalence is not claimed across
   differing hardware FPU implementations (FMA vs non-FMA rounding differences).
 - $1024\times 1024$ GEMM/LU cache-stress is not in the example crate; host
-  generators use Hilbert $n=8$ and GEMM $n=64$
-  ([`numerical-models-design.md`](numerical-models-design.md) §6.6). MCU C-2
+  generators use Hilbert $n=8$ and GEMM $n=64$. MCU C-2
   ($R, C \le 128$) is unchanged.
 
 ---
@@ -1076,12 +1101,37 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | **Step 3: Solvers**          | Wrap `Getrf`/`Getrs` for LU, add $LDL^T$, determinants, and in-place inversion over `DenseStorageMut`.                                                                                                                                  | 2.0 Days         |
 | **Step 4: Specializations**  | Create `UpperTriangular`, `LowerTriangular`, `Symmetric` wrappers and their packed counterparts.                                                                                                                                        | 1.5 Days         |
 | **Step 5: Factorizations**   | Wrap `Potrf`/`Potrs` (Cholesky, real and complex) and `Geqrf`/`Ormqr`/`Unmqr` (QR) with typed workspaces.                                                                                                                               | 2.0 Days         |
-| **Step 6: Verification**     | Set up `proptest` suites, dual-subsystem and strided-view coverage (§6.1), complex-scalar cases, ARM DWT cycle profiling, and Cachegrind setups per [`vv-standards.md`](../vv-standards.md).                                                                  | 2.5 Days         |
+| **Step 6: Verification**     | Set up `proptest` suites, dual-subsystem and strided-view coverage (§6.1), complex-scalar cases, ARM DWT cycle profiling, and Cachegrind setups.                                                                  | 2.5 Days         |
 | **Step 7: Interoperability** | Implement conversions between `Matrix`, `Polynomial` (Faddeev-LeVerrier), and `Tensor`.                                                                                                                                                 | 2.0 Days         |
 
 ---
 
-### 10. References
+### 10. Revision History
+
+| Revision | Date              | Author          | Description                                                                                                                                           |
+|:---------|:------------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 12, 2026     | @MitchellDScott | Initial draft: core matrix representation, operations, and zero-allocation scratch patterns.                                                          |
+| 1.1      | July 26, 2026     | @MitchellDScott | Matrix decompositions: added LU, QR, Cholesky, and LDLT factorizations with LAPACK subroutine mapping.                                                |
+| 1.2      | August 16, 2026   | @MitchellDScott | Storage subsystem parameterization: integrated decoupled storage traits (`DenseStorage`, `PackedStorage`) with static array backends.                |
+| 1.3      | August 19, 2026   | @MitchellDScott | View & layout abstractions: added column-major and row-major storage types, submatrices, and strided views.                                          |
+| 1.4      | August 25, 2026   | @MitchellDScott | Unified matrix representation: consolidated `Matrix<T, R, C, S>` struct across dense and packed backends with specialized type aliases.              |
+| 1.5      | August 25, 2026   | @MitchellDScott | V&V standardization: upgraded test oracles, residual bounds ($\tau = 20.0$), and structured matrix verification.                                      |
+| 1.6      | August 26, 2026   | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<N>` dimensions.                                                |
+| 1.7      | August 26, 2026   | @MitchellDScott | Collapsed subprogram inventory; crate-wide standards cite `vv-standards.md`.                                                                          |
+| 1.8      | August 28, 2026   | @MitchellDScott | Host-scale V&V: Hilbert and $1000\times 1000$ rows; umbrella $\tau\kappa\varepsilon$ and Instant timing. Caps unchanged.                             |
+| 1.9      | August 28, 2026   | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); C-2 MCU cap unchanged.                                                                        |
+| 1.10     | August 28, 2026   | @MitchellDScott | Example crate: Hilbert $n=8$ and timed GEMM $n=64$; $1024\times 1024$ remains out. Caps unchanged.                                                  |
+| 1.11     | August 28, 2026   | @MitchellDScott | §6.4 FR-5 artifact is `test_symmetric_construction`; packed storage remains in `storage_tests.rs`. Factor residuals live in `matrix_test_suite`. |
+| 1.12     | August 31, 2026   | @MitchellDScott | Added JAX x64 multi-source cross-validation oracle, updated validation crate paths, and reconciled EKF covariance heatmap tolerances.                 |
+| 1.13     | September 9, 2026 | @MitchellDScott | Structural hardening: split FR-7, updated §6 traceability and acceptance criteria, reordered references per standards. |
+| 1.15     | September 12, 2026 | @MitchellDScott | Host B2B gates Hilbert $n=8$, inverse $n=8$, GEMM $n=64$, and LU solve $n=16$ in addition to the EKF covariance heatmap. |
+| 1.16     | September 15, 2026 | @MitchellDScott | Retarget host validation paths to `control-rs-validation`; split host surfaces into validation/, examples/, and bench/. |
+| 1.17     | September 15, 2026 | @MitchellDScott | Need-named FR-1/FR-3; coverage measurement discharges nothing; child §6.3 names parent tolerance keys. |
+| 1.18     | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: dropped the §9 pointer; `design-template.md` §6 is the V&V contract. |
+
+---
+
+## References
 
 1. **Golub, G. H., & Van Loan, C. F. (2013).** _Matrix Computations_ (4th ed.).
    Johns Hopkins University Press. — Flop-count basis for in-place
@@ -1129,24 +1179,4 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
     Aug. 8, 2026. — `CBLAS_ORDER` as a per-call argument rather than a routine
     property, and the `lda`/`ldb`/`ldc` positions in `cblas_sgemm`, behind
     §4.2's layout-forwarding rule and §4.5.2's operand table.
-
----
-
-### 11. Revision History
-
-| Revision | Date            | Author          | Description                                                                                                                                           |
-|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026   | @MitchellDScott | Initial draft: core matrix representation, operations, and zero-allocation scratch patterns.                                                          |
-| 1.1      | July 26, 2026   | @MitchellDScott | Matrix decompositions: added LU, QR, Cholesky, and LDLT factorizations with LAPACK subroutine mapping.                                                |
-| 1.2      | August 16, 2026 | @MitchellDScott | Storage subsystem parameterization: integrated decoupled storage traits (`DenseStorage`, `PackedStorage`) with static array backends.                |
-| 1.3      | August 19, 2026 | @MitchellDScott | View & layout abstractions: added column-major and row-major storage types, submatrices, and strided views.                                          |
-| 1.4      | August 25, 2026 | @MitchellDScott | Unified matrix representation: consolidated `Matrix<T, R, C, S>` struct across dense and packed backends with specialized type aliases.              |
-| 1.5      | August 25, 2026 | @MitchellDScott | V&V standardization: upgraded test oracles, residual bounds ($\tau = 20.0$), and structured matrix verification.                                      |
-| 1.6      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<N>` dimensions.                                                |
-| 1.7      | August 26, 2026 | @MitchellDScott | Collapsed subprogram inventory; crate-wide standards cite `vv-standards.md`.                                                                          |
-| 1.8      | August 28, 2026 | @MitchellDScott | Host-scale V&V: Hilbert and $1000\times 1000$ rows; umbrella $\tau\kappa\varepsilon$ and Instant timing. Caps unchanged.                             |
-| 1.9      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); C-2 MCU cap unchanged.                                                                        |
-| 1.10     | August 28, 2026 | @MitchellDScott | Example crate: Hilbert $n=8$ and timed GEMM $n=64$; $1024\times 1024$ remains out. Caps unchanged.                                                  |
-| 1.11     | August 28, 2026 | @MitchellDScott | §6.4 FR-5 artifact is `test_symmetric_construction`; packed storage remains in `storage_tests.rs`. Factor residuals live in `matrix_test_suite`. |
-| 1.12     | August 31, 2026 | @MitchellDScott | Added JAX x64 multi-source cross-validation oracle, updated validation crate paths, and reconciled EKF covariance heatmap tolerances.                 |
 

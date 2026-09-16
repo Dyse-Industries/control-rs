@@ -1,7 +1,7 @@
 # Procedural Macros for Distributed Test Discovery (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-July_18,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)
+![Date Badge](https://img.shields.io/badge/Date-September_9,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -24,7 +24,7 @@ automated discovery without a centralized registry.
 
 ### 2. Requirements
 
-#### Functional Requirements
+#### 2.1 Functional Requirements
 
 - **FR-1 — Distributed Module Annotation**: Developers must declare a suite by
   tagging a module with `#[ets_suite]`.
@@ -41,20 +41,22 @@ automated discovery without a centralized registry.
   register a custom panic handler that routes test panics through the host
   communications layer.
 
-#### Non-Functional Requirements
+#### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Zero Runtime Allocation**: All generated code, setup contexts and
-  panic handlers must operate strictly without a heap.
+- **NFR-1 — Zero Static RAM at Idle**: Emitted test descriptors and registration
+  tables reside entirely in read-only Flash/ROM (`.ets_test_suites`), consuming
+  0 bytes of static RAM at idle.
 - **NFR-2 — Linker Retention Safety**: Generated descriptors must survive
   aggressive linker garbage collection (`--gc-sections`) in release builds.
 - **NFR-3 — Rust 2024/2027 Compliance**: Generated structures must eliminate
   `static mut` usage in favor of type-safe atomic wrappers and interior
   mutability.
 
-#### Constraints
+#### 2.3 Constraints
 
-- **C-1 — Strict `#![no_std]` Compatibility**: Code emitted by the macros must
-  compile on bare-metal targets without standard library support.
+- **C-1 — Strict `#![no_std]` and Zero Runtime Allocation**: Code emitted by the
+  macros must compile on bare-metal targets without standard library or dynamic
+  heap allocator runtime support.
 - **C-2 — Target Independency**: The macros must emit target-agnostic Rust code
   that delegates hardware specifics to the user-defined profiler.
 
@@ -86,7 +88,7 @@ flowchart TD
 
 ---
 
-### 4. Core Architecture
+### 4. Architecture
 
 #### 4.1. `#[ets_suite]` Module Parsing and Code Generation
 
@@ -148,6 +150,17 @@ To prevent this, the workspace employs a multi-tiered retention architecture:
    This prevents end-users from needing to manually manage linker configuration
    files.
 
+
+The generated descriptors are placed by `#[link_section]`, which "specifies the
+section of the object file that a function or static's content will be placed
+into" (Rust Reference, 2026). The Reference also records that the attribute "is
+unsafe as it allows users to place data and code into sections of memory not
+expecting them, such as mutable data into read-only areas"
+(Rust Reference, 2026). That is the reason the section name, its linker-script
+entry and the descriptor type are owned by this crate together: the safety of
+the placement is a property of the three agreeing, and it is not something a
+user of `#[ets_suite]` can be asked to get right.
+
 #### 4.3. `#[ets_setup]` Entrypoint and Panic Handling
 
 The `#[ets_setup]` macro is applied to the user's hardware initialization
@@ -206,18 +219,29 @@ function. It replaces the function with the primary entrypoint:
 * **Manual Registration Array**: Developers could manually declare a global
   array of function pointers. This is rejected due to high maintenance overhead,
   boilerplate and the risk of developer error when adding new tests.
-* **`linkme::distributed_slice`**: Rejected. The mechanism is architecturally
-  identical to the hand-rolled section scheme, but official platform support
-  covers OS-hosted targets only (Linux, macOS, Windows, FreeBSD, OpenBSD,
-  illumos); bare-metal Cortex-M/RISC-V support is uncorroborated by any primary
-  source. Adoption would also surrender project-owned control of the
-  `.ets_test_suites` section name and the `ets_suites.x`/`build.rs` linker
-  coordination.
-* **`inventory` (ctor-based registration)**: Rejected. Registration relies on
-  life-before-main constructors invoked by an OS loader (ELF `.init_array`,
-  Mach-O `mod_init_func`, PE TLS callbacks), which do not exist on a
-  loader-less bare-metal target. Unsupported platforms silently register
-  nothing rather than failing to compile.
+* **`linkme::distributed_slice`**: Rejected, on ownership rather than on
+  capability. The mechanism is architecturally identical to the hand-rolled
+  section scheme: a distributed slice is "a collection of static elements that
+  are gathered into a contiguous section of the binary by the linker"
+  (linkme, 2026), whose elements "may be defined individually from anywhere in
+  the dependency graph of the final binary" (linkme, 2026), which is exactly
+  the property FR-2 needs. The crate describes itself as "safe cross-platform
+  linker shenanigans" (linkme, 2026). Its documentation states no `no_std` or
+  bare-metal support, so adopting it would make the target build depend on a
+  property no primary source asserts; and it would surrender project-owned
+  control of the `.ets_test_suites` section name and the
+  `ets_suites.x` / `build.rs` linker coordination. *Assumption to verify if this
+  is revisited: that `linkme` does not in fact support the Cortex-M and RISC-V
+  targets in the matrix. The absence of a claim is not a claim of absence.*
+* **`inventory` (constructor-based registration)**: Rejected on mechanism.
+  `inventory` offers "typed distributed plugin registration" into which plugins
+  "can be registered from any source file linked into your application"
+  (inventory, 2026), and its registrations "all take effect simultaneously"
+  without any call from `main` (inventory, 2026). Taking effect without being
+  called from `main` is the property that makes it unsuitable here: it requires
+  a pre-main constructor mechanism supplied by a loader, and a bare-metal
+  target has no loader. The documented platform support extends to WebAssembly
+  targets (inventory, 2026) but says nothing about bare metal.
 * **Nightly `custom_test_frameworks`**: Rejected. This requires unstable
   compiler flags and nightly toolchains, which violates the strict reliability
   and safety-certification goals of `control-rs`.
@@ -232,24 +256,68 @@ function. It replaces the function with the primary entrypoint:
 
 ### 6. Verification & Validation
 
-#### 6.1. Verification Plan
+#### 6.1 Approach
 
-- **Procedural Macro Tests**: Implement compiler tests using `trybuild` to
-  verify that the macro correctly handles valid code structures and rejects
-  invalid constructs (e.g. non-static variable declarations inside a suite
-  module) with clean error messages. Compile-fail cases must cover
-  `#[ets_setup]`
-  misuse (wrong return type, missing `Context` generics) and assert spanned
-  `syn::Error` diagnostics rather than opaque proc-macro panics.
+The implementation must produce evidence that an annotated module registers
+exactly the cases it declares, that malformed input is rejected at compile time
+with a diagnostic pointing at the offending span, that registration survives
+linker garbage collection, and that the generated code allocates nothing.
 
-#### 6.2. Validation Plan
+| Method | Mechanism |
+|:-------|:----------|
+| Compile-time shape check | `trybuild` pass cases over valid suite and setup forms |
+| Compile-time shape check | `trybuild` compile-fail cases asserting spanned `syn::Error` diagnostics, not proc-macro panics |
+| Requirements-based test | `#[test]` comparing the descriptor set recovered from a built ELF against the annotations in source |
+| Static analysis | Section presence and retention checked in the linked ELF after `--gc-sections` |
+| Static analysis | `cargo clippy-ci`; inspection of generated code for allocation |
+| Compile-time shape check | Target builds for every supported triple |
+| On-target execution | ETS discovery on a physical board and under QEMU |
+| Coverage measurement | `cargo coverage` on the macro crate's host-side tests |
 
-- **Hardware Integration Test**: Compile the `teensy4` board tests using the
-  macros and execute them using the host-side `xtask`/`ServerBridge` to
-  validate that all tests are discovered and that settings can be modified
-  dynamically at runtime.
+Target: 85% line coverage of the macro crate's host-side logic, measured with
+`cargo coverage`.
 
----
+Excluded: generated code, which is verified by the behaviour of the ELF rather
+than by coverage of the generator; and `trybuild` fixtures, which are inputs.
+
+* **Hardware integration**: Compile the Teensy 4.1 board tests using the macros
+  and drive them through `control-rs-ets-host::ServerBridge`, confirming that
+  every suite is discovered and that settings can be modified at runtime.
+* **Third-party module**: Annotate a suite in a crate outside this workspace and
+  confirm it registers, which is the property distributed registration exists to
+  provide (linkme, 2026).
+
+#### 6.2 Acceptance
+
+| Claim | Oracle | Measure | Bound |
+|:------|:-------|:--------|:------|
+| Registration completeness | The annotations in the source tree | Descriptors recovered from the ELF | Exact set equality, no duplicates, no omissions |
+| Retention under GC | Same ELF linked with `--gc-sections` | Descriptors present | Unchanged from the non-GC link |
+| Diagnostic quality | Each compile-fail case | `trybuild` stderr | Matches the expected file, spans the offending token, no panic text |
+| Allocation freedom | Disassembly of a target build | Allocator symbols reachable from generated code | 0 |
+| Panic redirection | A deliberate panic on target | Path taken | The `#[ets_setup]` handler, not the default |
+| Settings translation | A suite declaring each supported setting type | Runtime type of each registered setting | Matches the declared Rust type |
+
+#### 6.3 Limits
+
+- `#[analysis_budget]` procedural macro: Static analysis budget attributes
+  requested by `control-rs-static-analyzer` are deferred and not verified in
+  this release; budget metadata generation will be specified in a future
+  macros revision.
+- `#[ets_setup]` panic diagnostics: Error reporting via spanned `syn::Error`
+  rather than macro panic is tracked as Step 5 hardening and is not verified in
+  current builds.
+- That the hand-rolled section scheme is more portable than `linkme`. Neither
+  crate's documentation states bare-metal support, so the comparison in §5 rests
+  on ownership and on the absence of a claim, not on measured portability.
+- Linker behaviour outside LLD and GNU ld. The section and script coordination
+  is exercised only with the linkers the matrix uses.
+- Proc-macro hygiene against adversarial input. Compile-fail cases cover
+  expected misuse, not deliberately hostile token streams.
+- Compile-time cost of the macros at large suite counts. No bound is stated and
+  none is measured.
+- Behaviour when two crates in one binary declare the same suite name.
+  Deduplication is unspecified.
 
 ### 7. Performance & Resource Considerations
 
@@ -297,7 +365,7 @@ function. It replaces the function with the primary entrypoint:
 
 Steps 1–4 are implemented in `control-rs-macros/src/lib.rs`; discovery via
 `.ets_test_suites` is exercised by ETS (see
-`embedded-test-server-design.md`). Step 5 covers remaining hardening.
+`../ets/embedded-test-server-design.md`). Step 5 covers remaining hardening.
 
 | Task / Feature                                 | Description                                                                                                                      | Status / Effort |
 |:-----------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------|:----------------|
@@ -311,8 +379,27 @@ Steps 1–4 are implemented in `control-rs-macros/src/lib.rs`; discovery via
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                                           |
-|:---------|:---------------|:----------------|:--------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 24, 2026   | @MitchellDScott | Initial specification for embedded test registration and discovery procedural macros.                                                |
-| 1.1      | July 18, 2026  | @MitchellDScott | Linker section codegen: added distributed slice linker-section generation and bare-metal panic redirection in `#[ets_setup]`.         |
-| 1.2      | August 6, 2026  | @MitchellDScott | Tooling hardening: unified linker script name (`ets_suites.x`) and added compile-time AST span error diagnostics.                    |
+| Revision | Date           | Author          | Description                                                                                                                   |
+|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | May 24, 2026   | @MitchellDScott | Initial specification for embedded test registration and discovery procedural macros.                                         |
+| 1.1      | July 18, 2026  | @MitchellDScott | Linker section codegen: added distributed slice linker-section generation and bare-metal panic redirection in `#[ets_setup]`. |
+| 1.2      | August 6, 2026 | @MitchellDScott | Tooling hardening: unified linker script name (`ets_suites.x`) and added compile-time AST span error diagnostics.             |
+| 1.3      | September 9, 2026 | @MitchellDScott | Packaging alignment: updated host validation reference to `control-rs-ets-host::ServerBridge`.                               |
+| 1.4 | September 9, 2026 | @MitchellDScott | Project split: relocated to `documentation/macros/` from the retired xtask project. |
+| 1.5      | September 9, 2026 | @MitchellDScott | Evidence pass: replaced the pre-evidence research file with a quotes-only pair, cited the `linkme` and `inventory` rejections and the `link_section` semantics, corrected the linkme rejection from a capability claim to an ownership one, restructured §6 per `vv-standards.md`. |
+| 1.6      | September 9, 2026 | @MitchellDScott | Structural hardening: numbered §2 subsections 2.1-2.3, fixed cross-reference to ../ets/embedded-test-server-design.md, recorded #[analysis_budget] deferral in §6.7, standardized reference ordering. |
+| 1.7      | September 9, 2026 | @MitchellDScott | Dropped the author-year / `[n]` mapping table. |
+
+---
+
+## References
+
+[1] D. Tolnay, *linkme*: safe cross-platform linker shenanigans. [Online].
+Available: https://docs.rs/linkme. Accessed: Sep. 9, 2026.
+
+[2] D. Tolnay, *inventory*: typed distributed plugin registration. [Online].
+Available: https://docs.rs/inventory. Accessed: Sep. 9, 2026.
+
+[3] Rust Project Developers, "Application Binary Interface," *The Rust
+Reference*. [Online]. Available:
+https://doc.rust-lang.org/beta/reference/abi.html. Accessed: Sep. 9, 2026.

@@ -1,9 +1,13 @@
 # Subprogram Backend Examples (Proposal)
 
-**Date:** August 26, 2026
-**Status:** Proposal. Not a pipeline artifact. Does not set `Reviewed` or `Approved`.
+![Date Badge](https://img.shields.io/badge/Date-September_10,_2026-blue)
+![Type Badge](https://img.shields.io/badge/Type-Proposal-lightgrey)
+![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+
+This document is a proposal. It does not follow
+`documentation/design-template.md` and carries no design status badge.
 **Evidence:** `documentation/math/research/subprograms.json` + `.bib`
-**Design:** `documentation/math/subprograms-design.md` §4.5, §5, §6.1.5, §9 Phase 5
+**Design:** `documentation/math/subprograms-design.md` §4.5, §5, §6.7, §9 Phase 5
 
 ---
 
@@ -13,7 +17,7 @@
 library-agnostic and that hardware backends attach by implementing the traits
 on a marker type. §5 rejects hardcoding one backend on exactly that ground.
 The assertion is currently unexercised: `DefaultBlas` is the only implementor,
-and §6.1.5 records CMSIS-DSP / NMSIS-DSP conformance as open until Phase 5
+and §6.7 records CMSIS-DSP / NMSIS-DSP conformance as open until Phase 5
 backends exist.
 
 This document proposes one example crate per architecture. Each crate is a
@@ -40,10 +44,10 @@ extend those two.
    feature flag is required for a downstream integrator to attach a backend.
    An example that compiles is therefore direct evidence for the §4.5
    library-agnostic claim, in the same position as an external user.
-2. **Dependency budget.** `CLAUDE.md` requires minimizing dependencies.
+2. **Dependency budget.** Standing crate policy is to minimize dependencies.
    Examples declare `unsafe extern "C"` blocks directly and take no
    dependency on `blas-sys`, `cblas-sys` or `blas`. The `blas` crate is cited
-   as an ABI pattern (blas-lapack-rs, 2026), not consumed.
+   as an ABI pattern [1], not consumed.
 3. **Build isolation.** Each architecture needs a different C toolchain,
    linker script, and `-l` directive. Those belong in that example's own
    package, which declares `[workspace]` so they stay out of the root crate's
@@ -75,15 +79,14 @@ Layout translation lives next to the ABI that needs it:
 
 | Backend | Layout contract | Basis |
 |:--|:--|:--|
-| CBLAS / Accelerate | `ORDER` → `CblasRowMajor=101` / `CblasColMajor=102`; `lda` from the non-unit stride; `incX` from the vector stride; flags `111..142`; real scalars by value, complex by `*const c_void` | (Anderson et al., 1999; Lawson et al., 1979; Dongarra et al., 1990; Apple Developer, 2026b) |
-| CMSIS-DSP / NMSIS-DSP | contiguous row-major `*_matrix_instance_f32` only; no `alpha`/`beta`/`trans`/`lda` | (Arm Software CMSIS-DSP, 2026; Nuclei Software NMSIS-DSP, 2026) |
-| NEON / AVX2 | `ContiguousStorage` or a `DefaultBlas` tail for the unaligned remainder | (Rust Project, 2026; Arm Architecture, 2026) |
+| CBLAS / Accelerate | `ORDER` → `CblasRowMajor=101` / `CblasColMajor=102`; `lda` from the non-unit stride; `incX` from the vector stride; flags `111..142`; real scalars by value, complex by `*const c_void` | [2]–[5] |
+| CMSIS-DSP / NMSIS-DSP | contiguous row-major `*_matrix_instance_f32` only; no `alpha`/`beta`/`trans`/`lda` | [6], [7] |
+| NEON / AVX2 | `ContiguousStorage` or a `DefaultBlas` tail for the unaligned remainder | [8], [9] |
 
 Scalar dispatch on the C ABI is per concrete type, not generic over `T`.
 Real CBLAS takes `const float alpha`; complex CBLAS takes `const void *alpha`
 (`cblas_saxpy` vs `cblas_caxpy`). Emit one impl per (`f32`, `f64`,
-`Complex32`, `Complex64`) in the host crates that link that ABI (ndarray,
-2026c).
+`Complex32`, `Complex64`) in the host crates that link that ABI [10].
 
 ### 4. Proposed examples
 
@@ -142,8 +145,8 @@ crate, while the driver does not.
 |:--|:--|
 | Traits | `Axpy`, `Scal`, `Dotu`, `Nrm2` (L1); `Gemv` (L2); `Gemm` (L3) |
 | Scalars | `f32`, `f64` |
-| Default | NEON is baseline on every `aarch64-*` target, so no runtime detection (Rust Project, 2026; Arm Architecture, 2026) |
-| Opt-in | `--features accelerate` on `target_vendor = "apple"`: `AccelerateBlas` via `-framework Accelerate` (Apple Developer, 2026a, 2026b) |
+| Default | NEON is baseline on every `aarch64-*` target, so no runtime detection [8], [9] |
+| Opt-in | `--features accelerate` on `target_vendor = "apple"`: `AccelerateBlas` via `-framework Accelerate` [5], [11] |
 
 Vector loops over `float32x4_t` / `float64x2_t` plus a `DefaultBlas` tail
 for lengths not divisible by the vector width. That tail is the same fallback
@@ -161,7 +164,7 @@ framework.
 | Traits | Same set as E-aarch64 |
 | Scalars | `f32`, `f64` |
 | Default | AVX2+FMA via `#[target_feature(enable = "avx2,fma")]` after `std::arch::is_x86_feature_detected!` |
-| Opt-in | `--features cblas`: `CblasBlas` via `-lcblas -lblas` (OpenBLAS, 2026; BLIS, 2026a) |
+| Opt-in | `--features cblas`: `CblasBlas` via `-lcblas -lblas` [12], [13] |
 
 AVX2 and FMA are not in the x86-64 baseline. The detection check has no
 `core` equivalent, which is why this example is `std` while E-thumbv7em and
@@ -183,7 +186,7 @@ arm only. Off by default.
 CMSIS-DSP is not a BLAS. It has no `alpha`, no `beta`, no `trans` and no
 `lda`: the matrix argument is `arm_matrix_instance_f32 { numRows, numCols,
 pData }` with `pData[i*numCols + j]`, contiguous row-major only
-(Arm Software CMSIS-DSP, 2026). Every impl is a guarded fast path. The
+[6]. Every impl is a guarded fast path. The
 predicate is the teaching point:
 
 ```rust
@@ -199,7 +202,7 @@ fn gemm(ta: Trans, tb: Trans, alpha: f32, a: &A, b: &B, beta: f32, c: &mut C) {
 
 Also convert `arm_status` → `LinAlgError` for routines that return one
 (`arm_mat_mult_f32`, `arm_mat_solve_*`, `ARM_MATH_SINGULAR`)
-(Arm Software CMSIS-DSP, 2026; Arm Software, 2026d).
+[6], [14].
 
 Runnable default: QEMU `mps2-an500` / Cortex-M7 via this crate's own
 `.cargo/config.toml`. A Teensy 4 rebuild is a runner and linker-script
@@ -215,17 +218,17 @@ change in a copy of this crate, not an edit to `examples/teensy4/`.
 
 NMSIS-DSP is a CMSIS-DSP port with an identical struct shape
 (`riscv_matrix_instance_f32`) and a `riscv_` prefix
-(Nuclei Software NMSIS-DSP, 2026; Nuclei Software, 2026e, 2026f, 2026g).
+[7], [15]–[17].
 The predicate and the fallback are the same; the example exists so a RISC-V
 integrator copies RISC-V symbols rather than renaming ARM ones.
 
 Two constraints belong in the marker's header comment:
 
 - `riscv32imac-unknown-none-elf` declares `features: "+m,+a,+c"`
-  (Rust Project, 2026b). No F or D extension, so `f32` arithmetic is
+  [18]. No F or D extension, so `f32` arithmetic is
   soft-float on this target.
 - NMSIS-DSP implementations are optimized for cores with P-ext 0.5.4 +
-  N1/N2/N3 or V-ext present (Nuclei Software, 2026b).
+  N1/N2/N3 or V-ext present [19].
 
 Runnable default: QEMU `virt` / `rv32` via this crate's own runner. That
 demonstrates that the binding compiles and matches `DefaultBlas`. It is not
@@ -240,15 +243,15 @@ exercises the marker against `DefaultBlas`. Timing is bonus.
    identical fixtures, once through `ArchBlas` and once through
    `DefaultBlas`. Floating-point paths assert a bounded `O(N·EPS)` residual
    per design §8; integer and fixed-point paths assert bit equality per
-   §6.1.5. Small compile-time `Const<N>` shapes (`N` in `{4, 8, 16}` on
+   §6.3. Small compile-time `Const<N>` shapes (`N` in `{4, 8, 16}` on
    `no_std`; host may go larger). On-target operands stay on the stack.
 2. **Fallback coverage (required).** Fixtures include `alpha != 1`,
    `beta != 0`, `Trans::Trans`, and a non-unit two-sided strided view, so
    the delegation branch executes.
 3. **Cost (bonus).** Host crates may print `Instant` elapsed time and a
    GFLOP/s ratio against `DefaultBlas`. Cortex-M may read `DWT->CYCCNT`
-   (Arm Software, 2026b). RISC-V may read `nmsis_bench.h` HPM helpers
-   (Nuclei Software, 2026c). Per design §6.1.4 these are measurements, not
+   [20]. RISC-V may read `nmsis_bench.h` HPM helpers
+   [21]. Per design §6.3 these are measurements, not
    gates. Omit them rather than take a dependency (`criterion` is out) or
    claim speedup on QEMU / soft-float `riscv32imac`.
 
@@ -258,7 +261,7 @@ exercises the marker against `DefaultBlas`. Timing is bonus.
    `DefaultBlas` is inlined over `Const<N>` while an FFI call is opaque, which
    is the choice the integrator actually faces.
 
-This is the concrete form of the §6.1.5 item currently recorded as open. It
+This is the concrete form of the §6.7 item currently recorded as open. It
 is not an ETS suite and not a CI gate. `examples/qemu/` and
 `examples/teensy4/` continue to run `DefaultBlas` only.
 
@@ -269,15 +272,15 @@ need revision before an example can implement them:
 
 | §4.5 row | Problem | Evidence |
 |:--|:--|:--|
-| `Axpy` / `Scal` → `arm_scale_f32` | `arm_scale_f32` computes `pDst[n] = pSrc[n] * scale`, which is SCAL. It is not AXPY: no accumulation into `y`. AXPY needs `arm_scale_f32` followed by `arm_add_f32`, or the `DefaultBlas` loop. | (Arm Software, 2026c) |
-| `Nrm2` → `arm_cmplx_mag_f32` | `arm_cmplx_mag_f32(pSrc, pDst, numSamples)` writes an element-wise magnitude vector. NRM2 returns one scalar `‖x‖₂`. The mapping needs a sum-of-squares reduction plus `sqrt`, not `cmplx_mag`. | (Nuclei Software, 2026i) |
-| `Trsm` / `Trsv` → `arm_mat_solve_upper_triangular_f32` | Solves `UT · X = A` with a matrix right-hand side and no `alpha`. It covers TRSM at `Side::Left`, `UpLo::Upper`, `Trans::NoTrans`, `Diag::NonUnit`, `alpha = 1` only, and does not cover TRSV. | (Arm Software, 2026d; Nuclei Software, 2026l) |
+| `Axpy` / `Scal` → `arm_scale_f32` | `arm_scale_f32` computes `pDst[n] = pSrc[n] * scale`, which is SCAL. It is not AXPY: no accumulation into `y`. AXPY needs `arm_scale_f32` followed by `arm_add_f32`, or the `DefaultBlas` loop. | [22] |
+| `Nrm2` → `arm_cmplx_mag_f32` | `arm_cmplx_mag_f32(pSrc, pDst, numSamples)` writes an element-wise magnitude vector. NRM2 returns one scalar `‖x‖₂`. The mapping needs a sum-of-squares reduction plus `sqrt`, not `cmplx_mag`. | [23] |
+| `Trsm` / `Trsv` → `arm_mat_solve_upper_triangular_f32` | Solves `UT · X = A` with a matrix right-hand side and no `alpha`. It covers TRSM at `Side::Left`, `UpLo::Upper`, `Trans::NoTrans`, `Diag::NonUnit`, `alpha = 1` only, and does not cover TRSV. | [14], [24] |
 
 Fix the table before Phase 5 rather than during it, so the examples implement
 a mapping the design states correctly.
 
 Placement is already stated in design §4.5.1 (implementors live under
-`examples/subprograms/`, copied rather than depended on) and §6.1.5
+`examples/subprograms/`, copied rather than depended on) and §6.7
 (example conformance is not an ETS gate). Phase 5 must not be discharged by
 editing `examples/qemu/` or `examples/teensy4/`.
 
@@ -315,8 +318,8 @@ editing `examples/qemu/` or `examples/teensy4/`.
 | 1 | §6 corrections to `subprograms-design.md` §4.5 | E-thumbv7em, E-riscv32 |
 | 2 | E-aarch64 (`NeonBlas` marker, `ArchBlas` alias, smoke `main`) | none |
 | 3 | E-x86_64 (`Avx2Blas` marker + smoke `main`) | none |
-| 4 | E-thumbv7em (`CmsisDspBlas`, CMSIS-DSP in `build.rs`) | §6.1.5 closure (Arm) |
-| 5 | E-riscv32 (`NmsisDspBlas`, NMSIS-DSP in `build.rs`) | §6.1.5 closure (RISC-V) |
+| 4 | E-thumbv7em (`CmsisDspBlas`, CMSIS-DSP in `build.rs`) | §6.7 closure (Arm) |
+| 5 | E-riscv32 (`NmsisDspBlas`, NMSIS-DSP in `build.rs`) | §6.7 closure (RISC-V) |
 | 6 | Optional: `accelerate` / `cblas` features and timing loops | none |
 
 Step 2 is load-bearing. If E-aarch64 attaches to the traits without an
@@ -327,15 +330,50 @@ of ISA, ABI and link directive over the same driver. Timing loops, if added, lan
 
 ## References
 
-Bibliographic entries live in
-`documentation/math/research/subprograms.bib`. The `Avx2Blas` crate has no
-key yet: `core::arch::x86_64` and the AVX2 / FMA intrinsic reference need
-one collected before that crate is written. Keys used above:
-`anderson1999`, `appleaccelerate2026a`, `appleaccelerate2026b`,
-`armcmsisdsp2026`, `armneon2026a`, `armsoftware2026a`, `armsoftware2026b`,
-`armsoftware2026c`, `armsoftware2026d`, `blaslapackrs2026`, `blis2026a`,
-`dongarra1988`, `dongarra1990`, `lawson1979`, `ndarray2026c`,
-`nucleinmsisdsp2026`, `nucleisoftware2026b`, `nucleisoftware2026c`,
-`nucleisoftware2026e`, `nucleisoftware2026f`, `nucleisoftware2026g`,
-`nucleisoftware2026i`, `nucleisoftware2026l`, `openblas2026`,
-`rustneon2026`, `rustproject2026b`.
+[1] blas-lapack-rs, "src/lib.rs," in *blas-lapack-rs/blas*, 2026. [Online]. Available: https://raw.githubusercontent.com/blas-lapack-rs/blas/master/src/lib.rs. Accessed: Aug. 24, 2026.
+
+[2] E. Anderson, Z. Bai, C. Bischof, S. Blackford, J. Demmel, J. Dongarra, J. Du Croz, A. Greenbaum, S. Hammarling, A. McKenney, and D. Sorensen, *LAPACK Users' Guide*, 3rd ed., Philadelphia, PA: SIAM, 1999. [Online]. Available: https://www.netlib.org/lapack/lug/. Accessed: Aug. 24, 2026.
+
+[3] C. L. Lawson, R. J. Hanson, D. R. Kincaid, and F. T. Krogh, "Basic Linear Algebra Subprograms for Fortran Usage," *ACM Trans. Math. Softw.*, vol. 5, no. 3, pp. 308–323, Sep. 1979, doi: 10.1145/355841.355847.
+
+[4] J. J. Dongarra, J. Du Croz, I. S. Duff, and S. Hammarling, "A Set of Level 3 Basic Linear Algebra Subprograms," *ACM Trans. Math. Softw.*, vol. 16, no. 1, pp. 1–17, Mar. 1990, doi: 10.1145/77626.79170.
+
+[5] Apple Inc., "BLAS," in *Apple Developer Documentation (Accelerate Framework)*, 2026. [Online]. Available: https://developer.apple.com/documentation/accelerate/blas-library. Accessed: Aug. 24, 2026.
+
+[6] Arm Software, "Include/dsp/matrix_functions.h," in *ARM-software/CMSIS-DSP*, 2026. [Online]. Available: https://raw.githubusercontent.com/ARM-software/CMSIS-DSP/main/Include/dsp/matrix_functions.h. Accessed: Aug. 24, 2026.
+
+[7] Nuclei Software, "NMSIS DSP Matrix Functions," in *doc.nucleisys.com (NMSIS 1.6.0 documentation)*, 2026. [Online]. Available: https://doc.nucleisys.com/nmsis/dsp/api/groupmatrix/api_matrixmult.html. Accessed: Aug. 24, 2026.
+
+[8] Rust Project, "Module core::arch::aarch64," in *The Rust Standard Library (core)*, 2026. [Online]. Available: https://doc.rust-lang.org/core/arch/aarch64/index.html. Accessed: Aug. 24, 2026.
+
+[9] Arm Limited, "Arm C Language Extensions (ACLE)," in *Arm Developer Documentation*, 2026. [Online]. Available: https://developer.arm.com/architectures/instruction-sets/intrinsics/. Accessed: Aug. 24, 2026.
+
+[10] bluss and ndarray developers, "src/linalg/impl_linalg.rs," in *rust-ndarray/ndarray*, 2026. [Online]. Available: https://raw.githubusercontent.com/rust-ndarray/ndarray/master/src/linalg/impl_linalg.rs. Accessed: Aug. 24, 2026.
+
+[11] Apple Inc., "Accelerate," in *Apple Developer Documentation*, 2026. [Online]. Available: https://developer.apple.com/documentation/accelerate. Accessed: Aug. 24, 2026.
+
+[12] OpenMathLib, "README.md," in *OpenMathLib/OpenBLAS*, 2026. [Online]. Available: https://raw.githubusercontent.com/OpenMathLib/OpenBLAS/develop/README.md. Accessed: Aug. 24, 2026.
+
+[13] flame (Field G. Van Zee et al.), "README.md," in *flame/blis*, 2026. [Online]. Available: https://raw.githubusercontent.com/flame/blis/master/README.md. Accessed: Aug. 24, 2026.
+
+[14] Arm Software, "CMSIS-DSP: Matrix Inverse," in *arm-software.github.io*, 2026. [Online]. Available: https://arm-software.github.io/CMSIS-DSP/main/group__MatrixInv.html. Accessed: Aug. 24, 2026.
+
+[15] Nuclei Software, "Matrix Multiplication," in *NMSIS DSP API*, 2026. [Online]. Available: https://doc.nucleisys.com/nmsis/dsp/api/groupmatrix/api_matrixmult.html. Accessed: Aug. 24, 2026.
+
+[16] Nuclei Software, "Matrix Vector Multiplication," in *NMSIS DSP API*, 2026. [Online]. Available: https://doc.nucleisys.com/nmsis/dsp/api/groupmatrix/api_matrixvectmult.html. Accessed: Aug. 24, 2026.
+
+[17] Nuclei Software, "Vector Scale," in *NMSIS DSP API*, 2026. [Online]. Available: https://doc.nucleisys.com/nmsis/dsp/api/groupmath/api_basicscale.html. Accessed: Aug. 24, 2026.
+
+[18] Rust Project, "riscv32imac_unknown_none_elf.rs," in *rust-lang/rust*, 2026. [Online]. Available: https://doc.rust-lang.org/nightly/nightly-rustc/src/rustc_target/spec/targets/riscv32imac_unknown_none_elf.rs.html. Accessed: Aug. 24, 2026.
+
+[19] Nuclei Software, "README.md," in *Nuclei-Software/NMSIS*, 2026. [Online]. Available: https://raw.githubusercontent.com/Nuclei-Software/NMSIS/master/README.md. Accessed: Aug. 24, 2026.
+
+[20] Arm Software, "CMSIS-Core (Cortex-M): DWT_Type Struct Reference," in *arm-software.github.io (CMSIS_6 v6.0.0)*, 2026. [Online]. Available: https://arm-software.github.io/CMSIS_6/v6.0.0/Core/structDWT__Type.html. Accessed: Aug. 24, 2026.
+
+[21] Nuclei Software, "Changelog," in *doc.nucleisys.com (NMSIS 1.6.0 documentation)*, 2026. [Online]. Available: https://doc.nucleisys.com/nmsis/changelog.html. Accessed: Aug. 24, 2026.
+
+[22] Arm Software, "CMSIS-DSP: Vector Scale," in *arm-software.github.io*, 2026. [Online]. Available: https://arm-software.github.io/CMSIS-DSP/main/group__BasicScale.html. Accessed: Aug. 24, 2026.
+
+[23] Nuclei Software, "Complex Magnitude," in *NMSIS DSP API*, 2026. [Online]. Available: https://doc.nucleisys.com/nmsis/dsp/api/groupcmplxmath/api_cmplx_mag.html. Accessed: Aug. 24, 2026.
+
+[24] Nuclei Software, "Matrix Inverse," in *NMSIS DSP API*, 2026. [Online]. Available: https://doc.nucleisys.com/nmsis/dsp/api/groupmatrix/api_matrixinv.html. Accessed: Aug. 24, 2026.

@@ -1,7 +1,7 @@
 # Numeric Trait Hierarchy (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-September_10,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -20,37 +20,31 @@ wrapping vs. saturating).
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Overflow Mode Disambiguation**: Primitive integer types explicitly
-  partition overflow semantics into wrapping or saturating execution modes at
-  compile time (num-traits, 2024a; num-traits, 2024b; Spiteri, 2026a).
-- **FR-2 — Unsigned Primitive Ring Bound**: Unsigned integer primitives
-  (`u8`, `u16`, `u32`, `u64`, `usize`) satisfy `Zero + One + Sub + Mul`.
-  Linear-algebra kernels consume that bound via `T: Scalar`
-  (`subprograms-design.md` FR-1); this document does not specify BLAS-loop
-  monomorphization (num-traits, 2024a).
-- **FR-3 — Reflexive & Complex Conjugation**: `Conjugate` is a `Scalar`
-  super trait exposing `fn conj(self) -> Self`. Real scalars (integer
-  primitives, `f32`, `f64`, `Quantized<Repr, SHIFT>`) implement it as the
-  identity; `Complex<T>` implements it as imaginary-component negation. A
-  value is real iff `self == self.conj()`.
-- **FR-4 — Real Projection**: Every `Scalar` exposes
-  `type Real: Scalar<Real = Self> + PartialOrd` plus `re()`, `im()`,
-  `from_real()`, and `abs2()` (`re² + im²`, no square root; Proposal; not in
-  evidence). Real types
-  set `Real = Self`; `Complex<T>` sets `Real = T`.
-- **FR-5 — Implementor Partition**: `Scalar`, `Float`, `Complex<T>`, and
-  `Quantized` occupy distinct implementor sets; the partition is the §4.3
-  table.
+- **FR-1 — Overflow mode disambiguation**: Primitive integer types explicitly
+  partition overflow into wrapping or saturating execution at compile time.
+- **FR-2 — Unsigned primitive ring bound**: Unsigned integer primitives
+  satisfy a ring bound consumed by linear-algebra kernels. This document does
+  not specify BLAS-loop monomorphization.
+- **FR-3 — Reflexive and complex conjugation**: Every scalar has a conjugate.
+  Real scalars implement it as the identity; a value is real iff it equals its
+  conjugate.
+- **FR-4 — Real component projection**: Every scalar exposes a real part, an
+  imaginary part, and a squared modulus without a square root. Real types are
+  their own real component.
+- **FR-5 — Disjoint implementor sets**: Statically partition general scalars,
+  floats, complex numbers, and fixed-point numbers into mutually exclusive
+  implementor sets, preventing field-only operations from binding to ring types
+  at compile time.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Zero-Cost Abstraction**: Trait calls, zero/one constants, and
+- **NFR-1 — Zero-cost abstraction**: Trait calls, zero/one constants, and
   saturating/wrapping operations compile to direct primitive FPU/ALU
   instructions with zero runtime overhead or function call trampolines.
 
 #### 2.3 Constraints
 
-- **C-1 — `#![no_std]` Compatibility**: Numerical traits operate without
+- **C-1 — `#![no_std]` compatibility**: Numerical traits operate without
   standard library dependencies or dynamic allocation.
 
 ---
@@ -193,7 +187,7 @@ marker with no super trait bounds._
       and associated constant `ONE`.
     - `PartialOrd` is not a super trait of either. `Complex<T>` therefore
       implements `Zero`/`One`/`Scalar` without a total or partial order.
-    - `clamp` / `signum` on `Scalar` (Proposal; not in evidence) are bounded
+    - `clamp` / `signum` on `Scalar` are bounded
       `where Self: PartialOrd`; kernels clip through `T::Real`.
 2. **Conjugation Tier (`Conjugate`)**:
     - `Conjugate` exposes `fn conj(self) -> Self` and is a `Scalar`
@@ -209,13 +203,13 @@ marker with no super trait bounds._
       signed integers, floats, `Complex<T>` when `T: AdditiveGroup`).
 4. **Hardware Integer Tier (`Integer`, `SaturatingInteger`, `Unsigned`)**:
     - `Integer` and `SaturatingInteger` expose the wrap and saturate ALU
-      behaviors respectively (num-traits, 2024a; num-traits, 2024b), plus range
+      behaviors respectively [1], [2], plus range
       constants (`MAX`, `MIN`,
       `MIN_POSITIVE`, `TWO`). Both are implemented by every integer
       primitive, signed and unsigned.
     - `Quantized<Repr, SHIFT>` implements `SaturatingInteger` when `Repr`
       does; Q-format DSP types (`q15`, `q31`) follow the same saturating
-      contract (systemonchips.com, 2025).
+      contract [4].
     - `Unsigned` remains a `Sized`-only marker distinguishing unsigned
       primitives from the `AdditiveGroup`/`Signed`/`Float` branch.
 5. **Scalar Tier (`Scalar`)**:
@@ -284,13 +278,12 @@ implements `Div` when `T: Div`. Integer and `Quantized` division stay on
 1. **Full Abstract Algebra Taxonomy**:
     - _Considered_: Implementing a granular algebraic hierarchy matching formal
       abstract algebra, of the kind the `noether` crate ships (`Magma`,
-      `Semigroup`, `Monoid`, `Group`, `Ring`, `Field`) (warlock-labs, 2025).
+      `Semigroup`, `Monoid`, `Group`, `Ring`, `Field`) [5].
     - _Rejected_: Too complex for practical control systems engineering. Rust's
       trait solver overhead and complex bound signatures outweigh the benefits
       — `noether`'s own documentation cautions that "extensive use of dispatch
-      ... may incur some runtime cost" (warlock-labs, 2025; secondary,
-      uncorroborated claim), a risk this design avoids entirely by not
-      building a comparably deep tower. The pragmatic tiering (`Zero`,
+      ... may incur some runtime cost" [5], a risk this design avoids entirely
+      by not building a comparably deep tower. The pragmatic tiering (`Zero`,
       `Conjugate`, `AdditiveGroup`, `Integer`, `SaturatingInteger`, `Scalar`,
       `Float`) provides the exact boundaries required by numerical algorithms.
 2. **Blanket Derivation of `AdditiveGroup` from `Zero + Sub`**:
@@ -316,15 +309,14 @@ implements `Div` when `T: Div`. Integer and `Quantized` division stay on
       wrapper — analogous to the `fixed` crate's `Saturating<F>`, which
       "provides saturating arithmetic on fixed-point numbers" by overloading
       operators on the wrapper rather than exposing named methods on the
-      underlying type (Spiteri, 2026b) — instead of `Integer`/
+      underlying type [6] — instead of `Integer`/
       `SaturatingInteger` method calls (`wrapping_add()`, `saturating_add()`)
       on the scalar type itself.
     - _Rejected_: Requiring callers to convert into and out of a wrapper type at
       each boundary adds friction the trait-method approach avoids.
 5. **`ComplexField` / `RealField` Tower**:
     - _Considered_: A second trait pair (`ComplexField` with associated
-      `RealField`) in the style of nalgebra/simba, separate from `Scalar` (
-      Crozet, 2020).
+      `RealField`) in the style of nalgebra/simba, separate from `Scalar` [7].
     - _Rejected_: `Scalar::Real` plus `Conjugate` as a `Scalar` super trait
       gives ring kernels a single bound (`T: Scalar`) and projects norms,
       real α, and Givens cosine onto `T::Real` without a parallel algebra
@@ -350,63 +342,47 @@ implements `Div` when `T: Div`. Integer and `Quantized` division stay on
 
 ### 6. Verification & Validation
 
-#### 6.1 Verification
+#### 6.1 Approach
 
-Verification ensures structural correctness and trait compliance across all
-target environments:
+The implementation must produce evidence that `num_traits` imposes zero
+runtime overhead and zero memory footprint; that integer overflow modes are
+strictly disambiguated between wrapping and saturating paths; that conjugation
+and real projection satisfy exact algebraic identities; and that illegal type
+trait bounds fail at compile time.
 
-1. **Unit Testing & Hardware-Boundary Verification**:
-    - Test suites (`num_trait_tests.rs`) validate identity elements, wrapping
-      behavior at `MAX`/`MIN` and saturation behavior at `MAX`/`MIN` across
-      primitive types and `Complex<T>`.
-2. **Compile-Time Marker Assertions**:
-    - Negative trait bounds (`unsigned: AdditiveGroup`, `Complex<f64>: Float`,
-      `Complex<u8>: Scalar`) are rustdoc `compile_fail` doctests on
-      `num_traits` module docs. They do not live in `#[ets_suite]` / `cfg(test)`
-      modules; rustdoc does not extract doctests from those.
-    - Marker tests verify at compile time that `Scalar` is implemented for
-      every integer and float primitive (signed and unsigned), that
-      `Unsigned + Integer + SaturatingInteger` hold on unsigned primitives
-      including `u128` and `usize`,
-      and that `AdditiveGroup`/`Signed` are withheld from unsigned types (
-      positive checks in `num_trait_tests.rs`).
-    - `Complex<T>: Scalar` with `Real = T` when `T: Neg`; `compile_fail` that
-      `Complex<f64>` does not implement `Float` or `Signed`, and that
-      `Complex<u8>` does not implement `Scalar`.
-    - Identity conjugation: `x.conj() == x` for every real primitive;
-      `Complex::new(a, b).conj() == Complex::new(a, -b)`.
-    - Real projection: `T::Real = T` and `x.re() == x`, `x.im() == T::ZERO`
-      for real primitives; `Complex<T>::Real = T`, method `re()`/`im()` match
-      the `re`/`im` fields, and
-      `z.abs2() == z.re * z.re + z.im * z.im`.
-    - `Quantized` / `Fixed` marker `compile_fail`s are specified in
-      `fixed-num-design.md` §6.1.5 (`Q15: One`, `Q15: Scalar`,
-      `Fixed<i16, 14>: SaturatingInteger` as trait bounds). They are no
-      longer deferred to a tensor scalar type.
-    - `Complex<T>` does not implement `PartialOrd`. A rustdoc `compile_fail`
-      pins that bound. `clamp` / `signum` stay on `T: Scalar + PartialOrd`;
-      `src/math/subprograms.rs` and `src/math/dsp.rs` clip through `T::Real`
-      (`abs2`, `re`).
-3. **Host tests and ETS suite wrap**:
-    - Unit tests within `num_traits` are wrapped with the `#[ets_suite]` proc
-      macro infrastructure. The ETS wrap covers wrap/saturate **runtime**
-      tests only; it does not verify marker absence or type-level bounds
-      beyond ZST `size_of`.
+| Method | Mechanism |
+|:-------|:----------|
+| Compile-time shape check | Static trait bounds and rustdoc `compile_fail` doctests |
+| Requirements-based test | `#[test]` unit tests covering identity constants, boundary wrapping/saturation, and projections |
+| Property-based test | `proptest` over conjugation involution, real projection, and complex modulus squared |
+| Static analysis | `cargo clippy-ci`, source inspection for direct ALU lowering and zero trampolines |
+| Resource usage evaluation | `size_of` assertions verifying zero-sized marker types |
+| On-target execution | `#[ets_suite]` target execution on bare-metal MCU targets for runtime arithmetic |
 
-#### 6.2 Validation
+Target: 95% statement coverage of `src/math/num_traits.rs`, measured via `cargo coverage`.
+Excluded: Unreachable panic paths in const assertions and debug formatting strings.
 
-Validation confirms that high-level toolbox components integrate seamlessly with
-the trait hierarchy:
+1. **Numerical Assertion Integration**: `assert_almost_eq!` and `assert_not_almost_eq!` macros operate seamlessly over `T: Float`.
+2. **DSP & Linear Algebra Integration**: FFT kernels in `dsp.rs` bind to `T: Float` for trigonometric factors, while Level 1–3 BLAS subprograms instantiate cleanly over `T: Scalar`.
 
-- **Numerical Assertion Integration**: `assert_almost_eq!` and
-  `assert_not_almost_eq!` macros operate seamlessly over `T: Float`.
-- **DSP & Linear Algebra Integration**: FFT in `dsp.rs` is scoped to
-  `T: Float` (trigonometric twiddle factors). BLAS subprograms
-  (`subprograms.rs`) validate compile-time ergonomics over `T: Scalar`
-  (integers, floats, `Complex<T>`, and later `Quantized`). Field kernels
-  (`Nrm2`, `Trsv`, LAPACK) bound `T: Scalar + Div` with
-  `T::Real: Radical` / `Trig` as required, not `T: Float` as a stand-in
-  for complex.
+#### 6.2 Acceptance
+
+| Claim | Oracle | Measure | Bound |
+|:------|:-------|:--------|:------|
+| Identity elements | Algebraic ring definitions | `ZERO + x == x`, `ONE * x == x` | $0$, bit-identical |
+| Real conjugation identity | Conjugate definition | `x.conj() == x` for real primitives | $0$, bit-identical |
+| Complex conjugation involution | Involutive property | `z.conj().conj() == z` | $0$, bit-identical |
+| Real component projections | Projection definitions | `z.re()` and `z.im()` match component values | $0$, bit-identical |
+| Squared modulus evaluation | Exact norm formula | `z.abs2() == z.re * z.re + z.im * z.im` | $0$, bit-identical |
+| Negative trait bounds | Forbidden trait implementations | rustdoc `compile_fail` doctests | Compilation fails on `unsigned: AdditiveGroup`, `Complex: Float` |
+| Overflow mode execution | Integer bounds | Wrapping arithmetic wraps mod $2^n$; saturating clamps | $0$, bit-identical |
+| Zero-size footprint | Type system specification | `size_of::<AdditiveGroup>()`, `size_of::<Unsigned>()` | Exactly $0$ bytes |
+
+#### 6.3 Limits
+
+- **Unchecked division without divide-by-zero checks**: A future `NonZero<T>`-gated `SafeDiv` trait is deferred and not verified.
+- **Partial ordering over `Complex<T>`**: Complex numbers do not implement `PartialOrd`; ordering operations on complex fields are intentionally rejected at compile time.
+- **Floating-point overflow trapping**: Float primitives follow standard IEEE 754 infinity and NaN semantics rather than returning custom error enums.
 
 ---
 
@@ -443,10 +419,10 @@ for Complex<T>`). Every implementor must name `Real` and provide
    validate-once/divide-many hot loops is out of scope and
    needs its own design pass. Generic `NonZero<T>` itself is stable (Rust
    stabilized `generic_nonzero` after RFC 2307 replaced a single generic
-   wrapper with twelve concrete per-primitive types) (Reitermarkus, 2024; RFC
-   2307, 2018), but its `Zeroable`/`ZeroablePrimitive` sealing was adopted
+   wrapper with twelve concrete per-primitive types) [8], [9], but its
+   `Zeroable`/`ZeroablePrimitive` sealing was adopted
    specifically because "it is unclear what happens ... when `T` is some type
-   other than a raw pointer or a primitive integer" (RFC 2307, 2018) — a
+   other than a raw pointer or a primitive integer" [9] — a
    future `SafeDiv` needs its own answer for custom scalar types, since it
    cannot rely on `core::num::NonZero<T>` covering them.
 4. **Evolution of `const fn` Traits**: When Rust stabilizes `const_trait_impl`,
@@ -455,14 +431,11 @@ for Complex<T>`). Every implementor must name `Real` and provide
    Project Goals, "the compiler now has a promising implementation of const
    traits ... [but] the feature is still firmly in experimental territory:
    there has never been an RFC describing its syntax," with stabilization
-   itself still a stretch goal (Scherer, 2025).
+   itself still a stretch goal [10].
 5. **`Complex<T>` trait impls**: `complex_num.rs` implements `Scalar`
    (`Real = T`), `Conjugate`, `AdditiveGroup`, and inherent methods. It does
    not implement `Float`, `Signed`, `Radical`, `Trig`, or `Exponential`
    (FR-5, Alternative 7).
-6. **Const-traits citation**: `documentation/math/research/num-traits.bib`
-   contains `scherer2025` (2025H1 URL). Inline cite and [10] remain at
-   (Scherer, 2025).
 
 ---
 
@@ -474,7 +447,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | **Phase 2: `Conjugate` + `Scalar::Real`** | `Conjugate` supertrait of `Scalar`; `type Real` with `re`/`im`/`from_real`/`abs2`; `impl_scalar!` emits identity conjugation and `Real = Self`; `Float: Scalar`.                  | Complete         |
 | **Phase 3: `Complex<T>` retraction**      | `Complex<T>: Scalar` (`Real = T`) + `Conjugate` + `AdditiveGroup` + `Div`; remove `Float`/`Signed`/`Radical`/`Trig`/`Exponential`.                                                | Complete         |
 | **Phase 4: Call-site migration**          | Re-bound `subprograms.rs`, `dsp.rs`, `assert.rs`, and matrix decompositions that used `T: Float` as a complex stand-in.                                                           | Complete         |
-| **Phase 5: Verification**                 | Marker tests and `compile_fail` doctests for FR-3–FR-5; `#[ets_suite]` wrap/saturate suite verified. `Quantized` / `Fixed` negative oracles live in `fixed-num-design.md` §6.1.5. | Complete         |
+| **Phase 5: Verification**                 | Marker tests and `compile_fail` doctests for FR-3–FR-5; `#[ets_suite]` wrap/saturate suite verified. `Quantized` / `Fixed` negative oracles live in `fixed-num-design.md` §6.3. | Complete         |
 
 ---
 
@@ -487,54 +460,31 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | 1.2      | August 22, 2026 | @MitchellDScott | Complex scalar support: added `Conjugate` trait, `Scalar::Real` projection, and retracted `Complex: Float` in favor of `Complex: Scalar`. |
 | 1.3      | August 24, 2026 | @MitchellDScott | Comparison decoupling: dropped `PartialOrd` from `Zero`/`One` and `Complex<T>`, restricting ordering to `Signed` and `Scalar::Real`.      |
 | 1.4      | August 24, 2026 | @MitchellDScott | Full implementation and verification of numeric traits and complex number primitives.                                                     |
+| 1.5      | September 9, 2026 | @MitchellDScott | Hardening: sentence-case requirement titles, standard IEEE numeric citation callouts [1]–[10], and consecutively ordered references.        |
+| 1.6      | September 10, 2026 | @MitchellDScott | Verification grounding & review closure: grounded §6.4 traceability locators to real tests in src/math/tests/num_trait_tests.rs and fixed §9 dead pointer to fixed-num §6.3. |
+| 1.7      | September 15, 2026 | @MitchellDScott | Citations and type laundry removed from FR-1..FR-4 bodies. |
+| 1.8      | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: §6 authoring rules are `design-template.md` §6. |
 
 ---
 
 ## References
 
-[1] rust-num, "WrappingAdd," in *num_traits::ops::wrapping* (Version 0.2.19),
+[1] rust-num, "WrappingAdd," in *num_traits::ops::wrapping* (Version 0.2.19), 2024. [Online]. Available: https://docs.rs/num-traits/latest/num_traits/ops/wrapping/trait.WrappingAdd.html. Accessed: Aug. 6, 2026.
 
-2024. [Online]. Available:
-      https://docs.rs/num-traits/latest/num_traits/ops/wrapping/trait.WrappingAdd.html.
-      Accessed: Aug. 6, 2026.
+[2] rust-num, "Saturating," in *num_traits::ops::saturating* (Version 0.2.19), 2024. [Online]. Available: https://docs.rs/num-traits/latest/num_traits/ops/saturating/trait.Saturating.html. Accessed: Aug. 6, 2026.
 
-[2] rust-num, "Saturating," in *num_traits::ops::saturating* (Version 0.2.19),
+[3] T. Spiteri, *az* (Version 1.3.0), 2026. [Online]. Available: https://docs.rs/az/latest/az/. Accessed: Aug. 6, 2026.
 
-2024. [Online]. Available:
-      https://docs.rs/num-traits/latest/num_traits/ops/saturating/trait.Saturating.html.
-      Accessed: Aug. 6, 2026.
+[4] systemonchips.com, "...and Correctly Using CMSIS-DSP Fixed-Point (Qx) Functions," 2025. [Online]. Available: https://www.systemonchips.com/and-correctly-using-cmsis-dsp-fixed-point-qx-functions/. Accessed: Aug. 6, 2026.
 
-[3] T. Spiteri, *az* (Version 1.3.0), 2026. [Online]. Available:
-https://docs.rs/az/latest/az/. Accessed: Aug. 6, 2026.
+[5] warlock-labs, *noether README* (Version 0.3.0), 2025. [Online]. Available: https://github.com/warlock-labs/noether. Accessed: Aug. 6, 2026.
 
-[4] systemonchips.com, "...and Correctly Using CMSIS-DSP Fixed-Point (Qx)
-Functions," 2025. [Online]. Available:
-https://www.systemonchips.com/and-correctly-using-cmsis-dsp-fixed-point-qx-functions/.
-Accessed: Aug. 6, 2026.
+[6] T. Spiteri, *fixed::Saturating* (Version 1.31.0), 2026. [Online]. Available: https://docs.rs/fixed/latest/fixed/struct.Saturating.html. Accessed: Aug. 6, 2026.
 
-[5] S. Crozet, "Switch to Simba and make the base and geometry modules mostly
-SIMD AoSoA friendly (PR #713)," in *dimforge/nalgebra*, 2020. [Online].
-Available: https://github.com/dimforge/nalgebra/pull/713. Accessed: Aug. 6,
+[7] S. Crozet, "Switch to Simba and make the base and geometry modules mostly SIMD AoSoA friendly (PR #713)," in *dimforge/nalgebra*, 2020. [Online]. Available: https://github.com/dimforge/nalgebra/pull/713. Accessed: Aug. 6, 2026.
 
-2026.
+[8] M. Reitermarkus, "Tracking Issue for generic NonZero (issue #120257)," in *rust-lang/rust*, 2024. [Online]. Available: https://github.com/rust-lang/rust/issues/120257. Accessed: Aug. 6, 2026.
 
-[6] warlock-labs, *noether README* (Version 0.3.0), 2025. [Online]. Available:
-https://github.com/warlock-labs/noether. Accessed: Aug. 6, 2026.
+[9] Rust Project, "RFC 2307: Concrete NonZero Types," *Rust RFC Book*, 2018. [Online]. Available: https://rust-lang.github.io/rfcs/2307-concrete-nonzero-types.html. Accessed: Aug. 6, 2026.
 
-[7] T. Spiteri, *fixed::Saturating* (Version 1.31.0), 2026. [Online].
-Available: https://docs.rs/fixed/latest/fixed/struct.Saturating.html.
-Accessed: Aug. 6, 2026.
-
-[8] M. Reitermarkus, "Tracking Issue for generic NonZero (issue #120257)," in
-*rust-lang/rust*, 2024. [Online]. Available:
-https://github.com/rust-lang/rust/issues/120257. Accessed: Aug. 6, 2026.
-
-[9] Rust Project, "RFC 2307: Concrete NonZero Types," *Rust RFC Book*, 2018.
-[Online]. Available:
-https://rust-lang.github.io/rfcs/2307-concrete-nonzero-types.html. Accessed:
-Aug. 6, 2026.
-
-[10] O. Scherer, "Prepare const traits for stabilization," *Rust Project Goals
-(2025H1)*, 2025. [Online]. Available:
-https://rust-lang.github.io/rust-project-goals/2025h1/const-trait.html.
-Accessed: Aug. 6, 2026.
+[10] O. Scherer, "Prepare const traits for stabilization," *Rust Project Goals (2025H1)*, 2025. [Online]. Available: https://rust-lang.github.io/rust-project-goals/2025h1/const-trait.html. Accessed: Aug. 6, 2026.

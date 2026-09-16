@@ -3,6 +3,13 @@
 These rules establish a rigorous and consistent documentation standard for a
 Rust native control systems toolbox intended for safety-critical applications.
 
+Design-document §2 Requirements and §6 Verification & Validation follow
+`documentation/design-template.md`, which is the sole authority for both.
+This file governs rustdoc and prose. Requirement-to-test association is the
+`#[req_trace]` attribute specified in
+`documentation/vv/requirement-traceability-design.md`; it does not replace
+the design document's §2.
+
 # 1. General Etiquette
 
 To maintain a clean, readable and highly maintainable codebase, all
@@ -68,6 +75,8 @@ The documentation for every public item should adhere to the following order:
 * **Safety**: A mandatory section detailing all safety-related aspects.
 * **Panics**: An explicit list of all conditions under which the item will
   panic.
+* **Verification**: Optional prose for a test's intent. Association with a
+  requirement is `#[req_trace]`, not a doc-comment tag.
 * **Example**: At least one runnable example that demonstrates typical usage.
 
 ### Example of function/trait docs
@@ -161,6 +170,28 @@ list below:
 /// - No other part of the system is concurrently accessing this UART peripheral.
 ///
 /// Failure to adhere to these conditions will result in undefined behavior.
+```
+
+## 3.3 Requirement association on tests
+
+Host `#[test]` functions that discharge a requirement carry
+`#[req_trace(req = "<slug>-<id>")]`, where `<slug>-<id>` is the global
+identifier (`polynomial-FR-1`). The attribute is specified in
+`documentation/vv/requirement-traceability-design.md`. Do not put fully
+qualified paths, locator schemes, or verified/unverified status in rustdoc
+or in the design document.
+
+`/// Trace:` and `Discharges:` comments are not the association.
+
+### Example:
+
+```rust
+/// Asserts that closed-loop poles satisfy the characteristic polynomial.
+#[req_trace(req = "classical-tools-FR-3")]
+#[test]
+fn test_roots_satisfy_characteristic_equation() {
+    // ...
+}
 ```
 
 # 4. ETS Test Suite Documentation

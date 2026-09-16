@@ -1,7 +1,7 @@
 # State-Space Model Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-September_15,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -60,21 +60,22 @@ Primary usage scenarios:
   parallel ($G_1 + G_2$), and feedback ($G / (I + G H)$) interconnections,
   deriving composite state dimensions at compile time. Feedback interconnections
   evaluate algebraic loop solvability and return
-  `Err(StateSpaceError::SingularLoopMatrix)` when $(I - \mathrm{sign}\, D_2 D_1)$
+  `Err(StateSpaceError::SingularLoopMatrix)`
+  when $(I - \mathrm{sign}\, D_2 D_1)$
   is singular.
-- **FR-4 — Continuous-to-Discrete Discretization**: Discretizes continuous-time
-  state-space models using Zero-Order Hold (ZOH via scaling-and-squaring matrix
-  exponential) and Bilinear / Tustin transformations (Van Loan, 1978; Higham,
-  2005). Ill-conditioned discretization transformations return explicit error
-  variants.
+- **FR-4 — Continuous-to-discrete discretization**: Discretizes continuous-time
+  state-space models using a hold equivalent and a bilinear map. Ill-conditioned
+  transformations return an explicit error. Algorithm choice is §4.
 - **FR-5 — Coordinate Similarity Transformations**: Computes coordinate basis
   changes ($z = T x$) producing transformed system
   matrices ($\tilde{A} = T A T^{-1}$, $\tilde{B} = T B$, $\tilde{C} = C T^{-1}$, $\tilde{D} = D$),
   returning an error if transformation matrix $T$ is singular.
-- **FR-6 — Controllability, Observability & Transfer Function Conversion**:
-  Generates controllability and observability
-  matrices ($[B, AB, \dots, A^{n-1}B]$ and $[C; CA; \dots; CA^{n-1}]$) and
-  provides conversion to SISO `TransferFunction` models.
+- **FR-6 — Controllability & Observability**: Generates controllability and observability
+  matrices ($\mathcal{C} = [B, AB, \dots, A^{n-1}B]$ and $\mathcal{O} = [C; CA; \dots; CA^{n-1}]$)
+  to evaluate reachability, observability, and minimal realization properties.
+- **FR-7 — Transfer Function Conversion**: Converts SISO state-space representations into
+  equivalent rational transfer functions ($G(s) = C(sI - A)^{-1}B + D$) via resolvent
+  evaluation or Faddeev–LeVerrier algorithms without dynamic heap allocation.
 
 #### 2.2. Non-Functional Requirements
 
@@ -92,8 +93,7 @@ Primary usage scenarios:
 - **C-2 — Dimension Capacity Limits**: State dimensions are
   bounded ($N_x \le 32$, $N_u, N_y \le 16$) to ensure real-time determinism and
   prevent stack overflow.
-- **C-3 — `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
-  standard library dependencies.
+- **C-3 — `#![no_std]` environment**: Core-only; no heap allocation.
 
 ---
 
@@ -134,14 +134,14 @@ bound that admits `Complex<T>` (FR-5), so those sites bind
 
 ---
 
-### 4. Core Architecture
+### 4. Architecture
 
 #### 4.1 Type Signature & Storage Layout
 
 ```rust
 // Dim-generic core. Owning defaults cannot be `ArrayStorage<T, NX, NX>`:
 // that leaf takes bare `const usize` parameters, not `Dim` types.
-pub struct StateSpaceCore<
+pub struct GenericStateSpace<
     T,
     NX: Dim,
     NU: Dim,
@@ -173,7 +173,7 @@ pub struct StateSpaceCore<
 ```rust
 // Owning stack allocation. `NX`/`NU`/`NY` are the alias's own const generics;
 // `Dim` slots are `Const<NX>`/`Const<NU>`/`Const<NY>`.
-pub type StateSpace<T, const NX: usize, const NU: usize, const NY: usize> = StateSpaceCore<
+pub type StateSpace<T, const NX: usize, const NU: usize, const NY: usize> = GenericStateSpace<
     T,
     Const<NX>,
     Const<NU>,
@@ -189,7 +189,7 @@ pub type ArrayStateSpace<T, const NX: usize, const NU: usize, const NY: usize> =
 StateSpace<T, NX, NU, NY>;
 
 /// Zero-copy borrowed read-only view.
-pub type StateSpaceView<'a, T, const NX: usize, const NU: usize, const NY: usize> = StateSpaceCore<
+pub type StateSpaceView<'a, T, const NX: usize, const NU: usize, const NY: usize> = GenericStateSpace<
     T,
     Const<NX>,
     Const<NU>,
@@ -201,7 +201,7 @@ pub type StateSpaceView<'a, T, const NX: usize, const NU: usize, const NY: usize
 >;
 
 /// Zero-copy borrowed mutable view.
-pub type StateSpaceViewMut<'a, T, const NX: usize, const NU: usize, const NY: usize> = StateSpaceCore<
+pub type StateSpaceViewMut<'a, T, const NX: usize, const NU: usize, const NY: usize> = GenericStateSpace<
     T,
     Const<NX>,
     Const<NU>,
@@ -221,12 +221,13 @@ does not re-wrap. Views are strided, not necessarily contiguous, so they
 carry no `as_slice()`; the accessors that need one bound
 `ContiguousStorage` separately (§4.3). Built-in time-domain simulation
 methods (`step()`, `derivative()`) delegate directly to the single-source
-subprogram kernels (`Gemv`, `Axpy`) defined in [`src/math/subprograms.rs`](../../src/math/subprograms.rs).
+subprogram kernels (`Gemv`, `Axpy`) defined in [
+`src/math/subprograms.rs`](../../src/math/subprograms.rs).
 
 #### 4.3 Safe `Matrix` Integration & Zero-Copy Matrix Views
 
 While data is stored inside storage backends (`Sa`, `Sb`, `Sc`, `Sd`),
-`StateSpaceCore` exposes methods to treat each backend as a zero-cost `Dense`
+`GenericStateSpace` exposes methods to treat each backend as a zero-cost `Dense`
 view
 or `MatrixSlice`, enabling full reuse of `Matrix` operations (multiplication,
 addition, transposition, solver routines). Per §4.1 and NFR-2, these accessors
@@ -235,7 +236,7 @@ bounded on `DenseStorage`/`DenseStorageMut`:
 
 ```rust
 impl<T, const NX: usize, const NU: usize, const NY: usize, Sa, Sb, Sc, Sd>
-StateSpaceCore<T, Const<NX>, Const<NU>, Const<NY>, Sa, Sb, Sc, Sd>
+GenericStateSpace<T, Const<NX>, Const<NU>, Const<NY>, Sa, Sb, Sc, Sd>
 where
     Sa: DenseStorage<T, R=Const<NX>, C=Const<NX>>,
     Sb: DenseStorage<T, R=Const<NX>, C=Const<NU>>,
@@ -313,17 +314,32 @@ matching the posture already adopted for `TransferFunction::evaluate_complex`
   `pub const fn from_storage(a: Sa, b: Sb, c: Sc, d: Sd, sample_time: Option<T>) -> Self`
 - **Owning Array Constructor**:
   ```rust
-  pub fn from_arrays<const NX: usize, const NU: usize, const NY: usize>(
+  pub const fn from_rows(
       a: [[T; NX]; NX],
-      b: [[T; NX]; NU],
-      c: [[T; NY]; NX],
-      d: [[T; NY]; NU],
+      b: [[T; NU]; NX],
+      c: [[T; NX]; NY],
+      d: [[T; NU]; NY],
       sample_time: Option<T>,
   ) -> ArrayStateSpace<T, NX, NU, NY>
   ```
-  Nested arrays match `ArrayStorage`'s `[[T; R]; C]` buffer
-  (`storage-design.md` FR-2). Lengths are the alias's own const generics,
-  not `Dim::USIZE` products.
+  Each argument is row-major, written the way the matrix is written on paper
+  (`matrix-design.md` §4.4). Transposition into `ArrayStorage`'s
+  `[[T; R]; C]` buffer (`storage-design.md` FR-2) runs in a `const` loop, so
+  a plant definition still lands in read-only memory. Lengths are the
+  alias's own const generics, not `Dim::USIZE` products.
+- **Time-Domain Constructors**:
+  ```rust
+  pub fn continuous(
+      a: impl Into<Owned<T, NX, NX>>,
+      b: impl Into<Owned<T, NX, NU>>,
+      c: impl Into<Owned<T, NY, NX>>,
+      d: impl Into<Owned<T, NY, NU>>,
+  ) -> Self
+  pub fn discrete(..., dt: T) -> Self
+  ```
+  `impl Into` accepts a row-major array literal or an already-built matrix
+  through one signature (`matrix-design.md` §4.4). It is not `const`; the
+  `const` path is `from_rows`.
 - **Borrowed views**: `ArrayStateSpace::view()` / `view_mut()`
   (`storage-design.md` FR-2). Wrapping an erased-length slice goes through
   `StorageView::new`, which is fallible with
@@ -338,7 +354,7 @@ vector $u \in \mathbb{R}^{N_u}$, compute next state $x_{next}$ and
 output $y \in \mathbb{R}^{N_y}$:
 
 ```rust
-impl<T, NX: Dim, NU: Dim, NY: Dim, Sa, Sb, Sc, Sd> StateSpaceCore<T, NX, NU, NY, Sa, Sb, Sc, Sd>
+impl<T, NX: Dim, NU: Dim, NY: Dim, Sa, Sb, Sc, Sd> GenericStateSpace<T, NX, NU, NY, Sa, Sb, Sc, Sd>
 where
     Sa: DenseStorage<T, R=NX, C=NX>,
     Sb: DenseStorage<T, R=NX, C=NU>,
@@ -448,7 +464,7 @@ is made independently by `transfer-function-design.md` §6 for
 
 ### 6. Verification & Validation
 
-#### 6.1. Objectives
+#### 6.1 Approach
 
 - Demonstrate compile-time verification of state, input, and output dimension
   constraints.
@@ -462,65 +478,48 @@ is made independently by `transfer-function-design.md` §6 for
 - Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
   deterministic real-time latency.
 
-#### 6.2. Methods
-
-| Method                    | Mechanism                                                                        | Requirements discharged  |
-|:--------------------------|:---------------------------------------------------------------------------------|:-------------------------|
-| Compile-time shape check  | Type-level `Dim` assertions, `compile_fail` doctests                             | FR-1, C-1, C-2           |
-| Requirements-based test   | `#[test]` unit tests over standard physical models and singular cases            | FR-2, FR-3, FR-4, FR-5, FR-6 |
-| Property-based test       | `proptest` suites verifying interconnection identities and similarity invariants | FR-3, FR-5               |
-| Doctest                   | Runnable doc examples in rustdoc                                                 | FR-2                     |
-| Back-to-back comparison   | `examples/numerical-models-validation/python3/state_space_validation.py` vs `src/state_space_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-4, FR-5         |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                   | NFR-1, NFR-2, C-2, C-3   |
-| On-target execution       | ETS suites under QEMU and Teensy hardware                                        | NFR-2                    |
-| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                          | FR-1..FR-6, NFR-1..NFR-2 |
-
-#### 6.3. Acceptance Criteria
-
-| Claim                              | Oracle                                            | Measure        | Bound                                                                                             | Justification                                               |
-|:-----------------------------------|:--------------------------------------------------|:---------------|:--------------------------------------------------------------------------------------------------|:------------------------------------------------------------|
-| ZOH discretization residual        | Van Loan exact matrix exponential                 | Relative error | $\frac{\|\hat{A}_d - e^{A T_s}\|_\infty}{\|e^{A T_s}\|_\infty \epsilon} < 20.0$                   | Van Loan (1978) & Higham (2005) Padé scaling error bound    |
-| Step response propagation          | Closed-form analytic linear solution              | Absolute error | $\|x[k] - x_{\text{exact}}[k]\|_\infty \le k \gamma_{N_x} \|A\|_\infty^k \|x[0]\|_\infty$         | Matrix recurrence error propagation (Higham, 2002)          |
-| Similarity transform invariance    | Characteristic polynomial invariance              | Relative error | $\frac{\|\det(sI - A) - \det(sI - T A T^{-1})\|_\infty}{\|\det(sI - A)\|_\infty} \le 10 \epsilon$ | Spectral invariance under coordinate change (Ogata, 2010)   |
-| Phase portrait & discrete step     | harold `State` / `discretize` / `sim`             | Absolute error | $\le 10^{-4}$ ($\theta, \dot{\theta}$ trajectories & discrete step response)                      | Cross-toolbox discrete LTI state simulation agreement       |
-| Feedback loop singularity          | Singular algebraic loop matrix $(I - \mathrm{sign}\, D_2 D_1)$ | Exact equality | `Err(StateSpaceError::SingularLoopMatrix)`                                                        | Precondition failure contract                               |
-| Tustin discretization singularity  | Singular bilinear operator $(I - \frac{T_s}{2}A)$ | Exact equality | `Err(StateSpaceError::SingularDiscretizationOperator)`                                            | Solvability precondition contract                           |
-| Long-horizon fixed-point recursion | Saturating recursion across $10^5$ steps          | Exact equality | Zero unbounded overflow drift / limit cycles                                                      | Mullis & Roberts (1976), Hwang (1977) fixed-point stability |
-| Zero-allocation guarantee          | Host memory allocator interception                | Exact equality | 0 heap allocations                                                                                | NFR-1 `#![no_std]` invariant                                |
-
-#### 6.4. Traceability
-
-| Requirement                                             | Method                                           | Artifact                                                              |
-|:--------------------------------------------------------|:-------------------------------------------------|:----------------------------------------------------------------------|
-| FR-1 — Continuous & Discrete LTI Representation         | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/state_space/mod.rs`           |
-| FR-2 — Deterministic State Propagation                  | Requirements-based test, Back-to-back comparison | `src/state_space/tests/state_space_tests.rs::test_discrete_simulation_step` |
-| FR-3 — System Interconnection Algebra                   | Property-based test, Back-to-back comparison     | `src/state_space/tests/state_space_tests.rs::test_series_parallel_feedback`, `test_feedback_singular_loop_matrix` |
-| FR-4 — Continuous-to-Discrete Discretization            | Requirements-based test, Back-to-back comparison | `src/state_space/tests/state_space_tests.rs::test_zoh_discretization`  |
-| FR-5 — Coordinate Similarity Transformations            | Property-based test, Requirements-based test     | `src/state_space/tests/state_space_tests.rs::test_similarity_transform_poles_and_step` |
-| FR-6 — Controllability, Observability & TF Conversion   | Requirements-based test                          | `src/state_space/tests/state_space_tests.rs::test_ctrb_obsv_tf`        |
-| NFR-1 — Single-Step Execution Complexity                | Resource usage evaluation                        | `size_of` assertions and `#![no_std]` host check                      |
-| NFR-2 — Bounded Stack Overhead                          | On-target execution                              | ETS suite `state_space_test_suite`                                    |
-| C-1 — Non-Zero State Dimensions                         | Compile-time shape check                         | Type definitions for linear systems                                   |
-| C-2 — Dimension Capacity Limits                         | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                                 |
-| C-3 — `#![no_std]` Environment                          | Resource usage evaluation                        | Compilation under `#![no_std]` target triples                         |
-
-#### 6.5. Coverage
+| Method                    | Mechanism                                                                                                                                                                         |
+|:--------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Compile-time shape check  | Type-level `Dim` assertions, `compile_fail` doctests                                                                                                                              |
+| Requirements-based test   | `#[test]` unit tests over standard physical models and singular cases                                                                                                             |
+| Property-based test       | `proptest` suites verifying interconnection identities and similarity invariants                                                                                                  |
+| Doctest                   | Runnable doc examples in rustdoc                                                                                                                                                  |
+| Back-to-back comparison   | `control-rs-validation/python3/state_space_oracle.py` vs `control-rs-validation/src/state_space.rs` HDF5; [`numerical-models-design.md`](numerical-models-design.md) §6.2 |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                                                                                            |
+| On-target execution       | ETS suites under QEMU and Teensy hardware                                                                                                                                         |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                                                                                                           |
 
 - **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage reported
   via `cargo coverage`.
 - **Excluded**: Hardware ETS cycle benchmarking loops and debug display
   implementations (`core::fmt::Debug`).
 
-#### 6.6. Validation
+- **Phase portrait, step, similarity, ctrb/obsv, stiff ZOH (fail-closed host gate)**: keys
+  `nmv.state_space.phase_portrait.theta[.dot].{scipy,harold}`,
+  `nmv.state_space.jitter.step_data.{scipy,harold}`,
+  `nmv.state_space.similarity.a_tilde`, `nmv.state_space.ctrb.matrix`,
+  `nmv.state_space.obsv.matrix`, and `nmv.state_space.stiff_zoh.ad`.
+  Controllability/observability *timing* arrays remain NFR diagnostics.
+  The `examples/*.rs` cargo examples are pedagogical (not B2B). `benches/numerical_models.rs` measures kernel latency with criterion and is not a numerical key.
 
-- **Continuous-Time Dynamics & ZOH Step Trajectory**: Verification of 2nd-order
-  continuous plant derivative evaluation, Zero-Order Hold (ZOH)
-  discretization via matrix exponential expansion, 200-step open-loop unit
-  step, similarity coordinate transformations, stiff diagonal plant
-  $A=\mathrm{diag}(-200,-0.5)$, and multi-source cross-validation against SciPy and harold
-  oracles in `examples/numerical-models-validation/src/state_space_validation.rs`.
+#### 6.2 Acceptance
 
-#### 6.7. Not Verified
+| Claim                              | Oracle                                                         | Measure        | Bound                                                                                             | Justification                                               |
+|:-----------------------------------|:---------------------------------------------------------------|:---------------|:--------------------------------------------------------------------------------------------------|:------------------------------------------------------------|
+| ZOH discretization residual        | Van Loan exact matrix exponential                              | Relative error | $\frac{\|\hat{A}_d - e^{A T_s}\|_\infty}{\|e^{A T_s}\|_\infty \epsilon} < 20.0$                   | Van Loan (1978) & Higham (2005) Padé scaling error bound    |
+| Step response propagation          | Closed-form analytic linear solution                           | Absolute error | $\|x[k] - x_{\text{exact}}[k]\|_\infty \le k \gamma_{N_x} \|A\|_\infty^k \|x[0]\|_\infty$         | Matrix recurrence error propagation (Higham, 2002)          |
+| Similarity transform invariance    | Characteristic polynomial invariance                           | Relative error | $\frac{\|\det(sI - A) - \det(sI - T A T^{-1})\|_\infty}{\|\det(sI - A)\|_\infty} \le 10 \epsilon$ | Spectral invariance under coordinate change (Ogata, 2010)   |
+| Phase portrait position            | SciPy                                              | Relative $\ell_2$ | Parent key `nmv.state_space.phase_portrait.theta.scipy` | 2000-step trajectory |
+| Phase portrait rate                | SciPy                                              | Relative $\ell_2$ | Parent key `nmv.state_space.phase_portrait.theta_dot.scipy` | 2000-step trajectory |
+| Stiff ZOH $A_d$                    | SciPy / harold                                     | Relative $\ell_2$ | Parent key `nmv.state_space.stiff_zoh.ad` | $5\times 10^{3}$ stiffness |
+| Similarity transform               | SciPy                                              | Relative $\ell_2$ | Parent key `nmv.state_space.similarity.a_tilde` | $\kappa(T)\sim 10^{8}$ |
+| Controllability matrix             | SciPy                                              | Relative $\ell_2$ | Parent key `nmv.state_space.ctrb.matrix` | Graded modes |
+| Feedback loop singularity          | Singular algebraic loop matrix $(I - \mathrm{sign}\, D_2 D_1)$ | Exact equality | `Err(StateSpaceError::SingularLoopMatrix)`                                                        | Precondition failure contract                               |
+| Tustin discretization singularity  | Singular bilinear operator $(I - \frac{T_s}{2}A)$              | Exact equality | `Err(StateSpaceError::SingularDiscretizationOperator)`                                            | Solvability precondition contract                           |
+| Long-horizon fixed-point recursion | Saturating recursion across $10^5$ steps                       | Exact equality | Zero unbounded overflow drift / limit cycles                                                      | Mullis & Roberts (1976), Hwang (1977) fixed-point stability |
+| Zero-allocation guarantee          | Host memory allocator interception                             | Exact equality | 0 heap allocations                                                                                | NFR-1 `#![no_std]` invariant                                |
+
+#### 6.3 Limits
 
 - Descriptor state-space formulations ($E \dot{x} = A x + B u$) are excluded and
   not verified.
@@ -529,6 +528,11 @@ is made independently by `transfer-function-design.md` §6 for
 - Transfer-function realization at denominator degree $> 32$ is not verified
   against C-2 ($N_x \le 32$). The example crate includes a 2-state stiff ZOH
   case ([`numerical-models-design.md`](numerical-models-design.md) §6.6).
+- On-target ETS execution under QEMU (`thumbv7em`, `riscv32imac`, `riscv64gc`) and
+  Teensy hardware (`thumbv7em`) has not yet run in firmware binaries;
+  `#[ets_suite]` modules exist in the source tree, but target firmware builds
+  only link `math` and `matrix` test suites to respect flash-footprint limits on
+  embedded targets.
 
 ---
 
@@ -587,7 +591,8 @@ is made independently by `transfer-function-design.md` §6 for
   for a single `Gemm` is necessary but not sufficient for `step()`, which is a
   recursion. Overflow handling in this path must saturate rather than wrap.
 - **FR-6 Scope (MIMO Transfer Function Conversion)**: FR-6
-  SISO conversion is scoped to §4.9. Extending to MIMO is tracked as future work.
+  SISO conversion is scoped to §4.9. Extending to MIMO is tracked as future
+  work.
 
 ---
 
@@ -595,116 +600,123 @@ is made independently by `transfer-function-design.md` §6 for
 
 | Task / Feature                                | Description                                                                                                                                                                                                                         | Estimated Effort |
 |:----------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Core Struct & Constructors**        | Implement `StateSpaceCore<T, NX, NU, NY, Sa, Sb, Sc, Sd>`, `StateSpace<T, NX, NU, NY>` alias, basic array/slice constructors and `StateSpaceError` (§4.4) in `src/state_space/mod.rs`.                                              | 1.0 Day          |
+| **Step 1: Core Struct & Constructors**        | Implement `GenericStateSpace<T, NX, NU, NY, Sa, Sb, Sc, Sd>`, `StateSpace<T, NX, NU, NY>` alias, basic array/slice constructors and `StateSpaceError` (§4.4) in `src/state_space/mod.rs`.                                           | 1.0 Day          |
 | **Step 2: Matrix Views & Basic Operations**   | Implement `a_matrix()`/`b_matrix()`/`c_matrix()`/`d_matrix()` bounded on `DenseStorage` per §4.3 and time-domain simulation (`step()`, derivative).                                                                                 | 1.0 Day          |
 | **Step 3: System Interconnections**           | Implement `series`, `parallel` and fallible `feedback` (loop-matrix solve, `StateSpaceError::SingularLoopMatrix`) with compile-time `Dim` arithmetic.                                                                               | 2.0 Days         |
 | **Step 4: Discretization**                    | Implement ZOH (Van Loan augmented matrix, scaling-and-squaring with precision-dependent Padé degree selection §4.8, Al-Mohy/Higham overscaling correction) and fallible Tustin (`StateSpaceError::SingularDiscretizationOperator`). | 4.5 Days         |
 | **Step 5: Structural Analysis & Conversions** | Implement controllability/observability matrix generation (scoped as definitional, §4.9), similarity transforms ($z=Tx$) and Hessenberg-reduction-based SISO transfer function conversion.                                          | 3.0 Days         |
-| **Step 6: Tests & Documentation**             | Unit tests, `proptest` suites, `python-control`/MATLAB cross-validation, long-horizon fixed-point recursion tests and crate-level documentation per [`vv-standards.md`](../vv-standards.md).                                                              | 3.0 Days         |
+| **Step 6: Tests & Documentation**             | Unit tests, `proptest` suites, `python-control`/MATLAB cross-validation, long-horizon fixed-point recursion tests and crate-level documentation.                                        | 3.0 Days         |
 
 ---
 
-### 10. References
+### 10. Revision History
+
+| Revision | Date              | Author          | Description                                                                                                            |
+|:---------|:------------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 26, 2026     | @MitchellDScott | Initial draft: LTI state-space representations, layouts, and continuous/discrete models.                               |
+| 1.1      | August 16, 2026   | @MitchellDScott | Storage & subprogram integration: bound system matrices ($A, B, C, D$) to decoupled `DenseStorage` and LAPACK solvers. |
+| 1.2      | August 25, 2026   | @MitchellDScott | Discretization & simulation: added zero-order hold (ZOH), bilinear/Tustin discretization, and algebraic interconnects. |
+| 1.3      | August 25, 2026   | @MitchellDScott | V&V standardization: aligned test oracles with matrix exponential and Padé approximation error bounds.                 |
+| 1.4      | August 26, 2026   | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `DenseStorage` traits.                 |
+| 1.5      | August 26, 2026   | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                           |
+| 1.6      | August 28, 2026   | @MitchellDScott | Host-scale V&V: stiff LTI (high $\kappa(A)$) within $N_x \le 32$; umbrella Instant timing. Caps unchanged.             |
+| 1.8      | August 28, 2026   | @MitchellDScott | Tustin four-block map: $C_d = C M^{-1}$, $D_d = D + C_d B h$.                                                          |
+| 1.9      | August 28, 2026   | @MitchellDScott | §6.4 FR-5 artifact is `test_similarity_transform_poles_and_step`; FR-3 includes `test_feedback_singular_loop_matrix`.  |
+| 1.10     | August 31, 2026   | @MitchellDScott | Added harold multi-source cross-validation oracle and updated validation crate paths.                                  |
+| 1.12     | September 12, 2026 | @MitchellDScott | Host B2B gates similarity $\tilde A$, controllability/observability matrices, and stiff 2-state ZOH $A_d$. |
+| 1.13     | September 15, 2026 | @MitchellDScott | Retarget host validation paths to `control-rs-validation`; split host surfaces into validation/, examples/, and bench/. |
+| 1.14     | September 15, 2026 | @MitchellDScott | FR-4 without algorithm cites; coverage measurement discharges nothing; child §6.3 names parent keys. |
+| 1.15     | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: dropped the §9 pointer; `design-template.md` §6 is the V&V contract. |
+
+---
+
+## References
 
 1. **Van Loan, C. F. (1978).** Computing integrals involving the matrix
    exponential. *IEEE Transactions on Automatic Control*, AC-23(3), 395–404.
 2. **Moler, C., & Van Loan, C. (2003).** Nineteen Dubious Ways to Compute the
    Exponential of a Matrix, Twenty-Five Years Later. *SIAM Review*, 45(1), 3–49.
-3. **Higham, N. J. (2005).** The Scaling and Squaring Method for the Matrix
+3. **Higham, N. J. (2002).** *Accuracy and Stability of Numerical Algorithms*,
+   2nd ed. Philadelphia, PA, USA: Society for Industrial and Applied
+   Mathematics. doi: 10.1137/1.9780898718027.
+4. **Higham, N. J. (2005).** The Scaling and Squaring Method for the Matrix
    Exponential Revisited. *SIAM J. Matrix Anal. Appl.*, 26(4), 1179–1193.
-4. **Al-Mohy, A. H., & Higham, N. J. (2009).** A New Scaling and Squaring
+5. **Al-Mohy, A. H., & Higham, N. J. (2009).** A New Scaling and Squaring
    Algorithm for the Matrix Exponential. *SIAM J. Matrix Anal. Appl.*, 31(3),
    970–989.
-5. **python-control developers. (2026).** `control/statesp.py`, python-control
+6. **python-control developers. (2026).** `control/statesp.py`, python-control
    library source. [Online].
    Available: https://github.com/python-control/python-control/blob/main/control/statesp.py.
-6. **python-control developers. (2026).** `control.StateSpace`, python-control
+7. **python-control developers. (2026).** `control.StateSpace`, python-control
    documentation. [Online].
    Available: https://python-control.readthedocs.io/en/latest/generated/control.StateSpace.html.
-7. **python-control developers. (2026).** `control.similarity_transform`,
+8. **python-control developers. (2026).** `control.similarity_transform`,
    python-control documentation. [Online].
    Available: https://python-control.readthedocs.io/en/latest/generated/control.similarity_transform.html.
-8. **python-control developers. (2026).** `control.ss2tf`, python-control
+9. **python-control developers. (2026).** `control.ss2tf`, python-control
    documentation. [Online].
    Available: https://python-control.readthedocs.io/en/latest/generated/control.ss2tf.html.
-9. **MathWorks. (2026).** `c2d` — Convert model from continuous to discrete
+10. **MathWorks. (2026).** `c2d` — Convert model from continuous to discrete
    time, MATLAB documentation. [Online].
    Available: https://www.mathworks.com/help/control/ref/dynamicsystem.c2d.html.
-10. **MathWorks. (2026).** *Continuous-Discrete Conversion Methods*, MATLAB &
+11. **MathWorks. (2026).** *Continuous-Discrete Conversion Methods*, MATLAB &
     Simulink documentation. [Online].
     Available: https://www.mathworks.com/help/control/ug/continuous-discrete-conversion-methods.html.
-11. **MathWorks. (2026).** `obsv` — Observability of state-space model, MATLAB
+12. **MathWorks. (2026).** `obsv` — Observability of state-space model, MATLAB
     documentation. [Online].
     Available: https://www.mathworks.com/help/control/ref/statespacemodel.obsv.html.
-12. **MathWorks. (2026).** `ctrb` — Controllability of state-space model, MATLAB
+13. **MathWorks. (2026).** `ctrb` — Controllability of state-space model, MATLAB
     documentation. [Online].
     Available: https://www.mathworks.com/help/control/ref/statespacemodel.ctrb.html.
-13. **MathWorks. (2026).** `ctrbf` — Compute controllability staircase form,
+14. **MathWorks. (2026).** `ctrbf` — Compute controllability staircase form,
     MATLAB documentation. [Online].
     Available: https://www.mathworks.com/help/control/ref/ctrbf.html.
-14. **MathWorks. (2026).** *State-Space Realizations* (`canon`, `compreal`,
+15. **MathWorks. (2026).** *State-Space Realizations* (`canon`, `compreal`,
     `modalreal`), MATLAB & Simulink documentation. [Online].
     Available: https://www.mathworks.com/help/control/ug/canonical-state-space-realizations.html.
-15. **MathWorks. (2026).** `canon` — (Not recommended) Canonical state-space
+16. **MathWorks. (2026).** `canon` — (Not recommended) Canonical state-space
     realization, MATLAB documentation. [Online].
     Available: https://www.mathworks.com/help/ident/ref/dynamicsystem.canon.html.
-16. **MathWorks. (2026).** `prescale` — Optimal scaling of state-space models,
+17. **MathWorks. (2026).** `prescale` — Optimal scaling of state-space models,
     MATLAB documentation. [Online].
     Available: https://www.mathworks.com/help/control/ref/ss.prescale.html.
-17. **MathWorks. (2026).** *Scaling State-Space Models*, MATLAB & Simulink
+18. **MathWorks. (2026).** *Scaling State-Space Models*, MATLAB & Simulink
     documentation. [Online].
     Available: https://www.mathworks.com/help/control/ug/scaling-state-space-models.html.
-18. **MathWorks. (2026).** `ss2ss` — State coordinate transformation for
+19. **MathWorks. (2026).** `ss2ss` — State coordinate transformation for
     state-space model, MATLAB documentation. [Online].
     Available: https://www.mathworks.com/help/ident/ref/statespacemodel.ss2ss.html.
-19. **MathWorks. (2026).** `sparss` — Sparse first-order state-space model,
+20. **MathWorks. (2026).** `sparss` — Sparse first-order state-space model,
     MATLAB documentation. [Online].
     Available: https://www.mathworks.com/help/control/ref/sparss.html.
-20. **python-control issue #116 / SLICOT `TB05AD`. (2026).** Discussion of using
+21. **python-control issue #116 / SLICOT `TB05AD`. (2026).** Discussion of using
     SLICOT's `TB05AD` in `StateSpace.freqresp`. [Online].
     Available: https://github.com/python-control/python-control/issues/116.
-21. **ACM. (2011).** A Note on Shifted Hessenberg Systems and Frequency Response
+22. **ACM. (2011).** A Note on Shifted Hessenberg Systems and Frequency Response
     Computation. *ACM Transactions on Mathematical Software*, 38(2), doi:
     10.1145/2049673.2049676.
-22. **ARM Ltd. (2025).** *Matrix Multiplication*, CMSIS-DSP
+23. **ARM Ltd. (2025).** *Matrix Multiplication*, CMSIS-DSP
     documentation. [Online].
     Available: https://arm-software.github.io/CMSIS-DSP/main/group__MatrixMult.html.
-23. **`control_systems_torbox` contributors. (2026).** `control_systems_torbox`
+24. **`control_systems_torbox` contributors. (2026).** `control_systems_torbox`
     crate documentation. [Online].
     Available: https://docs.rs/control_systems_torbox.
-24. **rdesarz. (2026).** `control-sys-rs`: A Control System library implemented
+25. **rdesarz. (2026).** `control-sys-rs`: A Control System library implemented
     in Rust. [Online]. Available: https://github.com/rdesarz/control-sys-rs.
-25. **sunsided. (2026).** `minikalman-rs`: Fixed- and floating-point Kalman
+26. **sunsided. (2026).** `minikalman-rs`: Fixed- and floating-point Kalman
     filters for resource-constrained environments. [Online].
     Available: https://github.com/sunsided/minikalman-rs.
-26. **strawlab. (2026).** `adskalman-rs`: Kalman filter and RTS smoothing in
+27. **strawlab. (2026).** `adskalman-rs`: Kalman filter and RTS smoothing in
     Rust. [Online]. Available: https://github.com/strawlab/adskalman-rs.
-27. **Kailath, T. (1980).** *Linear Systems*. Prentice-Hall.
-28. **Ogata, K. (2010).** *Modern Control Engineering* (5th ed.). Prentice Hall.
-29. **Åström, K. J., & Murray, R. M. (2021).** *Feedback Systems: An
+28. **Kailath, T. (1980).** *Linear Systems*. Prentice-Hall.
+29. **Ogata, K. (2010).** *Modern Control Engineering* (5th ed.). Prentice Hall.
+30. **Åström, K. J., & Murray, R. M. (2021).** *Feedback Systems: An
     Introduction for Scientists and Engineers* (2nd ed.). Princeton University
     Press.
-30. **Golub, G. H., & Van Loan, C. F. (2013).** *Matrix Computations* (4th ed.).
+31. **Golub, G. H., & Van Loan, C. F. (2013).** *Matrix Computations* (4th ed.).
     Johns Hopkins University Press.
-31. **Mullis, C. T., & Roberts, R. A. (1976).** Synthesis of minimum roundoff
+32. **Mullis, C. T., & Roberts, R. A. (1976).** Synthesis of minimum roundoff
     noise fixed point digital filters. *IEEE Transactions on Circuits and
     Systems*, 23(9), 551–562.
-32. **Yang, S., & Jones, C. N. (2026).** Numerically Reliable Brunovsky
+33. **Yang, S., & Jones, C. N. (2026).** Numerically Reliable Brunovsky
     Transformations.
-
----
-
-### 11. Revision History
-
-| Revision | Date            | Author          | Description                                                                                                                           |
-|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 26, 2026   | @MitchellDScott | Initial draft: LTI state-space representations, layouts, and continuous/discrete models.                                               |
-| 1.1      | August 16, 2026 | @MitchellDScott | Storage & subprogram integration: bound system matrices ($A, B, C, D$) to decoupled `DenseStorage` and LAPACK solvers.               |
-| 1.2      | August 25, 2026 | @MitchellDScott | Discretization & simulation: added zero-order hold (ZOH), bilinear/Tustin discretization, and algebraic interconnects.                 |
-| 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with matrix exponential and Padé approximation error bounds.                                |
-| 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `DenseStorage` traits.                                |
-| 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                          |
-| 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: stiff LTI (high $\kappa(A)$) within $N_x \le 32$; umbrella Instant timing. Caps unchanged.                             |
-| 1.8      | August 28, 2026 | @MitchellDScott | Tustin four-block map: $C_d = C M^{-1}$, $D_d = D + C_d B h$.                                                                          |
-| 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-5 artifact is `test_similarity_transform_poles_and_step`; FR-3 includes `test_feedback_singular_loop_matrix`.                |
-| 1.10     | August 31, 2026 | @MitchellDScott | Added harold multi-source cross-validation oracle and updated validation crate paths.                                                 |

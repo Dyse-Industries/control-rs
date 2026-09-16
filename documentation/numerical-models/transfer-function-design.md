@@ -1,7 +1,7 @@
 # Transfer Function Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-September_15,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -28,7 +28,7 @@ Primary usage scenarios:
   into controllable, observable, or modal canonical state-space realizations for
   time-domain simulation and state estimation.
 - **Pole & Zero Extraction**: Computing exact complex poles and zeros across
-  arbitrary system dimensions by invoking `Polynomial::roots()`.
+  arbitrary system dimensions without dynamic heap allocation.
 
 ---
 
@@ -51,15 +51,15 @@ Primary usage scenarios:
   orders determined at compile time.
 - **FR-4 — System Discretization**: Converts continuous transfer functions to
   discrete form using Bilinear (Tustin, with optional pre-warping) and
-  Zero-Order Hold (ZOH) methods, returning an error when the transformation is
-  ill-conditioned.
+  Zero-Order Hold (ZOH via controllable canonical state-space transformation),
+  returning an error when the transformation is ill-conditioned.
 - **FR-5 — State-Space Canonical Realization**: Converts transfer functions into
   equivalent controllable canonical or observable canonical `StateSpace` models
   with state dimension equal to the denominator degree $n = D - 1$.
-- **FR-6 — Generic Pole and Zero Extraction**: Computes the complex poles
-  ($p \in \mathbb{C}^D$) and zeros ($z \in \mathbb{C}^N$) returning fixed-size worst-case buffers
-  `[Complex<T>; D]` and `[Complex<T>; N]` by delegating directly
-  to `Polynomial::roots()` on the underlying denominator and numerator polynomial models.
+- **FR-6 — Pole and Zero Extraction**: Computes the complex poles
+  ($p \in \mathbb{C}^D$) and zeros ($z \in \mathbb{C}^N$) into fixed-size worst-case buffers
+  `[Complex<T>; D]` and `[Complex<T>; N]` without heap allocation, returning typed errors
+  on non-convergent or degenerate root-finding.
 
 #### 2.2. Non-Functional Requirements
 
@@ -79,8 +79,7 @@ Primary usage scenarios:
   coefficient $a_{D-1}$ must be non-zero ($a_{D-1} \neq 0$).
 - **C-3 — Capacity Bound**: Numerator and denominator polynomial capacities are
   bounded ($N, D \le 1024$) per `num-types-design.md` C-1.
-- **C-4 — `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
-  standard library dependencies.
+- **C-4 — `#![no_std]` environment**: Core-only; no heap allocation.
 
 ---
 
@@ -101,7 +100,7 @@ canonical controllable/observable realizations into `StateSpace`.
 
 ---
 
-### 4. Core Architecture
+### 4. Architecture
 
 #### 4.1 Type Signature & Storage Layout
 
@@ -393,7 +392,7 @@ impl<T: Float + Copy, const N: usize, const D: usize> ArrayTransferFunction<T, N
 - **Transfer-function-direct (deferred)**: $G(z) = (1 - z^{-1})\,
   \mathcal{Z}\left[\mathcal{L}^{-1}\left\{\frac{G(s)}{s}\right\}\right]$,
   via partial-fraction expansion of $G(s)/s$ followed by table-based
-  $z$-transform of each term (Franklin et al., 1998). Deferred to §6.7 / §8
+  $z$-transform of each term (Franklin et al., 1998). Deferred to §6.3 / §8
   until a pole solver exists. The state-space-mediated path remains available
   independently through explicit use of §4.10 plus a `StateSpace`
   discretization method.
@@ -430,33 +429,6 @@ realization is future work (§8).
 
 
 ---
-
-### 5. Alternatives
-
-| Architecture Option                     | Advantages                                                                                                                                                                                                        | Disadvantages                                                                                                                                                                                         | Decision     |
-|:----------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------|
-| **Wrapping `Polynomial`**               | Reuses existing polynomial methods.                                                                                                                                                                               | Breaks container peer model; adds artificial coupling; forces extra abstraction layers — the same rationale `state-space-design.md` uses to reject wrapping `Matrix` fields directly.                 | **Rejected** |
-| **Second-Order-Sections (SOS) Cascade** | Standard embedded-DSP answer to coefficient sensitivity growing with filter order (ARM CMSIS-DSP `BiquadCascadeDF2T`; Rust `biquad` crate); bounds conditioning per-stage rather than across the full polynomial. | Cannot represent an arbitrary rational transfer function, only designed filters reducible to cascaded biquads; would require a structurally different type from this general $N/D$ container.         | **Rejected** |
-| **Direct Storage Wrapper (Chosen)**     | Symmetric with `Matrix` and `Polynomial`; zero cost; direct access to `Dim`/DSP/BLAS; supports views and ROM storage.                                                                                             | Requires implementing evaluation and convolution calls against storage directly; flat coefficient representation inherits the coefficient-sensitivity growth SOS is designed to avoid, at high order. | **Selected** |
-
----
-
-### 6. Verification & Validation
-
-#### 6.1. Objectives
-
-- Demonstrate compile-time verification of numerator and denominator polynomial
-  capacities.
-- Demonstrate numerical accuracy of frequency response evaluation ($H(j\omega)$
-  and Bode magnitude/phase).
-- Demonstrate algebraic exactness of series, parallel, and feedback transfer
-  function connections.
-- Demonstrate numerical correctness of Tustin (bilinear with pre-warping) and
-  direct ZOH discretization.
-- Demonstrate exact state-space matrix conversions for Controllable and
-  Observable Canonical Forms.
-- Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
-  deterministic real-time performance.
 
 #### 4.11 Pole and Zero Extraction
 
@@ -508,41 +480,59 @@ where
 
 ---
 
-### 5. Implementation Alternatives
+### 5. Alternatives
 
-#### 5.1 Evaluated Alternatives
+| Architecture Option                     | Advantages                                                                                                                                                                                                        | Disadvantages                                                                                                                                                                                         | Decision     |
+|:----------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------|
+| **Wrapping `Polynomial`**               | Reuses existing polynomial methods.                                                                                                                                                                               | Breaks container peer model; adds artificial coupling; forces extra abstraction layers — the same rationale `state-space-design.md` uses to reject wrapping `Matrix` fields directly.                 | **Rejected** |
+| **Second-Order-Sections (SOS) Cascade** | Standard embedded-DSP answer to coefficient sensitivity growing with filter order (ARM CMSIS-DSP `BiquadCascadeDF2T`; Rust `biquad` crate); bounds conditioning per-stage rather than across the full polynomial. | Cannot represent an arbitrary rational transfer function, only designed filters reducible to cascaded biquads; would require a structurally different type from this general $N/D$ container.         | **Rejected** |
+| **Direct Storage Wrapper (Chosen)**     | Symmetric with `Matrix` and `Polynomial`; zero cost; direct access to `Dim`/DSP/BLAS; supports views and ROM storage.                                                                                             | Requires implementing evaluation and convolution calls against storage directly; flat coefficient representation inherits the coefficient-sensitivity growth SOS is designed to avoid, at high order. | **Selected** |
 
 - **Transfer-Function-Direct Partial Fraction Expansion vs State-Space Mediation for ZOH**:
   Direct partial-fraction ZOH requires finding exact complex poles and calculating residue coefficients. Delegating pole finding directly to `Polynomial::roots()` enables closed-form $\mathcal{O}(1)$ pole extraction for second-order systems ($D=3$) while preserving companion-form state-space conversion for higher degrees ($D > 3$).
 
 ---
 
-### 6. Verification and Validation
+### 6. Verification & Validation
 
-#### 6.1. Principles
+#### 6.1 Approach
 
-The verification approach aligns with [`vv-standards.md`](../vv-standards.md).
+The verification approach follows [`design-template.md`](../design-template.md)
+§6.
 Validation compares against NumPy / SciPy / harold reference models.
 
-#### 6.2. Methods
+| Method                    | Mechanism                                                                                                                                                    |
+|:--------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Compile-time shape check  | Type-level `Dim` sizing and `compile_fail` doctests                                                                                                          |
+| Requirements-based test   | `#[test]` unit tests over physical filter benchmarks and singular cases                                                                                      |
+| Property-based test       | `proptest` suites verifying transfer function commutativity and feedback identities                                                                          |
+| Doctest                   | Runnable rustdoc examples                                                                                                                                    |
+| Back-to-back comparison   | `control-rs-validation/python3/transfer_function_oracle.py` vs `control-rs-validation/src/transfer_function.rs` HDF5; [`numerical-models-design.md`](numerical-models-design.md) §6.2 |
+| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                                                                       |
+| On-target execution       | ETS suites under QEMU and Teensy hardware                                                                                                                    |
+| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                                                                                      |
 
-| Method                    | Mechanism                                                                                                                                                    | Requirements discharged  |
-|:--------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------|
-| Compile-time shape check  | Type-level `Dim` sizing and `compile_fail` doctests                                                                                                          | FR-1, C-1, C-3, C-4      |
-| Requirements-based test   | `#[test]` unit tests over physical filter benchmarks and singular cases                                                                                      | FR-2, FR-3, FR-4, FR-5, FR-6 |
-| Property-based test       | `proptest` suites verifying transfer function commutativity and feedback identities                                                                          | FR-3, FR-4               |
-| Doctest                   | Runnable rustdoc examples                                                                                                                                    | FR-2                     |
-| Back-to-back comparison   | `examples/numerical-models-validation/python3/transfer_function_validation.py` vs `src/transfer_function_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-4, FR-5, FR-6   |
-| Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                                                                       | NFR-1, NFR-2, C-2, C-4   |
-| On-target execution       | ETS suites under QEMU and Teensy hardware                                                                                                                    | NFR-1                    |
-| Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                                                                                      | FR-1..FR-6, NFR-1..NFR-2 |
+- **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage reported
+  via `cargo coverage`.
+- **Excluded**: Target-specific hardware benchmarking loops and debug display
+  formatting (`core::fmt::Debug`).
 
-#### 6.3. Acceptance Criteria
+- **CCF, Bode, Nyquist, discretization, clustered-pole Bode (fail-closed host gate)**: the
+  `nmv.transfer_function.tutorial.*`, `discretization.*`, `nyquist.*`,
+  `harold.*`, and `clustered_pole.*` keys in [`numerical-models-design.md`](numerical-models-design.md)
+  §6.2. Clustered-pole Bode sweeps $H(s)=1/[(s+1)^4(s+1.01)^4]$ on 128 frequencies.
+  The `examples/*.rs` cargo examples are pedagogical (not B2B). `benches/numerical_models.rs` measures kernel latency with criterion and is not a numerical key.
+
+#### 6.2 Acceptance
 
 | Claim                                         | Oracle                                                     | Measure        | Bound                                                                                                                                 | Justification                                                     |
 |:----------------------------------------------|:-----------------------------------------------------------|:---------------|:--------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------|
 | Frequency response $H(j\omega)$ residual      | Analytic rational function                                 | Relative error | $\frac{\|\hat{H}(j\omega) - H_{\text{analytic}}(j\omega)\|}{\|H_{\text{analytic}}(j\omega)\|} \le \gamma_{2(D-1)} \kappa(H(j\omega))$ | Rational Horner evaluation backward stability (Higham, 2002)      |
-| Continuous & discretized response             | harold `Transfer` / `frequency_response`                   | Mag / Phase    | Magnitude $\le 10^{-3}$ dB, phase $\le 10^{-2}$ deg, Nyquist locus $\le 10^{-3}$                                                      | Cross-toolbox frequency response (Misra-Patel) & Tustin/ZOH agreement |
+| Continuous Bode magnitude                     | SciPy `signal.freqs`                               | Absolute dB    | Parent key `nmv.transfer_function.discretization.cont_mag_db` |
+| Tustin Bode magnitude                         | SciPy `signal.cont2discrete`                       | Absolute dB    | Parent key `nmv.transfer_function.discretization.tustin_mag_db` |
+| ZOH Bode magnitude                            | SciPy `signal.cont2discrete`                       | Absolute dB    | Parent key `nmv.transfer_function.discretization.zoh_mag_db` |
+| Nyquist real / imag                           | SciPy `signal.freqs`                               | Absolute error | Parent keys `nmv.transfer_function.nyquist.h_re`, `nmv.transfer_function.nyquist.h_im` |
+| Clustered-pole Bode                           | SciPy `signal.freqs`                               | Mag / Phase    | Parent keys `nmv.transfer_function.clustered_pole.mag_db`, `nmv.transfer_function.clustered_pole.phase_deg` |
 | Series multiplication                         | Discrete polynomial convolution                            | Absolute error | $\|(N_1 N_2)_k - \sum a_i b_{k-i}\|_\infty \le (N_1+N_2)\epsilon$                                                                     | Discrete convolution arithmetic bound (Oppenheim & Schafer, 2009) |
 | Tustin discretization frequency mapping       | $\omega_d = \frac{2}{T_s} \arctan(\frac{\omega_a T_s}{2})$ | Relative error | $\le 5\epsilon$                                                                                                                       | Bilinear mapping identity (Franklin et al., 1998)                 |
 | Canonical state-space eigenvalue equivalence  | Roots of denominator polynomial $D(s)$                     | Absolute error | $\|\lambda_i(A_c) - p_i\| \le \mathcal{O}(\epsilon \kappa(D))$                                                                        | Companion matrix spectral equivalence (Kenney & Laub, 1988)       |
@@ -552,46 +542,7 @@ Validation compares against NumPy / SciPy / harold reference models.
 | Strictly improper transfer function rejection | System with $N > D$ in strictly proper contexts            | Exact equality | `Err(TransferFunctionError::ImproperSystem)`                                                                                          | Properness contract                                               |
 | Zero-allocation execution                     | Host allocator interception                                | Exact equality | 0 heap allocations                                                                                                                    | NFR-1 `#![no_std]` invariant                                      |
 
-#### 6.4. Traceability
-
-| Requirement                                           | Method                                           | Artifact                                                                                                                                   |
-|:------------------------------------------------------|:-------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------|
-| FR-1 — Rational SISO Transfer Function Representation | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/transfer_function/mod.rs`                                                                          |
-| FR-2 — Frequency Response Evaluation                  | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_frequency_response_continuous`                                               |
-| FR-3 — Rational System Algebra                        | Property-based test, Back-to-back comparison     | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_series`                                                    |
-| FR-4 — System Discretization                          | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_tustin_prewarped`                                                            |
-| FR-5 — State-Space Canonical Realization              | Requirements-based test                          | `src/transfer_function/tests/transfer_function_tests.rs::test_controllable_canonical_form`, `test_ccf_eigenvalues_match_denominator_roots` |
-| FR-6 — Generic Pole and Zero Extraction               | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_poles_and_zeros`                                            |
-
-| NFR-1 — Deterministic Fixed-Memory Execution | Resource usage evaluation |
-`#![no_std]` host allocator audit |
-| NFR-2 — Real-Time Frequency Sweep Throughput | Resource usage evaluation |
-`clippy::large_stack_arrays` CI check |
-| C-1 — Properness Precondition | Compile-time shape check | Static properness
-shape assertions |
-| C-2 — Non-Zero Leading Denominator | Requirements-based test | Zero leading
-coefficient error assertion |
-| C-3 — Capacity Bound | Compile-time shape check | Static size bounds checks |
-| C-4 — `#![no_std]` Environment | Resource usage evaluation | Compilation under
-`#![no_std]` target triples |
-
-#### 6.5. Coverage
-
-- **Target**: $\ge 90\%$ statement coverage, $\ge 85\%$ branch coverage reported
-  via `cargo coverage`.
-- **Excluded**: Target-specific hardware benchmarking loops and debug display
-  formatting (`core::fmt::Debug`).
-
-#### 6.6. Validation
-
-- **Frequency Response, Bode Analysis, & Realization**: Verification of given
-  2nd-order transfer function rational frequency evaluation $H(j\omega)$ on
-  $\mathrm{logspace}(-2,3,128)$, Bode magnitude/phase, series cascade
-  ($H_1 \cdot H_2$), controllable canonical realization, clustered-pole
-  $H(s)=1/[(s+1)^4(s+1.01)^4]$, and multi-source cross-validation against
-  SciPy and harold oracles in `examples/numerical-models-validation/src/transfer_function_validation.rs`.
-
-#### 6.7. Not Verified
+#### 6.3 Limits
 
 - Minimal realization reduction (`minreal`) with automatic pole-zero
   cancellation is deferred to future work.
@@ -602,7 +553,12 @@ coefficient error assertion |
 - Controllable-canonical realization at denominator degree $> 32$ is not
   verified against `state-space-design.md` C-2 ($N_x \le 32$). The example
   crate sweeps clustered-pole $H(s)=1/[(s+1)^4(s+1.01)^4]$ on 128 frequencies
-  ([`numerical-models-design.md`](numerical-models-design.md) §6.6).
+  under `nmv.transfer_function.clustered_pole.*`.
+- On-target ETS execution under QEMU (`thumbv7em`, `riscv32imac`, `riscv64gc`) and
+  Teensy hardware (`thumbv7em`) has not yet run in firmware binaries;
+  `#[ets_suite]` modules exist in the source tree, but target firmware builds
+  only link `math` and `matrix` test suites to respect flash-footprint limits on
+  embedded targets.
 
 ---
 
@@ -623,7 +579,7 @@ coefficient error assertion |
   poles/zeros (§4.8). A `minreal`-equivalent capacity-reducing operation is not
   yet scoped; whether and how to offer one is deferred.
 - **Partial-Fraction Conditioning for ZOH**: Transfer-function-direct ZOH via
-  partial fractions is deferred until a pole solver exists (§4.9, §6.7). Public
+  partial fractions is deferred until a pole solver exists (§4.9, §6.3). Public
   `to_discrete_zoh` uses the state-space-mediated path and inherits §4.10
   companion-form conditioning.
 - **Canonical Form Scope**: Controllable/observable canonical form (§4.10) is
@@ -653,11 +609,35 @@ coefficient error assertion |
 | **Phase 3: Algebra & DSP Convolution**      | Implement series, parallel and feedback connections using direct DSP convolution.                                                                                                                                 | 1.5 Days         |
 | **Phase 4: Discretization**                 | Bilinear (Tustin, with pre-warping) transform and transfer-function-direct ZOH, including partial-fraction decomposition (§8's closely-spaced/repeated-pole conditioning risk must be bounded, not assumed away). | 2.5 Days         |
 | **Phase 5: State-Space Conversion**         | Controllable and Observable Canonical Form conversions.                                                                                                                                                           | 1.5 Days         |
-| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites and cross-validation against two external reference implementations (MATLAB, `python-control`) per [`vv-standards.md`](../vv-standards.md).                                         | 2.0 Days         |
+| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites and cross-validation against two external reference implementations (MATLAB, `python-control`).                                         | 2.0 Days         |
 
 ---
 
-### 10. References
+### 10. Revision History
+
+| Revision | Date              | Author          | Description                                                                                                                             |
+|:---------|:------------------|:----------------|:----------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 26, 2026     | @MitchellDScott | Initial draft: SISO transfer functions with separate numerator and denominator polynomials.                                             |
+| 1.1      | August 16, 2026   | @MitchellDScott | Storage parameterization: decoupled polynomial storage into `DenseStorage` traits and added zero-copy views.                            |
+| 1.2      | August 25, 2026   | @MitchellDScott | System operations & algebra: added frequency response evaluation, series/parallel/feedback algebra, and bilinear/Tustin discretization. |
+| 1.3      | August 25, 2026   | @MitchellDScott | V&V standardization: aligned test oracles with frequency sweep tolerances and algebraic invariants.                                     |
+| 1.4      | August 26, 2026   | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<1>` dimensions.                                  |
+| 1.5      | August 26, 2026   | @MitchellDScott | Trimmed near-pole and companion-form caveats; crate-wide standards cite `vv-standards.md`.                                              |
+| 1.6      | August 28, 2026   | @MitchellDScott | Host-scale V&V: clustered-pole $H(j\omega)$ ($N>50$); realization at degree $>32$ stays in §6.7. Caps unchanged.                        |
+| 1.8      | August 28, 2026   | @MitchellDScott | Tustin returns biproper `(D, D)` after clearing $(z+1)^{D-1}$ (matches ZOH).                                                            |
+| 1.9      | August 28, 2026   | @MitchellDScott | §6.4 FR-4 `test_tustin_prewarped` and FR-5 CCF eigenvalue match live in `transfer_function_test_suite`.                                 |
+| 2.0      | August 30, 2026 | @MitchellDScott | Reverted Butterworth constructor from `transfer_function` module; deferred filter synthesis to future `filters/` crate module.          |
+| 2.1      | August 31, 2026   | @MitchellDScott | Added harold multi-source frequency response / discretization cross-validation oracle and updated validation crate paths.                |
+| 2.2      | September 1, 2026 | @MitchellDScott | Added FR-6: Generic pole and zero extraction `poles<const ORDER>()` and `zeros<const DEG>()` delegating to `Polynomial::roots()`.        |
+| 2.3      | September 1, 2026 | @MitchellDScott | Updated `poles()` and `zeros()` to return worst-case buffers `[Complex<T>; D]` and `[Complex<T>; N]` directly from type bounds without generic parameters. |
+| 2.5      | September 12, 2026 | @MitchellDScott | Host B2B gates clustered-pole Bode magnitude and phase. |
+| 2.6      | September 15, 2026 | @MitchellDScott | Retarget host validation paths to `control-rs-validation`; split host surfaces into validation/, examples/, and bench/. |
+| 2.7      | September 15, 2026 | @MitchellDScott | Coverage measurement discharges nothing; child §6.3 names parent keys. |
+| 2.8      | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: §6.1 and the §9 pointer now cite `design-template.md` §6. |
+
+---
+
+## References
 
 1. **Franklin, G. F., Powell, J. D., & Workman, M. L. (1998).** *Digital Control
    of Dynamic Systems* (3rd ed.). Addison-Wesley. — Implementation-oriented
@@ -702,23 +682,3 @@ coefficient error assertion |
 13. **Yang, S., & Jones, C. N. (2026).** Numerically Reliable Brunovsky
     Transformations. — Exponential condition-number growth of the standard
     companion-form transformation with system dimension (§4.10).
-
----
-
-### 11. Revision History
-
-| Revision | Date            | Author          | Description                                                                                                                             |
-|:---------|:----------------|:----------------|:----------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 26, 2026   | @MitchellDScott | Initial draft: SISO transfer functions with separate numerator and denominator polynomials.                                             |
-| 1.1      | August 16, 2026 | @MitchellDScott | Storage parameterization: decoupled polynomial storage into `DenseStorage` traits and added zero-copy views.                            |
-| 1.2      | August 25, 2026 | @MitchellDScott | System operations & algebra: added frequency response evaluation, series/parallel/feedback algebra, and bilinear/Tustin discretization. |
-| 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with frequency sweep tolerances and algebraic invariants.                                     |
-| 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<1>` dimensions.                                  |
-| 1.5      | August 26, 2026 | @MitchellDScott | Trimmed near-pole and companion-form caveats; crate-wide standards cite `vv-standards.md`.                                              |
-| 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-pole $H(j\omega)$ ($N>50$); realization at degree $>32$ stays in §6.7. Caps unchanged.                        |
-| 1.8      | August 28, 2026 | @MitchellDScott | Tustin returns biproper `(D, D)` after clearing $(z+1)^{D-1}$ (matches ZOH).                                                            |
-| 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-4 `test_tustin_prewarped` and FR-5 CCF eigenvalue match live in `transfer_function_test_suite`.                                 |
-| 2.0      | August 30, 2026 | @MitchellDScott | Reverted Butterworth constructor from `transfer_function` module; deferred filter synthesis to future `filters/` crate module.          |
-| 2.1      | August 31, 2026 | @MitchellDScott | Added harold multi-source frequency response / discretization cross-validation oracle and updated validation crate paths.                |
-| 2.2      | September 1, 2026 | @MitchellDScott | Added FR-6: Generic pole and zero extraction `poles<const ORDER>()` and `zeros<const DEG>()` delegating to `Polynomial::roots()`.        |
-| 2.3      | September 1, 2026 | @MitchellDScott | Updated `poles()` and `zeros()` to return worst-case buffers `[Complex<T>; D]` and `[Complex<T>; N]` directly from type bounds without generic parameters. |
