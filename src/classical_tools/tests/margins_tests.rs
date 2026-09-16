@@ -91,6 +91,47 @@ pub mod margins_test_suite {
     /// # Verification
     /// Trace: classical-tools#FR-4, classical-tools#NFR-3
     /// Method: Requirements-based test
+    ///
+    /// `G(s) = 100 / (s+1)^3` reaches unity gain after the phase has lagged
+    /// past −180°, so `Φ_m` is negative (~−53°). Principal `atan2` alone would
+    /// wrap that phase to ~+127° and report `Φ_m` ≈ +307°; the unwrapped sweep
+    /// must keep the sign correct.
+    fn test_negative_phase_margin_not_wrapped_positive() {
+        let tf = ArrayTransferFunction::<f64, 1, 4>::continuous(
+            [100.0],
+            [1.0, 3.0, 3.0, 1.0],
+        );
+        let omegas = _sweep_omegas();
+        let margins = stability_margins(&tf, &omegas);
+
+        let wgc = margins.gain_crossover_freq.unwrap();
+        let expected_wgc = (100f64.pow(2.0 / 3.0) - 1.0).sqrt();
+        assert!(
+            (wgc - expected_wgc).abs() < 1e-2,
+            "w_gc = {wgc}, expected ~{expected_wgc}"
+        );
+
+        let pm = margins.phase_margin.unwrap();
+        let expected_pm = (-3.0f64).mul_add(wgc.atan(), core::f64::consts::PI);
+        assert!(
+            pm < 0.0,
+            "phase margin must be negative for this gain, got {pm} rad"
+        );
+        assert!(
+            (pm - expected_pm).abs() < 0.05,
+            "Φ_m = {pm} rad, expected ~{expected_pm} rad"
+        );
+        // Wrapped principal-arg result would land near +2π + expected_pm.
+        assert!(
+            pm < core::f64::consts::PI,
+            "Φ_m = {pm} looks like a principal-arg wrap"
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: classical-tools#FR-4, classical-tools#NFR-3
+    /// Method: Requirements-based test
     fn test_no_crossing_within_range_yields_none() {
         let tf = _plant();
         // Well below either crossover: magnitude near 8 (DC gain) throughout,
