@@ -1,0 +1,43 @@
+# gate.toml - Continuous Integration & Quality-Gate Configuration
+#
+# Single source of truth for repository quality-gate orchestration.
+# All configured items belong strictly to this workspace. Nested crates
+# (examples/qemu, examples/teensy4, examples/subprograms/*) maintain their own
+# independent configuration files.
+#
+# `[gates]` key order is the pipeline. Each value is skip | warn | fail
+# (boolean true/false is still accepted as fail/skip). Gates omitted from
+# this table are skipped.
+
+[runner]
+title = "control-rs"
+out_dir = "target/ci"
+timeout_secs = 90
+
+# `validate` is omitted by decision, not by oversight. The suites in
+# `control-rs-validation` are verified by .github/workflows/validation.yml
+# against the repository-root validate.toml, and they need Python, HDF5 and
+# ngspice. Listing validate here would run them a second time on every
+# workspace CI run, for the same envelopes, at several minutes each.
+#
+# The consequence to keep in mind: a green run of this configuration verifies
+# no host numerics. Cross-comparison evidence comes from the validation
+# workflow, and `documentation/ci/ci-design.md` 4.3 records the split.
+
+[gates]
+clean = "fail"
+fmt = "fail"
+clippy = "fail"
+check = "fail"
+deny = "fail"
+audit = "fail"
+build = "fail"
+test = "fail"
+coverage = "fail"
+
+# `trace` is warn, not fail, for this sprint. The corpus moved to
+# `design-template.md` rev 1.4 and the tracer still parses the retired
+# 6.4/6.7 layout, so every requirement reports Missing. The rewrite is
+# scheduled work; see `documentation/vv/requirement-traceability-design.md`
+# and `documentation/TODO/ci-workflow-hygiene.md`.
+trace = "warn"

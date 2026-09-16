@@ -1,0 +1,21 @@
+# trace.toml - Requirement Traceability Configuration
+
+[trace]
+docs_dir = "documentation"
+manifest_path = "Cargo.toml"
+out_dir = "target/ci"
+strict = true
+
+[scan]
+include_dirs = [
+    "src",
+    "control-rs-ets/src",
+    "control-rs-macros/src",
+    "control-rs-ets-host/src",
+    "control-rs-tui/src",
+    "control-rs-ci/src",
+    "control-rs-validation/src",
+    "examples",
+    "benches",
+]
+doc_locator_prefix = "/// Trace:"

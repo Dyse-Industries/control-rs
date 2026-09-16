@@ -1,0 +1,79 @@
+# validate.toml - Host Numerical Multi-Oracle Validation Configuration
+
+[validate]
+title = "control-rs-validation"
+out_dir = "target/ci"
+timeout_secs = 300
+strict = true
+
+# Every suite lives in the `control-rs-validation` workspace member. The runner
+# synthesizes `cargo run --release --bin <bin>` in `manifest_path`, then runs
+# each command in the same directory. After those processes exit it globs
+# `results/<name>.*.h5` and 1:1-compares peers against the true oracle.
+#
+# The Rust side emits ill-conditioned kernels only. Pedagogical demonstrations
+# are `cargo run --example <name>` in the root package, and latency is
+# `cargo bench`; neither is part of this configuration.
+
+[[suites]]
+name = "matrix"
+manifest_path = "control-rs-validation"
+bin = "matrix"
+oracle = "scipy"
+commands = [
+    ["python3", "python3/matrix_oracle.py"],
+]
+
+[[suites]]
+name = "polynomial"
+manifest_path = "control-rs-validation"
+bin = "polynomial"
+oracle = "numpy"
+commands = [
+    ["python3", "python3/polynomial_oracle.py"],
+]
+
+[[suites]]
+name = "state_space"
+manifest_path = "control-rs-validation"
+bin = "state_space"
+oracle = "scipy"
+commands = [
+    ["python3", "python3/state_space_oracle.py"],
+]
+
+[[suites]]
+name = "transfer_function"
+manifest_path = "control-rs-validation"
+bin = "transfer_function"
+oracle = "scipy"
+commands = [
+    ["python3", "python3/transfer_function_oracle.py"],
+]
+
+[[suites]]
+name = "tensor"
+manifest_path = "control-rs-validation"
+bin = "tensor"
+oracle = "scipy"
+commands = [
+    ["python3", "python3/tensor_oracle.py"],
+]
+
+[[suites]]
+name = "buck-converter"
+manifest_path = "control-rs-validation"
+bin = "buck_converter"
+oracle = "scipy"
+commands = [
+    ["python3", "python3/buck_converter_oracle.py"],
+]
+
+[[suites]]
+name = "dc-motor"
+manifest_path = "control-rs-validation"
+bin = "dc_motor"
+oracle = "scipy"
+commands = [
+    ["python3", "python3/dc_motor_oracle.py"],
+]
