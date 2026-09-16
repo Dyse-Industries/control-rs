@@ -45,7 +45,11 @@ SECTIONS
     println!("cargo:rerun-if-changed=c_src");
 
     // Optional: try compiling C sources if a RISC-V C compiler is present on PATH
-    let compilers = ["riscv32-unknown-elf-gcc", "riscv-none-elf-gcc", "riscv64-unknown-elf-gcc"];
+    let compilers = [
+        "riscv32-unknown-elf-gcc",
+        "riscv-none-elf-gcc",
+        "riscv64-unknown-elf-gcc",
+    ];
     let mut found_compiler = None;
     for cc in &compilers {
         if Command::new(cc).arg("--version").output().is_ok() {
@@ -67,7 +71,11 @@ SECTIONS
         ];
 
         for c_file in &c_files {
-            let stem = std::path::Path::new(c_file).file_stem().unwrap().to_str().unwrap();
+            let stem = std::path::Path::new(c_file)
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap();
             let obj = out.join(format!("{}.o", stem));
             let status = Command::new(cc)
                 .arg("-march=rv32imac")

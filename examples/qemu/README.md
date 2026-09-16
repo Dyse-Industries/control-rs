@@ -20,10 +20,11 @@ QEMU system emulators on `PATH`: `qemu-system-arm`, `qemu-system-riscv32`,
 
 ## Run
 
-Interactive TUI from the repository root:
+From the repository root:
 
 ```bash
-cargo qemu
+cargo qemu       # Interactive TUI (routes to control-rs-tui with --manifest-path)
+cargo qemu-ci    # Headless ETS verification across all 4 architectures via control-rs-ci
 ```
 
 Headless, using the aliases in `.cargo/config.toml` (default target is

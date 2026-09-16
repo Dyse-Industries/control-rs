@@ -1,0 +1,49 @@
+[package]
+name = "control-rs-validation"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cross-language oracle validation for control-rs: ill-conditioned kernels emitted as HDF5 and compared against NumPy/SciPy and ngspice references."
+publish = false
+autobins = false
+
+[lints]
+workspace = true
+
+[dependencies]
+control-rs = { path = "..", version = "0.0.0" }
+control-rs-ci = { path = "../control-rs-ci", version = "0.1.0" }
+chrono = "0.4"
+libm = "0.2.16"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[[bin]]
+name = "matrix"
+path = "src/bin/matrix.rs"
+
+[[bin]]
+name = "polynomial"
+path = "src/bin/polynomial.rs"
+
+[[bin]]
+name = "state_space"
+path = "src/bin/state_space.rs"
+
+[[bin]]
+name = "transfer_function"
+path = "src/bin/transfer_function.rs"
+
+[[bin]]
+name = "tensor"
+path = "src/bin/tensor.rs"
+
+[[bin]]
+name = "dc_motor"
+path = "src/bin/dc_motor.rs"
+
+[[bin]]
+name = "buck_converter"
+path = "src/bin/buck_converter.rs"

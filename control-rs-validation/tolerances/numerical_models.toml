@@ -1,0 +1,368 @@
+# numerical_models.toml - Write-time tolerance keys for oracle HDF5 attributes
+# Gate verdicts come from those attributes, not from this file at compare time.
+# Keys match numerical-models-design.md 6.3.
+#
+# Bounds are set by conditioning, not by taste. A kernel with kappa ~ 1e13
+# cannot agree to 1e-12 in the solution vector, so the forward-error rows are
+# loose and the backward-error (residual) rows are tight. That asymmetry is the
+# measurement.
+
+# --- Matrix ---
+
+[tolerances."nmv.matrix.hilbert_solve.scipy"]
+subject = "matrix"
+operation = "Hilbert Solve Forward Error (n=10, kappa ~ 1.6e13)"
+oracle_library = "scipy"
+measure = "rel_l2"
+bound = 5e-3
+
+[tolerances."nmv.matrix.hilbert_residual.scipy"]
+subject = "matrix"
+operation = "Hilbert Solve Backward Residual"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-12
+
+[tolerances."nmv.matrix.vandermonde_solve.scipy"]
+subject = "matrix"
+operation = "Vandermonde Runge Coefficients (n=8, equispaced)"
+oracle_library = "scipy"
+measure = "rel_l2"
+bound = 1e-6
+
+[tolerances."nmv.matrix.inverse_residual.scipy"]
+subject = "matrix"
+operation = "Explicit Hilbert Inverse Residual (n=8)"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-4
+
+[tolerances."nmv.matrix.cholesky_spread.scipy"]
+subject = "matrix"
+operation = "Cholesky Solve, 1e10 Eigenvalue Spread"
+oracle_library = "scipy"
+measure = "rel_l2"
+bound = 1e-6
+
+[tolerances."nmv.matrix.qr_orthogonality.scipy"]
+subject = "matrix"
+operation = "QR Orthogonality Loss, Frobenius"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-12
+
+# --- Polynomial ---
+
+[tolerances."nmv.polynomial.wilkinson.residual_f64"]
+subject = "polynomial"
+operation = "Wilkinson Residual at Roots (f64), Same Order of Magnitude"
+oracle_library = "numpy"
+measure = "rel_l2"
+bound = 2.0
+
+[tolerances."nmv.polynomial.wilkinson.residual_f32"]
+subject = "polynomial"
+operation = "Wilkinson Residual at Roots (f32)"
+oracle_library = "numpy"
+measure = "rel_l2"
+bound = 1e-2
+
+[tolerances."nmv.polynomial.wilkinson.residual_f64_flint"]
+subject = "polynomial"
+operation = "Wilkinson Residual at Roots (256-bit ball)"
+oracle_library = "flint"
+measure = "rel_l2"
+bound = 2.0
+
+[tolerances."nmv.polynomial.clustered_horner.values"]
+subject = "polynomial"
+operation = "Horner on a 16-fold Root at 1.01"
+oracle_library = "numpy"
+measure = "rel_l2"
+bound = 1e-7
+
+[tolerances."nmv.polynomial.clustered_division.quot"]
+subject = "polynomial"
+operation = "Quotient by a Near-Exact Linear Factor"
+oracle_library = "numpy"
+measure = "rel_l2"
+bound = 1e-9
+
+[tolerances."nmv.polynomial.clustered_division.rem"]
+subject = "polynomial"
+operation = "Remainder by a Near-Exact Linear Factor"
+oracle_library = "numpy"
+measure = "abs"
+bound = 1e-6
+
+[tolerances."nmv.polynomial.scaled_product.coeffs"]
+subject = "polynomial"
+operation = "Convolution Across 1e16 of Coefficient Scale"
+oracle_library = "numpy"
+measure = "rel_l2"
+bound = 1e-14
+
+[tolerances."nmv.polynomial.companion.matrix"]
+subject = "polynomial"
+operation = "Companion Matrix Construction"
+oracle_library = "numpy"
+measure = "abs"
+bound = 1e-12
+
+# --- State Space ---
+
+[tolerances."nmv.state_space.phase_portrait.theta.scipy"]
+subject = "state_space"
+operation = "2000-step Trajectory, Position"
+oracle_library = "scipy"
+measure = "rel_l2"
+bound = 1e-9
+
+[tolerances."nmv.state_space.phase_portrait.theta_dot.scipy"]
+subject = "state_space"
+operation = "2000-step Trajectory, Rate"
+oracle_library = "scipy"
+measure = "rel_l2"
+bound = 1e-9
+
+[tolerances."nmv.state_space.stiff_zoh.ad"]
+subject = "state_space"
+operation = "ZOH Discrete A, 5e3 Stiffness Ratio"
+oracle_library = "scipy"
+measure = "rel_l2"
+bound = 1e-7
+
+[tolerances."nmv.state_space.stiff_zoh.ad_harold"]
+subject = "state_space"
+operation = "ZOH Discrete A, 5e3 Stiffness Ratio"
+oracle_library = "harold"
+measure = "rel_l2"
+bound = 1e-7
+
+[tolerances."nmv.state_space.stiff_zoh.bd"]
+subject = "state_space"
+operation = "ZOH Discrete B, 5e3 Stiffness Ratio"
+oracle_library = "scipy"
+measure = "rel_l2"
+bound = 1e-4
+
+[tolerances."nmv.state_space.stiff_step.y"]
+subject = "state_space"
+operation = "Stiff Step Response, 500 Samples"
+oracle_library = "scipy"
+measure = "rel_l2"
+bound = 1e-4
+
+[tolerances."nmv.state_space.similarity.a_tilde"]
+subject = "state_space"
+operation = "Similarity Transform, kappa(T) ~ 1e8"
+oracle_library = "scipy"
+measure = "rel_l2"
+bound = 1e-9
+
+[tolerances."nmv.state_space.ctrb.matrix"]
+subject = "state_space"
+operation = "Controllability Matrix, Graded Modes"
+oracle_library = "scipy"
+measure = "rel_l2"
+bound = 1e-9
+
+[tolerances."nmv.state_space.obsv.matrix"]
+subject = "state_space"
+operation = "Observability Matrix, Graded Modes"
+oracle_library = "scipy"
+measure = "rel_l2"
+bound = 1e-9
+
+# --- Transfer Function ---
+
+[tolerances."nmv.transfer_function.discretization.cont_mag_db"]
+subject = "transfer_function"
+operation = "Continuous Bode Magnitude (SciPy)"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.transfer_function.discretization.cont_phase_deg"]
+subject = "transfer_function"
+operation = "Continuous Bode Phase (SciPy)"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-2
+
+[tolerances."nmv.transfer_function.discretization.tustin_mag_db"]
+subject = "transfer_function"
+operation = "Tustin Discretized Magnitude (SciPy)"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.transfer_function.discretization.tustin_phase_deg"]
+subject = "transfer_function"
+operation = "Tustin Discretized Phase (SciPy)"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-2
+
+[tolerances."nmv.transfer_function.discretization.zoh_mag_db"]
+subject = "transfer_function"
+operation = "ZOH Discretized Magnitude (SciPy)"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.transfer_function.discretization.zoh_phase_deg"]
+subject = "transfer_function"
+operation = "ZOH Discretized Phase (SciPy)"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-2
+
+[tolerances."nmv.transfer_function.nyquist.h_re"]
+subject = "transfer_function"
+operation = "Nyquist Locus Real (SciPy)"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.transfer_function.nyquist.h_im"]
+subject = "transfer_function"
+operation = "Nyquist Locus Imag (SciPy)"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.transfer_function.nyquist.phase_margin_deg"]
+subject = "transfer_function"
+operation = "Nyquist Phase Margin (SciPy)"
+oracle_library = "scipy"
+measure = "abs"
+bound = 0.5
+
+[tolerances."nmv.transfer_function.nyquist.gain_margin_db"]
+subject = "transfer_function"
+operation = "Nyquist Gain Margin (SciPy)"
+oracle_library = "scipy"
+measure = "abs"
+bound = 0.5
+
+[tolerances."nmv.transfer_function.harold.cont_mag_db"]
+subject = "transfer_function"
+operation = "Continuous Bode Magnitude (harold)"
+oracle_library = "harold"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.transfer_function.harold.cont_phase_deg"]
+subject = "transfer_function"
+operation = "Continuous Bode Phase (harold)"
+oracle_library = "harold"
+measure = "abs"
+bound = 1e-2
+
+[tolerances."nmv.transfer_function.harold.tustin_mag_db"]
+subject = "transfer_function"
+operation = "Tustin Discretized Magnitude (harold)"
+oracle_library = "harold"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.transfer_function.harold.tustin_phase_deg"]
+subject = "transfer_function"
+operation = "Tustin Discretized Phase (harold)"
+oracle_library = "harold"
+measure = "abs"
+bound = 1e-2
+
+[tolerances."nmv.transfer_function.harold.zoh_mag_db"]
+subject = "transfer_function"
+operation = "ZOH Discretized Magnitude (harold)"
+oracle_library = "harold"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.transfer_function.harold.zoh_phase_deg"]
+subject = "transfer_function"
+operation = "ZOH Discretized Phase (harold)"
+oracle_library = "harold"
+measure = "abs"
+bound = 1e-2
+
+[tolerances."nmv.transfer_function.harold.h_re"]
+subject = "transfer_function"
+operation = "Nyquist Locus Real (harold)"
+oracle_library = "harold"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.transfer_function.harold.h_im"]
+subject = "transfer_function"
+operation = "Nyquist Locus Imag (harold)"
+oracle_library = "harold"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.transfer_function.harold.phase_margin_deg"]
+subject = "transfer_function"
+operation = "Nyquist Phase Margin (harold)"
+oracle_library = "harold"
+measure = "abs"
+bound = 0.5
+
+[tolerances."nmv.transfer_function.harold.gain_margin_db"]
+subject = "transfer_function"
+operation = "Nyquist Gain Margin (harold)"
+oracle_library = "harold"
+measure = "abs"
+bound = 0.5
+
+[tolerances."nmv.transfer_function.clustered_pole.mag_db"]
+subject = "transfer_function"
+operation = "Clustered-Pole Bode Magnitude"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.transfer_function.clustered_pole.phase_deg"]
+subject = "transfer_function"
+operation = "Clustered-Pole Bode Phase"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-2
+
+# --- Tensor ---
+
+[tolerances."nmv.tensor.manifold.interp_mesh"]
+subject = "tensor"
+operation = "Manifold Interpolation Mesh"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-4
+
+[tolerances."nmv.tensor.contraction.mat_c"]
+subject = "tensor"
+operation = "Tensor Contraction Matrix C"
+oracle_library = "scipy"
+measure = "rel"
+bound = 1e-4
+
+[tolerances."nmv.tensor.boundaries.q_raw"]
+subject = "tensor"
+operation = "Q7 Raw Byte Exactness"
+oracle_library = "numpy"
+measure = "exact"
+bound = 0.0
+
+[tolerances."nmv.tensor.boundaries.act_outputs"]
+subject = "tensor"
+operation = "Table Activation Outputs"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."nmv.tensor.boundaries.tflite_dequant"]
+subject = "tensor"
+operation = "TFLite Dequantized Closeness"
+oracle_library = "tflite"
+measure = "abs"
+bound = 0.05

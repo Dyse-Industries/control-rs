@@ -1,0 +1,203 @@
+# Acceptance Criteria (Tolerance Table)
+# Single Source of Truth matching classical-tools-examples-design.md §6.3
+
+# --- Buck Converter ---
+[tolerances."buck.plant.natural_frequency"]
+subject = "buck_converter"
+operation = "Plant Natural Frequency"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-9
+
+[tolerances."buck.plant.damping_ratio"]
+subject = "buck_converter"
+operation = "Plant Damping Ratio"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-9
+
+[tolerances."buck.margins.uncompensated.gain_crossover"]
+subject = "buck_converter"
+operation = "Uncompensated Gain Crossover"
+oracle_library = "scipy"
+measure = "abs"
+bound = 2.0
+
+[tolerances."buck.margins.uncompensated.phase_margin"]
+subject = "buck_converter"
+operation = "Uncompensated Phase Margin"
+oracle_library = "scipy"
+measure = "abs"
+bound = 0.01
+
+[tolerances."buck.compensator.gain_k"]
+subject = "buck_converter"
+operation = "Compensator Lead Gain K"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-5
+independent = false
+
+[tolerances."buck.compensator.time_constant_t_s"]
+subject = "buck_converter"
+operation = "Compensator Time Constant T"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-8
+independent = false
+
+[tolerances."buck.compensator.attenuation_alpha"]
+subject = "buck_converter"
+operation = "Compensator Attenuation Alpha"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-5
+independent = false
+
+[tolerances."buck.compensator.zero_rad_s"]
+subject = "buck_converter"
+operation = "Compensator Zero omega_z"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-3
+independent = false
+
+[tolerances."buck.compensator.pole_rad_s"]
+subject = "buck_converter"
+operation = "Compensator Pole omega_p"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-2
+independent = false
+
+[tolerances."buck.compensator.max_phase_lead_deg"]
+subject = "buck_converter"
+operation = "Maximum Phase Lead Angle"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-4
+independent = false
+
+[tolerances."buck.compensator.df2t_b0"]
+subject = "buck_converter"
+operation = "Bilinear Tustin Coefficient b0"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-5
+independent = false
+
+[tolerances."buck.compensator.df2t_b1"]
+subject = "buck_converter"
+operation = "Bilinear Tustin Coefficient b1"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-5
+independent = false
+
+[tolerances."buck.compensator.df2t_a1"]
+subject = "buck_converter"
+operation = "Bilinear Tustin Coefficient a1"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-5
+independent = false
+
+[tolerances."buck.margins.compensated.gain_crossover"]
+subject = "buck_converter"
+operation = "Compensated Gain Crossover"
+oracle_library = "scipy"
+measure = "abs"
+bound = 2.0
+
+[tolerances."buck.margins.compensated.phase_margin"]
+subject = "buck_converter"
+operation = "Compensated Phase Margin"
+oracle_library = "scipy"
+measure = "abs"
+bound = 0.01
+
+[tolerances."buck.margins.compensated.delay_margin"]
+subject = "buck_converter"
+operation = "Compensated Delay Margin"
+oracle_library = "scipy"
+measure = "abs"
+bound = 0.05
+
+[tolerances."buck.frequency_sweep.uncomp_mag_db"]
+subject = "buck_converter"
+operation = "Uncompensated Frequency Sweep Magnitude"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."buck.frequency_sweep.comp_mag_db"]
+subject = "buck_converter"
+operation = "Compensated Frequency Sweep Magnitude"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-3
+
+[tolerances."buck.frequency_sweep.uncomp_phase_deg"]
+subject = "buck_converter"
+operation = "Uncompensated Frequency Sweep Phase"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-2
+
+[tolerances."buck.frequency_sweep.comp_phase_deg"]
+subject = "buck_converter"
+operation = "Compensated Frequency Sweep Phase"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-2
+
+[tolerances."buck.root_locus.poles_re"]
+subject = "buck_converter"
+operation = "Root Locus Closed-Loop Poles Real"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-4
+
+[tolerances."buck.root_locus.poles_im"]
+subject = "buck_converter"
+operation = "Root Locus Closed-Loop Poles Imag"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-4
+
+[tolerances."buck.ngspice.ac_plant_dc_gain"]
+subject = "buck_converter"
+operation = "Small-Signal AC Plant DC Gain"
+oracle_library = "ngspice"
+measure = "abs"
+bound = 0.05
+
+[tolerances."buck.ngspice.step_final_voltage"]
+subject = "buck_converter"
+operation = "Transient Step Final Voltage"
+oracle_library = "ngspice"
+measure = "abs"
+bound = 0.005
+
+[tolerances."buck.ngspice.step_steady_state_error"]
+subject = "buck_converter"
+operation = "Transient Steady-State Error"
+oracle_library = "ngspice"
+measure = "abs"
+bound = 0.005
+
+[tolerances."buck.ngspice.load_restored_voltage"]
+subject = "buck_converter"
+operation = "Load Disturbance Restored Voltage"
+oracle_library = "ngspice"
+measure = "abs"
+bound = 0.005
+
+[tolerances."buck.ngspice.switched_ripple"]
+subject = "buck_converter"
+operation = "Switched PWM Ripple"
+oracle_library = "ngspice"
+measure = "interval"
+bound = 10.0
+interval = [1.0, 10.0]
+

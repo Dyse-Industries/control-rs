@@ -1,0 +1,60 @@
+* ==============================================================================
+* BUCK CONVERTER SWITCHED PWM CIRCUIT SIMULATION (ngspice)
+* Documentation: documentation/control-toolboxes/classical-tools-design.md, §6.6
+*
+* Cycle-by-cycle PWM switching circuit at f_sw = 100 kHz (T_sw = 10 us):
+*   V_in = 12.0 V, V_out = 5.0 V, D0 = 5/12 = 0.4166667
+*   L = 100 uH, C = 100 uF, R_load = 1.0 Ohm (Nominal I_out = 5.0 A)
+*   Sawtooth carrier: 100 kHz, 0 to 1.0 V
+*   Switch node: V(sw) = 12 V when V(d) > V(ramp), 0 V otherwise
+* ==============================================================================
+
+.title Buck Converter Switched PWM Simulation
+
+* ------------------------------------------------------------------------------
+* Power Stage (100 kHz Switched Node)
+* ------------------------------------------------------------------------------
+V_in in 0 DC 12.0
+
+* 100 kHz Sawtooth ramp carrier (0 to 1.0 V, period 10 us, 9.99 us ramp, 10 ns reset)
+V_ramp ramp 0 PULSE(0 1.0 0 9.99u 0.01u 0 10u)
+
+* PWM Comparator driving switch node between 12 V and 0 V
+B_pwm sw 0 V = (V(d) > V(ramp)) ? 12.0 : 0.0
+
+L_filt sw out 100u ic=5.0
+C_filt out 0 100u ic=5.0
+Rload out 0 1.0
+
+* ------------------------------------------------------------------------------
+* Feedback & Lead Compensator Network
+* ------------------------------------------------------------------------------
+* Reference setpoint: 5.0 V stepping to 5.5 V at t=0.5ms
+V_ref ref 0 PULSE(5.0 5.5 0.5m 1u 1u 5m 10m)
+
+* Error amplifier: e(t) = V_ref - V_out
+E_err err 0 ref out 1.0
+
+* Passive lead divider: R1 || C1 in series with R2
+Rcomp1 err n_lead 10000.0
+Ccomp err n_lead 6.328n
+Rcomp2 n_lead 0 3840.4
+* Gain amplifier stage:
+E_gain d_hat 0 n_lead 0 1.351654
+
+* Duty cycle command: clamped to [0.02, 0.98]
+B_d d 0 V = min(max(0.4166666666666667 + V(d_hat), 0.02), 0.98)
+
+* ------------------------------------------------------------------------------
+* Control Script (Switched Transient Simulation)
+* ------------------------------------------------------------------------------
+.control
+set filetype=ascii
+
+* High-resolution transient (0.05 us step to resolve 100 kHz switching edges)
+tran 0.05u 3m uic
+wrdata results/ngspice_switched_step.txt v(out) v(d) i(L_filt)
+
+quit
+.endcontrol
+.end

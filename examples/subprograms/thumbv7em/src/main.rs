@@ -10,11 +10,11 @@ use control_rs::math::num_types::Const;
 use control_rs::math::storage::{
     ArrayStorage, Diag, RowArrayStorage, Side, StorageView, Trans, UpLo,
 };
+use control_rs::math::subprograms::DefaultBlas;
 use control_rs::math::subprograms::lapack::Potrf;
 use control_rs::math::subprograms::level1::{Dotu, Scal};
 use control_rs::math::subprograms::level2::Gemv;
 use control_rs::math::subprograms::level3::{Gemm, Trsm};
-use control_rs::math::subprograms::DefaultBlas;
 
 use thumbv7em_subprograms::CmsisDspBlas;
 

@@ -1,0 +1,42 @@
+# gate.toml - CI & ETS Configuration for QEMU Firmware
+#
+# All configured items belong strictly to this workspace.
+# Targets refer directly to workspace binaries; no manifest_path is needed.
+# `[gates]` key order is the pipeline. Omitted gates are skipped.
+
+[runner]
+title = "control-rs-qemu"
+out_dir = "target/ci"
+timeout_secs = 60
+
+[gates]
+clean = "fail"
+fmt = "fail"
+clippy = "fail"
+check = "fail"
+build = "fail"
+ets = "fail"
+
+[[ets.targets]]
+name = "qemu-arm-hf"
+target = "thumbv7em-none-eabihf"
+bin = "control-rs-qemu-thumbv7em-none-eabihf"
+args = ["--release"]
+
+[[ets.targets]]
+name = "qemu-arm-sf"
+target = "thumbv7em-none-eabi"
+bin = "control-rs-qemu-thumbv7em-none-eabi"
+args = ["--release"]
+
+[[ets.targets]]
+name = "qemu-riscv32"
+target = "riscv32imac-unknown-none-elf"
+bin = "control-rs-qemu-riscv32imac-unknown-none-elf"
+args = ["--release"]
+
+[[ets.targets]]
+name = "qemu-riscv64"
+target = "riscv64gc-unknown-none-elf"
+bin = "control-rs-qemu-riscv64gc-unknown-none-elf"
+args = ["--release"]

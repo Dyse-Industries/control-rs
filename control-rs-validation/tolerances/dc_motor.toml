@@ -1,0 +1,136 @@
+# Acceptance Criteria (Tolerance Table)
+# Single Source of Truth matching classical-tools-examples-design.md §6.3
+
+# --- DC Motor ---
+[tolerances."dc_motor.plant.num"]
+subject = "dc_motor"
+operation = "Plant Numerator Polynomial"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-12
+
+[tolerances."dc_motor.plant.den"]
+subject = "dc_motor"
+operation = "Plant Denominator Polynomial"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-12
+
+[tolerances."dc_motor.margins.uncompensated.gain_crossover"]
+subject = "dc_motor"
+operation = "Uncompensated Gain Crossover"
+oracle_library = "scipy"
+measure = "abs"
+bound = 5e-3
+
+[tolerances."dc_motor.margins.uncompensated.phase_margin"]
+subject = "dc_motor"
+operation = "Uncompensated Phase Margin"
+oracle_library = "scipy"
+measure = "abs"
+bound = 5e-3
+
+[tolerances."dc_motor.compensator.gain_k"]
+subject = "dc_motor"
+operation = "Lead Gain K"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-4
+independent = false
+
+[tolerances."dc_motor.compensator.time_constant_t_s"]
+subject = "dc_motor"
+operation = "Lead Time Constant T"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-6
+independent = false
+
+[tolerances."dc_motor.compensator.attenuation_alpha"]
+subject = "dc_motor"
+operation = "Lead Attenuation Alpha"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-5
+independent = false
+
+[tolerances."dc_motor.compensator.max_phase_lead_deg"]
+subject = "dc_motor"
+operation = "Maximum Phase Lead Angle"
+oracle_library = "scipy"
+measure = "abs"
+bound = 0.05
+independent = false
+
+[tolerances."dc_motor.compensator.df2t_b0"]
+subject = "dc_motor"
+operation = "DF2T Coefficient b0"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-4
+independent = false
+
+[tolerances."dc_motor.compensator.df2t_b1"]
+subject = "dc_motor"
+operation = "DF2T Coefficient b1"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-4
+independent = false
+
+[tolerances."dc_motor.compensator.df2t_a1"]
+subject = "dc_motor"
+operation = "DF2T Coefficient a1"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-4
+independent = false
+
+[tolerances."dc_motor.margins.compensated.gain_crossover"]
+subject = "dc_motor"
+operation = "Compensated Gain Crossover"
+oracle_library = "scipy"
+measure = "abs"
+bound = 5e-3
+
+[tolerances."dc_motor.margins.compensated.phase_margin"]
+subject = "dc_motor"
+operation = "Compensated Phase Margin"
+oracle_library = "scipy"
+measure = "abs"
+bound = 5e-3
+
+[tolerances."dc_motor.margins.compensated.delay_margin"]
+subject = "dc_motor"
+operation = "Compensated Delay Margin"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1.0
+
+[tolerances."dc_motor.stability.rhp_poles"]
+subject = "dc_motor"
+operation = "Compensated Closed-Loop RHP Poles"
+oracle_library = "scipy"
+measure = "exact"
+bound = 0.0
+
+[tolerances."dc_motor.frequency_sweep.mag_db"]
+subject = "dc_motor"
+operation = "Frequency Sweep Magnitude"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-6
+
+[tolerances."dc_motor.frequency_sweep.phase_deg"]
+subject = "dc_motor"
+operation = "Frequency Sweep Phase"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-6
+
+[tolerances."dc_motor.root_locus.poles"]
+subject = "dc_motor"
+operation = "Root Locus Final Closed-Loop Poles"
+oracle_library = "scipy"
+measure = "abs"
+bound = 1e-6
