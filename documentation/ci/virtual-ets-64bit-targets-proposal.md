@@ -349,7 +349,7 @@ The consequence is a deliberate division of labor rather than a defect:
 
 A hard-float x86 profile is possible through a custom target JSON without
 `+soft-float` plus `-Z build-std=core`. That is nightly-only, so it does not
-belong in a matrix whose MSRV row is 1.88.0. It is proposed as an optional
+belong in a matrix whose MSRV row is 1.89.0. It is proposed as an optional
 phase in §10.
 
 ---

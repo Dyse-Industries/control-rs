@@ -54,7 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [ "1.88.0", "stable", "beta" ]
+        rust: [ "1.89.0", "stable", "beta" ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -446,7 +446,7 @@ jobs:
   publish:
     name: Publish Gate
     runs-on: ubuntu-latest
-    needs: [report, check-and-test]
+    needs: [ report, check-and-test ]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
