@@ -1,0 +1,23 @@
+[package]
+name = "control-rs-ets-host"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Host-side transport, framing and headless runner for the control-rs Embedded Test Server."
+readme = "README.md"
+keywords = ["embedded", "testing", "serial", "ets"]
+categories = ["embedded", "development-tools::testing"]
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+control-rs-ets = { path = "../control-rs-ets", version = "0.1.0" }
+serial2 = "0.2.37"
+postcard = { version = "1.0", features = ["alloc"] }
+crc = "3.4.0"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }

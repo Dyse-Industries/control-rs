@@ -9,7 +9,9 @@ use std::thread;
 use control_rs_ets::comms::{Command, FrameReader, LogMessage, Telemetry};
 use control_rs_ets::settings::SettingValue;
 
-type BridgeResult<T> = Result<T, Box<dyn std::error::Error>>;
+use crate::error::HostError;
+use crate::target::{SubprocessTarget, Target};
+
 type WaitResult = Result<Option<std::process::ExitStatus>, std::io::Error>;
 
 /// Inner bridge enum representing active connection variant.
@@ -28,54 +30,12 @@ enum BridgeInner {
     },
 }
 
-/// Message type sent from the background reader thread to the TUI.
+/// Message type sent from the background reader thread to the host controller or UI.
 pub enum BridgeMessage {
     /// Raw console output (stdout/stderr) from the target/QEMU.
     RawConsole(String),
     /// Telemetry parsed from target.
     Telemetry(Telemetry<'static>),
-}
-
-/// Target QEMU architecture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QemuArch {
-    /// RISC-V 32-bit architecture.
-    Riscv32imacUnknownNoneElf,
-    /// RISC-V 64-bit architecture.
-    Riscv64gcUnknownNoneElf,
-    /// ARM Soft-Float architecture.
-    Thumbv7emNoneEabi,
-    /// ARM Hard-Float architecture.
-    Thumbv7emNoneEabihf,
-}
-
-/// Target details for QEMU.
-pub struct QemuTargetDetails {
-    /// Binary name of the example.
-    pub binary_name: &'static str,
-    /// Human-readable description of the target.
-    pub description: &'static str,
-    /// Human readable description of the execution environment.
-    pub execution_env: &'static str,
-    /// Target triple used by rustc/cargo.
-    pub target_triple: &'static str,
-}
-
-/// Target execution platform.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Target {
-    /// virtual ETS (QEMU) target.
-    QemuSemihosting {
-        /// Target architecture.
-        arch: QemuArch,
-    },
-    /// ETS (physical board) target.
-    Serial {
-        /// Serial port path (e.g. `/dev/ttyACM0`).
-        port: String,
-        /// Baud rate (e.g. `115200`).
-        baud: u32,
-    },
 }
 
 /// Host driver (`ServerBridge`) for virtual ETS (QEMU) and ETS (board).
@@ -84,39 +44,6 @@ pub struct ServerBridge {
     link_info: String,
     rx_from_target: Receiver<BridgeMessage>,
     target_info: String,
-}
-
-impl QemuArch {
-    /// Gets the configuration and target details for this architecture.
-    #[must_use]
-    pub const fn details(&self) -> QemuTargetDetails {
-        match self {
-            Self::Riscv32imacUnknownNoneElf => QemuTargetDetails {
-                binary_name: "control-rs-qemu-riscv32imac-unknown-none-elf",
-                description: "QEMU (risc-v32)",
-                execution_env: "Semihosting (virt)",
-                target_triple: "riscv32imac-unknown-none-elf",
-            },
-            Self::Riscv64gcUnknownNoneElf => QemuTargetDetails {
-                binary_name: "control-rs-qemu-riscv64gc-unknown-none-elf",
-                description: "QEMU (risc-v64)",
-                execution_env: "Semihosting (virt)",
-                target_triple: "riscv64gc-unknown-none-elf",
-            },
-            Self::Thumbv7emNoneEabi => QemuTargetDetails {
-                binary_name: "control-rs-qemu-thumbv7em-none-eabi",
-                description: "QEMU (cortex-m7 soft-float)",
-                execution_env: "Semihosting (mps2-an500)",
-                target_triple: "thumbv7em-none-eabi",
-            },
-            Self::Thumbv7emNoneEabihf => QemuTargetDetails {
-                binary_name: "control-rs-qemu-thumbv7em-none-eabihf",
-                description: "QEMU (cortex-m7 hard-float)",
-                execution_env: "Semihosting (mps2-an500)",
-                target_triple: "thumbv7em-none-eabihf",
-            },
-        }
-    }
 }
 
 impl ServerBridge {
@@ -143,17 +70,14 @@ impl ServerBridge {
     ///
     /// # Errors
     ///
-    /// Returns an error if opening the serial port fails after 5 attempts or if QEMU fails to start.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the serial port reference is unexpectedly missing after loop execution.
-    #[allow(clippy::too_many_lines)]
+    /// Returns `HostError::SerialOpen` if opening serial port fails after retry budget,
+    /// `HostError::SerialClone` if serial port cannot be cloned, or
+    /// `HostError::Spawn` if the subprocess cannot be launched.
     pub fn new(
         target: Target,
-        elf_path: Option<&str>,
+        _elf_path: Option<&str>,
         inherit_stderr: bool,
-    ) -> BridgeResult<Self> {
+    ) -> Result<Self, HostError> {
         let (tx, rx) = channel();
 
         match target {
@@ -163,25 +87,39 @@ impl ServerBridge {
             } => {
                 let mut port = None;
                 let mut attempts = 0u32;
+                let mut last_err = String::new();
                 while port.is_none() {
                     match serial2::SerialPort::open(&port_path, baud) {
                         Ok(p) => port = Some(p),
                         Err(e) => {
                             attempts = attempts.saturating_add(1);
+                            last_err = e.to_string();
                             if attempts >= 5 {
-                                return Err(format!(
-                                    "Failed to open serial port '{port_path}' after 5 attempts (5 seconds): {e}"
-                                ).into());
+                                return Err(HostError::SerialOpen {
+                                    port: port_path,
+                                    attempts,
+                                    source: last_err.into(),
+                                });
                             }
                             thread::sleep(std::time::Duration::from_secs(1));
                         }
                     }
                 }
-                let port = port.unwrap();
+                let port = match port {
+                    Some(p) => p,
+                    None => {
+                        return Err(HostError::SerialOpen {
+                            port: port_path,
+                            attempts,
+                            source: last_err.into(),
+                        });
+                    }
+                };
 
-                let port_clone = port
-                    .try_clone()
-                    .map_err(|e| format!("Failed to clone serial port: {e}"))?;
+                let port_clone =
+                    port.try_clone().map_err(|e| HostError::SerialClone {
+                        source: e.to_string().into(),
+                    })?;
 
                 // Spawn serial reader thread
                 thread::spawn(move || {
@@ -216,49 +154,70 @@ impl ServerBridge {
                     link_info: format!("USB CDC ({port_path})"),
                 })
             }
-            Target::QemuSemihosting { arch } => {
-                elf_path.ok_or("ELF path is required for QEMU target")?;
-                Self::new_qemu_inner(arch, tx, rx, inherit_stderr)
+            Target::Subprocess(sub) => {
+                Self::new_subprocess_inner(&sub, tx, rx, inherit_stderr)
             }
         }
     }
-    fn new_qemu_inner(
-        arch: QemuArch,
+
+    fn new_subprocess_inner(
+        target: &SubprocessTarget,
         tx: Sender<BridgeMessage>,
         rx: Receiver<BridgeMessage>,
         inherit_stderr: bool,
-    ) -> BridgeResult<Self> {
-        let details = arch.details();
+    ) -> Result<Self, HostError> {
         let stderr_stdio = if inherit_stderr {
             Stdio::inherit()
         } else {
             Stdio::piped()
         };
 
-        let mut child = StdCommand::new("cargo")
-            .current_dir("examples/qemu")
-            .args([
-                "run",
-                "--bin",
-                details.binary_name,
-                "--target",
-                details.target_triple,
-                "--release",
-            ])
+        let mut cmd = StdCommand::new("cargo");
+        let crate_dir = target.crate_dir();
+        if !crate_dir.as_os_str().is_empty()
+            && crate_dir != std::path::Path::new(".")
+        {
+            cmd.current_dir(&crate_dir);
+        }
+        cmd.arg("run");
+        if let Some(bin) = &target.bin {
+            cmd.args(["--bin", bin]);
+        }
+        if let Some(triple) = &target.target {
+            cmd.args(["--target", triple]);
+        }
+        for arg in &target.args {
+            cmd.arg(arg);
+        }
+
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(stderr_stdio)
             .spawn()
-            .map_err(|e| format!("Failed to spawn cargo run process: {e}"))?;
+            .map_err(|e| HostError::Spawn {
+                source: format!(
+                    "Failed to spawn cargo run process in '{}': {e}",
+                    crate_dir.display()
+                )
+                .into(),
+            })?;
 
-        let stdin = child.stdin.take().ok_or("Failed to open stdin")?;
-        let stdout = child.stdout.take().ok_or("Failed to open stdout")?;
+        let stdin = child.stdin.take().ok_or_else(|| HostError::Spawn {
+            source: "Failed to open stdin".into(),
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| HostError::Spawn {
+            source: "Failed to open stdout".into(),
+        })?;
 
         if inherit_stderr {
             spawn_qemu_stdout_reader(stdout, tx);
         } else {
             spawn_qemu_stdout_reader(stdout, tx.clone());
-            let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
+            let stderr =
+                child.stderr.take().ok_or_else(|| HostError::Spawn {
+                    source: "Failed to open stderr".into(),
+                })?;
             thread::spawn(move || {
                 let mut reader = std::io::BufReader::new(stderr);
                 let mut line = String::new();
@@ -275,11 +234,18 @@ impl ServerBridge {
             });
         }
 
+        let target_desc = target.display_name();
+        let link_desc = if target.path.is_empty() || target.path == "." {
+            "Subprocess (cargo run)".to_string()
+        } else {
+            format!("Subprocess ({})", target.path)
+        };
+
         Ok(Self {
             inner: BridgeInner::Qemu { child, stdin },
             rx_from_target: rx,
-            target_info: details.description.to_string(),
-            link_info: details.execution_env.to_string(),
+            target_info: target_desc,
+            link_info: link_desc,
         })
     }
 
@@ -293,22 +259,19 @@ impl ServerBridge {
     ///
     /// # Errors
     ///
-    /// Returns an error if writing to or flushing the underlying writer fails.
-    ///
-    /// # Panics
-    ///
-    /// Panics if serialization of the command fails.
-    pub fn send_command(
-        &mut self,
-        cmd: &Command,
-    ) -> Result<(), std::io::Error> {
-        let mut payload = postcard::to_allocvec(cmd).unwrap();
+    /// Returns `HostError::Transport` if serializing or writing to the target stream fails.
+    pub fn send_command(&mut self, cmd: &Command) -> Result<(), HostError> {
+        let mut payload =
+            postcard::to_allocvec(cmd).map_err(|e| HostError::Transport {
+                source: format!("Failed to serialize command: {e}").into(),
+            })?;
         let mut frame = Vec::new();
         frame.push(0xAA);
         frame.push(0x55);
-        let len = u16::try_from(payload.len()).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-        })?;
+        let len =
+            u16::try_from(payload.len()).map_err(|e| HostError::Transport {
+                source: format!("Payload too large: {e}").into(),
+            })?;
         frame.push((len >> 8) as u8);
         frame.push((len & 0xFF) as u8);
 
@@ -318,17 +281,18 @@ impl ServerBridge {
         frame.push((crc_value >> 8) as u8);
         frame.push((crc_value & 0xFF) as u8);
 
-        match &mut self.inner {
+        let res = match &mut self.inner {
             BridgeInner::Qemu { stdin, .. } => {
-                stdin.write_all(&frame)?;
-                stdin.flush()?;
+                stdin.write_all(&frame).and_then(|()| stdin.flush())
             }
             BridgeInner::Serial { port } => {
-                port.write_all(&frame)?;
-                port.flush()?;
+                port.write_all(&frame).and_then(|()| port.flush())
             }
-        }
-        Ok(())
+        };
+
+        res.map_err(|e| HostError::Transport {
+            source: format!("I/O failure sending command: {e}").into(),
+        })
     }
 
     /// Gets description of the target platform.
@@ -350,108 +314,10 @@ impl ServerBridge {
     }
 }
 
-impl Target {
-    /// Parses target parameters from CLI arguments.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the target string is unknown or the QEMU architecture is unknown.
-    #[allow(clippy::type_complexity)]
-    pub fn parse(
-        args: &[String],
-        default_qemu_arch: &str,
-        default_teensy_port: &str,
-    ) -> Result<Option<Self>, String> {
-        let target_str = args.get(2).map_or("qemu", String::as_str);
-        let arch_or_port = args.get(3).map(String::as_str);
-        let baud_str = args.get(4).map(String::as_str);
-
-        match target_str {
-            "qemu" => {
-                let arch = arch_or_port.unwrap_or(default_qemu_arch);
-                match arch {
-                    "thumbv7em-none-eabihf" | "arm" | "arm-hf" => {
-                        Ok(Some(Self::QemuSemihosting {
-                            arch: QemuArch::Thumbv7emNoneEabihf,
-                        }))
-                    }
-                    "thumbv7em-none-eabi" | "arm-soft" | "arm-sf" => {
-                        Ok(Some(Self::QemuSemihosting {
-                            arch: QemuArch::Thumbv7emNoneEabi,
-                        }))
-                    }
-                    "riscv32imac-unknown-none-elf"
-                    | "riscv"
-                    | "riscv32"
-                    | "risc-v" => Ok(Some(Self::QemuSemihosting {
-                        arch: QemuArch::Riscv32imacUnknownNoneElf,
-                    })),
-                    "riscv64gc-unknown-none-elf" | "riscv64" | "risc-v64" => {
-                        Ok(Some(Self::QemuSemihosting {
-                            arch: QemuArch::Riscv64gcUnknownNoneElf,
-                        }))
-                    }
-                    "all" => Ok(None),
-                    _ => Err(format!("Unknown QEMU architecture: {arch}")),
-                }
-            }
-            "teensy" => {
-                let port = arch_or_port.map_or_else(
-                    || default_teensy_port.to_string(),
-                    String::from,
-                );
-                let baud =
-                    baud_str.and_then(|b| b.parse().ok()).unwrap_or(115_200);
-                Ok(Some(Self::Serial { port, baud }))
-            }
-            _ => Err(format!("Unknown target: {target_str}")),
-        }
-    }
-
-    /// Helper to create a QEMU ARM Hard-Float target.
-    #[must_use]
-    pub const fn qemu_arm() -> Self {
-        Self::QemuSemihosting {
-            arch: QemuArch::Thumbv7emNoneEabihf,
-        }
-    }
-
-    /// Helper to create a QEMU ARM Soft-Float target.
-    #[must_use]
-    pub const fn qemu_arm_soft() -> Self {
-        Self::QemuSemihosting {
-            arch: QemuArch::Thumbv7emNoneEabi,
-        }
-    }
-
-    /// Helper to create a QEMU RISC-V 32-bit target.
-    #[must_use]
-    pub const fn qemu_riscv() -> Self {
-        Self::QemuSemihosting {
-            arch: QemuArch::Riscv32imacUnknownNoneElf,
-        }
-    }
-
-    /// Helper to create a QEMU RISC-V 64-bit target.
-    #[must_use]
-    pub const fn qemu_riscv64() -> Self {
-        Self::QemuSemihosting {
-            arch: QemuArch::Riscv64gcUnknownNoneElf,
-        }
-    }
-
-    /// Helper to create a Serial target.
-    #[must_use]
-    pub const fn serial(port: String, baud: u32) -> Self {
-        Self::Serial { port, baud }
-    }
-}
-
 fn leak_str(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn make_suite_info(
     suite_id: u16,
     name: &str,
@@ -482,7 +348,6 @@ fn make_test_info(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn make_setting_info(
     suite_id: u16,
     setting_id: u16,
@@ -521,7 +386,8 @@ fn make_target_panic(
 }
 
 /// Converts a Telemetry object references into static owned equivalents.
-fn make_telemetry_owned(tel: &Telemetry<'_>) -> Telemetry<'static> {
+#[must_use]
+pub fn make_telemetry_owned(tel: &Telemetry<'_>) -> Telemetry<'static> {
     match *tel {
         Telemetry::SuiteInfo {
             suite_id,
@@ -604,7 +470,7 @@ fn spawn_qemu_stdout_reader(
 }
 
 /// Processes a single byte received from the target device.
-fn process_incoming_byte(
+pub fn process_incoming_byte(
     b: u8,
     reader: &mut FrameReader,
     raw_line_buf: &mut Vec<u8>,
@@ -645,105 +511,6 @@ fn process_incoming_byte(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_qemu_arch_details() {
-        let arm_details = QemuArch::Thumbv7emNoneEabihf.details();
-        assert_eq!(
-            arm_details.binary_name,
-            "control-rs-qemu-thumbv7em-none-eabihf"
-        );
-        let riscv_details = QemuArch::Riscv32imacUnknownNoneElf.details();
-        assert_eq!(
-            riscv_details.binary_name,
-            "control-rs-qemu-riscv32imac-unknown-none-elf"
-        );
-    }
-
-    #[test]
-    fn test_target_parse_none() {
-        let t1 = Target::parse(
-            &["bin".to_string(), "ci".to_string()],
-            "all",
-            "/dev/ttyACM0",
-        )
-        .unwrap();
-        assert!(t1.is_none());
-    }
-
-    #[test]
-    fn test_target_parse_qemu() {
-        let t2 = Target::parse(
-            &[
-                "bin".to_string(),
-                "ci".to_string(),
-                "qemu".to_string(),
-                "arm".to_string(),
-            ],
-            "arm",
-            "/dev/ttyACM0",
-        )
-        .unwrap()
-        .unwrap();
-        assert!(matches!(
-            t2,
-            Target::QemuSemihosting {
-                arch: QemuArch::Thumbv7emNoneEabihf
-            }
-        ));
-    }
-
-    #[test]
-    fn test_target_parse_teensy() {
-        let t3 = Target::parse(
-            &[
-                "bin".to_string(),
-                "ci".to_string(),
-                "teensy".to_string(),
-                "/dev/ttyUSB0".to_string(),
-                "9600".to_string(),
-            ],
-            "arm",
-            "/dev/ttyACM0",
-        )
-        .unwrap()
-        .unwrap();
-        if let Target::Serial { port, baud } = t3 {
-            assert_eq!(port, "/dev/ttyUSB0");
-            assert_eq!(baud, 9600);
-        } else {
-            panic!("Expected Target::Serial");
-        }
-    }
-
-    #[test]
-    fn test_target_parse_invalid() {
-        assert!(
-            Target::parse(
-                &[
-                    "bin".to_string(),
-                    "ci".to_string(),
-                    "qemu".to_string(),
-                    "invalid_arch".to_string()
-                ],
-                "arm",
-                "/dev/ttyACM0"
-            )
-            .is_err()
-        );
-        assert!(
-            Target::parse(
-                &[
-                    "bin".to_string(),
-                    "ci".to_string(),
-                    "invalid_target".to_string()
-                ],
-                "arm",
-                "/dev/ttyACM0"
-            )
-            .is_err()
-        );
-    }
 
     #[test]
     fn test_make_telemetry_owned_metadata() {
@@ -938,117 +705,6 @@ mod tests {
             msg2,
             BridgeMessage::Telemetry(Telemetry::DiscoveryComplete)
         ));
-    }
-
-    #[test]
-    #[allow(clippy::too_many_lines)]
-    fn test_target_helpers_and_remaining_parse_arches() {
-        assert!(matches!(
-            Target::qemu_arm(),
-            Target::QemuSemihosting {
-                arch: QemuArch::Thumbv7emNoneEabihf
-            }
-        ));
-        assert!(matches!(
-            Target::qemu_arm_soft(),
-            Target::QemuSemihosting {
-                arch: QemuArch::Thumbv7emNoneEabi
-            }
-        ));
-        assert!(matches!(
-            Target::qemu_riscv(),
-            Target::QemuSemihosting {
-                arch: QemuArch::Riscv32imacUnknownNoneElf
-            }
-        ));
-        assert!(matches!(
-            Target::qemu_riscv64(),
-            Target::QemuSemihosting {
-                arch: QemuArch::Riscv64gcUnknownNoneElf
-            }
-        ));
-        let serial = Target::serial("/dev/ttyUSB1".to_string(), 57600);
-        assert!(matches!(serial, Target::Serial { baud: 57600, .. }));
-
-        let arm_sf = Target::parse(
-            &[
-                "bin".to_string(),
-                "ci".to_string(),
-                "qemu".to_string(),
-                "arm-sf".to_string(),
-            ],
-            "arm",
-            "/dev/ttyACM0",
-        )
-        .unwrap()
-        .unwrap();
-        assert!(matches!(
-            arm_sf,
-            Target::QemuSemihosting {
-                arch: QemuArch::Thumbv7emNoneEabi
-            }
-        ));
-
-        let rv32 = Target::parse(
-            &[
-                "bin".to_string(),
-                "ci".to_string(),
-                "qemu".to_string(),
-                "risc-v".to_string(),
-            ],
-            "arm",
-            "/dev/ttyACM0",
-        )
-        .unwrap()
-        .unwrap();
-        assert!(matches!(
-            rv32,
-            Target::QemuSemihosting {
-                arch: QemuArch::Riscv32imacUnknownNoneElf
-            }
-        ));
-
-        let rv64 = Target::parse(
-            &[
-                "bin".to_string(),
-                "ci".to_string(),
-                "qemu".to_string(),
-                "risc-v64".to_string(),
-            ],
-            "arm",
-            "/dev/ttyACM0",
-        )
-        .unwrap()
-        .unwrap();
-        assert!(matches!(
-            rv64,
-            Target::QemuSemihosting {
-                arch: QemuArch::Riscv64gcUnknownNoneElf
-            }
-        ));
-
-        let teensy_default = Target::parse(
-            &["bin".to_string(), "ci".to_string(), "teensy".to_string()],
-            "arm",
-            "/dev/teensy",
-        )
-        .unwrap()
-        .unwrap();
-        if let Target::Serial { port, baud } = teensy_default {
-            assert_eq!(port, "/dev/teensy");
-            assert_eq!(baud, 115_200);
-        } else {
-            panic!("expected serial");
-        }
-
-        assert_eq!(
-            QemuArch::Thumbv7emNoneEabi.details().target_triple,
-            "thumbv7em-none-eabi"
-        );
-        assert_eq!(
-            QemuArch::Riscv64gcUnknownNoneElf.details().target_triple,
-            "riscv64gc-unknown-none-elf"
-        );
     }
 
     #[test]
