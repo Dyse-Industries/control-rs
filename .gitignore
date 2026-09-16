@@ -44,6 +44,7 @@
 **/CLAUDE.md
 **/GEMINI.md
 **/AGENTS.md
+**/Claude Outputs/
 .agent/
 .claude/
 .cursor/
