@@ -1,21 +1,41 @@
 [package]
 name = "control-rs"
 version = "0.0.0"
-edition = "2024"
+edition.workspace = true
 description = "A control systems library for autonomous systems."
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/Dyse-Industries/control-rs.git"
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
 categories = ["embedded", "science", "no-std"]
 keywords = ["control", "robotics", "firmware", "autonomy"]
+readme = "README.md"
+exclude = [
+    "documentation/",
+    "examples/qemu/",
+    "examples/teensy4/",
+    "examples/subprograms/",
+    "ci-report.md",
+    "ets-results.json",
+    "tarpaulin-report.*",
+]
 
 [workspace]
 members = [
     ".",
     "control-rs-ets",
-    "control-rs-xtask",
     "control-rs-macros",
+    "control-rs-ets-host",
+    "control-rs-tui",
+    "control-rs-ci",
+    "control-rs-validation",
 ]
 default-members = ["."]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Dyse-Industries/control-rs.git"
+rust-version = "1.88.0"
 
 [workspace.lints.rust]
 unused = "deny"
@@ -23,7 +43,6 @@ missing_docs = "deny"
 rust_2018_idioms = "deny"
 
 [workspace.lints.clippy]
-inline_always = { level = "allow", priority = 1 }
 todo = { level = "warn", priority = 1 }
 
 all = "deny"
@@ -40,14 +59,18 @@ indexing_slicing = "deny"
 arithmetic_side_effects = "deny"
 empty_structs_with_brackets = "deny"
 arbitrary_source_item_ordering = "deny"
+float_cmp = "deny"
+similar_names = "deny"
+items_after_statements = "deny"
+approx_constant = "deny"
 
 [lints]
 workspace = true
 
 [dependencies]
 libm = "0.2.16"
-control-rs-macros = { path = "control-rs-macros", optional = true }
-control-rs-ets = { path = "control-rs-ets", optional = true }
+control-rs-macros = { path = "control-rs-macros", version = "0.1.0", optional = true }
+control-rs-ets = { path = "control-rs-ets", version = "0.1.0", optional = true }
 
 [features]
 std = []
@@ -55,6 +78,17 @@ ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
 
 [dev-dependencies]
 proptest = "1"
+criterion = { version = "0.5", default-features = false, features = [
+    "cargo_bench_support",
+] }
+
+[[bench]]
+name = "numerical_models"
+harness = false
+
+[[bench]]
+name = "classical_tools"
+harness = false
 
 [profile.release]
 # Enable Link Time Optimization (LTO)

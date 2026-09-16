@@ -1,33 +1,51 @@
 [alias]
 
-# Development tools
-xtask = ["run", "--package", "control-rs-xtask", "--"]
-# Git-hooks setup
-install-hooks = ["xtask", "install-hooks"]
+# Continuous Integration & Report Aggregation
+ci = ["run", "--package", "control-rs-ci", "--bin", "ci", "--"]
+report = ["run", "--package", "control-rs-ci", "--bin", "report", "--"]
 
+# Standalone Verification Tools
+trace = ["run", "--package", "control-rs-ci", "--bin", "trace", "--"]
+compare = ["run", "--package", "control-rs-ci", "--bin", "compare", "--"]
+validate = ["run", "--package", "control-rs-ci", "--bin", "validate", "--"]
+gate = ["run", "--package", "control-rs-ci", "--bin", "gate", "--"]
 
-# Continuous Integration
-ci = ["xtask", "ci"]
 # Interactive TUI
-tui = ["xtask", "tui"]
+tui = ["run", "--package", "control-rs-tui", "--"]
 
 # On-target ETS infrastructure and target execution aliases
-qemu = ["tui", "qemu"]
-teensy = ["tui", "teensy"]
+qemu = ["run", "--package", "control-rs-tui", "--", "--manifest-path", "examples/qemu/Cargo.toml", "--target", "thumbv7em-none-eabihf", "--bin", "control-rs-qemu-thumbv7em-none-eabihf", "--release"]
+teensy = ["run", "--package", "control-rs-tui", "--", "--serial", "--port", "/dev/teensy"]
 
-# CI → virtual ETS (QEMU) and CI → ETS (board)
-qemu-ci = ["ci", "qemu"]
-teensy-ci = ["ci", "teensy"]
+# CI → virtual ETS (QEMU), CI → ETS (board)
+qemu-ci = ["run", "--package", "control-rs-ci", "--bin", "ci", "--", "--manifest-path", "examples/qemu/Cargo.toml", "--only", "ets"]
+teensy-ci = ["run", "--package", "control-rs-ci", "--bin", "ci", "--", "--only", "ets", "--serial", "--port", "/dev/ttyACM0"]
 
-# Format check helper
-fmt-check = ["fmt", "--all", "--", "--check"]
+# Format check helpers
 fmt-all = ["fmt", "--all"]
+fmt-check = ["fmt-all", "--", "--check"]
 
-# Clippy Helper
-lint = ["clippy", "--workspace", "--lib", "--bins", "--tests", "--examples", "--benches"]
-clippy-json = ["lint", "--message-format=json"]
-clippy-ci = ["clippy-json", "--", "-D", "warnings"]
+# Clippy helpers
+lint = ["clippy", "--workspace", "--all-targets"]
+clippy-ci = ["lint", "--all-features", "--", "-D", "warnings"]
 
-# Coverage helper
+# Packaging gate: manifest and file-list check for every publishable member
+package-check = ["package", "--workspace", "--exclude", "control-rs-tui", "--exclude", "control-rs-ci", "--exclude", "control-rs-validation", "--no-verify", "--allow-dirty"]
+
+# Coverage helpers
 coverage = ["tarpaulin", "--verbose", "--workspace"]
 coverage-ci = ["coverage", "--color", "never", "--out", "Html", "--out", "Json"]
+coverage-export = ["coverage", "--color", "never", "--out", "Html", "--out", "Json"]
+
+# Mutation testing
+mutants-ci = ["mutants", "-p", "control-rs", "-p", "control-rs-ets", "--output", "target/ci"]
+
+# Supply chain security & dependency auditing
+deny-check = ["deny", "check"]
+audit-check = ["audit"]
+
+# Advanced verification tools
+miri-test = ["miri", "test", "-p", "control-rs", "--lib"]
+lockbud-all = ["lockbud", "-k", "all"]
+kani-verify = ["kani"]
+fuzz-list = ["fuzz", "list"]

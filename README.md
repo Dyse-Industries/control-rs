@@ -131,10 +131,23 @@ assert_eq!(val, 2.5);
 
 ---
 
-## Validation & Hardware Acceleration
+## Validation, Examples & Benches
+
+Host work follows the standard cargo layout. Each tree answers one question,
+and none of them answers another's:
+
+| Tree | Job | Run |
+|:---|:---|:---|
+| [`examples/`](examples/) | Pedagogical demos of the public API | `cargo run --example <name>` |
+| [`benches/`](benches/) | Criterion latency (not a CI fail gate) | `cargo bench` |
+| [`control-rs-validation/`](control-rs-validation/) | Fail-closed oracle / HDF5 suites on ill-conditioned kernels (SciPy, NumPy, harold, flint, TFLite, ngspice) | `cargo run -p control-rs-ci --bin compare -- --name <suite>` |
+
+`control-rs-validation` is a workspace member; `examples/subprograms`,
+`examples/qemu` and `examples/teensy4` remain nested crates with their own
+`[workspace]` because they cross-compile.
 
 ### Multi-Oracle Verification Suite
-Located in [`examples/numerical-models-validation/`](examples/numerical-models-validation/), this suite performs automated cross-validation against external reference engines:
+Located in [`control-rs-validation/`](control-rs-validation/), this suite performs automated cross-validation against external reference engines:
 - **Matrix & Linear Algebra**: Cross-validated with **SciPy** (`scipy.linalg`) and **JAX** (x64 CPU backend).
 - **Polynomials**: Evaluated against **SciPy** and **Python-Flint** (256-bit ball arithmetic for Wilkinson conditioning).
 - **State-Space & Transfer Functions**: Cross-checked against **SciPy** (`scipy.signal`) and **Harold**.
@@ -149,12 +162,28 @@ Architecture-specific subprogram crates under [`examples/subprograms/`](examples
 
 ---
 
+## Continuous Integration & Quality Gates
+
+The workspace CI pipeline is orchestrated by [`control-rs-ci`](control-rs-ci) and driven by `.cargo/config.toml` aliases:
+
+| Alias | Command | Purpose |
+|:---|:---|:---|
+| `cargo ci` | `run -p control-rs-ci --bin ci --` | Quality-gate pipeline from root `gate.toml` (`[gates]` key order; omitted gates skipped) |
+| `cargo qemu-ci` | `run -p control-rs-ci --bin ci -- --manifest-path examples/qemu/Cargo.toml --only ets` | Headless virtual ETS verification across ARM Cortex-M and RISC-V targets in QEMU |
+| `cargo teensy-ci` | `run -p control-rs-ci --bin ci -- --only ets --serial --port /dev/ttyACM0` | On-target ETS verification against physical Teensy 4.0 hardware over serial |
+| `cargo tui` | `run -p control-rs-tui --` | Interactive terminal UI console for virtual and hardware ETS execution |
+| `cargo qemu` | `run -p control-rs-tui -- --manifest-path examples/qemu/Cargo.toml ...` | Interactive TUI attached to ARM Cortex-M QEMU ETS target |
+
+---
+
 ## Links & Documentation
 
-- [Development Guide & Cargo Aliases](documentation/development-guide.md)
-- [Examples & Host Validation Guide](examples/README.md)
-- [Embedded Test Server (ETS)](control-rs-ets)
-- [Workspace Task Runner & TUI](control-rs-xtask)
+- [Development Guide & Quality Gates](documentation/development-guide.md)
+- [CI Runner & Static Analyzer (`control-rs-ci`)](control-rs-ci/)
+- [Interactive Terminal UI (`control-rs-tui`)](control-rs-tui/)
+- [Host ETS Driver (`control-rs-ets-host`)](control-rs-ets-host/)
+- [Embedded Test Server (`control-rs-ets`)](control-rs-ets/)
+- [Examples](examples/README.md)
 
 ## Installation
 

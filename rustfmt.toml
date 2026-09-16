@@ -1,5 +1,5 @@
 # The edition of Rust code to be formatted.
-edition = "2021"
+edition = "2024"
 # Use the latest stable formatting engine.
 #version = "Two"
 

@@ -17,10 +17,18 @@
       <sourceFolder url="file://$MODULE_DIR$/examples/experiments/blas-interface/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/examples/experiments/storage-subprogram/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/control-rs-ets/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/control-rs-ci/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/control-rs-ets-host/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/control-rs-tui/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/examples/support/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/benches" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/control-rs-validation/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/control-rs-validation/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/examples/numerical-models-validation/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/examples/numerical-models/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/examples/support/target" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.12 (control-rs)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
