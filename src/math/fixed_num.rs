@@ -92,18 +92,13 @@
 //! // Fixed-point scalar types do not implement Float
 //! assert_float::<Fixed<i32, 16>>();
 //! ```
-
-#![allow(clippy::pedantic)]
+#![allow(clippy::inline_always)]
 #![allow(clippy::arbitrary_source_item_ordering)]
 #![allow(clippy::arithmetic_side_effects)]
 #![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cast_lossless)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::must_use_candidate)]
 #![allow(clippy::return_self_not_must_use)]
 
 use crate::math::{
@@ -294,7 +289,6 @@ macro_rules! impl_signed_repr {
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
-            #[allow(clippy::cast_possible_wrap)]
             fn rescale_product_down(prod: Self::Wide, shift: usize) -> Self {
                 if shift == 0 {
                     return Self::narrow_saturating(prod);
@@ -338,7 +332,6 @@ macro_rules! impl_signed_repr {
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
-            #[allow(clippy::cast_possible_wrap)]
             fn rescale_value(self, q: usize, r: usize) -> Self {
                 if r == q {
                     self
@@ -412,7 +405,6 @@ macro_rules! impl_signed_repr {
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
-            #[allow(clippy::cast_possible_wrap)]
             fn checked_mul_repr(self, rhs: Self, shift: usize) -> Option<Self> {
                 let w_a = self as $w;
                 let w_b = rhs as $w;

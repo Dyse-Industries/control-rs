@@ -1,5 +1,5 @@
+#![cfg_attr(feature = "ets", allow(clippy::unwrap_used))]
 #![allow(missing_docs)]
-#![allow(clippy::used_underscore_items)]
 
 pub mod transfer_function_tests;
 

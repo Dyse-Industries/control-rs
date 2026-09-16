@@ -9,14 +9,6 @@
 //!
 //! `Const<D>: Dim` is restated on every impl/struct below — see
 //! `decomposition.rs`'s module doc for why.
-#![allow(
-    clippy::arbitrary_source_item_ordering,
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    // `l_ii`/`l_ij`/`u_ii`/`u_ij` below are standard linear-algebra index
-    // notation, not accidentally-similar English words.
-    clippy::similar_names
-)]
 
 use super::Owned;
 use crate::math::LinAlgResult;
@@ -171,9 +163,8 @@ where
 /// Solves `L * x = b` for a lower triangular `L` using a specific BLAS engine.
 ///
 /// # Errors
-/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `L` is
+/// Returns [`crate::math::LinAlgError::SingularMatrix`] if any diagonal entry of `L` is
 /// within `T::epsilon()` of zero.
-#[allow(clippy::type_complexity)]
 pub fn solve_lower_triangular_with<
     B: Trsv<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, 1>>,
     T: Float + Copy,
@@ -199,9 +190,8 @@ where
 /// Solves `L * x = b` for a lower triangular `L`, via forward substitution using the default BLAS engine.
 ///
 /// # Errors
-/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `L` is
+/// Returns [`crate::math::LinAlgError::SingularMatrix`] if any diagonal entry of `L` is
 /// within `T::epsilon()` of zero.
-#[allow(clippy::type_complexity)]
 pub fn solve_lower_triangular<T: Float + Copy, const D: usize>(
     l: &LowerTriangular<T, D>,
     b: &Owned<T, D, 1>,
@@ -215,9 +205,8 @@ where
 /// Solves `U * x = b` for an upper triangular `U` using a specific BLAS engine.
 ///
 /// # Errors
-/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `U` is
+/// Returns [`crate::math::LinAlgError::SingularMatrix`] if any diagonal entry of `U` is
 /// within `T::epsilon()` of zero.
-#[allow(clippy::type_complexity)]
 pub fn solve_upper_triangular_with<
     B: Trsv<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, 1>>,
     T: Float + Copy,
@@ -243,9 +232,8 @@ where
 /// Solves `U * x = b` for an upper triangular `U`, via back substitution using the default BLAS engine.
 ///
 /// # Errors
-/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `U` is
+/// Returns [`crate::math::LinAlgError::SingularMatrix`] if any diagonal entry of `U` is
 /// within `T::epsilon()` of zero.
-#[allow(clippy::type_complexity)]
 pub fn solve_upper_triangular<T: Float + Copy, const D: usize>(
     u: &UpperTriangular<T, D>,
     b: &Owned<T, D, 1>,

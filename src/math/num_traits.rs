@@ -73,6 +73,7 @@
 //! fn assert_partial_ord<T: PartialOrd>() {}
 //! assert_partial_ord::<Complex<f64>>();
 //! ```
+#![allow(clippy::inline_always)]
 
 use crate::math::CartesianQuadrant2D;
 use crate::math::ops::{
@@ -428,6 +429,27 @@ pub trait Float:
     fn from_usize(n: usize) -> Self {
         (0..n).fold(Self::ZERO, |acc, _| acc.add(Self::ONE))
     }
+    /// Computes the cube root of the number.
+    #[must_use]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn cbrt(self) -> Self {
+        let one = Self::ONE;
+        let three = one.clone() + one.clone() + one;
+        self.pow(Self::ONE / three)
+    }
+    /// Computes `(self * a) + b` with a single rounding step.
+    ///
+    /// A fused multiply-add carries the full-precision product `self * a`
+    /// into the addition with `b` instead of rounding it first, which both
+    /// improves accuracy and, on targets exposing a native FMA instruction,
+    /// lowers to that single instruction (Rust Project, 2026a). Concrete
+    /// float impls override the default with the hardware/libm fused form;
+    /// the default below is an unfused fallback for generic callers.
+    #[must_use]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn mul_add(self, a: Self, b: Self) -> Self {
+        self * a + b
+    }
     /// Computes the hyperbolic sine of the number.
     ///
     /// # Mathematical Definition
@@ -669,17 +691,19 @@ macro_rules! impl_scalar {
 /// - `$one`/`$zero`: Literal identity elements.
 /// - `$epsilon`: The machine epsilon value.
 /// - `$e`/`$pi`: Constants for Euler's number and Pi.
-/// - `$sqrt`/`$exp`/`$ln`/`$log10`/`$pow`: Analytic function paths.
+/// - `$sqrt`/`$cbrt`/`$exp`/`$ln`/`$log10`/`$pow`: Analytic function paths.
 /// - `$cos`/`$sin`/`$tan`/`$acos`/`$asin`/`$atan`: Trigonometric function paths.
 /// - `$atan2`: Path to the type's native two-argument arctangent, overriding
 ///   `Float::atan2`'s quadrant-table default with the hardware/libm form.
+/// - `$mul_add`: Path to the type's native fused multiply-add, overriding
+///   `Float::mul_add`'s unfused default with the hardware/libm form.
 #[macro_export]
 macro_rules! impl_float {
     (
         $type:ty, $one:expr, $zero:expr, $epsilon:expr, $e:expr, $pi:expr,
-        $sqrt:path, $exp:path, $ln:path, $log10:path, $pow:path,
+        $sqrt:path, $cbrt:path, $exp:path, $ln:path, $log10:path, $pow:path,
         $cos:path, $sin:path, $tan:path, $acos:path, $asin:path, $atan:path,
-        $atan2:path
+        $atan2:path, $mul_add:path
     ) => {
         impl Zero for $type {
             const ZERO: Self = $zero;
@@ -760,6 +784,10 @@ macro_rules! impl_float {
                 $atan2(self, x)
             }
             #[inline(always)]
+            fn cbrt(self) -> Self {
+                $cbrt(self)
+            }
+            #[inline(always)]
             fn epsilon() -> Self {
                 $epsilon
             }
@@ -767,6 +795,10 @@ macro_rules! impl_float {
             #[allow(clippy::cast_precision_loss)]
             fn from_usize(n: usize) -> Self {
                 n as Self
+            }
+            #[inline(always)]
+            fn mul_add(self, a: Self, b: Self) -> Self {
+                $mul_add(self, a, b)
             }
         }
 
@@ -841,6 +873,7 @@ impl_float!(
     core::f32::consts::E,
     core::f32::consts::PI,
     libm::sqrtf,
+    libm::cbrtf,
     libm::expf,
     libm::logf,
     libm::log10f,
@@ -851,7 +884,8 @@ impl_float!(
     libm::acosf,
     libm::asinf,
     libm::atanf,
-    libm::atan2f
+    libm::atan2f,
+    libm::fmaf
 );
 
 impl_additive_group!(f32, libm::fabsf);
@@ -870,6 +904,7 @@ impl_float!(
     core::f64::consts::E,
     core::f64::consts::PI,
     libm::sqrt,
+    libm::cbrt,
     libm::exp,
     libm::log,
     libm::log10,
@@ -880,7 +915,8 @@ impl_float!(
     libm::acos,
     libm::asin,
     libm::atan,
-    libm::atan2
+    libm::atan2,
+    libm::fma
 );
 
 impl_additive_group!(f64, libm::fabs);

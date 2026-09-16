@@ -22,11 +22,7 @@
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
-    clippy::type_complexity,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::doc_markdown,
-    clippy::similar_names
+    clippy::unwrap_used
 )]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
@@ -104,6 +100,10 @@ pub mod storage_test_suite {
     /// Verifies `ArrayStorage::from_array` lays elements out column-major,
     /// matching `ContiguousStorage::ORDER` and `Storage::offset` (FR-1 +
     /// FR-3a of `storage-trait-design.md`).
+    ///
+    /// # Verification
+    /// Trace: storage-design#FR-1
+    /// Method: Requirements-based test
     fn test_array_storage_column_major_layout() {
         // 2 rows x 3 cols: columns are [1,2], [3,4], [5,6]
         let storage = ArrayStorage::from_array([[1, 2], [3, 4], [5, 6]]);
@@ -120,8 +120,40 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// Verifies the transposing constructors agree with the buffer-shaped
+    /// ones and stay total at a zero extent (FR-3a of
+    /// `storage-trait-design.md`).
+    fn test_array_storage_transposing_constructors() {
+        // Matrix [[1, 3, 5], [2, 4, 6]] written both ways.
+        let from_rows =
+            ArrayStorage::<i32, 2, 3>::from_rows([[1, 3, 5], [2, 4, 6]]);
+        let from_array =
+            ArrayStorage::<i32, 2, 3>::from_array([[1, 2], [3, 4], [5, 6]]);
+        assert_eq!(from_rows.as_slice(), from_array.as_slice());
+        assert_eq!(from_rows.get(0, 2), Some(&5));
+
+        let row_major =
+            RowArrayStorage::<i32, 2, 3>::from_cols([[1, 2], [3, 4], [5, 6]]);
+        assert_eq!(row_major.as_slice(), &[1, 3, 5, 2, 4, 6]);
+        assert_eq!(row_major.get(0, 2), Some(&5));
+
+        // Zero extents must not index the seed array.
+        let empty_rows = ArrayStorage::<i32, 0, 3>::from_rows([]);
+        assert_eq!(empty_rows.as_slice(), &[] as &[i32]);
+        let empty_cols = ArrayStorage::<i32, 2, 0>::from_rows([[], []]);
+        assert_eq!(empty_cols.as_slice(), &[] as &[i32]);
+        let empty_row_major =
+            RowArrayStorage::<i32, 0, 3>::from_cols([[], [], []]);
+        assert_eq!(empty_row_major.as_slice(), &[] as &[i32]);
+    }
+
+    #[cfg_attr(test, test)]
     /// Verifies `get`/`get_mut` return `None` outside `[0, rows) x [0, cols)`
     /// (FR-1 + FR-4 of `storage-trait-design.md`).
+    ///
+    /// # Verification
+    /// Trace: storage-design#FR-2
+    /// Method: Requirements-based test
     fn test_array_storage_bounds_checked_access() {
         let mut storage: ArrayStorage<i32, 2, 2> =
             ArrayStorage::from_array([[1, 2], [3, 4]]);
@@ -244,6 +276,10 @@ pub mod storage_test_suite {
     /// intermediate copy and that `ORDER` matches the layout `GEMV`'s
     /// default implementation assumes (row-major: `a.chunks_exact(cols)`)
     /// (FR-6 of `storage-trait-design.md`).
+    ///
+    /// # Verification
+    /// Trace: storage-design#FR-4
+    /// Method: Requirements-based test
     fn test_storage_gemv_contiguous_storage_interop() {
         // A = [[1, 2], [3, 4]], row-major.
         let a_data = [1.0f32, 2.0, 3.0, 4.0];
@@ -801,6 +837,10 @@ pub mod storage_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies all `StorageError` failure paths (V&V §6.1 of `storage-design.md`).
+    ///
+    /// # Verification
+    /// Trace: storage-design#C-6, error-design#FR-1, error-design#C-3
+    /// Method: Requirements-based test
     fn test_storage_error_failure_paths() {
         // 1. InvalidHermitianDiagonal: imaginary component on diagonal
         let mut herm = HermitianPackedStorage::<Complex<f64>, 2, 3>::new(
@@ -1217,11 +1257,7 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[allow(
-        clippy::too_many_lines,
-        clippy::float_cmp,
-        clippy::cognitive_complexity
-    )]
+    #[allow(clippy::too_many_lines)]
     fn test_storage_row_major_packed_views_sparse_leaves() {
         let row = ArrayStorage::<i32, 1, 3>::from_row([1, 2, 3]);
         assert_eq!(row.get(0, 2), Some(&3));
@@ -1335,14 +1371,14 @@ pub mod storage_test_suite {
         assert_eq!(dv.packed_index(0, 1), None);
         assert_eq!(dv.packed_index_unchecked(2, 2), 2);
         assert_eq!(dv.value(5, 0), None);
-        assert_eq!(dv.value_unchecked(0, 1), 0.0);
+        assert_almost_eq!(dv.value_unchecked(0, 1), 0.0);
         let mut dvm = DiagonalViewMut::<f64, 3>::new(&mut diag_data).unwrap();
         assert_eq!(dvm.uplo(), UpLo::Upper);
         assert_eq!(dvm.as_slice().len(), 3);
         assert_eq!(dvm.packed_index(0, 0), Some(0));
         assert_eq!(dvm.packed_index_unchecked(1, 1), 1);
         assert_eq!(dvm.value(9, 9), None);
-        assert_eq!(dvm.value_unchecked(0, 1), 0.0);
+        assert_almost_eq!(dvm.value_unchecked(0, 1), 0.0);
         assert_eq!(
             dvm.set(0, 1, 1.0),
             Err(StorageError::InvalidStructuralInvariant)
@@ -1351,7 +1387,7 @@ pub mod storage_test_suite {
         unsafe {
             dvm.set_unchecked(2, 2, 33.0);
         }
-        assert_eq!(dvm.as_mut_slice()[2], 33.0);
+        assert_almost_eq!(dvm.as_mut_slice()[2], 33.0);
 
         let mut short = [1.0f64; 2];
         assert!(
@@ -1370,9 +1406,9 @@ pub mod storage_test_suite {
         assert_eq!(sv.packed_index(0, 2), None);
         assert_eq!(sv.packed_index(9, 0), None);
         assert_eq!(sv.packed_index_unchecked(2, 1), 4);
-        assert_eq!(sv.value(0, 1), Some(2.0));
+        assert_almost_eq!(sv.value(0, 1).unwrap(), 2.0);
         assert_eq!(sv.value(9, 0), None);
-        assert_eq!(sv.value_unchecked(1, 0), 2.0);
+        assert_almost_eq!(sv.value_unchecked(1, 0), 2.0);
         let mut svm =
             SymmetricPackedViewMut::<f64, 3>::new(&mut lower_sym, UpLo::Lower)
                 .unwrap();
@@ -1382,7 +1418,7 @@ pub mod storage_test_suite {
         assert_eq!(svm.packed_index(0, 1), None);
         assert_eq!(svm.packed_index_unchecked(2, 2), 5);
         assert_eq!(svm.value(9, 0), None);
-        assert_eq!(svm.value_unchecked(0, 2), 3.0);
+        assert_almost_eq!(svm.value_unchecked(0, 2), 3.0);
         assert_eq!(
             svm.set(0, 1, 9.0),
             Err(StorageError::InvalidStructuralInvariant)
@@ -1391,7 +1427,7 @@ pub mod storage_test_suite {
         unsafe {
             svm.set_unchecked(2, 0, 30.0);
         }
-        assert_eq!(svm.as_mut_slice()[2], 30.0);
+        assert_almost_eq!(svm.as_mut_slice()[2], 30.0);
 
         let mut owned_sym =
             SymmetricPackedStorage::<f64, 3, 6>::new([0.0; 6], UpLo::Lower);
@@ -1408,7 +1444,7 @@ pub mod storage_test_suite {
         unsafe {
             owned_sym.set_unchecked(2, 2, 6.0);
         }
-        assert_eq!(owned_sym.as_mut_slice()[5], 6.0);
+        assert_almost_eq!(owned_sym.as_mut_slice()[5], 6.0);
         let mut owned_upper = SymmetricPackedStorage::<f64, 2, 3>::new(
             [1.0, 2.0, 3.0],
             UpLo::Upper,
@@ -1476,7 +1512,7 @@ pub mod storage_test_suite {
         unsafe {
             hvm.set_unchecked(2, 0, Complex::new(8.0, 1.0));
         }
-        assert_eq!(hvm.as_mut_slice()[2].re, 8.0);
+        assert_almost_eq!(hvm.as_mut_slice()[2].re, 8.0);
 
         let mut owned_h = HermitianPackedStorage::<Complex<f64>, 3, 6>::new(
             [c00, c10, c20, c11, c21, c22],
@@ -1525,8 +1561,8 @@ pub mod storage_test_suite {
         assert_eq!(tv.packed_index(0, 2), None);
         assert_eq!(tv.packed_index(9, 0), None);
         assert_eq!(tv.packed_index_unchecked(2, 1), 4);
-        assert_eq!(tv.value(0, 0), Some(1.0));
-        assert_eq!(tv.value(0, 1), Some(0.0));
+        assert_almost_eq!(tv.value(0, 0).unwrap(), 1.0);
+        assert_almost_eq!(tv.value(0, 1).unwrap(), 0.0);
         assert_eq!(tv.value(9, 0), None);
         let mut tvm = TriangularPackedViewMut::<f64, 3>::new(
             &mut tri_lo,
@@ -1540,8 +1576,8 @@ pub mod storage_test_suite {
         assert_eq!(tvm.packed_index(0, 1), None);
         assert_eq!(tvm.packed_index_unchecked(2, 2), 5);
         assert_eq!(tvm.value(9, 0), None);
-        assert_eq!(tvm.value_unchecked(0, 0), 1.0);
-        assert_eq!(tvm.value_unchecked(0, 2), 0.0);
+        assert_almost_eq!(tvm.value_unchecked(0, 0), 1.0);
+        assert_almost_eq!(tvm.value_unchecked(0, 2), 0.0);
         assert_eq!(
             tvm.set(0, 0, 9.0),
             Err(StorageError::ImmutableUnitDiagonal)
@@ -1554,7 +1590,7 @@ pub mod storage_test_suite {
         unsafe {
             tvm.set_unchecked(2, 0, 33.0);
         }
-        assert_eq!(tvm.as_mut_slice()[2], 33.0);
+        assert_almost_eq!(tvm.as_mut_slice()[2], 33.0);
 
         let mut owned_tri = TriangularPackedStorage::<f64, 3, 6>::new(
             [1.0; 6],
@@ -1572,7 +1608,7 @@ pub mod storage_test_suite {
         unsafe {
             owned_tri.set_unchecked(1, 0, 2.0);
         }
-        assert_eq!(owned_tri.as_mut_slice()[1], 2.0);
+        assert_almost_eq!(owned_tri.as_mut_slice()[1], 2.0);
         let mut diag_owned = DiagonalStorage::<f64, 2>::from_array([1.0, 2.0]);
         assert_eq!(diag_owned.uplo(), UpLo::Upper);
         assert_eq!(diag_owned.as_slice(), &[1.0, 2.0]);
@@ -1582,7 +1618,7 @@ pub mod storage_test_suite {
         unsafe {
             diag_owned.set_unchecked(1, 1, 9.0);
         }
-        assert_eq!(diag_owned.as_mut_slice()[1], 9.0);
+        assert_almost_eq!(diag_owned.as_mut_slice()[1], 9.0);
 
         let mut coo = ArrayCooStorage::<f64, 2, 2, 4>::default();
         assert_eq!(SparseStorage::get(&coo, 5, 0), None);
@@ -1595,10 +1631,12 @@ pub mod storage_test_suite {
             ArrayCsrStorage::<f64, 2, 2, 4, 3>::from_coo(&coo).unwrap();
         let mut csc =
             ArrayCscStorage::<f64, 2, 2, 4, 3>::from_coo(&coo).unwrap();
-        let csr2: ArrayCsrStorage<f64, 2, 2, 4, 3> = coo.to_csr().unwrap();
-        let csc2: ArrayCscStorage<f64, 2, 2, 4, 3> = coo.to_csc().unwrap();
-        assert_eq!(csr2.nnz(), csr.nnz());
-        assert_eq!(csc2.nnz(), csc.nnz());
+        let csr_from_method: ArrayCsrStorage<f64, 2, 2, 4, 3> =
+            coo.to_csr().unwrap();
+        let csc_storage_res: ArrayCscStorage<f64, 2, 2, 4, 3> =
+            coo.to_csc().unwrap();
+        assert_eq!(csr_from_method.nnz(), csr.nnz());
+        assert_eq!(csc_storage_res.nnz(), csc.nnz());
         assert_eq!(SparseStorage::get(&csr, 9, 0), None);
         assert_eq!(SparseStorage::get(&csc, 9, 0), None);
         assert_eq!(SparseStorage::get(&csr, 1, 1), Some(0.0));

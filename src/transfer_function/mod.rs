@@ -23,23 +23,11 @@
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
-    clippy::similar_names,
     clippy::needless_range_loop,
     clippy::type_complexity,
     clippy::doc_markdown,
     clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::option_if_let_else,
-    clippy::must_use_candidate,
-    clippy::many_single_char_names,
-    clippy::collapsible_if,
-    clippy::use_self,
-    clippy::too_many_arguments,
-    clippy::missing_const_for_fn,
-    clippy::cast_lossless
+    clippy::option_if_let_else
 )]
 
 #[cfg(any(test, feature = "ets"))]
@@ -49,7 +37,9 @@ pub mod tests;
 use crate::math::complex_num::Complex;
 use crate::math::dsp::{Convolution, DefaultDsp};
 use crate::math::num_traits::{Float, Scalar, Zero};
-use crate::math::num_types::{Const, Dim};
+use crate::math::num_types::{
+    Canon, Const, Dim, DimAdd, DimLe, DimMax, DimSub, Maximum, Sum, U1,
+};
 use crate::math::storage::{
     ArrayStorage, ContiguousStorage, DenseStorage, DenseStorageMut, Storage,
     StorageView, StorageViewMut,
@@ -68,12 +58,14 @@ use core::marker::PhantomData;
 pub use crate::polynomial::RootError;
 
 /// Errors from validating constructors and canonical conversions.
+///
+/// Properness ($N \le D$) and realization order ($ORDER + 1 = D$) are
+/// capacity relations carried by where-clauses, so they are compile-time
+/// errors and have no variant here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferFunctionError {
     /// Denominator leading coefficient is zero.
     ZeroLeadingDenominatorCoefficient,
-    /// Numerator degree exceeds denominator degree ($N > D$).
-    ImproperSystem,
 }
 
 impl fmt::Display for TransferFunctionError {
@@ -82,9 +74,6 @@ impl fmt::Display for TransferFunctionError {
             Self::ZeroLeadingDenominatorCoefficient => {
                 write!(f, "denominator leading coefficient must be non-zero")
             }
-            Self::ImproperSystem => {
-                write!(f, "transfer function is improper (N > D)")
-            }
         }
     }
 }
@@ -92,6 +81,11 @@ impl fmt::Display for TransferFunctionError {
 impl core::error::Error for TransferFunctionError {}
 
 /// Rational transfer function $H(s) = B(s) / A(s)$ over numerator storage `Sn` and denominator storage `Sd`.
+///
+/// Numerator and denominator coefficients are stored and accepted in
+/// **ascending** power order, matching [`crate::polynomial::Polynomial`]:
+/// index $i$ holds the coefficient of $s^i$. This is the reverse of the
+/// MATLAB `tf` convention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransferFunction<
     T,
@@ -178,6 +172,7 @@ where
     /// Zero-copy strided view of numerator and denominator coefficients.
     #[must_use]
     pub fn view(&self) -> TransferFunctionView<'_, T, N, D> {
+        // SAFETY: self.num_storage.as_ptr() covers N x 1 elements valid for borrow lifetime.
         let num_storage = unsafe {
             StorageView::new_with_strides_unchecked(
                 self.num_storage.as_ptr(),
@@ -185,6 +180,7 @@ where
                 self.num_storage.c_stride(),
             )
         };
+        // SAFETY: self.den_storage.as_ptr() covers D x 1 elements valid for borrow lifetime.
         let den_storage = unsafe {
             StorageView::new_with_strides_unchecked(
                 self.den_storage.as_ptr(),
@@ -202,6 +198,7 @@ where
     /// Zero-copy mutable strided view of numerator and denominator coefficients.
     pub fn view_mut(&mut self) -> TransferFunctionViewMut<'_, T, N, D> {
         let sample_time = self.sample_time;
+        // SAFETY: self.num_storage.as_mut_ptr() covers N x 1 elements with exclusive access.
         let num_storage = unsafe {
             StorageViewMut::new_with_strides_unchecked(
                 self.num_storage.as_mut_ptr(),
@@ -209,6 +206,7 @@ where
                 self.num_storage.c_stride(),
             )
         };
+        // SAFETY: self.den_storage.as_mut_ptr() covers D x 1 elements with exclusive access.
         let den_storage = unsafe {
             StorageViewMut::new_with_strides_unchecked(
                 self.den_storage.as_mut_ptr(),
@@ -226,15 +224,28 @@ where
     Const<N>: Dim,
     Const<D>: Dim,
 {
-    /// Validating constructor: non-zero leading denominator and $N \le D$.
+    /// Validating constructor: non-zero leading denominator coefficient.
+    ///
+    /// Properness ($N \le D$) is a capacity relation, carried by the
+    /// [`DimLe`] where-clause rather than checked at run time. An improper
+    /// coefficient pair does not compile:
+    ///
+    /// ```compile_fail
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// let _ = ArrayTransferFunction::<f64, 3, 2>::try_continuous(
+    ///     [1.0, 0.0, 1.0],
+    ///     [1.0, 1.0],
+    /// );
+    /// ```
     pub fn try_from_coefficients(
         num: [T; N],
         den: [T; D],
         sample_time: Option<T>,
-    ) -> Result<Self, TransferFunctionError> {
-        if N > D {
-            return Err(TransferFunctionError::ImproperSystem);
-        }
+    ) -> Result<Self, TransferFunctionError>
+    where
+        Const<N>: DimLe<Const<D>>,
+    {
         let leading = den[D.saturating_sub(1)];
         if leading.abs() < T::epsilon() {
             return Err(
@@ -248,7 +259,10 @@ where
     pub fn try_continuous(
         num: [T; N],
         den: [T; D],
-    ) -> Result<Self, TransferFunctionError> {
+    ) -> Result<Self, TransferFunctionError>
+    where
+        Const<N>: DimLe<Const<D>>,
+    {
         Self::try_from_coefficients(num, den, None)
     }
 
@@ -257,7 +271,10 @@ where
         num: [T; N],
         den: [T; D],
         dt: T,
-    ) -> Result<Self, TransferFunctionError> {
+    ) -> Result<Self, TransferFunctionError>
+    where
+        Const<N>: DimLe<Const<D>>,
+    {
         Self::try_from_coefficients(num, den, Some(dt))
     }
 }
@@ -456,6 +473,7 @@ where
     /// # Ok::<(), control_rs::transfer_function::RootError>(())
     /// ```
     pub fn poles(&self) -> Result<[Complex<T>; D], RootError> {
+        // SAFETY: self.den_storage.as_ptr() covers D x 1 elements valid for borrow lifetime.
         let den_storage: StorageView<'_, T, Const<D>, Const<1>> = unsafe {
             StorageView::new_with_strides_unchecked(
                 self.den_storage.as_ptr(),
@@ -499,6 +517,7 @@ where
     /// # Ok::<(), control_rs::transfer_function::RootError>(())
     /// ```
     pub fn zeros(&self) -> Result<[Complex<T>; N], RootError> {
+        // SAFETY: self.num_storage.as_ptr() covers N x 1 elements valid for borrow lifetime.
         let num_storage: StorageView<'_, T, Const<N>, Const<1>> = unsafe {
             StorageView::new_with_strides_unchecked(
                 self.num_storage.as_ptr(),
@@ -526,6 +545,9 @@ where
     Const<D1>: Dim,
 {
     /// Series connection using DSP backend `C`.
+    ///
+    /// Both capacities follow from the operands:
+    /// $N_{\text{out}} = N_1 + N_2 - 1$ and $D_{\text{out}} = D_1 + D_2 - 1$.
     pub fn series_with<
         C,
         const N2: usize,
@@ -542,6 +564,10 @@ where
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        Const<N1>: DimAdd<Const<N2>>,
+        Sum<Const<N1>, Const<N2>>: DimSub<U1, Output = Canon<Const<NOUT>>>,
+        Const<D1>: DimAdd<Const<D2>>,
+        Sum<Const<D1>, Const<D2>>: DimSub<U1, Output = Canon<Const<DOUT>>>,
     {
         let num_storage = convolve_poly::<C, T, N1, N2, NOUT>(
             &self.num_storage,
@@ -561,7 +587,27 @@ where
 
     /// Series (cascade) connection: $H_{\text{series}} = H_1 \cdot H_2 = \frac{B_1 B_2}{A_1 A_2}$.
     ///
-    /// Capacity: $N_{\text{out}} = N_1 + N_2 - 1$, $D_{\text{out}} = D_1 + D_2 - 1$.
+    /// Capacity: $N_{\text{out}} = N_1 + N_2 - 1$, $D_{\text{out}} = D_1 + D_2 - 1$,
+    /// both carried as where-clauses.
+    ///
+    /// ```
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// let h1 = ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
+    /// let h2 = ArrayTransferFunction::<f64, 1, 2>::continuous([2.0], [3.0, 1.0]);
+    /// let h = h1.series::<1, 2, 1, 3>(&h2);
+    /// assert_eq!(h.num_slice()[0], 2.0);
+    /// ```
+    ///
+    /// An under-sized denominator capacity does not compile:
+    ///
+    /// ```compile_fail
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// let h1 = ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
+    /// let h2 = ArrayTransferFunction::<f64, 1, 2>::continuous([2.0], [3.0, 1.0]);
+    /// let _ = h1.series::<1, 2, 1, 2>(&h2);
+    /// ```
     pub fn series<
         const N2: usize,
         const D2: usize,
@@ -576,6 +622,10 @@ where
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        Const<N1>: DimAdd<Const<N2>>,
+        Sum<Const<N1>, Const<N2>>: DimSub<U1, Output = Canon<Const<NOUT>>>,
+        Const<D1>: DimAdd<Const<D2>>,
+        Sum<Const<D1>, Const<D2>>: DimSub<U1, Output = Canon<Const<DOUT>>>,
     {
         self.series_with::<DefaultDsp, N2, D2, NOUT, DOUT>(rhs)
     }
@@ -595,10 +645,16 @@ where
     where
         C: Convolution<T>,
         B: Axpy<T, ArrayStorage<T, NOUT, 1>, ArrayStorage<T, NOUT, 1>>,
-        Const<N2>: Dim,
+        Const<N2>: Dim + DimAdd<Const<D1>>,
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        Const<N1>: DimAdd<Const<D2>>,
+        Sum<Const<N1>, Const<D2>>: DimMax<Sum<Const<N2>, Const<D1>>>,
+        Maximum<Sum<Const<N1>, Const<D2>>, Sum<Const<N2>, Const<D1>>>:
+            DimSub<U1, Output = Canon<Const<NOUT>>>,
+        Const<D1>: DimAdd<Const<D2>>,
+        Sum<Const<D1>, Const<D2>>: DimSub<U1, Output = Canon<Const<DOUT>>>,
     {
         let mut num = convolve_poly::<C, T, N1, D2, NOUT>(
             &self.num_storage,
@@ -618,7 +674,11 @@ where
 
     /// Parallel connection: $H_1 + H_2 = (B_1 A_2 + B_2 A_1) / (A_1 A_2)$.
     ///
-    /// `NOUT >= N1+D2-1` and `NOUT >= N2+D1-1`; `DOUT >= D1+D2-1`.
+    /// The numerator is a sum of two products, so its capacity is the larger
+    /// of the two: $N_{\text{out}} = \max(N_1 + D_2, N_2 + D_1) - 1$, and
+    /// $D_{\text{out}} = D_1 + D_2 - 1$. Both are where-clauses, so an
+    /// over-sized `NOUT` (which would inflate the reported numerator degree
+    /// and add a spurious zero) is rejected alongside an under-sized one.
     pub fn parallel<
         const N2: usize,
         const D2: usize,
@@ -629,10 +689,16 @@ where
         rhs: &ArrayTransferFunction<T, N2, D2>,
     ) -> ArrayTransferFunction<T, NOUT, DOUT>
     where
-        Const<N2>: Dim,
+        Const<N2>: Dim + DimAdd<Const<D1>>,
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        Const<N1>: DimAdd<Const<D2>>,
+        Sum<Const<N1>, Const<D2>>: DimMax<Sum<Const<N2>, Const<D1>>>,
+        Maximum<Sum<Const<N1>, Const<D2>>, Sum<Const<N2>, Const<D1>>>:
+            DimSub<U1, Output = Canon<Const<NOUT>>>,
+        Const<D1>: DimAdd<Const<D2>>,
+        Sum<Const<D1>, Const<D2>>: DimSub<U1, Output = Canon<Const<DOUT>>>,
     {
         self.parallel_with::<DefaultDsp, DefaultBlas, N2, D2, NOUT, DOUT>(rhs)
     }
@@ -656,6 +722,12 @@ where
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        Const<N1>: DimAdd<Const<D2>> + DimAdd<Const<N2>>,
+        Sum<Const<N1>, Const<D2>>: DimSub<U1, Output = Canon<Const<NOUT>>>,
+        Const<D1>: DimAdd<Const<D2>>,
+        Sum<Const<D1>, Const<D2>>: DimMax<Sum<Const<N1>, Const<N2>>>,
+        Maximum<Sum<Const<D1>, Const<D2>>, Sum<Const<N1>, Const<N2>>>:
+            DimSub<U1, Output = Canon<Const<DOUT>>>,
     {
         let num = convolve_poly::<C, T, N1, D2, NOUT>(
             &self.num_storage,
@@ -675,7 +747,8 @@ where
 
     /// Negative feedback: $H_1 / (1 + H_1 H_2) = (B_1 A_2) / (A_1 A_2 + B_1 B_2)$.
     ///
-    /// `NOUT >= N1+D2-1`; `DOUT` is at least the larger of `D1+D2-1` and `N1+N2-1`.
+    /// $N_{\text{out}} = N_1 + D_2 - 1$; the denominator is a sum of two
+    /// products, so $D_{\text{out}} = \max(D_1 + D_2, N_1 + N_2) - 1$.
     pub fn feedback<
         const N2: usize,
         const D2: usize,
@@ -690,6 +763,12 @@ where
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        Const<N1>: DimAdd<Const<D2>> + DimAdd<Const<N2>>,
+        Sum<Const<N1>, Const<D2>>: DimSub<U1, Output = Canon<Const<NOUT>>>,
+        Const<D1>: DimAdd<Const<D2>>,
+        Sum<Const<D1>, Const<D2>>: DimMax<Sum<Const<N1>, Const<N2>>>,
+        Maximum<Sum<Const<D1>, Const<D2>>, Sum<Const<N1>, Const<N2>>>:
+            DimSub<U1, Output = Canon<Const<DOUT>>>,
     {
         self.feedback_with::<DefaultDsp, DefaultBlas, N2, D2, NOUT, DOUT>(rhs)
     }
@@ -710,7 +789,8 @@ where
         &self,
     ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
     where
-        Const<ORDER>: Dim,
+        Const<ORDER>: Dim + DimAdd<U1, Output = Canon<Const<D>>>,
+        Const<N>: DimLe<Const<D>>,
         Const<1>: Dim,
         B: Scal<T, ArrayStorage<T, ORDER, 1>>
             + Axpy<T, ArrayStorage<T, ORDER, 1>, ArrayStorage<T, ORDER, 1>>,
@@ -744,14 +824,27 @@ where
     /// with feedthrough $d = b_n / a_n$ (zero when strictly proper) and
     /// $\beta_i = b_i / a_n - d \cdot a_i$.
     ///
+    /// `ORDER + 1 = D` and $N \le D$ are where-clauses, so a realization
+    /// order that does not match the denominator does not compile:
+    ///
+    /// ```compile_fail
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// let tf = ArrayTransferFunction::<f64, 1, 3>::continuous(
+    ///     [1.0], [1.0, 2.0, 1.0],
+    /// );
+    /// let _ = tf.to_controllable_canonical_form::<1>();
+    /// ```
+    ///
     /// # Errors
-    /// Returns [`TransferFunctionError`] if $N > D$, $D < 2$, or the leading
-    /// denominator coefficient is zero.
+    /// Returns [`TransferFunctionError::ZeroLeadingDenominatorCoefficient`]
+    /// if the leading denominator coefficient is zero.
     pub fn to_controllable_canonical_form<const ORDER: usize>(
         &self,
     ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
     where
-        Const<ORDER>: Dim,
+        Const<ORDER>: Dim + DimAdd<U1, Output = Canon<Const<D>>>,
+        Const<N>: DimLe<Const<D>>,
         Const<1>: Dim,
     {
         self.to_controllable_canonical_form_with::<DefaultBlas, ORDER>()
@@ -762,7 +855,8 @@ where
         &self,
     ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
     where
-        Const<ORDER>: Dim,
+        Const<ORDER>: Dim + DimAdd<U1, Output = Canon<Const<D>>>,
+        Const<N>: DimLe<Const<D>>,
         Const<1>: Dim,
         B: Scal<T, ArrayStorage<T, ORDER, 1>>
             + Axpy<T, ArrayStorage<T, ORDER, 1>, ArrayStorage<T, ORDER, 1>>,
@@ -783,7 +877,8 @@ where
         &self,
     ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
     where
-        Const<ORDER>: Dim,
+        Const<ORDER>: Dim + DimAdd<U1, Output = Canon<Const<D>>>,
+        Const<N>: DimLe<Const<D>>,
         Const<1>: Dim,
     {
         self.to_observable_canonical_form_with::<DefaultBlas, ORDER>()
@@ -801,16 +896,13 @@ where
         TransferFunctionError,
     >
     where
-        Const<ORDER>: Dim,
+        Const<ORDER>: Dim + DimAdd<U1, Output = Canon<Const<D>>>,
+        Const<N>: DimLe<Const<D>>,
         B: Scal<T, ArrayStorage<T, ORDER, 1>>
             + Axpy<T, ArrayStorage<T, ORDER, 1>, ArrayStorage<T, ORDER, 1>>,
     {
-        if ORDER + 1 != D || ORDER == 0 {
-            return Err(TransferFunctionError::ImproperSystem);
-        }
-        if N > D {
-            return Err(TransferFunctionError::ImproperSystem);
-        }
+        // ORDER + 1 == D and N <= D are where-clauses; only the leading
+        // coefficient is value-dependent.
         let a_n = self.den_storage.get(ORDER, 0).copied().unwrap_or(T::ZERO);
         if a_n.abs() < T::epsilon() {
             return Err(
@@ -892,21 +984,27 @@ where
     /// required $(z+1)^{r}$ numerator factor. The discrete result is therefore
     /// biproper with coefficient capacities `(D, D)`, matching
     /// [`Self::to_discrete_zoh`].
+    ///
+    /// Properness ($N \le D$) is a where-clause: an improper numerator would
+    /// be silently truncated to `D` coefficients.
     #[must_use]
     pub fn to_discrete_tustin(
         &self,
         sample_time: T,
         prewarp_frequency: Option<T>,
-    ) -> ArrayTransferFunction<T, D, D> {
+    ) -> ArrayTransferFunction<T, D, D>
+    where
+        Const<N>: DimLe<Const<D>>,
+    {
         let two = T::ONE + T::ONE;
         let k = match prewarp_frequency {
             None => two / sample_time,
             Some(wc) => wc / (wc * sample_time / two).tan(),
         };
         let ts_eff = two / k;
+        // N <= D by the where-clause, so the numerator copies whole.
         let mut num_coeffs = [T::ZERO; D];
-        let n_copy = core::cmp::min(N, D);
-        for i in 0..n_copy {
+        for i in 0..N {
             num_coeffs[i] =
                 self.num_storage.get(i, 0).copied().unwrap_or(T::ZERO);
         }
@@ -929,7 +1027,8 @@ where
         sample_time: T,
     ) -> LinAlgResult<ArrayTransferFunction<T, D, D>>
     where
-        Const<ORDER>: Dim,
+        Const<ORDER>: Dim + DimAdd<U1, Output = Canon<Const<D>>>,
+        Const<N>: DimLe<Const<D>>,
     {
         let ss = self
             .to_controllable_canonical_form::<ORDER>()
@@ -939,6 +1038,12 @@ where
     }
 }
 
+/// Convolves two coefficient columns into a `NO`-capacity column.
+///
+/// Precondition `NO >= NA + NB - 1`. Private: every caller is a public
+/// interconnection in this module whose own where-clause pins `NO` to the
+/// exact capacity of the sum it is accumulating into, so the precondition is
+/// discharged at those call sites.
 fn convolve_poly<
     C: Convolution<T>,
     T: Scalar + Copy,

@@ -17,26 +17,25 @@
 //! - **FR-6** (zero-copy submatrix views): `test_strided_submatrix`.
 //!
 //! Companion-matrix construction is implemented in `Polynomial::companion_matrix`.
-#![allow(
-    clippy::arithmetic_side_effects,
-    clippy::indexing_slicing,
-    clippy::similar_names,
-    clippy::unwrap_used,
-    clippy::items_after_statements,
-    clippy::cast_precision_loss,
-    clippy::float_cmp
-)]
+#![allow(clippy::unwrap_used)]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod matrix_test_suite {
     use crate::assert_almost_eq;
-    use crate::math::LinAlgError;
+    // `Float` supplies exp/cos/sin on f64 in the no_std `ets` compile mode,
+    // where the inherent std methods are unavailable.
+    #[allow(unused_imports)]
+    use crate::math::num_traits::{Exponential, Float, Trig};
     use crate::math::num_types::{Const, Dim};
+    use crate::math::storage::{Diag, UpLo};
+    use crate::math::{ConversionError, LinAlgError};
     use crate::matrix::specialized::{
         solve_lower_triangular, solve_upper_triangular,
     };
     use crate::matrix::{
-        LowerTriangular, Matrix, Owned, Symmetric, UpperTriangular,
+        ColVector, DiagonalMatrix, LowerTriangular, Matrix, Owned, RowOwned,
+        RowVector, Symmetric, SymmetricPacked, TriangularPacked,
+        UpperTriangular,
     };
 
     /// Residual-ratio factor $\tau$ in $\lVert AA^{-1}-I\rVert_\infty \le \tau\kappa\varepsilon$.
@@ -138,9 +137,10 @@ pub mod matrix_test_suite {
     {
         for i in 0..N {
             for j in 0..N {
-                assert_eq!(
+                assert_almost_eq!(
                     *m.get(i, j).unwrap(),
                     *m.get(j, i).unwrap(),
+                    f64::EPSILON,
                     "symmetry ({i},{j})"
                 );
             }
@@ -152,15 +152,21 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// `zero`/`identity`/`diagonal` are usable in a `const` context and
     /// produce the expected elements (FR-2).
+    /// # Verification
+    /// Trace: matrix-design#FR-1
+    /// Method: Requirements-based test
     fn test_zero_identity_diagonal_const_eval() {
         const ZERO: Owned<f64, 2, 3> = Owned::<f64, 2, 3>::zero();
+        const IDENTITY: Owned<f64, 3, 3> = Owned::<f64, 3, 3>::identity();
+        const DIAG: Owned<f64, 3, 3> =
+            Owned::<f64, 3, 3>::diagonal([1.0, 2.0, 3.0]);
+
         for i in 0..2 {
             for j in 0..3 {
                 assert_almost_eq!(*ZERO.get(i, j).unwrap(), 0.0);
             }
         }
 
-        const IDENTITY: Owned<f64, 3, 3> = Owned::<f64, 3, 3>::identity();
         for i in 0..3 {
             for j in 0..3 {
                 let expected = if i == j { 1.0 } else { 0.0 };
@@ -168,8 +174,6 @@ pub mod matrix_test_suite {
             }
         }
 
-        const DIAG: Owned<f64, 3, 3> =
-            Owned::<f64, 3, 3>::diagonal([1.0, 2.0, 3.0]);
         for i in 0..3 {
             for j in 0..3 {
                 let expected = if i == j { (i + 1) as f64 } else { 0.0 };
@@ -181,6 +185,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// `from_fn` builds a matrix element-by-element from row/column indices
     /// (FR-6).
+    /// # Verification
+    /// Trace: matrix-design#FR-1
+    /// Method: Requirements-based test
     fn test_from_fn() {
         let m: Owned<f64, 2, 3> = Matrix::from_fn(|i, j| (i * 10 + j) as f64);
         assert_almost_eq!(*m.get(0, 0).unwrap(), 0.0);
@@ -193,6 +200,9 @@ pub mod matrix_test_suite {
 
     #[cfg_attr(test, test)]
     /// `Add`/`Sub`/`Neg` are element-wise (FR-3).
+    /// # Verification
+    /// Trace: matrix-design#FR-2
+    /// Method: Requirements-based test
     fn test_add_sub_neg() {
         let a: Owned<f64, 2, 2> = Matrix::from_fn(|i, j| (i * 2 + j) as f64);
         let b: Owned<f64, 2, 2> = Owned::identity();
@@ -216,6 +226,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// Matrix-matrix multiplication statically enforces `(M x N) * (N x P)
     /// -> (M x P)` and computes the standard product (FR-3).
+    /// # Verification
+    /// Trace: matrix-design#FR-7
+    /// Method: Requirements-based test
     fn test_mul_matrix_matrix() {
         let a: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| (i * 2 + j + 1) as f64); // [[1,2],[3,4]]
@@ -236,6 +249,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// Matrix-vector multiplication is the `P == 1` case of the same `Mul`
     /// impl (FR-3, matrix-design.md §4.5's "Matrix-Vector Multiplication").
+    /// # Verification
+    /// Trace: matrix-design#FR-7
+    /// Method: Requirements-based test
     fn test_mul_matrix_vector() {
         let a: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| (i * 2 + j + 1) as f64); // [[1,2],[3,4]]
@@ -251,6 +267,9 @@ pub mod matrix_test_suite {
     /// `transpose_view`/`transpose_into`/`transpose` agree on a non-square
     /// matrix, and `transpose_view` is a true zero-copy reinterpretation
     /// (reads the same flat data `transpose()` copies).
+    /// # Verification
+    /// Trace: matrix-design#FR-2
+    /// Method: Requirements-based test
     fn test_transpose_non_square() {
         let a: Owned<f64, 2, 3> = Matrix::from_fn(|i, j| (i * 3 + j) as f64);
 
@@ -282,6 +301,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// `transpose_mut` performs an in-place transposition for square
     /// matrices (FR-4).
+    /// # Verification
+    /// Trace: matrix-design#FR-2
+    /// Method: Requirements-based test
     fn test_transpose_mut_square() {
         let mut a: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| (i * 2 + j) as f64); // [[0,1],[2,3]]
@@ -297,6 +319,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// `LuDecomposition::determinant` matches the closed-form 2x2
     /// determinant, including the sign flip from a row exchange.
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_lu_determinant() {
         // [[2, 1], [1, 3]], det = 5, no pivoting needed.
         let a: Owned<f64, 2, 2> =
@@ -314,6 +339,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// `LuDecomposition::solve_mut` solves `A * x = b` against a
     /// known-answer system.
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_lu_solve_mut() {
         // A = [[2, 1], [1, 3]], b = [3, 5] -> x = [0.8, 1.4]
         let a: Owned<f64, 2, 2> =
@@ -327,6 +355,9 @@ pub mod matrix_test_suite {
 
     #[cfg_attr(test, test)]
     /// Packed $PA = LU$ residual ratio $< 20$ (`matrix-design.md` §6.3).
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_lu_factor_residual() {
         let a: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
             [[4.0, 3.0, 2.0], [1.0, 5.0, 3.0], [2.0, 1.0, 6.0]][i][j]
@@ -362,6 +393,9 @@ pub mod matrix_test_suite {
 
     #[cfg_attr(test, test)]
     /// Undersized pivot scratch returns `WorkspaceTooSmall` instead of panicking.
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_lu_decompose_undersized_pivots() {
         let mut a: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| [[2.0, 1.0], [1.0, 3.0]][i][j]);
@@ -375,6 +409,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// `invert_mut`/`invert_into` round-trip: `A * A^-1 == I` within
     /// tolerance (FR-4).
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_lu_invert_round_trip() {
         let a: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
             [[4.0, 3.0, 2.0], [1.0, 5.0, 3.0], [2.0, 1.0, 6.0]][i][j]
@@ -395,6 +432,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// $A A^{-1} = I$ with $\varepsilon$ scaled by $\kappa_\infty(A)$
     /// (`matrix-design.md` §6.3 linear-solve / inversion residual).
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_inverse_identity_roundtrip_cond_scaled() {
         let well: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
             [[4.0, 3.0, 2.0], [1.0, 5.0, 3.0], [2.0, 1.0, 6.0]][i][j]
@@ -409,6 +449,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// Induced $\infty$-norm is sub-multiplicative: $\lVert AB\rVert_\infty
     /// \le \lVert A\rVert_\infty \lVert B\rVert_\infty$ (FR-2).
+    /// # Verification
+    /// Trace: matrix-design#FR-2
+    /// Method: Requirements-based test
     fn test_inf_norm_submultiplicative() {
         let a: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| [[2.0, -1.0], [0.5, 3.0]][i][j]);
@@ -423,6 +466,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// A singular matrix fails `LU` decomposition with
     /// `LinAlgError::SingularMatrix` rather than panicking (§4.9.3).
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_lu_singular_matrix_errors() {
         // Row 2 is a multiple of row 1 -> singular.
         let singular: Owned<f64, 2, 2> =
@@ -436,6 +482,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// `UpperTriangular`/`LowerTriangular` accept matrices that satisfy the
     /// invariant and reject matrices that don't (FR-5).
+    /// # Verification
+    /// Trace: matrix-design#FR-5
+    /// Method: Requirements-based test
     fn test_upper_lower_construction() {
         let upper: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| if i <= j { 1.0 } else { 0.0 });
@@ -455,6 +504,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// `solve_lower_triangular`/`solve_upper_triangular` match §4.10.1's
     /// forward/back-substitution example against a known-answer system.
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_solve_triangular() {
         let l: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| [[2.0, 0.0], [3.0, 4.0]][i][j]);
@@ -479,6 +531,9 @@ pub mod matrix_test_suite {
 
     #[cfg_attr(test, test)]
     /// `Symmetric` accepts symmetric matrices and rejects asymmetric ones.
+    /// # Verification
+    /// Trace: matrix-design#FR-5
+    /// Method: Requirements-based test
     fn test_symmetric_construction() {
         let sym: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| [[2.0, 1.0], [1.0, 3.0]][i][j]);
@@ -492,6 +547,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// `LdltDecomposition::determinant`/`solve_mut` match `LuDecomposition`
     /// on a symmetric positive-definite system.
+    /// # Verification
+    /// Trace: matrix-design#FR-5
+    /// Method: Requirements-based test
     fn test_ldlt_determinant_and_solve() {
         // A = [[4, 2], [2, 3]], det = 8, solve A*x = [6, 5] -> x = [1, 1].
         let a: Owned<f64, 2, 2> =
@@ -509,6 +567,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// A singular symmetric matrix fails `LDL^T` decomposition with
     /// `LinAlgError::SingularMatrix`.
+    /// # Verification
+    /// Trace: matrix-design#FR-5
+    /// Method: Requirements-based test
     fn test_ldlt_singular_matrix_errors() {
         let singular: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| [[0.0, 0.0], [0.0, 1.0]][i][j]);
@@ -523,6 +584,9 @@ pub mod matrix_test_suite {
     /// `CholeskyDecomposition::solve_mut` matches `LdltDecomposition` on the
     /// same symmetric positive-definite system as
     /// `test_ldlt_determinant_and_solve` (`matrix-design.md` §5.5).
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_cholesky_solve() {
         // A = [[4, 2], [2, 3]], solve A*x = [6, 5] -> x = [1, 1].
         let a: Owned<f64, 2, 2> =
@@ -538,6 +602,9 @@ pub mod matrix_test_suite {
 
     #[cfg_attr(test, test)]
     /// $A - L L^T$ residual ratio $< 20$ (`matrix-design.md` §6.3).
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_cholesky_factor_residual() {
         let a: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| [[4.0, 2.0], [2.0, 3.0]][i][j]);
@@ -557,6 +624,9 @@ pub mod matrix_test_suite {
     /// positive definite) fails Cholesky decomposition with
     /// `LinAlgError::NotPositiveDefinite` rather than panicking on a negative
     /// `sqrt` argument (§4.9.3).
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_cholesky_not_positive_definite_errors() {
         let indefinite: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| [[1.0, 2.0], [2.0, 1.0]][i][j]);
@@ -571,6 +641,9 @@ pub mod matrix_test_suite {
     /// `QrDecomposition::solve_mut` produces an `x` satisfying `A * x == b`
     /// (residual check) on the same system as `test_lu_invert_round_trip`
     /// (§4.7, Householder reflections).
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_qr_solve_residual() {
         let a: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
             [[4.0, 3.0, 2.0], [1.0, 5.0, 3.0], [2.0, 1.0, 6.0]][i][j]
@@ -587,6 +660,9 @@ pub mod matrix_test_suite {
 
     #[cfg_attr(test, test)]
     /// $\lVert Q^T Q - I\rVert_\infty < N\varepsilon$ (`matrix-design.md` §6.3).
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_qr_orthogonality() {
         let a: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
             [[4.0, 3.0, 2.0], [1.0, 5.0, 3.0], [2.0, 1.0, 6.0]][i][j]
@@ -605,6 +681,9 @@ pub mod matrix_test_suite {
     /// matrix (`matrix-design.md` §5.5) — the resulting `R` factor simply
     /// carries a near-zero pivot, which `solve_mut` reports as
     /// `LinAlgError::SingularMatrix` rather than dividing by it.
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_qr_solve_singular_matrix_errors() {
         // Row 2 is a multiple of row 1 -> rank-deficient.
         let singular: Owned<f64, 2, 2> =
@@ -620,6 +699,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// End-to-end numeric integrity check mirroring §6.2.1's discrete
     /// Kalman filter covariance update `P = (I - K*H) * P_pred`.
+    /// # Verification
+    /// Trace: matrix-design#FR-2
+    /// Method: Requirements-based test
     fn test_kalman_covariance_update() {
         let p_pred: Owned<f64, 2, 2> = Owned::identity();
         let k: Owned<f64, 2, 1> = Matrix::from_fn(|i, _| [0.5, 0.25][i]);
@@ -639,6 +721,9 @@ pub mod matrix_test_suite {
     #[cfg_attr(test, test)]
     /// Covariance time-update $P^- = A P A^T + Q$ and Joseph measurement
     /// update return bitwise-symmetric $P$ (`matrix-design.md` §6.2.1).
+    /// # Verification
+    /// Trace: matrix-design#FR-2
+    /// Method: Requirements-based test
     fn test_covariance_predict_symmetry() {
         let a: Owned<f64, 2, 2> =
             Matrix::from_fn(|i, j| [[1.0, 0.5], [0.0, 1.0]][i][j]);
@@ -662,30 +747,39 @@ pub mod matrix_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-4
+    /// Method: Requirements-based test
     fn test_coordinate_access() {
         let mut m: Owned<f64, 2, 2> = Owned::zero();
         m.set(0, 1, 3.0).unwrap();
-        assert_eq!(*m.get(0, 1).unwrap(), 3.0);
+        assert_almost_eq!(*m.get(0, 1).unwrap(), 3.0);
         assert!(m.set(2, 0, 1.0).is_err());
         assert!(m.get(2, 0).is_none());
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-6
+    /// Method: Requirements-based test
     fn test_strided_submatrix() {
         let m: Owned<f64, 3, 3> = Owned::from_fn(|i, j| (i * 3 + j) as f64);
         let sub = m.submatrix::<2, 2>(1, 1).unwrap();
-        assert_eq!(*sub.get(0, 0).unwrap(), *m.get(1, 1).unwrap());
-        assert_eq!(*sub.get(1, 1).unwrap(), *m.get(2, 2).unwrap());
+        assert_almost_eq!(*sub.get(0, 0).unwrap(), *m.get(1, 1).unwrap());
+        assert_almost_eq!(*sub.get(1, 1).unwrap(), *m.get(2, 2).unwrap());
         assert!(m.submatrix::<2, 2>(2, 2).is_none());
         let rev = m.reverse_view();
-        assert_eq!(*rev.get(0, 0).unwrap(), *m.get(2, 2).unwrap());
+        assert_almost_eq!(*rev.get(0, 0).unwrap(), *m.get(2, 2).unwrap());
         let sl = m.slice();
         assert_eq!(sl.as_slice().len(), 9);
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#NFR-2
+    /// Method: Requirements-based test
     fn test_c_abi_layout() {
-        let m: Owned<f64, 2, 2> = Owned::from_array([[1.0, 2.0], [3.0, 4.0]]);
+        let m: Owned<f64, 2, 2> = Owned::from_cols([[1.0, 2.0], [3.0, 4.0]]);
         let slice = m.as_slice();
         assert_eq!(slice.len(), 4);
         assert_eq!(
@@ -695,6 +789,9 @@ pub mod matrix_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_lu_workspace_too_small() {
         let mut a: Owned<f64, 2, 2> = Owned::identity();
         let mut pivots = [0usize; 1];
@@ -705,6 +802,9 @@ pub mod matrix_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-3
+    /// Method: Requirements-based test
     fn test_qr_rect_tall() {
         let a: Owned<f64, 3, 2> =
             Owned::from_fn(|i, j| [[1.0, 0.0], [1.0, 1.0], [0.0, 1.0]][i][j]);
@@ -722,18 +822,21 @@ pub mod matrix_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-7
+    /// Method: Requirements-based test
     fn test_matrix_storage_views_and_mul_into() {
         let mut m = Owned::<f64, 2, 2>::diagonal([3.0, 4.0]);
         assert_eq!(m.cols(), 2);
         assert_eq!(m.rows(), 2);
-        assert_eq!(m.storage().as_slice()[0], 3.0);
+        assert_almost_eq!(m.storage().as_slice()[0], 3.0);
         *m.get_mut(0, 1).unwrap() = 1.0;
         {
             let mut sl = m.slice_mut();
             *sl.get_mut(1, 0).unwrap() = 2.0;
         }
         let v = m.view();
-        assert_eq!(v.get(0, 0), Some(&3.0));
+        assert_almost_eq!(*v.get(0, 0).unwrap(), 3.0);
         let rv = m.reverse_view();
         assert!(rv.get(0, 0).is_some());
         {
@@ -746,10 +849,13 @@ pub mod matrix_test_suite {
         m.mul_into(&ident, &mut out);
         assert_almost_eq!(*out.get(0, 0).unwrap(), 3.0);
         let stored = m.into_storage();
-        assert_eq!(stored.as_slice()[3], 5.0);
+        assert_almost_eq!(stored.as_slice()[3], 5.0);
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-2
+    /// Method: Requirements-based test
     fn test_scalar_mul_trace_expm_write_block() {
         let ident = Owned::<f64, 2, 2>::identity();
         let scaled = &ident * 3.0;
@@ -772,6 +878,389 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*dest.get(1, 1).unwrap(), 1.0);
         assert_almost_eq!(*dest.get(2, 2).unwrap(), 1.0);
         assert_almost_eq!(*dest.get(0, 0).unwrap(), 0.0);
+    }
+
+    /// Nested-array constructors round-trip through their own accessor and
+    /// transpose through the other one.
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-1
+    /// Method: Requirements-based test
+    fn test_nested_array_round_trip() {
+        let rows = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let cols = [[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]];
+
+        let from_rows = Owned::<f64, 2, 3>::from_rows(rows);
+        let from_cols = Owned::<f64, 2, 3>::from_cols(cols);
+
+        assert_eq!(from_rows.to_rows(), rows);
+        assert_eq!(from_cols.to_cols(), cols);
+        assert_eq!(from_rows.to_cols(), cols);
+        assert_eq!(from_cols.to_rows(), rows);
+        assert_eq!(from_rows, from_cols);
+    }
+
+    /// Every constructor agrees with the coordinate map `from_fn` pins, which
+    /// fixes the layout independently of the storage backend.
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-1
+    /// Method: Requirements-based test
+    fn test_constructor_layout_agreement() {
+        let reference = Owned::<f64, 2, 3>::from_fn(|i, j| (i * 3 + j) as f64);
+
+        assert_eq!(
+            reference,
+            Owned::<f64, 2, 3>::from_rows([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]])
+        );
+        assert_eq!(
+            reference,
+            Owned::<f64, 2, 3>::from_cols([[0.0, 3.0], [1.0, 4.0], [2.0, 5.0]])
+        );
+        assert_eq!(
+            reference,
+            Owned::<f64, 2, 3>::try_from_row_slice(&[
+                0.0, 1.0, 2.0, 3.0, 4.0, 5.0
+            ])
+            .unwrap()
+        );
+        assert_eq!(
+            reference,
+            Owned::<f64, 2, 3>::try_from_col_slice(&[
+                0.0, 3.0, 1.0, 4.0, 2.0, 5.0
+            ])
+            .unwrap()
+        );
+        assert_eq!(reference, Owned::<f64, 2, 3>::from(reference.to_rows()));
+    }
+
+    /// Vector constructors and the flat-array conversion agree.
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-1
+    /// Method: Requirements-based test
+    fn test_vector_constructors() {
+        let col = ColVector::<f64, 3>::from_column([1.0, 2.0, 3.0]);
+        assert_eq!(col.get(2, 0), Some(&3.0));
+        assert_eq!(col, Owned::<f64, 3, 1>::from([1.0, 2.0, 3.0]));
+        assert_eq!(col, Owned::<f64, 3, 1>::from_rows([[1.0], [2.0], [3.0]]));
+
+        let row = RowVector::<f64, 3>::from_row([1.0, 2.0, 3.0]);
+        assert_eq!(row.get(0, 2), Some(&3.0));
+        assert_eq!(row, Owned::<f64, 1, 3>::from_rows([[1.0, 2.0, 3.0]]));
+    }
+
+    /// A slice whose length does not match `R * C` is rejected, not truncated.
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-1
+    /// Method: Requirements-based test
+    fn test_slice_constructor_length_mismatch() {
+        assert_eq!(
+            Owned::<f64, 2, 2>::try_from_row_slice(&[1.0, 2.0, 3.0]),
+            Err(ConversionError::DimensionMismatch)
+        );
+        assert_eq!(
+            Owned::<f64, 2, 2>::try_from_col_slice(&[1.0; 5]),
+            Err(ConversionError::DimensionMismatch)
+        );
+        assert_eq!(
+            RowOwned::<f64, 2, 2>::try_from_row_slice(&[]),
+            Err(ConversionError::DimensionMismatch)
+        );
+    }
+
+    /// Zero-extent construction is total: no constructor indexes an empty
+    /// seed array.
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-1
+    /// Method: Requirements-based test
+    fn test_zero_extent_construction() {
+        let empty_rows = Owned::<f64, 0, 3>::from_rows([]);
+        assert_eq!(empty_rows.to_rows(), [[0.0f64; 3]; 0]);
+        assert_eq!(empty_rows.rows(), 0);
+
+        let empty_cols = Owned::<f64, 2, 0>::from_rows([[], []]);
+        assert_eq!(empty_cols.to_cols(), [[0.0f64; 2]; 0]);
+        assert_eq!(empty_cols.cols(), 0);
+
+        let row_major_empty = RowOwned::<f64, 0, 2>::from_cols([[], []]);
+        assert_eq!(row_major_empty.rows(), 0);
+
+        assert_eq!(
+            Owned::<f64, 0, 0>::try_from_row_slice(&[]),
+            Ok(Owned::<f64, 0, 0>::from_rows([]))
+        );
+    }
+
+    /// Row-major matrices build from either nesting and expose the row-major
+    /// buffer for C hand-off.
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-1
+    /// Method: Requirements-based test
+    fn test_row_major_constructors() {
+        let from_rows =
+            RowOwned::<f64, 2, 2>::from_rows([[1.0, 2.0], [3.0, 4.0]]);
+        let from_cols =
+            RowOwned::<f64, 2, 2>::from_cols([[1.0, 3.0], [2.0, 4.0]]);
+
+        assert_eq!(from_rows, from_cols);
+        assert_eq!(from_rows.as_slice(), &[1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(
+            RowOwned::<f64, 2, 2>::identity().as_slice(),
+            &[1.0, 0.0, 0.0, 1.0]
+        );
+        assert_eq!(
+            RowOwned::<f64, 2, 2>::diagonal([2.0, 3.0]).as_slice(),
+            &[2.0, 0.0, 0.0, 3.0]
+        );
+        assert_eq!(RowOwned::<f64, 2, 2>::zero().as_slice(), &[0.0; 4]);
+    }
+
+    /// Packed backends wrap in `Matrix` and read structural coordinates
+    /// algebraically (`matrix-design.md` §4.1.1, §4.9.2).
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: matrix-design#FR-5
+    /// Method: Requirements-based test
+    fn test_packed_backends_are_reachable() {
+        let d = DiagonalMatrix::<f64, 3>::from_diagonal([2.0, 3.0, 4.0]);
+        assert_eq!(d.dim(), 3);
+        assert_eq!(d.value(1, 1), Some(3.0));
+        assert_eq!(d.value(0, 2), Some(0.0));
+        assert_eq!(d.value(3, 0), None);
+        assert_eq!(d.packed_slice(), &[2.0, 3.0, 4.0]);
+
+        // Lower triangle of [[1, 2], [2, 3]] packed column-wise.
+        let s = SymmetricPacked::<f64, 2, 3>::from_packed(
+            [1.0, 2.0, 3.0],
+            UpLo::Lower,
+        );
+        assert_eq!(s.uplo(), UpLo::Lower);
+        assert_eq!(s.value(0, 1), s.value(1, 0));
+
+        let mut t = TriangularPacked::<f64, 2, 3>::from_packed(
+            [1.0, 2.0, 3.0],
+            UpLo::Lower,
+            Diag::Unit,
+        );
+        assert_eq!(t.value(0, 0), Some(1.0));
+        assert!(t.set_packed(0, 1, 5.0).is_err());
+    }
+
+    /// Relative tolerance for [`Matrix::expm`]. The implementation is a
+    /// degree-6 Padé approximant with scaling and squaring at threshold 3,
+    /// which delivers roughly 1e-9 relative error at `inf_norm` 2 and 6e-8 at
+    /// `inf_norm` 5, so it cannot be compared to `exp` at machine epsilon.
+    /// The bound is still three orders tighter than any coefficient or sign
+    /// error in the approximant would produce.
+    const EXPM_TOL: f64 = 1e-7;
+
+    #[cfg_attr(test, test)]
+    fn test_expm_diagonal() {
+        let a = Owned::<f64, 2, 2>::diagonal([1.0, 2.0]);
+        let e = a.expm();
+        assert_almost_eq!(*e.get(0, 0).unwrap(), 1.0_f64.exp(), EXPM_TOL);
+        assert_almost_eq!(*e.get(0, 1).unwrap(), 0.0, EXPM_TOL);
+        assert_almost_eq!(*e.get(1, 0).unwrap(), 0.0, EXPM_TOL);
+        assert_almost_eq!(*e.get(1, 1).unwrap(), 2.0_f64.exp(), EXPM_TOL);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_expm_nilpotent() {
+        let a: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| [[0.0, 1.0], [0.0, 0.0]][i][j]);
+        let e = a.expm();
+        assert_almost_eq!(*e.get(0, 0).unwrap(), 1.0);
+        assert_almost_eq!(*e.get(0, 1).unwrap(), 1.0);
+        assert_almost_eq!(*e.get(1, 0).unwrap(), 0.0);
+        assert_almost_eq!(*e.get(1, 1).unwrap(), 1.0);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_expm_rotation() {
+        let a: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| [[0.0, 1.0], [-1.0, 0.0]][i][j]);
+        let e = a.expm();
+        let cos1 = 1.0_f64.cos();
+        let sin1 = 1.0_f64.sin();
+        assert_almost_eq!(*e.get(0, 0).unwrap(), cos1, EXPM_TOL);
+        assert_almost_eq!(*e.get(0, 1).unwrap(), sin1, EXPM_TOL);
+        assert_almost_eq!(*e.get(1, 0).unwrap(), -sin1, EXPM_TOL);
+        assert_almost_eq!(*e.get(1, 1).unwrap(), cos1, EXPM_TOL);
+    }
+
+    /// `inf_norm` above the Padé threshold drives the scaling-and-squaring
+    /// loop, so this exercises `s > 0` where the diagonal and rotation cases
+    /// do not. `diag(5, -5)` squares back to `exp(5)` and `exp(-5)`.
+    #[cfg_attr(test, test)]
+    fn test_expm_large_norm_scales_and_squares() {
+        let a = Owned::<f64, 2, 2>::diagonal([5.0, -5.0]);
+        let e = a.expm();
+        let rel = EXPM_TOL;
+        assert_almost_eq!(*e.get(0, 0).unwrap(), 5.0_f64.exp(), rel);
+        assert_almost_eq!(*e.get(1, 1).unwrap(), (-5.0_f64).exp(), rel);
+        assert_almost_eq!(*e.get(0, 1).unwrap(), 0.0, rel);
+        assert_almost_eq!(*e.get(1, 0).unwrap(), 0.0, rel);
+    }
+
+    /// `expm(0) = I` exactly: every Padé numerator term above the constant
+    /// vanishes, so no rounding enters.
+    #[cfg_attr(test, test)]
+    fn test_expm_zero_is_identity() {
+        let e = Owned::<f64, 3, 3>::zero().expm();
+        for i in 0..3 {
+            for j in 0..3 {
+                let want = if i == j { 1.0 } else { 0.0 };
+                assert_almost_eq!(*e.get(i, j).unwrap(), want, EXPM_TOL);
+            }
+        }
+    }
+
+    /// `expm(A) expm(-A) = I` for any `A`, which catches a sign or coefficient
+    /// error that a single-matrix comparison against `exp` would not.
+    #[cfg_attr(test, test)]
+    fn test_expm_inverse_identity() {
+        let a: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| [[0.5, -1.25], [0.75, 0.25]][i][j]);
+        let neg: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| -*a.get(i, j).unwrap_or(&0.0));
+        let prod = &a.expm() * &neg.expm();
+        for i in 0..2 {
+            for j in 0..2 {
+                let want = if i == j { 1.0 } else { 0.0 };
+                assert_almost_eq!(*prod.get(i, j).unwrap(), want, EXPM_TOL);
+            }
+        }
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_inf_norm_known() {
+        let a: Owned<f64, 2, 2> =
+            Matrix::from_fn(|i, j| [[1.0, -2.5], [-3.0, 4.0]][i][j]);
+        assert_almost_eq!(a.inf_norm(), 7.0);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_submatrix_boundaries() {
+        let a: Owned<f64, 3, 3> = Owned::zero();
+        assert!(a.submatrix::<2, 2>(0, 0).is_some());
+        assert!(a.submatrix::<2, 2>(1, 1).is_some());
+        assert!(a.submatrix::<2, 2>(2, 2).is_none());
+        assert!(a.submatrix::<3, 3>(1, 0).is_none());
+        assert!(a.submatrix::<3, 3>(0, 1).is_none());
+        assert!(a.submatrix::<4, 4>(0, 0).is_none());
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_to_rows_elements() {
+        let a: Owned<f64, 2, 3> = Matrix::from_fn(|i, j| (i * 3 + j) as f64);
+        let rows = a.to_rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].len(), 3);
+        assert_eq!(rows[1].len(), 3);
+        assert_almost_eq!(rows[0][0], 0.0);
+        assert_almost_eq!(rows[0][1], 1.0);
+        assert_almost_eq!(rows[0][2], 2.0);
+        assert_almost_eq!(rows[1][0], 3.0);
+        assert_almost_eq!(rows[1][1], 4.0);
+        assert_almost_eq!(rows[1][2], 5.0);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_lu_specific_matrix() {
+        let a: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
+            [[2.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 2.0]][i][j]
+        });
+        let mut pivots = [0usize; 3];
+        let mut packed = a;
+        packed.lu_decompose_mut(&mut pivots).unwrap();
+
+        let mut p_a = a;
+        for k in 0..3 {
+            _swap_rows(&mut p_a, k, pivots[k]);
+        }
+
+        let mut l = Owned::<f64, 3, 3>::identity();
+        let mut u = Owned::<f64, 3, 3>::zero();
+        for i in 0..3 {
+            for j in 0..3 {
+                if i > j {
+                    *l.get_mut(i, j).unwrap() = *packed.get(i, j).unwrap();
+                } else {
+                    *u.get_mut(i, j).unwrap() = *packed.get(i, j).unwrap();
+                }
+            }
+        }
+        let lu = &l * &u;
+        _assert_matrix_almost_eq(&p_a, &lu);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_ldlt_symmetric_positive_definite() {
+        let a: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
+            [[2.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 2.0]][i][j]
+        });
+        let mut sym = Symmetric::from_owned(a).unwrap();
+        sym.ldlt_decompose_mut().unwrap();
+        let l_d = *sym.as_matrix();
+        let mut l = Owned::<f64, 3, 3>::identity();
+        let mut d = Owned::<f64, 3, 3>::zero();
+        for i in 0..3 {
+            for j in 0..3 {
+                if i > j {
+                    *l.get_mut(i, j).unwrap() = *l_d.get(i, j).unwrap();
+                } else if i == j {
+                    *d.get_mut(i, i).unwrap() = *l_d.get(i, i).unwrap();
+                }
+            }
+        }
+        let lt = l.transpose();
+        let l_d_lt = &(&l * &d) * &lt;
+        _assert_matrix_almost_eq(&a, &l_d_lt);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_ldlt_solve_verify() {
+        let a: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
+            [[2.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 2.0]][i][j]
+        });
+        let sym = Symmetric::from_owned(a).unwrap();
+        let ldlt = sym.into_ldlt().unwrap();
+        let mut b: Owned<f64, 3, 1> =
+            Matrix::from_fn(|i, _| [1.0, 0.0, 1.0][i]);
+        ldlt.solve_mut(&mut b).unwrap();
+        assert_almost_eq!(*b.get(0, 0).unwrap(), 1.0);
+        assert_almost_eq!(*b.get(1, 0).unwrap(), 1.0);
+        assert_almost_eq!(*b.get(2, 0).unwrap(), 1.0);
+    }
+
+    /// The scaling loop in `expm` is capped at 16 halvings, so a matrix whose
+    /// `inf_norm` exceeds `3 * 2^16` still enters the Pade approximant with an
+    /// argument above the threshold. The contract exercised here is
+    /// termination: the call returns instead of looping.
+    ///
+    /// Beyond the budget the squaring step overflows and the result is NaN
+    /// rather than an error. That is a known limitation of the current
+    /// signature, which cannot report failure, so this test deliberately does
+    /// not assert on the returned values.
+    #[cfg_attr(test, test)]
+    fn test_expm_scaling_budget_terminates() {
+        let a = Owned::<f64, 2, 2>::diagonal([1e6, -1e6]);
+        let e = a.expm();
+        // Reaching this line is the assertion: the budget bounded the loop.
+        let _ = e.get(0, 0);
+
+        // Inside the budget the result is still usable, though accuracy falls
+        // as the norm rises: the relative error is about 1.5e-9 at inf_norm 2,
+        // 6e-8 at 5 and 7e-7 at 6, since each squaring amplifies the Pade
+        // error. This bound reflects the measured behaviour at inf_norm 6.
+        let m = Owned::<f64, 2, 2>::diagonal([6.0, 0.0]);
+        let em = m.expm();
+        assert_almost_eq!(*em.get(0, 0).unwrap(), 6.0_f64.exp(), 1e-5);
+        assert_almost_eq!(*em.get(1, 1).unwrap(), 1.0, 1e-5);
     }
 }
 
@@ -798,6 +1287,9 @@ mod matrix_property_tests {
     proptest! {
         /// `(A * B)^T == B^T * A^T` for arbitrary 2x3 * 3x2 matrices.
         #[test]
+        /// # Verification
+        /// Trace: matrix-design#FR-2
+        /// Method: Property-based test
         fn prop_transpose_of_product(
             a_vals in proptest::collection::vec(-100.0..100.0_f64, 6),
             b_vals in proptest::collection::vec(-100.0..100.0_f64, 6),
@@ -821,6 +1313,9 @@ mod matrix_property_tests {
         /// `A * (B + C) == A*B + A*C` (left distributivity) for arbitrary
         /// 2x2 matrices.
         #[test]
+        /// # Verification
+        /// Trace: matrix-design#FR-2
+        /// Method: Property-based test
         fn prop_distributivity(
             a_vals in proptest::collection::vec(-100.0..100.0_f64, 4),
             b_vals in proptest::collection::vec(-100.0..100.0_f64, 4),
@@ -845,6 +1340,9 @@ mod matrix_property_tests {
 
         /// `Add` is associative: `(A + B) + C == A + (B + C)`.
         #[test]
+        /// # Verification
+        /// Trace: matrix-design#FR-2
+        /// Method: Property-based test
         fn prop_add_associativity(
             a_vals in proptest::collection::vec(-100.0..100.0_f64, 4),
             b_vals in proptest::collection::vec(-100.0..100.0_f64, 4),
@@ -869,6 +1367,9 @@ mod matrix_property_tests {
         /// $A A^{-1} = I$ for non-singular $A$, with $\varepsilon$ scaled by
         /// $\kappa_\infty(A)$.
         #[test]
+        /// # Verification
+        /// Trace: matrix-design#FR-3
+        /// Method: Property-based test
         fn prop_inverse_identity_roundtrip(
             vals in proptest::collection::vec(-20.0..20.0_f64, 4),
         ) {
@@ -905,6 +1406,9 @@ mod matrix_property_tests {
         /// $\lVert AB\rVert_\infty \le \lVert A\rVert_\infty \lVert B\rVert_\infty$
         /// up to a $\gamma_n$ rounding factor on the computed product.
         #[test]
+        /// # Verification
+        /// Trace: matrix-design#FR-2
+        /// Method: Property-based test
         fn prop_inf_norm_submultiplicative(
             a_vals in proptest::collection::vec(-50.0..50.0_f64, 4),
             b_vals in proptest::collection::vec(-50.0..50.0_f64, 4),

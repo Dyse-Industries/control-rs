@@ -1,5 +1,5 @@
-#![allow(missing_docs)]
-#![allow(clippy::used_underscore_items)]
+#![cfg_attr(feature = "ets", allow(clippy::unwrap_used))]
+#![allow(clippy::used_underscore_items, missing_docs)]
 
 pub mod polynomial_tests;
 

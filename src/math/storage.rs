@@ -26,17 +26,19 @@
 //! needs_contiguous(&rev);
 //! ```
 //!
-//! Owning packed constructors const-assert `PACKED_LEN = N(N+1)/2`:
+//! Owning packed constructors carry `PACKED_LEN = N(N+1)/2` as a
+//! where-clause (written `N^2 + N = 2 PACKED_LEN`, which needs no division):
 //!
 //! ```compile_fail
 //! use control_rs::math::storage::{SymmetricPackedStorage, UpLo};
 //!
 //! let _ = SymmetricPackedStorage::<f32, 4, 9>::new([0.0; 9], UpLo::Upper);
 //! ```
+#![allow(clippy::inline_always)]
 #![allow(clippy::arithmetic_side_effects)]
 
 use crate::math::num_traits::{One, Scalar, Zero};
-use crate::math::num_types::{Const, Dim};
+use crate::math::num_types::{Const, Dim, DimAdd, DimMul, Prod, Sum};
 pub use crate::math::{
     ConversionError, ConversionResult, StorageError, StorageResult,
 };
@@ -951,6 +953,42 @@ impl<T, const R: usize, const C: usize> ArrayStorage<T, R, C> {
     }
 }
 
+impl<T: Copy, const R: usize, const C: usize> ArrayStorage<T, R, C> {
+    /// Builds a column-major backend from row-major nested arrays `[[T; C]; R]`.
+    ///
+    /// Transposition runs in a `const` loop, so a `static` backend built this
+    /// way still lands in read-only memory.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::math::storage::ArrayStorage;
+    ///
+    /// let storage = ArrayStorage::<f64, 2, 2>::from_rows([[1.0, 2.0], [3.0, 4.0]]);
+    /// assert_eq!(storage.to_array(), [[1.0, 3.0], [2.0, 4.0]]);
+    /// ```
+    #[must_use]
+    #[allow(clippy::indexing_slicing)]
+    pub const fn from_rows(data: RowMajorArray<T, R, C>) -> Self {
+        let mut col_major: ColMajorArray<T, R, C> = if R == 0 || C == 0 {
+            // SAFETY: `[[T; R]; C]` is zero-sized when either extent is zero,
+            // so no element of `T` is materialized and no bytes are written.
+            unsafe { MaybeUninit::zeroed().assume_init() }
+        } else {
+            [[data[0][0]; R]; C]
+        };
+        let mut i = 0;
+        while i < R {
+            let mut j = 0;
+            while j < C {
+                col_major[j][i] = data[i][j];
+                j += 1;
+            }
+            i += 1;
+        }
+        Self::from_array(col_major)
+    }
+}
+
 impl<T, const N: usize> ArrayStorage<T, N, 1> {
     /// Builds a column vector backend from a 1D array of elements.
     #[must_use]
@@ -1119,6 +1157,39 @@ impl<T, const R: usize, const C: usize> RowArrayStorage<T, R, C> {
         T: Zero + Copy,
     {
         Self::from_array([[T::ZERO; C]; R])
+    }
+}
+
+impl<T: Copy, const R: usize, const C: usize> RowArrayStorage<T, R, C> {
+    /// Builds a row-major backend from column-major nested arrays `[[T; R]; C]`.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::math::storage::RowArrayStorage;
+    ///
+    /// let storage = RowArrayStorage::<f64, 2, 2>::from_cols([[1.0, 2.0], [3.0, 4.0]]);
+    /// assert_eq!(storage.as_slice(), &[1.0, 3.0, 2.0, 4.0]);
+    /// ```
+    #[must_use]
+    #[allow(clippy::indexing_slicing)]
+    pub const fn from_cols(data: ColMajorArray<T, R, C>) -> Self {
+        let mut row_major: RowMajorArray<T, R, C> = if R == 0 || C == 0 {
+            // SAFETY: `[[T; C]; R]` is zero-sized when either extent is zero,
+            // so no element of `T` is materialized and no bytes are written.
+            unsafe { MaybeUninit::zeroed().assume_init() }
+        } else {
+            [[data[0][0]; C]; R]
+        };
+        let mut j = 0;
+        while j < C {
+            let mut i = 0;
+            while i < R {
+                row_major[i][j] = data[j][i];
+                i += 1;
+            }
+            j += 1;
+        }
+        Self::from_array(row_major)
     }
 }
 
@@ -1672,11 +1743,15 @@ where
 
 impl<T, const N: usize, const PACKED_LEN: usize>
     SymmetricPackedStorage<T, N, PACKED_LEN>
+where
+    Const<N>: Dim + DimMul<Const<N>>,
+    Const<PACKED_LEN>: Dim + DimAdd<Const<PACKED_LEN>>,
+    Prod<Const<N>, Const<N>>:
+        DimAdd<Const<N>, Output = Sum<Const<PACKED_LEN>, Const<PACKED_LEN>>>,
 {
     /// Creates symmetric packed storage from a flat packed buffer.
     #[must_use]
     pub const fn new(data: [T; PACKED_LEN], uplo: UpLo) -> Self {
-        const { assert!(PACKED_LEN == N * (N + 1) / 2) };
         Self { data, uplo }
     }
 }
@@ -1684,7 +1759,10 @@ impl<T, const N: usize, const PACKED_LEN: usize>
 impl<T: Scalar, const N: usize, const PACKED_LEN: usize>
     SymmetricPackedStorage<T, N, PACKED_LEN>
 where
-    Const<N>: Dim,
+    Const<N>: Dim + DimMul<Const<N>>,
+    Const<PACKED_LEN>: Dim + DimAdd<Const<PACKED_LEN>>,
+    Prod<Const<N>, Const<N>>:
+        DimAdd<Const<N>, Output = Sum<Const<PACKED_LEN>, Const<PACKED_LEN>>>,
 {
     /// Projects one triangle of a dense $N \times N$ matrix into packed
     /// symmetric storage.
@@ -1802,11 +1880,15 @@ where
 
 impl<T, const N: usize, const PACKED_LEN: usize>
     HermitianPackedStorage<T, N, PACKED_LEN>
+where
+    Const<N>: Dim + DimMul<Const<N>>,
+    Const<PACKED_LEN>: Dim + DimAdd<Const<PACKED_LEN>>,
+    Prod<Const<N>, Const<N>>:
+        DimAdd<Const<N>, Output = Sum<Const<PACKED_LEN>, Const<PACKED_LEN>>>,
 {
     /// Creates Hermitian packed storage.
     #[must_use]
     pub const fn new(data: [T; PACKED_LEN], uplo: UpLo) -> Self {
-        const { assert!(PACKED_LEN == N * (N + 1) / 2) };
         Self { data, uplo }
     }
 }
@@ -1814,7 +1896,10 @@ impl<T, const N: usize, const PACKED_LEN: usize>
 impl<T: Scalar, const N: usize, const PACKED_LEN: usize>
     HermitianPackedStorage<T, N, PACKED_LEN>
 where
-    Const<N>: Dim,
+    Const<N>: Dim + DimMul<Const<N>>,
+    Const<PACKED_LEN>: Dim + DimAdd<Const<PACKED_LEN>>,
+    Prod<Const<N>, Const<N>>:
+        DimAdd<Const<N>, Output = Sum<Const<PACKED_LEN>, Const<PACKED_LEN>>>,
 {
     /// Projects one triangle of a dense $N \times N$ matrix into packed
     /// Hermitian storage.
@@ -1951,11 +2036,15 @@ where
 
 impl<T, const N: usize, const PACKED_LEN: usize>
     TriangularPackedStorage<T, N, PACKED_LEN>
+where
+    Const<N>: Dim + DimMul<Const<N>>,
+    Const<PACKED_LEN>: Dim + DimAdd<Const<PACKED_LEN>>,
+    Prod<Const<N>, Const<N>>:
+        DimAdd<Const<N>, Output = Sum<Const<PACKED_LEN>, Const<PACKED_LEN>>>,
 {
     /// Creates triangular packed storage.
     #[must_use]
     pub const fn new(data: [T; PACKED_LEN], uplo: UpLo, diag: Diag) -> Self {
-        const { assert!(PACKED_LEN == N * (N + 1) / 2) };
         Self { data, uplo, diag }
     }
 }
@@ -1963,7 +2052,10 @@ impl<T, const N: usize, const PACKED_LEN: usize>
 impl<T: Scalar, const N: usize, const PACKED_LEN: usize>
     TriangularPackedStorage<T, N, PACKED_LEN>
 where
-    Const<N>: Dim,
+    Const<N>: Dim + DimMul<Const<N>>,
+    Const<PACKED_LEN>: Dim + DimAdd<Const<PACKED_LEN>>,
+    Prod<Const<N>, Const<N>>:
+        DimAdd<Const<N>, Output = Sum<Const<PACKED_LEN>, Const<PACKED_LEN>>>,
 {
     /// Projects one triangle of a dense $N \times N$ matrix into packed
     /// triangular storage.
@@ -2946,7 +3038,6 @@ impl<
     #[allow(
         clippy::indexing_slicing,
         clippy::arithmetic_side_effects,
-        clippy::needless_range_loop,
         clippy::too_many_lines
     )]
     pub fn from_coo(
@@ -3540,7 +3631,6 @@ impl<
     #[allow(
         clippy::indexing_slicing,
         clippy::arithmetic_side_effects,
-        clippy::needless_range_loop,
         clippy::manual_memcpy,
         clippy::too_many_lines
     )]

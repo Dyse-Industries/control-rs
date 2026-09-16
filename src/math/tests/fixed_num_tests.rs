@@ -233,7 +233,7 @@ pub mod fixed_num_test_suite {
         use crate::math::num_traits::Unsigned;
         type UQ14 = Fixed<u16, 14>;
 
-        fn assert_unsigned<T: Unsigned>() {}
+        const fn assert_unsigned<T: Unsigned>() {}
         assert_unsigned::<UQ7>();
         assert_unsigned::<UQ15>();
         assert_unsigned::<UQ31>();
@@ -279,15 +279,15 @@ pub mod fixed_num_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies gate separation between `OneRepresentable` and `TwoRepresentable` markers (§6.1.5).
-    fn test_gate_separation_boundary_pin() {
+    const fn test_gate_separation_boundary_pin() {
         type Q14 = Fixed<i16, 14>;
         type Q13 = Fixed<i16, 13>;
 
-        fn assert_one_rep<T: OneRepresentable>() {}
-        fn assert_two_rep<T: TwoRepresentable>() {}
-        fn assert_one<T: One>() {}
-        fn assert_scalar<T: Scalar>() {}
-        fn assert_sat_int<T: SaturatingInteger>() {}
+        const fn assert_one_rep<T: OneRepresentable>() {}
+        const fn assert_two_rep<T: TwoRepresentable>() {}
+        const fn assert_one<T: One>() {}
+        const fn assert_scalar<T: Scalar>() {}
+        const fn assert_sat_int<T: SaturatingInteger>() {}
 
         // Fixed<i16, 13>: both One and Two representable
         assert_one_rep::<Q13>();

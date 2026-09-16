@@ -39,18 +39,74 @@
 //! fn assert_dim<D: Dim>() {}
 //! assert_dim::<Const<10000>>();
 //! ```
+//!
+//! # Dimension contracts
+//!
+//! An operation whose output capacity is a function of its input capacities
+//! carries that function as a where-clause, not as an `assert!`. The idiom
+//! binds the operation's `Output` to [`Canon`] of the output const-generic:
+//!
+//! | Contract | Bound |
+//! |---|---|
+//! | $P = N + M - 1$ | `Sum<Const<N>, Const<M>>: DimSub<U1, Output = Canon<Const<P>>>` |
+//! | $NC = NX \cdot NU$ | `Const<NX>: DimMul<Const<NU>, Output = Canon<Const<NC>>>` |
+//! | $NP = NX + 1$ | `Const<NX>: DimAdd<U1, Output = Canon<Const<NP>>>` |
+//!
+//! Each `Const<N>` has exactly one canonical [`Dim::TypeNum`], so the binding
+//! is an equality. It is discharged at the call site against concrete values,
+//! costs nothing at run time, and adds no panic branch. Keep the arithmetic on
+//! the input side: a clause of the form `Const<P>: DimAdd<U1>` over a bare
+//! output parameter is not dischargeable from the caller's environment.
+//!
+//! ```
+//! use control_rs::math::num_types::{
+//!     Canon, Const, Dim, DimAdd, DimSub, Sum, U1,
+//! };
+//!
+//! fn convolution_capacity<const N: usize, const M: usize, const P: usize>()
+//! where
+//!     Const<N>: Dim,
+//!     Const<M>: Dim,
+//!     Const<P>: Dim,
+//!     Const<N>: DimAdd<Const<M>>,
+//!     Sum<Const<N>, Const<M>>: DimSub<U1, Output = Canon<Const<P>>>,
+//! {
+//! }
+//!
+//! convolution_capacity::<3, 2, 4>();
+//! ```
+//!
+//! A capacity that violates the relation has no implementation:
+//!
+//! ```compile_fail
+//! use control_rs::math::num_types::{
+//!     Canon, Const, Dim, DimAdd, DimSub, Sum, U1,
+//! };
+//!
+//! fn convolution_capacity<const N: usize, const M: usize, const P: usize>()
+//! where
+//!     Const<N>: Dim,
+//!     Const<M>: Dim,
+//!     Const<P>: Dim,
+//!     Const<N>: DimAdd<Const<M>>,
+//!     Sum<Const<N>, Const<M>>: DimSub<U1, Output = Canon<Const<P>>>,
+//! {
+//! }
+//!
+//! convolution_capacity::<3, 2, 5>();
+//! ```
 #![allow(clippy::arbitrary_source_item_ordering)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::use_self)]
 #![allow(clippy::manual_div_ceil)]
-#![allow(unused_macro_rules)]
 
 use core::marker::PhantomData;
 
 use private::{
-    AddBit, Cmp, Compare, PrivateAnd, PrivateAndOut, PrivateMax, PrivateMaxOut,
-    PrivateMin, PrivateMinOut, PrivateOr, PrivateOrOut, PrivateSub,
-    PrivateSubOut, PrivateXor, PrivateXorOut, SelectBit, Trim, TrimOut,
+    AddBit, Cmp, Compare, NotGreater, PrivateAnd, PrivateAndOut, PrivateMax,
+    PrivateMaxOut, PrivateMin, PrivateMinOut, PrivateOr, PrivateOrOut,
+    PrivateSub, PrivateSubOut, PrivateXor, PrivateXorOut, SelectBit, Trim,
+    TrimOut,
 };
 
 /// Type-level bit 0. Does not implement [`Dim`].
@@ -128,6 +184,45 @@ pub trait DimBitXor<Other> {
     type Output: Dim;
 }
 
+/// Sum of two dimensions.
+pub type Sum<A, B> = <A as DimAdd<B>>::Output;
+
+/// Difference of two dimensions. Underflow has no implementation.
+pub type Diff<A, B> = <A as DimSub<B>>::Output;
+
+/// Product of two dimensions.
+pub type Prod<A, B> = <A as DimMul<B>>::Output;
+
+/// Larger of two dimensions.
+pub type Maximum<A, B> = <A as DimMax<B>>::Output;
+
+/// Smaller of two dimensions.
+pub type Minimum<A, B> = <A as DimMin<B>>::Output;
+
+/// Type-level `<=` between two dimensions.
+///
+/// Used where an operand only has to fit, not match exactly: a destination
+/// block inside a larger matrix, or an output buffer that is allowed to carry
+/// trailing zeros. `Greater` has no [`private::NotGreater`] implementation, so
+/// an over-long operand fails to resolve.
+pub trait DimLe<Other> {}
+
+impl<A, B> DimLe<B> for A
+where
+    A: Dim,
+    B: Dim,
+    <A as Dim>::TypeNum: Cmp<<B as Dim>::TypeNum>,
+    Compare<<A as Dim>::TypeNum, <B as Dim>::TypeNum>: NotGreater,
+{
+}
+
+/// Canonical encoding of a dimension.
+///
+/// `Canon<Const<N>>` is the `UInt`/`UTerm` tree for `N`. Binding a `Dim*`
+/// operation's `Output` to it is how an output const-generic is pinned to an
+/// expression over the input dimensions (see the module header).
+pub type Canon<D> = <D as Dim>::TypeNum;
+
 /// Const-generic front end onto a canonical [`Dim`] encoding.
 ///
 /// `Const<N>` implements [`Dim`] only for `N` in the named-alias set
@@ -161,7 +256,6 @@ impl Dim for UTerm {
 }
 
 impl<U: Dim, B: Bit> Dim for UInt<U, B> {
-    #[allow(clippy::arithmetic_side_effects)]
     const USIZE: usize = U::USIZE * 2 + B::USIZE;
     type TypeNum = Self;
 }
@@ -516,6 +610,12 @@ mod private {
     pub struct Equal;
     /// Marker for a type-level comparison result.
     pub struct Greater;
+
+    /// Comparison outcomes that satisfy `<=`. `Greater` has no impl.
+    pub trait NotGreater {}
+
+    impl NotGreater for Less {}
+    impl NotGreater for Equal {}
 
     /// Add a single bit, propagating carry.
     pub trait AddBit<B> {

@@ -2,6 +2,7 @@
 //!
 //! This module provides a generic `Complex` struct and basic arithmetic operations
 //! (addition, subtraction, multiplication, division) for complex numbers.
+#![allow(clippy::inline_always)]
 
 use crate::math::{
     ArithmeticResult,

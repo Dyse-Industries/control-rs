@@ -564,8 +564,8 @@ pub mod num_trait_test_suite {
     /// `compile_fail` doctest on `num_traits`'s module documentation
     /// (this suite lives behind `#[cfg(any(test, feature = "ets"))]`,
     /// which `rustdoc` doctest extraction does not set).
-    fn test_num_trait_unsigned_integer_markers() {
-        fn assert_is_unsigned_integer<
+    const fn test_num_trait_unsigned_integer_markers() {
+        const fn assert_is_unsigned_integer<
             T: Unsigned + Integer + SaturatingInteger,
         >() {
         }
@@ -582,8 +582,8 @@ pub mod num_trait_test_suite {
     /// Statically verifies the compile-time presence of `Scalar` on every
     /// integer and float primitive, signed and unsigned (FR-3 of
     /// `num-traits-design.md`).
-    fn test_num_trait_scalar_markers() {
-        fn assert_is_scalar<T: Scalar>() {}
+    const fn test_num_trait_scalar_markers() {
+        const fn assert_is_scalar<T: Scalar>() {}
 
         assert_is_scalar::<i8>();
         assert_is_scalar::<i16>();

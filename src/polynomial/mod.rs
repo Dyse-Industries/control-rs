@@ -22,23 +22,16 @@
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
-    clippy::similar_names,
     clippy::needless_range_loop,
     clippy::type_complexity,
     clippy::doc_markdown,
     clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
     clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::option_if_let_else,
-    clippy::must_use_candidate,
     clippy::many_single_char_names,
     clippy::collapsible_if,
     clippy::use_self,
     clippy::too_many_arguments,
-    clippy::missing_const_for_fn,
-    clippy::cast_lossless
+    clippy::missing_const_for_fn
 )]
 
 #[cfg(any(test, feature = "ets"))]
@@ -48,7 +41,7 @@ pub mod tests;
 use crate::math::complex_num::Complex;
 use crate::math::dsp::{Convolution, DefaultDsp};
 use crate::math::num_traits::{Float, Scalar, Zero};
-use crate::math::num_types::{Const, Dim};
+use crate::math::num_types::{Canon, Const, Dim, DimAdd, DimSub, Sum, U1};
 use crate::math::ops::{Add, Neg, Sub};
 use crate::math::storage::{
     ArrayStorage, ContiguousStorage, ContiguousStorageMut, DenseStorage,
@@ -107,6 +100,11 @@ pub type QuadraticRootError = RootError;
 ///
 /// `N` represents the maximum coefficient capacity (maximum degree $N - 1$).
 /// `S` is the underlying storage backend.
+///
+/// Coefficients are stored and accepted in **ascending** power order:
+/// index $i$ holds $c_i$ in $p(x) = c_0 + c_1 x + \dots + c_{N-1} x^{N-1}$.
+/// Every constructor, accessor and evaluation in this module follows that
+/// order, which is the reverse of the MATLAB `polyval` convention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Polynomial<T, N: Dim, S: Storage<T, N, Const<1>>> {
     storage: S,
@@ -156,6 +154,7 @@ where
     /// Zero-copy strided view of the coefficient vector.
     #[must_use]
     pub fn view(&self) -> PolynomialView<'_, T, Const<N>> {
+        // SAFETY: self.storage.as_ptr() covers N x 1 elements valid for the borrow lifetime.
         let storage = unsafe {
             StorageView::new_with_strides_unchecked(
                 self.storage.as_ptr(),
@@ -168,6 +167,7 @@ where
 
     /// Zero-copy mutable strided view of the coefficient vector.
     pub fn view_mut(&mut self) -> PolynomialViewMut<'_, T, Const<N>> {
+        // SAFETY: self.storage.as_mut_ptr() covers N x 1 elements with exclusive access.
         let storage = unsafe {
             StorageViewMut::new_with_strides_unchecked(
                 self.storage.as_mut_ptr(),
@@ -264,6 +264,26 @@ impl<T: Copy> ArrayPolynomial<T, 2> {
     #[must_use]
     pub const fn line(c0: T, c1: T) -> Self {
         Self::from_coefficients([c0, c1])
+    }
+}
+
+/// Coefficients convert in ascending power order, matching
+/// [`ArrayPolynomial::from_coefficients`].
+///
+/// # Example
+/// ```
+/// use control_rs::polynomial::ArrayPolynomial;
+///
+/// // 2 + 3x
+/// let p: ArrayPolynomial<f64, 2> = [2.0, 3.0].into();
+/// assert_eq!(p.evaluate(1.0), 5.0);
+/// ```
+impl<T, const N: usize> From<[T; N]> for ArrayPolynomial<T, N>
+where
+    Const<N>: Dim,
+{
+    fn from(data: [T; N]) -> Self {
+        Self::from_coefficients(data)
     }
 }
 
@@ -497,7 +517,9 @@ where
 
     /// Multiplies two polynomials using DSP backend `C`.
     ///
-    /// Product capacity $P = N + M - 1$.
+    /// Product capacity is fixed by the operands: $P = N + M - 1$. The
+    /// relation is a where-clause, so a mis-sized `P` is a call-site type
+    /// error rather than a truncated or zero-padded product.
     pub fn mul_poly_with<C, const M: usize, const P: usize>(
         &self,
         rhs: &ArrayPolynomial<T, M>,
@@ -506,6 +528,8 @@ where
         C: Convolution<T>,
         Const<M>: Dim,
         Const<P>: Dim,
+        Const<N>: DimAdd<Const<M>>,
+        Sum<Const<N>, Const<M>>: DimSub<U1, Output = Canon<Const<P>>>,
     {
         let mut out = ArrayPolynomial::<T, P>::zero();
         let _ = C::convolve_input(
@@ -518,7 +542,36 @@ where
 
     /// Multiplies two polynomials via [`DefaultDsp`].
     ///
-    /// Product capacity $P = N + M - 1$.
+    /// Product capacity $P = N + M - 1$, enforced by the where-clause.
+    ///
+    /// ```
+    /// use control_rs::polynomial::ArrayPolynomial;
+    ///
+    /// let p = ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 2.0, 3.0]);
+    /// let q = ArrayPolynomial::<f64, 2>::from_coefficients([4.0, 5.0]);
+    /// let prod = p.mul_poly::<2, 4>(&q);
+    /// assert_eq!(prod.get(0), Some(&4.0));
+    /// ```
+    ///
+    /// An under-sized product capacity does not compile:
+    ///
+    /// ```compile_fail
+    /// use control_rs::polynomial::ArrayPolynomial;
+    ///
+    /// let p = ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 2.0, 3.0]);
+    /// let q = ArrayPolynomial::<f64, 2>::from_coefficients([4.0, 5.0]);
+    /// let _ = p.mul_poly::<2, 3>(&q);
+    /// ```
+    ///
+    /// Neither does an over-sized one, which would misreport the degree:
+    ///
+    /// ```compile_fail
+    /// use control_rs::polynomial::ArrayPolynomial;
+    ///
+    /// let p = ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 2.0, 3.0]);
+    /// let q = ArrayPolynomial::<f64, 2>::from_coefficients([4.0, 5.0]);
+    /// let _ = p.mul_poly::<2, 5>(&q);
+    /// ```
     pub fn mul_poly<const M: usize, const P: usize>(
         &self,
         rhs: &ArrayPolynomial<T, M>,
@@ -526,11 +579,15 @@ where
     where
         Const<M>: Dim,
         Const<P>: Dim,
+        Const<N>: DimAdd<Const<M>>,
+        Sum<Const<N>, Const<M>>: DimSub<U1, Output = Canon<Const<P>>>,
     {
         self.mul_poly_with::<DefaultDsp, M, P>(rhs)
     }
 
     /// Convolution multiply via [`crate::math::dsp::Convolution`] (`matrix-design` sibling DSP path).
+    ///
+    /// Product capacity $P = N + M - 1$, enforced by the where-clause.
     pub fn mul_with_conv<const M: usize, const P: usize>(
         &self,
         rhs: &ArrayPolynomial<T, M>,
@@ -538,6 +595,8 @@ where
     where
         Const<M>: Dim,
         Const<P>: Dim,
+        Const<N>: DimAdd<Const<M>>,
+        Sum<Const<N>, Const<M>>: DimSub<U1, Output = Canon<Const<P>>>,
     {
         self.mul_poly_with::<DefaultDsp, M, P>(rhs)
     }
@@ -575,21 +634,24 @@ where
 
     /// Computes Euclidean polynomial division ($A(x) = Q(x) D(x) + R(x)$).
     ///
-    /// Returns `(Quotient, Remainder)` where degree of `Q` is `N - M` (capacity `N - M + 1`)
-    /// and degree of `R` is `< M - 1` (capacity `M - 1`).
+    /// Returns `(Quotient, Remainder)`. Both capacities are fixed by the
+    /// operands and carried as where-clauses: $Q = N - M + 1$ (written
+    /// $Q + M - 1 = N$, which also rejects $M > N$) and $R = M - 1$.
     ///
     /// # Errors
     /// Returns [`DivisionError::ZeroLeadingCoefficient`] if the divisor is the
-    /// zero polynomial, or [`DivisionError::DegreeMismatch`] if $\deg D > \deg A$.
+    /// zero polynomial, or [`DivisionError::DegreeMismatch`] if $\deg D > \deg A$
+    /// for the actual coefficient values.
     pub fn div_rem<const M: usize, const Q: usize, const R: usize>(
         &self,
         divisor: &ArrayPolynomial<T, M>,
     ) -> Result<(ArrayPolynomial<T, Q>, ArrayPolynomial<T, R>), DivisionError>
     where
         T: Float,
-        Const<M>: Dim,
-        Const<Q>: Dim,
+        Const<M>: Dim + DimSub<U1, Output = Canon<Const<R>>>,
+        Const<Q>: Dim + DimAdd<Const<M>>,
         Const<R>: Dim,
+        Sum<Const<Q>, Const<M>>: DimSub<U1, Output = Canon<Const<N>>>,
     {
         let deg_a = self.degree().unwrap_or(0);
         let deg_b = divisor
@@ -653,17 +715,17 @@ where
     /// the companion matrix $C \in \mathbb{R}^{n \times n}$ is:
     /// $$C = \begin{bmatrix} 0 & 0 & \dots & 0 & -c_0 \\ 1 & 0 & \dots & 0 & -c_1 \\ 0 & 1 & \dots & 0 & -c_2 \\ \vdots & \vdots & \ddots & \vdots & \vdots \\ 0 & 0 & \dots & 1 & -c_{n-1} \end{bmatrix}$$
     ///
+    /// The matrix order is fixed by the coefficient count, $N = DEG + 1$, and
+    /// carried as a where-clause.
+    ///
     /// # Errors
-    /// Returns [`ConversionError::DimensionMismatch`] if $N < 2$, or [`ConversionError::NonMonicPolynomial`] if the polynomial is not monic.
+    /// Returns [`ConversionError::NonMonicPolynomial`] if the polynomial is not monic.
     pub fn companion_matrix<const DEG: usize>(
         &self,
     ) -> ConversionResult<Owned<T, DEG, DEG>>
     where
-        Const<DEG>: Dim,
+        Const<DEG>: Dim + DimAdd<U1, Output = Canon<Const<N>>>,
     {
-        if DEG + 1 != N || DEG == 0 {
-            return Err(ConversionError::DimensionMismatch);
-        }
         let leading = self.get(DEG).copied().unwrap_or(T::ZERO);
         if (leading - T::ONE).abs() > T::epsilon() * (T::ONE + T::ONE) {
             return Err(ConversionError::NonMonicPolynomial);
@@ -691,7 +753,7 @@ impl<T: Float + Copy, const N: usize, const DEG: usize>
     TryFrom<&ArrayPolynomial<T, N>> for Owned<T, DEG, DEG>
 where
     Const<N>: Dim,
-    Const<DEG>: Dim,
+    Const<DEG>: Dim + DimAdd<U1, Output = Canon<Const<N>>>,
 {
     type Error = ConversionError;
 

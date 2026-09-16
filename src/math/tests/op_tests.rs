@@ -6,7 +6,6 @@
 //! **FR-1** (single shared error type consumed by more than one module) —
 //! `storage_tests.rs` independently exercises the same enum via
 //! `ConversionError`.
-#![allow(clippy::arbitrary_source_item_ordering)]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod op_test_suite {

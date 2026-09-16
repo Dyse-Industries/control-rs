@@ -1,24 +1,31 @@
 //! # Transfer Function Unit and Verification Tests
-#![allow(
-    clippy::arithmetic_side_effects,
-    clippy::indexing_slicing,
-    clippy::similar_names,
-    clippy::unwrap_used,
-    clippy::items_after_statements,
-    clippy::cast_precision_loss,
-    clippy::float_cmp,
-    clippy::approx_constant
-)]
+#![allow(clippy::suboptimal_flops)]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod transfer_function_test_suite {
     use crate::assert_almost_eq;
-    use crate::math::num_traits::Radical;
+    #[allow(unused_imports)]
+    use crate::math::num_traits::{Float, Radical};
     use crate::transfer_function::{
         ArrayTransferFunction, TransferFunctionError,
     };
+    use core::fmt::Write;
+
+    struct StackBuf([u8; 192], usize);
+    impl Write for StackBuf {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            let rest = self.0.len().saturating_sub(self.1);
+            let n = rest.min(s.len());
+            self.0[self.1..self.1 + n].copy_from_slice(&s.as_bytes()[..n]);
+            self.1 += n;
+            Ok(())
+        }
+    }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-2
+    /// Method: Requirements-based test
     fn test_frequency_response_continuous() {
         // 1st-order low-pass filter: H(s) = 1 / (1 + s)
         let tf =
@@ -40,6 +47,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-3
+    /// Method: Requirements-based test
     fn test_transfer_function_series() {
         // H1(s) = 1 / (1 + s), H2(s) = 2 / (2 + s)
         let h1 =
@@ -52,7 +62,7 @@ pub mod transfer_function_test_suite {
         assert_eq!(h_ser.num_slice(), &[2.0]);
         assert_eq!(h_ser.den_slice(), &[2.0, 3.0, 1.0]);
 
-        // Series cascade matching examples/prototypes/numerical-models-validation/transfer-function/.
+        // Series cascade matching control-rs-validation/python3/transfer_function_oracle.py.
         let p1 =
             ArrayTransferFunction::<f64, 1, 2>::continuous([2.0], [2.0, 1.0]);
         let p2 =
@@ -63,13 +73,16 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-3
+    /// Method: Requirements-based test
     fn test_parallel_and_feedback() {
         let h1 =
             ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
         let h2 =
             ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
         // H+H = 2/(1+s) = 2(1+s) / (1+s)^2 = (2+2s)/(1+2s+s^2)
-        let h_par = h1.parallel::<1, 2, 3, 3>(&h2);
+        let h_par = h1.parallel::<1, 2, 2, 3>(&h2);
         assert_almost_eq!(h_par.num_slice()[0], 2.0, 1e-12);
         assert_almost_eq!(h_par.num_slice()[1], 2.0, 1e-12);
         assert_almost_eq!(h_par.den_slice()[0], 1.0, 1e-12);
@@ -85,7 +98,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[allow(clippy::too_many_lines)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-1
+    /// Method: Requirements-based test
     fn test_try_from_coefficients() {
         assert_eq!(
             ArrayTransferFunction::<f64, 1, 2>::try_continuous(
@@ -93,13 +108,6 @@ pub mod transfer_function_test_suite {
                 [1.0, 0.0]
             ),
             Err(TransferFunctionError::ZeroLeadingDenominatorCoefficient)
-        );
-        assert_eq!(
-            ArrayTransferFunction::<f64, 3, 2>::try_continuous(
-                [1.0, 0.0, 1.0],
-                [1.0, 1.0]
-            ),
-            Err(TransferFunctionError::ImproperSystem)
         );
         let ok = ArrayTransferFunction::<f64, 1, 2>::try_discrete(
             [1.0],
@@ -110,17 +118,6 @@ pub mod transfer_function_test_suite {
         assert!(ok.is_discrete());
         assert_eq!(ok.sample_time(), Some(0.1));
         assert!(!ok.is_continuous());
-        use core::fmt::Write;
-        struct StackBuf([u8; 192], usize);
-        impl Write for StackBuf {
-            fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                let rest = self.0.len().saturating_sub(self.1);
-                let n = rest.min(s.len());
-                self.0[self.1..self.1 + n].copy_from_slice(&s.as_bytes()[..n]);
-                self.1 += n;
-                Ok(())
-            }
-        }
         let mut zbuf = StackBuf([0u8; 192], 0);
         write!(
             &mut zbuf,
@@ -133,13 +130,6 @@ pub mod transfer_function_test_suite {
                 .unwrap()
                 .contains("denominator")
         );
-        let mut ibuf = StackBuf([0u8; 192], 0);
-        write!(&mut ibuf, "{}", TransferFunctionError::ImproperSystem).unwrap();
-        assert!(
-            core::str::from_utf8(&ibuf.0[..ibuf.1])
-                .unwrap()
-                .contains("improper")
-        );
         let from_st = ArrayTransferFunction::<f64, 1, 2>::from_storage(
             crate::math::storage::ArrayStorage::from_column([1.0]),
             crate::math::storage::ArrayStorage::from_column([1.0, 1.0]),
@@ -151,6 +141,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-5
+    /// Method: Requirements-based test
     fn test_controllable_canonical_form() {
         // H(s) = (2 + 3s) / (4 + 5s + s^2)  [monic denominator]
         let tf = ArrayTransferFunction::<f64, 2, 3>::continuous(
@@ -194,6 +187,9 @@ pub mod transfer_function_test_suite {
 
     #[cfg_attr(test, test)]
     /// $\lambda_i(A_c)$ match the roots of $D(s)$ (`transfer-function-design.md` §6.3).
+    /// # Verification
+    /// Trace: transfer-function-design#FR-5
+    /// Method: Requirements-based test
     fn test_ccf_eigenvalues_match_denominator_roots() {
         // D(s) = 4 + 5s + s^2 = (s+1)(s+4); A = [[0, 1], [-4, -5]].
         let tf = ArrayTransferFunction::<f64, 2, 3>::continuous(
@@ -226,6 +222,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-5
+    /// Method: Requirements-based test
     fn test_controllable_canonical_form_with_feedthrough() {
         // Proper but not strictly: H(s) = (2 + 3s + s^2) / (4 + 5s + s^2)
         // => d = 1, β = (2-4, 3-5) = (-2, -2)
@@ -240,6 +239,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-5
+    /// Method: Requirements-based test
     fn test_ccf_proper_feedthrough() {
         // H(s) = (1 + 2s) / (1 + s)  → d = 2, β0 = 1 - 2*1 = -1
         let tf = ArrayTransferFunction::<f64, 2, 2>::continuous(
@@ -253,6 +255,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-1
+    /// Method: Requirements-based test
     fn test_evaluate_complex_empty_numerator() {
         // N = 0 is a valid Dim; Horner must not underflow usize.
         let tf = ArrayTransferFunction::<f64, 0, 2>::continuous([], [1.0, 1.0]);
@@ -263,6 +268,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-4
+    /// Method: Requirements-based test
     fn test_tustin_and_zoh() {
         let tf =
             ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
@@ -287,6 +295,9 @@ pub mod transfer_function_test_suite {
     #[cfg_attr(test, test)]
     /// Pre-warped Tustin maps $H_c(j\omega_c)$ to $H_d(e^{j\omega_c T_s})$
     /// within $5\varepsilon$ (`transfer-function-design.md` §6.3).
+    /// # Verification
+    /// Trace: transfer-function-design#FR-4
+    /// Method: Requirements-based test
     fn test_tustin_prewarped() {
         let tf =
             ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
@@ -305,6 +316,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-5
+    /// Method: Requirements-based test
     fn test_controllable_canonical_form_realization_invariant_order2() {
         use crate::math::complex_num::Complex;
 
@@ -361,6 +375,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-5
+    /// Method: Requirements-based test
     fn test_controllable_canonical_form_realization_invariant_order3() {
         use crate::math::complex_num::Complex;
 
@@ -412,6 +429,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-1
+    /// Method: Requirements-based test
     fn test_transfer_function_view() {
         let mut tf =
             ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
@@ -428,6 +448,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-6
+    /// Method: Requirements-based test
     fn test_pole_zero_cancellation_bode() {
         // H(s) = 1/(s+1). Multiply num/den by (s+2), a stable factor.
         let h =
@@ -457,6 +480,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-6
+    /// Method: Requirements-based test
     fn test_transfer_function_poles_and_zeros_orders() {
         // Order-1 system: H(s) = (3) / (s + 2) -> pole at -2, D=2
         let tf1 =
@@ -499,6 +525,9 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: transfer-function-design#FR-6
+    /// Method: Requirements-based test
     fn test_transfer_function_poles_discrete_and_cascade() {
         use crate::polynomial::RootError;
 
@@ -513,7 +542,7 @@ pub mod transfer_function_test_suite {
         assert_eq!(poles_z.len(), 3);
         for p in &poles_z[0..2] {
             assert!(
-                (p.re * p.re + p.im * p.im) < 1.0,
+                p.re.mul_add(p.re, p.im * p.im) < 1.0,
                 "Discrete pole must be strictly within unit disk for stable continuous pole"
             );
         }
@@ -553,6 +582,9 @@ mod transfer_function_property_tests {
         /// Multiplying numerator and denominator by a random stable first-order
         /// factor does not change Bode magnitude or (wrapped) phase.
         #[test]
+        /// # Verification
+        /// Trace: transfer-function-design#FR-6
+        /// Method: Property-based test
         fn prop_pole_zero_cancellation_bode(
             a in 0.2_f64..8.0,
         ) {

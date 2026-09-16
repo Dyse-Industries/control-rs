@@ -1,18 +1,14 @@
 //! BLAS-style subprogram (`subprograms.rs`, levels 1-3, packed, sparse, and LAPACK) test suite.
-#![allow(unused_imports)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::many_single_char_names)]
 #![allow(clippy::arithmetic_side_effects)]
 #![allow(clippy::indexing_slicing)]
-#![allow(clippy::doc_markdown)]
-#![allow(clippy::similar_names)]
+#![allow(clippy::suboptimal_flops)]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod subprogram_test_suite {
     use crate::assert_almost_eq;
     use crate::math::LinAlgError;
     use crate::math::complex_num::{Complex, Complex32, Complex64};
-    use crate::math::num_traits::{One, Scalar, Zero};
+    use crate::math::num_traits::{Float, One, Scalar, Zero};
     use crate::math::num_types::{Const, Dim};
     use crate::math::storage::{
         ArrayCooStorage, ArrayCscStorage, ArrayCsrStorage, ArraySparseVector,
@@ -214,6 +210,10 @@ pub mod subprogram_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies AXPY vector scaling and addition (y = a * x + y) on f32.
+    ///
+    /// # Verification
+    /// Trace: subprograms-design#FR-1
+    /// Method: Requirements-based test
     fn test_subprograms_level1_axpy_f32() {
         let x = ArrayStorage::<f32, 3, 1>::from_array([[1.0, 2.0, 3.0]]);
         let mut y = ArrayStorage::<f32, 3, 1>::from_array([[4.0, 5.0, 6.0]]);
@@ -321,6 +321,10 @@ pub mod subprogram_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies GEMV matrix-vector multiplication (y = alpha * A * x + beta * y) on f32.
+    ///
+    /// # Verification
+    /// Trace: subprograms-design#FR-2
+    /// Method: Requirements-based test
     fn test_subprograms_level2_gemv_f32() {
         let a = ArrayStorage::<f32, 2, 2>::from_array([[1.0, 3.0], [2.0, 4.0]]);
         let x = ArrayStorage::<f32, 2, 1>::from_array([[1.0, 1.0]]);
@@ -389,7 +393,7 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    #[allow(clippy::too_many_lines)]
     /// Verifies Geru, Gerc, Symv, Hemv, Syr, Syr2, Her, Her2, Trmv, and Trsv Level 2 kernels.
     fn test_subprograms_level2_additional_kernels() {
         let mut a = ArrayStorage::<f32, 2, 2>::zeros();
@@ -587,6 +591,10 @@ pub mod subprogram_test_suite {
 
     #[cfg_attr(test, test)]
     /// Verifies GEMM matrix-matrix multiplication (C = alpha * A * B + beta * C) on f32.
+    ///
+    /// # Verification
+    /// Trace: subprograms-design#FR-4
+    /// Method: Requirements-based test
     fn test_subprograms_level3_gemm_f32() {
         let a = ArrayStorage::<f32, 2, 2>::from_array([[1.0, 3.0], [2.0, 4.0]]);
         let b = ArrayStorage::<f32, 2, 2>::identity();
@@ -1053,6 +1061,10 @@ pub mod subprogram_test_suite {
     #[cfg_attr(test, test)]
     #[allow(clippy::too_many_lines)]
     /// Verifies WorkspaceTooSmall errors for LAPACK routines Geqrf, Ormqr, Unmqr, Syev, and Heev.
+    ///
+    /// # Verification
+    /// Trace: subprograms-design#FR-6, error-design#FR-1, error-design#C-3
+    /// Method: Requirements-based test
     fn test_subprograms_lapack_workspace_too_small() {
         let mut a =
             ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [3.0, 4.0]]);
@@ -2162,7 +2174,11 @@ pub mod subprogram_test_suite {
         let mut x_pred = ArrayStorage::<f64, 3, 1>::zeros();
         DefaultBlas::csrmv(1.0, &a_csr, &u, 0.0, &mut x_pred);
         assert_almost_eq!(x_pred.as_slice()[0], 1.0);
-        assert_almost_eq!(x_pred.as_slice()[1], -0.8 * 1.0 + 1.0 * 0.5, 1e-10);
+        assert_almost_eq!(
+            x_pred.as_slice()[1],
+            (-0.8f64).mul_add(1.0, 1.0 * 0.5),
+            1e-10
+        );
     }
 
     #[cfg_attr(test, test)]
@@ -2202,10 +2218,26 @@ pub mod subprogram_test_suite {
         let modal_input =
             ArrayStorage::<f64, 4, 1>::from_array([[0.1, 0.2, 0.3, 0.4]]);
         DefaultBlas::axpy(1.0, &modal_input, &mut modal_state);
-        assert_almost_eq!(modal_state.as_slice()[0], 1.0 * 0.95 + 0.1, 1e-10);
-        assert_almost_eq!(modal_state.as_slice()[1], 2.0 * 0.95 + 0.2, 1e-10);
-        assert_almost_eq!(modal_state.as_slice()[2], 3.0 * 0.95 + 0.3, 1e-10);
-        assert_almost_eq!(modal_state.as_slice()[3], 4.0 * 0.95 + 0.4, 1e-10);
+        assert_almost_eq!(
+            modal_state.as_slice()[0],
+            1.0f64.mul_add(0.95, 0.1),
+            1e-10
+        );
+        assert_almost_eq!(
+            modal_state.as_slice()[1],
+            2.0f64.mul_add(0.95, 0.2),
+            1e-10
+        );
+        assert_almost_eq!(
+            modal_state.as_slice()[2],
+            3.0f64.mul_add(0.95, 0.3),
+            1e-10
+        );
+        assert_almost_eq!(
+            modal_state.as_slice()[3],
+            4.0f64.mul_add(0.95, 0.4),
+            1e-10
+        );
     }
 
     #[cfg_attr(test, test)]
@@ -2386,7 +2418,7 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[allow(clippy::too_many_lines, clippy::float_cmp)]
+    #[allow(clippy::too_many_lines)]
     fn test_subprograms_untaken_trans_uplo_side_diag_arms() {
         let a_c = ArrayStorage::<Complex64, 2, 2>::from_array([
             [Complex64::new(1.0, 1.0), Complex64::new(2.0, 0.0)],
@@ -2996,5 +3028,642 @@ pub mod subprogram_test_suite {
         // Sanity: Qᵀ ≠ Qᴴ for this complex factor.
         let diff = (*i_t.get(0, 1).unwrap() - *i_c.get(0, 1).unwrap()).abs();
         assert!(diff > 1e-6);
+    }
+
+    // ---------------------------------------------------------------------
+    // Level 1: branch coverage for the sign and tie-breaking comparisons.
+    // ---------------------------------------------------------------------
+
+    /// `asum` accumulates $\sum |\Re| + |\Im|$, so both sign branches and the
+    /// imaginary term have to be exercised: an all-positive real vector
+    /// leaves the negation branches and the imaginary accumulation untested.
+    #[cfg_attr(test, test)]
+    fn test_asum_covers_sign_branches() {
+        // Real, mixed signs: 1 + 2 + 3 + 4 = 10.
+        let x = ArrayStorage::<f64, 4, 1>::from_array([[1.0, -2.0, 3.0, -4.0]]);
+        assert_almost_eq!(<DefaultBlas as Asum<f64, _>>::asum(&x), 10.0, 1e-12);
+
+        // All negative: the negation branch alone.
+        let n = ArrayStorage::<f64, 3, 1>::from_array([[-1.5, -2.5, -3.0]]);
+        assert_almost_eq!(<DefaultBlas as Asum<f64, _>>::asum(&n), 7.0, 1e-12);
+
+        // Zero contributes nothing and does not flip a sign.
+        let z = ArrayStorage::<f64, 3, 1>::from_array([[0.0, -0.0, 5.0]]);
+        assert_almost_eq!(<DefaultBlas as Asum<f64, _>>::asum(&z), 5.0, 1e-12);
+
+        // Complex: |re| + |im| per element, both signs on both parts.
+        let c = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex::new(-3.0, 4.0),
+            Complex::new(1.0, -2.0),
+        ]]);
+        assert_almost_eq!(
+            <DefaultBlas as Asum<Complex64, _>>::asum(&c),
+            10.0,
+            1e-12
+        );
+
+        // An empty accumulation is zero.
+        let e = ArrayStorage::<f64, 1, 1>::from_array([[0.0]]);
+        assert_almost_eq!(<DefaultBlas as Asum<f64, _>>::asum(&e), 0.0, 1e-12);
+    }
+
+    /// `iamax` returns the first index of the largest $|\Re| + |\Im|$.
+    ///
+    /// The tie case pins `val > max_val` against `>=`, and a maximum that is
+    /// neither first nor last pins the running comparison.
+    #[cfg_attr(test, test)]
+    fn test_iamax_ties_and_sign_branches() {
+        // Maximum in the middle.
+        let mid =
+            ArrayStorage::<f64, 4, 1>::from_array([[1.0, -7.0, 3.0, 2.0]]);
+        assert_eq!(<DefaultBlas as Iamax<f64, _>>::iamax(&mid), 1);
+
+        // A tie keeps the first index.
+        let tie = ArrayStorage::<f64, 3, 1>::from_array([[5.0, -5.0, 5.0]]);
+        assert_eq!(<DefaultBlas as Iamax<f64, _>>::iamax(&tie), 0);
+
+        // Maximum at the last position.
+        let last = ArrayStorage::<f64, 3, 1>::from_array([[1.0, 2.0, -9.0]]);
+        assert_eq!(<DefaultBlas as Iamax<f64, _>>::iamax(&last), 2);
+
+        // Maximum at the first position, with a smaller follower.
+        let first = ArrayStorage::<f64, 3, 1>::from_array([[-8.0, 2.0, 1.0]]);
+        assert_eq!(<DefaultBlas as Iamax<f64, _>>::iamax(&first), 0);
+
+        // All zero: index 0 by the `idx == 0` seed.
+        let zeros = ArrayStorage::<f64, 3, 1>::from_array([[0.0, 0.0, 0.0]]);
+        assert_eq!(<DefaultBlas as Iamax<f64, _>>::iamax(&zeros), 0);
+
+        // Complex magnitude is |re| + |im|, not the modulus: (1, 1) scores 2
+        // and so beats (1.5, 0) which scores 1.5.
+        let c = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex::new(1.5, 0.0),
+            Complex::new(1.0, -1.0),
+        ]]);
+        assert_eq!(<DefaultBlas as Iamax<Complex64, _>>::iamax(&c), 1);
+    }
+
+    // ---------------------------------------------------------------------
+    // Level 2: the beta fast paths and the uplo mirror.
+    // ---------------------------------------------------------------------
+
+    /// `symv` has three distinct $\beta$ paths: $\beta = 0$ overwrites,
+    /// $\beta = 1$ accumulates untouched, and any other $\beta$ scales the
+    /// prior `y`. A test that only ever passes 0 or 1 leaves the scaling
+    /// multiply untested.
+    ///
+    /// $A = [[1, 2], [2, 3]]$ symmetric, $x = [1, 1]$, so $Ax = [3, 5]$.
+    #[cfg_attr(test, test)]
+    fn test_symv_beta_paths_and_uplo() {
+        let a = ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [2.0, 3.0]]);
+        let x = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 1.0]]);
+
+        for uplo in [UpLo::Upper, UpLo::Lower] {
+            // beta = 0 discards the prior contents entirely.
+            let mut y = ArrayStorage::<f64, 2, 1>::from_array([[100.0, 200.0]]);
+            <DefaultBlas as Symv<f64, _, _, _>>::symv(
+                uplo, 1.0, &a, &x, 0.0, &mut y,
+            );
+            assert_almost_eq!(*y.get(0, 0).unwrap(), 3.0, 1e-12);
+            assert_almost_eq!(*y.get(1, 0).unwrap(), 5.0, 1e-12);
+
+            // beta = 1 adds to the prior contents.
+            let mut y1 = ArrayStorage::<f64, 2, 1>::from_array([[10.0, 20.0]]);
+            <DefaultBlas as Symv<f64, _, _, _>>::symv(
+                uplo, 1.0, &a, &x, 1.0, &mut y1,
+            );
+            assert_almost_eq!(*y1.get(0, 0).unwrap(), 13.0, 1e-12);
+            assert_almost_eq!(*y1.get(1, 0).unwrap(), 25.0, 1e-12);
+
+            // beta = -0.5 scales the prior contents first.
+            let mut y2 = ArrayStorage::<f64, 2, 1>::from_array([[10.0, 20.0]]);
+            <DefaultBlas as Symv<f64, _, _, _>>::symv(
+                uplo, 2.0, &a, &x, -0.5, &mut y2,
+            );
+            // 2*[3,5] + (-0.5)*[10,20] = [6-5, 10-10] = [1, 0]
+            assert_almost_eq!(*y2.get(0, 0).unwrap(), 1.0, 1e-12);
+            assert_almost_eq!(*y2.get(1, 0).unwrap(), 0.0, 1e-12);
+        }
+    }
+
+    /// The `uplo` selector must actually read the named triangle: with a
+    /// non-symmetric buffer, `Upper` and `Lower` give different answers.
+    #[cfg_attr(test, test)]
+    fn test_symv_uplo_reads_the_named_triangle() {
+        // Deliberately non-symmetric storage: upper says 2, lower says 9.
+        let a = ArrayStorage::<f64, 2, 2>::from_array([[1.0, 9.0], [2.0, 3.0]]);
+        let x = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 1.0]]);
+
+        let mut up = ArrayStorage::<f64, 2, 1>::zeros();
+        <DefaultBlas as Symv<f64, _, _, _>>::symv(
+            UpLo::Upper,
+            1.0,
+            &a,
+            &x,
+            0.0,
+            &mut up,
+        );
+        let mut lo = ArrayStorage::<f64, 2, 1>::zeros();
+        <DefaultBlas as Symv<f64, _, _, _>>::symv(
+            UpLo::Lower,
+            1.0,
+            &a,
+            &x,
+            0.0,
+            &mut lo,
+        );
+
+        // Upper mirrors a[0][1] = 2 (column-major: row 0, col 1).
+        assert_almost_eq!(*up.get(0, 0).unwrap(), 1.0 + 2.0, 1e-12);
+        // Lower mirrors a[1][0] = 9.
+        assert_almost_eq!(*lo.get(0, 0).unwrap(), 1.0 + 9.0, 1e-12);
+        assert!(
+            (*up.get(0, 0).unwrap() - *lo.get(0, 0).unwrap()).abs() > 1.0,
+            "Upper and Lower must not read the same triangle"
+        );
+    }
+
+    /// `hemv` mirrors with a conjugate, so a Hermitian buffer whose lower
+    /// triangle is the conjugate of its upper gives the same real result from
+    /// either `uplo`, while the beta paths behave as in `symv`.
+    #[cfg_attr(test, test)]
+    fn test_hemv_beta_paths_and_conjugate_mirror() {
+        // [[2, 3+i], [3-i, 5]] is Hermitian; x = [1, 1] gives [5+i, 8-i].
+        let a = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex::new(2.0, 0.0), Complex::new(3.0, -1.0)],
+            [Complex::new(3.0, 1.0), Complex::new(5.0, 0.0)],
+        ]);
+        let x = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex::new(1.0, 0.0),
+            Complex::new(1.0, 0.0),
+        ]]);
+
+        for uplo in [UpLo::Upper, UpLo::Lower] {
+            let mut y = ArrayStorage::<Complex64, 2, 1>::from_array([[
+                Complex::new(7.0, 7.0),
+                Complex::new(9.0, 9.0),
+            ]]);
+            <DefaultBlas as Hemv<Complex64, _, _, _>>::hemv(
+                uplo,
+                Complex::new(1.0, 0.0),
+                &a,
+                &x,
+                Complex::new(0.0, 0.0),
+                &mut y,
+            );
+            assert_almost_eq!(y.get(0, 0).unwrap().re, 5.0, 1e-12);
+            assert_almost_eq!(y.get(1, 0).unwrap().re, 8.0, 1e-12);
+            assert_almost_eq!(y.get(0, 0).unwrap().im, 1.0, 1e-12);
+            assert_almost_eq!(y.get(1, 0).unwrap().im, -1.0, 1e-12);
+
+            // A non-trivial beta scales the prior vector.
+            let mut y2 = ArrayStorage::<Complex64, 2, 1>::from_array([[
+                Complex::new(2.0, 0.0),
+                Complex::new(4.0, 0.0),
+            ]]);
+            <DefaultBlas as Hemv<Complex64, _, _, _>>::hemv(
+                uplo,
+                Complex::new(1.0, 0.0),
+                &a,
+                &x,
+                Complex::new(2.0, 0.0),
+                &mut y2,
+            );
+            assert_almost_eq!(y2.get(0, 0).unwrap().re, 5.0 + 4.0, 1e-12);
+            assert_almost_eq!(y2.get(1, 0).unwrap().re, 8.0 + 8.0, 1e-12);
+        }
+    }
+
+    /// `gemv` beta paths, both `trans` modes and a non-square shape, so the
+    /// row and column extents cannot be swapped without detection.
+    ///
+    /// $A$ is 3x2, $Ax$ has length 3 and $A^T y$ has length 2.
+    #[cfg_attr(test, test)]
+    fn test_gemv_beta_paths_and_transpose_shapes() {
+        // Column-major 3x2: columns [1,2,3] and [4,5,6].
+        let a = ArrayStorage::<f64, 3, 2>::from_array([
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+        ]);
+        let x = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 1.0]]);
+
+        // NoTrans: A x = [5, 7, 9].
+        let mut y = ArrayStorage::<f64, 3, 1>::from_array([[9.0, 9.0, 9.0]]);
+        <DefaultBlas as Gemv<f64, _, _, _>>::gemv(
+            Trans::NoTrans,
+            1.0,
+            &a,
+            &x,
+            0.0,
+            &mut y,
+        );
+        assert_almost_eq!(*y.get(0, 0).unwrap(), 5.0, 1e-12);
+        assert_almost_eq!(*y.get(1, 0).unwrap(), 7.0, 1e-12);
+        assert_almost_eq!(*y.get(2, 0).unwrap(), 9.0, 1e-12);
+
+        // beta = 2 on a known prior: 1*[5,7,9] + 2*[1,1,1] = [7,9,11].
+        let mut yb = ArrayStorage::<f64, 3, 1>::from_array([[1.0, 1.0, 1.0]]);
+        <DefaultBlas as Gemv<f64, _, _, _>>::gemv(
+            Trans::NoTrans,
+            1.0,
+            &a,
+            &x,
+            2.0,
+            &mut yb,
+        );
+        assert_almost_eq!(*yb.get(0, 0).unwrap(), 7.0, 1e-12);
+        assert_almost_eq!(*yb.get(1, 0).unwrap(), 9.0, 1e-12);
+        assert_almost_eq!(*yb.get(2, 0).unwrap(), 11.0, 1e-12);
+
+        // Trans: A^T v with v = [1,1,1] is [6, 15].
+        let v = ArrayStorage::<f64, 3, 1>::from_array([[1.0, 1.0, 1.0]]);
+        let mut z = ArrayStorage::<f64, 2, 1>::from_array([[5.0, 5.0]]);
+        <DefaultBlas as Gemv<f64, _, _, _>>::gemv(
+            Trans::Trans,
+            1.0,
+            &a,
+            &v,
+            0.0,
+            &mut z,
+        );
+        assert_almost_eq!(*z.get(0, 0).unwrap(), 6.0, 1e-12);
+        assert_almost_eq!(*z.get(1, 0).unwrap(), 15.0, 1e-12);
+
+        // alpha scales the product, independent of beta.
+        let mut za = ArrayStorage::<f64, 2, 1>::zeros();
+        <DefaultBlas as Gemv<f64, _, _, _>>::gemv(
+            Trans::Trans,
+            -2.0,
+            &a,
+            &v,
+            0.0,
+            &mut za,
+        );
+        assert_almost_eq!(*za.get(0, 0).unwrap(), -12.0, 1e-12);
+        assert_almost_eq!(*za.get(1, 0).unwrap(), -30.0, 1e-12);
+    }
+
+    /// `spmv` on packed symmetric storage, across both `uplo` values and all
+    /// three beta paths, checked against the equivalent dense `symv`.
+    #[cfg_attr(test, test)]
+    fn test_spmv_matches_dense_symv_across_beta() {
+        // Symmetric [[1,2],[2,3]] packed in each triangle order.
+        let dense =
+            ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [2.0, 3.0]]);
+        let x = ArrayStorage::<f64, 2, 1>::from_array([[2.0, -1.0]]);
+
+        for (uplo, packed) in [
+            (UpLo::Upper, [1.0_f64, 2.0, 3.0]),
+            (UpLo::Lower, [1.0_f64, 2.0, 3.0]),
+        ] {
+            for beta in [0.0_f64, 1.0, -0.75] {
+                let ap = SymmetricPackedStorage::<f64, 2, 3>::new(packed, uplo);
+
+                let mut want =
+                    ArrayStorage::<f64, 2, 1>::from_array([[4.0, -6.0]]);
+                <DefaultBlas as Symv<f64, _, _, _>>::symv(
+                    uplo, 1.5, &dense, &x, beta, &mut want,
+                );
+
+                let mut got =
+                    ArrayStorage::<f64, 2, 1>::from_array([[4.0, -6.0]]);
+                <DefaultBlas as Spmv<f64, _, _, _>>::spmv(
+                    uplo, 1.5, &ap, &x, beta, &mut got,
+                );
+
+                assert_almost_eq!(
+                    *got.get(0, 0).unwrap(),
+                    *want.get(0, 0).unwrap(),
+                    1e-12
+                );
+                assert_almost_eq!(
+                    *got.get(1, 0).unwrap(),
+                    *want.get(1, 0).unwrap(),
+                    1e-12
+                );
+            }
+        }
+    }
+
+    /// `trmv` over every `(uplo, trans, diag)` combination, checked against a
+    /// dense reference product built in the test.
+    ///
+    /// The unit-diagonal mode must ignore the stored diagonal entirely, and
+    /// the transpose mode must walk the opposite triangle.
+    #[cfg_attr(test, test)]
+    fn test_trmv_all_uplo_trans_diag_combinations() {
+        // Column-major 2x2 buffer: [[4, 3], [2, 5]] as (row, col).
+        let a = ArrayStorage::<f64, 2, 2>::from_array([[4.0, 2.0], [3.0, 5.0]]);
+        let x0 = [1.0_f64, -2.0];
+
+        for uplo in [UpLo::Upper, UpLo::Lower] {
+            for trans in [Trans::NoTrans, Trans::Trans] {
+                for diag in [Diag::NonUnit, Diag::Unit] {
+                    // Dense reference: build the effective triangular matrix.
+                    let mut m = [[0.0_f64; 2]; 2];
+                    for (i, row) in m.iter_mut().enumerate() {
+                        for (j, cell) in row.iter_mut().enumerate() {
+                            let in_tri = match uplo {
+                                UpLo::Upper => i <= j,
+                                UpLo::Lower => i >= j,
+                            };
+                            if !in_tri {
+                                continue;
+                            }
+                            *cell = if i == j && diag == Diag::Unit {
+                                1.0
+                            } else {
+                                *a.get(i, j).unwrap()
+                            };
+                        }
+                    }
+                    let mut want = [0.0_f64; 2];
+                    for i in 0..2 {
+                        for j in 0..2 {
+                            let coeff = match trans {
+                                Trans::NoTrans => m[i][j],
+                                _ => m[j][i],
+                            };
+                            want[i] += coeff * x0[j];
+                        }
+                    }
+
+                    let mut x = ArrayStorage::<f64, 2, 1>::from_array([x0]);
+                    <DefaultBlas as Trmv<f64, _, _>>::trmv(
+                        uplo, trans, diag, &a, &mut x,
+                    );
+                    assert_almost_eq!(*x.get(0, 0).unwrap(), want[0], 1e-12);
+                    assert_almost_eq!(*x.get(1, 0).unwrap(), want[1], 1e-12);
+                }
+            }
+        }
+    }
+
+    /// `trsv` inverts `trmv`: applying the triangular product and then the
+    /// solve returns the original vector, for every combination.
+    #[cfg_attr(test, test)]
+    fn test_trsv_inverts_trmv_across_combinations() {
+        let a = ArrayStorage::<f64, 2, 2>::from_array([[4.0, 2.0], [3.0, 5.0]]);
+        let x0 = [1.5_f64, -2.25];
+
+        for uplo in [UpLo::Upper, UpLo::Lower] {
+            for trans in [Trans::NoTrans, Trans::Trans] {
+                for diag in [Diag::NonUnit, Diag::Unit] {
+                    let mut x = ArrayStorage::<f64, 2, 1>::from_array([x0]);
+                    <DefaultBlas as Trmv<f64, _, _>>::trmv(
+                        uplo, trans, diag, &a, &mut x,
+                    );
+                    <DefaultBlas as Trsv<f64, _, _>>::trsv(
+                        uplo, trans, diag, &a, &mut x,
+                    )
+                    .unwrap();
+                    assert_almost_eq!(*x.get(0, 0).unwrap(), x0[0], 1e-10);
+                    assert_almost_eq!(*x.get(1, 0).unwrap(), x0[1], 1e-10);
+                }
+            }
+        }
+    }
+
+    /// Vectors may be stored as a column (`n x 1`) or a row (`1 x n`). Every
+    /// level-2 kernel picks the layout with `rows() >= cols()`, and the whole
+    /// suite otherwise passes column vectors only, which leaves that selector
+    /// free to be anything.
+    ///
+    /// Each kernel below is run twice on the same mathematical inputs, once
+    /// in each layout, and the two results must agree.
+    #[cfg_attr(test, test)]
+    fn test_level2_accepts_row_and_column_vectors() {
+        let a = ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [2.0, 3.0]]);
+
+        // symv: A x with x = [2, -1] gives [0, 1].
+        let xc = ArrayStorage::<f64, 2, 1>::from_array([[2.0, -1.0]]);
+        let xr = ArrayStorage::<f64, 1, 2>::from_array([[2.0], [-1.0]]);
+
+        let mut yc = ArrayStorage::<f64, 2, 1>::zeros();
+        <DefaultBlas as Symv<f64, _, _, _>>::symv(
+            UpLo::Upper,
+            1.0,
+            &a,
+            &xc,
+            0.0,
+            &mut yc,
+        );
+        let mut yr = ArrayStorage::<f64, 1, 2>::zeros();
+        <DefaultBlas as Symv<f64, _, _, _>>::symv(
+            UpLo::Upper,
+            1.0,
+            &a,
+            &xr,
+            0.0,
+            &mut yr,
+        );
+        assert_almost_eq!(*yc.get(0, 0).unwrap(), 0.0, 1e-12);
+        assert_almost_eq!(*yc.get(1, 0).unwrap(), 1.0, 1e-12);
+        assert_almost_eq!(
+            *yr.get(0, 0).unwrap(),
+            *yc.get(0, 0).unwrap(),
+            1e-12
+        );
+        assert_almost_eq!(
+            *yr.get(0, 1).unwrap(),
+            *yc.get(1, 0).unwrap(),
+            1e-12
+        );
+
+        // syr: rank-1 update A += alpha x x^T, upper triangle.
+        let mut ac =
+            ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [2.0, 3.0]]);
+        <DefaultBlas as Syr<f64, _, _>>::syr(UpLo::Upper, 2.0, &xc, &mut ac);
+        let mut ar =
+            ArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [2.0, 3.0]]);
+        <DefaultBlas as Syr<f64, _, _>>::syr(UpLo::Upper, 2.0, &xr, &mut ar);
+        for i in 0..2 {
+            for j in 0..2 {
+                assert_almost_eq!(
+                    *ar.get(i, j).unwrap(),
+                    *ac.get(i, j).unwrap(),
+                    1e-12
+                );
+            }
+        }
+        // alpha x x^T with x = [2,-1]: diagonal gains 8 and 2.
+        assert_almost_eq!(*ac.get(0, 0).unwrap(), 1.0 + 8.0, 1e-12);
+        assert_almost_eq!(*ac.get(1, 1).unwrap(), 3.0 + 2.0, 1e-12);
+    }
+
+    /// The same layout equivalence for the symmetric rank-2 update.
+    #[cfg_attr(test, test)]
+    fn test_syr2_accepts_row_and_column_vectors() {
+        let xc = ArrayStorage::<f64, 2, 1>::from_array([[2.0, -1.0]]);
+        let xr = ArrayStorage::<f64, 1, 2>::from_array([[2.0], [-1.0]]);
+
+        // syr2: A += alpha (x y^T + y x^T).
+        let yv_c = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 3.0]]);
+        let yv_r = ArrayStorage::<f64, 1, 2>::from_array([[1.0], [3.0]]);
+        let mut bc =
+            ArrayStorage::<f64, 2, 2>::from_array([[0.0, 0.0], [0.0, 0.0]]);
+        <DefaultBlas as Syr2<f64, _, _, _>>::syr2(
+            UpLo::Lower,
+            1.0,
+            &xc,
+            &yv_c,
+            &mut bc,
+        );
+        let mut br =
+            ArrayStorage::<f64, 2, 2>::from_array([[0.0, 0.0], [0.0, 0.0]]);
+        <DefaultBlas as Syr2<f64, _, _, _>>::syr2(
+            UpLo::Lower,
+            1.0,
+            &xr,
+            &yv_r,
+            &mut br,
+        );
+        for i in 0..2 {
+            for j in 0..2 {
+                assert_almost_eq!(
+                    *br.get(i, j).unwrap(),
+                    *bc.get(i, j).unwrap(),
+                    1e-12
+                );
+            }
+        }
+        // x y^T + y x^T on the diagonal is 2 x_i y_i: 4 and -6.
+        assert_almost_eq!(*bc.get(0, 0).unwrap(), 4.0, 1e-12);
+        assert_almost_eq!(*bc.get(1, 1).unwrap(), -6.0, 1e-12);
+    }
+
+    /// The same layout equivalence for the complex Hermitian rank updates,
+    /// where the orientation selector appears four more times.
+    #[cfg_attr(test, test)]
+    fn test_hermitian_rank_updates_accept_both_layouts() {
+        let xc = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex::new(1.0, 2.0),
+            Complex::new(-1.0, 0.5),
+        ]]);
+        let xr = ArrayStorage::<Complex64, 1, 2>::from_array([
+            [Complex::new(1.0, 2.0)],
+            [Complex::new(-1.0, 0.5)],
+        ]);
+
+        let base = [
+            [Complex::new(3.0, 0.0), Complex::new(1.0, -1.0)],
+            [Complex::new(1.0, 1.0), Complex::new(4.0, 0.0)],
+        ];
+
+        // her: A += alpha x x^H, alpha real.
+        let mut hc = ArrayStorage::<Complex64, 2, 2>::from_array(base);
+        <DefaultBlas as Her<Complex64, _, _>>::her(
+            UpLo::Upper,
+            2.0,
+            &xc,
+            &mut hc,
+        );
+        let mut hr = ArrayStorage::<Complex64, 2, 2>::from_array(base);
+        <DefaultBlas as Her<Complex64, _, _>>::her(
+            UpLo::Upper,
+            2.0,
+            &xr,
+            &mut hr,
+        );
+        for i in 0..2 {
+            for j in 0..2 {
+                assert_almost_eq!(
+                    hr.get(i, j).unwrap().re,
+                    hc.get(i, j).unwrap().re,
+                    1e-12
+                );
+                assert_almost_eq!(
+                    hr.get(i, j).unwrap().im,
+                    hc.get(i, j).unwrap().im,
+                    1e-12
+                );
+            }
+        }
+        // |x_0|^2 = 5, so the (0,0) diagonal gains 2*5 = 10 and stays real.
+        assert_almost_eq!(hc.get(0, 0).unwrap().re, 13.0, 1e-12);
+        assert_almost_eq!(hc.get(0, 0).unwrap().im, 0.0, 1e-12);
+    }
+
+    /// Layout equivalence for the Hermitian rank-2 update.
+    #[cfg_attr(test, test)]
+    fn test_her2_accepts_both_layouts() {
+        let xc = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex::new(1.0, 2.0),
+            Complex::new(-1.0, 0.5),
+        ]]);
+        let xr = ArrayStorage::<Complex64, 1, 2>::from_array([
+            [Complex::new(1.0, 2.0)],
+            [Complex::new(-1.0, 0.5)],
+        ]);
+        let base = [
+            [Complex::new(3.0, 0.0), Complex::new(1.0, -1.0)],
+            [Complex::new(1.0, 1.0), Complex::new(4.0, 0.0)],
+        ];
+
+        // her2: A += alpha x y^H + conj(alpha) y x^H.
+        let yc = ArrayStorage::<Complex64, 2, 1>::from_array([[
+            Complex::new(0.5, -1.0),
+            Complex::new(2.0, 0.0),
+        ]]);
+        let yr = ArrayStorage::<Complex64, 1, 2>::from_array([
+            [Complex::new(0.5, -1.0)],
+            [Complex::new(2.0, 0.0)],
+        ]);
+        let mut h2c = ArrayStorage::<Complex64, 2, 2>::from_array(base);
+        <DefaultBlas as Her2<Complex64, _, _, _>>::her2(
+            UpLo::Lower,
+            Complex::new(1.0, 0.0),
+            &xc,
+            &yc,
+            &mut h2c,
+        );
+        let mut h2r = ArrayStorage::<Complex64, 2, 2>::from_array(base);
+        <DefaultBlas as Her2<Complex64, _, _, _>>::her2(
+            UpLo::Lower,
+            Complex::new(1.0, 0.0),
+            &xr,
+            &yr,
+            &mut h2r,
+        );
+        for i in 0..2 {
+            for j in 0..2 {
+                assert_almost_eq!(
+                    h2r.get(i, j).unwrap().re,
+                    h2c.get(i, j).unwrap().re,
+                    1e-12
+                );
+                assert_almost_eq!(
+                    h2r.get(i, j).unwrap().im,
+                    h2c.get(i, j).unwrap().im,
+                    1e-12
+                );
+            }
+        }
+        // The Hermitian diagonal stays real after a rank-2 update.
+        assert_almost_eq!(h2c.get(0, 0).unwrap().im, 0.0, 1e-12);
+        assert_almost_eq!(h2c.get(1, 1).unwrap().im, 0.0, 1e-12);
+    }
+
+    /// `gerc` general rank-1 update in both layouts, on a non-square matrix so
+    /// the two extents cannot be interchanged.
+    #[cfg_attr(test, test)]
+    fn test_gerc_accepts_both_layouts() {
+        let xc = ArrayStorage::<f64, 3, 1>::from_array([[1.0, 2.0, 3.0]]);
+        let xr = ArrayStorage::<f64, 1, 3>::from_array([[1.0], [2.0], [3.0]]);
+        let yc = ArrayStorage::<f64, 2, 1>::from_array([[4.0, 5.0]]);
+        let yr = ArrayStorage::<f64, 1, 2>::from_array([[4.0], [5.0]]);
+
+        let mut ac = ArrayStorage::<f64, 3, 2>::zeros();
+        <DefaultBlas as Gerc<f64, _, _, _>>::gerc(1.0, &xc, &yc, &mut ac);
+        let mut ar = ArrayStorage::<f64, 3, 2>::zeros();
+        <DefaultBlas as Gerc<f64, _, _, _>>::gerc(1.0, &xr, &yr, &mut ar);
+
+        for i in 0..3 {
+            for j in 0..2 {
+                let want = [1.0, 2.0, 3.0][i] * [4.0, 5.0][j];
+                assert_almost_eq!(*ac.get(i, j).unwrap(), want, 1e-12);
+                assert_almost_eq!(*ar.get(i, j).unwrap(), want, 1e-12);
+            }
+        }
     }
 }

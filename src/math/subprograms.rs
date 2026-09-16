@@ -26,6 +26,7 @@
 //! // Calling gemv and attempting to handle it as a Result fails to compile because gemv returns ()
 //! let _res: Result<(), ()> = DefaultBlas::gemv(Trans::NoTrans, 1.0, &a, &x, 0.0, &mut y);
 //! ```
+#![allow(clippy::inline_always)]
 // Conventional single-character argument names are standard and accepted for BLAS/LAPACK subprograms (e.g. m, n, k, A, B, C, x, y).
 #![allow(clippy::many_single_char_names)]
 // Direct matrix/vector indexing using brackets (slice[idx]) is used throughout this file for optimal memory layout access, bypassing bounds check branches in performance-critical BLAS loops.
@@ -34,8 +35,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 // BLAS/LAPACK routines naturally require many arguments (exceeding clippy's default limit of 4), conforming to standard BLAS/LAPACK APIs.
 #![allow(clippy::too_many_arguments)]
-// Parameter names matching BLAS standards (e.g., lda, ldb, trans_a, trans_b) look similar but are standard.
-#![allow(clippy::similar_names)]
 // Subprogram traits and implementations are grouped logically by BLAS Level 1/2/3 and LAPACK, rather than alphabetically.
 #![allow(clippy::arbitrary_source_item_ordering)]
 #![allow(clippy::needless_range_loop)]
@@ -3315,10 +3314,11 @@ where
                         UpLo::Lower => (j, k),
                         UpLo::Upper => (k, j),
                     };
-                    let v_ik = unsafe { a.get_unchecked(ik_r, ik_c).clone() };
-                    let v_jk =
+                    let row_elem_ik =
+                        unsafe { a.get_unchecked(ik_r, ik_c).clone() };
+                    let col_elem_jk =
                         unsafe { a.get_unchecked(jk_r, jk_c).clone().conj() };
-                    dot = dot + (v_ik * v_jk);
+                    dot = dot + (row_elem_ik * col_elem_jk);
                 }
 
                 let (target_r, target_c) = match uplo {
@@ -3424,9 +3424,9 @@ where
                     for i in (j + 1)..n {
                         let mut dot = T::ZERO;
                         for k in 0..j {
-                            let v_ik = ap.value_unchecked(i, k);
-                            let v_jk = ap.value_unchecked(j, k).conj();
-                            dot = dot + (v_ik * v_jk);
+                            let row_elem_ik = ap.value_unchecked(i, k);
+                            let col_elem_jk = ap.value_unchecked(j, k).conj();
+                            dot = dot + (row_elem_ik * col_elem_jk);
                         }
                         let val =
                             (ap.value_unchecked(i, j) - dot) / l_jj.clone();
@@ -3453,9 +3453,9 @@ where
                     for i in (j + 1)..n {
                         let mut dot = T::ZERO;
                         for k in 0..j {
-                            let v_kj = ap.value_unchecked(k, j).conj();
-                            let v_ki = ap.value_unchecked(k, i);
-                            dot = dot + (v_kj * v_ki);
+                            let conj_elem_kj = ap.value_unchecked(k, j).conj();
+                            let factor_elem_ki = ap.value_unchecked(k, i);
+                            dot = dot + (conj_elem_kj * factor_elem_ki);
                         }
                         let val =
                             (ap.value_unchecked(j, i) - dot) / u_jj.clone();
@@ -3632,9 +3632,13 @@ where
 
                 for j in (k + 1)..n {
                     unsafe {
-                        let a_ij = a.get_unchecked(i, j).clone();
-                        let a_kj = a.get_unchecked(k, j).clone();
-                        a.set_unchecked(i, j, a_ij - (mult.clone() * a_kj));
+                        let row_elem_ij = a.get_unchecked(i, j).clone();
+                        let pivot_row_kj = a.get_unchecked(k, j).clone();
+                        a.set_unchecked(
+                            i,
+                            j,
+                            row_elem_ij - (mult.clone() * pivot_row_kj),
+                        );
                     }
                 }
             }
@@ -3947,21 +3951,21 @@ fn qr_apply_left_k<T, A, C>(
         let mut dot = unsafe { c.get_unchecked(k, j).clone() };
         for i in (k + 1)..m {
             let v_i = unsafe { a.get_unchecked(i, k).clone() };
-            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
+            let elem_c_ij = unsafe { c.get_unchecked(i, j).clone() };
             let v_d = if conj.dot { v_i.conj() } else { v_i };
-            dot = dot + (v_d * c_ij);
+            dot = dot + (v_d * elem_c_ij);
         }
         let scalar = tau_k.clone() * dot;
-        let c_kj = unsafe { c.get_unchecked(k, j).clone() };
+        let pivot_c_kj = unsafe { c.get_unchecked(k, j).clone() };
         unsafe {
-            c.set_unchecked(k, j, c_kj - scalar.clone());
+            c.set_unchecked(k, j, pivot_c_kj - scalar.clone());
         }
         for i in (k + 1)..m {
             let v_i = unsafe { a.get_unchecked(i, k).clone() };
             let v_u = if conj.update { v_i.conj() } else { v_i };
-            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
+            let elem_c_ij = unsafe { c.get_unchecked(i, j).clone() };
             unsafe {
-                c.set_unchecked(i, j, c_ij - (v_u * scalar.clone()));
+                c.set_unchecked(i, j, elem_c_ij - (v_u * scalar.clone()));
             }
         }
     }
@@ -3985,21 +3989,21 @@ fn qr_apply_right_k<T, A, C>(
         let mut dot = unsafe { c.get_unchecked(i, k).clone() };
         for j in (k + 1)..n {
             let v_j = unsafe { a.get_unchecked(j, k).clone() };
-            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
+            let elem_c_ij = unsafe { c.get_unchecked(i, j).clone() };
             let v_d = if conj.dot { v_j.conj() } else { v_j };
-            dot = dot + (v_d * c_ij);
+            dot = dot + (v_d * elem_c_ij);
         }
         let scalar = tau_k.clone() * dot;
-        let c_ik = unsafe { c.get_unchecked(i, k).clone() };
+        let pivot_c_ik = unsafe { c.get_unchecked(i, k).clone() };
         unsafe {
-            c.set_unchecked(i, k, c_ik - scalar.clone());
+            c.set_unchecked(i, k, pivot_c_ik - scalar.clone());
         }
         for j in (k + 1)..n {
             let v_j = unsafe { a.get_unchecked(j, k).clone() };
             let v_u = if conj.update { v_j.conj() } else { v_j };
-            let c_ij = unsafe { c.get_unchecked(i, j).clone() };
+            let elem_c_ij = unsafe { c.get_unchecked(i, j).clone() };
             unsafe {
-                c.set_unchecked(i, j, c_ij - (v_u * scalar.clone()));
+                c.set_unchecked(i, j, elem_c_ij - (v_u * scalar.clone()));
             }
         }
     }
@@ -4275,12 +4279,12 @@ where
     T::Real: Float,
     A: DenseStorage<T>,
 {
-    let a_pp = uplo_entry(a, p, p, uplo).re();
-    let a_qq = uplo_entry(a, q, q, uplo).re();
-    let a_pq = uplo_entry(a, p, q, uplo).re();
+    let first_diag_re = uplo_entry(a, p, p, uplo).re();
+    let second_diag_re = uplo_entry(a, q, q, uplo).re();
+    let offdiag_pq_re = uplo_entry(a, p, q, uplo).re();
     let one = <T::Real as One>::ONE;
     let two = one.clone() + one.clone();
-    let theta = (a_qq - a_pp) / two / a_pq;
+    let theta = (second_diag_re - first_diag_re) / two / offdiag_pq_re;
     let t = if theta >= <T::Real as Zero>::ZERO {
         one.clone()
             / (theta.clone() + (one.clone() + theta.clone() * theta).sqrt())
@@ -4308,16 +4312,17 @@ fn syev_apply_offdiag<T, A>(
 {
     for k in 0..n {
         if k != p && k != q {
-            let a_kp = uplo_entry(a, k, p, uplo);
-            let a_kq = uplo_entry(a, k, q, uplo);
-            let new_kp =
-                (c_val.clone() * a_kp.clone()) - (s_val.clone() * a_kq.clone());
-            let new_kq = (s_val.clone() * a_kp) + (c_val.clone() * a_kq);
+            let elem_col_p = uplo_entry(a, k, p, uplo);
+            let elem_col_q = uplo_entry(a, k, q, uplo);
+            let updated_p = (c_val.clone() * elem_col_p.clone())
+                - (s_val.clone() * elem_col_q.clone());
+            let updated_q =
+                (s_val.clone() * elem_col_p) + (c_val.clone() * elem_col_q);
             unsafe {
-                a.set_unchecked(k, p, new_kp.clone());
-                a.set_unchecked(k, q, new_kq.clone());
-                a.set_unchecked(p, k, new_kp);
-                a.set_unchecked(q, k, new_kq);
+                a.set_unchecked(k, p, updated_p.clone());
+                a.set_unchecked(k, q, updated_q.clone());
+                a.set_unchecked(p, k, updated_p);
+                a.set_unchecked(q, k, updated_q);
             }
         }
     }
@@ -4335,16 +4340,17 @@ fn syev_apply_2x2<T, A>(
     T: Scalar,
     A: DenseStorageMut<T>,
 {
-    let a_pp = uplo_entry(a, p, p, uplo).re();
-    let a_qq = uplo_entry(a, q, q, uplo).re();
-    let a_pq = uplo_entry(a, p, q, uplo).re();
-    let two_a_pq = a_pq.clone() + a_pq;
+    let first_diag_re = uplo_entry(a, p, p, uplo).re();
+    let second_diag_re = uplo_entry(a, q, q, uplo).re();
+    let offdiag_pq_re = uplo_entry(a, p, q, uplo).re();
+    let two_a_pq = offdiag_pq_re.clone() + offdiag_pq_re;
     let c2 = c.clone() * c.clone();
     let s2 = s.clone() * s.clone();
     let cs = c * s;
-    let new_pp = (c2.clone() * a_pp.clone()) - (cs.clone() * two_a_pq.clone())
-        + (s2.clone() * a_qq.clone());
-    let new_qq = (s2 * a_pp) + (cs * two_a_pq) + (c2 * a_qq);
+    let new_pp = (c2.clone() * first_diag_re.clone())
+        - (cs.clone() * two_a_pq.clone())
+        + (s2.clone() * second_diag_re.clone());
+    let new_qq = (s2 * first_diag_re) + (cs * two_a_pq) + (c2 * second_diag_re);
     unsafe {
         a.set_unchecked(p, p, T::from_real(new_pp));
         a.set_unchecked(q, q, T::from_real(new_qq));
@@ -4363,11 +4369,12 @@ fn syev_apply_vectors<T: Scalar>(
     s_val: &T,
 ) {
     for k in 0..n {
-        let v_kp = work[k * n + p].clone();
-        let v_kq = work[k * n + q].clone();
-        work[k * n + p] =
-            (c_val.clone() * v_kp.clone()) - (s_val.clone() * v_kq.clone());
-        work[k * n + q] = (s_val.clone() * v_kp) + (c_val.clone() * v_kq);
+        let vec_entry_p = work[k * n + p].clone();
+        let vec_entry_q = work[k * n + q].clone();
+        work[k * n + p] = (c_val.clone() * vec_entry_p.clone())
+            - (s_val.clone() * vec_entry_q.clone());
+        work[k * n + q] =
+            (s_val.clone() * vec_entry_p) + (c_val.clone() * vec_entry_q);
     }
 }
 
@@ -4405,16 +4412,16 @@ where
     T::Real: Float,
     A: DenseStorage<T>,
 {
-    let a_pp = uplo_entry(a, p, p, uplo).re();
-    let a_qq = uplo_entry(a, q, q, uplo).re();
-    let a_pq = uplo_entry(a, p, q, uplo);
-    let abs_a_pq = a_pq.abs2().sqrt();
+    let first_diag_re = uplo_entry(a, p, p, uplo).re();
+    let second_diag_re = uplo_entry(a, q, q, uplo).re();
+    let offdiag_pq = uplo_entry(a, p, q, uplo);
+    let abs_a_pq = offdiag_pq.abs2().sqrt();
     if abs_a_pq.is_zero() {
         return None;
     }
     let one = <T::Real as One>::ONE;
     let two = one.clone() + one.clone();
-    let theta = (a_qq - a_pp) / (two * abs_a_pq.clone());
+    let theta = (second_diag_re - first_diag_re) / (two * abs_a_pq.clone());
     let t_real = if theta >= <T::Real as Zero>::ZERO {
         one.clone()
             / (theta.clone() + (one.clone() + theta.clone() * theta).sqrt())
@@ -4423,7 +4430,7 @@ where
             / (-theta.clone() + (one.clone() + theta.clone() * theta).sqrt())
     };
     let c_real = one.clone() / (one + t_real.clone() * t_real.clone()).sqrt();
-    let s_phase = a_pq / T::from_real(abs_a_pq);
+    let s_phase = offdiag_pq / T::from_real(abs_a_pq);
     let s = s_phase * T::from_real(t_real * c_real.clone());
     let c = T::from_real(c_real);
     let s_conj = s.clone().conj();
@@ -4446,18 +4453,18 @@ fn heev_apply_offdiag<T, A>(
 {
     for k in 0..n {
         if k != p && k != q {
-            let a_kp = uplo_entry(a, k, p, uplo);
-            let a_kq = uplo_entry(a, k, q, uplo);
+            let elem_col_p = uplo_entry(a, k, p, uplo);
+            let elem_col_q = uplo_entry(a, k, q, uplo);
             // Right-multiply by R = [[c, s], [-s̄, c]]: column update
             // a'_*p = c a_*p − s̄ a_*q,  a'_*q = s a_*p + c a_*q.
-            let new_kp =
-                (c.clone() * a_kp.clone()) - (s_conj.clone() * a_kq.clone());
-            let new_kq = (s.clone() * a_kp) + (c.clone() * a_kq);
+            let updated_p = (c.clone() * elem_col_p.clone())
+                - (s_conj.clone() * elem_col_q.clone());
+            let updated_q = (s.clone() * elem_col_p) + (c.clone() * elem_col_q);
             unsafe {
-                a.set_unchecked(k, p, new_kp.clone());
-                a.set_unchecked(k, q, new_kq.clone());
-                a.set_unchecked(p, k, new_kp.conj());
-                a.set_unchecked(q, k, new_kq.conj());
+                a.set_unchecked(k, p, updated_p.clone());
+                a.set_unchecked(k, q, updated_q.clone());
+                a.set_unchecked(p, k, updated_p.conj());
+                a.set_unchecked(q, k, updated_q.conj());
             }
         }
     }
@@ -4476,17 +4483,17 @@ fn heev_apply_2x2<T, A>(
     T: Scalar,
     A: DenseStorageMut<T>,
 {
-    let a_pp_val = uplo_entry(a, p, p, uplo);
-    let a_qq_val = uplo_entry(a, q, q, uplo);
-    let a_pq_val = uplo_entry(a, p, q, uplo);
-    let new_pp = (c.clone() * c.clone() * a_pp_val.clone())
-        - (c.clone() * s.clone() * a_pq_val.clone().conj())
-        - (c.clone() * s_conj.clone() * a_pq_val.clone())
-        + (s.clone() * s_conj.clone() * a_qq_val.clone());
-    let new_qq = (s.clone() * s_conj.clone() * a_pp_val)
-        + (c.clone() * s_conj.clone() * a_pq_val.clone())
-        + (c.clone() * s.clone() * a_pq_val.conj())
-        + (c.clone() * c.clone() * a_qq_val);
+    let first_diag_val = uplo_entry(a, p, p, uplo);
+    let second_diag_val = uplo_entry(a, q, q, uplo);
+    let offdiag_pq_val = uplo_entry(a, p, q, uplo);
+    let new_pp = (c.clone() * c.clone() * first_diag_val.clone())
+        - (c.clone() * s.clone() * offdiag_pq_val.clone().conj())
+        - (c.clone() * s_conj.clone() * offdiag_pq_val.clone())
+        + (s.clone() * s_conj.clone() * second_diag_val.clone());
+    let new_qq = (s.clone() * s_conj.clone() * first_diag_val)
+        + (c.clone() * s_conj.clone() * offdiag_pq_val.clone())
+        + (c.clone() * s.clone() * offdiag_pq_val.conj())
+        + (c.clone() * c.clone() * second_diag_val);
     unsafe {
         a.set_unchecked(p, p, T::from_real(new_pp.re()));
         a.set_unchecked(q, q, T::from_real(new_qq.re()));
@@ -4509,11 +4516,11 @@ fn heev_apply_vectors<T: Scalar>(
     // `heev_apply_offdiag` so columns of `work` are eigenvectors of the
     // original operand (`A V = V Λ`). Do not conjugate-transpose afterward.
     for k in 0..n {
-        let v_kp = work[k * n + p].clone();
-        let v_kq = work[k * n + q].clone();
-        work[k * n + p] =
-            (c.clone() * v_kp.clone()) - (s_conj.clone() * v_kq.clone());
-        work[k * n + q] = (s.clone() * v_kp) + (c.clone() * v_kq);
+        let vec_entry_p = work[k * n + p].clone();
+        let vec_entry_q = work[k * n + q].clone();
+        work[k * n + p] = (c.clone() * vec_entry_p.clone())
+            - (s_conj.clone() * vec_entry_q.clone());
+        work[k * n + q] = (s.clone() * vec_entry_p) + (c.clone() * vec_entry_q);
     }
 }
 

@@ -16,7 +16,7 @@
 //! use control_rs::tensor::{ArrayTensor, Tensor, Shape2D, Quantized};
 //!
 //! // 2D gain table lookup
-//! let table = ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+//! let table = ArrayTensor::<f32, 2, 2>::from_cols([[1.0, 2.0], [3.0, 4.0]]);
 //! let val = table.interpolate(&[0.5, 0.5]);
 //! assert_eq!(val, 2.5);
 //! ```
@@ -24,24 +24,11 @@
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
-    clippy::similar_names,
-    clippy::needless_range_loop,
     clippy::type_complexity,
     clippy::doc_markdown,
-    clippy::missing_errors_doc,
     clippy::missing_panics_doc,
     clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::option_if_let_else,
-    clippy::must_use_candidate,
-    clippy::many_single_char_names,
-    clippy::collapsible_if,
-    clippy::use_self,
-    clippy::too_many_arguments,
-    clippy::missing_const_for_fn,
-    clippy::cast_lossless,
-    clippy::missing_safety_doc
+    clippy::use_self
 )]
 
 #[cfg(any(test, feature = "ets"))]
@@ -50,7 +37,7 @@ pub mod tests;
 
 pub use crate::math::fixed_num::Quantized;
 use crate::math::num_traits::{Float, Scalar, Zero};
-use crate::math::num_types::{Const, Dim};
+use crate::math::num_types::{Canon, Const, Dim, DimMul, Prod};
 use crate::math::ops::{Add, Mul, Sub};
 use crate::math::storage::{
     ArrayStorage, ColMajor, RowArrayStorage, StaticStorageView,
@@ -65,6 +52,10 @@ use core::marker::PhantomData;
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Rank-neutral flat-buffer contract for contiguous memory storage.
+///
+/// # Safety
+/// Implementors must guarantee that `as_slice()` returns a contiguous slice of exactly `len()` elements,
+/// and `as_ptr()` points to the beginning of this valid, initialized memory region.
 pub unsafe trait FlatBuffer<T> {
     /// Number of elements stored in the buffer.
     fn len(&self) -> usize;
@@ -84,6 +75,10 @@ pub unsafe trait FlatBuffer<T> {
 }
 
 /// Mutable flat-buffer contract.
+///
+/// # Safety
+/// Implementors must guarantee that `as_mut_slice()` and `as_mut_ptr()` provide exclusive access to
+/// the same contiguous memory region described by `FlatBuffer`.
 pub unsafe trait FlatBufferMut<T>: FlatBuffer<T> {
     /// Exposes a mutable slice of elements.
     fn as_mut_slice(&mut self) -> &mut [T];
@@ -94,6 +89,7 @@ pub unsafe trait FlatBufferMut<T>: FlatBuffer<T> {
     }
 }
 
+// SAFETY: ArrayStorage provides contiguous column-major elements of length R * C.
 unsafe impl<T, const R: usize, const C: usize> FlatBuffer<T>
     for ArrayStorage<T, R, C>
 where
@@ -113,6 +109,7 @@ where
     }
 }
 
+// SAFETY: ArrayStorage provides exclusive mutable access to contiguous elements of length R * C.
 unsafe impl<T, const R: usize, const C: usize> FlatBufferMut<T>
     for ArrayStorage<T, R, C>
 where
@@ -128,6 +125,7 @@ where
     }
 }
 
+// SAFETY: RowArrayStorage provides contiguous row-major elements of length R * C.
 unsafe impl<T, const R: usize, const C: usize> FlatBuffer<T>
     for RowArrayStorage<T, R, C>
 where
@@ -147,6 +145,7 @@ where
     }
 }
 
+// SAFETY: RowArrayStorage provides exclusive mutable access to contiguous elements of length R * C.
 unsafe impl<T, const R: usize, const C: usize> FlatBufferMut<T>
     for RowArrayStorage<T, R, C>
 where
@@ -162,6 +161,7 @@ where
     }
 }
 
+// SAFETY: Fixed-size arrays [T; N] are contiguous in memory with length N.
 unsafe impl<T, const N: usize> FlatBuffer<T> for [T; N] {
     fn len(&self) -> usize {
         N
@@ -172,6 +172,7 @@ unsafe impl<T, const N: usize> FlatBuffer<T> for [T; N] {
     }
 }
 
+// SAFETY: FlatView wraps a valid contiguous slice of length data.len().
 unsafe impl<T> FlatBuffer<T> for FlatView<'_, T> {
     fn len(&self) -> usize {
         self.data.len()
@@ -182,12 +183,14 @@ unsafe impl<T> FlatBuffer<T> for FlatView<'_, T> {
     }
 }
 
+// SAFETY: FlatViewMut wraps a valid contiguous mutable slice of length data.len().
 unsafe impl<T> FlatBufferMut<T> for FlatViewMut<'_, T> {
     fn as_mut_slice(&mut self) -> &mut [T] {
         self.data
     }
 }
 
+// SAFETY: FlatViewMut wraps a valid contiguous slice of length data.len().
 unsafe impl<T> FlatBuffer<T> for FlatViewMut<'_, T> {
     fn len(&self) -> usize {
         self.data.len()
@@ -474,9 +477,20 @@ where
         Self::from_storage(ArrayStorage::zero())
     }
 
-    /// Builds a 2D tensor directly from column-major nested arrays `[[T; R]; C]`.
+    /// Builds a rank-2 tensor from column-major nested arrays `[[T; R]; C]`.
+    ///
+    /// The argument matches the underlying buffer, so this constructor copies
+    /// nothing. It is the entry point for ROM-resident constant tensors.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::tensor::ArrayTensor;
+    ///
+    /// let t = ArrayTensor::<f32, 2, 2>::from_cols([[1.0, 2.0], [3.0, 4.0]]);
+    /// assert_eq!(t.get(&[0, 1]), Some(&3.0));
+    /// ```
     #[must_use]
-    pub const fn from_raw(data: [[T; R]; C]) -> Self
+    pub const fn from_cols(data: [[T; R]; C]) -> Self
     where
         T: Copy,
     {
@@ -486,49 +500,71 @@ where
         }
     }
 
-    /// Returns the 2D tensor contents as column-major nested arrays.
-    ///
-    /// Provides direct access to the underlying `[[T; R]; C]` array buffer.
-    ///
-    /// # Returns
-    /// * `[[T; R]; C]` - The tensor data in column-major nested arrays.
+    /// Builds a rank-2 tensor from row-major nested arrays `[[T; C]; R]`.
     ///
     /// # Example
     /// ```
     /// use control_rs::tensor::ArrayTensor;
     ///
-    /// let t = ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
-    /// assert_eq!(t.to_arrays(), [[1.0, 2.0], [3.0, 4.0]]);
+    /// let t = ArrayTensor::<f32, 2, 2>::from_rows([[1.0, 2.0], [3.0, 4.0]]);
+    /// assert_eq!(t.get(&[0, 1]), Some(&2.0));
     /// ```
     #[must_use]
-    pub const fn to_arrays(&self) -> [[T; R]; C]
+    pub const fn from_rows(data: [[T; C]; R]) -> Self
+    where
+        T: Copy,
+    {
+        Self {
+            buffer: ArrayStorage::from_rows(data),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Returns the tensor contents as column-major nested arrays.
+    ///
+    /// # Returns
+    /// * `[[T; R]; C]` - The elements in column-major order.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::tensor::ArrayTensor;
+    ///
+    /// let t = ArrayTensor::<f32, 2, 2>::from_cols([[1.0, 2.0], [3.0, 4.0]]);
+    /// assert_eq!(t.to_cols(), [[1.0, 2.0], [3.0, 4.0]]);
+    /// ```
+    #[must_use]
+    pub const fn to_cols(&self) -> [[T; R]; C]
     where
         T: Copy,
     {
         self.buffer.to_array()
     }
 
-    /// Returns the 2D tensor contents as standard row-major nested arrays.
-    ///
-    /// Transposes the column-major buffer into a row-major `[[T; C]; R]` array without heap allocation.
+    /// Returns the tensor contents as row-major nested arrays.
     ///
     /// # Returns
-    /// * `[[T; C]; R]` - The tensor data in row-major nested arrays.
+    /// * `[[T; C]; R]` - The elements in row-major order.
     ///
     /// # Example
     /// ```
     /// use control_rs::tensor::ArrayTensor;
     ///
-    /// let t = ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 3.0], [2.0, 4.0]]);
-    /// assert_eq!(t.to_row_arrays(), [[1.0, 2.0], [3.0, 4.0]]);
+    /// let t = ArrayTensor::<f32, 2, 2>::from_cols([[1.0, 3.0], [2.0, 4.0]]);
+    /// assert_eq!(t.to_rows(), [[1.0, 2.0], [3.0, 4.0]]);
     /// ```
     #[must_use]
-    pub const fn to_row_arrays(&self) -> [[T; C]; R]
+    pub const fn to_rows(&self) -> [[T; C]; R]
     where
         T: Copy,
     {
         let col_data = self.buffer.as_array();
-        let mut row_major = [[col_data[0][0]; C]; R];
+        let mut row_major: [[T; C]; R] = if R == 0 || C == 0 {
+            // SAFETY: `[[T; C]; R]` is zero-sized when either extent is zero,
+            // so no element of `T` is materialized and no bytes are written.
+            unsafe { core::mem::zeroed() }
+        } else {
+            [[col_data[0][0]; C]; R]
+        };
         let mut i = 0;
         while i < R {
             let mut j = 0;
@@ -567,6 +603,7 @@ where
     where
         T: Copy,
     {
+        // SAFETY: self.as_slice() has length R * C, exactly matching StaticStorageView dimensions.
         Matrix::from_storage(unsafe {
             StaticStorageView::new_unchecked(self.as_slice())
         })
@@ -587,6 +624,7 @@ where
                 StaticStorageViewMut<'a, T, Const<R>, Const<P>, ColMajor>,
             >,
     {
+        // SAFETY: out.as_mut_slice() has length R * P, matching StaticStorageViewMut dimensions.
         let mut dest: MatrixSliceMut<'_, T, Const<R>, Const<P>> =
             Matrix::from_storage(unsafe {
                 StaticStorageViewMut::new_unchecked(out.as_mut_slice())
@@ -641,8 +679,48 @@ where
 
 impl<T, const D0: usize, const D1: usize, const D2: usize, const TOTAL: usize>
     ArrayTensor3D<T, D0, D1, D2, TOTAL>
+where
+    Const<D0>: Dim + DimMul<Const<D1>>,
+    Const<D1>: Dim,
+    Const<D2>: Dim,
+    Const<TOTAL>: Dim,
+    Prod<Const<D0>, Const<D1>>: DimMul<Const<D2>, Output = Canon<Const<TOTAL>>>,
 {
-    /// Extracts the $D0 \times D1$ plane at `fixed_indices[0]` along the last axis.
+    /// Builds a rank-3 tensor from its flat buffer.
+    ///
+    /// The flat index of $(i_0, i_1, i_2)$ is
+    /// $i_0 + i_1 D_0 + i_2 D_0 D_1$, so consecutive elements walk axis 0 and
+    /// each $D_0 \times D_1$ plane is contiguous. $TOTAL = D_0 D_1 D_2$ is a
+    /// where-clause on the impl, so a mis-sized buffer is a type error at the
+    /// call site.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::tensor::ArrayTensor3D;
+    ///
+    /// let t = ArrayTensor3D::<f32, 2, 2, 2, 8>::from_array(
+    ///     [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+    /// );
+    /// assert_eq!(t.get(&[1, 0, 1]), Some(&6.0));
+    /// ```
+    ///
+    /// A buffer that does not match the shape does not compile:
+    ///
+    /// ```compile_fail
+    /// use control_rs::tensor::ArrayTensor3D;
+    ///
+    /// let _ = ArrayTensor3D::<f32, 2, 2, 2, 7>::from_array([0.0; 7]);
+    /// ```
+    #[must_use]
+    pub const fn from_array(data: [T; TOTAL]) -> Self {
+        Self {
+            buffer: data,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Extracts the $D0 \times D1$ plane at `fixed_indices[0]` along the last
+    /// axis.
     #[must_use]
     pub fn slice_matrix(
         &self,
@@ -659,9 +737,58 @@ impl<T, const D0: usize, const D1: usize, const D2: usize, const TOTAL: usize>
         let start = plane * D0 * D1;
         let end = start + D0 * D1;
         let slice = self.as_slice().get(start..end)?;
+        // SAFETY: slice has length D0 * D1, matching StaticStorageView dimensions.
         Some(Matrix::from_storage(unsafe {
             StaticStorageView::new_unchecked(slice)
         }))
+    }
+}
+
+impl<
+    T,
+    const D0: usize,
+    const D1: usize,
+    const D2: usize,
+    const D3: usize,
+    const TOTAL: usize,
+> ArrayTensor4D<T, D0, D1, D2, D3, TOTAL>
+where
+    Const<D0>: Dim + DimMul<Const<D1>>,
+    Const<D1>: Dim,
+    Const<D2>: Dim,
+    Const<D3>: Dim,
+    Const<TOTAL>: Dim,
+    Prod<Const<D0>, Const<D1>>: DimMul<Const<D2>>,
+    Prod<Prod<Const<D0>, Const<D1>>, Const<D2>>:
+        DimMul<Const<D3>, Output = Canon<Const<TOTAL>>>,
+{
+    /// Builds a rank-4 tensor from its flat buffer.
+    ///
+    /// The flat index of $(i_0, i_1, i_2, i_3)$ is
+    /// $i_0 + i_1 D_0 + i_2 D_0 D_1 + i_3 D_0 D_1 D_2$.
+    /// $TOTAL = D_0 D_1 D_2 D_3$ is a where-clause on the impl.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::tensor::ArrayTensor4D;
+    ///
+    /// let t = ArrayTensor4D::<f32, 2, 1, 2, 1, 4>::from_array([1.0, 2.0, 3.0, 4.0]);
+    /// assert_eq!(t.get(&[1, 0, 1, 0]), Some(&4.0));
+    /// ```
+    ///
+    /// A buffer that does not match the shape does not compile:
+    ///
+    /// ```compile_fail
+    /// use control_rs::tensor::ArrayTensor4D;
+    ///
+    /// let _ = ArrayTensor4D::<f32, 2, 1, 2, 1, 5>::from_array([0.0; 5]);
+    /// ```
+    #[must_use]
+    pub const fn from_array(data: [T; TOTAL]) -> Self {
+        Self {
+            buffer: data,
+            _marker: PhantomData,
+        }
     }
 }
 

@@ -1,5 +1,15 @@
-#![allow(missing_docs)]
-#![allow(clippy::used_underscore_items)]
+#![cfg_attr(feature = "ets", allow(clippy::unwrap_used))]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::doc_markdown,
+    clippy::many_single_char_names,
+    clippy::similar_names,
+    clippy::type_complexity,
+    clippy::used_underscore_items,
+    missing_docs,
+    unused_imports
+)]
 
 /// ETS test suite for complex number mathematical operations.
 pub mod complex_num_tests;

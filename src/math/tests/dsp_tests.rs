@@ -2,7 +2,7 @@
 //!
 //! `dsp.rs` has no dedicated design doc, so no functional-requirement
 //! citations apply here. Length `N` is a power-of-two `debug_assert` on
-//! [`FFT`] entry points, not a [`Result`] path.
+//! [`crate::math::dsp::FFT`] entry points, not a [`Result`] path.
 
 #[cfg(all(test, debug_assertions))]
 mod dsp_debug_contract_tests {
@@ -20,7 +20,11 @@ mod dsp_debug_contract_tests {
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod dsp_test_suite {
-    #![allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+    #![allow(
+        clippy::arithmetic_side_effects,
+        clippy::indexing_slicing,
+        clippy::unwrap_used
+    )]
 
     use crate::math::{
         Bijection, ConversionError, Map,

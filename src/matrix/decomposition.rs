@@ -17,27 +17,6 @@
 //! `Const<16384>`, `num_types` generated impls), not via a blanket
 //! `impl<const N: usize> Dim for Const<N>` — the
 //! same pattern `storage.rs`'s own `ArrayStorage` impls already use.
-#![allow(
-    clippy::arbitrary_source_item_ordering,
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    // `l_ik`/`l_jk`/`u_ii`/`d_j` etc. below are standard linear-algebra
-    // index notation, not accidentally-similar English words.
-    clippy::similar_names,
-    // Every loop below indexes both a local scratch array (`y`, `col`) and
-    // `self.data.storage` by the same loop variable in the same body, so
-    // no single iterator covers both accesses.
-    clippy::needless_range_loop,
-    clippy::type_complexity,
-    clippy::doc_markdown,
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::option_if_let_else,
-    clippy::must_use_candidate
-)]
 
 use super::{LowerTriangular, Owned, Symmetric, UpperTriangular};
 use crate::math::num_traits::{Float, Radical};
@@ -153,7 +132,6 @@ where
     ///
     /// # Errors
     /// See [`Owned::lu_decompose_mut`].
-    #[allow(clippy::type_complexity)]
     pub fn into_lu_with<B: Getrf<T, ArrayStorage<T, D, D>>>(
         mut self,
     ) -> LinAlgResult<LuDecomposition<T, D>> {
@@ -170,7 +148,6 @@ where
     ///
     /// # Errors
     /// See [`Owned::lu_decompose_mut`].
-    #[allow(clippy::type_complexity)]
     pub fn into_lu(self) -> LinAlgResult<LuDecomposition<T, D>> {
         self.into_lu_with::<DefaultBlas>()
     }
@@ -370,7 +347,6 @@ where
     ///
     /// # Errors
     /// See [`Symmetric::ldlt_decompose_mut`].
-    #[allow(clippy::type_complexity)]
     pub fn into_ldlt(mut self) -> LinAlgResult<LdltDecomposition<T, D>> {
         self.ldlt_decompose_mut()?;
         Ok(LdltDecomposition {
@@ -418,7 +394,6 @@ where
     ///
     /// # Errors
     /// See [`Symmetric::cholesky_decompose_mut_with`].
-    #[allow(clippy::type_complexity)]
     pub fn into_cholesky_with<B: Potrf<T, ArrayStorage<T, D, D>>>(
         mut self,
     ) -> LinAlgResult<CholeskyDecomposition<T, D>>
@@ -435,7 +410,6 @@ where
     ///
     /// # Errors
     /// See [`Symmetric::cholesky_decompose_mut`].
-    #[allow(clippy::type_complexity)]
     pub fn into_cholesky(self) -> LinAlgResult<CholeskyDecomposition<T, D>>
     where
         T::Real: Radical,
@@ -525,7 +499,6 @@ where
 
     /// Consumes the matrix to construct a stack-allocated
     /// [`QrDecomposition`] using a specific BLAS engine.
-    #[allow(clippy::type_complexity)]
     pub fn into_qr_with<
         B: Geqrf<T, ArrayStorage<T, D, D>>
             + Ormqr<T, ArrayStorage<T, D, D>, ArrayStorage<T, D, D>>,
@@ -545,7 +518,6 @@ where
 
     /// Consumes the matrix to construct a stack-allocated
     /// [`QrDecomposition`] using the default BLAS engine.
-    #[allow(clippy::type_complexity)]
     pub fn into_qr(self) -> QrDecomposition<T, D>
     where
         T::Real: Radical,

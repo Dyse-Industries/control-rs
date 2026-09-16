@@ -90,6 +90,7 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
                     let even_idx = m + i;
                     let odd_idx = m + i + stage_len;
 
+                    // SAFETY: even_idx < N and odd_idx < N guaranteed by FFT bit-reversal and butterfly index bounds.
                     unsafe {
                         // Butterfly calculation:
                         // `Even = Even + W * Odd`
@@ -123,7 +124,7 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
         debug_assert!(N.is_power_of_two(), "FFT length must be a power of two");
 
         let n_t = T::from_const::<N>();
-        // # Safety: The input iter has the same number of elements as the output.
+        // SAFETY: The input iterator has exactly N elements matching the fixed array capacity.
         let mut temp_output: ComplexArrayMut<T, N> = unsafe {
             storage::array_from_iterator(input.iter().map(|c| c.clone().conj()))
         };

@@ -1,25 +1,24 @@
 //! # Tensor Unit and Verification Tests
-#![allow(
-    clippy::arithmetic_side_effects,
-    clippy::indexing_slicing,
-    clippy::similar_names,
-    clippy::unwrap_used,
-    clippy::items_after_statements,
-    clippy::cast_precision_loss,
-    clippy::float_cmp,
-    clippy::approx_constant
-)]
+// Expected values here are hand-derived reference expressions; the `mul_add`
+// form clippy suggests obscures the algebra being asserted and is not a
+// performance concern in a test oracle.
+#![allow(clippy::suboptimal_flops)]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod tensor_test_suite {
     use crate::assert_almost_eq;
+    use crate::math::storage::RowArrayStorage;
     use crate::tensor::{
-        Activation, ArrayTensor, Axes2D, Quantized, Relu, TableActivation,
+        Activation, ArrayTensor, ArrayTensor3D, ArrayTensor4D, Axes2D,
+        FlatBufferMut, Quantized, Relu, TableActivation,
     };
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-1
+    /// Method: Requirements-based test
     fn test_tensor_indexing_and_storage() {
-        let t = ArrayTensor::<f32, 2, 3>::from_raw([
+        let t = ArrayTensor::<f32, 2, 3>::from_cols([
             [1.0, 2.0],
             [3.0, 4.0],
             [5.0, 6.0],
@@ -33,9 +32,13 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-2
+    /// Method: Requirements-based test
     fn test_tensor_grid_interpolation() {
         // 2D grid: f(x, y) = [[0, 2], [4, 6]]
-        let grid = ArrayTensor::<f32, 2, 2>::from_raw([[0.0, 4.0], [2.0, 6.0]]);
+        let grid =
+            ArrayTensor::<f32, 2, 2>::from_cols([[0.0, 4.0], [2.0, 6.0]]);
         // Center point at (0.5, 0.5): (0 + 2 + 4 + 6) / 4 = 3.0
         let val = grid.interpolate(&[0.5, 0.5]);
         assert_almost_eq!(val, 3.0, 1e-6);
@@ -48,6 +51,9 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-4
+    /// Method: Requirements-based test
     fn test_quantized_scalar_operations() {
         // Q7 format: 1.0 = 128 (overflows i8, so 0.5 = 64, 0.25 = 32)
         type Q7 = Quantized<i8, 7>;
@@ -67,10 +73,13 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-5
+    /// Method: Requirements-based test
     fn test_activations() {
         let relu = Relu;
-        assert_eq!(relu.apply(3.5f32), 3.5f32);
-        assert_eq!(relu.apply(-2.0f32), 0.0f32);
+        assert_almost_eq!(relu.apply(3.5f32), 3.5f32);
+        assert_almost_eq!(relu.apply(-2.0f32), 0.0f32);
 
         let table = TableActivation {
             breakpoints: [-1.0f32, 0.0, 1.0],
@@ -81,6 +90,9 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-3
+    /// Method: Requirements-based test
     fn test_tensor_contract() {
         use crate::matrix::Owned;
         let a = ArrayTensor::<f64, 2, 3>::from_fn(|idx| {
@@ -119,13 +131,16 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-1
+    /// Method: Requirements-based test
     fn test_shape4d_and_view() {
         use crate::tensor::{ArrayTensor4D, Shape4D, TensorLayout};
         assert_eq!(Shape4D::<1, 2, 2, 2>::SIZE, 8);
         let t4 = ArrayTensor4D::<f64, 1, 1, 1, 1, 1>::from_storage([3.0]);
         assert_eq!(t4.get(&[0, 0, 0, 0]), Some(&3.0));
         let mut grid =
-            ArrayTensor::<f64, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+            ArrayTensor::<f64, 2, 2>::from_cols([[1.0, 2.0], [3.0, 4.0]]);
         assert_eq!(grid.view().get(&[0, 0]), Some(&1.0));
         {
             let mut view = grid.view_mut();
@@ -139,7 +154,10 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    #[allow(clippy::too_many_lines)]
+    /// # Verification
+    /// Trace: tensor-design#FR-2
+    /// Method: Requirements-based test
     fn test_tensor_shape_interpolate_and_table_edges() {
         use crate::tensor::{
             ArrayTensor3D, FlatBuffer, Shape1D, Shape3D, Shape4D, TensorLayout,
@@ -172,7 +190,8 @@ pub mod tensor_test_suite {
         assert!(t3.slice_matrix(&[]).is_none());
         assert!(t3.slice_matrix(&[0]).is_some());
 
-        let grid = ArrayTensor::<f64, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+        let grid =
+            ArrayTensor::<f64, 2, 2>::from_cols([[1.0, 2.0], [3.0, 4.0]]);
         let lo = grid.interpolate(&[-1.0, -1.0]);
         assert_almost_eq!(lo, 1.0, 1e-12);
         let hi = grid.interpolate(&[9.0, 9.0]);
@@ -185,28 +204,26 @@ pub mod tensor_test_suite {
             breakpoints: [],
             values: [],
         };
-        assert_eq!(empty.apply(1.0), 0.0);
+        assert_almost_eq!(empty.apply(1.0), 0.0);
         let dup = TableActivation::<f64, 2> {
             breakpoints: [0.0, 0.0],
             values: [1.0, 2.0],
         };
-        assert_eq!(dup.apply(0.0), 1.0);
+        assert_almost_eq!(dup.apply(0.0), 1.0);
         let clamp_hi = TableActivation::<f64, 2> {
             breakpoints: [0.0, 1.0],
             values: [3.0, 5.0],
         };
-        assert_eq!(clamp_hi.apply(-1.0), 3.0);
-        assert_eq!(clamp_hi.apply(2.0), 5.0);
+        assert_almost_eq!(clamp_hi.apply(-1.0), 3.0);
+        assert_almost_eq!(clamp_hi.apply(2.0), 5.0);
 
         // Test tensor subtraction and pointers
-        let t_a = ArrayTensor::<f64, 2, 2>::from_raw([[2.0, 4.0], [6.0, 8.0]]);
-        let t_b = ArrayTensor::<f64, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+        let t_a = ArrayTensor::<f64, 2, 2>::from_cols([[2.0, 4.0], [6.0, 8.0]]);
+        let t_b = ArrayTensor::<f64, 2, 2>::from_cols([[1.0, 2.0], [3.0, 4.0]]);
         let diff = &t_a - &t_b;
         assert_almost_eq!(diff.get(&[0, 0]).copied().unwrap(), 1.0, 1e-12);
         assert_almost_eq!(diff.get(&[1, 1]).copied().unwrap(), 4.0, 1e-12);
 
-        use crate::math::storage::RowArrayStorage;
-        use crate::tensor::FlatBufferMut;
         let mut row_buf =
             RowArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [3.0, 4.0]]);
         assert_eq!(FlatBuffer::len(&row_buf), 4);
@@ -219,7 +236,7 @@ pub mod tensor_test_suite {
         assert_eq!(FlatBuffer::as_slice(&arr), &[1.0, 2.0, 3.0]);
 
         let mut grid_for_view =
-            ArrayTensor::<f64, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+            ArrayTensor::<f64, 2, 2>::from_cols([[1.0, 2.0], [3.0, 4.0]]);
         let v = grid_for_view.view();
         assert_eq!(FlatBuffer::len(v.buffer()), 4);
         assert_eq!(FlatBuffer::as_slice(v.buffer()).len(), 4);
@@ -232,6 +249,9 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-4
+    /// Method: Requirements-based test
     fn test_quantization_roundtrip_half_lsb() {
         type Q7 = Quantized<i8, 7>;
         let step = 1.0 / 128.0;
@@ -259,6 +279,9 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-4
+    /// Method: Requirements-based test
     fn test_quantization_monotonicity() {
         type Q7 = Quantized<i8, 7>;
         let pairs = [
@@ -282,9 +305,12 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-1
+    /// Method: Requirements-based test
     fn test_tensor_permute_square_matrix() {
         let square =
-            ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+            ArrayTensor::<f32, 2, 2>::from_cols([[1.0, 2.0], [3.0, 4.0]]);
 
         // 1. Square matrix identity permutation [0, 1]
         let id = square.permute(Axes2D::Identity);
@@ -302,9 +328,12 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-1
+    /// Method: Requirements-based test
     fn test_tensor_permute_rectangular_matrix() {
         // Rectangular matrix transpose permutation [1, 0]
-        let rect = ArrayTensor::<f32, 2, 3>::from_raw([
+        let rect = ArrayTensor::<f32, 2, 3>::from_cols([
             [1.0, 2.0],
             [3.0, 4.0],
             [5.0, 6.0],
@@ -319,6 +348,9 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-1
+    /// Method: Requirements-based test
     fn test_axes2d_conversions_and_helpers() {
         assert_eq!(Axes2D::try_from([0, 1]), Ok(Axes2D::Identity));
         assert_eq!(Axes2D::try_from([1, 0]), Ok(Axes2D::Transpose));
@@ -343,12 +375,243 @@ pub mod tensor_test_suite {
     #[test]
     #[should_panic(expected = "invalid permutation axes")]
     fn _test_tensor_permute_non_square_identity_panic() {
-        let rect = ArrayTensor::<f32, 2, 3>::from_raw([
+        let rect = ArrayTensor::<f32, 2, 3>::from_cols([
             [1.0, 2.0],
             [3.0, 4.0],
             [5.0, 6.0],
         ]);
         let _ = rect.permute(Axes2D::Identity);
+    }
+
+    /// Rank-2 constructors agree, and each accessor round-trips its own
+    /// nesting.
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-1
+    /// Method: Requirements-based test
+    fn test_rank2_array_constructors() {
+        let rows = [[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let cols = [[1.0f32, 4.0], [2.0, 5.0], [3.0, 6.0]];
+
+        let from_rows = ArrayTensor::<f32, 2, 3>::from_rows(rows);
+        let from_cols = ArrayTensor::<f32, 2, 3>::from_cols(cols);
+
+        assert_eq!(from_rows.to_rows(), rows);
+        assert_eq!(from_cols.to_cols(), cols);
+        assert_eq!(from_rows.to_cols(), cols);
+        assert_eq!(from_rows.get(&[1, 2]), Some(&6.0));
+        assert_eq!(from_rows.as_slice(), from_cols.as_slice());
+    }
+
+    /// Rank-3 and rank-4 flat constructors index by
+    /// $i_0 + i_1 D_0 + i_2 D_0 D_1 (+ i_3 D_0 D_1 D_2)$.
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: tensor-design#FR-1
+    /// Method: Requirements-based test
+    fn test_rank3_and_rank4_array_constructors() {
+        let t3 = ArrayTensor3D::<f32, 2, 2, 2, 8>::from_array([
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+        ]);
+        assert_eq!(t3.get(&[0, 0, 0]), Some(&1.0));
+        assert_eq!(t3.get(&[1, 0, 1]), Some(&6.0));
+        assert_eq!(t3.get(&[1, 1, 1]), Some(&8.0));
+        assert_eq!(t3.get(&[2, 0, 0]), None);
+
+        let plane = t3.slice_matrix(&[1]).unwrap();
+        assert_eq!(plane.get(0, 0), Some(&5.0));
+
+        let t4 = ArrayTensor4D::<f32, 2, 1, 2, 1, 4>::from_array([
+            1.0, 2.0, 3.0, 4.0,
+        ]);
+        assert_eq!(t4.get(&[1, 0, 1, 0]), Some(&4.0));
+        assert_eq!(t4.get(&[0, 0, 1, 0]), Some(&3.0));
+    }
+
+    /// Multilinear interpolation is exact for an affine field, so
+    /// $f(i,j) = 3i + 5j + 1$ must be reproduced at every interior point.
+    ///
+    /// The existing centre-point check uses equal weights, which a swap of
+    /// `frac` and `1 - frac` also satisfies. An affine field at an asymmetric
+    /// point pins each corner weight individually.
+    ///
+    /// # Verification
+    /// Trace: tensor-design#FR-2
+    /// Method: Requirements-based test
+    #[cfg_attr(test, test)]
+    fn test_interpolate_is_exact_on_an_affine_field() {
+        // f(i, j) = 3i + 5j + 1 over a 2x2 grid.
+        let grid =
+            ArrayTensor::<f64, 2, 2>::from_cols([[1.0, 4.0], [6.0, 9.0]]);
+
+        for &(i, j) in &[
+            (0.0_f64, 0.0_f64),
+            (0.3, 0.8),
+            (0.25, 0.75),
+            (1.0, 0.5),
+            (0.5, 1.0),
+            (0.9, 0.1),
+        ] {
+            let want = 3.0 * i + 5.0 * j + 1.0;
+            assert_almost_eq!(grid.interpolate(&[i, j]), want, 1e-12);
+        }
+    }
+
+    /// An asymmetric interior point on an asymmetric grid: swapping the upper
+    /// and lower corner weights changes the answer.
+    ///
+    /// # Verification
+    /// Trace: tensor-design#FR-2
+    /// Method: Requirements-based test
+    #[cfg_attr(test, test)]
+    fn test_interpolate_weights_are_not_symmetric() {
+        // f(0,0)=0, f(1,0)=4, f(0,1)=2, f(1,1)=6.
+        let grid =
+            ArrayTensor::<f64, 2, 2>::from_cols([[0.0, 4.0], [2.0, 6.0]]);
+        // 0.75*0.25*0 + 0.25*0.25*4 + 0.75*0.75*2 + 0.25*0.75*6 = 2.5
+        assert_almost_eq!(grid.interpolate(&[0.25, 0.75]), 2.5, 1e-12);
+        // The mirrored point is a different value.
+        assert_almost_eq!(grid.interpolate(&[0.75, 0.25]), 3.5, 1e-12);
+    }
+
+    /// A non-square grid indexes each axis with its own extent, so a
+    /// transposed stride would land on the wrong corner.
+    ///
+    /// # Verification
+    /// Trace: tensor-design#FR-2
+    /// Method: Requirements-based test
+    #[cfg_attr(test, test)]
+    fn test_interpolate_non_square_grid() {
+        // 2 rows, 3 columns, f(i, j) = 10i + j.
+        let grid = ArrayTensor::<f64, 2, 3>::from_cols([
+            [0.0, 10.0],
+            [1.0, 11.0],
+            [2.0, 12.0],
+        ]);
+        assert_almost_eq!(grid.interpolate(&[0.0, 2.0]), 2.0, 1e-12);
+        assert_almost_eq!(grid.interpolate(&[1.0, 2.0]), 12.0, 1e-12);
+        assert_almost_eq!(grid.interpolate(&[0.5, 1.5]), 6.5, 1e-12);
+        // Clamping uses each axis's own maximum, not a shared one.
+        assert_almost_eq!(grid.interpolate(&[5.0, 5.0]), 12.0, 1e-12);
+        assert_almost_eq!(grid.interpolate(&[0.0, 5.0]), 2.0, 1e-12);
+    }
+
+    /// Rank 3 exercises all eight corners of the multilinear sum.
+    ///
+    /// # Verification
+    /// Trace: tensor-design#FR-2
+    /// Method: Requirements-based test
+    #[cfg_attr(test, test)]
+    fn test_interpolate_rank_three_affine() {
+        // f(i, j, k) = i + 2j + 4k over a 2x2x2 grid, column-major flat.
+        let mut buf = [0.0_f64; 8];
+        for k in 0..2 {
+            for j in 0..2 {
+                for i in 0..2 {
+                    let v = i as f64 + 2.0 * j as f64 + 4.0 * k as f64;
+                    buf[i + 2 * j + 4 * k] = v;
+                }
+            }
+        }
+        let t = ArrayTensor3D::<f64, 2, 2, 2, 8>::from_storage(buf);
+        assert_almost_eq!(t.interpolate(&[0.0, 0.0, 0.0]), 0.0, 1e-12);
+        assert_almost_eq!(t.interpolate(&[1.0, 1.0, 1.0]), 7.0, 1e-12);
+        assert_almost_eq!(t.interpolate(&[0.5, 0.5, 0.5]), 3.5, 1e-12);
+        assert_almost_eq!(t.interpolate(&[0.25, 0.5, 0.75]), 4.25, 1e-12);
+    }
+
+    /// ReLU is `max(0, x)`: the boundary at zero belongs to the zero branch,
+    /// and the identity branch must not scale or shift its input.
+    ///
+    /// # Verification
+    /// Trace: tensor-design#FR-5
+    /// Method: Requirements-based test
+    #[cfg_attr(test, test)]
+    fn test_relu_boundary_and_identity() {
+        let relu = Relu;
+        assert_almost_eq!(relu.apply(0.0_f64), 0.0, 1e-12);
+        assert_almost_eq!(relu.apply(-1e-12_f64), 0.0, 1e-12);
+        assert_almost_eq!(relu.apply(1e-12_f64), 1e-12, 1e-24);
+        assert_almost_eq!(relu.apply(1234.5_f64), 1234.5, 1e-12);
+        assert_almost_eq!(relu.apply(-1234.5_f64), 0.0, 1e-12);
+        // Not the identity, and not a constant.
+        assert!((relu.apply(-3.0_f64) - -3.0).abs() > 1.0);
+        assert!((relu.apply(3.0_f64) - relu.apply(2.0_f64)).abs() > 0.5);
+    }
+
+    /// The table activation interpolates linearly inside each segment and
+    /// saturates outside the breakpoint range.
+    ///
+    /// The segments here have unequal widths and slopes, so a wrong segment
+    /// index or a swapped endpoint gives a different value.
+    ///
+    /// # Verification
+    /// Trace: tensor-design#FR-5
+    /// Method: Requirements-based test
+    #[cfg_attr(test, test)]
+    fn test_table_activation_segments_and_saturation() {
+        // Breakpoints at -2, 0, 1, 5 with values 0, 4, 5, 1.
+        // Slopes: 2 on [-2,0], 1 on [0,1], -1 on [1,5].
+        let t = TableActivation::<f64, 4> {
+            breakpoints: [-2.0, 0.0, 1.0, 5.0],
+            values: [0.0, 4.0, 5.0, 1.0],
+        };
+
+        // Exactly on each breakpoint.
+        assert_almost_eq!(t.apply(-2.0), 0.0, 1e-12);
+        assert_almost_eq!(t.apply(0.0), 4.0, 1e-12);
+        assert_almost_eq!(t.apply(1.0), 5.0, 1e-12);
+        assert_almost_eq!(t.apply(5.0), 1.0, 1e-12);
+
+        // Inside each segment, at its own slope.
+        assert_almost_eq!(t.apply(-1.0), 2.0, 1e-12);
+        assert_almost_eq!(t.apply(-0.5), 3.0, 1e-12);
+        assert_almost_eq!(t.apply(0.25), 4.25, 1e-12);
+        assert_almost_eq!(t.apply(3.0), 3.0, 1e-12);
+        assert_almost_eq!(t.apply(4.0), 2.0, 1e-12);
+
+        // Saturation outside the range holds the end values.
+        assert_almost_eq!(t.apply(-100.0), 0.0, 1e-12);
+        assert_almost_eq!(t.apply(100.0), 1.0, 1e-12);
+
+        // A single breakpoint is a constant function.
+        let one = TableActivation::<f64, 1> {
+            breakpoints: [3.0],
+            values: [7.0],
+        };
+        assert_almost_eq!(one.apply(-5.0), 7.0, 1e-12);
+        assert_almost_eq!(one.apply(3.0), 7.0, 1e-12);
+        assert_almost_eq!(one.apply(9.0), 7.0, 1e-12);
+    }
+
+    /// `to_rows` reads the tensor out in row-major order, which is the
+    /// transpose of the column-major storage it is built from.
+    ///
+    /// # Verification
+    /// Trace: tensor-design#FR-1
+    /// Method: Requirements-based test
+    #[cfg_attr(test, test)]
+    fn test_to_rows_matches_element_access() {
+        // Columns [1,2,3], [4,5,6] -> rows [1,4], [2,5], [3,6].
+        let t = ArrayTensor::<f64, 3, 2>::from_cols([
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+        ]);
+        let rows = t.to_rows();
+        assert_eq!(rows, [[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]);
+
+        // Every entry agrees with indexed access, so the walk order is right.
+        for (i, row) in rows.iter().enumerate() {
+            for (j, v) in row.iter().enumerate() {
+                assert_almost_eq!(*v, *t.get(&[i, j]).unwrap(), 1e-12);
+            }
+        }
+
+        // A 1xN tensor stays a single row, an Nx1 becomes N rows of one.
+        let wide = ArrayTensor::<f64, 1, 3>::from_cols([[7.0], [8.0], [9.0]]);
+        assert_eq!(wide.to_rows(), [[7.0, 8.0, 9.0]]);
+        let tall = ArrayTensor::<f64, 3, 1>::from_cols([[7.0, 8.0, 9.0]]);
+        assert_eq!(tall.to_rows(), [[7.0], [8.0], [9.0]]);
     }
 }
 
@@ -363,6 +626,9 @@ mod tensor_property_tests {
         /// Round-trip error never exceeds half the Q7 step on the closed
         /// representable interval.
         #[test]
+        /// # Verification
+        /// Trace: tensor-design#FR-4
+        /// Method: Property-based test
         fn prop_quantization_roundtrip_half_lsb(
             x in -1.0_f64..Q7::MAX.dequantize(),
         ) {
@@ -376,6 +642,9 @@ mod tensor_property_tests {
 
         /// $x > y$ implies $\mathrm{quant}(x) \ge \mathrm{quant}(y)$.
         #[test]
+        /// # Verification
+        /// Trace: tensor-design#FR-4
+        /// Method: Property-based test
         fn prop_quantization_monotonicity(
             x in -4.0_f64..4.0,
             y in -4.0_f64..4.0,

@@ -159,7 +159,7 @@ pub mod num_type_test_suite {
     /// Verifies compile-time minimum and maximum bounds resolution on
     /// non-uniform dimensions (FR-2 of `num-types-design.md`).
     fn test_num_type_dynamic_min_max_bounding() {
-        fn assert_bounds<A, B, Max, Min>()
+        const fn assert_bounds<A, B, Max, Min>()
         where
             A: DimMax<B, Output = Max> + DimMin<B, Output = Min>,
             B: Dim,
