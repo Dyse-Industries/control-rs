@@ -6,30 +6,55 @@ on:
     tags: [ "v*" ]
     paths:
       - 'src/**'
+      - 'benches/**'
       - 'control-rs-ets/**'
-      - 'control-rs-xtask/**'
-      - '.github/workflows/**'
+      - 'control-rs-macros/**'
+      - 'control-rs-ets-host/**'
+      - 'control-rs-tui/**'
+      - 'control-rs-ci/**'
+      - 'examples/qemu/**'
+      - '.cargo/**'
+      - '.github/workflows/CI.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'gate.toml'
+      - 'validate.toml'
+      - 'trace.toml'
+      - 'tarpaulin.toml'
+      - 'deny.toml'
+      - 'clippy.toml'
+      - 'rustfmt.toml'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'src/**'
+      - 'benches/**'
       - 'control-rs-ets/**'
-      - 'control-rs-xtask/**'
+      - 'control-rs-macros/**'
+      - 'control-rs-ets-host/**'
+      - 'control-rs-tui/**'
+      - 'control-rs-ci/**'
+      - 'examples/qemu/**'
+      - '.cargo/**'
+      - '.github/workflows/CI.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - '.github/workflows/**'
+      - 'gate.toml'
+      - 'validate.toml'
+      - 'trace.toml'
+      - 'tarpaulin.toml'
+      - 'deny.toml'
+      - 'clippy.toml'
+      - 'rustfmt.toml'
 
 jobs:
-  build:
+  check-and-test:
+    name: Check & Test (${{ matrix.rust }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        rust: [ "1.88.0", "stable", "beta" ] # add nightly back when clippy is safe
-    permissions:
-      pull-requests: write # Required to post comments
+        rust: [ "1.88.0", "stable", "beta" ]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -37,33 +62,54 @@ jobs:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
 
-      - uses: cargo-bins/cargo-binstall@main
-      - name: Install Tarpaulin
-        run: cargo binstall cargo-tarpaulin -y
-
-      - name: Install Targets
-        run: rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
-
-      - name: Install apt packages
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system
-
-      - name: Download Tarpaulin Coverage Report
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # Every standard gate runs whatever the one before it did, and each
+      # verdict is recorded. `gates-report.json` is the only evidence the
+      # aggregate report has for these gates: without it `ci-report.md`
+      # renders them Skipped instead of asserting a pass it never observed.
+      # The step exits non-zero if any gate failed, so the job verdict is
+      # unchanged from the fail-fast sequence it replaces.
+      - name: Standard Gates
         run: |
-          mkdir -p target/tarpaulin && \
-          gh run download \
-          --name tarpaulin-baseline \
-          --dir target/tarpaulin \
-          --repo ${{ github.repository }} \
-          --branch main \
-          || echo "No baseline coverage report found. Proceeding without diff."
+          mkdir -p target/ci-artifacts
+          entries=()
+          status=0
+          run_gate() {
+            name="$1"
+            shift
+            start=$(date +%s.%N)
+            if "$@"; then verdict=pass; else verdict=fail; status=1; fi
+            secs=$(awk -v a="$(date +%s.%N)" -v b="$start" 'BEGIN{printf "%.2f", a-b}')
+            entries+=("{\"gate\":\"$name\",\"verdict\":\"$verdict\",\"seconds\":$secs}")
+            echo "::notice title=gate:$name::$verdict in ${secs}s"
+          }
+          run_gate fmt cargo fmt --all -- --check
+          run_gate clippy cargo clippy --workspace --all-targets --all-features -- -D warnings
+          run_gate check cargo check --workspace
+          run_gate build cargo build --workspace
+          run_gate test cargo test --workspace
+          printf '{"gates":[%s]}\n' "$(IFS=,; echo "${entries[*]}")" \
+            > target/ci-artifacts/gates-report.json
+          cat target/ci-artifacts/gates-report.json
+          exit $status
 
-      - name: Run CI
-        run: cargo ci
+      # One matrix entry publishes the verdicts. Three uploads under one
+      # artifact name is an error, and `stable` is the toolchain the rest of
+      # the pipeline reports against.
+      - name: Upload Standard Gate Verdicts
+        if: always() && matrix.rust == 'stable'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-gates
+          path: target/ci-artifacts/gates-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Package Check
+        if: matrix.rust == 'stable'
+        run: cargo package-check
 
       - name: Build Documentation
+        if: matrix.rust == 'stable'
         run: cargo doc --no-deps --workspace
 
       - name: Upload Documentation Artifact
@@ -74,8 +120,313 @@ jobs:
           path: target/doc
           retention-days: 30
 
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install Tarpaulin
+        run: cargo binstall cargo-tarpaulin -y
+
+      # `--out Json` writes `tarpaulin-report.json`, which is the basename the
+      # aggregator reads. The previous `*coverage.json` glob matched nothing,
+      # so the coverage section of `ci-report.md` was empty on every run.
+      # `|| true` is gone: `gate.toml` declares coverage a fail gate, and a
+      # tarpaulin that cannot run is a failure, not a silent skip.
+      - name: Run Tarpaulin
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo tarpaulin --verbose --workspace --color never --out Json --out Html --output-dir target/ci-artifacts/
+
+      - name: Upload Coverage Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-coverage
+          path: |
+            target/ci-artifacts/tarpaulin-report.json
+            target/ci-artifacts/tarpaulin-report.html
+          if-no-files-found: warn
+          retention-days: 30
+
+  # Report-only for this sprint. The documentation corpus moved to
+  # `design-template.md` rev 1.4 and the tracer still parses the retired
+  # 6.4/6.7 layout, so it reports every requirement Missing and exits 1.
+  # `gate.toml` sets `trace = "warn"` for the monolithic runner; this job
+  # needs its own guard because the standalone binary carries its own exit
+  # code. The aggregator is passed `--warn trace` to match. Both revert with
+  # the tracer rewrite.
+  traceability:
+    name: Traceability Audit (report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Requirement Traceability Audit
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo run -p control-rs-ci --bin trace -- --json --out-dir target/ci-artifacts
+
+      - name: Upload Traceability Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-trace
+          path: target/ci-artifacts/trace-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  ets-qemu:
+    name: Emulated Targets (QEMU)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Targets
+        run: rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
+      - name: Install apt packages
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system
+
+      - name: Run QEMU ETS Matrix
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo run -p control-rs-ci --bin ci -- --manifest-path examples/qemu/Cargo.toml --only ets --no-clean --out-dir target/ci-artifacts
+
+      - name: Upload ETS Results Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-ets
+          path: target/ci-artifacts/ets-results.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  mutants:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install cargo-mutants
+        run: cargo binstall cargo-mutants -y
+      - name: Run cargo mutants
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo run -p control-rs-ci --bin ci -- --only mutants --out-dir target/ci-artifacts
+      - name: Upload Mutants Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-mutants
+          path: |
+            target/ci-artifacts/mutants-report.json
+            target/ci-artifacts/mutants.out/outcomes.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Run cargo miri
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo run -p control-rs-ci --bin ci -- --only miri --out-dir target/ci-artifacts
+      - name: Upload Miri Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-miri
+          path: target/ci-artifacts/miri-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  valgrind:
+    name: Valgrind
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Run tests under Valgrind
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo run -p control-rs-ci --bin ci -- --only valgrind --out-dir target/ci-artifacts
+      - name: Upload Valgrind Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-valgrind
+          path: target/ci-artifacts/valgrind-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  lockbud:
+    name: Lockbud
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install lockbud
+        run: cargo install lockbud --locked
+      - name: Run lockbud
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo run -p control-rs-ci --bin ci -- --only lockbud --out-dir target/ci-artifacts
+      - name: Upload Lockbud Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-lockbud
+          path: target/ci-artifacts/lockbud-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install cargo-deny
+        run: cargo binstall cargo-deny -y
+      - name: Run cargo deny
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo run -p control-rs-ci --bin ci -- --only deny --out-dir target/ci-artifacts
+      - name: Upload Deny Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-deny
+          path: target/ci-artifacts/deny-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  audit:
+    name: Cargo Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install cargo-audit
+        run: cargo binstall cargo-audit -y
+      - name: Run cargo audit
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo run -p control-rs-ci --bin ci -- --only audit --out-dir target/ci-artifacts
+      - name: Upload Audit Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-audit
+          path: target/ci-artifacts/audit-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install cargo-fuzz
+        run: cargo binstall cargo-fuzz -y
+      - name: Run cargo fuzz
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo run -p control-rs-ci --bin ci -- --only fuzz --out-dir target/ci-artifacts
+      - name: Upload Fuzz Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-fuzz
+          path: target/ci-artifacts/fuzz-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  kani:
+    name: Kani
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Kani
+        run: cargo install --locked kani-verifier && cargo kani setup
+      - name: Run cargo kani
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo run -p control-rs-ci --bin ci -- --only kani --out-dir target/ci-artifacts
+      - name: Upload Kani Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-kani
+          path: target/ci-artifacts/kani-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  report:
+    name: Aggregate Quality Report
+    runs-on: ubuntu-latest
+    needs:
+      [
+        check-and-test,
+        coverage,
+        traceability,
+        ets-qemu,
+        mutants,
+        miri,
+        valgrind,
+        lockbud,
+        deny,
+        audit,
+        fuzz,
+        kani,
+      ]
+    if: always()
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Download CI Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci-artifacts-*
+          path: target/ci-artifacts
+          merge-multiple: true
+
+      # The aggregator exits non-zero when a downloaded verdict failed, so
+      # this job is the single gate the publish job hangs on. `--warn trace`
+      # keeps the paused tracer out of that decision.
+      - name: Generate Aggregated Report
+        run: cargo run -p control-rs-ci --bin report -- --artifacts-dir target/ci-artifacts --out-dir . --warn trace
+
       - name: Post PR Comment
-        if: github.event_name == 'pull_request' && matrix.rust == 'stable' && (success() || failure())
+        if: always() && github.event_name == 'pull_request'
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
@@ -88,28 +439,29 @@ jobs:
             cat ci-report.md >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Upload Tarpaulin Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: tarpaulin-baseline-${{ matrix.rust }}
-          path: target/tarpaulin/*coverage.json
-          retention-days: 30
-
-      - name: Upload ETS Results Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ets-results-${{ matrix.rust }}
-          path: ets-results.json
-          retention-days: 30
-
+  # `report` runs `if: always()`, so `needs: report` alone was satisfied by a
+  # report generated over failing jobs. The aggregator now exits non-zero on a
+  # failed verdict, and `check-and-test` is named directly so a job that never
+  # published its verdicts cannot be mistaken for a green one.
   publish:
+    name: Publish Gate
     runs-on: ubuntu-latest
-    needs: build
+    needs: [report, check-and-test]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
-      - name: Log in to crates.io
-        run: cargo login "${{ secrets.CRATES_IO_TOKEN }}"
-      - name: Publish to crates.io
-        run: cargo publish
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Dependency order is forced by the workspace graph:
+      #   control-rs-macros, control-rs-ets -> control-rs -> control-rs-ets-host -> control-rs-tui
+      - name: Dry-run package in dependency order
+        run: cargo package-check
+
+      - name: Report intended publication order
+        run: |
+          echo "Publication order (control-rs-ci publish will drive this):"
+          echo "  1. control-rs-macros"
+          echo "  2. control-rs-ets"
+          echo "  3. control-rs"
+          echo "  4. control-rs-ets-host"
+          echo "  5. control-rs-tui"

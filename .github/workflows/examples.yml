@@ -1,0 +1,71 @@
+name: Examples CI
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "examples/*.rs"
+      - "benches/**"
+      - "src/**"
+      - ".github/workflows/examples.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "examples/*.rs"
+      - "benches/**"
+      - "src/**"
+      - ".github/workflows/examples.yml"
+
+jobs:
+  # Pedagogical examples are cargo examples of the root package: they build
+  # with the workspace lints and run with no Python, HDF5, or ngspice.
+  pedagogical:
+    name: ${{ matrix.example }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        example:
+          - matrix
+          - polynomial
+          - state_space
+          - transfer_function
+          - tensor
+          - dc_motor
+          - buck_converter
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Clippy
+        run: cargo clippy --example ${{ matrix.example }} --all-features -- -D warnings
+
+      - name: Run
+        run: cargo run --release --example ${{ matrix.example }}
+
+  # Benches are not a fail gate on timing; this job only proves they compile
+  # and execute end to end at a reduced sample count.
+  benches:
+    name: Benches
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Smoke Run
+        run: |
+          cargo bench --bench numerical_models -- \
+            --warm-up-time 0.2 --measurement-time 0.5 --sample-size 10
+          cargo bench --bench classical_tools -- \
+            --warm-up-time 0.2 --measurement-time 0.5 --sample-size 10

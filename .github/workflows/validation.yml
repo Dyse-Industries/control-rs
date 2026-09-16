@@ -1,0 +1,159 @@
+name: Validation CI
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "control-rs-validation/**"
+      - "src/**"
+      - "control-rs-ci/**"
+      - "control-rs-ets-host/**"
+      - "validate.toml"
+      - ".github/workflows/validation.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "control-rs-validation/**"
+      - "src/**"
+      - "control-rs-ci/**"
+      - "control-rs-ets-host/**"
+      - "validate.toml"
+      - ".github/workflows/validation.yml"
+
+# Suites are declared once in the repository-root `validate.toml` and selected
+# by name. The runner builds the emitter in `control-rs-validation`, runs the
+# oracle command, and 1:1-compares the resulting HDF5 containers.
+jobs:
+  numerical-models:
+    name: Numerical Models
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r control-rs-validation/python3/requirements.txt
+
+      - name: Rust-side Invariants
+        run: cargo test -p control-rs-validation
+
+      - name: Cross-validate
+        run: |
+          for suite in matrix polynomial state_space transfer_function tensor; do
+            cargo run -p control-rs-ci --bin compare -- \
+              --name "$suite" --out-dir target/ci
+          done
+
+      # Plots are not a gate. Do not re-run the emitter: H5Container::create
+      # truncates the container the validate commands just compared.
+      - name: Generate Plots
+        continue-on-error: true
+        working-directory: control-rs-validation
+        run: python3 python3/plot_models.py
+
+      - name: Upload Results Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: numerical-models-results
+          path: control-rs-validation/results
+          if-no-files-found: warn
+          retention-days: 30
+
+  plants:
+    name: ${{ matrix.suite }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: dc-motor
+            plot: plot_dc_motor.py
+            apt: ""
+          - suite: buck-converter
+            plot: plot_buck_converter.py
+            apt: ngspice
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install System Dependencies
+        if: matrix.apt != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt }}
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy matplotlib h5py
+
+      - name: Cross-validate
+        run: |
+          cargo run -p control-rs-ci --bin compare -- \
+            --name ${{ matrix.suite }} --out-dir target/ci
+
+      - name: Generate Plots
+        continue-on-error: true
+        working-directory: control-rs-validation
+        run: python3 python3/${{ matrix.plot }}
+
+      - name: Upload Results Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.suite }}-results
+          path: control-rs-validation/results
+          if-no-files-found: warn
+          retention-days: 30
+
+  # `control-rs-validation` is a workspace member and a trace root, but the
+  # root CI.yml path filters omit it. Run trace here so a validation-only PR
+  # still audits Trace annotations against the design docs.
+  #
+  # Report-only for this sprint, for the same reason as the root CI.yml job:
+  # the corpus is on `design-template.md` rev 1.4 and the tracer still parses
+  # the retired 6.4/6.7 layout, so it exits 1 on every tree.
+  traceability:
+    name: Traceability Audit (report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Requirement Traceability Audit
+        run: |
+          mkdir -p target/ci-artifacts
+          cargo run -p control-rs-ci --bin trace -- --json --out-dir target/ci-artifacts
+
+      - name: Upload Traceability Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-trace-report
+          path: target/ci-artifacts/trace-report.json
+          if-no-files-found: warn
+          retention-days: 30
