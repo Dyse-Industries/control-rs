@@ -198,6 +198,30 @@ fn frequency_traces(
     }
 }
 
+/// Rounding grid for the real-part sort key, coarser than the f64 ulp scale
+/// at these pole magnitudes so a conjugate pair ties on the real part
+/// instead of ordering by rounding noise.
+const POLE_ORDER_ROUNDING: f64 = 1e-9;
+
+/// Orders three closed-loop poles by real part ascending, then imaginary
+/// part ascending, rounding the real-part comparison to
+/// [`POLE_ORDER_ROUNDING`] first.
+fn canonical_pole_order(re: &[f64; 3], im: &[f64; 3]) -> [usize; 3] {
+    let mut idx = [0usize, 1, 2];
+    idx.sort_by(|&a, &b| {
+        let re_a = (re[a] / POLE_ORDER_ROUNDING).round();
+        let re_b = (re[b] / POLE_ORDER_ROUNDING).round();
+        re_a.partial_cmp(&re_b)
+            .unwrap_or(core::cmp::Ordering::Equal)
+            .then(
+                im[a]
+                    .partial_cmp(&im[b])
+                    .unwrap_or(core::cmp::Ordering::Equal),
+            )
+    });
+    idx
+}
+
 fn root_locus_data(
     plant: &crate::buck_converter::analysis::PlantTf,
     lead_design: &crate::buck_converter::analysis::LeadDesign,
@@ -216,17 +240,7 @@ fn root_locus_data(
     let mut poles_re_sorted = poles_re.clone();
     let mut poles_im_sorted = poles_im.clone();
     for (re, im) in poles_re_sorted.iter_mut().zip(poles_im_sorted.iter_mut()) {
-        let mut idx = [0usize, 1, 2];
-        idx.sort_by(|&a, &b| {
-            re[a]
-                .partial_cmp(&re[b])
-                .unwrap_or(core::cmp::Ordering::Equal)
-                .then(
-                    im[a]
-                        .partial_cmp(&im[b])
-                        .unwrap_or(core::cmp::Ordering::Equal),
-                )
-        });
+        let idx = canonical_pole_order(re, im);
         let re_s = [re[idx[0]], re[idx[1]], re[idx[2]]];
         let im_s = [im[idx[0]], im[idx[1]], im[idx[2]]];
         *re = re_s;
@@ -402,4 +416,40 @@ pub fn run_analysis() -> AnalysisStudy {
         .expect("Failed to serialize BuckResults to Value");
 
     AnalysisStudy { results, payload }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_pole_order;
+
+    /// A conjugate pair whose real parts differ by one ulp still sorts by
+    /// imaginary part.
+    #[test]
+    fn conjugate_pair_with_ulp_real_split_orders_by_imaginary_part() {
+        let re: f64 = -6.760_581_292_2;
+        let ulp = f64::EPSILON * re.abs();
+        let re_parts = [re + ulp, re, 1.0];
+        let im_parts = [-2.5, 2.5, 0.0];
+
+        let idx = canonical_pole_order(&re_parts, &im_parts);
+
+        assert_eq!(
+            [im_parts[idx[0]], im_parts[idx[1]], im_parts[idx[2]]],
+            [-2.5, 2.5, 0.0],
+            "conjugate pair must order by imaginary part despite the ulp-level real split"
+        );
+    }
+
+    #[test]
+    fn distinct_real_poles_above_the_rounding_grid_stay_ordered_by_real_part() {
+        let re_parts = [-3_993.739_418_707_8, -140.733_806_199_8, 0.0];
+        let im_parts = [0.0, 0.0, 0.0];
+
+        let idx = canonical_pole_order(&re_parts, &im_parts);
+
+        assert_eq!(
+            [re_parts[idx[0]], re_parts[idx[1]], re_parts[idx[2]]],
+            [-3_993.739_418_707_8, -140.733_806_199_8, 0.0]
+        );
+    }
 }

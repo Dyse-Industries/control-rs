@@ -6,23 +6,12 @@
 # independent configuration files.
 #
 # `[gates]` key order is the pipeline. Each value is skip | warn | fail
-# (boolean true/false is still accepted as fail/skip). Gates omitted from
-# this table are skipped.
+# (boolean true/false is still accepted as fail/skip).
 
 [runner]
 title = "control-rs"
 out_dir = "target/ci"
 timeout_secs = 90
-
-# `validate` is omitted by decision, not by oversight. The suites in
-# `control-rs-validation` are verified by .github/workflows/validation.yml
-# against the repository-root validate.toml, and they need Python, HDF5 and
-# ngspice. Listing validate here would run them a second time on every
-# workspace CI run, for the same envelopes, at several minutes each.
-#
-# The consequence to keep in mind: a green run of this configuration verifies
-# no host numerics. Cross-comparison evidence comes from the validation
-# workflow, and `documentation/ci/ci-design.md` 4.3 records the split.
 
 [gates]
 clean = "fail"
@@ -35,45 +24,8 @@ build = "fail"
 test = "fail"
 coverage = "fail"
 
-# `trace` is warn, not fail, for this sprint. The corpus moved to
-# `design-template.md` rev 1.4 and the tracer still parses the retired
-# 6.4/6.7 layout, so every requirement reports Missing. The rewrite is
-# scheduled work; see `documentation/vv/requirement-traceability-design.md`
-# and `documentation/ci/ci-design.md` §9 Phase 10.
 trace = "warn"
 
-# Workflow-only gates. Each has its own job in `.github/workflows/CI.yml`,
-# which selects it with `--only <gate>`; `--only` promotes a `skip` entry to
-# fail, so the job still gates on the gate's own exit. They are `skip` here
-# because this table is also the local `cargo ci` pipeline, and a local run
-# that included them would take hours or need a nightly toolchain. Run one
-# on demand with `cargo ci --only <gate>`.
-#
-# | Gate       | Workflow job | Job policy         | Aggregator |
-# |:-----------|:-------------|:-------------------|:-----------|
-# | `ets`      | ets-qemu     | fail-closed        | `--require`|
-# | `mutants`  | mutants      | fail-closed, 360 m | `--require`|
-# | `miri`     | miri         | continue-on-error  | `--warn`   |
-# | `valgrind` | valgrind     | continue-on-error  | `--warn`   |
-# | `lockbud`  | lockbud      | continue-on-error  | `--warn`   |
-# | `fuzz`     | none         | not wired          | none       |
-# | `kani`     | none         | not wired          | none       |
-#
-# `fuzz` and `kani` have no workflow job. Neither can establish anything in
-# this repository yet: there is no `fuzz/` workspace, so the fuzz gate returns
-# "no fuzz/ workspace" on every invocation, and there is no `#[kani::proof]`
-# harness, so `cargo kani` verifies no properties. They stay selectable with
-# `cargo ci --only <gate>` and regain a job when they have a corpus and
-# proofs; see `documentation/ci/ci-design.md` §9 Phase 11.
-#
-# `ets` runs only when a target matrix is supplied. `--only ets` on its own
-# reports an implicit skip and exits 0; the ets-qemu job passes
-# `--manifest-path examples/qemu/Cargo.toml`, which supplies one. An empty
-# result set is caught by the aggregator's `--require ets`.
-#
-# `valgrind` drives `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER`, which only
-# takes effect on that triple. On any other host the gate now reports Skip
-# with the reason rather than passing without having run.
 ets = "skip"
 mutants = "skip"
 miri = "skip"

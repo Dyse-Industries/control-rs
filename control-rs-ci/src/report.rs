@@ -88,8 +88,6 @@ pub struct CiReportParams<'a> {
     pub test_cmd_output: &'a str,
     /// Time in seconds taken by `cargo test`.
     pub test_cmd_time: f32,
-    /// Coverage gate verdict.
-    pub coverage: GateVerdict,
     /// Summary of tarpaulin coverage and test counts.
     pub tarp_summary: &'a TarpaulinSummary,
     /// Raw output of tarpaulin.
@@ -447,13 +445,6 @@ fn collect_failed_tasks<'a>(
     ets_failed: usize,
 ) -> Vec<&'a str> {
     let mut failed_tasks = collect_standard_failures(params);
-    if !params.options.skip.contains(CiSkip::COV)
-        && (params.coverage != GateVerdict::Pass
-            || params.tarp_summary.failed > 0)
-        && !warned(params, "coverage")
-    {
-        failed_tasks.push("coverage");
-    }
     for tool in params.host_tools {
         if tool.verdict.is_fail() {
             failed_tasks.push(tool.name);
@@ -601,25 +592,16 @@ fn append_coverage_row(report: &mut String, params: &CiReportParams<'_>) {
         );
         return;
     }
-    let cov_ok =
-        params.coverage == GateVerdict::Pass && params.tarp_summary.failed == 0;
+    // Informational only; the `coverage` job carries its own pass/fail status.
+    let uncovered = params
+        .tarp_summary
+        .total_lines
+        .saturating_sub(params.tarp_summary.covered_lines);
     let _ = writeln!(
         report,
-        "| **Coverage** | {} | {} passed, {} failed, {} ignored (`{}%` coverage, {}/{} lines) | {:.2}s |",
-        cell(
-            if cov_ok {
-                GateVerdict::Pass
-            } else {
-                params.coverage
-            },
-            "coverage",
-            params,
-        ),
-        params.tarp_summary.passed,
-        params.tarp_summary.failed,
-        params.tarp_summary.ignored,
+        "| **Coverage** | Info | `{}%` coverage, {} uncovered / {} total lines | {:.2}s |",
         params.tarp_summary.coverage_percent,
-        format_number(params.tarp_summary.covered_lines as u64),
+        format_number(uncovered as u64),
         format_number(params.tarp_summary.total_lines as u64),
         params.test_time
     );
@@ -983,7 +965,6 @@ mod tests {
             test_cmd: GateVerdict::Pass,
             test_cmd_output: "",
             test_cmd_time: 0.4,
-            coverage: GateVerdict::Pass,
             tarp_summary: seed.tarp,
             tarp_output: seed.tarp_output,
             test_time: seed.test_time,

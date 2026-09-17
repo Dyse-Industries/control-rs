@@ -1082,7 +1082,7 @@ mod tests {
             c.close().unwrap();
         }
 
-        let future_time = SystemTime::now() + Duration::from_hours(1);
+        let future_time = SystemTime::now() + Duration::from_secs(3600);
         let freshness = FreshnessPolicy {
             head_commit: None,
             written_after: Some(future_time),

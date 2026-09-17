@@ -38,11 +38,11 @@ coverage-ci = ["coverage", "--color", "never", "--out", "Html", "--out", "Json"]
 coverage-export = ["coverage", "--color", "never", "--out", "Html", "--out", "Json"]
 
 # Mutation testing
-mutants-ci = ["mutants", "-p", "control-rs", "-p", "control-rs-ets", "--output", "target/ci"]
+mutants-ci = ["mutants", "--output", "target/ci"]
 
 # Supply chain security & dependency auditing
-deny-check = ["deny", "check"]
-audit-check = ["audit"]
+deny-check = ["deny", "--all-features", "check"]
+audit-check = ["audit", "--deny", "warnings"]
 
 # Advanced verification tools
 miri-test = ["miri", "test", "-p", "control-rs", "--lib"]

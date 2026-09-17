@@ -52,11 +52,14 @@ jobs:
       - name: Rust-side Invariants
         run: cargo test -p control-rs-validation
 
+      # Each suite gets its own subdirectory so per-suite reports don't
+      # overwrite each other.
       - name: Cross-validate
         run: |
           for suite in matrix polynomial state_space transfer_function tensor; do
+            mkdir -p "target/ci-artifacts/$suite"
             cargo run -p control-rs-ci --bin compare -- \
-              --name "$suite" --out-dir target/ci
+              --name "$suite" --out-dir "target/ci-artifacts/$suite"
           done
 
       # Plots are not a gate. Do not re-run the emitter: H5Container::create
@@ -72,6 +75,15 @@ jobs:
         with:
           name: numerical-models-results
           path: control-rs-validation/results
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload Cross-Validation Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-artifacts-validate-numerical-models
+          path: target/ci-artifacts/*/cross-val-report.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -113,8 +125,9 @@ jobs:
 
       - name: Cross-validate
         run: |
+          mkdir -p "target/ci-artifacts/${{ matrix.suite }}"
           cargo run -p control-rs-ci --bin compare -- \
-            --name ${{ matrix.suite }} --out-dir target/ci
+            --name ${{ matrix.suite }} --out-dir "target/ci-artifacts/${{ matrix.suite }}"
 
       - name: Generate Plots
         continue-on-error: true
@@ -127,6 +140,15 @@ jobs:
         with:
           name: ${{ matrix.suite }}-results
           path: control-rs-validation/results
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload Cross-Validation Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-artifacts-validate-${{ matrix.suite }}
+          path: target/ci-artifacts/${{ matrix.suite }}/cross-val-report.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -160,3 +182,40 @@ jobs:
           path: target/ci-artifacts/trace-report.json
           if-no-files-found: warn
           retention-days: 30
+
+  # Validation CI's own fail-closed aggregate; root CI.yml does not see
+  # these suites.
+  validation-report:
+    name: Aggregate Validation Report
+    runs-on: ubuntu-latest
+    needs: [ numerical-models, plants ]
+    if: always()
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Download Cross-Validation Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci-artifacts-validate-*
+          path: target/ci-artifacts
+          merge-multiple: true
+
+      - name: Generate Validation Report
+        run: cargo run -p control-rs-ci --bin report -- --artifacts-dir target/ci-artifacts --out-dir . --title "Validation CI" --require validate
+
+      - name: Post PR Comment
+        if: always() && github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: ci-report.md
+
+      - name: Upload to Step Summary
+        if: always()
+        run: |
+          if [ -f ci-report.md ]; then
+            cat ci-report.md >> $GITHUB_STEP_SUMMARY
+          fi

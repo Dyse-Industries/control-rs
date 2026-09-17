@@ -1045,8 +1045,8 @@ fn run_special_host_gate(
         ctx.out_path,
         &gates::HostToolSummary {
             tool: gate.name().to_string(),
-            success: verdict == GateVerdict::Pass
-                || verdict == GateVerdict::Skip,
+            // A skip is not a success (FR-13).
+            success: verdict == GateVerdict::Pass,
             skipped: verdict == GateVerdict::Skip,
             details,
         },
@@ -1605,7 +1605,6 @@ fn report_params<'a>(
         test_cmd: state.test_cmd.verdict,
         test_cmd_output: &state.test_cmd.output,
         test_cmd_time: state.test_cmd.time,
-        coverage: state.coverage.verdict,
         tarp_summary: &state.tarp_summary,
         tarp_output: &state.tarp_output,
         test_time: state.coverage.time,

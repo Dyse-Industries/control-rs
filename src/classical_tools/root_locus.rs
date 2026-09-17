@@ -98,8 +98,14 @@ where
 /// characteristic equation. $10^{-10}$ leaves four orders above the f64
 /// backward error of a well-separated sweep and five below the residual
 /// scale of an iterate that has not found the roots at all.
+// Case-by-case: Arithmetic side effects are unavoidable for a generic
+// constant built from repeated multiplication.
+#[allow(clippy::arithmetic_side_effects)]
 fn backward_error_bound<T: Float + Copy>() -> T {
-    T::ONE / T::from_usize(10_000_000_000)
+    let ten = T::from_usize(10);
+    let hundred = ten * ten;
+    let hundred_million = hundred * hundred * hundred * hundred;
+    T::ONE / (hundred_million * hundred)
 }
 
 /// Largest relative backward error $|P(\hat s)| / \sum_k |c_k| |\hat s|^k$

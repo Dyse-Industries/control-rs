@@ -856,7 +856,9 @@ pub mod polynomial_test_suite {
         let roots = p.roots().unwrap();
         let mut found: [f64; 4] =
             [roots[0].re, roots[1].re, roots[2].re, roots[3].re];
-        found.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        found.sort_unstable_by(|a, b| {
+            a.partial_cmp(b).unwrap_or(Ordering::Equal)
+        });
         let expected: [f64; 4] = [
             -3_993.739_418_707_8,
             -140.733_806_199_8,

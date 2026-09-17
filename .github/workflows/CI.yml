@@ -375,10 +375,12 @@ jobs:
           merge-multiple: true
 
       # The aggregator exits non-zero when a downloaded verdict failed, so
-      # this job is the single gate the publish job hangs on. `--warn trace`
-      # keeps the paused tracer out of that decision.
+      # this job is one of the gates the publish job hangs on. `--warn trace`
+      # keeps the paused tracer out of that decision. `coverage` is not on
+      # `--require`: `publish`'s `needs: coverage` is the real gate on that
+      # job's pass/fail.
       - name: Generate Aggregated Report
-        run: cargo run -p control-rs-ci --bin report -- --artifacts-dir target/ci-artifacts --out-dir . --warn trace --warn miri --warn valgrind --warn lockbud --require fmt,clippy,check,build,test,coverage,deny,audit,mutants,ets
+        run: cargo run -p control-rs-ci --bin report -- --artifacts-dir target/ci-artifacts --out-dir . --warn trace --warn miri --warn valgrind --warn lockbud --require fmt,clippy,check,build,test,deny,audit,mutants,ets
 
       - name: Post PR Comment
         if: always() && github.event_name == 'pull_request'

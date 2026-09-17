@@ -263,6 +263,46 @@ fn is_warned(args: &ReportArgs, name: &str) -> bool {
     args.warn_gates.iter().any(|warned| warned == name)
 }
 
+/// Merges every `cross-val-report.json` under `artifacts_dir` (the root
+/// itself, plus one level of suite subdirectories) into one summary.
+fn load_cross_val_summary(
+    artifacts_dir: &Path,
+) -> Option<CrossComparisonSummary> {
+    let mut parts = Vec::new();
+    if let Some(summary) = load_json::<CrossComparisonSummary>(
+        &artifacts_dir.join("cross-val-report.json"),
+    ) {
+        parts.push(summary);
+    }
+    if let Ok(entries) = fs::read_dir(artifacts_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir()
+                && let Some(summary) = load_json::<CrossComparisonSummary>(
+                    &path.join("cross-val-report.json"),
+                )
+            {
+                parts.push(summary);
+            }
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let mut merged = CrossComparisonSummary::default();
+    for part in parts {
+        merged.total_examples =
+            merged.total_examples.saturating_add(part.total_examples);
+        merged.passed_examples =
+            merged.passed_examples.saturating_add(part.passed_examples);
+        merged.failed_examples =
+            merged.failed_examples.saturating_add(part.failed_examples);
+        merged.total_duration_secs += part.total_duration_secs;
+        merged.outcomes.extend(part.outcomes);
+    }
+    Some(merged)
+}
+
 fn load_artifacts(artifacts_dir: &Path) -> LoadedArtifacts {
     let standard_gates = load_standard_gates(artifacts_dir);
     let tarp_path = artifacts_dir.join("tarpaulin-report.json");
@@ -270,9 +310,7 @@ fn load_artifacts(artifacts_dir: &Path) -> LoadedArtifacts {
     let tarp_summary = load_tarpaulin_summary(&tarp_path);
     let trace_path = artifacts_dir.join("trace-report.json");
     let trace_summary: Option<TraceMatrixSummary> = load_json(&trace_path);
-    let cross_val_path = artifacts_dir.join("cross-val-report.json");
-    let cross_val_summary: Option<CrossComparisonSummary> =
-        load_json(&cross_val_path);
+    let cross_val_summary = load_cross_val_summary(artifacts_dir);
     let ets_path = artifacts_dir.join("ets-results.json");
     let ets_tests: Vec<TestOutcome> = load_json(&ets_path).unwrap_or_default();
 
@@ -353,23 +391,25 @@ const fn gate_from_bool(ok: bool) -> GateVerdict {
 }
 
 /// Derives the trace and cross-validation verdicts from the summaries.
-///
-/// An absent summary is a pass here and a skipped section in the report, so a
-/// job that did not run cannot fail the aggregate.
+/// An absent summary is `Skip`, not `Pass`.
 fn derive_verdicts(data: &LoadedArtifacts) -> Verdicts {
-    let trace_ok = data.trace_summary.as_ref().is_none_or(|summary| {
-        summary.approved_missing_count == 0
-            && summary.approved_unresolved_count == 0
-            && summary.failed_count == 0
-    });
-    let cross_ok = data
+    let trace =
+        data.trace_summary
+            .as_ref()
+            .map_or(GateVerdict::Skip, |summary| {
+                gate_from_bool(
+                    summary.approved_missing_count == 0
+                        && summary.approved_unresolved_count == 0
+                        && summary.failed_count == 0,
+                )
+            });
+    let cross_val = data
         .cross_val_summary
         .as_ref()
-        .is_none_or(|summary| summary.failed_examples == 0);
-    Verdicts {
-        trace: gate_from_bool(trace_ok),
-        cross_val: gate_from_bool(cross_ok),
-    }
+        .map_or(GateVerdict::Skip, |summary| {
+            gate_from_bool(summary.failed_examples == 0)
+        });
+    Verdicts { trace, cross_val }
 }
 
 /// Every downloaded verdict that failed and is not on the `--warn` list.
@@ -406,9 +446,6 @@ fn blocking_failures(
     if ets_failed && !is_warned(args, "ets") {
         failed.push("ets".to_string());
     }
-    if coverage_verdict(data).is_fail() && !is_warned(args, "coverage") {
-        failed.push("coverage".to_string());
-    }
     for name in &args.required_gates {
         if !is_warned(args, name)
             && !published_verdict(data, name)
@@ -421,7 +458,8 @@ fn blocking_failures(
 }
 
 /// True when `name` published a verdict this run. A required gate that did
-/// not is a fail, not a skip (FR-13).
+/// not is a fail, not a skip (FR-13). A skipped host-tool gate did not
+/// publish a measurement either.
 fn published_verdict(data: &LoadedArtifacts, name: &str) -> bool {
     match name {
         "coverage" => data.tarp_exists,
@@ -430,16 +468,11 @@ fn published_verdict(data: &LoadedArtifacts, name: &str) -> bool {
         "ets" => !data.ets_tests.is_empty(),
         other => {
             data.standard_gates.contains_key(other)
-                || data.host_tools.iter().any(|tool| tool.tool == other)
+                || data
+                    .host_tools
+                    .iter()
+                    .any(|tool| tool.tool == other && !tool.skipped)
         }
-    }
-}
-
-const fn coverage_verdict(data: &LoadedArtifacts) -> GateVerdict {
-    if data.tarp_exists {
-        GateVerdict::Pass
-    } else {
-        GateVerdict::Fail
     }
 }
 
@@ -510,7 +543,6 @@ fn aggregator_params<'a>(
         test_cmd: standard_gate(data, "test").verdict,
         test_cmd_output: "",
         test_cmd_time: standard_gate(data, "test").seconds,
-        coverage: coverage_verdict(data),
         tarp_summary: &data.tarp_summary,
         tarp_output: "",
         test_time: 0.0,
@@ -654,6 +686,37 @@ mod tests {
     }
 
     #[test]
+    /// Multiple per-suite `cross-val-report.json` files merge into one.
+    ///
+    /// # Verification
+    /// Trace: ci-design#FR-13
+    /// Method: Requirements-based test
+    fn test_load_cross_val_summary_merges_per_suite_reports() {
+        let temp_dir = std::env::temp_dir()
+            .join("control_rs_ci_test_report_cli_merge_cross_val");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("matrix")).unwrap();
+        fs::create_dir_all(temp_dir.join("buck-converter")).unwrap();
+        fs::write(
+            temp_dir.join("matrix").join("cross-val-report.json"),
+            r#"{"total_examples":1,"passed_examples":1,"failed_examples":0,"total_duration_secs":1.0,"outcomes":[]}"#,
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("buck-converter").join("cross-val-report.json"),
+            r#"{"total_examples":1,"passed_examples":0,"failed_examples":1,"total_duration_secs":2.0,"outcomes":[]}"#,
+        )
+        .unwrap();
+
+        let merged = load_cross_val_summary(&temp_dir).unwrap();
+        assert_eq!(merged.total_examples, 2);
+        assert_eq!(merged.failed_examples, 1);
+        assert!((merged.total_duration_secs - 3.0).abs() < 1e-6);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
     fn test_create_ci_options_skips_missing_artifacts() {
         let data = LoadedArtifacts {
             standard_gates: BTreeMap::new(),
@@ -685,12 +748,33 @@ mod tests {
     }
 
     #[test]
+    /// An absent cross-validation or trace summary is `Skip`, not `Pass`.
+    ///
+    /// # Verification
+    /// Trace: ci-design#FR-13
+    /// Method: Requirements-based test
+    fn test_derive_verdicts_absent_summaries_are_skip_not_pass() {
+        let data = empty_artifacts();
+        let verdicts = derive_verdicts(&data);
+        assert_eq!(verdicts.trace, GateVerdict::Skip);
+        assert_eq!(verdicts.cross_val, GateVerdict::Skip);
+        // Skip must not block: an unmeasured gate is not a failed one.
+        let failures =
+            blocking_failures(&ReportArgs::default(), &data, &verdicts);
+        assert!(!failures.iter().any(|f| f == "trace" || f == "validate"));
+    }
+
+    #[test]
     fn test_main_impl_writes_report_from_fixture_artifacts() {
         let temp_dir = std::env::temp_dir()
             .join("control_rs_ci_test_report_cli_main_impl");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
 
+        // An empty artifacts directory with nothing on `--require` has
+        // nothing to check and exits clean; `--require` is what turns an
+        // absent artifact into a failure (FR-13), exercised separately by
+        // the `blocking_failures` tests above.
         let code = main_impl(&[
             "report".to_string(),
             "--artifacts-dir".to_string(),
@@ -700,7 +784,7 @@ mod tests {
             "--title".to_string(),
             "test-title".to_string(),
         ]);
-        assert_eq!(code, 1);
+        assert_eq!(code, 0);
         assert!(temp_dir.join("ci-report.md").exists());
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -830,6 +914,33 @@ mod tests {
     }
 
     #[test]
+    /// A required host-tool gate that skipped must block, same as no artifact.
+    ///
+    /// # Verification
+    /// Trace: ci-design#FR-13
+    /// Method: Requirements-based test
+    fn test_blocking_failures_required_skipped_host_tool_is_fail() {
+        let mut data = empty_artifacts();
+        data.tarp_exists = true;
+        data.host_tools.push(HostToolSummary {
+            tool: "miri".to_string(),
+            success: false,
+            skipped: true,
+            details: "no #[cfg(miri)] harness".to_string(),
+        });
+        let verdicts = derive_verdicts(&data);
+        let args = ReportArgs {
+            required_gates: vec!["miri".to_string()],
+            ..ReportArgs::default()
+        };
+        let failures = blocking_failures(&args, &data, &verdicts);
+        assert!(
+            failures.iter().any(|failed| failed == "miri"),
+            "a skipped required gate must block, got {failures:?}"
+        );
+    }
+
+    #[test]
     /// An enabled ETS matrix that produced zero cases publishes an empty
     /// result set, which is not a pass.
     ///
@@ -853,19 +964,29 @@ mod tests {
     }
 
     #[test]
-    /// Missing coverage is a fail-closed hole, not a skip.
+    /// Coverage only blocks when explicitly required, and only on presence.
     ///
     /// # Verification
     /// Trace: ci-design#FR-13
     /// Method: Requirements-based test
-    fn test_blocking_failures_missing_coverage_is_fail() {
+    fn test_blocking_failures_coverage_is_informational_unless_required() {
         let data = empty_artifacts();
         let verdicts = derive_verdicts(&data);
         let failures =
             blocking_failures(&ReportArgs::default(), &data, &verdicts);
         assert!(
+            !failures.iter().any(|name| name == "coverage"),
+            "coverage must not auto-block without --require, got {failures:?}"
+        );
+
+        let args = ReportArgs {
+            required_gates: vec!["coverage".to_string()],
+            ..ReportArgs::default()
+        };
+        let failures = blocking_failures(&args, &data, &verdicts);
+        assert!(
             failures.iter().any(|name| name == "coverage"),
-            "missing tarpaulin artifact must block, got {failures:?}"
+            "--require coverage must still block with no published artifact, got {failures:?}"
         );
     }
 

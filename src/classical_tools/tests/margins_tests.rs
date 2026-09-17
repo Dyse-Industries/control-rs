@@ -7,7 +7,7 @@ pub mod margins_test_suite {
     // `sqrt`, or `mul_add`; std's inherent methods win on host builds,
     // making these unused there.
     #[allow(unused_imports)]
-    use crate::math::num_traits::{Exponential, Float, Radical};
+    use crate::math::num_traits::{Exponential, Float, Radical, Trig};
     use crate::transfer_function::ArrayTransferFunction;
 
     /// `G(s) = 4 / (s + 1)^3`, i.e. `num = [4]`, `den = [1, 3, 3, 1]`

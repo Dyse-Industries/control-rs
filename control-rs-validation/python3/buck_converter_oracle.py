@@ -281,10 +281,19 @@ def compute_scipy_root_locus(plant_data: dict, comp_data: dict, num_points=100):
         poles_re.append([float(r.real) for r in prev_roots])
         poles_im.append([float(r.imag) for r in prev_roots])
 
+    # Rounding grid for the sort key's real part so a conjugate pair ties
+    # on the real part instead of ordering by solver rounding noise.
+    pole_order_rounding = 1e-9
+
+    def pole_sort_key(re_row, im_row, i):
+        return (round(re_row[i] / pole_order_rounding), im_row[i])
+
     poles_re_sorted = []
     poles_im_sorted = []
     for re_row, im_row in zip(poles_re, poles_im):
-        order = sorted(range(len(re_row)), key=lambda i: (re_row[i], im_row[i]))
+        order = sorted(
+            range(len(re_row)), key=lambda i: pole_sort_key(re_row, im_row, i)
+        )
         poles_re_sorted.append([re_row[i] for i in order])
         poles_im_sorted.append([im_row[i] for i in order])
 
