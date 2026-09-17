@@ -118,11 +118,11 @@ pub mod margins_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Regression: `pi + arg()` is not a phase margin. `arg()` is principal
-    /// on `(-pi, pi]`, so a gain crossover past the `-180 deg` crossing
-    /// yields `2 pi - |phi_m|` unless the sum is wrapped back onto
-    /// `(-pi, pi]`. Unwrapped, a loop with `K_g < 1` reports a phase margin
-    /// near `+360 deg` and a positive delay margin.
+    /// Regression: principal `arg()` alone is not a phase margin. Once gain
+    /// crossover lies past the `-180 deg` crossing, the principal branch is
+    /// positive (~`+167 deg` here) and `pi + arg()` reads near `+347 deg`
+    /// unless phase is unwrapped continuously through the sweep. A loop with
+    /// `K_g < 1` must report negative phase and delay margins.
     ///
     /// # Verification
     /// Trace: classical-tools#FR-4, classical-tools#NFR-3
@@ -224,5 +224,49 @@ pub mod margins_test_suite {
         let omegas = _sweep_omegas();
         let margins = stability_margins(&tf, &omegas);
         assert_eq!(margins.gain_margin, None);
+    }
+
+    /// `G(s) = 1e6 / (s + 1)^5`. Analytically `|G| = 1` at
+    /// `w_gc = sqrt(1e6^(2/5) - 1)` with unwrapped phase `-5 atan(w_gc)`, so
+    /// `Phi_m ≈ -251.9 deg`. Principal `atan2` sits near `-72 deg`; wrapping
+    /// `pi + atan2` alone then yields `≈ +108 deg` — a false stable reading.
+    ///
+    /// # Verification
+    /// Trace: classical-tools#FR-4, classical-tools#NFR-3
+    /// Method: Requirements-based test
+    #[cfg_attr(test, test)]
+    fn test_multi_wrap_phase_lag_reports_large_negative_margin() {
+        let tf = ArrayTransferFunction::<f64, 1, 6>::continuous(
+            [1e6],
+            [1.0, 5.0, 10.0, 10.0, 5.0, 1.0],
+        );
+        let omegas: [f64; 4000] =
+            core::array::from_fn(|i| (i as f64).mul_add(40.0 / 4000.0, 0.01));
+        let margins = stability_margins(&tf, &omegas);
+
+        let wgc = margins.gain_crossover_freq.unwrap();
+        let expected_wgc = (1e6f64.pow(0.4) - 1.0).sqrt();
+        assert!(
+            ((wgc - expected_wgc) / expected_wgc).abs() <= 1e-3,
+            "w_gc = {wgc}, expected ~{expected_wgc}"
+        );
+
+        let expected_pm =
+            (-5.0f64).mul_add(expected_wgc.atan(), core::f64::consts::PI);
+        let pm = margins.phase_margin.unwrap();
+        assert!(
+            pm < -core::f64::consts::PI,
+            "phi_m = {pm} rad, expected < -pi (past one full wrap)"
+        );
+        let pm_err_deg =
+            (pm - expected_pm).abs() * (180.0 / core::f64::consts::PI);
+        assert!(
+            pm_err_deg <= 0.5,
+            "phi_m = {pm} rad, expected ~{expected_pm} ({pm_err_deg} deg error)"
+        );
+        assert!(
+            margins.delay_margin.unwrap() < 0.0,
+            "delay margin must stay negative with Phi_m"
+        );
     }
 }
