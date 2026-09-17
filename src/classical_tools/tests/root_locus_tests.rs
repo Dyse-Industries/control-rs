@@ -445,4 +445,28 @@ pub mod root_locus_test_suite {
         assert_eq!(single_count, 1);
         assert_eq!(single_g[0], 2.0);
     }
+
+    #[cfg_attr(test, test)]
+    /// Degenerate terminal gain must not inherit poles from earlier sub-steps.
+    ///
+    /// # Verification
+    /// Trace: classical-tools#FR-3
+    /// Method: Requirements-based test
+    fn test_degenerate_terminal_gain_errors() {
+        // Biproper G(s)=(s^2+1)/(s^2+2s+2). At k=-1 the leading coefficient
+        // of D+kN cancels (`ZeroLeadingCoefficient`). Intermediate sub-steps
+        // before -1 still succeed; sweep must not attribute those poles to
+        // the failed terminal gain.
+        let tf = ArrayTransferFunction::<f64, 3, 3>::continuous(
+            [1.0, 0.0, 1.0],
+            [2.0, 2.0, 1.0],
+        );
+        let gains = [0.0_f64, -1.0];
+        let mut out = [Complex::new(0.0, 0.0); 4];
+        let result = sweep(&tf, &gains, &mut out);
+        assert!(
+            matches!(result, Err(RootLocusError::RootFinding(_))),
+            "sweep must Err when k_curr has ZeroLeadingCoefficient; got {result:?}"
+        );
+    }
 }

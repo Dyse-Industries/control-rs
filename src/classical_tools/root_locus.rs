@@ -284,14 +284,16 @@ where
     let s_total = T::from_usize(num_substeps);
 
     let mut advanced = false;
+    let mut reached_k_curr = false;
     let mut last_error = None;
     for s in 1..=num_substeps {
         let frac = T::from_usize(s) / s_total;
         let k_sub = k_prev + dk * frac;
-        // A sub-step that lands on a breakaway is rejected rather than
-        // fatal: the gain is skipped and the next sub-step carries the
-        // branch across. The interval fails only when every sub-step in it
-        // failed, which is a solver failure rather than a coincident pair.
+        // A mid-interval sub-step that lands on a breakaway is rejected
+        // rather than fatal: the gain is skipped and the next sub-step
+        // carries the branch across. The terminal gain `k_curr` must still
+        // succeed — otherwise poles from an earlier sub-step would be
+        // attributed to `k_curr` by the caller.
         let sub_roots = match solve_closed_loop_roots::<T, N, D>(tf, k_sub) {
             Ok(roots) => roots,
             Err(e) => {
@@ -307,8 +309,11 @@ where
         );
         tracked[..degree].copy_from_slice(&sub_matched[..degree]);
         advanced = true;
+        if s == num_substeps {
+            reached_k_curr = true;
+        }
     }
-    if advanced {
+    if advanced && reached_k_curr {
         Ok(())
     } else {
         Err(last_error.unwrap_or(RootLocusError::RootFinding(
@@ -341,10 +346,10 @@ where
         return Ok(());
     };
 
-    // A candidate gain the solver cannot resolve is not fatal here either:
-    // sub-stepping approaches the same interval on a finer mesh, which is
-    // the rejected-step behaviour an adaptive sweep relies on near a
-    // breakaway.
+    // When the candidate gain itself is unsolvable (e.g. leading-coefficient
+    // cancellation), sub-stepping still advances through intermediate gains
+    // but must fail if the terminal `k_curr` never resolves — otherwise the
+    // caller would attribute earlier poles to `k_curr`.
     let Ok(candidate) = solve_closed_loop_roots::<T, N, D>(tf, k_curr) else {
         return substep_advance_poles(tf, (k_prev, k_curr), 16, tracked);
     };
