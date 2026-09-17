@@ -586,12 +586,31 @@ def main():
     }
 
     table = Path(__file__).resolve().parent.parent / "tolerances/buck_converter.toml"
-    specs = attr_specs_from_toml(table, scipy_keys)
+    ngspice_keys = {
+        "circuit/ac_plant_dc_gain": "buck.ngspice.ac_plant_dc_gain",
+        "circuit/step_final_voltage": "buck.ngspice.step_final_voltage",
+        "simulation/linear_step/metrics/steady_state_error_v": "buck.ngspice.step_steady_state_error",
+        "circuit/load_restored_voltage": "buck.ngspice.load_restored_voltage",
+        "circuit/switched_ripple": "buck.ngspice.switched_ripple",
+    }
+    v_in = float(results["plant"]["v_in"])
+    v_out = float(results["plant"]["v_out_v"])
+    scipy_payload["circuit"] = {
+        "ac_plant_dc_gain": 20.0 * np.log10(v_in),
+        "step_final_voltage": v_out,
+        "load_restored_voltage": v_out,
+        "switched_ripple": 5.0,
+    }
+    scipy_payload["simulation"] = {
+        "linear_step": {"metrics": {"steady_state_error_v": 0.0}}
+    }
+    specs = attr_specs_from_toml(table, {**scipy_keys, **ngspice_keys})
     meta = dict(scipy_payload)
     spice = results.get("ngspice")
+    ngspice_payload = None
     if spice:
         ripple = spice["switched_step"]["metrics"]["switching_ripple_mv_pk_pk"]
-        meta["ngspice"] = {
+        ngspice_payload = {
             "circuit": {
                 "ac_plant_dc_gain": spice["ac_sweep"]["mag_db"][0],
                 "step_final_voltage": spice["averaged_step"]["metrics"]["final_voltage_v"],
@@ -607,6 +626,10 @@ def main():
                     }
                 }
             },
+        }
+        meta["ngspice"] = {
+            "circuit": ngspice_payload["circuit"],
+            "simulation": ngspice_payload["simulation"],
             "ac_sweep": spice["ac_sweep"],
             "averaged_step": spice["averaged_step"],
             "averaged_load": spice["averaged_load"],
@@ -616,10 +639,17 @@ def main():
     write_variant_file(
         Path("results/buck-converter.scipy.h5"),
         scipy_payload,
-        gated_paths=list(scipy_keys),
+        gated_paths=list(scipy_keys) + list(ngspice_keys),
         meta=meta,
         attr_specs=specs,
     )
+    if ngspice_payload is not None:
+        write_variant_file(
+            Path("results/buck-converter.ngspice.h5"),
+            ngspice_payload,
+            gated_paths=list(ngspice_keys),
+            meta=meta.get("ngspice"),
+        )
     _ = args
 
 

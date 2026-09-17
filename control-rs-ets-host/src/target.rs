@@ -214,11 +214,8 @@ impl Target {
             if default_qemu_arch == "all" {
                 return Ok(None);
             }
-            return Ok(map_shorthand(default_qemu_arch).map(|(t, n)| {
-                Self::Subprocess(
-                    SubprocessTarget::new(".").with_target(t).with_name(n),
-                )
-            }));
+            return Ok(map_shorthand(default_qemu_arch)
+                .map(|(t, n)| Self::Subprocess(qemu_example_target(t, n))));
         }
         if targets.len() > 1 {
             return Ok(None);
@@ -258,6 +255,31 @@ pub fn map_shorthand(s: &str) -> Option<(&'static str, &'static str)> {
     }
 }
 
+/// Maps a QEMU target triple onto the example firmware binary name.
+fn qemu_bin_for_triple(triple: &str) -> Option<&'static str> {
+    [
+        QemuArch::Riscv32imacUnknownNoneElf,
+        QemuArch::Riscv64gcUnknownNoneElf,
+        QemuArch::Thumbv7emNoneEabi,
+        QemuArch::Thumbv7emNoneEabihf,
+    ]
+    .iter()
+    .map(QemuArch::details)
+    .find(|details| details.target_triple == triple)
+    .map(|details| details.binary_name)
+}
+
+/// Example-firmware subprocess for a QEMU shorthand triple.
+fn qemu_example_target(triple: &str, name: &str) -> SubprocessTarget {
+    let mut sub = SubprocessTarget::new("examples/qemu")
+        .with_target(triple)
+        .with_name(name);
+    if let Some(bin) = qemu_bin_for_triple(triple) {
+        sub = sub.with_bin(bin);
+    }
+    sub
+}
+
 /// Parses CLI arguments into a list of targets.
 ///
 /// # Errors
@@ -278,6 +300,7 @@ pub fn parse_targets(args: &[String]) -> Result<Vec<Target>, String> {
     let mut is_serial = false;
     let mut port = None;
     let mut baud = 115_200;
+    let mut qemu_mode = false;
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -335,15 +358,11 @@ pub fn parse_targets(args: &[String]) -> Result<Vec<Target>, String> {
                     .map_err(|e| format!("Invalid baud: {e}"))?;
                 is_serial = true;
             }
-            "qemu" => {}
+            "qemu" => qemu_mode = true,
             "all" => {
                 for sh in ["arm", "arm-sf", "riscv32", "riscv64"] {
                     if let Some((t, n)) = map_shorthand(sh) {
-                        targets.push(
-                            SubprocessTarget::new(".")
-                                .with_target(t)
-                                .with_name(n),
-                        );
+                        targets.push(qemu_example_target(t, n));
                     }
                 }
             }
@@ -358,9 +377,7 @@ pub fn parse_targets(args: &[String]) -> Result<Vec<Target>, String> {
             }
             sh if map_shorthand(sh).is_some() => {
                 let (t, n) = map_shorthand(sh).unwrap_or(("", ""));
-                targets.push(
-                    SubprocessTarget::new(".").with_target(t).with_name(n),
-                );
+                targets.push(qemu_example_target(t, n));
             }
             other => return Err(format!("Unknown argument: {other}")),
         }
@@ -371,9 +388,19 @@ pub fn parse_targets(args: &[String]) -> Result<Vec<Target>, String> {
         return Ok(vec![Target::Serial { port: p, baud }]);
     }
 
+    if qemu_mode && (path.is_empty() || path == ".") {
+        path = String::from("examples/qemu");
+    }
+
     for t in &mut targets {
         if t.path.is_empty() || t.path == "." {
             t.path.clone_from(&path);
+        }
+        if t.bin.is_none()
+            && let Some(triple) = t.target.as_deref()
+            && let Some(bin) = qemu_bin_for_triple(triple)
+        {
+            t.bin = Some(bin.to_string());
         }
         for a in &extra_args {
             if !t.args.contains(a) {
@@ -566,6 +593,36 @@ mod tests {
                 ..
             }) if t == "thumbv7em-none-eabihf"
         ));
+    }
+
+    #[test]
+    /// Shorthand QEMU names must spawn the example firmware, not a
+    /// workspace-root `cargo run`.
+    ///
+    /// # Verification
+    /// Trace: ets-host#FR-9
+    /// Method: Requirements-based test
+    fn test_qemu_shorthand_uses_example_crate() {
+        let target = Target::parse(
+            &["tui".to_string(), "qemu".to_string(), "risc-v".to_string()],
+            "arm",
+            "/dev/ttyACM0",
+        )
+        .unwrap()
+        .unwrap();
+        if let Target::Subprocess(sub) = target {
+            assert!(
+                sub.path.contains("examples/qemu"),
+                "path = {}, expected examples/qemu",
+                sub.path
+            );
+            assert_eq!(
+                sub.bin.as_deref(),
+                Some("control-rs-qemu-riscv32imac-unknown-none-elf")
+            );
+        } else {
+            panic!("expected subprocess target");
+        }
     }
 
     #[test]

@@ -32,6 +32,11 @@ struct ReportArgs {
     /// Gate names whose failure is reported but does not block the
     /// pipeline, lowercased, from `--warn`.
     warn_gates: Vec<String>,
+    /// Gate names that must have published a verdict, lowercased, from
+    /// `--require`. A required gate with no artifact is a fail, not a skip
+    /// (FR-13): a job that died before its upload step cannot be mistaken
+    /// for one that passed.
+    required_gates: Vec<String>,
 }
 
 /// One `[gates]` entry of `gates-report.json`, written by the workflow job
@@ -92,6 +97,7 @@ impl Default for ReportArgs {
             out_dir: PathBuf::from("."),
             title: "control-rs".to_string(),
             warn_gates: Vec::new(),
+            required_gates: Vec::new(),
         }
     }
 }
@@ -104,8 +110,17 @@ fn print_help() {
           --out-dir <DIR>        Directory to write ci-report.md [default: .]\n  \
           --title <TITLE>        Report title [default: control-rs]\n  \
           --warn <LIST>          Comma-separated gates reported but not gating\n  \
+          --require <LIST>       Comma-separated gates that must publish a verdict\n  \
           -h, --help             Print help"
     );
+}
+
+/// Splits a comma-separated gate list into lowercased, non-empty names.
+fn split_gate_list(raw: &str) -> impl Iterator<Item = String> + '_ {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_ascii_lowercase)
 }
 
 fn handle_flag(
@@ -128,12 +143,12 @@ fn handle_flag(
         }
         "--warn" => {
             if let Some(val) = iter.next() {
-                args.warn_gates.extend(
-                    val.split(',')
-                        .map(str::trim)
-                        .filter(|name| !name.is_empty())
-                        .map(str::to_ascii_lowercase),
-                );
+                args.warn_gates.extend(split_gate_list(&val));
+            }
+        }
+        "--require" => {
+            if let Some(val) = iter.next() {
+                args.required_gates.extend(split_gate_list(&val));
             }
         }
         "--" => {}
@@ -202,14 +217,13 @@ fn load_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
 }
 
 /// Maps a published verdict string onto a [`GateVerdict`]. An unrecognized
-/// value is `Skip`: the job said something the aggregator cannot read, which
+/// value is `Fail`: the job said something the aggregator cannot read, which
 /// is not evidence of a pass.
 fn parse_verdict(raw: &str) -> GateVerdict {
     match raw.trim().to_ascii_lowercase().as_str() {
         "pass" | "ok" | "success" => GateVerdict::Pass,
-        "fail" | "failed" => GateVerdict::Fail,
         "warn" => GateVerdict::Warn,
-        _ => GateVerdict::Skip,
+        _ => GateVerdict::Fail,
     }
 }
 
@@ -308,9 +322,6 @@ fn load_artifacts(artifacts_dir: &Path) -> LoadedArtifacts {
 
 fn create_ci_options(data: &LoadedArtifacts, ets_empty: bool) -> CiOptions {
     let mut skip = CiSkip::default();
-    if !data.tarp_exists {
-        skip.set(CiSkip::COV);
-    }
     if data.trace_summary.is_none() {
         skip.set(CiSkip::TRACE);
     }
@@ -395,7 +406,41 @@ fn blocking_failures(
     if ets_failed && !is_warned(args, "ets") {
         failed.push("ets".to_string());
     }
+    if coverage_verdict(data).is_fail() && !is_warned(args, "coverage") {
+        failed.push("coverage".to_string());
+    }
+    for name in &args.required_gates {
+        if !is_warned(args, name)
+            && !published_verdict(data, name)
+            && !failed.iter().any(|already| already == name)
+        {
+            failed.push(name.clone());
+        }
+    }
     failed
+}
+
+/// True when `name` published a verdict this run. A required gate that did
+/// not is a fail, not a skip (FR-13).
+fn published_verdict(data: &LoadedArtifacts, name: &str) -> bool {
+    match name {
+        "coverage" => data.tarp_exists,
+        "trace" => data.trace_summary.is_some(),
+        "validate" => data.cross_val_summary.is_some(),
+        "ets" => !data.ets_tests.is_empty(),
+        other => {
+            data.standard_gates.contains_key(other)
+                || data.host_tools.iter().any(|tool| tool.tool == other)
+        }
+    }
+}
+
+const fn coverage_verdict(data: &LoadedArtifacts) -> GateVerdict {
+    if data.tarp_exists {
+        GateVerdict::Pass
+    } else {
+        GateVerdict::Fail
+    }
 }
 
 fn build_ci_report(
@@ -465,11 +510,7 @@ fn aggregator_params<'a>(
         test_cmd: standard_gate(data, "test").verdict,
         test_cmd_output: "",
         test_cmd_time: standard_gate(data, "test").seconds,
-        coverage: if data.tarp_exists {
-            GateVerdict::Pass
-        } else {
-            GateVerdict::Skip
-        },
+        coverage: coverage_verdict(data),
         tarp_summary: &data.tarp_summary,
         tarp_output: "",
         test_time: 0.0,
@@ -624,7 +665,7 @@ mod tests {
             host_tools: Vec::new(),
         };
         let options = create_ci_options(&data, true);
-        assert!(options.skip.contains(CiSkip::COV));
+        assert!(!options.skip.contains(CiSkip::COV));
         assert!(options.skip.contains(CiSkip::TRACE));
         assert!(options.skip.contains(CiSkip::EXAMPLES));
         assert!(options.skip.contains(CiSkip::ETS));
@@ -659,7 +700,7 @@ mod tests {
             "--title".to_string(),
             "test-title".to_string(),
         ]);
-        assert_eq!(code, 0);
+        assert_eq!(code, 1);
         assert!(temp_dir.join("ci-report.md").exists());
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -685,11 +726,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_verdict_unknown_is_skip() {
+    fn test_parse_verdict_unknown_is_fail() {
         assert_eq!(parse_verdict("pass"), GateVerdict::Pass);
         assert_eq!(parse_verdict(" FAIL "), GateVerdict::Fail);
         assert_eq!(parse_verdict("warn"), GateVerdict::Warn);
-        assert_eq!(parse_verdict("nonsense"), GateVerdict::Skip);
+        assert_eq!(parse_verdict("nonsense"), GateVerdict::Fail);
     }
 
     #[test]
@@ -739,6 +780,14 @@ mod tests {
     #[test]
     fn test_blocking_failures_reports_failed_standard_gate() {
         let mut data = empty_artifacts();
+        data.tarp_exists = true;
+        data.standard_gates.insert(
+            "coverage".to_string(),
+            StandardGate {
+                verdict: GateVerdict::Pass,
+                seconds: 1.0,
+            },
+        );
         data.standard_gates.insert(
             "clippy".to_string(),
             StandardGate {
@@ -750,6 +799,74 @@ mod tests {
         let failures =
             blocking_failures(&ReportArgs::default(), &data, &verdicts);
         assert_eq!(failures, vec!["clippy".to_string()]);
+    }
+
+    #[test]
+    /// A required gate that published no verdict blocks, so a job that died
+    /// before its upload step cannot be mistaken for a passing one.
+    ///
+    /// # Verification
+    /// Trace: ci-design#FR-13
+    /// Method: Requirements-based test
+    fn test_blocking_failures_required_gate_without_artifact_is_fail() {
+        let mut data = empty_artifacts();
+        data.tarp_exists = true;
+        let verdicts = derive_verdicts(&data);
+        let args = ReportArgs {
+            required_gates: vec![
+                "deny".to_string(),
+                "audit".to_string(),
+                "ets".to_string(),
+            ],
+            ..ReportArgs::default()
+        };
+        let failures = blocking_failures(&args, &data, &verdicts);
+        for name in ["deny", "audit", "ets"] {
+            assert!(
+                failures.iter().any(|failed| failed == name),
+                "{name} published no verdict and must block, got {failures:?}"
+            );
+        }
+    }
+
+    #[test]
+    /// An enabled ETS matrix that produced zero cases publishes an empty
+    /// result set, which is not a pass.
+    ///
+    /// # Verification
+    /// Trace: ci-design#FR-5
+    /// Method: Requirements-based test
+    fn test_blocking_failures_empty_ets_is_fail() {
+        let mut data = empty_artifacts();
+        data.tarp_exists = true;
+        data.ets_tests = Vec::new();
+        let verdicts = derive_verdicts(&data);
+        let args = ReportArgs {
+            required_gates: vec!["ets".to_string()],
+            ..ReportArgs::default()
+        };
+        let failures = blocking_failures(&args, &data, &verdicts);
+        assert!(
+            failures.iter().any(|failed| failed == "ets"),
+            "an empty ETS result set must block, got {failures:?}"
+        );
+    }
+
+    #[test]
+    /// Missing coverage is a fail-closed hole, not a skip.
+    ///
+    /// # Verification
+    /// Trace: ci-design#FR-13
+    /// Method: Requirements-based test
+    fn test_blocking_failures_missing_coverage_is_fail() {
+        let data = empty_artifacts();
+        let verdicts = derive_verdicts(&data);
+        let failures =
+            blocking_failures(&ReportArgs::default(), &data, &verdicts);
+        assert!(
+            failures.iter().any(|name| name == "coverage"),
+            "missing tarpaulin artifact must block, got {failures:?}"
+        );
     }
 
     #[test]
@@ -767,13 +884,21 @@ mod tests {
             ..TraceMatrixSummary::default()
         });
         let verdicts = derive_verdicts(&data);
-        let args = args_with_warns(&["trace", "clippy"]);
+        let args = args_with_warns(&["trace", "clippy", "coverage"]);
         assert!(blocking_failures(&args, &data, &verdicts).is_empty());
     }
 
     #[test]
     fn test_blocking_failures_reports_failed_trace() {
         let mut data = empty_artifacts();
+        data.tarp_exists = true;
+        data.standard_gates.insert(
+            "coverage".to_string(),
+            StandardGate {
+                verdict: GateVerdict::Pass,
+                seconds: 1.0,
+            },
+        );
         data.trace_summary = Some(TraceMatrixSummary {
             approved_missing_count: 12,
             ..TraceMatrixSummary::default()

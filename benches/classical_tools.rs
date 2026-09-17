@@ -68,7 +68,10 @@ fn compensators(c: &mut Criterion) {
 
     let mut pid = Pid::new(1.0, 0.1, 0.01, 0.002, -12.0, 12.0, 1.0);
     group.bench_function("pid_step", |b| {
-        b.iter(|| pid.step(black_box(1.0), black_box(0.0), black_box(5e-4)));
+        b.iter(|| {
+            pid.step(black_box(1.0), black_box(0.0), black_box(5e-4))
+                .expect("positive dt")
+        });
     });
 
     group.finish();

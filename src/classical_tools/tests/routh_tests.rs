@@ -15,13 +15,20 @@ pub mod routh_test_suite {
     /// `1e-6` guard band absorbs the root solver's own floating-point noise
     /// for roots that sit exactly on the axis (e.g. `+/- j`, which the
     /// solver returns with a real part around `1e-16`, not exactly `0.0`).
+    ///
+    /// The iterate is taken whether or not the solver met its step bound: a
+    /// repeated root converges only linearly and stalls well above that
+    /// bound while sitting far inside the same guard band, so requiring
+    /// convergence here would cost the oracle every multiple-root case.
     fn oracle_rhp_count<const N: usize>(poly: &ArrayPolynomial<f64, N>) -> usize
     where
         Const<N>: Dim,
     {
-        poly.roots()
+        poly.roots_best_effort()
             .unwrap()
+            .0
             .iter()
+            .take(N.saturating_sub(1))
             .filter(|root| root.re > 1e-6)
             .count()
     }
@@ -89,6 +96,28 @@ pub mod routh_test_suite {
             3.0, 2.0, 2.0, 1.0, 1.0,
         ]);
         assert_eq!(stability(&poly, EPSILON), Ok(oracle_rhp_count(&poly)));
+    }
+
+    #[cfg_attr(test, test)]
+    /// Regression: the epsilon substituted for a vanishing first-column
+    /// divisor must be the value the first column carries, not the zero it
+    /// replaced. `count_sign_changes` skips exact zeros, so recording the
+    /// pre-substitution zero loses both sign changes whenever the entries
+    /// bracketing it share a sign, undercounting the RHP roots by two.
+    ///
+    /// # Verification
+    /// Trace: classical-tools#FR-14
+    /// Method: Requirements-based test
+    fn test_first_column_zero_between_negative_entries() {
+        // s^4 - s^3 - 1. Roots: 1.380278, 0.219447 +/- 0.914474j and
+        // -0.819173, so three lie in the open RHP and none on the axis.
+        // The Routh first column is [1, -1, 0, -1e9, -1]; the recorded 0 is
+        // the epsilon-substituted divisor and carries a positive sign.
+        let poly = ArrayPolynomial::<f64, 5>::from_coefficients([
+            -1.0, 0.0, 0.0, -1.0, 1.0,
+        ]);
+        assert_eq!(stability(&poly, EPSILON), Ok(oracle_rhp_count(&poly)));
+        assert_eq!(stability(&poly, EPSILON), Ok(3));
     }
 
     #[cfg_attr(test, test)]

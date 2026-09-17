@@ -105,11 +105,16 @@ where
             // at power `p = (N - 1) - (i - 2) = N + 1 - i`.
             prev1 =
                 resolve_row_of_zeros::<T, N>(&prev2, N + 1 - i, m, epsilon)?;
+            first_col[i - 1] = prev1[0];
         }
         if prev1[0].abs() <= epsilon {
             // First-column zero: substitute a small epsilon so the divisor
-            // below never vanishes.
+            // below never vanishes. The substitute is also what the first
+            // column carries: `count_sign_changes` skips exact zeros, so
+            // recording the replaced zero drops both sign changes whenever
+            // the entries bracketing it share a sign.
             prev1[0] = epsilon;
+            first_col[i - 1] = epsilon;
         }
 
         let row = next_row::<T, N>(&prev1, &prev2, m);

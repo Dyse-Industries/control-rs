@@ -108,6 +108,16 @@ checks workspace packaging and dependency ordering before registry upload.
   as the standalone binary `compare` emitting `cross-val-report.json` and
   `cross-val-report.md`.
 
+- **FR-13 — Fail-closed aggregation**: A fail-closed gate whose artifact is
+  missing, unpublished, or recorded as fail must fail the aggregate report and
+  must not unlock the release gate. Presence of a coverage file is not a pass.
+  An unrecognized verdict string is a fail, not a skip. A job that did not run
+  cannot be mistaken for a passing one.
+
+- **FR-14 — Declared library toolchain**: The oldest pull-request toolchain row
+  is the workspace `rust-version` of the published crates. Tooling that needs a
+  newer compiler is excluded on that row; the row itself is not deleted.
+
 #### 2.2. Non-Functional Requirements
 
 - **NFR-1 — Test isolation**: Each target run begins from a clean device state.
@@ -142,6 +152,10 @@ checks workspace packaging and dependency ordering before registry upload.
   declared on the true-oracle dataset as HDF5 attributes (`measure`, `bound`,
   optional `interval`, optional `bound.<peer>`). Design-document §6.3 tables
   remain human documentation. The gate does not load `tolerances/*.toml`.
+
+- **C-6 — Advisory and fail-closed jobs agree**: A job marked `continue-on-error`
+  is on the aggregator's warn list. A fail-closed gate is not `continue-on-error`.
+  The two lists naming the same gate differently is a configuration error.
 
 ---
 
@@ -269,13 +283,19 @@ Options:
       --out-dir <DIR>        Output directory for ci-report.md [default: .]
       --title <TITLE>        Report title [default: control-rs]
       --warn <LIST>          Comma-separated gates reported but not gating
+      --require <LIST>       Comma-separated gates that must publish a verdict
   -h, --help                 Print help
 ```
 
 The aggregator exits non-zero when a downloaded verdict failed and its gate is
 not on the `--warn` list, so the aggregate job is the single gate the publish
-job depends on. A gate with no downloaded artifact is `Skipped` and never
-contributes a pass.
+job depends on. A warn-listed gate with no artifact is `Skipped`. A gate named
+in `--require` that published no verdict, an unpublished coverage file, an
+empty ETS result set, or an unrecognized verdict string is `Fail` (FR-13).
+Presence of `tarpaulin-report.json` is not a pass: the aggregator reads the
+coverage job's recorded verdict, or fails closed if that verdict is absent.
+`--require` is what makes the rule reach a job that died before its upload
+step, since such a job leaves no artifact to read a verdict from.
 
 ##### 4.2.5. `control-rs-ci` (`cargo ci`)
 ```text
@@ -285,7 +305,9 @@ Subcommands:
   ci       Run the quality gates (default)
   ets      Run the ETS target matrix
   validate Run host validation suites
-  publish  Report or perform release publication (FR-9)
+  publish  Report or perform release publication (FR-9); until this
+           subcommand lands, the GitHub tag job runs `cargo package-check`
+           and must still wait on every fail-closed job (FR-13)
 
 Options:
   -t, --target <TRIPLE>      Filter ETS targets to this triple
@@ -575,6 +597,8 @@ degrades to a named error rather than a crash.
 | Inspection | Report size against the job-summary cap |
 | Requirements-based test | `#[test]` over the topological sort and the blocked-member rule on synthetic manifest graphs |
 | Requirements-based test | `#[test]` over config parsing, defaults and precedence against explicit flags |
+| Requirements-based test | Fixture artifacts: missing coverage file, coverage file without a fail-closed verdict, unrecognized verdict string, empty host-tool directory, empty ETS results |
+| Inspection | Oldest matrix toolchain equals workspace `rust-version`; Validation CI runs on version tags |
 | Inspection | A release run without `--execute` observed to make no registry write |
 | Coverage measurement | `cargo coverage` |
 
@@ -605,6 +629,12 @@ the serial path, which requires a device.
 | Blocked member detected | A member depending on a `publish = false` member | Reported state | Blocked, not attempted, exit non-zero |
 | Report-only default | A release run without `--execute` | Registry writes | 0 |
 | Matrix agreement | `control-rs-xtask` on the same targets | Per-case state | Exact match |
+| Missing fail-closed artifact | Empty artifacts directory with `coverage = fail` | Aggregator exit | Non-zero; coverage rendered Fail, not Skip |
+| Coverage file is not a pass | `tarpaulin-report.json` present, no recorded coverage verdict | Aggregator exit | Non-zero |
+| Unrecognized verdict | `gates-report.json` with a non-pass/fail/skip string | Aggregator exit | Non-zero |
+| Empty ETS written | Enabled ETS matrix that produced zero cases | Aggregator exit | Non-zero (FR-5) |
+| Oldest toolchain | Workspace `rust-version` vs CI matrix | Exact equality | The oldest row is that version; hdf5 tooling excluded on it |
+| Release waits on oracles | Version tag `v*` | Validation workflow | Runs on the tag. `needs` cannot name a job in another workflow, so ordering against `publish` is a branch-protection required check, not a workflow edge |
 
 Cycle, duration and stack figures carry no bound here. Under C-2 they are
 indicative on Tier 1, and their accuracy is established by
@@ -672,6 +702,9 @@ indicative on Tier 1, and their accuracy is established by
 | **Phase 5: Release gating** | Implement `publish`: manifest-graph ordering, per-member packaging and metadata checks, report-only default, `--execute` upload with index waits. | 4 |
 | **Phase 6: Workspace config** | Implement `--config`, so the target matrix lives in the gated workspace rather than in an alias and a workflow. | 2 |
 | **Phase 7: Static analysis** | Land `control-rs-analyze` per `static-analyzer-design.md` only after that design is Approved. | 4 |
+| **Phase 8: Fail-closed aggregation (FR-13)** | Repair: coverage and other fail-closed gates fail the aggregator when the artifact is missing or the job failed; include them in publish `needs`; always write ETS JSON; unknown verdict → Fail; host-tool catch-all is not success. Tests: the 6.2 fixture rows. | 3 |
+| **Phase 9: Toolchain and release surface (FR-9, FR-14, C-6)** | Repair: restore the MSRV matrix row or bump `rust-version`; run Validation CI on `v*` tags; align `continue-on-error` with `--warn`; implement `publish` or drop it from the CLI table in favour of `package-check`. Tests: oldest-toolchain inspection; tag-path inspection. | 3 |
+| **Phase 10: Tracer rewrite (FR-10)** | Repair: parse design-template rev 1.4; then restore `trace = fail` and drop `continue-on-error` / `--warn trace`. Include `documentation/**` in path filters that run `trace`. | 4 |
 
 ---
 
@@ -702,6 +735,8 @@ indicative on Tier 1, and their accuracy is established by
 | 1.20 | September 15, 2026 | @MitchellDScott | Host numerics live in the `control-rs-validation` workspace member; `cargo trace --json` is accepted; static analysis remains deferred. |
 | 1.21 | September 15, 2026 | @MitchellDScott | Removed deferred FR-12 from §2; static analysis is §8/§9 until that design is in scope. |
 | 1.22 | September 16, 2026 | @MitchellDScott | Shipped-surface pass: 4.1 binary table, 4.2.1/4.2.2/4.2.4 flags; static analysis has no CLI (4.2.3); artifact protocol gains `gates-report.json` and drops `analyze-report.json`; traceability is report-only and the aggregator gates. |
+| 1.23 | September 16, 2026 | @MitchellDScott | FR-13 fail-closed aggregation, FR-14 declared library toolchain, C-6 advisory/fail-closed agreement; 4.2.4 missing fail-closed artifact is Fail; §6.2 fixture rows; §9 Phases 8–10. |
+| 1.24 | September 16, 2026 | @MitchellDScott | FR-13 discharged by `--require`: a named gate with no published verdict and an empty ETS result set both fail; `publish` names every fail-closed job; the release-ordering row states the branch-protection mechanism rather than a workflow edge. |
 
 ---
 

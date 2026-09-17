@@ -51,8 +51,13 @@ Pedagogical `examples/` targets are outside this contract.
   `manifest_path` select `cargo run --release --bin <bin>` in that crate. Cargo
   is not listed in `commands`.
 - **FR-3 — Fail-closed cross-validation**: Shape mismatches, missing true-oracle
-  file, unequal path sets, missing dataset attributes, and tolerance breaches
-  are errors. Zero comparison records fails closed.
+  file, a peer signal absent from the true oracle, missing dataset attributes,
+  unrecognized `measure` strings, and tolerance breaches are errors. Zero
+  comparison records fails closed. An unknown measure is not evaluated as
+  absolute error. A peer that covers a subset of the true oracle's signals is
+  compared on the intersection; naming the uncovered signals in the report is
+  open work (§9 Phase 6).
+
 - **FR-4 — One file per variant**: Each variant is a standalone HDF5 file at
   `results/<name>.<variant>.h5`. Datasets sit at `/<signal_path>`. `/_meta` is
   reserved and excluded from pairing. The suite `name` and `variant` contain no
@@ -66,7 +71,17 @@ Pedagogical `examples/` targets are outside this contract.
 - **FR-7 — Gate-side verdicts from attributes**: The gate reads `measure`,
   `bound`, optional `interval`, optional `bound.<peer>`, and optional
   `independent` from the true-oracle dataset. Peer-file attributes are ignored.
-  Freshness is each globbed file's mtime versus invocation time.
+  Freshness is each globbed file's mtime versus invocation time. Relative
+  measures divide by the true-oracle magnitude, not the peer's.
+- **FR-8 — Independent peer observation**: A peer dataset is a value that peer
+  produced. Copying the true-oracle array onto a gated path so the path sets
+  match is not a comparison. The `independent` attribute records the claim per
+  dataset; detecting an overlay from the gate side is open work (§9 Phase 6),
+  because bitwise equality also holds wherever the two implementations agree
+  exactly, as an exact-arithmetic oracle is expected to.
+- **FR-9 — Bound attachment**: Every bound the suite claims is an attribute on
+  a compared true-oracle dataset. A bound that exists only in a TOML table or
+  under `/_meta` does not gate.
 
 #### 2.2 Non-Functional Requirements
 
@@ -216,6 +231,8 @@ true-oracle dataset fails closed.
 | Shape mismatch | FAIL | named shapes |
 | Non-numeric element (NaN / Inf) | FAIL | named index |
 | Stale mtime | FAIL | predates this run |
+| Unrecognized `measure` | FAIL | named measure |
+| Peer signal absent from the true oracle | FAIL | named path |
 
 ---
 
@@ -245,6 +262,10 @@ true-oracle dataset fails closed.
 - Demonstrate rust-as-oracle and scipy-as-oracle both work.
 - Demonstrate missing attributes and `bound.<peer>` overrides.
 - Demonstrate stale mtime rejection.
+- Demonstrate an unrecognized `measure` fails closed.
+- Demonstrate a peer covering a subset of the true oracle's signals is compared
+  on the intersection.
+- Demonstrate TFLite (or any randomized calibration) is seeded so two runs match.
 
 | Method | Mechanism |
 |:---|:---|
@@ -276,6 +297,10 @@ spawn plot scripts. Plot failure is a warning, not a gate.
 | Attribute bounds | Offset payloads | abs/rel | Flags error above bound |
 | Peer bound override | `bound.<peer>` on true oracle | Named peer | Uses override for that pair |
 | Stale file rejection | mtime older than invocation floor | Freshness | Reports predates this run |
+| Unknown measure | `measure = "residual"` or a typo | Fail-closed | Does not evaluate as `abs` |
+| Peer subset | Peer covering a subset of the true oracle's signals | Gate records | Compared on the intersection; an extra peer signal fails |
+| Relative denominator | Peer magnitude $\gg$ true oracle | `rel` / `rel_l2` | Normalizes by the true-oracle array |
+| Bound attachment | Bound present only under `/_meta` or only in TOML | Gate records | That bound does not appear as a comparison record |
 
 #### 6.3 Limits
 
@@ -311,6 +336,7 @@ validation paths and does not affect target firmware timing.
 | Phase 3: Single-container HDF5 | Shared `results/<subject>.h5` with variant groups. | Retired |
 | Phase 4: Classical examples HDF5 | Buck and DC-motor HDF5 producers. | Shipped |
 | Phase 5: One file per variant | Glob by suite name, true-oracle 1:1, attribute bounds. | Active |
+| Phase 6: Independent peers and fail-closed measures | Repair: stop overlaying true-oracle arrays into flint/harold/numpy/tflite peers; emit ngspice metrics as gated datasets or withdraw those bounds; seed TFLite calibration; unknown `measure` fails; `rel`/`rel_l2` divide by the true oracle; tighten Wilkinson `rel_l2` or switch measure. Tests: the new 6.2 rows; a seeded TFLite conversion that matches on two runs. | Open |
 
 ---
 
@@ -323,6 +349,8 @@ validation paths and does not affect target firmware timing.
 | 1.8 | September 14, 2026 | @MitchellDScott | One HDF5 file per variant; glob by suite name; true-oracle 1:1 path equality; bounds on true-oracle dataset attributes; cargo from `bin` + `manifest_path`; external `commands` only. |
 | 1.9 | September 15, 2026 | @MitchellDScott | Relocate host oracle suites under `validation/`; pedagogical examples are out of contract. |
 | 1.10 | September 15, 2026 | @MitchellDScott | Host oracle suites live in the `control-rs-validation` workspace member; pedagogical examples remain out of contract. |
+| 1.11 | September 16, 2026 | @MitchellDScott | FR-3 unknown measure fails closed; FR-7 relative measures use the true oracle; FR-8 independent peer observation; FR-9 bound attachment; §9 Phase 6. |
+| 1.12 | September 16, 2026 | @MitchellDScott | FR-3 states the peer-subset rule the gate implements; FR-8 records the independence claim and defers gate-side overlay detection, which bitwise equality cannot separate from exact agreement. |
 
 ---
 

@@ -118,4 +118,34 @@ pub mod compensators_test_suite {
             Err(CompensatorError::InvalidAlpha)
         );
     }
+
+    #[cfg_attr(test, test)]
+    /// Lead requires `0 < alpha < 1`. `alpha <= 0` yields Inf/RHP poles.
+    ///
+    /// # Verification
+    /// Trace: classical-tools#FR-11
+    /// Method: Requirements-based test
+    fn test_lead_rejects_non_positive_alpha() {
+        assert_eq!(
+            lead::<f64>(1.0, 1.0, 0.0),
+            Err(CompensatorError::InvalidAlpha)
+        );
+        assert_eq!(
+            lead::<f64>(1.0, 1.0, -0.5),
+            Err(CompensatorError::InvalidAlpha)
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    /// A non-positive time constant is refused so `1/T` is finite.
+    ///
+    /// # Verification
+    /// Trace: classical-tools#FR-11
+    /// Method: Requirements-based test
+    fn test_lead_and_lag_reject_non_positive_time_constant() {
+        assert!(lead::<f64>(1.0, 0.0, 0.5).is_err());
+        assert!(lead::<f64>(1.0, -1.0, 0.5).is_err());
+        assert!(lag::<f64>(1.0, 0.0, 2.0).is_err());
+        assert!(lag::<f64>(1.0, -1.0, 2.0).is_err());
+    }
 }

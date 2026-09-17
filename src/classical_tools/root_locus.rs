@@ -78,7 +78,86 @@ where
         *coeff = den[i] + gain * n_i;
     }
     let poly = ArrayPolynomial::<T, D>::from_coefficients(coeffs);
-    poly.roots().map_err(RootLocusError::RootFinding)
+    let (roots, converged) = poly
+        .roots_best_effort()
+        .map_err(RootLocusError::RootFinding)?;
+    if converged
+        || max_backward_error::<T, D>(&poly, &roots) <= backward_error_bound()
+    {
+        return Ok(roots);
+    }
+    Err(RootLocusError::RootFinding(RootError::ConvergenceFailure))
+}
+
+/// Backward-error bound below which an unconverged Aberth iterate is still
+/// accepted as the closed-loop pole set.
+///
+/// A breakaway makes two closed-loop poles coincide, and simultaneous
+/// iteration converges only linearly on a multiple root, so the step bound
+/// is unreachable there while the iterate itself already satisfies the
+/// characteristic equation. $10^{-10}$ leaves four orders above the f64
+/// backward error of a well-separated sweep and five below the residual
+/// scale of an iterate that has not found the roots at all.
+fn backward_error_bound<T: Float + Copy>() -> T {
+    T::ONE / T::from_usize(10_000_000_000)
+}
+
+/// Largest relative backward error $|P(\hat s)| / \sum_k |c_k| |\hat s|^k$
+/// over `roots`, which is the standard scale-free residual for a computed
+/// polynomial root (Higham, 2002).
+fn max_backward_error<T: Float + Copy, const D: usize>(
+    poly: &ArrayPolynomial<T, D>,
+    roots: &[Complex<T>; D],
+) -> T
+where
+    Const<D>: Dim,
+{
+    let degree = D.saturating_sub(1);
+    let coeffs = poly.to_coefficients();
+    let mut worst = T::ZERO;
+    for root in roots.iter().take(degree) {
+        let residual = poly.evaluate_complex(*root).magnitude();
+        let magnitude = root.magnitude();
+        let mut scale = T::ZERO;
+        let mut coeff_sum = T::ZERO;
+        let mut power = T::ONE;
+        for coeff in &coeffs {
+            scale = scale + coeff.abs() * power;
+            coeff_sum = coeff_sum + coeff.abs();
+            power = power * magnitude;
+        }
+        // A root at the origin of a polynomial with no constant term drives
+        // both residual and scale to zero together, so the ratio is
+        // undefined there. Floor the scale at the polynomial's own
+        // evaluation rounding level.
+        let floor = coeff_sum * T::epsilon();
+        if scale < floor {
+            scale = floor;
+        }
+        if scale <= T::ZERO {
+            continue;
+        }
+        let relative = residual / scale;
+        if relative > worst {
+            worst = relative;
+        }
+    }
+    worst
+}
+
+/// True when the numerator's actual degree exceeds the denominator's.
+fn is_improper<T: Float + Copy, const N: usize, const D: usize>(
+    tf: &ArrayTransferFunction<T, N, D>,
+) -> bool
+where
+    Const<N>: Dim,
+    Const<D>: Dim,
+{
+    slice_degree(tf.num_slice()) > slice_degree(tf.den_slice())
+}
+
+fn slice_degree<T: Float + Copy>(coeffs: &[T]) -> Option<usize> {
+    coeffs.iter().rposition(|&c| c != T::ZERO)
 }
 
 /// Sorts roots deterministically in-place by real part ascending, then imaginary part ascending.
@@ -198,10 +277,22 @@ where
     let dk = k_curr - k_prev;
     let s_total = T::from_usize(num_substeps);
 
+    let mut advanced = false;
+    let mut last_error = None;
     for s in 1..=num_substeps {
         let frac = T::from_usize(s) / s_total;
         let k_sub = k_prev + dk * frac;
-        let sub_roots = solve_closed_loop_roots::<T, N, D>(tf, k_sub)?;
+        // A sub-step that lands on a breakaway is rejected rather than
+        // fatal: the gain is skipped and the next sub-step carries the
+        // branch across. The interval fails only when every sub-step in it
+        // failed, which is a solver failure rather than a coincident pair.
+        let sub_roots = match solve_closed_loop_roots::<T, N, D>(tf, k_sub) {
+            Ok(roots) => roots,
+            Err(e) => {
+                last_error = Some(e);
+                continue;
+            }
+        };
         let mut sub_matched = [Complex::new(T::ZERO, T::ZERO); D];
         match_nearest_neighbors::<T, D>(
             &tracked[..degree],
@@ -209,8 +300,15 @@ where
             &mut sub_matched,
         );
         tracked[..degree].copy_from_slice(&sub_matched[..degree]);
+        advanced = true;
     }
-    Ok(())
+    if advanced {
+        Ok(())
+    } else {
+        Err(last_error.unwrap_or(RootLocusError::RootFinding(
+            RootError::ConvergenceFailure,
+        )))
+    }
 }
 
 /// Advances tracked poles from `k_prev` to `k_curr` using nearest-neighbor matching,
@@ -237,7 +335,13 @@ where
         return Ok(());
     };
 
-    let candidate = solve_closed_loop_roots::<T, N, D>(tf, k_curr)?;
+    // A candidate gain the solver cannot resolve is not fatal here either:
+    // sub-stepping approaches the same interval on a finer mesh, which is
+    // the rejected-step behaviour an adaptive sweep relies on near a
+    // breakaway.
+    let Ok(candidate) = solve_closed_loop_roots::<T, N, D>(tf, k_curr) else {
+        return substep_advance_poles(tf, (k_prev, k_curr), 16, tracked);
+    };
     let mut matched = [Complex::new(T::ZERO, T::ZERO); D];
     match_nearest_neighbors::<T, D>(
         &tracked[..degree],
@@ -275,7 +379,8 @@ where
 /// separation boundaries.
 ///
 /// # Errors
-/// - [`RootLocusError::ImproperSystem`] if `N > D`.
+/// - [`RootLocusError::ImproperSystem`] if the numerator degree exceeds the
+///   denominator degree.
 /// - [`RootLocusError::BufferSizeMismatch`] if `out.len() != gains.len() * (D - 1)`.
 /// - [`RootLocusError::RootFinding`] if root-finding fails for any gain.
 pub fn sweep<T: Float + Copy, const N: usize, const D: usize>(
@@ -287,7 +392,7 @@ where
     Const<N>: Dim,
     Const<D>: Dim,
 {
-    if N > D {
+    if is_improper(tf) {
         return Err(RootLocusError::ImproperSystem);
     }
     let degree = D.saturating_sub(1);
@@ -328,7 +433,8 @@ where
 /// Returns the number of trajectory points written.
 ///
 /// # Errors
-/// - [`RootLocusError::ImproperSystem`] if `N > D`.
+/// - [`RootLocusError::ImproperSystem`] if the numerator degree exceeds the
+///   denominator degree.
 /// - [`RootLocusError::BufferSizeMismatch`] if `roots_out.len() != gains_out.len() * (D - 1)`.
 /// - [`RootLocusError::InvalidParameter`] if `k_range.0 > k_range.1`, `max_displacement <= T::ZERO`,
 ///   or any parameter is non-finite / NaN.
@@ -345,7 +451,7 @@ where
     Const<N>: Dim,
     Const<D>: Dim,
 {
-    if N > D {
+    if is_improper(tf) {
         return Err(RootLocusError::ImproperSystem);
     }
     let degree = D.saturating_sub(1);

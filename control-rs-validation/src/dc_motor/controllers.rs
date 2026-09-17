@@ -167,7 +167,9 @@ impl MotorController for PidMotorController {
         measurement_rad: f64,
         dt_s: f64,
     ) -> f64 {
-        self.pid.step(setpoint_rad, measurement_rad, dt_s)
+        self.pid
+            .step(setpoint_rad, measurement_rad, dt_s)
+            .expect("sample period is positive")
     }
 
     fn name(&self) -> &'static str {

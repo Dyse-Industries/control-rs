@@ -486,7 +486,7 @@ reproduce that value.
 | **Step 1: Core Serialization & Framing** — *Shipped* | Postcard schemas, sync-header framing/deframing and CRC-16 verification, implemented in `control-rs-ets/src/comms.rs`.                     | Complete         |
 | **Step 2: Target Trait & Drivers**                   | Implement the `HostComms` trait on the target, writing drivers for Embassy UART DMA and SEGGER RTT buffers.                                | 2 weeks          |
 | **Step 3: Target Crash Handlers**                    | Integrate `panic-probe` and `panic-persist` handlers to write backtrace logs to active buffers and persistent RAM regions.                 | 1 week           |
-| **Step 4: TargetInfo Wire Dispatch**                 | Implement `Telemetry::TargetInfo` dispatch carrying `PROTOCOL_VERSION`, board ID, core clock frequency, and FPU flags.                   | 1 week           |
+| **Step 4: TargetInfo Wire Dispatch**                 | Repair (outstanding): implement `Telemetry::TargetInfo` carrying `PROTOCOL_VERSION`, board ID, core clock frequency, and FPU flags. Blocks host FR-8 and TUI FR-1 until landed. Tests: host 6.2 protocol-mismatch row; golden vector for the new variant. | 1 week           |
 | **Step 5: Target Hardware Integration**              | Verify framed transmission and crash capture across Teensy 4.1 hardware and QEMU ARM Cortex-M emulation.                                   | 2 weeks          |
 
 ---
@@ -502,6 +502,7 @@ reproduce that value.
 | 1.4      | September 9, 2026 | @MitchellDScott | Project split: relocated to `documentation/ets/host-comm-design.md` from the retired xtask project. |
 | 1.5      | September 9, 2026 | @MitchellDScott | Wire contract: added FR-4 and `PROTOCOL_VERSION` with append-only variants and golden byte vectors; cited the postcard encoding rules; §6 restructured per `vv-standards.md`. |
 | 1.6      | September 9, 2026 | @MitchellDScott | Hardening pass: narrowed scope to target trait/drivers, demoted badge to Draft, added FR-5 and Telemetry::TargetInfo, deduplicated NFR-2/C-1, deferred defmt and watchdog to §6.7, and updated §9. |
+| 1.7      | September 16, 2026 | @MitchellDScott | Step 4 marked outstanding repair: `TargetInfo` / `PROTOCOL_VERSION` still absent on the wire; blocks host FR-8 and TUI FR-1. |
 
 ---
 

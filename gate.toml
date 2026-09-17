@@ -39,5 +39,5 @@ coverage = "fail"
 # `design-template.md` rev 1.4 and the tracer still parses the retired
 # 6.4/6.7 layout, so every requirement reports Missing. The rewrite is
 # scheduled work; see `documentation/vv/requirement-traceability-design.md`
-# and `documentation/TODO/ci-workflow-hygiene.md`.
+# and `documentation/ci/ci-design.md` §9 Phase 10.
 trace = "warn"

@@ -316,6 +316,7 @@ This table defines the write-time tolerance keys for `numerical_models` validati
 | **Phase 4: In-Process Suite Orchestrator** | Construct central `src/main.rs` executing all validators in-process with summary envelope emission. | 1.5 Days |
 | **Phase 5: Automated Verification** | Enforce 100% statement coverage of gate logic and verify error-bound handling. | 2.0 Days |
 | **Phase 6: Pedagogical Examples & Host Benches** | Cargo examples `examples/<model>.rs` and criterion bench `benches/numerical_models.rs` on the root package. Examples print narrative plus numeric results with no oracle/HDF5 gate. Benches measure kernel latency. Validation moves to the `control-rs-validation` workspace member and drops its timing and example-mirroring payloads. | 2.0 Days |
+| **Phase 7: Public prelude** | Repair: export the plant prelude from the library crate so its doctest compiles, or delete the orphan module. Test: `cargo test --doc` on that prelude. | 0.5 Days |
 
 ---
 
@@ -335,6 +336,7 @@ This table defines the write-time tolerance keys for `numerical_models` validati
 | 1.25     | September 15, 2026 | @MitchellDScott | Split the numerical-model host surfaces into the standard cargo layout: pedagogical demos became `examples/*.rs` on the root package, timing moved to the criterion benches in `benches/`, and validation became the `control-rs-validation` workspace member. Validator payloads were rebuilt around ill-conditioned kernels (Hilbert $n=10$, monomial Vandermonde, graded Cholesky, QR orthogonality loss, Wilkinson, a 16-fold root, $5 \times 10^{3}$ stiffness) and no longer restate the examples or record timing. 6.3 regenerated from `tolerances/numerical_models.toml`. |
 | 1.26     | September 15, 2026 | @MitchellDScott | FR-1 named from the gate need; FR-4 timing withdrawn (FR-6 owns benches). |
 | 1.27     | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: dropped the §9 pointer; `design-template.md` §6 is the V&V contract. |
+| 1.28     | September 16, 2026 | @MitchellDScott | §9 Phase 7: export or delete the orphan plant prelude; doctest is the test. |
 
 ---
 

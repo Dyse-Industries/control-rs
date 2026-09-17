@@ -13,21 +13,25 @@ use crate::math::num_traits::Float;
 /// Transient performance metrics extracted from a step response trajectory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StepInfo<T> {
-    /// 10% to 90% rise time in seconds.
-    pub rise_time: T,
+    /// 10% to 90% rise time in seconds. `None` if the trajectory never
+    /// crosses both thresholds.
+    pub rise_time: Option<T>,
     /// Peak overshoot percentage relative to target step magnitude:
     /// $$M_p = \frac{y_{\mathrm{peak}} - y_{\mathrm{target}}}{y_{\mathrm{target}} - y_{\mathrm{initial}}} \times 100\%$$
     pub peak_overshoot_pct: T,
     /// Peak response value.
     pub peak_value: T,
-    /// Timestamp corresponding to peak value.
-    pub peak_time: T,
+    /// Timestamp corresponding to peak value. `None` if no post-step sample
+    /// exists from which a peak can be taken.
+    pub peak_time: Option<T>,
     /// Settling time within the specified tolerance band of the target setpoint.
     /// Returns `None` if the response does not settle within the target band
     /// (e.g. Type-0 steady-state offset larger than the settling tolerance).
     pub settling_time: Option<T>,
-    /// Settling time within the specified tolerance band of the achieved steady-state value.
-    pub settling_time_achieved: T,
+    /// Settling time within the specified tolerance band of the achieved
+    /// steady-state value. `None` when no post-step sample exists, so the
+    /// band the response settles into is not defined by the trajectory.
+    pub settling_time_achieved: Option<T>,
     /// Absolute steady-state error $|y_{\mathrm{final}} - y_{\mathrm{target}}|$.
     pub steady_state_error: T,
     /// Achieved steady-state value $y_{\mathrm{final}}$.
@@ -72,12 +76,12 @@ pub fn step_info<T: Float + Copy + PartialOrd>(
     let epsilon = T::from_usize(1) / T::from_usize(1_000_000_000);
     if n == 0 || step_mag.abs() < epsilon {
         return StepInfo {
-            rise_time: zero,
+            rise_time: None,
             peak_overshoot_pct: zero,
             peak_value: initial_val,
-            peak_time: step_time,
+            peak_time: None,
             settling_time: None,
-            settling_time_achieved: zero,
+            settling_time_achieved: None,
             steady_state_error: zero,
             steady_state_value: initial_val,
         };
@@ -138,8 +142,8 @@ pub fn step_info<T: Float + Copy + PartialOrd>(
     }
 
     let rise_time = match (t_10, t_90) {
-        (Some(t1), Some(t2)) if t2 >= t1 => t2 - t1,
-        _ => zero,
+        (Some(t1), Some(t2)) if t2 >= t1 => Some(t2 - t1),
+        _ => None,
     };
 
     let overshoot_pct = if step_mag > zero && peak_val > target_val {
@@ -191,9 +195,9 @@ pub fn step_info<T: Float + Copy + PartialOrd>(
         rise_time,
         peak_overshoot_pct: overshoot_pct,
         peak_value: peak_val,
-        peak_time: peak_t,
+        peak_time: Some(peak_t),
         settling_time,
-        settling_time_achieved,
+        settling_time_achieved: Some(settling_time_achieved),
         steady_state_error: sse,
         steady_state_value: final_val,
     }

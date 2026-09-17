@@ -297,6 +297,10 @@ fn run_cargo(label: &str, argv: &[&str], envs: EnvPairs<'_>) -> (bool, String) {
     }
 }
 
+fn labeled_host(gate: Gate, (ok, output): (bool, String)) -> HostToolOutcome {
+    (ok, output, gate.command_label().to_string())
+}
+
 /// Dispatch host-tool execution.
 fn run_host_tool(gate: Gate, ctx: &PipelineCtx<'_>) -> HostToolOutcome {
     match gate {
@@ -314,35 +318,32 @@ fn run_host_tool(gate: Gate, ctx: &PipelineCtx<'_>) -> HostToolOutcome {
                 ),
             }
         }
-        Gate::Miri => {
-            let (ok, output) = gates::run_miri();
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Valgrind => {
-            let (ok, output) = gates::run_valgrind();
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Fuzz => {
-            let (ok, output) =
-                gates::run_fuzz(ctx.workspace_dir, ctx.timeout_secs);
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Lockbud => {
-            let (ok, output) = gates::run_lockbud();
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Deny => {
-            let (ok, output) = gates::run_deny();
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Audit => {
-            let (ok, output) = gates::run_audit();
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Kani => {
-            let (ok, output) = gates::run_kani();
-            (ok, output, gate.command_label().to_string())
-        }
-        _ => (true, String::new(), String::new()),
+        Gate::Miri => labeled_host(gate, gates::run_miri()),
+        Gate::Valgrind => labeled_host(gate, gates::run_valgrind()),
+        Gate::Fuzz => labeled_host(
+            gate,
+            gates::run_fuzz(ctx.workspace_dir, ctx.timeout_secs),
+        ),
+        Gate::Lockbud => labeled_host(gate, gates::run_lockbud()),
+        Gate::Deny => labeled_host(gate, gates::run_deny()),
+        Gate::Audit => labeled_host(gate, gates::run_audit()),
+        Gate::Kani => labeled_host(gate, gates::run_kani()),
+        Gate::Clean
+        | Gate::Fmt
+        | Gate::Clippy
+        | Gate::Check
+        | Gate::Build
+        | Gate::Test
+        | Gate::Coverage
+        | Gate::Trace
+        | Gate::Ets
+        | Gate::Validate => (
+            false,
+            String::new(),
+            format!(
+                "host-tool dispatch received non-host gate {}",
+                gate.command_label()
+            ),
+        ),
     }
 }

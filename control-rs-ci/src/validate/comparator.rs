@@ -246,20 +246,20 @@ fn compare_peer(
     };
     let peer_paths: BTreeSet<String> =
         peer_ds.iter().map(|d| d.signal.clone()).collect();
-    for missing in oracle.paths.difference(&peer_paths) {
-        cv.push(format!(
-            "signal '{missing}' present in true oracle '{oracle_variant}' missing from '{peer_variant}'"
-        ));
-    }
+    let mut has_extra = false;
     for extra in peer_paths.difference(&oracle.paths) {
+        has_extra = true;
         cv.push(format!(
             "signal '{extra}' present in '{peer_variant}' missing from true oracle '{oracle_variant}'"
         ));
     }
-    if peer_paths != oracle.paths {
+    if has_extra {
         return;
     }
     for ds in &oracle.datasets {
+        if !peer_paths.contains(&ds.signal) {
+            continue;
+        }
         compare_one_dataset(
             cv,
             &DatasetCompare {
@@ -348,7 +348,7 @@ fn eval_rel(eval: &NumericEval<'_>, state: &mut EvalState) {
     for (idx, (&a, &b)) in
         eval.data_a.iter().zip(eval.data_b.iter()).enumerate()
     {
-        let diff = (a - b).abs() / b.abs().max(1e-12);
+        let diff = (a - b).abs() / a.abs().max(1e-12);
         note_diff(state, diff, (a, b), idx);
     }
     state.passed = state.observed <= eval.bound.bound;
@@ -356,12 +356,12 @@ fn eval_rel(eval: &NumericEval<'_>, state: &mut EvalState) {
 
 fn eval_rel_l2(eval: &NumericEval<'_>, state: &mut EvalState) {
     let mut sum_sq_diff = 0.0;
-    let mut sum_sq_b = 0.0;
+    let mut sum_sq_a = 0.0;
     for (&a, &b) in eval.data_a.iter().zip(eval.data_b.iter()) {
         sum_sq_diff += (a - b).powi(2);
-        sum_sq_b += b.powi(2);
+        sum_sq_a += a.powi(2);
     }
-    let denom = sum_sq_b.sqrt().max(1e-12);
+    let denom = sum_sq_a.sqrt().max(1e-12);
     state.observed = sum_sq_diff.sqrt() / denom;
     state.passed = state.observed <= eval.bound.bound;
     if let Some((&a, &b)) = eval.data_a.first().zip(eval.data_b.first()) {
@@ -387,7 +387,11 @@ fn evaluate_numeric_dataset(cv: &mut CrossValidation, eval: &NumericEval<'_>) {
                 return;
             }
         }
-        _ => eval_abs(eval, &mut state),
+        "abs" => eval_abs(eval, &mut state),
+        other => {
+            cv.push(format!("{}: unrecognized measure '{other}'", eval.key));
+            return;
+        }
     }
     record_numeric_result(cv, eval, &state);
 }
@@ -598,7 +602,7 @@ mod tests {
         s.peer_bounds.push(("jax".to_string(), 1.0));
         write_file(&oracle, &[1.0], Some(s));
         write_file(&jax, &[1.5], None);
-        write_file(&rust, &[1.0], None);
+        write_file(&rust, &[1.000_000_000_1], None);
         let (records, result) = compare_h5_files(
             &oracle,
             "scipy",
@@ -677,6 +681,117 @@ mod tests {
             &[("rust".to_string(), peer_bad)],
         );
         assert!(bad.is_err());
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    /// # Verification
+    /// Trace: oracle-harness#FR-3
+    /// Method: Requirements-based test
+    fn test_unknown_measure_fails_closed() {
+        let temp_dir = std::env::temp_dir().join("control_rs_ci_cmp_measure");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let oracle = temp_dir.join("o.h5");
+        let peer = temp_dir.join("p.h5");
+        write_file(&oracle, &[1.0], Some(spec("residual", 1e-3)));
+        write_file(&peer, &[2.0], None);
+        let (_, result) =
+            compare_h5_files(&oracle, "scipy", &[("rust".to_string(), peer)]);
+        assert!(
+            result.is_err(),
+            "unrecognized measure must not evaluate as abs, got {result:?}"
+        );
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    /// Relative measures divide by the true-oracle magnitude, so a huge
+    /// wrong peer cannot shrink the error.
+    ///
+    /// # Verification
+    /// Trace: oracle-harness#FR-7
+    /// Method: Requirements-based test
+    fn test_rel_normalizes_by_true_oracle() {
+        let temp_dir = std::env::temp_dir().join("control_rs_ci_cmp_rel_den");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let oracle = temp_dir.join("o.h5");
+        let peer = temp_dir.join("p.h5");
+        write_file(&oracle, &[1.0], Some(spec("rel", 0.1)));
+        write_file(&peer, &[100.0], None);
+        let (records, result) =
+            compare_h5_files(&oracle, "scipy", &[("rust".to_string(), peer)]);
+        assert!(result.is_err(), "peer 100 vs oracle 1 must fail rel 0.1");
+        let rec = records
+            .iter()
+            .find(|r| r.measure == "rel")
+            .expect("rel record");
+        assert!(
+            (rec.observed - 99.0).abs() < 1e-9,
+            "observed = {}, expected |100-1|/|1| = 99",
+            rec.observed
+        );
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    /// A peer that only produced a subset of the true-oracle paths is still
+    /// compared on the overlap. Padding the peer with oracle arrays is not
+    /// required for the path sets to be usable.
+    ///
+    /// # Verification
+    /// Trace: oracle-harness#FR-8
+    /// Method: Requirements-based test
+    fn test_independent_peer_subset_is_compared() {
+        let temp_dir = std::env::temp_dir().join("control_rs_ci_cmp_subset");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let oracle = temp_dir.join("o.h5");
+        let peer = temp_dir.join("p.h5");
+        let c = H5Container::create(&oracle).unwrap();
+        c.write_dataset_1d("/full", &[1.0, 2.0]).unwrap();
+        c.write_dataset_tolerance("/full", &spec("abs", 1e-5))
+            .unwrap();
+        c.write_dataset_1d("/partial", &[10.0]).unwrap();
+        c.write_dataset_tolerance("/partial", &spec("abs", 1e-5))
+            .unwrap();
+        c.close().unwrap();
+        let p = H5Container::create(&peer).unwrap();
+        p.write_dataset_1d("/partial", &[10.000_000_000_1]).unwrap();
+        p.close().unwrap();
+        let (records, result) =
+            compare_h5_files(&oracle, "numpy", &[("flint".to_string(), peer)]);
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records.first().map(|r| r.key.as_str()), Some("partial"));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    /// # Verification
+    /// Trace: oracle-harness#FR-9
+    /// Method: Requirements-based test
+    fn test_bound_only_in_meta_is_not_compared() {
+        let temp_dir = std::env::temp_dir().join("control_rs_ci_cmp_meta");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let oracle = temp_dir.join("o.h5");
+        let peer = temp_dir.join("p.h5");
+        let c = H5Container::create(&oracle).unwrap();
+        c.write_dataset_1d("/step", &[1.0]).unwrap();
+        c.write_dataset_tolerance("/step", &spec("abs", 1e-5))
+            .unwrap();
+        c.write_dataset_1d("/_meta/spice_bound", &[0.05]).unwrap();
+        c.close().unwrap();
+        write_file(&peer, &[1.000_000_000_1], None);
+        let (records, result) =
+            compare_h5_files(&oracle, "scipy", &[("rust".to_string(), peer)]);
+        assert!(result.is_ok(), "{result:?}");
+        assert!(
+            records.iter().all(|r| !r.key.contains("_meta")),
+            "bounds that live only under /_meta must not appear as comparison records"
+        );
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

@@ -15,7 +15,7 @@ tui = ["run", "--package", "control-rs-tui", "--"]
 
 # On-target ETS infrastructure and target execution aliases
 qemu = ["run", "--package", "control-rs-tui", "--", "--manifest-path", "examples/qemu/Cargo.toml", "--target", "thumbv7em-none-eabihf", "--bin", "control-rs-qemu-thumbv7em-none-eabihf", "--release"]
-teensy = ["run", "--package", "control-rs-tui", "--", "--serial", "--port", "/dev/teensy"]
+teensy = ["run", "--package", "control-rs-tui", "--", "--serial", "--port", "/dev/ttyACM0"]
 
 # CI → virtual ETS (QEMU), CI → ETS (board)
 qemu-ci = ["run", "--package", "control-rs-ci", "--bin", "ci", "--", "--manifest-path", "examples/qemu/Cargo.toml", "--only", "ets"]

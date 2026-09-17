@@ -3,9 +3,11 @@ name: Validation CI
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
     paths:
       - "control-rs-validation/**"
       - "src/**"
+      - "documentation/**"
       - "control-rs-ci/**"
       - "control-rs-ets-host/**"
       - "validate.toml"
@@ -15,6 +17,7 @@ on:
     paths:
       - "control-rs-validation/**"
       - "src/**"
+      - "documentation/**"
       - "control-rs-ci/**"
       - "control-rs-ets-host/**"
       - "validate.toml"

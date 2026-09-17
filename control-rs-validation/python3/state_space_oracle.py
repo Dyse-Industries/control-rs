@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 from scipy import signal
 
-from h5_write import attr_specs_from_toml, overlay_dict, project_dict, write_variant_file
+from h5_write import attr_specs_from_toml, present_paths, write_variant_file
 
 HORIZON = 2000
 PENDULUM_TS = 0.05
@@ -192,9 +192,11 @@ if __name__ == "__main__":
         attr_specs=specs,
     )
     if harold_results:
-        write_variant_file(
-            results / "state_space.harold.h5",
-            overlay_dict(project_dict(scipy_results, GATED), harold_results),
-            gated_paths=GATED,
-            meta=harold_results,
-        )
+        harold_paths = present_paths(harold_results, GATED)
+        if harold_paths:
+            write_variant_file(
+                results / "state_space.harold.h5",
+                harold_results,
+                gated_paths=harold_paths,
+                meta=harold_results,
+            )

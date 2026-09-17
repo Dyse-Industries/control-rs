@@ -130,7 +130,9 @@ fn main() {
     let setpoint = 1.0;
     let measurements = [0.0, 0.02, 0.05, 0.08, 0.12];
     for (step, &y) in measurements.iter().enumerate() {
-        let u = pid.step(setpoint, y, TS);
+        let u = pid
+            .step(setpoint, y, TS)
+            .expect("sample period is positive");
         println!("  k={step}:  θ={y:.2} rad  u={u:.4} V");
     }
 }

@@ -14,7 +14,6 @@ per design document.
 | `design-template.md` | Authoritative design document structure |
 | `doc-standards.md` | Documentation policy for docs and code comments |
 | `development-guide.md` | Workspace architecture, cargo aliases, CI workflows |
-| [`TODO/README.md`](TODO/README.md) | Isolated follow-up tasks (CI hardening, host-surface migration) |
 
 ## Projects
 
@@ -40,8 +39,9 @@ column gives the package each one specifies:
 | `tui/` | `control-rs-tui` | Interactive terminal console (bin) |
 | `ci/` | `control-rs-ci` | Repository quality-gate runner (bin) |
 
-`control-rs-xtask` is deprecated and has no project here. See
-`control-rs-xtask/README.md`.
+`control-rs-xtask` is retired. Its host surfaces were split into
+`control-rs-ets-host`, `control-rs-tui` and `control-rs-ci`; the projects
+above are where their designs now live.
 
 ## Conventions
 

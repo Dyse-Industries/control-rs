@@ -77,7 +77,7 @@ where
         {
             let (wc, resp) = bisect_gain_crossover(tf, prev_omega, omega);
             margins.gain_crossover_freq = Some(wc);
-            margins.phase_margin = Some(T::PI + resp.arg());
+            margins.phase_margin = Some(wrap_to_pi(T::PI + resp.arg()));
         }
 
         if margins.phase_crossover_freq.is_none()
@@ -87,7 +87,10 @@ where
         {
             let (wc, resp) = bisect_phase_crossover(tf, prev_omega, omega);
             margins.phase_crossover_freq = Some(wc);
-            margins.gain_margin = Some(T::ONE / resp.magnitude());
+            let mag = resp.magnitude();
+            if mag > T::ZERO {
+                margins.gain_margin = Some(T::ONE / mag);
+            }
         }
 
         prev_omega = omega;
@@ -108,6 +111,19 @@ where
 /// exactly on zero coming from a nonzero `prev`.
 fn crosses<T: Float + Copy>(prev: T, cur: T) -> bool {
     (prev > T::ZERO && cur <= T::ZERO) || (prev < T::ZERO && cur >= T::ZERO)
+}
+
+/// Wraps `x` onto $(-\pi, \pi]$ so $\pi + \mathrm{atan2}(\cdot)$ is a phase
+/// margin rather than a principal-sum near $2\pi$.
+fn wrap_to_pi<T: Float + Copy>(mut x: T) -> T {
+    let two_pi = T::PI + T::PI;
+    while x > T::PI {
+        x = x - two_pi;
+    }
+    while x <= -T::PI {
+        x = x + two_pi;
+    }
+    x
 }
 
 /// Ten-step bisection locating where $|G(j\omega)|$ crosses unity gain

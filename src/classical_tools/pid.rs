@@ -21,6 +21,15 @@
 
 use crate::math::num_traits::Float;
 use crate::transfer_function::ArrayTransferFunction;
+use core::fmt;
+
+/// Errors from [`Pid::step`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PidError {
+    /// Sample period `dt` was not strictly positive, or $T_f + dt$ cancelled
+    /// the derivative-filter denominator.
+    InvalidSamplePeriod,
+}
 
 /// A scalar discrete-time PID controller.
 ///
@@ -57,6 +66,16 @@ pub struct Pid<T> {
     /// `true` once [`Pid::step`] has been called at least once, so the first
     /// call does not derivative-kick from an arbitrary zeroed measurement.
     has_run: bool,
+}
+
+impl fmt::Display for PidError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidSamplePeriod => {
+                write!(f, "PID sample period must be strictly positive")
+            }
+        }
+    }
 }
 
 impl<T: Float + Copy> Pid<T> {
@@ -108,7 +127,19 @@ impl<T: Float + Copy> Pid<T> {
     /// conditional (clamping) anti-windup: while the unsaturated candidate
     /// output would exceed the output limits, the integrator leaks toward
     /// zero at rate `gamma` instead of continuing to accumulate.
-    pub fn step(&mut self, setpoint: T, measurement: T, dt: T) -> T {
+    ///
+    /// # Errors
+    /// [`PidError::InvalidSamplePeriod`] if `dt` is not strictly positive or
+    /// $T_f + dt$ is not strictly positive.
+    pub fn step(
+        &mut self,
+        setpoint: T,
+        measurement: T,
+        dt: T,
+    ) -> Result<T, PidError> {
+        if dt <= T::ZERO || self.tf + dt <= T::ZERO {
+            return Err(PidError::InvalidSamplePeriod);
+        }
         let error = setpoint - measurement;
         let delta_measurement = if self.has_run {
             measurement - self.prev_measurement
@@ -133,7 +164,7 @@ impl<T: Float + Copy> Pid<T> {
 
         self.prev_measurement = measurement;
         self.has_run = true;
-        output
+        Ok(output)
     }
 
     /// Continuous-time parallel-form transfer function

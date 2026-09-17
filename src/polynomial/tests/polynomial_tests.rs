@@ -14,6 +14,7 @@ pub mod polynomial_test_suite {
     use crate::polynomial::{
         ArrayPolynomial, DivisionError, QuadraticRootError,
     };
+    use core::cmp::Ordering;
     use core::convert::TryFrom;
 
     /// A flat array converts to coefficients in ascending power order,
@@ -812,34 +813,87 @@ pub mod polynomial_test_suite {
         }
     }
 
-    /// The Aberth iteration is capped at 80 sweeps, so a polynomial it cannot
-    /// resolve must still return rather than spin.
+    /// A high-multiplicity root converges only linearly and does not reach
+    /// the step bound inside the iteration cap. That is reported as
+    /// [`RootError::ConvergenceFailure`], not as a buffer of unconverged
+    /// iterates.
     ///
-    /// A high-multiplicity root converges only linearly and does not reach the
-    /// tolerance inside the budget, which is exactly the case the cap exists
-    /// for. The contract is termination with finite output, not accuracy.
-    ///
-    /// Trace: polynomial-design#NFR-1
+    /// Trace: polynomial-design#FR-10
     /// Method: Requirements-based test
     #[cfg_attr(test, test)]
-    fn test_aberth_terminates_on_a_non_converging_polynomial() {
-        // (x - 1)^5: multiplicity 5, the slowest case for the method.
+    fn test_aberth_reports_convergence_failure() {
+        use crate::polynomial::RootError;
+
         let p = ArrayPolynomial::<f64, 6>::from_roots([1.0; 6]);
-        let roots = p.aberth_roots().unwrap();
+        assert_eq!(p.aberth_roots(), Err(RootError::ConvergenceFailure));
 
-        for root in roots.iter().take(5) {
-            assert!(
-                root.re.is_finite() && root.im.is_finite(),
-                "the iteration budget must return finite values"
-            );
-            // Even unconverged, the seeds have moved toward the true root.
-            assert!(root.re.abs() < 10.0);
-        }
-
-        // A polynomial with a zero leading coefficient is rejected before the
-        // loop is entered at all.
         let degenerate =
             ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 2.0, 0.0]);
-        assert!(degenerate.aberth_roots().is_err());
+        assert_eq!(
+            degenerate.aberth_roots(),
+            Err(RootError::ZeroLeadingCoefficient)
+        );
+    }
+    /// A spectrum spanning several decades must resolve: one ulp at
+    /// $|s| \sim 4 \times 10^{3}$ is $9 \times 10^{-13}$, three orders above
+    /// the $4\epsilon$ step bound, so an absolute test can never be met there.
+    ///
+    /// Roots are the independently computed values for this polynomial:
+    /// $0$, $-6.7605812922$, $-140.7338061998$, $-3993.7394187078$.
+    ///
+    /// Trace: polynomial-design#FR-11
+    /// Method: Requirements-based test
+    #[cfg_attr(test, test)]
+    fn test_wide_spectrum_polynomial_converges() {
+        // 1e-7 s^4 + 4.141e-4 s^3 + 0.059 s^2 + 0.37998 s.
+        let p = ArrayPolynomial::<f64, 5>::from_coefficients([
+            0.0,
+            0.379_981_276_739_338,
+            0.059_000_559_170_211_9,
+            0.000_414_123_380_619_975_5,
+            1.000_000_000_000_000_1e-7,
+        ]);
+        let roots = p.roots().unwrap();
+        let mut found: [f64; 4] =
+            [roots[0].re, roots[1].re, roots[2].re, roots[3].re];
+        found.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+        let expected: [f64; 4] = [
+            -3_993.739_418_707_8,
+            -140.733_806_199_8,
+            -6.760_581_292_2,
+            0.0,
+        ];
+        for (got, want) in found.iter().zip(expected.iter()) {
+            let scale = want.abs().max(1.0);
+            assert!(
+                (got - want).abs() / scale < 1e-9,
+                "root {got} vs expected {want}"
+            );
+        }
+        for root in roots.iter().take(4) {
+            assert!(root.im.abs() < 1e-9, "root {root:?} should be real");
+        }
+    }
+
+    /// The best-effort entry point returns the same iterate the fallible one
+    /// discards, plus the convergence state.
+    ///
+    /// Trace: polynomial-design#FR-12
+    /// Method: Requirements-based test
+    #[cfg_attr(test, test)]
+    fn test_best_effort_reports_the_unconverged_iterate() {
+        use crate::polynomial::RootError;
+
+        let p = ArrayPolynomial::<f64, 6>::from_roots([1.0; 6]);
+        assert_eq!(p.aberth_roots(), Err(RootError::ConvergenceFailure));
+
+        let (roots, converged) = p.roots_best_effort().unwrap();
+        assert!(!converged, "a 5-fold root must not report convergence");
+        for root in roots.iter().take(5) {
+            assert!(
+                (root.re - 1.0).abs() < 1e-2 && root.im.abs() < 1e-2,
+                "iterate {root:?} should sit near the 5-fold root at 1"
+            );
+        }
     }
 }

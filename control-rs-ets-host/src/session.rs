@@ -26,6 +26,8 @@ pub struct TestItem {
 pub struct SettingItem {
     /// Name of the setting.
     pub name: String,
+    /// Doc-comment description of the setting.
+    pub description: String,
     /// Current value of the setting.
     pub value: SettingValue,
 }
@@ -202,6 +204,7 @@ impl SessionState {
                     setting_id,
                     name,
                     value,
+                    description,
                     ..
                 } => {
                     let s_id = suite_id as usize;
@@ -216,10 +219,13 @@ impl SessionState {
                     while self.suites[s_id].settings.len() <= set_id {
                         self.suites[s_id].settings.push(SettingItem {
                             name: String::new(),
+                            description: String::new(),
                             value: SettingValue::U8(0),
                         });
                     }
                     self.suites[s_id].settings[set_id].name = name.to_string();
+                    self.suites[s_id].settings[set_id].description =
+                        description.to_string();
                     self.suites[s_id].settings[set_id].value = value;
                     Vec::new()
                 }

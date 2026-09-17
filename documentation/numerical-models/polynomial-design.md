@@ -74,6 +74,14 @@ Primary usage scenarios:
 - **FR-10 — Fallible Root Extraction Errors**: Root-finding returns an explicit typed
   `RootError` variant if the leading coefficient is zero, degrees are unsupported, or
   simultaneous iteration fails to converge.
+- **FR-11 — Scale-free convergence test**: The simultaneous-iteration step bound is
+  relative to the iterate's magnitude. An absolute bound is unreachable once one ulp of
+  a root exceeds it, so a well-separated polynomial whose spectrum spans several decades
+  would exhaust the iteration budget while sitting on its roots.
+- **FR-12 — Recoverable unconverged iterate**: A caller that can qualify an iterate by
+  an independent criterion obtains the iterate together with its convergence state. The
+  fallible entry point keeps FR-10's contract; it is that call with a non-converged
+  result mapped onto `ConvergenceFailure`.
 
 #### 2.2. Non-Functional Requirements
 
@@ -622,6 +630,9 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 | Quadratic roots (complex pair)    | Oscillator $s^2 + 2\zeta\omega_n s + \omega_n^2$   | Absolute error              | $\|r_i - \hat{r}_i\|_\infty \le \epsilon \omega_n$                                                        | Exact discriminant splitting                                   |
 | Quadratic roots (degenerate $c_2=0$) | Degenerate $c_2 = 0$ polynomial                 | Exact equality              | `Err(RootError::ZeroLeadingCoefficient)`                                                                 | Precondition failure contract                                  |
 | Companion roots (degree $\ge 3$)  | Manufactured roots (e.g. quartic $s^4+6s^3+18s^2+30s+25$) | Absolute error       | $\|r_i - \hat{r}_i\|_\infty \le 10^{-10}$                                                                 | Durand-Kerner companion decomposition                          |
+| Iterative non-convergence         | A degree $\ge 3$ polynomial whose Aberth step stays above the solver tolerance through the iteration cap | Exact equality | `Err(RootError::ConvergenceFailure)` | FR-10: simultaneous iteration that does not meet the step bound is reported, not returned as roots |
+| Wide-spectrum convergence         | A degree $\ge 3$ polynomial whose roots span several decades (poles at $0$ and $\sim-4\times10^{3}$) | Exact equality | `Ok`, roots resolved | FR-11: one ulp at $\lvert s\rvert\sim4\times10^{3}$ is $9\times10^{-13}$, three orders above the $4\epsilon$ step bound, so an absolute test can never be met there |
+| Iterate recoverable               | The same non-converging polynomial through the best-effort entry point | Exact equality | `Ok((roots, false))`; fallible entry point still `Err` | FR-12: the two entry points agree on the iterate and differ only in how they report non-convergence |
 
 #### 6.3 Limits
 
@@ -673,6 +684,8 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 | **Step 3: Evaluation, Calculus & Division** | Horner `evaluate`, derivative/integral methods, `div_rem` with `DivisionError` and the near-singular caveat.                                                                                    | 2.5 Days         |
 | **Step 4: Interoperability**                | Companion-`Matrix` `TryFrom` conversion, column-copy `From` conversion (§5.4), `Tensor` conversion, cross-check against `matrix-design.md`'s reverse Faddeev–LeVerrier conversion.              | 2.0 Days         |
 | **Step 5: Verification**                    | `proptest` algebraic invariants, host/qemu unit tests, release-codegen check that `evaluate` retains zero panic paths, cubic-spline trajectory validation example.        | 2.0 Days         |
+| **Step 6: ConvergenceFailure (FR-10)**      | Repair: after the Aberth iteration cap, return `Err(RootError::ConvergenceFailure)` when the step (or residual) remains above the solver tolerance. Test: the 6.2 non-convergence row; `roots()` must not wrap that iterate in `Ok`. | 0.5 Days         |
+| **Step 7: Scale-free test and recoverable iterate (FR-11, FR-12)** | Repair: divide the step by $1 + \lvert z_i\rvert^2$ so the comparison against the solver tolerance is relative; add the best-effort entry point returning `(roots, converged)`. Tests: the 6.2 wide-spectrum and iterate-recoverable rows. | 0.5 Days         |
 
 ---
 
@@ -700,6 +713,8 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 | 1.18     | September 15, 2026 | @MitchellDScott | Retarget host validation paths to `control-rs-validation`; split host surfaces into validation/, examples/, and bench/. |
 | 1.19     | September 15, 2026 | @MitchellDScott | Evaluation/companion FRs named from needs; coverage measurement discharges nothing; child §6.3 names parent keys. |
 | 1.20     | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: dropped the §9 pointer; `design-template.md` §6 is the V&V contract. |
+| 1.21     | September 16, 2026 | @MitchellDScott | FR-10 discharge: 6.2 non-convergence row and §9 Step 6; Aberth must return `ConvergenceFailure`, not the last iterate. |
+| 1.22     | September 16, 2026 | @MitchellDScott | FR-11 scale-free convergence test and FR-12 recoverable unconverged iterate; 6.2 wide-spectrum and iterate-recoverable rows; §9 Step 7. |
 
 ---
 

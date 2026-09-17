@@ -87,6 +87,22 @@ pub mod root_locus_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// Numerator capacity may exceed denominator capacity when leading
+    /// numerator coefficients are zero: the system is still proper.
+    ///
+    /// # Verification
+    /// Trace: classical-tools#FR-3
+    /// Method: Requirements-based test
+    fn test_padded_proper_numerator_is_not_improper() {
+        let tf = ArrayTransferFunction::<f64, 3, 2>::continuous(
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0],
+        );
+        let mut out = [Complex::new(0.0, 0.0); 1];
+        assert!(sweep(&tf, &[0.0], &mut out).is_ok());
+    }
+
+    #[cfg_attr(test, test)]
     /// # Verification
     /// Trace: classical-tools#FR-3
     /// Method: Requirements-based test
