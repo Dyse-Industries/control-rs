@@ -17,13 +17,14 @@ pub mod step_info_test_suite {
         let empty_time: [f64; 0] = [];
         let empty_y: [f64; 0] = [];
         let info = step_info(&empty_time, &empty_y, 0.0, 0.0, 1.0, None);
-        assert_eq!(info.rise_time, 0.0);
+        assert_eq!(info.rise_time, None);
+        assert_eq!(info.peak_time, None);
         assert_eq!(info.settling_time, None);
 
         let t = [0.0, 1.0, 2.0];
         let y = [5.0, 5.0, 5.0];
         let info_zero = step_info(&t, &y, 0.0, 5.0, 5.0, None);
-        assert_eq!(info_zero.rise_time, 0.0);
+        assert_eq!(info_zero.rise_time, None);
         assert_eq!(info_zero.steady_state_error, 0.0);
     }
 
@@ -54,10 +55,10 @@ pub mod step_info_test_suite {
         }
 
         let info = step_info(&time, &y, t_step, 0.0, 1.0, Some(0.02));
+        let rise = info.rise_time.expect("well-settled response crosses 10/90");
         assert!(
-            (info.rise_time - 0.22).abs() < 0.01,
-            "Rise time {info_rise_time} vs expected ~0.22",
-            info_rise_time = info.rise_time
+            (rise - 0.22).abs() < 0.01,
+            "Rise time {rise} vs expected ~0.22"
         );
         assert_eq!(info.peak_overshoot_pct, 0.0);
         assert!(info.settling_time.is_some());
@@ -102,10 +103,29 @@ pub mod step_info_test_suite {
             "Target settling time must be None when offset exceeds tolerance band"
         );
         assert!(
-            info.settling_time_achieved > 0.0,
+            info.settling_time_achieved
+                .expect("post-step samples exist")
+                > 0.0,
             "Achieved settling time must be non-zero"
         );
         let sse = info.steady_state_error;
         assert!((sse - 0.091).abs() < 0.002, "SSE: {sse}");
+    }
+
+    #[cfg_attr(test, test)]
+    /// A trajectory that never reaches 10%/90% must not report rise time 0.
+    ///
+    /// # Verification
+    /// Trace: classical-tools#FR-12
+    /// Method: Requirements-based test
+    fn test_incomputable_rise_time_is_absent() {
+        let time = [0.0, 0.1, 0.2, 0.3];
+        let y = [0.0, 0.0, 0.0, 0.0];
+        let info = step_info(&time, &y, 0.0, 0.0, 1.0, None);
+        assert!(
+            info.rise_time.is_none(),
+            "rise_time = {:?}, expected absent (never crossed 10%/90%)",
+            info.rise_time
+        );
     }
 }

@@ -21,6 +21,10 @@ type HostToolOutcome = (bool, String, String);
 pub(crate) struct GateOutcome {
     /// `true` when the gate command exited successfully.
     pub(crate) passed: bool,
+    /// `true` when the gate could not apply on this host and ran nothing.
+    /// A gate that did not run reports Skip, never Pass: a green verdict
+    /// must mean the check executed.
+    pub(crate) skipped: bool,
     /// Captured combined stdout + stderr (ANSI-stripped).
     pub(crate) output: String,
     /// One-line verdict detail for `ci-report.md`.
@@ -85,6 +89,7 @@ impl QualityGate for CargoArgvGate<'_> {
         let (passed, output) = run_cargo(self.label, self.argv, self.envs);
         GateOutcome {
             passed,
+            skipped: false,
             output,
             details: String::new(),
         }
@@ -93,9 +98,18 @@ impl QualityGate for CargoArgvGate<'_> {
 
 impl QualityGate for HostToolGate {
     fn execute(&self, ctx: &mut PipelineCtx<'_>) -> GateOutcome {
+        if let Some(reason) = gates::host_tool_inapplicable(self.gate) {
+            return GateOutcome {
+                passed: false,
+                skipped: true,
+                output: String::new(),
+                details: reason,
+            };
+        }
         let (passed, output, details) = run_host_tool(self.gate, ctx);
         GateOutcome {
             passed,
+            skipped: false,
             output,
             details,
         }
@@ -114,6 +128,7 @@ impl QualityGate for CoverageGate {
         }
         GateOutcome {
             passed,
+            skipped: false,
             output,
             details: String::new(),
         }
@@ -149,6 +164,7 @@ impl QualityGate for TraceGate {
         ctx.state.trace_summary = Some(summary);
         GateOutcome {
             passed,
+            skipped: false,
             output: String::new(),
             details: String::new(),
         }
@@ -160,6 +176,7 @@ impl QualityGate for ValidateGate {
         if ctx.example_targets.is_empty() {
             return GateOutcome {
                 passed: false,
+                skipped: false,
                 output: String::new(),
                 details: "no suites configured in toml".to_string(),
             };
@@ -174,6 +191,7 @@ impl QualityGate for ValidateGate {
         ctx.state.cross_val_summary = Some(summary);
         GateOutcome {
             passed,
+            skipped: false,
             output: String::new(),
             details: String::new(),
         }
@@ -196,6 +214,7 @@ impl QualityGate for EtsGate {
         let passed = crate::runner::ets_all_passed(&ctx.state.matrix_results);
         GateOutcome {
             passed,
+            skipped: false,
             output: String::new(),
             details: String::new(),
         }
@@ -231,6 +250,17 @@ pub(crate) fn run_gate(
     let start = Instant::now();
     let outcome = job.execute(ctx);
     let time = start.elapsed().as_secs_f32();
+    if outcome.skipped {
+        ctx.state.counters.skipped_gates =
+            ctx.state.counters.skipped_gates.saturating_add(1);
+        report::status("Skipped", id.command_label());
+        return GateRunResult {
+            verdict: GateVerdict::Skip,
+            output: outcome.output,
+            details: outcome.details,
+            time,
+        };
+    }
     let verdict = verdict_from(outcome.passed, mode);
     apply_gate_counters(id, mode, outcome.passed, ctx);
     GateRunResult {
@@ -297,6 +327,10 @@ fn run_cargo(label: &str, argv: &[&str], envs: EnvPairs<'_>) -> (bool, String) {
     }
 }
 
+fn labeled_host(gate: Gate, (ok, output): (bool, String)) -> HostToolOutcome {
+    (ok, output, gate.command_label().to_string())
+}
+
 /// Dispatch host-tool execution.
 fn run_host_tool(gate: Gate, ctx: &PipelineCtx<'_>) -> HostToolOutcome {
     match gate {
@@ -314,35 +348,32 @@ fn run_host_tool(gate: Gate, ctx: &PipelineCtx<'_>) -> HostToolOutcome {
                 ),
             }
         }
-        Gate::Miri => {
-            let (ok, output) = gates::run_miri();
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Valgrind => {
-            let (ok, output) = gates::run_valgrind();
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Fuzz => {
-            let (ok, output) =
-                gates::run_fuzz(ctx.workspace_dir, ctx.timeout_secs);
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Lockbud => {
-            let (ok, output) = gates::run_lockbud();
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Deny => {
-            let (ok, output) = gates::run_deny();
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Audit => {
-            let (ok, output) = gates::run_audit();
-            (ok, output, gate.command_label().to_string())
-        }
-        Gate::Kani => {
-            let (ok, output) = gates::run_kani();
-            (ok, output, gate.command_label().to_string())
-        }
-        _ => (true, String::new(), String::new()),
+        Gate::Miri => labeled_host(gate, gates::run_miri()),
+        Gate::Valgrind => labeled_host(gate, gates::run_valgrind()),
+        Gate::Fuzz => labeled_host(
+            gate,
+            gates::run_fuzz(ctx.workspace_dir, ctx.timeout_secs),
+        ),
+        Gate::Lockbud => labeled_host(gate, gates::run_lockbud()),
+        Gate::Deny => labeled_host(gate, gates::run_deny()),
+        Gate::Audit => labeled_host(gate, gates::run_audit()),
+        Gate::Kani => labeled_host(gate, gates::run_kani()),
+        Gate::Clean
+        | Gate::Fmt
+        | Gate::Clippy
+        | Gate::Check
+        | Gate::Build
+        | Gate::Test
+        | Gate::Coverage
+        | Gate::Trace
+        | Gate::Ets
+        | Gate::Validate => (
+            false,
+            String::new(),
+            format!(
+                "host-tool dispatch received non-host gate {}",
+                gate.command_label()
+            ),
+        ),
     }
 }

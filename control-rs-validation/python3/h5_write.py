@@ -7,7 +7,6 @@ attributes. ``/_meta`` holds plot-only extras and is skipped by the gate.
 
 from __future__ import annotations
 
-import copy
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -50,19 +49,16 @@ def project_dict(data: Mapping[str, Any], paths: list[str]) -> dict:
     return out
 
 
-def overlay_dict(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> dict:
-    """Deep-merge ``overlay`` onto a copy of ``base``."""
-    result = copy.deepcopy(dict(base))
-
-    def merge(dst: dict, src: Mapping[str, Any]) -> None:
-        for key, val in src.items():
-            if isinstance(val, Mapping) and isinstance(dst.get(key), dict):
-                merge(dst[key], val)
-            else:
-                dst[key] = copy.deepcopy(val)
-
-    merge(result, overlay)
-    return result
+def present_paths(data: Mapping[str, Any], paths: list[str]) -> list[str]:
+    """Return the subset of ``paths`` that exist in ``data``."""
+    present: list[str] = []
+    for path in paths:
+        try:
+            project_dict(data, [path])
+        except KeyError:
+            continue
+        present.append(path)
+    return present
 
 
 def _load_tolerances(table_path: Path) -> dict:

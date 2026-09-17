@@ -71,6 +71,11 @@ without vendoring this repository.
   session with a named mismatch rather than decoding. A CRC-valid frame carries
   no evidence that the two sides agree on the meaning of its payload.
 
+- **FR-9 — QEMU shorthand names the example crate**: A shorthand architecture
+  name (arm, risc-v, …) builds and runs the QEMU example firmware, not a
+  workspace-root `cargo run` for that triple. A documented shorthand that
+  starts from `.` with no binary is not a session.
+
 #### 2.2. Non-Functional Requirements
 
 - **NFR-1 — No presentation dependencies**: The dependency closure contains no
@@ -155,7 +160,8 @@ headless loop currently embedded in the task runner.
 
 * **Subprocess**: Spawn `cargo run --bin <bin> --target <triple>` inside the
   QEMU example crate with piped stdin, stdout, and stderr. Semihosting is not
-  used for data transport (see §5).
+  used for data transport (see §5). Shorthand architecture names resolve that
+  crate path and the matching binary name (FR-9).
 * **Serial**: Open a USB CDC port at a configured baud rate, defaulting to
   115200, through `serial2`.
 
@@ -387,6 +393,8 @@ races, which are not deterministically reachable from a test; and the
 | Reset budget | Stream that panics on every case | Reset cycles performed | Exactly `max_resets`, then `Completion::ResetBudgetExhausted` |
 | Timeout bound | Target that never completes | Wall-clock time to return | Within the supplied bound plus 1 s, `Completion::TimedOut` |
 | Orphan processes | Killed session | Child processes surviving return | 0 |
+| QEMU shorthand path | Architecture name without `--manifest-path` | Spawn directory and binary | QEMU example crate and its target binary, not workspace root |
+| Send failure | Broken transport on `ListSuites` | Returned error | Transport error, not a hung empty discovery |
 | Dependency floor | `cargo tree` output | Terminal-rendering or terminal-event crates present | 0 |
 | Outcome agreement | Deprecated `control-rs-xtask` baseline on the same QEMU targets | Per-case state, suite and test name | Exact match |
 
@@ -449,6 +457,7 @@ established by `../ets/cpu-profiler-design.md`, not here.
 | **Phase 2: Session extraction**           | Move the discovery and run-queue state machine out of the task runner; cover it with mock-stream tests.       | 4                       |
 | **Phase 3: Headless entrypoint**          | Promote the headless loop to `run_headless_ets` with a caller-supplied timeout and structured result.         | 3                       |
 | **Phase 4: Consumer cutover**             | Point `control-rs-tui` and `control-rs-ci` at this crate; confirm the QEMU matrix reproduces current results. | 3                       |
+| **Phase 5: Shorthand, protocol, and send errors** | Repair: default QEMU shorthand to the example crate and its bins (FR-9); implement `PROTOCOL_VERSION` / `TargetInfo` or demote FR-8; surface send failures; always write ETS JSON; share command framing with the target; same default serial port for interactive and CI aliases; restore QEMU wall-clock headroom. Tests: 6.2 shorthand and protocol-mismatch rows; send-failure row. | 4 |
 
 ---
 
@@ -460,6 +469,7 @@ established by `../ets/cpu-profiler-design.md`, not here.
 | 1.1      | September 9, 2026 | @MitchellDScott | Implementability pass: defined `HostError` and `EtsRunResult`, fixed the timeout return contract, stated the reset delay and reset budget, added FR-8 wire-contract check, admitted `thiserror` under C-3, restructured §6 per `vv-standards.md`. |
 | 1.2      | September 9, 2026 | @MitchellDScott | Hardening pass: updated badge to brightgreen, clarified serial session reset semantics, integrated TargetInfo protocol check, clarified xtask as deprecated parity baseline, and normalized §6.4 catalogue method names. |
 | 1.3      | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: §6 authoring rules are `design-template.md` §6. |
+| 1.4      | September 16, 2026 | @MitchellDScott | FR-9 QEMU shorthand names the example crate; 6.2 shorthand and send-failure rows; §9 Phase 5. |
 
 ---
 

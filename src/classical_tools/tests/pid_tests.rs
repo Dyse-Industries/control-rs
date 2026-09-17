@@ -3,7 +3,7 @@
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod pid_test_suite {
-    use crate::classical_tools::pid::Pid;
+    use crate::classical_tools::pid::{Pid, PidError};
     use crate::math::complex_num::Complex;
 
     #[cfg_attr(test, test)]
@@ -14,7 +14,7 @@ pub mod pid_test_suite {
         // kp = 2, ki = kd = 0, wide-open limits: u = Kp * e exactly, no
         // internal state involved.
         let mut pid = Pid::<f64>::new(2.0, 0.0, 0.0, 1.0, -1.0e9, 1.0e9, 0.0);
-        let output = pid.step(5.0, 1.0, 0.1);
+        let output = pid.step(5.0, 1.0, 0.1).expect("positive dt");
         assert!((output - 8.0).abs() < 1e-12, "output = {output}");
     }
 
@@ -34,7 +34,8 @@ pub mod pid_test_suite {
 
         let mut running_sum = 0.0_f64;
         for &measurement in &measurements {
-            let output = pid.step(setpoint, measurement, dt);
+            let output =
+                pid.step(setpoint, measurement, dt).expect("positive dt");
             let error = setpoint - measurement;
             running_sum += ki * error * dt;
             assert!(
@@ -64,7 +65,7 @@ pub mod pid_test_suite {
         let mut output = 0.0_f64;
         for _ in 0..5000 {
             measurement += slope * dt;
-            output = pid.step(0.0, measurement, dt);
+            output = pid.step(0.0, measurement, dt).expect("positive dt");
         }
 
         let expected = -kd * slope;
@@ -88,10 +89,10 @@ pub mod pid_test_suite {
         // zero, not decay from a wound-up integrator.
         let mut pid = Pid::<f64>::new(1.0, 1.0, 0.0, 1.0, -1.0, 1.0, 0.0);
         for _ in 0..20 {
-            let output = pid.step(100.0, 0.0, 0.1);
+            let output = pid.step(100.0, 0.0, 0.1).expect("positive dt");
             assert!((output - 1.0).abs() < 1e-12, "output = {output}");
         }
-        let recovered = pid.step(0.0, 0.0, 0.1);
+        let recovered = pid.step(0.0, 0.0, 0.1).expect("positive dt");
         assert!(recovered.abs() < 1e-12, "recovered output = {recovered}");
     }
 
@@ -101,12 +102,12 @@ pub mod pid_test_suite {
     /// Method: Requirements-based test
     fn test_reset_clears_internal_state() {
         let mut pid = Pid::<f64>::new(0.0, 1.0, 0.0, 1.0, -1.0e9, 1.0e9, 0.0);
-        let _ = pid.step(1.0, 0.0, 0.1);
-        let _ = pid.step(1.0, 0.0, 0.1);
+        let _ = pid.step(1.0, 0.0, 0.1).expect("positive dt");
+        let _ = pid.step(1.0, 0.0, 0.1).expect("positive dt");
         pid.reset();
         // Immediately after a reset the integrator is zero, so a fresh
         // integral-only step reproduces the very first step's output.
-        let after_reset = pid.step(1.0, 0.0, 0.1);
+        let after_reset = pid.step(1.0, 0.0, 0.1).expect("positive dt");
         assert!((after_reset - 0.1).abs() < 1e-12, "output = {after_reset}");
     }
 
@@ -137,6 +138,25 @@ pub mod pid_test_suite {
         assert!(
             (actual - expected).magnitude() < 1e-9,
             "actual = {actual:?}, expected = {expected:?}"
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: classical-tools#FR-13
+    /// Method: Requirements-based test
+    fn test_step_rejects_non_positive_sample_period() {
+        let mut pid = Pid::<f64>::new(1.0, 0.0, 0.0, 1.0, -1.0, 1.0, 0.0);
+        assert_eq!(pid.step(1.0, 0.0, 0.0), Err(PidError::InvalidSamplePeriod));
+        assert_eq!(
+            pid.step(1.0, 0.0, -0.1),
+            Err(PidError::InvalidSamplePeriod)
+        );
+        let mut cancelled =
+            Pid::<f64>::new(1.0, 0.0, 1.0, 0.05, -1.0, 1.0, 0.0);
+        assert_eq!(
+            cancelled.step(1.0, 0.0, -0.05),
+            Err(PidError::InvalidSamplePeriod)
         );
     }
 }

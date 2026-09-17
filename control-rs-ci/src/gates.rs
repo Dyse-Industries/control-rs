@@ -437,6 +437,30 @@ pub fn run_miri() -> (bool, String) {
     )
 }
 
+/// Reason a host tool cannot apply on this host, or `None` when it can.
+///
+/// A gate that cannot execute here reports Skip rather than Pass: a green
+/// verdict has to mean the check ran.
+#[must_use]
+pub fn host_tool_inapplicable(gate: crate::runner::Gate) -> Option<String> {
+    if gate == crate::runner::Gate::Valgrind && !valgrind_applicable() {
+        return Some(format!(
+            "not applicable on {}-{}: the valgrind gate drives \
+             CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER, which only \
+             takes effect on x86_64-unknown-linux-gnu",
+            std::env::consts::ARCH,
+            std::env::consts::OS,
+        ));
+    }
+    None
+}
+
+/// Whether the valgrind gate's cargo runner override applies to this host.
+#[must_use]
+pub const fn valgrind_applicable() -> bool {
+    cfg!(all(target_arch = "x86_64", target_os = "linux"))
+}
+
 /// Task to run host unit tests under Valgrind.
 #[must_use]
 pub fn run_valgrind() -> (bool, String) {
@@ -531,7 +555,12 @@ pub fn run_lockbud() -> (bool, String) {
 /// Task to run `cargo deny check`.
 #[must_use]
 pub fn run_deny() -> (bool, String) {
-    run_logged_command("`cargo deny check`", "cargo", &["deny", "check"], &[])
+    run_logged_command(
+        "`cargo deny --all-features check`",
+        "cargo",
+        &["deny", "--all-features", "check"],
+        &[],
+    )
 }
 
 /// Task to run `cargo audit`.
@@ -548,7 +577,12 @@ pub fn run_audit() -> (bool, String) {
             return (false, output);
         }
     }
-    run_logged_command("`cargo audit`", "cargo", &["audit"], &[])
+    run_logged_command(
+        "`cargo audit --deny warnings`",
+        "cargo",
+        &["audit", "--deny", "warnings"],
+        &[],
+    )
 }
 
 /// Task to run Kani proofs.
@@ -639,5 +673,38 @@ mod tests {
         assert!(ok);
         assert!(out.contains("stdout-tee"));
         assert!(out.contains("stderr-tee"));
+    }
+    #[test]
+    /// A host tool that cannot execute here reports Skip, never Pass.
+    ///
+    /// # Verification
+    /// Trace: ci-design#FR-13
+    /// Method: Requirements-based test
+    fn test_valgrind_applicability_matches_host() {
+        use crate::runner::Gate;
+
+        let applicable = valgrind_applicable();
+        assert_eq!(
+            applicable,
+            cfg!(all(target_arch = "x86_64", target_os = "linux")),
+            "the valgrind runner override only takes effect on \
+             x86_64-unknown-linux-gnu"
+        );
+        let reason = host_tool_inapplicable(Gate::Valgrind);
+        assert_eq!(
+            reason.is_none(),
+            applicable,
+            "valgrind must report a reason exactly when it cannot run"
+        );
+        if let Some(text) = reason {
+            assert!(
+                text.contains("not applicable"),
+                "reason must say the gate did not run, got {text}"
+            );
+        }
+        assert!(
+            host_tool_inapplicable(Gate::Deny).is_none(),
+            "only valgrind is host-restricted today"
+        );
     }
 }

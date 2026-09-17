@@ -855,6 +855,26 @@ where
     /// # Errors
     /// Returns [`RootError::ZeroLeadingCoefficient`] if the leading coefficient is zero.
     pub fn aberth_roots(&self) -> Result<[Complex<T>; N], RootError> {
+        let (roots, converged) = self.aberth_iterate()?;
+        if converged {
+            Ok(roots)
+        } else {
+            Err(RootError::ConvergenceFailure)
+        }
+    }
+
+    /// Runs the Aberth iteration and returns `(roots, converged)` without
+    /// discarding an iterate that missed the step bound.
+    ///
+    /// [`Self::aberth_roots`] is this call with `converged == false` mapped
+    /// onto [`RootError::ConvergenceFailure`]. Callers that can qualify an
+    /// unconverged iterate by an independent criterion, such as a backward
+    /// error on the characteristic polynomial, use this instead.
+    ///
+    /// # Errors
+    /// Returns [`RootError::ZeroLeadingCoefficient`] if the leading
+    /// coefficient is zero.
+    pub fn aberth_iterate(&self) -> Result<([Complex<T>; N], bool), RootError> {
         let deg = N.saturating_sub(1);
         let leading = *self.get(deg).unwrap_or(&T::ZERO);
         if leading == T::ZERO {
@@ -905,13 +925,14 @@ where
         mut z: [Complex<T>; N],
         deg: usize,
         leading: T,
-    ) -> [Complex<T>; N] {
+    ) -> ([Complex<T>; N], bool) {
         let tol = T::epsilon() * (T::ONE + T::ONE + T::ONE + T::ONE);
         let max_iters = 80;
+        let mut max_step = T::ZERO;
 
         for _ in 0..max_iters {
             let mut z_next = z;
-            let mut max_step = T::ZERO;
+            max_step = T::ZERO;
 
             for i in 0..deg {
                 let p_val = self.evaluate_complex(z[i])
@@ -930,19 +951,28 @@ where
                 if denom_mag > T::epsilon() * T::epsilon() {
                     let delta = p_val / denom;
                     let step_mag = delta.re * delta.re + delta.im * delta.im;
-                    if step_mag > max_step {
-                        max_step = step_mag;
+                    // Relative step: an absolute bound is unreachable for a
+                    // root whose magnitude puts one ulp above `tol`, so a
+                    // well-separated wide-spectrum polynomial would exhaust
+                    // the budget while sitting on its roots. Dividing by
+                    // `1 + |z_i|^2` keeps the comparison against `tol * tol`
+                    // a squared relative step.
+                    let scale_sq =
+                        (z[i].re * z[i].re + z[i].im * z[i].im) + T::ONE;
+                    let rel_step = step_mag / scale_sq;
+                    if rel_step > max_step {
+                        max_step = rel_step;
                     }
                     z_next[i] = z[i] - delta;
                 }
             }
             z = z_next;
             if max_step < tol * tol {
-                return z;
+                return (z, true);
             }
         }
 
-        z
+        (z, max_step < tol * tol)
     }
 
     /// Generic multi-tier polynomial root solver.
@@ -971,6 +1001,24 @@ where
                 Ok(out)
             }
             _ => self.aberth_roots(),
+        }
+    }
+
+    /// [`Self::roots`] that reports convergence instead of discarding an
+    /// unconverged iterate.
+    ///
+    /// The closed-form branches ($N \le 3$) always report `true`; only the
+    /// Aberth branch can report `false`.
+    ///
+    /// # Errors
+    /// Returns [`RootError::ZeroLeadingCoefficient`] if the leading
+    /// coefficient is zero.
+    pub fn roots_best_effort(
+        &self,
+    ) -> Result<([Complex<T>; N], bool), RootError> {
+        match N {
+            0..=3 => self.roots().map(|roots| (roots, true)),
+            _ => self.aberth_iterate(),
         }
     }
 }

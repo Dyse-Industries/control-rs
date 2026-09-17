@@ -32,8 +32,10 @@ use core::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompensatorError {
     /// `alpha` did not satisfy the range required for the requested network
-    /// ($\alpha < 1$ for [`lead`], $\alpha > 1$ for [`lag`]).
+    /// ($0 < \alpha < 1$ for [`lead`], $\alpha > 1$ for [`lag`]).
     InvalidAlpha,
+    /// Time constant `t` was not strictly positive.
+    InvalidTimeConstant,
 }
 
 impl fmt::Display for CompensatorError {
@@ -42,7 +44,18 @@ impl fmt::Display for CompensatorError {
             Self::InvalidAlpha => {
                 write!(f, "alpha out of range for the requested compensator")
             }
+            Self::InvalidTimeConstant => {
+                write!(f, "time constant must be strictly positive")
+            }
         }
+    }
+}
+
+fn check_time_constant<T: Float + Copy>(t: T) -> Result<(), CompensatorError> {
+    if t <= T::ZERO {
+        Err(CompensatorError::InvalidTimeConstant)
+    } else {
+        Ok(())
     }
 }
 
@@ -52,13 +65,15 @@ impl fmt::Display for CompensatorError {
 /// $1/(T\sqrt{\alpha})$.
 ///
 /// # Errors
-/// [`CompensatorError::InvalidAlpha`] if `alpha >= 1`.
+/// [`CompensatorError::InvalidAlpha`] if `alpha` is not in $(0, 1)$.
+/// [`CompensatorError::InvalidTimeConstant`] if `t <= 0`.
 pub fn lead<T: Float + Copy>(
     k: T,
     t: T,
     alpha: T,
 ) -> Result<ArrayTransferFunction<T, 2, 2>, CompensatorError> {
-    if alpha >= T::ONE {
+    check_time_constant(t)?;
+    if alpha <= T::ZERO || alpha >= T::ONE {
         return Err(CompensatorError::InvalidAlpha);
     }
     Ok(lead_lag_stage(k, t, alpha))
@@ -70,11 +85,13 @@ pub fn lead<T: Float + Copy>(
 ///
 /// # Errors
 /// [`CompensatorError::InvalidAlpha`] if `alpha <= 1`.
+/// [`CompensatorError::InvalidTimeConstant`] if `t <= 0`.
 pub fn lag<T: Float + Copy>(
     k: T,
     t: T,
     alpha: T,
 ) -> Result<ArrayTransferFunction<T, 2, 2>, CompensatorError> {
+    check_time_constant(t)?;
     if alpha <= T::ONE {
         return Err(CompensatorError::InvalidAlpha);
     }

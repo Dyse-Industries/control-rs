@@ -121,8 +121,9 @@ def _build_quant_tflite_tanh() -> bytes:
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
 
     def representative_data_gen():
+        rng = np.random.default_rng(0)
         for _ in range(100):
-            yield [np.random.uniform(-3.0, 3.0, size=(1, 1)).astype(np.float32)]
+            yield [rng.uniform(-3.0, 3.0, size=(1, 1)).astype(np.float32)]
 
     converter.representative_dataset = representative_data_gen
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
@@ -244,7 +245,7 @@ def run_tensor_oracle() -> dict:
 if __name__ == "__main__":
     from pathlib import Path
 
-    from h5_write import attr_specs_from_toml, overlay_dict, project_dict, write_variant_file
+    from h5_write import attr_specs_from_toml, present_paths, write_variant_file
 
     results = run_tensor_oracle()
     boundaries = results["boundaries"]
@@ -289,17 +290,20 @@ if __name__ == "__main__":
         meta=scipy_payload,
         attr_specs=specs,
     )
-    base = project_dict(scipy_payload, gated)
-    write_variant_file(
-        out / "tensor.numpy.h5",
-        overlay_dict(base, numpy_payload),
-        gated_paths=gated,
-        meta=numpy_payload,
-    )
-    write_variant_file(
-        out / "tensor.tflite.h5",
-        overlay_dict(base, tflite_payload),
-        gated_paths=gated,
-        meta=tflite_payload,
-    )
+    numpy_paths = present_paths(numpy_payload, gated)
+    if numpy_paths:
+        write_variant_file(
+            out / "tensor.numpy.h5",
+            numpy_payload,
+            gated_paths=numpy_paths,
+            meta=numpy_payload,
+        )
+    tflite_paths = present_paths(tflite_payload, gated)
+    if tflite_paths:
+        write_variant_file(
+            out / "tensor.tflite.h5",
+            tflite_payload,
+            gated_paths=tflite_paths,
+            meta=tflite_payload,
+        )
 

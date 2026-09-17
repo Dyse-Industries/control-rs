@@ -189,13 +189,14 @@ pub fn compute_step_metrics(
         spec.v_target,
         Some(0.02),
     );
+    let settling_achieved = info.settling_time_achieved.unwrap_or(0.0);
     TransientMetrics {
-        rise_time_s: info.rise_time,
-        rise_time_us: info.rise_time * 1e6,
+        rise_time_s: info.rise_time.unwrap_or(0.0),
+        rise_time_us: info.rise_time.unwrap_or(0.0) * 1e6,
         peak_overshoot_pct: info.peak_overshoot_pct,
         settling_time_target_s: info.settling_time,
-        settling_time_final_s: info.settling_time_achieved,
-        settling_time_us: info.settling_time_achieved * 1e6,
+        settling_time_final_s: settling_achieved,
+        settling_time_us: settling_achieved * 1e6,
         steady_state_error_v: info.steady_state_error,
         peak_voltage_v: info.peak_value,
     }

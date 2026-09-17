@@ -5,7 +5,8 @@
 
 use std::collections::HashSet;
 use std::io::stdout;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent},
@@ -25,6 +26,7 @@ use ratatui::{
 };
 
 use control_rs_ets::comms::{Command, TestState};
+use control_rs_ets::settings::SettingValue;
 use control_rs_ets_host::{
     BridgeMessage, ServerBridge, SessionAction, SessionState, Target,
 };
@@ -60,6 +62,21 @@ pub enum TableItem {
         /// Peak stack usage in bytes if completed.
         stack_peak: Option<u32>,
     },
+    /// Suite setting row.
+    Setting {
+        /// Index of the suite in session state.
+        suite_idx: usize,
+        /// Index of the setting in its suite.
+        setting_idx: usize,
+        /// Name of the setting.
+        name: String,
+        /// Doc-comment description of the setting.
+        description: String,
+        /// Display form of the current value.
+        value: String,
+        /// Whether this is the last row in the suite.
+        is_last: bool,
+    },
 }
 
 /// Presentation application state for the TUI dashboard.
@@ -84,6 +101,12 @@ pub struct AppState {
     pub filter_query: String,
     /// Whether the user is currently typing a filter query.
     pub is_filtering: bool,
+    /// Whether the user is editing a setting value.
+    pub is_editing_setting: bool,
+    /// In-progress setting edit buffer.
+    pub setting_edit: String,
+    /// Target process exit status, if observed.
+    pub process_exit: Option<String>,
 }
 
 impl AppState {
@@ -101,6 +124,9 @@ impl AppState {
             autoscroll: true,
             filter_query: String::new(),
             is_filtering: false,
+            is_editing_setting: false,
+            setting_edit: String::new(),
+            process_exit: None,
         };
         state.table_state.select(Some(0));
         state
@@ -138,17 +164,28 @@ impl AppState {
             });
 
             if !is_collapsed {
+                let setting_count = suite.settings.len();
                 let count = matching_tests.len();
                 for (i, &(t_idx, test)) in matching_tests.iter().enumerate() {
                     self.visible_items.push(TableItem::Test {
                         suite_idx: s_idx,
                         test_idx: t_idx,
                         name: test.name.clone(),
-                        is_last: i + 1 == count,
+                        is_last: i + 1 == count && setting_count == 0,
                         state: test.state,
                         cycles: test.cycles,
                         time_us: test.time_us,
                         stack_peak: test.stack_peak,
+                    });
+                }
+                for (i, setting) in suite.settings.iter().enumerate() {
+                    self.visible_items.push(TableItem::Setting {
+                        suite_idx: s_idx,
+                        setting_idx: i,
+                        name: setting.name.clone(),
+                        description: setting.description.clone(),
+                        value: format_setting_value(setting.value),
+                        is_last: i + 1 == setting_count,
                     });
                 }
             }
@@ -232,6 +269,10 @@ impl AppState {
                     }
                     self.rebuild_visible_items();
                 }
+                TableItem::Setting { value, .. } => {
+                    self.is_editing_setting = true;
+                    self.setting_edit.clone_from(&value);
+                }
             }
         }
     }
@@ -252,6 +293,63 @@ impl AppState {
                 // Handled in main loop for bridge reconstruction
             }
         }
+    }
+
+    fn show_selected_setting(&mut self) {
+        if let Some(selected) = self.table_state.selected()
+            && let Some(TableItem::Setting {
+                name, description, ..
+            }) = self.visible_items.get(selected)
+        {
+            self.logs.push(format!("> [SETTING] {name}: {description}"));
+        }
+    }
+
+    fn commit_setting_edit(&mut self, bridge: Option<&mut ServerBridge>) {
+        let selected = self.table_state.selected();
+        let Some(TableItem::Setting {
+            suite_idx,
+            setting_idx,
+            ..
+        }) = selected.and_then(|i| self.visible_items.get(i).cloned())
+        else {
+            self.is_editing_setting = false;
+            return;
+        };
+        let Some(current) = self
+            .session
+            .suites
+            .get(suite_idx)
+            .and_then(|s| s.settings.get(setting_idx))
+        else {
+            self.is_editing_setting = false;
+            return;
+        };
+        match parse_setting_value(&self.setting_edit, current.value) {
+            Ok(value) => {
+                if let Some(b) = bridge {
+                    let _ = b.send_command(&Command::SetSetting {
+                        suite_id: suite_idx as u16,
+                        setting_id: setting_idx as u16,
+                        value,
+                    });
+                }
+                if let Some(setting) = self
+                    .session
+                    .suites
+                    .get_mut(suite_idx)
+                    .and_then(|s| s.settings.get_mut(setting_idx))
+                {
+                    setting.value = value;
+                }
+                self.rebuild_visible_items();
+            }
+            Err(msg) => {
+                self.logs.push(format!("> [SETTING] {msg}"));
+            }
+        }
+        self.is_editing_setting = false;
+        self.setting_edit.clear();
     }
 
     /// Processes an incoming [`BridgeMessage`] from the target.
@@ -319,10 +417,34 @@ impl AppState {
             return false;
         }
 
+        if self.is_editing_setting {
+            match key.code {
+                KeyCode::Esc => {
+                    self.is_editing_setting = false;
+                    self.setting_edit.clear();
+                }
+                KeyCode::Enter => {
+                    self.commit_setting_edit(bridge);
+                }
+                KeyCode::Backspace => {
+                    self.setting_edit.pop();
+                }
+                KeyCode::Char(c) => {
+                    self.setting_edit.push(c);
+                }
+                _ => {}
+            }
+            return false;
+        }
+
         match key.code {
             KeyCode::Char('q') => true,
             KeyCode::Char('f') => {
                 self.is_filtering = true;
+                false
+            }
+            KeyCode::Char('d') => {
+                self.show_selected_setting();
                 false
             }
             KeyCode::Char('r') => {
@@ -428,9 +550,17 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
         ])
     } else {
         Line::from(vec![Span::styled(
-            " [ IDLE ]",
+            if state.process_exit.is_some() {
+                " [ EXITED ]"
+            } else {
+                " [ IDLE ]"
+            },
             Style::default()
-                .fg(Color::Green)
+                .fg(if state.process_exit.is_some() {
+                    Color::Red
+                } else {
+                    Color::Green
+                })
                 .add_modifier(Modifier::BOLD),
         )])
     };
@@ -528,6 +658,21 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
                 let name_cell = Cell::from(format!("  {branch} {name}"));
                 Row::new(vec![name_cell, cycles_cell, time_cell, stack_cell])
             }
+            TableItem::Setting {
+                name,
+                value,
+                is_last,
+                ..
+            } => {
+                let branch = if *is_last { "└─" } else { "├─" };
+                Row::new(vec![
+                    Cell::from(format!("  {branch} {name}"))
+                        .style(Style::default().fg(Color::Magenta)),
+                    Cell::from(value.as_str()),
+                    Cell::from(""),
+                    Cell::from(""),
+                ])
+            }
         })
         .collect();
 
@@ -595,6 +740,21 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
                 Style::default().fg(Color::DarkGray),
             ),
         ])
+    } else if state.is_editing_setting {
+        Line::from(vec![
+            Span::styled(
+                " SetSetting: ",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(&state.setting_edit),
+            Span::styled("▌", Style::default().fg(Color::Magenta)),
+            Span::styled(
+                " (Enter: send, Esc: cancel)",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
     } else {
         Line::from(vec![
             Span::styled(
@@ -619,6 +779,13 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
             ),
             Span::raw("top | "),
             Span::styled(
+                "(d)",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("escription | "),
+            Span::styled(
                 "(q)",
                 Style::default()
                     .fg(Color::Cyan)
@@ -628,6 +795,61 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
         ])
     };
     frame.render_widget(Paragraph::new(footer_content), chunks[3]);
+}
+
+fn format_setting_value(value: SettingValue) -> String {
+    match value {
+        SettingValue::Bool(v) => v.to_string(),
+        SettingValue::F32(v) => v.to_string(),
+        SettingValue::I32(v) => v.to_string(),
+        SettingValue::I8(v) => v.to_string(),
+        SettingValue::U16(v) => v.to_string(),
+        SettingValue::U32(v) => v.to_string(),
+        SettingValue::U64(v) => v.to_string(),
+        SettingValue::U8(v) => v.to_string(),
+    }
+}
+
+fn parse_setting_value(
+    raw: &str,
+    current: SettingValue,
+) -> Result<SettingValue, String> {
+    let trimmed = raw.trim();
+    match current {
+        SettingValue::Bool(_) => match trimmed {
+            "true" | "1" => Ok(SettingValue::Bool(true)),
+            "false" | "0" => Ok(SettingValue::Bool(false)),
+            _ => Err(format!("invalid bool '{trimmed}'")),
+        },
+        SettingValue::F32(_) => trimmed
+            .parse()
+            .map(SettingValue::F32)
+            .map_err(|_| format!("invalid f32 '{trimmed}'")),
+        SettingValue::I32(_) => trimmed
+            .parse()
+            .map(SettingValue::I32)
+            .map_err(|_| format!("invalid i32 '{trimmed}'")),
+        SettingValue::I8(_) => trimmed
+            .parse()
+            .map(SettingValue::I8)
+            .map_err(|_| format!("invalid i8 '{trimmed}'")),
+        SettingValue::U16(_) => trimmed
+            .parse()
+            .map(SettingValue::U16)
+            .map_err(|_| format!("invalid u16 '{trimmed}'")),
+        SettingValue::U32(_) => trimmed
+            .parse()
+            .map(SettingValue::U32)
+            .map_err(|_| format!("invalid u32 '{trimmed}'")),
+        SettingValue::U64(_) => trimmed
+            .parse()
+            .map(SettingValue::U64)
+            .map_err(|_| format!("invalid u64 '{trimmed}'")),
+        SettingValue::U8(_) => trimmed
+            .parse()
+            .map(SettingValue::U8)
+            .map_err(|_| format!("invalid u8 '{trimmed}'")),
+    }
 }
 
 /// Runs the interactive terminal dashboard event loop.
@@ -655,6 +877,7 @@ pub fn run_tui(
 
     // Initial discovery request
     let _ = bridge.send_command(&Command::ListSuites);
+    let mut last_discovery = Instant::now();
 
     let elf_opt = if elf_path.is_empty() {
         None
@@ -677,6 +900,19 @@ pub fn run_tui(
                 }
             }
 
+            if !state.session.discovery_complete
+                && last_discovery.elapsed() > Duration::from_millis(500)
+            {
+                let _ = bridge.send_command(&Command::ListSuites);
+                last_discovery = Instant::now();
+            }
+
+            if let Ok(Some(status)) = bridge.try_wait() {
+                let msg = format!("Target process exited: {status}");
+                state.process_exit = Some(msg.clone());
+                state.logs.push(format!("> [EXIT] {msg}"));
+            }
+
             // Recover and re-attach bridge on panic restart without tearing down terminal
             if need_restart {
                 bridge.kill();
@@ -684,11 +920,14 @@ pub fn run_tui(
                     "> [INFO] Target panicked. Re-attaching bridge..."
                         .to_string(),
                 );
+                thread::sleep(Duration::from_secs(1));
                 if let Ok(new_bridge) =
                     ServerBridge::new(target.clone(), elf_opt, false)
                 {
                     bridge = new_bridge;
+                    state.process_exit = None;
                     let _ = bridge.send_command(&Command::ListSuites);
+                    last_discovery = Instant::now();
                 }
             }
 
@@ -715,6 +954,7 @@ pub fn run_tui(
 mod tests {
     use super::*;
     use control_rs_ets::comms::Telemetry;
+    use control_rs_ets::settings::SettingValue;
     use crossterm::event::KeyModifiers;
 
     fn make_test_event(code: KeyCode) -> KeyEvent {
@@ -988,5 +1228,80 @@ mod tests {
         assert_eq!(format_duration(2), "2.00µs");
         assert_eq!(format_duration(5000), "5.00ms");
         assert_eq!(format_duration(2_500_000), "2.50s");
+    }
+
+    #[test]
+    /// # Verification
+    /// Trace: tui#FR-6
+    /// Method: Requirements-based test
+    fn test_process_exit_is_surfaced() {
+        let mut state = AppState::new("Target".to_string(), "Link".to_string());
+        state.process_exit = Some("exited with code 1".to_string());
+        state
+            .logs
+            .push("> [EXIT] Target process exited: 1".to_string());
+        assert!(state.process_exit.is_some());
+        assert!(
+            state.logs.iter().any(|line| line.contains("exited")),
+            "process exit must appear in the dashboard log"
+        );
+    }
+
+    #[test]
+    /// # Verification
+    /// Trace: tui#FR-7
+    /// Method: Requirements-based test
+    fn test_setting_description_and_edit() {
+        let mut state = AppState::new("Target".to_string(), "Link".to_string());
+        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite",
+                description: "",
+                test_count: 0,
+                setting_count: 1,
+            },
+        ));
+        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+            Telemetry::SettingInfo {
+                suite_id: 0,
+                setting_id: 0,
+                name: "cycle_limit",
+                description: "Maximum cycles before test timeout",
+                value: SettingValue::U32(100),
+            },
+        ));
+        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        state.rebuild_visible_items();
+        assert!(matches!(
+            &state.visible_items[1],
+            TableItem::Setting { name, description, .. }
+                if name == "cycle_limit"
+                    && description == "Maximum cycles before test timeout"
+        ));
+        state.table_state.select(Some(1));
+        assert!(!state.handle_key(make_test_event(KeyCode::Char('d')), None));
+        assert_eq!(
+            state.logs.last().map(String::as_str),
+            Some("> [SETTING] cycle_limit: Maximum cycles before test timeout")
+        );
+        assert!(!state.handle_key(make_test_event(KeyCode::Enter), None));
+        assert!(state.is_editing_setting);
+        for _ in 0..3 {
+            assert!(
+                !state.handle_key(make_test_event(KeyCode::Backspace), None)
+            );
+        }
+        for c in "200".chars() {
+            assert!(!state.handle_key(make_test_event(KeyCode::Char(c)), None));
+        }
+        assert!(!state.handle_key(make_test_event(KeyCode::Enter), None));
+        assert!(!state.is_editing_setting);
+        assert_eq!(
+            state.session.suites[0].settings[0].value,
+            SettingValue::U32(200)
+        );
     }
 }

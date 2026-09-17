@@ -4,3 +4,10 @@ all-features = true
 exclude-files = [
     "documentation/*",
 ]
+
+# Regression floor, not the target. A workspace run measured 84.05%
+# (17572/20907 lines) on 2026-09-16; 83.0 leaves about a point of headroom for
+# run-to-run variation while making a real drop fail the gate. Without a floor
+# the coverage gate only established that tarpaulin ran. The 90% target and the
+# ratchet toward it are tracked separately; raise this line as that lands.
+fail-under = 83.0

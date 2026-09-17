@@ -291,7 +291,7 @@ def run_harold_oracle() -> dict | None:
 if __name__ == "__main__":
     from pathlib import Path
 
-    from h5_write import attr_specs_from_toml, overlay_dict, project_dict, write_variant_file
+    from h5_write import attr_specs_from_toml, present_paths, write_variant_file
 
     scipy_results = run_transfer_function_oracle()
     harold_results = run_harold_oracle()
@@ -349,9 +349,11 @@ if __name__ == "__main__":
         attr_specs=specs,
     )
     if harold_results:
-        write_variant_file(
-            results / "transfer_function.harold.h5",
-            overlay_dict(project_dict(scipy_results, gated), harold_results),
-            gated_paths=gated,
-            meta=harold_results,
-        )
+        harold_paths = present_paths(harold_results, gated)
+        if harold_paths:
+            write_variant_file(
+                results / "transfer_function.harold.h5",
+                harold_results,
+                gated_paths=harold_paths,
+                meta=harold_results,
+            )

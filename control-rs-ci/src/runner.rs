@@ -842,7 +842,7 @@ fn resolve_config_path(cli: &CliArgs) -> PathBuf {
         |mp| {
             let p = Path::new(mp);
             if p.is_file() || p.file_name().is_some_and(|n| n == "Cargo.toml") {
-                p.parent().map_or_else(|| Path::new("."), |parent| parent)
+                p.parent().unwrap_or_else(|| Path::new("."))
             } else {
                 p
             }
@@ -1254,15 +1254,19 @@ fn write_json_reports(
             );
         }
     }
-    if !combined_ets_tests.is_empty() {
-        let json_path = out_path.join("ets-results.json");
-        if let Ok(json) = serde_json::to_string_pretty(combined_ets_tests) {
-            let _ = fs::write(&json_path, &json);
-            report::status(
-                "Saved",
-                format!("ETS results to {}", json_path.display()),
-            );
-        }
+    let json_path = out_path.join("ets-results.json");
+    if combined_ets_tests.is_empty() {
+        let _ = fs::write(&json_path, "[]");
+        report::status(
+            "Saved",
+            format!("empty ETS results to {}", json_path.display()),
+        );
+    } else if let Ok(json) = serde_json::to_string_pretty(combined_ets_tests) {
+        let _ = fs::write(&json_path, &json);
+        report::status(
+            "Saved",
+            format!("ETS results to {}", json_path.display()),
+        );
     }
 }
 
@@ -1409,11 +1413,11 @@ fn finish_run(config: &CiConfig, start_time: Instant) -> i32 {
         .config_file_path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
-        .map_or_else(|| Path::new("."), |p| p);
+        .unwrap_or_else(|| Path::new("."));
     let config_dir = config
         .config_file_path
         .parent()
-        .map_or_else(|| Path::new("."), |p| p);
+        .unwrap_or_else(|| Path::new("."));
     let targets_to_run = collect_ets_targets(config);
     let example_targets = collect_example_targets(config, config_dir);
     let mut state = PipelineState::default();
@@ -1661,6 +1665,7 @@ mod tests {
         ) -> quality_gate::GateOutcome {
             quality_gate::GateOutcome {
                 passed: self.0,
+                skipped: false,
                 output: String::new(),
                 details: String::new(),
             }
@@ -1675,6 +1680,7 @@ mod tests {
             self.calls.set(self.calls.get().saturating_add(1));
             quality_gate::GateOutcome {
                 passed: self.passed,
+                skipped: false,
                 output: String::new(),
                 details: String::new(),
             }
@@ -2489,7 +2495,7 @@ mod tests {
         write_json_reports(&temp_dir, &PipelineState::default(), &[]);
         assert!(!temp_dir.join("trace-report.json").exists());
         assert!(!temp_dir.join("validate-report.json").exists());
-        assert!(!temp_dir.join("ets-results.json").exists());
+        assert!(temp_dir.join("ets-results.json").exists());
 
         let state = PipelineState {
             trace_summary: Some(crate::trace::TraceMatrixSummary::default()),

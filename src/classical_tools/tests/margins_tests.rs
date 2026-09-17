@@ -82,9 +82,78 @@ pub mod margins_test_suite {
             margins.gain_crossover_freq.unwrap()
                 < margins.phase_crossover_freq.unwrap()
         );
-        assert!(margins.phase_margin.unwrap() > 0.0);
-        assert!(margins.gain_margin.unwrap() > 1.0);
+        let wgc = margins.gain_crossover_freq.unwrap();
+        let expected_wgc = (16f64.pow(1.0 / 3.0) - 1.0).sqrt();
+        assert!(
+            ((wgc - expected_wgc) / expected_wgc).abs() <= 1e-4,
+            "w_gc = {wgc}, expected ~{expected_wgc} (NFR-3 relative 1e-4)"
+        );
+
+        let expected_pm =
+            (-3.0f64).mul_add(expected_wgc.atan(), core::f64::consts::PI);
+        let pm = margins.phase_margin.unwrap();
+        let pm_err_deg =
+            (pm - expected_pm).abs() * (180.0 / core::f64::consts::PI);
+        assert!(
+            pm_err_deg <= 0.1,
+            "phi_m = {pm} rad, expected ~{expected_pm} ({pm_err_deg} deg error)"
+        );
+
+        let gm = margins.gain_margin.unwrap();
+        assert!(((gm - 2.0) / 2.0).abs() <= 1e-4, "K_g = {gm}, expected 2");
         assert!(margins.delay_margin.unwrap() > 0.0);
+    }
+
+    /// `L(s) = 10 / (s (s + 1) (s + 2))`, i.e. `num = [10]`,
+    /// `den = [0, 2, 3, 1]` ascending. Analytically: `Im L(jw) = 0` at
+    /// `w_pc = sqrt(2)` where `|L| = 10/6`, so `K_g = 0.6 < 1` and the closed
+    /// loop is unstable; `|L(jw)| = 1` at `w_gc = 1.802203`, past the
+    /// `-180 deg` crossing, where `arg L = +167.003 deg` on the principal
+    /// branch and the phase margin is `-12.997 deg = -0.226844 rad`.
+    const fn _unstable_loop() -> ArrayTransferFunction<f64, 1, 4> {
+        ArrayTransferFunction::<f64, 1, 4>::continuous(
+            [10.0],
+            [0.0, 2.0, 3.0, 1.0],
+        )
+    }
+
+    #[cfg_attr(test, test)]
+    /// Regression: `pi + arg()` is not a phase margin. `arg()` is principal
+    /// on `(-pi, pi]`, so a gain crossover past the `-180 deg` crossing
+    /// yields `2 pi - |phi_m|` unless the sum is wrapped back onto
+    /// `(-pi, pi]`. Unwrapped, a loop with `K_g < 1` reports a phase margin
+    /// near `+360 deg` and a positive delay margin.
+    ///
+    /// # Verification
+    /// Trace: classical-tools#FR-4, classical-tools#NFR-3
+    /// Method: Requirements-based test
+    fn test_unstable_loop_reports_negative_phase_and_delay_margin() {
+        let tf = _unstable_loop();
+        let omegas = _sweep_omegas();
+        let margins = stability_margins(&tf, &omegas);
+
+        // Gain crossover lies past phase crossover: the loop is unstable.
+        let wpc = margins.phase_crossover_freq.unwrap();
+        let wgc = margins.gain_crossover_freq.unwrap();
+        assert!(wgc > wpc, "w_gc = {wgc}, w_pc = {wpc}");
+        let gain_margin = margins.gain_margin.unwrap();
+        assert!((gain_margin - 0.6).abs() < 1e-3, "K_g = {gain_margin}");
+
+        let phase_margin = margins.phase_margin.unwrap();
+        assert!(
+            phase_margin < 0.0,
+            "phi_m = {phase_margin} rad, expected negative (K_g < 1)"
+        );
+        assert!(
+            (phase_margin - -0.226_844).abs() < 1e-3,
+            "phi_m = {phase_margin} rad, expected ~-0.226844"
+        );
+
+        let delay_margin = margins.delay_margin.unwrap();
+        assert!(
+            (delay_margin - -0.125_870).abs() < 1e-3,
+            "tau_m = {delay_margin} s, expected ~-0.125870"
+        );
     }
 
     #[cfg_attr(test, test)]
@@ -106,6 +175,35 @@ pub mod margins_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// A response that vanishes over the sweep has no reciprocal, so the
+    /// gain margin is absent rather than infinite or NaN.
+    ///
+    /// # Verification
+    /// Trace: classical-tools#FR-4
+    /// Method: Requirements-based test
+    fn test_vanishing_response_leaves_gain_margin_absent() {
+        let tf = ArrayTransferFunction::<f64, 1, 4>::continuous(
+            [0.0],
+            [1.0, 3.0, 3.0, 1.0],
+        );
+        let omegas = _sweep_omegas();
+        let margins = stability_margins(&tf, &omegas);
+        assert_eq!(margins.gain_margin, None);
+        assert_eq!(margins.gain_crossover_freq, None);
+        assert_eq!(margins.delay_margin, None);
+        for value in [
+            margins.gain_margin,
+            margins.phase_margin,
+            margins.delay_margin,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert!(value.is_finite(), "margin {value} must be finite");
+        }
+    }
+
+    #[cfg_attr(test, test)]
     /// # Verification
     /// Trace: classical-tools#FR-4, classical-tools#NFR-3
     /// Method: Requirements-based test
@@ -114,5 +212,17 @@ pub mod margins_test_suite {
         let margins = stability_margins(&tf, &[1.0]);
         assert_eq!(margins.gain_crossover_freq, None);
         assert_eq!(margins.phase_crossover_freq, None);
+    }
+
+    #[cfg_attr(test, test)]
+    /// # Verification
+    /// Trace: classical-tools#FR-4
+    /// Method: Requirements-based test
+    fn test_gain_margin_absent_when_magnitude_vanishes() {
+        let tf =
+            ArrayTransferFunction::<f64, 1, 2>::continuous([0.0], [1.0, 1.0]);
+        let omegas = _sweep_omegas();
+        let margins = stability_margins(&tf, &omegas);
+        assert_eq!(margins.gain_margin, None);
     }
 }

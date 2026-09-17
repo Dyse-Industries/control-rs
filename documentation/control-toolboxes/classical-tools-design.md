@@ -69,6 +69,27 @@ ControlSystems.jl (JuliaControl, 2026), `control_systems_torbox` (Børve,
   time, peak overshoot, settling time, and steady-state error from a sampled
   SISO step-response trajectory without heap allocation.
 
+- **FR-11 — Invalid compensator parameters refused**: Lead, lag, and lead-lag
+  synthesis refuse a non-positive time constant and an attenuation ratio
+  outside the open interval that stage requires. A silent Inf or RHP pole is
+  not a valid network.
+
+- **FR-12 — Incomputable transient metrics are distinct from zero**: A rise
+  time, peak time, or settling time that cannot be computed from the samples
+  is reported as absent, not as the value zero. Zero is reserved for a
+  trajectory that actually reaches the metric at $t = 0$.
+
+- **FR-13 — Positive PID sample period**: A discrete PID update refuses a
+  non-positive sample period and a filter time-constant that cancels the
+  sample period. A non-finite command from a bad timing configuration is not
+  a valid step.
+
+- **FR-14 — Substituted Routh divisor is the recorded divisor**: The value
+  that replaces a vanishing first-column entry is the value that entry
+  contributes to the sign-change count. A first column that records the
+  replaced zero and skips it when counting loses the two sign changes a
+  same-signed pair around it carries.
+
 #### 2.2 Non-Functional Requirements
 
 - **NFR-1 — Zero Dynamic Allocation**: All sweep drivers, Routh array
@@ -152,7 +173,9 @@ grid $K = [k_0, k_1, \dots, k_M]$:
    polynomial root extraction (NumPy Developers, 2024).
 3. Tracks continuous branch trajectories across consecutive gains using greedy
    nearest-neighbor matching, executing internal sub-steps when pole displacement
-   exceeds branch separation boundaries to guarantee zero branch swapping.
+   exceeds branch separation boundaries. Matching is best-effort: coincident
+   poles at a breakaway make assignment ambiguous, and branch index is not a
+   guaranteed identity after the split.
 4. Writes roots into caller-supplied pre-allocated slice `&mut [Complex<T>]` of
    size $(M+1) \times \deg(P)$.
 
@@ -411,11 +434,14 @@ intended purpose") (NASA, 2023; NASA, 2016; control-rs, 2026).
   clamps to `[u_min, u_max]`, and recovers from saturation without
   integrator windup.
 - Demonstrate that `compensators::lead`, `lag`, and `lead_lag` place poles
-  and zeros as specified, and that cascading two stages multiplies their
-  frequency responses.
+  and zeros as specified, that cascading two stages multiplies their
+  frequency responses, and that non-positive $T$ or out-of-range $\alpha$ is
+  refused.
 - Demonstrate that `step_info` recovers rise time, overshoot, and
   settling-time metrics from manufactured well-settled and Type-0 offset
-  trajectories.
+  trajectories, and that a missing 10%/90% crossing is absent rather than
+  zero.
+- Demonstrate that `Pid::step` refuses a non-positive sample period.
 - Demonstrate that Routh, root locus, margins, PID, and compensators
   produce mutually consistent results when applied to one physical plant.
 
@@ -448,14 +474,22 @@ Both validation suites conform to the host oracle harness contract (`documentati
 
 | Claim | Oracle | Measure | Bound | Justification |
 |:------|:-------|:--------|:------|:--------------|
-| Routh RHP count | Independent Aberth root-solve (`Polynomial::roots`), filtered at `re > 1e-6` | Exact equality of counts | count-exact | The `1e-6` filter was set from the root solver's measured noise on the exact $\pm j$ roots of $s^4+2s^3+2s^2+2s+1$ ($\text{re}\sim10^{-16}$); f64 epsilon is $2.22\times10^{-16}$ (IEEE, 2019), so `1e-6` clears solver noise by nine orders of magnitude without risking a true RHP root going uncounted. |
+| Routh first-column substitution | Characteristic polynomial whose first-column zero sits between two negative entries ($s^4-s^3-1$, three open-RHP roots) | Exact equality of counts | count-exact | FR-14. The $\epsilon$ method counts $\mathrm{sign}(a)\neq+$ and $+\neq\mathrm{sign}(b)$; skipping the recorded zero counts $\mathrm{sign}(a)\neq\mathrm{sign}(b)$, and the two differ by exactly two when $a<0$ and $b<0$. |
+| Root-locus solve at a breakaway | Closed-loop polynomial at a gain where two poles coincide | Relative backward error $\lvert P(\hat s)\rvert / \sum_k \lvert c_k\rvert \lvert\hat s\rvert^k$ | $\le 10^{-10}$ | Simultaneous iteration converges linearly on a multiple root and cannot reach the solver's step bound, while the iterate already satisfies the characteristic equation. The sweep qualifies it by backward error rather than discarding it. |
+| Routh RHP count | Independent Aberth root-solve (`Polynomial::roots_best_effort`), filtered at `re > 1e-6` | Exact equality of counts | count-exact | The `1e-6` filter was set from the root solver's measured noise on the exact $\pm j$ roots of $s^4+2s^3+2s^2+2s+1$ ($\text{re}\sim10^{-16}$); f64 epsilon is $2.22\times10^{-16}$ (IEEE, 2019), so `1e-6` clears solver noise by nine orders of magnitude without risking a true RHP root going uncounted. |
 | Root locus residual | Characteristic polynomial evaluated at the computed root | Absolute residual $\lvert P(\hat s)\rvert$ | $<10^{-6}$ | A fixed absolute bound is used instead of the LAPACK scaled-residual convention $r=\lVert A-LU\rVert/(n\lVert A\rVert\epsilon)$ (Anderson et al., 1994) because the swept companion matrices here are low order ($n\le3$) and well conditioned; $10^{-6}$ still leaves five to six orders of margin above the Aberth solver's f64 convergence floor. |
 | Adaptive root locus displacement bound | Maximum adjacent pole displacement $\max_j \lvert s_j(K_{i+1}) - s_j(K_i)\rvert$ across recorded steps | Absolute displacement | $\le \Delta s_{\max} + 10^{-4}$ (or at $\Delta K_{\min}$ floor) | Adaptive sub-stepping constrains step-to-step jumps; $10^{-4}$ is the unit-test slack matching f64 companion-root noise on the recorded mesh, not a claim of $10^{-9}$ geometric exactness. |
 | Adaptive root locus residual | Closed-loop characteristic polynomial evaluated at each recorded adaptive root | Absolute residual $\lvert P(\hat s)\rvert$ | $<10^{-6}$ | Demonstrates that every recorded adaptive sub-step satisfies the characteristic equation $D(s) + K N(s) = 0$. |
-| Margin crossover frequency | Closed-form analytical crossover ($\omega_{gc}=\sqrt{\sqrt[3]{16}-1}$, $\omega_{pc}=\sqrt3$ for $G(s)=4/(s+1)^3$), method of manufactured solutions (Yeo, 2020) | Absolute error | $10^{-2}$ rad/s (test comparison); $\sim2\times10^{-6}$ rad/s absolute (algorithm) | The bisection loop halves a $\sim0.0025$ rad/s coarse-sweep bracket for 10 iterations, reaching $\sim2\times10^{-6}$ rad/s absolute precision — comfortably inside NFR-3's $10^{-4}$ relative bound. The test's own $10^{-2}$ tolerance is a looser sanity check against the independently-derived analytical crossover, not the algorithm's achieved precision. |
+| Margin crossover frequency | Closed-form analytical crossover ($\omega_{gc}=\sqrt{\sqrt[3]{16}-1}$, $\omega_{pc}=\sqrt3$ for $G(s)=4/(s+1)^3$), method of manufactured solutions (Yeo, 2020) | Relative frequency error; absolute phase error | $\lvert\omega-\omega^\star\rvert/\omega^\star \le 10^{-4}$; $\lvert\Phi_m-\Phi_m^\star\rvert \le 0.1^\circ$; $\lvert K_g-2\rvert$ inside the same relative bound | NFR-3. $\Phi_m$ uses unwrapped $\phi(\omega_{gc})$, not principal $\mathrm{atan2}$. |
+| Phase margin after $-\pi$ wrap | Manufactured plant with $\omega_{gc} > \omega_{pc}$ (high gain on $G(s)=4/(s+1)^3$ or equivalent) | Sign and magnitude of $\Phi_m$ | Negative phase margin, matching unwrapped $\pi+\phi(\omega_{gc})$ | Principal $\mathrm{atan2}$ jumps to $+\pi$ after the negative-real crossing and would report the wrong sign. |
+| Compensator pole/zero placement | Closed-form pole/zero location of $K(s+1/T)/(s+1/(\alpha T))$ | Absolute error | $<10^{-9}$ | A degree-1 polynomial resolves via `Polynomial::roots`'s closed-form branch, not the iterative Aberth solver, so error is limited to f64 rounding in one division. |
+| Invalid lead/lag parameters | $\alpha\le 0$, $\alpha=1$, $T\le 0$ | Exact equality | Typed error; no Inf/NaN pole | Out-of-range attenuation or non-positive $T$ is not a network |
+| Incomputable rise time | Step record that never crosses 10% or 90% | Exact equality | Rise time absent, not $0$ | Zero is reserved for a true $t=0$ crossing |
+| PID non-positive sample period | $d t \le 0$ or $T_f + d t \le 0$ | Exact equality | Typed error, no non-finite command | A cancelled denominator is not a valid update |
+| Root-locus properness | Numerator capacity $>$ denominator capacity with leading numerator zeros (actually proper) | Exact equality | Sweep accepted | Improperness uses polynomial degree, not buffer capacity |
+| Gain margin at a vanishing response | Phase-crossover magnitude $0$ or non-finite | Exact equality | Gain margin absent, not Inf/NaN | $1/\lvert G\rvert$ is undefined at a vanishing response |
 | PID closed-form responses | Analytical P, I, D, and frequency-response formulas evaluated independently of `step` / `to_transfer_function` (method of manufactured solutions, Yeo, 2020) | Absolute error | $10^{-12}$ ($P$-only, saturation recovery, reset); $10^{-9}$ (integral running sum, frequency cross-check); $10^{-3}$ (derivative steady state) | Exact-algebra cases bound at f64 rounding ($10^{-12}$); the derivative filter's steady state is a settling limit reached over a finite simulated window ($5\,\text{s}$ against a $T_f=0.05\,\text{s}$ time constant), so its bound is looser. |
 | Realization equivalence | Independent Direct Form I difference equation (Oppenheim and Schafer, 2010) | Absolute error | $10^{-12}$ (cross-structure equivalence); $10^{-9}$ (DC-gain convergence); $10^{-15}$ (reset / identity) | DF2T and Biquad share no code path with the Direct Form I reference; bounds track accumulated f64 rounding over $\le200$ recurrence steps. |
-| Compensator pole/zero placement | Closed-form pole/zero location of $K(s+1/T)/(s+1/(\alpha T))$ | Absolute error | $<10^{-9}$ | A degree-1 polynomial resolves via `Polynomial::roots`'s closed-form branch, not the iterative Aberth solver, so error is limited to f64 rounding in one division. |
 
 #### 6.3 Limits
 
@@ -518,6 +552,8 @@ Both validation suites conform to the host oracle harness contract (`documentati
 | **Phase 3: Root Locus & Margins**          | Implement gain-sweep root locus and frequency margin crossing bisection over `TransferFunction`.                        | 2.5 Days         |
 | **Phase 4: Standalone PID & Compensators** | Implement `Pid<T>` struct, `lead()`, `lag()`, and   `Pid::to_transfer_function()` model factories.                        | 1.5 Days         |
 | **Phase 5: V&V & Target Profiling**        | Numerical equivalence tests, SOS quantization tests including `f32` high-order cascade error versus a direct-form realization, independent host-side oracle cross-validation, ETS QEMU target execution, and a buck-converter validation example. | 2.5 Days         |
+| **Phase 7: Routh substitution and breakaway sweeps** | Repair: record the substituted first-column divisor (FR-14); qualify an unconverged root-locus solve by relative backward error; reject rather than abort a sub-step that lands on a breakaway. Tests: the two new 6.2 rows. Deferred: sensitivity-predicted steps and optimal bipartite branch assignment, which supersede nearest-neighbour matching. | 1.5 Days         |
+| **Phase 6: Margin, compensator, and metric repairs** | Repair: unwrap $\phi(\omega_{gc})$ for $\Phi_m$; refuse non-positive $T$ and out-of-range $\alpha$; distinguish missing rise/settle from zero; refuse non-positive PID $dt$; compare root-locus properness by degree; leave gain margin absent when $\lvert G\rvert=0$. Tests: the new 6.2 rows, including NFR-3 analytical PM/GM and a wrap-around plant. | 2.0 Days         |
 
 ---
 
@@ -539,6 +575,8 @@ Both validation suites conform to the host oracle harness contract (`documentati
 | 1.11     | September 15, 2026 | @MitchellDScott | Split validation/, examples/, and bench/; relocate plant oracle suites under validation/. |
 | 1.12     | September 15, 2026 | @MitchellDScott | Need-named FRs without in-body cites; inherited C-1 pointer; §6.2 catalogue table only; f32 cascade in §9 not 6.7. |
 | 1.13     | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: reference [22] is now the design template. |
+| 1.14     | September 16, 2026 | @MitchellDScott | FR-11 invalid compensator parameters, FR-12 incomputable metrics, FR-13 positive PID sample period; NFR-3 bounds in 6.2; branch matching is best-effort; §9 Phase 6. |
+| 1.15     | September 16, 2026 | @MitchellDScott | FR-14 substituted Routh divisor is the recorded divisor; 6.2 rows for the first-column substitution and the breakaway backward error; §9 Phase 7. |
 
 ---
 

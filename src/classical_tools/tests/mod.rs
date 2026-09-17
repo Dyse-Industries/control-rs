@@ -1,4 +1,4 @@
-#![cfg_attr(feature = "ets", allow(clippy::unwrap_used))]
+#![cfg_attr(feature = "ets", allow(clippy::unwrap_used, clippy::expect_used))]
 #![allow(
     clippy::cast_precision_loss,
     clippy::items_after_statements,

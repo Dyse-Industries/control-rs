@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 from numpy.polynomial.polynomial import polyder, polydiv, polyfromroots, polymul, polyval
 
-from h5_write import attr_specs_from_toml, overlay_dict, project_dict, write_variant_file
+from h5_write import attr_specs_from_toml, present_paths, write_variant_file
 
 CLUSTER_ORDER = 16
 CLUSTER_ROOT = 1.01
@@ -194,9 +194,11 @@ if __name__ == "__main__":
         attr_specs=specs,
     )
     if flint_results:
-        write_variant_file(
-            results / "polynomial.flint.h5",
-            overlay_dict(project_dict(numpy_results, GATED), flint_results),
-            gated_paths=GATED,
-            meta=flint_results,
-        )
+        flint_paths = present_paths(flint_results, GATED)
+        if flint_paths:
+            write_variant_file(
+                results / "polynomial.flint.h5",
+                flint_results,
+                gated_paths=flint_paths,
+                meta=flint_results,
+            )

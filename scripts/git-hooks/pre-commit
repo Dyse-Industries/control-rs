@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# control-rs pre-commit hook.
+#
+# Formats the workspace, re-stages anything formatting changed, then runs the
+# fast local gates across the workspace, which includes the examples, the
+# benches and `control-rs-validation`. Install with:
+#
+#   cp scripts/git-hooks/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs')"
+
+cargo fmt-all
+
+if [ -n "$staged" ]; then
+    # Re-stage only files that were already staged, so the hook never adds
+    # unrelated work in progress to the commit.
+    printf '%s\n' "$staged" | while IFS= read -r file; do
+        [ -f "$file" ] && git add -- "$file"
+    done
+fi
+
+cargo clean
+cargo build --workspace --all-targets
+cargo check --workspace --all-targets
+cargo lint -- -D warnings

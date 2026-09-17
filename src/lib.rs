@@ -9,6 +9,8 @@ pub mod matrix;
 pub mod modern_tools;
 pub mod nonlinear_tools;
 pub mod polynomial;
+/// Plant-model types for the common import path.
+pub mod prelude;
 pub mod robust_tools;
 pub mod state_space;
 pub mod tensor;

@@ -1,0 +1,16 @@
+# cargo-audit configuration for the control-rs workspace.
+#
+# The gate runs `cargo audit --deny warnings`, so an unmaintained or yanked
+# advisory fails rather than printing a warning nobody reads. Every entry below
+# is therefore a recorded decision, not a suppression: state the reason and the
+# condition that retires it.
+
+[advisories]
+ignore = [
+    # bare-metal 0.2.5 is deprecated. It is an unconditional dependency of
+    # cortex-m 0.7.9, which is the latest release and offers no feature that
+    # drops it, so the only alternatives are removing cortex-m from
+    # control-rs-ets or waiting upstream. Retire this entry when a cortex-m
+    # release without the bare-metal edge ships.
+    "RUSTSEC-2026-0110",
+]

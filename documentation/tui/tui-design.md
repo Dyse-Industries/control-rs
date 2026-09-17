@@ -33,6 +33,14 @@ facilitating rapid on-target iteration.
 - **FR-5 — Keystroke Controls**: Users must control target execution via
   single-key shortcuts (`f` filter, `r` run all, `s` stop, `q` quit).
 
+- **FR-6 — Session liveness**: The dashboard retries discovery until the host
+  session reports it complete, and it surfaces target process exit. A QEMU
+  boot race or a dead subprocess must not look like an idle empty tree.
+
+- **FR-7 — Suite setting inspection and edit**: The operator can read a
+  setting's description and write a live `SetSetting` without leaving the
+  dashboard. Discovery without that path is not a complete interactive session.
+
 #### 2.2 Non-Functional Requirements
 
 - **NFR-1 — Diff-only repaint**: An unchanged frame writes nothing to the
@@ -242,6 +250,9 @@ real terminal.
 | Key bindings | Each bound key | Command emitted | The command named in FR-5 |
 | Cache survives reset | Reset injected mid-session | Per-case metrics after re-discovery | Unchanged for completed cases |
 | Transport isolation | Source and dependency tree | Framing, CRC or serial code in this crate | None |
+| Discovery retry | First `ListSuites` dropped | Suites eventually rendered | Discovery completes |
+| Target process exit | Spawned QEMU exits | Dashboard state | Exit surfaced; session not left looking connected |
+| Setting description | Key bound to description | Setting text shown | Matches the suite registry |
 
 No frame-rate bound is asserted. See 6.7.
 
@@ -289,6 +300,7 @@ No frame-rate bound is asserted. See 6.7.
 | **Step 1: Ratatui Interface Skeleton** | Build the terminal UI layout panels using `ratatui` (Header, Tree Table, Logs, Footer).     | 1.0 day          |
 | **Step 2: ServerBridge Connection**    | Integrate `ServerBridge` polling channels (QEMU stdio / `serial2`) into the TUI event loop. | 1.0 day          |
 | **Step 3: Bidirectional Controls**     | Implement keystroke handlers and write command packets to the target down-buffer.           | 0.5 day          |
+| **Step 4: Session liveness and settings** | Repair: retry `ListSuites` on the same interval as the headless runner; observe process exit; wait the host reset delay before re-open; restore setting description and `SetSetting`. Tests: 6.2 discovery-retry, process-exit, and setting-description rows. | 1.0 day          |
 
 ---
 
@@ -304,6 +316,7 @@ No frame-rate bound is asserted. See 6.7.
 | 1.5      | September 9, 2026 | @MitchellDScott | Evidence pass: added the research pair and citation layer, grounded the rendering and repaint claims, added the process-per-case alternative, restructured §6 per `vv-standards.md`, and moved the unverified 16 ms budget to 6.7. |
 | 1.6      | September 9, 2026 | @MitchellDScott | Hardening pass: numbered §2.1–§2.3 and added §2.3 Constraints (C-1..C-3), mapped TargetInfo in FR-1, corrected bridge diagram link, completed 6.4 traceability, and standardized References. |
 | 1.7      | September 15, 2026 | @MitchellDScott | NFR-1 is diff-only repaint; 16 ms budget is not a requirement and is not traced. |
+| 1.8      | September 16, 2026 | @MitchellDScott | FR-6 session liveness, FR-7 suite setting inspection and edit; 6.2 discovery/exit/setting rows; §9 Step 4. |
 
 ---
 

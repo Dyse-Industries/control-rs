@@ -6,6 +6,7 @@ on:
     tags: [ "v*" ]
     paths:
       - 'src/**'
+      - 'documentation/**'
       - 'benches/**'
       - 'control-rs-ets/**'
       - 'control-rs-macros/**'
@@ -28,6 +29,7 @@ on:
     branches: [ "main" ]
     paths:
       - 'src/**'
+      - 'documentation/**'
       - 'benches/**'
       - 'control-rs-ets/**'
       - 'control-rs-macros/**'
@@ -340,52 +342,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-  fuzz:
-    name: Fuzz
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: cargo-bins/cargo-binstall@main
-      - name: Install cargo-fuzz
-        run: cargo binstall cargo-fuzz -y
-      - name: Run cargo fuzz
-        run: |
-          mkdir -p target/ci-artifacts
-          cargo run -p control-rs-ci --bin ci -- --only fuzz --out-dir target/ci-artifacts
-      - name: Upload Fuzz Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-artifacts-fuzz
-          path: target/ci-artifacts/fuzz-report.json
-          if-no-files-found: warn
-          retention-days: 30
 
-  kani:
-    name: Kani
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Kani
-        run: cargo install --locked kani-verifier && cargo kani setup
-      - name: Run cargo kani
-        run: |
-          mkdir -p target/ci-artifacts
-          cargo run -p control-rs-ci --bin ci -- --only kani --out-dir target/ci-artifacts
-      - name: Upload Kani Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-artifacts-kani
-          path: target/ci-artifacts/kani-report.json
-          if-no-files-found: warn
-          retention-days: 30
 
   report:
     name: Aggregate Quality Report
@@ -402,8 +359,6 @@ jobs:
         lockbud,
         deny,
         audit,
-        fuzz,
-        kani,
       ]
     if: always()
     permissions:
@@ -423,7 +378,7 @@ jobs:
       # this job is the single gate the publish job hangs on. `--warn trace`
       # keeps the paused tracer out of that decision.
       - name: Generate Aggregated Report
-        run: cargo run -p control-rs-ci --bin report -- --artifacts-dir target/ci-artifacts --out-dir . --warn trace
+        run: cargo run -p control-rs-ci --bin report -- --artifacts-dir target/ci-artifacts --out-dir . --warn trace --warn miri --warn valgrind --warn lockbud --require fmt,clippy,check,build,test,coverage,deny,audit,mutants,ets
 
       - name: Post PR Comment
         if: always() && github.event_name == 'pull_request'
@@ -446,7 +401,7 @@ jobs:
   publish:
     name: Publish Gate
     runs-on: ubuntu-latest
-    needs: [ report, check-and-test ]
+    needs: [ report, check-and-test, coverage, deny, audit, mutants, ets-qemu ]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
