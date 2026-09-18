@@ -263,7 +263,7 @@ RunRecord {
     results: Vec<TestOutcome>,
     pending: Vec<(u16, u16)>,
     resets:  u32,
-    abort:   Option<Completion>, // None (drained) | TimedOut | ResetBudgetExhausted | SendFailed | ReconnectFailed
+    abort:   Option<Completion>, // None (drained) | TimedOut | ResetBudgetExhausted | SendFailed | ReconnectFailed | TargetExited
     elapsed: Duration,
     console: String,
 }
@@ -286,11 +286,11 @@ and raw console logs. `EtsRunResult` is retained as a type alias for `RunRecord`
 `TestOutcome`, `Completion`, and `RunRecord` are public API; changing a field is
 a breaking release of this crate.
 
-A mid-session `send_command` failure or a failed panic-reconnect returns `Ok`
-with `abort: Some(Completion::SendFailed)` or `Some(Completion::ReconnectFailed)`
-and the results collected so far. `Err(HostError)` is reserved for failures
-that prevent a session from producing results at all (build, spawn, serial
-open).
+A mid-session `send_command` failure, failed panic-reconnect, or premature target
+exit returns `Ok` with `abort: Some(Completion::SendFailed)`,
+`Some(Completion::ReconnectFailed)`, or `Some(Completion::TargetExited)` and the
+results collected so far. `Err(HostError)` is reserved for failures that prevent
+a session from producing results at all (build, spawn, serial open).
 
 `RunRecord` carries no pass/fail verdict. Whether a run with failures, a
 timeout, or an exhausted reset budget constitutes a CI failure is a policy

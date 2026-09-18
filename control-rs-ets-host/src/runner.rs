@@ -64,6 +64,8 @@ pub enum Completion {
     SendFailed,
     /// Panic recovery could not reopen the transport.
     ReconnectFailed,
+    /// Target process exited before all queued tests finished.
+    TargetExited,
 }
 
 impl RunRecord {
@@ -210,10 +212,13 @@ pub fn run_headless_ets(
                 || !state.run_queue.is_empty()
             {
                 bridge.terminate();
-                return Err(HostError::Transport {
-                    source: format!("Process exited unexpectedly: {status}")
-                        .into(),
-                });
+                return Ok(finish_record(
+                    state,
+                    resets,
+                    Some(Completion::TargetExited),
+                    start_time,
+                    Some(format!("process exited unexpectedly: {status}")),
+                ));
             }
             state.exit_loop = true;
         }
@@ -325,7 +330,7 @@ mod tests {
             None,
         );
         assert_eq!(record.pending, vec![(0, 0), (0, 1)]);
-        assert!(record.results.is_empty());
+        assert_eq!(record.results, []);
         assert_eq!(record.abort, Some(Completion::TimedOut));
     }
 
@@ -352,5 +357,50 @@ mod tests {
         );
         assert_eq!(record.pending, vec![(0, 1)]);
         assert_eq!(record.results.len(), 1);
+    }
+
+    #[test]
+    fn target_exit_mid_run_retains_results_as_abort() {
+        let mut state = SessionState::new();
+        discover_two(&mut state);
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Passed,
+            },
+        ));
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::MetricReport {
+                suite_id: 0,
+                test_id: 0,
+                cycles: 10,
+                time_us: 5,
+                stack_peak: 64,
+            },
+        ));
+        assert_eq!(state.current_running, Some((0, 1)));
+        assert_eq!(state.results.len(), 1);
+        assert_eq!(state.run_queue, []);
+
+        let record = finish_record(
+            state,
+            0,
+            Some(Completion::TargetExited),
+            Instant::now(),
+            Some("process exited unexpectedly: exit status: 1".to_string()),
+        );
+        assert_eq!(record.results.len(), 1);
+        assert_eq!(
+            record.results.first().map(|r| r.test_name.as_str()),
+            Some("t0")
+        );
+        assert_eq!(
+            record.results.first().map(|r| r.state),
+            Some(TestState::Passed)
+        );
+        assert_eq!(record.pending, vec![(0, 1)]);
+        assert_eq!(record.abort, Some(Completion::TargetExited));
+        assert!(record.console.contains("process exited unexpectedly"));
     }
 }
