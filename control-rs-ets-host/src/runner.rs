@@ -66,6 +66,17 @@ pub enum Completion {
     ReconnectFailed,
 }
 
+/// Decision after a [`SessionAction::PanicRestart`] once the bridge is closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanicRestartPlan {
+    /// `exit_loop` is set: the panic completed the suite; do not reconnect.
+    SuiteComplete,
+    /// Reset budget exhausted while work remains; abort the run.
+    BudgetExhausted,
+    /// Reopen the bridge and rediscover remaining cases.
+    Reconnect,
+}
+
 impl RunRecord {
     /// Returns the terminal completion status.
     #[must_use]
@@ -161,41 +172,51 @@ pub fn run_headless_ets(
                         bridge.terminate();
                         thread::sleep(Duration::from_secs(1));
 
-                        if resets >= MAX_RESETS {
-                            return Ok(finish_record(
-                                state,
-                                resets,
-                                Some(Completion::ResetBudgetExhausted),
-                                start_time,
-                                None,
-                            ));
-                        }
-
-                        if !state.exit_loop {
-                            match ETSBridge::new(target.clone(), true) {
-                                Ok(new_bridge) => {
-                                    bridge = new_bridge;
-                                    if let Err(e) = send_discovery(&mut bridge)
-                                    {
-                                        bridge.terminate();
+                        match plan_panic_restart(state.exit_loop, resets) {
+                            PanicRestartPlan::SuiteComplete => {
+                                // Final panic drained the suite; do not
+                                // mis-classify as reset-budget exhaustion.
+                            }
+                            PanicRestartPlan::BudgetExhausted => {
+                                return Ok(finish_record(
+                                    state,
+                                    resets,
+                                    Some(Completion::ResetBudgetExhausted),
+                                    start_time,
+                                    None,
+                                ));
+                            }
+                            PanicRestartPlan::Reconnect => {
+                                match ETSBridge::new(target.clone(), true) {
+                                    Ok(new_bridge) => {
+                                        bridge = new_bridge;
+                                        if let Err(e) =
+                                            send_discovery(&mut bridge)
+                                        {
+                                            bridge.terminate();
+                                            return Ok(finish_record(
+                                                state,
+                                                resets,
+                                                Some(Completion::SendFailed),
+                                                start_time,
+                                                Some(format!(
+                                                    "send failed: {e}"
+                                                )),
+                                            ));
+                                        }
+                                        last_send = Instant::now();
+                                    }
+                                    Err(e) => {
                                         return Ok(finish_record(
                                             state,
                                             resets,
-                                            Some(Completion::SendFailed),
+                                            Some(Completion::ReconnectFailed),
                                             start_time,
-                                            Some(format!("send failed: {e}")),
+                                            Some(format!(
+                                                "reconnect failed: {e}"
+                                            )),
                                         ));
                                     }
-                                    last_send = Instant::now();
-                                }
-                                Err(e) => {
-                                    return Ok(finish_record(
-                                        state,
-                                        resets,
-                                        Some(Completion::ReconnectFailed),
-                                        start_time,
-                                        Some(format!("reconnect failed: {e}")),
-                                    ));
                                 }
                             }
                         }
@@ -224,6 +245,22 @@ pub fn run_headless_ets(
     bridge.terminate();
 
     Ok(finish_record(state, resets, None, start_time, None))
+}
+
+/// Plans panic recovery after incrementing the reset counter.
+///
+/// When the panic that finishes the suite is also the Nth reset
+/// (`resets >= MAX_RESETS`), prefer [`PanicRestartPlan::SuiteComplete`] over
+/// [`PanicRestartPlan::BudgetExhausted`] so a fully recorded suite is not
+/// reported as an infrastructure abort.
+const fn plan_panic_restart(exit_loop: bool, resets: u32) -> PanicRestartPlan {
+    if exit_loop {
+        PanicRestartPlan::SuiteComplete
+    } else if resets >= MAX_RESETS {
+        PanicRestartPlan::BudgetExhausted
+    } else {
+        PanicRestartPlan::Reconnect
+    }
 }
 
 /// Sends cooperative reset then suite discovery.
@@ -352,5 +389,27 @@ mod tests {
         );
         assert_eq!(record.pending, vec![(0, 1)]);
         assert_eq!(record.results.len(), 1);
+    }
+
+    #[test]
+    fn plan_panic_restart_prefers_suite_complete_over_budget() {
+        // Three panicking tests with MAX_RESETS == 3: the final panic both
+        // drains the suite (exit_loop) and increments resets to the cap.
+        assert_eq!(
+            plan_panic_restart(true, MAX_RESETS),
+            PanicRestartPlan::SuiteComplete
+        );
+        assert_eq!(
+            plan_panic_restart(false, MAX_RESETS),
+            PanicRestartPlan::BudgetExhausted
+        );
+        assert_eq!(
+            plan_panic_restart(false, MAX_RESETS - 1),
+            PanicRestartPlan::Reconnect
+        );
+        assert_eq!(
+            plan_panic_restart(true, 1),
+            PanicRestartPlan::SuiteComplete
+        );
     }
 }
