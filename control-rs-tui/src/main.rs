@@ -16,7 +16,7 @@ use std::env;
 use std::process::exit;
 
 use control_rs_ets_host::ETSBridge;
-use control_rs_ets_host::target::{Target, build_target_elf, parse_targets};
+use control_rs_ets_host::target::{Target, parse_targets};
 
 mod tui;
 
@@ -62,24 +62,7 @@ fn main() {
         Target::qemu_arm()
     };
 
-    let elf_path = match &target {
-        Target::Subprocess(sub) => match build_target_elf(sub) {
-            Ok(path) => path,
-            Err(e) => {
-                eprintln!("error: {e}");
-                exit(1);
-            }
-        },
-        Target::Serial { .. } => String::new(),
-    };
-
-    let elf_opt = if elf_path.is_empty() {
-        None
-    } else {
-        Some(elf_path.as_str())
-    };
-
-    let bridge = match ETSBridge::new(target.clone(), elf_opt, false) {
+    let bridge = match ETSBridge::new(target.clone(), false) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("error: failed to start bridge: {e}");
@@ -87,7 +70,7 @@ fn main() {
         }
     };
 
-    if let Err(e) = tui::run_tui(bridge, &target, &elf_path) {
+    if let Err(e) = tui::run_tui(bridge, &target) {
         eprintln!("error: TUI error: {e}");
         exit(1);
     }

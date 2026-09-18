@@ -388,7 +388,11 @@ pub fn parse_targets(args: &[String]) -> Result<Vec<Target>, String> {
         return Ok(vec![Target::Serial { port: p, baud }]);
     }
 
-    if qemu_mode && (path.is_empty() || path == ".") {
+    let uses_known_qemu_triple = targets
+        .iter()
+        .any(|t| t.target.as_deref().and_then(qemu_bin_for_triple).is_some());
+    if (qemu_mode || uses_known_qemu_triple) && (path.is_empty() || path == ".")
+    {
         path = String::from("examples/qemu");
     }
 
@@ -619,6 +623,63 @@ mod tests {
             assert_eq!(
                 sub.bin.as_deref(),
                 Some("control-rs-qemu-riscv32imac-unknown-none-elf")
+            );
+        } else {
+            panic!("expected subprocess target");
+        }
+    }
+
+    #[test]
+    /// Architecture shorthand without a `qemu` token still names the example
+    /// firmware crate.
+    ///
+    /// # Verification
+    /// Trace: ets-host#FR-9
+    /// Method: Requirements-based test
+    fn test_parse_targets_shorthand_without_qemu_token() {
+        let targets =
+            parse_targets(&["tui".to_string(), "arm".to_string()]).unwrap();
+        assert_eq!(targets.len(), 1);
+        if let Target::Subprocess(sub) = &targets[0] {
+            assert!(
+                sub.path.contains("examples/qemu"),
+                "path = {}, expected examples/qemu",
+                sub.path
+            );
+            assert_eq!(sub.target.as_deref(), Some("thumbv7em-none-eabihf"));
+            assert_eq!(
+                sub.bin.as_deref(),
+                Some("control-rs-qemu-thumbv7em-none-eabihf")
+            );
+        } else {
+            panic!("expected subprocess target");
+        }
+    }
+
+    #[test]
+    /// `--target` with a known QEMU triple and default path `.` uses the
+    /// example crate, not workspace-root `cargo run`.
+    ///
+    /// # Verification
+    /// Trace: ets-host#FR-9
+    /// Method: Requirements-based test
+    fn test_parse_targets_known_triple_defaults_to_example_crate() {
+        let targets = parse_targets(&[
+            "tui".to_string(),
+            "--target".to_string(),
+            "thumbv7em-none-eabihf".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(targets.len(), 1);
+        if let Target::Subprocess(sub) = &targets[0] {
+            assert!(
+                sub.path.contains("examples/qemu"),
+                "path = {}, expected examples/qemu",
+                sub.path
+            );
+            assert_eq!(
+                sub.bin.as_deref(),
+                Some("control-rs-qemu-thumbv7em-none-eabihf")
             );
         } else {
             panic!("expected subprocess target");

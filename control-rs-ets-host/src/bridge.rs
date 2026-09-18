@@ -26,17 +26,20 @@
 //! use control_rs_ets_host::target::Target;
 //!
 //! let target = Target::qemu_arm();
-//! let bridge = ETSBridge::new(target, None, false);
+//! let bridge = ETSBridge::new(target, false);
 //! assert!(bridge.is_ok());
 //! ```
 
 use std::io::{Read, Write as IoWrite};
 use std::process::{Child, ChildStdout, Command as StdCommand, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::thread;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use control_rs_ets::comms::{
-    Command, FrameEncoder, FrameReader, LogMessage, Telemetry,
+    Command, FrameEncoder, FrameReader, MAX_FRAME_SIZE, Telemetry,
 };
 use control_rs_ets::settings::SettingValue;
 
@@ -51,6 +54,8 @@ pub struct ETSBridge {
     link_info: String,
     rx_from_target: Receiver<BridgeMessage>,
     target_info: String,
+    shutdown: Arc<AtomicBool>,
+    readers: Vec<JoinHandle<()>>,
 }
 
 /// Inner bridge enum representing active connection variant.
@@ -69,12 +74,192 @@ enum BridgeInner {
     },
 }
 
+/// Host-owned telemetry. String fields are copied out of the decode buffer
+/// so the reader thread can reuse it without leaking.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnedTelemetry {
+    /// Discovery finished.
+    DiscoveryComplete,
+    /// Log line from the target.
+    Log {
+        /// Microseconds since boot.
+        timestamp_us: u64,
+        /// Suite that emitted the log.
+        suite_id: u16,
+        /// Test that emitted the log.
+        test_id: u16,
+        /// Log text.
+        payload: String,
+    },
+    /// Pass metrics for a completed test.
+    MetricReport {
+        /// CPU cycles.
+        cycles: u64,
+        /// Peak stack bytes.
+        stack_peak: u32,
+        /// Suite id.
+        suite_id: u16,
+        /// Test id.
+        test_id: u16,
+        /// Duration microseconds.
+        time_us: u64,
+    },
+    /// Discovered setting metadata.
+    SettingInfo {
+        /// Doc comment.
+        description: String,
+        /// Setting name.
+        name: String,
+        /// Setting id.
+        setting_id: u16,
+        /// Parent suite id.
+        suite_id: u16,
+        /// Current value.
+        value: SettingValue,
+    },
+    /// Discovered suite metadata.
+    SuiteInfo {
+        /// Doc comment.
+        description: String,
+        /// Suite name.
+        name: String,
+        /// Number of settings.
+        setting_count: u16,
+        /// Suite id.
+        suite_id: u16,
+        /// Number of tests.
+        test_count: u16,
+    },
+    /// Target panic / exception report.
+    TargetPanic {
+        /// Source file.
+        file: String,
+        /// Source line.
+        line: u32,
+        /// Panic message.
+        message: String,
+    },
+    /// Discovered test metadata.
+    TestInfo {
+        /// Doc comment.
+        description: String,
+        /// Test name.
+        name: String,
+        /// Parent suite id.
+        suite_id: u16,
+        /// Test id.
+        test_id: u16,
+    },
+    /// Test state transition.
+    TestStateChange {
+        /// New state.
+        state: control_rs_ets::comms::TestState,
+        /// Parent suite id.
+        suite_id: u16,
+        /// Test id.
+        test_id: u16,
+    },
+}
+
 /// Message type sent from the background reader thread to the host controller or UI.
 pub enum BridgeMessage {
     /// Raw console output (stdout/stderr) from the target/QEMU.
     RawConsole(String),
-    /// Telemetry parsed from target.
-    Telemetry(Telemetry<'static>),
+    /// Telemetry parsed from target, with owned strings.
+    Telemetry(OwnedTelemetry),
+}
+
+impl OwnedTelemetry {
+    /// Copies string fields out of a borrowed [`Telemetry`] frame.
+    #[must_use]
+    pub fn from_telemetry(tel: &Telemetry<'_>) -> Self {
+        match *tel {
+            Telemetry::DiscoveryComplete => Self::DiscoveryComplete,
+            Telemetry::Log(ref msg) => Self::Log {
+                timestamp_us: msg.timestamp_us,
+                suite_id: msg.suite_id,
+                test_id: msg.test_id,
+                payload: msg.payload.to_string(),
+            },
+            Telemetry::MetricReport {
+                cycles,
+                stack_peak,
+                suite_id,
+                test_id,
+                time_us,
+            } => Self::MetricReport {
+                cycles,
+                stack_peak,
+                suite_id,
+                test_id,
+                time_us,
+            },
+            Telemetry::SettingInfo {
+                description,
+                name,
+                setting_id,
+                suite_id,
+                value,
+            } => Self::SettingInfo {
+                description: description.to_string(),
+                name: name.to_string(),
+                setting_id,
+                suite_id,
+                value,
+            },
+            Telemetry::SuiteInfo {
+                description,
+                name,
+                setting_count,
+                suite_id,
+                test_count,
+            } => Self::SuiteInfo {
+                description: description.to_string(),
+                name: name.to_string(),
+                setting_count,
+                suite_id,
+                test_count,
+            },
+            Telemetry::TargetPanic {
+                file,
+                line,
+                message,
+            } => Self::TargetPanic {
+                file: file.to_string(),
+                line,
+                message: message.to_string(),
+            },
+            Telemetry::TestInfo {
+                description,
+                name,
+                suite_id,
+                test_id,
+            } => Self::TestInfo {
+                description: description.to_string(),
+                name: name.to_string(),
+                suite_id,
+                test_id,
+            },
+            Telemetry::TestStateChange {
+                state,
+                suite_id,
+                test_id,
+            } => Self::TestStateChange {
+                state,
+                suite_id,
+                test_id,
+            },
+        }
+    }
+}
+
+impl BridgeMessage {
+    /// Copies a borrowed telemetry frame into an owned [`BridgeMessage`].
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn telemetry(tel: Telemetry<'_>) -> Self {
+        Self::Telemetry(OwnedTelemetry::from_telemetry(&tel))
+    }
 }
 
 impl BridgeInner {
@@ -90,14 +275,25 @@ impl BridgeInner {
     }
 }
 
+impl Drop for ETSBridge {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
+
 impl ETSBridge {
-    /// Terminate QEMU (no-op for serial).
-    pub fn kill(&mut self) {
+    /// Stop reader threads and kill a QEMU child. Serial has no process to
+    /// kill; the reader still joins after the shutdown flag and read timeout.
+    pub fn terminate(&mut self) {
+        self.shutdown.store(true, Ordering::SeqCst);
         match &mut self.inner {
             BridgeInner::Qemu { child, .. } => {
                 let _ = child.kill();
             }
             BridgeInner::Serial { .. } => {}
+        }
+        for handle in self.readers.drain(..) {
+            let _ = handle.join();
         }
     }
 
@@ -119,7 +315,6 @@ impl ETSBridge {
     /// `HostError::Spawn` if the subprocess cannot be launched.
     pub fn new(
         target: Target,
-        _elf_path: Option<&str>,
         inherit_stderr: bool,
     ) -> Result<Self, HostError> {
         let (tx, rx) = channel();
@@ -157,7 +352,7 @@ impl ETSBridge {
                             source: last_err.into(),
                         });
                     }
-                    thread::sleep(std::time::Duration::from_secs(1));
+                    thread::sleep(Duration::from_secs(1));
                 }
             }
         }
@@ -167,18 +362,28 @@ impl ETSBridge {
             source: last_err.into(),
         })?;
 
-        let port_clone =
+        let mut port_clone =
             port.try_clone().map_err(|e| HostError::SerialClone {
                 source: e.to_string().into(),
             })?;
+        port_clone
+            .set_read_timeout(Duration::from_millis(100))
+            .map_err(|e| HostError::Transport {
+                source: format!("serial read timeout: {e}").into(),
+            })?;
 
-        // Spawn serial reader thread
-        thread::spawn(move || {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_r = Arc::clone(&shutdown);
+
+        let reader = thread::spawn(move || {
             let mut reader = FrameReader::new();
             let mut raw_line_buf = Vec::new();
             let mut byte_buf = [0u8; 1];
 
             loop {
+                if shutdown_r.load(Ordering::Relaxed) {
+                    break;
+                }
                 match port_clone.read(&mut byte_buf) {
                     Ok(1) => {
                         let b = byte_buf[0];
@@ -189,9 +394,8 @@ impl ETSBridge {
                             &tx,
                         );
                     }
-                    _ => {
-                        thread::sleep(std::time::Duration::from_millis(1));
-                    }
+                    _ if shutdown_r.load(Ordering::Relaxed) => break,
+                    Ok(_) | Err(_) => {}
                 }
             }
         });
@@ -201,6 +405,8 @@ impl ETSBridge {
             rx_from_target: rx,
             target_info: "Teensy 4.0 (Cortex-M7)".to_string(),
             link_info: format!("USB CDC ({port_path})"),
+            shutdown,
+            readers: vec![reader],
         })
     }
 
@@ -254,28 +460,40 @@ impl ETSBridge {
             source: "Failed to open stdout".into(),
         })?;
 
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut readers = Vec::new();
+
         if inherit_stderr {
-            spawn_qemu_stdout_reader(stdout, tx);
+            readers.push(spawn_qemu_stdout_reader(
+                stdout,
+                tx,
+                Arc::clone(&shutdown),
+            ));
         } else {
-            spawn_qemu_stdout_reader(stdout, tx.clone());
+            readers.push(spawn_qemu_stdout_reader(
+                stdout,
+                tx.clone(),
+                Arc::clone(&shutdown),
+            ));
             let stderr =
                 child.stderr.take().ok_or_else(|| HostError::Spawn {
                     source: "Failed to open stderr".into(),
                 })?;
-            thread::spawn(move || {
+            let shutdown_e = Arc::clone(&shutdown);
+            readers.push(thread::spawn(move || {
                 let mut reader = std::io::BufReader::new(stderr);
                 let mut line = String::new();
-                while let Ok(n) =
-                    std::io::BufRead::read_line(&mut reader, &mut line)
-                {
-                    if n == 0 {
-                        break;
+                while !shutdown_e.load(Ordering::Relaxed) {
+                    match std::io::BufRead::read_line(&mut reader, &mut line) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {
+                            let trimmed = line.trim_end().to_string();
+                            let _ = tx.send(BridgeMessage::RawConsole(trimmed));
+                            line.clear();
+                        }
                     }
-                    let trimmed = line.trim_end().to_string();
-                    let _ = tx.send(BridgeMessage::RawConsole(trimmed));
-                    line.clear();
                 }
-            });
+            }));
         }
 
         let target_desc = target.display_name();
@@ -290,6 +508,8 @@ impl ETSBridge {
             rx_from_target: rx,
             target_info: target_desc,
             link_info: link_desc,
+            shutdown,
+            readers,
         })
     }
 
@@ -305,7 +525,7 @@ impl ETSBridge {
     ///
     /// Returns `HostError::Transport` if serializing or writing to the target stream fails.
     pub fn send_command(&mut self, cmd: &Command) -> Result<(), HostError> {
-        let mut buf = [0u8; 518];
+        let mut buf = [0u8; MAX_FRAME_SIZE];
         let len = FrameEncoder::frame_command(cmd, &mut buf).map_err(|e| {
             HostError::Transport {
                 source: format!("Failed to serialize command: {e}").into(),
@@ -338,150 +558,20 @@ impl ETSBridge {
     }
 }
 
-fn leak_str(s: &str) -> &'static str {
-    Box::leak(s.to_string().into_boxed_str())
-}
-
-fn make_suite_info(
-    suite_id: u16,
-    name: &str,
-    description: &str,
-    test_count: u16,
-    setting_count: u16,
-) -> Telemetry<'static> {
-    Telemetry::SuiteInfo {
-        suite_id,
-        name: leak_str(name),
-        description: leak_str(description),
-        test_count,
-        setting_count,
-    }
-}
-
-fn make_test_info(
-    suite_id: u16,
-    test_id: u16,
-    name: &str,
-    description: &str,
-) -> Telemetry<'static> {
-    Telemetry::TestInfo {
-        suite_id,
-        test_id,
-        name: leak_str(name),
-        description: leak_str(description),
-    }
-}
-
-fn make_setting_info(
-    suite_id: u16,
-    setting_id: u16,
-    name: &str,
-    description: &str,
-    value: SettingValue,
-) -> Telemetry<'static> {
-    Telemetry::SettingInfo {
-        suite_id,
-        setting_id,
-        name: leak_str(name),
-        description: leak_str(description),
-        value,
-    }
-}
-
-fn make_log_info(msg: &LogMessage<'_>) -> Telemetry<'static> {
-    Telemetry::Log(LogMessage {
-        timestamp_us: msg.timestamp_us,
-        suite_id: msg.suite_id,
-        test_id: msg.test_id,
-        payload: leak_str(msg.payload),
-    })
-}
-
-fn make_target_panic(
-    message: &str,
-    file: &str,
-    line: u32,
-) -> Telemetry<'static> {
-    Telemetry::TargetPanic {
-        message: leak_str(message),
-        file: leak_str(file),
-        line,
-    }
-}
-
-/// Converts a Telemetry object references into static owned equivalents.
-#[must_use]
-pub fn make_telemetry_owned(tel: &Telemetry<'_>) -> Telemetry<'static> {
-    match *tel {
-        Telemetry::SuiteInfo {
-            suite_id,
-            name,
-            description,
-            test_count,
-            setting_count,
-        } => make_suite_info(
-            suite_id,
-            name,
-            description,
-            test_count,
-            setting_count,
-        ),
-        Telemetry::TestInfo {
-            suite_id,
-            test_id,
-            name,
-            description,
-        } => make_test_info(suite_id, test_id, name, description),
-        Telemetry::SettingInfo {
-            suite_id,
-            setting_id,
-            name,
-            description,
-            value,
-        } => make_setting_info(suite_id, setting_id, name, description, value),
-        Telemetry::DiscoveryComplete => Telemetry::DiscoveryComplete,
-        Telemetry::TestStateChange {
-            suite_id,
-            test_id,
-            state,
-        } => Telemetry::TestStateChange {
-            suite_id,
-            test_id,
-            state,
-        },
-        Telemetry::MetricReport {
-            suite_id,
-            test_id,
-            cycles,
-            time_us,
-            stack_peak,
-        } => Telemetry::MetricReport {
-            suite_id,
-            test_id,
-            cycles,
-            time_us,
-            stack_peak,
-        },
-        Telemetry::Log(ref msg) => make_log_info(msg),
-        Telemetry::TargetPanic {
-            message,
-            file,
-            line,
-        } => make_target_panic(message, file, line),
-    }
-}
-
 /// Reads QEMU `cargo run` stdout and forwards framed telemetry plus raw lines.
 fn spawn_qemu_stdout_reader(
     mut stdout: ChildStdout,
     tx_stdout: Sender<BridgeMessage>,
-) {
+    shutdown: Arc<AtomicBool>,
+) -> JoinHandle<()> {
     thread::spawn(move || {
         let mut reader = FrameReader::new();
         let mut raw_line_buf = Vec::new();
         let mut byte_buf = [0u8; 1];
 
-        while matches!(stdout.read(&mut byte_buf), Ok(1)) {
+        while !shutdown.load(Ordering::Relaxed)
+            && matches!(stdout.read(&mut byte_buf), Ok(1))
+        {
             let b = byte_buf[0];
             process_incoming_byte(
                 b,
@@ -490,7 +580,7 @@ fn spawn_qemu_stdout_reader(
                 &tx_stdout,
             );
         }
-    });
+    })
 }
 
 /// Processes a single byte received from the target device.
@@ -503,8 +593,7 @@ pub fn process_incoming_byte(
     if let Some(payload) = reader.handle_byte(b) {
         match postcard::from_bytes::<Telemetry<'_>>(payload) {
             Ok(telemetry) => {
-                let owned_telemetry = make_telemetry_owned(&telemetry);
-                let _ = tx.send(BridgeMessage::Telemetry(owned_telemetry));
+                let _ = tx.send(BridgeMessage::telemetry(telemetry));
             }
             Err(e) => {
                 let _ = tx.send(BridgeMessage::RawConsole(format!(
@@ -535,9 +624,10 @@ pub fn process_incoming_byte(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use control_rs_ets::comms::LogMessage;
 
     #[test]
-    fn test_make_telemetry_owned_metadata() {
+    fn test_owned_telemetry_metadata() {
         let s = Telemetry::SuiteInfo {
             suite_id: 1,
             name: "suite1",
@@ -545,8 +635,8 @@ mod tests {
             test_count: 5,
             setting_count: 2,
         };
-        let owned = make_telemetry_owned(&s);
-        if let Telemetry::SuiteInfo {
+        let owned = OwnedTelemetry::from_telemetry(&s);
+        if let OwnedTelemetry::SuiteInfo {
             suite_id,
             name,
             description,
@@ -569,8 +659,8 @@ mod tests {
             name: "test1",
             description: "tdesc",
         };
-        let owned_t = make_telemetry_owned(&t);
-        if let Telemetry::TestInfo {
+        let owned_t = OwnedTelemetry::from_telemetry(&t);
+        if let OwnedTelemetry::TestInfo {
             suite_id,
             test_id,
             name,
@@ -587,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn test_make_telemetry_owned_setting_info() {
+    fn test_owned_telemetry_setting_info() {
         let set = Telemetry::SettingInfo {
             suite_id: 1,
             setting_id: 3,
@@ -595,8 +685,8 @@ mod tests {
             description: "sdesc",
             value: SettingValue::U8(10),
         };
-        let owned_set = make_telemetry_owned(&set);
-        if let Telemetry::SettingInfo {
+        let owned_set = OwnedTelemetry::from_telemetry(&set);
+        if let OwnedTelemetry::SettingInfo {
             suite_id,
             setting_id,
             name,
@@ -615,32 +705,32 @@ mod tests {
     }
 
     #[test]
-    fn test_make_telemetry_owned_simple() {
+    fn test_owned_telemetry_simple() {
         assert!(matches!(
-            make_telemetry_owned(&Telemetry::DiscoveryComplete),
-            Telemetry::DiscoveryComplete
+            OwnedTelemetry::from_telemetry(&Telemetry::DiscoveryComplete),
+            OwnedTelemetry::DiscoveryComplete
         ));
         assert!(matches!(
-            make_telemetry_owned(&Telemetry::TestStateChange {
+            OwnedTelemetry::from_telemetry(&Telemetry::TestStateChange {
                 suite_id: 1,
                 test_id: 2,
                 state: control_rs_ets::comms::TestState::Passed
             }),
-            Telemetry::TestStateChange {
+            OwnedTelemetry::TestStateChange {
                 suite_id: 1,
                 test_id: 2,
                 state: control_rs_ets::comms::TestState::Passed
             }
         ));
         assert!(matches!(
-            make_telemetry_owned(&Telemetry::MetricReport {
+            OwnedTelemetry::from_telemetry(&Telemetry::MetricReport {
                 suite_id: 1,
                 test_id: 2,
                 cycles: 10,
                 time_us: 20,
                 stack_peak: 30
             }),
-            Telemetry::MetricReport {
+            OwnedTelemetry::MetricReport {
                 suite_id: 1,
                 test_id: 2,
                 cycles: 10,
@@ -651,20 +741,20 @@ mod tests {
     }
 
     #[test]
-    fn test_make_telemetry_owned_log() {
+    fn test_owned_telemetry_log() {
         let log = Telemetry::Log(LogMessage {
             timestamp_us: 100,
             suite_id: 1,
             test_id: 2,
             payload: "hello",
         });
-        let owned_log = make_telemetry_owned(&log);
-        if let Telemetry::Log(LogMessage {
+        let owned_log = OwnedTelemetry::from_telemetry(&log);
+        if let OwnedTelemetry::Log {
             timestamp_us,
             suite_id,
             test_id,
             payload,
-        }) = owned_log
+        } = owned_log
         {
             assert_eq!(timestamp_us, 100);
             assert_eq!(suite_id, 1);
@@ -676,14 +766,14 @@ mod tests {
     }
 
     #[test]
-    fn test_make_telemetry_owned_panic() {
+    fn test_owned_telemetry_panic() {
         let panic_tel = Telemetry::TargetPanic {
             message: "panic message",
             file: "main.rs",
             line: 5,
         };
-        let owned_panic = make_telemetry_owned(&panic_tel);
-        if let Telemetry::TargetPanic {
+        let owned_panic = OwnedTelemetry::from_telemetry(&panic_tel);
+        if let OwnedTelemetry::TargetPanic {
             message,
             file,
             line,
@@ -727,7 +817,7 @@ mod tests {
         let msg2 = rx.try_recv().unwrap();
         assert!(matches!(
             msg2,
-            BridgeMessage::Telemetry(Telemetry::DiscoveryComplete)
+            BridgeMessage::Telemetry(OwnedTelemetry::DiscoveryComplete)
         ));
     }
 

@@ -1,9 +1,9 @@
 //! Discovery, run queue and session state machine for host-side ETS.
 
-use control_rs_ets::comms::{Command as CommCommand, Telemetry, TestState};
+use control_rs_ets::comms::{Command as CommCommand, TestState};
 use control_rs_ets::settings::SettingValue;
 
-use crate::bridge::BridgeMessage;
+use crate::bridge::{BridgeMessage, OwnedTelemetry};
 use crate::runner::TestOutcome;
 
 /// Representation of a single test case under discovery.
@@ -179,7 +179,7 @@ impl SessionState {
                 Vec::new()
             }
             BridgeMessage::Telemetry(telemetry) => match telemetry {
-                Telemetry::SuiteInfo { suite_id, name, .. } => {
+                OwnedTelemetry::SuiteInfo { suite_id, name, .. } => {
                     let id = suite_id as usize;
                     while self.suites.len() <= id {
                         self.suites.push(SuiteItem {
@@ -188,10 +188,10 @@ impl SessionState {
                             settings: Vec::new(),
                         });
                     }
-                    self.suites[id].name = name.to_string();
+                    self.suites[id].name = name;
                     Vec::new()
                 }
-                Telemetry::TestInfo {
+                OwnedTelemetry::TestInfo {
                     suite_id,
                     test_id,
                     name,
@@ -218,10 +218,10 @@ impl SessionState {
                         });
                     }
                     self.suites[s_id].tests[t_id].suite_name = suite_name;
-                    self.suites[s_id].tests[t_id].name = name.to_string();
+                    self.suites[s_id].tests[t_id].name = name;
                     Vec::new()
                 }
-                Telemetry::SettingInfo {
+                OwnedTelemetry::SettingInfo {
                     suite_id,
                     setting_id,
                     name,
@@ -245,13 +245,13 @@ impl SessionState {
                             value: SettingValue::U8(0),
                         });
                     }
-                    self.suites[s_id].settings[set_id].name = name.to_string();
+                    self.suites[s_id].settings[set_id].name = name;
                     self.suites[s_id].settings[set_id].description =
-                        description.to_string();
+                        description;
                     self.suites[s_id].settings[set_id].value = value;
                     Vec::new()
                 }
-                Telemetry::DiscoveryComplete => {
+                OwnedTelemetry::DiscoveryComplete => {
                     self.discovery_complete = true;
                     self.run_queue.clear();
                     for (s_idx, suite) in self.suites.iter_mut().enumerate() {
@@ -275,7 +275,7 @@ impl SessionState {
                     }
                     self.start_next_or_exit().into_iter().collect()
                 }
-                Telemetry::TestStateChange {
+                OwnedTelemetry::TestStateChange {
                     suite_id,
                     test_id,
                     state: new_state,
@@ -289,6 +289,10 @@ impl SessionState {
                     }
 
                     if new_state == TestState::Failed {
+                        // Target `handle_failure` always emits Failed then
+                        // TargetPanic. Advancing the queue here would make the
+                        // subsequent TargetPanic attribute the crash to the
+                        // next queued test and skip running it.
                         let suite_name = self
                             .suites
                             .get(s_id)
@@ -300,20 +304,25 @@ impl SessionState {
                             .and_then(|s| s.tests.get(t_id))
                             .map(|t| t.name.clone())
                             .unwrap_or_default();
-                        self.results.push(TestOutcome {
-                            suite_name,
-                            test_name,
-                            state: TestState::Failed,
-                            cycles: None,
-                            time_us: None,
-                            stack_peak: None,
+                        let already_recorded = self.results.iter().any(|r| {
+                            r.suite_name == suite_name
+                                && r.test_name == test_name
                         });
-                        self.start_next_or_exit().into_iter().collect()
-                    } else {
-                        Vec::new()
+                        if !already_recorded {
+                            self.results.push(TestOutcome {
+                                suite_name,
+                                test_name,
+                                state: TestState::Failed,
+                                cycles: None,
+                                time_us: None,
+                                stack_peak: None,
+                            });
+                        }
+                        self.current_running = Some((suite_id, test_id));
                     }
+                    Vec::new()
                 }
-                Telemetry::MetricReport {
+                OwnedTelemetry::MetricReport {
                     suite_id,
                     test_id,
                     cycles,
@@ -352,8 +361,8 @@ impl SessionState {
                     });
                     self.start_next_or_exit().into_iter().collect()
                 }
-                Telemetry::Log(_) => Vec::new(),
-                Telemetry::TargetPanic {
+                OwnedTelemetry::Log { .. } => Vec::new(),
+                OwnedTelemetry::TargetPanic {
                     message,
                     file,
                     line,
@@ -371,16 +380,24 @@ impl SessionState {
                         {
                             self.suites[s_idx].tests[t_idx].state =
                                 TestState::Failed;
-                            self.results.push(TestOutcome {
-                                suite_name: self.suites[s_idx].name.clone(),
-                                test_name: self.suites[s_idx].tests[t_idx]
-                                    .name
-                                    .clone(),
-                                state: TestState::Failed,
-                                cycles: None,
-                                time_us: None,
-                                stack_peak: None,
-                            });
+                            let suite_name = self.suites[s_idx].name.clone();
+                            let test_name =
+                                self.suites[s_idx].tests[t_idx].name.clone();
+                            let already_recorded =
+                                self.results.iter().any(|r| {
+                                    r.suite_name == suite_name
+                                        && r.test_name == test_name
+                                });
+                            if !already_recorded {
+                                self.results.push(TestOutcome {
+                                    suite_name,
+                                    test_name,
+                                    state: TestState::Failed,
+                                    cycles: None,
+                                    time_us: None,
+                                    stack_peak: None,
+                                });
+                            }
                         }
                     }
 
@@ -414,9 +431,10 @@ impl SessionState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use control_rs_ets::comms::Telemetry;
 
     fn discover_two_tests(state: &mut SessionState) {
-        let _ = state.handle_message(BridgeMessage::Telemetry(
+        let _ = state.handle_message(BridgeMessage::telemetry(
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
@@ -425,7 +443,7 @@ mod tests {
                 setting_count: 1,
             },
         ));
-        let _ = state.handle_message(BridgeMessage::Telemetry(
+        let _ = state.handle_message(BridgeMessage::telemetry(
             Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 0,
@@ -433,7 +451,7 @@ mod tests {
                 description: "",
             },
         ));
-        let _ = state.handle_message(BridgeMessage::Telemetry(
+        let _ = state.handle_message(BridgeMessage::telemetry(
             Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 1,
@@ -441,7 +459,7 @@ mod tests {
                 description: "",
             },
         ));
-        let _ = state.handle_message(BridgeMessage::Telemetry(
+        let _ = state.handle_message(BridgeMessage::telemetry(
             Telemetry::SettingInfo {
                 suite_id: 0,
                 setting_id: 0,
@@ -457,7 +475,7 @@ mod tests {
         let mut state = SessionState::new();
         discover_two_tests(&mut state);
 
-        let actions = state.handle_message(BridgeMessage::Telemetry(
+        let actions = state.handle_message(BridgeMessage::telemetry(
             Telemetry::DiscoveryComplete,
         ));
         assert!(matches!(
@@ -470,14 +488,14 @@ mod tests {
         assert_eq!(state.current_running, Some((0, 0)));
         assert_eq!(state.run_queue, vec![(0, 1)]);
 
-        let _ = state.handle_message(BridgeMessage::Telemetry(
+        let _ = state.handle_message(BridgeMessage::telemetry(
             Telemetry::TestStateChange {
                 suite_id: 0,
                 test_id: 0,
                 state: TestState::Running,
             },
         ));
-        let actions = state.handle_message(BridgeMessage::Telemetry(
+        let actions = state.handle_message(BridgeMessage::telemetry(
             Telemetry::MetricReport {
                 suite_id: 0,
                 test_id: 0,
@@ -495,7 +513,8 @@ mod tests {
         ));
         assert_eq!(state.results[0].state, TestState::Passed);
 
-        let actions = state.handle_message(BridgeMessage::Telemetry(
+        // Failed alone must not drain the session: TargetPanic owns recovery.
+        let actions = state.handle_message(BridgeMessage::telemetry(
             Telemetry::TestStateChange {
                 suite_id: 0,
                 test_id: 1,
@@ -503,10 +522,28 @@ mod tests {
             },
         ));
         assert!(actions.is_empty());
-        assert!(state.exit_loop);
+        assert!(!state.exit_loop);
+        assert_eq!(state.current_running, Some((0, 1)));
         assert_eq!(state.results[1].state, TestState::Failed);
 
-        let _ = state.handle_message(BridgeMessage::Telemetry(Telemetry::Log(
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TargetPanic {
+                message: "assert",
+                file: "t1.rs",
+                line: 1,
+            },
+        ));
+        assert!(state.exit_loop);
+        assert_eq!(state.results.len(), 2);
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                SessionAction::Send(CommCommand::TryReset),
+                SessionAction::PanicRestart
+            ]
+        ));
+
+        let _ = state.handle_message(BridgeMessage::telemetry(Telemetry::Log(
             control_rs_ets::comms::LogMessage {
                 timestamp_us: 1,
                 suite_id: 0,
@@ -520,9 +557,54 @@ mod tests {
     }
 
     #[test]
+    fn failed_before_target_panic_does_not_blame_next_test() {
+        let mut state = SessionState::new();
+        discover_two_tests(&mut state);
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert_eq!(state.current_running, Some((0, 0)));
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+
+        // Mirror on-target handle_failure: Failed for the crashing test, then
+        // TargetPanic. The next queued test must remain pending for restart.
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Failed,
+            },
+        ));
+        assert!(actions.is_empty());
+        assert_eq!(state.current_running, Some((0, 0)));
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+        assert_eq!(state.results.len(), 1);
+        assert_eq!(state.results[0].test_name, "t0");
+
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TargetPanic {
+                message: "boom",
+                file: "t0.rs",
+                line: 3,
+            },
+        ));
+        assert_eq!(state.results.len(), 1);
+        assert_eq!(state.suites[0].tests[1].state, TestState::Pending);
+        assert!(!state.exit_loop);
+        assert!(state.logs.contains("Restarting target bridge"));
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                SessionAction::Send(CommCommand::TryReset),
+                SessionAction::PanicRestart
+            ]
+        ));
+    }
+
+    #[test]
     fn ci_ets_state_empty_discovery_and_panic_restart() {
         let mut empty = SessionState::new();
-        let _ = empty.handle_message(BridgeMessage::Telemetry(
+        let _ = empty.handle_message(BridgeMessage::telemetry(
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "empty",
@@ -531,7 +613,7 @@ mod tests {
                 setting_count: 0,
             },
         ));
-        let actions = empty.handle_message(BridgeMessage::Telemetry(
+        let actions = empty.handle_message(BridgeMessage::telemetry(
             Telemetry::DiscoveryComplete,
         ));
         assert!(actions.is_empty());
@@ -539,10 +621,10 @@ mod tests {
 
         let mut state = SessionState::new();
         discover_two_tests(&mut state);
-        let _ = state.handle_message(BridgeMessage::Telemetry(
+        let _ = state.handle_message(BridgeMessage::telemetry(
             Telemetry::DiscoveryComplete,
         ));
-        let actions = state.handle_message(BridgeMessage::Telemetry(
+        let actions = state.handle_message(BridgeMessage::telemetry(
             Telemetry::TargetPanic {
                 message: "boom",
                 file: "main.rs",
@@ -577,7 +659,7 @@ mod tests {
             stack_peak: None,
         });
         state.current_running = Some((0, 0));
-        let actions = state.handle_message(BridgeMessage::Telemetry(
+        let actions = state.handle_message(BridgeMessage::telemetry(
             Telemetry::TargetPanic {
                 message: "done",
                 file: "main.rs",
@@ -608,14 +690,14 @@ mod tests {
             stack_peak: Some(32),
         });
 
-        let actions = state.handle_message(BridgeMessage::Telemetry(
+        let actions = state.handle_message(BridgeMessage::telemetry(
             Telemetry::DiscoveryComplete,
         ));
         assert!(!actions.is_empty());
         assert_eq!(state.run_queue.len(), 0);
         assert_eq!(state.current_running, Some((0, 1)));
 
-        let _ = state.handle_message(BridgeMessage::Telemetry(
+        let _ = state.handle_message(BridgeMessage::telemetry(
             Telemetry::MetricReport {
                 suite_id: 0,
                 test_id: 1,
@@ -625,7 +707,7 @@ mod tests {
             },
         ));
 
-        let _ = state.handle_message(BridgeMessage::Telemetry(
+        let _ = state.handle_message(BridgeMessage::telemetry(
             Telemetry::TestStateChange {
                 suite_id: 0,
                 test_id: 1,

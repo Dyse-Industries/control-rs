@@ -280,9 +280,11 @@ impl Setting for AtomicU32Setting {
 Interactive testing sessions follow a strict state-machine flow:
 
 1. **Deployment & Reset**: Firmware containing the test server and suites is
-   deployed to the target via the target cargo runner (or external programmer),
-   and `control-rs-ets-host::ETSBridge` connects to the running target and
-   triggers a protocol reset to ensure execution isolation.
+   deployed to the target via the target cargo runner (or external programmer).
+   `control-rs-ets-host::ETSBridge` then connects to the already-running
+   target. Isolation is cooperative (`Command::TryReset`) plus process restart
+   on QEMU; a serial session without lab reset wiring cannot power-cycle the
+   board.
 2. **State Tracking**: Test execution status is evaluated via start and end
    timestamps recorded on the target:
     - **Pending**: No start timestamp recorded.
@@ -478,6 +480,7 @@ descriptor statics, which are data.
 | 1.5      | September 9, 2026 | @MitchellDScott | Citation pass: grounded the cross-crate registration hazard that motivates the `KEEP` directive, added evidence-backed rejections for `inventory`, `ctor`, `static_init`, `embedded-test` and the CLI crates, restructured §6 per `vv-standards.md`. |
 | 1.6      | September 9, 2026 | @MitchellDScott | Structural hardening: demoted badge to Draft, numbered §2 subsections, eliminated rogue FR-4, mapped NFR-4 to §6.7, mapped C-2/C-3 in §6.4, clarified firmware deployment and attribute extensions, standardized references. |
 | 1.7      | September 9, 2026 | @MitchellDScott | Dropped the author-year / `[n]` mapping table. |
+| 1.8      | September 18, 2026 | @MitchellDScott | Serial/QEMU isolation: bridge connects to already-running firmware; `TryReset` is cooperative, not a power cycle. |
 
 ---
 

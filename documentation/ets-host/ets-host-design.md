@@ -98,10 +98,10 @@ without vendoring this repository.
   of that contract, not an independent protocol.
 
 - **C-3 — Minimal dependencies**: Transport and codec dependencies are limited
-  to `control-rs-ets`, `serial2`, `postcard`, and `crc`. `thiserror` is
-  admitted in addition, because the crate error rule requires library errors to
-  be a crate-local `thiserror` enum; it is a compile-time derive with no
-  runtime dependency of its own.
+  to `control-rs-ets`, `serial2`, and `postcard`. Frame CRC-16 lives in
+  `control-rs-ets`. `thiserror` is admitted in addition, because the crate
+  error rule requires library errors to be a crate-local `thiserror` enum; it
+  is a compile-time derive with no runtime dependency of its own.
 
 ---
 
@@ -119,7 +119,7 @@ the structured result.
 flowchart LR
     subgraph Consumers
         tui["control-rs-tui"]
-        ci["control-rs-ci"]
+        ci["control-rs-xtask"]
     end
     subgraph Host ["control-rs-ets-host"]
         runner["runner"]
@@ -148,7 +148,7 @@ flowchart LR
 | Module    | Responsibility                                                                                                       |
 |:----------|:---------------------------------------------------------------------------------------------------------------------|
 | `target`  | `Target`, `SubprocessTarget`, `SerialTarget`, QEMU architecture descriptors, ELF path resolution, `build_target_elf` |
-| `bridge`  | `ETSBridge` construction, reader threads, `BridgeMessage` stream, `send_command`, `try_wait`, `kill`                 |
+| `bridge`  | `ETSBridge` construction, reader threads, `BridgeMessage` stream, `send_command`, `try_wait`, `terminate`            |
 | `session` | Discovery and run-queue state machine, panic detection, reset and reconnect sequence                                 |
 | `runner`  | `run_headless_ets(target, timeout) -> Result<RunRecord, HostError>`                                                  |
 
@@ -196,16 +196,19 @@ while leaving the CRC valid, so skew presents as a correctly-framed message
 decoded as the wrong variant rather than as a transport error. The encoding
 rule and the absence of any cross-revision compatibility guarantee are
 established in `../ets/host-comm-design.md` §4.2.1, which owns the wire
-contract. FR-8 is discharged by a `PROTOCOL_VERSION` constant exported from
-`control-rs-ets::comms` and transmitted by the target in `Telemetry::TargetInfo`
-(which also conveys `board_id`, `core_clock_hz`, and `fpu_flags`); the
-host compares `protocol_version` to its own compiled value before issuing any
-`RunExecutable` and fails the session on mismatch with `HostError::ProtocolMismatch`.
+contract. FR-8 is **outstanding**: `control-rs-ets::comms` does not export
+`PROTOCOL_VERSION`, `Telemetry` has no `TargetInfo` variant, and
+`HostError::ProtocolMismatch` is reserved but never constructed. The host
+therefore cannot refuse a foreign revision at session open. That handshake is
+host-comm Step 4 (a protocol bump), not a host-only repair. Until it lands,
+decode of a CRC-valid frame is not evidence that both ends agree on variant
+meaning.
 
 #### 4.4. Session State Machine
 
-1. **Discovery** — send `ListSuites`, collect the suite and case registry, and
-   validate `Telemetry::TargetInfo`.
+1. **Discovery** — send `ListSuites` and collect the suite and case registry.
+   `Telemetry::TargetInfo` validation is FR-8 / host-comm Step 4 and is not
+   performed yet.
 2. **Run queue** — issue `RunExecutable` per queued case, accumulate cycle,
    duration, and peak-stack telemetry.
 3. **Panic** — on `Telemetry::TargetPanic`, stop issuing runs, send
@@ -244,8 +247,8 @@ points the existing implementation already surfaces as strings:
 | `SerialClone { source }` | The reader half of an opened port cannot be cloned |
 | `Spawn { source }` | The subprocess transport cannot be spawned, or its pipes cannot be taken |
 | `Transport { source }` | A read or write on an established link fails |
-| `ProtocolMismatch { host, target }` | FR-8: the target reports a different `PROTOCOL_VERSION` |
-| `Discovery` | The target never completes discovery within the session bound |
+| `ProtocolMismatch { host, target }` | Reserved for FR-8; not raised until `TargetInfo` exists on the wire |
+| `Discovery` | Reserved; a session that never completes discovery currently returns `Ok` with `abort: Some(Completion::TimedOut)` |
 
 Serial opening retries 5 times at 1 s intervals before returning
 `SerialOpen`, matching current behaviour. Frame-level integrity failures are
@@ -260,7 +263,7 @@ RunRecord {
     results: Vec<TestOutcome>,
     pending: Vec<(u16, u16)>,
     resets:  u32,
-    abort:   Option<Completion>, // None | Some(TimedOut) | Some(ResetBudgetExhausted)
+    abort:   Option<Completion>, // None (drained) | TimedOut | ResetBudgetExhausted | SendFailed | ReconnectFailed
     elapsed: Duration,
     console: String,
 }
@@ -282,6 +285,12 @@ indices, total resets performed, terminal abort condition, elapsed duration,
 and raw console logs. `EtsRunResult` is retained as a type alias for `RunRecord`.
 `TestOutcome`, `Completion`, and `RunRecord` are public API; changing a field is
 a breaking release of this crate.
+
+A mid-session `send_command` failure or a failed panic-reconnect returns `Ok`
+with `abort: Some(Completion::SendFailed)` or `Some(Completion::ReconnectFailed)`
+and the results collected so far. `Err(HostError)` is reserved for failures
+that prevent a session from producing results at all (build, spawn, serial
+open).
 
 `RunRecord` carries no pass/fail verdict. Whether a run with failures, a
 timeout, or an exhausted reset budget constitutes a CI failure is a policy
@@ -392,13 +401,13 @@ races, which are not deterministically reachable from a test; and the
 | Frame round trip | The encoder's own output re-read by `FrameReader` | Byte equality | Exact |
 | Corrupted frame rejection | A frame with one flipped payload byte | Frames delivered to the session | 0 |
 | Golden vector stability | Checked-in bytes per variant | Byte equality | Exact |
-| Protocol mismatch detection | A discovery response with a different `PROTOCOL_VERSION` | Returned variant | `Err(HostError::ProtocolMismatch)` |
+| Protocol mismatch detection | Reserved until `Telemetry::TargetInfo` exists (host-comm Step 4) | Session behaviour | Outstanding FR-8; `ProtocolMismatch` is not constructed |
 | Panic recovery retains results | Scripted stream with a panic after *n* cases | Results present after reset | *n*, none lost |
 | Reset budget | Stream that panics on every case | Reset cycles performed | Exactly `max_resets`, with `abort: Some(Completion::ResetBudgetExhausted)` |
 | Timeout bound | Target that never completes | Wall-clock time to return | Within the supplied bound plus 1 s, `abort: Some(Completion::TimedOut)` |
 | Orphan processes | Killed session | Child processes surviving return | 0 |
 | QEMU shorthand path | Architecture name without `--manifest-path` | Spawn directory and binary | QEMU example crate and its target binary, not workspace root |
-| Send failure | Broken transport on `ListSuites` | Returned error | Transport error, not a hung empty discovery |
+| Send failure | Broken transport on `ListSuites` | `RunRecord.abort` | `Some(Completion::SendFailed)`, results retained |
 | Dependency floor | `cargo tree` output | Terminal-rendering or terminal-event crates present | 0 |
 | Outcome agreement | Deprecated `control-rs-xtask` baseline on the same QEMU targets | Per-case state, suite and test name | Exact match |
 
@@ -434,10 +443,10 @@ established by `../ets/cpu-profiler-design.md`, not here.
 
 ### 8. Risks & Open Questions
 
-* **Release mechanism for the version pin**: FR-8 detects skew at run time and
-  the crate depends on an exact `control-rs-ets` version, but the mechanism
-  that keeps the two versions moving together at release time, workspace
-  version inheritance or a release script, is not yet decided.
+* **FR-8 wire handshake**: `PROTOCOL_VERSION` / `Telemetry::TargetInfo` are
+  not on the wire. The `ProtocolMismatch` error variant is reserved. The
+  crate depends on `control-rs-ets` `0.1.0` (Cargo caret). How versions move
+  together at release time is undecided.
 * **Serial enumeration**: Port paths are supplied by the caller. Automatic
   device discovery, as offered by board-aware harnesses (pytest-embedded,
   2026), is unspecified.
@@ -475,6 +484,7 @@ established by `../ets/cpu-profiler-design.md`, not here.
 | 1.3      | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: §6 authoring rules are `design-template.md` §6. |
 | 1.4      | September 16, 2026 | @MitchellDScott | FR-9 QEMU shorthand names the example crate; 6.2 shorthand and send-failure rows; §9 Phase 5. |
 | 1.5      | September 18, 2026 | @MitchellDScott | Renamed `ServerBridge` to `ETSBridge`, and updated execution result to recorded `RunRecord` data model. |
+| 1.6      | September 18, 2026 | @MitchellDScott | FR-8 marked outstanding (no `PROTOCOL_VERSION` / `TargetInfo` on the wire); `terminate` teardown; send and reconnect keep partial `RunRecord`s; host `crc` dropped. |
 
 ---
 
