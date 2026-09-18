@@ -281,7 +281,7 @@ Excluded: generated code, which is verified by the behaviour of the ELF rather
 than by coverage of the generator; and `trybuild` fixtures, which are inputs.
 
 * **Hardware integration**: Compile the Teensy 4.1 board tests using the macros
-  and drive them through `control-rs-ets-host::ServerBridge`, confirming that
+  and drive them through `control-rs-ets-host::ETSBridge`, confirming that
   every suite is discovered and that settings can be modified at runtime.
 * **Third-party module**: Annotate a suite in a crate outside this workspace and
   confirm it registers, which is the property distributed registration exists to

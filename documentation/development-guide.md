@@ -16,7 +16,7 @@ flowchart LR
     subgraph Host["Host Environment"]
         TUI("fa:fa-display Terminal UI (TUI)")
         CI("fa:fa-robot CI Runner")
-        Comm{"fa:fa-code ServerBridge"}
+        Comm{"fa:fa-code ETSBridge"}
     end
     subgraph Loop["fa:fa-rotate-right Server Event Loop"]
         direction TB
@@ -60,7 +60,7 @@ the target-side infrastructure:
 
 - **Terminal User Interface (TUI)**: Interactive frontend for virtual ETS and
   ETS.
-- **ServerBridge**: Host driver for TUI and CI against virtual Embedded Test
+- **ETSBridge**: Host driver for TUI and CI against virtual Embedded Test
   Server (virtual ETS) under QEMU or ETS on a board.
 
 ### 3. Continuous Integration (`.github/workflows/CI.yml`)

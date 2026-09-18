@@ -59,13 +59,13 @@ waiting for commands.
 ### 3. Technical Overview
 
 The ETS framework is structured as a dual-targeted system. `control-rs-tui`
-and `control-rs-ci` are host frontends; `control-rs-ets-host::ServerBridge`
+and `control-rs-ci` are host frontends; `control-rs-ets-host::ETSBridge`
 drives both. The target-side `Server` is ETS on a physical board and virtual
 Embedded Test Server (virtual ETS) under QEMU.
 
 1. **Host-Side (PC)**:
     - **`control-rs-ets-host`**: Reusable host library providing
-      `ServerBridge`, framing protocols (`postcard`, `crc`), transport drivers,
+      `ETSBridge`, framing protocols (`postcard`, `crc`), transport drivers,
       and headless test-runner state machines.
     - **`control-rs-tui`**: Standalone interactive terminal console
       (`control-rs-tui` → virtual ETS or `control-rs-tui` → ETS).
@@ -91,7 +91,7 @@ flowchart TD
         direction TB
         TUI["control-rs-tui"]
         CI["control-rs-ci"]
-        Bridge["control-rs-ets-host (ServerBridge)"]
+        Bridge["control-rs-ets-host (ETSBridge)"]
         TUI <--> Bridge
         CI <--> Bridge
     end
