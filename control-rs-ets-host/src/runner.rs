@@ -98,7 +98,7 @@ pub fn run_headless_ets(
     let mut state = SessionState::new();
     let mut resets = 0u32;
 
-    if let Err(e) = bridge.send_command(&CommCommand::ListSuites) {
+    if let Err(e) = send_discovery(&mut bridge) {
         bridge.terminate();
         return Ok(finish_record(
             state,
@@ -124,7 +124,10 @@ pub fn run_headless_ets(
         if !state.discovery_complete
             && last_send.elapsed() > Duration::from_millis(500)
         {
-            if let Err(e) = bridge.send_command(&CommCommand::ListSuites) {
+            // Retry TryReset then ListSuites. Serial targets that miss the
+            // post-panic TryReset spin forever in handle_failure and ignore
+            // ListSuites; rediscovery must keep offering TryReset.
+            if let Err(e) = send_discovery(&mut bridge) {
                 bridge.terminate();
                 return Ok(finish_record(
                     state,
@@ -172,8 +175,7 @@ pub fn run_headless_ets(
                             match ETSBridge::new(target.clone(), true) {
                                 Ok(new_bridge) => {
                                     bridge = new_bridge;
-                                    if let Err(e) = bridge
-                                        .send_command(&CommCommand::ListSuites)
+                                    if let Err(e) = send_discovery(&mut bridge)
                                     {
                                         bridge.terminate();
                                         return Ok(finish_record(
@@ -224,6 +226,18 @@ pub fn run_headless_ets(
     Ok(finish_record(state, resets, None, start_time, None))
 }
 
+/// Sends cooperative reset then suite discovery.
+///
+/// `handle_failure` on the target waits only for [`CommCommand::TryReset`].
+/// After a panic reconnect, [`CommCommand::ListSuites`] alone leaves a serial
+/// target spinning forever if the earlier `TryReset` was lost when the link
+/// closed. `TryReset` is a no-op in the normal server command loop, so pairing
+/// it with every discovery attempt is safe.
+fn send_discovery(bridge: &mut ETSBridge) -> Result<(), HostError> {
+    bridge.send_command(&CommCommand::TryReset)?;
+    bridge.send_command(&CommCommand::ListSuites)
+}
+
 fn finish_record(
     mut state: SessionState,
     resets: u32,
@@ -237,12 +251,106 @@ fn finish_record(
             state.logs.push('\n');
         }
     }
+    let pending = state.pending_cases();
     RunRecord {
         results: state.results,
-        pending: state.run_queue,
+        pending,
         resets,
         abort,
         elapsed: start_time.elapsed(),
         console: state.logs,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use control_rs_ets::comms::Telemetry;
+    use control_rs_ets::settings::SettingValue;
+
+    use crate::bridge::BridgeMessage;
+
+    fn discover_two(state: &mut SessionState) {
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite",
+                description: "",
+                test_count: 2,
+                setting_count: 0,
+            },
+        ));
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "t0",
+                description: "",
+            },
+        ));
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 1,
+                name: "t1",
+                description: "",
+            },
+        ));
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::SettingInfo {
+                suite_id: 0,
+                setting_id: 0,
+                name: "gain",
+                description: "",
+                value: SettingValue::U8(0),
+            },
+        ));
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+    }
+
+    #[test]
+    fn finish_record_includes_in_flight_case_in_pending() {
+        let mut state = SessionState::new();
+        discover_two(&mut state);
+        assert_eq!(state.current_running, Some((0, 0)));
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+
+        let record = finish_record(
+            state,
+            0,
+            Some(Completion::TimedOut),
+            Instant::now(),
+            None,
+        );
+        assert_eq!(record.pending, vec![(0, 0), (0, 1)]);
+        assert!(record.results.is_empty());
+        assert_eq!(record.abort, Some(Completion::TimedOut));
+    }
+
+    #[test]
+    fn finish_record_omits_in_flight_when_already_recorded() {
+        let mut state = SessionState::new();
+        discover_two(&mut state);
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Failed,
+            },
+        ));
+        assert_eq!(state.current_running, Some((0, 0)));
+        assert_eq!(state.results.len(), 1);
+
+        let record = finish_record(
+            state,
+            0,
+            Some(Completion::TimedOut),
+            Instant::now(),
+            None,
+        );
+        assert_eq!(record.pending, vec![(0, 1)]);
+        assert_eq!(record.results.len(), 1);
     }
 }
