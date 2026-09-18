@@ -289,6 +289,10 @@ impl SessionState {
                     }
 
                     if new_state == TestState::Failed {
+                        // Target `handle_failure` always emits Failed then
+                        // TargetPanic. Advancing the queue here would make the
+                        // subsequent TargetPanic attribute the crash to the
+                        // next queued test and skip running it.
                         let suite_name = self
                             .suites
                             .get(s_id)
@@ -300,18 +304,23 @@ impl SessionState {
                             .and_then(|s| s.tests.get(t_id))
                             .map(|t| t.name.clone())
                             .unwrap_or_default();
-                        self.results.push(TestOutcome {
-                            suite_name,
-                            test_name,
-                            state: TestState::Failed,
-                            cycles: None,
-                            time_us: None,
-                            stack_peak: None,
+                        let already_recorded = self.results.iter().any(|r| {
+                            r.suite_name == suite_name
+                                && r.test_name == test_name
                         });
-                        self.start_next_or_exit().into_iter().collect()
-                    } else {
-                        Vec::new()
+                        if !already_recorded {
+                            self.results.push(TestOutcome {
+                                suite_name,
+                                test_name,
+                                state: TestState::Failed,
+                                cycles: None,
+                                time_us: None,
+                                stack_peak: None,
+                            });
+                        }
+                        self.current_running = Some((suite_id, test_id));
                     }
+                    Vec::new()
                 }
                 Telemetry::MetricReport {
                     suite_id,
@@ -371,16 +380,24 @@ impl SessionState {
                         {
                             self.suites[s_idx].tests[t_idx].state =
                                 TestState::Failed;
-                            self.results.push(TestOutcome {
-                                suite_name: self.suites[s_idx].name.clone(),
-                                test_name: self.suites[s_idx].tests[t_idx]
-                                    .name
-                                    .clone(),
-                                state: TestState::Failed,
-                                cycles: None,
-                                time_us: None,
-                                stack_peak: None,
-                            });
+                            let suite_name = self.suites[s_idx].name.clone();
+                            let test_name =
+                                self.suites[s_idx].tests[t_idx].name.clone();
+                            let already_recorded =
+                                self.results.iter().any(|r| {
+                                    r.suite_name == suite_name
+                                        && r.test_name == test_name
+                                });
+                            if !already_recorded {
+                                self.results.push(TestOutcome {
+                                    suite_name,
+                                    test_name,
+                                    state: TestState::Failed,
+                                    cycles: None,
+                                    time_us: None,
+                                    stack_peak: None,
+                                });
+                            }
                         }
                     }
 
@@ -495,6 +512,7 @@ mod tests {
         ));
         assert_eq!(state.results[0].state, TestState::Passed);
 
+        // Failed alone must not drain the session: TargetPanic owns recovery.
         let actions = state.handle_message(BridgeMessage::Telemetry(
             Telemetry::TestStateChange {
                 suite_id: 0,
@@ -503,8 +521,26 @@ mod tests {
             },
         ));
         assert!(actions.is_empty());
-        assert!(state.exit_loop);
+        assert!(!state.exit_loop);
+        assert_eq!(state.current_running, Some((0, 1)));
         assert_eq!(state.results[1].state, TestState::Failed);
+
+        let actions = state.handle_message(BridgeMessage::Telemetry(
+            Telemetry::TargetPanic {
+                message: "assert",
+                file: "t1.rs",
+                line: 1,
+            },
+        ));
+        assert!(state.exit_loop);
+        assert_eq!(state.results.len(), 2);
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                SessionAction::Send(CommCommand::TryReset),
+                SessionAction::PanicRestart
+            ]
+        ));
 
         let _ = state.handle_message(BridgeMessage::Telemetry(Telemetry::Log(
             control_rs_ets::comms::LogMessage {
@@ -517,6 +553,51 @@ mod tests {
         let _ = state
             .handle_message(BridgeMessage::RawConsole("console".to_string()));
         assert!(state.logs.contains("      [ETS] console"));
+    }
+
+    #[test]
+    fn failed_before_target_panic_does_not_blame_next_test() {
+        let mut state = SessionState::new();
+        discover_two_tests(&mut state);
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert_eq!(state.current_running, Some((0, 0)));
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+
+        // Mirror on-target handle_failure: Failed for the crashing test, then
+        // TargetPanic. The next queued test must remain pending for restart.
+        let actions = state.handle_message(BridgeMessage::Telemetry(
+            Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Failed,
+            },
+        ));
+        assert!(actions.is_empty());
+        assert_eq!(state.current_running, Some((0, 0)));
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+        assert_eq!(state.results.len(), 1);
+        assert_eq!(state.results[0].test_name, "t0");
+
+        let actions = state.handle_message(BridgeMessage::Telemetry(
+            Telemetry::TargetPanic {
+                message: "boom",
+                file: "t0.rs",
+                line: 3,
+            },
+        ));
+        assert_eq!(state.results.len(), 1);
+        assert_eq!(state.suites[0].tests[1].state, TestState::Pending);
+        assert!(!state.exit_loop);
+        assert!(state.logs.contains("Restarting target bridge"));
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                SessionAction::Send(CommCommand::TryReset),
+                SessionAction::PanicRestart
+            ]
+        ));
     }
 
     #[test]

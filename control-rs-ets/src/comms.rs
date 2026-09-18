@@ -416,6 +416,9 @@ impl FrameReader {
             ReaderState::WaitStart2 => {
                 if byte == START_BYTE_2 {
                     self.state = ReaderState::WaitLen1;
+                } else if byte == START_BYTE_1 {
+                    // Orphan/noise 0xAA left us in WaitStart2; this 0xAA may
+                    // start a real frame, so stay armed for 0x55.
                 } else {
                     self.state = ReaderState::WaitStart1;
                 }
@@ -692,6 +695,28 @@ mod tests {
         assert!(!reader.is_idle()); // now in WaitStart2
         assert!(reader.handle_byte(0x00).is_none());
         assert!(reader.is_idle()); // reset to WaitStart1
+    }
+
+    #[test]
+    fn test_frame_reader_resync_after_orphan_start_byte() {
+        let mut buf = [0u8; 128];
+        let framed_len =
+            frame_telemetry(&Telemetry::DiscoveryComplete, &mut buf)
+                .expect("framing");
+
+        let mut reader = FrameReader::new();
+        // Noise/orphan 0xAA must not consume the real frame's leading 0xAA.
+        assert!(reader.handle_byte(START_BYTE_1).is_none());
+        let mut decoded = false;
+        for &b in &buf[..framed_len] {
+            if reader.handle_byte(b).is_some() {
+                decoded = true;
+            }
+        }
+        assert!(
+            decoded,
+            "valid frame after an orphan 0xAA must still decode"
+        );
     }
 
     #[test]
