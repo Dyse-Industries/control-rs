@@ -5,6 +5,34 @@ use std::process::Command;
 
 use crate::error::HostError;
 
+/// Target details for QEMU.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QemuTargetDetails {
+    /// Binary name of the example.
+    pub binary_name: &'static str,
+    /// Human-readable description of the target.
+    pub description: &'static str,
+    /// Human readable description of the execution environment.
+    pub execution_env: &'static str,
+    /// Target triple used by rustc/cargo.
+    pub target_triple: &'static str,
+}
+
+/// Configuration for running an ETS binary via a subprocess (e.g. `cargo run`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubprocessTarget {
+    /// Working directory or crate path (defaults to current directory ".").
+    pub path: String,
+    /// Target triple (e.g. "thumbv7em-none-eabihf").
+    pub target: Option<String>,
+    /// Binary name (e.g. "control-rs-qemu-thumbv7em-none-eabihf").
+    pub bin: Option<String>,
+    /// Additional arguments passed to the runner / cargo (e.g. `["--release"]`).
+    pub args: Vec<String>,
+    /// Optional display name (e.g. "ARM HF (thumbv7em-none-eabihf)").
+    pub name: Option<String>,
+}
+
 /// Target QEMU architecture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QemuArch {
@@ -18,17 +46,18 @@ pub enum QemuArch {
     Thumbv7emNoneEabihf,
 }
 
-/// Target details for QEMU.
+/// Target execution platform.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QemuTargetDetails {
-    /// Binary name of the example.
-    pub binary_name: &'static str,
-    /// Human-readable description of the target.
-    pub description: &'static str,
-    /// Human readable description of the execution environment.
-    pub execution_env: &'static str,
-    /// Target triple used by rustc/cargo.
-    pub target_triple: &'static str,
+pub enum Target {
+    /// Subprocess / virtual ETS runner (cargo run, QEMU, simulator).
+    Subprocess(SubprocessTarget),
+    /// ETS (physical board) target over serial port.
+    Serial {
+        /// Serial port path (e.g. `/dev/ttyACM0`).
+        port: String,
+        /// Baud rate (e.g. `115200`).
+        baud: u32,
+    },
 }
 
 impl QemuArch {
@@ -62,21 +91,6 @@ impl QemuArch {
             },
         }
     }
-}
-
-/// Configuration for running an ETS binary via a subprocess (e.g. `cargo run`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SubprocessTarget {
-    /// Working directory or crate path (defaults to current directory ".").
-    pub path: String,
-    /// Target triple (e.g. "thumbv7em-none-eabihf").
-    pub target: Option<String>,
-    /// Binary name (e.g. "control-rs-qemu-thumbv7em-none-eabihf").
-    pub bin: Option<String>,
-    /// Additional arguments passed to the runner / cargo (e.g. `["--release"]`).
-    pub args: Vec<String>,
-    /// Optional display name (e.g. "ARM HF (thumbv7em-none-eabihf)").
-    pub name: Option<String>,
 }
 
 impl SubprocessTarget {
@@ -125,7 +139,7 @@ impl SubprocessTarget {
     pub fn crate_dir(&self) -> PathBuf {
         let p = Path::new(&self.path);
         if p.is_file() || p.file_name().is_some_and(|n| n == "Cargo.toml") {
-            p.parent().unwrap_or(Path::new(".")).to_path_buf()
+            p.parent().unwrap_or_else(|| Path::new(".")).to_path_buf()
         } else {
             p.to_path_buf()
         }
@@ -161,20 +175,6 @@ impl SubprocessTarget {
             Clone::clone,
         )
     }
-}
-
-/// Target execution platform.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Target {
-    /// Subprocess / virtual ETS runner (cargo run, QEMU, simulator).
-    Subprocess(SubprocessTarget),
-    /// ETS (physical board) target over serial port.
-    Serial {
-        /// Serial port path (e.g. `/dev/ttyACM0`).
-        port: String,
-        /// Baud rate (e.g. `115200`).
-        baud: u32,
-    },
 }
 
 impl Target {

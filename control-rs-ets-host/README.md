@@ -8,9 +8,9 @@ nothing and runs no quality gates.
 | Module    | Responsibility |
 |:----------|:---------------|
 | `target`  | Target descriptors, QEMU architecture entries, ELF path resolution and build |
-| `bridge`  | `ServerBridge` construction, reader threads, `BridgeMessage` stream |
+| `bridge`  | `ETSBridge` construction, reader threads, `BridgeMessage` stream |
 | `session` | Discovery and run-queue state machine, panic detection, reset sequence |
-| `runner`  | `run_headless_ets(target, timeout) -> Result<EtsRunResult, HostError>` |
+| `runner`  | `run_headless_ets(target, timeout) -> Result<RunRecord, HostError>` |
 
 Two transports: a spawned subprocess (QEMU under `cargo run`) and a USB CDC
 serial port. Both resolve to the same reader/writer pair, so `session` is

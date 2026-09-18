@@ -1,6 +1,6 @@
 //! Interactive Terminal User Interface (TUI) for Embedded Test Server (ETS) testing.
 //!
-//! Provides an immediate-mode dashboard consuming [`control_rs_ets_host::ServerBridge`]
+//! Provides an immediate-mode dashboard consuming [`control_rs_ets_host::ETSBridge`]
 //! and [`control_rs_ets_host::SessionState`].
 
 use std::collections::HashSet;
@@ -28,7 +28,7 @@ use ratatui::{
 use control_rs_ets::comms::{Command, TestState};
 use control_rs_ets::settings::SettingValue;
 use control_rs_ets_host::{
-    BridgeMessage, ServerBridge, SessionAction, SessionState, Target,
+    BridgeMessage, ETSBridge, SessionAction, SessionState, Target,
 };
 
 /// Selectable item in the hierarchical metrics table.
@@ -204,7 +204,7 @@ impl AppState {
     }
 
     /// Navigates selection to the next visible row.
-    pub fn next_row(&mut self) {
+    pub const fn next_row(&mut self) {
         if self.visible_items.is_empty() {
             return;
         }
@@ -222,7 +222,7 @@ impl AppState {
     }
 
     /// Navigates selection to the previous visible row.
-    pub fn previous_row(&mut self) {
+    pub const fn previous_row(&mut self) {
         if self.visible_items.is_empty() {
             return;
         }
@@ -240,10 +240,7 @@ impl AppState {
     }
 
     /// Handles Enter on the currently selected item (toggles suite collapse or executes test).
-    pub fn toggle_or_run_selected(
-        &mut self,
-        bridge: Option<&mut ServerBridge>,
-    ) {
+    pub fn toggle_or_run_selected(&mut self, bridge: Option<&mut ETSBridge>) {
         if let Some(selected) = self.table_state.selected()
             && let Some(item) = self.visible_items.get(selected).cloned()
         {
@@ -265,7 +262,7 @@ impl AppState {
                         .session
                         .enqueue_test(suite_idx as u16, test_idx as u16)
                     {
-                        self.execute_action(action, bridge);
+                        Self::execute_action(action, bridge);
                     }
                     self.rebuild_visible_items();
                 }
@@ -279,9 +276,8 @@ impl AppState {
 
     /// Executes a [`SessionAction`] returned by the session state machine.
     pub fn execute_action(
-        &mut self,
         action: SessionAction,
-        bridge: Option<&mut ServerBridge>,
+        bridge: Option<&mut ETSBridge>,
     ) {
         match action {
             SessionAction::Send(cmd) => {
@@ -289,9 +285,7 @@ impl AppState {
                     let _ = b.send_command(&cmd);
                 }
             }
-            SessionAction::PanicRestart => {
-                // Handled in main loop for bridge reconstruction
-            }
+            SessionAction::PanicRestart => {}
         }
     }
 
@@ -305,7 +299,7 @@ impl AppState {
         }
     }
 
-    fn commit_setting_edit(&mut self, bridge: Option<&mut ServerBridge>) {
+    fn commit_setting_edit(&mut self, bridge: Option<&mut ETSBridge>) {
         let selected = self.table_state.selected();
         let Some(TableItem::Setting {
             suite_idx,
@@ -356,12 +350,12 @@ impl AppState {
     pub fn handle_bridge_message(
         &mut self,
         msg: BridgeMessage,
-        mut bridge: Option<&mut ServerBridge>,
+        mut bridge: Option<&mut ETSBridge>,
     ) -> Option<SessionAction> {
         match msg {
             BridgeMessage::RawConsole(line) => {
                 self.logs.push(format!("> {line}"));
-                self.session.log(&format!("      target {line}\n"));
+                self.session.log(&format!("      [ETS] {line}\n"));
                 None
             }
             BridgeMessage::Telemetry(t) => {
@@ -378,7 +372,7 @@ impl AppState {
                     if matches!(action, SessionAction::PanicRestart) {
                         restart = Some(action);
                     } else {
-                        self.execute_action(action, bridge.as_deref_mut());
+                        Self::execute_action(action, bridge.as_deref_mut());
                     }
                 }
                 self.rebuild_visible_items();
@@ -392,7 +386,7 @@ impl AppState {
     pub fn handle_key(
         &mut self,
         key: KeyEvent,
-        bridge: Option<&mut ServerBridge>,
+        bridge: Option<&mut ETSBridge>,
     ) -> bool {
         if self.is_filtering {
             match key.code {
@@ -449,7 +443,7 @@ impl AppState {
             }
             KeyCode::Char('r') => {
                 if let Some(action) = self.session.enqueue_all() {
-                    self.execute_action(action, bridge);
+                    Self::execute_action(action, bridge);
                 }
                 self.rebuild_visible_items();
                 false
@@ -459,6 +453,18 @@ impl AppState {
                 if let Some(b) = bridge {
                     let _ = b.send_command(&Command::TryReset);
                 }
+                self.rebuild_visible_items();
+                false
+            }
+            KeyCode::Char('c') => {
+                for i in 0..self.session.suites.len() {
+                    self.collapsed_suites.insert(i);
+                }
+                self.rebuild_visible_items();
+                false
+            }
+            KeyCode::Char('e') => {
+                self.collapsed_suites.clear();
                 self.rebuild_visible_items();
                 false
             }
@@ -511,17 +517,18 @@ pub fn format_duration(us: u64) -> String {
 
 /// Draws the complete TUI interface according to §4.1 layout specification.
 pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
+    let size = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Header Dashboard
-            Constraint::Min(8),    // Hierarchical Metrics Table
-            Constraint::Length(8), // Target Logs Panel
-            Constraint::Length(1), // Footer Action Bar
+            Constraint::Length(4),
+            Constraint::Min(8),
+            Constraint::Length(8),
+            Constraint::Length(1),
         ])
-        .split(frame.area());
+        .split(size);
 
-    // 1. Header Dashboard
+    // 1. Header (target, link info, running status)
     let header_line1 =
         format!(" TARGET: {} | LINK: {}", state.target_info, state.link_info);
     let running_info = if let Some((s_id, t_id)) = state.session.current_running
@@ -530,15 +537,13 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
             .session
             .suites
             .get(s_id as usize)
-            .map(|s| s.name.as_str())
-            .unwrap_or("unknown");
+            .map_or("unknown", |s| s.name.as_str());
         let t_name = state
             .session
             .suites
             .get(s_id as usize)
             .and_then(|s| s.tests.get(t_id as usize))
-            .map(|t| t.name.as_str())
-            .unwrap_or("unknown");
+            .map_or("unknown", |t| t.name.as_str());
         Line::from(vec![
             Span::styled(
                 " [ RUNNING ] ",
@@ -548,37 +553,65 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
             ),
             Span::raw(format!("{s_name}::{t_name}")),
         ])
+    } else if state.session.discovery_complete {
+        Line::from(vec![
+            Span::styled(
+                " [ IDLE ] ",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("All tests completed or stopped"),
+        ])
     } else {
-        Line::from(vec![Span::styled(
-            if state.process_exit.is_some() {
-                " [ EXITED ]"
-            } else {
-                " [ IDLE ]"
-            },
-            Style::default()
-                .fg(if state.process_exit.is_some() {
-                    Color::Red
-                } else {
-                    Color::Green
-                })
-                .add_modifier(Modifier::BOLD),
-        )])
+        Line::from(vec![
+            Span::styled(
+                " [ DISCOVERING ] ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("Querying target test suites..."),
+        ])
     };
 
-    let header_widget =
-        Paragraph::new(vec![Line::from(header_line1), running_info]).block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        );
-    frame.render_widget(header_widget, chunks[0]);
+    let total_tests: usize =
+        state.session.suites.iter().map(|s| s.tests.len()).sum();
+    let passed_tests = state
+        .session
+        .results
+        .iter()
+        .filter(|r| r.state == TestState::Passed)
+        .count();
+    let failed_tests = state
+        .session
+        .results
+        .iter()
+        .filter(|r| r.state == TestState::Failed)
+        .count();
 
-    // 2. Hierarchical Metrics Table
+    let header_line2 = format!(
+        " Tests: {total_tests} | Passed: {passed_tests} | Failed: {failed_tests}"
+    );
+
+    let header_block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Embedded Test Server (ETS) Dashboard ")
+        .style(Style::default().fg(Color::White));
+    let header_paragraph = Paragraph::new(vec![
+        Line::from(header_line1),
+        running_info,
+        Line::from(header_line2),
+    ])
+    .block(header_block);
+    frame.render_widget(header_paragraph, chunks[0]);
+
+    // 2. Metrics Table
     let header_cells =
-        ["NAME", "CYCLES", "TIME", "STACK"].into_iter().map(|h| {
+        ["  Suite / Test / Setting", "Cycles", "Time", "Stack (B)"].map(|h| {
             Cell::from(h).style(
                 Style::default()
-                    .fg(Color::White)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )
         });
@@ -860,7 +893,7 @@ fn parse_setting_value(
 ///
 /// Returns an error if terminal initialization, crossterm polling, or bridge communication fails.
 pub fn run_tui(
-    mut bridge: ServerBridge,
+    mut bridge: ETSBridge,
     target: &Target,
     elf_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -922,7 +955,7 @@ pub fn run_tui(
                 );
                 thread::sleep(Duration::from_secs(1));
                 if let Ok(new_bridge) =
-                    ServerBridge::new(target.clone(), elf_opt, false)
+                    ETSBridge::new(target.clone(), elf_opt, false)
                 {
                     bridge = new_bridge;
                     state.process_exit = None;
@@ -1204,10 +1237,21 @@ mod tests {
         assert_eq!(state.table_state.selected(), Some(1));
         state.next_row();
         assert_eq!(state.table_state.selected(), Some(2));
-        state.next_row(); // Wrap around
+        // Navigation with j / k
+        state.handle_key(make_test_event(KeyCode::Char('j')), None);
         assert_eq!(state.table_state.selected(), Some(0));
-        state.previous_row(); // Wrap back
-        assert_eq!(state.table_state.selected(), Some(2));
+        state.handle_key(make_test_event(KeyCode::Char('j')), None);
+        assert_eq!(state.table_state.selected(), Some(1));
+        state.handle_key(make_test_event(KeyCode::Char('k')), None);
+        assert_eq!(state.table_state.selected(), Some(0));
+
+        // 'c' collapses all suites
+        state.handle_key(make_test_event(KeyCode::Char('c')), None);
+        assert_eq!(state.visible_items.len(), 1);
+
+        // 'e' expands all suites
+        state.handle_key(make_test_event(KeyCode::Char('e')), None);
+        assert_eq!(state.visible_items.len(), 3);
 
         // 'r' runs all
         assert!(!state.handle_key(make_test_event(KeyCode::Char('r')), None));

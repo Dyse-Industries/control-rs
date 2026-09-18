@@ -7,26 +7,6 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorSource(pub String);
 
-impl fmt::Display for ErrorSource {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for ErrorSource {}
-
-impl From<String> for ErrorSource {
-    fn from(s: String) -> Self {
-        Self(s)
-    }
-}
-
-impl From<&str> for ErrorSource {
-    fn from(s: &str) -> Self {
-        Self(s.to_string())
-    }
-}
-
 /// Host-side ETS communication and execution error.
 #[derive(Debug, Error)]
 pub enum HostError {
@@ -87,4 +67,24 @@ pub enum HostError {
     /// Target failed to complete discovery within the allowed duration.
     #[error("target discovery timed out")]
     Discovery,
+}
+
+impl fmt::Display for ErrorSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ErrorSource {}
+
+impl From<String> for ErrorSource {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for ErrorSource {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
 }
