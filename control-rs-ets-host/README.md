@@ -1,0 +1,27 @@
+# `control-rs-ets-host`
+
+Host-side counterpart to the [`control-rs-ets`](../control-rs-ets) Embedded
+Test Server. It owns the connection to a target, the wire framing and the
+command/telemetry session that drives test discovery and execution. It renders
+nothing and runs no quality gates.
+
+| Module    | Responsibility |
+|:----------|:---------------|
+| `target`  | Target descriptors, QEMU architecture entries, ELF path resolution and build |
+| `bridge`  | `ServerBridge` construction, reader threads, `BridgeMessage` stream |
+| `session` | Discovery and run-queue state machine, panic detection, reset sequence |
+| `runner`  | `run_headless_ets(target, timeout) -> Result<EtsRunResult, HostError>` |
+
+Two transports: a spawned subprocess (QEMU under `cargo run`) and a USB CDC
+serial port. Both resolve to the same reader/writer pair, so `session` is
+transport-agnostic.
+
+Consumers are [`control-rs-tui`](../control-rs-tui), which renders the message
+stream, and [`control-rs-ci`](../control-rs-ci), which keeps only the
+structured result.
+
+Design: `documentation/ets-host/ets-host-design.md`.
+
+## License
+
+MIT OR Apache-2.0.
