@@ -6,19 +6,16 @@
     clippy::cast_precision_loss,
     clippy::equatable_if_let,
     clippy::indexing_slicing,
-    clippy::map_unwrap_or,
-    clippy::missing_const_for_fn,
     clippy::multiple_crate_versions,
     clippy::needless_pass_by_ref_mut,
     clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::unused_self
+    clippy::type_complexity
 )]
 
 use std::env;
 use std::process::exit;
 
-use control_rs_ets_host::ServerBridge;
+use control_rs_ets_host::ETSBridge;
 use control_rs_ets_host::target::{Target, build_target_elf, parse_targets};
 
 mod tui;
@@ -82,7 +79,7 @@ fn main() {
         Some(elf_path.as_str())
     };
 
-    let bridge = match ServerBridge::new(target.clone(), elf_opt, false) {
+    let bridge = match ETSBridge::new(target.clone(), elf_opt, false) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("error: failed to start bridge: {e}");

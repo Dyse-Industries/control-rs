@@ -25,7 +25,7 @@ registry, requiring zero boilerplate and little runtime overhead.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Linker-Based Suite Discovery**: Test suites and cases must be
+- **FR-1 — Distributed Suite Discovery**: Test suites and cases must be
   discoverable across modules and crates at runtime without central registration
   tables.
 - **FR-2 — Dynamic Parameter Configuration**: Settings on the target must be
@@ -75,7 +75,7 @@ flowchart TD
     subgraph Host ["Host Environment"]
         direction TB
         TUI["control-rs-tui"]
-        Bridge["control-rs-ets-host (ServerBridge)"]
+        Bridge["control-rs-ets-host (ETSBridge)"]
         TUI <--> Bridge
     end
 
@@ -281,7 +281,7 @@ Interactive testing sessions follow a strict state-machine flow:
 
 1. **Deployment & Reset**: Firmware containing the test server and suites is
    deployed to the target via the target cargo runner (or external programmer),
-   and `control-rs-ets-host::ServerBridge` connects to the running target and
+   and `control-rs-ets-host::ETSBridge` connects to the running target and
    triggers a protocol reset to ensure execution isolation.
 2. **State Tracking**: Test execution status is evaluated via start and end
    timestamps recorded on the target:
