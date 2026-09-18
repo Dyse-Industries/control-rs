@@ -3,11 +3,11 @@
 
 extern crate control_rs;
 
+use control_rs_ets::RiscvProfiler;
 use control_rs_ets::comms::{
-    frame_telemetry, Command, FrameReader, HostComms, Telemetry,
+    Command, FrameReader, HostComms, Telemetry, frame_telemetry,
 };
 use control_rs_ets::server::Context;
-use control_rs_ets::RiscvProfiler;
 use control_rs_macros::ets_setup;
 
 use semihosting::io::Write;

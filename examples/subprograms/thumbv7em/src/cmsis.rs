@@ -4,12 +4,14 @@
 //! (`arm_mat_mult_f32`, `arm_mat_vec_mult_f32`, `arm_dot_prod_f32`, etc.).
 
 use control_rs::math::complex_num::Complex;
-use control_rs::math::storage::{DenseStorage, DenseStorageMut, Diag, Side, Trans, UpLo};
+use control_rs::math::storage::{
+    DenseStorage, DenseStorageMut, Diag, Side, Trans, UpLo,
+};
+use control_rs::math::subprograms::DefaultBlas;
 use control_rs::math::subprograms::lapack::Potrf;
 use control_rs::math::subprograms::level1::{Dotc, Dotu, Scal};
 use control_rs::math::subprograms::level2::Gemv;
 use control_rs::math::subprograms::level3::{Gemm, Trsm};
-use control_rs::math::subprograms::DefaultBlas;
 use control_rs::math::{LinAlgError, LinAlgResult};
 
 /// Zero-sized marker type for ARM CMSIS-DSP backend.
@@ -25,14 +27,28 @@ struct ArmMatrixInstanceF32 {
 
 #[allow(dead_code)]
 unsafe extern "C" {
-    fn arm_mat_init_f32(s: *mut ArmMatrixInstanceF32, n_rows: u16, n_cols: u16, p_data: *mut f32);
+    fn arm_mat_init_f32(
+        s: *mut ArmMatrixInstanceF32,
+        n_rows: u16,
+        n_cols: u16,
+        p_data: *mut f32,
+    );
     fn arm_mat_mult_f32(
         src_a: *const ArmMatrixInstanceF32,
         src_b: *const ArmMatrixInstanceF32,
         dst: *mut ArmMatrixInstanceF32,
     ) -> i32;
-    fn arm_mat_vec_mult_f32(src_mat: *const ArmMatrixInstanceF32, p_vec: *const f32, p_dst: *mut f32);
-    fn arm_dot_prod_f32(src_a: *const f32, src_b: *const f32, block_size: u32, result: *mut f32);
+    fn arm_mat_vec_mult_f32(
+        src_mat: *const ArmMatrixInstanceF32,
+        p_vec: *const f32,
+        p_dst: *mut f32,
+    );
+    fn arm_dot_prod_f32(
+        src_a: *const f32,
+        src_b: *const f32,
+        block_size: u32,
+        result: *mut f32,
+    );
     fn arm_cmplx_dot_prod_f32(
         src_a: *const f32,
         src_b: *const f32,
@@ -40,7 +56,12 @@ unsafe extern "C" {
         real_result: *mut f32,
         imag_result: *mut f32,
     );
-    fn arm_scale_f32(src: *const f32, scale: f32, dst: *mut f32, block_size: u32);
+    fn arm_scale_f32(
+        src: *const f32,
+        scale: f32,
+        dst: *mut f32,
+        block_size: u32,
+    );
     fn arm_mat_cholesky_f32(
         src: *const ArmMatrixInstanceF32,
         dst: *mut ArmMatrixInstanceF32,
@@ -60,7 +81,11 @@ impl<X: DenseStorageMut<f32>> Scal<f32, X> for CmsisDspBlas {
     #[inline(always)]
     fn scal(alpha: f32, x: &mut X) {
         let n = x.rows() * x.cols();
-        let stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
+        let stride = if x.rows() >= x.cols() {
+            x.r_stride()
+        } else {
+            x.c_stride()
+        };
         if stride == 1 {
             unsafe {
                 arm_scale_f32(
@@ -76,12 +101,22 @@ impl<X: DenseStorageMut<f32>> Scal<f32, X> for CmsisDspBlas {
     }
 }
 
-impl<X: DenseStorage<f32>, Y: DenseStorage<f32>> Dotu<f32, X, Y> for CmsisDspBlas {
+impl<X: DenseStorage<f32>, Y: DenseStorage<f32>> Dotu<f32, X, Y>
+    for CmsisDspBlas
+{
     #[inline(always)]
     fn dotu(x: &X, y: &Y) -> f32 {
         let n = x.rows() * x.cols();
-        let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-        let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+        let x_stride = if x.rows() >= x.cols() {
+            x.r_stride()
+        } else {
+            x.c_stride()
+        };
+        let y_stride = if y.rows() >= y.cols() {
+            y.r_stride()
+        } else {
+            y.c_stride()
+        };
 
         if x_stride == 1 && y_stride == 1 {
             let mut res = 0.0f32;
@@ -106,8 +141,16 @@ impl<X: DenseStorage<Complex<f32>>, Y: DenseStorage<Complex<f32>>>
     #[inline(always)]
     fn dotc(x: &X, y: &Y) -> Complex<f32> {
         let n = x.rows() * x.cols();
-        let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-        let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+        let x_stride = if x.rows() >= x.cols() {
+            x.r_stride()
+        } else {
+            x.c_stride()
+        };
+        let y_stride = if y.rows() >= y.cols() {
+            y.r_stride()
+        } else {
+            y.c_stride()
+        };
 
         if x_stride == 1 && y_stride == 1 {
             let mut re = 0.0f32;
@@ -137,8 +180,16 @@ impl<A: DenseStorage<f32>, X: DenseStorage<f32>, Y: DenseStorageMut<f32>>
 {
     #[inline(always)]
     fn gemv(trans: Trans, alpha: f32, a: &A, x: &X, beta: f32, y: &mut Y) {
-        let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-        let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+        let x_stride = if x.rows() >= x.cols() {
+            x.r_stride()
+        } else {
+            x.c_stride()
+        };
+        let y_stride = if y.rows() >= y.cols() {
+            y.r_stride()
+        } else {
+            y.c_stride()
+        };
 
         // CMSIS-DSP fast path: row-major contiguous, NoTrans, alpha=1.0, beta=0.0
         if trans == Trans::NoTrans
@@ -167,11 +218,9 @@ impl<A: DenseStorage<f32>, X: DenseStorage<f32>, Y: DenseStorageMut<f32>>
 // Level 3: Gemm
 // =============================================================================
 
-impl<
-    A: DenseStorage<f32>,
-    B: DenseStorage<f32>,
-    C: DenseStorageMut<f32>,
-> Gemm<f32, A, B, C> for CmsisDspBlas {
+impl<A: DenseStorage<f32>, B: DenseStorage<f32>, C: DenseStorageMut<f32>>
+    Gemm<f32, A, B, C> for CmsisDspBlas
+{
     #[inline(always)]
     fn gemm(
         ta: Trans,
@@ -210,7 +259,8 @@ impl<
                 p_data: c.as_mut_ptr(),
             };
 
-            let status = unsafe { arm_mat_mult_f32(&a_mat, &b_mat, &mut c_mat) };
+            let status =
+                unsafe { arm_mat_mult_f32(&a_mat, &b_mat, &mut c_mat) };
             if status == 0 {
                 return;
             }
@@ -227,7 +277,10 @@ impl<A: DenseStorageMut<f32>> Potrf<f32, A> for CmsisDspBlas {
     #[inline(always)]
     fn potrf(uplo: UpLo, a: &mut A) -> LinAlgResult<()> {
         let n = a.rows();
-        if uplo == UpLo::Lower && a.c_stride() == 1 && a.r_stride() == n.cast_signed() {
+        if uplo == UpLo::Lower
+            && a.c_stride() == 1
+            && a.r_stride() == n.cast_signed()
+        {
             // Buffer to compute Cholesky in place
             let mut l_mat = ArmMatrixInstanceF32 {
                 num_rows: u16::try_from(n).unwrap_or(0),
@@ -245,7 +298,9 @@ impl<A: DenseStorageMut<f32>> Potrf<f32, A> for CmsisDspBlas {
     }
 }
 
-impl<A: DenseStorage<f32>, B: DenseStorageMut<f32>> Trsm<f32, A, B> for CmsisDspBlas {
+impl<A: DenseStorage<f32>, B: DenseStorageMut<f32>> Trsm<f32, A, B>
+    for CmsisDspBlas
+{
     #[inline(always)]
     fn trsm(
         side: Side,

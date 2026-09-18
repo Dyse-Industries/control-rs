@@ -7,10 +7,10 @@
 use core::arch::x86_64::*;
 
 use control_rs::math::storage::{DenseStorage, DenseStorageMut, Trans};
+use control_rs::math::subprograms::DefaultBlas;
 use control_rs::math::subprograms::level1::{Axpy, Dotu, Nrm2, Scal};
 use control_rs::math::subprograms::level2::Gemv;
 use control_rs::math::subprograms::level3::Gemm;
-use control_rs::math::subprograms::DefaultBlas;
 
 /// Zero-sized marker type for the AVX2+FMA accelerated subprogram backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -46,7 +46,12 @@ unsafe fn hsum256_pd(v: __m256d) -> f64 {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
-unsafe fn axpy_f32_avx2(n: usize, alpha: f32, x_ptr: *const f32, y_ptr: *mut f32) {
+unsafe fn axpy_f32_avx2(
+    n: usize,
+    alpha: f32,
+    x_ptr: *const f32,
+    y_ptr: *mut f32,
+) {
     let chunks = n / 8;
     let rem = n % 8;
     let alpha_vec = _mm256_set1_ps(alpha);
@@ -67,7 +72,12 @@ unsafe fn axpy_f32_avx2(n: usize, alpha: f32, x_ptr: *const f32, y_ptr: *mut f32
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
-unsafe fn axpy_f64_avx2(n: usize, alpha: f64, x_ptr: *const f64, y_ptr: *mut f64) {
+unsafe fn axpy_f64_avx2(
+    n: usize,
+    alpha: f64,
+    x_ptr: *const f64,
+    y_ptr: *mut f64,
+) {
     let chunks = n / 4;
     let rem = n % 4;
     let alpha_vec = _mm256_set1_pd(alpha);
@@ -86,15 +96,27 @@ unsafe fn axpy_f64_avx2(n: usize, alpha: f64, x_ptr: *const f64, y_ptr: *mut f64
     }
 }
 
-impl<X: DenseStorage<f32>, Y: DenseStorageMut<f32>> Axpy<f32, X, Y> for Avx2Blas {
+impl<X: DenseStorage<f32>, Y: DenseStorageMut<f32>> Axpy<f32, X, Y>
+    for Avx2Blas
+{
     #[inline(always)]
     fn axpy(alpha: f32, x: &X, y: &mut Y) {
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
+            {
                 let n = x.rows() * x.cols();
-                let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-                let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+                let x_stride = if x.rows() >= x.cols() {
+                    x.r_stride()
+                } else {
+                    x.c_stride()
+                };
+                let y_stride = if y.rows() >= y.cols() {
+                    y.r_stride()
+                } else {
+                    y.c_stride()
+                };
 
                 if x_stride == 1 && y_stride == 1 {
                     unsafe {
@@ -108,15 +130,27 @@ impl<X: DenseStorage<f32>, Y: DenseStorageMut<f32>> Axpy<f32, X, Y> for Avx2Blas
     }
 }
 
-impl<X: DenseStorage<f64>, Y: DenseStorageMut<f64>> Axpy<f64, X, Y> for Avx2Blas {
+impl<X: DenseStorage<f64>, Y: DenseStorageMut<f64>> Axpy<f64, X, Y>
+    for Avx2Blas
+{
     #[inline(always)]
     fn axpy(alpha: f64, x: &X, y: &mut Y) {
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
+            {
                 let n = x.rows() * x.cols();
-                let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-                let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+                let x_stride = if x.rows() >= x.cols() {
+                    x.r_stride()
+                } else {
+                    x.c_stride()
+                };
+                let y_stride = if y.rows() >= y.cols() {
+                    y.r_stride()
+                } else {
+                    y.c_stride()
+                };
 
                 if x_stride == 1 && y_stride == 1 {
                     unsafe {
@@ -177,7 +211,11 @@ impl<X: DenseStorageMut<f32>> Scal<f32, X> for Avx2Blas {
         {
             if std::arch::is_x86_feature_detected!("avx2") {
                 let n = x.rows() * x.cols();
-                let stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
+                let stride = if x.rows() >= x.cols() {
+                    x.r_stride()
+                } else {
+                    x.c_stride()
+                };
                 if stride == 1 {
                     unsafe {
                         scal_f32_avx2(n, alpha, x.as_mut_ptr());
@@ -197,7 +235,11 @@ impl<X: DenseStorageMut<f64>> Scal<f64, X> for Avx2Blas {
         {
             if std::arch::is_x86_feature_detected!("avx2") {
                 let n = x.rows() * x.cols();
-                let stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
+                let stride = if x.rows() >= x.cols() {
+                    x.r_stride()
+                } else {
+                    x.c_stride()
+                };
                 if stride == 1 {
                     unsafe {
                         scal_f64_avx2(n, alpha, x.as_mut_ptr());
@@ -261,10 +303,20 @@ impl<X: DenseStorage<f32>, Y: DenseStorage<f32>> Dotu<f32, X, Y> for Avx2Blas {
     fn dotu(x: &X, y: &Y) -> f32 {
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
+            {
                 let n = x.rows() * x.cols();
-                let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-                let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+                let x_stride = if x.rows() >= x.cols() {
+                    x.r_stride()
+                } else {
+                    x.c_stride()
+                };
+                let y_stride = if y.rows() >= y.cols() {
+                    y.r_stride()
+                } else {
+                    y.c_stride()
+                };
 
                 if x_stride == 1 && y_stride == 1 {
                     return unsafe { dotu_f32_avx2(n, x.as_ptr(), y.as_ptr()) };
@@ -280,10 +332,20 @@ impl<X: DenseStorage<f64>, Y: DenseStorage<f64>> Dotu<f64, X, Y> for Avx2Blas {
     fn dotu(x: &X, y: &Y) -> f64 {
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
+            {
                 let n = x.rows() * x.cols();
-                let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-                let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+                let x_stride = if x.rows() >= x.cols() {
+                    x.r_stride()
+                } else {
+                    x.c_stride()
+                };
+                let y_stride = if y.rows() >= y.cols() {
+                    y.r_stride()
+                } else {
+                    y.c_stride()
+                };
 
                 if x_stride == 1 && y_stride == 1 {
                     return unsafe { dotu_f64_avx2(n, x.as_ptr(), y.as_ptr()) };
@@ -299,11 +361,18 @@ impl<X: DenseStorage<f32>> Nrm2<f32, X> for Avx2Blas {
     fn nrm2(x: &X) -> f32 {
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
+            {
                 let n = x.rows() * x.cols();
-                let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
+                let x_stride = if x.rows() >= x.cols() {
+                    x.r_stride()
+                } else {
+                    x.c_stride()
+                };
                 if x_stride == 1 {
-                    let sum = unsafe { dotu_f32_avx2(n, x.as_ptr(), x.as_ptr()) };
+                    let sum =
+                        unsafe { dotu_f32_avx2(n, x.as_ptr(), x.as_ptr()) };
                     return libm::sqrtf(sum);
                 }
             }
@@ -317,11 +386,18 @@ impl<X: DenseStorage<f64>> Nrm2<f64, X> for Avx2Blas {
     fn nrm2(x: &X) -> f64 {
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
+            {
                 let n = x.rows() * x.cols();
-                let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
+                let x_stride = if x.rows() >= x.cols() {
+                    x.r_stride()
+                } else {
+                    x.c_stride()
+                };
                 if x_stride == 1 {
-                    let sum = unsafe { dotu_f64_avx2(n, x.as_ptr(), x.as_ptr()) };
+                    let sum =
+                        unsafe { dotu_f64_avx2(n, x.as_ptr(), x.as_ptr()) };
                     return libm::sqrt(sum);
                 }
             }
@@ -364,7 +440,11 @@ unsafe fn gemv_notrans_rowmajor_f32_avx2(
             dot += *row_ptr.add(k) * *x_ptr.add(k);
         }
 
-        let y_val = if beta == 0.0 { 0.0 } else { *y_ptr.add(i) * beta };
+        let y_val = if beta == 0.0 {
+            0.0
+        } else {
+            *y_ptr.add(i) * beta
+        };
         *y_ptr.add(i) = alpha * dot + y_val;
     }
 }
@@ -399,7 +479,11 @@ unsafe fn gemv_notrans_rowmajor_f64_avx2(
             dot += *row_ptr.add(k) * *x_ptr.add(k);
         }
 
-        let y_val = if beta == 0.0 { 0.0 } else { *y_ptr.add(i) * beta };
+        let y_val = if beta == 0.0 {
+            0.0
+        } else {
+            *y_ptr.add(i) * beta
+        };
         *y_ptr.add(i) = alpha * dot + y_val;
     }
 }
@@ -411,11 +495,25 @@ impl<A: DenseStorage<f32>, X: DenseStorage<f32>, Y: DenseStorageMut<f32>>
     fn gemv(trans: Trans, alpha: f32, a: &A, x: &X, beta: f32, y: &mut Y) {
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
-                let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-                let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
+            {
+                let x_stride = if x.rows() >= x.cols() {
+                    x.r_stride()
+                } else {
+                    x.c_stride()
+                };
+                let y_stride = if y.rows() >= y.cols() {
+                    y.r_stride()
+                } else {
+                    y.c_stride()
+                };
 
-                if trans == Trans::NoTrans && a.c_stride() == 1 && x_stride == 1 && y_stride == 1 {
+                if trans == Trans::NoTrans
+                    && a.c_stride() == 1
+                    && x_stride == 1
+                    && y_stride == 1
+                {
                     unsafe {
                         gemv_notrans_rowmajor_f32_avx2(
                             a.rows(),
@@ -443,11 +541,25 @@ impl<A: DenseStorage<f64>, X: DenseStorage<f64>, Y: DenseStorageMut<f64>>
     fn gemv(trans: Trans, alpha: f64, a: &A, x: &X, beta: f64, y: &mut Y) {
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
-                let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-                let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
+            {
+                let x_stride = if x.rows() >= x.cols() {
+                    x.r_stride()
+                } else {
+                    x.c_stride()
+                };
+                let y_stride = if y.rows() >= y.cols() {
+                    y.r_stride()
+                } else {
+                    y.c_stride()
+                };
 
-                if trans == Trans::NoTrans && a.c_stride() == 1 && x_stride == 1 && y_stride == 1 {
+                if trans == Trans::NoTrans
+                    && a.c_stride() == 1
+                    && x_stride == 1
+                    && y_stride == 1
+                {
                     unsafe {
                         gemv_notrans_rowmajor_f64_avx2(
                             a.rows(),
@@ -582,11 +694,9 @@ unsafe fn gemm_notrans_rowmajor_f64_avx2(
     }
 }
 
-impl<
-    A: DenseStorage<f32>,
-    B: DenseStorage<f32>,
-    C: DenseStorageMut<f32>,
-> Gemm<f32, A, B, C> for Avx2Blas {
+impl<A: DenseStorage<f32>, B: DenseStorage<f32>, C: DenseStorageMut<f32>>
+    Gemm<f32, A, B, C> for Avx2Blas
+{
     #[inline(always)]
     fn gemm(
         ta: Trans,
@@ -599,7 +709,9 @@ impl<
     ) {
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
+            {
                 if ta == Trans::NoTrans
                     && tb == Trans::NoTrans
                     && a.c_stride() == 1
@@ -629,11 +741,9 @@ impl<
     }
 }
 
-impl<
-    A: DenseStorage<f64>,
-    B: DenseStorage<f64>,
-    C: DenseStorageMut<f64>,
-> Gemm<f64, A, B, C> for Avx2Blas {
+impl<A: DenseStorage<f64>, B: DenseStorage<f64>, C: DenseStorageMut<f64>>
+    Gemm<f64, A, B, C> for Avx2Blas
+{
     #[inline(always)]
     fn gemm(
         ta: Trans,
@@ -646,7 +756,9 @@ impl<
     ) {
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma") {
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
+            {
                 if ta == Trans::NoTrans
                     && tb == Trans::NoTrans
                     && a.c_stride() == 1
