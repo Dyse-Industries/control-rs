@@ -28,7 +28,8 @@ use ratatui::{
 use control_rs_ets::comms::{Command, TestState};
 use control_rs_ets::settings::SettingValue;
 use control_rs_ets_host::{
-    BridgeMessage, ETSBridge, SessionAction, SessionState, Target,
+    BridgeMessage, ETSBridge, HostError, OwnedTelemetry, SessionAction,
+    SessionState, Target,
 };
 
 /// Selectable item in the hierarchical metrics table.
@@ -261,8 +262,9 @@ impl AppState {
                     if let Some(action) = self
                         .session
                         .enqueue_test(suite_idx as u16, test_idx as u16)
+                        && let Err(e) = Self::execute_action(action, bridge)
                     {
-                        Self::execute_action(action, bridge);
+                        self.logs.push(format!("> [HOST] send failed: {e}"));
                     }
                     self.rebuild_visible_items();
                 }
@@ -275,17 +277,22 @@ impl AppState {
     }
 
     /// Executes a [`SessionAction`] returned by the session state machine.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport error if a command cannot be written.
     pub fn execute_action(
         action: SessionAction,
         bridge: Option<&mut ETSBridge>,
-    ) {
+    ) -> Result<(), HostError> {
         match action {
             SessionAction::Send(cmd) => {
                 if let Some(b) = bridge {
-                    let _ = b.send_command(&cmd);
+                    b.send_command(&cmd)?;
                 }
+                Ok(())
             }
-            SessionAction::PanicRestart => {}
+            SessionAction::PanicRestart => Ok(()),
         }
     }
 
@@ -321,12 +328,14 @@ impl AppState {
         };
         match parse_setting_value(&self.setting_edit, current.value) {
             Ok(value) => {
-                if let Some(b) = bridge {
-                    let _ = b.send_command(&Command::SetSetting {
+                if let Some(b) = bridge
+                    && let Err(e) = b.send_command(&Command::SetSetting {
                         suite_id: suite_idx as u16,
                         setting_id: setting_idx as u16,
                         value,
-                    });
+                    })
+                {
+                    self.logs.push(format!("> [HOST] send failed: {e}"));
                 }
                 if let Some(setting) = self
                     .session
@@ -359,11 +368,11 @@ impl AppState {
                 None
             }
             BridgeMessage::Telemetry(t) => {
-                if let control_rs_ets::comms::Telemetry::Log(log_msg) = &t {
-                    self.logs.push(format!(
-                        "> [{}] {}",
-                        log_msg.suite_id, log_msg.payload
-                    ));
+                if let OwnedTelemetry::Log {
+                    suite_id, payload, ..
+                } = &t
+                {
+                    self.logs.push(format!("> [{suite_id}] {payload}"));
                 }
                 let actions =
                     self.session.handle_message(BridgeMessage::Telemetry(t));
@@ -371,8 +380,10 @@ impl AppState {
                 for action in actions {
                     if matches!(action, SessionAction::PanicRestart) {
                         restart = Some(action);
-                    } else {
-                        Self::execute_action(action, bridge.as_deref_mut());
+                    } else if let Err(e) =
+                        Self::execute_action(action, bridge.as_deref_mut())
+                    {
+                        self.logs.push(format!("> [HOST] send failed: {e}"));
                     }
                 }
                 self.rebuild_visible_items();
@@ -442,16 +453,20 @@ impl AppState {
                 false
             }
             KeyCode::Char('r') => {
-                if let Some(action) = self.session.enqueue_all() {
-                    Self::execute_action(action, bridge);
+                if let Some(action) = self.session.enqueue_all()
+                    && let Err(e) = Self::execute_action(action, bridge)
+                {
+                    self.logs.push(format!("> [HOST] send failed: {e}"));
                 }
                 self.rebuild_visible_items();
                 false
             }
             KeyCode::Char('s') => {
                 self.session.stop();
-                if let Some(b) = bridge {
-                    let _ = b.send_command(&Command::TryReset);
+                if let Some(b) = bridge
+                    && let Err(e) = b.send_command(&Command::TryReset)
+                {
+                    self.logs.push(format!("> [HOST] send failed: {e}"));
                 }
                 self.rebuild_visible_items();
                 false
@@ -895,7 +910,6 @@ fn parse_setting_value(
 pub fn run_tui(
     mut bridge: ETSBridge,
     target: &Target,
-    elf_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -908,15 +922,10 @@ pub fn run_tui(
         bridge.link_info().to_string(),
     );
 
-    // Initial discovery request
-    let _ = bridge.send_command(&Command::ListSuites);
+    if let Err(e) = bridge.send_command(&Command::ListSuites) {
+        state.logs.push(format!("> [HOST] send failed: {e}"));
+    }
     let mut last_discovery = Instant::now();
-
-    let elf_opt = if elf_path.is_empty() {
-        None
-    } else {
-        Some(elf_path)
-    };
 
     let run_res = (|| -> Result<(), Box<dyn std::error::Error>> {
         loop {
@@ -936,7 +945,9 @@ pub fn run_tui(
             if !state.session.discovery_complete
                 && last_discovery.elapsed() > Duration::from_millis(500)
             {
-                let _ = bridge.send_command(&Command::ListSuites);
+                if let Err(e) = bridge.send_command(&Command::ListSuites) {
+                    state.logs.push(format!("> [HOST] send failed: {e}"));
+                }
                 last_discovery = Instant::now();
             }
 
@@ -948,19 +959,30 @@ pub fn run_tui(
 
             // Recover and re-attach bridge on panic restart without tearing down terminal
             if need_restart {
-                bridge.kill();
+                bridge.terminate();
                 state.logs.push(
                     "> [INFO] Target panicked. Re-attaching bridge..."
                         .to_string(),
                 );
                 thread::sleep(Duration::from_secs(1));
-                if let Ok(new_bridge) =
-                    ETSBridge::new(target.clone(), elf_opt, false)
-                {
-                    bridge = new_bridge;
-                    state.process_exit = None;
-                    let _ = bridge.send_command(&Command::ListSuites);
-                    last_discovery = Instant::now();
+                match ETSBridge::new(target.clone(), false) {
+                    Ok(new_bridge) => {
+                        bridge = new_bridge;
+                        state.process_exit = None;
+                        if let Err(e) =
+                            bridge.send_command(&Command::ListSuites)
+                        {
+                            state
+                                .logs
+                                .push(format!("> [HOST] send failed: {e}"));
+                        }
+                        last_discovery = Instant::now();
+                    }
+                    Err(e) => {
+                        state
+                            .logs
+                            .push(format!("> [HOST] reconnect failed: {e}"));
+                    }
                 }
             }
 
@@ -974,6 +996,8 @@ pub fn run_tui(
         }
         Ok(())
     })();
+
+    bridge.terminate();
 
     // Tear down terminal state cleanly
     disable_raw_mode()?;
@@ -1004,7 +1028,7 @@ mod tests {
         assert_eq!(state.link_info, "USB CDC (/dev/ttyACM0)");
 
         // Script discovery
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "math::storage",
@@ -1013,7 +1037,7 @@ mod tests {
                 setting_count: 0,
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 0,
@@ -1021,7 +1045,7 @@ mod tests {
                 description: "",
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 1,
@@ -1029,7 +1053,7 @@ mod tests {
                 description: "",
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::DiscoveryComplete,
         ));
         state.rebuild_visible_items();
@@ -1049,7 +1073,7 @@ mod tests {
         ));
 
         // Script metrics (FR-3)
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::MetricReport {
                 suite_id: 0,
                 test_id: 0,
@@ -1111,7 +1135,7 @@ mod tests {
         let mut state = AppState::new("Target".to_string(), "Link".to_string());
 
         // Discover and run test 0
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
@@ -1120,7 +1144,7 @@ mod tests {
                 setting_count: 0,
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 0,
@@ -1128,10 +1152,10 @@ mod tests {
                 description: "",
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::DiscoveryComplete,
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::MetricReport {
                 suite_id: 0,
                 test_id: 0,
@@ -1142,14 +1166,14 @@ mod tests {
         ));
 
         // Simulate target crash/reset and re-discovery
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::TargetPanic {
                 message: "crash",
                 file: "foo.rs",
                 line: 10,
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
@@ -1158,7 +1182,7 @@ mod tests {
                 setting_count: 0,
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 0,
@@ -1166,7 +1190,7 @@ mod tests {
                 description: "",
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::DiscoveryComplete,
         ));
         state.rebuild_visible_items();
@@ -1192,7 +1216,7 @@ mod tests {
     #[test]
     fn test_navigation_and_collapse() {
         let mut state = AppState::new("Target".to_string(), "Link".to_string());
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite1",
@@ -1201,7 +1225,7 @@ mod tests {
                 setting_count: 0,
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 0,
@@ -1209,7 +1233,7 @@ mod tests {
                 description: "",
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 1,
@@ -1217,7 +1241,7 @@ mod tests {
                 description: "",
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::DiscoveryComplete,
         ));
         state.rebuild_visible_items();
@@ -1297,7 +1321,7 @@ mod tests {
     /// Method: Requirements-based test
     fn test_setting_description_and_edit() {
         let mut state = AppState::new("Target".to_string(), "Link".to_string());
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
@@ -1306,7 +1330,7 @@ mod tests {
                 setting_count: 1,
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::SettingInfo {
                 suite_id: 0,
                 setting_id: 0,
@@ -1315,7 +1339,7 @@ mod tests {
                 value: SettingValue::U32(100),
             },
         ));
-        let _ = state.session.handle_message(BridgeMessage::Telemetry(
+        let _ = state.session.handle_message(BridgeMessage::telemetry(
             Telemetry::DiscoveryComplete,
         ));
         state.rebuild_visible_items();
