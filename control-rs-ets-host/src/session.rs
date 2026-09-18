@@ -114,12 +114,21 @@ impl SessionState {
     }
 
     /// Enqueues all discovered tests across all suites for execution.
+    ///
+    /// When a case is already in flight (`current_running`), that case is
+    /// omitted from the rebuilt queue so the next metric report does not
+    /// immediately re-run it.
     #[allow(clippy::cast_possible_truncation)]
     pub fn enqueue_all(&mut self) -> Option<SessionAction> {
+        let in_flight = self.current_running;
         self.run_queue.clear();
         for (s_idx, suite) in self.suites.iter().enumerate() {
             for (t_idx, _) in suite.tests.iter().enumerate() {
-                self.run_queue.push((s_idx as u16, t_idx as u16));
+                let id = (s_idx as u16, t_idx as u16);
+                if in_flight == Some(id) {
+                    continue;
+                }
+                self.run_queue.push(id);
             }
         }
         if self.current_running.is_none() {
@@ -127,6 +136,40 @@ impl SessionState {
         } else {
             None
         }
+    }
+
+    /// Returns cases that have not finished when a run aborts.
+    ///
+    /// Includes the in-flight `current_running` case when it is not already
+    /// recorded in `results`, then the remaining `run_queue` entries.
+    #[must_use]
+    pub fn pending_cases(&self) -> Vec<(u16, u16)> {
+        let mut pending = Vec::new();
+        if let Some((s_id, t_id)) = self.current_running {
+            let s_idx = s_id as usize;
+            let t_idx = t_id as usize;
+            let recorded = self
+                .suites
+                .get(s_idx)
+                .and_then(|suite| {
+                    suite.tests.get(t_idx).map(|test| {
+                        self.results.iter().any(|r| {
+                            r.suite_name == suite.name
+                                && r.test_name == test.name
+                        })
+                    })
+                })
+                .unwrap_or(false);
+            if !recorded {
+                pending.push((s_id, t_id));
+            }
+        }
+        for id in &self.run_queue {
+            if !pending.contains(id) {
+                pending.push(*id);
+            }
+        }
+        pending
     }
 
     /// Enqueues a specific test for execution.
@@ -752,5 +795,52 @@ mod tests {
             }))
         ));
         assert_eq!(state.current_running, Some((0, 1)));
+    }
+
+    #[test]
+    fn enqueue_all_while_running_excludes_in_flight_case() {
+        let mut state = SessionState::new();
+        discover_two_tests(&mut state);
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert_eq!(state.current_running, Some((0, 0)));
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+
+        // Mid-run "r" must not re-queue the in-flight case; otherwise the
+        // next MetricReport pops (0, 0) again and re-runs it.
+        let action = state.enqueue_all();
+        assert!(action.is_none());
+        assert_eq!(state.current_running, Some((0, 0)));
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::MetricReport {
+                suite_id: 0,
+                test_id: 0,
+                cycles: 1,
+                time_us: 1,
+                stack_peak: 1,
+            },
+        ));
+        assert!(matches!(
+            actions.as_slice(),
+            [SessionAction::Send(CommCommand::RunExecutable {
+                suite_id: 0,
+                test_id: 1
+            })]
+        ));
+        assert_eq!(state.current_running, Some((0, 1)));
+        assert!(state.run_queue.is_empty());
+    }
+
+    #[test]
+    fn pending_cases_includes_in_flight_before_queue() {
+        let mut state = SessionState::new();
+        discover_two_tests(&mut state);
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert_eq!(state.pending_cases(), vec![(0, 0), (0, 1)]);
     }
 }
