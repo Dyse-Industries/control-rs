@@ -21,6 +21,11 @@ pub struct TestItem {
     pub time_us: Option<u64>,
     /// Peak stack memory usage in bytes if completed.
     pub stack_peak: Option<u32>,
+    /// `true` after a [`OwnedTelemetry::TestInfo`] frame populated this slot.
+    ///
+    /// Sparse/`while` padding for a higher `test_id` leaves undiscovered
+    /// placeholders; discovery must not treat those as real cases.
+    pub discovered: bool,
 }
 
 /// Representation of a configuration setting in a test suite.
@@ -43,6 +48,8 @@ pub struct SuiteItem {
     pub tests: Vec<TestItem>,
     /// Collection of config settings inside this suite.
     pub settings: Vec<SettingItem>,
+    /// Expected test count from [`OwnedTelemetry::SuiteInfo`], if received.
+    pub expected_test_count: Option<u16>,
 }
 
 /// Host-side ETS session state (discovery, run queue, results).
@@ -113,17 +120,45 @@ impl SessionState {
         self.logs.push_str(msg);
     }
 
+    /// Returns whether every suite registry matches its `SuiteInfo` counts.
+    ///
+    /// A lost `TestInfo` frame (serial CRC failure / noise) must not be treated
+    /// as an empty or shorter suite: [`OwnedTelemetry::DiscoveryComplete`]
+    /// waits for a `ListSuites` retry instead of draining green.
+    #[must_use]
+    pub fn discovery_registry_ready(&self) -> bool {
+        self.suites.iter().all(|suite| {
+            let Some(expected) = suite.expected_test_count else {
+                // TestInfo without SuiteInfo cannot confirm completeness.
+                return suite.tests.is_empty();
+            };
+            let expected = usize::from(expected);
+            suite.tests.len() >= expected
+                && suite
+                    .tests
+                    .iter()
+                    .take(expected)
+                    .all(|test| test.discovered)
+        })
+    }
+
     /// Enqueues all discovered tests across all suites for execution.
     ///
     /// When a case is already in flight (`current_running`), that case is
     /// omitted from the rebuilt queue so the next metric report does not
-    /// immediately re-run it.
+    /// immediately re-run it. Only slots confirmed by `TestInfo` are queued.
     #[allow(clippy::cast_possible_truncation)]
     pub fn enqueue_all(&mut self) -> Option<SessionAction> {
         let in_flight = self.current_running;
         self.run_queue.clear();
         for (s_idx, suite) in self.suites.iter().enumerate() {
-            for (t_idx, _) in suite.tests.iter().enumerate() {
+            let limit = suite
+                .expected_test_count
+                .map_or(suite.tests.len(), usize::from);
+            for (t_idx, test) in suite.tests.iter().enumerate().take(limit) {
+                if !test.discovered {
+                    continue;
+                }
                 let id = (s_idx as u16, t_idx as u16);
                 if in_flight == Some(id) {
                     continue;
@@ -222,16 +257,23 @@ impl SessionState {
                 Vec::new()
             }
             BridgeMessage::Telemetry(telemetry) => match telemetry {
-                OwnedTelemetry::SuiteInfo { suite_id, name, .. } => {
+                OwnedTelemetry::SuiteInfo {
+                    suite_id,
+                    name,
+                    test_count,
+                    ..
+                } => {
                     let id = suite_id as usize;
                     while self.suites.len() <= id {
                         self.suites.push(SuiteItem {
                             name: String::new(),
                             tests: Vec::new(),
                             settings: Vec::new(),
+                            expected_test_count: None,
                         });
                     }
                     self.suites[id].name = name;
+                    self.suites[id].expected_test_count = Some(test_count);
                     Vec::new()
                 }
                 OwnedTelemetry::TestInfo {
@@ -247,6 +289,7 @@ impl SessionState {
                             name: String::new(),
                             tests: Vec::new(),
                             settings: Vec::new(),
+                            expected_test_count: None,
                         });
                     }
                     let suite_name = self.suites[s_id].name.clone();
@@ -258,10 +301,12 @@ impl SessionState {
                             cycles: None,
                             time_us: None,
                             stack_peak: None,
+                            discovered: false,
                         });
                     }
                     self.suites[s_id].tests[t_id].suite_name = suite_name;
                     self.suites[s_id].tests[t_id].name = name;
+                    self.suites[s_id].tests[t_id].discovered = true;
                     Vec::new()
                 }
                 OwnedTelemetry::SettingInfo {
@@ -279,6 +324,7 @@ impl SessionState {
                             name: String::new(),
                             tests: Vec::new(),
                             settings: Vec::new(),
+                            expected_test_count: None,
                         });
                     }
                     while self.suites[s_id].settings.len() <= set_id {
@@ -302,11 +348,26 @@ impl SessionState {
                     if self.discovery_complete {
                         return Vec::new();
                     }
+                    // SuiteInfo.test_count is authoritative. A lost TestInfo
+                    // frame must not drain an incomplete registry as green.
+                    if !self.discovery_registry_ready() {
+                        self.log(
+                            "Incomplete discovery registry; waiting for ListSuites retry\n",
+                        );
+                        return Vec::new();
+                    }
                     self.discovery_complete = true;
                     self.run_queue.clear();
                     for (s_idx, suite) in self.suites.iter_mut().enumerate() {
-                        for (t_idx, test) in suite.tests.iter_mut().enumerate()
+                        let limit = suite
+                            .expected_test_count
+                            .map_or(suite.tests.len(), usize::from);
+                        for (t_idx, test) in
+                            suite.tests.iter_mut().enumerate().take(limit)
                         {
+                            if !test.discovered {
+                                continue;
+                            }
                             let already_recorded =
                                 self.results.iter().find(|r| {
                                     r.suite_name == suite.name
@@ -457,16 +518,22 @@ impl SessionState {
                     self.current_running = None;
                     self.discovery_complete = false;
 
-                    let registry_has_tests =
-                        self.suites.iter().any(|suite| !suite.tests.is_empty());
+                    let registry_has_tests = self
+                        .suites
+                        .iter()
+                        .any(|suite| suite.tests.iter().any(|t| t.discovered));
                     let remaining_to_run =
                         if had_discovery || registry_has_tests {
                             self.suites.iter().any(|suite| {
-                                suite.tests.iter().any(|test| {
-                                    !self.results.iter().any(|r| {
-                                        r.suite_name == suite.name
-                                            && r.test_name == test.name
-                                    })
+                                let limit = suite
+                                    .expected_test_count
+                                    .map_or(suite.tests.len(), usize::from);
+                                suite.tests.iter().take(limit).any(|test| {
+                                    test.discovered
+                                        && !self.results.iter().any(|r| {
+                                            r.suite_name == suite.name
+                                                && r.test_name == test.name
+                                        })
                                 })
                             })
                         } else {
@@ -942,5 +1009,97 @@ mod tests {
                 SessionAction::PanicRestart
             ]
         ));
+    }
+
+    #[test]
+    fn incomplete_discovery_does_not_false_drain() {
+        let mut state = SessionState::new();
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite",
+                description: "",
+                test_count: 2,
+                setting_count: 0,
+            },
+        ));
+        // SuiteInfo promised two tests; none arrived (lost TestInfo frames).
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert!(actions.is_empty());
+        assert!(!state.discovery_complete);
+        assert!(!state.exit_loop);
+        assert!(state.run_queue.is_empty());
+        assert!(state.logs.contains("Incomplete discovery registry"));
+
+        // Partial TestInfo still incomplete.
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "t0",
+                description: "",
+            },
+        ));
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert!(actions.is_empty());
+        assert!(!state.discovery_complete);
+        assert!(!state.exit_loop);
+
+        // Full registry then proceeds.
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 1,
+                name: "t1",
+                description: "",
+            },
+        ));
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert!(matches!(
+            actions.as_slice(),
+            [SessionAction::Send(CommCommand::RunExecutable {
+                suite_id: 0,
+                test_id: 0
+            })]
+        ));
+        assert!(state.discovery_complete);
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn sparse_test_info_hole_does_not_false_drain() {
+        let mut state = SessionState::new();
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite",
+                description: "",
+                test_count: 2,
+                setting_count: 0,
+            },
+        ));
+        // test_id 0 lost; test_id 1 arrives and pads an undiscovered placeholder.
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 1,
+                name: "t1",
+                description: "",
+            },
+        ));
+        assert!(!state.suites[0].tests[0].discovered);
+        assert!(state.suites[0].tests[1].discovered);
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert!(actions.is_empty());
+        assert!(!state.discovery_complete);
+        assert!(!state.exit_loop);
     }
 }
