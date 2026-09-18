@@ -129,8 +129,10 @@ impl SessionState {
     pub fn discovery_registry_ready(&self) -> bool {
         self.suites.iter().all(|suite| {
             let Some(expected) = suite.expected_test_count else {
-                // TestInfo without SuiteInfo cannot confirm completeness.
-                return suite.tests.is_empty();
+                // Missing SuiteInfo: either a padded hole from a higher
+                // suite_id, or TestInfo without SuiteInfo. Neither is ready.
+                // Empty suites are reported as SuiteInfo { test_count: 0 }.
+                return false;
             };
             let expected = usize::from(expected);
             suite.tests.len() >= expected
@@ -1101,5 +1103,42 @@ mod tests {
         assert!(actions.is_empty());
         assert!(!state.discovery_complete);
         assert!(!state.exit_loop);
+    }
+
+    #[test]
+    fn missing_lower_suite_info_pad_does_not_false_drain() {
+        let mut state = SessionState::new();
+        // suite_id 0 SuiteInfo lost; suite_id 1 arrives and pads an empty
+        // suite 0 with expected_test_count: None.
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 1,
+                name: "suite1",
+                description: "",
+                test_count: 1,
+                setting_count: 0,
+            },
+        ));
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TestInfo {
+                suite_id: 1,
+                test_id: 0,
+                name: "t0",
+                description: "",
+            },
+        ));
+        assert_eq!(state.suites.len(), 2);
+        assert!(state.suites[0].expected_test_count.is_none());
+        assert!(state.suites[0].tests.is_empty());
+        assert_eq!(state.suites[1].expected_test_count, Some(1));
+
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert!(actions.is_empty());
+        assert!(!state.discovery_complete);
+        assert!(!state.exit_loop);
+        assert!(state.run_queue.is_empty());
+        assert!(state.logs.contains("Incomplete discovery registry"));
     }
 }
