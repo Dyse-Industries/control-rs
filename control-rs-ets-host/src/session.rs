@@ -831,7 +831,7 @@ mod tests {
             })]
         ));
         assert_eq!(state.current_running, Some((0, 1)));
-        assert!(state.run_queue.is_empty());
+        assert_eq!(state.run_queue, []);
     }
 
     #[test]
