@@ -64,6 +64,11 @@ pub enum Completion {
     SendFailed,
     /// Panic recovery could not reopen the transport.
     ReconnectFailed,
+    /// Subprocess target exited while discovery or case work remained.
+    ///
+    /// Returned as `RunRecord.abort` (not `Err`) so outcomes already collected
+    /// stay available to CI consumers.
+    TargetExited,
 }
 
 impl RunRecord {
@@ -84,8 +89,10 @@ impl RunRecord {
 ///
 /// # Errors
 ///
-/// Returns `HostError` if the target cannot be spawned or unexpectedly disconnects
-/// before any session record can be produced.
+/// Returns `HostError` only when a session record cannot be produced at all
+/// (spawn / serial open failures before the run loop). Mid-run transport
+/// aborts — including an unexpected subprocess exit — return `Ok(RunRecord)`
+/// with `abort` set so partial results are retained.
 #[allow(clippy::needless_pass_by_value)]
 pub fn run_headless_ets(
     target: Target,
@@ -205,15 +212,17 @@ pub fn run_headless_ets(
         }
 
         if let Ok(Some(status)) = bridge.try_wait() {
-            if !state.discovery_complete
-                || state.current_running.is_some()
-                || !state.run_queue.is_empty()
-            {
+            if work_remains_after_target_exit(&state) {
+                // Retain outcomes collected so far; Err(HostError) is reserved
+                // for failures that prevent producing any RunRecord.
                 bridge.terminate();
-                return Err(HostError::Transport {
-                    source: format!("Process exited unexpectedly: {status}")
-                        .into(),
-                });
+                return Ok(finish_record(
+                    state,
+                    resets,
+                    Some(Completion::TargetExited),
+                    start_time,
+                    Some(format!("Process exited unexpectedly: {status}")),
+                ));
             }
             state.exit_loop = true;
         }
@@ -236,6 +245,16 @@ pub fn run_headless_ets(
 fn send_discovery(bridge: &mut ETSBridge) -> Result<(), HostError> {
     bridge.send_command(&CommCommand::TryReset)?;
     bridge.send_command(&CommCommand::ListSuites)
+}
+
+/// Returns true when a subprocess exit must abort with [`Completion::TargetExited`].
+///
+/// A clean exit after discovery with an empty queue and no in-flight case is
+/// treated as normal completion (`exit_loop`), not an abort.
+const fn work_remains_after_target_exit(state: &SessionState) -> bool {
+    !state.discovery_complete
+        || state.current_running.is_some()
+        || !state.run_queue.is_empty()
 }
 
 fn finish_record(
@@ -352,5 +371,62 @@ mod tests {
         );
         assert_eq!(record.pending, vec![(0, 1)]);
         assert_eq!(record.results.len(), 1);
+    }
+
+    #[test]
+    fn target_exit_mid_run_retains_results_as_abort() {
+        let mut state = SessionState::new();
+        discover_two(&mut state);
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::MetricReport {
+                suite_id: 0,
+                test_id: 0,
+                cycles: 10,
+                time_us: 20,
+                stack_peak: 30,
+            },
+        ));
+        assert_eq!(state.results.len(), 1);
+        assert_eq!(state.current_running, Some((0, 1)));
+        assert!(work_remains_after_target_exit(&state));
+
+        let record = finish_record(
+            state,
+            0,
+            Some(Completion::TargetExited),
+            Instant::now(),
+            Some("Process exited unexpectedly: exit status: 1".to_string()),
+        );
+        assert_eq!(record.abort, Some(Completion::TargetExited));
+        assert_eq!(record.results.len(), 1);
+        assert_eq!(record.results[0].state, TestState::Passed);
+        assert_eq!(record.pending, vec![(0, 1)]);
+        assert!(record.console.contains("Process exited unexpectedly"));
+    }
+
+    #[test]
+    fn target_exit_after_drain_is_not_an_abort() {
+        let mut state = SessionState::new();
+        discover_two(&mut state);
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::MetricReport {
+                suite_id: 0,
+                test_id: 0,
+                cycles: 1,
+                time_us: 1,
+                stack_peak: 1,
+            },
+        ));
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::MetricReport {
+                suite_id: 0,
+                test_id: 1,
+                cycles: 2,
+                time_us: 2,
+                stack_peak: 2,
+            },
+        ));
+        assert!(state.exit_loop);
+        assert!(!work_remains_after_target_exit(&state));
     }
 }
