@@ -4,9 +4,6 @@
 #![allow(
     unused_extern_crates,
     clippy::uninlined_format_args,
-    clippy::missing_panics_doc,
-    clippy::panic,
-    clippy::expect_used,
     clippy::manual_let_else,
     clippy::match_wildcard_for_single_variants
 )]
@@ -167,7 +164,8 @@ fn generate_suite_descriptors(
         },
         parse_quote! {
             /// Pointer to the suite descriptor, linked into the ETS test suites section.
-            #[unsafe(link_section = ".ets_test_suites")]
+            #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__ets_suites"))]
+            #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".ets_test_suites"))]
             #[used]
             pub static SUITE_DESCRIPTOR_PTR: &::control_rs_ets::SuiteDescriptor = &SUITE_DESCRIPTOR;
         },
@@ -266,11 +264,22 @@ fn ets_setup_impl(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
 
     let return_type = match &setup_fn.sig.output {
         syn::ReturnType::Type(_, ty) => ty,
-        _ => panic!("setup function must return a Context"),
+        _ => {
+            return syn::Error::new_spanned(
+                &setup_fn.sig,
+                "setup function must return a Context<C, P>",
+            )
+            .to_compile_error();
+        }
     };
 
-    let (c_ty, p_ty) = extract_context_generics(return_type)
-        .expect("setup function return type must be Context<C, P>");
+    let Some((c_ty, p_ty)) = extract_context_generics(return_type) else {
+        return syn::Error::new_spanned(
+            return_type,
+            "setup function return type must be Context<C, P>",
+        )
+        .to_compile_error();
+    };
 
     quote! {
         #setup_fn
@@ -659,5 +668,13 @@ mod tests {
                 .to_string()
                 .contains("expected")
         );
+        let non_ctx = ets_setup_impl(quote::quote! {
+            fn setup() -> u32 { 0 }
+        });
+        assert!(non_ctx.to_string().contains("compile_error"));
+        let no_ret = ets_setup_impl(quote::quote! {
+            fn setup() {}
+        });
+        assert!(no_ret.to_string().contains("compile_error"));
     }
 }

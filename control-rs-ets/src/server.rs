@@ -1020,6 +1020,7 @@ mod tests {
 
     #[test]
     fn test_server_discovery() {
+        let _ = TEST_U8_SETTING.set(SettingValue::U8(42));
         let comms = MockComms {
             commands: std::vec![Command::ListSuites],
             payloads: Vec::new(),
@@ -1231,6 +1232,7 @@ mod tests {
                 ..
             }
         ));
+        let _ = TEST_U8_SETTING.set(SettingValue::U8(42));
     }
 
     #[test]
