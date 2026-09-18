@@ -49,7 +49,12 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::settings::SettingValue;
 
-const MAX_PAYLOAD_SIZE: usize = 512;
+/// Sync (2) + length (2) + CRC-16 (2).
+pub const FRAME_OVERHEAD: usize = 6;
+/// Maximum encoded frame size (`MAX_PAYLOAD_SIZE` + `FRAME_OVERHEAD`).
+pub const MAX_FRAME_SIZE: usize = 518;
+/// Maximum postcard payload bytes in one frame.
+pub const MAX_PAYLOAD_SIZE: usize = 512;
 const START_BYTE_1: u8 = 0xAA;
 const START_BYTE_2: u8 = 0x55;
 
@@ -416,6 +421,9 @@ impl FrameReader {
             ReaderState::WaitStart2 => {
                 if byte == START_BYTE_2 {
                     self.state = ReaderState::WaitLen1;
+                } else if byte == START_BYTE_1 {
+                    // Orphan/noise 0xAA left us in WaitStart2; this 0xAA may
+                    // start a real frame, so stay armed for 0x55.
                 } else {
                     self.state = ReaderState::WaitStart1;
                 }
@@ -485,21 +493,17 @@ impl FrameReader {
 }
 
 impl FrameEncoder {
-    /// Frames a raw payload byte slice into the destination buffer.
-    ///
-    /// # Errors
-    /// Returns `postcard::Error::SerializeBufferFull` if `dest` is too small or `payload` exceeds `MAX_PAYLOAD_SIZE`.
+    /// Writes sync, length, and CRC for a payload already sitting at `dest[4..]`.
     #[allow(clippy::arithmetic_side_effects)]
-    pub fn frame_payload(
-        payload: &[u8],
+    fn finish_frame(
         dest: &mut [u8],
+        payload_len: usize,
     ) -> Result<usize, postcard::Error> {
-        let payload_len = payload.len();
         if payload_len > MAX_PAYLOAD_SIZE {
             return Err(postcard::Error::SerializeBufferFull);
         }
         let total_len = payload_len
-            .checked_add(6)
+            .checked_add(FRAME_OVERHEAD)
             .ok_or(postcard::Error::SerializeBufferFull)?;
         if dest.len() < total_len {
             return Err(postcard::Error::SerializeBufferFull);
@@ -521,127 +525,92 @@ impl FrameEncoder {
             *slot = (len_u16 & 0xFF) as u8;
         }
 
-        if let Some(slice) = dest.get_mut(4..4 + payload_len) {
-            slice.copy_from_slice(payload);
-        }
-
-        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
-        let crc_value = crc.checksum(payload);
-
+        let crc_value = {
+            let payload = dest
+                .get(4..4 + payload_len)
+                .ok_or(postcard::Error::SerializeBufferFull)?;
+            crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC).checksum(payload)
+        };
         if let Some(slot) = dest.get_mut(4 + payload_len) {
             *slot = (crc_value >> 8) as u8;
         }
         if let Some(slot) = dest.get_mut(4 + payload_len + 1) {
             *slot = (crc_value & 0xFF) as u8;
         }
-
         Ok(total_len)
+    }
+
+    /// Serializes `value` into `dest[4..]` then writes the frame header and CRC.
+    fn serialize_then_frame<T: serde::Serialize>(
+        value: &T,
+        dest: &mut [u8],
+    ) -> Result<usize, postcard::Error> {
+        if dest.len() < FRAME_OVERHEAD {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+        let max_payload = dest
+            .len()
+            .saturating_sub(FRAME_OVERHEAD)
+            .min(MAX_PAYLOAD_SIZE);
+        let payload_len = {
+            let end = 4usize
+                .checked_add(max_payload)
+                .ok_or(postcard::Error::SerializeBufferFull)?;
+            let slice = dest
+                .get_mut(4..end)
+                .ok_or(postcard::Error::SerializeBufferFull)?;
+            postcard::to_slice(value, slice)?.len()
+        };
+        Self::finish_frame(dest, payload_len)
+    }
+
+    /// Frames a raw payload byte slice into the destination buffer.
+    ///
+    /// # Errors
+    /// Returns `postcard::Error::SerializeBufferFull` if `dest` is too small or `payload` exceeds `MAX_PAYLOAD_SIZE`.
+    pub fn frame_payload(
+        payload: &[u8],
+        dest: &mut [u8],
+    ) -> Result<usize, postcard::Error> {
+        let payload_len = payload.len();
+        if payload_len > MAX_PAYLOAD_SIZE {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+        let total_len = payload_len
+            .checked_add(FRAME_OVERHEAD)
+            .ok_or(postcard::Error::SerializeBufferFull)?;
+        if dest.len() < total_len {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+        let end = 4usize
+            .checked_add(payload_len)
+            .ok_or(postcard::Error::SerializeBufferFull)?;
+        if let Some(slice) = dest.get_mut(4..end) {
+            slice.copy_from_slice(payload);
+        }
+        Self::finish_frame(dest, payload_len)
     }
 
     /// Serializes and frames a [`Command`] message into the destination buffer.
     ///
     /// # Errors
     /// Returns `postcard::Error` if serialization fails or `dest` is too small.
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn frame_command(
         cmd: &Command,
         dest: &mut [u8],
     ) -> Result<usize, postcard::Error> {
-        if dest.len() < 6 {
-            return Err(postcard::Error::SerializeBufferFull);
-        }
-
-        if let Some(slot) = dest.get_mut(0) {
-            *slot = START_BYTE_1;
-        }
-        if let Some(slot) = dest.get_mut(1) {
-            *slot = START_BYTE_2;
-        }
-
-        let dest_len = dest.len();
-        let (payload_len, crc_value) = {
-            let slice = dest
-                .get_mut(4..dest_len - 2)
-                .ok_or(postcard::Error::SerializeBufferFull)?;
-            let payload_slice = postcard::to_slice(cmd, slice)?;
-            if payload_slice.len() > MAX_PAYLOAD_SIZE {
-                return Err(postcard::Error::SerializeBufferFull);
-            }
-            let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
-            let crc_value = crc.checksum(payload_slice);
-            (payload_slice.len(), crc_value)
-        };
-
-        let len_u16 = u16::try_from(payload_len)
-            .map_err(|_| postcard::Error::SerializeBufferFull)?;
-        if let Some(slot) = dest.get_mut(2) {
-            *slot = (len_u16 >> 8) as u8;
-        }
-        if let Some(slot) = dest.get_mut(3) {
-            *slot = (len_u16 & 0xFF) as u8;
-        }
-
-        if let Some(slot) = dest.get_mut(4 + payload_len) {
-            *slot = (crc_value >> 8) as u8;
-        }
-        if let Some(slot) = dest.get_mut(4 + payload_len + 1) {
-            *slot = (crc_value & 0xFF) as u8;
-        }
-
-        Ok(6 + payload_len)
+        Self::serialize_then_frame(cmd, dest)
     }
 
     /// Serializes and frames a [`Telemetry`] message into the destination buffer.
     ///
     /// # Errors
     /// Returns `postcard::Error` if serialization fails or `dest` is too small.
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn frame_telemetry(
         telemetry: &Telemetry<'_>,
         dest: &mut [u8],
     ) -> Result<usize, postcard::Error> {
-        if dest.len() < 6 {
-            return Err(postcard::Error::SerializeBufferFull);
-        }
-
-        if let Some(slot) = dest.get_mut(0) {
-            *slot = START_BYTE_1;
-        }
-        if let Some(slot) = dest.get_mut(1) {
-            *slot = START_BYTE_2;
-        }
-
-        let dest_len = dest.len();
-        let (payload_len, crc_value) = {
-            let slice = dest
-                .get_mut(4..dest_len - 2)
-                .ok_or(postcard::Error::SerializeBufferFull)?;
-            let payload_slice = postcard::to_slice(telemetry, slice)?;
-            if payload_slice.len() > MAX_PAYLOAD_SIZE {
-                return Err(postcard::Error::SerializeBufferFull);
-            }
-            let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
-            let crc_value = crc.checksum(payload_slice);
-            (payload_slice.len(), crc_value)
-        };
-
-        let len_u16 = u16::try_from(payload_len)
-            .map_err(|_| postcard::Error::SerializeBufferFull)?;
-        if let Some(slot) = dest.get_mut(2) {
-            *slot = (len_u16 >> 8) as u8;
-        }
-        if let Some(slot) = dest.get_mut(3) {
-            *slot = (len_u16 & 0xFF) as u8;
-        }
-
-        if let Some(slot) = dest.get_mut(4 + payload_len) {
-            *slot = (crc_value >> 8) as u8;
-        }
-        if let Some(slot) = dest.get_mut(4 + payload_len + 1) {
-            *slot = (crc_value & 0xFF) as u8;
-        }
-
-        Ok(6 + payload_len)
+        Self::serialize_then_frame(telemetry, dest)
     }
 }
 
@@ -692,6 +661,28 @@ mod tests {
         assert!(!reader.is_idle()); // now in WaitStart2
         assert!(reader.handle_byte(0x00).is_none());
         assert!(reader.is_idle()); // reset to WaitStart1
+    }
+
+    #[test]
+    fn test_frame_reader_resync_after_orphan_start_byte() {
+        let mut buf = [0u8; 128];
+        let framed_len =
+            frame_telemetry(&Telemetry::DiscoveryComplete, &mut buf)
+                .expect("framing");
+
+        let mut reader = FrameReader::new();
+        // Noise/orphan 0xAA must not consume the real frame's leading 0xAA.
+        assert!(reader.handle_byte(START_BYTE_1).is_none());
+        let mut decoded = false;
+        for &b in &buf[..framed_len] {
+            if reader.handle_byte(b).is_some() {
+                decoded = true;
+            }
+        }
+        assert!(
+            decoded,
+            "valid frame after an orphan 0xAA must still decode"
+        );
     }
 
     #[test]
