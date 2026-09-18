@@ -10,12 +10,14 @@
 //! the fallback Rust implementations below satisfy the exact NMSIS C ABI symbols without symbol collisions.
 
 use control_rs::math::complex_num::Complex;
-use control_rs::math::storage::{DenseStorage, DenseStorageMut, Diag, Side, Trans, UpLo};
+use control_rs::math::storage::{
+    DenseStorage, DenseStorageMut, Diag, Side, Trans, UpLo,
+};
+use control_rs::math::subprograms::DefaultBlas;
 use control_rs::math::subprograms::lapack::Potrf;
 use control_rs::math::subprograms::level1::{Dotc, Dotu, Scal};
 use control_rs::math::subprograms::level2::Gemv;
 use control_rs::math::subprograms::level3::{Gemm, Trsm};
-use control_rs::math::subprograms::DefaultBlas;
 use control_rs::math::{LinAlgError, LinAlgResult};
 
 /// Zero-sized marker type for RISC-V NMSIS-DSP backend.
@@ -34,14 +36,28 @@ pub mod ffi {
 
     #[allow(dead_code)]
     unsafe extern "C" {
-        pub fn riscv_mat_init_f32(s: *mut RiscvMatrixInstanceF32, n_rows: u16, n_cols: u16, p_data: *mut f32);
+        pub fn riscv_mat_init_f32(
+            s: *mut RiscvMatrixInstanceF32,
+            n_rows: u16,
+            n_cols: u16,
+            p_data: *mut f32,
+        );
         pub fn riscv_mat_mult_f32(
             src_a: *const RiscvMatrixInstanceF32,
             src_b: *const RiscvMatrixInstanceF32,
             dst: *mut RiscvMatrixInstanceF32,
         ) -> i32;
-        pub fn riscv_mat_vec_mult_f32(src_mat: *const RiscvMatrixInstanceF32, p_vec: *const f32, p_dst: *mut f32);
-        pub fn riscv_dot_prod_f32(src_a: *const f32, src_b: *const f32, block_size: u32, result: *mut f32);
+        pub fn riscv_mat_vec_mult_f32(
+            src_mat: *const RiscvMatrixInstanceF32,
+            p_vec: *const f32,
+            p_dst: *mut f32,
+        );
+        pub fn riscv_dot_prod_f32(
+            src_a: *const f32,
+            src_b: *const f32,
+            block_size: u32,
+            result: *mut f32,
+        );
         pub fn riscv_cmplx_dot_prod_f32(
             src_a: *const f32,
             src_b: *const f32,
@@ -49,7 +65,12 @@ pub mod ffi {
             real_result: *mut f32,
             imag_result: *mut f32,
         );
-        pub fn riscv_scale_f32(src: *const f32, scale: f32, dst: *mut f32, block_size: u32);
+        pub fn riscv_scale_f32(
+            src: *const f32,
+            scale: f32,
+            dst: *mut f32,
+            block_size: u32,
+        );
         pub fn riscv_mat_cholesky_f32(
             src: *const RiscvMatrixInstanceF32,
             dst: *mut RiscvMatrixInstanceF32,
@@ -65,7 +86,12 @@ pub mod ffi {
 // Fallback Rust implementations of NMSIS C symbols, active when C static library is not compiled
 #[cfg(not(feature = "c_nmsis"))]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn riscv_scale_f32(src: *const f32, scale: f32, dst: *mut f32, block_size: u32) {
+pub unsafe extern "C" fn riscv_scale_f32(
+    src: *const f32,
+    scale: f32,
+    dst: *mut f32,
+    block_size: u32,
+) {
     for i in 0..block_size as usize {
         *dst.add(i) = *src.add(i) * scale;
     }
@@ -73,7 +99,12 @@ pub unsafe extern "C" fn riscv_scale_f32(src: *const f32, scale: f32, dst: *mut 
 
 #[cfg(not(feature = "c_nmsis"))]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn riscv_dot_prod_f32(src_a: *const f32, src_b: *const f32, block_size: u32, result: *mut f32) {
+pub unsafe extern "C" fn riscv_dot_prod_f32(
+    src_a: *const f32,
+    src_b: *const f32,
+    block_size: u32,
+    result: *mut f32,
+) {
     let mut sum = 0.0f32;
     for i in 0..block_size as usize {
         sum += *src_a.add(i) * *src_b.add(i);
@@ -106,7 +137,11 @@ pub unsafe extern "C" fn riscv_cmplx_dot_prod_f32(
 
 #[cfg(not(feature = "c_nmsis"))]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn riscv_mat_vec_mult_f32(src_mat: *const RiscvMatrixInstanceF32, p_vec: *const f32, p_dst: *mut f32) {
+pub unsafe extern "C" fn riscv_mat_vec_mult_f32(
+    src_mat: *const RiscvMatrixInstanceF32,
+    p_vec: *const f32,
+    p_dst: *mut f32,
+) {
     let rows = (*src_mat).num_rows as usize;
     let cols = (*src_mat).num_cols as usize;
     let mat = (*src_mat).p_data;
@@ -230,7 +265,11 @@ impl<X: DenseStorageMut<f32>> Scal<f32, X> for NmsisDspBlas {
     #[inline(always)]
     fn scal(alpha: f32, x: &mut X) {
         let n = x.rows() * x.cols();
-        let stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
+        let stride = if x.rows() >= x.cols() {
+            x.r_stride()
+        } else {
+            x.c_stride()
+        };
         if stride == 1 {
             unsafe {
                 ffi::riscv_scale_f32(
@@ -246,12 +285,22 @@ impl<X: DenseStorageMut<f32>> Scal<f32, X> for NmsisDspBlas {
     }
 }
 
-impl<X: DenseStorage<f32>, Y: DenseStorage<f32>> Dotu<f32, X, Y> for NmsisDspBlas {
+impl<X: DenseStorage<f32>, Y: DenseStorage<f32>> Dotu<f32, X, Y>
+    for NmsisDspBlas
+{
     #[inline(always)]
     fn dotu(x: &X, y: &Y) -> f32 {
         let n = x.rows() * x.cols();
-        let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-        let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+        let x_stride = if x.rows() >= x.cols() {
+            x.r_stride()
+        } else {
+            x.c_stride()
+        };
+        let y_stride = if y.rows() >= y.cols() {
+            y.r_stride()
+        } else {
+            y.c_stride()
+        };
 
         if x_stride == 1 && y_stride == 1 {
             let mut res = 0.0f32;
@@ -276,8 +325,16 @@ impl<X: DenseStorage<Complex<f32>>, Y: DenseStorage<Complex<f32>>>
     #[inline(always)]
     fn dotc(x: &X, y: &Y) -> Complex<f32> {
         let n = x.rows() * x.cols();
-        let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-        let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+        let x_stride = if x.rows() >= x.cols() {
+            x.r_stride()
+        } else {
+            x.c_stride()
+        };
+        let y_stride = if y.rows() >= y.cols() {
+            y.r_stride()
+        } else {
+            y.c_stride()
+        };
 
         if x_stride == 1 && y_stride == 1 {
             let mut re = 0.0f32;
@@ -307,8 +364,16 @@ impl<A: DenseStorage<f32>, X: DenseStorage<f32>, Y: DenseStorageMut<f32>>
 {
     #[inline(always)]
     fn gemv(trans: Trans, alpha: f32, a: &A, x: &X, beta: f32, y: &mut Y) {
-        let x_stride = if x.rows() >= x.cols() { x.r_stride() } else { x.c_stride() };
-        let y_stride = if y.rows() >= y.cols() { y.r_stride() } else { y.c_stride() };
+        let x_stride = if x.rows() >= x.cols() {
+            x.r_stride()
+        } else {
+            x.c_stride()
+        };
+        let y_stride = if y.rows() >= y.cols() {
+            y.r_stride()
+        } else {
+            y.c_stride()
+        };
 
         if trans == Trans::NoTrans
             && alpha == 1.0
@@ -336,11 +401,9 @@ impl<A: DenseStorage<f32>, X: DenseStorage<f32>, Y: DenseStorageMut<f32>>
 // Level 3: Gemm
 // =============================================================================
 
-impl<
-    A: DenseStorage<f32>,
-    B: DenseStorage<f32>,
-    C: DenseStorageMut<f32>,
-> Gemm<f32, A, B, C> for NmsisDspBlas {
+impl<A: DenseStorage<f32>, B: DenseStorage<f32>, C: DenseStorageMut<f32>>
+    Gemm<f32, A, B, C> for NmsisDspBlas
+{
     #[inline(always)]
     fn gemm(
         ta: Trans,
@@ -378,7 +441,8 @@ impl<
                 p_data: c.as_mut_ptr(),
             };
 
-            let status = unsafe { ffi::riscv_mat_mult_f32(&a_mat, &b_mat, &mut c_mat) };
+            let status =
+                unsafe { ffi::riscv_mat_mult_f32(&a_mat, &b_mat, &mut c_mat) };
             if status == 0 {
                 return;
             }
@@ -395,13 +459,17 @@ impl<A: DenseStorageMut<f32>> Potrf<f32, A> for NmsisDspBlas {
     #[inline(always)]
     fn potrf(uplo: UpLo, a: &mut A) -> LinAlgResult<()> {
         let n = a.rows();
-        if uplo == UpLo::Lower && a.c_stride() == 1 && a.r_stride() == n.cast_signed() {
+        if uplo == UpLo::Lower
+            && a.c_stride() == 1
+            && a.r_stride() == n.cast_signed()
+        {
             let mut l_mat = RiscvMatrixInstanceF32 {
                 num_rows: u16::try_from(n).unwrap_or(0),
                 num_cols: u16::try_from(n).unwrap_or(0),
                 p_data: a.as_mut_ptr(),
             };
-            let status = unsafe { ffi::riscv_mat_cholesky_f32(&l_mat, &mut l_mat) };
+            let status =
+                unsafe { ffi::riscv_mat_cholesky_f32(&l_mat, &mut l_mat) };
             if status == 0 {
                 return Ok(());
             } else {
@@ -412,7 +480,9 @@ impl<A: DenseStorageMut<f32>> Potrf<f32, A> for NmsisDspBlas {
     }
 }
 
-impl<A: DenseStorage<f32>, B: DenseStorageMut<f32>> Trsm<f32, A, B> for NmsisDspBlas {
+impl<A: DenseStorage<f32>, B: DenseStorageMut<f32>> Trsm<f32, A, B>
+    for NmsisDspBlas
+{
     #[inline(always)]
     fn trsm(
         side: Side,
@@ -445,7 +515,9 @@ impl<A: DenseStorage<f32>, B: DenseStorageMut<f32>> Trsm<f32, A, B> for NmsisDsp
             };
 
             let status = unsafe {
-                ffi::riscv_mat_solve_upper_triangular_f32(&a_mat, &b_mat, &mut b_mat)
+                ffi::riscv_mat_solve_upper_triangular_f32(
+                    &a_mat, &b_mat, &mut b_mat,
+                )
             };
             if status == 0 {
                 return Ok(());

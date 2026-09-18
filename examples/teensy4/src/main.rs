@@ -34,10 +34,10 @@ fn SysTick() {
 
 // --- Communication Implementation ---
 //
-// The ETS testing framework uses the `HostComms` trait to define target-to-host 
-// communication. On the Teensy 4.0, we implement this using a USB CDC virtual serial 
-// port. Telemetry is serialized using Postcard and framed with `frame_telemetry`, 
-// then transmitted over USB. Incoming bytes are passed to `FrameReader` to reassemble 
+// The ETS testing framework uses the `HostComms` trait to define target-to-host
+// communication. On the Teensy 4.0, we implement this using a USB CDC virtual serial
+// port. Telemetry is serialized using Postcard and framed with `frame_telemetry`,
+// then transmitted over USB. Incoming bytes are passed to `FrameReader` to reassemble
 // host commands.
 
 struct TeensyComms {
@@ -182,8 +182,8 @@ pub mod teensy_pid_suite {
 
 // --- Profiler Implementation for ARM Cortex-M ---
 //
-// We use the ETS crate's built-in `CortexMProfiler` to implement the target-agnostic 
-// `CPUProfiler` trait. It reads clock cycles from the ARM DWT cycle counter and tracks 
+// We use the ETS crate's built-in `CortexMProfiler` to implement the target-agnostic
+// `CPUProfiler` trait. It reads clock cycles from the ARM DWT cycle counter and tracks
 // real-time duration using the ARM SysTick timer. It also paints/profiles stack space.
 
 fn enable_dwt_cycle_counter() {

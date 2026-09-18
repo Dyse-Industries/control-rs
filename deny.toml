@@ -1,0 +1,39 @@
+# cargo-deny policy for the control-rs workspace.
+#
+# Invoked as `cargo deny --all-features check`. The feature selection matters:
+# a plain `cargo deny check` does not resolve the feature- and target-gated
+# dependencies, so it silently skips the RISC-V and embedded edges of the
+# published crates and reports a policy narrower than what they ship.
+
+[advisories]
+yanked = "deny"
+ignore = [
+    # bare-metal 0.2.5 is deprecated and is an unconditional dependency of
+    # cortex-m 0.7.9, the latest release, so nothing available removes it.
+    # Retire this entry when a cortex-m release without that edge ships.
+    # Mirrored in `.cargo/audit.toml` for `cargo audit`.
+    "RUSTSEC-2026-0110",
+]
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "MIT",
+    "Apache-2.0",
+    # Encountered only in the feature- and target-gated graph, which the plain
+    # `cargo deny check` invocation does not reach: riscv (ISC) on the RISC-V
+    # targets, and a dependency carrying `AND Unicode-3.0`. Keeping them here
+    # means the policy covers the whole dependency surface rather than only
+    # the subset the gate's default feature selection resolves.
+    "ISC",
+    "Unicode-3.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

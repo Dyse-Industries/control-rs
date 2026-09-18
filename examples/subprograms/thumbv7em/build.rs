@@ -38,7 +38,11 @@ MEMORY
     ];
 
     for c_file in &c_files {
-        let stem = std::path::Path::new(c_file).file_stem().unwrap().to_str().unwrap();
+        let stem = std::path::Path::new(c_file)
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap();
         let obj = out.join(format!("{}.o", stem));
         let status = Command::new("clang")
             .arg("--target=thumbv7em-none-eabihf")
