@@ -535,6 +535,7 @@ pub fn frame_telemetry(
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
@@ -673,5 +674,163 @@ mod tests {
         let mut comms = TestComms;
         comms.close();
         comms.close_on_failure();
+    }
+
+    /// Byte-level layout of a framed telemetry packet:
+    /// `[0xAA, 0x55, len_hi, len_lo, payload.., crc_hi, crc_lo]`, with the
+    /// CRC-16/IBM-SDLC taken over the payload only.
+    ///
+    /// Every field is asserted against an independently computed value, so a
+    /// swapped header byte, a little-endian length, a CRC over the wrong span
+    /// or an off-by-one placement all fail here.
+    #[test]
+    fn test_frame_telemetry_byte_layout() {
+        let mut buf = [0u8; 128];
+        let n = frame_telemetry(&Telemetry::DiscoveryComplete, &mut buf)
+            .expect("framing must succeed into a 128 byte buffer");
+
+        // Header.
+        assert_eq!(buf[0], 0xAA);
+        assert_eq!(buf[1], 0x55);
+
+        // Length is big-endian and counts the payload only.
+        let payload_len =
+            usize::from(u16::from(buf[2]) << 8 | u16::from(buf[3]));
+        assert_eq!(n, payload_len + 6);
+
+        // The payload is exactly what postcard produces on its own.
+        let mut direct = [0u8; 64];
+        let encoded =
+            postcard::to_slice(&Telemetry::DiscoveryComplete, &mut direct)
+                .expect("payload must serialize");
+        assert_eq!(payload_len, encoded.len());
+        assert_eq!(&buf[4..4 + payload_len], encoded);
+
+        // CRC over the payload, big-endian, in the last two bytes.
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+        let want = crc.checksum(encoded);
+        let got = u16::from(buf[4 + payload_len]) << 8
+            | u16::from(buf[4 + payload_len + 1]);
+        assert_eq!(got, want);
+
+        // Nothing is written past the frame.
+        assert!(buf[n..].iter().all(|&b| b == 0));
+    }
+
+    /// A buffer smaller than the six framing bytes is rejected before
+    /// anything is written, and the boundary is exactly six.
+    #[test]
+    fn test_frame_telemetry_rejects_short_buffers() {
+        for len in 0..6usize {
+            let mut small = [0u8; 8];
+            let res = frame_telemetry(
+                &Telemetry::DiscoveryComplete,
+                &mut small[..len],
+            );
+            assert!(res.is_err(), "len {len} must be rejected");
+            assert!(
+                small.iter().all(|&b| b == 0),
+                "len {len} must not write into the buffer"
+            );
+        }
+
+        // A buffer that clears the header check but cannot hold the payload
+        // still fails rather than truncating.
+        let mut tight = [0u8; 6];
+        assert!(
+            frame_telemetry(&Telemetry::DiscoveryComplete, &mut tight).is_err()
+        );
+    }
+
+    /// A framed packet decodes back through `FrameReader`, and corrupting any
+    /// single byte of the payload or the CRC makes the reader reject it.
+    #[test]
+    fn test_frame_telemetry_round_trip_and_corruption() {
+        let mut buf = [0u8; 128];
+        let n = frame_telemetry(&Telemetry::DiscoveryComplete, &mut buf)
+            .expect("framing must succeed");
+
+        let mut reader = FrameReader::new();
+        let mut decoded = false;
+        for &b in &buf[..n] {
+            if reader.handle_byte(b).is_some() {
+                decoded = true;
+            }
+        }
+        assert!(decoded, "a clean frame must decode");
+
+        // Flipping a bit anywhere after the header must break the frame.
+        for corrupt_at in 4..n {
+            let mut bad = buf;
+            bad[corrupt_at] ^= 0xFF;
+            let mut r = FrameReader::new();
+            let mut ok = false;
+            for &b in &bad[..n] {
+                if r.handle_byte(b).is_some() {
+                    ok = true;
+                }
+            }
+            assert!(
+                !ok,
+                "corrupting byte {corrupt_at} must fail the CRC check"
+            );
+        }
+    }
+
+    /// The returned length is `6 + payload_len` for every telemetry variant,
+    /// and the frame always starts with the two header bytes.
+    #[test]
+    fn test_frame_telemetry_length_accounting_across_variants() {
+        let variants = [
+            Telemetry::DiscoveryComplete,
+            Telemetry::MetricReport {
+                cycles: 123_456,
+                stack_peak: 2048,
+                suite_id: 7,
+                test_id: 9,
+                time_us: 654_321,
+            },
+        ];
+        for v in &variants {
+            let mut buf = [0u8; 128];
+            let n = frame_telemetry(v, &mut buf).expect("framing");
+            let payload_len =
+                usize::from(u16::from(buf[2]) << 8 | u16::from(buf[3]));
+            assert_eq!(n, payload_len + 6);
+            assert_eq!(buf[0], 0xAA);
+            assert_eq!(buf[1], 0x55);
+            assert!(n >= 6);
+        }
+    }
+
+    /// `CommsLock` is a single-holder flag: the first `try_lock` wins, every
+    /// later one fails until `unlock`, and `unlock` is idempotent.
+    #[test]
+    fn test_comms_lock_excludes_second_holder() {
+        let lock = CommsLock::new();
+
+        assert!(lock.try_lock(), "an unlocked lock must be acquirable");
+        for _ in 0..4 {
+            assert!(!lock.try_lock(), "a held lock must stay held");
+        }
+
+        lock.unlock();
+        assert!(lock.try_lock(), "unlock must release the flag");
+
+        lock.unlock();
+        lock.unlock();
+        assert!(lock.try_lock(), "a repeated unlock must not wedge the lock");
+        lock.unlock();
+    }
+
+    /// A fresh lock starts unlocked, and `Default` agrees with `new`.
+    #[test]
+    fn test_comms_lock_starts_unlocked() {
+        let a = CommsLock::new();
+        assert!(a.try_lock());
+
+        let b = CommsLock::default();
+        assert!(b.try_lock());
+        assert!(!b.try_lock());
     }
 }

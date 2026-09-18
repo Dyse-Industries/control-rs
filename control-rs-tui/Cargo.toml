@@ -1,0 +1,21 @@
+[package]
+name = "control-rs-tui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Interactive terminal console for driving control-rs Embedded Test Server targets."
+readme = "README.md"
+keywords = ["embedded", "tui", "testing", "ets"]
+categories = ["embedded", "development-tools::testing", "command-line-utilities"]
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+control-rs-ets-host = { path = "../control-rs-ets-host", version = "0.1.0" }
+control-rs-ets = { path = "../control-rs-ets", version = "0.1.0" }
+ratatui = "0.30"
+crossterm = "0.29"
