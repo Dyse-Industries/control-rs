@@ -1,18 +1,57 @@
 //! Bridge module to interface host computer with the target device.
 //! Manages spawning and monitoring the execution environments (QEMU or Serial).
+//!
+//! # Examples
+//!
+//! ```
+//! use control_rs_ets::comms::{Command, FrameEncoder, FrameReader};
+//!
+//! let cmd = Command::ListSuites;
+//! let mut buf = [0u8; 64];
+//! let len = FrameEncoder::frame_command(&cmd, &mut buf).unwrap();
+//!
+//! let mut reader = FrameReader::new();
+//! let mut decoded = false;
+//! for &b in &buf[..len] {
+//!     if reader.handle_byte(b).is_some() {
+//!         decoded = true;
+//!         break;
+//!     }
+//! }
+//! assert!(decoded);
+//! ```
+//!
+//! ```no_run
+//! use control_rs_ets_host::ETSBridge;
+//! use control_rs_ets_host::target::Target;
+//!
+//! let target = Target::qemu_arm();
+//! let bridge = ETSBridge::new(target, None, false);
+//! assert!(bridge.is_ok());
+//! ```
 
 use std::io::{Read, Write as IoWrite};
 use std::process::{Child, ChildStdout, Command as StdCommand, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 
-use control_rs_ets::comms::{Command, FrameReader, LogMessage, Telemetry};
+use control_rs_ets::comms::{
+    Command, FrameEncoder, FrameReader, LogMessage, Telemetry,
+};
 use control_rs_ets::settings::SettingValue;
 
 use crate::error::HostError;
 use crate::target::{SubprocessTarget, Target};
 
 type WaitResult = Result<Option<std::process::ExitStatus>, std::io::Error>;
+
+/// Host driver (`ETSBridge`) for virtual ETS (QEMU) and ETS (board).
+pub struct ETSBridge {
+    inner: BridgeInner,
+    link_info: String,
+    rx_from_target: Receiver<BridgeMessage>,
+    target_info: String,
+}
 
 /// Inner bridge enum representing active connection variant.
 enum BridgeInner {
@@ -38,15 +77,20 @@ pub enum BridgeMessage {
     Telemetry(Telemetry<'static>),
 }
 
-/// Host driver (`ServerBridge`) for virtual ETS (QEMU) and ETS (board).
-pub struct ServerBridge {
-    inner: BridgeInner,
-    link_info: String,
-    rx_from_target: Receiver<BridgeMessage>,
-    target_info: String,
+impl BridgeInner {
+    fn write_frame(&mut self, frame: &[u8]) -> std::io::Result<()> {
+        match self {
+            Self::Qemu { stdin, .. } => {
+                stdin.write_all(frame).and_then(|()| stdin.flush())
+            }
+            Self::Serial { port } => {
+                port.write_all(frame).and_then(|()| port.flush())
+            }
+        }
+    }
 }
 
-impl ServerBridge {
+impl ETSBridge {
     /// Terminate QEMU (no-op for serial).
     pub fn kill(&mut self) {
         match &mut self.inner {
@@ -84,83 +128,83 @@ impl ServerBridge {
             Target::Serial {
                 port: port_path,
                 baud,
-            } => {
-                let mut port = None;
-                let mut attempts = 0u32;
-                let mut last_err = String::new();
-                while port.is_none() {
-                    match serial2::SerialPort::open(&port_path, baud) {
-                        Ok(p) => port = Some(p),
-                        Err(e) => {
-                            attempts = attempts.saturating_add(1);
-                            last_err = e.to_string();
-                            if attempts >= 5 {
-                                return Err(HostError::SerialOpen {
-                                    port: port_path,
-                                    attempts,
-                                    source: last_err.into(),
-                                });
-                            }
-                            thread::sleep(std::time::Duration::from_secs(1));
-                        }
-                    }
-                }
-                let port = match port {
-                    Some(p) => p,
-                    None => {
-                        return Err(HostError::SerialOpen {
-                            port: port_path,
-                            attempts,
-                            source: last_err.into(),
-                        });
-                    }
-                };
-
-                let port_clone =
-                    port.try_clone().map_err(|e| HostError::SerialClone {
-                        source: e.to_string().into(),
-                    })?;
-
-                // Spawn serial reader thread
-                thread::spawn(move || {
-                    let mut reader = FrameReader::new();
-                    let mut raw_line_buf = Vec::new();
-                    let mut byte_buf = [0u8; 1];
-
-                    loop {
-                        match port_clone.read(&mut byte_buf) {
-                            Ok(1) => {
-                                let b = byte_buf[0];
-                                process_incoming_byte(
-                                    b,
-                                    &mut reader,
-                                    &mut raw_line_buf,
-                                    &tx,
-                                );
-                            }
-                            _ => {
-                                thread::sleep(
-                                    std::time::Duration::from_millis(1),
-                                );
-                            }
-                        }
-                    }
-                });
-
-                Ok(Self {
-                    inner: BridgeInner::Serial { port },
-                    rx_from_target: rx,
-                    target_info: "Teensy 4.0 (Cortex-M7)".to_string(),
-                    link_info: format!("USB CDC ({port_path})"),
-                })
-            }
+            } => Self::new_serial(&port_path, baud, tx, rx),
             Target::Subprocess(sub) => {
-                Self::new_subprocess_inner(&sub, tx, rx, inherit_stderr)
+                Self::new_subprocess(&sub, tx, rx, inherit_stderr)
             }
         }
     }
 
-    fn new_subprocess_inner(
+    fn new_serial(
+        port_path: &str,
+        baud: u32,
+        tx: Sender<BridgeMessage>,
+        rx: Receiver<BridgeMessage>,
+    ) -> Result<Self, HostError> {
+        let mut port = None;
+        let mut attempts = 0u32;
+        let mut last_err = String::new();
+        while port.is_none() {
+            match serial2::SerialPort::open(port_path, baud) {
+                Ok(p) => port = Some(p),
+                Err(e) => {
+                    attempts = attempts.saturating_add(1);
+                    last_err = e.to_string();
+                    if attempts >= 5 {
+                        return Err(HostError::SerialOpen {
+                            port: port_path.to_string(),
+                            attempts,
+                            source: last_err.into(),
+                        });
+                    }
+                    thread::sleep(std::time::Duration::from_secs(1));
+                }
+            }
+        }
+        let port = port.ok_or_else(|| HostError::SerialOpen {
+            port: port_path.to_string(),
+            attempts,
+            source: last_err.into(),
+        })?;
+
+        let port_clone =
+            port.try_clone().map_err(|e| HostError::SerialClone {
+                source: e.to_string().into(),
+            })?;
+
+        // Spawn serial reader thread
+        thread::spawn(move || {
+            let mut reader = FrameReader::new();
+            let mut raw_line_buf = Vec::new();
+            let mut byte_buf = [0u8; 1];
+
+            loop {
+                match port_clone.read(&mut byte_buf) {
+                    Ok(1) => {
+                        let b = byte_buf[0];
+                        process_incoming_byte(
+                            b,
+                            &mut reader,
+                            &mut raw_line_buf,
+                            &tx,
+                        );
+                    }
+                    _ => {
+                        thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            inner: BridgeInner::Serial { port },
+            rx_from_target: rx,
+            target_info: "Teensy 4.0 (Cortex-M7)".to_string(),
+            link_info: format!("USB CDC ({port_path})"),
+        })
+    }
+
+    fn new_subprocess(
         target: &SubprocessTarget,
         tx: Sender<BridgeMessage>,
         rx: Receiver<BridgeMessage>,
@@ -261,38 +305,18 @@ impl ServerBridge {
     ///
     /// Returns `HostError::Transport` if serializing or writing to the target stream fails.
     pub fn send_command(&mut self, cmd: &Command) -> Result<(), HostError> {
-        let mut payload =
-            postcard::to_allocvec(cmd).map_err(|e| HostError::Transport {
+        let mut buf = [0u8; 518];
+        let len = FrameEncoder::frame_command(cmd, &mut buf).map_err(|e| {
+            HostError::Transport {
                 source: format!("Failed to serialize command: {e}").into(),
-            })?;
-        let mut frame = Vec::new();
-        frame.push(0xAA);
-        frame.push(0x55);
-        let len =
-            u16::try_from(payload.len()).map_err(|e| HostError::Transport {
-                source: format!("Payload too large: {e}").into(),
-            })?;
-        frame.push((len >> 8) as u8);
-        frame.push((len & 0xFF) as u8);
-
-        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
-        let crc_value = crc.checksum(&payload);
-        frame.append(&mut payload);
-        frame.push((crc_value >> 8) as u8);
-        frame.push((crc_value & 0xFF) as u8);
-
-        let res = match &mut self.inner {
-            BridgeInner::Qemu { stdin, .. } => {
-                stdin.write_all(&frame).and_then(|()| stdin.flush())
             }
-            BridgeInner::Serial { port } => {
-                port.write_all(&frame).and_then(|()| port.flush())
-            }
-        };
+        })?;
 
-        res.map_err(|e| HostError::Transport {
-            source: format!("I/O failure sending command: {e}").into(),
-        })
+        self.inner
+            .write_frame(&buf[..len])
+            .map_err(|e| HostError::Transport {
+                source: format!("I/O failure sending command: {e}").into(),
+            })
     }
 
     /// Gets description of the target platform.
@@ -715,15 +739,14 @@ mod tests {
 
         // 1. Send invalid postcard payload inside a valid frame
         let invalid_payload = [0xFF, 0xFF, 0xFF];
-        let len = u16::try_from(invalid_payload.len()).unwrap();
-        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
-        let crc_val = crc.checksum(&invalid_payload);
-        let mut frame = vec![0xAA, 0x55, (len >> 8) as u8, (len & 0xFF) as u8];
-        frame.extend_from_slice(&invalid_payload);
-        frame.push((crc_val >> 8) as u8);
-        frame.push((crc_val & 0xFF) as u8);
+        let mut frame_buf = [0u8; 32];
+        let frame_len = control_rs_ets::comms::FrameEncoder::frame_payload(
+            &invalid_payload,
+            &mut frame_buf,
+        )
+        .unwrap();
 
-        for b in frame {
+        for &b in &frame_buf[..frame_len] {
             process_incoming_byte(b, &mut reader, &mut raw_buf, &tx);
         }
 

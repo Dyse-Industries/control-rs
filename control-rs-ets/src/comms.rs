@@ -341,6 +341,18 @@ pub struct LogMessage<'a> {
     pub timestamp_us: u64,
 }
 
+/// Helper to serialize and frame payloads, commands, and telemetry messages into packet wire format.
+///
+/// # Wire Format
+///
+/// | Field          | Width    | Value                                 |
+/// |:---------------|:---------|:--------------------------------------|
+/// | Sync header    | 2 B      | `0xAA 0x55`                           |
+/// | Payload length | 2 B      | big-endian (`u16`), payload ≤ 512 B   |
+/// | Payload        | variable | `postcard` serialized payload         |
+/// | Checksum       | 2 B      | big-endian CRC-16 (`CRC_16_IBM_SDLC`) |
+pub struct FrameEncoder;
+
 impl Default for CommsLock {
     fn default() -> Self {
         Self::new()
@@ -472,70 +484,187 @@ impl FrameReader {
     }
 }
 
+impl FrameEncoder {
+    /// Frames a raw payload byte slice into the destination buffer.
+    ///
+    /// # Errors
+    /// Returns `postcard::Error::SerializeBufferFull` if `dest` is too small or `payload` exceeds `MAX_PAYLOAD_SIZE`.
+    #[allow(clippy::arithmetic_side_effects)]
+    pub fn frame_payload(
+        payload: &[u8],
+        dest: &mut [u8],
+    ) -> Result<usize, postcard::Error> {
+        let payload_len = payload.len();
+        if payload_len > MAX_PAYLOAD_SIZE {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+        let total_len = payload_len
+            .checked_add(6)
+            .ok_or(postcard::Error::SerializeBufferFull)?;
+        if dest.len() < total_len {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+
+        if let Some(slot) = dest.get_mut(0) {
+            *slot = START_BYTE_1;
+        }
+        if let Some(slot) = dest.get_mut(1) {
+            *slot = START_BYTE_2;
+        }
+
+        let len_u16 = u16::try_from(payload_len)
+            .map_err(|_| postcard::Error::SerializeBufferFull)?;
+        if let Some(slot) = dest.get_mut(2) {
+            *slot = (len_u16 >> 8) as u8;
+        }
+        if let Some(slot) = dest.get_mut(3) {
+            *slot = (len_u16 & 0xFF) as u8;
+        }
+
+        if let Some(slice) = dest.get_mut(4..4 + payload_len) {
+            slice.copy_from_slice(payload);
+        }
+
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+        let crc_value = crc.checksum(payload);
+
+        if let Some(slot) = dest.get_mut(4 + payload_len) {
+            *slot = (crc_value >> 8) as u8;
+        }
+        if let Some(slot) = dest.get_mut(4 + payload_len + 1) {
+            *slot = (crc_value & 0xFF) as u8;
+        }
+
+        Ok(total_len)
+    }
+
+    /// Serializes and frames a [`Command`] message into the destination buffer.
+    ///
+    /// # Errors
+    /// Returns `postcard::Error` if serialization fails or `dest` is too small.
+    #[allow(clippy::arithmetic_side_effects)]
+    pub fn frame_command(
+        cmd: &Command,
+        dest: &mut [u8],
+    ) -> Result<usize, postcard::Error> {
+        if dest.len() < 6 {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+
+        if let Some(slot) = dest.get_mut(0) {
+            *slot = START_BYTE_1;
+        }
+        if let Some(slot) = dest.get_mut(1) {
+            *slot = START_BYTE_2;
+        }
+
+        let dest_len = dest.len();
+        let (payload_len, crc_value) = {
+            let slice = dest
+                .get_mut(4..dest_len - 2)
+                .ok_or(postcard::Error::SerializeBufferFull)?;
+            let payload_slice = postcard::to_slice(cmd, slice)?;
+            if payload_slice.len() > MAX_PAYLOAD_SIZE {
+                return Err(postcard::Error::SerializeBufferFull);
+            }
+            let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+            let crc_value = crc.checksum(payload_slice);
+            (payload_slice.len(), crc_value)
+        };
+
+        let len_u16 = u16::try_from(payload_len)
+            .map_err(|_| postcard::Error::SerializeBufferFull)?;
+        if let Some(slot) = dest.get_mut(2) {
+            *slot = (len_u16 >> 8) as u8;
+        }
+        if let Some(slot) = dest.get_mut(3) {
+            *slot = (len_u16 & 0xFF) as u8;
+        }
+
+        if let Some(slot) = dest.get_mut(4 + payload_len) {
+            *slot = (crc_value >> 8) as u8;
+        }
+        if let Some(slot) = dest.get_mut(4 + payload_len + 1) {
+            *slot = (crc_value & 0xFF) as u8;
+        }
+
+        Ok(6 + payload_len)
+    }
+
+    /// Serializes and frames a [`Telemetry`] message into the destination buffer.
+    ///
+    /// # Errors
+    /// Returns `postcard::Error` if serialization fails or `dest` is too small.
+    #[allow(clippy::arithmetic_side_effects)]
+    pub fn frame_telemetry(
+        telemetry: &Telemetry<'_>,
+        dest: &mut [u8],
+    ) -> Result<usize, postcard::Error> {
+        if dest.len() < 6 {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+
+        if let Some(slot) = dest.get_mut(0) {
+            *slot = START_BYTE_1;
+        }
+        if let Some(slot) = dest.get_mut(1) {
+            *slot = START_BYTE_2;
+        }
+
+        let dest_len = dest.len();
+        let (payload_len, crc_value) = {
+            let slice = dest
+                .get_mut(4..dest_len - 2)
+                .ok_or(postcard::Error::SerializeBufferFull)?;
+            let payload_slice = postcard::to_slice(telemetry, slice)?;
+            if payload_slice.len() > MAX_PAYLOAD_SIZE {
+                return Err(postcard::Error::SerializeBufferFull);
+            }
+            let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+            let crc_value = crc.checksum(payload_slice);
+            (payload_slice.len(), crc_value)
+        };
+
+        let len_u16 = u16::try_from(payload_len)
+            .map_err(|_| postcard::Error::SerializeBufferFull)?;
+        if let Some(slot) = dest.get_mut(2) {
+            *slot = (len_u16 >> 8) as u8;
+        }
+        if let Some(slot) = dest.get_mut(3) {
+            *slot = (len_u16 & 0xFF) as u8;
+        }
+
+        if let Some(slot) = dest.get_mut(4 + payload_len) {
+            *slot = (crc_value >> 8) as u8;
+        }
+        if let Some(slot) = dest.get_mut(4 + payload_len + 1) {
+            *slot = (crc_value & 0xFF) as u8;
+        }
+
+        Ok(6 + payload_len)
+    }
+}
+
 /// Helper to serialize and frame a telemetry message into a destination buffer.
-/// Returns the number of bytes written.
 ///
-/// # Arguments
-/// * `telemetry` - Reference to the telemetry message data.
-/// * `dest` - Target byte buffer destination.
-///
-/// # Returns
-/// * `Result<usize, postcard::Error>` - The count of bytes written on success or serialization error.
+/// Forwards to [`FrameEncoder::frame_telemetry`].
 ///
 /// # Errors
-/// Returns `postcard::Error` if serialization fails or `dest` is too small.
-#[allow(clippy::arithmetic_side_effects)]
+/// Returns `postcard::Error` if serialization fails or destination buffer is too small.
+#[inline]
 pub fn frame_telemetry(
     telemetry: &Telemetry<'_>,
     dest: &mut [u8],
 ) -> Result<usize, postcard::Error> {
-    if dest.len() < 6 {
-        return Err(postcard::Error::SerializeBufferFull);
-    }
-
-    // Set the headers safely using get_mut to avoid index bounds checks
-    if let Some(slot) = dest.get_mut(0) {
-        *slot = START_BYTE_1;
-    }
-    if let Some(slot) = dest.get_mut(1) {
-        *slot = START_BYTE_2;
-    }
-
-    let dest_len = dest.len();
-    // Serialize payload into the dest starting at index 4 (leaving space for length and leaving 2 bytes at the end for CRC-16)
-    let (payload_len, crc_value) = {
-        let slice = dest
-            .get_mut(4..dest_len - 2)
-            .ok_or(postcard::Error::SerializeBufferFull)?;
-        let payload_slice = postcard::to_slice(telemetry, slice)?;
-        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
-        let crc_value = crc.checksum(payload_slice);
-        (payload_slice.len(), crc_value)
-    };
-
-    // Write length (big-endian)
-    let len_u16 = u16::try_from(payload_len)
-        .map_err(|_| postcard::Error::SerializeBufferFull)?;
-    if let Some(slot) = dest.get_mut(2) {
-        *slot = (len_u16 >> 8) as u8;
-    }
-    if let Some(slot) = dest.get_mut(3) {
-        *slot = (len_u16 & 0xFF) as u8;
-    }
-
-    // Write checksum (2 bytes, big-endian)
-    if let Some(slot) = dest.get_mut(4 + payload_len) {
-        *slot = (crc_value >> 8) as u8;
-    }
-    if let Some(slot) = dest.get_mut(4 + payload_len + 1) {
-        *slot = (crc_value & 0xFF) as u8;
-    }
-
-    Ok(6 + payload_len)
+    FrameEncoder::frame_telemetry(telemetry, dest)
 }
 
 #[cfg(test)]
-#[allow(clippy::indexing_slicing)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::similar_names,
+    clippy::too_many_lines
+)]
 mod tests {
     use super::*;
 
@@ -832,5 +961,201 @@ mod tests {
         let b = CommsLock::default();
         assert!(b.try_lock());
         assert!(!b.try_lock());
+    }
+
+    #[test]
+    fn test_frame_encoder_payload_and_command() {
+        let payload = [0x12, 0x34, 0x56, 0x78];
+        let mut buf = [0u8; 32];
+        let len = FrameEncoder::frame_payload(&payload, &mut buf)
+            .expect("payload framing");
+        assert_eq!(len, 10);
+        assert_eq!(buf[0], 0xAA);
+        assert_eq!(buf[1], 0x55);
+        assert_eq!(buf[2], 0x00);
+        assert_eq!(buf[3], 0x04);
+        assert_eq!(&buf[4..8], &payload);
+
+        let mut reader = FrameReader::new();
+        let mut decoded_buf = [0u8; 32];
+        let mut decoded_len = 0;
+        for &b in &buf[..len] {
+            if let Some(slice) = reader.handle_byte(b) {
+                decoded_buf[..slice.len()].copy_from_slice(slice);
+                decoded_len = slice.len();
+                break;
+            }
+        }
+        assert_eq!(&decoded_buf[..decoded_len], &payload);
+
+        let cmd = Command::RunExecutable {
+            suite_id: 1,
+            test_id: 2,
+        };
+        let mut cmd_buf = [0u8; 32];
+        let cmd_len = FrameEncoder::frame_command(&cmd, &mut cmd_buf)
+            .expect("command framing");
+        let mut cmd_reader = FrameReader::new();
+        let mut decoded_cmd_buf = [0u8; 32];
+        let mut decoded_cmd_len = 0;
+        for &b in &cmd_buf[..cmd_len] {
+            if let Some(slice) = cmd_reader.handle_byte(b) {
+                decoded_cmd_buf[..slice.len()].copy_from_slice(slice);
+                decoded_cmd_len = slice.len();
+                break;
+            }
+        }
+        assert!(decoded_cmd_len > 0);
+        let decoded_cmd: Command =
+            postcard::from_bytes(&decoded_cmd_buf[..decoded_cmd_len])
+                .expect("must deserialize command");
+        match decoded_cmd {
+            Command::RunExecutable { suite_id, test_id } => {
+                assert_eq!(suite_id, 1);
+                assert_eq!(test_id, 2);
+            }
+            _ => panic!("unexpected command variant"),
+        }
+    }
+
+    #[test]
+    fn test_golden_wire_vectors_commands() {
+        // 1. Command::ListSuites
+        let cmd1 = Command::ListSuites;
+        let mut buf1 = [0u8; 32];
+        let len1 = FrameEncoder::frame_command(&cmd1, &mut buf1)
+            .expect("framing cmd1");
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+        let exp_crc1 = crc.checksum(&[0x00]);
+        let expected1 = [
+            0xAA,
+            0x55,
+            0x00,
+            0x01,
+            0x00,
+            (exp_crc1 >> 8) as u8,
+            (exp_crc1 & 0xFF) as u8,
+        ];
+        assert_eq!(&buf1[..len1], &expected1);
+
+        // 2. Command::RunExecutable { suite_id: 1, test_id: 2 }
+        let cmd2 = Command::RunExecutable {
+            suite_id: 1,
+            test_id: 2,
+        };
+        let mut buf2 = [0u8; 32];
+        let len2 = FrameEncoder::frame_command(&cmd2, &mut buf2)
+            .expect("framing cmd2");
+        let mut r = FrameReader::new();
+        let mut d_buf = [0u8; 32];
+        let mut d_len = 0;
+        for &b in &buf2[..len2] {
+            if let Some(s) = r.handle_byte(b) {
+                d_buf[..s.len()].copy_from_slice(s);
+                d_len = s.len();
+                break;
+            }
+        }
+        assert!(d_len > 0);
+        let decoded2: Command = postcard::from_bytes(&d_buf[..d_len])
+            .expect("postcard decode cmd2");
+        assert!(matches!(
+            decoded2,
+            Command::RunExecutable {
+                suite_id: 1,
+                test_id: 2
+            }
+        ));
+
+        // 3. Command::TryReset
+        let cmd3 = Command::TryReset;
+        let mut buf3 = [0u8; 32];
+        let len3 = FrameEncoder::frame_command(&cmd3, &mut buf3)
+            .expect("framing cmd3");
+        let mut r3 = FrameReader::new();
+        let mut d3_buf = [0u8; 32];
+        let mut d3_len = 0;
+        for &b in &buf3[..len3] {
+            if let Some(s) = r3.handle_byte(b) {
+                d3_buf[..s.len()].copy_from_slice(s);
+                d3_len = s.len();
+                break;
+            }
+        }
+        assert!(d3_len > 0);
+        let decoded3: Command = postcard::from_bytes(&d3_buf[..d3_len])
+            .expect("postcard decode cmd3");
+        assert!(matches!(decoded3, Command::TryReset));
+    }
+
+    #[test]
+    fn test_golden_wire_vectors_telemetry() {
+        let variants = [
+            Telemetry::DiscoveryComplete,
+            Telemetry::Log(LogMessage {
+                payload: "test log",
+                suite_id: 1,
+                test_id: 2,
+                timestamp_us: 1000,
+            }),
+            Telemetry::MetricReport {
+                cycles: 5000,
+                stack_peak: 256,
+                suite_id: 1,
+                test_id: 2,
+                time_us: 420,
+            },
+            Telemetry::SettingInfo {
+                description: "Setting desc",
+                name: "baud_rate",
+                setting_id: 1,
+                suite_id: 2,
+                value: SettingValue::U32(115_200),
+            },
+            Telemetry::SuiteInfo {
+                description: "Suite desc",
+                name: "TestSuite1",
+                setting_count: 1,
+                suite_id: 0,
+                test_count: 4,
+            },
+            Telemetry::TargetPanic {
+                file: "src/main.rs",
+                line: 50,
+                message: "Target panic test",
+            },
+            Telemetry::TestInfo {
+                description: "Test desc",
+                name: "test_addition",
+                suite_id: 0,
+                test_id: 1,
+            },
+        ];
+
+        for t in &variants {
+            let mut buf = [0u8; 256];
+            let len = FrameEncoder::frame_telemetry(t, &mut buf)
+                .expect("telemetry framing");
+            assert_eq!(buf[0], 0xAA);
+            assert_eq!(buf[1], 0x55);
+            let payload_len =
+                usize::from(u16::from(buf[2]) << 8 | u16::from(buf[3]));
+            assert_eq!(len, payload_len + 6);
+
+            let mut reader = FrameReader::new();
+            let mut dec_buf = [0u8; 256];
+            let mut dec_len = 0;
+            for &b in &buf[..len] {
+                if let Some(s) = reader.handle_byte(b) {
+                    dec_buf[..s.len()].copy_from_slice(s);
+                    dec_len = s.len();
+                    break;
+                }
+            }
+            assert!(dec_len > 0);
+            let _dec_t: Telemetry<'_> =
+                postcard::from_bytes(&dec_buf[..dec_len])
+                    .expect("postcard decode telemetry");
+        }
     }
 }
