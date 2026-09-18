@@ -295,6 +295,13 @@ impl SessionState {
                     Vec::new()
                 }
                 OwnedTelemetry::DiscoveryComplete => {
+                    // A 500 ms ListSuites retry may still be in flight when the
+                    // first DiscoveryComplete arrives. Rebuilding the queue
+                    // would clear current_running and re-issue RunExecutable
+                    // for the case already executing on the target.
+                    if self.discovery_complete {
+                        return Vec::new();
+                    }
                     self.discovery_complete = true;
                     self.run_queue.clear();
                     for (s_idx, suite) in self.suites.iter_mut().enumerate() {
@@ -444,17 +451,28 @@ impl SessionState {
                         }
                     }
 
+                    // Capture before clearing: a pre-discovery panic leaves
+                    // suites empty, which must not look like a drained suite.
+                    let had_discovery = self.discovery_complete;
                     self.current_running = None;
                     self.discovery_complete = false;
 
-                    let remaining_to_run = self.suites.iter().any(|suite| {
-                        suite.tests.iter().any(|test| {
-                            !self.results.iter().any(|r| {
-                                r.suite_name == suite.name
-                                    && r.test_name == test.name
+                    let registry_has_tests =
+                        self.suites.iter().any(|suite| !suite.tests.is_empty());
+                    let remaining_to_run =
+                        if had_discovery || registry_has_tests {
+                            self.suites.iter().any(|suite| {
+                                suite.tests.iter().any(|test| {
+                                    !self.results.iter().any(|r| {
+                                        r.suite_name == suite.name
+                                            && r.test_name == test.name
+                                    })
+                                })
                             })
-                        })
-                    });
+                        } else {
+                            // No case registry yet (or only SuiteInfo placeholders).
+                            true
+                        };
 
                     if remaining_to_run {
                         self.log("Restarting target bridge to continue running tests\n");
@@ -842,5 +860,87 @@ mod tests {
             Telemetry::DiscoveryComplete,
         ));
         assert_eq!(state.pending_cases(), vec![(0, 0), (0, 1)]);
+    }
+
+    #[test]
+    fn duplicate_discovery_complete_does_not_requeue_in_flight() {
+        let mut state = SessionState::new();
+        discover_two_tests(&mut state);
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert!(matches!(
+            actions.as_slice(),
+            [SessionAction::Send(CommCommand::RunExecutable {
+                suite_id: 0,
+                test_id: 0
+            })]
+        ));
+        assert_eq!(state.current_running, Some((0, 0)));
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+
+        // In-flight ListSuites retry delivers a second DiscoveryComplete after
+        // the first run has already started.
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::DiscoveryComplete,
+        ));
+        assert!(actions.is_empty());
+        assert_eq!(state.current_running, Some((0, 0)));
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+        assert!(state.discovery_complete);
+        assert!(!state.exit_loop);
+    }
+
+    #[test]
+    fn pre_discovery_target_panic_does_not_false_drain() {
+        let mut state = SessionState::new();
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TargetPanic {
+                message: "init",
+                file: "main.rs",
+                line: 1,
+            },
+        ));
+        assert!(!state.exit_loop);
+        assert!(!state.discovery_complete);
+        assert!(state.logs.contains("Restarting target bridge"));
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                SessionAction::Send(CommCommand::TryReset),
+                SessionAction::PanicRestart
+            ]
+        ));
+    }
+
+    #[test]
+    fn partial_discovery_target_panic_does_not_false_drain() {
+        let mut state = SessionState::new();
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "suite",
+                description: "",
+                test_count: 2,
+                setting_count: 0,
+            },
+        ));
+        // SuiteInfo does not populate tests; without the had_discovery guard
+        // remaining_to_run would be false and falsely drain.
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TargetPanic {
+                message: "boot",
+                file: "main.rs",
+                line: 2,
+            },
+        ));
+        assert!(!state.exit_loop);
+        assert!(matches!(
+            actions.as_slice(),
+            [
+                SessionAction::Send(CommCommand::TryReset),
+                SessionAction::PanicRestart
+            ]
+        ));
     }
 }
