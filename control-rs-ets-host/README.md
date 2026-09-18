@@ -16,9 +16,9 @@ Two transports: a spawned subprocess (QEMU under `cargo run`) and a USB CDC
 serial port. Both resolve to the same reader/writer pair, so `session` is
 transport-agnostic.
 
-Consumers are [`control-rs-tui`](../control-rs-tui), which renders the message
-stream, and [`control-rs-ci`](../control-rs-ci), which keeps only the
-structured result.
+The interactive consumer is [`control-rs-tui`](../control-rs-tui). Headless
+execution is `run_headless_ets`; live `cargo ci` still goes through
+`control-rs-xtask` until that crate is retired.
 
 Design: `documentation/ets-host/ets-host-design.md`.
 

@@ -11,7 +11,7 @@
     clippy::type_complexity
 )]
 
-pub use bridge::{BridgeMessage, ETSBridge};
+pub use bridge::{BridgeMessage, ETSBridge, OwnedTelemetry};
 pub use error::HostError;
 pub use runner::{
     Completion, EtsRunResult, RunRecord, TestOutcome, run_headless_ets,
