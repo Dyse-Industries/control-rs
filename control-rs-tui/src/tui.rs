@@ -922,6 +922,9 @@ pub fn run_tui(
         bridge.link_info().to_string(),
     );
 
+    if let Err(e) = bridge.send_command(&Command::TryReset) {
+        state.logs.push(format!("> [HOST] send failed: {e}"));
+    }
     if let Err(e) = bridge.send_command(&Command::ListSuites) {
         state.logs.push(format!("> [HOST] send failed: {e}"));
     }
@@ -945,6 +948,11 @@ pub fn run_tui(
             if !state.session.discovery_complete
                 && last_discovery.elapsed() > Duration::from_millis(500)
             {
+                // Pair TryReset with ListSuites so a serial target still
+                // waiting in handle_failure can exit after a lost reset frame.
+                if let Err(e) = bridge.send_command(&Command::TryReset) {
+                    state.logs.push(format!("> [HOST] send failed: {e}"));
+                }
                 if let Err(e) = bridge.send_command(&Command::ListSuites) {
                     state.logs.push(format!("> [HOST] send failed: {e}"));
                 }
@@ -959,6 +967,9 @@ pub fn run_tui(
 
             // Recover and re-attach bridge on panic restart without tearing down terminal
             if need_restart {
+                // Drain window for the TryReset frame already written by the
+                // session action handler before closing the link.
+                thread::sleep(Duration::from_millis(50));
                 bridge.terminate();
                 state.logs.push(
                     "> [INFO] Target panicked. Re-attaching bridge..."
@@ -969,6 +980,15 @@ pub fn run_tui(
                     Ok(new_bridge) => {
                         bridge = new_bridge;
                         state.process_exit = None;
+                        // Serial targets that miss the pre-terminate TryReset
+                        // spin in handle_failure ignoring ListSuites. Retry
+                        // TryReset on the new link before rediscovery.
+                        if let Err(e) = bridge.send_command(&Command::TryReset)
+                        {
+                            state
+                                .logs
+                                .push(format!("> [HOST] send failed: {e}"));
+                        }
                         if let Err(e) =
                             bridge.send_command(&Command::ListSuites)
                         {
