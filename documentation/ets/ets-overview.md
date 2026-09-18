@@ -64,7 +64,7 @@ flowchart TD
         direction TB
         TUI["TUI"]
         CI["CI"]
-        Bridge["ServerBridge"]
+        Bridge["ETSBridge"]
         TUI <--> Bridge
         CI <--> Bridge
     end

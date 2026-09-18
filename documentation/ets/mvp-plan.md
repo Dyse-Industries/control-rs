@@ -13,7 +13,7 @@ Status (September 9, 2026): items 1–5 are substantially shipped: the
 `CPUProfiler` trait and target implementations, the `HostComms` framing and
 postcard schemas (`control-rs-ets/src/comms.rs`), the `SuiteDescriptor` linker
 mechanics, the `.ets_test_suites` discovery macros and the host-side
-`ServerBridge` with headless orchestration. Items 6 and 7 exist as code inside
+`ETSBridge` with headless orchestration. Items 6 and 7 exist as code inside
 the deprecated `control-rs-xtask` and are pending extraction into their own
 crates. Remaining work is the open steps of each design's Development Plan
 (watchdog multiplexing, driver integration, TUI polish, CI Tiers 1 and 2).

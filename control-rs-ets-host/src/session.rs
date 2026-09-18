@@ -9,6 +9,8 @@ use crate::runner::TestOutcome;
 /// Representation of a single test case under discovery.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestItem {
+    /// Name of the suite containing this test case.
+    pub suite_name: String,
     /// Name of the test case.
     pub name: String,
     /// Current execution state of the test.
@@ -43,18 +45,9 @@ pub struct SuiteItem {
     pub settings: Vec<SettingItem>,
 }
 
-/// Side effects requested by [`SessionState`] while processing bridge messages.
-#[derive(Debug)]
-pub enum SessionAction {
-    /// Request target restart and bridge reconnection.
-    PanicRestart,
-    /// Send a command packet to the target.
-    Send(CommCommand),
-}
-
 /// Host-side ETS session state (discovery, run queue, results).
 pub struct SessionState {
-    /// Currently executing test (suite_id, test_id).
+    /// Currently executing test (`suite_id`, `test_id`).
     pub current_running: Option<(u16, u16)>,
     /// Whether initial test discovery has finished.
     pub discovery_complete: bool,
@@ -70,6 +63,30 @@ pub struct SessionState {
     pub suites: Vec<SuiteItem>,
 }
 
+/// Side effects requested by [`SessionState`] while processing bridge messages.
+#[derive(Debug)]
+pub enum SessionAction {
+    /// Request target restart and bridge reconnection.
+    PanicRestart,
+    /// Send a command packet to the target.
+    Send(CommCommand),
+}
+
+impl TestItem {
+    /// Converts this [`TestItem`] into a [`TestOutcome`].
+    #[must_use]
+    pub fn into_outcome(self) -> TestOutcome {
+        TestOutcome {
+            suite_name: self.suite_name,
+            test_name: self.name,
+            state: self.state,
+            cycles: self.cycles,
+            time_us: self.time_us,
+            stack_peak: self.stack_peak,
+        }
+    }
+}
+
 impl Default for SessionState {
     fn default() -> Self {
         Self::new()
@@ -79,7 +96,7 @@ impl Default for SessionState {
 impl SessionState {
     /// Creates a new, empty session state.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             current_running: None,
             discovery_complete: false,
@@ -97,6 +114,7 @@ impl SessionState {
     }
 
     /// Enqueues all discovered tests across all suites for execution.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn enqueue_all(&mut self) -> Option<SessionAction> {
         self.run_queue.clear();
         for (s_idx, suite) in self.suites.iter().enumerate() {
@@ -152,10 +170,11 @@ impl SessionState {
     }
 
     /// Processes an incoming bridge message and updates session state accordingly.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn handle_message(&mut self, msg: BridgeMessage) -> Vec<SessionAction> {
         match msg {
             BridgeMessage::RawConsole(line) => {
-                let formatted = format!("      target {line}\n");
+                let formatted = format!("      [ETS] {line}\n");
                 self.log(&formatted);
                 Vec::new()
             }
@@ -187,8 +206,10 @@ impl SessionState {
                             settings: Vec::new(),
                         });
                     }
+                    let suite_name = self.suites[s_id].name.clone();
                     while self.suites[s_id].tests.len() <= t_id {
                         self.suites[s_id].tests.push(TestItem {
+                            suite_name: suite_name.clone(),
                             name: String::new(),
                             state: TestState::Pending,
                             cycles: None,
@@ -196,6 +217,7 @@ impl SessionState {
                             stack_peak: None,
                         });
                     }
+                    self.suites[s_id].tests[t_id].suite_name = suite_name;
                     self.suites[s_id].tests[t_id].name = name.to_string();
                     Vec::new()
                 }
@@ -494,7 +516,7 @@ mod tests {
         )));
         let _ = state
             .handle_message(BridgeMessage::RawConsole("console".to_string()));
-        assert!(state.logs.contains("      target console"));
+        assert!(state.logs.contains("      [ETS] console"));
     }
 
     #[test]
@@ -623,7 +645,7 @@ mod tests {
         let mut state = SessionState::new();
         discover_two_tests(&mut state);
 
-        assert!(state.run_queue.is_empty());
+        assert_eq!(state.run_queue, vec![]);
         let action = state.enqueue_all();
         assert!(matches!(
             action,
@@ -637,7 +659,7 @@ mod tests {
 
         state.stop();
         assert_eq!(state.current_running, None);
-        assert!(state.run_queue.is_empty());
+        assert_eq!(state.run_queue, vec![]);
 
         let action_single = state.enqueue_test(0, 1);
         assert!(matches!(
