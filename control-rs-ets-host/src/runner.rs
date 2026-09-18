@@ -68,6 +68,17 @@ pub enum Completion {
     TargetExited,
 }
 
+/// Next step after `PanicRestart` terminates the current bridge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterPanicRestart {
+    /// Suite finished; leave the headless loop with `abort: None`.
+    Drained,
+    /// Remaining work exists but the reset budget is spent.
+    ResetBudgetExhausted,
+    /// Remaining work exists; reopen the transport and rediscover.
+    Reconnect,
+}
+
 impl RunRecord {
     /// Returns the terminal completion status.
     #[must_use]
@@ -77,6 +88,35 @@ impl RunRecord {
             None => Completion::Drained,
         }
     }
+}
+
+/// Chooses the post-`PanicRestart` step.
+///
+/// `exit_loop` wins over the reset budget: a draining final panic must not be
+/// reported as [`Completion::ResetBudgetExhausted`].
+const fn after_panic_restart(
+    exit_loop: bool,
+    resets: u32,
+) -> AfterPanicRestart {
+    if exit_loop {
+        AfterPanicRestart::Drained
+    } else if resets >= MAX_RESETS {
+        AfterPanicRestart::ResetBudgetExhausted
+    } else {
+        AfterPanicRestart::Reconnect
+    }
+}
+
+/// Returns true when a live child exit should abort as [`Completion::TargetExited`].
+///
+/// Callers must skip this check when `exit_loop` is already set (drained panic
+/// recovery kills the child on purpose while `discovery_complete` is false).
+const fn is_unexpected_target_exit(
+    discovery_complete: bool,
+    has_current_running: bool,
+    run_queue_empty: bool,
+) -> bool {
+    !discovery_complete || has_current_running || !run_queue_empty
 }
 
 /// Headless execution loop for driving ETS tests to completion on a target.
@@ -163,41 +203,51 @@ pub fn run_headless_ets(
                         bridge.terminate();
                         thread::sleep(Duration::from_secs(1));
 
-                        if resets >= MAX_RESETS {
-                            return Ok(finish_record(
-                                state,
-                                resets,
-                                Some(Completion::ResetBudgetExhausted),
-                                start_time,
-                                None,
-                            ));
-                        }
-
-                        if !state.exit_loop {
-                            match ETSBridge::new(target.clone(), true) {
-                                Ok(new_bridge) => {
-                                    bridge = new_bridge;
-                                    if let Err(e) = send_discovery(&mut bridge)
-                                    {
-                                        bridge.terminate();
+                        // TargetPanic clears discovery_complete and may set
+                        // exit_loop when no cases remain. Prefer drain over
+                        // reset-budget / TargetExited for that path.
+                        match after_panic_restart(state.exit_loop, resets) {
+                            AfterPanicRestart::Drained => break,
+                            AfterPanicRestart::ResetBudgetExhausted => {
+                                return Ok(finish_record(
+                                    state,
+                                    resets,
+                                    Some(Completion::ResetBudgetExhausted),
+                                    start_time,
+                                    None,
+                                ));
+                            }
+                            AfterPanicRestart::Reconnect => {
+                                match ETSBridge::new(target.clone(), true) {
+                                    Ok(new_bridge) => {
+                                        bridge = new_bridge;
+                                        if let Err(e) =
+                                            send_discovery(&mut bridge)
+                                        {
+                                            bridge.terminate();
+                                            return Ok(finish_record(
+                                                state,
+                                                resets,
+                                                Some(Completion::SendFailed),
+                                                start_time,
+                                                Some(format!(
+                                                    "send failed: {e}"
+                                                )),
+                                            ));
+                                        }
+                                        last_send = Instant::now();
+                                    }
+                                    Err(e) => {
                                         return Ok(finish_record(
                                             state,
                                             resets,
-                                            Some(Completion::SendFailed),
+                                            Some(Completion::ReconnectFailed),
                                             start_time,
-                                            Some(format!("send failed: {e}")),
+                                            Some(format!(
+                                                "reconnect failed: {e}"
+                                            )),
                                         ));
                                     }
-                                    last_send = Instant::now();
-                                }
-                                Err(e) => {
-                                    return Ok(finish_record(
-                                        state,
-                                        resets,
-                                        Some(Completion::ReconnectFailed),
-                                        start_time,
-                                        Some(format!("reconnect failed: {e}")),
-                                    ));
                                 }
                             }
                         }
@@ -207,10 +257,17 @@ pub fn run_headless_ets(
         }
 
         if let Ok(Some(status)) = bridge.try_wait() {
-            if !state.discovery_complete
-                || state.current_running.is_some()
-                || !state.run_queue.is_empty()
-            {
+            // A drained PanicRestart already terminated the child. Do not
+            // reclassify that intentional kill as TargetExited — TargetPanic
+            // left discovery_complete false, which would otherwise match.
+            if state.exit_loop {
+                break;
+            }
+            if is_unexpected_target_exit(
+                state.discovery_complete,
+                state.current_running.is_some(),
+                state.run_queue.is_empty(),
+            ) {
                 bridge.terminate();
                 return Ok(finish_record(
                     state,
@@ -402,5 +459,88 @@ mod tests {
         assert_eq!(record.pending, vec![(0, 1)]);
         assert_eq!(record.abort, Some(Completion::TargetExited));
         assert!(record.console.contains("process exited unexpectedly"));
+    }
+
+    #[test]
+    fn draining_final_panic_prefers_drained_over_reset_budget() {
+        // Suite finished on the Nth panic: exit_loop set, resets at the cap.
+        assert_eq!(
+            after_panic_restart(true, MAX_RESETS),
+            AfterPanicRestart::Drained
+        );
+        assert_eq!(
+            after_panic_restart(true, MAX_RESETS.saturating_add(1)),
+            AfterPanicRestart::Drained
+        );
+    }
+
+    #[test]
+    fn mid_suite_panic_at_reset_cap_exhausts_budget() {
+        assert_eq!(
+            after_panic_restart(false, MAX_RESETS),
+            AfterPanicRestart::ResetBudgetExhausted
+        );
+        assert_eq!(
+            after_panic_restart(false, MAX_RESETS.saturating_sub(1)),
+            AfterPanicRestart::Reconnect
+        );
+    }
+
+    #[test]
+    fn drained_panic_kill_is_not_unexpected_target_exit() {
+        // TargetPanic clears discovery_complete before PanicRestart kills the
+        // child. With exit_loop already true the runner must not use this
+        // predicate (guarded by exit_loop in run_headless_ets).
+        assert!(is_unexpected_target_exit(false, false, true));
+        assert!(!is_unexpected_target_exit(true, false, true));
+        assert!(is_unexpected_target_exit(true, true, true));
+        assert!(is_unexpected_target_exit(true, false, false));
+    }
+
+    #[test]
+    fn last_case_panic_sets_exit_loop_with_discovery_incomplete() {
+        let mut state = SessionState::new();
+        discover_two(&mut state);
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::MetricReport {
+                suite_id: 0,
+                test_id: 0,
+                cycles: 1,
+                time_us: 1,
+                stack_peak: 8,
+            },
+        ));
+        assert_eq!(state.current_running, Some((0, 1)));
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 1,
+                state: TestState::Failed,
+            },
+        ));
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            Telemetry::TargetPanic {
+                message: "boom",
+                file: "t.rs",
+                line: 1,
+            },
+        ));
+        assert!(state.exit_loop);
+        assert!(!state.discovery_complete);
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, SessionAction::PanicRestart))
+        );
+        // Without the exit_loop guard, try_wait would see this as TargetExited.
+        assert!(is_unexpected_target_exit(
+            state.discovery_complete,
+            state.current_running.is_some(),
+            state.run_queue.is_empty(),
+        ));
+        assert_eq!(
+            after_panic_restart(state.exit_loop, 1),
+            AfterPanicRestart::Drained
+        );
     }
 }
