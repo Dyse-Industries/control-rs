@@ -49,7 +49,12 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::settings::SettingValue;
 
-const MAX_PAYLOAD_SIZE: usize = 512;
+/// Sync (2) + length (2) + CRC-16 (2).
+pub const FRAME_OVERHEAD: usize = 6;
+/// Maximum encoded frame size (`MAX_PAYLOAD_SIZE` + `FRAME_OVERHEAD`).
+pub const MAX_FRAME_SIZE: usize = 518;
+/// Maximum postcard payload bytes in one frame.
+pub const MAX_PAYLOAD_SIZE: usize = 512;
 const START_BYTE_1: u8 = 0xAA;
 const START_BYTE_2: u8 = 0x55;
 
@@ -341,6 +346,18 @@ pub struct LogMessage<'a> {
     pub timestamp_us: u64,
 }
 
+/// Helper to serialize and frame payloads, commands, and telemetry messages into packet wire format.
+///
+/// # Wire Format
+///
+/// | Field          | Width    | Value                                 |
+/// |:---------------|:---------|:--------------------------------------|
+/// | Sync header    | 2 B      | `0xAA 0x55`                           |
+/// | Payload length | 2 B      | big-endian (`u16`), payload ≤ 512 B   |
+/// | Payload        | variable | `postcard` serialized payload         |
+/// | Checksum       | 2 B      | big-endian CRC-16 (`CRC_16_IBM_SDLC`) |
+pub struct FrameEncoder;
+
 impl Default for CommsLock {
     fn default() -> Self {
         Self::new()
@@ -404,6 +421,9 @@ impl FrameReader {
             ReaderState::WaitStart2 => {
                 if byte == START_BYTE_2 {
                     self.state = ReaderState::WaitLen1;
+                } else if byte == START_BYTE_1 {
+                    // Orphan/noise 0xAA left us in WaitStart2; this 0xAA may
+                    // start a real frame, so stay armed for 0x55.
                 } else {
                     self.state = ReaderState::WaitStart1;
                 }
@@ -472,69 +492,148 @@ impl FrameReader {
     }
 }
 
+impl FrameEncoder {
+    /// Writes sync, length, and CRC for a payload already sitting at `dest[4..]`.
+    #[allow(clippy::arithmetic_side_effects)]
+    fn finish_frame(
+        dest: &mut [u8],
+        payload_len: usize,
+    ) -> Result<usize, postcard::Error> {
+        if payload_len > MAX_PAYLOAD_SIZE {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+        let total_len = payload_len
+            .checked_add(FRAME_OVERHEAD)
+            .ok_or(postcard::Error::SerializeBufferFull)?;
+        if dest.len() < total_len {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+
+        if let Some(slot) = dest.get_mut(0) {
+            *slot = START_BYTE_1;
+        }
+        if let Some(slot) = dest.get_mut(1) {
+            *slot = START_BYTE_2;
+        }
+
+        let len_u16 = u16::try_from(payload_len)
+            .map_err(|_| postcard::Error::SerializeBufferFull)?;
+        if let Some(slot) = dest.get_mut(2) {
+            *slot = (len_u16 >> 8) as u8;
+        }
+        if let Some(slot) = dest.get_mut(3) {
+            *slot = (len_u16 & 0xFF) as u8;
+        }
+
+        let crc_value = {
+            let payload = dest
+                .get(4..4 + payload_len)
+                .ok_or(postcard::Error::SerializeBufferFull)?;
+            crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC).checksum(payload)
+        };
+        if let Some(slot) = dest.get_mut(4 + payload_len) {
+            *slot = (crc_value >> 8) as u8;
+        }
+        if let Some(slot) = dest.get_mut(4 + payload_len + 1) {
+            *slot = (crc_value & 0xFF) as u8;
+        }
+        Ok(total_len)
+    }
+
+    /// Serializes `value` into `dest[4..]` then writes the frame header and CRC.
+    fn serialize_then_frame<T: serde::Serialize>(
+        value: &T,
+        dest: &mut [u8],
+    ) -> Result<usize, postcard::Error> {
+        if dest.len() < FRAME_OVERHEAD {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+        let max_payload = dest
+            .len()
+            .saturating_sub(FRAME_OVERHEAD)
+            .min(MAX_PAYLOAD_SIZE);
+        let payload_len = {
+            let end = 4usize
+                .checked_add(max_payload)
+                .ok_or(postcard::Error::SerializeBufferFull)?;
+            let slice = dest
+                .get_mut(4..end)
+                .ok_or(postcard::Error::SerializeBufferFull)?;
+            postcard::to_slice(value, slice)?.len()
+        };
+        Self::finish_frame(dest, payload_len)
+    }
+
+    /// Frames a raw payload byte slice into the destination buffer.
+    ///
+    /// # Errors
+    /// Returns `postcard::Error::SerializeBufferFull` if `dest` is too small or `payload` exceeds `MAX_PAYLOAD_SIZE`.
+    pub fn frame_payload(
+        payload: &[u8],
+        dest: &mut [u8],
+    ) -> Result<usize, postcard::Error> {
+        let payload_len = payload.len();
+        if payload_len > MAX_PAYLOAD_SIZE {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+        let total_len = payload_len
+            .checked_add(FRAME_OVERHEAD)
+            .ok_or(postcard::Error::SerializeBufferFull)?;
+        if dest.len() < total_len {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+        let end = 4usize
+            .checked_add(payload_len)
+            .ok_or(postcard::Error::SerializeBufferFull)?;
+        if let Some(slice) = dest.get_mut(4..end) {
+            slice.copy_from_slice(payload);
+        }
+        Self::finish_frame(dest, payload_len)
+    }
+
+    /// Serializes and frames a [`Command`] message into the destination buffer.
+    ///
+    /// # Errors
+    /// Returns `postcard::Error` if serialization fails or `dest` is too small.
+    pub fn frame_command(
+        cmd: &Command,
+        dest: &mut [u8],
+    ) -> Result<usize, postcard::Error> {
+        Self::serialize_then_frame(cmd, dest)
+    }
+
+    /// Serializes and frames a [`Telemetry`] message into the destination buffer.
+    ///
+    /// # Errors
+    /// Returns `postcard::Error` if serialization fails or `dest` is too small.
+    pub fn frame_telemetry(
+        telemetry: &Telemetry<'_>,
+        dest: &mut [u8],
+    ) -> Result<usize, postcard::Error> {
+        Self::serialize_then_frame(telemetry, dest)
+    }
+}
+
 /// Helper to serialize and frame a telemetry message into a destination buffer.
-/// Returns the number of bytes written.
 ///
-/// # Arguments
-/// * `telemetry` - Reference to the telemetry message data.
-/// * `dest` - Target byte buffer destination.
-///
-/// # Returns
-/// * `Result<usize, postcard::Error>` - The count of bytes written on success or serialization error.
+/// Forwards to [`FrameEncoder::frame_telemetry`].
 ///
 /// # Errors
-/// Returns `postcard::Error` if serialization fails or `dest` is too small.
-#[allow(clippy::arithmetic_side_effects)]
+/// Returns `postcard::Error` if serialization fails or destination buffer is too small.
+#[inline]
 pub fn frame_telemetry(
     telemetry: &Telemetry<'_>,
     dest: &mut [u8],
 ) -> Result<usize, postcard::Error> {
-    if dest.len() < 6 {
-        return Err(postcard::Error::SerializeBufferFull);
-    }
-
-    // Set the headers safely using get_mut to avoid index bounds checks
-    if let Some(slot) = dest.get_mut(0) {
-        *slot = START_BYTE_1;
-    }
-    if let Some(slot) = dest.get_mut(1) {
-        *slot = START_BYTE_2;
-    }
-
-    let dest_len = dest.len();
-    // Serialize payload into the dest starting at index 4 (leaving space for length and leaving 2 bytes at the end for CRC-16)
-    let (payload_len, crc_value) = {
-        let slice = dest
-            .get_mut(4..dest_len - 2)
-            .ok_or(postcard::Error::SerializeBufferFull)?;
-        let payload_slice = postcard::to_slice(telemetry, slice)?;
-        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
-        let crc_value = crc.checksum(payload_slice);
-        (payload_slice.len(), crc_value)
-    };
-
-    // Write length (big-endian)
-    let len_u16 = u16::try_from(payload_len)
-        .map_err(|_| postcard::Error::SerializeBufferFull)?;
-    if let Some(slot) = dest.get_mut(2) {
-        *slot = (len_u16 >> 8) as u8;
-    }
-    if let Some(slot) = dest.get_mut(3) {
-        *slot = (len_u16 & 0xFF) as u8;
-    }
-
-    // Write checksum (2 bytes, big-endian)
-    if let Some(slot) = dest.get_mut(4 + payload_len) {
-        *slot = (crc_value >> 8) as u8;
-    }
-    if let Some(slot) = dest.get_mut(4 + payload_len + 1) {
-        *slot = (crc_value & 0xFF) as u8;
-    }
-
-    Ok(6 + payload_len)
+    FrameEncoder::frame_telemetry(telemetry, dest)
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::similar_names,
+    clippy::too_many_lines
+)]
 mod tests {
     use super::*;
 
@@ -562,6 +661,28 @@ mod tests {
         assert!(!reader.is_idle()); // now in WaitStart2
         assert!(reader.handle_byte(0x00).is_none());
         assert!(reader.is_idle()); // reset to WaitStart1
+    }
+
+    #[test]
+    fn test_frame_reader_resync_after_orphan_start_byte() {
+        let mut buf = [0u8; 128];
+        let framed_len =
+            frame_telemetry(&Telemetry::DiscoveryComplete, &mut buf)
+                .expect("framing");
+
+        let mut reader = FrameReader::new();
+        // Noise/orphan 0xAA must not consume the real frame's leading 0xAA.
+        assert!(reader.handle_byte(START_BYTE_1).is_none());
+        let mut decoded = false;
+        for &b in &buf[..framed_len] {
+            if reader.handle_byte(b).is_some() {
+                decoded = true;
+            }
+        }
+        assert!(
+            decoded,
+            "valid frame after an orphan 0xAA must still decode"
+        );
     }
 
     #[test]
@@ -673,5 +794,359 @@ mod tests {
         let mut comms = TestComms;
         comms.close();
         comms.close_on_failure();
+    }
+
+    /// Byte-level layout of a framed telemetry packet:
+    /// `[0xAA, 0x55, len_hi, len_lo, payload.., crc_hi, crc_lo]`, with the
+    /// CRC-16/IBM-SDLC taken over the payload only.
+    ///
+    /// Every field is asserted against an independently computed value, so a
+    /// swapped header byte, a little-endian length, a CRC over the wrong span
+    /// or an off-by-one placement all fail here.
+    #[test]
+    fn test_frame_telemetry_byte_layout() {
+        let mut buf = [0u8; 128];
+        let n = frame_telemetry(&Telemetry::DiscoveryComplete, &mut buf)
+            .expect("framing must succeed into a 128 byte buffer");
+
+        // Header.
+        assert_eq!(buf[0], 0xAA);
+        assert_eq!(buf[1], 0x55);
+
+        // Length is big-endian and counts the payload only.
+        let payload_len =
+            usize::from(u16::from(buf[2]) << 8 | u16::from(buf[3]));
+        assert_eq!(n, payload_len + 6);
+
+        // The payload is exactly what postcard produces on its own.
+        let mut direct = [0u8; 64];
+        let encoded =
+            postcard::to_slice(&Telemetry::DiscoveryComplete, &mut direct)
+                .expect("payload must serialize");
+        assert_eq!(payload_len, encoded.len());
+        assert_eq!(&buf[4..4 + payload_len], encoded);
+
+        // CRC over the payload, big-endian, in the last two bytes.
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+        let want = crc.checksum(encoded);
+        let got = u16::from(buf[4 + payload_len]) << 8
+            | u16::from(buf[4 + payload_len + 1]);
+        assert_eq!(got, want);
+
+        // Nothing is written past the frame.
+        assert!(buf[n..].iter().all(|&b| b == 0));
+    }
+
+    /// A buffer smaller than the six framing bytes is rejected before
+    /// anything is written, and the boundary is exactly six.
+    #[test]
+    fn test_frame_telemetry_rejects_short_buffers() {
+        for len in 0..6usize {
+            let mut small = [0u8; 8];
+            let res = frame_telemetry(
+                &Telemetry::DiscoveryComplete,
+                &mut small[..len],
+            );
+            assert!(res.is_err(), "len {len} must be rejected");
+            assert!(
+                small.iter().all(|&b| b == 0),
+                "len {len} must not write into the buffer"
+            );
+        }
+
+        // A buffer that clears the header check but cannot hold the payload
+        // still fails rather than truncating.
+        let mut tight = [0u8; 6];
+        assert!(
+            frame_telemetry(&Telemetry::DiscoveryComplete, &mut tight).is_err()
+        );
+    }
+
+    /// A framed packet decodes back through `FrameReader`, and corrupting any
+    /// single byte of the payload or the CRC makes the reader reject it.
+    #[test]
+    fn test_frame_telemetry_round_trip_and_corruption() {
+        let mut buf = [0u8; 128];
+        let n = frame_telemetry(&Telemetry::DiscoveryComplete, &mut buf)
+            .expect("framing must succeed");
+
+        let mut reader = FrameReader::new();
+        let mut decoded = false;
+        for &b in &buf[..n] {
+            if reader.handle_byte(b).is_some() {
+                decoded = true;
+            }
+        }
+        assert!(decoded, "a clean frame must decode");
+
+        // Flipping a bit anywhere after the header must break the frame.
+        for corrupt_at in 4..n {
+            let mut bad = buf;
+            bad[corrupt_at] ^= 0xFF;
+            let mut r = FrameReader::new();
+            let mut ok = false;
+            for &b in &bad[..n] {
+                if r.handle_byte(b).is_some() {
+                    ok = true;
+                }
+            }
+            assert!(
+                !ok,
+                "corrupting byte {corrupt_at} must fail the CRC check"
+            );
+        }
+    }
+
+    /// The returned length is `6 + payload_len` for every telemetry variant,
+    /// and the frame always starts with the two header bytes.
+    #[test]
+    fn test_frame_telemetry_length_accounting_across_variants() {
+        let variants = [
+            Telemetry::DiscoveryComplete,
+            Telemetry::MetricReport {
+                cycles: 123_456,
+                stack_peak: 2048,
+                suite_id: 7,
+                test_id: 9,
+                time_us: 654_321,
+            },
+        ];
+        for v in &variants {
+            let mut buf = [0u8; 128];
+            let n = frame_telemetry(v, &mut buf).expect("framing");
+            let payload_len =
+                usize::from(u16::from(buf[2]) << 8 | u16::from(buf[3]));
+            assert_eq!(n, payload_len + 6);
+            assert_eq!(buf[0], 0xAA);
+            assert_eq!(buf[1], 0x55);
+            assert!(n >= 6);
+        }
+    }
+
+    /// `CommsLock` is a single-holder flag: the first `try_lock` wins, every
+    /// later one fails until `unlock`, and `unlock` is idempotent.
+    #[test]
+    fn test_comms_lock_excludes_second_holder() {
+        let lock = CommsLock::new();
+
+        assert!(lock.try_lock(), "an unlocked lock must be acquirable");
+        for _ in 0..4 {
+            assert!(!lock.try_lock(), "a held lock must stay held");
+        }
+
+        lock.unlock();
+        assert!(lock.try_lock(), "unlock must release the flag");
+
+        lock.unlock();
+        lock.unlock();
+        assert!(lock.try_lock(), "a repeated unlock must not wedge the lock");
+        lock.unlock();
+    }
+
+    /// A fresh lock starts unlocked, and `Default` agrees with `new`.
+    #[test]
+    fn test_comms_lock_starts_unlocked() {
+        let a = CommsLock::new();
+        assert!(a.try_lock());
+
+        let b = CommsLock::default();
+        assert!(b.try_lock());
+        assert!(!b.try_lock());
+    }
+
+    #[test]
+    fn test_frame_encoder_payload_and_command() {
+        let payload = [0x12, 0x34, 0x56, 0x78];
+        let mut buf = [0u8; 32];
+        let len = FrameEncoder::frame_payload(&payload, &mut buf)
+            .expect("payload framing");
+        assert_eq!(len, 10);
+        assert_eq!(buf[0], 0xAA);
+        assert_eq!(buf[1], 0x55);
+        assert_eq!(buf[2], 0x00);
+        assert_eq!(buf[3], 0x04);
+        assert_eq!(&buf[4..8], &payload);
+
+        let mut reader = FrameReader::new();
+        let mut decoded_buf = [0u8; 32];
+        let mut decoded_len = 0;
+        for &b in &buf[..len] {
+            if let Some(slice) = reader.handle_byte(b) {
+                decoded_buf[..slice.len()].copy_from_slice(slice);
+                decoded_len = slice.len();
+                break;
+            }
+        }
+        assert_eq!(&decoded_buf[..decoded_len], &payload);
+
+        let cmd = Command::RunExecutable {
+            suite_id: 1,
+            test_id: 2,
+        };
+        let mut cmd_buf = [0u8; 32];
+        let cmd_len = FrameEncoder::frame_command(&cmd, &mut cmd_buf)
+            .expect("command framing");
+        let mut cmd_reader = FrameReader::new();
+        let mut decoded_cmd_buf = [0u8; 32];
+        let mut decoded_cmd_len = 0;
+        for &b in &cmd_buf[..cmd_len] {
+            if let Some(slice) = cmd_reader.handle_byte(b) {
+                decoded_cmd_buf[..slice.len()].copy_from_slice(slice);
+                decoded_cmd_len = slice.len();
+                break;
+            }
+        }
+        assert!(decoded_cmd_len > 0);
+        let decoded_cmd: Command =
+            postcard::from_bytes(&decoded_cmd_buf[..decoded_cmd_len])
+                .expect("must deserialize command");
+        match decoded_cmd {
+            Command::RunExecutable { suite_id, test_id } => {
+                assert_eq!(suite_id, 1);
+                assert_eq!(test_id, 2);
+            }
+            _ => panic!("unexpected command variant"),
+        }
+    }
+
+    #[test]
+    fn test_golden_wire_vectors_commands() {
+        // 1. Command::ListSuites
+        let cmd1 = Command::ListSuites;
+        let mut buf1 = [0u8; 32];
+        let len1 = FrameEncoder::frame_command(&cmd1, &mut buf1)
+            .expect("framing cmd1");
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
+        let exp_crc1 = crc.checksum(&[0x00]);
+        let expected1 = [
+            0xAA,
+            0x55,
+            0x00,
+            0x01,
+            0x00,
+            (exp_crc1 >> 8) as u8,
+            (exp_crc1 & 0xFF) as u8,
+        ];
+        assert_eq!(&buf1[..len1], &expected1);
+
+        // 2. Command::RunExecutable { suite_id: 1, test_id: 2 }
+        let cmd2 = Command::RunExecutable {
+            suite_id: 1,
+            test_id: 2,
+        };
+        let mut buf2 = [0u8; 32];
+        let len2 = FrameEncoder::frame_command(&cmd2, &mut buf2)
+            .expect("framing cmd2");
+        let mut r = FrameReader::new();
+        let mut d_buf = [0u8; 32];
+        let mut d_len = 0;
+        for &b in &buf2[..len2] {
+            if let Some(s) = r.handle_byte(b) {
+                d_buf[..s.len()].copy_from_slice(s);
+                d_len = s.len();
+                break;
+            }
+        }
+        assert!(d_len > 0);
+        let decoded2: Command = postcard::from_bytes(&d_buf[..d_len])
+            .expect("postcard decode cmd2");
+        assert!(matches!(
+            decoded2,
+            Command::RunExecutable {
+                suite_id: 1,
+                test_id: 2
+            }
+        ));
+
+        // 3. Command::TryReset
+        let cmd3 = Command::TryReset;
+        let mut buf3 = [0u8; 32];
+        let len3 = FrameEncoder::frame_command(&cmd3, &mut buf3)
+            .expect("framing cmd3");
+        let mut r3 = FrameReader::new();
+        let mut d3_buf = [0u8; 32];
+        let mut d3_len = 0;
+        for &b in &buf3[..len3] {
+            if let Some(s) = r3.handle_byte(b) {
+                d3_buf[..s.len()].copy_from_slice(s);
+                d3_len = s.len();
+                break;
+            }
+        }
+        assert!(d3_len > 0);
+        let decoded3: Command = postcard::from_bytes(&d3_buf[..d3_len])
+            .expect("postcard decode cmd3");
+        assert!(matches!(decoded3, Command::TryReset));
+    }
+
+    #[test]
+    fn test_golden_wire_vectors_telemetry() {
+        let variants = [
+            Telemetry::DiscoveryComplete,
+            Telemetry::Log(LogMessage {
+                payload: "test log",
+                suite_id: 1,
+                test_id: 2,
+                timestamp_us: 1000,
+            }),
+            Telemetry::MetricReport {
+                cycles: 5000,
+                stack_peak: 256,
+                suite_id: 1,
+                test_id: 2,
+                time_us: 420,
+            },
+            Telemetry::SettingInfo {
+                description: "Setting desc",
+                name: "baud_rate",
+                setting_id: 1,
+                suite_id: 2,
+                value: SettingValue::U32(115_200),
+            },
+            Telemetry::SuiteInfo {
+                description: "Suite desc",
+                name: "TestSuite1",
+                setting_count: 1,
+                suite_id: 0,
+                test_count: 4,
+            },
+            Telemetry::TargetPanic {
+                file: "src/main.rs",
+                line: 50,
+                message: "Target panic test",
+            },
+            Telemetry::TestInfo {
+                description: "Test desc",
+                name: "test_addition",
+                suite_id: 0,
+                test_id: 1,
+            },
+        ];
+
+        for t in &variants {
+            let mut buf = [0u8; 256];
+            let len = FrameEncoder::frame_telemetry(t, &mut buf)
+                .expect("telemetry framing");
+            assert_eq!(buf[0], 0xAA);
+            assert_eq!(buf[1], 0x55);
+            let payload_len =
+                usize::from(u16::from(buf[2]) << 8 | u16::from(buf[3]));
+            assert_eq!(len, payload_len + 6);
+
+            let mut reader = FrameReader::new();
+            let mut dec_buf = [0u8; 256];
+            let mut dec_len = 0;
+            for &b in &buf[..len] {
+                if let Some(s) = reader.handle_byte(b) {
+                    dec_buf[..s.len()].copy_from_slice(s);
+                    dec_len = s.len();
+                    break;
+                }
+            }
+            assert!(dec_len > 0);
+            let _dec_t: Telemetry<'_> =
+                postcard::from_bytes(&dec_buf[..dec_len])
+                    .expect("postcard decode telemetry");
+        }
     }
 }
