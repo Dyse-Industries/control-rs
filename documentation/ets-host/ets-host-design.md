@@ -13,7 +13,7 @@ Test Server. It owns the connection to a target, the wire framing, and the
 command/telemetry session that drives test discovery and execution. It renders
 nothing and runs no repository quality gates.
 
-The host orchestration layer already exists: `ServerBridge` and the headless
+The host orchestration layer already exists: `ETSBridge` and the headless
 run loop drive QEMU targets on `ubuntu-latest` today. It
 is currently compiled inside `control-rs-xtask` alongside the terminal
 dashboard and the CI runner, so no consumer can take the transport without
@@ -86,7 +86,7 @@ without vendoring this repository.
   return typed errors naming the failing stage. The crate does not abort the
   host process and does not panic outside tests.
 
-#### 2.3. Constraints
+#### 2.3 Constraints
 
 - **C-1 — Host-only execution**: The crate requires `std`, OS threads,
   `std::process::Command`, and platform serial drivers. It is not `no_std` and
@@ -108,7 +108,7 @@ without vendoring this repository.
 ### 3. Technical Overview
 
 The crate is a synchronous session driver. A `Target` descriptor names either a
-subprocess or a serial device; a `ServerBridge` turns that descriptor into a
+subprocess or a serial device; an `ETSBridge` turns that descriptor into a
 byte stream plus a pair of reader threads; a session state machine converts the
 resulting message stream into suite metadata, per-case telemetry, and a
 terminal result. Two consumers sit above it: the terminal dashboard, which
@@ -148,9 +148,9 @@ flowchart LR
 | Module    | Responsibility                                                                                                       |
 |:----------|:---------------------------------------------------------------------------------------------------------------------|
 | `target`  | `Target`, `SubprocessTarget`, `SerialTarget`, QEMU architecture descriptors, ELF path resolution, `build_target_elf` |
-| `bridge`  | `ServerBridge` construction, reader threads, `BridgeMessage` stream, `send_command`, `try_wait`, `kill`              |
+| `bridge`  | `ETSBridge` construction, reader threads, `BridgeMessage` stream, `send_command`, `try_wait`, `kill`                 |
 | `session` | Discovery and run-queue state machine, panic detection, reset and reconnect sequence                                 |
-| `runner`  | `run_headless_ets(target, timeout) -> Result<EtsRunResult, HostError>`                                               |
+| `runner`  | `run_headless_ets(target, timeout) -> Result<RunRecord, HostError>`                                                  |
 
 `target`, `bridge`, and `session` are extracted from the existing
 `control-rs-xtask` modules of the same names; `runner` is the promotion of the
@@ -256,11 +256,13 @@ corrupted frame on a noisy link is expected traffic, not a session failure.
 #### 4.6. Run Result
 
 ```
-EtsRunResult {
-    completion: Completion,      // Drained | TimedOut | ResetBudgetExhausted
-    results:    Vec<TestOutcome>,
-    console:    String,
-    resets:     u32,
+RunRecord {
+    results: Vec<TestOutcome>,
+    pending: Vec<(u16, u16)>,
+    resets:  u32,
+    abort:   Option<Completion>, // None | Some(TimedOut) | Some(ResetBudgetExhausted)
+    elapsed: Duration,
+    console: String,
 }
 
 TestOutcome {
@@ -275,24 +277,26 @@ TestOutcome {
 
 `TestOutcome` is field-identical to the `HeadlessTestResult` the task runner
 serializes today, and `ets-results.json` remains a JSON array of these objects.
-That is what keeps the existing workflow summary and PR-comment jobs parsing
-`TestOutcome` and `Completion` are public API; changing a
-field is a breaking release of this crate.
+`RunRecord` explicitly records the collected outcomes, unexecuted pending test
+indices, total resets performed, terminal abort condition, elapsed duration,
+and raw console logs. `EtsRunResult` is retained as a type alias for `RunRecord`.
+`TestOutcome`, `Completion`, and `RunRecord` are public API; changing a field is
+a breaking release of this crate.
 
-`EtsRunResult` carries no pass/fail verdict. Whether a run with failures, a
+`RunRecord` carries no pass/fail verdict. Whether a run with failures, a
 timeout, or an exhausted reset budget constitutes a CI failure is a policy
 decision belonging to the consumer, not to the transport library.
 
 #### 4.7. Headless Entrypoint
 
 `run_headless_ets` wraps §4.4 with a wall-clock bound and returns
-`EtsRunResult`. It performs no file I/O and no report formatting, so report
+`RunRecord`. It performs no file I/O and no report formatting, so report
 shape is a consumer decision rather than a library one. The 90-second bound
 currently hard-coded in the task runner becomes a parameter.
 
 The bound is whole-session, measured from bridge construction, not per case.
 Exceeding it kills the target and returns `Ok` with
-`completion: Completion::TimedOut` and every result collected up to that point.
+`abort: Some(Completion::TimedOut)` and every result collected up to that point.
 This is a deliberate change from the current behaviour, which returns an error
 string and discards the partial results: a run that timed
 out after twenty passing cases and one hang is more diagnosable with the twenty
@@ -390,8 +394,8 @@ races, which are not deterministically reachable from a test; and the
 | Golden vector stability | Checked-in bytes per variant | Byte equality | Exact |
 | Protocol mismatch detection | A discovery response with a different `PROTOCOL_VERSION` | Returned variant | `Err(HostError::ProtocolMismatch)` |
 | Panic recovery retains results | Scripted stream with a panic after *n* cases | Results present after reset | *n*, none lost |
-| Reset budget | Stream that panics on every case | Reset cycles performed | Exactly `max_resets`, then `Completion::ResetBudgetExhausted` |
-| Timeout bound | Target that never completes | Wall-clock time to return | Within the supplied bound plus 1 s, `Completion::TimedOut` |
+| Reset budget | Stream that panics on every case | Reset cycles performed | Exactly `max_resets`, with `abort: Some(Completion::ResetBudgetExhausted)` |
+| Timeout bound | Target that never completes | Wall-clock time to return | Within the supplied bound plus 1 s, `abort: Some(Completion::TimedOut)` |
 | Orphan processes | Killed session | Child processes surviving return | 0 |
 | QEMU shorthand path | Architecture name without `--manifest-path` | Spawn directory and binary | QEMU example crate and its target binary, not workspace root |
 | Send failure | Broken transport on `ListSuites` | Returned error | Transport error, not a hung empty discovery |
@@ -470,6 +474,7 @@ established by `../ets/cpu-profiler-design.md`, not here.
 | 1.2      | September 9, 2026 | @MitchellDScott | Hardening pass: updated badge to brightgreen, clarified serial session reset semantics, integrated TargetInfo protocol check, clarified xtask as deprecated parity baseline, and normalized §6.4 catalogue method names. |
 | 1.3      | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: §6 authoring rules are `design-template.md` §6. |
 | 1.4      | September 16, 2026 | @MitchellDScott | FR-9 QEMU shorthand names the example crate; 6.2 shorthand and send-failure rows; §9 Phase 5. |
+| 1.5      | September 18, 2026 | @MitchellDScott | Renamed `ServerBridge` to `ETSBridge`, and updated execution result to recorded `RunRecord` data model. |
 
 ---
 

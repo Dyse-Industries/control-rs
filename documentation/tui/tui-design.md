@@ -56,9 +56,9 @@ facilitating rapid on-target iteration.
 - **C-1 — Presentation Only Scope**: `control-rs-tui` is strictly a presentation
   frontend; it does not own physical transport, session state machines, framing
   algorithms, or CRC checks, which are wholly delegated to
-  `control-rs-ets-host::ServerBridge`.
+  `control-rs-ets-host::ETSBridge`.
 - **C-2 — Single-Session Lifetime**: The binary manages exactly one active
-  `ServerBridge` session at any time.
+  `ETSBridge` session at any time.
 - **C-3 — Host Environment Constraints**: The crate requires standard terminal
   input/output and ANSI/VT escape sequences, operating under `std`.
 
@@ -68,7 +68,7 @@ facilitating rapid on-target iteration.
 
 The TUI is implemented as the standalone binary crate `control-rs-tui`. It
 runs on the developer's host machine and interfaces with physical
-microcontrollers through the `ServerBridge` abstraction provided by
+microcontrollers through the `ETSBridge` abstraction provided by
 `control-rs-ets-host`.
 
 Rendering is immediate mode: "In `ratatui`, every frame draws the UI anew"
@@ -90,7 +90,7 @@ library that makes it possible to write cross-platform text-based interfaces"
 flowchart LR
     subgraph Host ["Host Computer"]
         TUI["TUI Dashboard (ratatui)"]
-        Bridge["ServerBridge"]
+        Bridge["ETSBridge"]
         TUI <==> Bridge
     end
 
@@ -143,9 +143,9 @@ developer situational awareness:
 3. **Logs Panel**: A live log terminal streaming output from the target.
 4. **Footer Action Bar**: Displays available key shortcuts.
 
-#### 4.2. Host-Target ServerBridge Integration
+#### 4.2. Host-Target ETSBridge Integration
 
-The TUI communicates with target environments via the `ServerBridge`
+The TUI communicates with target environments via the `ETSBridge`
 abstraction provided by the `control-rs-ets-host` library crate. That crate is
 the sole transport dependency; `ratatui` and `crossterm` stop at this binary
 and never enter a headless dependency closure. Two execution targets are
@@ -177,7 +177,7 @@ configuration beyond the flags it forwards to the bridge constructor.
 
 The loop follows the centralized catching, message passing pattern: events are
 polled in one place and dispatched onward [4]. The event loop merges incoming
-`ServerBridge` telemetry messages and terminal keystrokes into a single event
+`ETSBridge` telemetry messages and terminal keystrokes into a single event
 processing queue.
 
 ---
@@ -193,7 +193,7 @@ processing queue.
   standard serial output lacks structured data capability, rendering
   hierarchical tables, dynamic status overlays and bidirectional control
   vectors impossible without complex custom parsers.
-* **ServerBridge Logging**: The bridge parses all traffic between the server
+* **ETSBridge Logging**: The bridge parses all traffic between the server
   and the TUI, so it is the natural place to record a session transcript. That
   capability belongs to `control-rs-ets-host`, not to this binary.
 * **Process-per-case result model**: Rejected for this dashboard, and noted
@@ -298,7 +298,7 @@ No frame-rate bound is asserted. See 6.7.
 | Task / Feature                         | Description                                                                                 | Estimated Effort |
 |:---------------------------------------|:--------------------------------------------------------------------------------------------|:-----------------|
 | **Step 1: Ratatui Interface Skeleton** | Build the terminal UI layout panels using `ratatui` (Header, Tree Table, Logs, Footer).     | 1.0 day          |
-| **Step 2: ServerBridge Connection**    | Integrate `ServerBridge` polling channels (QEMU stdio / `serial2`) into the TUI event loop. | 1.0 day          |
+| **Step 2: ETSBridge Connection**       | Integrate `ETSBridge` polling channels (QEMU stdio / `serial2`) into the TUI event loop.    | 1.0 day          |
 | **Step 3: Bidirectional Controls**     | Implement keystroke handlers and write command packets to the target down-buffer.           | 0.5 day          |
 | **Step 4: Session liveness and settings** | Repair: retry `ListSuites` on the same interval as the headless runner; observe process exit; wait the host reset delay before re-open; restore setting description and `SetSetting`. Tests: 6.2 discovery-retry, process-exit, and setting-description rows. | 1.0 day          |
 
@@ -317,6 +317,7 @@ No frame-rate bound is asserted. See 6.7.
 | 1.6      | September 9, 2026 | @MitchellDScott | Hardening pass: numbered §2.1–§2.3 and added §2.3 Constraints (C-1..C-3), mapped TargetInfo in FR-1, corrected bridge diagram link, completed 6.4 traceability, and standardized References. |
 | 1.7      | September 15, 2026 | @MitchellDScott | NFR-1 is diff-only repaint; 16 ms budget is not a requirement and is not traced. |
 | 1.8      | September 16, 2026 | @MitchellDScott | FR-6 session liveness, FR-7 suite setting inspection and edit; 6.2 discovery/exit/setting rows; §9 Step 4. |
+| 1.9      | September 18, 2026 | @MitchellDScott | Packaging alignment: updated host bridge references to `control-rs-ets-host::ETSBridge`. |
 
 ---
 
