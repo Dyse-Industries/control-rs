@@ -1,12 +1,19 @@
 //! Discovery, run queue and session state machine for host-side ETS.
 
-use std::collections::BTreeMap;
-
 use control_rs_ets::comms::{Command as CommCommand, TestState};
 use control_rs_ets::settings::SettingValue;
 
 use crate::bridge::{BridgeMessage, OwnedTelemetry};
 use crate::runner::TestOutcome;
+
+/// Flag indicating that all `SettingInfo` items (`0..setting_count-1`) have been received.
+pub const SETTINGS_READY: u8 = 0b0000_0100; // 0x04
+/// Flag indicating that `SuiteInfo` metadata (name, test/setting counts) has been received.
+pub const SUITE_INFO_READY: u8 = 0b0000_0001; // 0x01
+/// Complete readiness mask for a test suite (`SUITE_INFO_READY | TESTS_READY | SETTINGS_READY`).
+pub const SUITE_READY_MASK: u8 = 0b0000_0111; // 0x07
+/// Flag indicating that all `TestInfo` items (`0..test_count-1`) have been received.
+pub const TESTS_READY: u8 = 0b0000_0010; // 0x02
 
 /// Pair of `(suite_id, test_id)` identifying a test case.
 pub type TestIndex = (u16, u16);
@@ -16,33 +23,12 @@ pub type TestIndex = (u16, u16);
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
 )]
 pub enum SessionPhase {
-    /// Target test discovery in progress. Telemetry is collected into a staging scratch map.
+    /// Target test discovery in progress. Telemetry is collected directly into suite readiness masks.
     Discovering,
-    /// Discovery has been validated and committed. Discovered tests are actively executing or queued.
+    /// Discovery has been validated. Discovered tests are actively executing or queued.
     Running,
     /// Target panic or reset recovery in progress while unexecuted tests remain.
     Recovering,
-}
-
-/// Representation of a single test case under discovery.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TestItem {
-    /// Identifier assigned to this test within its suite.
-    pub test_id: u16,
-    /// Identifier of the suite containing this test case.
-    pub suite_id: u16,
-    /// Name of the suite containing this test case.
-    pub suite_name: String,
-    /// Name of the test case.
-    pub name: String,
-    /// Current execution state of the test.
-    pub state: TestState,
-    /// CPU cycles consumed during the test run if completed.
-    pub cycles: Option<u64>,
-    /// Elapsed time of the test run in microseconds if completed.
-    pub time_us: Option<u64>,
-    /// Peak stack memory usage in bytes if completed.
-    pub stack_peak: Option<u32>,
 }
 
 /// Representation of a configuration setting in a test suite.
@@ -58,6 +44,29 @@ pub struct SettingItem {
     pub value: SettingValue,
 }
 
+/// Representation of a single test case under discovery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestItem {
+    /// Identifier assigned to this test within its suite.
+    pub test_id: u16,
+    /// Identifier of the suite containing this test case.
+    pub suite_id: u16,
+    /// Name of the suite containing this test case.
+    pub suite_name: String,
+    /// Name of the test case.
+    pub name: String,
+    /// Doc-comment description of the test case.
+    pub description: String,
+    /// Current execution state of the test.
+    pub state: TestState,
+    /// CPU cycles consumed during the test run if completed.
+    pub cycles: Option<u64>,
+    /// Elapsed time of the test run in microseconds if completed.
+    pub time_us: Option<u64>,
+    /// Peak stack memory usage in bytes if completed.
+    pub stack_peak: Option<u32>,
+}
+
 /// Representation of a test suite containing tests and settings.
 #[derive(Debug, Clone)]
 pub struct SuiteItem {
@@ -65,65 +74,31 @@ pub struct SuiteItem {
     pub suite_id: u16,
     /// Name of the suite.
     pub name: String,
+    /// Doc-comment description of the suite.
+    pub description: String,
+    /// Expected number of tests in the suite from `SuiteInfo`.
+    pub test_count: u16,
+    /// Expected number of settings in the suite from `SuiteInfo`.
+    pub setting_count: u16,
     /// Collection of tests inside this suite.
     pub tests: Vec<TestItem>,
     /// Collection of config settings inside this suite.
     pub settings: Vec<SettingItem>,
-}
-
-/// In-progress test case metadata staged during discovery.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScratchTest {
-    /// Name of the test case.
-    pub name: String,
-    /// Doc-comment description of the test case.
-    pub description: String,
-}
-
-/// In-progress setting metadata staged during discovery.
-#[derive(Debug, Clone)]
-pub struct ScratchSetting {
-    /// Name of the setting.
-    pub name: String,
-    /// Doc-comment description of the setting.
-    pub description: String,
-    /// Current value of the setting.
-    pub value: SettingValue,
-}
-
-/// In-progress suite metadata staged during discovery.
-#[derive(Debug, Clone, Default)]
-pub struct ScratchSuite {
-    /// Name of the suite.
-    pub name: Option<String>,
-    /// Doc-comment description of the suite.
-    pub description: Option<String>,
-    /// Expected number of tests in the suite from `SuiteInfo`.
-    pub test_count: Option<u16>,
-    /// Expected number of settings in the suite from `SuiteInfo`.
-    pub setting_count: Option<u16>,
-    /// Staged test cases keyed by `test_id`.
-    pub tests: BTreeMap<u16, ScratchTest>,
-    /// Staged settings keyed by `setting_id`.
-    pub settings: BTreeMap<u16, ScratchSetting>,
-}
-
-/// Scratch map for buffering incoming discovery telemetry before atomic validation and commit.
-#[derive(Debug, Clone, Default)]
-pub struct DiscoveryScratch {
-    /// Staged suites keyed by `suite_id`.
-    pub suites: BTreeMap<u16, ScratchSuite>,
+    /// Bitmask of initialized components (`SUITE_INFO_READY | TESTS_READY | SETTINGS_READY`).
+    pub ready_mask: u8,
+    /// Bitmask tracking individual test indices (bit t is set when test t arrives).
+    pub test_slots_mask: u64,
+    /// Bitmask tracking individual setting indices (bit s is set when setting s arrives).
+    pub setting_slots_mask: u64,
 }
 
 /// Host-side ETS session state (discovery, run queue, results).
 pub struct SessionState {
     /// Current lifecycle phase of the session.
     pub phase: SessionPhase,
-    /// Staged discovery metadata buffer.
-    pub discovery_scratch: DiscoveryScratch,
     /// Currently executing test (`suite_id`, `test_id`).
     pub current_running: Option<TestIndex>,
-    /// Flag signaling whether discovery has been committed (kept in sync with phase).
+    /// Flag signaling whether discovery has been validated (kept in sync with phase).
     pub discovery_complete: bool,
     /// Flag signaling that test execution has finished or reached terminal state.
     pub exit_loop: bool,
@@ -146,6 +121,40 @@ pub enum SessionAction {
     Send(CommCommand),
 }
 
+impl SuiteItem {
+    /// Creates a new, uninitialized suite descriptor.
+    #[must_use]
+    pub const fn new(suite_id: u16) -> Self {
+        Self {
+            suite_id,
+            name: String::new(),
+            description: String::new(),
+            test_count: 0,
+            setting_count: 0,
+            tests: Vec::new(),
+            settings: Vec::new(),
+            ready_mask: 0,
+            test_slots_mask: 0,
+            setting_slots_mask: 0,
+        }
+    }
+
+    /// Returns true if this suite has received all info, test, and setting frames.
+    #[must_use]
+    pub const fn is_ready(&self) -> bool {
+        (self.ready_mask & SUITE_READY_MASK) == SUITE_READY_MASK
+    }
+
+    /// Resets all readiness masks and clears transient items for re-discovery.
+    pub fn reset_discovery(&mut self) {
+        self.ready_mask = 0;
+        self.test_slots_mask = 0;
+        self.setting_slots_mask = 0;
+        self.tests.clear();
+        self.settings.clear();
+    }
+}
+
 impl TestItem {
     /// Converts this [`TestItem`] into a [`TestOutcome`].
     #[must_use]
@@ -163,63 +172,6 @@ impl TestItem {
     }
 }
 
-impl DiscoveryScratch {
-    /// Creates a new, empty discovery scratch space.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            suites: BTreeMap::new(),
-        }
-    }
-
-    /// Clears all staged discovery metadata.
-    pub fn clear(&mut self) {
-        self.suites.clear();
-    }
-
-    /// Validates that the staged discovery state is complete and contiguous.
-    ///
-    /// Requires:
-    /// - Contiguous suite IDs `0..N-1` where `N = suites.len()`.
-    /// - For each suite, `SuiteInfo` was received (`name`, `test_count`, `setting_count` present).
-    /// - For each suite, `tests.len() == test_count` and all test IDs `0..test_count-1` are present.
-    /// - For each suite, `settings.len() == setting_count` and all setting IDs `0..setting_count-1` are present.
-    #[must_use]
-    pub fn validate(&self) -> bool {
-        let suite_count = self.suites.len();
-        for s_idx in 0..suite_count {
-            let Ok(s_id) = u16::try_from(s_idx) else {
-                return false;
-            };
-            let Some(suite) = self.suites.get(&s_id) else {
-                return false;
-            };
-            let (Some(_name), Some(test_count), Some(setting_count)) =
-                (&suite.name, suite.test_count, suite.setting_count)
-            else {
-                return false;
-            };
-            if suite.tests.len() != test_count as usize {
-                return false;
-            }
-            for t_id in 0..test_count {
-                if !suite.tests.contains_key(&t_id) {
-                    return false;
-                }
-            }
-            if suite.settings.len() != setting_count as usize {
-                return false;
-            }
-            for set_id in 0..setting_count {
-                if !suite.settings.contains_key(&set_id) {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-}
-
 impl Default for SessionState {
     fn default() -> Self {
         Self::new()
@@ -232,7 +184,6 @@ impl SessionState {
     pub const fn new() -> Self {
         Self {
             phase: SessionPhase::Discovering,
-            discovery_scratch: DiscoveryScratch::new(),
             current_running: None,
             discovery_complete: false,
             exit_loop: false,
@@ -246,6 +197,22 @@ impl SessionState {
     /// Appends a raw message to the internal log buffer.
     pub fn log(&mut self, msg: &str) {
         self.logs.push_str(msg);
+    }
+
+    /// Ensures that `self.suites` contains an entry at index `suite_id`.
+    pub fn ensure_suite_slot(&mut self, suite_id: u16) -> &mut SuiteItem {
+        let idx = suite_id as usize;
+        if self.suites.len() <= idx {
+            self.suites.reserve(
+                idx.saturating_add(1).saturating_sub(self.suites.len()),
+            );
+            while self.suites.len() <= idx {
+                #[allow(clippy::cast_possible_truncation)]
+                let next_id = self.suites.len() as u16;
+                self.suites.push(SuiteItem::new(next_id));
+            }
+        }
+        &mut self.suites[idx]
     }
 
     /// Returns a reference to a recorded outcome matching `(suite_id, test_id)`.
@@ -372,68 +339,6 @@ impl SessionState {
         }
     }
 
-    /// Atomically commits staged discovery metadata into `suites` and dispatches the initial test.
-    fn commit_discovery(&mut self) -> Vec<SessionAction> {
-        let mut new_suites =
-            Vec::with_capacity(self.discovery_scratch.suites.len());
-        for (s_id, scratch_suite) in &self.discovery_scratch.suites {
-            let suite_name = scratch_suite.name.clone().unwrap_or_default();
-            let mut tests = Vec::with_capacity(scratch_suite.tests.len());
-            for (t_id, scratch_test) in &scratch_suite.tests {
-                let prev = self.find_outcome(*s_id, *t_id);
-                let state = prev.map_or(TestState::Pending, |p| p.state);
-                let cycles = prev.and_then(|p| p.cycles);
-                let time_us = prev.and_then(|p| p.time_us);
-                let stack_peak = prev.and_then(|p| p.stack_peak);
-
-                tests.push(TestItem {
-                    suite_id: *s_id,
-                    test_id: *t_id,
-                    suite_name: suite_name.clone(),
-                    name: scratch_test.name.clone(),
-                    state,
-                    cycles,
-                    time_us,
-                    stack_peak,
-                });
-            }
-
-            let mut settings = Vec::with_capacity(scratch_suite.settings.len());
-            for (set_id, scratch_setting) in &scratch_suite.settings {
-                settings.push(SettingItem {
-                    setting_id: *set_id,
-                    name: scratch_setting.name.clone(),
-                    description: scratch_setting.description.clone(),
-                    value: scratch_setting.value,
-                });
-            }
-
-            new_suites.push(SuiteItem {
-                suite_id: *s_id,
-                name: suite_name,
-                tests,
-                settings,
-            });
-        }
-
-        self.suites = new_suites;
-        self.discovery_scratch.clear();
-        self.run_queue.clear();
-
-        for suite in &self.suites {
-            for test in &suite.tests {
-                if self.find_outcome(suite.suite_id, test.test_id).is_none() {
-                    self.run_queue.push((suite.suite_id, test.test_id));
-                }
-            }
-        }
-
-        self.phase = SessionPhase::Running;
-        self.discovery_complete = true;
-
-        self.start_next_or_exit().into_iter().collect()
-    }
-
     /// Processes an incoming bridge message and updates session state accordingly.
     #[allow(clippy::too_many_lines)]
     pub fn handle_message(&mut self, msg: BridgeMessage) -> Vec<SessionAction> {
@@ -454,15 +359,19 @@ impl SessionState {
                     if self.phase == SessionPhase::Running {
                         return Vec::new();
                     }
-                    let suite = self
-                        .discovery_scratch
-                        .suites
-                        .entry(suite_id)
-                        .or_default();
-                    suite.name = Some(name);
-                    suite.description = Some(description);
-                    suite.test_count = Some(test_count);
-                    suite.setting_count = Some(setting_count);
+                    self.ensure_suite_slot(suite_id);
+                    let suite = &mut self.suites[suite_id as usize];
+                    suite.name = name;
+                    suite.description = description;
+                    suite.test_count = test_count;
+                    suite.setting_count = setting_count;
+                    suite.ready_mask |= SUITE_INFO_READY;
+                    if test_count == 0 {
+                        suite.ready_mask |= TESTS_READY;
+                    }
+                    if setting_count == 0 {
+                        suite.ready_mask |= SETTINGS_READY;
+                    }
                     Vec::new()
                 }
                 OwnedTelemetry::TestInfo {
@@ -474,14 +383,53 @@ impl SessionState {
                     if self.phase == SessionPhase::Running {
                         return Vec::new();
                     }
-                    let suite = self
-                        .discovery_scratch
-                        .suites
-                        .entry(suite_id)
-                        .or_default();
-                    suite
-                        .tests
-                        .insert(test_id, ScratchTest { name, description });
+                    self.ensure_suite_slot(suite_id);
+                    let s_idx = suite_id as usize;
+                    let prev = self.find_outcome(suite_id, test_id);
+                    let state = prev.map_or(TestState::Pending, |p| p.state);
+                    let cycles = prev.and_then(|p| p.cycles);
+                    let time_us = prev.and_then(|p| p.time_us);
+                    let stack_peak = prev.and_then(|p| p.stack_peak);
+
+                    let suite = &mut self.suites[s_idx];
+                    let t_idx = test_id as usize;
+                    if t_idx < 64 {
+                        suite.test_slots_mask |= 1u64 << t_idx;
+                    }
+                    let item = TestItem {
+                        suite_id,
+                        test_id,
+                        suite_name: suite.name.clone(),
+                        name,
+                        description,
+                        state,
+                        cycles,
+                        time_us,
+                        stack_peak,
+                    };
+                    if let Some(existing) =
+                        suite.tests.iter_mut().find(|t| t.test_id == test_id)
+                    {
+                        *existing = item;
+                    } else {
+                        suite.tests.push(item);
+                    }
+                    if suite.test_count > 0
+                        && suite.tests.len() == suite.test_count as usize
+                    {
+                        if suite.test_count <= 64 {
+                            let expected = if suite.test_count == 64 {
+                                u64::MAX
+                            } else {
+                                (1u64 << suite.test_count).saturating_sub(1)
+                            };
+                            if (suite.test_slots_mask & expected) == expected {
+                                suite.ready_mask |= TESTS_READY;
+                            }
+                        } else {
+                            suite.ready_mask |= TESTS_READY;
+                        }
+                    }
                     Vec::new()
                 }
                 OwnedTelemetry::SettingInfo {
@@ -494,34 +442,80 @@ impl SessionState {
                     if self.phase == SessionPhase::Running {
                         return Vec::new();
                     }
-                    let suite = self
-                        .discovery_scratch
-                        .suites
-                        .entry(suite_id)
-                        .or_default();
-                    suite.settings.insert(
+                    self.ensure_suite_slot(suite_id);
+                    let s_idx = suite_id as usize;
+                    let suite = &mut self.suites[s_idx];
+                    let set_idx = setting_id as usize;
+                    if set_idx < 64 {
+                        suite.setting_slots_mask |= 1u64 << set_idx;
+                    }
+                    let item = SettingItem {
                         setting_id,
-                        ScratchSetting {
-                            name,
-                            description,
-                            value,
-                        },
-                    );
+                        name,
+                        description,
+                        value,
+                    };
+                    if let Some(existing) = suite
+                        .settings
+                        .iter_mut()
+                        .find(|s| s.setting_id == setting_id)
+                    {
+                        *existing = item;
+                    } else {
+                        suite.settings.push(item);
+                    }
+                    if suite.setting_count > 0
+                        && suite.settings.len() == suite.setting_count as usize
+                    {
+                        if suite.setting_count <= 64 {
+                            let expected = if suite.setting_count == 64 {
+                                u64::MAX
+                            } else {
+                                (1u64 << suite.setting_count).saturating_sub(1)
+                            };
+                            if (suite.setting_slots_mask & expected) == expected
+                            {
+                                suite.ready_mask |= SETTINGS_READY;
+                            }
+                        } else {
+                            suite.ready_mask |= SETTINGS_READY;
+                        }
+                    }
                     Vec::new()
                 }
                 OwnedTelemetry::DiscoveryComplete => {
                     if self.phase == SessionPhase::Running {
-                        // In-flight duplicate complete while tests already running
                         return Vec::new();
                     }
-                    if !self.discovery_scratch.validate() {
+                    if self.suites.is_empty()
+                        || !self.suites.iter().all(SuiteItem::is_ready)
+                    {
                         self.log(
                             "Discovery validation failed (incomplete or non-contiguous slots). Retrying discovery.\n",
                         );
-                        self.discovery_scratch.clear();
+                        for s in &mut self.suites {
+                            s.reset_discovery();
+                        }
                         return Vec::new();
                     }
-                    self.commit_discovery()
+
+                    self.run_queue.clear();
+                    for suite in &self.suites {
+                        for test in &suite.tests {
+                            if self
+                                .find_outcome(suite.suite_id, test.test_id)
+                                .is_none()
+                            {
+                                self.run_queue
+                                    .push((suite.suite_id, test.test_id));
+                            }
+                        }
+                    }
+
+                    self.phase = SessionPhase::Running;
+                    self.discovery_complete = true;
+
+                    self.start_next_or_exit().into_iter().collect()
                 }
                 OwnedTelemetry::TestStateChange {
                     suite_id,
@@ -529,18 +523,16 @@ impl SessionState {
                     state: new_state,
                 } => {
                     let s_idx = suite_id as usize;
-                    let t_idx = test_id as usize;
                     if let Some(suite) = self.suites.get_mut(s_idx)
-                        && let Some(test) = suite.tests.get_mut(t_idx)
+                        && let Some(test) = suite
+                            .tests
+                            .iter_mut()
+                            .find(|t| t.test_id == test_id)
                     {
                         test.state = new_state;
                     }
 
                     if new_state == TestState::Failed {
-                        // Target `handle_failure` always emits Failed then
-                        // TargetPanic. Advancing the queue here would make the
-                        // subsequent TargetPanic attribute the crash to the
-                        // next queued test and skip running it.
                         let suite_name = self
                             .suites
                             .get(s_idx)
@@ -548,7 +540,9 @@ impl SessionState {
                         let test_name = self
                             .suites
                             .get(s_idx)
-                            .and_then(|s| s.tests.get(t_idx))
+                            .and_then(|s| {
+                                s.tests.iter().find(|t| t.test_id == test_id)
+                            })
                             .map_or_else(String::new, |t| t.name.clone());
                         if self.find_outcome(suite_id, test_id).is_none() {
                             self.record_outcome(TestOutcome {
@@ -574,9 +568,11 @@ impl SessionState {
                     stack_peak,
                 } => {
                     let s_idx = suite_id as usize;
-                    let t_idx = test_id as usize;
                     if let Some(suite) = self.suites.get_mut(s_idx)
-                        && let Some(test) = suite.tests.get_mut(t_idx)
+                        && let Some(test) = suite
+                            .tests
+                            .iter_mut()
+                            .find(|t| t.test_id == test_id)
                     {
                         test.state = TestState::Passed;
                         test.cycles = Some(cycles);
@@ -590,7 +586,9 @@ impl SessionState {
                     let test_name = self
                         .suites
                         .get(s_idx)
-                        .and_then(|s| s.tests.get(t_idx))
+                        .and_then(|s| {
+                            s.tests.iter().find(|t| t.test_id == test_id)
+                        })
                         .map_or_else(String::new, |t| t.name.clone());
                     self.record_outcome(TestOutcome {
                         suite_id,
@@ -615,32 +613,47 @@ impl SessionState {
                     );
                     self.log(&panic_str);
 
-                    if let Some((s_id, t_id)) = self.current_running {
-                        let s_idx = s_id as usize;
-                        let t_idx = t_id as usize;
-                        if let Some(suite) = self.suites.get_mut(s_idx)
-                            && let Some(test) = suite.tests.get_mut(t_idx)
-                        {
-                            test.state = TestState::Failed;
-                            let suite_name = suite.name.clone();
-                            let test_name = test.name.clone();
-                            if self.find_outcome(s_id, t_id).is_none() {
-                                self.record_outcome(TestOutcome {
-                                    suite_id: s_id,
-                                    test_id: t_id,
-                                    suite_name,
-                                    test_name,
-                                    state: TestState::Failed,
-                                    cycles: None,
-                                    time_us: None,
-                                    stack_peak: None,
-                                });
+                    match self.phase {
+                        SessionPhase::Discovering => {
+                            self.log(
+                                "Target panic occurred during discovery phase.\n",
+                            );
+                        }
+                        SessionPhase::Running => {
+                            if let Some((s_id, t_id)) = self.current_running {
+                                let s_idx = s_id as usize;
+                                if let Some(suite) = self.suites.get_mut(s_idx)
+                                    && let Some(test) = suite
+                                        .tests
+                                        .iter_mut()
+                                        .find(|t| t.test_id == t_id)
+                                {
+                                    test.state = TestState::Failed;
+                                    let suite_name = suite.name.clone();
+                                    let test_name = test.name.clone();
+                                    if self.find_outcome(s_id, t_id).is_none() {
+                                        self.record_outcome(TestOutcome {
+                                            suite_id: s_id,
+                                            test_id: t_id,
+                                            suite_name,
+                                            test_name,
+                                            state: TestState::Failed,
+                                            cycles: None,
+                                            time_us: None,
+                                            stack_peak: None,
+                                        });
+                                    }
+                                }
+                            } else {
+                                self.log("Target panic occurred outside test execution in running phase.\n");
                             }
                         }
+                        SessionPhase::Recovering => {
+                            self.log(
+                                "Target panic occurred during recovery phase.\n",
+                            );
+                        }
                     }
-
-                    self.current_running = None;
-                    self.discovery_scratch.clear();
 
                     let remaining_to_run = match self.phase {
                         SessionPhase::Discovering => true,
@@ -657,17 +670,19 @@ impl SessionState {
                         }
                     };
 
-                    self.discovery_complete = false;
-                    let restart_action = SessionAction::PanicRestart;
+                    self.current_running = None;
+                    for s in &mut self.suites {
+                        s.reset_discovery();
+                    }
 
-                    if remaining_to_run {
-                        self.phase = SessionPhase::Recovering;
-                    } else {
+                    self.discovery_complete = false;
+                    self.phase = SessionPhase::Recovering;
+                    if !remaining_to_run {
                         self.exit_loop = true;
                     }
                     vec![
                         SessionAction::Send(CommCommand::TryReset),
-                        restart_action,
+                        SessionAction::PanicRestart,
                     ]
                 }
             },
@@ -722,7 +737,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transactional_discovery_buffering_and_validation() {
+    fn test_bitmask_discovery_and_readiness() {
         let mut state = SessionState::new();
         assert_eq!(state.phase, SessionPhase::Discovering);
         assert!(!state.discovery_complete);
@@ -735,9 +750,10 @@ mod tests {
             assert!(actions.is_empty());
         }
 
-        // Discovery scratch is populated, suites remains untouched
-        assert_eq!(state.discovery_scratch.suites.len(), 1);
-        assert!(state.suites.is_empty());
+        // Suite 0 is fully ready in suites vector
+        assert_eq!(state.suites.len(), 1);
+        assert!(state.suites[0].is_ready());
+        assert_eq!(state.suites[0].ready_mask, SUITE_READY_MASK);
         assert!(!state.discovery_complete);
 
         // DiscoveryComplete commits atomically
@@ -760,98 +776,23 @@ mod tests {
         assert_eq!(state.suites[0].settings.len(), 1);
         assert_eq!(state.run_queue, vec![(0, 1)]);
         assert_eq!(state.current_running, Some((0, 0)));
-        assert!(state.discovery_scratch.suites.is_empty());
-    }
-
-    #[test]
-    fn test_validation_rejects_missing_or_non_contiguous_suites() {
-        let mut scratch = DiscoveryScratch::new();
-
-        // Suite 1 present, but suite 0 missing -> non-contiguous
-        let s1 = ScratchSuite {
-            name: Some("S1".to_string()),
-            description: Some("desc".to_string()),
-            test_count: Some(1),
-            setting_count: Some(0),
-            tests: [(
-                0,
-                ScratchTest {
-                    name: "t0".to_string(),
-                    description: "d".to_string(),
-                },
-            )]
-            .into_iter()
-            .collect(),
-            settings: BTreeMap::new(),
-        };
-        scratch.suites.insert(1, s1);
-        assert!(!scratch.validate());
-
-        // Now add suite 0 -> contiguous 0..2
-        let s0 = ScratchSuite {
-            name: Some("S0".to_string()),
-            description: Some("desc".to_string()),
-            test_count: Some(1),
-            setting_count: Some(0),
-            tests: [(
-                0,
-                ScratchTest {
-                    name: "t0".to_string(),
-                    description: "d".to_string(),
-                },
-            )]
-            .into_iter()
-            .collect(),
-            settings: BTreeMap::new(),
-        };
-        scratch.suites.insert(0, s0);
-        assert!(scratch.validate());
     }
 
     #[test]
     fn test_validation_rejects_incomplete_test_slots() {
-        let mut scratch = DiscoveryScratch::new();
-        let mut s0 = ScratchSuite {
-            name: Some("S0".to_string()),
-            description: Some("desc".to_string()),
-            test_count: Some(3),
-            setting_count: Some(0),
-            tests: BTreeMap::new(),
-            settings: BTreeMap::new(),
-        };
-        s0.tests.insert(
-            0,
-            ScratchTest {
-                name: "t0".to_string(),
-                description: "d".to_string(),
-            },
-        );
-        s0.tests.insert(
-            2,
-            ScratchTest {
-                name: "t2".to_string(),
-                description: "d".to_string(),
-            },
-        ); // missing slot 1!
-        scratch.suites.insert(0, s0);
-
-        assert!(!scratch.validate());
-    }
-
-    #[test]
-    fn test_validation_failure_resets_scratch_and_stays_discovering() {
         let mut state = SessionState::new();
 
-        // Send incomplete suite (expects 2 tests, only send test 0)
+        // Send SuiteInfo expecting 3 tests
         let _ = state.handle_message(BridgeMessage::Telemetry(
             OwnedTelemetry::SuiteInfo {
                 suite_id: 0,
-                name: "Incomplete".to_string(),
+                name: "S0".to_string(),
                 description: "desc".to_string(),
-                test_count: 2,
+                test_count: 3,
                 setting_count: 0,
             },
         ));
+        // Send test 0 and test 2 (missing test 1)
         let _ = state.handle_message(BridgeMessage::Telemetry(
             OwnedTelemetry::TestInfo {
                 suite_id: 0,
@@ -860,6 +801,17 @@ mod tests {
                 description: "d".to_string(),
             },
         ));
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::TestInfo {
+                suite_id: 0,
+                test_id: 2,
+                name: "t2".to_string(),
+                description: "d".to_string(),
+            },
+        ));
+
+        assert!(!state.suites[0].is_ready());
+        assert_eq!(state.suites[0].ready_mask & TESTS_READY, 0);
 
         // DiscoveryComplete fails validation
         let actions = state.handle_message(BridgeMessage::Telemetry(
@@ -868,8 +820,6 @@ mod tests {
         assert!(actions.is_empty());
         assert_eq!(state.phase, SessionPhase::Discovering);
         assert!(!state.discovery_complete);
-        assert!(state.discovery_scratch.suites.is_empty());
-        assert!(state.suites.is_empty());
         assert!(state.logs.contains("Discovery validation failed"));
     }
 
