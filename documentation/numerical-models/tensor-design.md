@@ -162,7 +162,7 @@ strides (first dimension varies fastest): $\text{flat\_index} = i_0 + i_1
 
 `#[repr(C)]` guarantees a stable layout. Padding-free slice interfaces
 (`as_slice`, `as_mut_slice`) are gated behind `FlatBuffer`/`FlatBufferMut`,
-facilitifying zero-copy casting to `&[T]` for subprogram routing when the
+facilitating zero-copy casting to `&[T]` for subprogram routing when the
 storage backend supports it. Tensor contraction reaching a 2-D kernel
 rewraps the slice as a `StorageView` and calls `Gemm`
 (`subprograms-design.md` FR-4) rather than defining its own inner loop.

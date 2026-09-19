@@ -1,0 +1,68 @@
+[runner]
+title = "control-rs"
+out_dir = "target/ci-artifacts"
+timeout_secs = 90
+
+[gates]
+clean = "skip"
+fmt = "fail"
+clippy = "fail"
+check = "fail"
+build = "fail"
+test = "fail"
+coverage = "warn"
+metrics = "warn"
+git = "fail"
+vale = "warn"
+deny = "warn"
+geiger = "warn"
+semver = "warn"
+mutants = "skip"
+valgrind = "skip"
+
+[metrics]
+max_source_lines = 100000
+tracked_dirs = [
+    "src",
+    "control-rs-ets",
+    "control-rs-macros",
+    "control-rs-ets-host",
+    "control-rs-tui",
+    "control-rs-ci",
+]
+
+[git]
+require_clean_working_tree = false
+enforce_conventional_commits = false
+disallowed_patterns = ["wip", "temp", "asdf", "fix typo", "debug", "test1"]
+max_header_length = 72
+
+[vale]
+config = ".vale.ini"
+paths = [
+    "documentation",
+    "src",
+    "control-rs-ets",
+    "control-rs-macros",
+    "control-rs-ets-host",
+    "control-rs-tui",
+    "control-rs-ci",
+]
+
+[geiger]
+max_unsafe_blocks = 0
+
+[semver]
+baseline_ref = "origin/main"
+
+[mutants]
+timeout_multiplier = 2.0
+exclude = ["tests/**", "examples/**", "benches/**"]
+exclude_re = "(^|::)(test|tests|example|examples|bench|benches)"
+files = ["src/**"]
+
+[valgrind]
+leak_check = "full"
+error_exitcode = 1
+bins = ["control-rs-ci"]
+examples = []

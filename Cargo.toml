@@ -27,6 +27,7 @@ members = [
     "control-rs-macros",
     "control-rs-ets-host",
     "control-rs-tui",
+    "control-rs-ci",
 ]
 default-members = ["."]
 

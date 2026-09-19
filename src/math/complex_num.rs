@@ -12,9 +12,9 @@ use crate::math::{
     },
 };
 
-/// Tye alias for a complex number using single precision.
+/// Type alias for a complex number using single precision.
 pub type Complex32 = Complex<f32>;
-/// Tye alias for a complex number using double precision.
+/// Type alias for a complex number using double precision.
 pub type Complex64 = Complex<f64>;
 
 /// A complex number consisting of a real and an imaginary part.

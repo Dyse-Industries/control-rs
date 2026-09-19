@@ -3777,7 +3777,7 @@ pub const fn reverse_array<T: Copy, const N: usize>(input: [T; N]) -> [T; N] {
 /// uninitialized value is initialized (undefined behavior).
 ///
 /// # Panics
-/// Panics in debug builds if the iterator is shorter than `N`.
+/// This function panics in debug builds if the iterator is shorter than `N`.
 #[allow(clippy::arithmetic_side_effects)]
 pub(crate) unsafe fn array_from_iterator<I, T, const N: usize>(
     iterator: I,
