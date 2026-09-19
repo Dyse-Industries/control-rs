@@ -1,7 +1,7 @@
 # HostComms (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-September_9,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
