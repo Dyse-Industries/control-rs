@@ -76,10 +76,9 @@ fn main() {
             if is_pass {
                 ui::status("Finished", "All fail-closed quality gates passed");
                 exit(0);
-            } else {
-                ui::error("One or more fail-closed quality gates failed");
-                exit(1);
             }
+            ui::error("One or more fail-closed quality gates failed");
+            exit(1);
         }
         Err(e) => {
             ui::error(format!("Failed to generate report: {e}"));

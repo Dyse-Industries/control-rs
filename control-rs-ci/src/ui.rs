@@ -40,12 +40,17 @@ pub fn init_color() {
     cargo_color_choice().write_global();
 }
 
-fn cargo_color_choice() -> ColorChoice {
-    match env::var("CARGO_TERM_COLOR").ok().as_deref() {
+fn parse_cargo_color_choice(val: Option<&str>) -> ColorChoice {
+    match val {
         Some("always") => ColorChoice::Always,
         Some("never") => ColorChoice::Never,
         _ => ColorChoice::Auto,
     }
+}
+
+fn cargo_color_choice() -> ColorChoice {
+    let var = env::var("CARGO_TERM_COLOR").ok();
+    parse_cargo_color_choice(var.as_deref())
 }
 
 /// Formats a cargo-style status line without color.
@@ -117,6 +122,16 @@ mod tests {
 
     #[test]
     fn test_cargo_color_choice() {
-        assert_eq!(cargo_color_choice(), ColorChoice::Auto);
+        assert_eq!(
+            parse_cargo_color_choice(Some("always")),
+            ColorChoice::Always
+        );
+        assert_eq!(parse_cargo_color_choice(Some("never")), ColorChoice::Never);
+        assert_eq!(parse_cargo_color_choice(Some("auto")), ColorChoice::Auto);
+        assert_eq!(parse_cargo_color_choice(None), ColorChoice::Auto);
+        assert_eq!(
+            parse_cargo_color_choice(Some("unknown")),
+            ColorChoice::Auto
+        );
     }
 }

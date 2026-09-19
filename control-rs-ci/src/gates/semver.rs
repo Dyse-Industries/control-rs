@@ -59,7 +59,7 @@ impl QualityGate for SemverGate {
             Ok((status, duration)) => {
                 let exit_code = status.code();
 
-                // If cargo reported missing subcommand, degrade gracefully
+                // If cargo reported missing subcommand or toolchain incompatibility, degrade gracefully
                 if let Ok(content) = fs::read_to_string(&log_path) {
                     if (content.contains("no such command")
                         || content.contains("no such subcommand"))
@@ -73,6 +73,21 @@ impl QualityGate for SemverGate {
                             summary: Some(
                                 "cargo-semver-checks is uninstalled (install with: cargo install cargo-semver-checks --locked); SemVer check skipped (degraded)"
                                     .to_string(),
+                            ),
+                            log_file: "semver.log".to_string(),
+                            raw_artifact: None,
+                        };
+                        let _ = outcome.save_to_dir(&ctx.out_dir)?;
+                        return Ok(outcome);
+                    }
+                    if content.contains("rustc version is not high enough") {
+                        let outcome = GateOutcome {
+                            gate: self.name().to_string(),
+                            verdict: Verdict::Warn,
+                            exit_code: None,
+                            duration_secs: duration,
+                            summary: Some(
+                                "cargo-semver-checks skipped (requires rustc >= 1.93.0)".to_string(),
                             ),
                             log_file: "semver.log".to_string(),
                             raw_artifact: None,
