@@ -48,6 +48,7 @@
 .agent/
 .claude/
 .cursor/
+.idea/workspace.xml
 
 documentation/TODO/
 documentation/**/research/*
