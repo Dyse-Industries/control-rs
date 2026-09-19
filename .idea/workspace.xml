@@ -25,7 +25,13 @@
       <package file="$PROJECT_DIR$/control-rs-ets">
         <feature name="default" enabled="true" />
       </package>
+      <package file="$PROJECT_DIR$/control-rs-ets-host">
+        <feature name="default" enabled="true" />
+      </package>
       <package file="$PROJECT_DIR$/control-rs-macros">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/control-rs-tui">
         <feature name="default" enabled="true" />
       </package>
       <package file="$PROJECT_DIR$/control-rs-xtask">
@@ -34,15 +40,7 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="8be7cc75-fd28-41ef-96aa-10e81e42224f" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/Cargo.toml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/README.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/src/bridge.rs" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/src/error.rs" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/src/lib.rs" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/src/runner.rs" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/src/target.rs" afterDir="false" />
-    </list>
+    <list default="true" id="8be7cc75-fd28-41ef-96aa-10e81e42224f" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -80,61 +78,61 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.3649765829363738" />
-      <entry key="MS500" value="3.3884165988965456" />
-      <entry key="S2" value="7.432862208033755" />
-      <entry key="S5" value="14.790041904723068" />
-      <entry key="S10" value="23.455834579120687" />
-      <entry key="S30" value="36.47785253922126" />
-      <entry key="S60" value="41.650899468644795" />
-      <entry key="M2" value="45.686219796801865" />
-      <entry key="M5" value="67.00329755933029" />
-      <entry key="M10" value="111.97619390720426" />
-      <entry key="M15" value="150.5936603951661" />
-      <entry key="M30" value="242.9333453935989" />
-      <entry key="H1" value="379.6246877376448" />
-      <entry key="H2" value="543.6377520172152" />
-      <entry key="H4" value="702.6680129318968" />
-      <entry key="D1" value="1219.5162581689779" />
-      <entry key="W1" value="4078.9928441170327" />
+      <entry key="MS100" value="1.6217261782591346" />
+      <entry key="MS500" value="5.0698448867616195" />
+      <entry key="S2" value="10.554655000677258" />
+      <entry key="S5" value="15.166930384198366" />
+      <entry key="S10" value="20.32645327444528" />
+      <entry key="S30" value="27.820886057375194" />
+      <entry key="S60" value="32.14204287673819" />
+      <entry key="M2" value="46.372180276473955" />
+      <entry key="M5" value="95.74065557236194" />
+      <entry key="M10" value="159.8049899462602" />
+      <entry key="M15" value="209.03317312164725" />
+      <entry key="M30" value="317.60920054034295" />
+      <entry key="H1" value="467.4709049775331" />
+      <entry key="H2" value="643.1555654096986" />
+      <entry key="H4" value="811.8541140535954" />
+      <entry key="D1" value="1340.8131356119136" />
+      <entry key="W1" value="4202.835120836729" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
       <entry key="MS500" value="0.0" />
       <entry key="S2" value="0.0" />
-      <entry key="S5" value="1.465816664038672E-260" />
-      <entry key="S10" value="1.2107091574935178E-130" />
-      <entry key="S30" value="4.947053525692451E-44" />
-      <entry key="S60" value="2.224284508476302E-22" />
-      <entry key="M2" value="1.5075802459391463E-11" />
-      <entry key="M5" value="6.253948487941939E-5" />
-      <entry key="M10" value="0.014954007551709158" />
-      <entry key="M15" value="0.10438336748784603" />
-      <entry key="M30" value="0.8129577903598619" />
-      <entry key="H1" value="2.444474993911258" />
-      <entry key="H2" value="4.393539598767548" />
-      <entry key="H4" value="6.1323171275578225" />
-      <entry key="D1" value="10.67104075345277" />
-      <entry key="W1" value="34.555457327184314" />
+      <entry key="S5" value="7.604699956671624E-288" />
+      <entry key="S10" value="2.757662045405773E-144" />
+      <entry key="S30" value="1.4023196323635535E-48" />
+      <entry key="S60" value="1.1842422180044843E-24" />
+      <entry key="M2" value="1.1000325582527585E-12" />
+      <entry key="M5" value="2.194847448399279E-5" />
+      <entry key="M10" value="0.008858957452384842" />
+      <entry key="M15" value="0.07362884427709714" />
+      <entry key="M30" value="0.6827729975688489" />
+      <entry key="H1" value="2.240215351484128" />
+      <entry key="H2" value="4.205974449011678" />
+      <entry key="H4" value="5.999991683880625" />
+      <entry key="D1" value="10.632313794851342" />
+      <entry key="W1" value="34.53751405294834" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.302628275046988" />
-      <entry key="MS500" value="3.3585075286479347" />
-      <entry key="S2" value="7.416387166666476" />
-      <entry key="S5" value="14.767910520253404" />
-      <entry key="S10" value="23.424418168928575" />
-      <entry key="S30" value="36.452883118260914" />
-      <entry key="S60" value="41.63515452427341" />
-      <entry key="M2" value="45.67690731491694" />
-      <entry key="M5" value="66.99541743439684" />
-      <entry key="M10" value="111.9828551123675" />
-      <entry key="M15" value="150.6901981311915" />
-      <entry key="M30" value="243.73974282799364" />
-      <entry key="H1" value="382.06410493389495" />
-      <entry key="H2" value="548.0278403092397" />
-      <entry key="H4" value="708.7982257692042" />
-      <entry key="D1" value="1230.1867715373053" />
-      <entry key="W1" value="4113.5479902321185" />
+      <entry key="MS100" value="1.5583578900661132" />
+      <entry key="MS500" value="5.029512386861609" />
+      <entry key="S2" value="10.532466416106569" />
+      <entry key="S5" value="15.153161027374843" />
+      <entry key="S10" value="20.316656696602227" />
+      <entry key="S30" value="27.816176257075888" />
+      <entry key="S60" value="32.13887856825314" />
+      <entry key="M2" value="46.36819297185042" />
+      <entry key="M5" value="95.73456698063637" />
+      <entry key="M10" value="159.80654282748785" />
+      <entry key="M15" value="209.09945802287197" />
+      <entry key="M30" value="318.2854353389009" />
+      <entry key="H1" value="469.7059366563276" />
+      <entry key="H2" value="647.3579525982899" />
+      <entry key="H4" value="817.8519028861355" />
+      <entry key="D1" value="1351.4448996132141" />
+      <entry key="W1" value="4237.372320356457" />
     </decayedShown>
   </component>
   <component name="OptimizeOnSaveOptions">
@@ -177,7 +175,7 @@
     "SHELLCHECK.PATH": "/Users/mitchelldscott/Library/Application Support/JetBrains/RustRover2026.1/plugins/Shell Script/shellcheck",
     "codeWithMe.voiceChat.enabledByDefault": "false",
     "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "mdsdev/pr2-1-discovery-overhaul",
+    "git-widget-placeholder": "main",
     "git.auto.fetch.suggestion.counter": "1",
     "junie.onboarding.icon.badge.shown": "true",
     "last_opened_file_path": "/Users/mitchelldscott/control-rs",
@@ -331,7 +329,7 @@
       <workItem from="1789335135406" duration="14355000" />
       <workItem from="1789402401225" duration="63502000" />
       <workItem from="1789692079655" duration="2707000" />
-      <workItem from="1789744800238" duration="15595000" />
+      <workItem from="1789744800238" duration="16051000" />
     </task>
     <servers />
   </component>
