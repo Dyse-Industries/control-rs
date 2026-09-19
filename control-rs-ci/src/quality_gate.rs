@@ -14,7 +14,7 @@ use crate::error::GateError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Verdict {
-    /// Gate succeeded completely without warnings or errors.
+    /// Gate succeeded cleanly without warnings or errors.
     Pass,
     /// Gate completed with non-blocking warnings or degraded capability.
     Warn,
@@ -27,7 +27,7 @@ pub enum Verdict {
 /// Standardized metadata record written to `<gate>.result.json` after execution.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GateOutcome {
-    /// Unique identifier / slug of the gate (e.g. "fmt", "valgrind").
+    /// Unique identifier / slug of the gate (for example, "fmt", "valgrind").
     pub gate: String,
     /// High-level verdict outcome.
     pub verdict: Verdict,
@@ -37,9 +37,9 @@ pub struct GateOutcome {
     pub duration_secs: f64,
     /// Concise human-readable summary of the gate result.
     pub summary: Option<String>,
-    /// Relative filename of the captured log output (e.g. "fmt.log").
+    /// Relative filename of the captured log output (for example, "fmt.log").
     pub log_file: String,
-    /// Optional relative filename of the raw tool JSON data (e.g. "metrics-raw.json").
+    /// Optional relative filename of the raw tool JSON data (for example, "metrics-raw.json").
     pub raw_artifact: Option<String>,
 }
 

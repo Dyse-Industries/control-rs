@@ -15,7 +15,7 @@ coordinate transformations, and embedded inference.
 Primary usage scenarios:
 
 - **Gain-Scheduled Flight Control Tables**: Evaluating N-dimensional aerodynamic
-  lookup grids (e.g., angle-of-attack, Mach number, dynamic pressure) via
+  lookup grids (for example, angle-of-attack, Mach number, dynamic pressure) via
   multilinear grid interpolation in deterministic time without dynamic
   allocation.
 - **Microcontroller Neural Network Inference**: Executing feedforward inference
@@ -360,7 +360,7 @@ is required.
   considered, but this conflates two orthogonal concerns — shape (`Layout`)
   and scalar representation (`SHIFT`) — inside one type and would require
   every existing `impl` block (`Add`, `contract_into`, conversions) to
-  thread `SHIFT` arithmetic (e.g. rescaling when contracting two tensors
+  thread `SHIFT` arithmetic (for example, rescaling when contracting two tensors
   with different shifts), a significant complexity increase to an
   already-generic type.
 - **Scalar-Level Type (selected)**: `Quantized<Repr, SHIFT>` (§4.10) makes

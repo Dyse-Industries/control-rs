@@ -264,7 +264,7 @@ No frame-rate bound is asserted. See 6.7.
 - Terminal emulator compatibility. `crossterm` is cross-platform
   [3], but only the emulators developers happen to use are
   exercised.
-- Behaviour at very large suite counts. No bound is stated on how many cases
+- Behaviour at large suite counts. No bound is stated on how many cases
   the tree can render before layout or scrolling degrades.
 - Accessibility. Screen-reader behaviour of a full-screen TUI is not
   considered.

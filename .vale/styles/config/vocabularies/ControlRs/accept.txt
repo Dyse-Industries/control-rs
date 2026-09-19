@@ -336,10 +336,13 @@ aberth
 accessor
 accessors
 acos
+anstream
+anstream's
 arccos
 arcsin
 arctan
 ardupilot
+arg
 argv
 asdf
 asin
@@ -348,6 +351,7 @@ asum
 async
 atan
 auditable
+autodiscover
 autonomy
 autoscroll
 axpy

@@ -9,10 +9,10 @@ use anstyle::AnsiColor;
 /// Cargo status-line width: right-aligned 12-char verb.
 pub const CARGO_STATUS_WIDTH: usize = 12;
 
-/// Cargo status `HEADER`: bright green bold verb (e.g. `Running`, `Finished`, `Writing`).
+/// Cargo status `HEADER`: bright green bold verb (for example, `Running`, `Finished`, `Writing`).
 pub const HEADER: anstyle::Style = AnsiColor::BrightGreen.on_default().bold();
 
-/// Cargo status `STATUS_INFO`: cyan bold verb (e.g. `Skipping`, `Listing`).
+/// Cargo status `STATUS_INFO`: cyan bold verb (for example, `Skipping`, `Listing`).
 pub const STATUS_INFO: anstyle::Style = AnsiColor::Cyan.on_default().bold();
 
 /// Cargo `WARNING`: bright yellow bold diagnostic prefix / status verb.
@@ -54,7 +54,7 @@ pub fn format_status(status: &str, msg: impl fmt::Display) -> String {
     format!("{status:>CARGO_STATUS_WIDTH$} {msg}")
 }
 
-/// Prints a cargo-style green status line to stderr (e.g. `     Running gate`).
+/// Prints a cargo-style green status line to stderr (for example, `     Running gate`).
 pub fn status(status_verb: &str, msg: impl fmt::Display) {
     init_color();
     anstream::eprintln!(

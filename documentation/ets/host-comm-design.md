@@ -157,7 +157,7 @@ pub trait HostComms {
 ```
 
 The associated type `Error` allows concrete drivers to bubble up
-hardware-specific failures (e.g., framing errors, overflow flags, socket
+hardware-specific failures (for example, framing errors, overflow flags, socket
 disconnects) to the calling Server loop.
 
 #### 4.2. Command Schema & Binary Serialization
@@ -515,6 +515,6 @@ Available: https://postcard.jamesmunns.com/wire-format. Accessed: Sep. 9, 2026.
 [Online]. Available: https://serde.rs/enum-representations.html. Accessed:
 Sep. 9, 2026.
 
-[3] crc-rs contributors, *crc*: Rust implementation of CRC with support of
-various standards. [Online]. Available: https://docs.rs/crc. Accessed:
+[3] crc-rs contributors, "*crc*: Rust implementation of CRC with support of
+various standards." [Online]. Available: https://docs.rs/crc. Accessed:
 Sep. 9, 2026.

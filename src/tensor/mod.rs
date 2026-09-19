@@ -854,7 +854,7 @@ impl<T: Float + Copy> Activation<T> for Relu {
     }
 }
 
-/// Piecewise-linear table-driven activation function (e.g. sigmoid or tanh).
+/// Piecewise-linear table-driven activation function (for example, sigmoid or tanh).
 #[derive(Debug, Clone, Copy)]
 pub struct TableActivation<T, const N: usize> {
     /// Ordered breakpoint locations.

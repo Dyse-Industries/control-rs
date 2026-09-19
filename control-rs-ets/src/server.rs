@@ -176,7 +176,7 @@ pub struct TestIndexIndicator {
 impl<C: HostComms, P> Context<C, P> {
     /// Flushes comms safely by acquiring the comms lock first.
     ///
-    /// If the lock is already held (e.g., by a panic handler or an interrupt), this method returns `Ok(false)`
+    /// If the lock is already held (for example, by a panic handler or an interrupt), this method returns `Ok(false)`
     /// immediately to avoid reentrancy deadlock or state corruption.
     ///
     /// # Returns

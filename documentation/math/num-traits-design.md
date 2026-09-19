@@ -450,7 +450,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
    future `SafeDiv` needs its own answer for custom scalar types, since it
    cannot rely on `core::num::NonZero<T>` covering them.
 4. **Evolution of `const fn` Traits**: When Rust stabilizes `const_trait_impl`,
-   associated trait functions (e.g., `is_zero()`) can be made `const fn`,
+   associated trait functions (for example, `is_zero()`) can be made `const fn`,
    expanding compile-time evaluation capabilities. As of the 2025H1 Rust
    Project Goals, "the compiler now has a promising implementation of const
    traits ... [but] the feature is still firmly in experimental territory:
@@ -461,7 +461,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
    not implement `Float`, `Signed`, `Radical`, `Trig`, or `Exponential`
    (FR-5, Alternative 7).
 6. **Const-traits citation**: `documentation/math/research/num-traits.bib`
-   contains `scherer2025` (2025H1 URL). Inline cite and [10] remain at
+   contains `scherer2025` (2025H1 web address). Inline cite and [10] remain at
    (Scherer, 2025).
 
 ---

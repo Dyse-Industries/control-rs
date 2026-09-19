@@ -26,7 +26,7 @@
 //! // Calling gemv and attempting to handle it as a Result fails to compile because gemv returns ()
 //! let _res: Result<(), ()> = DefaultBlas::gemv(Trans::NoTrans, 1.0, &a, &x, 0.0, &mut y);
 //! ```
-// Conventional single-character argument names are standard and accepted for BLAS/LAPACK subprograms (e.g. m, n, k, A, B, C, x, y).
+// Conventional single-character argument names are standard and accepted for BLAS/LAPACK subprograms (for example, m, n, k, A, B, C, x, y).
 #![allow(clippy::many_single_char_names)]
 // Direct matrix/vector indexing using brackets (slice[idx]) is used throughout this file for optimal memory layout access, bypassing bounds check branches in performance-critical BLAS loops.
 #![allow(clippy::indexing_slicing)]
@@ -34,7 +34,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 // BLAS/LAPACK routines naturally require many arguments (exceeding clippy's default limit of 4), conforming to standard BLAS/LAPACK APIs.
 #![allow(clippy::too_many_arguments)]
-// Parameter names matching BLAS standards (e.g., lda, ldb, trans_a, trans_b) look similar but are standard.
+// Parameter names matching BLAS standards (for example, lda, ldb, trans_a, trans_b) look similar but are standard.
 #![allow(clippy::similar_names)]
 // Subprogram traits and implementations are grouped logically by BLAS Level 1/2/3 and LAPACK, rather than alphabetically.
 #![allow(clippy::arbitrary_source_item_ordering)]

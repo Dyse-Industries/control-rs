@@ -51,7 +51,7 @@ active, passing test evidence.
   per-requirement verification statuses, broken link locations, and coverage
   percentages.
 - **FR-7 — Deterministic Gate Exit Status**: The auditor binary must return an
-  exit code of `0` when all requirements meet policy (e.g. 100% verified, zero
+  exit code of `0` when all requirements meet policy (for example, 100% verified, zero
   broken links) and non-zero on any unverified requirement, broken link, or test
   failure, enabling integration as a blocking CI gate (OpenFastTrace, 2026b;
   Doorstop, 2026a).

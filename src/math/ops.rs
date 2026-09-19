@@ -18,7 +18,7 @@ pub trait TryAdd<Rhs = Self>: Sized + Add<Rhs> {
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
     ///   representable range of the type.
     /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
-    ///   given inputs (e.g., adding to a `NaN` floating-point number).
+    ///   given inputs (for example, adding to a `NaN` floating-point number).
     #[allow(clippy::type_complexity)]
     fn try_add(&self, v: &Rhs) -> ArithmeticResult<Self::Output>;
 }
@@ -31,7 +31,7 @@ pub trait TrySub<Rhs = Self>: Sized + Sub<Rhs> {
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
     ///   representable range of the type.
     /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
-    ///   given inputs (e.g., subtracting a `NaN` floating-point number).
+    ///   given inputs (for example, subtracting a `NaN` floating-point number).
     #[allow(clippy::type_complexity)]
     fn try_sub(&self, v: &Rhs) -> ArithmeticResult<Self::Output>;
 }
@@ -44,7 +44,7 @@ pub trait TryMul<Rhs = Self>: Sized + Mul<Rhs> {
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
     ///   representable range of the type.
     /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
-    ///   given inputs (e.g., multiplying by a `NaN` floating-point number).
+    ///   given inputs (for example, multiplying by a `NaN` floating-point number).
     #[allow(clippy::type_complexity)]
     fn try_mul(&self, v: &Rhs) -> ArithmeticResult<Self::Output>;
 }
@@ -56,9 +56,9 @@ pub trait TryDiv<Rhs = Self>: Sized + Div<Rhs> {
     /// # Errors
     /// - `ArithmeticError::DivisionByZero`: The divisor `v` is zero.
     /// - `ArithmeticError::Overflow`: The result exceeded the maximum
-    ///   representable range (e.g., `i32::MIN / -1`).
+    ///   representable range (for example, `i32::MIN / -1`).
     /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
-    ///   given inputs (e.g., dividing by a `NaN` floating-point number).
+    ///   given inputs (for example, dividing by a `NaN` floating-point number).
     #[allow(clippy::type_complexity)]
     fn try_div(&self, v: &Rhs) -> ArithmeticResult<Self::Output>;
 }
@@ -68,7 +68,7 @@ pub trait TryNeg: Sized + Neg {
     /// Negates a number, returning an error on failure.
     ///
     /// # Errors
-    /// - `ArithmeticError::Overflow`: The result cannot be represented (e.g., `-i32::MIN`).
+    /// - `ArithmeticError::Overflow`: The result cannot be represented (for example, `-i32::MIN`).
     #[allow(clippy::type_complexity)]
     fn try_neg(&self) -> ArithmeticResult<Self::Output>;
 }
@@ -80,9 +80,9 @@ pub trait TryRem<Rhs = Self>: Sized + Rem<Rhs> {
     /// # Errors
     ///
     /// - `ArithmeticError::DivisionByZero`: The divisor `v` is zero.
-    /// - `ArithmeticError::Overflow`: The operation overflows (e.g., `i32::MIN % -1`).
+    /// - `ArithmeticError::Overflow`: The operation overflows (for example, `i32::MIN % -1`).
     /// - `ArithmeticError::DomainViolation`: The operation is invalid for the
-    ///   given inputs (e.g., involving a `NaN` floating-point number).
+    ///   given inputs (for example, involving a `NaN` floating-point number).
     #[allow(clippy::type_complexity)]
     fn try_rem(&self, v: &Rhs) -> ArithmeticResult<Self::Output>;
 }

@@ -331,7 +331,7 @@ than by coverage of the generator; and `trybuild` fixtures, which are inputs.
 
 ### 8. Risks & Open Questions
 
-* **Linker Target Differences**: Different targets (e.g., MSP430 or custom
+* **Linker Target Differences**: Different targets (for example, MSP430 or custom
   architectures) might require variations of the linker script arguments. The
   build script must detect the target architecture and adapt the link flags
   accordingly.

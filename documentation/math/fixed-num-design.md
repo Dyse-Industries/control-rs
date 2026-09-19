@@ -50,7 +50,7 @@ fixed quantization step $\Delta = 2^{-\text{SHIFT}}$ (ARM, 1996; Spiteri,
 - **NFR-1 — Single-Word Footprint**: `Fixed<Repr, SHIFT>` has the size
   and alignment of `Repr`. `SHIFT` occupies no storage.
 - **NFR-2 — Zero-Cost Arithmetic**: Each operator compiles to the integer
-  instructions a hand-scaled `Repr` implementation would emit. There is no
+  instructions a hand-scaled `Repr` implementation would emit. No
   runtime scale bookkeeping and no call trampoline.
 
 #### 2.3 Constraints
@@ -344,7 +344,7 @@ guaranteeing compile-time validity while removing panicking assertions.
 
 ##### DSP Interchange Formats vs. Computational Scalars
 
-Canonical DSP interchange formats (e.g. Q15 with $n=16, \text{SHIFT}=15$) span
+Canonical DSP interchange formats (for example, Q15 with $n=16, \text{SHIFT}=15$) span
 $[-1.0, 1.0)$, where the maximum representable value
 is $(2^{15}-1)/2^{15} \approx 0.999969$.
 Because $1.0$ cannot be represented, Q15 implements `Zero` and `Conjugate`, but
@@ -432,7 +432,7 @@ pub type UQ63 = Fixed<u64, 63>;
     - _Rejected_: That bound encoding predates stable integer const generics
       and carries the scale itself as a type parameter, which appears on
       every signature that mentions the format. Const generics combined with
-      the `DimMax` trait (e.g. `Const<SHIFT>: DimMax<Limit, Output = Limit>`)
+      the `DimMax` trait (for example, `Const<SHIFT>: DimMax<Limit, Output = Limit>`)
       bridge the const generic directly to type-level dimension checking without
       requiring an extra type parameter or new traits.
 3. **Same-Width Multiply**:

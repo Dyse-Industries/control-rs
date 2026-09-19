@@ -29,7 +29,7 @@ low-complexity design principle**:
 - **Lightweight Built-In Extraction & Zero-Parsing Custom Gates**: The report
   aggregator (`control-rs-ci report`) performs lightweight, low-effort
   extraction
-  on known built-in tool JSONs (e.g., line counts from `metrics`, coverage %
+  on known built-in tool JSONs (for example, line counts from `metrics`, coverage %
   from
   `tarpaulin`, leak counts from `valgrind`, unsafe counts from `geiger`), while
   custom gates require **zero parsing**—reporting purely their verdict,
@@ -115,7 +115,7 @@ gates integrate seamlessly without custom parsers.
   execute Vale across documentation and doc comments, saving raw Vale JSON to
   `vale-raw.json`, streaming output to `vale.log`, and gracefully degrading
   (FR-7) when Vale is uninstalled.
-- **FR-17 — Supply-Chain & Advisory Security Gating (`deny`)**: The runner must
+- **FR-17 — Supply Chain & Advisory Security Gating (`deny`)**: The runner must
   execute `cargo-deny` against `deny.toml` to audit software licenses and
   RUSTSEC advisories, writing output to `deny.log` and recording
   `deny.result.json`.
@@ -312,7 +312,7 @@ The gate execution model follows a **zero-overhead process runner pattern**:
 - **Log Redirection**: Every gate redirects `stdout` and `stderr` directly into
   its dedicated log file (`target/ci-artifacts/<gate>.log`). Gates do not parse
   or reformat CLI log streams.
-- **Native Raw Dumps**: Tools that output JSON or data files (e.g., `tarpaulin`,
+- **Native Raw Dumps**: Tools that output JSON or data files (for example, `tarpaulin`,
   `metrics`, `geiger`, `valgrind`, `vale`) write their native output directly to
   `target/ci-artifacts/<gate>-raw.json` in whatever structure the tool natively
   emits.
@@ -498,7 +498,7 @@ When changes merge to `main`, `.github/workflows/release.yml` invokes
    (`control-rs-ets` $\to$ `control-rs-macros` $\to$ `control-rs` $\to$
    `control-rs-ets-host` $\to$ `control-rs-tui` $\to$ `control-rs-ci`).
 3. **Branch-per-Version Preservation**: Automatically creates and pushes
-   immutable Git branches `release/vX.Y.Z` (e.g., `release/v0.1.0`) to origin
+   immutable Git branches `release/vX.Y.Z` (for example, `release/v0.1.0`) to origin
    for audit baselines and historical maintenance.
 4. **GitHub Release Assets**: Bundles pre-compiled host CLI binaries
    (`control-rs-ci`, `control-rs-tui`), SHA-256 checksums, and validation
@@ -530,7 +530,7 @@ When changes merge to `main`, `.github/workflows/release.yml` invokes
 | `test`    | Lightweight Built-In Extraction Tests | Verifies direct, safe extraction from `tarpaulin-raw.json`, `metrics-raw.json`, `valgrind-raw.json`, `geiger-raw.json`.  |
 | `test`    | Custom Gate Zero-Parsing Tests        | Verifies that custom commands are reported accurately with logs attached and zero custom parsing overhead.               |
 | `test`    | Project Codebase Metrics Scanner      | Accurately counts source, comment, blank, and total lines by file type, and calculates directory byte footprints.        |
-| `test`    | Git Hygiene & Commit Message Linter   | Detects dirty working tree state and rejects non-compliant or sloppy commit messages (e.g., "wip", "asdf").              |
+| `test`    | Git Hygiene & Commit Message Linter   | Detects dirty working tree state and rejects non-compliant or sloppy commit messages (for example, "wip", "asdf").              |
 | `test`    | Vale Prose Linter Dispatch            | Invocations capture output to `vale.log` and degrade gracefully when Vale is uninstalled.                                |
 | `test`    | Supply Chain & Advisory Gating        | Executes `cargo-deny` with `deny.toml` policy and logs licensing and security advisory records.                          |
 | `test`    | Memory Safety & Geiger Scanner        | Accurately writes `geiger-raw.json` and enforces `max_unsafe_blocks` bounds.                                             |
@@ -625,7 +625,7 @@ When changes merge to `main`, `.github/workflows/release.yml` invokes
 | 1.8      | September 19, 2026 | @MitchellDScott | Decoupled domain-specific gates: extracted requirement traceability and differential cross-validation to standalone design docs, and generalized `control-rs-ci` for user-defined custom gates.                                 |
 | 1.9      | September 19, 2026 | @MitchellDScott | Added built-in project codebase metrics gating (line counts by type, directory byte footprints) and repository git hygiene gating (working tree status, commit message validation).                                             |
 | 1.10     | September 19, 2026 | @MitchellDScott | Added built-in prose and documentation style linting gate (`ValeGate`, FR-16) for automated `.vale.ini` rule enforcement and report generation (`vale-report.json`).                                                            |
-| 1.11     | September 19, 2026 | @MitchellDScott | Added built-in safety-critical quality gates: supply-chain licensing (`DenyGate`, FR-17), memory safety surface (`GeigerGate`, FR-18), API SemVer stability (`SemverGate`, FR-19), and mutation testing (`MutantsGate`, FR-20). |
+| 1.11     | September 19, 2026 | @MitchellDScott | Added built-in safety-critical quality gates: supply chain licensing (`DenyGate`, FR-17), memory safety surface (`GeigerGate`, FR-18), API SemVer stability (`SemverGate`, FR-19), and mutation testing (`MutantsGate`, FR-20). |
 | 1.12     | September 19, 2026 | @MitchellDScott | Added built-in runtime memory safety and leak checking gate (`ValgrindGate`, FR-21) for host binaries and workspace examples (`valgrind-report.json`).                                                                          |
 | 1.13     | September 19, 2026 | @MitchellDScott | Decoupled gating and reporting: established standardized `GateReport` uniform envelope contract and gate-agnostic report aggregation with zero per-tool parsers in the report binary.                                           |
 | 1.14     | September 19, 2026 | @MitchellDScott | Minimal-parsing architecture: gates dump native tool JSON and redirect stdout/stderr to `<gate>.log`; report performs lightweight extraction for built-ins and zero parsing for custom gates.                                   |

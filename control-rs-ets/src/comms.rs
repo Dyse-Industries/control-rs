@@ -105,7 +105,7 @@ pub trait HostComms {
     /// The error type associated with transport failures.
     type Error;
 
-    /// Closes the communication interface (e.g. signaling semihosting exit).
+    /// Closes the communication interface (for example, signaling semihosting exit).
     fn close(&mut self) {}
 
     /// Closes the communication interface with a failure/error status.
@@ -272,7 +272,7 @@ pub enum Telemetry<'a> {
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
 )]
 pub enum TestState {
-    /// Test execution failed (e.g. panic or assertion failure).
+    /// Test execution failed (for example, panic or assertion failure).
     Failed,
     /// Test completed successfully.
     Passed,
@@ -697,7 +697,7 @@ mod tests {
         assert!(reader.handle_byte(0x00).is_none());
         assert!(reader.is_idle()); // should reset since len = 0 is invalid
 
-        // Send length > MAX_PAYLOAD_SIZE (e.g. 513 = MSB=2, LSB=1)
+        // Send length > MAX_PAYLOAD_SIZE (for example, 513 = MSB=2, LSB=1)
         assert!(reader.handle_byte(START_BYTE_1).is_none());
         assert!(reader.handle_byte(START_BYTE_2).is_none());
         assert!(reader.handle_byte(0x02).is_none());

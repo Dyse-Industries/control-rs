@@ -1,7 +1,7 @@
 //! Structural specializations.
 //!
 //! New-type wrappers around [`Owned`] enforcing a mathematical invariant, so
-//! callers who hold one of these types get a statically-known guarantee
+//! callers who hold one of these types get a statically known guarantee
 //! (upper/lower triangular, symmetric) instead of re-checking it. A full
 //! square matrix is wrapped (not a packed triangular layout) — this trades
 //! memory space for cache-friendly, slice-compatible storage
@@ -14,7 +14,7 @@
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
     // `l_ii`/`l_ij`/`u_ii`/`u_ij` below are standard linear-algebra index
-    // notation, not accidentally-similar English words.
+    // notation, not accidentally similar English words.
     clippy::similar_names
 )]
 
@@ -78,7 +78,7 @@ where
 
     /// Wraps `m` without validating the upper-triangular invariant.
     /// Crate-internal: only for decomposition code that has just produced a
-    /// provably upper-triangular result (e.g. `QrDecomposition`'s `R`
+    /// provably upper-triangular result (for example, `QrDecomposition`'s `R`
     /// factor), where re-validating via `from_owned`'s `T::epsilon()` scan
     /// would be redundant.
     pub(super) const fn from_owned_unchecked(m: Owned<T, D, D>) -> Self {
@@ -119,7 +119,7 @@ where
 
     /// Wraps `m` without validating the lower-triangular invariant.
     /// Crate-internal: only for decomposition code that has just produced a
-    /// provably lower-triangular result (e.g. `CholeskyDecomposition`'s `L`
+    /// provably lower-triangular result (for example, `CholeskyDecomposition`'s `L`
     /// factor), where re-validating via `from_owned`'s `T::epsilon()` scan
     /// would be redundant.
     pub(super) const fn from_owned_unchecked(m: Owned<T, D, D>) -> Self {

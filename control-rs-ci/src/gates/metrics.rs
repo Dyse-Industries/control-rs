@@ -41,7 +41,7 @@ pub struct DirectoryFootprint {
 pub struct MetricsReport {
     /// Aggregate line metrics across all scanned files.
     pub total_lines: LineCounts,
-    /// Detailed line breakdown by file extension (e.g. "rs", "md", "toml").
+    /// Detailed line breakdown by file extension (for example, "rs", "md", "toml").
     pub by_extension: BTreeMap<String, LineCounts>,
     /// Directory size footprints by relative directory path.
     pub directories: BTreeMap<String, DirectoryFootprint>,

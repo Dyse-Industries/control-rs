@@ -1,4 +1,4 @@
-//! Supply-chain security and advisory audit gate using cargo-deny.
+//! Supply chain security and advisory audit gate using cargo-deny.
 
 use std::fs::{self, File};
 use std::io::Write;
@@ -8,7 +8,7 @@ use std::time::Instant;
 use crate::error::GateError;
 use crate::quality_gate::{GateContext, GateOutcome, QualityGate, Verdict};
 
-/// Built-in supply-chain security and license audit gate.
+/// Built-in supply chain security and license audit gate.
 #[derive(Debug, Clone, Default)]
 pub struct DenyGate;
 

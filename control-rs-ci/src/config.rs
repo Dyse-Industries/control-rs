@@ -87,7 +87,7 @@ pub struct GitConfig {
     /// If true, commit messages on branch must follow Conventional Commits.
     #[serde(default = "default_true")]
     pub enforce_conventional_commits: bool,
-    /// Disallowed commit summary substrings (e.g. "wip", "temp").
+    /// Disallowed commit summary substrings (for example, "wip", "temp").
     #[serde(default)]
     pub disallowed_patterns: Vec<String>,
     /// Maximum character length for commit subject lines.
@@ -179,13 +179,13 @@ pub struct MutantsConfig {
     pub timeout_multiplier: f64,
     /// Number of concurrent cargo build/test jobs (defaults to available logical cores).
     pub jobs: Option<usize>,
-    /// Globs for files or paths to exclude from mutation (e.g. tests, examples, benches).
+    /// Globs for files or paths to exclude from mutation (for example, tests, examples, benches).
     #[serde(default = "default_mutants_exclude")]
     pub exclude: Vec<String>,
     /// Regex pattern for mutations to exclude.
     #[serde(default = "default_mutants_exclude_re")]
     pub exclude_re: Option<String>,
-    /// File globs to examine for mutation (e.g. `src/**`).
+    /// File globs to examine for mutation (for example, `src/**`).
     #[serde(default = "default_mutants_files")]
     pub files: Vec<String>,
 }
@@ -225,7 +225,7 @@ impl Default for MutantsConfig {
 /// Valgrind Memcheck gate settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValgrindConfig {
-    /// Leak check level (e.g. "full").
+    /// Leak check level (for example, "full").
     #[serde(default = "default_leak_check")]
     pub leak_check: String,
     /// Exit status returned on memory leak or error.
@@ -264,7 +264,7 @@ pub struct GateConfig {
     /// General runner configuration.
     #[serde(default)]
     pub runner: RunnerConfig,
-    /// Execution policies mapped by gate name (e.g. `fmt = "fail"`).
+    /// Execution policies mapped by gate name (for example, `fmt = "fail"`).
     #[serde(default)]
     pub gates: HashMap<String, GatePolicy>,
     /// Codebase metrics settings.

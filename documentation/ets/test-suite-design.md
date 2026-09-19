@@ -315,7 +315,7 @@ Interactive testing sessions follow a strict state-machine flow:
   features [6], neither of which is viable on bare metal.
 * **`linkme::DistributedSlice`**: Rejected for composite suite descriptors.
   `linkme` [1] is designed for flat, homogeneous slices. Adopting it would force
-  splitting `SuiteDescriptor` into separate independently-registered slices for
+  splitting `SuiteDescriptor` into separate independently registered slices for
   tests and settings that require reconciliation at runtime. It also inherits
   cross-crate discard risks ([2], [3]), which the explicit linker script and
   `KEEP` directive defined in §4.1 resolve directly.
@@ -422,8 +422,8 @@ descriptor statics, which are data.
 * **ROM/RAM Overhead**: To operate within the 32 KB Flash and 8 KB RAM budget,
   the target Server utilizes zero heap allocations and avoids unnecessary string
   formatting on-device. All descriptors reside strictly in Flash.
-* **Atomic Ordering**: Setting telemetry uses `Ordering::Relaxed` to completely
-  bypass ARM memory barrier instructions (`DMB`/`DSB`), which can take multiple
+* **Atomic Ordering**: Setting telemetry uses `Ordering::Relaxed` to bypass
+  ARM memory barrier instructions (`DMB`/`DSB`), which can take multiple
   clock cycles.
 * **Critical Sections**: On ARMv6-M architectures, software-emulated CAS
   operations disable interrupts. Developers must minimize the frequency of
@@ -464,7 +464,7 @@ descriptor statics, which are data.
 | **Step 1: Core Structs & Traits**           | Define `SuiteDescriptor`, `Setting` trait and type-safe atomic settings wrappers.                                 | 0.5 days         |
 | **Step 2: Linker Script & Injection**       | Develop the `build.rs` script to generate the custom `ets_suites.x` script fragment containing `KEEP` directives. | 0.5 days         |
 | **Step 3: Target Server State Machine**     | Implement the on-target Server's state machine, timestamp-based lifecycle tracking and panic handlers.            | 0.5 days         |
-| **Step 4: Host-Side ELF Discovery** | Implement ELF section parsing (using `goblin`/`elf`) inside `control-rs-ets-host` to auto-discover suites.             | 0.5 days         |
+| **Step 4: Host-Side ELF Discovery** | Implement ELF section parsing (using `goblin`/`elf`) inside `control-rs-ets-host` to autodiscover suites.             | 0.5 days         |
 
 ---
 

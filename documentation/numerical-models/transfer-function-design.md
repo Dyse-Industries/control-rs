@@ -629,7 +629,7 @@ coefficient error assertion |
 - **Canonical Form Scope**: Controllable/observable canonical form (§4.10) is
   numerically fragile above low system order (Kenney & Laub, 1988; Yang & Jones,
   2026). Balanced or modal realization is identified as the
-  numerically-preferred alternative used by reference implementations but is not
+  numerically preferred alternative used by reference implementations but is not
   implemented.
 - **Compensated Horner Evaluation**: Near-pole frequency-response evaluation (
   §4.7) is documented as inherently ill-conditioned rather than compensated. If
@@ -651,7 +651,7 @@ coefficient error assertion |
 | **Phase 1: Storage Wrapper & Constructors** | Base `TransferFunction` struct, storage traits, slice accessors and error type.                                                                                                                                   | 1.0 Day          |
 | **Phase 2: Frequency Evaluation**           | Direct Horner evaluation over storage for $H(j\omega)$ and Bode calculations.                                                                                                                                     | 1.0 Day          |
 | **Phase 3: Algebra & DSP Convolution**      | Implement series, parallel and feedback connections using direct DSP convolution.                                                                                                                                 | 1.5 Days         |
-| **Phase 4: Discretization**                 | Bilinear (Tustin, with pre-warping) transform and transfer-function-direct ZOH, including partial-fraction decomposition (§8's closely-spaced/repeated-pole conditioning risk must be bounded, not assumed away). | 2.5 Days         |
+| **Phase 4: Discretization**                 | Bilinear (Tustin, with pre-warping) transform and transfer-function-direct ZOH, including partial-fraction decomposition (§8's closely spaced/repeated-pole conditioning risk must be bounded, not assumed away). | 2.5 Days         |
 | **Phase 5: State-Space Conversion**         | Controllable and Observable Canonical Form conversions.                                                                                                                                                           | 1.5 Days         |
 | **Phase 6: Verification Suite**             | Unit tests, `proptest` suites and cross-validation against two external reference implementations (MATLAB, `python-control`) per [`vv-standards.md`](../vv-standards.md).                                         | 2.0 Days         |
 

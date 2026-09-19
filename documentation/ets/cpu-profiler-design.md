@@ -187,7 +187,7 @@ impl CPUProfiler for CortexMProfiler {
 }
 ```
 
-`reset()` performs a host-commanded warm reboot (e.g. `Command::TryReset`).
+`reset()` performs a host-commanded warm reboot (for example, `Command::TryReset`).
 Crash recovery does not use it: ETS's panic path relies on watchdog
 starvation for a hard reset, since a soft `SCB` reset leaves peripherals and
 active DMA running (see `embedded-test-server-design.md` §4.4).
@@ -229,7 +229,7 @@ active DMA running (see `embedded-test-server-design.md` §4.4).
   `disable_interrupts<F, R>` and allows shared implementations across Cortex-M
   and RISC-V.
 * **External GPIO pin toggling**: Rejected for automated test telemetry. Toggling
-  hardware pins allows external instrumentation (e.g. logic analyzers) to measure
+  hardware pins allows external instrumentation (for example, logic analyzers) to measure
   timings, but requires dedicated physical I/O and host capture hardware,
   precluding headless CI and QEMU execution.
 * **Dynamic heap and multicore profiling**: Deferred as non-goals for single-core

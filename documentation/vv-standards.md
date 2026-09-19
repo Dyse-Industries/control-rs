@@ -89,8 +89,8 @@ is not an acceptance criterion.
 |:--------|:---------|
 | Exact equality | Integer, fixed-point exact operations and structural results (shape, rank, index, ordering). |
 | Absolute error | The expected magnitude is known and bounded away from zero. |
-| Relative error | The result spans several orders of magnitude. |
-| ULP distance | Comparing against a correctly-rounded reference [10]. |
+| Relative error | The result spans multiple orders of magnitude. |
+| ULP distance | Comparing against a correctly rounded reference [10]. |
 | Residual test ratio | Factorizations, solves and eigenproblems (§4.2). |
 
 For floating-point comparison in Rust, `approx` supplies `abs_diff_eq!`,

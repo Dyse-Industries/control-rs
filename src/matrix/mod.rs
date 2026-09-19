@@ -10,7 +10,7 @@
 //! array, borrowed view). Arithmetic operators and decompositions read
 //! elements through [`Storage::get_unchecked`]/[`StorageMut::get_unchecked_mut`]
 //! rather than assuming a fixed physical layout, so mixed-layout operands
-//! (e.g. one side a [`Matrix::transpose_view`]) are handled correctly with
+//! (for example, one side a [`Matrix::transpose_view`]) are handled correctly with
 //! no special-casing.
 //!
 //! Dimension mismatches fail at compile time:
@@ -548,7 +548,7 @@ where
 // Operators
 //
 // Implemented for `&Matrix` (matching every worked example in
-// `matrix-design.md`, e.g. `&diff * p_pred`), not for owned `Matrix`, so
+// `matrix-design.md`, for example, `&diff * p_pred`), not for owned `Matrix`, so
 // arithmetic never has to move a potentially large (up to 63KB, C-3) stack
 // matrix. Delegated directly to canonical BLAS Level 1/3 subprogram kernels
 // ([`DefaultBlas`]), ensuring zero-overhead compilation while enabling

@@ -103,7 +103,7 @@ impl core::error::Error for RootError {}
 /// Alias for backwards compatibility with earlier quadratic root solving API.
 pub type QuadraticRootError = RootError;
 
-/// Statically-typed polynomial over coefficient storage backend `S`.
+/// Statically typed polynomial over coefficient storage backend `S`.
 ///
 /// `N` represents the maximum coefficient capacity (maximum degree $N - 1$).
 /// `S` is the underlying storage backend.

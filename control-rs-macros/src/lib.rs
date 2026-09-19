@@ -49,7 +49,7 @@ fn extract_doc_string(attrs: &[syn::Attribute]) -> String {
 /// Checks if a given `syn::Type` is a supported primitive setting.
 /// Returns the corresponding Atomic wrapper type name if matched.
 fn get_atomic_wrapper_name(ty: &syn::Type) -> Option<&'static str> {
-    // Ensure the type is a standard path (e.g., `u8` or `std::primitive::u8`)
+    // Ensure the type is a standard path (for example, `u8` or `std::primitive::u8`)
     let path = match ty {
         syn::Type::Path(type_path) if type_path.qself.is_none() => {
             &type_path.path

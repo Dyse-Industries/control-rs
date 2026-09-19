@@ -9,7 +9,7 @@
 This document outlines the suggested order and estimated time for implementing
 the features described in the design documents.
 
-Status (September 9, 2026): items 1–5 are substantially shipped: the
+Status (September 9, 2026): items 1–5 are shipped: the
 `CPUProfiler` trait and target implementations, the `HostComms` framing and
 postcard schemas (`control-rs-ets/src/comms.rs`), the `SuiteDescriptor` linker
 mechanics, the `.ets_test_suites` discovery macros and the host-side

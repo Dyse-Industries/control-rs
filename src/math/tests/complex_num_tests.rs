@@ -111,7 +111,7 @@ pub mod complex_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies square root calculations for complex edge cases (e.g. zero, negative real parts).
+    /// Verifies square root calculations for complex edge cases (for example, zero, negative real parts).
     fn test_complex_square_root_edge_cases() {
         // Covers self.is_zero() early return
         let z = Complex::<f64>::zero();
@@ -127,7 +127,7 @@ pub mod complex_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies complex power calculations for special exponents (e.g. zero, one).
+    /// Verifies complex power calculations for special exponents (for example, zero, one).
     fn test_complex_power_edge_cases() {
         let zero = Complex::<f64>::zero();
         let one = Complex::<f64>::one();
@@ -362,7 +362,7 @@ pub mod complex_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies complex exponential calculations (e.g. Euler's identity).
+    /// Verifies complex exponential calculations (for example, Euler's identity).
     fn test_complex_exponential() {
         // e^(i * PI) = -1
         let z = Complex32::new(0.0, f32::PI);

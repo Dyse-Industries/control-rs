@@ -18,18 +18,18 @@ pub struct QemuTargetDetails {
     pub target_triple: &'static str,
 }
 
-/// Configuration for running an ETS binary via a subprocess (e.g. `cargo run`).
+/// Configuration for running an ETS binary via a subprocess (for example, `cargo run`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubprocessTarget {
     /// Working directory or crate path (defaults to current directory ".").
     pub path: String,
-    /// Target triple (e.g. "thumbv7em-none-eabihf").
+    /// Target triple (for example, "thumbv7em-none-eabihf").
     pub target: Option<String>,
-    /// Binary name (e.g. "control-rs-qemu-thumbv7em-none-eabihf").
+    /// Binary name (for example, "control-rs-qemu-thumbv7em-none-eabihf").
     pub bin: Option<String>,
-    /// Additional arguments passed to the runner / cargo (e.g. `["--release"]`).
+    /// Additional arguments passed to the runner / cargo (for example, `["--release"]`).
     pub args: Vec<String>,
-    /// Optional display name (e.g. "ARM HF (thumbv7em-none-eabihf)").
+    /// Optional display name (for example, "ARM HF (thumbv7em-none-eabihf)").
     pub name: Option<String>,
 }
 
@@ -53,9 +53,9 @@ pub enum Target {
     Subprocess(SubprocessTarget),
     /// ETS (physical board) target over serial port.
     Serial {
-        /// Serial port path (e.g. `/dev/ttyACM0`).
+        /// Serial port path (for example, `/dev/ttyACM0`).
         port: String,
-        /// Baud rate (e.g. `115200`).
+        /// Baud rate (for example, `115200`).
         baud: u32,
     },
 }
