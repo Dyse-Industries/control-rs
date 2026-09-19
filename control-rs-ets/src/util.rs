@@ -156,7 +156,7 @@ pub unsafe fn get_suites(
 /// * `context` is a valid, reference-stable reference to ETS context.
 /// * Global interrupts are permanently disabled.
 /// * A target reset is performed at the end of the function (diverging control flow).
-/// * The system's hardware configurations required to send telemetry (e.g. UART clock) must remain stable until telemetry is sent.
+/// * The system's hardware configurations required to send telemetry (for example, UART clock) must remain stable until telemetry is sent.
 /// * The Host TUI is listening and capable of receiving the panic telemetry and responding to/sending the `TryReset` command if `comms_ok` is `true`.
 ///
 /// # Panics
@@ -270,7 +270,7 @@ pub unsafe fn handle_failure<
 ///
 /// # Safety
 ///
-/// This function operates in an exception handler context (e.g., `HardFault`, `PageFault`) where the target state is highly unstable.
+/// This function operates in an exception handler context (for example, `HardFault`, `PageFault`) where the target state is highly unstable.
 /// The caller MUST ensure the following conditions are met:
 ///
 /// * The processor is in an exception state and it is safe to permanently disable interrupts.

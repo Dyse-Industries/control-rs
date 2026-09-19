@@ -365,7 +365,7 @@ where
 ##### Continuous State Derivative ($\dot{x} = A x + B u$)
 
 Evaluates state derivative $\dot{x}(t)$ for numerical integration routines (
-e.g., Runge-Kutta 4th Order). Symmetric to `step()` and subject to the same
+for example, Runge-Kutta 4th Order). Symmetric to `step()` and subject to the same
 domain-mismatch caveat in reverse.
 
 #### 4.7 System Interconnections
@@ -534,7 +534,7 @@ is made independently by `transfer-function-design.md` §6 for
 
 ### 7. Performance & Resource Considerations
 
-- **Stack Allocation Limits**: Large state vectors (e.g., $N_x = 32$)
+- **Stack Allocation Limits**: Large state vectors (for example, $N_x = 32$)
   require $32 \times 32 = 1024$ elements for matrix $A$, exactly
   `matrix-design.md` §2.3's per-matrix budget. Storing via `DenseStorage`
   enables static buffer placement or borrowed views, preventing embedded stack
@@ -674,7 +674,7 @@ is made independently by `transfer-function-design.md` §6 for
     Available: https://docs.rs/control_systems_torbox.
 24. **rdesarz. (2026).** `control-sys-rs`: A Control System library implemented
     in Rust. [Online]. Available: https://github.com/rdesarz/control-sys-rs.
-25. **sunsided. (2026).** `minikalman-rs`: Fixed- and floating-point Kalman
+25. **sunsided. (2026).** `minikalman-rs`: Fixed-point and floating-point Kalman
     filters for resource-constrained environments. [Online].
     Available: https://github.com/sunsided/minikalman-rs.
 26. **strawlab. (2026).** `adskalman-rs`: Kalman filter and RTS smoothing in

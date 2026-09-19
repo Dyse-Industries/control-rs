@@ -245,7 +245,7 @@ flowchart TD
 
 1. **Continuous Release on `main`**: Merging a feature or fix PR into `main` automatically evaluates whether a release is warranted based on Conventional Commits (`feat:`, `fix:`, `perf:`, `refactor:`, `BREAKING CHANGE:`).
 2. **Branch-per-Version Preservation (`release/vX.Y.Z`)**:
-   - For every release cut (`vX.Y.Z`), the release workflow automatically creates and pushes a dedicated Git branch: `release/vX.Y.Z` (e.g., `release/v0.1.0`).
+   - For every release cut (`vX.Y.Z`), the release workflow automatically creates and pushes a dedicated Git branch: `release/vX.Y.Z` (for example, `release/v0.1.0`).
    - **Safety & Compliance Rationale**: Safety-critical aerospace and robotics systems (DO-178C, ISO 26262) require fixed, auditable branch references for qualification baselines.
    - **Patch & Backport Support**: Enables targeted maintenance and security cherry-picks to historical releases without disrupting ongoing trunk development on `main`.
 3. **Topological Crates.io Distribution**:

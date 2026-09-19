@@ -18,7 +18,7 @@ Usage scenarios:
   residual bound to hold across an input range, not at sampled points.
 - The same property runs unchanged on the host under `cargo ci`, so a range
   failure is reproducible off-target before anyone reaches for hardware.
-- A suite author sweeps a kernel across several element types and dimensions,
+- A suite author sweeps a kernel across multiple element types and dimensions,
   and expects each instantiation to report as its own ETS test entry.
 - A suite must still fit in flash beside the rest of the firmware image.
 
@@ -233,7 +233,7 @@ reachable scalar result, and that it executes on the ETS targets.
 | Coverage measurement | `cargo coverage` reporting statement coverage for `src/math` |
 
 Target: 90% statement coverage of the range type once it exists, measured
-with `cargo coverage`. Excluded: `Debug` / `Display`. There is no executable
+with `cargo coverage`. Excluded: `Debug` / `Display`. No executable exists
 surface to cover at this revision.
 
 A range-valued property replaces any sampled test whose kernel is generic over

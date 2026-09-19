@@ -162,7 +162,7 @@ pub trait Conjugate: Sized {
 /// Unsigned primitives never implement it: their subtraction underflows
 /// whenever `a < b`, not just at the representation edge. Signed integers
 /// do implement it, but still overflow at the representation limits
-/// (e.g. `i32::MIN - 1`, a debug panic / release wrap) — the marker
+/// (for example, `i32::MIN - 1`, a debug panic / release wrap) — the marker
 /// guarantees underflow-free semantics away from those limits, not full
 /// mathematical totality. Implementors must guarantee `a - b` is well-defined
 /// for all `a`, `b` whose difference is representable in the type.
@@ -254,7 +254,7 @@ pub trait Signed: AdditiveGroup + Neg<Output = Self> + PartialOrd {
 /// Trait for types that support square root (radical functions).
 ///
 /// The square root of a negative number must return an imaginary number or
-/// a domain-violation value (e.g. `NaN`) rather than panicking, so the
+/// a domain-violation value (for example, `NaN`) rather than panicking, so the
 /// domain covers all of `Self`.
 pub trait Radical:
     Clone + PartialEq + PartialOrd + Add<Output = Self> + Mul<Output = Self>
@@ -276,8 +276,8 @@ pub trait Radical:
 
 /// Trait for types that support exponential, power and root functions.
 ///
-/// Out-of-domain inputs (e.g. the logarithm of a negative number) must
-/// return a domain-violation value (e.g. `NaN`) rather than panicking, so
+/// Out-of-domain inputs (for example, the logarithm of a negative number) must
+/// return a domain-violation value (for example, `NaN`) rather than panicking, so
 /// the domain covers all of `Self`.
 pub trait Exponential: Clone + PartialEq + PartialOrd {
     /// Constant representing Euler's number.
@@ -300,8 +300,8 @@ pub trait Exponential: Clone + PartialEq + PartialOrd {
 
 /// Trait for types that support trigonometric functions.
 ///
-/// Out-of-domain inputs (e.g. `acos` of a value outside `[-1, 1]`) must
-/// return a domain-violation value (e.g. `NaN`) rather than panicking, so
+/// Out-of-domain inputs (for example, `acos` of a value outside `[-1, 1]`) must
+/// return a domain-violation value (for example, `NaN`) rather than panicking, so
 /// the domain covers all of `Self`.
 pub trait Trig: Clone + PartialEq + PartialOrd {
     /// Constant representing Pi.
@@ -407,7 +407,7 @@ pub trait Float:
     ///
     /// # Overflow Warning
     /// Because this implementation relies on `.exp()`, evaluating this function for
-    /// large inputs results in rapid overflow to infinity (e.g., around `x ~ 89.4` for `f32`).
+    /// large inputs results in rapid overflow to infinity (for example, around `x ~ 89.4` for `f32`).
     #[must_use]
     // Case-by-case: Arithmetic side effects are unavoidable for generic cosh formula.
     #[allow(clippy::arithmetic_side_effects)]
@@ -442,7 +442,7 @@ pub trait Float:
     ///
     /// # Numerical Stability Note
     /// This default trait implementation uses the standard algebraic definition.
-    /// For values of `self` very close to `0.0`, computing $e^x - e^{-x}$ can
+    /// For values of `self` close to `0.0`, computing $e^x - e^{-x}$ can
     /// suffer from **catastrophic cancellation**, leading to a loss of significant
     /// digits. For control loops requiring high precision near the origin,
     /// consider overriding this default with a Taylor series expansion or an `expm1`
@@ -556,7 +556,7 @@ pub trait Scalar:
 /// already provided for every integer primitive.
 ///
 /// # Arguments
-/// - `$type`: The numeric type for which to implement the tier (e.g., `i64`, `u32`).
+/// - `$type`: The numeric type for which to implement the tier (for example, `i64`, `u32`).
 /// - `$one`: The literal expression for the multiplicative identity.
 /// - `$zero`: The literal expression for the additive identity.
 /// - `$max`: The literal expression for the maximum value.
@@ -596,7 +596,7 @@ macro_rules! impl_int {
 ///
 /// # Arguments
 /// - `$type`: The numeric type.
-/// - `$abs`: Path to the type's `abs` function (e.g., `i32::abs`, `libm::fabsf`).
+/// - `$abs`: Path to the type's `abs` function (for example, `i32::abs`, `libm::fabsf`).
 #[macro_export]
 macro_rules! impl_additive_group {
     ($type:ty, $abs:path) => {

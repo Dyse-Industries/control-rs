@@ -69,10 +69,10 @@
 //! }
 //!
 //! // --- Usage ---
-//! // Polynomial A: Length 3 (e.g., ax^2 + bx + c)
+//! // Polynomial A: Length 3 (for example, ax^2 + bx + c)
 //! let p_a = StaticPolynomial::<Const<3>>::new();
 //!
-//! // Polynomial B: Length 2 (e.g., dx + e)
+//! // Polynomial B: Length 2 (for example, dx + e)
 //! let p_b = StaticPolynomial::<Const<2>>::new();
 //!
 //! // Result C: The compiler infers length 4 (3 + 2-1).
@@ -106,7 +106,7 @@ pub enum ArithmeticError {
     DivisionByZero,
 
     /// The mathematical operation is undefined for the given inputs
-    /// (e.g., `sqrt(-1.0)`, `acos(2.0)`).
+    /// (for example, `sqrt(-1.0)`, `acos(2.0)`).
     DomainViolation,
 
     /// The result exceeded the maximum representable range of the type.
@@ -114,7 +114,7 @@ pub enum ArithmeticError {
     Overflow,
 
     /// The result could not be represented exactly, resulting in quantization
-    /// or rounding errors (e.g., casting `f64` to `u32` where the float has a decimal).
+    /// or rounding errors (for example, casting `f64` to `u32` where the float has a decimal).
     PrecisionLoss,
 
     /// The value exceeded the range but was clamped to the maximum/minimum

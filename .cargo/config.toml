@@ -6,8 +6,10 @@ xtask = ["run", "--package", "control-rs-xtask", "--"]
 install-hooks = ["xtask", "install-hooks"]
 
 
-# Continuous Integration
-ci = ["xtask", "ci"]
+# Continuous Integration & Quality Gates
+ci = ["run", "--package", "control-rs-ci", "--bin", "control-rs-ci", "--"]
+gate = ["run", "--package", "control-rs-ci", "--bin", "gate", "--"]
+report = ["run", "--package", "control-rs-ci", "--bin", "report", "--"]
 # Interactive TUI
 tui = ["xtask", "tui"]
 

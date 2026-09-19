@@ -51,6 +51,11 @@
 .claude/
 .cursor/
 .idea/workspace.xml
+.idea/codeStyles/
+
+# Vale styles downloaded packages (preserve project vocabularies)
+.vale/styles/*
+!.vale/styles/config/
 
 documentation/TODO/
 documentation/**/research/*

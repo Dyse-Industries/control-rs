@@ -8,7 +8,7 @@
 
 ### 1. Introduction
 
-This module provides statically-typed, zero-allocation matrix representations
+This module provides statically typed, zero-allocation matrix representations
 and linear algebra routines for real-time control, estimation, and signal
 processing.
 
@@ -622,7 +622,7 @@ Converts a 2D matrix to a rank-2 `Tensor<T, Layout, B>`.
 
 ##### 4.9.1. Compile-Time Constraints
 
-Dimension mismatches (e.g., adding matrices of different sizes or multiplying
+Dimension mismatches (for example, adding matrices of different sizes or multiplying
 incompatible dimensions) fail at compile-time. Rust's type checker prevents
 compiling invalid math.
 
@@ -705,7 +705,7 @@ where
 
 The signatures differ deliberately. `get` returns `Option<&T>` because every
 in-bounds coordinate of a strided backend names a stored element. `value`
-returns `Option<T>` by value because a structurally-implied entry (a
+returns `Option<T>` by value because a structurally implied entry (a
 reflected element, a unit diagonal, an off-triangle zero) is computed, not
 addressed, so no reference to it exists (`storage-design.md` §4.3). `None`
 means out of bounds in both, never "structurally zero".
@@ -842,7 +842,7 @@ We evaluated exposing convenient, immutable linear algebra signatures like
   heavy $O(N^3)$ operations masks large internal stack allocations, risking
   unpredictable hard faults on stack-constrained embedded targets.
 - **Redundant Factorization Computation**: Hiding factorizations behind
-  convenience methods forces subsequent operations (e.g., calculating
+  convenience methods forces subsequent operations (for example, calculating
   determinants or solving multiple right-hand side vectors) to recompute
   factorizations from scratch.
 - **Explicit `no_alloc` Alternative**: Linear algebra operations require
@@ -856,7 +856,7 @@ We evaluated using raw const generics (`[[T; R]; C]`) as the primary matrix
 interface versus type-level dimension traits (`Dim`).
 
 - **Raw Const Generics Limitations**: Stable Rust currently limits const generic
-  arithmetic in public trait bounds (e.g., expressing that
+  arithmetic in public trait bounds (for example, expressing that
   multiplying $M \times N$ by $N \times P$ yields $M \times P$).
 - **Selected `Dim` + Decoupled Storage Architecture**: Combining the `Dim` trait
   system with the decoupled `DenseStorage<T>` trait, whose `type R`/`type C`
@@ -919,7 +919,7 @@ Ways of exposing the dense/packed split on the wrapper:
 $LDL^T$ is the default solver for symmetric matrices: $O(N^3/3)$ operations,
 no square-root evaluations, and no convenience `invert()` (Higham, 2002).
 Near-singular or indefinite symmetric matrices are not handled via
-block-pivoting (e.g. Bunch-Kaufman); callers needing that fall back to LU.
+block-pivoting (for example, Bunch-Kaufman); callers needing that fall back to LU.
 General non-symmetric systems use LU with partial pivoting ($O(2N^3/3)$); QR
 is reserved for ill-conditioned or non-square systems ($O(4N^3/3)$).
 Forming $A^T A$ to reduce a rectangular system to a symmetric one is

@@ -22,7 +22,7 @@
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
     // `l_ik`/`l_jk`/`u_ii`/`d_j` etc. below are standard linear-algebra
-    // index notation, not accidentally-similar English words.
+    // index notation, not accidentally similar English words.
     clippy::similar_names,
     // Every loop below indexes both a local scratch array (`y`, `col`) and
     // `self.data.storage` by the same loop variable in the same body, so
@@ -387,7 +387,7 @@ where
     ///
     /// # Errors
     /// Returns [`LinAlgError::NotPositiveDefinite`] if a diagonal pivot is not
-    /// positive, i.e. `self` is not positive definite.
+    /// positive, that is, `self` is not positive definite.
     pub fn cholesky_decompose_mut_with<B: Potrf<T, ArrayStorage<T, D, D>>>(
         &mut self,
     ) -> LinAlgResult<()>

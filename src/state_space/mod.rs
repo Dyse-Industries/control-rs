@@ -1,6 +1,6 @@
 //! # State-Space Module
 //!
-//! Generic, statically-sized Linear Time-Invariant (LTI) state-space model [`StateSpaceCore`]
+//! Generic, statically sized Linear Time-Invariant (LTI) state-space model [`StateSpaceCore`]
 //! decoupled from physical memory storage via [`crate::math::storage`].
 //!
 //! Continuous-time dynamics:

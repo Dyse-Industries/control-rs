@@ -8,7 +8,7 @@
 
 ### 1. Introduction
 
-This module provides statically-typed, single-variable polynomial
+This module provides statically typed, single-variable polynomial
 representations and polynomial arithmetic for digital filter design, trajectory
 interpolation, discretization algebra, and root finding.
 
@@ -18,7 +18,7 @@ Primary usage scenarios:
   numerator and denominator coefficient vectors ($B(z)$ and $A(z)$) for signal
   processing pipelines.
 - **Continuous System Discretization**: Performing algebraic polynomial
-  transformations (e.g., Tustin bilinear
+  transformations (for example, Tustin bilinear
   transform $s \leftarrow \frac{2}{T_s} \frac{z-1}{z+1}$ and Zero-Order Hold) to
   map continuous Laplace-domain transfer functions into discrete $Z$-domain
   equivalents.
@@ -59,7 +59,7 @@ Primary usage scenarios:
   matrices whose eigenvalues equal the polynomial roots. Conversion must return
   an explicit error if the leading coefficient is zero (Aurentz et al., 2018).
 - **FR-6 — Discretization & Trajectory Transforms**: Evaluates trajectory
-  splines (cubic and quintic) and parameter substitutions (e.g. bilinear
+  splines (cubic and quintic) and parameter substitutions (for example, bilinear
   transform $s \to \frac{2}{T_s}\frac{z-1}{z+1}$) without heap allocation.
 - **FR-7 — Generic Polynomial Root Finding**: Computes the complex roots
   ($r \in \mathbb{C}^N$) of a polynomial of capacity $N$ into a fixed-size worst-case buffer
@@ -127,7 +127,7 @@ does. Every owning single-column leaf satisfies both, so the split costs
 nothing here; it keeps the two documents' storage story identical.
 
 Here, `N` represents the capacity (number of coefficients, maximum possible
-degree is $N - 1$) and `S` defines where the coefficients reside (e.g. stack
+degree is $N - 1$) and `S` defines where the coefficients reside (for example, stack
 `ArrayStorage<T, N, 1>`, a borrowed `StorageView` or static Flash memory).
 `ArrayStorage` takes bare `const usize` capacities, so it is not a valid
 default for `N: Dim`.
@@ -301,7 +301,7 @@ provides two interfaces:
   (Horner, 1819). The recurrence is multiply-add only, so it holds at
   `T: Scalar` and admits integer, fixed-point and complex coefficients.
   The computed result is exact for a polynomial whose coefficients are
-  relatively perturbed by at most $\gamma_{2n} = 2nu / (1 - 2nu)$ from
+  perturbed by at most $\gamma_{2n} = 2nu / (1 - 2nu)$ from
   $p$'s true coefficients, where $u$ is unit roundoff (Higham, 2002, Ch.
     5) — a small, degree-linear backward-error bound quantifying the
        "minimizes rounding error" claim above.
@@ -332,7 +332,7 @@ provides two interfaces:
       ) -> Result<(Polynomial<T, Q>, Polynomial<T, R>), DivisionError> { /* ... */ }
   }
   ```
-  `DivisionError` covers the hard case (an exactly-zero leading divisor
+  `DivisionError` covers the hard case (an exactly zero leading divisor
   coefficient or a degree mismatch), not the soft case: `div_rem`'s
   repeated subtract-and-rescale steps degrade continuously in accuracy as
   the divisor's leading coefficient shrinks relative to its other
@@ -478,7 +478,7 @@ pub enum RootError {
   have no established fixed-point (Q31/Q15) numerical precedent in DSP
   reference libraries (unlike Horner evaluation and convolution, both
   standard fixed-point DSP primitives). These two operations are intended
-  for floating-point, design-time use (e.g. offline controller synthesis,
+  for floating-point, design-time use (for example, offline controller synthesis,
   coefficient generation), not on-target fixed-point runtime paths.
 - **Panic Path in `mul_with_conv`'s Dependency**: shipped
   `Convolution::convolve_input` ([`src/math/dsp.rs`](../../src/math/dsp.rs)) panics via
@@ -603,7 +603,7 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 | Quadratic roots (distinct real)   | Analytic $(x-r_1)(x-r_2)$ with $r_1 \gg r_2$       | Relative error              | $\|r_i - \hat{r}_i\| \le 2\epsilon$                                                                       | Muller cancellation-free formulation (Higham, 2002)            |
 | Quadratic roots (complex pair)    | Oscillator $s^2 + 2\zeta\omega_n s + \omega_n^2$   | Absolute error              | $\|r_i - \hat{r}_i\|_\infty \le \epsilon \omega_n$                                                        | Exact discriminant splitting                                   |
 | Quadratic roots (degenerate $c_2=0$) | Degenerate $c_2 = 0$ polynomial                 | Exact equality              | `Err(RootError::ZeroLeadingCoefficient)`                                                                 | Precondition failure contract                                  |
-| Companion roots (degree $\ge 3$)  | Manufactured roots (e.g. quartic $s^4+6s^3+18s^2+30s+25$) | Absolute error       | $\|r_i - \hat{r}_i\|_\infty \le 10^{-10}$                                                                 | Durand-Kerner companion decomposition                          |
+| Companion roots (degree $\ge 3$)  | Manufactured roots (for example, quartic $s^4+6s^3+18s^2+30s+25$) | Absolute error       | $\|r_i - \hat{r}_i\|_\infty \le 10^{-10}$                                                                 | Durand-Kerner companion decomposition                          |
 
 #### 6.4. Traceability
 

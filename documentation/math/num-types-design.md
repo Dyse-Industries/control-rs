@@ -11,7 +11,7 @@
 Every numerical model in the crate (matrices, polynomials, state-space
 systems, tensors, transfer functions) is parameterized over fixed dimensions
 that must be known and checked before the program runs. Catching a dimension
-mismatch (e.g. multiplying a $3 \times 4$ matrix by a $5 \times 2$ matrix) at
+mismatch (for example, multiplying a $3 \times 4$ matrix by a $5 \times 2$ matrix) at
 compile time rather than as a runtime panic guarantees safety in embedded
 control systems. Matrix storage targets 128×128 shapes; flattened products
 such as $128 \times 128 = 16384$ must be expressible as type-level results.
@@ -180,7 +180,7 @@ reverse `UTerm`/`UInt`↔`Const`, each projecting both sides through
 $10000$, which need not be a C-1 `Const` (C-2). Naming that product as
 `Const<K>` still requires $K$ in C-1.
 
-There is no `from_i8` / `from_u8` / `try_from_usize`: a runtime integer
+No `from_i8` exists / `from_u8` / `try_from_usize`: a runtime integer
 cannot be tied to `N` in a way release builds or the type system enforce.
 Array lengths remain caller `const R` / `const C` (storage C-4).
 

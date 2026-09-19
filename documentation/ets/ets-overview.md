@@ -89,7 +89,7 @@ This object provides the specific drivers for cpu profiling and communication:
 
 * **HostComms:** A generic trait acting as a middleware for firmware-to-host
   communications. Users implement this for the available communication
-  peripherals (e.g., UART, USB).
+  peripherals (for example, UART, USB).
 * **CPUProfiler:** A generic trait that allows users to configure CPU
   profiling utilities for ETS. Users implement this trait to
   provide low-level access to CPU cycle counters, nanosecond system timers,

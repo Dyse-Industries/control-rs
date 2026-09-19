@@ -340,7 +340,7 @@ impl SessionState {
     }
 
     /// Processes an incoming bridge message and updates session state accordingly.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     pub fn handle_message(&mut self, msg: BridgeMessage) -> Vec<SessionAction> {
         match msg {
             BridgeMessage::RawConsole(line) => {

@@ -1,8 +1,23 @@
 # Default ignored files
 /shelf/
 /workspace.xml
+/codeStyles/
+/tasks.xml
+/usage.statistics.xml
+
 # Editor-based HTTP Client requests
 /httpRequests/
+
 # Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
+
+# Temporary / cache files
+/caches/
+/libraries/
+/modules/
+/sonarlint/
+/uiDesigner.xml
+/dynamic.xml
+*.iws
+

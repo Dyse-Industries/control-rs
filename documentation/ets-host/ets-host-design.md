@@ -192,7 +192,7 @@ crashes before it can frame anything.
 The frame carries no version field, and `Command` and `Telemetry` are
 `postcard`-encoded enums whose variant discriminants are positional. Inserting
 or reordering a variant therefore shifts the encoding of every later variant
-while leaving the CRC valid, so skew presents as a correctly-framed message
+while leaving the CRC valid, so skew presents as a correctly framed message
 decoded as the wrong variant rather than as a transport error. The encoding
 rule and the absence of any cross-revision compatibility guarantee are
 established in `../ets/host-comm-design.md` §4.2.1, which owns the wire
@@ -214,7 +214,7 @@ meaning.
 2. **Run queue** — issue `RunExecutable` per queued case, accumulate cycle,
    duration, and peak-stack telemetry.
 3. **Panic & Comms Recovery** — on `Telemetry::TargetPanic` or unexpected link drop,
-   attribute failure according to `SessionPhase` (e.g. discovery vs active test case),
+   attribute failure according to `SessionPhase` (for example, discovery vs active test case),
    send `Command::TryReset`, allow 50 ms for the frame to drain, and drop the bridge.
 4. **Reset** — wait 1 s for target initialization, rebuild the bridge, and re-enter
    discovery. Results already collected are retained.

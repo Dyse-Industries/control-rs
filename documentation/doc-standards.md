@@ -9,9 +9,9 @@ To maintain a clean, readable and highly maintainable codebase, all
 documentation must adhere to the following rules:
 
 * **Module-level Documentation**: Module-level documentation must be written
-  using inner doc comments (`//!` or `/*!`) placed at the very top of the file.
+  using inner doc comments (`//!` or `/*!`) placed at the top of the file.
   Do not use outer doc comments (`///` or `/**`) placed directly above module
-  declarations (e.g., `pub mod my_module;`). Placing module-level docs at the
+  declarations (for example, `pub mod my_module;`). Placing module-level docs at the
   top of the file keeps the module definition clean and ensures the rustdoc
   output is correctly associated with the module content.
 * **Language, Tone and Tense**: Write in clear, concise and professional
@@ -133,7 +133,7 @@ For any function, method or unsafe block that has safety implications, a
 dedicated `#safety` section is mandatory. This section must explicitly detail
 the contract the caller must uphold to ensure safe execution.
 
-The `#safety` documentation must clearly state any applicable items from the
+The `#safety` documentation must state any applicable items from the
 list below:
 
 * Pre-conditions: The conditions that must be true before calling the function.

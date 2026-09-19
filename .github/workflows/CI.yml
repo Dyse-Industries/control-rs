@@ -8,18 +8,28 @@ on:
       - 'src/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
+      - 'control-rs-macros/**'
+      - 'control-rs-tui/**'
+      - 'control-rs-ci/**'
       - 'control-rs-xtask/**'
+      - 'documentation/**'
       - '.github/workflows/**'
-      - 'Cargo.toml'
+      - '*.toml'
+      - '.vale.ini'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'src/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
+      - 'control-rs-macros/**'
+      - 'control-rs-tui/**'
+      - 'control-rs-ci/**'
       - 'control-rs-xtask/**'
+      - 'documentation/**'
       - '.github/workflows/**'
-      - 'Cargo.toml'
+      - '*.toml'
+      - '.vale.ini'
 
 jobs:
   build:
@@ -27,38 +37,49 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [ "1.89.0", "stable", "beta" ] # add nightly back when clippy is safe
+        rust: [ "stable", "1.89.0", "1.90.0", "1.91.0", "1.92.0", "1.93.0", "beta" ] # add nightly back when clippy is safe
     permissions:
       pull-requests: write # Required to post comments
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
 
       - uses: cargo-bins/cargo-binstall@main
-      - name: Install Tarpaulin
-        run: cargo binstall cargo-tarpaulin -y
+      - name: Install Cargo Tools
+        run: cargo binstall -y cargo-tarpaulin cargo-deny cargo-geiger cargo-semver-checks
+
+      - name: Install Vale
+        run: |
+          curl -fsSL https://github.com/vale-cli/vale/releases/download/v3.22.0/vale_3.22.0_Linux_64-bit.tar.gz | tar -xz -C ~/.cargo/bin vale
+          vale --config=.vale.ini sync
 
       - name: Install Targets
         run: rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
 
       - name: Install apt packages
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system valgrind
 
       - name: Download Tarpaulin Coverage Report
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p target/tarpaulin && \
-          gh run download \
-          --name tarpaulin-baseline \
-          --dir target/tarpaulin \
-          --repo ${{ github.repository }} \
-          --branch main \
-          || echo "No baseline coverage report found. Proceeding without diff."
+          mkdir -p target/tarpaulin
+          RUN_ID=$(gh run list --branch main --status success --workflow "Rust-CI" --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)
+          if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; then
+            gh run download "$RUN_ID" \
+              --name "tarpaulin-baseline-${{ matrix.rust }}" \
+              --dir target/tarpaulin \
+              || echo "No baseline coverage report found. Proceeding without diff."
+          else
+            echo "No baseline run found on main. Proceeding without diff."
+          fi
 
       - name: Run CI
         run: cargo ci
@@ -101,6 +122,7 @@ jobs:
         with:
           name: ets-results-${{ matrix.rust }}
           path: ets-results.json
+          if-no-files-found: ignore
           retention-days: 30
 
   publish:

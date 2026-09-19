@@ -34,7 +34,7 @@ waiting for commands.
 - **FR-4 — Crash Recovery**: On a test panic or hardware exception, the Server
   must capture diagnostic details (a "Firmware Black Box") and transmit them
   before initiating system recovery.
-- **FR-5 — Cooperative lockup recovery**: If a test hangs, the target
+- **FR-5 — Cooperative lockup recovery**: If a test stops responding, the target
   services a cooperative reset request from the host. Hardware watchdog
   recovery is out of scope (6.7).
 

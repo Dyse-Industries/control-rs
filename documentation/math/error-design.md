@@ -35,9 +35,9 @@ failure in the course of computation (Anderson et al., 1999).
 - **FR-1 — Single Definition for Shared Error Types**: An error type
   consumed by more than one sibling module (`storage`, `subprograms`,
   `Matrix`, `Polynomial`, `Tensor`, `StateSpace`, `TransferFunction`) is
-  defined once, here. Single-consumer enums (e.g. `DivisionError` in
+  defined once, here. Single-consumer enums (for example, `DivisionError` in
   `polynomial-design.md` §4.8.2) stay in their owning module.
-- **FR-2 — No Statically-Decidable Failure Modes**: A variant may be
+- **FR-2 — No Statically Decidable Failure Modes**: A variant may be
   returned only for a condition that is not already provable from the
   producer's generic bounds. If a bound already guarantees the condition,
   the API is infallible (`From`, associated-function kernel, or
@@ -296,7 +296,7 @@ to `Potrf` is a `matrix-design.md` change, not this module's.
   `SingularMatrix` is the same requirement at the solver layer.
 - **Per-strategy modules** (saturating/wrapping/strict), following the
   `fixed` crate's `Saturating`/`Wrapping`/`Strict` split (fixed, 2026).
-  Rejected: that pattern trades a single fallible operation for several
+  Rejected: that pattern trades a single fallible operation for multiple
   infallible ones under different numeric policies — applicable to
   `ArithmeticError`'s overflow domain, not to conversion, storage, or
   factorization domains.
@@ -394,7 +394,7 @@ add no allocation.
 - **`faer-rs` unresearched (open, low priority)**:
   faer-rs's dimension-mismatch convention is not established from its
   crate-level docs. Eigen and the ndarray/LAPACK family already cover
-  both branches of §4 (statically-decidable vs. value-dependent).
+  both branches of §4 (statically decidable vs. value-dependent).
 - **Matrix Cholesky mapping (open)**: Shipped
   `CholeskyDecomposition` / `LdltDecomposition` report a non-positive
   pivot as `SingularMatrix`. `Potrf` reports `NotPositiveDefinite`.

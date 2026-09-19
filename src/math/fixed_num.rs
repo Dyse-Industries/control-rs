@@ -12,7 +12,7 @@
 //! Numerical traits (`One`, `Scalar`, `SaturatingInteger`) are gated to scales where their
 //! mathematical identity constants ($1.0$, $2.0$) are strictly representable.
 //!
-//! Standard DSP interchange formats (e.g. `Q15`, `Q31`) span $[-1.0, 1.0)$ and cannot represent
+//! Standard DSP interchange formats (for example, `Q15`, `Q31`) span $[-1.0, 1.0)$ and cannot represent
 //! $1.0$. Consequently, `Q15` implements `Zero` and `Conjugate`, but withholds `One`, `Scalar`,
 //! and `SaturatingInteger` as trait bounds:
 //!
@@ -176,7 +176,7 @@ pub trait FixedRepr:
     /// Whether this primitive type is signed.
     const IS_SIGNED: bool;
 
-    /// Type-level bit-width dimension (e.g. `U8`, `U16`, `U32`, `U64`).
+    /// Type-level bit-width dimension (for example, `U8`, `U16`, `U32`, `U64`).
     type BitsDim: Dim;
 
     /// Maximum scale exponent where 1.0 is strictly representable.

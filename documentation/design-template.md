@@ -95,7 +95,7 @@ What this verification plan does not establish, unverified conditions, or explic
 
 ### 7. Performance & Resource Considerations
 
-Describe requirements and bounds based on the practical nature of the implementation (e.g., memory footprint, execution timing, stack budgets, `#![no_std]` zero-allocation guarantees).
+Describe requirements and bounds based on the practical nature of the implementation (for example, memory footprint, execution timing, stack budgets, `#![no_std]` zero-allocation guarantees).
 
 ---
 

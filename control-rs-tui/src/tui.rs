@@ -500,7 +500,7 @@ impl AppState {
     }
 }
 
-/// Formats a large integer with comma thousand separators (e.g. `1,204`).
+/// Formats a large integer with comma thousand separators (for example, `1,204`).
 #[must_use]
 pub fn format_number(val: u64) -> String {
     let s = val.to_string();
