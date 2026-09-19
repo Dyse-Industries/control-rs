@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [ "1.89.0", "stable", "beta" ] # add nightly back when clippy is safe
+        rust: [ "stable", "1.89.0", "1.90.0", "1.91.0", "1.92.0", "1.93.0", "beta" ] # add nightly back when clippy is safe
     permissions:
       pull-requests: write # Required to post comments
     steps:
