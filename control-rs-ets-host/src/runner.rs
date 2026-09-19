@@ -18,6 +18,10 @@ pub type EtsRunResult = RunRecord;
 /// The result and performance telemetry of an individual test case.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TestOutcome {
+    /// Identifier of the test suite.
+    pub suite_id: u16,
+    /// Identifier of the test case within the suite.
+    pub test_id: u16,
     /// Suite namespace of the test.
     pub suite_name: String,
     /// Identifier name of the test.
@@ -339,7 +343,7 @@ mod tests {
                 name: "suite",
                 description: "",
                 test_count: 2,
-                setting_count: 0,
+                setting_count: 1,
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(

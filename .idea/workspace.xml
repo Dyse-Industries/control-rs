@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AIAssistantCustomInstructionsStorage">
+    <option name="instructions">
+      <map>
+        <entry key="AIAssistant.General.ProjectPrompt">
+          <value>
+            <AIAssistantStoredInstruction>
+              <option name="actionId" value="AIAssistant.General.ProjectPrompt" />
+              <option name="content" value="Read CLAUDE.md from the workspace root." />
+            </AIAssistantStoredInstruction>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="CargoProjects">
+    <cargoProject FILE="$PROJECT_DIR$/Cargo.toml">
+      <package file="$PROJECT_DIR$">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/control-rs-ets">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/control-rs-macros">
+        <feature name="default" enabled="true" />
+      </package>
+      <package file="$PROJECT_DIR$/control-rs-xtask">
+        <feature name="default" enabled="true" />
+      </package>
+    </cargoProject>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="8be7cc75-fd28-41ef-96aa-10e81e42224f" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/Cargo.toml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/README.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/src/bridge.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/src/error.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/src/lib.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/src/runner.rs" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/control-rs-ets-host/src/target.rs" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="EmbeddingIndexingInfo">
+    <option name="cachedIndexableFilesCount" value="29336" />
+  </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
+  <component name="FormatOnSaveOptions">
+    <option name="myRunOnSave" value="true" />
+  </component>
+  <component name="Git.Settings">
+    <option name="INCOMING_COMMITS_CHECK_STRATEGY" value="FETCH" />
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;Mitchelldscott&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;git@github.com:Dyse-Industries/control-rs.git&quot;,
+    &quot;accountId&quot;: &quot;98f402b9-0439-440b-8726-42f3c41be231&quot;
+  }
+}</component>
+  <component name="MacroExpansionManager">
+    <option name="directoryName" value="CjrFyK7b" />
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="NextEditCompletionFeaturesState">
+    <decayedCancelled>
+      <entry key="MS100" value="1.3649765829363738" />
+      <entry key="MS500" value="3.3884165988965456" />
+      <entry key="S2" value="7.432862208033755" />
+      <entry key="S5" value="14.790041904723068" />
+      <entry key="S10" value="23.455834579120687" />
+      <entry key="S30" value="36.47785253922126" />
+      <entry key="S60" value="41.650899468644795" />
+      <entry key="M2" value="45.686219796801865" />
+      <entry key="M5" value="67.00329755933029" />
+      <entry key="M10" value="111.97619390720426" />
+      <entry key="M15" value="150.5936603951661" />
+      <entry key="M30" value="242.9333453935989" />
+      <entry key="H1" value="379.6246877376448" />
+      <entry key="H2" value="543.6377520172152" />
+      <entry key="H4" value="702.6680129318968" />
+      <entry key="D1" value="1219.5162581689779" />
+      <entry key="W1" value="4078.9928441170327" />
+    </decayedCancelled>
+    <decayedSelected>
+      <entry key="MS100" value="0.0" />
+      <entry key="MS500" value="0.0" />
+      <entry key="S2" value="0.0" />
+      <entry key="S5" value="1.465816664038672E-260" />
+      <entry key="S10" value="1.2107091574935178E-130" />
+      <entry key="S30" value="4.947053525692451E-44" />
+      <entry key="S60" value="2.224284508476302E-22" />
+      <entry key="M2" value="1.5075802459391463E-11" />
+      <entry key="M5" value="6.253948487941939E-5" />
+      <entry key="M10" value="0.014954007551709158" />
+      <entry key="M15" value="0.10438336748784603" />
+      <entry key="M30" value="0.8129577903598619" />
+      <entry key="H1" value="2.444474993911258" />
+      <entry key="H2" value="4.393539598767548" />
+      <entry key="H4" value="6.1323171275578225" />
+      <entry key="D1" value="10.67104075345277" />
+      <entry key="W1" value="34.555457327184314" />
+    </decayedSelected>
+    <decayedShown>
+      <entry key="MS100" value="1.302628275046988" />
+      <entry key="MS500" value="3.3585075286479347" />
+      <entry key="S2" value="7.416387166666476" />
+      <entry key="S5" value="14.767910520253404" />
+      <entry key="S10" value="23.424418168928575" />
+      <entry key="S30" value="36.452883118260914" />
+      <entry key="S60" value="41.63515452427341" />
+      <entry key="M2" value="45.67690731491694" />
+      <entry key="M5" value="66.99541743439684" />
+      <entry key="M10" value="111.9828551123675" />
+      <entry key="M15" value="150.6901981311915" />
+      <entry key="M30" value="243.73974282799364" />
+      <entry key="H1" value="382.06410493389495" />
+      <entry key="H2" value="548.0278403092397" />
+      <entry key="H4" value="708.7982257692042" />
+      <entry key="D1" value="1230.1867715373053" />
+      <entry key="W1" value="4113.5479902321185" />
+    </decayedShown>
+  </component>
+  <component name="OptimizeOnSaveOptions">
+    <option name="myRunOnSave" value="true" />
+  </component>
+  <component name="ProblemsViewState">
+    <option name="proportion" value="0.39805827" />
+    <option name="selectedTabId" value="CurrentFile" />
+    <option name="showPreview" value="true" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 2,
+  &quot;fromUser&quot;: false
+}</component>
+  <component name="ProjectId" id="3FPkAjKa85f6MLLzdu3dGZSFP0L" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "Cargo.CI.executor": "Run",
+    "Cargo.ETS.executor": "Debug",
+    "Cargo.Run blas-interface.executor": "Run",
+    "Cargo.Run measure.executor": "Run",
+    "Cargo.TUI.executor": "Debug",
+    "Cargo.Test math::tests::subprogram_tests::subprogram_test_suite::test_herk_unmqr_trans_distinct_from_conjtrans.executor": "Debug",
+    "Cargo.Verify Subprograms.executor": "Debug",
+    "Cargo.tui.executor": "Run",
+    "Cargo.verify subprograms.executor": "Debug",
+    "CidrDebugProfileConversion": "true",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.rust.reset.selective.auto.import": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "SHELLCHECK.PATH": "/Users/mitchelldscott/Library/Application Support/JetBrains/RustRover2026.1/plugins/Shell Script/shellcheck",
+    "codeWithMe.voiceChat.enabledByDefault": "false",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "mdsdev/pr2-1-discovery-overhaul",
+    "git.auto.fetch.suggestion.counter": "1",
+    "junie.onboarding.icon.badge.shown": "true",
+    "last_opened_file_path": "/Users/mitchelldscott/control-rs",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
+    "org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon": "",
+    "python.packages.toolwindow.project.migrated.to.right.top.v2": "true",
+    "settings.editor.selected.configurable": "language.rust.build.tool.cargo",
+    "to.speed.mode.migration.done": "true",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="PyDebuggerOptionsProvider">
+    <option name="mySaveCallSignatures" value="true" />
+    <option name="myDebuggerBackend" value="DEBUGPY" />
+  </component>
+  <component name="RecentsManager">
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/documentation/control-toolboxes/research" />
+      <recent name="$PROJECT_DIR$/documentation/math/research" />
+      <recent name="$PROJECT_DIR$/documentation/numerical-models/research" />
+      <recent name="$PROJECT_DIR$/documentation/xtask/research" />
+      <recent name="$PROJECT_DIR$/documentation/control-toolboxes" />
+    </key>
+  </component>
+  <component name="RsExternalLinterProjectSettings">
+    <option name="additionalArguments" value="--all-features --all-targets --benches --bins --examples --lib" />
+    <option name="tool" value="Clippy" />
+  </component>
+  <component name="RunManager" selected="Cargo.TUI">
+    <configuration name="CI" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="dev" />
+      <option name="command" value="run --package control-rs-xtask -- ci" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="TUI" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="dev" />
+      <option name="command" value="run --package control-rs-xtask -- tui qemu" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Verify Subprograms" type="CargoCommandRunConfiguration" factoryName="Cargo Command" activateToolWindowBeforeRun="false">
+      <option name="buildProfileId" value="test" />
+      <option name="command" value=" test --package control-rs --lib -- math::tests::subprogram_tests" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="FULL" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration default="true" type="LATEX_RUN_CONFIGURATION" factoryName="LaTeX configuration factory">
+      <steps>
+        <latexmkCompile id="15f37537-f49c-4f6d-b929-bd9ee32c6ac6" />
+        <pdfViewer id="3cff2e65-9aa9-48f7-8efd-5d5fa71b1371" />
+      </steps>
+      <method v="2" />
+    </configuration>
+    <list>
+      <item itemvalue="Cargo.CI" />
+      <item itemvalue="Cargo.Verify Subprograms" />
+      <item itemvalue="Cargo.TUI" />
+    </list>
+  </component>
+  <component name="RustProjectSettings">
+    <option name="toolchainHomeDirectory" value="$PROJECT_DIR$/../.cargo/bin" />
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="8be7cc75-fd28-41ef-96aa-10e81e42224f" name="Changes" comment="" />
+      <created>1781983949208</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1781983949208</updated>
+      <workItem from="1781983950226" duration="1720000" />
+      <workItem from="1781986446915" duration="1282000" />
+      <workItem from="1782010050604" duration="2598000" />
+      <workItem from="1782067537707" duration="1308000" />
+      <workItem from="1782270619901" duration="7360000" />
+      <workItem from="1783176098717" duration="14982000" />
+      <workItem from="1783268708506" duration="13254000" />
+      <workItem from="1783784452748" duration="9568000" />
+      <workItem from="1783800211495" duration="52190000" />
+      <workItem from="1783996378688" duration="2784000" />
+      <workItem from="1784074968889" duration="4251000" />
+      <workItem from="1784245202284" duration="11956000" />
+      <workItem from="1784324195397" duration="56641000" />
+      <workItem from="1785018180705" duration="10799000" />
+      <workItem from="1785077465796" duration="19238000" />
+      <workItem from="1785161154569" duration="1238000" />
+      <workItem from="1785253623069" duration="21305000" />
+      <workItem from="1785683024741" duration="17193000" />
+      <workItem from="1785894286809" duration="3763000" />
+      <workItem from="1785984474296" duration="5777000" />
+      <workItem from="1786030518167" duration="38594000" />
+      <workItem from="1786201928591" duration="15226000" />
+      <workItem from="1786287387115" duration="75280000" />
+      <workItem from="1786461192369" duration="182105000" />
+      <workItem from="1787174377793" duration="76567000" />
+      <workItem from="1787618599696" duration="19954000" />
+      <workItem from="1787674225784" duration="46872000" />
+      <workItem from="1787853754383" duration="31279000" />
+      <workItem from="1787965515281" duration="18347000" />
+      <workItem from="1788019033426" duration="1452000" />
+      <workItem from="1788020518319" duration="36082000" />
+      <workItem from="1788280953664" duration="52655000" />
+      <workItem from="1788624545488" duration="5491000" />
+      <workItem from="1788801294441" duration="22681000" />
+      <workItem from="1788881753284" duration="21076000" />
+      <workItem from="1788966645838" duration="19674000" />
+      <workItem from="1789068497954" duration="22195000" />
+      <workItem from="1789233516056" duration="2488000" />
+      <workItem from="1789236590644" duration="1552000" />
+      <workItem from="1789257539966" duration="11487000" />
+      <workItem from="1789315757291" duration="3711000" />
+      <workItem from="1789335135406" duration="14355000" />
+      <workItem from="1789402401225" duration="63502000" />
+      <workItem from="1789692079655" duration="2707000" />
+      <workItem from="1789744800238" duration="15595000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="XSLT-Support.FileAssociations.UIState">
+    <expand />
+    <select />
+  </component>
+</project>
