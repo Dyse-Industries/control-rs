@@ -50,12 +50,14 @@ jobs:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
 
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-tarpaulin,cargo-deny,cargo-geiger,cargo-semver-checks,vale
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install Cargo Tools
+        run: cargo binstall -y cargo-tarpaulin cargo-deny cargo-geiger cargo-semver-checks
 
-      - name: Sync Vale styles
-        run: vale --config=.vale.ini sync
+      - name: Install Vale
+        run: |
+          curl -fsSL https://github.com/vale-cli/vale/releases/download/v3.9.1/vale_3.9.1_Linux_64-bit.tar.gz | tar -xz -C ~/.cargo/bin vale
+          vale --config=.vale.ini sync
 
       - name: Install Targets
         run: rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
