@@ -56,41 +56,25 @@ the target-side infrastructure:
 - **Target Profiling**: Measures execution time using hardware cycle counters
   (ARM DWT) and tracks memory limits using stack painting and scanning.
 
-### 2. Host-Side (`control-rs-xtask`)
+### 2. Host Infrastructure (`control-rs-ets-host`, `control-rs-tui`, `control-rs-ci`)
 
-- **Terminal User Interface (TUI)**: Interactive frontend for virtual ETS and
-  ETS.
-- **ETSBridge**: Host driver for TUI and CI against virtual Embedded Test
-  Server (virtual ETS) under QEMU or ETS on a board.
+- **Session Engine (`control-rs-ets-host`)**: Headless session state machine,
+  COBS framing, serial/TCP transport abstractions, and automated test execution.
+- **Terminal User Interface (`control-rs-tui`)**: Interactive dashboard (Ratatui)
+  for real-time on-target telemetry inspection and manual test execution.
+- **Quality Gate Runner (`control-rs-ci`)**: Declarative quality gate runner
+  (`gate.toml`), report generator (`ci-report.md`), and requirement traceability
+  auditor.
 
 ### 3. Continuous Integration (`.github/workflows/CI.yml`)
 
 - **Multi-Arch Emulation**: CI → virtual ETS (QEMU) for both **ARM
   Cortex-M** (`thumbv7em-none-eabihf`) and **RISC-V**
   (`riscv32imac-unknown-none-elf`) targets.
-- **Code Quality Reporting**: Parses stdout/stderr from the available
-  cargo tooling (`fmt`, `clippy`, `test`, `tarpaulin`, `qemu`) and generates a
-  report (`ci-report.md`).
-- **Numerical-model JSON V&V**: Separate workflow
-  [
-  `.github/workflows/numerical-models.yml`](../.github/workflows/numerical-models.yml)
-  installs Python 3.12 and `examples/numerical-models-validation/python3/requirements.txt`,
-  then `cargo build --release` and
-  `cargo run --release --bin validate -- suites/`. Not part of `cargo ci`.
-  Suite files list validators (suite path in, JSON on stdout) and plotters
-  (results directory in). Artifacts include `metrics` (residual / $\tau\kappa\varepsilon$)
-  and `timings` (kernel Instant / `perf_counter_ns`). Plotters write
-  named PNGs under `results/<slug>/`; PNG pixels are not a numeric gate.
-  Additional native `source` names (`rust-row`, optional Apple
-  `rust-accelerate`) are extra validators, not a substitute for `source: rust`.
-  Each run uploads `results/` as the `numerical-models-results` Actions
-  artifact (30-day retention). Successful `main` runs also publish flattened
-  `{slug}-{name}.png` files to the rolling
-  [`plots`](https://github.com/Dyse-Industries/control-rs/releases/tag/plots)
-  release (not marked Latest, so `v*` crate publishes keep that badge). The
-  gallery is in [`examples/README.md`](../examples/README.md).
-  That nested crate is not a workspace member, so `cargo fmt-all` does not
-  cover it; `cargo ci` fmt-checks it via `--manifest-path`.
+- **Code Quality Reporting**: `control-rs-ci` executes workspace quality gates
+  and aggregates structured JSON artifacts into `ci-report.md`.
+- **Differential Validation**: Host reference cross-validation against
+  high-precision oracles (`control-rs-oracle`).
 
 ---
 
@@ -112,9 +96,12 @@ to simplify development, testing, formatting, linting and coverage reporting:
 
 | Category                               | Alias               | Underlying Command                                             | Description                                                     |
 |:---------------------------------------|:--------------------|:---------------------------------------------------------------|:----------------------------------------------------------------|
-| **Development & UI**                   | `cargo xtask`       | `run --package control-rs-xtask --`                            | Runs the workspace's auxiliary build/test tasks.                |
-|                                        | `cargo tui`         | `cargo xtask tui`                                              | Launches the interactive TUI console dashboard.                 |
-|                                        | `cargo ci`          | `cargo xtask ci`                                               | Runs the continuous integration suite locally.                  |
+| **Development & UI**                   | `cargo ci`          | `run --package control-rs-ci --bin ci --`                      | Runs the continuous integration suite locally.                  |
+|                                        | `cargo gate`        | `run --package control-rs-ci --bin gate --`                    | Runs targeted quality gates via `gate.toml`.                    |
+|                                        | `cargo trace`       | `run --package control-rs-ci --bin trace --`                   | Audits requirement traceability across design docs.             |
+|                                        | `cargo report`      | `run --package control-rs-ci --bin report --`                  | Aggregates JSON artifacts into `ci-report.md`.                  |
+|                                        | `cargo compare`     | `run --package control-rs-ci --bin compare --`                 | Runs host oracle differential cross-validation.                 |
+|                                        | `cargo tui`         | `run --package control-rs-tui --bin tui --`                    | Launches the interactive TUI console dashboard.                 |
 | **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | TUI → virtual ETS (QEMU).                                       |
 |                                        | `cargo teensy`      | `cargo tui teensy`                                             | TUI → ETS (Teensy 4.0).                                         |
 | **Target Execution (CI)**              | `cargo qemu-ci`     | `cargo ci qemu`                                                | CI → virtual ETS (QEMU).                                        |
