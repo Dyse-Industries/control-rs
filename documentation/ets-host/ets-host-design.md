@@ -206,33 +206,27 @@ meaning.
 
 #### 4.4. Session State Machine
 
-1. **Discovery** — send `ListSuites` and collect the suite and case registry.
-   `Telemetry::TargetInfo` validation is FR-8 / host-comm Step 4 and is not
-   performed yet.
+1. **Discovery (Per-Suite Ready Bitmask)** — send `ListSuites` and populate `SuiteItem`
+   descriptors directly. Incoming frames update integer readiness bitmasks
+   (`SUITE_INFO_READY`, `TESTS_READY`, `SETTINGS_READY`). On `DiscoveryComplete`,
+   readiness is validated in $O(1)$ by asserting `suite.ready_mask == SUITE_READY_MASK`.
+   Incomplete suites trigger a retry rather than entering the run phase.
 2. **Run queue** — issue `RunExecutable` per queued case, accumulate cycle,
    duration, and peak-stack telemetry.
-3. **Panic** — on `Telemetry::TargetPanic`, stop issuing runs, send
-   `Command::TryReset`, allow 50 ms for the frame to drain, and drop the
-   bridge. On serial connections, the server firmware is responsible for
-   resolving hangs and resetting hardware; the host assumes `Command::TryReset`
-   will be serviced or a timeout will be reported.
-4. **Reset** — wait 1 s for the target bootloader and hardware initialization,
-   rebuild the bridge, clear the queue, and re-enter discovery. Results already
-   collected are retained. The 1 s figure is the value the existing headless
-   loop uses; the interactive console uses 2 s, and the two are reconciled to
-   the headless value here because the console's extra second covers terminal
-   redraw, not target boot.
+3. **Panic & Comms Recovery** — on `Telemetry::TargetPanic` or unexpected link drop,
+   attribute failure according to `SessionPhase` (e.g. discovery vs active test case),
+   send `Command::TryReset`, allow 50 ms for the frame to drain, and drop the bridge.
+4. **Reset** — wait 1 s for target initialization, rebuild the bridge, and re-enter
+   discovery. Results already collected are retained.
 5. **Completion** — the queue drains, the reset budget is exhausted, or the
-   caller's timeout expires.
+   caller-supplied `RunOptions.timeout` expires.
 
 Discovery re-sends `ListSuites` every 500 ms until the target answers, so a
 target that boots slower than the host connects is not deadlocked.
 
-Resets are bounded. A session performs at most `max_resets` panic-recovery
-cycles, defaulting to 3. Exhausting the budget ends the session at step 5 with
-the results collected so far; it is not an error. Without a bound, a target
-that panics on every case reproduces the panic until the wall clock expires and
-returns nothing useful.
+Resets are bounded via `RunOptions.max_resets` (defaulting to 3). Exhausting the
+budget ends the session at step 5 with the results collected so far. Without a bound,
+a target that panics on every case reproduces the panic until the wall clock expires.
 
 #### 4.5. Error Type
 

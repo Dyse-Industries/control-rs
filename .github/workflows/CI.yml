@@ -7,19 +7,19 @@ on:
     paths:
       - 'src/**'
       - 'control-rs-ets/**'
+      - 'control-rs-ets-host/**'
       - 'control-rs-xtask/**'
       - '.github/workflows/**'
       - 'Cargo.toml'
-      - 'Cargo.lock'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'src/**'
       - 'control-rs-ets/**'
+      - 'control-rs-ets-host/**'
       - 'control-rs-xtask/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
       - '.github/workflows/**'
+      - 'Cargo.toml'
 
 jobs:
   build:
@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [ "1.88.0", "stable", "beta" ] # add nightly back when clippy is safe
+        rust: [ "1.89.0", "stable", "beta" ] # add nightly back when clippy is safe
     permissions:
       pull-requests: write # Required to post comments
     steps:

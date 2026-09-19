@@ -14,10 +14,13 @@
 pub use bridge::{BridgeMessage, ETSBridge, OwnedTelemetry};
 pub use error::HostError;
 pub use runner::{
-    Completion, EtsRunResult, RunRecord, TestOutcome, run_headless_ets,
+    Completion, EtsRunResult, RunOptions, RunRecord, TestOutcome,
+    run_headless_ets, run_headless_ets_with_options,
 };
 pub use session::{
-    SessionAction, SessionState, SettingItem, SuiteItem, TestItem,
+    SETTINGS_READY, SUITE_INFO_READY, SUITE_READY_MASK, SessionAction,
+    SessionPhase, SessionState, SettingItem, SuiteItem, TESTS_READY, TestIndex,
+    TestItem,
 };
 pub use target::{
     QemuArch, QemuTargetDetails, SubprocessTarget, Target, build_target_elf,

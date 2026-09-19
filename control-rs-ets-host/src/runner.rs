@@ -10,14 +10,27 @@ use crate::error::HostError;
 use crate::session::{SessionAction, SessionState};
 use crate::target::Target;
 
-const MAX_RESETS: u32 = 3;
-
 /// Legacy alias for [`RunRecord`].
 pub type EtsRunResult = RunRecord;
+
+/// Execution options controlling timeout and retry parameters for headless runs.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
+pub struct RunOptions {
+    /// Maximum wall-clock duration for the entire test session.
+    pub timeout: Duration,
+    /// Maximum allowed target resets or reconnection attempts before aborting.
+    pub max_resets: u32,
+}
 
 /// The result and performance telemetry of an individual test case.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TestOutcome {
+    /// Identifier of the test suite.
+    pub suite_id: u16,
+    /// Identifier of the test case within the suite.
+    pub test_id: u16,
     /// Suite namespace of the test.
     pub suite_name: String,
     /// Identifier name of the test.
@@ -79,6 +92,15 @@ enum AfterPanicRestart {
     Reconnect,
 }
 
+impl Default for RunOptions {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_secs(30),
+            max_resets: 3,
+        }
+    }
+}
+
 impl RunRecord {
     /// Returns the terminal completion status.
     #[must_use]
@@ -97,10 +119,11 @@ impl RunRecord {
 const fn after_panic_restart(
     exit_loop: bool,
     resets: u32,
+    max_resets: u32,
 ) -> AfterPanicRestart {
     if exit_loop {
         AfterPanicRestart::Drained
-    } else if resets >= MAX_RESETS {
+    } else if resets >= max_resets {
         AfterPanicRestart::ResetBudgetExhausted
     } else {
         AfterPanicRestart::Reconnect
@@ -119,7 +142,7 @@ const fn is_unexpected_target_exit(
     !discovery_complete || has_current_running || !run_queue_empty
 }
 
-/// Headless execution loop for driving ETS tests to completion on a target.
+/// Headless execution loop for driving ETS tests to completion on a target with default options.
 ///
 /// Establishes the transport bridge (`cargo run` builds subprocess firmware),
 /// runs test discovery, and executes the suite run-queue under a wall-clock timeout.
@@ -132,6 +155,26 @@ const fn is_unexpected_target_exit(
 pub fn run_headless_ets(
     target: Target,
     timeout: Duration,
+) -> Result<RunRecord, HostError> {
+    run_headless_ets_with_options(
+        target,
+        RunOptions {
+            timeout,
+            max_resets: 3,
+        },
+    )
+}
+
+/// Headless execution loop for driving ETS tests to completion on a target with explicit options.
+///
+/// # Errors
+///
+/// Returns `HostError` if the target cannot be spawned or unexpectedly disconnects
+/// before any session record can be produced.
+#[allow(clippy::needless_pass_by_value)]
+pub fn run_headless_ets_with_options(
+    target: Target,
+    options: RunOptions,
 ) -> Result<RunRecord, HostError> {
     let mut bridge = ETSBridge::new(target.clone(), true)?;
 
@@ -152,7 +195,7 @@ pub fn run_headless_ets(
     }
 
     while !state.exit_loop {
-        if start_time.elapsed() > timeout {
+        if start_time.elapsed() > options.timeout {
             bridge.terminate();
             return Ok(finish_record(
                 state,
@@ -206,7 +249,11 @@ pub fn run_headless_ets(
                         // TargetPanic clears discovery_complete and may set
                         // exit_loop when no cases remain. Prefer drain over
                         // reset-budget / TargetExited for that path.
-                        match after_panic_restart(state.exit_loop, resets) {
+                        match after_panic_restart(
+                            state.exit_loop,
+                            resets,
+                            options.max_resets,
+                        ) {
                             AfterPanicRestart::Drained => break,
                             AfterPanicRestart::ResetBudgetExhausted => {
                                 return Ok(finish_record(
@@ -339,7 +386,7 @@ mod tests {
                 name: "suite",
                 description: "",
                 test_count: 2,
-                setting_count: 0,
+                setting_count: 1,
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(
@@ -464,24 +511,18 @@ mod tests {
     #[test]
     fn draining_final_panic_prefers_drained_over_reset_budget() {
         // Suite finished on the Nth panic: exit_loop set, resets at the cap.
-        assert_eq!(
-            after_panic_restart(true, MAX_RESETS),
-            AfterPanicRestart::Drained
-        );
-        assert_eq!(
-            after_panic_restart(true, MAX_RESETS.saturating_add(1)),
-            AfterPanicRestart::Drained
-        );
+        assert_eq!(after_panic_restart(true, 3, 3), AfterPanicRestart::Drained);
+        assert_eq!(after_panic_restart(true, 4, 3), AfterPanicRestart::Drained);
     }
 
     #[test]
     fn mid_suite_panic_at_reset_cap_exhausts_budget() {
         assert_eq!(
-            after_panic_restart(false, MAX_RESETS),
+            after_panic_restart(false, 3, 3),
             AfterPanicRestart::ResetBudgetExhausted
         );
         assert_eq!(
-            after_panic_restart(false, MAX_RESETS.saturating_sub(1)),
+            after_panic_restart(false, 2, 3),
             AfterPanicRestart::Reconnect
         );
     }
@@ -539,7 +580,7 @@ mod tests {
             state.run_queue.is_empty(),
         ));
         assert_eq!(
-            after_panic_restart(state.exit_loop, 1),
+            after_panic_restart(state.exit_loop, 1, 3),
             AfterPanicRestart::Drained
         );
     }

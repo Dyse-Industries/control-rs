@@ -45,9 +45,12 @@
 **/GEMINI.md
 **/AGENTS.md
 **/Claude Outputs/
+
+.ai/
 .agent/
 .claude/
 .cursor/
+.idea/workspace.xml
 
 documentation/TODO/
 documentation/**/research/*
