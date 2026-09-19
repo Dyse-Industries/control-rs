@@ -8,18 +8,28 @@ on:
       - 'src/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
+      - 'control-rs-macros/**'
+      - 'control-rs-tui/**'
+      - 'control-rs-ci/**'
       - 'control-rs-xtask/**'
+      - 'documentation/**'
       - '.github/workflows/**'
-      - 'Cargo.toml'
+      - '*.toml'
+      - '.vale.ini'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'src/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
+      - 'control-rs-macros/**'
+      - 'control-rs-tui/**'
+      - 'control-rs-ci/**'
       - 'control-rs-xtask/**'
+      - 'documentation/**'
       - '.github/workflows/**'
-      - 'Cargo.toml'
+      - '*.toml'
+      - '.vale.ini'
 
 jobs:
   build:
@@ -32,20 +42,26 @@ jobs:
       pull-requests: write # Required to post comments
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
 
-      - uses: cargo-bins/cargo-binstall@main
-      - name: Install Tarpaulin
-        run: cargo binstall cargo-tarpaulin -y
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-tarpaulin,cargo-deny,cargo-geiger,cargo-semver-checks,vale
+
+      - name: Sync Vale styles
+        run: vale --config=.vale.ini sync
 
       - name: Install Targets
         run: rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
 
       - name: Install apt packages
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system valgrind
 
       - name: Download Tarpaulin Coverage Report
         if: github.event_name == 'pull_request'

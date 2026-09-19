@@ -123,10 +123,8 @@ impl ReportAggregator {
         }
 
         md.push_str("### Executive Summary Matrix\n\n");
-        md.push_str(
-            "| Gate | Verdict | Duration | Exit Code | Summary | Log |\n",
-        );
-        md.push_str("|:---|:---|:---|:---|:---|:---|\n");
+        md.push_str("| Gate | Verdict | Duration | Exit Code | Summary |\n");
+        md.push_str("|:---|:---|:---|:---|:---|\n");
 
         for outcome in outcomes.values() {
             let verdict_badge = match outcome.verdict {
@@ -139,15 +137,13 @@ impl ReportAggregator {
                 outcome.exit_code.map_or("-".to_string(), |c| c.to_string());
             let summary_str = outcome.summary.as_deref().unwrap_or("-");
 
-            let log_rel = format!("artifacts/{}", outcome.log_file);
             md.push_str(&format!(
-                "| `{}` | {} | {:.2}s | {} | {} | [log]({}) |\n",
+                "| `{}` | {} | {:.2}s | {} | {} |\n",
                 outcome.gate,
                 verdict_badge,
                 outcome.duration_secs,
                 exit_str,
-                summary_str,
-                log_rel
+                summary_str
             ));
         }
 

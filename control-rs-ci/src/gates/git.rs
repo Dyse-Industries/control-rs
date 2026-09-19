@@ -31,6 +31,15 @@ impl GitHygieneGate {
             return issues;
         }
 
+        let lower = trimmed.to_lowercase();
+        let is_merge_or_initial = lower.starts_with("merge ")
+            || lower.starts_with("initial ")
+            || lower.starts_with("release");
+
+        if is_merge_or_initial {
+            return issues;
+        }
+
         // Check header length
         if trimmed.chars().count() > self.config.max_header_length {
             issues.push(format!(
@@ -41,7 +50,6 @@ impl GitHygieneGate {
         }
 
         // Check disallowed patterns
-        let lower = trimmed.to_lowercase();
         for pat in &self.config.disallowed_patterns {
             let pat_lower = pat.to_lowercase();
             if lower == pat_lower
@@ -87,12 +95,7 @@ impl GitHygieneGate {
                 false
             });
 
-            // If it starts with Merge or Initial commit, allow as exception
-            let is_merge_or_initial = lower.starts_with("merge ")
-                || lower.starts_with("initial ")
-                || lower.starts_with("release");
-
-            if !is_conventional && !is_merge_or_initial {
+            if !is_conventional {
                 issues.push(format!(
                     "Does not conform to Conventional Commits (e.g. 'feat:', 'fix(scope):', etc.): '{trimmed}'"
                 ));
