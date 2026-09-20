@@ -683,7 +683,7 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 | **Step 2: Core Arithmetic**                 | `Add`/`Sub`/`Neg` operator overloads, `mul_poly`, `mul_with_conv` via `Convolution<T>`.                                                                                                         | 2.0 Days         |
 | **Step 3: Evaluation, Calculus & Division** | Horner `evaluate`, derivative/integral methods, `div_rem` with `DivisionError` and the near-singular caveat.                                                                                    | 2.5 Days         |
 | **Step 4: Interoperability**                | Companion-`Matrix` `TryFrom` conversion, column-copy `From` conversion (§5.4), `Tensor` conversion, cross-check against `matrix-design.md`'s reverse Faddeev–LeVerrier conversion.              | 2.0 Days         |
-| **Step 5: Verification**                    | `proptest` algebraic invariants, host/qemu unit tests, release-codegen check that `evaluate` retains zero panic paths, cubic-spline trajectory validation example per [`vv-standards.md`](../vv-standards.md).        | 2.0 Days         |
+| **Step 5: Verification**                    | `proptest` algebraic invariants, host/qemu unit tests, release-codegen check that `evaluate` retains zero panic paths, cubic-spline trajectory validation example per [`design-template.md`](../design-template.md) §6. | 2.0 Days         |
 
 ---
 

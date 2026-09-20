@@ -154,7 +154,9 @@ Architecture-specific subprogram crates under [`examples/subprograms/`](examples
 - [Development Guide & Cargo Aliases](documentation/development-guide.md)
 - [Examples & Host Validation Guide](examples/README.md)
 - [Embedded Test Server (ETS)](control-rs-ets)
-- [Workspace Task Runner & TUI](control-rs-xtask)
+- [Host ETS Session Library](control-rs-ets-host)
+- [Interactive Terminal UI (TUI)](control-rs-tui)
+- [CI Quality Gate Runner](control-rs-ci)
 
 ## Installation
 

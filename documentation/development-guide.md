@@ -96,7 +96,7 @@ to simplify development, testing, formatting, linting and coverage reporting:
 
 | Category                               | Alias               | Underlying Command                                             | Description                                                     |
 |:---------------------------------------|:--------------------|:---------------------------------------------------------------|:----------------------------------------------------------------|
-| **Development & UI**                   | `cargo ci`          | `run --package control-rs-ci --bin ci --`                      | Runs the continuous integration suite locally.                  |
+| **Development & UI**                   | `cargo ci`          | `run --package control-rs-ci --bin control-rs-ci --`           | Runs the continuous integration suite locally.                  |
 |                                        | `cargo gate`        | `run --package control-rs-ci --bin gate --`                    | Runs targeted quality gates via `gate.toml`.                    |
 |                                        | `cargo metrics`     | `cargo gate --only metrics`                                    | Measures codebase line counts and directory byte footprints.    |
 |                                        | `cargo git-hygiene` | `cargo gate --only git`                                        | Audits working tree status and commit message history hygiene.  |
@@ -107,7 +107,7 @@ to simplify development, testing, formatting, linting and coverage reporting:
 |                                        | `cargo mutants`     | `cargo gate --only mutants`                                    | Runs mutation testing to verify test fault-detection rigor.     |
 |                                        | `cargo valgrind`    | `cargo gate --only valgrind`                                   | Audits runtime memory safety and leaks on binaries and examples.|
 |                                        | `cargo report`      | `run --package control-rs-ci --bin report --`                  | Aggregates JSON artifacts into `ci-report.md`.                  |
-|                                        | `cargo tui`         | `run --package control-rs-tui --bin tui --`                    | Launches the interactive TUI console dashboard.                 |
+|                                        | `cargo tui`         | `run --package control-rs-tui --`                              | Launches the interactive TUI console dashboard.                 |
 | **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | TUI → virtual ETS (QEMU).                                       |
 |                                        | `cargo teensy`      | `cargo tui teensy`                                             | TUI → ETS (Teensy 4.0).                                         |
 | **Target Execution (CI)**              | `cargo qemu-ci`     | `cargo ci qemu`                                                | CI → virtual ETS (QEMU).                                        |

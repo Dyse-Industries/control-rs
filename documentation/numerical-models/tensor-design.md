@@ -548,7 +548,7 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | **Phase 2: Element Ops & Contraction**       | Operator overloads, `contract_into`/`contract_into_dynamic`, `permute`, `as_view`/`slice_inplace`.                                                                                                              | 2.5 Days         |
 | **Phase 3: Grid Interpolation & Activation** | Multilinear `interpolate`, `Activation` trait, `Relu`, `TableActivation`.                                                                                                                                       | 2.5 Days         |
 | **Phase 4: Quantized Scalar Type**           | `Quantized<Repr, SHIFT>` with full `Zero`/`One`/`Scalar` arithmetic `num_traits` impls (correct rounding/saturation semantics), quantize/dequantize, integration across existing generic `T` paths in `Tensor`. | 3.5 Days         |
-| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial` per [`vv-standards.md`](../vv-standards.md).                 | 3.0 Days         |
+| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial` per [`design-template.md`](../design-template.md) §6.        | 3.0 Days         |
 
 ---
 

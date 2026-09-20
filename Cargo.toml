@@ -23,7 +23,6 @@ exclude = [
 members = [
     ".",
     "control-rs-ets",
-    "control-rs-xtask",
     "control-rs-macros",
     "control-rs-ets-host",
     "control-rs-tui",
