@@ -1,0 +1,20 @@
+[compare]
+out_dir = "results"
+timeout_secs = 90
+
+[[suite]]
+name = "numerical_models"
+true_oracle = "scipy"
+
+[[suite.variants]]
+name = "rust"
+type = "rust_bin"
+manifest_path = "Cargo.toml"
+bin = "validate"
+output_file = "results/matrix.json"
+
+[[suite.variants]]
+name = "scipy"
+type = "python_script"
+script = "python3/export_h5.py"
+output_file = "results/numerical_models.scipy.h5"

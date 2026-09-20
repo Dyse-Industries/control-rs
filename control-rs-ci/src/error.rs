@@ -46,12 +46,4 @@ pub enum GateError {
     /// Git command or repository inspection error.
     #[error("Git error: {0}")]
     Git(String),
-
-    /// Missing required outcome or artifact file.
-    #[error("Missing required artifact: {0:?}")]
-    MissingArtifact(PathBuf),
-
-    /// General gate runner execution failure.
-    #[error("Quality gate runner error: {0}")]
-    Execution(String),
 }

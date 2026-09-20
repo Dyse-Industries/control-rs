@@ -1,0 +1,9 @@
+[compare]
+title = "control-rs Cross-Comparison Suite"
+out_dir = "results"
+timeout_secs = 120
+strict = true
+
+suites = [
+    "examples/numerical-models-validation",
+]

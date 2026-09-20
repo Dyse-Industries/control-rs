@@ -4,6 +4,7 @@
 ci = ["run", "--package", "control-rs-ci", "--bin", "control-rs-ci", "--"]
 gate = ["run", "--package", "control-rs-ci", "--bin", "gate", "--"]
 report = ["run", "--package", "control-rs-ci", "--bin", "report", "--"]
+compare = ["run", "--package", "control-rs-compare", "--bin", "compare", "--"]
 
 # Interactive TUI
 tui = ["run", "--package", "control-rs-tui", "--"]
@@ -12,9 +13,6 @@ tui = ["run", "--package", "control-rs-tui", "--"]
 qemu = ["tui", "qemu"]
 teensy = ["tui", "teensy"]
 
-# CI → virtual ETS (QEMU) and CI → ETS (board)
-qemu-ci = ["ci", "qemu"]
-teensy-ci = ["ci", "teensy"]
 
 # Format check helper
 fmt-check = ["fmt", "--all", "--", "--check"]

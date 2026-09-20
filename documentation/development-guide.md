@@ -96,22 +96,13 @@ to simplify development, testing, formatting, linting and coverage reporting:
 
 | Category                               | Alias               | Underlying Command                                             | Description                                                     |
 |:---------------------------------------|:--------------------|:---------------------------------------------------------------|:----------------------------------------------------------------|
-| **Development & UI**                   | `cargo ci`          | `run --package control-rs-ci --bin control-rs-ci --`           | Runs the continuous integration suite locally.                  |
-|                                        | `cargo gate`        | `run --package control-rs-ci --bin gate --`                    | Runs targeted quality gates via `gate.toml`.                    |
-|                                        | `cargo metrics`     | `cargo gate --only metrics`                                    | Measures codebase line counts and directory byte footprints.    |
-|                                        | `cargo git-hygiene` | `cargo gate --only git`                                        | Audits working tree status and commit message history hygiene.  |
-|                                        | `cargo vale`        | `cargo gate --only vale`                                       | Runs Vale prose linter across documentation and doc comments.   |
-|                                        | `cargo deny-check`  | `cargo gate --only deny`                                       | Audits supply chain, licenses, and RUSTSEC advisories.          |
-|                                        | `cargo geiger`      | `cargo gate --only geiger`                                     | Audits `unsafe` code blocks and memory safety surface.          |
-|                                        | `cargo semver`      | `cargo gate --only semver`                                     | Audits public API changes against breaking SemVer regressions.  |
-|                                        | `cargo mutants`     | `cargo gate --only mutants`                                    | Runs mutation testing to verify test fault-detection rigor.     |
-|                                        | `cargo valgrind`    | `cargo gate --only valgrind`                                   | Audits runtime memory safety and leaks on binaries and examples.|
+| **Development & Quality Gates**        | `cargo ci`          | `run --package control-rs-ci --bin control-rs-ci --`           | Runs the full continuous integration pipeline locally.          |
+|                                        | `cargo gate`        | `run --package control-rs-ci --bin gate --`                    | Runs targeted quality gates (e.g. `cargo gate fmt,clippy`).     |
 |                                        | `cargo report`      | `run --package control-rs-ci --bin report --`                  | Aggregates JSON artifacts into `ci-report.md`.                  |
-|                                        | `cargo tui`         | `run --package control-rs-tui --`                              | Launches the interactive TUI console dashboard.                 |
-| **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | TUI → virtual ETS (QEMU).                                       |
-|                                        | `cargo teensy`      | `cargo tui teensy`                                             | TUI → ETS (Teensy 4.0).                                         |
-| **Target Execution (CI)**              | `cargo qemu-ci`     | `cargo ci qemu`                                                | CI → virtual ETS (QEMU).                                        |
-|                                        | `cargo teensy-ci`   | `cargo ci teensy`                                              | CI → ETS (Teensy 4.0).                                          |
+|                                        | `cargo compare`     | `run --package control-rs-compare --bin compare --`            | Executes reference oracles and compares HDF5 dataset results.   |
+| **Interactive TUI**                    | `cargo tui`         | `run --package control-rs-tui --`                              | Launches the interactive TUI console dashboard.                 |
+| **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | TUI → virtual ETS (QEMU ARM Cortex-M7).                         |
+|                                        | `cargo teensy`      | `cargo tui teensy`                                             | TUI → ETS (Teensy 4.0/4.1 over serial).                         |
 | **Formatting**                         | `cargo fmt-all`     | `fmt --all`                                                    | Automatically formats all Rust files in the workspace.          |
 |                                        | `cargo fmt-check`   | `fmt --all -- --check`                                         | Checks that all files conform to formatting rules.              |
 | **Linting**                            | `cargo lint`        | `clippy --workspace --lib --bins --tests --examples --benches` | Runs Clippy lints across all packages and targets.              |

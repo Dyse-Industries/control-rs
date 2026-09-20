@@ -19,6 +19,7 @@ geiger = "warn"
 semver = "warn"
 mutants = "skip"
 valgrind = "skip"
+cross-compare = "warn"
 
 [metrics]
 max_source_lines = 100000
@@ -57,9 +58,9 @@ baseline_ref = "origin/main"
 
 [mutants]
 timeout_multiplier = 2.0
-exclude = ["tests/**", "examples/**", "benches/**"]
-exclude_re = "(^|::)(test|tests|example|examples|bench|benches)"
-files = ["src/**"]
+exclude = ["tests/**", "benches/**"]
+exclude_re = "(^|::)(test|tests|bench|benches)"
+files = ["src/**", "examples/numerical-models-validation/src/**"]
 
 [valgrind]
 leak_check = "full"

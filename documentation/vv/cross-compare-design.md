@@ -1,7 +1,7 @@
-# Host Oracle & HDF5 Comparison System (Design Document)
+# Cross-Compare Harness & HDF5 Comparison System (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-September_19,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -11,53 +11,14 @@
 `control-rs` implements `no_std` and `no_alloc` control algorithms. Verifying
 numerical correctness, model fidelity, and algorithmic behavior in safety-critical
 autonomous systems requires empirical validation against certified reference
-oracles and multi-language implementations (such as NumPy, SciPy, JAX,
-python-flint, harold, and ngspice) on ill-conditioned kernels where
+oracles and multi-language implementations on ill-conditioned kernels where
 floating-point error accumulation is observable (SLICOT, 2026; Kochenderfer
 et al., 2026).
 
-This document establishes the architecture and normative contract for the
-published **Oracle Harness & HDF5 Comparison System**. Both `control-rs-ci` and
-`oracle-harness` are designed as standalone, publishable crates on crates.io,
-emitting distinct CLI binaries while providing an extensible, multi-method
-evaluation pipeline:
-
-1. **Published Crate Distribution**:
-   - **`oracle-harness`**: A published crate providing the core comparison engine,
-     multi-modal HDF5 verification library, and two standalone CLI binaries:
-     - **`oracle` (`control-rs-oracle` / `cargo oracle`)**: The variant runner and orchestrator.
-     - **`h5` (`control-rs-h5` / `cargo h5`)**: The independent result comparison engine.
-   - **`control-rs-ci`**: The published workspace CI gate orchestrator that invokes
-     the `oracle` and `h5` tools as a registered **custom quality gate**.
-2. **Extensible Multi-Method Evaluation Pipeline**:
-   - Supports extensible evaluators spanning **numerical arrays** (absolute error,
-     relative error, RMS, matrix norms, interval containment), **text and structured
-     outputs** (exact string match, regular expressions, `Levenshtein` edit distance,
-     JSON structural diffs, semantic contextual embeddings), and **control-domain
-     invariants** (time-domain bounding envelopes, stability margins, spectral radii).
-   - Allows declaring **multiple comparison methods per dataset** with composite
-     satisfaction policies (`all_of` vs `any_of`).
-3. **Unified Modular Configuration Schema (`oracle.toml`)**:
-   - The same `oracle.toml` schema and data structures are parsed identically at
-     every directory level by the same program (`oracle`).
-   - A root `oracle.toml` can reference child suite directories via `suites = [...]`
-     for modular cleanliness, or define/override suites and variants directly
-     at the root level.
-   - A suite-level `oracle.toml` uses the identical schema, allowing developers to
-     run a single suite in isolation (`oracle --config examples/<suite>/oracle.toml`)
-     or compose multiple suites globally.
-4. **Zero-Dependency Example Suite Decoupling**:
-   - Validation suites in `examples/` (for example, `examples/numerical-models-validation`,
-     `examples/buck-converter`, `examples/dc-motor`) are standard, pure Rust
-     examples that have **zero Cargo dependencies** on `oracle-harness` or `control-rs-ci`.
-   - Executing an example emitter via `cargo run --example <suite>` (or `cargo run -p <suite>`)
-     only computes native Rust routines and writes `results/<suite>.rust.h5`.
-   - The example interacts with the harness strictly through declarative file
-     contracts: emitting `.rust.h5` and providing an `oracle.toml` file.
-5. **Diagnostic Plotting Scripts (`python3/plot_*.py`)**:
-   - Downstream Python scripts that ingest `.h5` files from `results/` to
-     generate publication-grade figures (PNG/SVG) using Matplotlib (`control_rs_plot`).
-     Plotting is not implemented in Rust and cannot affect gate verdicts.
+This document establishes the architecture and normative contract for
+`control-rs-compare`, a standalone host verification tool that executes
+multi-language model variants and validates emitted HDF5 datasets against
+numerical tolerance bounds.
 
 ---
 
@@ -65,58 +26,41 @@ evaluation pipeline:
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Multi-Modal HDF5 Variant Container**: Each execution variant
-  (for example, `rust`, `scipy`, `jax`, `ngspice`) must emit its results to an
-  independent HDF5 file formatted as `results/<suite>.<variant>.h5`. The container
-  must support numeric datasets (`f64` scalar, 1D/2D arrays), UTF-8 text string
-  datasets, and compound/JSON structures at `/<signal_path>`.
-- **FR-2 — Published Standalone Comparator CLI (`h5`)**: `oracle-harness` must
-  publish a standalone binary `h5` (aliased as `control-rs-h5` / `cargo h5`) that
-  operates independently on a specified results directory (`--results-dir`),
-  without requiring compilation or knowledge of how variants were executed.
-- **FR-3 — Published Standalone Variant Runner CLI (`oracle`)**: `oracle-harness`
-  must publish a standalone binary `oracle` (aliased as `control-rs-oracle` /
-  `cargo oracle`) that parses `oracle.toml` files, resolves Python virtual
-  environments, executes declared variants with timeouts, and deposits `.h5`
-  containers into the results directory.
-- **FR-4 — Unified Modular Configuration Schema**: `oracle` must parse an
-  identical, unified `oracle.toml` configuration schema at all directory levels.
-  The schema must support both referencing external suite directories (`suites = [...]`)
-  and inlining suite/variant definitions directly (`[[suite]]`), allowing users
-  to define variants from outside or inside a suite.
-- **FR-5 — Extensible Multi-Method Comparison Engine**: The comparison engine
-  must evaluate datasets using extensible evaluators declared per signal:
-  1. *Numeric*: `abs`, `rel`, `rms`, `interval`, `matrix_norm`.
-  2. *Text & Structured*: `exact_match`, `regex_match`, `levenshtein`, `json_diff`, `semantic_similarity` (contextual embeddings).
-  3. *Control Domain*: `envelope` (dynamic time-domain bounds), `spectral_radius`, `stability_margins`.
-- **FR-6 — Composite Evaluation Policies**: The comparator must allow declaring
-  multiple comparison methods on a single dataset with configurable satisfaction
-  policies (`policy = "all_of"` where all declared methods must pass, or
-  `policy = "any_of"` where at least one must pass).
-- **FR-7 — CI Custom Gate Integration**: `oracle-harness` must adhere to the
-  custom quality gate protocol expected by `control-rs-ci` (`gate.toml`),
-  emitting machine-readable `cross-val-report.json`, human-readable
-  `cross-val-report.md`, and deterministic process exit codes (The Cargo Book, 2026).
-- **FR-8 — Zero Cargo Dependency for Examples**: Example suites in `examples/`
-  must not declare `oracle-harness` or `control-rs-ci` in their `[dependencies]`
-  or `[dev-dependencies]`. They interact with the harness solely by writing `.rust.h5`
-  and declaring `oracle.toml` (Rust API Guidelines, 2026).
-- **FR-9 — Isolated Suite Emitters**: Running an example suite directly with
-  `cargo run --example <suite>` or `cargo run -p <suite>` must compute only native
-  Rust math and emit `results/<suite>.rust.h5`, without triggering oracles or
-  comparisons.
-- **FR-10 — Fail-Closed Discrepancy Accumulation**: The comparison engine must
-  treat missing datasets, shape/dimension mismatches, non-numeric entries,
-  `NaN` or infinite values, and method tolerance breaches as discrepancies, terminating
-  with a non-zero exit code.
-- **FR-11 — Decoupled Diagnostic Plot Generation**: Companion plotting
-  scripts (`python3/plot_<suite>.py`) must ingest persisted `.h5` containers
-  from `results/` and emit publication-grade static figures (PNG/SVG) using
-  Python (`matplotlib`).
-- **FR-12 — Evidence Freshness & Provenance Verification**: The comparator must
-  validate that result containers were produced during the current test session
-  and capture git commit SHA, host target triple, and oracle library versions
-  (NIST, 2026; Abels and Benner, 1999).
+- **FR-1 — Typed HDF5 Variant Container**: Each execution variant (for example,
+  `rust`, `scipy`, `jax`, `ngspice`) emits its results to an independent HDF5 file
+  formatted as `results/<suite>.<variant>.h5`. Datasets carry typed floating-point
+  arrays (`f64`, 1D/2D) and string logs.
+- **FR-2 — Unified Standalone Runner & Comparator CLI (`compare`)**: `control-rs-compare`
+  publishes a standalone binary `compare` (`cargo compare`) that parses `compare.toml`,
+  resolves Python virtual environments, executes variants with timeouts, and performs
+  typed HDF5 dataset comparisons.
+- **FR-3 — Flexible Subsystem Filtering**: `compare` supports `--run <suites>`,
+  `--skip-run`, `--compare <suites>`, and `--skip-compare` to allow running or
+  comparing in isolation or combined.
+- **FR-4 — Unified Modular Configuration Schema**: `compare` parses an identical,
+  unified `compare.toml` configuration schema at all directory levels, supporting both
+  `suites = [...]` references and inlined `[[suite]]` definitions.
+- **FR-5 — Typed Numerical Comparison Engine**: Evaluates datasets using standard
+  numerical methods: `abs`, `rel`, `rms`, `interval`, `matrix_norm`, `envelope`,
+  and `exact_match`.
+- **FR-6 — Composite Evaluation Policies**: Allows declaring multiple comparison methods
+  per dataset with configurable satisfaction policies (`policy = "all_of"` or `"any_of"`).
+- **FR-7 — CI Custom Gate Integration**: Adheres to the custom quality gate protocol
+  expected by `control-rs-ci` (`gate.toml`), emitting `cross-val-report.json`,
+  `cross-val-report.md`, and deterministic process exit codes.
+- **FR-8 — Zero Cargo Dependency for Examples**: Example suites in `examples/` do not
+  declare `control-rs-compare` or `control-rs-ci` in their dependencies; they interact
+  solely through `.rust.h5` output and `compare.toml`.
+- **FR-9 — Isolated Suite Emitters**: Running an example suite directly computes only
+  native Rust math and emits `results/<suite>.rust.h5`.
+- **FR-10 — Fail-Closed Discrepancy Accumulation**: Missing datasets, dimension
+  mismatches, NaNs/infinities, and tolerance breaches are accumulated and terminate
+  with non-zero exit code.
+- **FR-11 — Decoupled Diagnostic Plot Generation**: Companion plotting scripts
+  (`python3/plot_<suite>.py`) ingest persisted `.h5` files and generate static figures.
+- **FR-12 — Pure Rust HDF5 Compatibility**: Reading and writing `.h5` containers
+  operates via pure-Rust implementations to eliminate host C-library compiler and
+  version drift.
 
 #### 2.2 Non-Functional Requirements
 
@@ -212,9 +156,9 @@ flowchart TD
 `oracle-harness` is published to crates.io with two standalone binaries:
 
 ```toml
-# oracle-harness/Cargo.toml (Published Crate)
+# control-rs-oracle/Cargo.toml (Published Crate)
 [package]
-name = "oracle-harness"
+name = "control-rs-oracle"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -225,35 +169,27 @@ keywords = ["control", "validation", "hdf5", "oracle", "testing"]
 categories = ["development-tools::testing"]
 
 [dependencies]
-hdf5 = "0.8"
+hdf5-pure = "0.46"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 chrono = "0.4"
-regex = "1.10"
-strsim = "0.11"
+thiserror = "2.0"
 
 [[bin]]
 name = "oracle"
 path = "src/bin/oracle.rs"
-
-[[bin]]
-name = "h5"
-path = "src/bin/h5.rs"
 ```
 
-#### 4.2 Modular Comparison Engine & Evaluator Trait Architecture
+#### 4.2 Typed Numerical Comparison Architecture
 
-The comparison engine decouples dataset representation from verification logic
-via the `ComparisonEvaluator` trait:
+The comparison engine evaluates datasets loaded directly from HDF5 containers:
 
 ```rust
-pub enum DatasetValue<'a> {
-    Float1D(&'a [f64]),
-    Float2D { rows: usize, cols: usize, data: &'a [f64] },
-    Text(&'a str),
-    TextList(&'a [&'a str]),
-    StructuredJson(&'a serde_json::Value),
+pub enum DatasetValue {
+    Float1D(Vec<f64>),
+    Float2D { rows: usize, cols: usize, data: Vec<f64> },
+    Text(String),
 }
 
 pub struct MethodResult {
@@ -263,24 +199,9 @@ pub struct MethodResult {
     pub threshold: f64,
     pub details: Option<String>,
 }
-
-pub trait ComparisonEvaluator: Send + Sync {
-    /// Canonical method identifier (e.g. "abs", "regex_match", "semantic_similarity").
-    fn method_name(&self) -> &str;
-
-    /// Evaluates the peer dataset value against the reference oracle.
-    fn evaluate(
-        &self,
-        oracle: &DatasetValue,
-        peer: &DatasetValue,
-        context: &EvaluationContext,
-    ) -> MethodResult;
-}
 ```
 
-#### 4.3 Catalogue of Built-In Comparison Methods
-
-##### 1. Numeric Methods
+#### 4.3 Catalogue of Numerical Comparison Methods
 
 | Method | Mathematical Definition / Measure | Pass Condition |
 |:---|:---|:---|
@@ -289,24 +210,8 @@ pub trait ComparisonEvaluator: Send + Sync {
 | **`rms`** | $\sqrt{\frac{1}{N}\sum_{i=1}^N (D_{\text{oracle}}[i] - D_{\text{peer}}[i])^2}$ | $\text{score} \le \text{bound}$ |
 | **`interval`** | Range check: $D_{\text{peer}}[i] \in [\min, \max]$ for all $i$ | All elements in interval |
 | **`matrix_norm`** | Matrix Frobenius norm: $\|A - B\|_F = \sqrt{\sum_{i,j} (a_{ij} - b_{ij})^2}$ | $\|A - B\|_F \le \text{bound}$ |
-
-##### 2. Text & Structural Methods
-
-| Method | Measure / Algorithm | Pass Condition |
-|:---|:---|:---|
-| **`exact_match`** | String byte-for-byte or normalized whitespace equality. | $\text{peer} == \text{oracle}$ |
-| **`regex_match`** | Evaluates regular expression pattern over peer text/logs. | Pattern matches peer output |
-| **`levenshtein`** | Normalized `Levenshtein` similarity: $1 - \frac{d(s_1, s_2)}{\max(|s_1|, |s_2|)}$. | $\text{similarity} \ge \text{threshold}$ |
-| **`json_diff`** | Structural JSON AST comparison ignoring key ordering. | Semantic JSON identity |
-| **`semantic_similarity`** | Cosine similarity of contextual text embeddings: $\frac{\mathbf{u} \cdot \mathbf{v}}{\|\mathbf{u}\|_2 \|\mathbf{v}\|_2}$. | $\cos(\theta) \ge \text{threshold}$ |
-
-##### 3. Domain-Specific & Control Methods
-
-| Method | Domain Measure | Pass Condition |
-|:---|:---|:---|
-| **`envelope`** | Time-series bounded by dynamic bounds: $y_{\min}[k] \le y_{\text{peer}}[k] \le y_{\max}[k]$. | Trajectory inside envelope |
-| **`spectral_radius`** | Maximum eigenvalue magnitude: $\rho(A) = \max_i |\lambda_i(A)|$. | $\rho(A) < 1.0$ (discrete) / $\text{Re}(\lambda) < 0$ (continuous) |
-| **`stability_margins`** | Evaluates gain margin $\Delta G$ (dB) and phase margin $\Delta \Phi$ (deg) tolerance. | $|\Delta G_{\text{peer}} - \Delta G_{\text{oracle}}| \le \text{tol}$ |
+| **`envelope`** | Dynamic envelope check: $y_{\min}[k] \le y_{\text{peer}}[k] \le y_{\max}[k]$ | Trajectory inside bounds |
+| **`exact_match`** | Exact string or token identity: $\text{peer} == \text{oracle}$ | Equality match |
 
 #### 4.4 Composite Multi-Method Evaluation Policies
 

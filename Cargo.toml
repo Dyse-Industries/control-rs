@@ -27,6 +27,7 @@ members = [
     "control-rs-ets-host",
     "control-rs-tui",
     "control-rs-ci",
+    "control-rs-compare",
 ]
 default-members = ["."]
 

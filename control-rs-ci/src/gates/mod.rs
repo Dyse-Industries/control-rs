@@ -2,6 +2,7 @@
 
 pub mod cargo;
 pub mod coverage;
+pub mod cross_compare;
 pub mod deny;
 pub mod geiger;
 pub mod git;
@@ -13,6 +14,7 @@ pub mod valgrind;
 
 pub use self::cargo::CargoArgvGate;
 pub use self::coverage::CoverageGate;
+pub use self::cross_compare::CrossCompareGate;
 pub use self::deny::DenyGate;
 pub use self::geiger::GeigerGate;
 pub use self::git::GitHygieneGate;
@@ -92,6 +94,10 @@ pub fn build_all_gates(config: &GateConfig) -> Vec<Arc<dyn QualityGate>> {
     // 15. Valgrind Memcheck
     if config.policy_for("valgrind") != GatePolicy::Skip {
         gates.push(Arc::new(ValgrindGate::new(config.valgrind.clone())));
+    }
+    // 16. Cross-Comparison Gate
+    if config.policy_for("cross-compare") != GatePolicy::Skip {
+        gates.push(Arc::new(CrossCompareGate));
     }
 
     gates
