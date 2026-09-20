@@ -1,7 +1,7 @@
 # Host Oracle & HDF5 Comparison System (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-September_19,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -29,15 +29,15 @@ evaluation pipeline:
      - **`h5` (`control-rs-h5` / `cargo h5`)**: The independent result comparison engine.
    - **`control-rs-ci`**: The published workspace CI gate orchestrator that invokes
      the `oracle` and `h5` tools as a registered **custom quality gate**.
-2. **Pluggable Multi-Method Evaluation Pipeline**:
-   - Supports pluggable evaluators spanning **numerical arrays** (absolute error,
+2. **Extensible Multi-Method Evaluation Pipeline**:
+   - Supports extensible evaluators spanning **numerical arrays** (absolute error,
      relative error, RMS, matrix norms, interval containment), **text and structured
-     outputs** (exact string match, regular expressions, Levenshtein edit distance,
+     outputs** (exact string match, regular expressions, `Levenshtein` edit distance,
      JSON structural diffs, semantic contextual embeddings), and **control-domain
      invariants** (time-domain bounding envelopes, stability margins, spectral radii).
    - Allows declaring **multiple comparison methods per dataset** with composite
      satisfaction policies (`all_of` vs `any_of`).
-3. **Unified, Composable Configuration Schema (`oracle.toml`)**:
+3. **Unified Modular Configuration Schema (`oracle.toml`)**:
    - The same `oracle.toml` schema and data structures are parsed identically at
      every directory level by the same program (`oracle`).
    - A root `oracle.toml` can reference child suite directories via `suites = [...]`
@@ -47,7 +47,7 @@ evaluation pipeline:
      run a single suite in isolation (`oracle --config examples/<suite>/oracle.toml`)
      or compose multiple suites globally.
 4. **Zero-Dependency Example Suite Decoupling**:
-   - Validation suites in `examples/` (e.g. `examples/numerical-models-validation`,
+   - Validation suites in `examples/` (for example, `examples/numerical-models-validation`,
      `examples/buck-converter`, `examples/dc-motor`) are standard, pure Rust
      examples that have **zero Cargo dependencies** on `oracle-harness` or `control-rs-ci`.
    - Executing an example emitter via `cargo run --example <suite>` (or `cargo run -p <suite>`)
@@ -66,7 +66,7 @@ evaluation pipeline:
 #### 2.1 Functional Requirements
 
 - **FR-1 — Multi-Modal HDF5 Variant Container**: Each execution variant
-  (e.g., `rust`, `scipy`, `jax`, `ngspice`) must emit its results to an
+  (for example, `rust`, `scipy`, `jax`, `ngspice`) must emit its results to an
   independent HDF5 file formatted as `results/<suite>.<variant>.h5`. The container
   must support numeric datasets (`f64` scalar, 1D/2D arrays), UTF-8 text string
   datasets, and compound/JSON structures at `/<signal_path>`.
@@ -79,13 +79,13 @@ evaluation pipeline:
   `cargo oracle`) that parses `oracle.toml` files, resolves Python virtual
   environments, executes declared variants with timeouts, and deposits `.h5`
   containers into the results directory.
-- **FR-4 — Unified Composable Configuration Schema**: `oracle` must parse an
+- **FR-4 — Unified Modular Configuration Schema**: `oracle` must parse an
   identical, unified `oracle.toml` configuration schema at all directory levels.
   The schema must support both referencing external suite directories (`suites = [...]`)
   and inlining suite/variant definitions directly (`[[suite]]`), allowing users
   to define variants from outside or inside a suite.
 - **FR-5 — Extensible Multi-Method Comparison Engine**: The comparison engine
-  must evaluate datasets using pluggable evaluators declared per signal:
+  must evaluate datasets using extensible evaluators declared per signal:
   1. *Numeric*: `abs`, `rel`, `rms`, `interval`, `matrix_norm`.
   2. *Text & Structured*: `exact_match`, `regex_match`, `levenshtein`, `json_diff`, `semantic_similarity` (contextual embeddings).
   3. *Control Domain*: `envelope` (dynamic time-domain bounds), `spectral_radius`, `stability_margins`.
@@ -151,7 +151,7 @@ evaluation pipeline:
 - **C-4 — Published Binary Naming**: The runner binary is named `oracle`. The
   comparator binary is named `h5`.
 - **C-5 — Zero Filesystem Searching**: Execution paths must be statically
-  declared in configuration files; runtime globbing or directory crawling to
+  declared in configuration files; runtime wildcard matching or directory crawling to
   discover suites or variants is prohibited.
 
 ---
@@ -163,7 +163,7 @@ multi-method evaluation, and diagnostic visualization:
 
 ```mermaid
 flowchart TD
-    subgraph Config["Unified Composable oracle.toml Schema"]
+    subgraph Config["Unified Modular oracle.toml Schema"]
         direction TB
         RootTOML["<b>Root oracle.toml</b><br/>• Global settings (out_dir, timeout)<br/>• <code>suites = ['examples/buck-converter', ...]</code><br/>• <i>(Optional) inlined [[suite]] variants</i>"]
         SuiteTOML["<b>examples/buck-converter/oracle.toml</b><br/>• Same schema: <code>[[suite]]</code> + <code>[[suite.variants]]</code><br/>• Declares multi-method comparison specs"]
@@ -179,7 +179,7 @@ flowchart TD
 
     subgraph Comparison["Multi-Method Comparison Engine (h5)"]
         direction TB
-        subgraph Evaluators["Pluggable Evaluator Pipeline"]
+        subgraph Evaluators["Extensible Evaluator Pipeline"]
             NumEval["<b>Numeric</b><br/><code>abs</code>, <code>rel</code>, <code>rms</code>, <code>interval</code>, <code>norm</code>"]
             TextEval["<b>Text & Structural</b><br/><code>exact_match</code>, <code>regex</code>, <code>levenshtein</code>, <code>json_diff</code>, <code>embedding</code>"]
             CtrlEval["<b>Control Domain</b><br/><code>envelope</code>, <code>stability_margins</code>, <code>spectral_radius</code>"]
@@ -242,7 +242,7 @@ name = "h5"
 path = "src/bin/h5.rs"
 ```
 
-#### 4.2 Pluggable Comparison Engine & Evaluator Trait Architecture
+#### 4.2 Modular Comparison Engine & Evaluator Trait Architecture
 
 The comparison engine decouples dataset representation from verification logic
 via the `ComparisonEvaluator` trait:
@@ -296,7 +296,7 @@ pub trait ComparisonEvaluator: Send + Sync {
 |:---|:---|:---|
 | **`exact_match`** | String byte-for-byte or normalized whitespace equality. | $\text{peer} == \text{oracle}$ |
 | **`regex_match`** | Evaluates regular expression pattern over peer text/logs. | Pattern matches peer output |
-| **`levenshtein`** | Normalized Levenshtein similarity: $1 - \frac{d(s_1, s_2)}{\max(|s_1|, |s_2|)}$. | $\text{similarity} \ge \text{threshold}$ |
+| **`levenshtein`** | Normalized `Levenshtein` similarity: $1 - \frac{d(s_1, s_2)}{\max(|s_1|, |s_2|)}$. | $\text{similarity} \ge \text{threshold}$ |
 | **`json_diff`** | Structural JSON AST comparison ignoring key ordering. | Semantic JSON identity |
 | **`semantic_similarity`** | Cosine similarity of contextual text embeddings: $\frac{\mathbf{u} \cdot \mathbf{v}}{\|\mathbf{u}\|_2 \|\mathbf{v}\|_2}$. | $\cos(\theta) \ge \text{threshold}$ |
 
@@ -329,7 +329,7 @@ methods = [
 ]
 ```
 
-#### 4.5 Unified Composable Configuration Schema (`oracle.toml`)
+#### 4.5 Unified Modular Configuration Schema (`oracle.toml`)
 
 The configuration format is unified across root and suite levels:
 
@@ -502,7 +502,7 @@ cargo h5 [OPTIONS]
 
 ##### CLI Options
 - `--results-dir <DIR>` / `--out-dir <DIR>`: Directory containing `.h5` files (default: `results` or `.`).
-- `--suite <NAME>`: Evaluate only the named suite (e.g. `buck_converter`).
+- `--suite <NAME>`: Evaluate only the named suite (for example, `buck_converter`).
 - `--oracle <VARIANT>`: Override true oracle variant (default: `scipy` or `rust`).
 - `--strict`: Terminate non-zero on any tolerance breach (default: `true`).
 - `--bypass-gate`: Generate reports without returning non-zero exit code.
@@ -555,7 +555,7 @@ results/
   `agg` backend) and `control_rs_plot` provides flexible visual styling without
   introducing GUI or graphical C dependencies into the Rust workspace.
 - **Decoupled Failure Boundary**: Plot script invocation occurs downstream of
-  `h5` comparison. Script missingness or plotting errors do not alter gate exit
+  `h5` comparison. Script absence or plotting errors do not alter gate exit
   codes.
 
 #### 4.11 Structured Report Schemas
@@ -645,11 +645,11 @@ results/
 | Alternative | Technical Tradeoffs & Reason for Rejection | Reference |
 |:---|:---|:---|
 | **Hardcoded Float-Only Evaluators** | Restricts comparison strictly to double-precision numbers; fails to support text logs, regular expression status checks, JSON AST equivalence, or semantic contextual embeddings. | [7], [8] |
-| **Separate Incompatible Config Schemas for Root vs Suites** | Forces runner to implement multiple parser paths; unified composable schema allows identical data structures to parse root configs, suite configs, or inlined experiments. | [6] |
+| **Separate Incompatible Config Schemas for Root vs Suites** | Forces runner to implement multiple parser paths; unified modular schema allows identical data structures to parse root configs, suite configs, or inlined experiments. | [6] |
 | **Unpublished In-Tree Harness / xtask** | Prevents other control projects and external users from adopting `oracle-harness` as a reusable numerical verification tool for their own Rust and C control algorithms. Publishing establishes a standardized ecosystem tool. | [6], [9] |
 | **Examples Depending on Harness as a Rust Library** | Couples simple pedagogical examples to heavy host-only I/O dependencies (`hdf5`, `serde_json`, `toml`); violates the principle that examples should remain minimal, clean, and focused purely on toolbox API demonstration. | [9] |
 | **Dynamic Filesystem Searching / Crawling** | Dynamic directory walking is non-deterministic, brittle in complex workspace hierarchies, and hides missing suite targets behind silent discovery omissions. Statically declaring suites in config guarantees exhaustive execution. | [6] |
-| **Rust-Native Plotting (plotters / egui)** | Adds significant compilation overhead and graphics driver dependencies to CI pipelines for diagnostic figures that are only inspected off-line. | [6] |
+| **Rust-Native Plotting (plotters / `egui`)** | Adds significant compilation overhead and graphics driver dependencies to CI pipelines for diagnostic figures that are only inspected off-line. | [6] |
 
 ---
 
@@ -659,7 +659,7 @@ results/
 
 | Kind | Step | Establishes |
 |:---|:---|:---|
-| `test` | Pluggable Evaluator Unit Tests | Validates `abs`, `rel`, `rms`, `interval`, `exact_match`, `regex_match`, `levenshtein`, and `json_diff` across clean and breach inputs. |
+| `test` | Extensible Evaluator Unit Tests | Validates `abs`, `rel`, `rms`, `interval`, `exact_match`, `regex_match`, `levenshtein`, and `json_diff` across clean and breach inputs. |
 | `test` | Composite Policy Evaluation Tests | Asserts correct resolution of `all_of` and `any_of` policies across multi-method datasets. |
 | `test` | Unified configuration schema parser tests | Verifies loading child `suites`, inlined `[[suite]]` definitions, path normalizations, and overrides. |
 | `test` | Multi-Modal HDF5 container tests | Verifies reading and writing numeric arrays, UTF-8 string datasets, and JSON attributes. |
@@ -675,7 +675,7 @@ results/
 | **Unified Config Parsing** | Single/multi-suite TOML fixtures | AST validation | Identical parsing across root and suite files |
 | **Missing Key Rejection** | Synthetic partial HDF5 container | Error accumulator | Flags missing dataset with non-zero exit |
 | **Deterministic Evaluation** | Repeated host execution | Binary reproducibility | Exactly identical floating-point residuals |
-| **Freshness Enforcement** | Pre-dated container fixture | Mtime / timestamp check | Flags stale container with non-zero exit |
+| **Freshness Enforcement** | Pre-dated container fixture | `mtime` / timestamp check | Flags stale container with non-zero exit |
 
 #### 6.3 Limits
 
@@ -700,14 +700,14 @@ results/
 ### 8. Risks & Open Questions
 
 - **External Library Version Drift**: Minor numerical discrepancies in reference
-  libraries (e.g., SciPy eigenvalue algorithm updates) can shift machine-precision
+  libraries (for example, SciPy eigenvalue algorithm updates) can shift machine-precision
   residuals. Documenting exact reference versions in C-8 envelopes and TOML
   provenance headers mitigates this risk.
 - **Embedding Model Weight Distribution**: For `semantic_similarity` evaluations,
-  relying on lightweight local tokenizers / small embedding models ensures offline
+  relying on lightweight local token models ensures offline
   reproducibility in CI without requiring live API keys or cloud connections.
 - **HDF5 C Library Dependency on crates.io**: Published `oracle-harness` binary
-  releases may provide precompiled standalone binaries (via GitHub Releases / cargo-binstall)
+  releases may provide pre-compiled standalone binaries (via GitHub Releases / cargo-binstall)
   to allow developers on systems without local `libhdf5-dev` headers to use `h5`
   and `oracle` seamlessly.
 
@@ -717,8 +717,8 @@ results/
 
 | Phase / Task | Description | Status |
 |:---|:---|:---|
-| **Phase 1: `oracle-harness` Crate & Pluggable Evaluator Engine (`h5`)** | Implement `ComparisonEvaluator` trait, numeric evaluators (`abs`, `rel`, `rms`, `interval`, `norm`), text evaluators (`exact_match`, `regex_match`, `levenshtein`), composite policies (`all_of`/`any_of`), and standalone `h5` binary. | Active |
-| **Phase 2: Unified Config Loader & Variant Runner (`oracle`)** | Implement unified composable `oracle.toml` parser (supporting child `suites` and inlined `[[suite]]`), Python runtime resolution, timeout management, and standalone `oracle` binary. | Active |
+| **Phase 1: `oracle-harness` Crate & Extensible Evaluator Engine (`h5`)** | Implement `ComparisonEvaluator` trait, numeric evaluators (`abs`, `rel`, `rms`, `interval`, `norm`), text evaluators (`exact_match`, `regex_match`, `levenshtein`), composite policies (`all_of`/`any_of`), and standalone `h5` binary. | Active |
+| **Phase 2: Unified Config Loader & Variant Runner (`oracle`)** | Implement unified modular `oracle.toml` parser (supporting child `suites` and inlined `[[suite]]`), Python runtime resolution, timeout management, and standalone `oracle` binary. | Active |
 | **Phase 3: `control-rs-ci` Custom Gate Integration** | Register `cross-val` custom gate in `gate.toml` and wire report ingestion into `ci-report.md`. | Active |
 | **Phase 4: Suite Migration & Diagnostic Matplotlib Figures** | Ensure `examples/` suites emit `.rust.h5` without harness dependencies, declare per-suite `oracle.toml`, and maintain companion Matplotlib plotting scripts. | Active |
 
@@ -733,9 +733,9 @@ results/
 | 1.2 | September 19, 2026 | @MitchellDScott | Upgraded plotting to interactive Plotly/HTML dashboards; added explicit per-suite binary structure and config-driven runner (prohibiting dynamic searching). |
 | 1.3 | September 19, 2026 | @MitchellDScott | Established two-tier configuration (root `oracle.toml` without variants, per-suite `oracle.toml` with variants), single root orchestrator example (`examples/oracle`), and isolated single-emitter execution. |
 | 1.4 | September 19, 2026 | @MitchellDScott | Specified published crate architecture for `oracle-harness` (emitting `oracle` and `h5` binaries) and `control-rs-ci` (custom gate integration), with zero-dependency example decoupling. |
-| 1.5 | September 19, 2026 | @MitchellDScott | Unified `oracle.toml` into a single composable configuration schema used identically across root and suite levels, allowing variant definitions from inside or outside suites. |
+| 1.5 | September 19, 2026 | @MitchellDScott | Unified `oracle.toml` into a single modular configuration schema used identically across root and suite levels, allowing variant definitions from inside or outside suites. |
 | 1.6 | September 19, 2026 | @MitchellDScott | Standardized diagnostic plotting on headless Python Matplotlib (`control_rs_plot`), dropping interactive HTML for static publication-grade figures. |
-| 1.7 | September 19, 2026 | @MitchellDScott | Formalized pluggable multi-method comparison engine (`ComparisonEvaluator` trait) covering numeric, text/regex, contextual embedding, and control-domain evaluators with composite satisfaction policies (`all_of`/`any_of`). |
+| 1.7 | September 19, 2026 | @MitchellDScott | Formalized extensible multi-method comparison engine (`ComparisonEvaluator` trait) covering numeric, text/regex, contextual embedding, and control-domain evaluators with composite satisfaction policies (`all_of`/`any_of`). |
 
 ---
 

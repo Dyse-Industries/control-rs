@@ -1080,7 +1080,7 @@ mod tests {
 
         state.stop();
         assert_eq!(state.current_running, None);
-        assert!(state.run_queue.is_empty());
+        assert_eq!(state.run_queue, []);
 
         let action = state.enqueue_test(0, 1);
         assert_eq!(state.current_running, Some((0, 1)));
