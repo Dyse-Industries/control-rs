@@ -17,6 +17,7 @@ exclude = [
     "ci-report.md",
     "ets-results.json",
     "tarpaulin-report.*",
+    "tests/fixtures/",
 ]
 
 [workspace]
@@ -80,6 +81,7 @@ ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
 
 [dev-dependencies]
 proptest = "1"
+control-rs-ci = { path = "control-rs-ci" }
 
 [profile.release]
 # Enable Link Time Optimization (LTO)

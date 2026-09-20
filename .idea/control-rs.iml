@@ -21,6 +21,10 @@
       <sourceFolder url="file://$MODULE_DIR$/control-rs-tui/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/control-rs-ci/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/control-rs-ci/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/control-rs-compare/benches" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/control-rs-compare/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/control-rs-compare/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/examples/numerical-models-validation/.venv" />

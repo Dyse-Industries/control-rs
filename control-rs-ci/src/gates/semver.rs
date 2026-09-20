@@ -49,6 +49,7 @@ impl QualityGate for SemverGate {
 
         let mut cmd = Command::new("cargo");
         cmd.current_dir(&ctx.workspace_root);
+        cmd.env("CARGO_TARGET_DIR", ctx.out_dir.join("targets/semver"));
         cmd.args(["semver-checks", "check-release", "--baseline-rev"]);
         cmd.arg(&self.config.baseline_ref);
 
