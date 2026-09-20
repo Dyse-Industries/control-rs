@@ -62,7 +62,6 @@ documentation/**/research/*
 
 # Generated V&V JSON/plots
 examples/*/results/
-control-rs-validation/results/
 
 # SQLite session files (e.g. hdf5/python tooling)
 **/*.ses
