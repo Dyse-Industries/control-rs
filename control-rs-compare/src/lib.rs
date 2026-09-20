@@ -32,12 +32,14 @@ pub mod report;
 pub mod runner;
 
 pub use crate::compare::{
-    ComparatorOptions, ToleranceSpec, compare_dataset, compare_float_arrays,
+    ComparatorOptions, SignalTolerancePolicy, ToleranceSpec, compare_dataset,
+    compare_float_arrays, discover_datasets, resolve_signal_tolerances,
     run_comparison,
 };
 pub use crate::config::{
     CompareConfigFile, CompareGeneralConfig, MasterPlan, OracleConfigFile,
-    OracleGeneralConfig, SuiteConfig, VariantConfig,
+    OracleGeneralConfig, SignalToleranceConfig, SuiteConfig,
+    ToleranceMethodConfig, ToleranceTable, VariantConfig,
 };
 pub use crate::error::HarnessError;
 pub use crate::report::ValidationReport;

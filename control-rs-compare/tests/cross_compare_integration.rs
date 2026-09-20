@@ -48,8 +48,10 @@ fn test_workspace_cross_compare() {
         results_dir,
         suite_filter: None,
         oracle_override: None,
+        signals: None,
         strict: true,
         quiet: true,
+        num_threads: None,
     };
 
     let report = run_comparison(Some(&master_plan), &comparator_opts)

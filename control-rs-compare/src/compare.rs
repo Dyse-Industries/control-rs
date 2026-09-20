@@ -1,13 +1,13 @@
 //! HDF5 typed dataset inspection and numerical comparison engine.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use hdf5_pure::File;
+use hdf5_pure::{AttrValue, Dataset, File, Group};
 
-use crate::config::MasterPlan;
+use crate::config::{MasterPlan, ToleranceTable};
 use crate::error::HarnessError;
 use crate::report::{
     ComparisonFinding, MethodFinding, SuiteReport, ValidationReport,
@@ -26,11 +26,17 @@ pub struct ComparatorOptions {
     /// True oracle override (e.g. "scipy").
     pub oracle_override: Option<String>,
 
+    /// Explicit signals to verify (if provided, overrides dynamic discovery).
+    pub signals: Option<Vec<String>>,
+
     /// If true, discrepancy triggers a non-zero exit return.
     pub strict: bool,
 
     /// If true, suppresses stdout streaming messages.
     pub quiet: bool,
+
+    /// Optional thread count override for parallel chunked evaluation.
+    pub num_threads: Option<usize>,
 }
 
 impl Default for ComparatorOptions {
@@ -39,16 +45,18 @@ impl Default for ComparatorOptions {
             results_dir: PathBuf::from("results"),
             suite_filter: None,
             oracle_override: None,
+            signals: None,
             strict: true,
             quiet: false,
+            num_threads: None,
         }
     }
 }
 
 /// Tolerance bound configuration for a numerical comparison check.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ToleranceSpec {
-    /// Method name ("abs", "rel", "rms", "matrix_norm", "interval", "envelope", "exact_match").
+    /// Method name ("abs", "rel", "rms", "matrix_norm", "exact_match").
     pub method: String,
     /// Numerical threshold or tolerance bound.
     pub bound: f64,
@@ -59,6 +67,24 @@ impl Default for ToleranceSpec {
         Self {
             method: "abs".to_string(),
             bound: 1e-4,
+        }
+    }
+}
+
+/// Composite multi-method tolerance policy for evaluating a signal.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SignalTolerancePolicy {
+    /// List of numerical tolerance methods to evaluate.
+    pub methods: Vec<ToleranceSpec>,
+    /// Satisfaction policy ("all_of" or "any_of").
+    pub policy: String,
+}
+
+impl Default for SignalTolerancePolicy {
+    fn default() -> Self {
+        Self {
+            methods: vec![ToleranceSpec::default()],
+            policy: "all_of".to_string(),
         }
     }
 }
@@ -165,6 +191,18 @@ pub fn run_comparison(
             }
         };
 
+        // Load external tolerance table if configured
+        let tolerance_table = configured_suite
+            .and_then(|s| s.tolerance_table.as_deref())
+            .map(Path::new)
+            .and_then(|p| {
+                if p.exists() {
+                    ToleranceTable::load_from_file(p).ok()
+                } else {
+                    None
+                }
+            });
+
         let mut suite_comparisons = Vec::new();
         let mut suite_passed = true;
 
@@ -201,21 +239,57 @@ pub fn run_comparison(
                 }
             };
 
-            // Discover datasets by reading root and child groups
-            let signals = discover_datasets(&oracle_file);
+            // Determine signals: explicit provided signals take precedence over dynamic discovery
+            let explicit_signals = options
+                .signals
+                .as_ref()
+                .or_else(|| configured_suite.and_then(|s| s.signals.as_ref()));
+
+            let signals = if let Some(explicit) = explicit_signals {
+                explicit.clone()
+            } else {
+                discover_datasets(&oracle_file)
+            };
 
             for signal in signals {
                 let comparison_key =
                     format!("{actual_oracle_suite}.{signal}.{peer_variant}");
 
-                let res = compare_dataset(
-                    &oracle_file,
-                    &peer_file,
+                let oracle_ds = oracle_file.dataset(&signal).ok();
+                let policy = resolve_signal_tolerances(
+                    oracle_ds.as_ref(),
                     &signal,
-                    &ToleranceSpec::default(),
+                    peer_variant,
+                    tolerance_table.as_ref(),
                 );
 
-                if res.verdict == "fail" {
+                let mut method_findings = Vec::new();
+                let mut method_passes = Vec::new();
+
+                for spec in &policy.methods {
+                    let threads = options.num_threads.unwrap_or_else(|| {
+                        std::thread::available_parallelism()
+                            .map_or(1, std::num::NonZero::get)
+                    });
+                    let res = compare_dataset_with_threads(
+                        &oracle_file,
+                        &peer_file,
+                        &signal,
+                        spec,
+                        threads,
+                    );
+                    let passed = res.verdict == "pass";
+                    method_passes.push(passed);
+                    method_findings.push(res);
+                }
+
+                let signal_passed = if policy.policy == "any_of" {
+                    method_passes.iter().any(|&p| p)
+                } else {
+                    method_passes.iter().all(|&p| p)
+                };
+
+                if !signal_passed {
                     suite_passed = false;
                 }
 
@@ -223,9 +297,10 @@ pub fn run_comparison(
                     key: comparison_key,
                     pair: (actual_oracle_variant.clone(), peer_variant.clone()),
                     signal,
-                    policy: "all_of".to_string(),
-                    verdict: res.verdict.clone(),
-                    methods: vec![res],
+                    policy: policy.policy,
+                    verdict: if signal_passed { "pass" } else { "fail" }
+                        .to_string(),
+                    methods: method_findings,
                 });
             }
         }
@@ -261,13 +336,28 @@ pub fn run_comparison(
     })
 }
 
-/// Compares a single dataset between an oracle and peer HDF5 file.
+/// Compares a single dataset between an oracle and peer HDF5 file using default available concurrency.
 #[must_use]
 pub fn compare_dataset(
     oracle_file: &File,
     peer_file: &File,
     signal: &str,
     tol: &ToleranceSpec,
+) -> MethodFinding {
+    let threads =
+        std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    compare_dataset_with_threads(oracle_file, peer_file, signal, tol, threads)
+}
+
+/// Compares a single dataset between an oracle and peer HDF5 file with explicit concurrency.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn compare_dataset_with_threads(
+    oracle_file: &File,
+    peer_file: &File,
+    signal: &str,
+    tol: &ToleranceSpec,
+    num_threads: usize,
 ) -> MethodFinding {
     let o_ds = match oracle_file.dataset(signal) {
         Ok(d) => d,
@@ -329,7 +419,12 @@ pub fn compare_dataset(
             }
         };
 
-        return compare_float_arrays(&o_data, &p_data, tol);
+        return compare_float_arrays_parallel(
+            &o_data,
+            &p_data,
+            tol,
+            num_threads,
+        );
     }
 
     // Try reading string data
@@ -372,33 +467,74 @@ pub fn compare_dataset(
     }
 }
 
-/// Compares two floating-point vectors according to a tolerance specification.
+/// Minimum element count threshold to trigger multi-threaded chunked evaluation.
+pub const CHUNK_THRESHOLD: usize = 65_536;
+
+/// Partial summary statistics accumulated over a chunk slice of dataset elements.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PartialChunkStats {
+    /// Maximum absolute pointwise difference observed in the chunk.
+    pub max_abs: f64,
+    /// Maximum relative pointwise error observed in the chunk.
+    pub max_rel: f64,
+    /// Sum of squared residuals observed in the chunk.
+    pub sum_sq: f64,
+    /// Set to true if any NaN or Infinity value was encountered.
+    pub has_invalid: bool,
+}
+
+impl Default for PartialChunkStats {
+    fn default() -> Self {
+        Self {
+            max_abs: 0.0,
+            max_rel: 0.0,
+            sum_sq: 0.0,
+            has_invalid: false,
+        }
+    }
+}
+
+/// Computes partial comparison statistics over a single slice of oracle and peer elements.
 #[must_use]
-pub fn compare_float_arrays(
-    oracle: &[f64],
-    peer: &[f64],
-    tol: &ToleranceSpec,
-) -> MethodFinding {
-    if oracle.len() != peer.len() {
-        return MethodFinding {
-            r#type: tol.method.clone(),
-            bound: tol.bound,
-            observed: f64::INFINITY,
-            verdict: "fail".to_string(),
-            details: Some(format!(
-                "Length mismatch: oracle={}, peer={}",
-                oracle.len(),
-                peer.len()
-            )),
-        };
+pub fn compute_chunk_stats(oracle: &[f64], peer: &[f64]) -> PartialChunkStats {
+    let mut stats = PartialChunkStats::default();
+
+    for (&o, &p) in oracle.iter().zip(peer.iter()) {
+        if o.is_nan() || p.is_nan() || o.is_infinite() || p.is_infinite() {
+            stats.has_invalid = true;
+            return stats;
+        }
+
+        let diff = (o - p).abs();
+        if diff > stats.max_abs {
+            stats.max_abs = diff;
+        }
+
+        let denom = o.abs() + f64::EPSILON;
+        let rel = diff / denom;
+        if rel > stats.max_rel {
+            stats.max_rel = rel;
+        }
+
+        stats.sum_sq += diff * diff;
     }
 
+    stats
+}
+
+/// Reduces an array of chunk statistics and evaluates against a tolerance specification.
+#[must_use]
+pub fn reduce_and_evaluate(
+    total_len: usize,
+    partials: &[PartialChunkStats],
+    tol: &ToleranceSpec,
+) -> MethodFinding {
     let mut max_abs = 0.0_f64;
     let mut max_rel = 0.0_f64;
     let mut sum_sq = 0.0_f64;
 
-    for (&o, &p) in oracle.iter().zip(peer.iter()) {
-        if o.is_nan() || p.is_nan() || o.is_infinite() || p.is_infinite() {
+    for chunk in partials {
+        if chunk.has_invalid {
             return MethodFinding {
                 r#type: tol.method.clone(),
                 bound: tol.bound,
@@ -410,22 +546,17 @@ pub fn compare_float_arrays(
             };
         }
 
-        let diff = (o - p).abs();
-        if diff > max_abs {
-            max_abs = diff;
+        if chunk.max_abs > max_abs {
+            max_abs = chunk.max_abs;
         }
-
-        let denom = o.abs() + f64::EPSILON;
-        let rel = diff / denom;
-        if rel > max_rel {
-            max_rel = rel;
+        if chunk.max_rel > max_rel {
+            max_rel = chunk.max_rel;
         }
-
-        sum_sq += diff * diff;
+        sum_sq += chunk.sum_sq;
     }
 
     #[allow(clippy::cast_precision_loss)]
-    let count = oracle.len() as f64;
+    let count = total_len as f64;
     let rms = if count > 0.0 {
         (sum_sq / count).sqrt()
     } else {
@@ -506,6 +637,80 @@ pub fn compare_float_arrays(
     }
 }
 
+/// Compares two floating-point vectors sequentially according to a tolerance specification.
+#[must_use]
+pub fn compare_float_arrays(
+    oracle: &[f64],
+    peer: &[f64],
+    tol: &ToleranceSpec,
+) -> MethodFinding {
+    if oracle.len() != peer.len() {
+        return MethodFinding {
+            r#type: tol.method.clone(),
+            bound: tol.bound,
+            observed: f64::INFINITY,
+            verdict: "fail".to_string(),
+            details: Some(format!(
+                "Length mismatch: oracle={}, peer={}",
+                oracle.len(),
+                peer.len()
+            )),
+        };
+    }
+
+    let stats = compute_chunk_stats(oracle, peer);
+    reduce_and_evaluate(oracle.len(), &[stats], tol)
+}
+
+/// Compares two floating-point vectors in parallel across worker threads.
+#[must_use]
+pub fn compare_float_arrays_parallel(
+    oracle: &[f64],
+    peer: &[f64],
+    tol: &ToleranceSpec,
+    num_threads: usize,
+) -> MethodFinding {
+    if oracle.len() != peer.len() {
+        return MethodFinding {
+            r#type: tol.method.clone(),
+            bound: tol.bound,
+            observed: f64::INFINITY,
+            verdict: "fail".to_string(),
+            details: Some(format!(
+                "Length mismatch: oracle={}, peer={}",
+                oracle.len(),
+                peer.len()
+            )),
+        };
+    }
+
+    let threads = num_threads.max(1);
+    if oracle.len() < CHUNK_THRESHOLD || threads <= 1 {
+        return compare_float_arrays(oracle, peer, tol);
+    }
+
+    let max_chunks = oracle.len().div_ceil(CHUNK_THRESHOLD);
+    let actual_threads = threads.min(max_chunks);
+    let chunk_size = oracle.len().div_ceil(actual_threads);
+    let mut partials = vec![PartialChunkStats::default(); actual_threads];
+
+    std::thread::scope(|s| {
+        for (k, out_stat) in partials.iter_mut().enumerate() {
+            let start = k * chunk_size;
+            let end = (start + chunk_size).min(oracle.len());
+            if start < end {
+                let o_slice = &oracle[start..end];
+                let p_slice = &peer[start..end];
+                s.spawn(move || {
+                    *out_stat = compute_chunk_stats(o_slice, p_slice);
+                });
+            }
+        }
+    });
+
+    reduce_and_evaluate(oracle.len(), &partials, tol)
+}
+
 fn parse_suite_and_variant(path: &Path) -> (String, String) {
     let stem = path
         .file_stem()
@@ -522,34 +727,251 @@ fn parse_suite_and_variant(path: &Path) -> (String, String) {
     }
 }
 
-fn discover_datasets(file: &File) -> Vec<String> {
-    // Collect dataset paths from root
+/// Discovers all datasets in an HDF5 container by recursively traversing the group hierarchy.
+///
+/// Starts at the root group and visits all child groups recursively (like running `ls`),
+/// accumulating fully qualified dataset paths (e.g. `"matrix/a"`, `"transient/v_out"`).
+/// Groups starting with an underscore (such as `_meta`) are skipped per multi-modal container conventions.
+/// Discovered dataset paths are sorted deterministically.
+#[must_use]
+pub fn discover_datasets(file: &File) -> Vec<String> {
     let mut datasets = Vec::new();
-    let common_signals = [
-        "matrix/a",
-        "matrix/b",
-        "matrix/c",
-        "polynomial/roots",
-        "polynomial/coefficients",
-        "state_space/a",
-        "state_space/b",
-        "state_space/c",
-        "state_space/d",
-        "state_space/time_series/state_trajectory",
-        "state_space/time_series/output_trajectory",
-        "transfer_function/numerator",
-        "transfer_function/denominator",
-        "tensor/data",
-        "transient/v_out",
-        "plant/natural_frequency_rad_s",
-        "plant/damping_ratio",
-    ];
+    let root = file.root();
+    collect_group_datasets(&root, "", &mut datasets);
+    datasets.sort();
+    datasets
+}
 
-    for signal in common_signals {
-        if file.dataset(signal).is_ok() {
-            datasets.push(signal.to_string());
+fn collect_group_datasets(group: &Group, prefix: &str, out: &mut Vec<String>) {
+    if let Ok(ds_names) = group.datasets() {
+        for name in ds_names {
+            if name.starts_with('_') {
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            out.push(path);
         }
     }
 
-    datasets
+    if let Ok(subgroups) = group.groups() {
+        for grp_name in subgroups {
+            if grp_name.starts_with('_') {
+                continue;
+            }
+            let next_prefix = if prefix.is_empty() {
+                grp_name.clone()
+            } else {
+                format!("{prefix}/{grp_name}")
+            };
+            if let Ok(subgroup) = group.group(&grp_name) {
+                collect_group_datasets(&subgroup, &next_prefix, out);
+            }
+        }
+    }
+}
+
+/// Resolves the tolerance policy for a dataset signal from:
+/// 1. External TOML tolerance table (`suite.tolerance_table`).
+/// 2. HDF5 dataset attributes on the oracle container.
+/// 3. Default fallback tolerance (`abs` <= 1e-4, `policy = "all_of"`).
+#[must_use]
+pub fn resolve_signal_tolerances(
+    oracle_dataset: Option<&Dataset>,
+    signal: &str,
+    peer_variant: &str,
+    tolerance_table: Option<&ToleranceTable>,
+) -> SignalTolerancePolicy {
+    // 1. External tolerance table check
+    if let Some(table) = tolerance_table {
+        if let Some(cfg) = table.find_signal(signal) {
+            let policy_str = if cfg.policy.is_empty() {
+                "all_of".to_string()
+            } else {
+                cfg.policy.clone()
+            };
+
+            let mut methods = Vec::new();
+            if !cfg.methods.is_empty() {
+                for m in &cfg.methods {
+                    let bound = cfg
+                        .peer_bounds
+                        .get(peer_variant)
+                        .copied()
+                        .unwrap_or(m.bound);
+                    methods.push(ToleranceSpec {
+                        method: m.r#type.clone(),
+                        bound,
+                    });
+                }
+            } else if let Some(m) = &cfg.method {
+                let bound = cfg
+                    .peer_bounds
+                    .get(peer_variant)
+                    .copied()
+                    .or(cfg.bound)
+                    .unwrap_or(1e-4);
+                methods.push(ToleranceSpec {
+                    method: m.clone(),
+                    bound,
+                });
+            } else if let Some(b) = cfg.bound {
+                let bound =
+                    cfg.peer_bounds.get(peer_variant).copied().unwrap_or(b);
+                methods.push(ToleranceSpec {
+                    method: "abs".to_string(),
+                    bound,
+                });
+            }
+
+            if !methods.is_empty() {
+                return SignalTolerancePolicy {
+                    methods,
+                    policy: policy_str,
+                };
+            }
+        }
+    }
+
+    // 2. Oracle dataset HDF5 attributes check
+    if let Some(ds) = oracle_dataset {
+        if let Ok(attrs) = ds.attrs() {
+            if let Some(policy) =
+                extract_policy_from_attrs(&attrs, peer_variant)
+            {
+                return policy;
+            }
+        }
+    }
+
+    // 3. Fallback default
+    SignalTolerancePolicy::default()
+}
+
+fn extract_policy_from_attrs(
+    attrs: &HashMap<String, AttrValue>,
+    peer_variant: &str,
+) -> Option<SignalTolerancePolicy> {
+    let peer_override_key = format!("bound.{peer_variant}");
+    let peer_bound_override =
+        attrs.get(&peer_override_key).and_then(attr_to_f64);
+
+    // Multi-method JSON string attribute
+    if let Some(methods_attr) = attrs.get("methods") {
+        if let Some(json_str) = attr_to_string(methods_attr) {
+            if let Ok(parsed_methods) =
+                serde_json::from_str::<Vec<serde_json::Value>>(&json_str)
+            {
+                let mut specs = Vec::new();
+                for item in parsed_methods {
+                    let method_name = item
+                        .get("type")
+                        .or_else(|| item.get("method"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("abs")
+                        .to_string();
+                    let bound = peer_bound_override
+                        .or_else(|| {
+                            item.get("bound")
+                                .and_then(serde_json::Value::as_f64)
+                        })
+                        .unwrap_or(1e-4);
+                    specs.push(ToleranceSpec {
+                        method: method_name,
+                        bound,
+                    });
+                }
+
+                if !specs.is_empty() {
+                    let policy_str = attrs
+                        .get("policy")
+                        .and_then(attr_to_string)
+                        .unwrap_or_else(|| "all_of".to_string());
+                    return Some(SignalTolerancePolicy {
+                        methods: specs,
+                        policy: policy_str,
+                    });
+                }
+            }
+        }
+    }
+
+    // Single method attribute
+    let method_name = attrs
+        .get("measure")
+        .or_else(|| attrs.get("method"))
+        .and_then(attr_to_string);
+
+    let bound_val = peer_bound_override
+        .or_else(|| attrs.get("bound").and_then(attr_to_f64));
+
+    if let (Some(m), Some(b)) = (method_name.as_ref(), bound_val) {
+        return Some(SignalTolerancePolicy {
+            methods: vec![ToleranceSpec {
+                method: m.clone(),
+                bound: b,
+            }],
+            policy: "all_of".to_string(),
+        });
+    }
+
+    if let Some(b) = bound_val {
+        return Some(SignalTolerancePolicy {
+            methods: vec![ToleranceSpec {
+                method: method_name.unwrap_or_else(|| "abs".to_string()),
+                bound: b,
+            }],
+            policy: "all_of".to_string(),
+        });
+    }
+
+    if let Some(m) = method_name {
+        return Some(SignalTolerancePolicy {
+            methods: vec![ToleranceSpec {
+                method: m,
+                bound: 1e-4,
+            }],
+            policy: "all_of".to_string(),
+        });
+    }
+
+    None
+}
+
+fn attr_to_f64(attr: &AttrValue) -> Option<f64> {
+    match attr {
+        AttrValue::F64(v) => Some(*v),
+        AttrValue::F32(v) => Some(f64::from(*v)),
+        AttrValue::F64Array(arr) => arr.first().copied(),
+        AttrValue::F32Array(arr) => arr.first().map(|&v| f64::from(v)),
+        AttrValue::I32(v) => Some(f64::from(*v)),
+        #[allow(clippy::cast_precision_loss)]
+        AttrValue::I64(v) => Some(*v as f64),
+        AttrValue::U32(v) => Some(f64::from(*v)),
+        #[allow(clippy::cast_precision_loss)]
+        AttrValue::U64(v) => Some(*v as f64),
+        AttrValue::String(s)
+        | AttrValue::AsciiString(s)
+        | AttrValue::VarLenString(s)
+        | AttrValue::VarLenAsciiString(s) => s.parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+fn attr_to_string(attr: &AttrValue) -> Option<String> {
+    match attr {
+        AttrValue::String(s)
+        | AttrValue::AsciiString(s)
+        | AttrValue::VarLenString(s)
+        | AttrValue::VarLenAsciiString(s) => Some(s.clone()),
+        AttrValue::StringArray(arr)
+        | AttrValue::AsciiStringArray(arr)
+        | AttrValue::VarLenStringArray(arr)
+        | AttrValue::VarLenAsciiStringArray(arr)
+        | AttrValue::VarLenAsciiCharArray(arr) => arr.first().cloned(),
+        _ => None,
+    }
 }

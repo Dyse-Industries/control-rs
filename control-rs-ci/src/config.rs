@@ -258,12 +258,75 @@ impl Default for ValgrindConfig {
     }
 }
 
+/// Execution schedule, lane partitioning, and concurrency configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionConfig {
+    /// If true, executes independent lanes concurrently across worker threads.
+    #[serde(default = "default_true")]
+    pub parallel: bool,
+    /// List of gate names that require exclusive processor authority (e.g. `cross-compare`).
+    #[serde(default = "default_exclusive_gates")]
+    pub exclusive_gates: Vec<String>,
+    /// Declarative execution lanes: mapping lane_name -> list of gate names.
+    #[serde(default = "default_lanes")]
+    pub lanes: HashMap<String, Vec<String>>,
+}
+
+fn default_exclusive_gates() -> Vec<String> {
+    vec![
+        "cross-compare".to_string(),
+        "valgrind".to_string(),
+        "mutants".to_string(),
+    ]
+}
+
+fn default_lanes() -> HashMap<String, Vec<String>> {
+    let mut map = HashMap::new();
+    map.insert(
+        "cargo".to_string(),
+        vec![
+            "fmt".to_string(),
+            "clippy".to_string(),
+            "check".to_string(),
+            "build".to_string(),
+            "test".to_string(),
+            "coverage".to_string(),
+        ],
+    );
+    map.insert(
+        "audit".to_string(),
+        vec![
+            "deny".to_string(),
+            "geiger".to_string(),
+            "semver".to_string(),
+        ],
+    );
+    map.insert(
+        "static".to_string(),
+        vec!["metrics".to_string(), "git".to_string(), "vale".to_string()],
+    );
+    map
+}
+
+impl Default for ExecutionConfig {
+    fn default() -> Self {
+        Self {
+            parallel: true,
+            exclusive_gates: default_exclusive_gates(),
+            lanes: default_lanes(),
+        }
+    }
+}
+
 /// Top-level workspace quality gate configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GateConfig {
     /// General runner configuration.
     #[serde(default)]
     pub runner: RunnerConfig,
+    /// Multi-lane parallel scheduling and authority configuration.
+    #[serde(default)]
+    pub execution: ExecutionConfig,
     /// Execution policies mapped by gate name (for example, `fmt = "fail"`).
     #[serde(default)]
     pub gates: HashMap<String, GatePolicy>,

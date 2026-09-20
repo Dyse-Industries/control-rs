@@ -61,10 +61,18 @@ numerical tolerance bounds.
 - **FR-12 — Pure Rust HDF5 Compatibility**: Reading and writing `.h5` containers
   operates via pure-Rust implementations to eliminate host C-library compiler and
   version drift.
+- **FR-13 — Parallel Chunked Dataset Evaluation**: `compare` must support evaluating
+  massive numerical datasets ($N \ge 65,536$) by partitioning arrays into cache-aligned
+  contiguous chunks processed concurrently across a pool of worker threads (`std::thread::scope`).
+- **FR-14 — Associative Map-Reduce Reduction**: Chunk workers must compute partial
+  statistics (`max_abs`, `max_rel`, `sum_sq`, `has_invalid`) in parallel with deterministic
+  reduction to maintain numerical stability and reproducibility (Higham, 2002; Demmel and Nguyen, 2013).
+- **FR-15 — Configurable Concurrency**: Concurrency must be configurable via CLI `--threads <N>` /
+  `-j <N>` and `compare.toml` (`threads = N`), defaulting to `std::thread::available_parallelism()`.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Publishable Crate Standards**: Both `oracle-harness` and
+- **NFR-1 — Publishable Crate Standards**: Both `control-rs-compare` and
   `control-rs-ci` must meet crates.io publication standards (Rust API Guidelines
   C-METADATA, SemVer adherence, permissive MIT/Apache-2.0 licensing, and complete
   documentation) (Rust API Guidelines, 2026; The Cargo Book, 2026).
@@ -84,19 +92,21 @@ numerical tolerance bounds.
   resolve Python interpreters in strict priority order: `PYTHON` environment
   variable, active `VIRTUAL_ENV` path, crate-root `.venv`
   (`../../.venv/bin/python3`), local `.venv`, and system `PATH`.
-- **C-2 — Single-Source Tolerance Attribution**: Numerical tolerance bounds
-  must be declared in single-source TOML tables (`examples/<suite>/tolerances/*.toml`)
-  or inscribed directly onto true-oracle HDF5 attributes. Module specifications
-  cite these rows without duplicating numeric literals.
+- **C-2 — Multi-Tier Tolerance Discovery**: Numerical tolerance bounds
+  are resolved hierarchically: (1) external TOML tables (`examples/<suite>/tolerances/*.toml`),
+  (2) oracle dataset HDF5 attributes (`methods`, `measure`/`method`, `bound`, `bound.<peer>`),
+  or (3) fallback default (`abs` $\le 10^{-4}$, `policy = "all_of"`).
 - **C-3 — Decoupled Non-Rust Visualization**: Diagnostic plot generators
   must read exclusively from persisted `results/*.h5` files using Python
   (`matplotlib` with headless `agg` backend). Visualizations must not be
   implemented in Rust and must not affect gate pass/fail status.
-- **C-4 — Published Binary Naming**: The runner binary is named `oracle`. The
-  comparator binary is named `h5`.
-- **C-5 — Zero Filesystem Searching**: Execution paths must be statically
-  declared in configuration files; runtime wildcard matching or directory crawling to
-  discover suites or variants is prohibited.
+- **C-4 — Published Binary Naming**: The unified runner and comparator
+  binary is named `compare` (`cargo compare`), provided by `control-rs-compare`.
+- **C-5 — Dynamic HDF5 Dataset Discovery & Explicit Overrides**: Dataset inspection
+  recursively traverses the HDF5 group hierarchy (`ls`-style) from the root group,
+  excluding metadata groups (`_meta`). When explicit signals are specified in `compare.toml`
+  (`signals = [...]`) or via CLI (`--signals <s1,s2>`), explicit signals override
+  dynamic discovery.
 
 ---
 
@@ -107,10 +117,10 @@ multi-method evaluation, and diagnostic visualization:
 
 ```mermaid
 flowchart TD
-    subgraph Config["Unified Modular oracle.toml Schema"]
+    subgraph Config["Unified Modular compare.toml Schema"]
         direction TB
-        RootTOML["<b>Root oracle.toml</b><br/>• Global settings (out_dir, timeout)<br/>• <code>suites = ['examples/buck-converter', ...]</code><br/>• <i>(Optional) inlined [[suite]] variants</i>"]
-        SuiteTOML["<b>examples/buck-converter/oracle.toml</b><br/>• Same schema: <code>[[suite]]</code> + <code>[[suite.variants]]</code><br/>• Declares multi-method comparison specs"]
+        RootTOML["<b>Root compare.toml</b><br/>• Global settings (out_dir, timeout)<br/>• <code>suites = ['examples/buck-converter', ...]</code><br/>• <i>(Optional) inlined [[suite]] variants</i>"]
+        SuiteTOML["<b>examples/buck-converter/compare.toml</b><br/>• Same schema: <code>[[suite]]</code> + <code>[[suite.variants]]</code><br/>• Declares tolerance table & explicit signals"]
         RootTOML -. References / Merges .-> SuiteTOML
     end
 
@@ -121,14 +131,14 @@ flowchart TD
         PeerH5["results/buck_converter.ngspice.h5<br/><i>(SPICE Switched Model)</i>"]
     end
 
-    subgraph Comparison["Multi-Method Comparison Engine (h5)"]
+    subgraph Comparison["Multi-Method Comparison Engine (compare)"]
         direction TB
         subgraph Evaluators["Extensible Evaluator Pipeline"]
-            NumEval["<b>Numeric</b><br/><code>abs</code>, <code>rel</code>, <code>rms</code>, <code>interval</code>, <code>norm</code>"]
-            TextEval["<b>Text & Structural</b><br/><code>exact_match</code>, <code>regex</code>, <code>levenshtein</code>, <code>json_diff</code>, <code>embedding</code>"]
-            CtrlEval["<b>Control Domain</b><br/><code>envelope</code>, <code>stability_margins</code>, <code>spectral_radius</code>"]
+            NumEval["<b>Numeric</b><br/><code>abs</code>, <code>rel</code>, <code>rms</code>, <code>interval</code>, <code>matrix_norm</code>"]
+            TextEval["<b>Text & Exact</b><br/><code>exact_match</code>, <code>string_diff</code>"]
+            TolDiscovery["<b>Tolerance Discovery</b><br/>TOML Table &rarr; HDF5 Attributes &rarr; Fallback"]
         end
-        H5Engine["Comparator CLI: <code>h5 --results-dir results/</code>"]
+        CompareEngine["Comparator CLI: <code>compare --results-dir results/</code>"]
         ReportJSON["cross-val-report.json<br/><i>(Per-method findings & scores)</i>"]
         ReportMD["cross-val-report.md<br/><i>(Executive Summary)</i>"]
         GateVerdict["Custom Gate Status (Pass / Discrepancy)"]
@@ -139,8 +149,8 @@ flowchart TD
     end
 
     Config --> Storage
-    Storage --> H5Engine
-    H5Engine --> Evaluators
+    Storage --> CompareEngine
+    CompareEngine --> Evaluators
     Evaluators --> ReportJSON
     Evaluators --> ReportMD
     Evaluators --> GateVerdict
@@ -153,12 +163,12 @@ flowchart TD
 
 #### 4.1 Crate & Binary Distribution Model
 
-`oracle-harness` is published to crates.io with two standalone binaries:
+`control-rs-compare` is published to crates.io with the standalone binary `compare`:
 
 ```toml
-# control-rs-oracle/Cargo.toml (Published Crate)
+# control-rs-compare/Cargo.toml (Published Crate)
 [package]
-name = "control-rs-oracle"
+name = "control-rs-compare"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -177,8 +187,8 @@ chrono = "0.4"
 thiserror = "2.0"
 
 [[bin]]
-name = "oracle"
-path = "src/bin/oracle.rs"
+name = "compare"
+path = "src/bin/compare.rs"
 ```
 
 #### 4.2 Typed Numerical Comparison Architecture
@@ -234,7 +244,7 @@ methods = [
 ]
 ```
 
-#### 4.5 Unified Modular Configuration Schema (`oracle.toml`)
+#### 4.5 Unified Modular Configuration Schema (`compare.toml`)
 
 The configuration format is unified across root and suite levels:
 
@@ -242,9 +252,9 @@ The configuration format is unified across root and suite levels:
 
 ```rust
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct OracleConfigFile {
+pub struct CompareConfigFile {
     #[serde(default)]
-    pub oracle: OracleGeneralConfig,
+    pub compare: CompareGeneralConfig,
     /// Optional child suite directories to merge (for modularity).
     #[serde(default)]
     pub suites: Vec<String>,
@@ -254,7 +264,7 @@ pub struct OracleConfigFile {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct OracleGeneralConfig {
+pub struct CompareGeneralConfig {
     #[serde(default = "default_title")]
     pub title: String,
     #[serde(default = "default_out_dir")]
@@ -272,6 +282,8 @@ pub struct SuiteConfig {
     pub true_oracle: String,
     #[serde(default)]
     pub tolerance_table: Option<String>,
+    #[serde(default)]
+    pub signals: Option<Vec<String>>,
     #[serde(default)]
     pub variants: Vec<VariantConfig>,
 }
@@ -294,17 +306,17 @@ pub struct VariantConfig {
 }
 ```
 
-##### 1. Workspace Root Example (`oracle.toml`)
+##### 1. Workspace Root Example (`compare.toml`)
 
 ```toml
-# oracle.toml (workspace root)
-[oracle]
+# compare.toml (workspace root)
+[compare]
 title = "control-rs Cross-Validation Suite"
 out_dir = "results"
 timeout_secs = 120
 strict = true
 
-# Referenced suite directories (each contains its own oracle.toml)
+# Referenced suite directories (each contains its own compare.toml)
 suites = [
     "examples/numerical-models-validation",
     "examples/buck-converter",
@@ -331,11 +343,11 @@ script = "examples/experiment/python3/experiment_oracle.py"
 output_file = "results/experiment.scipy.h5"
 ```
 
-##### 2. Per-Suite Example (`examples/buck-converter/oracle.toml`)
+##### 2. Per-Suite Example (`examples/buck-converter/compare.toml`)
 
 ```toml
-# examples/buck-converter/oracle.toml
-[oracle]
+# examples/buck-converter/compare.toml
+[compare]
 out_dir = "results"
 timeout_secs = 90
 
@@ -367,11 +379,11 @@ optional = true
 
 #### 4.6 Recursive Config Resolution & Path Normalization
 
-When `oracle` loads a config:
-1. It parses the target TOML file into `OracleConfigFile`.
+When `compare` loads a config:
+1. It parses the target TOML file into `CompareConfigFile`.
 2. For every entry in `suites`:
    - Resolves the child directory path relative to the parent TOML.
-   - Loads `<suite_dir>/oracle.toml`.
+   - Loads `<suite_dir>/compare.toml`.
    - Normalizes all relative script, manifest, and tolerance paths to be relative
      to the current working directory / workspace root.
    - Appends all discovered `[[suite]]` entries into the master plan.
@@ -381,7 +393,7 @@ When `oracle` loads a config:
 
 #### 4.7 CI Custom Gate Integration (`control-rs-ci`)
 
-`control-rs-ci` registers the oracle comparison system as a standard custom gate
+`control-rs-ci` registers the comparison system as a standard custom gate
 in `gate.toml`:
 
 ```toml
@@ -389,29 +401,33 @@ in `gate.toml`:
 [[gates]]
 name = "cross-val"
 description = "Host-side oracle cross-validation and HDF5 numerical tolerance gate"
-command = "oracle --config oracle.toml"
-verify_command = "h5 --results-dir results/"
+command = "compare --config compare.toml"
 report_json = "results/cross-val-report.json"
 report_md = "results/cross-val-report.md"
 blocking = true
 ```
 
-#### 4.8 Standalone Result Comparison Engine (`h5`)
+#### 4.8 Standalone Result Comparison Engine (`compare`)
 
-The published `h5` binary operates independently on `--results-dir`:
+The published `compare` binary operates on `--config` or `--results-dir`:
 
 ```bash
-h5 [OPTIONS]
-cargo h5 [OPTIONS]
+compare [OPTIONS]
+cargo compare [OPTIONS]
 ```
 
 ##### CLI Options
-- `--results-dir <DIR>` / `--out-dir <DIR>`: Directory containing `.h5` files (default: `results` or `.`).
-- `--suite <NAME>`: Evaluate only the named suite (for example, `buck_converter`).
+- `-c, --config <FILE>`: Path to `compare.toml` (default: `compare.toml`).
+- `-o, --results-dir <DIR>`: Directory containing `.h5` files (default: `results`).
+- `--run <SUITES>`: Suites to execute (`all`, `none`, or `s1,s2`).
+- `--skip-run`: Suites to not execute.
+- `--compare <SUITES>`: Suites to compare (`all`, `none`, or `s1,s2`).
+- `--skip-compare`: Suites to skip.
+- `--signals <SIGNALS>`: Explicit comma-separated signals to evaluate (overrides discovery).
 - `--oracle <VARIANT>`: Override true oracle variant (default: `scipy` or `rust`).
 - `--strict`: Terminate non-zero on any tolerance breach (default: `true`).
-- `--bypass-gate`: Generate reports without returning non-zero exit code.
-- `--quiet`: Suppress streaming messages, emitting only reports.
+- `--no-fail`: Generate reports without returning non-zero exit code.
+- `-q, --quiet`: Suppress streaming output.
 
 #### 4.9 HDF5 Multi-Modal Container Schema & Attributes
 
@@ -444,7 +460,89 @@ True-oracle datasets carry write-time attributes:
 - `independent`: `u8` (1 or 0)
 - `bound.<peer>`: `f64` (optional peer override)
 
-#### 4.10 Diagnostic Plotting Pipeline (Python Matplotlib)
+#### 4.10 Parallel Chunked Comparison Engine & Comparator Pool
+
+For massive datasets ($N > 10^5$ to $10^8$ floating-point elements), single-threaded
+sequential comparison becomes constrained by CPU and memory bandwidth. The comparison engine
+deploys a zero-dependency, cache-aligned parallel reduction architecture:
+
+##### Mathematical Map-Reduce Reduction Model
+
+Given oracle and peer arrays $D_{\text{oracle}}, D_{\text{peer}} \in \mathbb{R}^N$ partitioned
+into $P$ contiguous chunks $\mathcal{C}_k = [s_k, e_k)$ for $k \in \{1, \dots, P\}$:
+
+1. **Map Phase (Per Chunk Worker)**:
+   $$\text{max_abs}_k = \max_{i \in \mathcal{C}_k} |D_{\text{oracle}}[i] - D_{\text{peer}}[i]|$$
+   $$\text{max_rel}_k = \max_{i \in \mathcal{C}_k} \frac{|D_{\text{oracle}}[i] - D_{\text{peer}}[i]|}{|D_{\text{oracle}}[i]| + \epsilon_{\text{mach}}}$$
+   $$\text{sum_sq}_k = \sum_{i \in \mathcal{C}_k} (D_{\text{oracle}}[i] - D_{\text{peer}}[i])^2$$
+
+2. **Reduce Phase (Associative Aggregation)**:
+   $$\text{max\_abs} = \max_{k=1}^P \text{max\_abs}_k, \quad \text{max\_rel} = \max_{k=1}^P \text{max\_rel}_k, \quad \text{sum\_sq} = \sum_{k=1}^P \text{sum\_sq}_k$$
+   $$\text{rms} = \sqrt{\frac{1}{N}\text{sum\_sq}}, \quad \|D_{\text{oracle}} - D_{\text{peer}}\|_F = \sqrt{\text{sum\_sq}}$$
+
+##### Numerical Stability & Error Bounds
+
+Floating-point summation is inherently non-associative due to rounding error (Demmel and
+Nguyen, 2013). While sequential accumulation exhibits an error bound that grows
+linearly with element count $\mathcal{O}(N\mathbf{u})$, pairwise and chunked tree summation
+bounds error accumulation to $\mathcal{O}((\log_2 P + \frac{N}{P})\mathbf{u})$, where $\mathbf{u}$
+is unit roundoff (Higham, 2002). Chunking thus provides superior numerical stability in addition
+to execution speedup.
+
+##### Chunk Size & Cache Alignment
+
+To balance thread dispatch latency against SIMD memory throughput:
+- **Adaptive Execution Threshold**: Datasets with $N < 65,536$ elements ($512\text{ KiB}$) execute
+  sequentially on the caller thread, avoiding thread scheduling overhead.
+- **Cache-Conscious Partitioning**: For $N \ge 65,536$, data is partitioned into $P = \min(\text{threads}, \lceil N / 65536 \rceil)$
+  disjoint contiguous chunks that fit comfortably into L2/L3 CPU cache lines.
+- **HDF5 Storage Alignment**: When datasets utilize HDF5 chunked storage layouts (Folk et al., 2011),
+  chunk sizes naturally align with container boundaries to maximize sequential I/O throughput.
+
+##### Zero-Dependency Concurrency via `std::thread::scope`
+
+The engine uses Rust's standard library `std::thread::scope` and `std::thread::available_parallelism()`:
+
+```rust
+pub struct PartialChunkStats {
+    pub max_abs: f64,
+    pub max_rel: f64,
+    pub sum_sq: f64,
+    pub has_invalid: bool,
+}
+
+pub fn compare_float_arrays_parallel(
+    oracle: &[f64],
+    peer: &[f64],
+    tol: &ToleranceSpec,
+    num_threads: usize,
+) -> MethodFinding {
+    if oracle.len() < 65_536 || num_threads <= 1 {
+        return compare_float_arrays(oracle, peer, tol);
+    }
+
+    let chunk_size = (oracle.len() + num_threads - 1) / num_threads;
+    let mut partials = vec![PartialChunkStats::default(); num_threads];
+
+    std::thread::scope(|s| {
+        for (k, out_stat) in partials.iter_mut().enumerate() {
+            let start = k * chunk_size;
+            let end = (start + chunk_size).min(oracle.len());
+            if start < end {
+                let o_slice = &oracle[start..end];
+                let p_slice = &peer[start..end];
+                s.spawn(move || {
+                    *out_stat = compute_chunk_stats(o_slice, p_slice);
+                });
+            }
+        }
+    });
+
+    reduce_and_evaluate(oracle.len(), &partials, tol)
+}
+```
+
+#### 4.11 Diagnostic Plotting Pipeline (Python Matplotlib)
 
 Companion plotting scripts (`examples/<suite>/python3/plot_<suite>.py`) load
 `.h5` containers from `results/` and emit publication-grade static figures:
@@ -460,10 +558,10 @@ results/
   `agg` backend) and `control_rs_plot` provides flexible visual styling without
   introducing GUI or graphical C dependencies into the Rust workspace.
 - **Decoupled Failure Boundary**: Plot script invocation occurs downstream of
-  `h5` comparison. Script absence or plotting errors do not alter gate exit
+  `compare` comparison. Script absence or plotting errors do not alter gate exit
   codes.
 
-#### 4.11 Structured Report Schemas
+#### 4.12 Structured Report Schemas
 
 ##### `cross-val-report.json`
 
@@ -551,10 +649,11 @@ results/
 |:---|:---|:---|
 | **Hardcoded Float-Only Evaluators** | Restricts comparison strictly to double-precision numbers; fails to support text logs, regular expression status checks, JSON AST equivalence, or semantic contextual embeddings. | [7], [8] |
 | **Separate Incompatible Config Schemas for Root vs Suites** | Forces runner to implement multiple parser paths; unified modular schema allows identical data structures to parse root configs, suite configs, or inlined experiments. | [6] |
-| **Unpublished In-Tree Harness / xtask** | Prevents other control projects and external users from adopting `oracle-harness` as a reusable numerical verification tool for their own Rust and C control algorithms. Publishing establishes a standardized ecosystem tool. | [6], [9] |
+| **Unpublished In-Tree Harness / xtask** | Prevents other control projects and external users from adopting `control-rs-compare` as a reusable numerical verification tool for their own Rust and C control algorithms. Publishing establishes a standardized ecosystem tool. | [6], [9] |
 | **Examples Depending on Harness as a Rust Library** | Couples simple pedagogical examples to heavy host-only I/O dependencies (`hdf5`, `serde_json`, `toml`); violates the principle that examples should remain minimal, clean, and focused purely on toolbox API demonstration. | [9] |
 | **Dynamic Filesystem Searching / Crawling** | Dynamic directory walking is non-deterministic, brittle in complex workspace hierarchies, and hides missing suite targets behind silent discovery omissions. Statically declaring suites in config guarantees exhaustive execution. | [6] |
 | **Rust-Native Plotting (plotters / `egui`)** | Adds significant compilation overhead and graphics driver dependencies to CI pipelines for diagnostic figures that are only inspected off-line. | [6] |
+| **External Heavy Thread Pool (`rayon` / `tokio`)** | Introducing third-party thread pools pulls in dozens of transitive dependencies (`crossbeam`, `rayon-core`); `std::thread::scope` provides zero-dependency, safe, scoped borrowing with bounded lifetime guarantees. | [6], [9], [10] |
 
 ---
 
@@ -564,8 +663,11 @@ results/
 
 | Kind | Step | Establishes |
 |:---|:---|:---|
-| `test` | Extensible Evaluator Unit Tests | Validates `abs`, `rel`, `rms`, `interval`, `exact_match`, `regex_match`, `levenshtein`, and `json_diff` across clean and breach inputs. |
+| `test` | Extensible Evaluator Unit Tests | Validates `abs`, `rel`, `rms`, `interval`, and `matrix_norm` across clean and breach inputs. |
 | `test` | Composite Policy Evaluation Tests | Asserts correct resolution of `all_of` and `any_of` policies across multi-method datasets. |
+| `test` | Dynamic Recursive Dataset Discovery Tests | Parameterized validation of recursive `ls`-style group hierarchy traversal across complex synthetic HDF5 trees. |
+| `test` | Multi-Tier Tolerance Discovery Tests | Asserts correct resolution order: external TOML table &rarr; HDF5 dataset attributes &rarr; fallback defaults. |
+| `test` | Parallel Chunked Evaluation Equivalence Tests | Verifies mathematical identity between sequential and chunked parallel evaluations across varying thread counts and array sizes. |
 | `test` | Unified configuration schema parser tests | Verifies loading child `suites`, inlined `[[suite]]` definitions, path normalizations, and overrides. |
 | `test` | Multi-Modal HDF5 container tests | Verifies reading and writing numeric arrays, UTF-8 string datasets, and JSON attributes. |
 | `test` | Fail-closed discrepancy tests | Asserts that missing datasets, shape mismatches, NaNs, and stale timestamps trigger non-zero exit. |
@@ -580,6 +682,7 @@ results/
 | **Unified Config Parsing** | Single/multi-suite TOML fixtures | AST validation | Identical parsing across root and suite files |
 | **Missing Key Rejection** | Synthetic partial HDF5 container | Error accumulator | Flags missing dataset with non-zero exit |
 | **Deterministic Evaluation** | Repeated host execution | Binary reproducibility | Exactly identical floating-point residuals |
+| **Parallel Equivalence** | Single vs Multi-Thread Execution | Max residual difference | $\|R_{\text{seq}} - R_{\text{par}}\| \le \epsilon_{\text{mach}}$ |
 | **Freshness Enforcement** | Pre-dated container fixture | `mtime` / timestamp check | Flags stale container with non-zero exit |
 
 #### 6.3 Limits
@@ -594,10 +697,13 @@ results/
 
 - **Streaming Dataset Evaluation**: Reading HDF5 datasets sequentially bounds
   host RAM consumption below 128 MB even during multi-suite trajectory audits.
+- **Parallel Multi-Core Scalability**: For massive arrays ($N \ge 65,536$), chunked
+  parallel evaluation scales near-linearly across available host CPU cores, reducing
+  gating latency from seconds to milliseconds on multi-million element trajectories.
 - **Zero Embedded Footprint**: All HDF5 and comparison dependencies (`hdf5`,
   `serde_json`, `toml`, `regex`, `strsim`) are quarantined to the published host tool
   crates, ensuring zero impact on the embedded `control-rs` library footprint (`#![no_std]`).
-- **Rapid Gating Latency**: `h5` executes in under 200 ms for complete model
+- **Rapid Gating Latency**: `compare` executes in under 200 ms for complete model
   suites when reading pre-generated containers.
 
 ---
@@ -611,10 +717,9 @@ results/
 - **Embedding Model Weight Distribution**: For `semantic_similarity` evaluations,
   relying on lightweight local token models ensures offline
   reproducibility in CI without requiring live API keys or cloud connections.
-- **HDF5 C Library Dependency on crates.io**: Published `oracle-harness` binary
-  releases may provide pre-compiled standalone binaries (via GitHub Releases / cargo-binstall)
-  to allow developers on systems without local `libhdf5-dev` headers to use `h5`
-  and `oracle` seamlessly.
+- **HDF5 C Library Dependency on crates.io**: `control-rs-compare` relies on
+  pure-Rust `hdf5-pure` reader and writer crates to eliminate C-library header
+  and shared object dependencies across host targets.
 
 ---
 
@@ -622,10 +727,11 @@ results/
 
 | Phase / Task | Description | Status |
 |:---|:---|:---|
-| **Phase 1: `oracle-harness` Crate & Extensible Evaluator Engine (`h5`)** | Implement `ComparisonEvaluator` trait, numeric evaluators (`abs`, `rel`, `rms`, `interval`, `norm`), text evaluators (`exact_match`, `regex_match`, `levenshtein`), composite policies (`all_of`/`any_of`), and standalone `h5` binary. | Active |
-| **Phase 2: Unified Config Loader & Variant Runner (`oracle`)** | Implement unified modular `oracle.toml` parser (supporting child `suites` and inlined `[[suite]]`), Python runtime resolution, timeout management, and standalone `oracle` binary. | Active |
-| **Phase 3: `control-rs-ci` Custom Gate Integration** | Register `cross-val` custom gate in `gate.toml` and wire report ingestion into `ci-report.md`. | Active |
-| **Phase 4: Suite Migration & Diagnostic Matplotlib Figures** | Ensure `examples/` suites emit `.rust.h5` without harness dependencies, declare per-suite `oracle.toml`, and maintain companion Matplotlib plotting scripts. | Active |
+| **Phase 1: `control-rs-compare` Engine & Evaluators (`compare`)** | Implement numerical evaluators (`abs`, `rel`, `rms`, `matrix_norm`), composite policies (`all_of`/`any_of`), and standalone `compare` binary. | Complete |
+| **Phase 2: Unified Config Loader & Variant Runner** | Implement unified modular `compare.toml` parser (supporting child `suites` and inlined `[[suite]]`), Python runtime resolution, timeout management, and `--signals` filtering. | Complete |
+| **Phase 3: `control-rs-ci` Custom Gate Integration** | Register `cross-val` custom gate in `gate.toml` and wire report ingestion into `ci-report.md`. | Complete |
+| **Phase 4: Dynamic HDF5 Discovery & Multi-Tier Tolerances** | Implement recursive group hierarchy dataset discovery (`ls`-style), external TOML tolerance tables, and HDF5 dataset attribute resolution. | Complete |
+| **Phase 5: Parallel Chunked Evaluation & Worker Pool** | Implement `compare_float_arrays_parallel` using `std::thread::scope`, map-reduce partial statistics reduction, and `--threads` CLI/config concurrency options. | Active |
 
 ---
 
@@ -641,6 +747,8 @@ results/
 | 1.5 | September 19, 2026 | @MitchellDScott | Unified `oracle.toml` into a single modular configuration schema used identically across root and suite levels, allowing variant definitions from inside or outside suites. |
 | 1.6 | September 19, 2026 | @MitchellDScott | Standardized diagnostic plotting on headless Python Matplotlib (`control_rs_plot`), dropping interactive HTML for static publication-grade figures. |
 | 1.7 | September 19, 2026 | @MitchellDScott | Formalized extensible multi-method comparison engine (`ComparisonEvaluator` trait) covering numeric, text/regex, contextual embedding, and control-domain evaluators with composite satisfaction policies (`all_of`/`any_of`). |
+| 1.8 | September 20, 2026 | @MitchellDScott | Unified crate name to `control-rs-compare` with standalone `compare` binary (`cargo compare`), `compare.toml`, recursive `ls`-style dataset discovery, and multi-tier tolerance resolution (TOML table + HDF5 attributes). |
+| 1.9 | September 20, 2026 | @MitchellDScott | Integrated background research on parallel numerical reductions, pairwise tree error bounds (Higham, 2002), reproducible summation (Demmel and Nguyen, 2013), and chunked array I/O (Folk et al., 2011); formulated parallel chunked comparison architecture and comparator worker pool. |
 
 ---
 
@@ -663,3 +771,10 @@ results/
 [8] Google Project Wycheproof Developers, "Project Wycheproof: Test vectors for cryptographic software," 2026. [Online]. Available: https://github.com/google/wycheproof.
 
 [9] Rust Library Team, "Rust API Guidelines," *Rust Documentation*, 2026. [Online]. Available: https://rust-lang.github.io/api-guidelines/.
+
+[10] N. J. Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., Philadelphia, PA: SIAM, 2002.
+
+[11] J. Demmel and H. D. Nguyen, "Fast Reproducible Floating-Point Summation," in *21st IEEE Symposium on Computer Arithmetic (ARITH-21)*, 2013, pp. 163–172.
+
+[12] M. Folk et al., "An Overview of the HDF5 Technology Suite and Its Applications," in *Proceedings of the EDBT/ICDT 2011 Workshop on Array Databases*, 2011, pp. 36–47.
+

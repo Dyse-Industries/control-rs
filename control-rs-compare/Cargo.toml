@@ -29,3 +29,10 @@ toml = "0.8"
 [[bin]]
 name = "compare"
 path = "src/bin/compare.rs"
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "pool_scaling"
+harness = false

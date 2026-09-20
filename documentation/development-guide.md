@@ -97,7 +97,7 @@ to simplify development, testing, formatting, linting and coverage reporting:
 | Category                               | Alias               | Underlying Command                                             | Description                                                     |
 |:---------------------------------------|:--------------------|:---------------------------------------------------------------|:----------------------------------------------------------------|
 | **Development & Quality Gates**        | `cargo ci`          | `run --package control-rs-ci --bin control-rs-ci --`           | Runs the full continuous integration pipeline locally.          |
-|                                        | `cargo gate`        | `run --package control-rs-ci --bin gate --`                    | Runs targeted quality gates (e.g. `cargo gate fmt,clippy`).     |
+|                                        | `cargo gate`        | `run --package control-rs-ci --bin gate --`                    | Runs targeted quality gates (for example, `cargo gate fmt,clippy`). |
 |                                        | `cargo report`      | `run --package control-rs-ci --bin report --`                  | Aggregates JSON artifacts into `ci-report.md`.                  |
 |                                        | `cargo compare`     | `run --package control-rs-compare --bin compare --`            | Executes reference oracles and compares HDF5 dataset results.   |
 | **Interactive TUI**                    | `cargo tui`         | `run --package control-rs-tui --`                              | Launches the interactive TUI console dashboard.                 |

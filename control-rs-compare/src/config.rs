@@ -1,5 +1,6 @@
 //! Unified modular configuration schema and recursive loader for `compare.toml`.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -51,6 +52,10 @@ pub struct CompareGeneralConfig {
     /// Optional child suite directories specified under the [compare] table.
     #[serde(default)]
     pub suites: Vec<String>,
+
+    /// Optional thread count override for parallel chunked evaluation.
+    #[serde(default)]
+    pub threads: Option<usize>,
 }
 
 /// Declaration of a single validation suite.
@@ -67,9 +72,105 @@ pub struct SuiteConfig {
     #[serde(default)]
     pub tolerance_table: Option<String>,
 
+    /// Optional explicitly provided list of signals/datasets to verify.
+    #[serde(default)]
+    pub signals: Option<Vec<String>>,
+
     /// List of execution variants configured for this suite.
     #[serde(default)]
     pub variants: Vec<VariantConfig>,
+}
+
+/// Single-source TOML tolerance table containing per-signal numerical tolerances.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToleranceTable {
+    /// Tolerances mapped by signal path (for example, "matrix/a" or "transient/v_out").
+    #[serde(default)]
+    pub tolerances: BTreeMap<String, SignalToleranceConfig>,
+
+    /// Alternative table key `[signals]`.
+    #[serde(default)]
+    pub signals: BTreeMap<String, SignalToleranceConfig>,
+}
+
+/// Tolerance configuration for a specific signal.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SignalToleranceConfig {
+    /// Target subject/suite name (optional filter).
+    pub subject: Option<String>,
+
+    /// Target signal path (optional if table key is signal path).
+    pub signal: Option<String>,
+
+    /// Single method name ("abs", "rel", "rms", "matrix_norm", etc.).
+    pub method: Option<String>,
+
+    /// Numerical bound for single method.
+    pub bound: Option<f64>,
+
+    /// Multi-method list.
+    #[serde(default)]
+    pub methods: Vec<ToleranceMethodConfig>,
+
+    /// Satisfaction policy ("all_of" or "any_of").
+    #[serde(default = "default_policy")]
+    pub policy: String,
+
+    /// Peer-specific bound overrides (e.g. `peer_bounds.ngspice = 1e-2`).
+    #[serde(default)]
+    pub peer_bounds: BTreeMap<String, f64>,
+}
+
+/// A single tolerance method configuration in a multi-method list.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToleranceMethodConfig {
+    /// Method type name ("abs", "rel", "rms", "matrix_norm", "exact_match", etc.).
+    #[serde(rename = "type", alias = "method")]
+    pub r#type: String,
+
+    /// Numerical threshold or tolerance bound.
+    pub bound: f64,
+}
+
+impl ToleranceTable {
+    /// Loads a `tolerance_table.toml` file from disk.
+    ///
+    /// # Errors
+    /// Returns `HarnessError::Config` if reading or parsing TOML fails.
+    pub fn load_from_file(path: &Path) -> Result<Self, HarnessError> {
+        let content =
+            fs::read_to_string(path).map_err(|e| HarnessError::Config {
+                path: path.to_path_buf(),
+                message: e.to_string(),
+            })?;
+
+        let parsed: Self =
+            toml::from_str(&content).map_err(|e| HarnessError::Config {
+                path: path.to_path_buf(),
+                message: e.to_string(),
+            })?;
+
+        Ok(parsed)
+    }
+
+    /// Finds the tolerance configuration for a given signal path.
+    #[must_use]
+    pub fn find_signal(&self, signal: &str) -> Option<&SignalToleranceConfig> {
+        if let Some(cfg) = self.tolerances.get(signal) {
+            return Some(cfg);
+        }
+        if let Some(cfg) = self.signals.get(signal) {
+            return Some(cfg);
+        }
+        self.tolerances
+            .values()
+            .chain(self.signals.values())
+            .find(|cfg| cfg.signal.as_deref() == Some(signal))
+    }
+}
+
+fn default_policy() -> String {
+    "all_of".to_string()
 }
 
 /// Execution specification for a single language or model variant.
@@ -123,6 +224,7 @@ impl Default for CompareGeneralConfig {
             timeout_secs: default_timeout_secs(),
             strict: default_true(),
             suites: Vec::new(),
+            threads: None,
         }
     }
 }

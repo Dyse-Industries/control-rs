@@ -40,7 +40,9 @@ struct CliArgs {
     compare_filter: Option<Vec<String>>,
     skip_compare: bool,
     oracle_override: Option<String>,
+    signals: Option<Vec<String>>,
     timeout_secs: Option<u64>,
+    threads: Option<usize>,
     strict: bool,
     bypass_gate: bool,
     quiet: bool,
@@ -64,7 +66,9 @@ impl Default for CliArgs {
             compare_filter: None,
             skip_compare: false,
             oracle_override: None,
+            signals: None,
             timeout_secs: None,
+            threads: None,
             strict: true,
             bypass_gate: false,
             quiet: false,
@@ -125,6 +129,23 @@ fn parse_args() -> Result<CliArgs, String> {
                 })?;
                 args.oracle_override = Some(val);
             }
+            "--signals" | "--signal" => {
+                let val = iter.next().ok_or_else(|| {
+                    "--signals requires comma-separated signal names"
+                        .to_string()
+                })?;
+                let sigs: Vec<String> = val
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect();
+                if let Some(existing) = &mut args.signals {
+                    existing.extend(sigs);
+                } else {
+                    args.signals = Some(sigs);
+                }
+            }
             "--timeout" => {
                 let val = iter.next().ok_or_else(|| {
                     "--timeout requires a number of seconds".to_string()
@@ -133,6 +154,15 @@ fn parse_args() -> Result<CliArgs, String> {
                     .parse()
                     .map_err(|_| "Invalid timeout integer".to_string())?;
                 args.timeout_secs = Some(secs);
+            }
+            "--threads" | "-j" => {
+                let val = iter.next().ok_or_else(|| {
+                    "--threads requires a thread count integer".to_string()
+                })?;
+                let n: usize = val
+                    .parse()
+                    .map_err(|_| "Invalid threads integer".to_string())?;
+                args.threads = Some(n);
             }
             "--strict" => {
                 args.strict = true;
@@ -185,7 +215,13 @@ fn print_help() {
     println!(
         "        --oracle <VARIANT>       Override true oracle variant (default: scipy)"
     );
+    println!(
+        "        --signals <SIGNALS>      Explicit signals to compare ('s1,s2', overrides discovery)"
+    );
     println!("        --timeout <SECS>         Timeout in seconds per variant");
+    println!(
+        "    -j, --threads <N>            Worker threads for chunked dataset comparison"
+    );
     println!(
         "        --strict                 Fail-closed exit status on discrepancies"
     );
@@ -268,12 +304,18 @@ fn main() -> ExitCode {
         let suite_filter_set: Option<BTreeSet<String>> =
             args.compare_filter.map(|list| list.into_iter().collect());
 
+        let num_threads = args
+            .threads
+            .or_else(|| master_plan.as_ref().and_then(|p| p.general.threads));
+
         let comparator_opts = ComparatorOptions {
             results_dir: results_dir.clone(),
             suite_filter: suite_filter_set,
             oracle_override: args.oracle_override,
+            signals: args.signals,
             strict: args.strict,
             quiet: args.quiet,
+            num_threads,
         };
 
         match run_comparison(master_plan.as_ref(), &comparator_opts) {

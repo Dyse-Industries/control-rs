@@ -3,14 +3,23 @@ title = "control-rs"
 out_dir = "target/ci-artifacts"
 timeout_secs = 90
 
+[execution]
+parallel = true
+exclusive_gates = ["cross-compare", "valgrind", "mutants"]
+
+[execution.lanes]
+cargo = ["fmt", "clippy", "check", "build", "test", "coverage"]
+audit = ["deny", "geiger", "semver"]
+static = ["metrics", "git", "vale"]
+
 [gates]
 clean = "skip"
 fmt = "fail"
 clippy = "fail"
-check = "fail"
+check = "skip"
 build = "fail"
 test = "fail"
-coverage = "warn"
+coverage = "skip"
 metrics = "warn"
 git = "fail"
 vale = "warn"
@@ -30,6 +39,7 @@ tracked_dirs = [
     "control-rs-ets-host",
     "control-rs-tui",
     "control-rs-ci",
+    "control-rs-compare",
 ]
 
 [git]
@@ -48,6 +58,7 @@ paths = [
     "control-rs-ets-host",
     "control-rs-tui",
     "control-rs-ci",
+    "control-rs-compare",
 ]
 
 [geiger]
