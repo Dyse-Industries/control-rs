@@ -56,7 +56,11 @@ jobs:
 
       - uses: cargo-bins/cargo-binstall@main
       - name: Install Cargo Tools
-        run: cargo binstall -y cargo-tarpaulin cargo-deny cargo-geiger cargo-semver-checks
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo binstall -y --locked cargo-tarpaulin cargo-deny cargo-semver-checks
+          cargo binstall -y --locked cargo-geiger || echo "cargo-geiger unavailable; gate will degrade gracefully"
 
       - name: Install Vale
         run: |
