@@ -4,12 +4,12 @@ use std::path::PathBuf;
 use std::process::exit;
 
 use crate::config::GateConfig;
-use crate::gates::build_all_gates;
+use crate::gate::build_all_gates;
 use crate::run_pipeline;
 use crate::ui;
 
 /// Options parsed from command line arguments.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CliOptions {
     /// Whitelist of gates to run.
     pub only_gates: Vec<String>,
@@ -19,6 +19,10 @@ pub struct CliOptions {
     pub up_to_gate: Option<String>,
     /// Custom path to gate.toml.
     pub config_path: Option<PathBuf>,
+    /// Clean previous CI artifacts and reports.
+    pub clean: bool,
+    /// Run all quality gates.
+    pub run_all: bool,
 }
 
 /// Formats the help and usage string using cargo-style terminal colors.
@@ -34,9 +38,14 @@ pub fn render_usage(binary_name: &str) -> String {
            {f}-s{f:#}, {f}--skip{f:#} {a}<gate>{a:#}      Skip the specified gate(s)\n  \
            {f}-u{f:#}, {f}--up-to{f:#} {a}<gate>{a:#}     Run gates up to and including the specified gate\n  \
            {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: workspace gate.toml)\n  \
+           {f}-X{f:#}, {f}--clean{f:#}            Clean previous CI artifacts and reports\n  \
+           {f}-a{f:#}, {f}--all{f:#}              Run all registered quality gates\n  \
            {f}-l{f:#}, {f}--list{f:#}             List all registered quality gates\n  \
            {f}-h{f:#}, {f}--help{f:#}             Print help information\n\n\
          {h}Examples:{h:#}\n  \
+           {f}{binary_name}{f:#} {a}clean{a:#}\n  \
+           {f}{binary_name}{f:#} {f}--clean{f:#}\n  \
+           {f}{binary_name}{f:#} {f}--clean{f:#} {a}fmt{a:#}\n  \
            {f}{binary_name}{f:#} {f}--only{f:#} {a}fmt,clippy{a:#}\n  \
            {f}{binary_name}{f:#} {a}fmt{a:#}\n  \
            {f}{binary_name}{f:#} {f}--up-to{f:#} {a}test{a:#}"
@@ -72,7 +81,7 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
                 .unwrap_or_else(|| workspace_root.join("gate.toml"));
             let config =
                 GateConfig::load_from_path(&config_path).unwrap_or_default();
-            let all_gates = build_all_gates(&config);
+            let all_gates = build_all_gates(&config).unwrap_or_default();
             ui::init_color();
             let h = ui::HELP_HEADER;
             let f = ui::HELP_FLAG;
@@ -81,10 +90,14 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
                 anstream::println!(
                     "  - {f}{:<12}{f:#} : {}",
                     g.name(),
-                    g.description()
+                    g.description().unwrap_or("-")
                 );
             }
             exit(0);
+        } else if arg == "-X" || arg == "--clean" {
+            options.clean = true;
+        } else if arg == "-a" || arg == "--all" {
+            options.run_all = true;
         } else if arg == "-o" || arg == "--only" {
             i = i.saturating_add(1);
             while i < args.len() {
@@ -165,7 +178,13 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
             for part in arg.split(',') {
                 let trimmed = part.trim();
                 if !trimmed.is_empty() {
-                    options.only_gates.push(trimmed.to_string());
+                    if trimmed == "clean" {
+                        options.clean = true;
+                    } else if trimmed == "all" {
+                        options.run_all = true;
+                    } else {
+                        options.only_gates.push(trimmed.to_string());
+                    }
                 }
             }
         } else {
@@ -189,7 +208,29 @@ pub fn run_cli(binary_name: &str) {
         .config_path
         .unwrap_or_else(|| workspace_root.join("gate.toml"));
 
-    let only_ref = if options.only_gates.is_empty() {
+    let is_clean_only = options.clean
+        && !options.run_all
+        && options.only_gates.is_empty()
+        && options.up_to_gate.is_none();
+
+    if is_clean_only {
+        ui::init_color();
+        match crate::clean_artifacts(&workspace_root, &config_path) {
+            Ok(out_dir) => {
+                ui::status(
+                    "Cleaned",
+                    format!("Removed CI artifacts in {}", out_dir.display()),
+                );
+                exit(0);
+            }
+            Err(e) => {
+                ui::error(format!("Failed to clean CI artifacts: {e}"));
+                exit(1);
+            }
+        }
+    }
+
+    let only_ref = if options.run_all || options.only_gates.is_empty() {
         None
     } else {
         Some(options.only_gates.as_slice())
@@ -206,6 +247,7 @@ pub fn run_cli(binary_name: &str) {
         only_ref,
         skip_ref,
         options.up_to_gate.as_deref(),
+        options.clean,
     ) {
         Ok(true) => exit(0),
         Ok(false) => exit(1),

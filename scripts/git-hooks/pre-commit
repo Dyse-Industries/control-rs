@@ -1,0 +1,69 @@
+#!/bin/bash
+set -e
+
+# Pre-commit hook to format code and run clean, build, check, lint in the
+# main workspace, nested validation crates, and pedagogical example crates.
+#
+# Install: cp scripts/git-hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+status() {
+    local verb="$1"
+    shift
+    local msg="$*"
+    if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${CARGO_TERM_COLOR:-}" != "never" ]; then
+        printf "\033[1;92m%12s\033[0m %s\n" "$verb" "$msg" >&2
+    else
+        printf "%12s %s\n" "$verb" "$msg" >&2
+    fi
+}
+
+status "Running" "cargo fmt-all in main workspace"
+cargo fmt-all
+
+for manifest in \
+    validation/*/Cargo.toml \
+    examples/*/Cargo.toml \
+    examples/*/*/Cargo.toml
+do
+    if [ -f "$manifest" ]; then
+        cargo fmt --manifest-path "$manifest"
+    fi
+done
+
+staged_rust_files=$(git diff --name-only --cached --diff-filter=d | grep '\.rs$' || true)
+if [ -n "$staged_rust_files" ]; then
+    for file in $staged_rust_files; do
+        git add "$file"
+    done
+fi
+
+status "Running" "clean, build, check, lint in main workspace"
+cargo clean
+cargo build
+cargo check
+cargo lint
+
+NESTED=(
+    "validation/numerical-models"
+    "validation/buck-converter"
+    "validation/dc-motor"
+    "examples/numerical-models"
+    "examples/buck-converter"
+    "examples/dc-motor"
+)
+
+for crate in "${NESTED[@]}"; do
+    if [ -d "$REPO_ROOT/$crate" ]; then
+        status "Running" "clean, build, check, lint in $crate"
+        (
+            cd "$REPO_ROOT/$crate"
+            cargo clean
+            cargo build
+            cargo check
+            cargo lint
+        )
+    fi
+done

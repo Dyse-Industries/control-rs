@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
-/// Core error classification for the oracle verification harness.
+/// Core error classification for the oracle control-rs-verification harness.
 #[derive(Debug, Error)]
 pub enum HarnessError {
     /// Configuration file reading, parsing, or resolution error.

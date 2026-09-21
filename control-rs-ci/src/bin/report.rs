@@ -1,5 +1,7 @@
 //! Report aggregator CLI (`cargo report`).
 
+#![allow(clippy::too_many_lines)]
+
 use std::env;
 use std::path::PathBuf;
 use std::process::exit;
@@ -17,9 +19,11 @@ fn print_usage(binary_name: &str) {
         "{h}Usage:{h:#} {f}{binary_name}{f:#} {a}[OPTIONS]{a:#}\n\n\
          {h}Options:{h:#}\n  \
            {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: workspace gate.toml)\n  \
+           {f}-X{f:#}, {f}--clean{f:#}            Clean CI artifacts and reports\n  \
            {f}-h{f:#}, {f}--help{f:#}             Print help information\n\n\
          {h}Examples:{h:#}\n  \
            {f}{binary_name}{f:#}\n  \
+           {f}{binary_name}{f:#} {f}--clean{f:#}\n  \
            {f}{binary_name}{f:#} {f}--config{f:#} {a}gate.toml{a:#}"
     );
 }
@@ -27,6 +31,7 @@ fn print_usage(binary_name: &str) {
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut config_path_override = None;
+    let mut clean = false;
     let mut i = 1;
     while i < args.len() {
         let arg = match args.get(i) {
@@ -36,6 +41,8 @@ fn main() {
         if arg == "-h" || arg == "--help" {
             print_usage("cargo report");
             exit(0);
+        } else if arg == "-X" || arg == "--clean" || arg == "clean" {
+            clean = true;
         } else if arg == "-c" || arg == "--config" {
             i = i.saturating_add(1);
             if let Some(val) = args.get(i) {
@@ -58,6 +65,23 @@ fn main() {
         env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let config_path = config_path_override
         .unwrap_or_else(|| workspace_root.join("gate.toml"));
+
+    if clean {
+        ui::init_color();
+        match control_rs_ci::clean_artifacts(&workspace_root, &config_path) {
+            Ok(out_dir) => {
+                ui::status(
+                    "Cleaned",
+                    format!("Removed CI artifacts in {}", out_dir.display()),
+                );
+                exit(0);
+            }
+            Err(e) => {
+                ui::error(format!("Failed to clean CI artifacts: {e}"));
+                exit(1);
+            }
+        }
+    }
 
     let config = match GateConfig::load_from_path(&config_path) {
         Ok(c) => c,

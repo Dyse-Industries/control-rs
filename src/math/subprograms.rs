@@ -4547,7 +4547,7 @@ where
 /// sweep budget.
 ///
 /// Crate-private seam for [`lapack::Syev`]. The public `syev` supplies the
-/// default budget $50 n^2$; verification supplies `max_iter = 0` to reach the
+/// default budget $50 n^2$; control-rs-verification supplies `max_iter = 0` to reach the
 /// [`LinAlgError::MaxIterationsReached`] arm on a well-conditioned operand
 /// (`subprograms-design.md` §4.3, §6.1.2). The budget travels on the call
 /// stack, so no global state participates in the result (NFR-1b).

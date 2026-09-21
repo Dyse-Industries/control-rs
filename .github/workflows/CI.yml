@@ -8,6 +8,8 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'examples/**'
+      - 'benches/**'
+      - '../../control-rs-verification/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
       - 'control-rs-macros/**'
@@ -24,6 +26,8 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'examples/**'
+      - 'benches/**'
+      - '../../control-rs-verification/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
       - 'control-rs-macros/**'
@@ -95,7 +99,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install -r examples/numerical-models-validation/python3/requirements.txt
+          pip install -r verification/python3/requirements.txt
 
       - name: Run CI
         run: cargo ci
@@ -116,13 +120,13 @@ jobs:
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
-          body-path: ci-report.md
+          body-path: target/ci-artifacts/ci-report.md
 
       - name: Upload to Step Summary
         if: always()
         run: |
-          if [ -f ci-report.md ]; then
-            cat ci-report.md >> $GITHUB_STEP_SUMMARY
+          if [ -f target/ci-artifacts/ci-report.md ]; then
+            cat target/ci-artifacts/ci-report.md >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Upload Tarpaulin Artifacts

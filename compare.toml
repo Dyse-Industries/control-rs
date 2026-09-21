@@ -5,5 +5,5 @@ timeout_secs = 120
 strict = true
 
 suites = [
-    "examples/numerical-models-validation",
+    "control-rs-verification",
 ]

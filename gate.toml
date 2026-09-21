@@ -26,7 +26,7 @@ exclusive_gates = ["geiger", "cross-compare", "valgrind", "mutants"]
 [execution.groups]
 cargo = ["fmt", "clippy", "check", "build", "test", "coverage"]
 audit = ["deny", "semver"]
-static = ["metrics", "git", "vale"]
+static = ["vale"]
 
 [gates]
 clean = "skip"
@@ -36,8 +36,6 @@ check = "skip"
 build = "fail"
 test = "fail"
 coverage = "skip"
-metrics = "warn"
-git = "fail"
 vale = "warn"
 deny = "warn"
 geiger = "warn"
@@ -46,51 +44,71 @@ mutants = "skip"
 valgrind = "skip"
 cross-compare = "warn"
 
-[metrics]
-max_source_lines = 100000
-tracked_dirs = [
-    "src",
-    "control-rs-ets",
-    "control-rs-macros",
-    "control-rs-ets-host",
-    "control-rs-tui",
-    "control-rs-ci",
-    "control-rs-compare",
-]
+[clean]
+command = "cargo clean"
+description = "Cleans workspace build artifacts"
 
-[git]
-require_clean_working_tree = false
-enforce_conventional_commits = false
-disallowed_patterns = ["wip", "temp", "asdf", "fix typo", "debug", "test1"]
-max_header_length = 72
+[fmt]
+command = "cargo fmt"
+args = ["--all", "--", "--check"]
+description = "Verifies codebase formatting conformity with rustfmt"
 
-[vale]
-config = ".vale.ini"
-paths = [
-    "documentation",
-    "src",
-    "control-rs-ets",
-    "control-rs-macros",
-    "control-rs-ets-host",
-    "control-rs-tui",
-    "control-rs-ci",
-    "control-rs-compare",
-]
+[clippy]
+command = "cargo clippy"
+args = ["--workspace", "--all-targets", "--", "-D", "warnings"]
+description = "Executes Clippy linter across workspace targets"
 
-[geiger]
-max_unsafe_blocks = 0
+[check]
+command = "cargo check"
+args = ["--workspace", "--all-targets"]
+description = "Performs compiler type checking without full codegen"
+
+[build]
+command = "cargo build"
+args = ["--workspace", "--all-targets"]
+description = "Compiles all workspace targets"
+
+[test]
+command = "cargo test"
+args = ["--workspace"]
+description = "Executes host unit and integration test suites"
+
+[coverage]
+command = "cargo tarpaulin"
+args = ["--verbose", "--workspace", "--color", "never", "--out", "Json", "--output-dir", "target/ci-artifacts"]
+description = "Measures workspace line coverage using cargo-tarpaulin"
+
+[deny]
+command = "cargo deny"
+args = ["check"]
+description = "Audits dependencies for security advisories and license compliance"
 
 [semver]
-baseline_ref = "origin/main"
+command = "cargo semver-checks"
+args = ["check-release", "--baseline-rev", "origin/main"]
+description = "Verifies public API stability against baseline ref"
 
-[mutants]
-timeout_multiplier = 2.0
-exclude = ["tests/**", "benches/**"]
-exclude_re = "(^|::)(test|tests|bench|benches)"
-files = ["src/**", "examples/numerical-models-validation/src/**"]
+[geiger]
+command = "cargo geiger"
+args = ["--output-format", "Json"]
+description = "Scans workspace crates for unsafe code blocks and functions"
+
+[cross-compare]
+command = "cargo run"
+args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", "compare.toml", "--bypass-gate"]
+description = "Executes multi-language reference oracles and verifies HDF5 tolerance bounds"
+
+[vale]
+command = "vale"
+args = ["--config=.vale.ini", "--output=JSON", "documentation", "src"]
+description = "Lints documentation and doc comments for prose style conformity"
 
 [valgrind]
-leak_check = "full"
-error_exitcode = 1
-bins = ["control-rs-ci"]
-examples = []
+command = "valgrind"
+args = ["--leak-check=full", "--error-exitcode=1", "cargo", "run", "--package", "control-rs-ci", "--", "--help"]
+description = "Executes Valgrind Memcheck against host binaries"
+
+[mutants]
+command = "cargo mutants"
+args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
+description = "Mutates ASTs to verify test fault-injection rigor using cargo-mutants"

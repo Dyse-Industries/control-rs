@@ -1,0 +1,20 @@
+[package]
+name = "control-rs-verification"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Dedicated host verification harness emitting .rust.h5 containers for all 5 domains against Python reference oracles."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+control-rs = { path = ".." }
+hdf5-pure = "0.46"
+
+[[bin]]
+name = "validate"
+path = "src/main.rs"

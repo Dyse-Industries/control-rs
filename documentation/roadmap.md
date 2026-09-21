@@ -3,7 +3,7 @@
 - [x] **PR1**: Workspace Foundations & Strict Lint Baseline
 - [x] **PR2**: ETS Host Extraction & Terminal Dashboard
 - [x] **PR3**: CI Quality Gate Infrastructure (`control-rs-ci`)
-  - [ ] **PR3-1**: Multi-Oracle Differential Test Harness (`control-rs-compare`)
+  - [x] **PR3-1**: Multi-Oracle Differential Test Harness (`control-rs-compare`)
   - [ ] **PR3-2**: CI Gate — Performance & Benchmarking (`bench`)
   - [ ] **PR3-3**: CI Gate — Property-Based Testing (`prop-test`)
   - [ ] **PR3-4**: CI Gate — Requirement Traceability (`trace`)

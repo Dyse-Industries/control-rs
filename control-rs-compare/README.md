@@ -16,7 +16,7 @@ Multi-language reference oracles (NumPy, SciPy, JAX, python-flint, harold) and s
 # Create venv at crate root if not already present
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -r examples/numerical-models-validation/python3/requirements.txt
+pip install -r control-rs-verification/python3/requirements.txt
 ```
 
 ## CLI Usage
@@ -37,5 +37,5 @@ cargo compare --skip-run
 cargo compare --skip-compare
 
 # Run only a specific suite
-cargo compare --run numerical_models --compare numerical_models
+cargo compare --run matrix --compare matrix
 ```

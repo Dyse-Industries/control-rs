@@ -13,16 +13,8 @@ use control_rs_ci::config::{ExecutionConfig, GateConfig};
 fn test_execution_config_defaults() {
     let config = ExecutionConfig::default();
     assert!(config.parallel);
-    assert!(
-        config
-            .exclusive_gates
-            .contains(&"cross-compare".to_string())
-    );
-    assert!(config.exclusive_gates.contains(&"valgrind".to_string()));
-    assert!(config.exclusive_gates.contains(&"mutants".to_string()));
-    assert!(config.groups.contains_key("cargo"));
-    assert!(config.groups.contains_key("audit"));
-    assert!(config.groups.contains_key("static"));
+    assert!(config.exclusive_gates.is_empty());
+    assert!(config.groups.is_empty());
 }
 
 #[test]

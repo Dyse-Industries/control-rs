@@ -134,11 +134,11 @@ assert_eq!(val, 2.5);
 ## Validation & Hardware Acceleration
 
 ### Multi-Oracle Verification Suite
-Located in [`examples/numerical-models-validation/`](examples/numerical-models-validation/), this suite performs automated cross-validation against external reference engines:
-- **Matrix & Linear Algebra**: Cross-validated with **SciPy** (`scipy.linalg`) and **JAX** (x64 CPU backend).
-- **Polynomials**: Evaluated against **SciPy** and **Python-Flint** (256-bit ball arithmetic for Wilkinson conditioning).
-- **State-Space & Transfer Functions**: Cross-checked against **SciPy** (`scipy.signal`) and **Harold**.
-- **Tensors & Activations**: Compared against **SciPy** exact functions and **TensorFlow Lite** int8 quantized kernels.
+Located in [`control-rs-verification`](control-rs-verification/), this suite performs automated cross-validation against external reference engines (`cargo compare`):
+- **Matrix & Linear Algebra**: Cross-validated with **SciPy** (`scipy.linalg`).
+- **Polynomials**: Evaluated against **SciPy** and Horner evaluation.
+- **State-Space & Transfer Functions**: Cross-checked against **SciPy** (`scipy.signal`).
+- **Tensors & Contractions**: Compared against **SciPy** tensor contractions.
 
 ### Standalone Subprogram Backends
 Architecture-specific subprogram crates under [`examples/subprograms/`](examples/subprograms/) implement `control_rs::math::subprograms` traits:
