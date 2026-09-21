@@ -63,8 +63,61 @@ pub use error::GateError;
 pub use quality_gate::{GateContext, GateOutcome, QualityGate, Verdict};
 pub use report::ReportAggregator;
 
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+fn execute_gate(
+    gate: &Arc<dyn QualityGate>,
+    group_id: Option<&str>,
+    style: Option<anstyle::Style>,
+    ctx: &GateContext,
+    ui_lock: &Mutex<()>,
+) {
+    let name = gate.name();
+    let tag = ui::format_group_tag(group_id, style);
+    {
+        let _guard = ui_lock.lock();
+        ui::status("Running", format!("{tag}{}", gate.command_display()));
+    }
+    match gate.execute(ctx) {
+        Ok(outcome) => {
+            let _guard = ui_lock.lock();
+            let summary = outcome
+                .summary
+                .as_ref()
+                .map_or(String::new(), |s| format!(" ({s})"));
+            match outcome.verdict {
+                Verdict::Pass => ui::status(
+                    "Passed",
+                    format!("{tag}{name} in {:.2}s", outcome.duration_secs),
+                ),
+                Verdict::Warn => ui::warning(
+                    "Warning",
+                    format!(
+                        "{tag}{name} in {:.2}s{summary}",
+                        outcome.duration_secs
+                    ),
+                ),
+                Verdict::Fail => ui::failure(
+                    "Failed",
+                    format!(
+                        "{tag}{name} in {:.2}s{summary}",
+                        outcome.duration_secs
+                    ),
+                ),
+                Verdict::Skipped => {
+                    ui::warning("Skipped", format!("{tag}{name}"));
+                }
+            }
+        }
+        Err(e) => {
+            let _guard = ui_lock.lock();
+            ui::error(format!("{tag}Error executing gate '{name}': {e}"));
+        }
+    }
+}
 
 /// Runs the complete CI quality gate pipeline or filtered subset.
 ///
@@ -96,98 +149,132 @@ pub fn run_pipeline(
     };
 
     let all_gates = gates::build_all_gates(&config);
-
-    let mut executed_gates = Vec::new();
+    let mut active_gates = Vec::new();
+    let mut executed_gate_names = Vec::new();
 
     for gate in all_gates {
-        let name = gate.name();
+        let name = gate.name().to_string();
 
         if let Some(only) = only_gates {
-            if !only.iter().any(|g| g == name) {
+            if !only.iter().any(|g| g == &name) {
                 continue;
             }
         }
 
         if let Some(skip) = skip_gates {
-            if skip.iter().any(|g| g == name) {
+            if skip.iter().any(|g| g == &name) {
                 continue;
             }
         }
 
-        executed_gates.push(name.to_string());
-        ui::status("Running", gate.command_display());
-        let outcome = gate.execute(&ctx)?;
+        let is_up_to = up_to_gate.is_some_and(|up_to| up_to == name);
+        executed_gate_names.push(name);
+        active_gates.push(gate);
 
-        match outcome.verdict {
-            Verdict::Pass => {
-                ui::status(
-                    "Passed",
-                    format!("{name} in {:.2}s", outcome.duration_secs),
-                );
-            }
-            Verdict::Warn => {
-                let summary_suffix = outcome
-                    .summary
-                    .as_ref()
-                    .map_or(String::new(), |s| format!(" ({s})"));
-                ui::warning(
-                    "Warning",
-                    format!(
-                        "{name} in {:.2}s{summary_suffix}",
-                        outcome.duration_secs
-                    ),
-                );
-            }
-            Verdict::Fail => {
-                let summary_suffix = outcome
-                    .summary
-                    .as_ref()
-                    .map_or(String::new(), |s| format!(" ({s})"));
-                ui::failure(
-                    "Failed",
-                    format!(
-                        "{name} in {:.2}s{summary_suffix}",
-                        outcome.duration_secs
-                    ),
-                );
-            }
-            Verdict::Skipped => {
-                ui::warning("Skipped", name.to_string());
-            }
+        if is_up_to {
+            break;
         }
+    }
 
-        if let Some(up_to) = up_to_gate {
-            if up_to == name {
-                break;
+    // Remove stale results for inactive or skipped gates
+    if let Ok(entries) = std::fs::read_dir(&out_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.ends_with(".result.json") {
+                    let gate_name = name.trim_end_matches(".result.json");
+                    if !executed_gate_names.iter().any(|g| g == gate_name) {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
             }
         }
     }
 
-    let is_partial =
-        only_gates.is_some() || skip_gates.is_some() || up_to_gate.is_some();
-    let subset_filter = if is_partial {
-        Some(executed_gates.as_slice())
+    // A gate is exclusive if explicitly declared in `exclusive_gates` OR if it is
+    // unassigned to any group in `execution.groups`. All unassigned gates safely
+    // default to sequential execution with full processor authority.
+    let (exclusive, concurrent): (Vec<_>, Vec<_>) =
+        active_gates.into_iter().partition(|g| {
+            config
+                .execution
+                .exclusive_gates
+                .iter()
+                .any(|e| e == g.name())
+                || !config
+                    .execution
+                    .groups
+                    .values()
+                    .any(|members| members.iter().any(|m| m == g.name()))
+        });
+
+    let ui_lock = Mutex::new(());
+
+    if config.execution.parallel {
+        let mut groups: BTreeMap<&str, Vec<Arc<dyn QualityGate>>> =
+            BTreeMap::new();
+
+        for gate in concurrent {
+            if let Some((group, _)) =
+                config.execution.groups.iter().find(|(_, members)| {
+                    members.iter().any(|m| m == gate.name())
+                })
+            {
+                groups.entry(group.as_str()).or_default().push(gate);
+            }
+        }
+
+        std::thread::scope(|s| {
+            for (idx, (group_name, group_gates)) in
+                groups.into_iter().enumerate()
+            {
+                let ctx_ref = &ctx;
+                let lock_ref = &ui_lock;
+                let style = ui::group_style(idx);
+                s.spawn(move || {
+                    let group_start = Instant::now();
+                    for g in &group_gates {
+                        execute_gate(
+                            g,
+                            Some(group_name),
+                            Some(style),
+                            ctx_ref,
+                            lock_ref,
+                        );
+                    }
+                    let duration = group_start.elapsed().as_secs_f64();
+                    let _guard = lock_ref.lock();
+                    let tag =
+                        ui::format_group_tag(Some(group_name), Some(style));
+                    ui::status("Joined", format!("{tag}in {duration:.2}s"));
+                });
+            }
+        });
     } else {
-        None
-    };
+        for gate in concurrent {
+            execute_gate(&gate, None, None, &ctx, &ui_lock);
+        }
+    }
+
+    for gate in exclusive {
+        let style = ui::exclusive_style();
+        execute_gate(&gate, Some("exclusive"), Some(style), &ctx, &ui_lock);
+    }
 
     let aggregator =
         ReportAggregator::new(out_dir, workspace_root.to_path_buf());
-    let (is_pass, report_path) =
-        aggregator.write_report(&config, subset_filter)?;
+    let (is_pass, report_path) = aggregator
+        .write_report(&config, Some(executed_gate_names.as_slice()))?;
     let total_duration = pipeline_start.elapsed().as_secs_f64();
 
     ui::status("Writing", format!("{}", report_path.display()));
     if is_pass {
-        ui::status(
-            "Finished",
-            format!("ci-pipeline passed in {:.2}s", total_duration),
-        );
+        ui::status("Finished", format!("ci in {:.2}s", total_duration));
     } else {
-        ui::error(format!(
-            "ci-pipeline failed in {:.2}s (see report for details)",
-            total_duration
-        ));
+        ui::failure(
+            "Failed",
+            format!("ci in {:.2}s (see report for details)", total_duration),
+        );
     }
 
     Ok(is_pass)

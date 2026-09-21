@@ -17,17 +17,18 @@ exclude = [
     "ci-report.md",
     "ets-results.json",
     "tarpaulin-report.*",
+    "tests/fixtures/",
 ]
 
 [workspace]
 members = [
     ".",
     "control-rs-ets",
-    "control-rs-xtask",
     "control-rs-macros",
     "control-rs-ets-host",
     "control-rs-tui",
     "control-rs-ci",
+    "control-rs-compare",
 ]
 default-members = ["."]
 
@@ -35,7 +36,7 @@ default-members = ["."]
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Dyse-Industries/control-rs.git"
-rust-version = "1.88.0"
+rust-version = "1.89.0"
 
 [workspace.lints.rust]
 unused = "deny"
@@ -80,6 +81,7 @@ ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
 
 [dev-dependencies]
 proptest = "1"
+control-rs-ci = { path = "control-rs-ci", version = "0.1.0" }
 
 [profile.release]
 # Enable Link Time Optimization (LTO)

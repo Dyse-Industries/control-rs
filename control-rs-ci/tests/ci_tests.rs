@@ -166,6 +166,52 @@ fn test_report_aggregator_generation() {
 }
 
 #[test]
+fn test_report_aggregator_subset_filtering() {
+    let tmp_dir = std::env::temp_dir().join("control_rs_ci_report_subset_test");
+    let artifacts_dir = tmp_dir.join("artifacts");
+    let _ = fs::remove_dir_all(&tmp_dir);
+    fs::create_dir_all(&artifacts_dir).unwrap();
+
+    let outcome1 = GateOutcome {
+        gate: "fmt".to_string(),
+        verdict: Verdict::Pass,
+        exit_code: Some(0),
+        duration_secs: 0.42,
+        summary: Some("Formatting clean".to_string()),
+        log_file: "fmt.log".to_string(),
+        raw_artifact: None,
+    };
+    outcome1.save_to_dir(&artifacts_dir).unwrap();
+
+    let outcome2 = GateOutcome {
+        gate: "check".to_string(),
+        verdict: Verdict::Pass,
+        exit_code: Some(0),
+        duration_secs: 5.12,
+        summary: Some("Check clean".to_string()),
+        log_file: "check.log".to_string(),
+        raw_artifact: None,
+    };
+    outcome2.save_to_dir(&artifacts_dir).unwrap();
+
+    let mut config = GateConfig::default();
+    config.gates.insert("fmt".to_string(), GatePolicy::Fail);
+    config.gates.insert("check".to_string(), GatePolicy::Skip);
+
+    let aggregator = ReportAggregator::new(artifacts_dir, tmp_dir.clone());
+    let (is_pass, report_path) = aggregator
+        .write_report(&config, Some(&["fmt".to_string()]))
+        .unwrap();
+
+    assert!(is_pass);
+    let content = fs::read_to_string(&report_path).unwrap();
+    assert!(content.contains("`fmt`"));
+    assert!(!content.contains("`check`"));
+
+    let _ = fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
 fn test_cli_args_parsing() {
     use control_rs_ci::cli::parse_args;
 
@@ -218,6 +264,27 @@ fn test_cli_args_parsing() {
         vec!["gate".to_string(), "fmt".to_string(), "vale".to_string()];
     let pos_options = parse_args(&positional_args, "cargo gate");
     assert_eq!(pos_options.only_gates, vec!["fmt", "vale"]);
+}
+
+#[test]
+fn test_cli_multi_token_parsing() {
+    use control_rs_ci::cli::parse_args;
+
+    let multi_space_args = vec![
+        "cargo-ci".to_string(),
+        "--skip".to_string(),
+        "fmt".to_string(),
+        "clippy".to_string(),
+        "check".to_string(),
+        "build".to_string(),
+        "test".to_string(),
+    ];
+    let multi_space_options = parse_args(&multi_space_args, "cargo ci");
+    assert_eq!(
+        multi_space_options.skip_gates,
+        vec!["fmt", "clippy", "check", "build", "test"]
+    );
+    assert_eq!(multi_space_options.only_gates, Vec::<String>::new());
 }
 
 #[test]

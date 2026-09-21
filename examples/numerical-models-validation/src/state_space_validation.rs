@@ -355,8 +355,17 @@ pub fn run() -> Value {
     let rust_results = run_validation_default();
 
     println!("Spawning Python oracle subprocess...");
+    let script_paths = [
+        "python3/state_space_validation.py",
+        "examples/numerical-models-validation/python3/state_space_validation.py",
+    ];
+    let script_path = script_paths
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .expect("Could not find python3/state_space_validation.py");
+
     let py_output = Command::new("python3")
-        .arg("python3/state_space_validation.py")
+        .arg(script_path)
         .output()
         .expect("Failed to spawn Python process");
 

@@ -132,6 +132,18 @@ gates integrate seamlessly without custom parsers.
   must execute Valgrind Memcheck against host binaries and workspace examples,
   capturing memcheck logs to `valgrind.log`, raw leak summaries to
   `valgrind-raw.json`, and degrading gracefully (FR-7) when Valgrind is absent.
+- **FR-22 — Declarative Multi-Lane Parallel Execution**: The runner must support
+  partitioning quality gates into independent concurrent execution lanes declared
+  in `gate.toml` (`[execution.lanes]`), executing lanes concurrently across worker
+  threads while preserving sequential execution within each lane.
+- **FR-23 — Exclusive Processor Authority Barriers (`exclusive = true`)**: Heavy,
+  multi-threaded, or hardware-exclusive verification gates (such as `cross-compare`,
+  `mutants`, or `valgrind`) must support declaring `exclusive = true`. The scheduler
+  must drain and join all active background worker lanes before dispatching an exclusive
+  gate with 100% processor authority, and block subsequent stages until complete.
+- **FR-24 — Concurrency & Subsystem Resource Allocation**: The runner must support
+  configuring thread caps, worker pool limits, and target directory isolation
+  (`CARGO_TARGET_DIR`) per lane or per gate in `gate.toml`.
 
 #### 2.2 Non-Functional Requirements
 
@@ -504,6 +516,100 @@ When changes merge to `main`, `.github/workflows/release.yml` invokes
    (`control-rs-ci`, `control-rs-tui`), SHA-256 checksums, and validation
    summary reports.
 
+#### 4.8 Configurable Multi-Lane Parallel Execution & Processor Authority
+
+Sequential quality gate execution scales with the sum of all tool durations.
+`control-rs-ci` provides a zero-dependency, configurable multi-lane parallel
+execution model using `std::thread::scope`:
+
+##### Declarative Group & Authority Architecture
+
+```mermaid
+flowchart TD
+    subgraph Stage1["Stage 1: Multi-Group Concurrent Block (std::thread::scope)"]
+        subgraph GroupCargo["Group 'cargo' (Sequential Build Lock)"]
+            C1["fmt"] --> C2["clippy"] --> C3["build"] --> C4["test"]
+        end
+        subgraph GroupAudit["Group 'audit' (Background Audit)"]
+            A1["deny"] --> A2["semver"]
+        end
+        subgraph GroupStatic["Group 'static' (Filesystem Linters)"]
+            S1["metrics"] --> S2["git"] --> S3["vale"]
+        end
+    end
+
+    Barrier["<b>Barrier Join</b><br/>(Drain & complete all background worker groups)"]
+    Stage1 --> Barrier
+
+    subgraph Stage2["Stage 2: Built-In Exclusive Group (Full Processor Authority)"]
+        Ex1["geiger"] --> Ex2["cross-compare"] --> Ex3["valgrind"] --> Ex4["mutants / unassigned"]
+    end
+    Barrier --> Stage2
+
+    subgraph Stage3["Stage 3: Deterministic Report Aggregator"]
+        Rep["Sort Outcomes to Canonical Order<br/>Render ci-report.md"]
+    end
+    Stage2 --> Stage3
+```
+
+##### Concurrency Topology: Groups and Exclusive Authority
+
+The execution topology partitions all active quality gates into two clean tiers:
+
+1. **User-Defined Groups (`[execution.groups]`)**:
+   Named concurrency lanes (for example, `cargo`, `audit`, `static`). When parallel execution is enabled,
+   each declared group is allocated a dedicated OS worker thread via `std::thread::scope`. Gates within a single
+   group execute sequentially in their declared order. Output lines display colored group tags
+   (for example, `[cargo] `, `[audit] `, `[static] `).
+2. **The Built-In `exclusive` Group (`exclusive_gates` and Unassigned Gates)**:
+   The **only built-in group** in the quality gate architecture. Gates requiring unrestricted access
+   to CPU cycles, memory bandwidth, hardware debug probes, or the primary Cargo target lock (such as
+   hardware target emulation, differential validation, Geiger unsafe audits, Valgrind, or mutation analysis)
+   belong to this group.
+
+   The runner establishes a strict **barrier join**: all user group threads must complete and join before
+   exclusive gates begin. Furthermore, any gate enabled in `[gates]` that is omitted from `[execution.groups]`
+   automatically routes to the `exclusive` group, ensuring safe, non-contending sequential execution by default.
+   Exclusive gates execute strictly sequentially, one at a time, displaying the distinct `[exclusive] ` tag.
+
+##### Declarative `gate.toml` Configuration Schema
+
+Execution groups, concurrency flags, and the built-in exclusive group are declared in `gate.toml`:
+
+```toml
+[execution]
+parallel = true # Enable concurrency (defaults to true)
+
+# Built-in exclusive group (Full Processor Authority):
+# Gates listed here (or omitted from [execution.groups]) execute sequentially after barrier join.
+exclusive_gates = ["geiger", "cross-compare", "valgrind", "mutants"]
+
+# User-defined execution groups:
+# Gates in different groups run concurrently in parallel worker threads;
+# gates within a single group execute sequentially in declared order.
+[execution.groups]
+cargo = ["fmt", "clippy", "check", "build", "test", "coverage"]
+audit = ["deny", "semver"]
+static = ["metrics", "git", "vale"]
+```
+
+##### Cargo Build-Lock & Process Isolation
+
+1. **Zero-Contention Default Groups**: Gates that acquire Cargo's primary `target/`
+   compilation lock (`fmt`, `clippy`, `check`, `build`, `test`, `coverage`) reside in a single sequential
+   group (`cargo`), while non-compiling gates (`audit`, `static`) run in parallel
+   without lock contention.
+2. **Directory Isolation (`CARGO_TARGET_DIR`)**: Gates requiring concurrent Cargo
+   compilation (such as `cargo-semver-checks` or isolated custom gates) are
+   assigned dedicated target directories (`CARGO_TARGET_DIR=target/ci-artifacts/targets/<gate>`).
+3. **Full Processor Authority (`exclusive_gates`)**: Heavy numerical suites,
+   mutation engines, and memory profilers that require unrestricted CPU and
+   memory bandwidth declare membership in the built-in `exclusive` group. The runner drains
+   all active background group threads before starting exclusive gates, eliminating contention.
+4. **Deterministic Aggregation**: Outcomes from asynchronous groups are gathered
+   into a thread-safe collector and sorted to match the declared canonical gate
+   order before rendering `ci-report.md`.
+
 ---
 
 ### 5. Alternatives
@@ -607,6 +713,7 @@ When changes merge to `main`, `.github/workflows/release.yml` invokes
 | **Phase 3: Advanced Safety, Linter & Verification Gates**             | Implement specialized built-in tool gates and lightweight extraction: `CoverageGate` (`cargo-tarpaulin`), `ValeGate` (prose linting with degradation), `DenyGate` (`cargo-deny`), `GeigerGate` (`cargo-geiger`), `SemverGate` (`cargo-semver-checks`), `MutantsGate` (`cargo-mutants`), and `ValgrindGate` (Memcheck leak checking). | 4                |
 | **Phase 4: User-Defined Custom Gate Engine & Multi-Target Emulation** | Implement `CustomCommandGate` (zero-parsing opaque runner for user-defined binaries/scripts) and configure QEMU ARM Cortex-M and RISC-V headless emulation matrix (`EtsGate`) in `.github/workflows/CI.yml` and `.github/workflows/examples.yml`.                                                                                    | 3                |
 | **Phase 5: Automated Git Release System & Branch Preservation**       | Implement `control-rs-ci publish`, topological dependency sorter, and `.github/workflows/release.yml` with `release/vX.Y.Z` branch preservation.                                                                                                                                                                                     | 3                |
+| **Phase 6: Multi-Lane Parallel Execution & Processor Authority**     | Implement declarative multi-lane parallel scheduler using `std::thread::scope`, `[execution.lanes]` in `gate.toml`, barrier synchronization for `exclusive = true` gates, and `CARGO_TARGET_DIR` directory isolation.                                                                                                            | 3                |
 
 ---
 
@@ -630,6 +737,7 @@ When changes merge to `main`, `.github/workflows/release.yml` invokes
 | 1.13     | September 19, 2026 | @MitchellDScott | Decoupled gating and reporting: established standardized `GateReport` uniform envelope contract and gate-agnostic report aggregation with zero per-tool parsers in the report binary.                                           |
 | 1.14     | September 19, 2026 | @MitchellDScott | Minimal-parsing architecture: gates dump native tool JSON and redirect stdout/stderr to `<gate>.log`; report performs lightweight extraction for built-ins and zero parsing for custom gates.                                   |
 | 1.15     | September 19, 2026 | @MitchellDScott | Refined development plan: staged implementation starting with core QualityGate infrastructure and built-in Cargo/hygiene gates, deferring complex tool integrations and custom gates to follow-up phases.                       |
+| 1.16     | September 20, 2026 | @MitchellDScott | Added declarative multi-lane parallel execution (`[execution.lanes]`, FR-22), exclusive processor authority barrier synchronization (`exclusive = true`, FR-23), and concurrency resource allocation (FR-24).                |
 
 ---
 

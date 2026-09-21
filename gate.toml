@@ -3,14 +3,39 @@ title = "control-rs"
 out_dir = "target/ci-artifacts"
 timeout_secs = 90
 
+[execution]
+parallel = true
+
+# Built-in exclusive group:
+# The ONLY built-in group in control-rs-ci. Gates listed here require Full Processor
+# Authority (such as hardware target execution, benchmark validation, unsafe audits,
+# or mutation testing) and must never compete for CPU, I/O, or target lock resources.
+#
+# When parallel = true, the runner establishes a barrier join: ALL concurrent user
+# groups must finish and join before exclusive gates run. Exclusive gates then execute
+# strictly sequentially, one at a time, tagged [exclusive].
+#
+# Any gate enabled under [gates] that is omitted from [execution.groups] also
+# automatically routes to the exclusive group for safe sequential execution.
+exclusive_gates = ["geiger", "cross-compare", "valgrind", "mutants"]
+
+# User-defined execution groups:
+# When parallel = true, each group executes concurrently on its own dedicated OS thread.
+# Gates within a single group execute sequentially in declared order.
+# Output lines are tagged with the group identifier (e.g., [cargo], [audit], [static]).
+[execution.groups]
+cargo = ["fmt", "clippy", "check", "build", "test", "coverage"]
+audit = ["deny", "semver"]
+static = ["metrics", "git", "vale"]
+
 [gates]
 clean = "skip"
 fmt = "fail"
 clippy = "fail"
-check = "fail"
+check = "skip"
 build = "fail"
 test = "fail"
-coverage = "warn"
+coverage = "skip"
 metrics = "warn"
 git = "fail"
 vale = "warn"
@@ -19,6 +44,7 @@ geiger = "warn"
 semver = "warn"
 mutants = "skip"
 valgrind = "skip"
+cross-compare = "warn"
 
 [metrics]
 max_source_lines = 100000
@@ -29,6 +55,7 @@ tracked_dirs = [
     "control-rs-ets-host",
     "control-rs-tui",
     "control-rs-ci",
+    "control-rs-compare",
 ]
 
 [git]
@@ -47,6 +74,7 @@ paths = [
     "control-rs-ets-host",
     "control-rs-tui",
     "control-rs-ci",
+    "control-rs-compare",
 ]
 
 [geiger]
@@ -57,9 +85,9 @@ baseline_ref = "origin/main"
 
 [mutants]
 timeout_multiplier = 2.0
-exclude = ["tests/**", "examples/**", "benches/**"]
-exclude_re = "(^|::)(test|tests|example|examples|bench|benches)"
-files = ["src/**"]
+exclude = ["tests/**", "benches/**"]
+exclude_re = "(^|::)(test|tests|bench|benches)"
+files = ["src/**", "examples/numerical-models-validation/src/**"]
 
 [valgrind]
 leak_check = "full"

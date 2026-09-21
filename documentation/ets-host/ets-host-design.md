@@ -119,7 +119,7 @@ the structured result.
 flowchart LR
     subgraph Consumers
         tui["control-rs-tui"]
-        ci["control-rs-xtask"]
+        ci["control-rs-ci"]
     end
     subgraph Host ["control-rs-ets-host"]
         runner["runner"]
@@ -314,7 +314,7 @@ prevent a session from producing results at all, per §4.5.
 | `control-rs-ets-host/src/bridge.rs`  | Moved      | From `control-rs-xtask/src/bridge.rs`; positional argument grammar dropped   |
 | `control-rs-ets-host/src/session.rs` | New        | Discovery and run loop, from `tasks.rs`                                      |
 | `control-rs-ets-host/src/runner.rs`  | New        | `run_headless_ets` with parameterized timeout                                |
-| `control-rs-xtask`                   | Deprecated | Retained, superseded by this crate plus `control-rs-tui` and `control-rs-ci` |
+| `control-rs-xtask`                   | Removed    | Superseded by this crate plus `control-rs-tui` and `control-rs-ci`           |
 
 ---
 

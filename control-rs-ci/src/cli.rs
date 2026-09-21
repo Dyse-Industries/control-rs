@@ -87,13 +87,21 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
             exit(0);
         } else if arg == "-o" || arg == "--only" {
             i = i.saturating_add(1);
-            if let Some(val) = args.get(i) {
+            while i < args.len() {
+                let val = match args.get(i) {
+                    Some(a) if !a.starts_with('-') => a.as_str(),
+                    _ => {
+                        i = i.saturating_sub(1);
+                        break;
+                    }
+                };
                 for part in val.split(',') {
                     let trimmed = part.trim();
                     if !trimmed.is_empty() {
                         options.only_gates.push(trimmed.to_string());
                     }
                 }
+                i = i.saturating_add(1);
             }
         } else if let Some(val) = arg
             .strip_prefix("--only=")
@@ -107,13 +115,21 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
             }
         } else if arg == "-s" || arg == "--skip" {
             i = i.saturating_add(1);
-            if let Some(val) = args.get(i) {
+            while i < args.len() {
+                let val = match args.get(i) {
+                    Some(a) if !a.starts_with('-') => a.as_str(),
+                    _ => {
+                        i = i.saturating_sub(1);
+                        break;
+                    }
+                };
                 for part in val.split(',') {
                     let trimmed = part.trim();
                     if !trimmed.is_empty() {
                         options.skip_gates.push(trimmed.to_string());
                     }
                 }
+                i = i.saturating_add(1);
             }
         } else if let Some(val) = arg
             .strip_prefix("--skip=")

@@ -1,0 +1,38 @@
+[package]
+name = "control-rs-compare"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "HDF5 cross-comparison engine and multi-language variant runner"
+readme = "README.md"
+publish = false
+keywords = ["control", "validation", "hdf5", "compare", "testing"]
+categories = ["development-tools::testing"]
+
+[lints]
+workspace = true
+
+[dependencies]
+anstream = "0.6"
+anstyle = "1.0"
+chrono = "0.4"
+hdf5-pure = "0.46"
+regex = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+strsim = "0.11"
+thiserror = "2.0"
+toml = "0.8"
+
+[[bin]]
+name = "compare"
+path = "src/bin/compare.rs"
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "pool_scaling"
+harness = false

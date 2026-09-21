@@ -521,7 +521,7 @@ where
 
 #### 6.1. Principles
 
-The verification approach aligns with [`vv-standards.md`](../vv-standards.md).
+The verification approach aligns with [`design-template.md`](../design-template.md) §6.
 Validation compares against NumPy / SciPy / harold reference models.
 
 #### 6.2. Methods
@@ -653,7 +653,7 @@ coefficient error assertion |
 | **Phase 3: Algebra & DSP Convolution**      | Implement series, parallel and feedback connections using direct DSP convolution.                                                                                                                                 | 1.5 Days         |
 | **Phase 4: Discretization**                 | Bilinear (Tustin, with pre-warping) transform and transfer-function-direct ZOH, including partial-fraction decomposition (§8's closely spaced/repeated-pole conditioning risk must be bounded, not assumed away). | 2.5 Days         |
 | **Phase 5: State-Space Conversion**         | Controllable and Observable Canonical Form conversions.                                                                                                                                                           | 1.5 Days         |
-| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites and cross-validation against two external reference implementations (MATLAB, `python-control`) per [`vv-standards.md`](../vv-standards.md).                                         | 2.0 Days         |
+| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites and cross-validation against two external reference implementations (MATLAB, `python-control`) per [`design-template.md`](../design-template.md) §6.                                | 2.0 Days         |
 
 ---
 

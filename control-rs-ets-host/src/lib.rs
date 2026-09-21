@@ -14,8 +14,8 @@
 pub use bridge::{BridgeMessage, ETSBridge, OwnedTelemetry};
 pub use error::HostError;
 pub use runner::{
-    Completion, EtsRunResult, RunOptions, RunRecord, TestOutcome,
-    run_headless_ets, run_headless_ets_with_options,
+    Completion, RunOptions, RunRecord, TestOutcome, run_headless_ets,
+    run_headless_ets_with_options,
 };
 pub use session::{
     SETTINGS_READY, SUITE_INFO_READY, SUITE_READY_MASK, SessionAction,

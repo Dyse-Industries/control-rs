@@ -10,9 +10,6 @@ use crate::error::HostError;
 use crate::session::{SessionAction, SessionState};
 use crate::target::Target;
 
-/// Legacy alias for [`RunRecord`].
-pub type EtsRunResult = RunRecord;
-
 /// Execution options controlling timeout and retry parameters for headless runs.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,

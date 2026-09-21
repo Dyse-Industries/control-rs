@@ -31,6 +31,69 @@ pub const HELP_FLAG: anstyle::Style = AnsiColor::Cyan.on_default();
 /// Help arg / placeholder style (bright yellow).
 pub const HELP_ARG: anstyle::Style = AnsiColor::BrightYellow.on_default();
 
+/// Muted ANSI color palette for multi-group concurrent execution.
+///
+/// Uses standard (less bright) ANSI colors. Does not include `Magenta`, which is
+/// reserved exclusively for the built-in `exclusive` group.
+pub const GROUP_PALETTE: [anstyle::AnsiColor; 5] = [
+    AnsiColor::Cyan,
+    AnsiColor::Blue,
+    AnsiColor::Green,
+    AnsiColor::Yellow,
+    AnsiColor::Red,
+];
+
+/// Legacy alias for `GROUP_PALETTE`.
+pub const LANE_PALETTE: [anstyle::AnsiColor; 5] = GROUP_PALETTE;
+
+/// Returns a deterministic ANSI color styling from the palette by active group index.
+#[must_use]
+pub fn group_style(index: usize) -> anstyle::Style {
+    GROUP_PALETTE[index % GROUP_PALETTE.len()].on_default()
+}
+
+/// Legacy alias for `group_style`.
+#[must_use]
+pub fn lane_style(index: usize) -> anstyle::Style {
+    group_style(index)
+}
+
+/// Returns the distinct ANSI color styling for the built-in exclusive group.
+///
+/// Uses standard Magenta, giving exclusive execution a unique, non-colliding color.
+#[must_use]
+pub fn exclusive_style() -> anstyle::Style {
+    AnsiColor::Magenta.on_default()
+}
+
+/// Formats a group tag with brackets and color (for example, `[cargo] ` or `[exclusive] `).
+///
+/// Returns an empty string if `group` is `None` (ungrouped gate) or empty.
+#[must_use]
+pub fn format_group_tag(
+    group: Option<&str>,
+    style: Option<anstyle::Style>,
+) -> String {
+    match (group, style) {
+        (Some(name), Some(st)) if !name.is_empty() => {
+            format!("{st}[{name}]{st:#} ")
+        }
+        (Some(name), None) if !name.is_empty() => {
+            format!("[{name}] ")
+        }
+        _ => String::new(),
+    }
+}
+
+/// Legacy alias for `format_group_tag`.
+#[must_use]
+pub fn format_lane_tag(
+    lane: Option<&str>,
+    style: Option<anstyle::Style>,
+) -> String {
+    format_group_tag(lane, style)
+}
+
 /// Apply cargo-compatible color choice to anstream's global default.
 ///
 /// `CARGO_TERM_COLOR` is cargo-specific and is not read by `anstream` itself.
@@ -133,5 +196,39 @@ mod tests {
             parse_cargo_color_choice(Some("unknown")),
             ColorChoice::Auto
         );
+    }
+
+    #[test]
+    fn test_lane_tags_and_styles() {
+        assert_eq!(format_lane_tag(None, None), "");
+        assert_eq!(format_lane_tag(Some(""), None), "");
+        assert_eq!(format_lane_tag(Some("exclusive"), None), "[exclusive] ");
+        assert_eq!(format_lane_tag(Some("cargo"), None), "[cargo] ");
+
+        let excl_style = exclusive_style();
+        let excl_tag = format_group_tag(Some("exclusive"), Some(excl_style));
+        assert!(excl_tag.contains("[exclusive]"));
+
+        let style0 = lane_style(0);
+        let tag0 = format_lane_tag(Some("cargo"), Some(style0));
+        assert!(tag0.contains("[cargo]"));
+        assert!(tag0.ends_with(' '));
+
+        let style1 = lane_style(1);
+        let tag1 = format_lane_tag(Some("audit"), Some(style1));
+        assert!(tag1.contains("[audit]"));
+        assert!(tag1.ends_with(' '));
+        assert_ne!(tag0, tag1);
+
+        let style2 = lane_style(2);
+        let tag2 = format_lane_tag(Some("static"), Some(style2));
+        assert!(tag2.contains("[static]"));
+        assert!(tag2.ends_with(' '));
+        assert_ne!(tag1, tag2);
+
+        // Verify exclusive has its own distinct styling that does not collide with groups
+        assert_ne!(excl_tag, tag0);
+        assert_ne!(excl_tag, tag1);
+        assert_ne!(excl_tag, tag2);
     }
 }

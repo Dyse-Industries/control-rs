@@ -17,8 +17,8 @@ serial port. Both resolve to the same reader/writer pair, so `session` is
 transport-agnostic.
 
 The interactive consumer is [`control-rs-tui`](../control-rs-tui). Headless
-execution is `run_headless_ets`; live `cargo ci` still goes through
-`control-rs-xtask` until that crate is retired.
+execution is `run_headless_ets`; automated quality gates run through
+[`control-rs-ci`](../control-rs-ci).
 
 Design: `documentation/ets-host/ets-host-design.md`.
 

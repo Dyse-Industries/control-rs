@@ -806,7 +806,7 @@ Reference implementors live under `examples/subprograms/` and exist to be read,
 copied or referenced by integrators rather than depended on. Each declares its
 own marker and implements the traits directly, which is evidence that the
 extension point works from the position an external user occupies.
-`subprograms-examples-proposal.md` specifies the set, the feature gating and
+`examples/subprograms/` provides the set, the feature gating and
 the equivalence harness; the evidence for each binding is collected there.
 
 | Implementor      | Environment                     | Attaches via                                                                     |
@@ -853,7 +853,7 @@ The mapping below records the closest entry point each DSP library offers for a
 given trait. It is guidance for an implementor, not a claim of equivalence.
 Rows marked † are not one-to-one substitutions and need composition or a
 `DefaultBlas` delegate rather than a direct call;
-`subprograms-examples-proposal.md` §6 records each discrepancy against the same
+`examples/subprograms/` records each discrepancy against the same
 evidence.
 
 | Subprogram Trait  | ARM CMSIS-DSP (`CmsisDspBlas`)                 | RISC-V NMSIS-DSP (`NmsisDspBlas`)                  | Supported Scalar Types | Hardware Citations                          |
@@ -1149,7 +1149,7 @@ Disassembly under `opt-level=3` (LLVM 22.1.6) on `x86_64-apple-darwin`,
 | **Phase 3: Sparse BLAS (SpBLAS)** | Implement `Csrmv`, `Cscmv`, `Csrmm`, `SpDotu`, `SpDotc`, `SpAxpy` on `DefaultBlas`.                                                                                                                                                                                                                                             |   Complete    |
 | **Phase 4: LAPACK Solvers**       | Implement `Potrf`/`Potrs` (SPD & HPD), `Geqrf`/`Ormqr`/`Unmqr`, `Getrf`/`Getrs`, `Syev`/`Heev` (Jacobi) on `DefaultBlas` with typed workspaces and `LinAlgError`. `Syev`/`Heev` route through the crate-private `syev_impl`/`heev_impl` budget seam (§4.3).                                                                     | Trait surface |
 | **Phase 4b: §6 oracle closure**   | Close Right-side `Trsm`/`Ormqr`/`Unmqr`, Upper `Pptrf`, `Unmqr` \(Q^H\) conjugation, `Getrs` `ipiv` length, C-3 on `Cscmv` row dest, caller workspaces without a hidden `[T; 64]`, and the Level 2/3 oracles listed in §6. Host CI green on untested stubs does not complete this phase.                                         |       M       |
-| **Phase 5: Example implementors** | Reference backend implementors under `examples/subprograms/`, each with an equivalence harness against `DefaultBlas` (§4.5.1). `src/` is unchanged by this phase. Specified in `subprograms-examples-proposal.md`.                                                                                                              |       S       |
+| **Phase 5: Example implementors** | Reference backend implementors under `examples/subprograms/`, each with an equivalence harness against `DefaultBlas` (§4.5.1). `src/` is unchanged by this phase. Implemented in `examples/subprograms/`.                                                                                                                      |       S       |
 | **Phase 6: NFR-1 Enforcement**    | Add the source-level gate rejecting `extern crate std`, `thread_local`, `static mut` and interior-mutable `static` under `src/` (NFR-1a, NFR-1b), plus a host-vs-bare-metal public API diff for NFR-1c (§8).                                                                                                                    |       S       |
 
 ---

@@ -600,7 +600,7 @@ is made independently by `transfer-function-design.md` §6 for
 | **Step 3: System Interconnections**           | Implement `series`, `parallel` and fallible `feedback` (loop-matrix solve, `StateSpaceError::SingularLoopMatrix`) with compile-time `Dim` arithmetic.                                                                               | 2.0 Days         |
 | **Step 4: Discretization**                    | Implement ZOH (Van Loan augmented matrix, scaling-and-squaring with precision-dependent Padé degree selection §4.8, Al-Mohy/Higham overscaling correction) and fallible Tustin (`StateSpaceError::SingularDiscretizationOperator`). | 4.5 Days         |
 | **Step 5: Structural Analysis & Conversions** | Implement controllability/observability matrix generation (scoped as definitional, §4.9), similarity transforms ($z=Tx$) and Hessenberg-reduction-based SISO transfer function conversion.                                          | 3.0 Days         |
-| **Step 6: Tests & Documentation**             | Unit tests, `proptest` suites, `python-control`/MATLAB cross-validation, long-horizon fixed-point recursion tests and crate-level documentation per [`vv-standards.md`](../vv-standards.md).                                                              | 3.0 Days         |
+| **Step 6: Tests & Documentation**             | Unit tests, `proptest` suites, `python-control`/MATLAB cross-validation, long-horizon fixed-point recursion tests and crate-level documentation per [`design-template.md`](../design-template.md) §6.                                                     | 3.0 Days         |
 
 ---
 

@@ -127,6 +127,12 @@ impl ReportAggregator {
         md.push_str("|:---|:---|:---|:---|:---|\n");
 
         for outcome in outcomes.values() {
+            if let Some(active_subset) = subset {
+                if !active_subset.iter().any(|g| g == &outcome.gate) {
+                    continue;
+                }
+            }
+
             let verdict_badge = match outcome.verdict {
                 Verdict::Pass => "**Pass**",
                 Verdict::Warn => "*Warn*",
