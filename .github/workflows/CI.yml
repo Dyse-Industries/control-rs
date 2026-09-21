@@ -6,6 +6,8 @@ on:
     tags: [ "v*" ]
     paths:
       - 'src/**'
+      - 'tests/**'
+      - 'examples/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
       - 'control-rs-macros/**'
@@ -20,6 +22,8 @@ on:
     branches: [ "main" ]
     paths:
       - 'src/**'
+      - 'tests/**'
+      - 'examples/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
       - 'control-rs-macros/**'
@@ -80,6 +84,16 @@ jobs:
           else
             echo "No baseline run found on main. Proceeding without diff."
           fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r examples/numerical-models-validation/python3/requirements.txt
 
       - name: Run CI
         run: cargo ci

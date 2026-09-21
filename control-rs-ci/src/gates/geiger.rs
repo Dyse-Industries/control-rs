@@ -66,6 +66,8 @@ impl QualityGate for GeigerGate {
 
         let mut cmd = Command::new("cargo");
         cmd.current_dir(&ctx.workspace_root);
+        let geiger_target_dir = ctx.out_dir.join("geiger-target");
+        cmd.env("CARGO_TARGET_DIR", &geiger_target_dir);
         cmd.args(["geiger", "--output-format", "Json"]);
 
         let spawn_res =

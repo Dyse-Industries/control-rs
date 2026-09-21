@@ -5,11 +5,27 @@ timeout_secs = 90
 
 [execution]
 parallel = true
-exclusive_gates = ["cross-compare", "valgrind", "mutants"]
 
-[execution.lanes]
+# Built-in exclusive group:
+# The ONLY built-in group in control-rs-ci. Gates listed here require Full Processor
+# Authority (such as hardware target execution, benchmark validation, unsafe audits,
+# or mutation testing) and must never compete for CPU, I/O, or target lock resources.
+#
+# When parallel = true, the runner establishes a barrier join: ALL concurrent user
+# groups must finish and join before exclusive gates run. Exclusive gates then execute
+# strictly sequentially, one at a time, tagged [exclusive].
+#
+# Any gate enabled under [gates] that is omitted from [execution.groups] also
+# automatically routes to the exclusive group for safe sequential execution.
+exclusive_gates = ["geiger", "cross-compare", "valgrind", "mutants"]
+
+# User-defined execution groups:
+# When parallel = true, each group executes concurrently on its own dedicated OS thread.
+# Gates within a single group execute sequentially in declared order.
+# Output lines are tagged with the group identifier (e.g., [cargo], [audit], [static]).
+[execution.groups]
 cargo = ["fmt", "clippy", "check", "build", "test", "coverage"]
-audit = ["deny", "geiger", "semver"]
+audit = ["deny", "semver"]
 static = ["metrics", "git", "vale"]
 
 [gates]

@@ -258,18 +258,58 @@ impl Default for ValgrindConfig {
     }
 }
 
-/// Execution schedule, lane partitioning, and concurrency configuration.
+/// Execution schedule, group partitioning, and concurrency configuration.
+///
+/// # Concurrency Topology
+///
+/// Quality gates are partitioned into two clean execution tiers:
+///
+/// 1. **User-Defined Groups (`[execution.groups]`)**:
+///    Named concurrency lanes (for example, `cargo`, `audit`, `static`). When `parallel` is enabled,
+///    each group runs concurrently on its own dedicated OS worker thread via `std::thread::scope`.
+///    Gates within a single group execute sequentially in their declared order. Output is tagged
+///    with the group identifier (for example, `[cargo] `, `[audit] `).
+///
+/// 2. **The Built-In `exclusive` Group (`exclusive_gates` and Unassigned Gates)**:
+///    The **only built-in group** in the quality gate system. Gates in this tier require
+///    **Full Processor Authority** or safe isolated execution without background contention
+///    (for example, differential cross-validation, hardware emulation, Geiger unsafe audits, or
+///    mutation tests).
+///
+///    When parallel execution is enabled, the runner establishes a barrier join: it drains and
+///    joins **all** concurrent group threads before dispatching exclusive gates. Any gate enabled
+///    in `[gates]` that is not assigned to a group under `[execution.groups]` automatically routes
+///    to the `exclusive` group, ensuring safe sequential execution without resource conflicts.
+///    Exclusive gates execute strictly sequentially, one at a time, under the `[exclusive] ` tag.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionConfig {
-    /// If true, executes independent lanes concurrently across worker threads.
+    /// If true, executes independent groups concurrently across worker threads.
     #[serde(default = "default_true")]
     pub parallel: bool,
-    /// List of gate names that require exclusive processor authority (e.g. `cross-compare`).
+    /// List of gate names assigned to the built-in `exclusive` group.
+    ///
+    /// These gates are granted full processor and I/O authority and execute sequentially
+    /// after all concurrent groups have joined. Any gate omitted from `groups` also routes here.
     #[serde(default = "default_exclusive_gates")]
     pub exclusive_gates: Vec<String>,
-    /// Declarative execution lanes: mapping lane_name -> list of gate names.
-    #[serde(default = "default_lanes")]
-    pub lanes: HashMap<String, Vec<String>>,
+    /// Declarative execution groups: mapping group_name -> list of gate names.
+    ///
+    /// Gates within the same group execute sequentially on a dedicated worker thread.
+    #[serde(default = "default_groups", alias = "lanes", alias = "threads")]
+    pub groups: HashMap<String, Vec<String>>,
+}
+
+impl ExecutionConfig {
+    /// Normalizes configuration by merging any `groups["exclusive"]` entries into `exclusive_gates`.
+    pub fn normalize(&mut self) {
+        if let Some(mut excl) = self.groups.remove("exclusive") {
+            for g in excl.drain(..) {
+                if !self.exclusive_gates.contains(&g) {
+                    self.exclusive_gates.push(g);
+                }
+            }
+        }
+    }
 }
 
 fn default_exclusive_gates() -> Vec<String> {
@@ -280,7 +320,7 @@ fn default_exclusive_gates() -> Vec<String> {
     ]
 }
 
-fn default_lanes() -> HashMap<String, Vec<String>> {
+fn default_groups() -> HashMap<String, Vec<String>> {
     let mut map = HashMap::new();
     map.insert(
         "cargo".to_string(),
@@ -313,7 +353,7 @@ impl Default for ExecutionConfig {
         Self {
             parallel: true,
             exclusive_gates: default_exclusive_gates(),
-            lanes: default_lanes(),
+            groups: default_groups(),
         }
     }
 }
@@ -370,11 +410,12 @@ impl GateConfig {
                 message: e.to_string(),
             })?;
 
-        let config: Self =
+        let mut config: Self =
             toml::from_str(&content).map_err(|e| GateError::Config {
                 path: path.to_path_buf(),
                 message: e.to_string(),
             })?;
+        config.execution.normalize();
 
         Ok(config)
     }

@@ -70,13 +70,13 @@ use std::time::{Duration, Instant};
 
 fn execute_gate(
     gate: &Arc<dyn QualityGate>,
-    lane_id: Option<&str>,
+    group_id: Option<&str>,
     style: Option<anstyle::Style>,
     ctx: &GateContext,
     ui_lock: &Mutex<()>,
 ) {
     let name = gate.name();
-    let tag = ui::format_lane_tag(lane_id, style);
+    let tag = ui::format_group_tag(group_id, style);
     {
         let _guard = ui_lock.lock();
         ui::status("Running", format!("{tag}{}", gate.command_display()));
@@ -191,6 +191,9 @@ pub fn run_pipeline(
         }
     }
 
+    // A gate is exclusive if explicitly declared in `exclusive_gates` OR if it is
+    // unassigned to any group in `execution.groups`. All unassigned gates safely
+    // default to sequential execution with full processor authority.
     let (exclusive, concurrent): (Vec<_>, Vec<_>) =
         active_gates.into_iter().partition(|g| {
             config
@@ -198,43 +201,51 @@ pub fn run_pipeline(
                 .exclusive_gates
                 .iter()
                 .any(|e| e == g.name())
+                || !config
+                    .execution
+                    .groups
+                    .values()
+                    .any(|members| members.iter().any(|m| m == g.name()))
         });
 
     let ui_lock = Mutex::new(());
 
     if config.execution.parallel {
-        let mut lanes: BTreeMap<&str, Vec<Arc<dyn QualityGate>>> =
+        let mut groups: BTreeMap<&str, Vec<Arc<dyn QualityGate>>> =
             BTreeMap::new();
+
         for gate in concurrent {
-            let lane_name = config
-                .execution
-                .lanes
-                .iter()
-                .find(|(_, members)| members.iter().any(|m| m == gate.name()))
-                .map_or("cargo", |(lane, _)| lane.as_str());
-            lanes.entry(lane_name).or_default().push(gate);
+            if let Some((group, _)) =
+                config.execution.groups.iter().find(|(_, members)| {
+                    members.iter().any(|m| m == gate.name())
+                })
+            {
+                groups.entry(group.as_str()).or_default().push(gate);
+            }
         }
 
         std::thread::scope(|s| {
-            for (idx, (lane_name, lane_gates)) in lanes.into_iter().enumerate()
+            for (idx, (group_name, group_gates)) in
+                groups.into_iter().enumerate()
             {
                 let ctx_ref = &ctx;
                 let lock_ref = &ui_lock;
-                let style = ui::lane_style(idx);
+                let style = ui::group_style(idx);
                 s.spawn(move || {
-                    let lane_start = Instant::now();
-                    for g in &lane_gates {
+                    let group_start = Instant::now();
+                    for g in &group_gates {
                         execute_gate(
                             g,
-                            Some(lane_name),
+                            Some(group_name),
                             Some(style),
                             ctx_ref,
                             lock_ref,
                         );
                     }
-                    let duration = lane_start.elapsed().as_secs_f64();
+                    let duration = group_start.elapsed().as_secs_f64();
                     let _guard = lock_ref.lock();
-                    let tag = ui::format_lane_tag(Some(lane_name), Some(style));
+                    let tag =
+                        ui::format_group_tag(Some(group_name), Some(style));
                     ui::status("Joined", format!("{tag}in {duration:.2}s"));
                 });
             }
@@ -246,7 +257,8 @@ pub fn run_pipeline(
     }
 
     for gate in exclusive {
-        execute_gate(&gate, None, None, &ctx, &ui_lock);
+        let style = ui::exclusive_style();
+        execute_gate(&gate, Some("exclusive"), Some(style), &ctx, &ui_lock);
     }
 
     let aggregator =

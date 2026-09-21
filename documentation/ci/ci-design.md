@@ -522,27 +522,27 @@ Sequential quality gate execution scales with the sum of all tool durations.
 `control-rs-ci` provides a zero-dependency, configurable multi-lane parallel
 execution model using `std::thread::scope`:
 
-##### Declarative Lane & Authority Architecture
+##### Declarative Group & Authority Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Stage1["Stage 1: Multi-Lane Parallel Block (std::thread::scope)"]
-        subgraph LaneCargo["Lane 'cargo' (Sequential Build Lock)"]
+    subgraph Stage1["Stage 1: Multi-Group Concurrent Block (std::thread::scope)"]
+        subgraph GroupCargo["Group 'cargo' (Sequential Build Lock)"]
             C1["fmt"] --> C2["clippy"] --> C3["build"] --> C4["test"]
         end
-        subgraph LaneAudit["Lane 'audit' (Background Audit)"]
-            A1["deny"] --> A2["geiger"] --> A3["semver"]
+        subgraph GroupAudit["Group 'audit' (Background Audit)"]
+            A1["deny"] --> A2["semver"]
         end
-        subgraph LaneStatic["Lane 'static' (Filesystem Linters)"]
+        subgraph GroupStatic["Group 'static' (Filesystem Linters)"]
             S1["metrics"] --> S2["git"] --> S3["vale"]
         end
     end
 
-    Barrier["<b>Barrier Join</b><br/>(Drain & complete all background worker lanes)"]
+    Barrier["<b>Barrier Join</b><br/>(Drain & complete all background worker groups)"]
     Stage1 --> Barrier
 
-    subgraph Stage2["Stage 2: Exclusive Processor Authority Block"]
-        Ex1["cross-compare<br/><i>(100% CPU & Memory Bandwidth Allocation)</i>"]
+    subgraph Stage2["Stage 2: Built-In Exclusive Group (Full Processor Authority)"]
+        Ex1["geiger"] --> Ex2["cross-compare"] --> Ex3["valgrind"] --> Ex4["mutants / unassigned"]
     end
     Barrier --> Stage2
 
@@ -552,39 +552,61 @@ flowchart TD
     Stage2 --> Stage3
 ```
 
+##### Concurrency Topology: Groups and Exclusive Authority
+
+The execution topology partitions all active quality gates into two clean tiers:
+
+1. **User-Defined Groups (`[execution.groups]`)**:
+   Named concurrency lanes (for example, `cargo`, `audit`, `static`). When parallel execution is enabled,
+   each declared group is allocated a dedicated OS worker thread via `std::thread::scope`. Gates within a single
+   group execute sequentially in their declared order. Output lines display colored group tags
+   (for example, `[cargo] `, `[audit] `, `[static] `).
+2. **The Built-In `exclusive` Group (`exclusive_gates` and Unassigned Gates)**:
+   The **only built-in group** in the quality gate architecture. Gates requiring unrestricted access
+   to CPU cycles, memory bandwidth, hardware debug probes, or the primary Cargo target lock (such as
+   hardware target emulation, differential validation, Geiger unsafe audits, Valgrind, or mutation analysis)
+   belong to this group.
+
+   The runner establishes a strict **barrier join**: all user group threads must complete and join before
+   exclusive gates begin. Furthermore, any gate enabled in `[gates]` that is omitted from `[execution.groups]`
+   automatically routes to the `exclusive` group, ensuring safe, non-contending sequential execution by default.
+   Exclusive gates execute strictly sequentially, one at a time, displaying the distinct `[exclusive] ` tag.
+
 ##### Declarative `gate.toml` Configuration Schema
 
-Execution lanes, concurrency flags, thread allocations, and barrier gates are
-declared in `gate.toml`:
+Execution groups, concurrency flags, and the built-in exclusive group are declared in `gate.toml`:
 
 ```toml
 [execution]
-parallel = true # Enable multi-lane concurrency (defaults to true)
-exclusive_gates = ["cross-compare", "valgrind", "mutants"] # Full processor authority barriers
+parallel = true # Enable concurrency (defaults to true)
 
-# Declarative execution lanes:
-# Gates in different lanes run concurrently in parallel worker threads;
-# gates within a single lane execute sequentially in declared order.
-[execution.lanes]
-cargo = ["fmt", "clippy", "build", "test"]
-audit = ["deny", "geiger", "semver"]
+# Built-in exclusive group (Full Processor Authority):
+# Gates listed here (or omitted from [execution.groups]) execute sequentially after barrier join.
+exclusive_gates = ["geiger", "cross-compare", "valgrind", "mutants"]
+
+# User-defined execution groups:
+# Gates in different groups run concurrently in parallel worker threads;
+# gates within a single group execute sequentially in declared order.
+[execution.groups]
+cargo = ["fmt", "clippy", "check", "build", "test", "coverage"]
+audit = ["deny", "semver"]
 static = ["metrics", "git", "vale"]
 ```
 
 ##### Cargo Build-Lock & Process Isolation
 
-1. **Zero-Contention Default Lanes**: Gates that acquire Cargo's primary `target/`
-   compilation lock (`fmt`, `clippy`, `build`, `test`) reside in a single sequential
-   lane (`cargo`), while non-compiling gates (`audit`, `static`) run in parallel
+1. **Zero-Contention Default Groups**: Gates that acquire Cargo's primary `target/`
+   compilation lock (`fmt`, `clippy`, `check`, `build`, `test`, `coverage`) reside in a single sequential
+   group (`cargo`), while non-compiling gates (`audit`, `static`) run in parallel
    without lock contention.
 2. **Directory Isolation (`CARGO_TARGET_DIR`)**: Gates requiring concurrent Cargo
    compilation (such as `cargo-semver-checks` or isolated custom gates) are
    assigned dedicated target directories (`CARGO_TARGET_DIR=target/ci-artifacts/targets/<gate>`).
-3. **Full Processor Authority (`exclusive = true`)**: Heavy numerical suites,
+3. **Full Processor Authority (`exclusive_gates`)**: Heavy numerical suites,
    mutation engines, and memory profilers that require unrestricted CPU and
-   memory bandwidth declare `exclusive = true`. The runner drains all active
-   background threads before starting the exclusive gate, eliminating contention.
-4. **Deterministic Aggregation**: Outcomes from asynchronous lanes are gathered
+   memory bandwidth declare membership in the built-in `exclusive` group. The runner drains
+   all active background group threads before starting exclusive gates, eliminating contention.
+4. **Deterministic Aggregation**: Outcomes from asynchronous groups are gathered
    into a thread-safe collector and sorted to match the declared canonical gate
    order before rendering `ci-report.md`.
 
