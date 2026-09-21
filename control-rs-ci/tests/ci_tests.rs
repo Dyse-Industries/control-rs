@@ -284,7 +284,7 @@ fn test_cli_multi_token_parsing() {
         multi_space_options.skip_gates,
         vec!["fmt", "clippy", "check", "build", "test"]
     );
-    assert!(multi_space_options.only_gates.is_empty());
+    assert_eq!(multi_space_options.only_gates, Vec::<String>::new());
 }
 
 #[test]

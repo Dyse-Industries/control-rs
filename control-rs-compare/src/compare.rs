@@ -719,8 +719,8 @@ fn parse_suite_and_variant(path: &Path) -> (String, String) {
 
     let parts: Vec<&str> = stem.split('.').collect();
     if parts.len() >= 2 {
-        let suite = parts.first().unwrap_or(&"unknown").to_string();
-        let variant = parts.get(1).unwrap_or(&"unknown").to_string();
+        let suite = (*parts.first().unwrap_or(&"unknown")).to_string();
+        let variant = (*parts.get(1).unwrap_or(&"unknown")).to_string();
         (suite, variant)
     } else {
         (stem.to_string(), "unknown".to_string())
