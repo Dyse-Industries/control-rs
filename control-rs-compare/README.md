@@ -1,19 +1,16 @@
 # `control-rs-compare`
 
-Cross-Compare Harness & HDF5 Verification Comparison Engine for `control-rs`.
+HDF5 cross-comparison engine: runs the variants declared in [`compare.toml`](../compare.toml)
+and compares their outputs against a reference oracle.
+[Design](../documentation/vv/cross-compare-design.md) · [Workspace](../README.md)
 
-## Prerequisites & System Dependencies
+## Prerequisites
 
-### 1. HDF5 Ingestion & Storage
-
-`control-rs-compare` uses typed pure-Rust HDF5 dataset parsing via `hdf5-pure` for cross-platform compatibility and zero C-toolchain dependencies.
-
-### 2. Python Scientific Runtime
-
-Multi-language reference oracles (NumPy, SciPy, JAX, python-flint, harold) and simulation oracles run within the crate-root Python 3.12 virtual environment (`.venv`):
+No system HDF5 library is required (`hdf5-pure`). Oracles run in the Python
+3.12 virtualenv at the workspace root:
 
 ```bash
-# Create venv at crate root if not already present
+# Create the venv at the workspace root if not already present
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r control-rs-verification/python3/requirements.txt

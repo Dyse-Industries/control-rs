@@ -1,64 +1,20 @@
-# control-rs-ets
+# `control-rs-ets`
 
-`control-rs-ets` is the target-side (embedded, `no_std`) core library for the
-Embedded Test Server (ETS) testing and benchmarking infrastructure of
-`control-rs`.
+Target-side `no_std` Embedded Test Server (ETS): transport and profiler
+traits, framed command and telemetry protocol, and the server event loop.
+[Design](../documentation/ets/embedded-test-server-design.md) · [Overview](../documentation/ets/ets-overview.md) · [Workspace](../README.md)
 
-## Purpose
-
-The purpose of this crate is to provide target-side abstractions, communication
-framing and the interactive test server event loop. It enables control systems
-developers to test their algorithms directly on embedded hardware (or within
-emulators like QEMU) and collect real-time telemetry, panic logs and execution
-cycle/time benchmarks without dynamic memory allocations (`no_std`).
-
-## Role in the Ecosystem
-
-```mermaid
----
-config:
-  layout: fixed
----
-flowchart LR
- subgraph Target["Target MCU / QEMU (control-rs-ets)"]
-    direction TB
-        CommsRx["HostComms"]
-        Server["Server"]
-        Tests["SuiteDescriptors"]
-        CPUUtils["CPUProfiler"]
-  end
-    Tests -. <br> .-> Server
-    Host(("Host CLI / TUI / CI")) <--> CommsRx
-    CommsRx <--> Server
-    CPUUtils --> Server
-    
-     CommsRx:::commsNode
-     Server:::serverLoop
-     Tests:::testNode
-     Host:::hostNode
-     CPUUtils:::cpuNode
-    classDef hostNode stroke:#38bdf8
-    classDef commsNode stroke:#4ade80
-    classDef serverLoop stroke:#a78bfa
-    classDef testNode stroke:#facc15
-    classDef cpuNode stroke:#2962FF
-```
-
-`control-rs-ets`:
-
-1. **Defines core abstractions** (`CPUProfiler` and `HostComms` traits) for
-   hardware communication, timing and CPU profiling.
-2. **Implements packet framing** using a robust CRC-16 checksum binary protocol.
-3. **Hosts the server event loop** which processes incoming execution commands
-   from the host, executes target tests and streams back telemetry.
+| Module | Contents | Design |
+|:--|:--|:--|
+| `comms` | `HostComms`, frame reader, telemetry framing (CRC-16) | [host-comm-design](../documentation/ets/host-comm-design.md) |
+| `profiler` | `CPUProfiler` cycle and stack measurement | [cpu-profiler-design](../documentation/ets/cpu-profiler-design.md) |
+| `settings` | Host-adjustable atomic test settings | [test-suite-design](../documentation/ets/test-suite-design.md) |
+| `server` | `Context` and the event loop | [embedded-test-server-design](../documentation/ets/embedded-test-server-design.md) |
 
 ## End-User Example
 
-Developers use `control-rs-ets` by defining a target-side transport (such as a
-UART interface) and CPU profiling utilities and then passing them into the
-Server's context.
-
-Here is an example implementation:
+Implement `HostComms` for the target transport and `CPUProfiler` for its
+timer, then pass both to `Context`:
 
 ```rust
 #![no_std]

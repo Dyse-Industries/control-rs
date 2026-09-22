@@ -3,6 +3,7 @@
 Interactive terminal console for driving
 [`control-rs-ets`](../control-rs-ets) targets over
 [`control-rs-ets-host`](../control-rs-ets-host).
+[Design](../documentation/tui/tui-design.md) · [Workspace](../README.md)
 
 The dashboard shows target metadata, a hierarchical suite and case tree, per-case
 cycle, duration and peak-stack telemetry, and a live target log. Execution is
@@ -17,8 +18,6 @@ Framing, CRC verification, telemetry decoding, panic detection and the
 reset/reconnect sequence belong to `control-rs-ets-host`. This binary holds
 layout and input handling only, which is what keeps the terminal stack out of
 every headless dependency closure.
-
-Design: `documentation/tui/tui-design.md`.
 
 ## License
 

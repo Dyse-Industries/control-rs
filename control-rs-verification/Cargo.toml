@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Dedicated host verification harness emitting .rust.h5 containers for all 5 domains against Python reference oracles."
+readme = "README.md"
 publish = false
 
 [lints]

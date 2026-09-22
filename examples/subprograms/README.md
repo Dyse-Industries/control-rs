@@ -4,6 +4,7 @@ Copyable reference implementors for `control_rs::math::subprograms`. Each
 crate is a downstream user of the library: a zero-sized marker, trait impls
 for the scalars and layouts that backend supports, and a short `main` that
 checks those methods against `DefaultBlas`.
+[Design](../../documentation/math/subprograms-design.md) · [Examples](../README.md) · [Workspace](../../README.md)
 
 `control-rs` `src/` ships only `DefaultBlas`. These packages are not workspace
 members, are excluded from `cargo ci`, and are not a substitute for

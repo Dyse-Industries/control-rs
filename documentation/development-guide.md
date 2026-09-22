@@ -51,16 +51,18 @@ flowchart LR
 Located in [control-rs-ets](../control-rs-ets), this `no_std` crate provides
 the target-side infrastructure:
 
-- **Interactive Test Server**: A lightweight event loop that executes test
+- **Interactive Test Server**: An event loop that executes test
   suites on request and streams results back.
 - **Target Profiling**: Measures execution time using hardware cycle counters
   (ARM DWT) and tracks memory limits using stack painting and scanning.
 
-### 2. Host Infrastructure (`control-rs-ets-host`, `control-rs-tui`, `control-rs-ci`)
+### 2. Host Infrastructure (`control-rs-ets-host`, `control-rs-tui`,
+`control-rs-ci`)
 
 - **Session Engine (`control-rs-ets-host`)**: Headless session state machine,
   COBS framing, serial/TCP transport abstractions, and automated test execution.
-- **Terminal User Interface (`control-rs-tui`)**: Interactive dashboard (Ratatui)
+- **Terminal User Interface (`control-rs-tui`)**: Interactive dashboard
+  (Ratatui)
   for real-time on-target telemetry inspection and manual test execution.
 - **Quality Gate Runner (`control-rs-ci`)**: Declarative quality gate runner
   (`gate.toml`), report generator (`ci-report.md`), and requirement traceability
@@ -73,18 +75,29 @@ the target-side infrastructure:
   (`riscv32imac-unknown-none-elf`) targets.
 - **Code Quality Reporting**: `control-rs-ci` executes workspace quality gates
   and aggregates structured JSON artifacts into `ci-report.md`.
-- **Differential Validation**: Host reference cross-validation against
-  high-precision oracles (`control-rs-oracle`).
+- **Differential Validation**: Host cross-validation of the numerical models
+  against Python reference oracles (`control-rs-verification`, compared by
+  `control-rs-compare`).
 
 ---
 
-## Toolchain Setup
+## Prerequisites
 
-The workspace's tooling requires multiple toolchains be installed:
+| Requirement | Version / Value | Needed for |
+|:--|:--|:--|
+| Rust toolchain | minimum `1.89.0`; CI also tests stable and beta | Everything |
+| Bare-metal targets | `rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf` | `examples/qemu`, `examples/teensy4`, ETS |
+| QEMU | `qemu-system-arm`, `qemu-system-riscv32`, `qemu-system-riscv64` | `cargo qemu`, virtual ETS |
+| `libudev-dev` | Linux only | Serial transport in `control-rs-ets-host` |
+| Python | 3.12, virtualenv at the workspace root (`.venv`) | `cargo compare`, `cross-compare` gate |
+| `vale` | 3.22, then `vale --config=.vale.ini sync` | `vale` gate |
+| `cargo-tarpaulin` | latest | `cargo coverage`, `coverage` gate |
+| `cargo-deny`, `cargo-geiger`, `cargo-semver-checks` | latest | `deny`, `geiger`, `semver` gates |
+| `cargo-mutants` | latest | `mutants` gate (skipped by default) |
+| `valgrind` | Linux only | `cargo valgrind`, `valgrind` gate |
+| `cargo-binutils` | latest | Linker-section inspection in `control-rs-macros` |
 
-```bash
-rustup target add thumbv7em-none-eabihf riscv32imac-unknown-none-elf
-```
+The `valgrind` gate runs on Linux only; CI runs it there.
 
 ---
 
@@ -94,22 +107,24 @@ Helpful cargo aliases are configured
 in [.cargo/config.toml](../.cargo/config.toml)
 to simplify development, testing, formatting, linting and coverage reporting:
 
-| Category                               | Alias               | Underlying Command                                             | Description                                                     |
-|:---------------------------------------|:--------------------|:---------------------------------------------------------------|:----------------------------------------------------------------|
-| **Development & Quality Gates**        | `cargo ci`          | `run --package control-rs-ci --bin control-rs-ci --`           | Runs the full continuous integration pipeline locally.          |
+| Category                               | Alias               | Underlying Command                                             | Description                                                         |
+|:---------------------------------------|:--------------------|:---------------------------------------------------------------|:--------------------------------------------------------------------|
+| **Development & Quality Gates**        | `cargo ci`          | `run --package control-rs-ci --bin control-rs-ci --`           | Runs the full continuous integration pipeline locally.              |
 |                                        | `cargo gate`        | `run --package control-rs-ci --bin gate --`                    | Runs targeted quality gates (for example, `cargo gate fmt,clippy`). |
-|                                        | `cargo report`      | `run --package control-rs-ci --bin report --`                  | Aggregates JSON artifacts into `ci-report.md`.                  |
-|                                        | `cargo compare`     | `run --package control-rs-compare --bin compare --`            | Executes reference oracles and compares HDF5 dataset results.   |
-| **Interactive TUI**                    | `cargo tui`         | `run --package control-rs-tui --`                              | Launches the interactive TUI console dashboard.                 |
-| **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | TUI → virtual ETS (QEMU ARM Cortex-M7).                         |
-|                                        | `cargo teensy`      | `cargo tui teensy`                                             | TUI → ETS (Teensy 4.0/4.1 over serial).                         |
-| **Formatting**                         | `cargo fmt-all`     | `fmt --all`                                                    | Automatically formats all Rust files in the workspace.          |
-|                                        | `cargo fmt-check`   | `fmt --all -- --check`                                         | Checks that all files conform to formatting rules.              |
-| **Linting**                            | `cargo lint`        | `clippy --workspace --lib --bins --tests --examples --benches` | Runs Clippy lints across all packages and targets.              |
-|                                        | `cargo clippy-json` | `cargo lint --message-format=json`                             | Runs Clippy lints and outputs findings in JSON format.          |
-|                                        | `cargo clippy-ci`   | `cargo clippy-json -- -D warnings`                             | Runs Clippy CI lints, treating all warnings as compiler errors. |
-| **Coverage**                           | `cargo coverage`    | `tarpaulin --verbose --workspace`                              | Measures test code coverage via `cargo-tarpaulin`.              |
-|                                        | `cargo coverage-ci` | `cargo coverage --color never --out Html --out Json`           | Runs coverage in CI mode, exporting reports in HTML and JSON.   |
+|                                        | `cargo report`      | `run --package control-rs-ci --bin report --`                  | Aggregates JSON artifacts into `ci-report.md`.                      |
+|                                        | `cargo compare`     | `run --package control-rs-compare --bin compare --`            | Executes reference oracles and compares HDF5 dataset results.       |
+|                                        | `cargo valgrind`    | `run --package control-rs-ci --bin valgrind --`                | Runs Valgrind Memcheck against the workspace example binaries.      |
+|                                        | `cargo regression`  | `run --package control-rs-ci --bin regression --`              | Checks `criterion` results against budgets and baselines.      |
+| **Interactive TUI**                    | `cargo tui`         | `run --package control-rs-tui --`                              | Launches the interactive TUI console dashboard.                     |
+| **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | TUI → virtual ETS (QEMU ARM Cortex-M7).                             |
+|                                        | `cargo teensy`      | `cargo tui teensy`                                             | TUI → ETS (Teensy 4.0/4.1 over serial).                             |
+| **Formatting**                         | `cargo fmt-all`     | `fmt --all`                                                    | Automatically formats all Rust files in the workspace.              |
+|                                        | `cargo fmt-check`   | `fmt --all -- --check`                                         | Checks that all files conform to formatting rules.                  |
+| **Linting**                            | `cargo lint`        | `clippy --workspace --lib --bins --tests --examples --benches` | Runs Clippy lints across all packages and targets.                  |
+|                                        | `cargo clippy-json` | `cargo lint --message-format=json`                             | Runs Clippy lints and outputs findings in JSON format.              |
+|                                        | `cargo clippy-ci`   | `cargo clippy-json -- -D warnings`                             | Runs Clippy CI lints, treating all warnings as compiler errors.     |
+| **Coverage**                           | `cargo coverage`    | `tarpaulin --verbose --workspace`                              | Measures test code coverage via `cargo-tarpaulin`.                  |
+|                                        | `cargo coverage-ci` | `cargo coverage --color never --out Html --out Json`           | Runs coverage in CI mode, exporting reports in HTML and JSON.       |
 
 ---
 
@@ -156,31 +171,31 @@ parameters in real time.
 
 ## Continuous Integration & Verification
 
-Run the exact verification steps performed by the GitHub Actions pipeline
-locally (clippy, formatting, tarpaulin coverage, and CI → virtual ETS).
-Numerical-model JSON V&V is a separate workflow. The Python 3.12 virtualenv
-lives at the **crate root** (`.venv`), not under `examples/`. Activate it,
-then run the nested crate from inside `examples/numerical-models-validation/`:
+`cargo ci` runs every gate declared in [`gate.toml`](../gate.toml), grouped
+as in GitHub Actions. `cargo gate` runs a subset.
+
+```bash
+cargo ci                  # all gates
+cargo gate fmt,clippy     # selected gates
+cargo coverage            # console coverage
+cargo coverage-ci         # HTML and JSON coverage reports
+```
+
+Numerical cross-validation runs the Python oracles in
+[`control-rs-verification`](../control-rs-verification/README.md) and compares
+their HDF5 output with the Rust results. Setup and flags:
+[`control-rs-compare`](../control-rs-compare/README.md).
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -r examples/numerical-models-validation/python3/requirements.txt
-cd examples/numerical-models-validation
-cargo run --release --bin validate
+pip install -r control-rs-verification/python3/requirements.txt
+cargo compare
 ```
 
-- **Run all checks (ARM & RISC-V QEMU):**
-  ```bash
-  cargo ci
-  ```
-- **Run checks for specific targets:**
-  ```bash
-  cargo qemu-ci
-  cargo teensy-ci
-  ```
-- **Run workspace code coverage analysis:**
-  ```bash
-  cargo coverage      # Detailed console coverage
-  cargo coverage-ci   # Export HTML and JSON reports (headless CI style)
-  ```
+Install the pre-commit hook to format and lint before each commit:
+
+```bash
+cp scripts/git-hooks/pre-commit .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```

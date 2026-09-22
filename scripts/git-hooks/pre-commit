@@ -2,7 +2,7 @@
 set -e
 
 # Pre-commit hook to format code and run clean, build, check, lint in the
-# main workspace, nested validation crates, and pedagogical example crates.
+# main workspace and the nested example crates.
 #
 # Install: cp scripts/git-hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
@@ -24,7 +24,6 @@ status "Running" "cargo fmt-all in main workspace"
 cargo fmt-all
 
 for manifest in \
-    validation/*/Cargo.toml \
     examples/*/Cargo.toml \
     examples/*/*/Cargo.toml
 do

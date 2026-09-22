@@ -1,73 +1,27 @@
-# teensy4
+# `teensy4`
 
-A demonstration crate implementing the `control-rs` Embedded Test Server (ETS)
-test server on physical **Teensy 4.0** hardware over a native USB connection.
-
-## Purpose
-
-The purpose of this example is to show how to integrate the target-side
-`control-rs-ets` event loop, clocks and macros into a real bare-metal embedded
-microcontroller environment. It exposes a live PID controller tuning suite where
-settings (Proportional, Integral and Derivative gains) can be read and set
-dynamically by the host TUI or CI runner over a native USB serial connection.
+Embedded Test Server firmware for Teensy 4.0 over native USB. Exposes a PID
+gain-tuning suite whose settings the host TUI or CI runner reads and writes.
+[Design](../../documentation/ets/embedded-test-server-design.md) · [Examples](../README.md) · [Workspace](../../README.md)
 
 ---
 
-## Hardware Connection Setup
+## Connection
 
-Unlike standard UART-based ETS configurations, this example utilizes the Teensy
-4.0's native USB controller.
-
-### Wiring Diagram
-
-Connect the Teensy 4.0 directly to your host PC using a standard **Micro-USB** (
-or USB-C) cable.
-
-```text
-  +------------------+                    +------------------+
-  |     Host PC      | <================> |   Teensy 4.0     |
-  | (CLI / TUI / CI) |    USB Cable       |  (ETS Test Bed)  |
-  +------------------+                    +------------------+
-```
-
-No external USB-to-UART serial adapters or custom wiring are needed!
+Connect the board to the host with a USB cable. The ETS uses the board's native
+USB controller; no UART adapter is required.
 
 ---
 
-## How it Works
+## Target Configuration
 
-1. **Host-Target Communications**: ETS operates as a native **USB CDC
-   ACM (virtual COM port) device**. The `TeensyComms` struct polls the USB stack
-   dynamically inside `poll_command()`, handling the USB enumeration,
-   configuration states and bidirectional packet transmission seamlessly.
-2. **Device USB Profile**:
-    - **Vendor ID (VID)**: `0x5824`
-    - **Product ID (PID)**: `0x27dd`
-    - **Manufacturer / Product**: `teensy4`
-3. **System Clock**: We configure the ARM Cortex-M `SysTick` exception to tick
-   every 1 ms. The `TeensyClock` struct uses this tick counter and the current
-   SysTick register countdown to provide microsecond-accurate timekeeping (
-   `now_us()`).
-4. **Status Indicator**: The onboard LED on **Pin 13** turns on solid when the
-   ETS is successfully initialized and ready to communicate with the
-   host.
-
----
-
-```
-# UDEV Rules for Teensy boards, http://www.pjrc.com/teensy/
-#
-# The latest version of this file may be found at:
-#   http://www.pjrc.com/teensy/00-teensy.rules
-
-ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1"
-ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04[789a]*", ENV{MTP_NO_PROBE}="1"
-KERNEL=="ttyACM*", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666", RUN:="/bin/stty -F /dev/%k raw -echo", SYMLINK+="teensy"
-KERNEL=="hidraw*", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666"
-SUBSYSTEMS=="usb", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666"
-KERNEL=="hidraw*", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="013*", MODE:="0666"
-SUBSYSTEMS=="usb", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="013*", MODE:="0666"
-```
+| Item | Value |
+|:--|:--|
+| Transport | USB CDC ACM (virtual COM port), polled by `TeensyComms::poll_command()` |
+| USB VID / PID | `0x5824` / `0x27dd` |
+| Manufacturer / Product | `teensy4` |
+| Clock | `SysTick` at 1 ms; `TeensyClock::now_us()` adds the SysTick countdown for microsecond resolution |
+| Ready indicator | LED on pin 13, solid once the ETS is initialized |
 
 ---
 
@@ -89,6 +43,23 @@ sudo apt-get install teensy-loader-cli
 ```
 
 Alternatively, you can use the official graphical Teensy Loader GUI.
+
+On Linux, install the PJRC udev rules (`/etc/udev/rules.d/00-teensy.rules`):
+
+```
+# UDEV Rules for Teensy boards, http://www.pjrc.com/teensy/
+#
+# The latest version of this file may be found at:
+#   http://www.pjrc.com/teensy/00-teensy.rules
+
+ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1"
+ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04[789a]*", ENV{MTP_NO_PROBE}="1"
+KERNEL=="ttyACM*", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666", RUN:="/bin/stty -F /dev/%k raw -echo", SYMLINK+="teensy"
+KERNEL=="hidraw*", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="04*", MODE:="0666"
+KERNEL=="hidraw*", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="013*", MODE:="0666"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="013*", MODE:="0666"
+```
 
 ### 1. Build the Binary
 
