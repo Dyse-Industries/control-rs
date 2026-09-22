@@ -23,6 +23,9 @@ pub enum GatePolicy {
     Skip,
 }
 
+/// Type alias for [`GatePolicy`] matching declarative `gate-mode` terminology.
+pub type GateMode = GatePolicy;
+
 /// Runner-wide execution settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunnerConfig {
@@ -114,6 +117,9 @@ pub struct GateDefinition {
     /// Optional environment variable overrides.
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Optional execution mode / policy for this gate (e.g. "fail", "warn", "skip").
+    #[serde(default)]
+    pub mode: Option<GatePolicy>,
 }
 
 impl GateDefinition {
@@ -125,7 +131,14 @@ impl GateDefinition {
             args,
             description: None,
             env: HashMap::new(),
+            mode: None,
         }
+    }
+
+    /// Resolves the execution mode/policy for this gate, defaulting to [`GatePolicy::Fail`].
+    #[must_use]
+    pub fn mode(&self) -> GatePolicy {
+        self.mode.unwrap_or(GatePolicy::Fail)
     }
 }
 
@@ -147,6 +160,17 @@ pub struct GateConfig {
 }
 
 impl GateConfig {
+    /// Normalizes configuration by synchronizing execution groups and populating gate policies.
+    pub fn normalize(&mut self) {
+        self.execution.normalize();
+        for (name, def) in &self.gate_definitions {
+            let mode = def.mode.unwrap_or_else(|| {
+                self.gates.get(name).copied().unwrap_or(GatePolicy::Fail)
+            });
+            self.gates.insert(name.clone(), mode);
+        }
+    }
+
     /// Loads a `GateConfig` from a TOML file path. If the file does not exist,
     /// returns default configuration.
     ///
@@ -168,7 +192,7 @@ impl GateConfig {
                 path: path.to_path_buf(),
                 message: e.to_string(),
             })?;
-        config.execution.normalize();
+        config.normalize();
 
         Ok(config)
     }
@@ -176,6 +200,11 @@ impl GateConfig {
     /// Gets the policy for a named gate, defaulting to `GatePolicy::Fail`.
     #[must_use]
     pub fn policy_for(&self, gate_name: &str) -> GatePolicy {
+        if let Some(def) = self.gate_definitions.get(gate_name) {
+            if let Some(mode) = def.mode {
+                return mode;
+            }
+        }
         self.gates
             .get(gate_name)
             .copied()

@@ -100,6 +100,8 @@ pub struct Gate {
     pub description: Option<String>,
     /// Environment variable overrides.
     pub env: HashMap<String, String>,
+    /// Execution mode / policy for this gate.
+    pub mode: GatePolicy,
 }
 
 impl Gate {
@@ -118,6 +120,7 @@ impl Gate {
             args,
             description,
             env,
+            mode: GatePolicy::Fail,
         }
     }
 
@@ -133,6 +136,7 @@ impl Gate {
             args: def.args.clone(),
             description: def.description.clone(),
             env: def.env.clone(),
+            mode: def.mode(),
         }
     }
 
@@ -140,6 +144,12 @@ impl Gate {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns the execution policy / mode for this gate.
+    #[must_use]
+    pub fn mode(&self) -> GatePolicy {
+        self.mode
     }
 
     /// Returns the optional description of this gate.

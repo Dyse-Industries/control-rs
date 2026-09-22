@@ -51,6 +51,7 @@ fn test_config_parsing_defaults() {
             ],
             description: None,
             env: HashMap::new(),
+            mode: None,
         })
     );
     assert_eq!(
@@ -60,6 +61,7 @@ fn test_config_parsing_defaults() {
             args: vec![],
             description: None,
             env: HashMap::new(),
+            mode: None,
         })
     );
 }
@@ -473,6 +475,7 @@ fn test_gate_definition_parsing() {
             args: vec!["--workspace".to_string(), "--all-targets".to_string(),],
             description: Some("Compiles all targets".to_string()),
             env: HashMap::new(),
+            mode: None,
         })
     );
 
@@ -484,8 +487,53 @@ fn test_gate_definition_parsing() {
             args: vec!["check".to_string(), "--strict".to_string()],
             description: None,
             env: HashMap::new(),
+            mode: None,
         })
     );
+}
+
+#[test]
+fn test_decentralized_gate_mode_parsing() {
+    let toml_str = r#"
+        [runner]
+        title = "test-ci"
+
+        [clean]
+        mode = "fail"
+        command = "cargo clean"
+
+        [check]
+        mode = "skip"
+        command = "cargo check"
+        args = ["--workspace"]
+
+        [lint]
+        mode = "warn"
+        command = "cargo clippy"
+
+        [custom]
+        command = "my-tool"
+    "#;
+
+    let mut config: GateConfig = toml::from_str(toml_str).unwrap();
+    assert_eq!(config.policy_for("clean"), GatePolicy::Fail);
+    assert_eq!(config.policy_for("check"), GatePolicy::Skip);
+    assert_eq!(config.policy_for("lint"), GatePolicy::Warn);
+    assert_eq!(config.policy_for("custom"), GatePolicy::Fail);
+    assert_eq!(config.policy_for("unknown"), GatePolicy::Fail);
+
+    // Verify normalize populates config.gates
+    config.normalize();
+    assert_eq!(config.gates.get("clean"), Some(&GatePolicy::Fail));
+    assert_eq!(config.gates.get("check"), Some(&GatePolicy::Skip));
+    assert_eq!(config.gates.get("lint"), Some(&GatePolicy::Warn));
+    assert_eq!(config.gates.get("custom"), Some(&GatePolicy::Fail));
+
+    // Verify Gate::from_definition inherits mode
+    let clean_def = config.gate_def("clean").unwrap();
+    assert_eq!(clean_def.mode(), GatePolicy::Fail);
+    let gate = Gate::from_definition("clean", clean_def);
+    assert_eq!(gate.mode(), GatePolicy::Fail);
 }
 
 #[test]

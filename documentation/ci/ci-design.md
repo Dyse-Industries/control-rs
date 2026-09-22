@@ -26,7 +26,7 @@ The gating and reporting infrastructure follows a **generic gate runner, minimal
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Generic Gate Execution**: The runner must execute any quality gate declared in `gate.toml` under `[gates]` and `[<gate>]`, supporting compiler checks, linters, tests, coverage, security audits, and user-defined verification harnesses.
+- **FR-1 — Generic Gate Execution**: The runner must execute any quality gate declared in `gate.toml` under `[<gate>]`, supporting compiler checks, linters, tests, coverage, security audits, and user-defined verification harnesses.
 - **FR-2 — Single Concrete Gate Model**: All quality gates must be represented and executed via a single concrete `Gate` type without gate-specific traits, sub-types, or dynamic dispatch.
 - **FR-3 — Declarative Workspace Configuration (`gate.toml`)**: Runner settings, execution groups, exclusive gates, and individual gate execution definitions must be declared in a workspace-root `gate.toml` without hardcoded fallback vectors in runner source code.
 - **FR-4 — Subcommand & Flag Economy**: The runner must parse compound command strings (for example `command = "cargo clean"`) and optional argument vectors (`args`) without forcing repetition of subcommand names in arguments.
@@ -59,7 +59,7 @@ The gating and reporting infrastructure follows a **generic gate runner, minimal
 ```mermaid
 flowchart TD
     subgraph Config["Workspace Configuration (gate.toml)"]
-        CFG["gate.toml<br/><i>[runner], [execution.groups], [gates], [&lt;gate&gt;]</i>"]
+        CFG["gate.toml<br/><i>[runner], [execution.groups], [&lt;gate&gt;]</i>"]
     end
 
     subgraph Runner["Generic Runner Engine (control-rs-ci / gate)"]
@@ -109,11 +109,13 @@ Developers retain single-command local verification through `cargo ci` or target
 
 `control-rs-ci` provides a core library (`lib.rs`) containing generic gate dispatch, configuration parsing, scheduler coordination, artifact cleanup, and report rendering logic. The package exposes focused binary targets:
 
-| Binary / Command | Alias          | Responsibility                                                  |
-|:-----------------|:---------------|:----------------------------------------------------------------|
-| `control-rs-ci`  | `cargo ci`     | Monolithic coordinator and quality gate runner                  |
-| `gate`           | `cargo gate`   | Targeted quality gate execution (`--only`, `--skip`, `--up-to`) |
-| `report`         | `cargo report` | JSON artifact aggregator rendering `ci-report.md`               |
+| Binary / Command | Alias              | Responsibility                                                  |
+|:-----------------|:-------------------|:----------------------------------------------------------------|
+| `control-rs-ci`  | `cargo ci`         | Monolithic coordinator and quality gate runner                  |
+| `gate`           | `cargo gate`       | Targeted quality gate execution (`--only`, `--skip`, `--up-to`) |
+| `report`         | `cargo report`     | JSON artifact aggregator rendering `ci-report.md`               |
+| `regression`     | `cargo regression` | Performance regression evaluator and benchmark budget harness   |
+| `valgrind`       | `cargo valgrind`   | Multi-example Valgrind Memcheck memory leak and safety runner   |
 
 #### 4.2 Concrete Gate Model & Lifecycle
 
@@ -153,6 +155,9 @@ pub struct GateDefinition {
     /// Optional environment variable overrides.
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
+    /// Execution mode / policy (`fail`, `warn`, `skip`).
+    #[serde(default)]
+    pub mode: GatePolicy,
 }
 
 /// The single, concrete quality gate type used for all gates.
@@ -194,97 +199,103 @@ timeout_secs = 90
 
 [execution]
 parallel = true
-exclusive_gates = ["geiger", "cross-compare", "valgrind", "mutants"]
+exclusive_gates = ["geiger", "cross-compare", "valgrind", "mutants", "regression"]
 
 [execution.groups]
-cargo = ["fmt", "clippy", "check", "build", "test", "coverage"]
-audit = ["deny", "semver"]
-static = ["vale"]
+cargo = ["clean", "fmt", "clippy", "build", "test", "coverage"]
+audit = ["deny", "semver", "vale"]
 
-[gates]
-clean = "skip"
-fmt = "fail"
-clippy = "fail"
-check = "skip"
-build = "fail"
-test = "fail"
-coverage = "skip"
-vale = "warn"
-deny = "warn"
-geiger = "warn"
-semver = "warn"
-mutants = "skip"
-valgrind = "skip"
-cross-compare = "warn"
-
+# Cargo Lane Gates
 [clean]
+mode = "fail"
 command = "cargo clean"
 description = "Cleans workspace build artifacts"
 
 [fmt]
+mode = "fail"
 command = "cargo fmt"
 args = ["--all", "--", "--check"]
 description = "Verifies codebase formatting conformity with rustfmt"
 
 [clippy]
+mode = "fail"
 command = "cargo clippy"
 args = ["--workspace", "--all-targets", "--", "-D", "warnings"]
 description = "Executes Clippy linter across workspace targets"
 
 [check]
+mode = "skip"
 command = "cargo check"
 args = ["--workspace", "--all-targets"]
 description = "Performs compiler type checking without full codegen"
 
 [build]
+mode = "fail"
 command = "cargo build"
 args = ["--workspace", "--all-targets"]
 description = "Compiles all workspace targets"
 
 [test]
+mode = "fail"
 command = "cargo test"
 args = ["--workspace"]
 description = "Executes host unit and integration test suites"
 
 [coverage]
+mode = "fail"
 command = "cargo tarpaulin"
 args = ["--verbose", "--workspace", "--color", "never", "--out", "Json", "--output-dir", "target/ci-artifacts"]
 description = "Measures workspace line coverage using cargo-tarpaulin"
 
+# Audit Lane Gates
 [deny]
+mode = "fail"
 command = "cargo deny"
 args = ["check"]
 description = "Audits dependencies for security advisories and license compliance"
 
 [semver]
+mode = "fail"
 command = "cargo semver-checks"
 args = ["check-release", "--baseline-rev", "origin/main"]
 description = "Verifies public API stability against baseline ref"
 
+[vale]
+mode = "fail"
+command = "vale"
+args = ["--config=.vale.ini", "--output=JSON", "documentation", "src"]
+description = "Lints documentation and doc comments for prose style conformity"
+
+# Exclusive Lane Gates
 [geiger]
+mode = "fail"
 command = "cargo geiger"
 args = ["--output-format", "Json"]
 description = "Scans workspace crates for unsafe code blocks and functions"
 
 [cross-compare]
+mode = "fail"
 command = "cargo run"
-args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", "compare.toml", "--bypass-gate"]
+args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", "compare.toml"]
 description = "Executes multi-language reference oracles and verifies HDF5 tolerance bounds"
 
-[vale]
-command = "vale"
-args = ["--config=.vale.ini", "--output=JSON", "documentation", "src"]
-description = "Lints documentation and doc comments for prose style conformity"
-
 [valgrind]
-command = "valgrind"
-args = ["--leak-check=full", "--error-exitcode=1", "cargo", "run", "--package", "control-rs-ci", "--", "--help"]
-description = "Executes Valgrind Memcheck against host binaries"
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "valgrind"]
+description = "Executes Valgrind Memcheck against all workspace example binaries to verify zero memory leaks"
 
 [mutants]
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
 description = "Mutates ASTs to verify test fault-injection rigor using cargo-mutants"
+
+[regression]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "regression"]
+description = "Evaluates Criterion benchmark outputs against performance budgets and regression baselines"
 ```
 
 #### 4.4 Concurrency Topology & Scheduling
@@ -294,7 +305,7 @@ The execution topology partitions active gates into two tiers:
 1. **User-Defined Groups (`[execution.groups]`)**:
    Named concurrency lanes (for example, `cargo`, `audit`, `static`). When parallel execution is enabled, each declared group runs on a dedicated OS worker thread via `std::thread::scope`. Gates within a single group execute sequentially in their declared order. Output lines display colored group tags (for example `[cargo] `, `[audit] `, `[static] `).
 2. **Exclusive Group (`exclusive_gates` and Unassigned Gates)**:
-   Gates requiring full processor authority (such as `geiger`, `cross-compare`, `valgrind`, `mutants`) or any active gate omitted from `[execution.groups]`. The runner establishes a strict **barrier join**: all group threads must complete and join before exclusive gates begin. Exclusive gates execute strictly sequentially, one at a time, displaying the `[exclusive] ` tag.
+   Gates requiring full processor authority (such as `geiger`, `cross-compare`, `valgrind`, `mutants`, `regression`) or any active gate omitted from `[execution.groups]`. The runner establishes a strict **barrier join**: all group threads must complete and join before exclusive gates begin. Exclusive gates execute strictly sequentially, one at a time, displaying the `[exclusive] ` tag.
 
 #### 4.5 Report Aggregation & Artifact Protocol
 
@@ -314,6 +325,15 @@ All CI artifacts reside under `target/ci-artifacts/`. Cleanup is supported via `
 - Invoked via `cargo ci clean`, `cargo ci --clean`, `cargo gate clean`, or `cargo report --clean`.
 - Recursively deletes `target/ci-artifacts/`.
 - Removes legacy/stray root artifacts (`ci-report.md`, `mutants.out`, `tarpaulin-report.*`).
+
+#### 4.7 Performance Regression Harness (`regression`)
+
+Criterion benchmarks (`benches/jitter.rs`, `benches/scaling.rs`) compute empirical timing distributions and confidence intervals, but exit with code 0 by default even when performance degrades. To enforce hard real-time latency deadlines and performance regression bounds within automated quality gates, `control-rs-ci` provides a dedicated `regression` binary (`cargo regression`):
+
+1. **Criterion Ingestion**: Ingests JSON measurement artifacts emitted by Criterion (`target/criterion/<benchmark_id>/new/estimates.json`).
+2. **Timing Budget Verification**: Asserts point estimates (median latency, slope, and standard error) against upper-bound cycle budgets (such as $\le 10\,\mu\text{s}$ jitter for flight control loops).
+3. **Statistical Regression Detection**: When baseline measurements exist (`target/criterion/<benchmark_id>/base/estimates.json`), computes relative performance degradation $(\text{median}_{\text{new}} - \text{median}_{\text{base}}) / \text{median}_{\text{base}}$ against acceptable noise tolerance thresholds.
+4. **Deterministic Fail-Closed Gating**: Emits exit code 0 if all monitored benchmarks satisfy budget and regression constraints, or exits non-zero with structured failure diagnostics, enabling fail-closed gating under `gate.toml`.
 
 ---
 
@@ -380,6 +400,7 @@ All CI artifacts reside under `target/ci-artifacts/`. Cleanup is supported via `
 | **Phase 1: Generic Gate Engine & Concrete Model**                 | Implement single concrete `Gate` type, process spawning with stdout/stderr redirection, `GateOutcome` schema, generic `gate.toml` parser with no hardcoded gate fallbacks, and artifact cleanup operations.          | 3                |
 | **Phase 2: Generic Gate Configuration & Artifact Relocation**     | Standardize all gate execution around declarative `command` and `args` in `gate.toml`, relocate all CI output strictly to `target/ci-artifacts/`, and update report aggregator.                                | 2                |
 | **Phase 3: Multi-Lane Parallel Execution & Barrier Join**        | Implement declarative multi-lane parallel scheduler using `std::thread::scope`, `[execution.groups]` in `gate.toml`, and barrier synchronization for `exclusive_gates`.                                              | 3                |
+| **Phase 4: Performance Regression Harness (`regression`)**        | Implement `regression` binary in `control-rs-ci`, Criterion `estimates.json` ingestion, budget threshold evaluation, and `gate.toml` gate integration.                                                               | 2                |
 
 ---
 
@@ -391,8 +412,10 @@ All CI artifacts reside under `target/ci-artifacts/`. Cleanup is supported via `
 | 1.5      | September 13, 2026 | @MitchellDScott | Decentralized tool architecture: split into standalone binaries backed by reusable `lib.rs` and JSON artifact exchange protocol.                                                                                                |
 | 1.10     | September 20, 2026 | @MitchellDScott | Declarative multi-lane parallel execution (`[execution.groups]`), exclusive processor authority barrier synchronization (`exclusive_gates`), and concurrency resource allocation.                                             |
 | 1.15     | September 21, 2026 | @MitchellDScott | Generic quality gate runner architecture: eliminated `QualityGate` trait in favor of a single concrete `Gate` type, unified `gate.toml` configuration (`command` and optional `args`), and extracted `metrics`/`git` tools. |
-| 1.16     | September 21, 2026 | @MitchellDScott | Updated Mermaid architecture diagram to reflect generic execution lanes, barrier join, and gate-agnostic report aggregation with pipeline ordering. |
-| 1.17     | September 21, 2026 | @MitchellDScott | Streamlined generic gate runner: eliminated bespoke in-tree tools (`ci-metrics`, `ci-git`) and raw artifact parsing in favor of standard CLI commands and pure generic reporting. |
+| 1.16     | September 21, 2026 | @MitchellDScott | Updated Mermaid architecture diagram to reflect generic execution lanes, barrier join, and gate-agnostic report aggregation with pipeline ordering.                                                                             |
+| 1.17     | September 21, 2026 | @MitchellDScott | Streamlined generic gate runner: eliminated bespoke in-tree tools (`ci-metrics`, `ci-git`) and raw artifact parsing in favor of standard CLI commands and pure generic reporting.                                               |
+| 1.18     | September 21, 2026 | @MitchellDScott | Integrated performance regression harness (`regression`) and benchmark budget gating for Criterion suites.                                                                                     |
+| 1.19     | September 21, 2026 | @MitchellDScott | Decentralized gate mode configuration: moved execution policies directly into individual `[<gate>]` tables via `mode`, eliminated redundant centralized `[gates]` section, and organized tables into execution lanes.         |
 
 ---
 

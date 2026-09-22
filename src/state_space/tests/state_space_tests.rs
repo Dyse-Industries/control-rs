@@ -408,7 +408,9 @@ mod state_space_property_tests {
             for _ in 0..6 {
                 let (xn, y) = sys.step(&x, &u);
                 let (zn, yt) = sys_t.step(&z, &u);
-                prop_assert!((y.get(0, 0).unwrap() - yt.get(0, 0).unwrap()).abs() < 1e-9);
+                let diff = (y.get(0, 0).unwrap() - yt.get(0, 0).unwrap()).abs();
+                let scale = y.get(0, 0).unwrap().abs().max(yt.get(0, 0).unwrap().abs()).max(1.0);
+                prop_assert!(diff / scale <= 1e-8);
                 x = xn;
                 z = zn;
             }

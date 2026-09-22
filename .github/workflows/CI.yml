@@ -9,7 +9,7 @@ on:
       - 'tests/**'
       - 'examples/**'
       - 'benches/**'
-      - '../../control-rs-verification/**'
+      - 'control-rs-verification/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
       - 'control-rs-macros/**'
@@ -27,7 +27,7 @@ on:
       - 'tests/**'
       - 'examples/**'
       - 'benches/**'
-      - '../../control-rs-verification/**'
+      - 'control-rs-verification/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
       - 'control-rs-macros/**'
@@ -99,7 +99,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install -r verification/python3/requirements.txt
+          pip install -r control-rs-verification/python3/requirements.txt
 
       - name: Run CI
         run: cargo ci

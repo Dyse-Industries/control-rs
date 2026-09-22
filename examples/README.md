@@ -5,11 +5,10 @@ backends, and Embedded Test Server (ETS) firmware. The crate root
 [`README.md`](../README.md) is the project overview; this file is the
 operator's guide for everything under `examples/`.
 
-None of these packages are workspace members of `control-rs`. The
-numerical-model
-host crate, subprogram backends, QEMU, and Teensy packages each declare their
-own `[workspace]` so their toolchains and link flags stay out of the library
-graph.
+The standalone subprogram backends, QEMU, and Teensy firmware packages each
+declare their own `[workspace]` so their toolchains and link flags stay out of
+the library graph. Domain examples (`dc_motor.rs`, `buck_converter.rs`) are built
+directly via the root workspace.
 
 ---
 
@@ -19,6 +18,8 @@ graph.
 |:---------------------------------------------------------------|:------------------|:---------------------------------------------------------------------|:-----------------------------------------|
 | [`dc_motor.rs`](dc_motor.rs)                                   | Example binary    | DC motor state-space modeling, Tustin discretization & simulation    | `cargo run --example dc_motor`           |
 | [`buck_converter.rs`](buck_converter.rs)                       | Example binary    | Buck converter small-signal TF, frequency analysis & step response  | `cargo run --example buck_converter`     |
+| [`fixed_point_math.rs`](fixed_point_math.rs)                   | Example binary    | Q16.16 fixed-point scalar arithmetic, saturation & IIR filter        | `cargo run --example fixed_point_math`   |
+| [`dsp_spectral_analysis.rs`](dsp_spectral_analysis.rs)         | Example binary    | Radix-2 FFT spectral analysis, tone detection & IFFT reconstruction  | `cargo run --example dsp_spectral_analysis` |
 | [`subprograms/`](subprograms/)                                 | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                        |
 | [`qemu/`](qemu/)                                               | Firmware package  | Bare-metal ETS runners (Cortex-M7, RISC-V)                           | `examples/qemu/` or `cargo qemu`         |
 | [`teensy4/`](teensy4/)                                         | Firmware package  | Teensy 4.0 ETS over USB CDC                                          | `examples/teensy4/` or `cargo teensy`    |
@@ -34,12 +35,16 @@ Run directly with Cargo:
 ```bash
 cargo run --example dc_motor
 cargo run --example buck_converter
+cargo run --example fixed_point_math
+cargo run --example dsp_spectral_analysis
 ```
 
 | Command | Demonstrates |
 |:------------------------------------|:------------------------------------------------------------------------------|
 | `cargo run --example dc_motor` | Permanent magnet DC motor continuous state-space modeling, controllability matrix $M_c$, Tustin discretization ($T_s = 10\text{ ms}$), Bode frequency evaluation, and $12\text{ V}$ step transient simulation |
 | `cargo run --example buck_converter` | Synchronous buck converter small-signal modeling, control-to-output transfer function $G_{vd}(s)$, $LC$ resonance evaluation ($f_0 = 1073\text{ Hz}$), and $100\text{ kHz}$ digital controller step response |
+| `cargo run --example fixed_point_math` | Q16.16 fixed-point scalar arithmetic, representation bounds, saturation protection against overflow, and integer-only discrete IIR low-pass filtering |
+| `cargo run --example dsp_spectral_analysis` | Forward Radix-2 FFT spectral analysis, complex magnitude spectrum extraction, harmonic tone peak detection, and lossless inverse FFT time-domain signal reconstruction |
 
 > **Note on Verification & Benchmarks**: Algorithmic scaling and latency jitter benchmarks are located under `benches/` (run with `cargo bench`). Cross-language numerical oracle validation against SciPy/Python is located under `../control-rs-verification` (run with `cargo compare`).
 

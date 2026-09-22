@@ -47,12 +47,12 @@ cargo check
 cargo lint
 
 NESTED=(
-    "validation/numerical-models"
-    "validation/buck-converter"
-    "validation/dc-motor"
-    "examples/numerical-models"
-    "examples/buck-converter"
-    "examples/dc-motor"
+    "examples/subprograms/aarch64"
+    "examples/subprograms/x86_64"
+    "examples/subprograms/thumbv7em"
+    "examples/subprograms/riscv32imac"
+    "examples/qemu"
+    "examples/teensy4"
 )
 
 for crate in "${NESTED[@]}"; do

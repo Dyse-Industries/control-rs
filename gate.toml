@@ -15,100 +15,112 @@ parallel = true
 # groups must finish and join before exclusive gates run. Exclusive gates then execute
 # strictly sequentially, one at a time, tagged [exclusive].
 #
-# Any gate enabled under [gates] that is omitted from [execution.groups] also
-# automatically routes to the exclusive group for safe sequential execution.
-exclusive_gates = ["geiger", "cross-compare", "valgrind", "mutants"]
+exclusive_gates = ["regression", "mutants"]
 
 # User-defined execution groups:
 # When parallel = true, each group executes concurrently on its own dedicated OS thread.
 # Gates within a single group execute sequentially in declared order.
 # Output lines are tagged with the group identifier (e.g., [cargo], [audit], [static]).
 [execution.groups]
-cargo = ["fmt", "clippy", "check", "build", "test", "coverage"]
-audit = ["deny", "semver"]
-static = ["vale"]
+build_test = ["build", "test"]
+lint = ["fmt", "clippy", "vale"]
+audit = ["deny", "semver", "valgrind", "geiger"]
+verify = ["cross-compare"]
+coverage = ["coverage"]
 
-[gates]
-clean = "skip"
-fmt = "fail"
-clippy = "fail"
-check = "skip"
-build = "fail"
-test = "fail"
-coverage = "skip"
-vale = "warn"
-deny = "warn"
-geiger = "warn"
-semver = "warn"
-mutants = "skip"
-valgrind = "skip"
-cross-compare = "warn"
-
-[clean]
-command = "cargo clean"
-description = "Cleans workspace build artifacts"
+# ==============================================================================
+# Cargo Lane Gates
+# ==============================================================================
 
 [fmt]
+mode = "fail"
 command = "cargo fmt"
 args = ["--all", "--", "--check"]
 description = "Verifies codebase formatting conformity with rustfmt"
 
 [clippy]
+mode = "fail"
 command = "cargo clippy"
 args = ["--workspace", "--all-targets", "--", "-D", "warnings"]
 description = "Executes Clippy linter across workspace targets"
 
 [check]
+mode = "skip"
 command = "cargo check"
 args = ["--workspace", "--all-targets"]
 description = "Performs compiler type checking without full codegen"
 
 [build]
+mode = "fail"
 command = "cargo build"
 args = ["--workspace", "--all-targets"]
 description = "Compiles all workspace targets"
 
 [test]
+mode = "fail"
 command = "cargo test"
 args = ["--workspace"]
 description = "Executes host unit and integration test suites"
 
 [coverage]
+mode = "fail"
 command = "cargo tarpaulin"
-args = ["--verbose", "--workspace", "--color", "never", "--out", "Json", "--output-dir", "target/ci-artifacts"]
+args = ["--verbose", "--workspace", "--skip-clean", "--target-dir", "target/tarpaulin", "--color", "never", "--out", "Json", "--output-dir", "target/ci-artifacts"]
 description = "Measures workspace line coverage using cargo-tarpaulin"
 
+# ==============================================================================
+# Audit Lane Gates
+# ==============================================================================
+
 [deny]
+mode = "fail"
 command = "cargo deny"
 args = ["check"]
 description = "Audits dependencies for security advisories and license compliance"
 
 [semver]
+mode = "fail"
 command = "cargo semver-checks"
 args = ["check-release", "--baseline-rev", "origin/main"]
 description = "Verifies public API stability against baseline ref"
 
-[geiger]
-command = "cargo geiger"
-args = ["--output-format", "Json"]
-description = "Scans workspace crates for unsafe code blocks and functions"
-
-[cross-compare]
-command = "cargo run"
-args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", "compare.toml", "--bypass-gate"]
-description = "Executes multi-language reference oracles and verifies HDF5 tolerance bounds"
-
 [vale]
+mode = "fail"
 command = "vale"
 args = ["--config=.vale.ini", "--output=JSON", "documentation", "src"]
 description = "Lints documentation and doc comments for prose style conformity"
 
+# ==============================================================================
+# Exclusive Lane Gates
+# ==============================================================================
+
+[geiger]
+mode = "fail"
+command = "cargo geiger"
+args = ["--output-format", "Json"]
+env = { CARGO_TARGET_DIR = "target/geiger" }
+description = "Scans workspace crates for unsafe code blocks and functions"
+
+[cross-compare]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", "compare.toml"]
+description = "Executes multi-language reference oracles and verifies HDF5 tolerance bounds"
+
 [valgrind]
-command = "valgrind"
-args = ["--leak-check=full", "--error-exitcode=1", "cargo", "run", "--package", "control-rs-ci", "--", "--help"]
-description = "Executes Valgrind Memcheck against host binaries"
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "valgrind"]
+description = "Executes Valgrind Memcheck against all workspace example binaries to verify zero memory leaks"
 
 [mutants]
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
 description = "Mutates ASTs to verify test fault-injection rigor using cargo-mutants"
+
+[regression]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "regression"]
+description = "Evaluates Criterion benchmark outputs against performance budgets and regression baselines"
