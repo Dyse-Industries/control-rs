@@ -32,7 +32,6 @@
 #![allow(
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     clippy::similar_names,
     clippy::needless_range_loop,
     clippy::type_complexity,
@@ -479,12 +478,12 @@ where
         x: &Owned<T, NX, 1>,
         u: &Owned<T, NU, 1>,
     ) -> (Owned<T, NX, 1>, Owned<T, NY, 1>) {
-        let ax = &self.a_matrix() * x;
-        let bu = &self.b_matrix() * u;
-        let x_next = &ax + &bu;
-        let cx = &self.c_matrix() * x;
-        let du = &self.d_matrix() * u;
-        let y = &cx + &du;
+        let ax = self.a_matrix().saturating_mul(x);
+        let bu = self.b_matrix().saturating_mul(u);
+        let x_next = ax.saturating_add(&bu);
+        let cx = self.c_matrix().saturating_mul(x);
+        let du = self.d_matrix().saturating_mul(u);
+        let y = cx.saturating_add(&du);
         (x_next, y)
     }
 
@@ -532,10 +531,10 @@ where
         let b2 = rhs.b();
         let c2 = rhs.c();
         let d2 = rhs.d();
-        let b2c1 = &b2 * &c1;
-        let b2d1 = &b2 * &d1;
-        let d2c1 = &d2 * &c1;
-        let d2d1 = &d2 * &d1;
+        let b2c1 = b2.saturating_mul(&c1);
+        let b2d1 = b2.saturating_mul(&d1);
+        let d2c1 = d2.saturating_mul(&c1);
+        let d2d1 = d2.saturating_mul(&d1);
 
         let mut a = Owned::<T, NXOUT, NXOUT>::zero();
         let mut b = Owned::<T, NXOUT, NU>::zero();
@@ -582,7 +581,7 @@ where
         b.write_block(NX1, 0, &b2);
         c.write_block(0, 0, &c1);
         c.write_block(0, NX1, &c2);
-        let d = &d1 + &d2;
+        let d = d1.saturating_add(&d2);
 
         match (self.sample_time, rhs.sample_time) {
             (Some(dt), Some(_)) => StateSpace::discrete(a, b, c, d, dt),
@@ -613,14 +612,15 @@ where
         let d2 = rhs.d();
 
         // F = I - sign D2 D1
-        let d2d1 = &d2 * &d1;
+        let d2d1 = d2.saturating_mul(&d1);
         let mut f = Owned::<T, NU, NU>::identity();
         for i in 0..NU {
             for j in 0..NU {
                 if let (Some(target), Some(&v)) =
                     (f.get_mut(i, j), d2d1.get(i, j))
                 {
-                    *target = *target - sign * v;
+                    *target =
+                        (*target).saturating_sub(&sign.saturating_mul(&v));
                 }
             }
         }
@@ -631,22 +631,22 @@ where
             .map_err(|_| StateSpaceError::SingularLoopMatrix)?;
 
         // u1 = F^{-1} (u + sign D2 C1 x1 + sign C2 x2)
-        let b1e = &b1 * &f_inv;
-        let d1e = &d1 * &f_inv;
-        let b2d1e = &b2 * &d1e;
+        let b1e = b1.saturating_mul(&f_inv);
+        let d1e = d1.saturating_mul(&f_inv);
+        let b2d1e = b2.saturating_mul(&d1e);
 
-        let d2c1 = &d2 * &c1;
-        let sign_d2c1 = &d2c1 * sign;
-        let sign_c2 = &c2 * sign;
-        let a1_corr = &b1e * &sign_d2c1;
-        let a12 = &b1e * &sign_c2;
-        let a21_corr = &b2d1e * &sign_d2c1;
-        let a22_corr = &b2d1e * &sign_c2;
-        let b2c1 = &b2 * &c1;
+        let d2c1 = d2.saturating_mul(&c1);
+        let sign_d2c1 = d2c1.saturating_scale(sign);
+        let sign_c2 = c2.saturating_scale(sign);
+        let a1_corr = b1e.saturating_mul(&sign_d2c1);
+        let a12 = b1e.saturating_mul(&sign_c2);
+        let a21_corr = b2d1e.saturating_mul(&sign_d2c1);
+        let a22_corr = b2d1e.saturating_mul(&sign_c2);
+        let b2c1 = b2.saturating_mul(&c1);
 
-        let a11 = &a1 + &a1_corr;
-        let a21 = &b2c1 + &a21_corr;
-        let a22 = &a2 + &a22_corr;
+        let a11 = a1.saturating_add(&a1_corr);
+        let a21 = b2c1.saturating_add(&a21_corr);
+        let a22 = a2.saturating_add(&a22_corr);
 
         let mut a = Owned::<T, NXOUT, NXOUT>::zero();
         let mut b = Owned::<T, NXOUT, NU>::zero();
@@ -658,9 +658,9 @@ where
         b.write_block(0, 0, &b1e);
         b.write_block(NX1, 0, &b2d1e);
 
-        let d1e_d2c1 = &d1e * &sign_d2c1;
-        let c11 = &c1 + &d1e_d2c1;
-        let c12 = &d1e * &sign_c2;
+        let d1e_d2c1 = d1e.saturating_mul(&sign_d2c1);
+        let c11 = c1.saturating_add(&d1e_d2c1);
+        let c12 = d1e.saturating_mul(&sign_c2);
         c.write_block(0, 0, &c11);
         c.write_block(0, NX1, &c12);
 
@@ -688,7 +688,7 @@ where
     pub fn to_discrete_zoh(&self, dt: T) -> Self {
         let a = self.a();
         let b = self.b();
-        let adt = &a * dt;
+        let adt = a.saturating_scale(dt);
         let ad = adt.expm();
 
         // V = \sum_{k=0}^{19} (A dt)^k / (k+1)! via backward Horner evaluation
@@ -697,27 +697,29 @@ where
             let denom = {
                 let mut d = T::ZERO;
                 for _ in 0..=k {
-                    d = d + T::ONE;
+                    d = d.saturating_add(&T::ONE);
                 }
                 d
             };
-            let inv_denom = T::ONE / denom;
-            let term = &adt * &v;
+            let inv_denom = T::ONE.saturating_div(&denom);
+            let term = adt.saturating_mul(&v);
             let mut next_v = Owned::<T, NX, NX>::identity();
             for i in 0..NX {
                 for j in 0..NX {
                     if let (Some(dst), Some(&src)) =
                         (next_v.get_mut(i, j), term.get(i, j))
                     {
-                        *dst = (*dst + src) * inv_denom;
+                        *dst = (*dst)
+                            .saturating_add(&src)
+                            .saturating_mul(&inv_denom);
                     }
                 }
             }
             v = next_v;
         }
 
-        let bdt = &b * dt;
-        let bd = &v * &bdt;
+        let bdt = b.saturating_scale(dt);
+        let bd = v.saturating_mul(&bdt);
         Self::discrete(ad, bd, self.c(), self.d(), dt)
     }
 
@@ -736,8 +738,8 @@ where
     /// Returns [`StateSpaceError::SingularDiscretizationOperator`] when $M$ is
     /// singular to working precision.
     pub fn to_discrete_tustin(&self, dt: T) -> StateSpaceResult<Self> {
-        let two = T::ONE + T::ONE;
-        let h = dt / two;
+        let two = T::ONE.saturating_add(&T::ONE);
+        let h = dt.saturating_div(&two);
         let a = self.a();
         let b = self.b();
         let mut i_minus = Owned::<T, NX, NX>::identity();
@@ -746,10 +748,10 @@ where
             for j in 0..NX {
                 if let Some(&aij) = a.get(i, j) {
                     if let Some(t) = i_minus.get_mut(i, j) {
-                        *t = *t - h * aij;
+                        *t = (*t).saturating_sub(&h.saturating_mul(&aij));
                     }
                     if let Some(t) = i_plus.get_mut(i, j) {
-                        *t = *t + h * aij;
+                        *t = (*t).saturating_add(&h.saturating_mul(&aij));
                     }
                 }
             }
@@ -759,10 +761,12 @@ where
         let m_inv = lu
             .inverse()
             .map_err(|_| StateSpaceError::SingularDiscretizationOperator)?;
-        let ad = &m_inv * &i_plus;
-        let bd = &m_inv * &(&b * dt);
-        let cd = &self.c() * &m_inv;
-        let dd = &self.d() + &(&(&cd * &b) * h);
+        let ad = m_inv.saturating_mul(&i_plus);
+        let bd = m_inv.saturating_mul(&b.saturating_scale(dt));
+        let cd = self.c().saturating_mul(&m_inv);
+        let dd = self
+            .d()
+            .saturating_add(&cd.saturating_mul(&b).saturating_scale(h));
         Ok(Self::discrete(ad, bd, cd, dd, dt))
     }
 
@@ -775,9 +779,9 @@ where
     ) -> LinAlgResult<Self> {
         let lu = LuDecomposition::decompose(*t)?;
         let t_inv = lu.inverse()?;
-        let a_tilde = &(t * &self.a()) * &t_inv;
-        let b_tilde = t * &self.b();
-        let c_tilde = &self.c() * &t_inv;
+        let a_tilde = t.saturating_mul(&self.a()).saturating_mul(&t_inv);
+        let b_tilde = t.saturating_mul(&self.b());
+        let c_tilde = self.c().saturating_mul(&t_inv);
         Ok(Self::from_storage(
             a_tilde.into_storage(),
             b_tilde.into_storage(),
@@ -809,8 +813,8 @@ where
         let mut block = self.b();
         let mut ctrb = Owned::<T, NX, NC>::zero();
         for k in 0..NX {
-            ctrb.write_block(0, k * NU, &block);
-            block = &a * &block;
+            ctrb.write_block(0, k.saturating_mul(NU), &block);
+            block = a.saturating_mul(&block);
         }
         ctrb
     }
@@ -825,8 +829,8 @@ where
         let mut block = self.c();
         let mut obsv = Owned::<T, NR, NX>::zero();
         for k in 0..NX {
-            obsv.write_block(k * NY, 0, &block);
-            block = &block * &a;
+            obsv.write_block(k.saturating_mul(NY), 0, &block);
+            block = block.saturating_mul(&a);
         }
         obsv
     }
@@ -847,26 +851,27 @@ where
         let a = self.a();
         let mut char_c = [T::ZERO; NX];
         let mut ak = a;
-        char_c[0] = T::ZERO - ak.trace();
+        char_c[0] = T::ZERO.saturating_sub(&ak.trace());
         for k in 2..=NX {
             let mut tmp = ak;
-            add_identity_scaled(&mut tmp, char_c[k - 2]);
-            ak = &a * &tmp;
+            add_identity_scaled(&mut tmp, char_c[k.saturating_sub(2)]);
+            ak = a.saturating_mul(&tmp);
             let kk = {
                 let mut s = T::ZERO;
                 for _ in 0..k {
-                    s = s + T::ONE;
+                    s = s.saturating_add(&T::ONE);
                 }
                 s
             };
-            char_c[k - 1] = (T::ZERO - ak.trace()) / kk;
+            char_c[k.saturating_sub(1)] =
+                T::ZERO.saturating_sub(&ak.trace()).saturating_div(&kk);
         }
 
         let mut den = [T::ZERO; NP];
         if NP > NX {
             den[NX] = T::ONE;
             for i in 0..NX {
-                den[i] = char_c[NX - 1 - i];
+                den[i] = char_c[NX.saturating_sub(1).saturating_sub(i)];
             }
         }
 
@@ -876,19 +881,21 @@ where
         let c = self.c();
         let d = self.d().get(0, 0).copied().unwrap_or(T::ZERO);
         for k in 0..NX {
-            let cb = &c * &(&bk * &b);
+            let cb = c.saturating_mul(&bk.saturating_mul(&b));
             let scale = cb.get(0, 0).copied().unwrap_or(T::ZERO);
-            if NX - 1 - k < NP {
-                num[NX - 1 - k] = num[NX - 1 - k] + scale;
+            if NX.saturating_sub(1).saturating_sub(k) < NP {
+                num[NX.saturating_sub(1).saturating_sub(k)] = (num
+                    [NX.saturating_sub(1).saturating_sub(k)])
+                .saturating_add(&scale);
             }
-            if k + 1 < NX {
-                bk = &a * &bk;
+            if k.saturating_add(1) < NX {
+                bk = a.saturating_mul(&bk);
                 add_identity_scaled(&mut bk, char_c[k]);
             }
         }
         for i in 0..NP {
-            if i < NX + 1 {
-                num[i] = num[i] + d * den[i];
+            if i < NX.saturating_add(1) {
+                num[i] = num[i].saturating_add(&d.saturating_mul(&den[i]));
             }
         }
 
@@ -907,7 +914,7 @@ fn add_identity_scaled<T: Scalar + Copy, const N: usize>(
 {
     for i in 0..N {
         if let Some(v) = m.get_mut(i, i) {
-            *v = *v + s;
+            *v = (*v).saturating_add(&s);
         }
     }
 }

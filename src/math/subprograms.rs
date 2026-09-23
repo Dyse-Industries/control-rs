@@ -30,8 +30,6 @@
 #![allow(clippy::many_single_char_names)]
 // Direct matrix/vector indexing using brackets (slice[idx]) is used throughout this file for optimal memory layout access, bypassing bounds check branches in performance-critical BLAS loops.
 #![allow(clippy::indexing_slicing)]
-// Standard floating-point matrix arithmetic operations are unavoidable in generic BLAS/LAPACK implementations.
-#![allow(clippy::arithmetic_side_effects)]
 // BLAS/LAPACK routines naturally require many arguments (exceeding clippy's default limit of 4), conforming to standard BLAS/LAPACK APIs.
 #![allow(clippy::too_many_arguments)]
 // Parameter names matching BLAS standards (for example, lda, ldb, trans_a, trans_b) look similar but are standard.
@@ -42,7 +40,9 @@
 #![allow(clippy::type_complexity)]
 
 use crate::math::num_traits::{Float, One, Radical, Scalar, Zero};
-use crate::math::ops::Div;
+use crate::math::ops::SaturatingDiv;
+use crate::math::ops::SaturatingNeg;
+use crate::math::ops::{SaturatingAdd, SaturatingMul, SaturatingSub};
 use crate::math::storage::{
     CscStorage, CsrStorage, DenseStorage, DenseStorageMut, Diag, PackedStorage,
     PackedStorageMut, Side, SparseVectorStorage, Trans, UpLo,
@@ -142,8 +142,8 @@ pub mod level1 {
 /// Level 2 BLAS: Matrix-vector subprograms.
 pub mod level2 {
     use super::{
-        DenseStorage, DenseStorageMut, Diag, Div, LinAlgResult, Scalar, Trans,
-        UpLo,
+        DenseStorage, DenseStorageMut, Diag, LinAlgResult, SaturatingDiv,
+        Scalar, Trans, UpLo,
     };
 
     /// General matrix-vector multiplication: $y \leftarrow \alpha \text{op}(A) x + \beta y$.
@@ -250,7 +250,7 @@ pub mod level2 {
 
     /// Triangular system solve: $\text{op}(A) x = b$ via forward/back substitution.
     pub trait Trsv<
-        T: Scalar + Div<Output = T>,
+        T: Scalar + SaturatingDiv,
         A: DenseStorage<T>,
         X: DenseStorageMut<T>,
     >
@@ -289,8 +289,8 @@ pub mod level2 {
 /// Packed BLAS subprograms.
 pub mod packed {
     use super::{
-        DenseStorage, DenseStorageMut, Diag, Div, LinAlgResult, PackedStorage,
-        PackedStorageMut, Scalar, Trans, UpLo,
+        DenseStorage, DenseStorageMut, Diag, LinAlgResult, PackedStorage,
+        PackedStorageMut, SaturatingDiv, Scalar, Trans, UpLo,
     };
 
     /// Symmetric packed matrix-vector multiplication: $y \leftarrow \alpha A_{pack} x + \beta y$.
@@ -361,7 +361,7 @@ pub mod packed {
 
     /// Triangular packed system solve: $\text{op}(A_{pack}) x = b$.
     pub trait Tpsv<
-        T: Scalar + Div<Output = T>,
+        T: Scalar + SaturatingDiv,
         TP: PackedStorage<T>,
         X: DenseStorageMut<T>,
     >
@@ -397,8 +397,8 @@ pub mod packed {
 /// Level 3 BLAS: Matrix-matrix subprograms.
 pub mod level3 {
     use super::{
-        DenseStorage, DenseStorageMut, Diag, Div, LinAlgResult, Scalar, Side,
-        Trans, UpLo,
+        DenseStorage, DenseStorageMut, Diag, LinAlgResult, SaturatingDiv,
+        Scalar, Side, Trans, UpLo,
     };
 
     /// General matrix-matrix multiplication: $C \leftarrow \alpha \text{op}(A) \text{op}(B) + \beta C$.
@@ -536,7 +536,7 @@ pub mod level3 {
 
     /// Triangular matrix-matrix solve: $\text{op}(A) X = \alpha B$ or $X \text{op}(A) = \alpha B$.
     pub trait Trsm<
-        T: Scalar + Div<Output = T>,
+        T: Scalar + SaturatingDiv,
         A: DenseStorage<T>,
         B: DenseStorageMut<T>,
     >
@@ -663,12 +663,13 @@ pub enum JobZ {
 /// LAPACK direct solvers, factorizations, and spectral algorithms.
 pub mod lapack {
     use super::{
-        DenseStorage, DenseStorageMut, Div, Float, JobZ, LinAlgResult,
-        PackedStorage, PackedStorageMut, Radical, Scalar, Side, Trans, UpLo,
+        DenseStorage, DenseStorageMut, Float, JobZ, LinAlgResult,
+        PackedStorage, PackedStorageMut, Radical, SaturatingDiv, Scalar, Side,
+        Trans, UpLo,
     };
 
     /// Cholesky factorization: $A = L L^T$ (or $U^T U$) for symmetric/Hermitian positive-definite matrices.
-    pub trait Potrf<T: Scalar + Div<Output = T>, A: DenseStorageMut<T>>
+    pub trait Potrf<T: Scalar + SaturatingDiv, A: DenseStorageMut<T>>
     where
         T::Real: Radical,
     {
@@ -681,7 +682,7 @@ pub mod lapack {
 
     /// Solves $A X = B$ using factored Cholesky form from [`Potrf`].
     pub trait Potrs<
-        T: Scalar + Div<Output = T>,
+        T: Scalar + SaturatingDiv,
         A: DenseStorage<T>,
         B: DenseStorageMut<T>,
     >
@@ -694,7 +695,7 @@ pub mod lapack {
     }
 
     /// Packed Cholesky factorization: $A_{pack} = L L^T$ (or $U^T U$).
-    pub trait Pptrf<T: Scalar + Div<Output = T>, AP: PackedStorageMut<T>>
+    pub trait Pptrf<T: Scalar + SaturatingDiv, AP: PackedStorageMut<T>>
     where
         T::Real: Radical,
     {
@@ -707,7 +708,7 @@ pub mod lapack {
 
     /// Solves $A_{pack} X = B$ using factored packed Cholesky form from [`Pptrf`].
     pub trait Pptrs<
-        T: Scalar + Div<Output = T>,
+        T: Scalar + SaturatingDiv,
         AP: PackedStorage<T>,
         B: DenseStorageMut<T>,
     >
@@ -720,7 +721,7 @@ pub mod lapack {
     }
 
     /// General LU factorization with partial row pivoting: $P A = L U$.
-    pub trait Getrf<T: Scalar + Div<Output = T>, A: DenseStorageMut<T>> {
+    pub trait Getrf<T: Scalar + SaturatingDiv, A: DenseStorageMut<T>> {
         /// Computes $P A = L U$ in place.
         ///
         /// # Errors
@@ -731,7 +732,7 @@ pub mod lapack {
 
     /// Solves $A X = B$ using factored LU form from [`Getrf`].
     pub trait Getrs<
-        T: Scalar + Div<Output = T>,
+        T: Scalar + SaturatingDiv,
         A: DenseStorage<T>,
         B: DenseStorageMut<T>,
     >
@@ -750,7 +751,7 @@ pub mod lapack {
     }
 
     /// Householder QR factorization: $A = Q R$.
-    pub trait Geqrf<T: Scalar + Div<Output = T>, A: DenseStorageMut<T>>
+    pub trait Geqrf<T: Scalar + SaturatingDiv, A: DenseStorageMut<T>>
     where
         T::Real: Radical,
     {
@@ -764,7 +765,7 @@ pub mod lapack {
 
     /// Applies real orthogonal matrix $Q$ from QR factorization: $C \leftarrow \text{op}(Q) C$ or $C \leftarrow C \text{op}(Q)$.
     pub trait Ormqr<
-        T: Scalar + Div<Output = T>,
+        T: Scalar + SaturatingDiv,
         A: DenseStorage<T>,
         C: DenseStorageMut<T>,
     >
@@ -786,7 +787,7 @@ pub mod lapack {
 
     /// Applies complex unitary matrix $Q$ from QR factorization: $C \leftarrow \text{op}(Q) C$ or $C \leftarrow C \text{op}(Q)$.
     pub trait Unmqr<
-        T: Scalar + Div<Output = T>,
+        T: Scalar + SaturatingDiv,
         A: DenseStorage<T>,
         C: DenseStorageMut<T>,
     >
@@ -807,7 +808,7 @@ pub mod lapack {
     }
 
     /// Real symmetric Jacobi eigensolver: computes all eigenvalues and eigenvectors of $A = A^T$.
-    pub trait Syev<T: Scalar + Div<Output = T>, A: DenseStorageMut<T>>
+    pub trait Syev<T: Scalar + SaturatingDiv, A: DenseStorageMut<T>>
     where
         T::Real: Float,
     {
@@ -827,7 +828,7 @@ pub mod lapack {
     }
 
     /// Complex Hermitian Jacobi eigensolver: computes all eigenvalues and eigenvectors of $A = A^H$.
-    pub trait Heev<T: Scalar + Div<Output = T>, A: DenseStorageMut<T>>
+    pub trait Heev<T: Scalar + SaturatingDiv, A: DenseStorageMut<T>>
     where
         T::Real: Float,
     {
@@ -884,7 +885,11 @@ impl<T: Scalar, X: DenseStorage<T>, Y: DenseStorageMut<T>> level1::Axpy<T, X, Y>
                 unsafe {
                     let xi = x.get_unchecked(r, c).clone();
                     let yi = y.get_unchecked(r, c).clone();
-                    y.set_unchecked(r, c, yi + (alpha.clone() * xi));
+                    y.set_unchecked(
+                        r,
+                        c,
+                        yi.saturating_add(&alpha.saturating_mul(&xi)),
+                    );
                 }
             }
         }
@@ -898,7 +903,7 @@ impl<T: Scalar, X: DenseStorageMut<T>> level1::Scal<T, X> for DefaultBlas {
             for c in 0..x.cols() {
                 unsafe {
                     let xi = x.get_unchecked(r, c).clone();
-                    x.set_unchecked(r, c, alpha.clone() * xi);
+                    x.set_unchecked(r, c, alpha.saturating_mul(&xi));
                 }
             }
         }
@@ -913,7 +918,7 @@ impl<T: Scalar, X: DenseStorageMut<T>> level1::RealScal<T, X> for DefaultBlas {
             for c in 0..x.cols() {
                 unsafe {
                     let xi = x.get_unchecked(r, c).clone();
-                    x.set_unchecked(r, c, a.clone() * xi);
+                    x.set_unchecked(r, c, a.saturating_mul(&xi));
                 }
             }
         }
@@ -933,9 +938,11 @@ impl<T: Scalar, X: DenseStorage<T>, Y: DenseStorage<T>> level1::Dotu<T, X, Y>
         for r in 0..rows {
             for c in 0..cols {
                 unsafe {
-                    acc = acc
-                        + (x.get_unchecked(r, c).clone()
-                            * y.get_unchecked(r, c).clone());
+                    acc = acc.saturating_add(
+                        &x.get_unchecked(r, c)
+                            .clone()
+                            .saturating_mul(&y.get_unchecked(r, c).clone()),
+                    );
                 }
             }
         }
@@ -956,9 +963,12 @@ impl<T: Scalar, X: DenseStorage<T>, Y: DenseStorage<T>> level1::Dotc<T, X, Y>
         for r in 0..rows {
             for c in 0..cols {
                 unsafe {
-                    acc = acc
-                        + (x.get_unchecked(r, c).clone().conj()
-                            * y.get_unchecked(r, c).clone());
+                    acc = acc.saturating_add(
+                        &x.get_unchecked(r, c)
+                            .clone()
+                            .conj()
+                            .saturating_mul(&y.get_unchecked(r, c).clone()),
+                    );
                 }
             }
         }
@@ -977,16 +987,16 @@ impl<T: Scalar, X: DenseStorage<T>> level1::Asum<T, X> for DefaultBlas {
                     let re = elem.re();
                     let im = elem.im();
                     let re_abs = if re < <T::Real as Zero>::ZERO {
-                        <T::Real as Zero>::ZERO - re
+                        (<T::Real as Zero>::ZERO).saturating_sub(&re)
                     } else {
                         re
                     };
                     let im_abs = if im < <T::Real as Zero>::ZERO {
-                        <T::Real as Zero>::ZERO - im
+                        (<T::Real as Zero>::ZERO).saturating_sub(&im)
                     } else {
                         im
                     };
-                    acc = acc + re_abs + im_abs;
+                    acc = acc.saturating_add(&re_abs).saturating_add(&im_abs);
                 }
             }
         }
@@ -997,13 +1007,13 @@ impl<T: Scalar, X: DenseStorage<T>> level1::Asum<T, X> for DefaultBlas {
 impl<T: Scalar, X: DenseStorage<T>> level1::Iamax<T, X> for DefaultBlas {
     #[inline(always)]
     fn iamax(x: &X) -> usize {
-        let total = x.rows() * x.cols();
+        let total = x.rows().saturating_mul(x.cols());
         if total == 0 {
             return 0;
         }
         let mut max_val = <T::Real as Zero>::ZERO;
         let mut max_idx = 0;
-        let mut idx = 0;
+        let mut idx = 0_usize;
         for c in 0..x.cols() {
             for r in 0..x.rows() {
                 unsafe {
@@ -1011,22 +1021,22 @@ impl<T: Scalar, X: DenseStorage<T>> level1::Iamax<T, X> for DefaultBlas {
                     let re = elem.re();
                     let im = elem.im();
                     let re_abs = if re < <T::Real as Zero>::ZERO {
-                        <T::Real as Zero>::ZERO - re
+                        (<T::Real as Zero>::ZERO).saturating_sub(&re)
                     } else {
                         re
                     };
                     let im_abs = if im < <T::Real as Zero>::ZERO {
-                        <T::Real as Zero>::ZERO - im
+                        (<T::Real as Zero>::ZERO).saturating_sub(&im)
                     } else {
                         im
                     };
-                    let val = re_abs + im_abs;
+                    let val = re_abs.saturating_add(&im_abs);
                     if idx == 0 || val > max_val {
                         max_val = val;
                         max_idx = idx;
                     }
                 }
-                idx += 1;
+                idx = idx.saturating_add(1);
             }
         }
         max_idx
@@ -1065,7 +1075,7 @@ where
         for r in 0..x.rows() {
             for c in 0..x.cols() {
                 unsafe {
-                    sum2 = sum2 + x.get_unchecked(r, c).abs2();
+                    sum2 = sum2.saturating_add(&x.get_unchecked(r, c).abs2());
                 }
             }
         }
@@ -1089,9 +1099,14 @@ impl<T: Scalar, X: DenseStorageMut<T>, Y: DenseStorageMut<T>>
                 unsafe {
                     let xv = x.get_unchecked(r, col).clone();
                     let yv = y.get_unchecked(r, col).clone();
-                    let new_x =
-                        (c_s.clone() * xv.clone()) + (s.clone() * yv.clone());
-                    let new_y = (c_s.clone() * yv) - (s_conj.clone() * xv);
+                    let new_x = c_s
+                        .clone()
+                        .saturating_mul(&xv.clone())
+                        .saturating_add(&s.saturating_mul(&yv.clone()));
+                    let new_y = c_s
+                        .clone()
+                        .saturating_mul(&yv)
+                        .saturating_sub(&s_conj.saturating_mul(&xv));
                     x.set_unchecked(r, col, new_x);
                     y.set_unchecked(r, col, new_y);
                 }
@@ -1111,8 +1126,8 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
             Trans::NoTrans => (a.rows(), a.cols()),
             Trans::Trans | Trans::ConjTrans => (a.cols(), a.rows()),
         };
-        let x_len = x.rows() * x.cols();
-        let y_len = y.rows() * y.cols();
+        let x_len = x.rows().saturating_mul(x.cols());
+        let y_len = y.rows().saturating_mul(y.cols());
         debug_assert_eq!(n, x_len);
         debug_assert_eq!(m, y_len);
 
@@ -1131,7 +1146,7 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                     if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
                 unsafe {
                     let yi = y.get_unchecked(ry, cy).clone();
-                    y.set_unchecked(ry, cy, beta.clone() * yi);
+                    y.set_unchecked(ry, cy, beta.saturating_mul(&yi));
                 }
             }
         }
@@ -1154,12 +1169,16 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                 let (rx, cx) =
                     if x.rows() >= x.cols() { (j, 0) } else { (0, j) };
                 let xv = unsafe { x.get_unchecked(rx, cx).clone() };
-                dot = dot + (a_val * xv);
+                dot = dot.saturating_add(&a_val.saturating_mul(&xv));
             }
             let (ry, cy) = if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
             unsafe {
                 let yi = y.get_unchecked(ry, cy).clone();
-                y.set_unchecked(ry, cy, yi + (alpha.clone() * dot));
+                y.set_unchecked(
+                    ry,
+                    cy,
+                    yi.saturating_add(&alpha.saturating_mul(&dot)),
+                );
             }
         }
     }
@@ -1184,7 +1203,12 @@ impl<T: Scalar, A: DenseStorageMut<T>, X: DenseStorage<T>, Y: DenseStorage<T>>
                     a.set_unchecked(
                         i,
                         j,
-                        a_val + (alpha.clone() * xv.clone() * yv),
+                        a_val.saturating_add(
+                            &alpha
+                                .clone()
+                                .saturating_mul(&xv.clone())
+                                .saturating_mul(&yv),
+                        ),
                     );
                 }
             }
@@ -1211,7 +1235,12 @@ impl<T: Scalar, A: DenseStorageMut<T>, X: DenseStorage<T>, Y: DenseStorage<T>>
                     a.set_unchecked(
                         i,
                         j,
-                        a_val + (alpha.clone() * xv.clone() * yv),
+                        a_val.saturating_add(
+                            &alpha
+                                .clone()
+                                .saturating_mul(&xv.clone())
+                                .saturating_mul(&yv),
+                        ),
                     );
                 }
             }
@@ -1241,7 +1270,7 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                     if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
                 unsafe {
                     let yi = y.get_unchecked(ry, cy).clone();
-                    y.set_unchecked(ry, cy, beta.clone() * yi);
+                    y.set_unchecked(ry, cy, beta.saturating_mul(&yi));
                 }
             }
         }
@@ -1269,12 +1298,16 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                 let (rx, cx) =
                     if x.rows() >= x.cols() { (j, 0) } else { (0, j) };
                 let xv = unsafe { x.get_unchecked(rx, cx).clone() };
-                dot = dot + (a_val * xv);
+                dot = dot.saturating_add(&a_val.saturating_mul(&xv));
             }
             let (ry, cy) = if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
             unsafe {
                 let yi = y.get_unchecked(ry, cy).clone();
-                y.set_unchecked(ry, cy, yi + (alpha.clone() * dot));
+                y.set_unchecked(
+                    ry,
+                    cy,
+                    yi.saturating_add(&alpha.saturating_mul(&dot)),
+                );
             }
         }
     }
@@ -1302,7 +1335,7 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                     if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
                 unsafe {
                     let yi = y.get_unchecked(ry, cy).clone();
-                    y.set_unchecked(ry, cy, beta.clone() * yi);
+                    y.set_unchecked(ry, cy, beta.saturating_mul(&yi));
                 }
             }
         }
@@ -1329,12 +1362,16 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                 let (rx, cx) =
                     if x.rows() >= x.cols() { (j, 0) } else { (0, j) };
                 let xv = unsafe { x.get_unchecked(rx, cx).clone() };
-                dot = dot + (a_val * xv);
+                dot = dot.saturating_add(&a_val.saturating_mul(&xv));
             }
             let (ry, cy) = if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
             unsafe {
                 let yi = y.get_unchecked(ry, cy).clone();
-                y.set_unchecked(ry, cy, yi + (alpha.clone() * dot));
+                y.set_unchecked(
+                    ry,
+                    cy,
+                    yi.saturating_add(&alpha.saturating_mul(&dot)),
+                );
             }
         }
     }
@@ -1363,7 +1400,12 @@ impl<T: Scalar, A: DenseStorageMut<T>, X: DenseStorage<T>> level2::Syr<T, A, X>
                         a.set_unchecked(
                             i,
                             j,
-                            a_val + (alpha.clone() * xi.clone() * xj),
+                            a_val.saturating_add(
+                                &alpha
+                                    .clone()
+                                    .saturating_mul(&xi.clone())
+                                    .saturating_mul(&xj),
+                            ),
                         );
                     }
                 }
@@ -1401,8 +1443,18 @@ impl<T: Scalar, A: DenseStorageMut<T>, X: DenseStorage<T>, Y: DenseStorage<T>>
                             i,
                             j,
                             a_val
-                                + (alpha.clone() * xi.clone() * yj)
-                                + (alpha.clone() * yi.clone() * xj),
+                                .saturating_add(
+                                    &alpha
+                                        .clone()
+                                        .saturating_mul(&xi.clone())
+                                        .saturating_mul(&yj),
+                                )
+                                .saturating_add(
+                                    &alpha
+                                        .clone()
+                                        .saturating_mul(&yi.clone())
+                                        .saturating_mul(&xj),
+                                ),
                         );
                     }
                 }
@@ -1435,7 +1487,12 @@ impl<T: Scalar, A: DenseStorageMut<T>, X: DenseStorage<T>> level2::Her<T, A, X>
                         a.set_unchecked(
                             i,
                             j,
-                            a_val + (a_scalar.clone() * xi.clone() * xj),
+                            a_val.saturating_add(
+                                &a_scalar
+                                    .clone()
+                                    .saturating_mul(&xi.clone())
+                                    .saturating_mul(&xj),
+                            ),
                         );
                     }
                 }
@@ -1476,8 +1533,18 @@ impl<T: Scalar, A: DenseStorageMut<T>, X: DenseStorage<T>, Y: DenseStorage<T>>
                             i,
                             j,
                             a_val
-                                + (alpha.clone() * xi.clone() * yj)
-                                + (alpha_conj.clone() * yi.clone() * xj),
+                                .saturating_add(
+                                    &alpha
+                                        .clone()
+                                        .saturating_mul(&xi.clone())
+                                        .saturating_mul(&yj),
+                                )
+                                .saturating_add(
+                                    &alpha_conj
+                                        .clone()
+                                        .saturating_mul(&yi.clone())
+                                        .saturating_mul(&xj),
+                                ),
                         );
                     }
                 }
@@ -1500,7 +1567,7 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorageMut<T>> level2::Trmv<T, A, X>
         let mut i = if forward { 0 } else { n };
         while if forward { i < n } else { i > 0 } {
             if !forward {
-                i -= 1;
+                i = i.saturating_sub(1);
             }
             let mut acc = T::ZERO;
             for j in 0..n {
@@ -1526,7 +1593,7 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorageMut<T>> level2::Trmv<T, A, X>
                     let (rx, cx) =
                         if x.rows() >= x.cols() { (j, 0) } else { (0, j) };
                     let xv = unsafe { x.get_unchecked(rx, cx).clone() };
-                    acc = acc + (a_val * xv);
+                    acc = acc.saturating_add(&a_val.saturating_mul(&xv));
                 }
             }
             let (rx, cx) = if x.rows() >= x.cols() { (i, 0) } else { (0, i) };
@@ -1534,7 +1601,7 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorageMut<T>> level2::Trmv<T, A, X>
                 x.set_unchecked(rx, cx, acc);
             }
             if forward {
-                i += 1;
+                i = i.saturating_add(1);
             }
         }
     }
@@ -1565,7 +1632,7 @@ fn trsv_row<T, A, X>(
     j_end: usize,
 ) -> LinAlgResult<()>
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     X: DenseStorageMut<T>,
 {
@@ -1584,7 +1651,7 @@ where
         };
         let (rxj, cxj) = vec_coord(x, j);
         let xj = unsafe { x.get_unchecked(rxj, cxj).clone() };
-        sum = sum - (a_val * xj);
+        sum = sum.saturating_sub(&a_val.saturating_mul(&xj));
     }
     if diag == Diag::Unit {
         unsafe {
@@ -1601,13 +1668,13 @@ where
             piv
         };
         unsafe {
-            x.set_unchecked(rxi, cxi, sum / piv_val);
+            x.set_unchecked(rxi, cxi, sum.saturating_div(&piv_val));
         }
     }
     Ok(())
 }
 
-impl<T: Scalar + Div<Output = T>, A: DenseStorage<T>, X: DenseStorageMut<T>>
+impl<T: Scalar + SaturatingDiv, A: DenseStorage<T>, X: DenseStorageMut<T>>
     level2::Trsv<T, A, X> for DefaultBlas
 {
     #[inline(always)]
@@ -1621,8 +1688,8 @@ impl<T: Scalar + Div<Output = T>, A: DenseStorage<T>, X: DenseStorageMut<T>>
         let n = a.rows();
         if tri_is_upper(uplo, trans) {
             for k in 0..n {
-                let i = n - 1 - k;
-                trsv_row(trans, diag, a, x, i, i + 1, n)?;
+                let i = n.saturating_sub(1).saturating_sub(k);
+                trsv_row(trans, diag, a, x, i, i.saturating_add(1), n)?;
             }
         } else {
             for i in 0..n {
@@ -1655,7 +1722,7 @@ impl<T: Scalar, AP: PackedStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                     if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
                 unsafe {
                     let yi = y.get_unchecked(ry, cy).clone();
-                    y.set_unchecked(ry, cy, beta.clone() * yi);
+                    y.set_unchecked(ry, cy, beta.saturating_mul(&yi));
                 }
             }
         }
@@ -1667,12 +1734,16 @@ impl<T: Scalar, AP: PackedStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                 let (rx, cx) =
                     if x.rows() >= x.cols() { (j, 0) } else { (0, j) };
                 let xv = unsafe { x.get_unchecked(rx, cx).clone() };
-                acc = acc + (a_val * xv);
+                acc = acc.saturating_add(&a_val.saturating_mul(&xv));
             }
             let (ry, cy) = if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
             unsafe {
                 let yi = y.get_unchecked(ry, cy).clone();
-                y.set_unchecked(ry, cy, yi + (alpha.clone() * acc));
+                y.set_unchecked(
+                    ry,
+                    cy,
+                    yi.saturating_add(&alpha.saturating_mul(&acc)),
+                );
             }
         }
         let _ = uplo;
@@ -1699,7 +1770,7 @@ impl<T: Scalar, HP: PackedStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                     if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
                 unsafe {
                     let yi = y.get_unchecked(ry, cy).clone();
-                    y.set_unchecked(ry, cy, beta.clone() * yi);
+                    y.set_unchecked(ry, cy, beta.saturating_mul(&yi));
                 }
             }
         }
@@ -1711,12 +1782,16 @@ impl<T: Scalar, HP: PackedStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                 let (rx, cx) =
                     if x.rows() >= x.cols() { (j, 0) } else { (0, j) };
                 let xv = unsafe { x.get_unchecked(rx, cx).clone() };
-                acc = acc + (a_val * xv);
+                acc = acc.saturating_add(&a_val.saturating_mul(&xv));
             }
             let (ry, cy) = if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
             unsafe {
                 let yi = y.get_unchecked(ry, cy).clone();
-                y.set_unchecked(ry, cy, yi + (alpha.clone() * acc));
+                y.set_unchecked(
+                    ry,
+                    cy,
+                    yi.saturating_add(&alpha.saturating_mul(&acc)),
+                );
             }
         }
         let _ = uplo;
@@ -1745,7 +1820,12 @@ impl<T: Scalar, AP: PackedStorageMut<T>, X: DenseStorage<T>>
                     let _ = ap.set(
                         i,
                         j,
-                        current + (alpha.clone() * xi.clone() * xj),
+                        current.saturating_add(
+                            &alpha
+                                .clone()
+                                .saturating_mul(&xi.clone())
+                                .saturating_mul(&xj),
+                        ),
                     );
                 }
             }
@@ -1776,7 +1856,12 @@ impl<T: Scalar, HP: PackedStorageMut<T>, X: DenseStorage<T>>
                     let _ = hp.set(
                         i,
                         j,
-                        current + (a_scalar.clone() * xi.clone() * xj),
+                        current.saturating_add(
+                            &a_scalar
+                                .clone()
+                                .saturating_mul(&xi.clone())
+                                .saturating_mul(&xj),
+                        ),
                     );
                 }
             }
@@ -1812,8 +1897,18 @@ impl<T: Scalar, AP: PackedStorageMut<T>, X: DenseStorage<T>, Y: DenseStorage<T>>
                         i,
                         j,
                         current
-                            + (alpha.clone() * xi.clone() * yj)
-                            + (alpha.clone() * yi.clone() * xj),
+                            .saturating_add(
+                                &alpha
+                                    .clone()
+                                    .saturating_mul(&xi.clone())
+                                    .saturating_mul(&yj),
+                            )
+                            .saturating_add(
+                                &alpha
+                                    .clone()
+                                    .saturating_mul(&yi.clone())
+                                    .saturating_mul(&xj),
+                            ),
                     );
                 }
             }
@@ -1852,8 +1947,18 @@ impl<T: Scalar, HP: PackedStorageMut<T>, X: DenseStorage<T>, Y: DenseStorage<T>>
                         i,
                         j,
                         current
-                            + (alpha.clone() * xi.clone() * yj)
-                            + (alpha_conj.clone() * yi.clone() * xj),
+                            .saturating_add(
+                                &alpha
+                                    .clone()
+                                    .saturating_mul(&xi.clone())
+                                    .saturating_mul(&yj),
+                            )
+                            .saturating_add(
+                                &alpha_conj
+                                    .clone()
+                                    .saturating_mul(&yi.clone())
+                                    .saturating_mul(&xj),
+                            ),
                     );
                 }
             }
@@ -1875,7 +1980,7 @@ impl<T: Scalar, TP: PackedStorage<T>, X: DenseStorageMut<T>>
         let mut i = if forward { 0 } else { n };
         while if forward { i < n } else { i > 0 } {
             if !forward {
-                i -= 1;
+                i = i.saturating_sub(1);
             }
             let mut acc = T::ZERO;
             for j in 0..n {
@@ -1901,7 +2006,7 @@ impl<T: Scalar, TP: PackedStorage<T>, X: DenseStorageMut<T>>
                     let (rx, cx) =
                         if x.rows() >= x.cols() { (j, 0) } else { (0, j) };
                     let xv = unsafe { x.get_unchecked(rx, cx).clone() };
-                    acc = acc + (a_val * xv);
+                    acc = acc.saturating_add(&a_val.saturating_mul(&xv));
                 }
             }
             let (rx, cx) = if x.rows() >= x.cols() { (i, 0) } else { (0, i) };
@@ -1909,7 +2014,7 @@ impl<T: Scalar, TP: PackedStorage<T>, X: DenseStorageMut<T>>
                 x.set_unchecked(rx, cx, acc);
             }
             if forward {
-                i += 1;
+                i = i.saturating_add(1);
             }
         }
     }
@@ -1926,7 +2031,7 @@ fn tpsv_row<T, TP, X>(
     j_end: usize,
 ) -> LinAlgResult<()>
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     TP: PackedStorage<T>,
     X: DenseStorageMut<T>,
 {
@@ -1945,7 +2050,7 @@ where
         };
         let (rxj, cxj) = vec_coord(x, j);
         let xj = unsafe { x.get_unchecked(rxj, cxj).clone() };
-        sum = sum - (a_val * xj);
+        sum = sum.saturating_sub(&a_val.saturating_mul(&xj));
     }
     if diag == Diag::Unit {
         unsafe {
@@ -1962,13 +2067,13 @@ where
             piv
         };
         unsafe {
-            x.set_unchecked(rxi, cxi, sum / piv_val);
+            x.set_unchecked(rxi, cxi, sum.saturating_div(&piv_val));
         }
     }
     Ok(())
 }
 
-impl<T: Scalar + Div<Output = T>, TP: PackedStorage<T>, X: DenseStorageMut<T>>
+impl<T: Scalar + SaturatingDiv, TP: PackedStorage<T>, X: DenseStorageMut<T>>
     packed::Tpsv<T, TP, X> for DefaultBlas
 {
     #[inline(always)]
@@ -1982,8 +2087,8 @@ impl<T: Scalar + Div<Output = T>, TP: PackedStorage<T>, X: DenseStorageMut<T>>
         let n = tp.dim();
         if tri_is_upper(uplo, trans) {
             for k in 0..n {
-                let i = n - 1 - k;
-                tpsv_row(trans, diag, tp, x, i, i + 1, n)?;
+                let i = n.saturating_sub(1).saturating_sub(k);
+                tpsv_row(trans, diag, tp, x, i, i.saturating_add(1), n)?;
             }
         } else {
             for i in 0..n {
@@ -2040,7 +2145,7 @@ fn scale_dense<T: Scalar, C: DenseStorageMut<T>>(c: &mut C, beta: &T) {
             for j in 0..n {
                 unsafe {
                     let cv = c.get_unchecked(i, j).clone();
-                    c.set_unchecked(i, j, beta.clone() * cv);
+                    c.set_unchecked(i, j, beta.saturating_mul(&cv));
                 }
             }
         }
@@ -2070,7 +2175,7 @@ fn scale_triangle<T: Scalar, C: DenseStorageMut<T>>(
                 if in_triangle(uplo, i, j) {
                     unsafe {
                         let cv = c.get_unchecked(i, j).clone();
-                        c.set_unchecked(i, j, beta.clone() * cv);
+                        c.set_unchecked(i, j, beta.saturating_mul(&cv));
                     }
                 }
             }
@@ -2124,11 +2229,15 @@ impl<T: Scalar, A: DenseStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
                         b_elem
                     };
 
-                    dot = dot + (a_val * b_val);
+                    dot = dot.saturating_add(&a_val.saturating_mul(&b_val));
                 }
                 unsafe {
                     let cv = c.get_unchecked(i, j).clone();
-                    c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+                    c.set_unchecked(
+                        i,
+                        j,
+                        cv.saturating_add(&alpha.saturating_mul(&dot)),
+                    );
                 }
             }
         }
@@ -2167,11 +2276,15 @@ where
                 };
                 let a_val = unsafe { a.get_unchecked(ar, ac).clone() };
                 let b_val = unsafe { b.get_unchecked(k, j).clone() };
-                dot = dot + (a_val * b_val);
+                dot = dot.saturating_add(&a_val.saturating_mul(&b_val));
             }
             unsafe {
                 let cv = c.get_unchecked(i, j).clone();
-                c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+                c.set_unchecked(
+                    i,
+                    j,
+                    cv.saturating_add(&alpha.saturating_mul(&dot)),
+                );
             }
         }
     }
@@ -2209,11 +2322,15 @@ where
                 };
                 let a_val = unsafe { a.get_unchecked(ar, ac).clone() };
                 let b_val = unsafe { b.get_unchecked(i, k).clone() };
-                dot = dot + (b_val * a_val);
+                dot = dot.saturating_add(&b_val.saturating_mul(&a_val));
             }
             unsafe {
                 let cv = c.get_unchecked(i, j).clone();
-                c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+                c.set_unchecked(
+                    i,
+                    j,
+                    cv.saturating_add(&alpha.saturating_mul(&dot)),
+                );
             }
         }
     }
@@ -2271,11 +2388,15 @@ where
                     }
                 };
                 let b_val = unsafe { b.get_unchecked(k, j).clone() };
-                dot = dot + (a_val * b_val);
+                dot = dot.saturating_add(&a_val.saturating_mul(&b_val));
             }
             unsafe {
                 let cv = c.get_unchecked(i, j).clone();
-                c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+                c.set_unchecked(
+                    i,
+                    j,
+                    cv.saturating_add(&alpha.saturating_mul(&dot)),
+                );
             }
         }
     }
@@ -2312,11 +2433,15 @@ where
                     }
                 };
                 let b_val = unsafe { b.get_unchecked(i, k).clone() };
-                dot = dot + (b_val * a_val);
+                dot = dot.saturating_add(&b_val.saturating_mul(&a_val));
             }
             unsafe {
                 let cv = c.get_unchecked(i, j).clone();
-                c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+                c.set_unchecked(
+                    i,
+                    j,
+                    cv.saturating_add(&alpha.saturating_mul(&dot)),
+                );
             }
         }
     }
@@ -2370,11 +2495,15 @@ where
                     };
                     let v1 = unsafe { a.get_unchecked(a1_r, a1_c).clone() };
                     let v2 = unsafe { a.get_unchecked(a2_r, a2_c).clone() };
-                    dot = dot + (v1 * v2);
+                    dot = dot.saturating_add(&v1.saturating_mul(&v2));
                 }
                 unsafe {
                     let cv = c.get_unchecked(i, j).clone();
-                    c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+                    c.set_unchecked(
+                        i,
+                        j,
+                        cv.saturating_add(&alpha.saturating_mul(&dot)),
+                    );
                 }
             }
         }
@@ -2413,7 +2542,7 @@ where
                 let j_end = if matches!(uplo, UpLo::Upper) {
                     n
                 } else {
-                    i + 1
+                    i.saturating_add(1)
                 };
 
                 for j in j_start..j_end {
@@ -2422,13 +2551,10 @@ where
                         unsafe {
                             let v1 = a.get_unchecked(i, p).clone();
                             let v2 = a.get_unchecked(j, p).clone().conj();
-                            dot = dot + (v1 * v2);
+                            dot = dot.saturating_add(&v1.saturating_mul(&v2));
                         }
                     }
-                    unsafe {
-                        let cv = c.get_unchecked(i, j).clone();
-                        c.set_unchecked(i, j, cv + (alpha.clone() * dot));
-                    }
+                    herk_accumulate(c, i, j, alpha, &dot);
                 }
             }
         }
@@ -2440,7 +2566,7 @@ where
                 let j_end = if matches!(uplo, UpLo::Upper) {
                     n
                 } else {
-                    i + 1
+                    i.saturating_add(1)
                 };
 
                 for j in j_start..j_end {
@@ -2449,16 +2575,27 @@ where
                         unsafe {
                             let v1 = a.get_unchecked(p, i).clone().conj();
                             let v2 = a.get_unchecked(p, j).clone();
-                            dot = dot + (v1 * v2);
+                            dot = dot.saturating_add(&v1.saturating_mul(&v2));
                         }
                     }
-                    unsafe {
-                        let cv = c.get_unchecked(i, j).clone();
-                        c.set_unchecked(i, j, cv + (alpha.clone() * dot));
-                    }
+                    herk_accumulate(c, i, j, alpha, &dot);
                 }
             }
         }
+    }
+}
+
+/// Accumulates `alpha * dot` into `C[i, j]` for the rank-k update kernels.
+#[inline(always)]
+fn herk_accumulate<T, C>(c: &mut C, i: usize, j: usize, alpha: &T, dot: &T)
+where
+    T: Scalar,
+    C: DenseStorageMut<T>,
+{
+    // SAFETY: callers iterate `i, j < c.rows()` on a square `C`.
+    unsafe {
+        let cv = c.get_unchecked(i, j).clone();
+        c.set_unchecked(i, j, cv.saturating_add(&alpha.saturating_mul(dot)));
     }
 }
 
@@ -2525,11 +2662,17 @@ fn syr2k_update<T, A, B, C>(
                     };
                     let a_val2 = unsafe { a.get_unchecked(ar2, ac2).clone() };
                     let b_val2 = unsafe { b.get_unchecked(br2, bc2).clone() };
-                    dot = dot + (a_val * b_val) + (b_val2 * a_val2);
+                    dot = dot
+                        .saturating_add(&a_val.saturating_mul(&b_val))
+                        .saturating_add(&b_val2.saturating_mul(&a_val2));
                 }
                 unsafe {
                     let cv = c.get_unchecked(i, j).clone();
-                    c.set_unchecked(i, j, cv + (alpha.clone() * dot));
+                    c.set_unchecked(
+                        i,
+                        j,
+                        cv.saturating_add(&alpha.saturating_mul(&dot)),
+                    );
                 }
             }
         }
@@ -2584,8 +2727,15 @@ where
         let a_val2 = storage_elem(a, ar2, ac2, conj_n);
         let b_val2 = storage_elem(b, br2, bc2, conj_t);
         dot = dot
-            + (alpha.clone() * a_val * b_val)
-            + (alpha_conj.clone() * b_val2 * a_val2);
+            .saturating_add(
+                &alpha.saturating_mul(&a_val).saturating_mul(&b_val),
+            )
+            .saturating_add(
+                &alpha_conj
+                    .clone()
+                    .saturating_mul(&b_val2)
+                    .saturating_mul(&a_val2),
+            );
     }
     dot
 }
@@ -2616,7 +2766,7 @@ fn her2k_update<T, A, B, C>(
                 let dot = her2k_dot(trans, alpha, &alpha_conj, a, b, k, i, j);
                 unsafe {
                     let cv = c.get_unchecked(i, j).clone();
-                    c.set_unchecked(i, j, cv + dot);
+                    c.set_unchecked(i, j, cv.saturating_add(&dot));
                 }
             }
         }
@@ -2692,11 +2842,11 @@ fn trmm_left_elem<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>>(
     for k in 0..m {
         if let Some(a_val) = trmm_tri_elem(a, diag, trans, uplo, i, k) {
             let bv = unsafe { b.get_unchecked(k, j).clone() };
-            acc = acc + (a_val * bv);
+            acc = acc.saturating_add(&a_val.saturating_mul(&bv));
         }
     }
     unsafe {
-        b.set_unchecked(i, j, alpha.clone() * acc);
+        b.set_unchecked(i, j, alpha.saturating_mul(&acc));
     }
 }
 
@@ -2745,11 +2895,11 @@ fn trmm_right_elem<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>>(
     for k in 0..n {
         if let Some(a_val) = trmm_tri_elem(a, diag, trans, uplo, k, j) {
             let bv = unsafe { b.get_unchecked(i, k).clone() };
-            acc = acc + (bv * a_val);
+            acc = acc.saturating_add(&bv.saturating_mul(&a_val));
         }
     }
     unsafe {
-        b.set_unchecked(i, j, alpha.clone() * acc);
+        b.set_unchecked(i, j, alpha.saturating_mul(&acc));
     }
 }
 
@@ -2804,7 +2954,7 @@ impl<T: Scalar, A: DenseStorage<T>, B: DenseStorageMut<T>> level3::Trmm<T, A, B>
 
 #[inline(always)]
 fn trsm_diag_solve<
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     B: DenseStorageMut<T>,
 >(
@@ -2832,7 +2982,7 @@ fn trsm_diag_solve<
             piv
         };
         unsafe {
-            b.set_unchecked(r, c, sum / piv_val);
+            b.set_unchecked(r, c, sum.saturating_div(&piv_val));
         }
     }
     Ok(())
@@ -2859,7 +3009,7 @@ fn trsm_a_elem<T: Scalar, A: DenseStorage<T>>(
 
 #[inline(always)]
 fn trsm_left_upper_col<
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     B: DenseStorageMut<T>,
 >(
@@ -2872,12 +3022,14 @@ fn trsm_left_upper_col<
     j: usize,
 ) -> LinAlgResult<()> {
     for k in 0..m {
-        let i = m - 1 - k;
-        let mut sum = alpha.clone() * unsafe { b.get_unchecked(i, j).clone() };
-        for p in (i + 1)..m {
+        let i = m.saturating_sub(1).saturating_sub(k);
+        let mut sum = alpha
+            .clone()
+            .saturating_mul(&(unsafe { b.get_unchecked(i, j).clone() }));
+        for p in i.saturating_add(1)..m {
             let a_val = trsm_a_elem(a, trans, i, p);
             let bp = unsafe { b.get_unchecked(p, j).clone() };
-            sum = sum - (a_val * bp);
+            sum = sum.saturating_sub(&a_val.saturating_mul(&bp));
         }
         trsm_diag_solve(a, b, diag, trans, i, i, j, sum)?;
     }
@@ -2886,7 +3038,7 @@ fn trsm_left_upper_col<
 
 #[inline(always)]
 fn trsm_left_lower_col<
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     B: DenseStorageMut<T>,
 >(
@@ -2899,11 +3051,13 @@ fn trsm_left_lower_col<
     j: usize,
 ) -> LinAlgResult<()> {
     for i in 0..m {
-        let mut sum = alpha.clone() * unsafe { b.get_unchecked(i, j).clone() };
+        let mut sum = alpha
+            .clone()
+            .saturating_mul(&(unsafe { b.get_unchecked(i, j).clone() }));
         for p in 0..i {
             let a_val = trsm_a_elem(a, trans, i, p);
             let bp = unsafe { b.get_unchecked(p, j).clone() };
-            sum = sum - (a_val * bp);
+            sum = sum.saturating_sub(&a_val.saturating_mul(&bp));
         }
         trsm_diag_solve(a, b, diag, trans, i, i, j, sum)?;
     }
@@ -2912,7 +3066,7 @@ fn trsm_left_lower_col<
 
 #[inline(always)]
 fn trsm_left<
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     B: DenseStorageMut<T>,
 >(
@@ -2943,7 +3097,7 @@ fn trsm_left<
 
 #[inline(always)]
 fn trsm_right_upper_col<
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     B: DenseStorageMut<T>,
 >(
@@ -2959,7 +3113,7 @@ fn trsm_right_upper_col<
         for k in 0..j {
             let a_val = trsm_a_elem(a, trans, k, j);
             let bk = unsafe { b.get_unchecked(i, k).clone() };
-            sum = sum - (bk * a_val);
+            sum = sum.saturating_sub(&bk.saturating_mul(&a_val));
         }
         trsm_diag_solve(a, b, diag, trans, j, i, j, sum)?;
     }
@@ -2968,7 +3122,7 @@ fn trsm_right_upper_col<
 
 #[inline(always)]
 fn trsm_right_lower_col<
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     B: DenseStorageMut<T>,
 >(
@@ -2982,10 +3136,10 @@ fn trsm_right_lower_col<
 ) -> LinAlgResult<()> {
     for i in 0..m {
         let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-        for k in (j + 1)..n {
+        for k in j.saturating_add(1)..n {
             let a_val = trsm_a_elem(a, trans, k, j);
             let bk = unsafe { b.get_unchecked(i, k).clone() };
-            sum = sum - (bk * a_val);
+            sum = sum.saturating_sub(&bk.saturating_mul(&a_val));
         }
         trsm_diag_solve(a, b, diag, trans, j, i, j, sum)?;
     }
@@ -2994,7 +3148,7 @@ fn trsm_right_lower_col<
 
 #[inline(always)]
 fn trsm_right<
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     B: DenseStorageMut<T>,
 >(
@@ -3017,7 +3171,7 @@ fn trsm_right<
         for j in 0..n {
             unsafe {
                 let bv = b.get_unchecked(i, j).clone();
-                b.set_unchecked(i, j, alpha.clone() * bv);
+                b.set_unchecked(i, j, alpha.saturating_mul(&bv));
             }
         }
     }
@@ -3028,14 +3182,14 @@ fn trsm_right<
         }
     } else {
         for jj in 0..n {
-            let j = n - 1 - jj;
+            let j = n.saturating_sub(1).saturating_sub(jj);
             trsm_right_lower_col(a, b, diag, trans, m, n, j)?;
         }
     }
     Ok(())
 }
 
-impl<T: Scalar + Div<Output = T>, A: DenseStorage<T>, B: DenseStorageMut<T>>
+impl<T: Scalar + SaturatingDiv, A: DenseStorage<T>, B: DenseStorageMut<T>>
     level3::Trsm<T, A, B> for DefaultBlas
 {
     #[inline(always)]
@@ -3081,26 +3235,31 @@ impl<T: Scalar, A: CsrStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                     if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
                 unsafe {
                     let yi = y.get_unchecked(ry, cy).clone();
-                    y.set_unchecked(ry, cy, beta.clone() * yi);
+                    y.set_unchecked(ry, cy, beta.saturating_mul(&yi));
                 }
             }
         }
 
         for r in 0..m {
             let start = row_offsets[r];
-            let end = row_offsets[r + 1];
+            let end = row_offsets[r.saturating_add(1)];
             let mut dot = T::ZERO;
             for idx in start..end {
                 let c = col_indices[idx];
                 let (rx, cx) =
                     if x.rows() >= x.cols() { (c, 0) } else { (0, c) };
                 let xv = unsafe { x.get_unchecked(rx, cx).clone() };
-                dot = dot + (values[idx].clone() * xv);
+                dot = dot
+                    .saturating_add(&(values[idx].clone()).saturating_mul(&xv));
             }
             let (ry, cy) = if y.rows() >= y.cols() { (r, 0) } else { (0, r) };
             unsafe {
                 let yi = y.get_unchecked(ry, cy).clone();
-                y.set_unchecked(ry, cy, yi + (alpha.clone() * dot));
+                y.set_unchecked(
+                    ry,
+                    cy,
+                    yi.saturating_add(&alpha.saturating_mul(&dot)),
+                );
             }
         }
     }
@@ -3130,7 +3289,7 @@ impl<T: Scalar, A: CscStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                     if y.rows() >= y.cols() { (i, 0) } else { (0, i) };
                 unsafe {
                     let yi = y.get_unchecked(ry, cy).clone();
-                    y.set_unchecked(ry, cy, beta.clone() * yi);
+                    y.set_unchecked(ry, cy, beta.saturating_mul(&yi));
                 }
             }
         }
@@ -3138,9 +3297,9 @@ impl<T: Scalar, A: CscStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
         for c in 0..n {
             let (rx, cx) = if x.rows() >= x.cols() { (c, 0) } else { (0, c) };
             let xv = unsafe { x.get_unchecked(rx, cx).clone() };
-            let scalar = alpha.clone() * xv;
+            let scalar = alpha.saturating_mul(&xv);
             let start = col_offsets[c];
-            let end = col_offsets[c + 1];
+            let end = col_offsets[c.saturating_add(1)];
             for idx in start..end {
                 let r = row_indices[idx];
                 let (ry, cy) =
@@ -3150,7 +3309,11 @@ impl<T: Scalar, A: CscStorage<T>, X: DenseStorage<T>, Y: DenseStorageMut<T>>
                     y.set_unchecked(
                         ry,
                         cy,
-                        yi + (scalar.clone() * values[idx].clone()),
+                        yi.saturating_add(
+                            &scalar
+                                .clone()
+                                .saturating_mul(&(values[idx].clone())),
+                        ),
                     );
                 }
             }
@@ -3182,7 +3345,7 @@ impl<T: Scalar, A: CsrStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
                 for j in 0..n {
                     unsafe {
                         let cv = c.get_unchecked(i, j).clone();
-                        c.set_unchecked(i, j, beta.clone() * cv);
+                        c.set_unchecked(i, j, beta.saturating_mul(&cv));
                     }
                 }
             }
@@ -3190,17 +3353,23 @@ impl<T: Scalar, A: CsrStorage<T>, B: DenseStorage<T>, C: DenseStorageMut<T>>
 
         for r in 0..m {
             let start = row_offsets[r];
-            let end = row_offsets[r + 1];
+            let end = row_offsets[r.saturating_add(1)];
             for j in 0..n {
                 let mut dot = T::ZERO;
                 for idx in start..end {
                     let p = col_indices[idx];
                     let bv = unsafe { b.get_unchecked(p, j).clone() };
-                    dot = dot + (values[idx].clone() * bv);
+                    dot = dot.saturating_add(
+                        &(values[idx].clone()).saturating_mul(&bv),
+                    );
                 }
                 unsafe {
                     let cv = c.get_unchecked(r, j).clone();
-                    c.set_unchecked(r, j, cv + (alpha.clone() * dot));
+                    c.set_unchecked(
+                        r,
+                        j,
+                        cv.saturating_add(&alpha.saturating_mul(&dot)),
+                    );
                 }
             }
         }
@@ -3222,7 +3391,7 @@ impl<T: Scalar, X: SparseVectorStorage<T>, Y: DenseStorage<T>>
                 (0, *idx)
             };
             let yv = unsafe { y.get_unchecked(ry, cy).clone() };
-            acc = acc + (val.clone() * yv);
+            acc = acc.saturating_add(&val.saturating_mul(&yv));
         }
         acc
     }
@@ -3243,7 +3412,7 @@ impl<T: Scalar, X: SparseVectorStorage<T>, Y: DenseStorage<T>>
                 (0, *idx)
             };
             let yv = unsafe { y.get_unchecked(ry, cy).clone() };
-            acc = acc + (val.clone().conj() * yv);
+            acc = acc.saturating_add(&val.clone().conj().saturating_mul(&yv));
         }
         acc
     }
@@ -3264,7 +3433,11 @@ impl<T: Scalar, X: SparseVectorStorage<T>, Y: DenseStorageMut<T>>
             };
             unsafe {
                 let yv = y.get_unchecked(ry, cy).clone();
-                y.set_unchecked(ry, cy, yv + (alpha.clone() * val.clone()));
+                y.set_unchecked(
+                    ry,
+                    cy,
+                    yv.saturating_add(&alpha.saturating_mul(&val.clone())),
+                );
             }
         }
     }
@@ -3274,7 +3447,7 @@ impl<T: Scalar, X: SparseVectorStorage<T>, Y: DenseStorageMut<T>>
 
 impl<T, A> lapack::Potrf<T, A> for DefaultBlas
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     T::Real: Radical,
     A: DenseStorageMut<T>,
 {
@@ -3291,20 +3464,20 @@ where
                     UpLo::Upper => (k, j),
                 };
                 let elem = unsafe { a.get_unchecked(r, c) };
-                sum2 = sum2 + elem.abs2();
+                sum2 = sum2.saturating_add(&elem.abs2());
             }
 
             let a_jj_re = unsafe { a.get_unchecked(j, j).re() };
             if a_jj_re <= sum2 {
                 return Err(LinAlgError::NotPositiveDefinite);
             }
-            let l_jj_re = (a_jj_re - sum2).sqrt();
+            let l_jj_re = a_jj_re.saturating_sub(&sum2).sqrt();
             let l_jj = T::from_real(l_jj_re.clone());
             unsafe {
                 a.set_unchecked(j, j, l_jj.clone());
             }
 
-            for i in (j + 1)..n {
+            for i in j.saturating_add(1)..n {
                 let mut dot = T::ZERO;
                 for k in 0..j {
                     let (ik_r, ik_c) = match uplo {
@@ -3318,7 +3491,7 @@ where
                     let v_ik = unsafe { a.get_unchecked(ik_r, ik_c).clone() };
                     let v_jk =
                         unsafe { a.get_unchecked(jk_r, jk_c).clone().conj() };
-                    dot = dot + (v_ik * v_jk);
+                    dot = dot.saturating_add(&v_ik.saturating_mul(&v_jk));
                 }
 
                 let (target_r, target_c) = match uplo {
@@ -3327,7 +3500,9 @@ where
                 };
                 let target_val =
                     unsafe { a.get_unchecked(target_r, target_c).clone() };
-                let val = (target_val - dot) / l_jj.clone();
+                let val = target_val
+                    .saturating_sub(&dot)
+                    .saturating_div(&l_jj.clone());
                 unsafe {
                     a.set_unchecked(target_r, target_c, val);
                 }
@@ -3339,7 +3514,7 @@ where
 
 impl<T, A, B> lapack::Potrs<T, A, B> for DefaultBlas
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     B: DenseStorageMut<T>,
 {
@@ -3395,9 +3570,36 @@ where
     }
 }
 
+/// Computes and stores the Cholesky pivot $\sqrt{a_{jj} - \sum_{k<j} \lvert a_{jk} \rvert^2}$ of packed column `j`.
+///
+/// Returns [`LinAlgError::NotPositiveDefinite`] when the radicand is not positive.
+#[inline(always)]
+fn pptrf_pivot<T, AP>(ap: &mut AP, j: usize, uplo: UpLo) -> LinAlgResult<T>
+where
+    T: Scalar,
+    T::Real: Radical,
+    AP: PackedStorageMut<T>,
+{
+    let mut sum2 = <T::Real as Zero>::ZERO;
+    for k in 0..j {
+        let elem = match uplo {
+            UpLo::Lower => ap.value_unchecked(j, k),
+            UpLo::Upper => ap.value_unchecked(k, j),
+        };
+        sum2 = sum2.saturating_add(&elem.abs2());
+    }
+    let a_jj_re = ap.value_unchecked(j, j).re();
+    if a_jj_re <= sum2 {
+        return Err(LinAlgError::NotPositiveDefinite);
+    }
+    let pivot = T::from_real(a_jj_re.saturating_sub(&sum2).sqrt());
+    let _ = ap.set(j, j, pivot.clone());
+    Ok(pivot)
+}
+
 impl<T, AP> lapack::Pptrf<T, AP> for DefaultBlas
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     T::Real: Radical,
     AP: PackedStorageMut<T>,
 {
@@ -3407,58 +3609,40 @@ where
         match uplo {
             UpLo::Lower => {
                 for j in 0..n {
-                    let mut sum2 = <T::Real as Zero>::ZERO;
-                    for k in 0..j {
-                        let elem = ap.value_unchecked(j, k);
-                        sum2 = sum2 + elem.abs2();
-                    }
+                    let l_jj = pptrf_pivot(ap, j, UpLo::Lower)?;
 
-                    let a_jj_re = ap.value_unchecked(j, j).re();
-                    if a_jj_re <= sum2 {
-                        return Err(LinAlgError::NotPositiveDefinite);
-                    }
-                    let l_jj_re = (a_jj_re - sum2).sqrt();
-                    let l_jj = T::from_real(l_jj_re.clone());
-                    let _ = ap.set(j, j, l_jj.clone());
-
-                    for i in (j + 1)..n {
+                    for i in j.saturating_add(1)..n {
                         let mut dot = T::ZERO;
                         for k in 0..j {
                             let v_ik = ap.value_unchecked(i, k);
                             let v_jk = ap.value_unchecked(j, k).conj();
-                            dot = dot + (v_ik * v_jk);
+                            dot =
+                                dot.saturating_add(&v_ik.saturating_mul(&v_jk));
                         }
-                        let val =
-                            (ap.value_unchecked(i, j) - dot) / l_jj.clone();
+                        let val = ap
+                            .value_unchecked(i, j)
+                            .saturating_sub(&dot)
+                            .saturating_div(&l_jj.clone());
                         let _ = ap.set(i, j, val);
                     }
                 }
             }
             UpLo::Upper => {
                 for j in 0..n {
-                    let mut sum2 = <T::Real as Zero>::ZERO;
-                    for k in 0..j {
-                        let elem = ap.value_unchecked(k, j);
-                        sum2 = sum2 + elem.abs2();
-                    }
+                    let u_jj = pptrf_pivot(ap, j, UpLo::Upper)?;
 
-                    let a_jj_re = ap.value_unchecked(j, j).re();
-                    if a_jj_re <= sum2 {
-                        return Err(LinAlgError::NotPositiveDefinite);
-                    }
-                    let u_jj_re = (a_jj_re - sum2).sqrt();
-                    let u_jj = T::from_real(u_jj_re.clone());
-                    let _ = ap.set(j, j, u_jj.clone());
-
-                    for i in (j + 1)..n {
+                    for i in j.saturating_add(1)..n {
                         let mut dot = T::ZERO;
                         for k in 0..j {
                             let v_kj = ap.value_unchecked(k, j).conj();
                             let v_ki = ap.value_unchecked(k, i);
-                            dot = dot + (v_kj * v_ki);
+                            dot =
+                                dot.saturating_add(&v_kj.saturating_mul(&v_ki));
                         }
-                        let val =
-                            (ap.value_unchecked(j, i) - dot) / u_jj.clone();
+                        let val = ap
+                            .value_unchecked(j, i)
+                            .saturating_sub(&dot)
+                            .saturating_div(&u_jj.clone());
                         let _ = ap.set(j, i, val);
                     }
                 }
@@ -3476,7 +3660,7 @@ fn pptrs_lower<T, AP, B>(
     nrhs: usize,
 ) -> LinAlgResult<()>
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     AP: PackedStorage<T>,
     B: DenseStorageMut<T>,
 {
@@ -3484,32 +3668,36 @@ where
         for i in 0..n {
             let mut sum = unsafe { b.get_unchecked(i, j).clone() };
             for k in 0..i {
-                sum = sum
-                    - (ap.value_unchecked(i, k)
-                        * unsafe { b.get_unchecked(k, j).clone() });
+                sum = sum.saturating_sub(
+                    &ap.value_unchecked(i, k).saturating_mul(
+                        &(unsafe { b.get_unchecked(k, j).clone() }),
+                    ),
+                );
             }
             let piv = ap.value_unchecked(i, i);
             if piv.is_zero() {
                 return Err(LinAlgError::SingularMatrix);
             }
             unsafe {
-                b.set_unchecked(i, j, sum / piv);
+                b.set_unchecked(i, j, sum.saturating_div(&piv));
             }
         }
         for k in 0..n {
-            let i = n - 1 - k;
+            let i = n.saturating_sub(1).saturating_sub(k);
             let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-            for p in (i + 1)..n {
-                sum = sum
-                    - (ap.value_unchecked(p, i).conj()
-                        * unsafe { b.get_unchecked(p, j).clone() });
+            for p in i.saturating_add(1)..n {
+                sum = sum.saturating_sub(
+                    &ap.value_unchecked(p, i).conj().saturating_mul(
+                        &(unsafe { b.get_unchecked(p, j).clone() }),
+                    ),
+                );
             }
             let piv = ap.value_unchecked(i, i);
             if piv.is_zero() {
                 return Err(LinAlgError::SingularMatrix);
             }
             unsafe {
-                b.set_unchecked(i, j, sum / piv.conj());
+                b.set_unchecked(i, j, sum.saturating_div(&piv.conj()));
             }
         }
     }
@@ -3524,7 +3712,7 @@ fn pptrs_upper<T, AP, B>(
     nrhs: usize,
 ) -> LinAlgResult<()>
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     AP: PackedStorage<T>,
     B: DenseStorageMut<T>,
 {
@@ -3532,32 +3720,36 @@ where
         for i in 0..n {
             let mut sum = unsafe { b.get_unchecked(i, j).clone() };
             for k in 0..i {
-                sum = sum
-                    - (ap.value_unchecked(k, i).conj()
-                        * unsafe { b.get_unchecked(k, j).clone() });
+                sum = sum.saturating_sub(
+                    &ap.value_unchecked(k, i).conj().saturating_mul(
+                        &(unsafe { b.get_unchecked(k, j).clone() }),
+                    ),
+                );
             }
             let piv = ap.value_unchecked(i, i);
             if piv.is_zero() {
                 return Err(LinAlgError::SingularMatrix);
             }
             unsafe {
-                b.set_unchecked(i, j, sum / piv.conj());
+                b.set_unchecked(i, j, sum.saturating_div(&piv.conj()));
             }
         }
         for k in 0..n {
-            let i = n - 1 - k;
+            let i = n.saturating_sub(1).saturating_sub(k);
             let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-            for p in (i + 1)..n {
-                sum = sum
-                    - (ap.value_unchecked(i, p)
-                        * unsafe { b.get_unchecked(p, j).clone() });
+            for p in i.saturating_add(1)..n {
+                sum = sum.saturating_sub(
+                    &ap.value_unchecked(i, p).saturating_mul(
+                        &(unsafe { b.get_unchecked(p, j).clone() }),
+                    ),
+                );
             }
             let piv = ap.value_unchecked(i, i);
             if piv.is_zero() {
                 return Err(LinAlgError::SingularMatrix);
             }
             unsafe {
-                b.set_unchecked(i, j, sum / piv);
+                b.set_unchecked(i, j, sum.saturating_div(&piv));
             }
         }
     }
@@ -3566,7 +3758,7 @@ where
 
 impl<T, AP, B> lapack::Pptrs<T, AP, B> for DefaultBlas
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     AP: PackedStorage<T>,
     B: DenseStorageMut<T>,
 {
@@ -3583,7 +3775,7 @@ where
 
 impl<T, A> lapack::Getrf<T, A> for DefaultBlas
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorageMut<T>,
 {
     #[inline(always)]
@@ -3623,18 +3815,22 @@ where
             }
 
             let pivot = unsafe { a.get_unchecked(k, k).clone() };
-            for i in (k + 1)..m {
-                let mult =
-                    unsafe { a.get_unchecked(i, k).clone() } / pivot.clone();
+            for i in k.saturating_add(1)..m {
+                let mult = (unsafe { a.get_unchecked(i, k).clone() })
+                    .saturating_div(&pivot.clone());
                 unsafe {
                     a.set_unchecked(i, k, mult.clone());
                 }
 
-                for j in (k + 1)..n {
+                for j in k.saturating_add(1)..n {
                     unsafe {
                         let a_ij = a.get_unchecked(i, j).clone();
                         let a_kj = a.get_unchecked(k, j).clone();
-                        a.set_unchecked(i, j, a_ij - (mult.clone() * a_kj));
+                        a.set_unchecked(
+                            i,
+                            j,
+                            a_ij.saturating_sub(&mult.saturating_mul(&a_kj)),
+                        );
                     }
                 }
             }
@@ -3681,7 +3877,7 @@ fn getrs_notrans_col<T, A, B>(
     j: usize,
 ) -> LinAlgResult<()>
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     B: DenseStorageMut<T>,
 {
@@ -3689,28 +3885,32 @@ where
     for i in 0..n {
         let mut sum = unsafe { b.get_unchecked(i, j).clone() };
         for k in 0..i {
-            sum = sum
-                - (unsafe { a.get_unchecked(i, k).clone() }
-                    * unsafe { b.get_unchecked(k, j).clone() });
+            sum = sum.saturating_sub(
+                &(unsafe { a.get_unchecked(i, k).clone() }).saturating_mul(
+                    &(unsafe { b.get_unchecked(k, j).clone() }),
+                ),
+            );
         }
         unsafe {
             b.set_unchecked(i, j, sum);
         }
     }
     for k in 0..n {
-        let i = n - 1 - k;
+        let i = n.saturating_sub(1).saturating_sub(k);
         let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-        for p in (i + 1)..n {
-            sum = sum
-                - (unsafe { a.get_unchecked(i, p).clone() }
-                    * unsafe { b.get_unchecked(p, j).clone() });
+        for p in i.saturating_add(1)..n {
+            sum = sum.saturating_sub(
+                &(unsafe { a.get_unchecked(i, p).clone() }).saturating_mul(
+                    &(unsafe { b.get_unchecked(p, j).clone() }),
+                ),
+            );
         }
         let piv = unsafe { a.get_unchecked(i, i).clone() };
         if piv.is_zero() {
             return Err(LinAlgError::SingularMatrix);
         }
         unsafe {
-            b.set_unchecked(i, j, sum / piv);
+            b.set_unchecked(i, j, sum.saturating_div(&piv));
         }
     }
     Ok(())
@@ -3725,7 +3925,7 @@ fn getrs_trans_ut<T, A, B>(
     j: usize,
 ) -> LinAlgResult<()>
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     B: DenseStorageMut<T>,
 {
@@ -3734,7 +3934,10 @@ where
         let mut sum = unsafe { b.get_unchecked(i, j).clone() };
         for k in 0..i {
             let a_val = storage_elem(a, k, i, conj);
-            sum = sum - (a_val * unsafe { b.get_unchecked(k, j).clone() });
+            sum =
+                sum.saturating_sub(&a_val.saturating_mul(
+                    &(unsafe { b.get_unchecked(k, j).clone() }),
+                ));
         }
         let piv = unsafe { a.get_unchecked(i, i).clone() };
         if piv.is_zero() {
@@ -3742,7 +3945,7 @@ where
         }
         let piv_val = if conj { piv.conj() } else { piv };
         unsafe {
-            b.set_unchecked(i, j, sum / piv_val);
+            b.set_unchecked(i, j, sum.saturating_div(&piv_val));
         }
     }
     Ok(())
@@ -3757,11 +3960,14 @@ where
 {
     let conj = trans == Trans::ConjTrans;
     for k in 0..n {
-        let i = n - 1 - k;
+        let i = n.saturating_sub(1).saturating_sub(k);
         let mut sum = unsafe { b.get_unchecked(i, j).clone() };
-        for p in (i + 1)..n {
+        for p in i.saturating_add(1)..n {
             let a_val = storage_elem(a, p, i, conj);
-            sum = sum - (a_val * unsafe { b.get_unchecked(p, j).clone() });
+            sum =
+                sum.saturating_sub(&a_val.saturating_mul(
+                    &(unsafe { b.get_unchecked(p, j).clone() }),
+                ));
         }
         unsafe {
             b.set_unchecked(i, j, sum);
@@ -3771,7 +3977,7 @@ where
 
 impl<T, A, B> lapack::Getrs<T, A, B> for DefaultBlas
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     B: DenseStorageMut<T>,
 {
@@ -3811,7 +4017,7 @@ fn geqrf_apply_reflector<T, A>(
     T: Scalar,
     A: DenseStorageMut<T>,
 {
-    for j in (k + 1)..n {
+    for j in k.saturating_add(1)..n {
         let mut dot = T::ZERO;
         for i in k..m {
             let v_i = if i == k {
@@ -3820,9 +4026,9 @@ fn geqrf_apply_reflector<T, A>(
                 unsafe { a.get_unchecked(i, k).clone() }
             };
             let a_ij = unsafe { a.get_unchecked(i, j).clone() };
-            dot = dot + (v_i.conj() * a_ij);
+            dot = dot.saturating_add(&v_i.conj().saturating_mul(&a_ij));
         }
-        let scalar = tau_k.clone() * dot;
+        let scalar = tau_k.saturating_mul(&dot);
         for i in k..m {
             let v_i = if i == k {
                 T::ONE
@@ -3831,7 +4037,11 @@ fn geqrf_apply_reflector<T, A>(
             };
             let a_ij = unsafe { a.get_unchecked(i, j).clone() };
             unsafe {
-                a.set_unchecked(i, j, a_ij - (v_i * scalar.clone()));
+                a.set_unchecked(
+                    i,
+                    j,
+                    a_ij.saturating_sub(&v_i.saturating_mul(&scalar.clone())),
+                );
             }
         }
     }
@@ -3839,7 +4049,7 @@ fn geqrf_apply_reflector<T, A>(
 
 impl<T, A> lapack::Geqrf<T, A> for DefaultBlas
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     T::Real: Radical,
     A: DenseStorageMut<T>,
 {
@@ -3855,7 +4065,8 @@ where
         for k in 0..min_dim {
             let mut sum2 = <T::Real as Zero>::ZERO;
             for i in k..m {
-                sum2 = sum2 + unsafe { a.get_unchecked(i, k).abs2() };
+                sum2 = sum2
+                    .saturating_add(&(unsafe { a.get_unchecked(i, k).abs2() }));
             }
 
             let norm = sum2.sqrt();
@@ -3866,22 +4077,25 @@ where
 
             let alpha = unsafe { a.get_unchecked(k, k).clone() };
             let beta_re = if alpha.re() >= <T::Real as Zero>::ZERO {
-                <T::Real as Zero>::ZERO - norm
+                (<T::Real as Zero>::ZERO).saturating_sub(&norm)
             } else {
                 norm
             };
             let beta = T::from_real(beta_re.clone());
 
-            let v0 = alpha.clone() - beta.clone();
-            tau[k] = (beta.clone() - alpha) / beta.clone();
+            let v0 = alpha.saturating_sub(&beta.clone());
+            tau[k] = beta
+                .clone()
+                .saturating_sub(&alpha)
+                .saturating_div(&beta.clone());
             unsafe {
                 a.set_unchecked(k, k, beta);
             }
 
-            for i in (k + 1)..m {
+            for i in k.saturating_add(1)..m {
                 let current = unsafe { a.get_unchecked(i, k).clone() };
                 unsafe {
-                    a.set_unchecked(i, k, current / v0.clone());
+                    a.set_unchecked(i, k, current.saturating_div(&v0.clone()));
                 }
             }
 
@@ -3945,23 +4159,27 @@ fn qr_apply_left_k<T, A, C>(
 {
     for j in 0..n {
         let mut dot = unsafe { c.get_unchecked(k, j).clone() };
-        for i in (k + 1)..m {
+        for i in k.saturating_add(1)..m {
             let v_i = unsafe { a.get_unchecked(i, k).clone() };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
             let v_d = if conj.dot { v_i.conj() } else { v_i };
-            dot = dot + (v_d * c_ij);
+            dot = dot.saturating_add(&v_d.saturating_mul(&c_ij));
         }
-        let scalar = tau_k.clone() * dot;
+        let scalar = tau_k.saturating_mul(&dot);
         let c_kj = unsafe { c.get_unchecked(k, j).clone() };
         unsafe {
-            c.set_unchecked(k, j, c_kj - scalar.clone());
+            c.set_unchecked(k, j, c_kj.saturating_sub(&scalar.clone()));
         }
-        for i in (k + 1)..m {
+        for i in k.saturating_add(1)..m {
             let v_i = unsafe { a.get_unchecked(i, k).clone() };
             let v_u = if conj.update { v_i.conj() } else { v_i };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
             unsafe {
-                c.set_unchecked(i, j, c_ij - (v_u * scalar.clone()));
+                c.set_unchecked(
+                    i,
+                    j,
+                    c_ij.saturating_sub(&v_u.saturating_mul(&scalar.clone())),
+                );
             }
         }
     }
@@ -3983,23 +4201,27 @@ fn qr_apply_right_k<T, A, C>(
 {
     for i in 0..m {
         let mut dot = unsafe { c.get_unchecked(i, k).clone() };
-        for j in (k + 1)..n {
+        for j in k.saturating_add(1)..n {
             let v_j = unsafe { a.get_unchecked(j, k).clone() };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
             let v_d = if conj.dot { v_j.conj() } else { v_j };
-            dot = dot + (v_d * c_ij);
+            dot = dot.saturating_add(&v_d.saturating_mul(&c_ij));
         }
-        let scalar = tau_k.clone() * dot;
+        let scalar = tau_k.saturating_mul(&dot);
         let c_ik = unsafe { c.get_unchecked(i, k).clone() };
         unsafe {
-            c.set_unchecked(i, k, c_ik - scalar.clone());
+            c.set_unchecked(i, k, c_ik.saturating_sub(&scalar.clone()));
         }
-        for j in (k + 1)..n {
+        for j in k.saturating_add(1)..n {
             let v_j = unsafe { a.get_unchecked(j, k).clone() };
             let v_u = if conj.update { v_j.conj() } else { v_j };
             let c_ij = unsafe { c.get_unchecked(i, j).clone() };
             unsafe {
-                c.set_unchecked(i, j, c_ij - (v_u * scalar.clone()));
+                c.set_unchecked(
+                    i,
+                    j,
+                    c_ij.saturating_sub(&v_u.saturating_mul(&scalar.clone())),
+                );
             }
         }
     }
@@ -4021,7 +4243,11 @@ fn qr_apply_left<T, A, C>(
     let m = c.rows();
     let n = c.cols();
     for t in 0..k_limit {
-        let k = if reverse { k_limit - 1 - t } else { t };
+        let k = if reverse {
+            k_limit.saturating_sub(1).saturating_sub(t)
+        } else {
+            t
+        };
         let tau_k = if conj.tau {
             tau[k].clone().conj()
         } else {
@@ -4050,7 +4276,11 @@ fn qr_apply_right<T, A, C>(
     let m = c.rows();
     let n = c.cols();
     for t in 0..k_limit {
-        let k = if reverse { k_limit - 1 - t } else { t };
+        let k = if reverse {
+            k_limit.saturating_sub(1).saturating_sub(t)
+        } else {
+            t
+        };
         let tau_k = if conj.tau {
             tau[k].clone().conj()
         } else {
@@ -4065,7 +4295,7 @@ fn qr_apply_right<T, A, C>(
 
 impl<T, A, C> lapack::Ormqr<T, A, C> for DefaultBlas
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     C: DenseStorageMut<T>,
 {
@@ -4110,7 +4340,7 @@ where
 
 impl<T, A, C> lapack::Unmqr<T, A, C> for DefaultBlas
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     A: DenseStorage<T>,
     C: DenseStorageMut<T>,
 {
@@ -4190,7 +4420,8 @@ fn ev_init_vectors<T: Scalar>(jobz: JobZ, n: usize, work: &mut [T]) {
     if jobz == JobZ::Vectors {
         for i in 0..n {
             for j in 0..n {
-                work[i * n + j] = if i == j { T::ONE } else { T::ZERO };
+                work[i.saturating_mul(n).saturating_add(j)] =
+                    if i == j { T::ONE } else { T::ZERO };
             }
         }
     }
@@ -4206,7 +4437,7 @@ where
     let mut p = 0;
     let mut q = 1;
     for i in 0..n {
-        for j in (i + 1)..n {
+        for j in i.saturating_add(1)..n {
             let val = uplo_entry(a, i, j, uplo).abs2();
             if val > max_off || !val.eq(&val) {
                 max_off = val;
@@ -4256,7 +4487,11 @@ where
         for i in 0..n {
             for j in 0..n {
                 unsafe {
-                    a.set_unchecked(i, j, work[i * n + j].clone());
+                    a.set_unchecked(
+                        i,
+                        j,
+                        work[i.saturating_mul(n).saturating_add(j)].clone(),
+                    );
                 }
             }
         }
@@ -4279,17 +4514,25 @@ where
     let a_qq = uplo_entry(a, q, q, uplo).re();
     let a_pq = uplo_entry(a, p, q, uplo).re();
     let one = <T::Real as One>::ONE;
-    let two = one.clone() + one.clone();
-    let theta = (a_qq - a_pp) / two / a_pq;
+    let two = one.saturating_add(&one);
+    let theta = a_qq
+        .saturating_sub(&a_pp)
+        .saturating_div(&two)
+        .saturating_div(&a_pq);
     let t = if theta >= <T::Real as Zero>::ZERO {
-        one.clone()
-            / (theta.clone() + (one.clone() + theta.clone() * theta).sqrt())
+        one.saturating_div(&theta.saturating_add(
+            &(one.saturating_add(&theta.saturating_mul(&theta)).sqrt()),
+        ))
     } else {
-        -one.clone()
-            / (-theta.clone() + (one.clone() + theta.clone() * theta).sqrt())
+        one.saturating_neg().saturating_div(
+            &theta.saturating_neg().saturating_add(
+                &(one.saturating_add(&theta.saturating_mul(&theta)).sqrt()),
+            ),
+        )
     };
-    let c = one.clone() / (one + t.clone() * t.clone()).sqrt();
-    let s = t * c.clone();
+    let c =
+        one.saturating_div(&one.saturating_add(&t.saturating_mul(&t)).sqrt());
+    let s = t.saturating_mul(&c);
     (T::from_real(c.clone()), T::from_real(s.clone()), c, s)
 }
 
@@ -4310,9 +4553,14 @@ fn syev_apply_offdiag<T, A>(
         if k != p && k != q {
             let a_kp = uplo_entry(a, k, p, uplo);
             let a_kq = uplo_entry(a, k, q, uplo);
-            let new_kp =
-                (c_val.clone() * a_kp.clone()) - (s_val.clone() * a_kq.clone());
-            let new_kq = (s_val.clone() * a_kp) + (c_val.clone() * a_kq);
+            let new_kp = c_val
+                .clone()
+                .saturating_mul(&a_kp.clone())
+                .saturating_sub(&s_val.saturating_mul(&a_kq.clone()));
+            let new_kq = s_val
+                .clone()
+                .saturating_mul(&a_kp)
+                .saturating_add(&c_val.saturating_mul(&a_kq));
             unsafe {
                 a.set_unchecked(k, p, new_kp.clone());
                 a.set_unchecked(k, q, new_kq.clone());
@@ -4329,8 +4577,8 @@ fn syev_apply_2x2<T, A>(
     p: usize,
     q: usize,
     uplo: UpLo,
-    c: T::Real,
-    s: T::Real,
+    c: &T::Real,
+    s: &T::Real,
 ) where
     T: Scalar,
     A: DenseStorageMut<T>,
@@ -4338,13 +4586,18 @@ fn syev_apply_2x2<T, A>(
     let a_pp = uplo_entry(a, p, p, uplo).re();
     let a_qq = uplo_entry(a, q, q, uplo).re();
     let a_pq = uplo_entry(a, p, q, uplo).re();
-    let two_a_pq = a_pq.clone() + a_pq;
-    let c2 = c.clone() * c.clone();
-    let s2 = s.clone() * s.clone();
-    let cs = c * s;
-    let new_pp = (c2.clone() * a_pp.clone()) - (cs.clone() * two_a_pq.clone())
-        + (s2.clone() * a_qq.clone());
-    let new_qq = (s2 * a_pp) + (cs * two_a_pq) + (c2 * a_qq);
+    let two_a_pq = a_pq.saturating_add(&a_pq);
+    let c2 = c.saturating_mul(c);
+    let s2 = s.saturating_mul(s);
+    let cs = c.saturating_mul(s);
+    let new_pp = c2
+        .saturating_mul(&a_pp)
+        .saturating_sub(&cs.saturating_mul(&two_a_pq))
+        .saturating_add(&s2.saturating_mul(&a_qq));
+    let new_qq = s2
+        .saturating_mul(&a_pp)
+        .saturating_add(&cs.saturating_mul(&two_a_pq))
+        .saturating_add(&c2.saturating_mul(&a_qq));
     unsafe {
         a.set_unchecked(p, p, T::from_real(new_pp));
         a.set_unchecked(q, q, T::from_real(new_qq));
@@ -4363,11 +4616,16 @@ fn syev_apply_vectors<T: Scalar>(
     s_val: &T,
 ) {
     for k in 0..n {
-        let v_kp = work[k * n + p].clone();
-        let v_kq = work[k * n + q].clone();
-        work[k * n + p] =
-            (c_val.clone() * v_kp.clone()) - (s_val.clone() * v_kq.clone());
-        work[k * n + q] = (s_val.clone() * v_kp) + (c_val.clone() * v_kq);
+        let v_kp = work[k.saturating_mul(n).saturating_add(p)].clone();
+        let v_kq = work[k.saturating_mul(n).saturating_add(q)].clone();
+        work[k.saturating_mul(n).saturating_add(p)] = c_val
+            .clone()
+            .saturating_mul(&v_kp.clone())
+            .saturating_sub(&s_val.saturating_mul(&v_kq.clone()));
+        work[k.saturating_mul(n).saturating_add(q)] = s_val
+            .clone()
+            .saturating_mul(&v_kp)
+            .saturating_add(&c_val.saturating_mul(&v_kq));
     }
 }
 
@@ -4387,7 +4645,7 @@ fn syev_rotate<T, A>(
 {
     let (c_val, s_val, c, s) = syev_jacobi_cs(a, p, q, uplo);
     syev_apply_offdiag(a, n, p, q, uplo, &c_val, &s_val);
-    syev_apply_2x2(a, p, q, uplo, c, s);
+    syev_apply_2x2(a, p, q, uplo, &c, &s);
     if jobz == JobZ::Vectors {
         syev_apply_vectors(work, n, p, q, &c_val, &s_val);
     }
@@ -4401,7 +4659,7 @@ fn heev_jacobi_cs<T, A>(
     uplo: UpLo,
 ) -> Option<(T, T, T)>
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     T::Real: Float,
     A: DenseStorage<T>,
 {
@@ -4413,18 +4671,27 @@ where
         return None;
     }
     let one = <T::Real as One>::ONE;
-    let two = one.clone() + one.clone();
-    let theta = (a_qq - a_pp) / (two * abs_a_pq.clone());
+    let two = one.saturating_add(&one);
+    let theta = a_qq
+        .saturating_sub(&a_pp)
+        .saturating_div(&two.saturating_mul(&abs_a_pq));
     let t_real = if theta >= <T::Real as Zero>::ZERO {
-        one.clone()
-            / (theta.clone() + (one.clone() + theta.clone() * theta).sqrt())
+        one.saturating_div(&theta.saturating_add(
+            &(one.saturating_add(&theta.saturating_mul(&theta)).sqrt()),
+        ))
     } else {
-        -one.clone()
-            / (-theta.clone() + (one.clone() + theta.clone() * theta).sqrt())
+        one.saturating_neg().saturating_div(
+            &theta.saturating_neg().saturating_add(
+                &(one.saturating_add(&theta.saturating_mul(&theta)).sqrt()),
+            ),
+        )
     };
-    let c_real = one.clone() / (one + t_real.clone() * t_real.clone()).sqrt();
-    let s_phase = a_pq / T::from_real(abs_a_pq);
-    let s = s_phase * T::from_real(t_real * c_real.clone());
+    let c_real = one.saturating_div(
+        &one.saturating_add(&t_real.saturating_mul(&t_real)).sqrt(),
+    );
+    let s_phase = a_pq.saturating_div(&T::from_real(abs_a_pq));
+    let s =
+        s_phase.saturating_mul(&(T::from_real(t_real.saturating_mul(&c_real))));
     let c = T::from_real(c_real);
     let s_conj = s.clone().conj();
     Some((c, s, s_conj))
@@ -4450,9 +4717,14 @@ fn heev_apply_offdiag<T, A>(
             let a_kq = uplo_entry(a, k, q, uplo);
             // Right-multiply by R = [[c, s], [-s̄, c]]: column update
             // a'_*p = c a_*p − s̄ a_*q,  a'_*q = s a_*p + c a_*q.
-            let new_kp =
-                (c.clone() * a_kp.clone()) - (s_conj.clone() * a_kq.clone());
-            let new_kq = (s.clone() * a_kp) + (c.clone() * a_kq);
+            let new_kp = c
+                .clone()
+                .saturating_mul(&a_kp.clone())
+                .saturating_sub(&s_conj.saturating_mul(&a_kq.clone()));
+            let new_kq = s
+                .clone()
+                .saturating_mul(&a_kp)
+                .saturating_add(&c.saturating_mul(&a_kq));
             unsafe {
                 a.set_unchecked(k, p, new_kp.clone());
                 a.set_unchecked(k, q, new_kq.clone());
@@ -4479,14 +4751,44 @@ fn heev_apply_2x2<T, A>(
     let a_pp_val = uplo_entry(a, p, p, uplo);
     let a_qq_val = uplo_entry(a, q, q, uplo);
     let a_pq_val = uplo_entry(a, p, q, uplo);
-    let new_pp = (c.clone() * c.clone() * a_pp_val.clone())
-        - (c.clone() * s.clone() * a_pq_val.clone().conj())
-        - (c.clone() * s_conj.clone() * a_pq_val.clone())
-        + (s.clone() * s_conj.clone() * a_qq_val.clone());
-    let new_qq = (s.clone() * s_conj.clone() * a_pp_val)
-        + (c.clone() * s_conj.clone() * a_pq_val.clone())
-        + (c.clone() * s.clone() * a_pq_val.conj())
-        + (c.clone() * c.clone() * a_qq_val);
+    let new_pp = c
+        .clone()
+        .saturating_mul(&c.clone())
+        .saturating_mul(&a_pp_val)
+        .saturating_sub(
+            &c.clone()
+                .saturating_mul(&s.clone())
+                .saturating_mul(&a_pq_val.clone().conj()),
+        )
+        .saturating_sub(
+            &c.clone()
+                .saturating_mul(&s_conj.clone())
+                .saturating_mul(&a_pq_val),
+        )
+        .saturating_add(
+            &s.clone()
+                .saturating_mul(&s_conj.clone())
+                .saturating_mul(&a_qq_val),
+        );
+    let new_qq = s
+        .clone()
+        .saturating_mul(&s_conj.clone())
+        .saturating_mul(&a_pp_val)
+        .saturating_add(
+            &c.clone()
+                .saturating_mul(&s_conj.clone())
+                .saturating_mul(&a_pq_val.clone()),
+        )
+        .saturating_add(
+            &c.clone()
+                .saturating_mul(&s.clone())
+                .saturating_mul(&a_pq_val.conj()),
+        )
+        .saturating_add(
+            &c.clone()
+                .saturating_mul(&c.clone())
+                .saturating_mul(&a_qq_val),
+        );
     unsafe {
         a.set_unchecked(p, p, T::from_real(new_pp.re()));
         a.set_unchecked(q, q, T::from_real(new_qq.re()));
@@ -4509,11 +4811,16 @@ fn heev_apply_vectors<T: Scalar>(
     // `heev_apply_offdiag` so columns of `work` are eigenvectors of the
     // original operand (`A V = V Λ`). Do not conjugate-transpose afterward.
     for k in 0..n {
-        let v_kp = work[k * n + p].clone();
-        let v_kq = work[k * n + q].clone();
-        work[k * n + p] =
-            (c.clone() * v_kp.clone()) - (s_conj.clone() * v_kq.clone());
-        work[k * n + q] = (s.clone() * v_kp) + (c.clone() * v_kq);
+        let v_kp = work[k.saturating_mul(n).saturating_add(p)].clone();
+        let v_kq = work[k.saturating_mul(n).saturating_add(q)].clone();
+        work[k.saturating_mul(n).saturating_add(p)] = c
+            .clone()
+            .saturating_mul(&v_kp.clone())
+            .saturating_sub(&s_conj.saturating_mul(&v_kq.clone()));
+        work[k.saturating_mul(n).saturating_add(q)] = s
+            .clone()
+            .saturating_mul(&v_kp)
+            .saturating_add(&c.saturating_mul(&v_kq));
     }
 }
 
@@ -4528,7 +4835,7 @@ fn heev_rotate<T, A>(
     uplo: UpLo,
 ) -> bool
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     T::Real: Float,
     A: DenseStorageMut<T>,
 {
@@ -4561,13 +4868,17 @@ pub(crate) fn syev_impl<T, A>(
     max_iter: usize,
 ) -> LinAlgResult<()>
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     T::Real: Float,
     A: DenseStorageMut<T>,
 {
     let n = a.rows();
     debug_assert_eq!(n, a.cols());
-    let min_work = if jobz == JobZ::Vectors { n * n } else { n };
+    let min_work = if jobz == JobZ::Vectors {
+        n.saturating_mul(n)
+    } else {
+        n
+    };
     if w.len() < n || work.len() < min_work {
         return Err(LinAlgError::WorkspaceTooSmall);
     }
@@ -4579,7 +4890,7 @@ where
             break;
         }
         syev_rotate(a, work, n, p, q, jobz, uplo);
-        iter += 1;
+        iter = iter.saturating_add(1);
     }
     ev_store_w(a, w, n);
     ev_copy_vectors(jobz, a, work, n);
@@ -4601,13 +4912,17 @@ pub(crate) fn heev_impl<T, A>(
     max_iter: usize,
 ) -> LinAlgResult<()>
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     T::Real: Float,
     A: DenseStorageMut<T>,
 {
     let n = a.rows();
     debug_assert_eq!(n, a.cols());
-    let min_work = if jobz == JobZ::Vectors { n * n } else { n };
+    let min_work = if jobz == JobZ::Vectors {
+        n.saturating_mul(n)
+    } else {
+        n
+    };
     if w.len() < n || work.len() < min_work {
         return Err(LinAlgError::WorkspaceTooSmall);
     }
@@ -4621,7 +4936,7 @@ where
         if !heev_rotate(a, work, n, p, q, jobz, uplo) {
             break;
         }
-        iter += 1;
+        iter = iter.saturating_add(1);
     }
     ev_store_w(a, w, n);
     ev_copy_vectors(jobz, a, work, n);
@@ -4630,7 +4945,7 @@ where
 
 impl<T, A> lapack::Syev<T, A> for DefaultBlas
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     T::Real: Float,
     A: DenseStorageMut<T>,
 {
@@ -4643,13 +4958,20 @@ where
         work: &mut [T],
     ) -> LinAlgResult<()> {
         let n = a.rows();
-        syev_impl(jobz, uplo, a, w, work, 50 * n * n)
+        syev_impl(
+            jobz,
+            uplo,
+            a,
+            w,
+            work,
+            n.saturating_mul(50).saturating_mul(n),
+        )
     }
 }
 
 impl<T, A> lapack::Heev<T, A> for DefaultBlas
 where
-    T: Scalar + Div<Output = T>,
+    T: Scalar + SaturatingDiv,
     T::Real: Float,
     A: DenseStorageMut<T>,
 {
@@ -4662,6 +4984,13 @@ where
         work: &mut [T],
     ) -> LinAlgResult<()> {
         let n = a.rows();
-        heev_impl(jobz, uplo, a, w, work, 50 * n * n)
+        heev_impl(
+            jobz,
+            uplo,
+            a,
+            w,
+            work,
+            n.saturating_mul(50).saturating_mul(n),
+        )
     }
 }

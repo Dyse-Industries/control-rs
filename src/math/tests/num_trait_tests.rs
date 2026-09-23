@@ -18,7 +18,6 @@
 //! `CartesianQuadrant2D`, hyperbolic functions and the custom-`atan2`
 //! fallback tests exercise implementation details of FR-1's `Trig`/`Float`
 //! traits rather than a separately numbered requirement.
-#![allow(clippy::arithmetic_side_effects)]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod num_trait_test_suite {
@@ -29,7 +28,10 @@ pub mod num_trait_test_suite {
         AdditiveGroup, Conjugate, Exponential, Float, Integer, One, Radical,
         SaturatingInteger, Scalar, Signed, Trig, Unsigned, Zero,
     };
-    use crate::math::ops::{TryAdd, TryDiv, TryMul, TrySub};
+    use crate::math::ops::{
+        SaturatingAdd, SaturatingDiv, SaturatingMul, SaturatingNeg,
+        SaturatingSub, TryAdd, TryDiv, TryMul, TrySub,
+    };
 
     // --- Custom implementation for TestFloat to verify default atan2 logic ---
 
@@ -63,6 +65,31 @@ pub mod num_trait_test_suite {
     impl core::ops::Neg for TestFloat {
         type Output = Self;
         fn neg(self) -> Self {
+            Self(-self.0)
+        }
+    }
+    impl SaturatingAdd for TestFloat {
+        fn saturating_add(&self, v: &Self) -> Self {
+            Self(self.0 + v.0)
+        }
+    }
+    impl SaturatingSub for TestFloat {
+        fn saturating_sub(&self, v: &Self) -> Self {
+            Self(self.0 - v.0)
+        }
+    }
+    impl SaturatingMul for TestFloat {
+        fn saturating_mul(&self, v: &Self) -> Self {
+            Self(self.0 * v.0)
+        }
+    }
+    impl SaturatingDiv for TestFloat {
+        fn saturating_div(&self, v: &Self) -> Self {
+            Self(self.0 / v.0)
+        }
+    }
+    impl SaturatingNeg for TestFloat {
+        fn saturating_neg(&self) -> Self {
             Self(-self.0)
         }
     }
@@ -164,51 +191,59 @@ pub mod num_trait_test_suite {
         _scalar_property_check::<T>();
     }
 
-    fn _check_additive_group_axioms<T: AdditiveGroup + core::fmt::Debug>(
+    fn _check_additive_group_axioms<
+        T: AdditiveGroup + SaturatingAdd + SaturatingSub + core::fmt::Debug,
+    >(
         a: &T,
     ) {
         // Identity: a + 0 = a
-        assert_eq!(a.clone() + T::zero(), *a);
+        assert_eq!(a.saturating_add(&T::zero()), *a);
         // Inverse: a - a = 0
-        assert_eq!(a.clone() - a.clone(), T::ZERO);
+        assert_eq!(a.saturating_sub(&a.clone()), T::ZERO);
     }
 
-    fn _check_integer_axioms<T: Integer + core::fmt::Debug>(a: T, b: T, c: T) {
+    fn _check_integer_axioms<
+        T: Integer + SaturatingAdd + SaturatingMul + core::fmt::Debug,
+    >(
+        a: &T,
+        b: &T,
+        c: &T,
+    ) {
         // Identity: a + 0 = a
-        assert_eq!(a.clone() + T::zero(), a);
+        assert_eq!(a.saturating_add(&T::zero()), *a);
         // Identity: a * 1 = a
-        assert_eq!(a.clone() * T::one(), a);
+        assert_eq!(a.saturating_mul(&T::one()), *a);
         // Associativity: (a + b) + c = a + (b + c)
         assert_eq!(
-            (a.clone() + b.clone()) + c.clone(),
-            a.clone() + (b.clone() + c.clone())
+            a.saturating_add(b).saturating_add(c),
+            a.saturating_add(&b.saturating_add(c))
         );
         // Distributivity: a * (b + c) = a*b + a*c
-        let left = a.clone() * (b.clone() + c.clone());
-        let right = (a.clone() * b) + (a * c);
+        let left = a.saturating_mul(&b.saturating_add(c));
+        let right = a.saturating_mul(b).saturating_add(&a.saturating_mul(c));
         assert_eq!(left, right);
-        assert_eq!(T::ONE + T::ONE, T::TWO);
+        assert_eq!(T::ONE.saturating_add(&T::ONE), T::TWO);
     }
 
     fn _check_float_axioms<T: Float + TrySub + TryMul + core::fmt::Debug>(
-        a: T,
-        b: T,
-        c: T,
+        a: &T,
+        b: &T,
+        c: &T,
     ) {
         // Identity: a + 0 = a
-        assert_almost_eq!(a.clone() + T::zero(), a);
+        assert_almost_eq!(a.saturating_add(&T::zero()), *a);
         // Identity: a * 1 = a
-        assert_almost_eq!(a.clone() * T::one(), a);
+        assert_almost_eq!(a.saturating_mul(&T::one()), *a);
         // Associativity: (a + b) + c = a + (b + c)
         assert_almost_eq!(
-            (a.clone() + b.clone()) + c.clone(),
-            a.clone() + (b.clone() + c.clone())
+            a.saturating_add(b).saturating_add(c),
+            a.saturating_add(&b.saturating_add(c))
         );
         // Distributivity: a * (b + c) = a*b + a*c
-        let left = a.clone() * (b.clone() + c.clone());
-        let right = (a.clone() * b) + (a * c);
+        let left = a.saturating_mul(&b.saturating_add(c));
+        let right = a.saturating_mul(b).saturating_add(&a.saturating_mul(c));
         assert_almost_eq!(left, right);
-        let two = T::ONE + T::ONE;
+        let two = T::ONE.saturating_add(&T::ONE);
         assert_almost_eq!(T::from_const::<2>(), two);
         assert_almost_eq!(T::from_usize(2), two);
     }
@@ -216,8 +251,8 @@ pub mod num_trait_test_suite {
     fn _radical_property_check<
         T: Radical + Float + TrySub + TryMul + core::fmt::Debug,
     >() {
-        let two = T::ONE + T::ONE;
-        assert_almost_eq!(T::sqrt(two.clone() + two.clone()), two);
+        let two = T::ONE.saturating_add(&T::ONE);
+        assert_almost_eq!(T::sqrt(two.saturating_add(&two.clone())), two);
     }
 
     #[allow(clippy::eq_op)]
@@ -226,14 +261,14 @@ pub mod num_trait_test_suite {
     >() {
         // NaN is produced generically via 0/0, matching the IEEE-754 total
         // division `Float` relies on rather than a dedicated NAN constant.
-        let nan = T::ZERO / T::ZERO;
+        let nan = T::ZERO.saturating_div(&T::ZERO);
         assert_almost_eq!(T::sqrt(T::ONE.neg()), nan);
     }
 
     fn _exponential_property_check<
         T: Exponential + Float + TrySub + TryMul + core::fmt::Debug,
     >() {
-        let two = T::ONE + T::ONE;
+        let two = T::ONE.saturating_add(&T::ONE);
         assert_almost_eq!(<T as Exponential>::exp(T::ONE), T::E);
         assert_almost_eq!(<T as Exponential>::ln(T::E), T::ONE);
         assert_almost_eq!(
@@ -242,37 +277,40 @@ pub mod num_trait_test_suite {
         );
         assert_almost_eq!(
             <T as Exponential>::pow(two.clone(), two.clone()),
-            two.clone() + two
+            two.saturating_add(&two)
         );
     }
 
     fn _trig_property_check<
         T: Trig + Float + TrySub + TryMul + core::fmt::Debug,
     >() {
-        let two = T::ONE + T::ONE;
+        let two = T::ONE.saturating_add(&T::ONE);
         assert_almost_eq!(<T as Trig>::cos(T::PI), T::ONE.neg());
         assert_almost_eq!(<T as Trig>::sin(T::PI), T::ZERO);
         assert_almost_eq!(<T as Trig>::tan(T::ZERO), T::ZERO);
-        assert_almost_eq!(<T as Trig>::acos(T::ZERO), T::PI / two.clone());
+        assert_almost_eq!(
+            <T as Trig>::acos(T::ZERO),
+            T::PI.saturating_div(&two)
+        );
         assert_almost_eq!(<T as Trig>::asin(T::ZERO), T::ZERO);
         assert_almost_eq!(
             <T as Trig>::atan(T::ONE),
-            T::PI / (two.clone() + two.clone())
+            T::PI.saturating_div(&two.saturating_add(&two))
         );
         assert_almost_eq!(<T as Float>::atan2(T::ZERO, T::ZERO), T::ZERO);
         assert_almost_eq!(<T as Float>::atan2(T::ZERO, T::ONE), T::ZERO);
         assert_almost_eq!(<T as Float>::atan2(T::ZERO, T::ONE.neg()), T::PI);
         assert_almost_eq!(
             <T as Float>::atan2(T::ONE, T::ONE),
-            T::PI / (two.clone() + two.clone())
+            T::PI.saturating_div(&two.saturating_add(&two))
         );
         assert_almost_eq!(
             <T as Float>::atan2(T::ONE, T::ZERO),
-            T::PI / two.clone()
+            T::PI.saturating_div(&two)
         );
         assert_almost_eq!(
             <T as Float>::atan2(T::ONE.neg(), T::ZERO),
-            T::PI.neg() / two
+            T::PI.neg().saturating_div(&two)
         );
     }
 
@@ -281,12 +319,12 @@ pub mod num_trait_test_suite {
         // NaN/Infinity are produced generically via total IEEE-754 division
         // (0/0, 1/0) rather than dedicated NAN/INF constants (`Float`
         // deliberately carries neither — see `num-traits-design.md`).
-        let nan = T::ZERO / T::ZERO;
-        let inf = T::ONE / T::ZERO;
+        let nan = T::ZERO.saturating_div(&T::ZERO);
+        let inf = T::ONE.saturating_div(&T::ZERO);
         assert_ne!(nan.clone(), nan);
         assert_eq!(inf.clone(), inf);
-        let two = T::ONE + T::ONE;
-        assert_almost_eq!(T::epsilon() / two, T::ZERO);
+        let two = T::ONE.saturating_add(&T::ONE);
+        assert_almost_eq!(T::epsilon().saturating_div(&two), T::ZERO);
 
         _radical_property_check::<T>();
         _exponential_property_check::<T>();
@@ -343,17 +381,17 @@ pub mod num_trait_test_suite {
     /// Verifies commutative, associative, distributive and identity axioms
     /// of the Integer trait (FR-2 of `num-traits-design.md`).
     fn test_num_trait_integer_axioms() {
-        _check_integer_axioms(3_i8, 4_i8, 5_i8);
-        _check_integer_axioms(0_i16, 10_i16, 5_i16);
-        _check_integer_axioms(3_u8, 4_u8, 5_u8);
+        _check_integer_axioms(&3_i8, &4_i8, &5_i8);
+        _check_integer_axioms(&0_i16, &10_i16, &5_i16);
+        _check_integer_axioms(&3_u8, &4_u8, &5_u8);
     }
 
     #[cfg_attr(test, test)]
     /// Verifies commutative, associative, distributive and identity axioms
     /// of the Float trait (FR-2 of `num-traits-design.md`).
     fn test_num_trait_float_axioms() {
-        _check_float_axioms(2.0f32, 3.0f32, 4.0f32);
-        _check_float_axioms(2.0f64, 3.0f64, 4.0f64);
+        _check_float_axioms(&2.0f32, &3.0f32, &4.0f32);
+        _check_float_axioms(&2.0f64, &3.0f64, &4.0f64);
     }
 
     #[cfg_attr(test, test)]

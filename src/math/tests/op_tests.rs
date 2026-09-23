@@ -14,15 +14,15 @@ pub mod op_test_suite {
         ArithmeticError,
         num_traits::{Integer, SaturatingInteger, Signed},
         ops::{
-            Div, Neg, Rem, SaturatingAdd, SaturatingMul, SaturatingSub, Shl,
-            Shr, TryAdd, TryDiv, TryMul, TryNeg, TryRem, TryShl, TryShr,
-            TrySub, WrappingAdd, WrappingMul, WrappingSub,
+            Div, Neg, Rem, SaturatingAdd, SaturatingDiv, SaturatingMul,
+            SaturatingNeg, SaturatingSub, Shl, Shr, TryAdd, TryDiv, TryMul,
+            TryNeg, TryRem, TryShl, TryShr, TrySub, WrappingAdd, WrappingMul,
+            WrappingSub,
         },
     };
 
     // --- Helper functions for try addition/subtraction/multiplication/division/remainder/negation/shifting ---
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn _signed_saturating_add_int_checks<
         T: Integer + SaturatingInteger + Signed + SaturatingAdd + core::fmt::Debug,
     >(
@@ -30,11 +30,11 @@ pub mod op_test_suite {
         lhs: T,
         expected: T,
     ) {
-        assert_eq!(T::MIN.saturating_add(&(-T::ONE)), T::MIN);
+        assert_eq!(T::MIN.saturating_add(&T::ONE.saturating_neg()), T::MIN);
         _unsigned_saturating_add_int_checks(rhs, lhs, expected);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_saturating_add_int_checks<
         T: Integer + SaturatingInteger + SaturatingAdd + core::fmt::Debug,
     >(
@@ -48,7 +48,7 @@ pub mod op_test_suite {
         assert_eq!(T::MIN.saturating_add(&T::MIN), T::MIN);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _signed_wrapping_add_int_checks<
         T: Integer + Signed + WrappingAdd + core::fmt::Debug,
     >(
@@ -59,12 +59,12 @@ pub mod op_test_suite {
         assert_eq!(T::MIN.wrapping_add(&(T::ONE.neg())), T::MAX);
         assert_eq!(T::MAX.wrapping_add(&T::ONE), T::MIN);
         assert_eq!(T::MAX.wrapping_add(&T::ONE), T::MIN);
-        assert_eq!(T::MAX.wrapping_add(&T::MAX), -T::TWO);
+        assert_eq!(T::MAX.wrapping_add(&T::MAX), T::TWO.saturating_neg());
         assert_eq!(T::MIN.wrapping_add(&T::MIN), T::ZERO);
         assert_eq!(lhs.wrapping_add(&rhs), expected);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_wrapping_add_int_checks<
         T: Integer + WrappingAdd + core::fmt::Debug,
     >(
@@ -74,12 +74,12 @@ pub mod op_test_suite {
     ) {
         assert_eq!(T::MAX.wrapping_add(&T::ONE), T::MIN);
         assert_eq!(T::MAX.wrapping_add(&T::ONE), T::MIN);
-        assert_eq!(T::MAX.wrapping_add(&T::MAX), T::MAX - T::ONE);
+        assert_eq!(T::MAX.wrapping_add(&T::MAX), T::MAX.wrapping_sub(&T::ONE));
         assert_eq!(T::MIN.wrapping_add(&T::MIN), T::ZERO);
         assert_eq!(lhs.wrapping_add(&rhs), expected);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _signed_try_add_int_checks<
         T: Integer + Signed + TryAdd + core::fmt::Debug + PartialEq,
     >(
@@ -89,10 +89,13 @@ pub mod op_test_suite {
     ) {
         assert_eq!(lhs.try_add(&rhs), Ok(expected));
         assert_eq!(T::MAX.try_add(&T::ONE), Err(ArithmeticError::Overflow));
-        assert_eq!(T::MIN.try_add(&(-T::ONE)), Err(ArithmeticError::Overflow));
+        assert_eq!(
+            T::MIN.try_add(&T::ONE.saturating_neg()),
+            Err(ArithmeticError::Overflow)
+        );
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_try_add_int_checks<
         T: Integer + TryAdd + core::fmt::Debug + PartialEq,
     >(
@@ -104,7 +107,7 @@ pub mod op_test_suite {
         assert_eq!(T::MAX.try_add(&T::ONE), Err(ArithmeticError::Overflow));
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _signed_try_sub_int_checks<
         T: Integer + TrySub + core::fmt::Debug + PartialEq,
     >(
@@ -116,7 +119,7 @@ pub mod op_test_suite {
         assert_eq!(T::MIN.try_sub(&T::ONE), Err(ArithmeticError::Overflow));
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_try_sub_int_checks<
         T: Integer + TrySub + core::fmt::Debug + PartialEq,
     >(
@@ -128,7 +131,7 @@ pub mod op_test_suite {
         assert_eq!(T::MIN.try_sub(&T::ONE), Err(ArithmeticError::Overflow));
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _signed_saturating_sub_int_checks<
         T: Integer + SaturatingInteger + Signed + SaturatingSub + core::fmt::Debug,
     >(
@@ -136,11 +139,11 @@ pub mod op_test_suite {
         lhs: T,
         expected: T,
     ) {
-        assert_eq!(T::MAX.saturating_sub(&(-T::ONE)), T::MAX);
+        assert_eq!(T::MAX.saturating_sub(&T::ONE.saturating_neg()), T::MAX);
         _unsigned_saturating_sub_int_checks(rhs, lhs, expected);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_saturating_sub_int_checks<
         T: Integer + SaturatingInteger + SaturatingSub + core::fmt::Debug,
     >(
@@ -152,7 +155,6 @@ pub mod op_test_suite {
         assert_eq!(T::MIN.saturating_sub(&T::ONE), T::MIN);
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn _signed_wrapping_sub_int_checks<
         T: Integer + Signed + WrappingSub + core::fmt::Debug,
     >(
@@ -160,11 +162,11 @@ pub mod op_test_suite {
         lhs: T,
         expected: T,
     ) {
-        assert_eq!(T::MAX.wrapping_sub(&(-T::ONE)), T::MIN);
+        assert_eq!(T::MAX.wrapping_sub(&T::ONE.saturating_neg()), T::MIN);
         _unsigned_wrapping_sub_int_checks(rhs, lhs, expected);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_wrapping_sub_int_checks<
         T: Integer + WrappingSub + core::fmt::Debug + PartialEq,
     >(
@@ -176,7 +178,6 @@ pub mod op_test_suite {
         assert_eq!(T::MIN.wrapping_sub(&T::ONE), T::MAX);
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_mul_int_checks<
         T: Integer + TryMul + core::fmt::Debug + PartialEq,
     >(
@@ -187,7 +188,7 @@ pub mod op_test_suite {
         _unsigned_try_mul_int_checks(rhs, lhs, expected);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_try_mul_int_checks<
         T: Integer + TryMul + core::fmt::Debug + PartialEq,
     >(
@@ -199,7 +200,6 @@ pub mod op_test_suite {
         assert_eq!(T::MAX.try_mul(&T::TWO), Err(ArithmeticError::Overflow));
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn _signed_saturating_mul_int_checks<
         T: Integer
             + SaturatingInteger
@@ -216,7 +216,7 @@ pub mod op_test_suite {
         _unsigned_saturating_mul_int_checks(rhs, lhs, expected);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_saturating_mul_int_checks<
         T: Integer
             + SaturatingInteger
@@ -232,7 +232,6 @@ pub mod op_test_suite {
         assert_eq!(T::MAX.saturating_mul(&T::TWO), T::MAX);
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn _signed_wrapping_mul_int_checks<
         T: Integer + Signed + WrappingMul + core::fmt::Debug + PartialEq,
     >(
@@ -240,11 +239,11 @@ pub mod op_test_suite {
         lhs: T,
         expected: T,
     ) {
-        assert_eq!(T::MAX.wrapping_mul(&T::TWO), -T::TWO);
+        assert_eq!(T::MAX.wrapping_mul(&T::TWO), T::TWO.saturating_neg());
         _unsigned_wrapping_mul_int_checks(rhs, lhs, expected);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_wrapping_mul_int_checks<
         T: Integer + WrappingMul + core::fmt::Debug + PartialEq,
     >(
@@ -255,7 +254,6 @@ pub mod op_test_suite {
         assert_eq!(lhs.wrapping_mul(&rhs), expected);
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_div_int_checks<
         T: Integer
             + Signed
@@ -268,11 +266,14 @@ pub mod op_test_suite {
         lhs: T,
         expected: T,
     ) {
-        assert_eq!(T::MIN.try_div(&(-T::ONE)), Err(ArithmeticError::Overflow));
+        assert_eq!(
+            T::MIN.try_div(&T::ONE.saturating_neg()),
+            Err(ArithmeticError::Overflow)
+        );
         _unsigned_try_div_int_checks(rhs, lhs, expected);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_try_div_int_checks<
         T: Integer + Div<T, Output = T> + TryDiv + core::fmt::Debug + PartialEq,
     >(
@@ -287,7 +288,6 @@ pub mod op_test_suite {
         assert_eq!(T::MAX.try_div(&T::ONE), Ok(T::MAX));
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_rem_int_checks<
         T: Integer
             + Signed
@@ -305,7 +305,7 @@ pub mod op_test_suite {
         _unsigned_try_rem_int_checks(rhs, lhs, expected);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_try_rem_int_checks<
         T: Integer + TryRem + Rem<T, Output = T> + core::fmt::Debug + PartialEq,
     >(
@@ -319,7 +319,6 @@ pub mod op_test_suite {
         assert!(result);
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_neg_int_checks<
         T: Integer + Signed + TryNeg + core::fmt::Debug + PartialEq + Copy,
     >(
@@ -331,7 +330,6 @@ pub mod op_test_suite {
         assert_eq!(T::MIN.try_neg(), Err(ArithmeticError::Overflow));
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_shl_int_checks<
         T: Integer + Shl<u32, Output = T> + TryShl + core::fmt::Debug + PartialEq,
     >(
@@ -342,7 +340,7 @@ pub mod op_test_suite {
         _unsigned_try_shl_int_checks(val, expected, bits);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_try_shl_int_checks<
         T: Integer + Shl<u32, Output = T> + TryShl + core::fmt::Debug + PartialEq,
     >(
@@ -354,7 +352,6 @@ pub mod op_test_suite {
         assert_eq!(val.try_shl(bits), Err(ArithmeticError::Overflow));
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn _signed_try_shr_int_checks<
         T: Integer + Shr<u32, Output = T> + TryShr + core::fmt::Debug + PartialEq,
     >(
@@ -364,7 +361,7 @@ pub mod op_test_suite {
         _unsigned_try_shr_int_checks(val, bits);
     }
 
-    #[allow(clippy::arithmetic_side_effects, clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value)]
     fn _unsigned_try_shr_int_checks<
         T: Integer + Shr<u32, Output = T> + TryShr + core::fmt::Debug + PartialEq,
     >(
@@ -807,5 +804,97 @@ pub mod op_test_suite {
         _unsigned_try_shr_int_checks(16_u16, 16);
         _unsigned_try_shr_int_checks(32_u32, 32);
         _unsigned_try_shr_int_checks(64_usize, usize::BITS);
+    }
+
+    fn _signed_saturating_div_neg_checks<
+        T: Integer
+            + SaturatingInteger
+            + Signed
+            + SaturatingDiv
+            + SaturatingNeg
+            + core::fmt::Debug,
+    >(
+        seven: &T,
+    ) {
+        let neg_seven = seven.saturating_neg();
+        // Division by zero saturates toward the sign of the numerator.
+        assert_eq!(seven.saturating_div(&T::ZERO), T::MAX);
+        assert_eq!(neg_seven.saturating_div(&T::ZERO), T::MIN);
+        assert_eq!(T::ZERO.saturating_div(&T::ZERO), T::ZERO);
+        // The single overflowing quotient MIN / -1 saturates to MAX.
+        assert_eq!(T::MIN.saturating_div(&T::ONE.saturating_neg()), T::MAX);
+        // In-range quotients truncate toward zero.
+        assert_eq!(
+            seven.saturating_div(&T::TWO),
+            T::ONE.saturating_add(&T::TWO)
+        );
+        assert_eq!(
+            neg_seven.saturating_div(&T::TWO),
+            T::ONE.saturating_add(&T::TWO).saturating_neg()
+        );
+        // Negation saturates only at MIN.
+        assert_eq!(T::MIN.saturating_neg(), T::MAX);
+        assert_eq!(T::MAX.saturating_neg(), T::MIN.saturating_add(&T::ONE));
+        assert_eq!(T::ZERO.saturating_neg(), T::ZERO);
+    }
+
+    fn _unsigned_saturating_div_checks<
+        T: Integer + SaturatingInteger + SaturatingDiv + core::fmt::Debug,
+    >(
+        seven: &T,
+    ) {
+        assert_eq!(seven.saturating_div(&T::ZERO), T::MAX);
+        assert_eq!(T::ZERO.saturating_div(&T::ZERO), T::ZERO);
+        assert_eq!(T::MAX.saturating_div(&T::ONE), T::MAX);
+        assert_eq!(
+            seven.saturating_div(&T::TWO),
+            T::ONE.saturating_add(&T::TWO)
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies the `SaturatingDiv`/`SaturatingNeg` contract for signed integers:
+    /// `x / 0` saturates by the sign of `x`, `0 / 0 = 0` and `MIN / -1 = MAX`.
+    fn test_ops_saturating_div_neg_signed_integers() {
+        _signed_saturating_div_neg_checks(&7_i8);
+        _signed_saturating_div_neg_checks(&7_i16);
+        _signed_saturating_div_neg_checks(&7_i32);
+        _signed_saturating_div_neg_checks(&7_i64);
+        _signed_saturating_div_neg_checks(&7_i128);
+        _signed_saturating_div_neg_checks(&7_isize);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies the `SaturatingDiv` contract for unsigned integers: `x / 0`
+    /// saturates to `MAX` for `x != 0` and `0 / 0 = 0`.
+    fn test_ops_saturating_div_unsigned_integers() {
+        _unsigned_saturating_div_checks(&7_u8);
+        _unsigned_saturating_div_checks(&7_u16);
+        _unsigned_saturating_div_checks(&7_u32);
+        _unsigned_saturating_div_checks(&7_u64);
+        _unsigned_saturating_div_checks(&7_u128);
+        _unsigned_saturating_div_checks(&7_usize);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies that `SaturatingDiv`/`SaturatingNeg` keep IEEE-754 semantics
+    /// for floats: division by zero yields `±inf` or `NaN`.
+    fn test_ops_saturating_div_neg_floats() {
+        let pos_inf = SaturatingDiv::saturating_div(&1.0_f32, &0.0);
+        assert!(pos_inf.is_infinite() && pos_inf.is_sign_positive());
+        let neg_inf = SaturatingDiv::saturating_div(&-1.0_f32, &0.0);
+        assert!(neg_inf.is_infinite() && neg_inf.is_sign_negative());
+        assert!(SaturatingDiv::saturating_div(&0.0_f32, &0.0).is_nan());
+        assert_eq!(
+            SaturatingDiv::saturating_div(&7.0_f64, &2.0).to_bits(),
+            3.5_f64.to_bits()
+        );
+        assert_eq!(
+            SaturatingNeg::saturating_neg(&f64::MAX).to_bits(),
+            f64::MIN.to_bits()
+        );
+        let neg_of_inf = SaturatingNeg::saturating_neg(&f64::INFINITY);
+        assert!(neg_of_inf.is_infinite() && neg_of_inf.is_sign_negative());
+        assert!(SaturatingNeg::saturating_neg(&0.0_f32).is_sign_negative());
     }
 }

@@ -130,7 +130,7 @@ factors, `tan` for Tustin pre-warping) project onto `T::Real`, which the
 analytic traits `Radical`, `Exponential` and `Trig` cover
 (`num-traits-design.md` §4.1). `T: Float` is `f32`/`f64` only and is not a
 bound that admits `Complex<T>` (FR-5), so those sites bind
-`T: Scalar + Div` with `T::Real: Trig` rather than `T: Float`.
+`T: Scalar + SaturatingDiv` with `T::Real: Trig` rather than `T: Float`.
 
 ---
 
@@ -573,7 +573,7 @@ is made independently by `transfer-function-design.md` §6 for
   is a common, compile-time-knowable, immediately resolvable win. A sparse or
   companion-form $A$ is a different question and stays deferred.
 - **Analytic Scalar Bounds**: §4.8/§4.9's transcendental sites (matrix
-  exponential scaling, Tustin pre-warping) bind `T: Scalar + Div` with
+  exponential scaling, Tustin pre-warping) bind `T: Scalar + SaturatingDiv` with
   `T::Real: Radical`/`Trig` rather than `T: Float`, which `num-traits-design.md`
   FR-5 restricts to `f32`/`f64`. Projecting onto `T::Real` keeps those paths
   open to `Complex<T>` plants.
@@ -709,3 +709,4 @@ is made independently by `transfer-function-design.md` §6 for
 | 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-5 artifact is `test_similarity_transform_poles_and_step`; FR-3 includes `test_feedback_singular_loop_matrix`.                |
 | 1.10     | August 31, 2026 | @MitchellDScott | Added harold multi-source cross-validation oracle and updated validation crate paths.                                                 |
 | 1.11      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` (SciPy oracle) and listed the cases not yet cross-validated. |
+| 1.12      | September 23, 2026 | @MitchellDScott | Field bounds use `T: Scalar + SaturatingDiv` (`num-traits-design.md` FR-6). |

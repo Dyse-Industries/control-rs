@@ -27,10 +27,12 @@ fixed quantization step $\Delta = 2^{-\text{SHIFT}}$ (ARM, 1996; Spiteri,
 - **FR-2 — Binary Power-of-Two Scale**: A value with scale `SHIFT` is
   `raw · 2^(−SHIFT)`. Adjacent values differ by a constant `Δ = 2^(−SHIFT)`.
   Decimal (power-of-ten) scales are out of scope.
-- **FR-3 — Total Saturating Arithmetic**: `Add`, `Sub`, `Mul` and `Neg` always
-  return a value of the type. Overflow saturates to min or max; it does not wrap
-  or panic. Overflow detection is provided via the `math::ops` `Try*` traits,
-  which return `Result`.
+- **FR-3 — Total Saturating Arithmetic**: `Add`, `Sub`, `Mul`, `Div` and `Neg`
+  always return a value of the type, and each equals the matching `math::ops`
+  `Saturating*` method. Overflow saturates to min or max; it does not wrap or
+  panic. Division by zero returns `MAX` for a positive numerator, `MIN` for a
+  negative one and zero for `0 / 0`. Overflow and division-by-zero detection
+  is provided via the `math::ops` `Try*` traits, which return `Result`.
 - **FR-4 — Exact Product Rescale**: `Mul` forms the full product in a wider
   integer, then rescales to `SHIFT`. A same-width multiply is not used.
 - **FR-5 — Scale Conversion**: `rescale` converts `Fixed<Repr, Q>` to
@@ -270,6 +272,23 @@ flowchart LR
 _Figure 2: Four-step widening multiplication path ensuring full intermediate
 precision prior to convergent rounding and saturating narrowing._
 
+##### Division
+
+Dividing two values of scale $2^{-\text{SHIFT}}$ cancels the scale, so the
+numerator is pre-shifted to keep $\text{SHIFT}$ fractional bits:
+
+$$q_{\text{raw}} = \operatorname{round}\left(\frac{a_{\text{raw}} \cdot 2^{\text{SHIFT}}}{b_{\text{raw}}}\right)$$
+
+The magnitudes are formed in `u128`: $|a_{\text{raw}}| < 2^{64}$ and
+$\text{SHIFT} \le 64$, so the shifted numerator is exact at every width.
+The quotient rounds ties to even, the same convergent rounding as `Mul`
+(§4.3, next subsection), then takes the sign $\operatorname{sgn}(a) \cdot
+\operatorname{sgn}(b)$ and narrows. `SaturatingDiv` (and `Div`) clamp an
+out-of-range quotient to the bound of its sign, including
+$\text{MIN} / (-1)$, and map $b = 0$ to `MAX`, `MIN` or zero by the sign of
+$a$ (FR-3). `TryDiv` returns `DivisionByZero` for $b = 0$ and `Overflow`
+for an out-of-range quotient.
+
 ##### Rescaling & Convergent Rounding
 
 Right-shifting the widened product discards fractional bits. Narrowing applies
@@ -505,6 +524,12 @@ of method-level traits. This design inherits that decision.
 2. **Saturation Oracles**: `MAX + ONE == MAX`, `MIN - ONE == MIN`,
    `MAX * TWO == MAX` and `Neg` at `MIN` saturate rather than wrap or panic
    (FR-3). The `Try*` forms return the error arm on the same inputs.
+   Division: `x / ZERO` is `MAX`, `MIN` or zero by the sign of `x`,
+   `MIN / -ONE == MAX`, and `TryDiv` separates `DivisionByZero` from
+   `Overflow`; quotient ties round to even at `SHIFT = 1`, and the widest
+   `Repr` (`i64`, `u64`) divides `MAX / MAX` to exactly `ONE`
+   (`test_division_saturating_and_fallible`,
+   `test_unsigned_division_saturating`).
 3. **Product Exactness** (proptest, host): for random raw pairs, the
    §4.3 result equals the `f64` reference product rounded to the grid with
    round-ties-to-even, with error bounded by `DELTA/2`. This is the oracle
@@ -572,7 +597,9 @@ A signed product tie (raw product $-3$, `SHIFT = 1`) rounds to $-2$
 
 `Fixed<Repr, SHIFT>` is a single-field struct over `Repr` and
 monomorphizes to the bare integer (NFR-1). `Add`, `Sub` and `Neg` are one
-saturating integer instruction. `Mul` is a widening multiply, a
+saturating integer instruction. `Div` is a `u128` shift and divide with a
+remainder test for rounding, the most expensive operation on the type. `Mul`
+is a widening multiply, a
 round-ties-to-even rescale (per IEEE, 2019; AMD, 2024) and a saturating narrow:
 more than a floating-point
 multiply on a part with an FPU, and far less than the software floating-point
@@ -625,7 +652,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | Phase                                    | Description                                                                                                                                                                                               | Estimated Effort |
 |:-----------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------:|
 | **Phase 1: Representation & Core Type**  | Implement `Fixed<Repr, SHIFT>`, `Quantized` alias, sealed `FixedRepr` trait for `i8`–`i64` / `u8`–`u64`, `from_bits`/`to_bits`/`from_num`/`to_num`, and Q-format aliases.                                 |      Medium      |
-| **Phase 2: Total Saturating Arithmetic** | Implement saturating `Add`, `Sub`, `Neg`, widening `Mul` with convergent rounding, `rescale`, and fallible `Try*` ops.                                                                                    |      Medium      |
+| **Phase 2: Total Saturating Arithmetic** | Implement saturating `Add`, `Sub`, `Neg`, widening `Mul` and pre-shifted `Div` with convergent rounding, `rescale`, and fallible `Try*` ops.                                                               |      Medium      |
 | **Phase 3: Numeric Trait Integration**   | Implement sealed `OneRepresentable` / `TwoRepresentable` markers and their macro enumeration (§4.4), then `Zero`, `One`, `Conjugate`, `Scalar`, `Signed`, and `SaturatingInteger` gated on those markers. |      Medium      |
 | **Phase 4: Verification Suite**          | Implement unit tests, proptest oracles, `compile_fail` doctests, memory footprint assertions, and `#[ets_suite]` verification.                                                                            |      Medium      |
 | **Phase 5: Downstream Model Validation** | Validate generic instantiation in matrix and tensor kernels across control toolboxes.                                                                                                                     |      Small       |
@@ -640,6 +667,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | 1.1      | August 24, 2026 | @MitchellDScott | Convergent rounding & architecture: grounded rescaling in IEEE 754-2019/DSP standards and established `Fixed` with `Quantized` alias.     |
 | 1.2      | August 25, 2026 | @MitchellDScott | Representability gating: established sealed `OneRepresentable` / `TwoRepresentable` marker traits with compile-time failure verification. |
 | 1.3      | August 31, 2026 | @MitchellDScott | Dim trait bound integration: formalize type-level `DimMax` bounds, streamline `FixedRepr`, and unify compile-time scale gating.           |
+| 1.4      | September 23, 2026 | @MitchellDScott | Division: `Div`, `DivAssign`, `SaturatingDiv` and `TryDiv` with a pre-shifted `u128` quotient and ties-to-even rounding (FR-3, §4.3). |
 
 ---
 

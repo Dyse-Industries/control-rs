@@ -1,5 +1,6 @@
 //! Common Digital Signal Processing Operations
 
+use crate::math::ops::{SaturatingAdd, SaturatingMul, SaturatingSub};
 use crate::math::{
     Bijection, ConversionError, ConversionResult, Map,
     complex_num::Complex,
@@ -51,8 +52,6 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
     /// # Safety
     /// Uses pointer reads/writes; indices stay in `0..N` because `N` is a power
     /// of two and the butterfly loops are bounded by `stage_len` and `step`.
-    // Case-by-case: Arithmetic side effects are unavoidable for Cooley-Tukey Radix-2 FFT.
-    #[allow(clippy::arithmetic_side_effects)]
     fn fft_complex<const N: usize>(data: ComplexSliceMut<'_, T, N>) {
         debug_assert!(N.is_power_of_two(), "FFT length must be a power of two");
 
@@ -65,30 +64,33 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
             }
             let mut m = N >> 1;
             while m >= 1 && j >= m {
-                j -= m;
+                j = j.saturating_sub(m);
                 m >>= 1;
             }
-            j += m;
+            j = j.saturating_add(m);
         }
 
         // 2. Cooley-Tukey Radix-2 Butterfly
         // Processes the data in log2(N) stages.
         let ptr = data.as_mut_ptr();
-        let two_pi = T::PI * (T::ONE + T::ONE);
+        let two_pi = T::PI.saturating_mul(&T::ONE.saturating_add(&T::ONE));
         let mut stage_len = 1;
         while stage_len < N {
             let step = stage_len << 1;
 
             // Calculate the angular step for this stage
-            let angle = -two_pi.clone() / T::from_usize(step);
+            let angle = two_pi
+                .clone()
+                .saturating_neg()
+                .saturating_div(&T::from_usize(step));
             let w_step = Complex::new(angle.clone().cos(), angle.sin());
 
             for m in (0..N).step_by(step) {
                 let mut w = Complex::new(T::ONE, T::ZERO);
 
                 for i in 0..stage_len {
-                    let even_idx = m + i;
-                    let odd_idx = m + i + stage_len;
+                    let even_idx = m.saturating_add(i);
+                    let odd_idx = m.saturating_add(i).saturating_add(stage_len);
 
                     unsafe {
                         // Butterfly calculation:
@@ -97,15 +99,16 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
                         let even = ptr.add(even_idx).read();
                         let odd = ptr.add(odd_idx).read();
 
-                        let twiddled_odd = w.clone() * odd.clone();
+                        let twiddled_odd = w.saturating_mul(&odd.clone());
 
                         ptr.add(even_idx)
-                            .write(even.clone() + twiddled_odd.clone());
-                        ptr.add(odd_idx).write(even - twiddled_odd.clone());
+                            .write(even.saturating_add(&twiddled_odd.clone()));
+                        ptr.add(odd_idx)
+                            .write(even.saturating_sub(&twiddled_odd.clone()));
                     }
 
                     // Update twiddle factor for the next element in the group
-                    w = w * w_step.clone();
+                    w = w.saturating_mul(&w_step.clone());
                 }
             }
             stage_len = step;
@@ -132,9 +135,8 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
 
         for (i, val) in temp_output.iter().enumerate() {
             if let Some(out) = output.get_mut(i) {
-                // Case-by-case: Float division is unavoidable here.
-                #[allow(clippy::arithmetic_side_effects)]
-                let val_divided = val.clone().conj().re / n_t.clone();
+                let val_divided =
+                    val.clone().conj().re.saturating_div(&n_t.clone());
                 *out = val_divided;
             }
         }
@@ -158,8 +160,6 @@ pub trait Convolution<T: Scalar> {
     /// `input_len + kernel_len - 1`.
     // Performance: Direct indexing is used to bypass bounds checking in performance-critical convolution loops.
     #[allow(clippy::indexing_slicing)]
-    // Case-by-case: Arithmetic side effects are unavoidable for convolution math.
-    #[allow(clippy::arithmetic_side_effects)]
     fn convolve_input(
         input: &[T],
         kernel: &[T],
@@ -172,7 +172,8 @@ pub trait Convolution<T: Scalar> {
             return Ok(());
         }
 
-        let expected_len = input_len + kernel_len - 1;
+        let expected_len =
+            input_len.saturating_add(kernel_len).saturating_sub(1);
         if output.len() < expected_len {
             return Err(ConversionError::DimensionMismatch);
         }
@@ -182,11 +183,14 @@ pub trait Convolution<T: Scalar> {
             let mut sum = T::ZERO;
 
             // Determine the valid range for k to ensure indices stay within bounds
-            let k_min = n.saturating_sub(kernel_len - 1);
-            let k_max = n.min(input_len - 1);
+            let k_min = n.saturating_sub(kernel_len.saturating_sub(1));
+            let k_max = n.min(input_len.saturating_sub(1));
 
             for k in k_min..=k_max {
-                sum = sum + input[k].clone() * kernel[n - k].clone();
+                sum = sum
+                    .saturating_add(&(input[k].clone()).saturating_mul(
+                        &(kernel[n.saturating_sub(k)].clone()),
+                    ));
             }
 
             output[n] = sum;

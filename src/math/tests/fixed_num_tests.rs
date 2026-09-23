@@ -1,5 +1,4 @@
 //! Fixed-point number mathematical ETS and unit test suite.
-#![allow(clippy::arithmetic_side_effects)]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 /// Unit and ETS test suite for fixed-point number operations.
@@ -12,8 +11,8 @@ pub mod fixed_num_test_suite {
         },
         num_traits::{Conjugate, One, SaturatingInteger, Scalar, Signed, Zero},
         ops::{
-            SaturatingAdd, SaturatingMul, SaturatingSub, TryAdd, TryMul,
-            TryNeg, TrySub,
+            SaturatingAdd, SaturatingDiv, SaturatingMul, SaturatingSub, TryAdd,
+            TryDiv, TryMul, TryNeg, TrySub,
         },
     };
     use core::mem::{align_of, size_of};
@@ -28,7 +27,7 @@ pub mod fixed_num_test_suite {
             for &b in s.as_bytes() {
                 if let Some(slot) = self.buf.get_mut(self.len) {
                     *slot = b;
-                    self.len += 1;
+                    self.len = self.len.saturating_add(1);
                 }
             }
             Ok(())
@@ -278,6 +277,82 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// Verifies $Q$-scale division: exact quotients, the ties-to-even rounding
+    /// shared with `Mul` (FR-4), saturation at division by zero and overflow
+    /// (FR-3) and the `TryDiv` error split.
+    fn test_division_saturating_and_fallible() {
+        type Q8 = Fixed<i16, 8>;
+        type Q1 = Fixed<i16, 1>;
+        type Q32 = Fixed<i64, 32>;
+        type UQ32 = Fixed<u64, 32>;
+        let three = Q8::from_num(3.0);
+        let two = Q8::from_num(2.0);
+        assert_eq!((three / two).to_bits(), Q8::from_num(1.5).to_bits());
+        assert_eq!((-three / two).to_bits(), Q8::from_num(-1.5).to_bits());
+        assert_eq!(
+            (three / two).to_bits(),
+            three.saturating_div(&two).to_bits()
+        );
+        // 1/3 = 85.33 raw -> 85; 2/3 = 170.67 raw -> 171.
+        assert_eq!((Q8::ONE / three).to_bits(), 85);
+        assert_eq!((two / three).to_bits(), 171);
+
+        // Division by zero saturates by the numerator sign; 0 / 0 = 0.
+        assert_eq!((three / Q8::ZERO).to_bits(), Q8::MAX.to_bits());
+        assert_eq!((-three / Q8::ZERO).to_bits(), Q8::MIN.to_bits());
+        assert_eq!((Q8::ZERO / Q8::ZERO).to_bits(), 0);
+        assert_eq!(
+            three.try_div(&Q8::ZERO),
+            Err(ArithmeticError::DivisionByZero)
+        );
+
+        // MIN / -1 exceeds MAX and clamps; `TryDiv` reports the overflow.
+        let neg_one = -Q8::ONE;
+        assert_eq!((Q8::MIN / neg_one).to_bits(), Q8::MAX.to_bits());
+        assert_eq!(Q8::MIN.try_div(&neg_one), Err(ArithmeticError::Overflow));
+        assert_eq!(
+            three.try_div(&two).unwrap().to_bits(),
+            Q8::from_num(1.5).to_bits()
+        );
+        // MIN / 1 is exact: the negative magnitude reaches MIN without overflow.
+        assert_eq!((Q8::MIN / Q8::ONE).to_bits(), Q8::MIN.to_bits());
+
+        // Ties round to even: 1.5 / 2 = 0.75 is raw 1.5 at SHIFT = 1.
+        assert_eq!((Q1::from_bits(3) / Q1::from_bits(4)).to_bits(), 2);
+        assert_eq!((Q1::from_bits(-3) / Q1::from_bits(4)).to_bits(), -2);
+        assert_eq!((Q1::from_bits(1) / Q1::from_bits(4)).to_bits(), 0);
+
+        // Widest representation: the shifted numerator stays exact in u128.
+        assert_eq!((Q32::MAX / Q32::MAX).to_bits(), 1_i64 << 32);
+        assert_eq!((Q32::MIN / Q32::MAX).to_bits(), -(1_i64 << 32));
+        assert_eq!((UQ32::MAX / UQ32::MAX).to_bits(), 1_u64 << 32);
+
+        let mut acc = three;
+        acc /= two;
+        assert_eq!(acc.to_bits(), Q8::from_num(1.5).to_bits());
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies unsigned $Q$-scale division saturates to `MAX` on division by
+    /// zero and overflow, and that `0 / 0 = 0` (FR-3).
+    fn test_unsigned_division_saturating() {
+        type UQ4 = Fixed<u8, 4>;
+        let three = UQ4::from_num(3.0);
+        let two = UQ4::from_num(2.0);
+        assert_eq!((three / two).to_bits(), UQ4::from_num(1.5).to_bits());
+        assert_eq!((three / UQ4::ZERO).to_bits(), UQ4::MAX.to_bits());
+        assert_eq!((UQ4::ZERO / UQ4::ZERO).to_bits(), 0);
+        let big = UQ4::from_num(15.0);
+        let half = UQ4::from_num(0.5);
+        assert_eq!((big / half).to_bits(), UQ4::MAX.to_bits());
+        assert_eq!(big.try_div(&half), Err(ArithmeticError::Overflow));
+        assert_eq!(
+            three.try_div(&UQ4::ZERO),
+            Err(ArithmeticError::DivisionByZero)
+        );
+    }
+
+    #[cfg_attr(test, test)]
     /// Verifies gate separation between `OneRepresentable` and `TwoRepresentable` markers (§6.1.5).
     fn test_gate_separation_boundary_pin() {
         type Q14 = Fixed<i16, 14>;
@@ -365,6 +440,7 @@ pub mod fixed_num_test_suite {
 #[cfg(test)]
 mod fixed_num_property_tests {
     use crate::math::fixed_num::Fixed;
+    use crate::math::ops::SaturatingMul;
     use proptest::prelude::*;
 
     proptest! {
@@ -380,7 +456,7 @@ mod fixed_num_property_tests {
             type Q14 = Fixed<i16, 14>;
             let a = Q14::from_bits(raw_a);
             let b = Q14::from_bits(raw_b);
-            let prod = a * b;
+            let prod = a.saturating_mul(&b);
             let ref_prod = a.to_num() * b.to_num();
             let delta = 1.0 / f64::from(1u32 << 14);
             let half_delta = delta / 2.0 + 1e-12;

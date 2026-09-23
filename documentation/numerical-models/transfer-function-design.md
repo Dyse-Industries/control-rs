@@ -354,7 +354,7 @@ impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, R=N, C=Const<1>>, Sd: DenseStorage<T
         prewarp_frequency: Option<T>,
     ) -> ArrayTransferFunction<T, D, D>
     where
-        T: Scalar + Div<Output=T>,
+        T: Scalar + SaturatingDiv,
         T::Real: Trig,
     {
         // Direct algebraic expansion over numerator and denominator storage
@@ -363,7 +363,7 @@ impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, R=N, C=Const<1>>, Sd: DenseStorage<T
 }
 ```
 
-The bound is `T: Scalar + Div` with `T::Real: Trig` rather than `T: Float`:
+The bound is `T: Scalar + SaturatingDiv` with `T::Real: Trig` rather than `T: Float`:
 the pre-warping path needs `tan()`, which `Trig` supplies on the real
 projection, and the $\frac{2}{T_s}$ factor needs division, which `Scalar`
 deliberately excludes (`num-traits-design.md` FR-2, Alternative 3). Binding
@@ -637,7 +637,7 @@ coefficient error assertion |
   Horner evaluation (Graillat, Langlois, & Louvet, 2006) is the identified
   mitigation path.
 - **Analytic Scalar Bounds**: `to_discrete_tustin` (§4.9) binds
-  `T: Scalar + Div` with `T::Real: Trig`, following `num-traits-design.md` §4.1.
+  `T: Scalar + SaturatingDiv` with `T::Real: Trig`, following `num-traits-design.md` §4.1.
   Separately, `Convolution<T>` (`src/math/dsp.rs`) is currently declared over
   `T: Float`, which accepts a narrower scalar set than the ring arithmetic
   paths. Widening it to `T: Scalar` is tracked in `polynomial-design.md` §7.
@@ -723,3 +723,4 @@ coefficient error assertion |
 | 2.2      | September 1, 2026 | @MitchellDScott | Added FR-6: Generic pole and zero extraction `poles<const ORDER>()` and `zeros<const DEG>()` delegating to `Polynomial::roots()`.        |
 | 2.3      | September 1, 2026 | @MitchellDScott | Updated `poles()` and `zeros()` to return worst-case buffers `[Complex<T>; D]` and `[Complex<T>; N]` directly from type bounds without generic parameters. |
 | 2.4      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` (SciPy oracle) and listed the cases not yet cross-validated. |
+| 2.5      | September 23, 2026 | @MitchellDScott | Field bounds use `T: Scalar + SaturatingDiv` (`num-traits-design.md` FR-6). |

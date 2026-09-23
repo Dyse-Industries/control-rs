@@ -12,7 +12,6 @@
 #![allow(
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     // `l_ii`/`l_ij`/`u_ii`/`u_ij` below are standard linear-algebra index
     // notation, not accidentally similar English words.
     clippy::similar_names
@@ -95,7 +94,7 @@ where
     #[must_use]
     pub fn from_owned(m: Owned<T, D, D>) -> Option<Self> {
         for i in 0..D {
-            for j in (i + 1)..D {
+            for j in i.saturating_add(1)..D {
                 let above_diagonal = m.get(i, j).copied().unwrap_or(T::ZERO);
                 if above_diagonal.abs() >= T::epsilon() {
                     return None;
@@ -136,10 +135,10 @@ where
     #[must_use]
     pub fn from_owned(m: Owned<T, D, D>) -> Option<Self> {
         for i in 0..D {
-            for j in (i + 1)..D {
+            for j in i.saturating_add(1)..D {
                 let upper = m.get(i, j).copied().unwrap_or(T::ZERO);
                 let lower = m.get(j, i).copied().unwrap_or(T::ZERO);
-                if (upper - lower).abs() >= T::epsilon() {
+                if upper.saturating_sub(&lower).abs() >= T::epsilon() {
                     return None;
                 }
             }

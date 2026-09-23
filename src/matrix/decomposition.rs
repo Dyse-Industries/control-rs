@@ -20,7 +20,6 @@
 #![allow(
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     // `l_ik`/`l_jk`/`u_ii`/`d_j` etc. below are standard linear-algebra
     // index notation, not accidentally similar English words.
     clippy::similar_names,
@@ -135,7 +134,7 @@ where
         let mut row_exchanges = 0usize;
         for (k, &p) in pivots.iter().enumerate().take(D) {
             if p != k {
-                row_exchanges += 1;
+                row_exchanges = row_exchanges.saturating_add(1);
             }
         }
         Ok(row_exchanges)
@@ -273,10 +272,12 @@ where
         let mut det = T::ONE;
         for i in 0..D {
             // Safety: `i < D`.
-            det = det * unsafe { *self.data.storage.get_unchecked(i, i) };
+            det = det.saturating_mul(
+                &(unsafe { *self.data.storage.get_unchecked(i, i) }),
+            );
         }
         if self.row_exchanges % 2 == 1 {
-            det = T::ZERO - det;
+            det = T::ZERO.saturating_sub(&det);
         }
         det
     }
@@ -333,7 +334,9 @@ where
                 unsafe {
                     let l_jk = *data.storage.get_unchecked(j, k);
                     let d_k = *data.storage.get_unchecked(k, k);
-                    d_j = d_j - (l_jk * l_jk * d_k);
+                    d_j = d_j.saturating_sub(
+                        &l_jk.saturating_mul(&l_jk).saturating_mul(&d_k),
+                    );
                 }
             }
             if d_j.abs() < T::epsilon() {
@@ -344,7 +347,7 @@ where
                 *data.storage.get_unchecked_mut(j, j) = d_j;
             }
 
-            for i in (j + 1)..D {
+            for i in j.saturating_add(1)..D {
                 // Safety: `i < D`, `j < D`.
                 let mut num = unsafe { *data.storage.get_unchecked(i, j) };
                 for k in 0..j {
@@ -353,12 +356,15 @@ where
                         let l_ik = *data.storage.get_unchecked(i, k);
                         let l_jk = *data.storage.get_unchecked(j, k);
                         let d_k = *data.storage.get_unchecked(k, k);
-                        num = num - (l_ik * l_jk * d_k);
+                        num = num.saturating_sub(
+                            &l_ik.saturating_mul(&l_jk).saturating_mul(&d_k),
+                        );
                     }
                 }
                 // Safety: `i < D`, `j < D`.
                 unsafe {
-                    *data.storage.get_unchecked_mut(i, j) = num / d_j;
+                    *data.storage.get_unchecked_mut(i, j) =
+                        num.saturating_div(&d_j);
                 }
             }
         }
@@ -397,7 +403,7 @@ where
         let data = self.as_matrix_mut();
         B::potrf(UpLo::Lower, &mut data.storage)?;
         for i in 0..D {
-            for j in (i + 1)..D {
+            for j in i.saturating_add(1)..D {
                 unsafe {
                     *data.storage.get_unchecked_mut(i, j) = T::ZERO;
                 }
@@ -577,7 +583,7 @@ where
         Const<COLS>: Dim,
     {
         let r = self.r.as_matrix();
-        let tol = T::epsilon() * T::from_usize(128);
+        let tol = T::epsilon().saturating_mul(&T::from_usize(128));
         for i in 0..D {
             let r_ii = unsafe { *r.storage.get_unchecked(i, i) };
             if r_ii.abs() <= tol {
@@ -636,7 +642,9 @@ where
         let mut det = T::ONE;
         for i in 0..D {
             // Safety: `i < D`.
-            det = det * unsafe { *self.data.storage.get_unchecked(i, i) };
+            det = det.saturating_mul(
+                &(unsafe { *self.data.storage.get_unchecked(i, i) }),
+            );
         }
         det
     }
@@ -670,7 +678,7 @@ where
             for c in 0..COLS {
                 unsafe {
                     let z = *b.storage.get_unchecked(i, c);
-                    *b.storage.get_unchecked_mut(i, c) = z / d_i;
+                    *b.storage.get_unchecked_mut(i, c) = z.saturating_div(&d_i);
                 }
             }
         }

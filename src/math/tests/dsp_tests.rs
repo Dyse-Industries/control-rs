@@ -20,7 +20,7 @@ mod dsp_debug_contract_tests {
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod dsp_test_suite {
-    #![allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+    #![allow(clippy::indexing_slicing)]
 
     use crate::math::{
         Bijection, ConversionError, Map,
@@ -108,7 +108,7 @@ pub mod dsp_test_suite {
         let tol = _fft_tol(N);
         for k in 1..(N / 2) {
             let hi = spectrum[k];
-            let lo = spectrum[N - k];
+            let lo = spectrum[N.saturating_sub(k)];
             _assert_close(hi.re, lo.re, tol);
             _assert_close(hi.im, -lo.im, tol);
         }

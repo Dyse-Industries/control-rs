@@ -1,6 +1,5 @@
 //! # State-Space Unit and Invariant Tests
 #![allow(
-    clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
     clippy::similar_names,
     clippy::unwrap_used,
@@ -364,7 +363,7 @@ mod state_space_property_tests {
     use proptest::prelude::*;
 
     fn owned2(vals: &[f64]) -> Owned<f64, 2, 2> {
-        Owned::from_fn(|i, j| vals[j * 2 + i])
+        Owned::from_fn(|i, j| vals[j.saturating_mul(2).saturating_add(i)])
     }
 
     fn charpoly_2(a: &Owned<f64, 2, 2>) -> (f64, f64) {

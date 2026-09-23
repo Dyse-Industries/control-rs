@@ -21,7 +21,6 @@
 #![allow(
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     clippy::similar_names,
     clippy::needless_range_loop,
     clippy::type_complexity,
@@ -49,7 +48,9 @@ use crate::math::complex_num::Complex;
 use crate::math::dsp::{Convolution, DefaultDsp};
 use crate::math::num_traits::{Float, Scalar, Zero};
 use crate::math::num_types::{Const, Dim};
+use crate::math::ops::SaturatingMul;
 use crate::math::ops::{Add, Neg, Sub};
+use crate::math::ops::{SaturatingAdd, SaturatingDiv, SaturatingSub};
 use crate::math::storage::{
     ArrayStorage, ContiguousStorage, ContiguousStorageMut, DenseStorage,
     DenseStorageMut, Storage, StorageInit, StorageMut, StorageView,
@@ -241,11 +242,12 @@ where
         let deg = N.saturating_sub(1);
         for k in 0..deg {
             let r = roots[k];
-            coeffs[k + 1] = coeffs[k];
+            coeffs[k.saturating_add(1)] = coeffs[k];
             for i in (1..=k).rev() {
-                coeffs[i] = coeffs[i - 1] - r * coeffs[i];
+                coeffs[i] = (coeffs[i.saturating_sub(1)])
+                    .saturating_sub(&r.saturating_mul(&coeffs[i]));
             }
-            coeffs[0] = -r * coeffs[0];
+            coeffs[0] = r.saturating_neg().saturating_mul(&coeffs[0]);
         }
         Self::from_coefficients(coeffs)
     }
@@ -373,16 +375,16 @@ impl<T: Scalar + Copy, N: Dim, S: Storage<T, N, Const<1>>> Polynomial<T, N, S> {
         if cap == 0 {
             return T::ZERO;
         }
-        let mut result = match self.get(cap - 1) {
+        let mut result = match self.get(cap.saturating_sub(1)) {
             Some(&c) => c,
             None => T::ZERO,
         };
-        for i in (0..(cap - 1)).rev() {
+        for i in (0..cap.saturating_sub(1)).rev() {
             let c = match self.get(i) {
                 Some(&coeff) => coeff,
                 None => T::ZERO,
             };
-            result = result * x + c;
+            result = result.saturating_mul(&x).saturating_add(&c);
         }
         result
     }
@@ -394,16 +396,18 @@ impl<T: Scalar + Copy, N: Dim, S: Storage<T, N, Const<1>>> Polynomial<T, N, S> {
         if cap == 0 {
             return Complex::ZERO;
         }
-        let mut result = match self.get(cap - 1) {
+        let mut result = match self.get(cap.saturating_sub(1)) {
             Some(&c) => Complex::new(c, T::ZERO),
             None => Complex::ZERO,
         };
-        for i in (0..(cap - 1)).rev() {
+        for i in (0..cap.saturating_sub(1)).rev() {
             let c = match self.get(i) {
                 Some(&coeff) => coeff,
                 None => T::ZERO,
             };
-            result = result * x + Complex::new(c, T::ZERO);
+            result = result
+                .saturating_mul(&x)
+                .saturating_add(&Complex::new(c, T::ZERO));
         }
         result
     }
@@ -444,7 +448,11 @@ where
     fn sub(self, rhs: &'b Polynomial<T, Const<N>, S2>) -> Self::Output {
         let mut out = ArrayPolynomial::<T, N>::zero();
         DefaultBlas::axpy(T::ONE, &self.storage, &mut out.storage);
-        DefaultBlas::axpy(T::ZERO - T::ONE, &rhs.storage, &mut out.storage);
+        DefaultBlas::axpy(
+            T::ZERO.saturating_sub(&T::ONE),
+            &rhs.storage,
+            &mut out.storage,
+        );
         out
     }
 }
@@ -459,7 +467,11 @@ where
 
     fn neg(self) -> Self::Output {
         let mut out = ArrayPolynomial::<T, N>::zero();
-        DefaultBlas::axpy(T::ZERO - T::ONE, &self.storage, &mut out.storage);
+        DefaultBlas::axpy(
+            T::ZERO.saturating_sub(&T::ONE),
+            &self.storage,
+            &mut out.storage,
+        );
         out
     }
 }
@@ -482,13 +494,13 @@ where
             let factor = {
                 let mut f = T::ZERO;
                 for _ in 0..i {
-                    f = f + T::ONE;
+                    f = f.saturating_add(&T::ONE);
                 }
                 f
             };
             if let Some(&c) = self.get(i) {
-                if let Some(out_c) = out.get_mut(i - 1) {
-                    *out_c = factor * c;
+                if let Some(out_c) = out.get_mut(i.saturating_sub(1)) {
+                    *out_c = factor.saturating_mul(&c);
                 }
             }
         }
@@ -560,13 +572,13 @@ where
             let divisor = {
                 let mut d = T::ZERO;
                 for _ in 0..=(i) {
-                    d = d + T::ONE;
+                    d = d.saturating_add(&T::ONE);
                 }
                 d
             };
             if let Some(&c) = self.get(i) {
-                if let Some(target) = out.get_mut(i + 1) {
-                    *target = c / divisor;
+                if let Some(target) = out.get_mut(i.saturating_add(1)) {
+                    *target = c.saturating_div(&divisor);
                 }
             }
         }
@@ -612,15 +624,16 @@ where
 
         if deg_a >= deg_b {
             for i in (deg_b..=deg_a).rev() {
-                let factor = rem_coeffs[i] / b_lead;
-                let q_idx = i - deg_b;
+                let factor = rem_coeffs[i].saturating_div(&b_lead);
+                let q_idx = i.saturating_sub(deg_b);
                 if q_idx < Q {
                     quot_coeffs[q_idx] = factor;
                 }
                 for j in 0..=deg_b {
                     let c_b = divisor.get(j).copied().unwrap_or(T::ZERO);
-                    rem_coeffs[i - deg_b + j] =
-                        rem_coeffs[i - deg_b + j] - factor * c_b;
+                    rem_coeffs[i.saturating_sub(deg_b).saturating_add(j)] =
+                        (rem_coeffs[i.saturating_sub(deg_b).saturating_add(j)])
+                            .saturating_sub(&factor.saturating_mul(&c_b));
                 }
             }
         }
@@ -661,26 +674,28 @@ where
     where
         Const<DEG>: Dim,
     {
-        if DEG + 1 != N || DEG == 0 {
+        if DEG.saturating_add(1) != N || DEG == 0 {
             return Err(ConversionError::DimensionMismatch);
         }
         let leading = self.get(DEG).copied().unwrap_or(T::ZERO);
-        if (leading - T::ONE).abs() > T::epsilon() * (T::ONE + T::ONE) {
+        if leading.saturating_sub(&T::ONE).abs()
+            > T::epsilon().saturating_mul(&T::ONE.saturating_add(&T::ONE))
+        {
             return Err(ConversionError::NonMonicPolynomial);
         }
 
         let mut comp = Owned::<T, DEG, DEG>::zero();
         // Subdiagonal ones
         for i in 1..DEG {
-            if let Some(elem) = comp.get_mut(i, i - 1) {
+            if let Some(elem) = comp.get_mut(i, i.saturating_sub(1)) {
                 *elem = T::ONE;
             }
         }
         // Last column: -c_i
         for i in 0..DEG {
             let c = self.get(i).copied().unwrap_or(T::ZERO);
-            if let Some(elem) = comp.get_mut(i, DEG - 1) {
-                *elem = T::ZERO - c;
+            if let Some(elem) = comp.get_mut(i, DEG.saturating_sub(1)) {
+                *elem = T::ZERO.saturating_sub(&c);
             }
         }
         Ok(comp)
@@ -722,7 +737,10 @@ where
         if c1 == T::ZERO {
             return Err(RootError::ZeroLeadingCoefficient);
         }
-        Ok(Complex::new(-c0 / c1, T::ZERO))
+        Ok(Complex::new(
+            c0.saturating_neg().saturating_div(&c1),
+            T::ZERO,
+        ))
     }
 
     /// Solves for the two complex roots of a degree-2 quadratic polynomial $c_0 + c_1 x + c_2 x^2 = 0$.
@@ -751,28 +769,39 @@ where
             return Err(RootError::ZeroLeadingCoefficient);
         }
 
-        let two = T::ONE + T::ONE;
-        let four = two + two;
-        let disc = c1 * c1 - four * c0 * c2;
+        let two = T::ONE.saturating_add(&T::ONE);
+        let four = two.saturating_add(&two);
+        let disc = c1
+            .saturating_mul(&c1)
+            .saturating_sub(&four.saturating_mul(&c0).saturating_mul(&c2));
 
         if disc >= T::ZERO {
             let sqrt_disc = disc.sqrt();
-            let sgn_c1 = if c1 >= T::ZERO { T::ONE } else { -T::ONE };
-            let q = -(c1 + sgn_c1 * sqrt_disc) / two;
+            let sgn_c1 = if c1 >= T::ZERO {
+                T::ONE
+            } else {
+                T::ONE.saturating_neg()
+            };
+            let q = c1
+                .saturating_add(&sgn_c1.saturating_mul(&sqrt_disc))
+                .saturating_neg()
+                .saturating_div(&two);
 
-            let r1 = Complex::new(q / c2, T::ZERO);
+            let r1 = Complex::new(q.saturating_div(&c2), T::ZERO);
             let r2 = if q == T::ZERO {
                 Complex::new(T::ZERO, T::ZERO)
             } else {
-                Complex::new(c0 / q, T::ZERO)
+                Complex::new(c0.saturating_div(&q), T::ZERO)
             };
             Ok([r1, r2])
         } else {
-            let real_part = -c1 / (two * c2);
-            let imag_part = (-disc).sqrt() / (two * c2.abs());
+            let real_part =
+                c1.saturating_neg().saturating_div(&two.saturating_mul(&c2));
+            let imag_part = (disc.saturating_neg().sqrt())
+                .saturating_div(&two.saturating_mul(&c2.abs()));
             Ok([
                 Complex::new(real_part, imag_part),
-                Complex::new(real_part, -imag_part),
+                Complex::new(real_part, imag_part.saturating_neg()),
             ])
         }
     }
@@ -813,27 +842,40 @@ where
         let mut out = [Complex::new(T::ZERO, T::ZERO); N];
         let mut max_ratio = T::ZERO;
         for i in 0..deg {
-            let coeff = (*self.get(i).unwrap_or(&T::ZERO) / leading).abs();
+            let coeff = (*self.get(i).unwrap_or(&T::ZERO))
+                .saturating_div(&leading)
+                .abs();
             if coeff > max_ratio {
                 max_ratio = coeff;
             }
         }
-        let radius = T::ONE + max_ratio;
+        let radius = T::ONE.saturating_add(&max_ratio);
         let mut deg_t = T::ZERO;
         for _ in 0..deg {
-            deg_t = deg_t + T::ONE;
+            deg_t = deg_t.saturating_add(&T::ONE);
         }
         let pi = T::PI;
-        let two_pi = pi + pi;
-        let offset = pi / (deg_t + deg_t + deg_t + deg_t); // pi / 4*n
+        let two_pi = pi.saturating_add(&pi);
+        let offset = pi.saturating_div(
+            &deg_t
+                .saturating_add(&deg_t)
+                .saturating_add(&deg_t)
+                .saturating_add(&deg_t),
+        ); // pi / 4*n
 
         for k in 0..deg {
             let mut k_t = T::ZERO;
             for _ in 0..k {
-                k_t = k_t + T::ONE;
+                k_t = k_t.saturating_add(&T::ONE);
             }
-            let theta = (two_pi * k_t) / deg_t + offset;
-            out[k] = Complex::new(radius * theta.cos(), radius * theta.sin());
+            let theta = two_pi
+                .saturating_mul(&k_t)
+                .saturating_div(&deg_t)
+                .saturating_add(&offset);
+            out[k] = Complex::new(
+                radius.saturating_mul(&theta.cos()),
+                radius.saturating_mul(&theta.sin()),
+            );
         }
         out
     }
@@ -844,7 +886,12 @@ where
         deg: usize,
         leading: T,
     ) -> [Complex<T>; N] {
-        let tol = T::epsilon() * (T::ONE + T::ONE + T::ONE + T::ONE);
+        let tol = T::epsilon().saturating_mul(
+            &T::ONE
+                .saturating_add(&T::ONE)
+                .saturating_add(&T::ONE)
+                .saturating_add(&T::ONE),
+        );
         let max_iters = 80;
 
         for _ in 0..max_iters {
@@ -852,30 +899,41 @@ where
             let mut max_step = T::ZERO;
 
             for i in 0..deg {
-                let p_val = self.evaluate_complex(z[i])
-                    / Complex::new(leading, T::ZERO);
+                let p_val = self
+                    .evaluate_complex(z[i])
+                    .saturating_div(&Complex::new(leading, T::ZERO));
                 let mut denom = Complex::new(T::ONE, T::ZERO);
                 for j in 0..deg {
                     if i != j {
-                        let diff = z[i] - z[j];
+                        let diff = z[i].saturating_sub(&z[j]);
                         denom = Complex::new(
-                            denom.re * diff.re - denom.im * diff.im,
-                            denom.re * diff.im + denom.im * diff.re,
+                            denom.re.saturating_mul(&diff.re).saturating_sub(
+                                &denom.im.saturating_mul(&diff.im),
+                            ),
+                            denom.re.saturating_mul(&diff.im).saturating_add(
+                                &denom.im.saturating_mul(&diff.re),
+                            ),
                         );
                     }
                 }
-                let denom_mag = denom.re * denom.re + denom.im * denom.im;
-                if denom_mag > T::epsilon() * T::epsilon() {
-                    let delta = p_val / denom;
-                    let step_mag = delta.re * delta.re + delta.im * delta.im;
+                let denom_mag = denom
+                    .re
+                    .saturating_mul(&denom.re)
+                    .saturating_add(&denom.im.saturating_mul(&denom.im));
+                if denom_mag > T::epsilon().saturating_mul(&T::epsilon()) {
+                    let delta = p_val.saturating_div(&denom);
+                    let step_mag = delta
+                        .re
+                        .saturating_mul(&delta.re)
+                        .saturating_add(&delta.im.saturating_mul(&delta.im));
                     if step_mag > max_step {
                         max_step = step_mag;
                     }
-                    z_next[i] = z[i] - delta;
+                    z_next[i] = z[i].saturating_sub(&delta);
                 }
             }
             z = z_next;
-            if max_step < tol * tol {
+            if max_step < tol.saturating_mul(&tol) {
                 return z;
             }
         }
@@ -933,11 +991,17 @@ impl<T: Scalar + Copy> ArrayPolynomial<T, 4> {
     /// Cubic Hermite segment on $t \in [0, 1]$ from endpoints $(p_0, v_0)$, $(p_1, v_1)$.
     #[must_use]
     pub fn cubic(p0: T, p1: T, v0: T, v1: T) -> Self {
-        let three = T::ONE + T::ONE + T::ONE;
-        let two = T::ONE + T::ONE;
-        let dp = p1 - p0;
-        let a2 = three * dp - two * v0 - v1;
-        let a3 = two * (p0 - p1) + v0 + v1;
+        let three = T::ONE.saturating_add(&T::ONE).saturating_add(&T::ONE);
+        let two = T::ONE.saturating_add(&T::ONE);
+        let dp = p1.saturating_sub(&p0);
+        let a2 = three
+            .saturating_mul(&dp)
+            .saturating_sub(&two.saturating_mul(&v0))
+            .saturating_sub(&v1);
+        let a3 = two
+            .saturating_mul(&p0.saturating_sub(&p1))
+            .saturating_add(&v0)
+            .saturating_add(&v1);
         Self::from_coefficients([p0, v0, a2, a3])
     }
 }
@@ -946,27 +1010,38 @@ impl<T: Float + Copy> ArrayPolynomial<T, 6> {
     /// Quintic Hermite segment on $t \in [0, 1]$ from position, velocity, and acceleration.
     #[must_use]
     pub fn quintic(p0: T, p1: T, v0: T, v1: T, a0: T, a1: T) -> Self {
-        let two = T::ONE + T::ONE;
-        let half = T::ONE / two;
-        let three = two + T::ONE;
-        let four = two + two;
-        let six = three + three;
-        let seven = six + T::ONE;
-        let eight = four + four;
-        let ten = eight + two;
-        let fifteen = ten + four + T::ONE;
-        let dp = p1 - p0;
+        let two = T::ONE.saturating_add(&T::ONE);
+        let half = T::ONE.saturating_div(&two);
+        let three = two.saturating_add(&T::ONE);
+        let four = two.saturating_add(&two);
+        let six = three.saturating_add(&three);
+        let seven = six.saturating_add(&T::ONE);
+        let eight = four.saturating_add(&four);
+        let ten = eight.saturating_add(&two);
+        let fifteen = ten.saturating_add(&four).saturating_add(&T::ONE);
+        let dp = p1.saturating_sub(&p0);
         let c0 = p0;
         let c1 = v0;
-        let c2 = a0 * half;
-        let c3 =
-            ten * dp - six * v0 - four * v1 - (three * half) * a0 + half * a1;
-        let c4 = (T::ZERO - fifteen) * dp
-            + eight * v0
-            + seven * v1
-            + (three * half) * a0
-            - a1;
-        let c5 = six * dp - three * v0 - three * v1 - half * a0 + half * a1;
+        let c2 = a0.saturating_mul(&half);
+        let c3 = ten
+            .saturating_mul(&dp)
+            .saturating_sub(&six.saturating_mul(&v0))
+            .saturating_sub(&four.saturating_mul(&v1))
+            .saturating_sub(&three.saturating_mul(&half).saturating_mul(&a0))
+            .saturating_add(&half.saturating_mul(&a1));
+        let c4 = T::ZERO
+            .saturating_sub(&fifteen)
+            .saturating_mul(&dp)
+            .saturating_add(&eight.saturating_mul(&v0))
+            .saturating_add(&seven.saturating_mul(&v1))
+            .saturating_add(&three.saturating_mul(&half).saturating_mul(&a0))
+            .saturating_sub(&a1);
+        let c5 = six
+            .saturating_mul(&dp)
+            .saturating_sub(&three.saturating_mul(&v0))
+            .saturating_sub(&three.saturating_mul(&v1))
+            .saturating_sub(&half.saturating_mul(&a0))
+            .saturating_add(&half.saturating_mul(&a1));
         Self::from_coefficients([c0, c1, c2, c3, c4, c5])
     }
 }
@@ -978,8 +1053,8 @@ where
     /// Substitute $s = \frac{2}{T_s}\frac{z-1}{z+1}$ and clear $(z+1)^{N-1}$.
     #[must_use]
     pub fn compose_bilinear(&self, sample_time: T) -> Self {
-        let two = T::ONE + T::ONE;
-        let k = two / sample_time;
+        let two = T::ONE.saturating_add(&T::ONE);
+        let k = two.saturating_div(&sample_time);
         let n = N.saturating_sub(1);
         let mut out = [T::ZERO; N];
         for deg in 0..N {
@@ -990,16 +1065,25 @@ where
             let scale = {
                 let mut s = T::ONE;
                 for _ in 0..deg {
-                    s = s * k;
+                    s = s.saturating_mul(&k);
                 }
-                s * c
+                s.saturating_mul(&c)
             };
-            let zm1 = expand_linear::<T, N>(deg, T::ONE, T::ZERO - T::ONE);
+            let zm1 = expand_linear::<T, N>(
+                deg,
+                T::ONE,
+                T::ZERO.saturating_sub(&T::ONE),
+            );
             let zp1 =
                 expand_linear::<T, N>(n.saturating_sub(deg), T::ONE, T::ONE);
             for i in 0..N {
-                for j in 0..(N - i) {
-                    out[i + j] = out[i + j] + scale * zm1[i] * zp1[j];
+                for j in 0..N.saturating_sub(i) {
+                    out[i.saturating_add(j)] = (out[i.saturating_add(j)])
+                        .saturating_add(
+                            &scale
+                                .saturating_mul(&zm1[i])
+                                .saturating_mul(&zp1[j]),
+                        );
                 }
             }
         }
@@ -1021,9 +1105,10 @@ fn expand_linear<T: Float + Copy, const N: usize>(
     for _ in 0..power {
         let mut next = [T::ZERO; N];
         for i in 0..N {
-            next[i] = next[i] + coeffs[i] * b;
-            if i + 1 < N {
-                next[i + 1] = next[i + 1] + coeffs[i] * a;
+            next[i] = next[i].saturating_add(&coeffs[i].saturating_mul(&b));
+            if i.saturating_add(1) < N {
+                next[i.saturating_add(1)] = (next[i.saturating_add(1)])
+                    .saturating_add(&coeffs[i].saturating_mul(&a));
             }
         }
         coeffs = next;

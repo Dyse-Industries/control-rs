@@ -460,7 +460,6 @@ where
         }
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn run_test(
         &mut self,
         suite_id: u16,
@@ -756,9 +755,8 @@ mod tests {
     impl HostComms for MockComms {
         type Error = &'static str;
 
-        #[allow(clippy::arithmetic_side_effects)]
         fn flush(&mut self) -> Result<(), Self::Error> {
-            self.flush_count += 1;
+            self.flush_count = self.flush_count.saturating_add(1);
             Ok(())
         }
 

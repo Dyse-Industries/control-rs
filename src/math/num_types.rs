@@ -161,7 +161,6 @@ impl Dim for UTerm {
 }
 
 impl<U: Dim, B: Bit> Dim for UInt<U, B> {
-    #[allow(clippy::arithmetic_side_effects)]
     const USIZE: usize = U::USIZE * 2 + B::USIZE;
     type TypeNum = Self;
 }

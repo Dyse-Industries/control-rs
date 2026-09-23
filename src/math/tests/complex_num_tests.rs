@@ -5,7 +5,6 @@
 //! (and the fallible-arithmetic tests below) do transitively exercise
 //! `num-traits-design.md`'s **FR-3** — see `num_trait_tests.rs` for the
 //! primary `Scalar` coverage.
-#![allow(clippy::arithmetic_side_effects)]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
 /// Unit and ETS test suite for complex number operations.
@@ -18,12 +17,37 @@ pub mod complex_num_test_suite {
             complex_num::Complex64,
             num_traits::{One, Trig, Zero},
             ops::{
-                Neg, TryAdd, TryDiv, TryMul, TrySub, WrappingAdd, WrappingMul,
-                WrappingSub,
+                Neg, SaturatingDiv, SaturatingMul, SaturatingNeg, TryAdd,
+                TryDiv, TryMul, TrySub, WrappingAdd, WrappingMul, WrappingSub,
             },
         },
     };
     use core::mem;
+
+    #[cfg_attr(test, test)]
+    /// Verifies the saturating contract on `Complex<T>`: operators equal the
+    /// named saturating methods, and integer components clamp at their bounds.
+    fn test_complex_saturating_arithmetic() {
+        let z1 = Complex64::new(1.0, 2.0);
+        let z2 = Complex64::new(3.0, 4.0);
+        assert_eq!(z1.saturating_div(&z2), z1 / z2);
+        assert_eq!(z1.saturating_neg(), -z1);
+        assert_almost_eq!(z1.saturating_div(&z2).re, 0.44);
+        assert_almost_eq!(z1.saturating_div(&z2).im, 0.08);
+
+        // (100 + 100i)(2 + 0i): both components exceed i8::MAX and clamp.
+        let big = Complex::<i8>::new(100, 100);
+        let two = Complex::<i8>::new(2, 0);
+        assert_eq!(big.saturating_mul(&two), Complex::new(i8::MAX, i8::MAX));
+        assert_eq!(
+            Complex::<i8>::new(i8::MIN, 1).saturating_neg(),
+            Complex::new(i8::MAX, -1)
+        );
+        // Integer division by zero saturates component-wise by numerator sign.
+        let zero = Complex::<i8>::new(0, 0);
+        let q = big.saturating_div(&zero);
+        assert_eq!(q, Complex::new(0, 0));
+    }
 
     #[cfg_attr(test, test)]
     /// Verifies basic addition, subtraction, multiplication and division on complex floats.
@@ -133,9 +157,9 @@ pub mod complex_num_test_suite {
         let one = Complex::<f64>::one();
         let two = Complex::new(2.0, 0.0);
 
-        assert_eq!(zero.pow(zero), one);
-        assert_eq!(zero.pow(two), zero);
-        assert_eq!(one.pow(two), one);
+        assert_eq!(zero.pow(&zero), one);
+        assert_eq!(zero.pow(&two), zero);
+        assert_eq!(one.pow(&two), one);
     }
 
     #[cfg_attr(test, test)]
@@ -218,7 +242,7 @@ pub mod complex_num_test_suite {
     fn test_complex_construction_from_polar() {
         let r = 2.0_f32;
         let theta = f32::PI / 4.0_f32;
-        let z = Complex32::from_polar(r, theta);
+        let z = Complex32::from_polar(&r, &theta);
         let expected = r * (f32::PI / 4.0_f32).cos(); // Both re and im should be this
         assert_almost_eq!(z.re, expected);
         assert_almost_eq!(z.im, expected);
@@ -229,7 +253,7 @@ pub mod complex_num_test_suite {
     fn test_complex_polar_form_roundtrip() {
         let z = Complex64::new(3.0, 4.0);
         let (r, theta) = z.to_polar();
-        let z_reconstructed = Complex64::from_polar(r, theta);
+        let z_reconstructed = Complex64::from_polar(&r, &theta);
 
         assert_almost_eq!(z.re, z_reconstructed.re);
         assert_almost_eq!(z.im, z_reconstructed.im);

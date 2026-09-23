@@ -76,8 +76,8 @@
 
 use crate::math::CartesianQuadrant2D;
 use crate::math::ops::{
-    Add, Div, Mul, Neg, SaturatingAdd, SaturatingMul, SaturatingSub, Sub,
-    WrappingAdd, WrappingMul, WrappingSub,
+    Add, Div, Mul, Neg, SaturatingAdd, SaturatingDiv, SaturatingMul,
+    SaturatingNeg, SaturatingSub, Sub, WrappingAdd, WrappingMul, WrappingSub,
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -233,7 +233,9 @@ pub trait Unsigned: Sized {}
 /// Defines a set with a mathematical sign (signed integers and
 /// floating/fixed-point types). Values that implement `Neg` have a
 /// well-defined sign.
-pub trait Signed: AdditiveGroup + Neg<Output = Self> + PartialOrd {
+pub trait Signed:
+    AdditiveGroup + Neg<Output = Self> + SaturatingNeg + PartialOrd
+{
     /// Returns the absolute value.
     #[must_use]
     fn abs(self) -> Self;
@@ -257,15 +259,16 @@ pub trait Signed: AdditiveGroup + Neg<Output = Self> + PartialOrd {
 /// a domain-violation value (for example, `NaN`) rather than panicking, so the
 /// domain covers all of `Self`.
 pub trait Radical:
-    Clone + PartialEq + PartialOrd + Add<Output = Self> + Mul<Output = Self>
+    Clone + PartialEq + PartialOrd + SaturatingAdd + SaturatingMul
 {
     /// Computes the hypotenuse of a right triangle with legs `self` (`x`)
     /// and `y`: $\sqrt{x^2 + y^2}$.
     #[must_use]
-    // Case-by-case: Arithmetic side effects are unavoidable for generic hypotenuse formula.
-    #[allow(clippy::arithmetic_side_effects)]
     fn hypot(self, y: Self) -> Self {
-        ((self.clone() * self) + (y.clone() * y)).sqrt()
+        self.clone()
+            .saturating_mul(&self)
+            .saturating_add(&y.saturating_mul(&y))
+            .sqrt()
     }
     /// Computes the square root of a number.
     #[must_use]
@@ -348,7 +351,13 @@ pub trait Trig: Clone + PartialEq + PartialOrd {
 /// assert!(!is_significantly_different(1.00000001f32, 1.0f32));
 /// ```
 pub trait Float:
-    Scalar + Signed + Radical + Exponential + Trig + Div<Output = Self>
+    Scalar
+    + Signed
+    + Radical
+    + Exponential
+    + Trig
+    + Div<Output = Self>
+    + SaturatingDiv
 {
     /// Computes the four-quadrant inverse tangent of `self` (`y`) and `x`
     /// in radians.
@@ -375,22 +384,26 @@ pub trait Float:
     /// *Note: Many implementations return 0 for origin coordinates to avoid NaNs
     /// in real-time control loops.*
     #[must_use]
-    // Case-by-case: Arithmetic side effects are unavoidable for generic atan2 formula.
-    #[allow(clippy::arithmetic_side_effects)]
     fn atan2(self, x: Self) -> Self {
-        let two = Self::ONE + Self::ONE;
+        let two = Self::ONE.saturating_add(&Self::ONE);
         match CartesianQuadrant2D::from_coords(&x, &self) {
             CartesianQuadrant2D::Origin
             | CartesianQuadrant2D::PositiveXAxis
             | CartesianQuadrant2D::Undefined => Self::ZERO,
-            CartesianQuadrant2D::NegativeYAxis => -(Self::PI / two),
-            CartesianQuadrant2D::NegativeXAxis => Self::PI,
-            CartesianQuadrant2D::PositiveYAxis => Self::PI / two,
-            CartesianQuadrant2D::Q1 | CartesianQuadrant2D::Q4 => {
-                Self::atan(self / x)
+            CartesianQuadrant2D::NegativeYAxis => {
+                Self::PI.saturating_div(&two).saturating_neg()
             }
-            CartesianQuadrant2D::Q2 => Self::atan(self / x) + Self::PI,
-            CartesianQuadrant2D::Q3 => Self::atan(self / x) - Self::PI,
+            CartesianQuadrant2D::NegativeXAxis => Self::PI,
+            CartesianQuadrant2D::PositiveYAxis => Self::PI.saturating_div(&two),
+            CartesianQuadrant2D::Q1 | CartesianQuadrant2D::Q4 => {
+                Self::atan(self.saturating_div(&x))
+            }
+            CartesianQuadrant2D::Q2 => {
+                Self::atan(self.saturating_div(&x)).saturating_add(&Self::PI)
+            }
+            CartesianQuadrant2D::Q3 => {
+                Self::atan(self.saturating_div(&x)).saturating_sub(&Self::PI)
+            }
         }
     }
     /// Computes the hyperbolic cosine of the number.
@@ -409,11 +422,12 @@ pub trait Float:
     /// Because this implementation relies on `.exp()`, evaluating this function for
     /// large inputs results in rapid overflow to infinity (for example, around `x ~ 89.4` for `f32`).
     #[must_use]
-    // Case-by-case: Arithmetic side effects are unavoidable for generic cosh formula.
-    #[allow(clippy::arithmetic_side_effects)]
     fn cosh(self) -> Self {
-        let two = Self::ONE + Self::ONE;
-        (self.clone().exp() + (Self::ZERO - self).exp()) / two
+        let two = Self::ONE.saturating_add(&Self::ONE);
+        self.clone()
+            .exp()
+            .saturating_add(&(Self::ZERO.saturating_sub(&self).exp()))
+            .saturating_div(&two)
     }
     /// Returns the machine epsilon value for the type.
     fn epsilon() -> Self;
@@ -423,8 +437,6 @@ pub trait Float:
         Self::sum([Self::ONE; N])
     }
     /// Initiate self from the given usize.
-    // Case-by-case: Arithmetic side effects are unavoidable when converting usize to Self via generic fold.
-    #[allow(clippy::arithmetic_side_effects)]
     fn from_usize(n: usize) -> Self {
         (0..n).fold(Self::ZERO, |acc, _| acc.add(Self::ONE))
     }
@@ -448,17 +460,17 @@ pub trait Float:
     /// consider overriding this default with a Taylor series expansion or an `expm1`
     /// based approach for $|x| < 1$.
     #[must_use]
-    // Case-by-case: Arithmetic side effects are unavoidable for generic sinh formula.
-    #[allow(clippy::arithmetic_side_effects)]
     fn sinh(self) -> Self {
-        let two = Self::ONE + Self::ONE;
-        (self.clone().exp() - (Self::ZERO - self).exp()) / two
+        let two = Self::ONE.saturating_add(&Self::ONE);
+        self.clone()
+            .exp()
+            .saturating_sub(&(Self::ZERO.saturating_sub(&self).exp()))
+            .saturating_div(&two)
     }
     /// Sum the elements of an iterator.
-    // Case-by-case: Arithmetic side effects are unavoidable for generic sum of elements.
-    #[allow(clippy::arithmetic_side_effects)]
     fn sum<I: IntoIterator<Item = Self>>(iter: I) -> Self {
-        iter.into_iter().fold(Self::ZERO, |acc, x| acc + x)
+        iter.into_iter()
+            .fold(Self::ZERO, |acc, x| acc.saturating_add(&x))
     }
 }
 
@@ -466,12 +478,19 @@ pub trait Float:
 
 /// The unified target for control-loop arithmetic.
 ///
-/// `Zero + One + Sub + Mul + Conjugate`, implemented by every integer and float
-/// primitive, signed and unsigned, and `Complex<T>` where `T: Scalar<Real = T> + Neg`.
-/// Deliberately excludes `Div`: integer division is not total (`/0` panics,
-/// `i32::MIN / -1` overflows), so requiring it here would reintroduce the
-/// panic surface this hierarchy exists to remove. Division stays on `Float`,
-/// where IEEE-754 semantics make it total.
+/// `Zero + One + Sub + Mul + SaturatingAdd + SaturatingSub + SaturatingMul +
+/// Conjugate`, implemented by every integer and float primitive, signed and
+/// unsigned, `Fixed<Repr, SHIFT>` formats that represent one and `Complex<T>` where
+/// `T: Scalar<Real = T> + SaturatingNeg + PartialOrd`.
+///
+/// The saturating super traits are the overflow contract: library arithmetic
+/// on a generic `T: Scalar` calls `saturating_add`/`saturating_sub`/
+/// `saturating_mul`, so integers and fixed-point values clamp at `MIN`/`MAX`
+/// and floats keep IEEE-754 semantics (`±inf`, `NaN`). Nothing panics or wraps.
+///
+/// Deliberately excludes `Div`: the `/` operator is not total on integers
+/// (`/0` panics, `i32::MIN / -1` overflows). Kernels that divide bound
+/// `T: Scalar + SaturatingDiv`, which is total on every implementor.
 ///
 /// # Example
 /// ```
@@ -485,7 +504,14 @@ pub trait Float:
 /// assert_eq!(clamp_to_unit(5u32), 1);
 /// ```
 pub trait Scalar:
-    Zero + One + Sub<Output = Self> + Mul<Output = Self> + Conjugate
+    Zero
+    + One
+    + Sub<Output = Self>
+    + Mul<Output = Self>
+    + SaturatingAdd
+    + SaturatingSub
+    + SaturatingMul
+    + Conjugate
 {
     /// The associated real scalar type for norms, eigenvalues, and projection.
     /// Always ordered: clipping and 1-norms go through `Real`, not `Self`.
@@ -493,12 +519,12 @@ pub trait Scalar:
 
     /// Evaluates the squared modulus / Euclidean norm squared (`re^2 + im^2`),
     /// without requiring a square root.
-    // Case-by-case: Arithmetic side effects are unavoidable for generic abs2 modulus.
-    #[allow(clippy::arithmetic_side_effects)]
     fn abs2(&self) -> Self::Real {
         let r = self.re();
         let i = self.im();
-        r.clone() * r + i.clone() * i
+        r.clone()
+            .saturating_mul(&r)
+            .saturating_add(&i.saturating_mul(&i))
     }
 
     /// Restricts a value to a certain interval.
@@ -528,8 +554,6 @@ pub trait Scalar:
     /// Returns a number that represents the sign of self (`-ONE`, `ZERO`,
     /// or `ONE`); for unsigned types the negative branch is unreachable.
     #[must_use]
-    // Case-by-case: Arithmetic side effects are unavoidable for signum calculation.
-    #[allow(clippy::arithmetic_side_effects)]
     fn signum(self) -> Self
     where
         Self: PartialOrd,
@@ -537,7 +561,7 @@ pub trait Scalar:
         if self.is_zero() {
             Self::ZERO
         } else if self.lt(&Self::ZERO) {
-            Self::ZERO - Self::ONE
+            Self::ZERO.saturating_sub(&Self::ONE)
         } else {
             Self::ONE
         }
@@ -634,11 +658,9 @@ macro_rules! impl_scalar {
         impl Scalar for $type {
             type Real = Self;
 
-            // Case-by-case: Arithmetic side effects are unavoidable for primitive scalar abs2.
-            #[allow(clippy::arithmetic_side_effects)]
             #[inline(always)]
             fn abs2(&self) -> Self::Real {
-                *self * *self
+                SaturatingMul::saturating_mul(self, self)
             }
 
             #[inline(always)]

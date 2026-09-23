@@ -53,20 +53,19 @@ pub struct FailureBufWriter<'a> {
 }
 
 impl Write for FailureBufWriter<'_> {
-    #[allow(clippy::arithmetic_side_effects)]
     fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
         let bytes = s.as_bytes();
         let len = bytes.len();
         // Safe check to avoid writing past the end of `buf`.
-        if self.pos + len > self.buf.len() {
+        if self.pos.saturating_add(len) > self.buf.len() {
             return Err(::core::fmt::Error);
         }
         let dest = self
             .buf
-            .get_mut(self.pos..self.pos + len)
+            .get_mut(self.pos..self.pos.saturating_add(len))
             .ok_or(::core::fmt::Error)?;
         dest.copy_from_slice(bytes);
-        self.pos += len;
+        self.pos = self.pos.saturating_add(len);
         Ok(())
     }
 }
@@ -119,13 +118,14 @@ impl Write for FailureBufWriter<'_> {
 /// assert_eq!(suites[0].name, "s1");
 /// ```
 #[must_use]
-#[allow(clippy::arithmetic_side_effects)]
 pub unsafe fn get_suites(
     start: *const &'static SuiteDescriptor,
     end: *const &'static SuiteDescriptor,
 ) -> &'static [&'static SuiteDescriptor] {
-    let len = (end as usize - start as usize)
-        / ::core::mem::size_of::<&SuiteDescriptor>();
+    let len = (end as usize)
+        .saturating_sub(start as usize)
+        .checked_div(::core::mem::size_of::<&SuiteDescriptor>())
+        .unwrap_or(0);
     // SAFETY: The safety invariants of the function guarantee that `start` and `end` enclose a valid,
     // contiguous, initialized array of references to `SuiteDescriptor` instances in static memory.
     // Length is computed based on size of pointer offsets, which is safe to convert to a slice.
