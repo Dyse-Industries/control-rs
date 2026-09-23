@@ -197,9 +197,3 @@ pip install -r control-rs-verification/python3/requirements.txt
 cargo compare
 ```
 
-Install the pre-commit hook to format and lint before each commit:
-
-```bash
-cp scripts/git-hooks/pre-commit .git/hooks/pre-commit
-chmod +x .git/hooks/pre-commit
-```

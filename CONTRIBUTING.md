@@ -174,13 +174,6 @@ runs the same gates on every PR, across the supported toolchains from the
 MSRV (`1.89.0`) to beta. Some gates need extra tools or are Linux-only;
 see the Development Guide.
 
-Install the pre-commit hook to format and lint before each commit:
-
-```sh
-cp scripts/git-hooks/pre-commit .git/hooks/pre-commit
-chmod +x .git/hooks/pre-commit
-```
-
 ---
 
 ## 7. Pull requests
