@@ -171,7 +171,7 @@ where
 /// Solves `L * x = b` for a lower triangular `L` using a specific BLAS engine.
 ///
 /// # Errors
-/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `L` is
+/// Returns [`LinAlgError::SingularMatrix`](crate::math::LinAlgError::SingularMatrix) if any diagonal entry of `L` is
 /// within `T::epsilon()` of zero.
 #[allow(clippy::type_complexity)]
 pub fn solve_lower_triangular_with<
@@ -199,7 +199,7 @@ where
 /// Solves `L * x = b` for a lower triangular `L`, via forward substitution using the default BLAS engine.
 ///
 /// # Errors
-/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `L` is
+/// Returns [`LinAlgError::SingularMatrix`](crate::math::LinAlgError::SingularMatrix) if any diagonal entry of `L` is
 /// within `T::epsilon()` of zero.
 #[allow(clippy::type_complexity)]
 pub fn solve_lower_triangular<T: Float + Copy, const D: usize>(
@@ -215,7 +215,7 @@ where
 /// Solves `U * x = b` for an upper triangular `U` using a specific BLAS engine.
 ///
 /// # Errors
-/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `U` is
+/// Returns [`LinAlgError::SingularMatrix`](crate::math::LinAlgError::SingularMatrix) if any diagonal entry of `U` is
 /// within `T::epsilon()` of zero.
 #[allow(clippy::type_complexity)]
 pub fn solve_upper_triangular_with<
@@ -243,7 +243,7 @@ where
 /// Solves `U * x = b` for an upper triangular `U`, via back substitution using the default BLAS engine.
 ///
 /// # Errors
-/// Returns [`LinAlgError::SingularMatrix`] if any diagonal entry of `U` is
+/// Returns [`LinAlgError::SingularMatrix`](crate::math::LinAlgError::SingularMatrix) if any diagonal entry of `U` is
 /// within `T::epsilon()` of zero.
 #[allow(clippy::type_complexity)]
 pub fn solve_upper_triangular<T: Float + Copy, const D: usize>(

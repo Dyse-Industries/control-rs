@@ -153,7 +153,7 @@ fn qr_orthogonality_loss() -> f64 {
     sum_sq.sqrt()
 }
 
-/// Executes the matrix control-rs-verification kernel and writes `results/matrix.rust.h5`.
+/// Executes the matrix control-rs-verification kernel and writes `target/verification/matrix.rust.h5`.
 pub fn emit_container(output_path: &Path) -> Result<(), String> {
     let mut writer = H5Writer::new();
 

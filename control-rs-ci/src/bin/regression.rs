@@ -1,9 +1,11 @@
 //! Criterion performance regression evaluator and benchmark budget harness.
 //!
 //! Evaluates Criterion benchmark outputs against real-time latency budgets
-//! (e.g. <= 10 µs jitter for flight control loops) and statistical regression
-//! baselines. Always executes benchmarks prior to evaluation unless `--skip-bench`
-//! is explicitly provided.
+//! (for example, 10 µs jitter for flight control loops) and statistical
+//! regression baselines. Executes benchmarks prior to evaluation unless
+//! compare-only mode is requested (see `--help`). A Criterion `base/` baseline
+//! is optional: when the workflow has not restored one into the Criterion
+//! directory, only budgets are checked.
 
 #![allow(
     missing_docs,
@@ -54,7 +56,7 @@ struct BenchmarkEvaluation {
 struct CliOptions {
     bench_target: Option<String>,
     run_all: bool,
-    skip_bench: bool,
+    only_compare: bool,
     threshold_pct: f64,
     criterion_dir: Option<PathBuf>,
 }
@@ -63,7 +65,7 @@ fn parse_cli_args() -> Result<CliOptions, String> {
     let mut args = std::env::args().skip(1);
     let mut bench_target = None;
     let mut run_all = false;
-    let mut skip_bench = false;
+    let mut only_compare = false;
     let mut threshold_pct = 15.0; // 15% default noise tolerance
     let mut criterion_dir = None;
 
@@ -72,8 +74,8 @@ fn parse_cli_args() -> Result<CliOptions, String> {
             "--all" => {
                 run_all = true;
             }
-            "--skip-bench" => {
-                skip_bench = true;
+            "--only-compare" => {
+                only_compare = true;
             }
             "--bench" => {
                 if let Some(target) = args.next() {
@@ -113,7 +115,7 @@ fn parse_cli_args() -> Result<CliOptions, String> {
     Ok(CliOptions {
         bench_target,
         run_all,
-        skip_bench,
+        only_compare,
         threshold_pct,
         criterion_dir,
     })
@@ -125,7 +127,7 @@ fn print_help() {
          Options:\n  \
            --bench <NAME>        Run only the specified benchmark target (e.g. jitter, scaling)\n  \
            --all                 Run all workspace benchmark targets\n  \
-           --skip-bench          Skip running cargo bench and analyze existing Criterion artifacts\n  \
+           --only-compare        Do not run cargo bench; compare existing Criterion artifacts only\n  \
            --threshold <PCT>     Maximum acceptable performance regression percentage against baseline (default: 15.0)\n  \
            --criterion-dir <DIR> Custom Criterion output directory (defaults to target/criterion)\n  \
            -h, --help            Print help information"
@@ -170,9 +172,9 @@ fn format_duration(ns: f64) -> String {
 }
 
 fn run_benchmarks(root: &Path, opts: &CliOptions) -> Result<(), String> {
-    if opts.skip_bench {
+    if opts.only_compare {
         println!(
-            "Notice: Skipping benchmark execution (--skip-bench specified). Evaluating existing artifacts in target/criterion."
+            "Notice: Skipping benchmark execution (--only-compare specified). Evaluating existing artifacts in target/criterion."
         );
         return Ok(());
     }
@@ -298,7 +300,7 @@ fn evaluate_benchmark(
                 0.0
             };
 
-            // Avoid false alarms on sub-microsecond timer jitter: require delta > 50 ns
+            // Avoid false alarms on sub-microsecond timer jitter: require delta > 50 nanoseconds
             let is_reg =
                 delta > threshold_pct && (median_ns - base_median) > 50.0;
             if is_reg {

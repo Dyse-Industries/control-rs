@@ -82,7 +82,7 @@ ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
 
 [dev-dependencies]
 proptest = "1"
-control-rs-ci = { path = "control-rs-ci", version = "0.1.0" }
+control-rs-ci = { path = "control-rs-ci" }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 [[bench]]

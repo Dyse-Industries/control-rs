@@ -25,7 +25,7 @@ pip install -r control-rs-verification/python3/requirements.txt
 cargo compare
 
 # Specify custom configuration file and output directory
-cargo compare --config compare.toml --results-dir results/
+cargo compare --config compare.toml --results-dir target/verification/
 
 # Skip variant execution and evaluate pre-existing .h5 containers
 cargo compare --skip-run

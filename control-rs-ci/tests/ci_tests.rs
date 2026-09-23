@@ -52,6 +52,8 @@ fn test_config_parsing_defaults() {
             description: None,
             env: HashMap::new(),
             mode: None,
+            timeout_secs: None,
+            skip_exit_codes: Vec::new(),
         })
     );
     assert_eq!(
@@ -62,6 +64,8 @@ fn test_config_parsing_defaults() {
             description: None,
             env: HashMap::new(),
             mode: None,
+            timeout_secs: None,
+            skip_exit_codes: Vec::new(),
         })
     );
 }
@@ -129,7 +133,7 @@ fn test_generic_gate_compound_command() {
     let _ = fs::remove_dir_all(&tmp_dir);
     fs::create_dir_all(&out_dir).unwrap();
 
-    // Compound command "echo foo" with additional args ["bar"]
+    // Compound command "echo foo" with additional arguments `["bar"]`
     let gate = Gate::new(
         "compound_test",
         "echo foo",
@@ -313,6 +317,22 @@ fn test_cli_args_parsing() {
         vec!["gate".to_string(), "fmt".to_string(), "vale".to_string()];
     let pos_options = parse_args(&positional_args, "cargo gate");
     assert_eq!(pos_options.only_gates, vec!["fmt", "vale"]);
+
+    let group_args = vec![
+        "cargo-ci".to_string(),
+        "--group".to_string(),
+        "lint,audit".to_string(),
+    ];
+    let group_options = parse_args(&group_args, "cargo ci");
+    assert_eq!(group_options.groups, vec!["lint", "audit"]);
+
+    let short_group_args = vec![
+        "cargo-ci".to_string(),
+        "-g".to_string(),
+        "verify".to_string(),
+    ];
+    let short_group_options = parse_args(&short_group_args, "cargo ci");
+    assert_eq!(short_group_options.groups, vec!["verify"]);
 }
 
 #[test]
@@ -476,6 +496,8 @@ fn test_gate_definition_parsing() {
             description: Some("Compiles all targets".to_string()),
             env: HashMap::new(),
             mode: None,
+            timeout_secs: None,
+            skip_exit_codes: Vec::new(),
         })
     );
 
@@ -488,6 +510,8 @@ fn test_gate_definition_parsing() {
             description: None,
             env: HashMap::new(),
             mode: None,
+            timeout_secs: None,
+            skip_exit_codes: Vec::new(),
         })
     );
 }
@@ -589,7 +613,7 @@ fn test_build_all_gates_ordering_and_missing_check() {
     let names: Vec<&str> = gates.iter().map(|g| g.name()).collect();
     assert_eq!(names, vec!["fmt", "clippy", "valgrind"]);
 
-    // If an active gate is missing definition, build_all_gates returns an error
+    // If an active gate is missing definition, `build_all_gates` returns an error
     let missing_toml = r#"
         [runner]
         title = "test-ci"
@@ -600,4 +624,66 @@ fn test_build_all_gates_ordering_and_missing_check() {
     "#;
     let missing_config: GateConfig = toml::from_str(missing_toml).unwrap();
     assert!(build_all_gates(&missing_config).is_err());
+}
+
+#[test]
+fn test_cli_verbose_flag() {
+    use control_rs_ci::cli::parse_args;
+
+    let default_args = vec!["cargo-ci".to_string()];
+    assert!(!parse_args(&default_args, "cargo ci").verbose);
+
+    let long_args = vec!["cargo-ci".to_string(), "--verbose".to_string()];
+    assert!(parse_args(&long_args, "cargo ci").verbose);
+
+    let short_args = vec![
+        "cargo-ci".to_string(),
+        "-v".to_string(),
+        "--group".to_string(),
+        "lint".to_string(),
+    ];
+    let short_options = parse_args(&short_args, "cargo ci");
+    assert!(short_options.verbose);
+    assert_eq!(short_options.groups, vec!["lint"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_gate_echo_preserves_log_and_verdict() {
+    let tmp_dir = std::env::temp_dir().join("control_rs_ci_echo_test");
+    let out_dir = tmp_dir.join("artifacts");
+    let _ = fs::remove_dir_all(&tmp_dir);
+    fs::create_dir_all(&out_dir).unwrap();
+
+    let gate = Gate::new(
+        "echo_streams",
+        "sh",
+        vec![
+            "-c".to_string(),
+            "echo to_stdout; echo to_stderr 1>&2; exit 3".to_string(),
+        ],
+        None,
+        HashMap::new(),
+    );
+    let ctx = GateContext {
+        workspace_root: tmp_dir.clone(),
+        out_dir: out_dir.clone(),
+        default_timeout: std::time::Duration::from_secs(10),
+    };
+
+    let outcome = gate.execute_with_echo(&ctx, Some("[t] echo | ")).unwrap();
+    assert_eq!(outcome.verdict, Verdict::Fail);
+    assert_eq!(outcome.exit_code, Some(3));
+
+    let log = fs::read_to_string(out_dir.join("echo_streams.log")).unwrap();
+    assert!(
+        log.contains("to_stdout\n"),
+        "stdout missing from log: {log}"
+    );
+    assert!(
+        log.contains("to_stderr\n"),
+        "stderr missing from log: {log}"
+    );
+
+    let _ = fs::remove_dir_all(&tmp_dir);
 }

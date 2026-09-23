@@ -34,7 +34,7 @@
 //! let sys = ArrayStateSpace::continuous(a, b, c, d).to_discrete_zoh(0.05);
 //! let x = Owned::<f64, 2, 1>::zero();
 //! let u = Owned::<f64, 1, 1>::scalar(1.0);
-//! let (_x_next, _y) = sys.step(&x, &u);
+//! let (x_next, y) = sys.step(&x, &u);
 //! ```
 //!
 //! # Features

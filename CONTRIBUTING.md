@@ -164,10 +164,11 @@ Run the full gate set before opening a PR:
 ```sh
 cargo ci                  # all gates in gate.toml
 cargo gate fmt,clippy     # a subset while iterating
+cargo ci -v               # stream gate output, tagged [group] gate
 ```
 
 The gates are declared in [`gate.toml`](gate.toml): `fmt`, `clippy`,
-`vale`, `build`, `test`, `coverage`, `deny`, `semver`, `geiger`,
+`doc`, `vale`, `build`, `test`, `coverage`, `deny`, `semver`, `geiger`,
 `valgrind`, `cross-compare`, `regression` and `mutants`. GitHub Actions
 runs the same gates on every PR, across the supported toolchains from the
 MSRV (`1.89.0`) to beta. Some gates need extra tools or are Linux-only;
@@ -193,8 +194,8 @@ chmod +x .git/hooks/pre-commit
   change implements or modifies.
 - PRs are squash-merged into `main`.
 - `Cargo.lock` is not committed (library convention).
-- Generated reports (`ci-report.md`, `trace-report.*`, `tarpaulin-report.*`,
-  `results/`) are ignored and not committed.
+- Generated reports (`ci-report.md`, `trace-report.*`, `tarpaulin-report.*`)
+  are ignored and not committed.
 
 ---
 

@@ -102,7 +102,7 @@ impl ReportAggregator {
                             }
                         }
                         None => {
-                            // Missing fail-closed gate fails aggregator (FR-12)
+                            // Missing fail-closed gate fails aggregator (FR-10)
                             return false;
                         }
                     }

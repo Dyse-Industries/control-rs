@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""State-space reference oracle generating results/state_space.scipy.h5 via SciPy."""
+"""State-space reference oracle generating target/verification/state_space.scipy.h5 via SciPy."""
 
 from pathlib import Path
 import numpy as np

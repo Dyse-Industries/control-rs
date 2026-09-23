@@ -64,7 +64,7 @@ pub struct ComparisonFinding {
     /// Unique comparison key (for example, "`buck_converter.transient/v_out.rust`").
     pub key: String,
 
-    /// Variant pair evaluated (for example, ("scipy", "rust")).
+    /// Variant pair evaluated (for example, `("scipy", "rust")`).
     pub pair: (String, String),
 
     /// Canonical signal path.

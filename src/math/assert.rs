@@ -107,7 +107,7 @@ macro_rules! assert_not_almost_eq {
 /// Returns `true` if `a` and `b` differ by less than `T::epsilon()`.
 ///
 /// # Errors
-/// Returns [`ArithmeticError`] if the subtraction fails (for example a domain
+/// Returns [`ArithmeticError`](crate::math::ArithmeticError) if the subtraction fails (for example a domain
 /// violation on `NaN`).
 pub fn almost_eq<T>(a: &T, b: &T) -> ArithmeticResult<bool>
 where
@@ -119,7 +119,7 @@ where
 /// Returns `true` if `a` and `b` differ by less than `epsilon`.
 ///
 /// # Errors
-/// Returns [`ArithmeticError`] if the subtraction fails (for example a domain
+/// Returns [`ArithmeticError`](crate::math::ArithmeticError) if the subtraction fails (for example a domain
 /// violation on `NaN`).
 pub fn almost_eq_eps<T>(a: &T, b: &T, epsilon: &T) -> ArithmeticResult<bool>
 where

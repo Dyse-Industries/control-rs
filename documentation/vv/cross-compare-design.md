@@ -69,6 +69,11 @@ numerical tolerance bounds.
   reduction to maintain numerical stability and reproducibility (Higham, 2002; Demmel and Nguyen, 2013).
 - **FR-15 — Configurable Concurrency**: Concurrency must be configurable via CLI `--threads <N>` /
   `-j <N>` and `compare.toml` (`threads = N`), defaulting to `std::thread::available_parallelism()`.
+- **FR-16 — Annotated Signal Omission**: A suite may carry more than one variant, one
+  container each. Every peer must provide every true-oracle signal unless the oracle
+  dataset carries a non-zero `missing_ok.<peer>` attribute; an unannotated omission
+  fails (FR-10). A peer that provides no oracle signal fails. Per-peer bounds use the
+  `bound.<peer>` attribute (C-2).
 
 #### 2.2 Non-Functional Requirements
 
@@ -312,15 +317,13 @@ pub struct VariantConfig {
 # compare.toml (workspace root)
 [compare]
 title = "control-rs Cross-Validation Suite"
-out_dir = "results"
+out_dir = "target/verification"
 timeout_secs = 120
 strict = true
 
 # Referenced suite directories (each contains its own compare.toml)
 suites = [
-    "examples/numerical-models-validation",
-    "examples/buck-converter",
-    "examples/dc-motor",
+    "control-rs-verification",
 ]
 
 # (Optional) Inlined suite defined from outside the suite folder
@@ -749,6 +752,7 @@ results/
 | 1.7 | September 19, 2026 | @MitchellDScott | Formalized extensible multi-method comparison engine (`ComparisonEvaluator` trait) covering numeric, text/regex, contextual embedding, and control-domain evaluators with composite satisfaction policies (`all_of`/`any_of`). |
 | 1.8 | September 20, 2026 | @MitchellDScott | Unified crate name to `control-rs-compare` with standalone `compare` binary (`cargo compare`), `compare.toml`, recursive `ls`-style dataset discovery, and multi-tier tolerance resolution (TOML table + HDF5 attributes). |
 | 1.9 | September 20, 2026 | @MitchellDScott | Integrated background research on parallel numerical reductions, pairwise tree error bounds (Higham, 2002), reproducible summation (Demmel and Nguyen, 2013), and chunked array I/O (Folk et al., 2011); formulated parallel chunked comparison architecture and comparator worker pool. |
+| 1.10 | September 22, 2026 | @MitchellDScott | Added FR-16 annotated signal omission (`missing_ok.<peer>`) for multi-oracle suites; workspace example references `control-rs-verification`. |
 
 ---
 

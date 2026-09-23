@@ -79,7 +79,7 @@ def generate_datasets():
     }
 
     tolerances = {
-        "covariance_heatmap/matrix": ("abs", 1e-4),
+        "covariance_heatmap/matrix": ("abs", 1e-4, {"jax": 1e-6}),
         "hilbert_solve/x": ("abs", 0.05),
         "hilbert_solve/residual": ("abs", 1e-12),
         "vandermonde_solve/x": ("abs", 1e-3),

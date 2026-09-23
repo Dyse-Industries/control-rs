@@ -81,7 +81,7 @@ impl PendulumSim {
     }
 }
 
-/// Executes the state-space control-rs-verification kernel and writes `results/state_space.rust.h5`.
+/// Executes the state-space control-rs-verification kernel and writes `target/verification/state_space.rust.h5`.
 pub fn emit_container(output_path: &Path) -> Result<(), String> {
     let mut writer = H5Writer::new();
     let sim = PendulumSim::new(2.0, 0.8, 0.05);

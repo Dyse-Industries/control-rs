@@ -31,7 +31,7 @@ fn evaluate_tutorial_polynomial() -> (f64, f64, f64) {
     let p = Poly::<4>::from_coefficients([-30.0, 31.0, -10.0, 1.0]);
     let p_real = p.evaluate(2.5);
 
-    // Complex eval at 1.0 + 2.0i
+    // Complex evaluation at 1.0 + 2.0i
     let c_val = p.evaluate_complex(Complex::new(1.0, 2.0));
 
     (p_real, c_val.re, c_val.im)
@@ -98,7 +98,7 @@ fn compute_wilkinson_residuals() -> (Vec<f64>, Vec<f64>) {
     (residual_f64, residual_f32)
 }
 
-/// Executes the polynomial control-rs-verification kernel and writes `results/polynomial.rust.h5`.
+/// Executes the polynomial control-rs-verification kernel and writes `target/verification/polynomial.rust.h5`.
 pub fn emit_container(output_path: &Path) -> Result<(), String> {
     let mut writer = H5Writer::new();
 

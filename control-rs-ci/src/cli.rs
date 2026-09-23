@@ -11,6 +11,8 @@ use crate::ui;
 /// Options parsed from command line arguments.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CliOptions {
+    /// Whitelist of execution groups to run.
+    pub groups: Vec<String>,
     /// Whitelist of gates to run.
     pub only_gates: Vec<String>,
     /// Blacklist of gates to skip.
@@ -23,6 +25,8 @@ pub struct CliOptions {
     pub clean: bool,
     /// Run all quality gates.
     pub run_all: bool,
+    /// Echo each gate's output to stderr as it runs.
+    pub verbose: bool,
 }
 
 /// Formats the help and usage string using cargo-style terminal colors.
@@ -34,19 +38,22 @@ pub fn render_usage(binary_name: &str) -> String {
     format!(
         "{h}Usage:{h:#} {f}{binary_name}{f:#} {a}[OPTIONS]{a:#} {a}[GATES]...{a:#}\n\n\
          {h}Options:{h:#}\n  \
+           {f}-g{f:#}, {f}--group{f:#} {a}<group>{a:#}    Run all quality gates in the specified group(s)\n  \
            {f}-o{f:#}, {f}--only{f:#} {a}<gate>{a:#}      Run only the specified gate(s) (comma-separated or repeated)\n  \
            {f}-s{f:#}, {f}--skip{f:#} {a}<gate>{a:#}      Skip the specified gate(s)\n  \
            {f}-u{f:#}, {f}--up-to{f:#} {a}<gate>{a:#}     Run gates up to and including the specified gate\n  \
            {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: workspace gate.toml)\n  \
            {f}-X{f:#}, {f}--clean{f:#}            Clean previous CI artifacts and reports\n  \
            {f}-a{f:#}, {f}--all{f:#}              Run all registered quality gates\n  \
+           {f}-v{f:#}, {f}--verbose{f:#}          Echo each gate's output, prefixed with its group and name\n  \
            {f}-l{f:#}, {f}--list{f:#}             List all registered quality gates\n  \
            {f}-h{f:#}, {f}--help{f:#}             Print help information\n\n\
          {h}Examples:{h:#}\n  \
            {f}{binary_name}{f:#} {a}clean{a:#}\n  \
            {f}{binary_name}{f:#} {f}--clean{f:#}\n  \
-           {f}{binary_name}{f:#} {f}--clean{f:#} {a}fmt{a:#}\n  \
+           {f}{binary_name}{f:#} {f}--group{f:#} {a}lint{a:#}\n  \
            {f}{binary_name}{f:#} {f}--only{f:#} {a}fmt,clippy{a:#}\n  \
+           {f}{binary_name}{f:#} {f}--verbose{f:#} {f}--group{f:#} {a}verify{a:#}\n  \
            {f}{binary_name}{f:#} {a}fmt{a:#}\n  \
            {f}{binary_name}{f:#} {f}--up-to{f:#} {a}test{a:#}"
     )
@@ -96,8 +103,38 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
             exit(0);
         } else if arg == "-X" || arg == "--clean" {
             options.clean = true;
+        } else if arg == "-v" || arg == "--verbose" {
+            options.verbose = true;
         } else if arg == "-a" || arg == "--all" {
             options.run_all = true;
+        } else if arg == "-g" || arg == "--group" {
+            i = i.saturating_add(1);
+            while i < args.len() {
+                let val = match args.get(i) {
+                    Some(a) if !a.starts_with('-') => a.as_str(),
+                    _ => {
+                        i = i.saturating_sub(1);
+                        break;
+                    }
+                };
+                for part in val.split(',') {
+                    let trimmed = part.trim();
+                    if !trimmed.is_empty() {
+                        options.groups.push(trimmed.to_string());
+                    }
+                }
+                i = i.saturating_add(1);
+            }
+        } else if let Some(val) = arg
+            .strip_prefix("--group=")
+            .or_else(|| arg.strip_prefix("-g="))
+        {
+            for part in val.split(',') {
+                let trimmed = part.trim();
+                if !trimmed.is_empty() {
+                    options.groups.push(trimmed.to_string());
+                }
+            }
         } else if arg == "-o" || arg == "--only" {
             i = i.saturating_add(1);
             while i < args.len() {
@@ -201,15 +238,17 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
 /// Runs the CLI application using parsed options.
 pub fn run_cli(binary_name: &str) {
     let args: Vec<String> = std::env::args().collect();
-    let options = parse_args(&args, binary_name);
+    let mut options = parse_args(&args, binary_name);
     let workspace_root =
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let config_path = options
         .config_path
+        .clone()
         .unwrap_or_else(|| workspace_root.join("gate.toml"));
 
     let is_clean_only = options.clean
         && !options.run_all
+        && options.groups.is_empty()
         && options.only_gates.is_empty()
         && options.up_to_gate.is_none();
 
@@ -230,6 +269,56 @@ pub fn run_cli(binary_name: &str) {
         }
     }
 
+    let config = match GateConfig::load_from_path(&config_path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            ui::error(format!("Failed to load configuration: {e}"));
+            exit(1);
+        }
+    };
+
+    // Expand groups specified via --group / -g into options.only_gates
+    for group_name in &options.groups {
+        if group_name == "exclusive" {
+            for gate in &config.execution.exclusive_gates {
+                if !options.only_gates.contains(gate) {
+                    options.only_gates.push(gate.clone());
+                }
+            }
+        } else if let Some(members) = config.execution.groups.get(group_name) {
+            for gate in members {
+                if !options.only_gates.contains(gate) {
+                    options.only_gates.push(gate.clone());
+                }
+            }
+        } else {
+            ui::error(format!("Unknown execution group: '{group_name}'"));
+            exit(1);
+        }
+    }
+
+    // Also expand any positional arguments that match group names
+    let mut expanded_gates = Vec::new();
+    for gate_or_group in &options.only_gates {
+        if gate_or_group == "exclusive" {
+            for gate in &config.execution.exclusive_gates {
+                if !expanded_gates.contains(gate) {
+                    expanded_gates.push(gate.clone());
+                }
+            }
+        } else if let Some(members) = config.execution.groups.get(gate_or_group)
+        {
+            for gate in members {
+                if !expanded_gates.contains(gate) {
+                    expanded_gates.push(gate.clone());
+                }
+            }
+        } else if !expanded_gates.contains(gate_or_group) {
+            expanded_gates.push(gate_or_group.clone());
+        }
+    }
+    options.only_gates = expanded_gates;
+
     let only_ref = if options.run_all || options.only_gates.is_empty() {
         None
     } else {
@@ -248,6 +337,7 @@ pub fn run_cli(binary_name: &str) {
         skip_ref,
         options.up_to_gate.as_deref(),
         options.clean,
+        options.verbose,
     ) {
         Ok(true) => exit(0),
         Ok(false) => exit(1),

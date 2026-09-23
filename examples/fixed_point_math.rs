@@ -99,7 +99,7 @@ fn main() {
     println!();
 
     // 4. Fixed-Point Discrete Low-Pass IIR Filter
-    // Filter equation: y[k] = alpha * x[k] + (1 - alpha) * y[k-1]
+    // Difference equation: y[k] = alpha * x[k] + (1 - alpha) * y[k-1]
     // Filter parameters: cutoff frequency fc = 10 Hz, sampling fs = 1000 Hz (Ts = 1 ms)
     // alpha = 2*pi*fc*Ts / (1 + 2*pi*fc*Ts) ~= 0.05912
     let filter_alpha_f64 = 0.059_12;

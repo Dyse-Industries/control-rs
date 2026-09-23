@@ -2,9 +2,10 @@
 
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -12,6 +13,68 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{GateConfig, GateDefinition, GatePolicy};
 use crate::error::GateError;
+
+/// Upper bound on the wait for output pumps after the gate process exits.
+///
+/// A descendant that outlives the gate can hold its pipe open; the pump is then
+/// detached rather than blocking the pipeline.
+const PUMP_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Suffix of the per-gate outcome artifact.
+pub const RESULT_SUFFIX: &str = ".result.json";
+
+/// Suffix of the per-group dispatch manifest artifact.
+pub const MANIFEST_SUFFIX: &str = ".group.json";
+
+/// Record of the gates a group was asked to dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupManifest {
+    /// Group name (or "exclusive").
+    pub group: String,
+    /// Gates dispatched by this group, in execution order.
+    pub gates: Vec<String>,
+}
+
+impl GroupManifest {
+    /// Writes this manifest to `<out_dir>/<group>.group.json`.
+    ///
+    /// # Errors
+    /// Returns `GateError::Io` or `GateError::Json` on failure.
+    pub fn save_to_dir(&self, out_dir: &Path) -> Result<PathBuf, GateError> {
+        std::fs::create_dir_all(out_dir)?;
+        let manifest_path =
+            out_dir.join(format!("{}{MANIFEST_SUFFIX}", self.group));
+        let file = File::create(&manifest_path)?;
+        serde_json::to_writer_pretty(file, self)?;
+        Ok(manifest_path)
+    }
+
+    /// Loads all manifest records found in a directory.
+    ///
+    /// # Errors
+    /// Returns `GateError` if directory access fails.
+    pub fn load_all(out_dir: &Path) -> Result<Vec<Self>, GateError> {
+        let mut manifests = Vec::new();
+        if !out_dir.exists() {
+            return Ok(manifests);
+        }
+        for entry in std::fs::read_dir(out_dir)?.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.ends_with(MANIFEST_SUFFIX) {
+                        let file = File::open(&path)?;
+                        if let Ok(m) = serde_json::from_reader(file) {
+                            manifests.push(m);
+                        }
+                    }
+                }
+            }
+        }
+        manifests.sort_by(|a, b| a.group.cmp(&b.group));
+        Ok(manifests)
+    }
+}
 
 /// Outcome verdict classification for a quality gate execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,7 +114,7 @@ impl GateOutcome {
     /// Returns `GateError::Io` or `GateError::Json` on failure.
     pub fn save_to_dir(&self, out_dir: &Path) -> Result<PathBuf, GateError> {
         std::fs::create_dir_all(out_dir)?;
-        let result_path = out_dir.join(format!("{}.result.json", self.gate));
+        let result_path = out_dir.join(format!("{}{RESULT_SUFFIX}", self.gate));
         let file = File::create(&result_path)?;
         serde_json::to_writer_pretty(file, self)?;
         Ok(result_path)
@@ -90,9 +153,9 @@ impl GateContext {
 /// The single, concrete quality gate type used for all gates.
 #[derive(Debug, Clone)]
 pub struct Gate {
-    /// Gate identifier (e.g. "clean", "fmt", "clippy").
+    /// Gate identifier (for example, `"clean"`, `"fmt"`, `"clippy"`).
     pub name: String,
-    /// Base command string (e.g. "cargo clean", "cargo fmt", "vale").
+    /// Base command string (for example, `"cargo clean"`, `"cargo fmt"`, `"vale"`).
     pub command: String,
     /// Additional arguments passed to the command.
     pub args: Vec<String>,
@@ -102,6 +165,77 @@ pub struct Gate {
     pub env: HashMap<String, String>,
     /// Execution mode / policy for this gate.
     pub mode: GatePolicy,
+    /// Wall-clock bound for this gate.
+    pub timeout: Duration,
+    /// Exit codes reported as `Verdict::Skipped`.
+    pub skip_exit_codes: Vec<i32>,
+}
+
+fn append_log(path: &Path, text: &str) -> Result<(), GateError> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    file.write_all(text.as_bytes())?;
+    Ok(())
+}
+
+/// Copies `reader` line by line into the shared log and echoes each line to
+/// stderr behind `prefix`.
+fn spawn_pump<R: Read + Send + 'static>(
+    reader: R,
+    sink: Arc<Mutex<File>>,
+    prefix: String,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut reader = BufReader::new(reader);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            match reader.read_until(b'\n', &mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if let Ok(mut log) = sink.lock() {
+                        let _ = log.write_all(&line);
+                    }
+                    let text = String::from_utf8_lossy(&line);
+                    crate::ui::gate_output(
+                        &prefix,
+                        text.trim_end_matches(['\n', '\r']),
+                    );
+                }
+            }
+        }
+    })
+}
+
+/// Joins pumps that finish within `PUMP_DRAIN_TIMEOUT` and detaches the rest.
+fn drain_pumps(pumps: Vec<thread::JoinHandle<()>>) {
+    let deadline = Instant::now() + PUMP_DRAIN_TIMEOUT;
+    for pump in pumps {
+        while !pump.is_finished() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        if pump.is_finished() {
+            let _ = pump.join();
+        }
+    }
+}
+
+#[cfg(unix)]
+fn terminate_tree(child: &mut std::process::Child, pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-KILL", &format!("-{pid}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(not(unix))]
+fn terminate_tree(child: &mut std::process::Child, _pid: u32) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 impl Gate {
@@ -121,6 +255,29 @@ impl Gate {
             description,
             env,
             mode: GatePolicy::Fail,
+            timeout: Duration::from_secs(300),
+            skip_exit_codes: Vec::new(),
+        }
+    }
+
+    /// Constructs a `Gate` from a parsed `GateDefinition` with fallback timeout.
+    #[must_use]
+    pub fn from_definition_with_timeout(
+        name: impl Into<String>,
+        def: &GateDefinition,
+        default_timeout_secs: u64,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            command: def.command.clone(),
+            args: def.args.clone(),
+            description: def.description.clone(),
+            env: def.env.clone(),
+            mode: def.mode(),
+            timeout: Duration::from_secs(
+                def.timeout_secs.unwrap_or(default_timeout_secs),
+            ),
+            skip_exit_codes: def.skip_exit_codes.clone(),
         }
     }
 
@@ -130,14 +287,7 @@ impl Gate {
         name: impl Into<String>,
         def: &GateDefinition,
     ) -> Self {
-        Self {
-            name: name.into(),
-            command: def.command.clone(),
-            args: def.args.clone(),
-            description: def.description.clone(),
-            env: def.env.clone(),
-            mode: def.mode(),
-        }
+        Self::from_definition_with_timeout(name, def, 300)
     }
 
     /// Returns the name of this gate.
@@ -172,14 +322,32 @@ impl Gate {
     /// evaluates verdict and writes `<gate>.result.json`.
     ///
     /// # Errors
-    /// Returns `GateError` on process spawn failure or I/O error.
+    /// Returns `GateError` only when artifact file creation or I/O fails.
     pub fn execute(&self, ctx: &GateContext) -> Result<GateOutcome, GateError> {
+        self.execute_with_echo(ctx, None)
+    }
+
+    /// Executes the gate as [`Gate::execute`] does. When `echo` is
+    /// `Some(prefix)`, each line of the gate's stdout and stderr is also
+    /// written to stderr behind `prefix` as it arrives.
+    ///
+    /// The log file receives the same lines in both modes. With echo enabled,
+    /// stdout and stderr are read through separate pipes, so their relative
+    /// order in the log is preserved per stream but not across streams.
+    ///
+    /// # Errors
+    /// Returns `GateError` only when artifact file creation or I/O fails.
+    pub fn execute_with_echo(
+        &self,
+        ctx: &GateContext,
+        echo: Option<&str>,
+    ) -> Result<GateOutcome, GateError> {
         let log_path = ctx.log_path(&self.name);
         if let Some(parent) = log_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Decompose compound command string into binary + initial arguments (e.g. "cargo clean")
+        // Decompose compound command string into binary + initial arguments (for example, `"cargo clean"`)
         let mut words = self.command.split_whitespace();
         let program = words.next().unwrap_or(&self.command);
         let mut initial_args: Vec<String> = words.map(String::from).collect();
@@ -192,33 +360,104 @@ impl Gate {
             cmd.env(k, v);
         }
 
-        let (status, duration) =
-            self.spawn_and_log(&mut cmd, &log_path, ctx.default_timeout)?;
+        let timeout = self.timeout;
+        let outcome = match self
+            .spawn_and_log(&mut cmd, &log_path, timeout, echo)
+        {
+            Ok((status, duration)) => {
+                let exit_code = status.code();
+                let verdict = if let Some(code) = exit_code {
+                    if self.skip_exit_codes.contains(&code) {
+                        Verdict::Skipped
+                    } else if status.success() {
+                        Verdict::Pass
+                    } else if self.mode == GatePolicy::Warn {
+                        Verdict::Warn
+                    } else {
+                        Verdict::Fail
+                    }
+                } else if status.success() {
+                    Verdict::Pass
+                } else if self.mode == GatePolicy::Warn {
+                    Verdict::Warn
+                } else {
+                    Verdict::Fail
+                };
 
-        let exit_code = status.code();
-        let verdict = if status.success() {
-            Verdict::Pass
-        } else {
-            Verdict::Fail
-        };
+                let summary = if verdict == Verdict::Skipped {
+                    Some(format!(
+                        "{} skipped with exit code {}",
+                        self.name,
+                        exit_code.unwrap_or(0)
+                    ))
+                } else if status.success() {
+                    Some(format!("{} succeeded cleanly", self.name))
+                } else {
+                    Some(format!(
+                        "{} failed with exit code {}",
+                        self.name,
+                        exit_code.unwrap_or(-1)
+                    ))
+                };
 
-        let summary = if status.success() {
-            Some(format!("{} succeeded cleanly", self.name))
-        } else {
-            Some(format!(
-                "{} failed with exit code {}",
-                self.name,
-                exit_code.unwrap_or(-1)
-            ))
-        };
-
-        let outcome = GateOutcome {
-            gate: self.name.clone(),
-            verdict,
-            exit_code,
-            duration_secs: duration,
-            summary,
-            log_file: format!("{}.log", self.name),
+                GateOutcome {
+                    gate: self.name.clone(),
+                    verdict,
+                    exit_code,
+                    duration_secs: duration,
+                    summary,
+                    log_file: format!("{}.log", self.name),
+                }
+            }
+            Err(GateError::Timeout { timeout_secs, .. }) => {
+                let _ = append_log(
+                    &log_path,
+                    &format!(
+                        "\ncontrol-rs-ci: gate '{}' timed out after {:.1}s\n",
+                        self.name, timeout_secs
+                    ),
+                );
+                GateOutcome {
+                    gate: self.name.clone(),
+                    verdict: if self.mode == GatePolicy::Warn {
+                        Verdict::Warn
+                    } else {
+                        Verdict::Fail
+                    },
+                    exit_code: None,
+                    duration_secs: timeout_secs,
+                    summary: Some(format!(
+                        "{} timed out after {:.1}s",
+                        self.name, timeout_secs
+                    )),
+                    log_file: format!("{}.log", self.name),
+                }
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                let _ = append_log(
+                    &log_path,
+                    &format!(
+                        "control-rs-ci: gate '{}' failed to execute: {}\n",
+                        self.name, err_msg
+                    ),
+                );
+                GateOutcome {
+                    gate: self.name.clone(),
+                    verdict: if self.mode == GatePolicy::Warn {
+                        Verdict::Warn
+                    } else {
+                        Verdict::Fail
+                    },
+                    exit_code: None,
+                    duration_secs: 0.0,
+                    summary: Some(format!(
+                        "{} execution error: {}",
+                        self.name, err_msg
+                    )),
+                    log_file: format!("{}.log", self.name),
+                }
+            }
         };
 
         let _ = outcome.save_to_dir(&ctx.out_dir)?;
@@ -230,12 +469,19 @@ impl Gate {
         cmd: &mut Command,
         log_path: &Path,
         timeout: Duration,
+        echo: Option<&str>,
     ) -> Result<(ExitStatus, f64), GateError> {
         let log_file = File::create(log_path)?;
-        let err_file = log_file.try_clone()?;
-
-        cmd.stdout(Stdio::from(log_file));
-        cmd.stderr(Stdio::from(err_file));
+        let sink = if echo.is_some() {
+            cmd.stdout(Stdio::piped());
+            cmd.stderr(Stdio::piped());
+            Some(Arc::new(Mutex::new(log_file)))
+        } else {
+            let err_file = log_file.try_clone()?;
+            cmd.stdout(Stdio::from(log_file));
+            cmd.stderr(Stdio::from(err_file));
+            None
+        };
 
         let start = Instant::now();
         let mut child = cmd.spawn().map_err(|e| GateError::Spawn {
@@ -243,17 +489,32 @@ impl Gate {
             message: e.to_string(),
         })?;
 
+        let mut pumps = Vec::new();
+        if let (Some(prefix), Some(sink)) = (echo, sink) {
+            if let Some(out) = child.stdout.take() {
+                pumps.push(spawn_pump(
+                    out,
+                    Arc::clone(&sink),
+                    prefix.to_owned(),
+                ));
+            }
+            if let Some(err) = child.stderr.take() {
+                pumps.push(spawn_pump(err, sink, prefix.to_owned()));
+            }
+        }
+
+        let pid = child.id();
         let poll_interval = Duration::from_millis(50);
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
                     let elapsed = start.elapsed().as_secs_f64();
+                    drain_pumps(pumps);
                     return Ok((status, elapsed));
                 }
                 Ok(None) => {
                     if start.elapsed() > timeout {
-                        let _ = child.kill();
-                        let _ = child.wait();
+                        terminate_tree(&mut child, pid);
                         return Err(GateError::Timeout {
                             gate: self.name.clone(),
                             timeout_secs: timeout.as_secs_f64(),
@@ -262,7 +523,7 @@ impl Gate {
                     thread::sleep(poll_interval);
                 }
                 Err(e) => {
-                    let _ = child.kill();
+                    terminate_tree(&mut child, pid);
                     return Err(GateError::Spawn {
                         gate: self.name.clone(),
                         message: e.to_string(),
@@ -323,10 +584,15 @@ pub fn build_all_gates(
         }
     }
 
+    let default_timeout = config.runner.timeout_secs;
     let mut gates = Vec::new();
     for name in names {
         if let Some(def) = config.gate_def(&name) {
-            gates.push(Arc::new(Gate::from_definition(name, def)));
+            gates.push(Arc::new(Gate::from_definition_with_timeout(
+                name,
+                def,
+                default_timeout,
+            )));
         } else if config.policy_for(&name) != GatePolicy::Skip {
             return Err(GateError::Config {
                 path: PathBuf::from("gate.toml"),

@@ -32,7 +32,7 @@ impl H5Writer {
         Self::default()
     }
 
-    /// Adds a 1D or flattened numeric dataset at `path` (e.g., "matrix/a" or "v_out").
+    /// Adds a 1D or flattened numeric dataset at `path` (for example, `"matrix/a"` or `"v_out"`).
     pub fn add_dataset(&mut self, path: &str, data: &[f64]) {
         let clean = path.trim_start_matches('/');
         if let Some((group, ds)) = clean.split_once('/') {
@@ -101,17 +101,11 @@ impl H5Writer {
     }
 }
 
-/// Resolves the absolute path to the workspace root `results/` directory.
+/// Resolves the absolute path to the workspace `target/verification/` directory.
 #[must_use]
 pub fn results_dir() -> PathBuf {
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        let p = PathBuf::from(manifest_dir);
-        if p.ends_with("..") {
-            p.parent().unwrap_or(&p).join("results")
-        } else {
-            p.join("results")
-        }
-    } else {
-        PathBuf::from("results")
-    }
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().map_or_else(
+        || PathBuf::from("target/verification"),
+        |root| root.join("target").join("verification"),
+    )
 }

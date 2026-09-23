@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Polynomial reference oracle generating results/polynomial.scipy.h5 via NumPy."""
+"""Polynomial reference oracle generating target/verification/polynomial.scipy.h5 via NumPy."""
 
 from pathlib import Path
 import numpy as np
@@ -57,21 +57,28 @@ def generate_datasets():
     }
 
     tolerances = {
-        "tutorial/p_real": ("abs", 1e-6),
-        "tutorial/p_c_re": ("abs", 1e-6),
-        "tutorial/p_c_im": ("abs", 1e-6),
+        "tutorial/p_real": ("abs", 1e-6, {"flint": 1e-9}),
+        "tutorial/p_c_re": ("abs", 1e-6, {"flint": 1e-9}),
+        "tutorial/p_c_im": ("abs", 1e-6, {"flint": 1e-9}),
         "root_convergence/iterations": ("abs", 2.0),
         "wilkinson_residual/residual_f64": ("rel", 0.05),
         "wilkinson_residual/residual_f32": ("rel", 10.0),
     }
 
-    return datasets, tolerances
+    # python-flint provides the tutorial evaluations only.
+    missing_ok = {
+        "root_convergence/iterations": ["flint"],
+        "wilkinson_residual/residual_f64": ["flint"],
+        "wilkinson_residual/residual_f32": ["flint"],
+    }
+
+    return datasets, tolerances, missing_ok
 
 
 def main():
-    datasets, tolerances = generate_datasets()
+    datasets, tolerances, missing_ok = generate_datasets()
     out_file = get_results_dir() / "polynomial.scipy.h5"
-    write_h5(out_file, datasets, tolerances)
+    write_h5(out_file, datasets, tolerances, missing_ok)
 
 
 if __name__ == "__main__":

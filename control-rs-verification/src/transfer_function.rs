@@ -5,6 +5,7 @@
 //! 2. Tustin bilinear transform frequency warping
 //! 3. Zero-Order Hold (ZOH) discretization consistency
 //! 4. Nyquist stability contour and gain/phase margins
+//! 5. Controllable canonical form realization
 
 #![allow(
     missing_docs,
@@ -145,7 +146,25 @@ fn compute_nyquist() -> (Vec<f64>, Vec<f64>, f64, f64) {
     (h_re, h_im, phase_margin_deg, gain_margin_db)
 }
 
-/// Executes the transfer function control-rs-verification kernel and writes `results/transfer_function.rust.h5`.
+/// Controllable canonical form of H(s) = (2s + 3) / (s^2 + 5s + 4), row-major `(A, B, C)`.
+fn compute_ccf_realization() -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let tf = Tf::<2, 3>::continuous([3.0, 2.0], [4.0, 5.0, 1.0]);
+    let ss = tf
+        .to_controllable_canonical_form::<2>()
+        .expect("CCF realization failed");
+    let (a, b, c) = (ss.a(), ss.b(), ss.c());
+    let mut a_flat = Vec::with_capacity(4);
+    for i in 0..2 {
+        for j in 0..2 {
+            a_flat.push(*a.get(i, j).unwrap());
+        }
+    }
+    let b_flat = (0..2).map(|i| *b.get(i, 0).unwrap()).collect();
+    let c_flat = (0..2).map(|j| *c.get(0, j).unwrap()).collect();
+    (a_flat, b_flat, c_flat)
+}
+
+/// Executes the transfer function control-rs-verification kernel and writes `target/verification/transfer_function.rust.h5`.
 pub fn emit_container(output_path: &Path) -> Result<(), String> {
     let mut writer = H5Writer::new();
 
@@ -192,6 +211,16 @@ pub fn emit_container(output_path: &Path) -> Result<(), String> {
 
     writer.add_dataset("nyquist/gain_margin_db", &[gm_db]);
     writer.set_tolerance("nyquist/gain_margin_db", "abs", 1.0);
+
+    let (ccf_a, ccf_b, ccf_c) = compute_ccf_realization();
+    for (name, data) in [
+        ("realization/ccf_a", &ccf_a),
+        ("realization/ccf_b", &ccf_b),
+        ("realization/ccf_c", &ccf_c),
+    ] {
+        writer.add_dataset(name, data);
+        writer.set_tolerance(name, "abs", 1e-12);
+    }
 
     writer.write_to_file(output_path)
 }

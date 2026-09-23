@@ -1,7 +1,7 @@
 # Range-Valued On-Target Property Tests (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-September_8,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---

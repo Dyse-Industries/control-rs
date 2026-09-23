@@ -450,7 +450,7 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | Requirements-based test   | `#[test]` unit tests over grid boundaries, activations, and conversions                                                                                                 | FR-2, FR-4, FR-5         |
 | Property-based test       | `proptest` suites verifying axis permutation round-trips and tensor contraction identities                                                                              | FR-3                     |
 | Doctest                   | Runnable rustdoc examples                                                                                                                                               | FR-2, FR-4               |
-| Back-to-back comparison   | `examples/numerical-models-validation/python3/tensor_validation.py` vs `src/tensor_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-3, FR-4               |
+| Back-to-back comparison   | `control-rs-verification/python3/tensor_oracle.py` and ONNX Runtime and TFLite oracles vs `control-rs-verification/src/tensor.rs` HDF5 (`cargo compare`); [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-3, FR-4               |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                                                                                  | NFR-1, NFR-2, C-2, C-3   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                                                                                                                               | NFR-2                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                                                                                                 | FR-1..FR-5, NFR-1..NFR-2 |
@@ -491,11 +491,12 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 
 #### 6.6. Validation
 
-- **Multilinear Grid Interpolation & Quantized Activation**: Verification of 2D
-  table multilinear continuous interpolation (3×3 affine vertices and a
-  $16\times 16$ curved table on a 64-point cut) and fixed-point
-  `Quantized<i8, 7>` arithmetic with `Relu` on dyadic and non-dyadic inputs in
-  `examples/numerical-models-validation/src/tensor_validation.rs`.
+- **Multilinear Grid Interpolation & Quantized Activation**: `control-rs-verification/src/tensor.rs`
+  cross-validates $16 \times 16$ table interpolation against SciPy, `f32`
+  contraction against NumPy and ONNX Runtime, bit-exact `Quantized<i8, 7>` raw
+  values, and a `TableActivation` tanh sweep against exact tanh and a TFLite
+  int8 model ([numerical-models-design](numerical-models-design.md) §5.1). The
+  3×3 affine table and `Relu` cases are not yet in the suite ([numerical-models-design](numerical-models-design.md) §5.2).
 
 #### 6.7. Not Verified
 
@@ -607,3 +608,4 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | 1.7      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); MCU element cap unchanged.                                              |
 | 1.8      | August 28, 2026 | @MitchellDScott | Example crate: $16\times 16$ curved-grid interpolation and non-dyadic Q7. NFR-1 cap unchanged.                                 |
 | 1.9      | August 31, 2026 | @MitchellDScott | Updated numerical-models validation crate and script paths to `examples/numerical-models-validation/`.                         |
+| 1.10      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |

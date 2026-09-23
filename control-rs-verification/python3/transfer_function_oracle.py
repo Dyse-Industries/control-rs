@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transfer function reference oracle generating results/transfer_function.scipy.h5 via SciPy."""
+"""Transfer function reference oracle generating target/verification/transfer_function.scipy.h5 via SciPy."""
 
 from pathlib import Path
 import numpy as np
@@ -61,7 +61,18 @@ def generate_datasets():
     pc_mag = mag[idx_pc]
     gain_margin_db = float(-20.0 * np.log10(pc_mag))
 
+    # Controllable canonical form of H(s) = (2s + 3) / (s^2 + 5s + 4).
+    # tf2ss orders states highest-derivative first; reversing the state order
+    # gives the companion form with the coefficient row last.
+    a_ss, b_ss, c_ss, _ = signal.tf2ss([2.0, 3.0], [1.0, 5.0, 4.0])
+    ccf_a = a_ss[::-1, ::-1].flatten()
+    ccf_b = b_ss[::-1, :].flatten()
+    ccf_c = c_ss[:, ::-1].flatten()
+
     datasets = {
+        "realization/ccf_a": ccf_a,
+        "realization/ccf_b": ccf_b,
+        "realization/ccf_c": ccf_c,
         "bode/freqs_hz": freqs_hz,
         "bode/cont_mag_db": cont_mag_db,
         "bode/cont_phase_deg": cont_phase_deg,
@@ -76,6 +87,9 @@ def generate_datasets():
     }
 
     tolerances = {
+        "realization/ccf_a": ("abs", 1e-12),
+        "realization/ccf_b": ("abs", 1e-12),
+        "realization/ccf_c": ("abs", 1e-12),
         "bode/freqs_hz": ("abs", 1e-6),
         "bode/cont_mag_db": ("abs", 0.1),
         "bode/cont_phase_deg": ("abs", 0.5),

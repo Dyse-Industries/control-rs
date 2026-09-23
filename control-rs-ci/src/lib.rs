@@ -111,6 +111,7 @@ fn execute_gate(
     style: Option<anstyle::Style>,
     ctx: &GateContext,
     ui_lock: &Mutex<()>,
+    verbose: bool,
 ) {
     let name = gate.name();
     let tag = ui::format_group_tag(group_id, style);
@@ -118,7 +119,8 @@ fn execute_gate(
         let _guard = ui_lock.lock();
         ui::status("Running", format!("{tag}{}", gate.command_display()));
     }
-    match gate.execute(ctx) {
+    let echo = verbose.then(|| ui::format_echo_prefix(&tag, name));
+    match gate.execute_with_echo(ctx, echo.as_deref()) {
         Ok(outcome) => {
             let _guard = ui_lock.lock();
             let summary = outcome
@@ -175,6 +177,7 @@ pub fn run_pipeline(
     skip_gates: Option<&[String]>,
     up_to_gate: Option<&str>,
     clean: bool,
+    verbose: bool,
 ) -> Result<bool, GateError> {
     let pipeline_start = Instant::now();
     if clean {
@@ -283,6 +286,7 @@ pub fn run_pipeline(
                             Some(style),
                             ctx_ref,
                             lock_ref,
+                            verbose,
                         );
                     }
                     let duration = group_start.elapsed().as_secs_f64();
@@ -295,13 +299,20 @@ pub fn run_pipeline(
         });
     } else {
         for gate in concurrent {
-            execute_gate(&gate, None, None, &ctx, &ui_lock);
+            execute_gate(&gate, None, None, &ctx, &ui_lock, verbose);
         }
     }
 
     for gate in exclusive {
         let style = ui::exclusive_style();
-        execute_gate(&gate, Some("exclusive"), Some(style), &ctx, &ui_lock);
+        execute_gate(
+            &gate,
+            Some("exclusive"),
+            Some(style),
+            &ctx,
+            &ui_lock,
+            verbose,
+        );
     }
 
     let aggregator =

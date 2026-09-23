@@ -19,6 +19,7 @@ cargo ci --list            # registered gates
 cargo ci --group lint      # one group
 cargo ci --only fmt,clippy # selected gates
 cargo ci --skip mutants    # all but one
+cargo ci -v --group verify # stream output as "[verify] cross-compare | ..."
 cargo ci --clean           # remove previous artifacts
 ```
 

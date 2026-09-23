@@ -108,6 +108,7 @@ Fortran
 Frias
 Frison
 Frobenius
+GPUs
 Gaithersburg
 Garlati
 Gemignani
@@ -162,6 +163,7 @@ Kacker
 Kailath
 Kalman
 Kaufmann
+Ke
 Kenney
 Khurshid
 Kincaid
@@ -189,6 +191,7 @@ MCUs
 MLSys
 MSBs
 Madhusudan
+Mc
 Melquiond
 Memcheck
 Memfault
@@ -258,6 +261,7 @@ Retarget
 Riccati
 Ronacher
 Runciman
+Runge
 Rustdoc
 SIMD
 SLICOT's
@@ -286,6 +290,7 @@ Syev
 Sylvester
 Symp
 TDHolmes
+TFLite
 Teensy
 Telem
 Tisseur
@@ -311,8 +316,10 @@ Valgrind
 Validator
 Validators
 Vandebril
+Vandermonde
 Varints
 Vendoring
+Vin
 Virtualenv
 Volterra
 Watchpoint
@@ -336,6 +343,7 @@ aberth
 accessor
 accessors
 acos
+angular_velocity
 anstream
 anstream's
 arccos
@@ -344,6 +352,8 @@ arctan
 ardupilot
 arg
 argv
+armature_current
+armature_voltage
 asdf
 asin
 assertable
@@ -378,6 +388,7 @@ bmatrix
 boilerplates
 bool
 boolean
+bootloader
 borrowck
 breakpoint
 brightgreen
@@ -390,6 +401,7 @@ canonicalization
 cartesian
 cblas
 cdot
+ci
 clippy
 cmd
 codec
@@ -419,6 +431,7 @@ ctx
 cutoff_freq
 cutover
 cycle_limit
+d_hat
 debuginfo
 dedupe
 deduplicated
@@ -456,6 +469,7 @@ dsp
 dt
 dummy_suite
 dummy_test
+duty_perturbation
 dx
 eabihf
 eigen
@@ -480,6 +494,7 @@ factorization's
 faer
 fail-closed
 fail_closed
+fc
 feedforward
 feedthrough
 firmware
@@ -488,6 +503,7 @@ fmt
 fn
 fns
 from_dense_triangle
+fs
 futex
 geiger
 gemm
@@ -609,6 +625,7 @@ namespace
 namespaces
 ndarray
 ndarray's
+negatable
 newtype
 newtypes
 nextest
@@ -641,6 +658,7 @@ parameterizes
 parameterizing
 partialord
 peano
+pluggable
 pointwise
 potrf
 potrs
@@ -656,6 +674,7 @@ profiler
 profilers
 proptest
 pseudoinverse
+pseudorandom
 ptr
 pub
 rdesarz
@@ -724,6 +743,7 @@ submatrix
 subnormals
 subprocess
 substrings
+subview
 suite_id
 sunsided
 superdiagonal
@@ -734,6 +754,7 @@ symm
 symv
 syrk
 sys
+syscalls
 sysid
 tarpaulin
 teardown
@@ -771,6 +792,7 @@ u16
 u32
 u64
 u8
+udev
 ulps
 unary
 unconjugated
@@ -798,6 +820,7 @@ uplink
 uplo
 usize
 v_d
+v_out_perturbation
 valgrind
 validator
 validators

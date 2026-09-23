@@ -75,7 +75,7 @@ pub struct ExecutionConfig {
     /// List of gate names assigned to exclusive execution.
     #[serde(default)]
     pub exclusive_gates: Vec<String>,
-    /// Declarative execution groups: mapping group_name -> list of gate names.
+    /// Declarative execution groups: mapping `group_name` -> list of gate names.
     #[serde(default, alias = "lanes", alias = "threads")]
     pub groups: HashMap<String, Vec<String>>,
 }
@@ -106,7 +106,7 @@ impl ExecutionConfig {
 /// Generic declarative gate definition parsed from `gate.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateDefinition {
-    /// Command string to execute (e.g. `"cargo clean"`, `"cargo fmt"`, `"vale"`).
+    /// Command string to execute (for example, `"cargo clean"`, `"cargo fmt"`, `"vale"`).
     pub command: String,
     /// Optional additional command arguments.
     #[serde(default)]
@@ -117,9 +117,15 @@ pub struct GateDefinition {
     /// Optional environment variable overrides.
     #[serde(default)]
     pub env: HashMap<String, String>,
-    /// Optional execution mode / policy for this gate (e.g. "fail", "warn", "skip").
+    /// Optional execution mode / policy for this gate (for example, `"fail"`, `"warn"`, `"skip"`).
     #[serde(default)]
     pub mode: Option<GatePolicy>,
+    /// Optional execution timeout in seconds for this specific gate.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// Exit codes reported as `Verdict::Skipped`.
+    #[serde(default)]
+    pub skip_exit_codes: Vec<i32>,
 }
 
 impl GateDefinition {
@@ -132,6 +138,8 @@ impl GateDefinition {
             description: None,
             env: HashMap::new(),
             mode: None,
+            timeout_secs: None,
+            skip_exit_codes: Vec::new(),
         }
     }
 
@@ -154,7 +162,7 @@ pub struct GateConfig {
     /// Execution policies mapped by gate name (for example, `fmt = "fail"`).
     #[serde(default)]
     pub gates: HashMap<String, GatePolicy>,
-    /// Declarative gate definitions (e.g. `[clean]`, `[fmt]`, `[clippy]`, etc.).
+    /// Declarative gate definitions (for example, `[clean]`, `[fmt]`, `[clippy]`, etc.).
     #[serde(flatten)]
     pub gate_definitions: HashMap<String, GateDefinition>,
 }

@@ -6,7 +6,7 @@
 //!
 //! Handles platform degradation gracefully: on environments without native Valgrind
 //! (such as macOS Apple Silicon), it logs a diagnostic message and exits 0. On supported
-//! platforms (e.g., Linux CI runners), it enforces strict memory safety across all targets.
+//! platforms (for example, Linux CI runners), it enforces strict memory safety across all targets.
 
 #![allow(
     clippy::arithmetic_side_effects,
@@ -98,7 +98,7 @@ fn main() {
             "Notice: 'valgrind' is not installed or supported natively on this host (e.g., macOS Apple Silicon).\n\
              Skipping memory checks (degraded). Valgrind is enforced on Linux CI environments."
         );
-        std::process::exit(0);
+        std::process::exit(78);
     }
 
     let root = find_workspace_root();

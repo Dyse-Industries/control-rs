@@ -8,6 +8,17 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 from h5_writer import get_results_dir, write_h5
 
 
+def _q7_raw(val: float) -> int:
+    scaled = float(val) * 128.0
+    if scaled >= 127.0:
+        return 127
+    if scaled <= -128.0:
+        return -128
+    if scaled >= 0.0:
+        return int(scaled + 0.5)
+    return int(scaled - 0.5)
+
+
 def _q7_roundtrip(val: float) -> float:
     scaled = float(val) * 128.0
     if scaled >= 127.0:
@@ -56,7 +67,15 @@ def generate_datasets():
     ]
     act_outputs = [_q7_roundtrip(np.tanh(x)) for x in float_inputs]
 
+    q_raw = [float(_q7_raw(x)) for x in float_inputs]
+
+    # 4. TableActivation tanh sweep reference (exact tanh)
+    act_inputs = np.asarray(-3.0 + 0.05 * np.arange(121), dtype=np.float32)
+    act_exact = np.tanh(act_inputs.astype(np.float64))
+
     datasets = {
+        "boundaries/q_raw": q_raw,
+        "activation/act_outputs": act_exact,
         "manifold/interp_mesh": interp_mesh,
         "contraction/mat_c": mat_c,
         "boundaries/act_outputs": act_outputs,
@@ -66,15 +85,26 @@ def generate_datasets():
         "manifold/interp_mesh": ("abs", 0.05),
         "contraction/mat_c": ("abs", 2e-4),
         "boundaries/act_outputs": ("abs", 0.02),
+        "boundaries/q_raw": ("abs", 0.0),
+        "activation/act_outputs": ("abs", 1e-3, {"tflite": 0.05}),
     }
 
-    return datasets, tolerances
+    # ONNX Runtime provides the contraction only; TFLite the activation sweep only.
+    missing_ok = {
+        "manifold/interp_mesh": ["onnx", "tflite"],
+        "contraction/mat_c": ["tflite"],
+        "boundaries/act_outputs": ["onnx", "tflite"],
+        "boundaries/q_raw": ["onnx", "tflite"],
+        "activation/act_outputs": ["onnx"],
+    }
+
+    return datasets, tolerances, missing_ok
 
 
 def main():
-    datasets, tolerances = generate_datasets()
+    datasets, tolerances, missing_ok = generate_datasets()
     out_file = get_results_dir() / "tensor.scipy.h5"
-    write_h5(out_file, datasets, tolerances)
+    write_h5(out_file, datasets, tolerances, missing_ok)
 
 
 if __name__ == "__main__":

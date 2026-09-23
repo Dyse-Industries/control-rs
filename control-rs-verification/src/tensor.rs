@@ -4,6 +4,7 @@
 //! 1. Multilinear interpolation manifold (3D saddle point $z = x^2 - y^2$)
 //! 2. High-order tensor contraction ($A \times B \to C$)
 //! 3. Fixed-point quantization precision boundaries (`Quantized<i8, 7>`)
+//! 4. `TableActivation` tanh sweep
 
 #![allow(
     missing_docs,
@@ -101,7 +102,38 @@ fn compute_quantized_boundaries() -> Vec<f64> {
     outputs
 }
 
-/// Executes the tensor control-rs-verification kernel and writes `results/tensor.rust.h5`.
+/// Raw `Quantized<i8, 7>` representation of the boundary inputs.
+fn compute_q7_raw() -> Vec<f64> {
+    type Q7 = Quantized<i8, 7>;
+    let float_inputs = [
+        -1.5_f32, -1.0, -0.75, -0.5, -0.125, -0.0078125, 0.0, 0.0078125, 0.125,
+        0.5, 0.75, 0.9921875, 1.0, 1.5,
+    ];
+    float_inputs
+        .iter()
+        .map(|&x| f64::from(Q7::quantize(f64::from(x)).raw()))
+        .collect()
+}
+
+/// `TableActivation` tanh (61 breakpoints on [-3, 3]) evaluated at 121 points.
+fn compute_activation_sweep() -> Vec<f64> {
+    let mut breakpoints = [0.0f32; 61];
+    let mut values = [0.0f32; 61];
+    for i in 0..61 {
+        let x = -3.0f32 + (i as f32) * 0.1f32;
+        breakpoints[i] = x;
+        values[i] = x.tanh();
+    }
+    let tanh_lut = TableActivation {
+        breakpoints,
+        values,
+    };
+    (0..121)
+        .map(|i| f64::from(tanh_lut.apply(-3.0f32 + (i as f32) * 0.05f32)))
+        .collect()
+}
+
+/// Executes the tensor control-rs-verification kernel and writes `target/verification/tensor.rust.h5`.
 pub fn emit_container(output_path: &Path) -> Result<(), String> {
     let mut writer = H5Writer::new();
 
@@ -116,6 +148,12 @@ pub fn emit_container(output_path: &Path) -> Result<(), String> {
     let act = compute_quantized_boundaries();
     writer.add_dataset("boundaries/act_outputs", &act);
     writer.set_tolerance("boundaries/act_outputs", "abs", 0.02);
+
+    writer.add_dataset("boundaries/q_raw", &compute_q7_raw());
+    writer.set_tolerance("boundaries/q_raw", "abs", 0.0);
+
+    writer.add_dataset("activation/act_outputs", &compute_activation_sweep());
+    writer.set_tolerance("activation/act_outputs", "abs", 1e-3);
 
     writer.write_to_file(output_path)
 }

@@ -137,8 +137,8 @@ crate.
   (carry) to the MSB sum.
 - **Sub**: private bitwise `PrivateSub` (borrow via `SubBit`), then `Trim` /
   `AttachBit` so a leading `UInt<UTerm, B0>` collapses and equal operands
-  yield `UTerm`. There is no `SubBit<B1>` on `UTerm`: underflow has no impl
-  and fails at compile time.
+  yield `UTerm`. `UTerm` has no `SubBit<B1>` impl, so underflow fails at
+  compile time.
 - **Mul**: shift-and-add. `UInt<Ul, B0> * Ur = UInt<Ul * Ur, B0>`; the `B1`
   case adds `Ur` onto that shift. Times `UTerm` is `UTerm`.
 - **Max / min**: private `Cmp` (`Less` / `Equal` / `Greater`) with
@@ -272,9 +272,9 @@ projections.
    (`impl<const N: usize> Dim for Const<N>`) as `nalgebra` does (Crozet, 2026),
    allowing arbitrary `usize` dimensions (up to `usize::MAX`) for simple storage
    and metadata without upfront macro bounds, while deferring type-level
-   arithmetic to an auxiliary trait (e.g. `ToTypenum`) generated via macros for
-   a limited range (e.g. `0..=127`).
-   _Rejected_: neither library has a completely bounds-free solution on stable
+   arithmetic to an auxiliary trait (for example `ToTypenum`) generated via macros for
+   a limited range (for example `0..=127`).
+   _Rejected_: neither library has a bounds-free solution on stable
    Rust without `generic_const_exprs`. `nalgebra`'s deferred approach permits
    unconstrained types like `Matrix<T, Const<10000>, Const<10000>>` for basic
    storage, but traps downstream callers when attempting type-level math (like
@@ -334,7 +334,7 @@ projections.
       `DimMax`, `DimMin`, `DimBit*`) without missing trait bounds, including
       `Const`×`Const`.
     - *Out-of-bounds immediate failure*: Verify that attempting to use
-      `Const<N>` outside C-1 (e.g. `Const<1025>` or `Const<10000>`) as a `Dim`
+      `Const<N>` outside C-1 (for example `Const<1025>` or `Const<10000>`) as a `Dim`
       fails immediately at compile time at the `Dim` trait boundary (`the trait
      bound Const<...>: Dim is not satisfied`), preventing deferred compile-time
       failure cascades in downstream arithmetic operations. `Const<10000>: Dim`

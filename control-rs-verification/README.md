@@ -1,8 +1,8 @@
 # `control-rs-verification`
 
 Rust emitters and Python reference oracles for cross-validating the
-numerical models. Each side writes one HDF5 container per model to the
-workspace `results/` directory; [`control-rs-compare`](../control-rs-compare/README.md) compares them.
+numerical models. Each side writes one HDF5 container per model to
+`target/verification/`; [`control-rs-compare`](../control-rs-compare/README.md) compares them.
 [Design](../documentation/vv/cross-compare-design.md) · [Workspace](../README.md)
 
 | Model | Rust emitter | Oracle |

@@ -522,7 +522,7 @@ where
 #### 6.1. Principles
 
 The verification approach aligns with [`design-template.md`](../design-template.md) §6.
-Validation compares against NumPy / SciPy / harold reference models.
+Validation compares against NumPy / SciPy reference models.
 
 #### 6.2. Methods
 
@@ -532,7 +532,7 @@ Validation compares against NumPy / SciPy / harold reference models.
 | Requirements-based test   | `#[test]` unit tests over physical filter benchmarks and singular cases                                                                                      | FR-2, FR-3, FR-4, FR-5, FR-6 |
 | Property-based test       | `proptest` suites verifying transfer function commutativity and feedback identities                                                                          | FR-3, FR-4               |
 | Doctest                   | Runnable rustdoc examples                                                                                                                                    | FR-2                     |
-| Back-to-back comparison   | `examples/numerical-models-validation/python3/transfer_function_validation.py` vs `src/transfer_function_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-4, FR-5, FR-6   |
+| Back-to-back comparison   | `control-rs-verification/python3/transfer_function_oracle.py` vs `control-rs-verification/src/transfer_function.rs` HDF5 (`cargo compare`); [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-4, FR-5, FR-6   |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                                                                                                       | NFR-1, NFR-2, C-2, C-4   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                                                                                                                    | NFR-1                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics                                                                                                      | FR-1..FR-6, NFR-1..NFR-2 |
@@ -542,7 +542,7 @@ Validation compares against NumPy / SciPy / harold reference models.
 | Claim                                         | Oracle                                                     | Measure        | Bound                                                                                                                                 | Justification                                                     |
 |:----------------------------------------------|:-----------------------------------------------------------|:---------------|:--------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------|
 | Frequency response $H(j\omega)$ residual      | Analytic rational function                                 | Relative error | $\frac{\|\hat{H}(j\omega) - H_{\text{analytic}}(j\omega)\|}{\|H_{\text{analytic}}(j\omega)\|} \le \gamma_{2(D-1)} \kappa(H(j\omega))$ | Rational Horner evaluation backward stability (Higham, 2002)      |
-| Continuous & discretized response             | harold `Transfer` / `frequency_response`                   | Mag / Phase    | Magnitude $\le 10^{-3}$ dB, phase $\le 10^{-2}$ deg, Nyquist locus $\le 10^{-3}$                                                      | Cross-toolbox frequency response (Misra-Patel) & Tustin/ZOH agreement |
+| Continuous & discretized response             | SciPy `freqs` / `dfreqresp`                                | Mag / Phase    | Magnitude $\le 0.1$ dB ($0.2$ dB ZOH), phase $\le 0.5$ deg ($1$ deg ZOH), Nyquist locus $\le 0.05$                                   | Cross-toolbox frequency response & Tustin/ZOH agreement           |
 | Series multiplication                         | Discrete polynomial convolution                            | Absolute error | $\|(N_1 N_2)_k - \sum a_i b_{k-i}\|_\infty \le (N_1+N_2)\epsilon$                                                                     | Discrete convolution arithmetic bound (Oppenheim & Schafer, 2009) |
 | Tustin discretization frequency mapping       | $\omega_d = \frac{2}{T_s} \arctan(\frac{\omega_a T_s}{2})$ | Relative error | $\le 5\epsilon$                                                                                                                       | Bilinear mapping identity (Franklin et al., 1998)                 |
 | Canonical state-space eigenvalue equivalence  | Roots of denominator polynomial $D(s)$                     | Absolute error | $\|\lambda_i(A_c) - p_i\| \le \mathcal{O}(\epsilon \kappa(D))$                                                                        | Companion matrix spectral equivalence (Kenney & Laub, 1988)       |
@@ -584,12 +584,12 @@ coefficient error assertion |
 
 #### 6.6. Validation
 
-- **Frequency Response, Bode Analysis, & Realization**: Verification of given
-  2nd-order transfer function rational frequency evaluation $H(j\omega)$ on
-  $\mathrm{logspace}(-2,3,128)$, Bode magnitude/phase, series cascade
-  ($H_1 \cdot H_2$), controllable canonical realization, clustered-pole
-  $H(s)=1/[(s+1)^4(s+1.01)^4]$, and multi-source cross-validation against
-  SciPy and harold oracles in `examples/numerical-models-validation/src/transfer_function_validation.rs`.
+- **Frequency Response, Bode Analysis, & Realization**: `control-rs-verification/src/transfer_function.rs`
+  cross-validates the controllable canonical realization of
+  $(2s+3)/(s^2+5s+4)$, continuous, Tustin and ZOH Bode responses of a series
+  notch-lowpass cascade, and a Nyquist locus with gain and phase margins against
+  the SciPy oracle ([numerical-models-design](numerical-models-design.md) §5.1).
+  The clustered-pole case is not yet in the suite ([numerical-models-design](numerical-models-design.md) §5.2).
 
 #### 6.7. Not Verified
 
@@ -722,3 +722,4 @@ coefficient error assertion |
 | 2.1      | August 31, 2026 | @MitchellDScott | Added harold multi-source frequency response / discretization cross-validation oracle and updated validation crate paths.                |
 | 2.2      | September 1, 2026 | @MitchellDScott | Added FR-6: Generic pole and zero extraction `poles<const ORDER>()` and `zeros<const DEG>()` delegating to `Polynomial::roots()`.        |
 | 2.3      | September 1, 2026 | @MitchellDScott | Updated `poles()` and `zeros()` to return worst-case buffers `[Complex<T>; D]` and `[Complex<T>; N]` directly from type bounds without generic parameters. |
+| 2.4      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` (SciPy oracle) and listed the cases not yet cross-validated. |

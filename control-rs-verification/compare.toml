@@ -1,5 +1,5 @@
 [compare]
-out_dir = "../results"
+out_dir = "../target/verification"
 timeout_secs = 90
 
 [[suite]]
@@ -11,13 +11,19 @@ name = "rust"
 type = "rust_bin"
 manifest_path = "Cargo.toml"
 bin = "validate"
-output_file = "../results/matrix.rust.h5"
+output_file = "../target/verification/matrix.rust.h5"
 
 [[suite.variants]]
 name = "scipy"
 type = "python_script"
 script = "python3/matrix_oracle.py"
-output_file = "../results/matrix.scipy.h5"
+output_file = "../target/verification/matrix.scipy.h5"
+
+[[suite.variants]]
+name = "jax"
+type = "python_script"
+script = "python3/matrix_jax_oracle.py"
+output_file = "../target/verification/matrix.jax.h5"
 
 [[suite]]
 name = "polynomial"
@@ -28,13 +34,19 @@ name = "rust"
 type = "rust_bin"
 manifest_path = "Cargo.toml"
 bin = "validate"
-output_file = "../results/polynomial.rust.h5"
+output_file = "../target/verification/polynomial.rust.h5"
 
 [[suite.variants]]
 name = "scipy"
 type = "python_script"
 script = "python3/polynomial_oracle.py"
-output_file = "../results/polynomial.scipy.h5"
+output_file = "../target/verification/polynomial.scipy.h5"
+
+[[suite.variants]]
+name = "flint"
+type = "python_script"
+script = "python3/polynomial_flint_oracle.py"
+output_file = "../target/verification/polynomial.flint.h5"
 
 [[suite]]
 name = "state_space"
@@ -45,13 +57,13 @@ name = "rust"
 type = "rust_bin"
 manifest_path = "Cargo.toml"
 bin = "validate"
-output_file = "../results/state_space.rust.h5"
+output_file = "../target/verification/state_space.rust.h5"
 
 [[suite.variants]]
 name = "scipy"
 type = "python_script"
 script = "python3/state_space_oracle.py"
-output_file = "../results/state_space.scipy.h5"
+output_file = "../target/verification/state_space.scipy.h5"
 
 [[suite]]
 name = "transfer_function"
@@ -62,13 +74,13 @@ name = "rust"
 type = "rust_bin"
 manifest_path = "Cargo.toml"
 bin = "validate"
-output_file = "../results/transfer_function.rust.h5"
+output_file = "../target/verification/transfer_function.rust.h5"
 
 [[suite.variants]]
 name = "scipy"
 type = "python_script"
 script = "python3/transfer_function_oracle.py"
-output_file = "../results/transfer_function.scipy.h5"
+output_file = "../target/verification/transfer_function.scipy.h5"
 
 [[suite]]
 name = "tensor"
@@ -79,10 +91,22 @@ name = "rust"
 type = "rust_bin"
 manifest_path = "Cargo.toml"
 bin = "validate"
-output_file = "../results/tensor.rust.h5"
+output_file = "../target/verification/tensor.rust.h5"
 
 [[suite.variants]]
 name = "scipy"
 type = "python_script"
 script = "python3/tensor_oracle.py"
-output_file = "../results/tensor.scipy.h5"
+output_file = "../target/verification/tensor.scipy.h5"
+
+[[suite.variants]]
+name = "onnx"
+type = "python_script"
+script = "python3/tensor_onnx_oracle.py"
+output_file = "../target/verification/tensor.onnx.h5"
+
+[[suite.variants]]
+name = "tflite"
+type = "python_script"
+script = "python3/tensor_tflite_oracle.py"
+output_file = "../target/verification/tensor.tflite.h5"

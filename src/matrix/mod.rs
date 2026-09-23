@@ -8,7 +8,7 @@
 //! One `Matrix<T, R, C, S>` implementation — arithmetic, transposition,
 //! factorization — operates over any conforming storage backend (stack
 //! array, borrowed view). Arithmetic operators and decompositions read
-//! elements through [`Storage::get_unchecked`]/[`StorageMut::get_unchecked_mut`]
+//! elements through [`DenseStorage::get_unchecked`]/[`DenseStorageMut::get_unchecked_mut`]
 //! rather than assuming a fixed physical layout, so mixed-layout operands
 //! (for example, one side a [`Matrix::transpose_view`]) are handled correctly with
 //! no special-casing.
@@ -433,7 +433,7 @@ impl<T, R: Dim, C: Dim, S: StorageMut<T, R, C>> Matrix<T, R, C, S> {
     /// Writes `val` at `(i, j)`.
     ///
     /// # Errors
-    /// Returns [`StorageError::OutOfBounds`] if either index is out of bounds.
+    /// Returns [`StorageError::OutOfBounds`](crate::math::StorageError::OutOfBounds) if either index is out of bounds.
     pub fn set(&mut self, i: usize, j: usize, val: T) -> StorageResult<()> {
         self.storage.set(i, j, val)
     }

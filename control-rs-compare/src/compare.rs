@@ -23,7 +23,7 @@ pub struct ComparatorOptions {
     /// Optional suite filter (runs comparison only for named suites).
     pub suite_filter: Option<BTreeSet<String>>,
 
-    /// True oracle override (e.g. "scipy").
+    /// True oracle override (for example, `"scipy"`).
     pub oracle_override: Option<String>,
 
     /// Explicit signals to verify (if provided, overrides dynamic discovery).
@@ -56,7 +56,7 @@ impl Default for ComparatorOptions {
 /// Tolerance bound configuration for a numerical comparison check.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ToleranceSpec {
-    /// Method name ("abs", "rel", "rms", "matrix_norm", "exact_match").
+    /// Method name (`"abs"`, `"rel"`, `"rms"`, `"matrix_norm"`, `"exact_match"`).
     pub method: String,
     /// Numerical threshold or tolerance bound.
     pub bound: f64,
@@ -76,7 +76,7 @@ impl Default for ToleranceSpec {
 pub struct SignalTolerancePolicy {
     /// List of numerical tolerance methods to evaluate.
     pub methods: Vec<ToleranceSpec>,
-    /// Satisfaction policy ("all_of" or "any_of").
+    /// Satisfaction policy (`"all_of"` or `"any_of"`).
     pub policy: String,
 }
 
@@ -109,7 +109,7 @@ pub fn run_comparison(
         )));
     }
 
-    // 1. Ingest all `.h5` files in results_dir: map suite -> (variant -> path)
+    // 1. Ingest all `.h5` files in `results_dir`: map suite -> (variant -> path)
     let mut suite_files: BTreeMap<String, BTreeMap<String, PathBuf>> =
         BTreeMap::new();
     let entries = fs::read_dir(&options.results_dir)?;
@@ -251,11 +251,22 @@ pub fn run_comparison(
                 discover_datasets(&oracle_file)
             };
 
+            // A peer may omit a signal only where the oracle dataset carries
+            // `missing_ok.<peer>`; every other omission fails the comparison.
+            let signal_count = signals.len();
+            let mut compared_signals = 0_usize;
+
             for signal in signals {
+                let oracle_ds = oracle_file.dataset(&signal).ok();
+                if peer_file.dataset(&signal).is_err()
+                    && missing_ok(oracle_ds.as_ref(), peer_variant)
+                {
+                    continue;
+                }
+                compared_signals = compared_signals.saturating_add(1);
                 let comparison_key =
                     format!("{actual_oracle_suite}.{signal}.{peer_variant}");
 
-                let oracle_ds = oracle_file.dataset(&signal).ok();
                 let policy = resolve_signal_tolerances(
                     oracle_ds.as_ref(),
                     &signal,
@@ -301,6 +312,26 @@ pub fn run_comparison(
                     verdict: if signal_passed { "pass" } else { "fail" }
                         .to_string(),
                     methods: method_findings,
+                });
+            }
+
+            if signal_count > 0 && compared_signals == 0 {
+                suite_passed = false;
+                suite_comparisons.push(ComparisonFinding {
+                    key: format!("{suite_name}.coverage.{peer_variant}"),
+                    pair: (actual_oracle_variant.clone(), peer_variant.clone()),
+                    signal: "(container)".to_string(),
+                    policy: "all_of".to_string(),
+                    verdict: "fail".to_string(),
+                    methods: vec![MethodFinding {
+                        r#type: "signal_coverage".to_string(),
+                        bound: 1.0,
+                        observed: 0.0,
+                        verdict: "fail".to_string(),
+                        details: Some(format!(
+                            "Variant '{peer_variant}' provides no oracle signal"
+                        )),
+                    }],
                 });
             }
         }
@@ -730,7 +761,7 @@ fn parse_suite_and_variant(path: &Path) -> (String, String) {
 /// Discovers all datasets in an HDF5 container by recursively traversing the group hierarchy.
 ///
 /// Starts at the root group and visits all child groups recursively (like running `ls`),
-/// accumulating fully qualified dataset paths (e.g. `"matrix/a"`, `"transient/v_out"`).
+/// accumulating fully qualified dataset paths (for example, `"matrix/a"`, `"transient/v_out"`).
 /// Groups starting with an underscore (such as `_meta`) are skipped per multi-modal container conventions.
 /// Discovered dataset paths are sorted deterministically.
 #[must_use]
@@ -939,6 +970,16 @@ fn extract_policy_from_attrs(
     }
 
     None
+}
+
+/// Returns `true` when the oracle dataset marks the signal as optional for `peer_variant`
+/// through a non-zero `missing_ok.<peer>` attribute.
+fn missing_ok(oracle_dataset: Option<&Dataset>, peer_variant: &str) -> bool {
+    let key = format!("missing_ok.{peer_variant}");
+    oracle_dataset
+        .and_then(|ds| ds.attrs().ok())
+        .and_then(|attrs| attrs.get(&key).and_then(attr_to_f64))
+        .is_some_and(|v| v != 0.0)
 }
 
 fn attr_to_f64(attr: &AttrValue) -> Option<f64> {

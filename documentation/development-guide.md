@@ -172,10 +172,14 @@ parameters in real time.
 ## Continuous Integration & Verification
 
 `cargo ci` runs every gate declared in [`gate.toml`](../gate.toml), grouped
-as in GitHub Actions. `cargo gate` runs a subset.
+as in GitHub Actions. `cargo gate` runs a subset. Gate output goes to
+`target/ci-artifacts/<gate>.log`; add `-v` to also stream it to the console,
+each line prefixed with its group and gate (for example
+`[verify] cross-compare | ...`), as the GitHub Actions lanes do.
 
 ```bash
 cargo ci                  # all gates
+cargo ci -v               # all gates, output streamed with [group] gate prefixes
 cargo gate fmt,clippy     # selected gates
 cargo coverage            # console coverage
 cargo coverage-ci         # HTML and JSON coverage reports
