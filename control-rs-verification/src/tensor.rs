@@ -40,7 +40,7 @@ type Q7 = Quantized<i8, 7>;
 type Tensor16x16 = ArrayTensor<f32, 16, 16>;
 
 /// Row and column index of a rank-2 tensor element.
-fn index2(idx: &[usize]) -> (usize, usize) {
+const fn index2(idx: &[usize]) -> (usize, usize) {
     match *idx {
         [i, j, ..] => (i, j),
         [i] => (i, 0),
