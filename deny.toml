@@ -32,6 +32,9 @@ allow = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Path dependencies without a version are allowed: cargo strips versionless
+# path dev-dependencies on publish, and `control-rs-ci` is `publish = false`.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

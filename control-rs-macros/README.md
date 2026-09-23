@@ -1,59 +1,18 @@
-# control-rs-macros
+# `control-rs-macros`
 
-`control-rs-macros` provides procedural macros that simplify test registration
-and entrypoint generation for target-side Embedded Test Server (ETS) test suites
-in the `control-rs` library.
+Procedural macros for ETS firmware images.
 
-## Purpose
+| Macro | Generates |
+|:--|:--|
+| `#[ets_suite]` | Suite descriptor and case registration in `.ets_test_suites` |
+| `#[ets_setup]` | Target `main` that runs the server with the returned `Context` |
+| `ets_entrypoint!`, `ets_panic!`, `ets_exception!` | Entrypoint, panic handler and exception handler |
 
-The purpose of this crate is to automate the boilerplates of bare-metal embedded
-test setups. Declaring an ETS test suite requires setting up memory sections,
-registering function pointers, defining static descriptors, exporting symbols to
-linker scripts and configuring custom low-level panic handlers.
-`control-rs-macros` encapsulates these behaviors behind clean, declarative Rust
-attributes.
-
-## Role in the Ecosystem
-
-```mermaid
----
-config:
-  layout: elk
----
-graph LR
-    UserCode[User Test Module] -->|"#[ets_suite]"| MacroExpansion[Test & Setting Descriptors]
-    UserSetup[User Setup Fn] -->|"#[ets_setup]"| Entrypoint[main Entrypoint & panic_handler]
-    MacroExpansion --> Linker[.ets_test_suites Section]
-    
-    classDef testModule stroke:#818cf8
-    classDef macro stroke:#2dd4bf
-    classDef setup stroke:#fb923c
-    classDef entrypoint stroke:#a78bfa
-    classDef linker stroke:#4ade80
-    
-    class UserCode testModule
-    class MacroExpansion macro
-    class UserSetup setup
-    class Entrypoint entrypoint
-    class Linker linker
-```
-
-`control-rs-macros`:
-
-1. **Translates static variables** into atomic settings that can be
-   queried and modified by the host.
-2. **Registers all module functions** as executables inside a suite
-   descriptor array (via `#[ets_suite]`).
-3. **Generates the main entrypoint** (`#[entry] fn main() -> !`) and links the
-   target-side runner loop automatically.
-4. **Implements the low-level target panic handler** that captures stack
-   assertions/panics, sends failure telemetry to the host bridge and resets the
-   target safely.
+[Design](../documentation/macros/macros-design.md) · [Workspace](../README.md)
 
 ## End-User Example
 
-Using `control-rs-macros`, a developer can set up an executable test image with
-minimal code:
+A complete test image:
 
 ```rust
 #![no_std]

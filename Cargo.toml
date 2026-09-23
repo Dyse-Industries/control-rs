@@ -29,6 +29,7 @@ members = [
     "control-rs-tui",
     "control-rs-ci",
     "control-rs-compare",
+    "control-rs-verification",
 ]
 default-members = ["."]
 
@@ -81,7 +82,16 @@ ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
 
 [dev-dependencies]
 proptest = "1"
-control-rs-ci = { path = "control-rs-ci", version = "0.1.0" }
+control-rs-ci = { path = "control-rs-ci" }
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "scaling"
+harness = false
+
+[[bench]]
+name = "jitter"
+harness = false
 
 [profile.release]
 # Enable Link Time Optimization (LTO)

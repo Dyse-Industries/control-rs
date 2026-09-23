@@ -283,7 +283,7 @@ methods = [
     assert_eq!(pol_default.methods[0].method, "matrix_norm");
     assert!((pol_default.methods[0].bound - 0.05).abs() < 1e-9);
 
-    // 2. Peer override: matlab
+    // 2. Peer override: `matlab`
     let pol_matlab =
         resolve_signal_tolerances(None, "matrix/a", "matlab", Some(&table));
     assert_eq!(pol_matlab.methods[0].bound, 0.10);
@@ -293,7 +293,7 @@ methods = [
         resolve_signal_tolerances(None, "matrix/a", "python", Some(&table));
     assert_eq!(pol_python.methods[0].bound, 0.02);
 
-    // 4. Multi-method with any_of policy
+    // 4. Multi-method with `any_of` policy
     let pol_trans = resolve_signal_tolerances(
         None,
         "transient/v_out",
@@ -330,7 +330,7 @@ fn test_tolerance_discovery_from_hdf5_attributes() {
         resolve_signal_tolerances(Some(&ds1_obj), "sig1", "matlab", None);
     assert_eq!(pol1_matlab.methods[0].bound, 0.05);
 
-    // 2. Multi-method JSON attribute with any_of policy
+    // 2. Multi-method JSON attribute with `any_of` policy
     let mut b2 = FileBuilder::new();
     let ds2 = b2.create_dataset("sig2");
     ds2.with_f64_data(&[1.0, 2.0]);

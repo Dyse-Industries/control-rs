@@ -582,7 +582,7 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 | Requirements-based test   | `#[test]` unit tests over boundary conditions and division | FR-2, FR-4, FR-5, FR-6   |
 | Property-based test       | `proptest` suites verifying ring algebraic invariants      | FR-2, FR-3               |
 | Doctest                   | Runnable rustdoc examples                                  | FR-2, FR-5               |
-| Back-to-back comparison   | `examples/numerical-models-validation/python3/polynomial_validation.py` vs `src/polynomial_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-3, FR-6         |
+| Back-to-back comparison   | `control-rs-verification/python3/polynomial_oracle.py` and python-flint oracles vs `control-rs-verification/src/polynomial.rs` HDF5 (`cargo compare`); [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-3, FR-6         |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                           | NFR-2, C-2               |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                  | NFR-1                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics    | FR-1..FR-7, NFR-1..NFR-2 |
@@ -630,13 +630,13 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 
 #### 6.6. Validation
 
-- **Polynomial Evaluation, Calculus, Companion Realization, & Ball Arithmetic**: Verification of
-  degree-bounded polynomial construction, real and complex Horner evaluation,
-  analytical differentiation/integration, polynomial multiplication, Euclidean division,
-  Frobenius companion matrix formulation, clustered-root Horner
-  $p(x)=(x-1)^8(x-1.01)^8$ on a 128-point sweep, and multi-precision cross-validation
-  against NumPy and python-flint 256-bit `arb_poly` in
-  `examples/numerical-models-validation/src/polynomial_validation.rs`.
+- **Polynomial Evaluation & Ball Arithmetic**: `control-rs-verification/src/polynomial.rs`
+  cross-validates real and complex Horner evaluation against NumPy and
+  python-flint 256-bit `arb_poly` / `acb_poly`, Newton root-convergence
+  iteration counts and the Wilkinson $W_{20}$ residual in `f64` and `f32`
+  ([numerical-models-design](numerical-models-design.md) §5.1). Calculus,
+  Euclidean division, companion realization and the clustered-root sweep are
+  not yet in the suite ([numerical-models-design](numerical-models-design.md) §5.2).
 
 #### 6.7. Not Verified
 
@@ -764,3 +764,4 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 | 1.12     | September 1, 2026 | @MitchellDScott | Expanded FR-7 into generic multi-tier `roots()` solver with `line_intercept`, `quadratic_roots`, `companion_roots`, and unified `RootError`. |
 | 1.13     | September 1, 2026 | @MitchellDScott | Updated root-finding methods (`roots()`, `companion_roots()`) to return worst-case buffer `[Complex<T>; N]` directly from type bounds without generic parameters. |
 | 1.14     | September 1, 2026 | @MitchellDScott | Extracted `aberth_solver` helper and renamed `companion_roots` to `aberth_roots` (`durand_kerner_roots`). |
+| 1.15      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |

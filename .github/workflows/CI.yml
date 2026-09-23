@@ -8,6 +8,8 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'examples/**'
+      - 'benches/**'
+      - 'control-rs-verification/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
       - 'control-rs-macros/**'
@@ -24,6 +26,8 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'examples/**'
+      - 'benches/**'
+      - 'control-rs-verification/**'
       - 'control-rs-ets/**'
       - 'control-rs-ets-host/**'
       - 'control-rs-macros/**'
@@ -35,57 +39,126 @@ on:
       - '*.toml'
       - '.vale.ini'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
+  # ============================================================================
+  # Group: lint (fmt, clippy, vale)
+  # ============================================================================
+  lint:
+    name: Lint & Prose
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        rust: [ "stable", "1.89.0", "1.90.0", "1.91.0", "1.92.0", "1.93.0", "beta" ] # add nightly back when clippy is safe
-    permissions:
-      pull-requests: write # Required to post comments
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
-
-      - uses: cargo-bins/cargo-binstall@main
-      - name: Install Cargo Tools
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: cargo binstall -y cargo-tarpaulin cargo-deny cargo-geiger cargo-semver-checks
 
       - name: Install Vale
         run: |
           curl -fsSL https://github.com/vale-cli/vale/releases/download/v3.22.0/vale_3.22.0_Linux_64-bit.tar.gz | tar -xz -C ~/.cargo/bin vale
           vale --config=.vale.ini sync
 
+      - name: Run Lint Group
+        run: cargo ci --verbose --group lint
+
+      - name: Upload Lint Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-lint
+          path: target/ci-artifacts/
+          retention-days: 7
+
+  # ============================================================================
+  # Group: build_test (build, test) across Rust matrix
+  # ============================================================================
+  build_test:
+    name: Build & Test (${{ matrix.rust }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [ "stable", "1.89.0", "1.90.0", "1.91.0", "1.92.0", "1.93.0", "beta" ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+
       - name: Install Targets
         run: rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
 
       - name: Install apt packages
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system valgrind
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system
 
-      - name: Download Tarpaulin Coverage Report
-        if: github.event_name == 'pull_request'
+      - name: Run Build & Test Group
+        run: cargo ci --verbose --group build_test
+
+      - name: Upload Build Artifacts
+        if: always() && matrix.rust == 'stable'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-build_test
+          path: target/ci-artifacts/
+          retention-days: 7
+
+      - name: Upload ETS Results Artifact
+        if: always() && matrix.rust == 'stable'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ets-results-${{ matrix.rust }}
+          path: ets-results.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # ============================================================================
+  # Group: audit (deny, semver, valgrind, geiger)
+  # ============================================================================
+  audit:
+    name: Security & Memory Safety Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install Audit Cargo Tools
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p target/tarpaulin
-          RUN_ID=$(gh run list --branch main --status success --workflow "Rust-CI" --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)
-          if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; then
-            gh run download "$RUN_ID" \
-              --name "tarpaulin-baseline-${{ matrix.rust }}" \
-              --dir target/tarpaulin \
-              || echo "No baseline coverage report found. Proceeding without diff."
-          else
-            echo "No baseline run found on main. Proceeding without diff."
-          fi
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: cargo binstall -y cargo-deny cargo-geiger cargo-semver-checks
+
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Run Audit Group
+        run: cargo ci --verbose --group audit
+
+      - name: Upload Audit Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-audit
+          path: target/ci-artifacts/
+          retention-days: 7
+
+  # ============================================================================
+  # Group: verify (cross-compare)
+  # ============================================================================
+  verify:
+    name: Numerical Oracle Comparison
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -95,16 +168,147 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install -r examples/numerical-models-validation/python3/requirements.txt
+          pip install -r control-rs-verification/python3/requirements.txt
 
-      - name: Run CI
-        run: cargo ci
+      - name: Run Verify Group
+        run: cargo ci --verbose --group verify
+
+      - name: Upload Verify Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-verify
+          path: target/ci-artifacts/
+          retention-days: 7
+
+  # ============================================================================
+  # Group: coverage (coverage)
+  # ============================================================================
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install Tarpaulin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: cargo binstall -y cargo-tarpaulin
+
+      - name: Download Tarpaulin Coverage Baseline
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p target/tarpaulin
+          RUN_ID=$(gh run list --branch main --status success --workflow "Rust-CI" --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)
+          if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; then
+            gh run download "$RUN_ID" \
+              --name "tarpaulin-baseline-stable" \
+              --dir target/tarpaulin \
+              || echo "No baseline coverage report found. Proceeding without diff."
+          else
+            echo "No baseline run found on main. Proceeding without diff."
+          fi
+
+      - name: Run Coverage Group
+        run: cargo ci --verbose --group coverage
+
+      - name: Upload Coverage Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-coverage
+          path: target/ci-artifacts/
+          retention-days: 7
+
+      - name: Upload Tarpaulin Baseline Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarpaulin-baseline-stable
+          path: target/tarpaulin/*coverage.json
+          retention-days: 30
+
+  # ============================================================================
+  # Exclusive Gate: regression (benchmarks & regression gate)
+  # ============================================================================
+  regression:
+    name: Performance Regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Download Criterion Baseline
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID=$(gh run list --branch main --status success --workflow "Rust-CI" --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)
+          if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; then
+            gh run download "$RUN_ID" \
+              --name "criterion-baseline" \
+              --dir target/criterion \
+              || echo "No baseline benchmark data found. Proceeding without regression comparison."
+          else
+            echo "No baseline run found on main. Proceeding without regression comparison."
+          fi
+
+      - name: Run Regression Gate
+        run: cargo ci --verbose --only regression
+
+      - name: Upload Criterion Baseline Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-baseline
+          path: target/criterion/
+          retention-days: 30
+
+      - name: Upload Regression Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-regression
+          path: target/ci-artifacts/
+          retention-days: 7
+
+  # ============================================================================
+  # Aggregator: report (merges all group artifacts, writes ci-report.md, PR comment)
+  # ============================================================================
+  report:
+    name: Aggregate Report
+    runs-on: ubuntu-latest
+    needs: [lint, build_test, audit, verify, coverage, regression]
+    if: always()
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Download all group artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci-artifacts-*
+          path: target/ci-artifacts/
+          merge-multiple: true
+
+      - name: Generate CI Report
+        run: cargo run --package control-rs-ci --bin report --
 
       - name: Build Documentation
+        if: github.ref == 'refs/heads/main'
         run: cargo doc --no-deps --workspace
 
       - name: Upload Documentation Artifact
-        if: github.ref == 'refs/heads/main' && matrix.rust == 'stable'
+        if: github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: documentation
@@ -112,42 +316,34 @@ jobs:
           retention-days: 30
 
       - name: Post PR Comment
-        if: github.event_name == 'pull_request' && matrix.rust == 'stable' && (success() || failure())
+        if: github.event_name == 'pull_request' && (success() || failure())
         uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.pull_request.number }}
-          body-path: ci-report.md
+          body-path: target/ci-artifacts/ci-report.md
 
       - name: Upload to Step Summary
         if: always()
         run: |
-          if [ -f ci-report.md ]; then
-            cat ci-report.md >> $GITHUB_STEP_SUMMARY
+          if [ -f target/ci-artifacts/ci-report.md ]; then
+            cat target/ci-artifacts/ci-report.md >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Upload Tarpaulin Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: tarpaulin-baseline-${{ matrix.rust }}
-          path: target/tarpaulin/*coverage.json
-          retention-days: 30
-
-      - name: Upload ETS Results Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ets-results-${{ matrix.rust }}
-          path: ets-results.json
-          if-no-files-found: ignore
-          retention-days: 30
-
+  # ============================================================================
+  # Publish: Release on Tag
+  # ============================================================================
   publish:
+    name: Publish to Crates.io
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build_test, report]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Log in to crates.io
         run: cargo login "${{ secrets.CRATES_IO_TOKEN }}"
-      - name: Publish to crates.io
-        run: cargo publish
+      - name: Publish workspace crates
+        run: |
+          cargo publish --package control-rs-macros || true
+          cargo publish --package control-rs-ets || true
+          cargo publish --package control-rs

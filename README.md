@@ -1,6 +1,6 @@
 # control-rs
 
-`control-rs` is a high-assurance, `#![no_std]`-first Rust library for numerical
+`control-rs` is a `#![no_std]`-first Rust library for numerical
 modeling, control synthesis, and real-time execution, targeting autonomous
 systems, robotics, and bare-metal embedded flight computers.
 
@@ -10,13 +10,13 @@ systems, robotics, and bare-metal embedded flight computers.
 
 `control-rs` is built around five storage-backed numerical primitives:
 
-| Model | Storage & Capacity | Applications | Key Capabilities & Algorithms |
-|:---|:---|:---|:---|
-| **[`Matrix`](src/matrix/)** | `Storage<T, R, C>` | Kalman filtering (EKF), state-space, linear systems | BLAS 1/2/3, LU with partial pivoting, LDL^T, Cholesky, Householder QR, direct triangular solvers (`UpperTriangular`, `LowerTriangular`, `Symmetric`), Padé [6/6] Matrix Exponential (`expm`), submatrix slicing |
-| **[`Polynomial`](src/polynomial/)** | `Storage<T, N, 1>` | Filtering, trajectory generation, root-finding | Ascending-power representation, real/complex Horner evaluation, analytic calculus, DSP convolution (`mul_poly`), Euclidean division (`div_rem`), cubic & quintic splines, bilinear discretization (`compose_bilinear`), Muller/Higham stabilized quadratic roots, Aberth–Ehrlich root finder |
-| **[`Tensor`](src/tensor/)** | `FlatBuffer<T>` | Flight lookup tables, gain scheduling, embedded inference | N-D static shapes (`Shape1D`–`Shape4D`), multilinear continuous hypercube grid interpolation (`interpolate`), tensor contraction (`contract_into` via GEMM), axis permutation, activations (`Relu`, piecewise LUT `TableActivation`), fixed-point quantized operations |
-| **[`TransferFunction`](src/transfer_function/)** | Polynomial-backed | Classical SISO $H(s)$ & $H(z)$ control loops | Rational transfer functions, complex frequency response (`eval_frequency`, `bode_point`), companion matrix pole & zero extraction, series/parallel/feedback block algebra, canonical state-space realizations (CCF & OCF), pre-warped Tustin & ZOH discretization |
-| **[`StateSpace`](src/state_space/)** | Matrix-backed | Multivariable LTI systems, observers, simulation | Continuous ($\dot{x}=Ax+Bu$) & discrete ($x_{k+1}=Ax_k+Bu_k$) dynamics, step simulation, continuous derivatives, series/parallel/feedback interconnections with algebraic loop detection, exact ZOH & Tustin discretization, similarity transforms, controllability/observability matrices, Faddeev–LeVerrier transfer function conversion |
+| Model                                                  | Storage & Capacity | Applications                                              | Key Capabilities & Algorithms                                                                                                                                                                                                                                                                                                              |
+|:-------------------------------------------------------|:-------------------|:----------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **[`Matrix`](src/matrix/mod.rs)**                      | `Storage<T, R, C>` | Kalman filtering (EKF), state-space, linear systems       | BLAS 1/2/3, LU with partial pivoting, LDL^T, Cholesky, Householder QR, direct triangular solvers (`UpperTriangular`, `LowerTriangular`, `Symmetric`), Padé [6/6] Matrix Exponential (`expm`), submatrix slicing                                                                                                                            |
+| **[`Polynomial`](src/polynomial/mod.rs)**              | `Storage<T, N, 1>` | Filtering, trajectory generation, root-finding            | Ascending-power representation, real/complex Horner evaluation, analytic calculus, DSP convolution (`mul_poly`), Euclidean division (`div_rem`), cubic & quintic splines, bilinear discretization (`compose_bilinear`), Muller/Higham stabilized quadratic roots, Aberth–Ehrlich root finder                                               |
+| **[`Tensor`](src/tensor/mod.rs)**                      | `FlatBuffer<T>`    | Flight lookup tables, gain scheduling, embedded inference | N-D static shapes (`Shape1D`–`Shape4D`), multilinear continuous hypercube grid interpolation (`interpolate`), tensor contraction (`contract_into` via GEMM), axis permutation, activations (`Relu`, piecewise LUT `TableActivation`), fixed-point quantized operations                                                                     |
+| **[`TransferFunction`](src/transfer_function/mod.rs)** | Polynomial-backed  | Classical SISO $H(s)$ & $H(z)$ control loops              | Rational transfer functions, complex frequency response (`eval_frequency`, `bode_point`), companion matrix pole & zero extraction, series/parallel/feedback block algebra, canonical state-space realizations (CCF & OCF), pre-warped Tustin & ZOH discretization                                                                          |
+| **[`StateSpace`](src/state_space/mod.rs)**             | Matrix-backed      | Multivariable LTI systems, observers, simulation          | Continuous ($\dot{x}=Ax+Bu$) & discrete ($x_{k+1}=Ax_k+Bu_k$) dynamics, step simulation, continuous derivatives, series/parallel/feedback interconnections with algebraic loop detection, exact ZOH & Tustin discretization, similarity transforms, controllability/observability matrices, Faddeev–LeVerrier transfer function conversion |
 
 ---
 
@@ -47,7 +47,7 @@ flowchart TB
         StateSpace["StateSpace (src/state_space)"]:::core
     end
 
-    subgraph Tools["Control Synthesis & Toolboxes"]
+    subgraph Tools["Control Synthesis & Toolboxes (planned)"]
         direction TB
         Classical["Classical Control"]:::tools
         Modern["Modern Control (LQR, Observers)"]:::tools
@@ -56,7 +56,7 @@ flowchart TB
     end
 
     Math --> Models
-    Models --> Tools
+    Models -.-> Tools
     classDef core fill: #0d1b2a, stroke: #778da9, stroke-width: 2px, color: #e0e1dd
     classDef external fill: #1b263b, stroke: #8d99ae, stroke-width: 2px, color: #edf2f4
     classDef tools fill: #415a77, stroke: #a3b1c6, stroke-width: 2px, color: #ffffff
@@ -75,22 +75,24 @@ flowchart TB
 use control_rs::matrix::Owned;
 use control_rs::state_space::ArrayStateSpace;
 
-// Continuous inverted pendulum / harmonic oscillator
-let a = Owned::<f64, 2, 2>::from_row_arrays([[0.0, 1.0], [-4.0, -0.8]]);
-let b = Owned::<f64, 2, 1>::from_column([0.0, 1.0]);
-let c = Owned::<f64, 1, 2>::from_row([1.0, 0.0]);
-let d = Owned::<f64, 1, 1>::scalar(0.0);
+fn main() {
+    // Continuous inverted pendulum / harmonic oscillator
+    let a = Owned::<f64, 2, 2>::from_row_arrays([[0.0, 1.0], [-4.0, -0.8]]);
+    let b = Owned::<f64, 2, 1>::from_column([0.0, 1.0]);
+    let c = Owned::<f64, 1, 2>::from_row([1.0, 0.0]);
+    let d = Owned::<f64, 1, 1>::scalar(0.0);
 
-let sys_c = ArrayStateSpace::continuous(a, b, c, d);
+    let sys_c = ArrayStateSpace::continuous(a, b, c, d);
 
-// Exact Zero-Order Hold (ZOH) discretization
-let sys_d = sys_c.to_discrete_zoh(0.05);
+    // Exact Zero-Order Hold (ZOH) discretization
+    let sys_d = sys_c.to_discrete_zoh(0.05);
 
-let mut x = Owned::<f64, 2, 1>::zero();
-let u = Owned::<f64, 1, 1>::scalar(1.0);
+    let mut x = Owned::<f64, 2, 1>::zero();
+    let u = Owned::<f64, 1, 1>::scalar(1.0);
 
-// Advance 1 discrete time step
-let (x_next, y) = sys_d.step(&x, &u);
+    // Advance 1 discrete time step
+    let (x_next, y) = sys_d.step(&x, &u);
+}
 ```
 
 ### 2. Rational Transfer Function Frequency Response & Canonical Realization
@@ -98,19 +100,21 @@ let (x_next, y) = sys_d.step(&x, &u);
 ```rust
 use control_rs::transfer_function::ArrayTransferFunction;
 
-// 2nd-order lowpass filter: H(s) = 4 / (s^2 + 2s + 4)
-// Ascending coefficient order: [4.0] / [4.0, 2.0, 1.0]
-let tf = ArrayTransferFunction::<f64, 1, 3>::continuous([4.0], [4.0, 2.0, 1.0]);
+fn main() {
+    // 2nd-order lowpass filter: H(s) = 4 / (s^2 + 2s + 4)
+    // Ascending coefficient order: [4.0] / [4.0, 2.0, 1.0]
+    let tf = ArrayTransferFunction::<f64, 1, 3>::continuous([4.0], [4.0, 2.0, 1.0]);
 
-// Evaluate frequency response at omega = 2.0 rad/s
-let (mag, phase_rad) = tf.bode_point(2.0);
+    // Evaluate frequency response at omega = 2.0 rad/s
+    let (mag, phase_rad) = tf.bode_point(2.0);
 
-// Extract complex poles (companion matrix roots)
-let poles = tf.poles().expect("stable denominator");
+    // Extract complex poles (companion matrix roots)
+    let poles = tf.poles().expect("stable denominator");
 
-// Convert directly into Controllable Canonical Form (CCF)
-let ss_ccf = tf.to_controllable_canonical_form::<2>()
-    .expect("proper transfer function");
+    // Convert directly into Controllable Canonical Form (CCF)
+    let ss_ccf = tf.to_controllable_canonical_form::<2>()
+        .expect("proper transfer function");
+}
 ```
 
 ### 3. Fixed-Point Quantization & Multilinear Tensor Lookup
@@ -118,15 +122,17 @@ let ss_ccf = tf.to_controllable_canonical_form::<2>()
 ```rust
 use control_rs::tensor::{ArrayTensor, Quantized};
 
-// Q7 fixed-point representation with convergent rounding
-type Q7 = Quantized<i8, 7>;
-let q = Q7::quantize(0.75);
-assert_eq!(q.raw(), 96); // 0.75 * 128 = 96
+fn main() {
+    // Q7 fixed-point representation with convergent rounding
+    type Q7 = Quantized<i8, 7>;
+    let q = Q7::quantize(0.75);
+    assert_eq!(q.raw(), 96); // 0.75 * 128 = 96
 
-// 2D Gain scheduling table over a 2x2 grid
-let table = ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
-let val = table.interpolate(&[0.5, 0.5]);
-assert_eq!(val, 2.5);
+    // 2D Gain scheduling table over a 2x2 grid
+    let table = ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
+    let val = table.interpolate(&[0.5, 0.5]);
+    assert_eq!(val, 2.5);
+}
 ```
 
 ---
@@ -134,14 +140,23 @@ assert_eq!(val, 2.5);
 ## Validation & Hardware Acceleration
 
 ### Multi-Oracle Verification Suite
-Located in [`examples/numerical-models-validation/`](examples/numerical-models-validation/), this suite performs automated cross-validation against external reference engines:
-- **Matrix & Linear Algebra**: Cross-validated with **SciPy** (`scipy.linalg`) and **JAX** (x64 CPU backend).
-- **Polynomials**: Evaluated against **SciPy** and **Python-Flint** (256-bit ball arithmetic for Wilkinson conditioning).
-- **State-Space & Transfer Functions**: Cross-checked against **SciPy** (`scipy.signal`) and **Harold**.
-- **Tensors & Activations**: Compared against **SciPy** exact functions and **TensorFlow Lite** int8 quantized kernels.
+
+Located in [`control-rs-verification`](control-rs-verification/README.md), this
+suite performs automated cross-validation against external reference engines
+(`cargo compare`):
+
+- **Matrix & Linear Algebra**: Cross-validated with **SciPy** (`scipy.linalg`).
+- **Polynomials**: Evaluated against **SciPy** and Horner evaluation.
+- **State-Space & Transfer Functions**: Cross-checked against **SciPy**
+  (`scipy.signal`).
+- **Tensors & Contractions**: Compared against **SciPy** tensor contractions.
 
 ### Standalone Subprogram Backends
-Architecture-specific subprogram crates under [`examples/subprograms/`](examples/subprograms/) implement `control_rs::math::subprograms` traits:
+
+Architecture-specific subprogram crates under [
+`examples/subprograms/`](examples/subprograms/README.md) implement
+`control_rs::math::subprograms` traits:
+
 - `subprograms/aarch64`: ARM NEON & Apple Accelerate
 - `subprograms/x86_64`: AVX2 + FMA & CBLAS
 - `subprograms/thumbv7em`: ARM CMSIS-DSP
@@ -149,14 +164,23 @@ Architecture-specific subprogram crates under [`examples/subprograms/`](examples
 
 ---
 
-## Links & Documentation
+## Workspace
 
-- [Development Guide & Cargo Aliases](documentation/development-guide.md)
-- [Examples & Host Validation Guide](examples/README.md)
-- [Embedded Test Server (ETS)](control-rs-ets)
-- [Host ETS Session Library](control-rs-ets-host)
-- [Interactive Terminal UI (TUI)](control-rs-tui)
-- [CI Quality Gate Runner](control-rs-ci)
+| Crate | Role | Design |
+|:--|:--|:--|
+| `control-rs` (this crate) | Math core and numerical models | [math](documentation/README.md#math), [numerical-models](documentation/README.md#numerical-models) |
+| [`control-rs-ets`](control-rs-ets/README.md) | Target-side Embedded Test Server | [ets](documentation/README.md#ets) |
+| [`control-rs-macros`](control-rs-macros/README.md) | ETS suite and entrypoint macros | [macros-design](documentation/macros/macros-design.md) |
+| [`control-rs-ets-host`](control-rs-ets-host/README.md) | Host transport, framing and headless runner | [ets-host-design](documentation/ets-host/ets-host-design.md) |
+| [`control-rs-tui`](control-rs-tui/README.md) | Interactive ETS terminal console | [tui-design](documentation/tui/tui-design.md) |
+| [`control-rs-ci`](control-rs-ci/README.md) | Quality gate runner and report aggregator | [ci-design](documentation/ci/ci-design.md) |
+| [`control-rs-compare`](control-rs-compare/README.md) | HDF5 cross-comparison engine | [cross-compare-design](documentation/vv/cross-compare-design.md) |
+| [`control-rs-verification`](control-rs-verification/README.md) | Rust emitters and Python oracles for cross-validation | [cross-compare-design](documentation/vv/cross-compare-design.md) |
+| [`examples/`](examples/README.md) | Domain examples, subprogram backends, ETS firmware | |
+
+- [Documentation index](documentation/README.md): design docs, standards, roadmap
+- [Contributing](CONTRIBUTING.md): design-doc to implementation process
+- [Development Guide](documentation/development-guide.md): prerequisites, cargo aliases, CI
 
 ## Installation
 

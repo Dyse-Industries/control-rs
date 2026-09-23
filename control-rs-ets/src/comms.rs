@@ -310,7 +310,7 @@ pub struct CommsLock {
 /// State machine to de-frame a stream of incoming bytes into packets.
 ///
 /// Statefully processes serial stream input byte-by-byte and performs
-/// payload verification via CRC-16 checks.
+/// payload control-rs-verification via CRC-16 checks.
 ///
 /// # Safety
 /// This struct does not use `unsafe` code.

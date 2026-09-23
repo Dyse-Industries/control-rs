@@ -4,6 +4,7 @@ Copyable reference implementors for `control_rs::math::subprograms`. Each
 crate is a downstream user of the library: a zero-sized marker, trait impls
 for the scalars and layouts that backend supports, and a short `main` that
 checks those methods against `DefaultBlas`.
+[Design](../../documentation/math/subprograms-design.md) · [Examples](../README.md) · [Workspace](../../README.md)
 
 `control-rs` `src/` ships only `DefaultBlas`. These packages are not workspace
 members, are excluded from `cargo ci`, and are not a substitute for
@@ -68,7 +69,7 @@ rustup target add thumbv7em-none-eabihf riscv32imac-unknown-none-elf
 | Crate | Extra tools |
 |:------|:------------|
 | `thumbv7em` | `qemu-system-arm`, `clang` with `--target=thumbv7em-none-eabihf` |
-| `riscv32imac` | `qemu-system-riscv32`. A RISC-V gcc is optional; without it the crate uses the portable Rust ABI stand-ins in `src/nmsis.rs` |
+| `riscv32imac` | `qemu-system-riscv32`. A RISC-V GCC is optional; without it the crate uses the portable Rust ABI stand-ins in `src/nmsis.rs` |
 
 Do not invoke QEMU with a handwritten `-kernel path/to/target/...` unless you
 know `CARGO_TARGET_DIR`. The crate runner already receives the artifact

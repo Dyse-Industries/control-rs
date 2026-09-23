@@ -3,6 +3,7 @@
 Bare-metal Embedded Test Server (ETS) runners for virtual ARM Cortex-M7 and
 RISC-V targets. This package is validation firmware. It is not a subprogram
 backend and does not link CMSIS-DSP or NMSIS-DSP.
+[Design](../../documentation/ets/embedded-test-server-design.md) · [Examples](../README.md) · [Workspace](../../README.md)
 
 The crate is its own `[workspace]`. Run commands from this directory unless
 using the root alias `cargo qemu`, which launches the host TUI against this

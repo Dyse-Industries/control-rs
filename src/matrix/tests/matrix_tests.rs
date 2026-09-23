@@ -2,7 +2,7 @@
 //!
 //! ## Functional Requirement Coverage (`matrix-design.md`)
 //!
-//! - **FR-1** (compile-time shape verification): tests are parameterized on
+//! - **FR-1** (compile-time shape control-rs-verification): tests are parameterized on
 //!   `Const<N>`; a dimension mismatch is a compile error (`compile_fail` in
 //!   `src/matrix/mod.rs`).
 //! - **FR-2** (matrix algebra): `test_add_sub_neg`, `test_mul_matrix_matrix`,

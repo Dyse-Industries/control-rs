@@ -1,0 +1,8 @@
+h5py>=3.10.0
+numpy>=2.0.0
+scipy>=1.14.0
+jax>=0.4.30
+python-flint>=0.6.0
+tensorflow>=2.16
+onnx>=1.16
+onnxruntime>=1.18

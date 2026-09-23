@@ -1,9 +1,9 @@
 [compare]
 title = "control-rs Cross-Comparison Suite"
-out_dir = "results"
+out_dir = "target/verification"
 timeout_secs = 120
 strict = true
 
 suites = [
-    "examples/numerical-models-validation",
+    "control-rs-verification",
 ]

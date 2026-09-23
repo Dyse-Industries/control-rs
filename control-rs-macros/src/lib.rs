@@ -1,5 +1,14 @@
-//! Procedural macros for the control-rs ETS testing framework.
-//! Provides attributes like `#[ets_suite]` and `#[ets_setup]` to declare ETS test suites and setup functions.
+//! Procedural macros for `control-rs` Embedded Test Server (ETS) firmware.
+//!
+//! | Macro | Generates |
+//! |:--|:--|
+//! | `#[ets_suite]` | Suite descriptor and case registration in `.ets_test_suites` |
+//! | `#[ets_setup]` | Target `main` that runs the server with the returned `Context` |
+//! | `ets_entrypoint!` | Target `main` for a given setup function |
+//! | `ets_panic!` | Panic handler that reports the failure to the host and resets |
+//! | `ets_exception!` | Exception handler |
+//!
+//! Firmware usage: `examples/qemu` and `examples/teensy4` in the repository.
 
 #![allow(
     unused_extern_crates,

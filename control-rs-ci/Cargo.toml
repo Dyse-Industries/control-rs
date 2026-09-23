@@ -33,3 +33,12 @@ path = "src/bin/gate.rs"
 [[bin]]
 name = "report"
 path = "src/bin/report.rs"
+
+[[bin]]
+name = "valgrind"
+path = "src/bin/valgrind.rs"
+
+[[bin]]
+name = "regression"
+path = "src/bin/regression.rs"
+

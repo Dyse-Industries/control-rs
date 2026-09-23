@@ -727,7 +727,7 @@ kernels, whose unchecked accessors carry no bounds checks (NFR-3).
 Dynamic operations that cannot be validated statically use soft failure paths:
 
 - Matrix inversion returns `LinAlgResult<()>` instead of panicking, allowing
-  control loops to handle singular conditions (e.g., falling back to a
+  control loops to handle singular conditions (for example, falling back to a
   degraded state on `Err(LinAlgError::SingularMatrix)`).
 - Boundary access returns `Option<&T>` (`get`, strided backends) or
   `Option<T>` (`value`, packed backends); `None` denotes an out-of-bounds
@@ -958,7 +958,7 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | Requirements-based test   | `#[test]` unit tests over edge cases and singular inputs | FR-3, FR-4, FR-5, C-2    |
 | Property-based test       | `proptest` suites verifying algebraic invariants         | FR-2, FR-6               |
 | Doctest                   | Runnable doc examples in rustdoc                         | FR-2, FR-4               |
-| Back-to-back comparison   | `examples/numerical-models-validation/python3/matrix_validation.py` vs `src/matrix_validation.rs` JSON; [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-3               |
+| Back-to-back comparison   | `control-rs-verification/python3/matrix_oracle.py` and JAX oracles vs `control-rs-verification/src/matrix.rs` HDF5 (`cargo compare`); [`numerical-models-design.md`](numerical-models-design.md) §5.1 | FR-2, FR-3               |
 | Resource usage evaluation | `no_alloc` audit, `size_of` assertions, stack analysis                       | NFR-1, NFR-2, C-2, C-3   |
 | On-target execution       | ETS suites under QEMU and Teensy hardware                | NFR-3                    |
 | Coverage measurement      | `cargo coverage` reporting statement and branch metrics  | FR-1..FR-6, NFR-1..NFR-3 |
@@ -1005,13 +1005,13 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 
 #### 6.6. Validation
 
-- **Matrix Arithmetic, Linear Solves, & Inversion**: End-to-end numeric integrity
-  verification in `examples/numerical-models-validation/src/matrix_validation.rs` executing matrix
-  construction, arithmetic (`+`, `-`, `*`), transposition, $LU$ decomposition
-  solving $Ax = b$, matrix inversion with identity check ($A \cdot A^{-1} = I$),
-  Hilbert $n=8$ solve/inverse (residual and $\tau\kappa\varepsilon$), timed
-  GEMM $n=64$, and multi-source cross-validation against SciPy and JAX x64 oracles,
-  without dynamic heap allocation.
+- **Matrix Arithmetic & Linear Solves**: `control-rs-verification/src/matrix.rs`
+  cross-validates the 100-step EKF covariance recursion, a $10 \times 10$ Hilbert
+  solve and residual, an 8-node Vandermonde solve, a graded-spread Cholesky solve
+  and QR orthogonality loss against SciPy and JAX x64 oracles
+  ([numerical-models-design](numerical-models-design.md) §5.1), without dynamic
+  heap allocation. Matrix inversion with identity check is not yet in the suite
+  ([numerical-models-design](numerical-models-design.md) §5.2); GEMM timing is a criterion bench.
 - **Hardware DSP Interoperability**: Slicing contiguous memory (`as_slice()`) to
   pass directly into CMSIS-DSP vector routines without intermediate buffers.
 
@@ -1149,4 +1149,5 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | 1.10     | August 28, 2026 | @MitchellDScott | Example crate: Hilbert $n=8$ and timed GEMM $n=64$; $1024\times 1024$ remains out. Caps unchanged.                                                  |
 | 1.11     | August 28, 2026 | @MitchellDScott | §6.4 FR-5 artifact is `test_symmetric_construction`; packed storage remains in `storage_tests.rs`. Factor residuals live in `matrix_test_suite`. |
 | 1.12     | August 31, 2026 | @MitchellDScott | Added JAX x64 multi-source cross-validation oracle, updated validation crate paths, and reconciled EKF covariance heatmap tolerances.                 |
+| 1.13      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |
 

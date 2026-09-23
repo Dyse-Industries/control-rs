@@ -49,7 +49,7 @@ pub struct CompareGeneralConfig {
     #[serde(default = "default_true")]
     pub strict: bool,
 
-    /// Optional child suite directories specified under the [compare] table.
+    /// Optional child suite directories specified under the `[compare]` table.
     #[serde(default)]
     pub suites: Vec<String>,
 
@@ -64,7 +64,7 @@ pub struct SuiteConfig {
     /// Canonical suite name (for example, "`buck_converter`", "matrix").
     pub name: String,
 
-    /// Name of the reference oracle variant (default: "scipy").
+    /// Name of the reference oracle variant (default: `"scipy"`).
     #[serde(default = "default_oracle")]
     pub true_oracle: String,
 
@@ -102,7 +102,7 @@ pub struct SignalToleranceConfig {
     /// Target signal path (optional if table key is signal path).
     pub signal: Option<String>,
 
-    /// Single method name ("abs", "rel", "rms", "matrix_norm", etc.).
+    /// Single method name (`"abs"`, `"rel"`, `"rms"`, `"matrix_norm"`, etc.).
     pub method: Option<String>,
 
     /// Numerical bound for single method.
@@ -112,11 +112,11 @@ pub struct SignalToleranceConfig {
     #[serde(default)]
     pub methods: Vec<ToleranceMethodConfig>,
 
-    /// Satisfaction policy ("all_of" or "any_of").
+    /// Satisfaction policy (`"all_of"` or `"any_of"`).
     #[serde(default = "default_policy")]
     pub policy: String,
 
-    /// Peer-specific bound overrides (e.g. `peer_bounds.ngspice = 1e-2`).
+    /// Peer-specific bound overrides (for example, `peer_bounds.ngspice = 1e-2`).
     #[serde(default)]
     pub peer_bounds: BTreeMap<String, f64>,
 }
@@ -124,7 +124,7 @@ pub struct SignalToleranceConfig {
 /// A single tolerance method configuration in a multi-method list.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToleranceMethodConfig {
-    /// Method type name ("abs", "rel", "rms", "matrix_norm", "exact_match", etc.).
+    /// Method type name (`"abs"`, `"rel"`, `"rms"`, `"matrix_norm"`, `"exact_match"`, etc.).
     #[serde(rename = "type", alias = "method")]
     pub r#type: String,
 
@@ -176,7 +176,7 @@ fn default_policy() -> String {
 /// Execution specification for a single language or model variant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VariantConfig {
-    /// Variant identifier (for example, "rust", "scipy", "jax", "ngspice").
+    /// Variant identifier (for example, `"rust"`, `"scipy"`, `"jax"`, `"ngspice"`).
     pub name: String,
 
     /// Execution engine type ("`rust_bin`", "`python_script`", or "`command`").

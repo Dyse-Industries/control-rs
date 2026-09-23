@@ -1,13 +1,13 @@
 //! Integration tests verifying that builtin CI Cargo quality gates fail on invalid code.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use control_rs_ci::gates::cargo::CargoArgvGate;
-use control_rs_ci::quality_gate::{GateContext, QualityGate, Verdict};
+use control_rs_ci::gate::{Gate, GateContext, Verdict};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -115,7 +115,13 @@ fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
 #[test]
 fn test_negative_fmt_gate_fails_on_unformatted_code() -> TestResult {
     let temp = create_temp_context(NegativeScenario::Format)?;
-    let gate = CargoArgvGate::fmt();
+    let gate = Gate::new(
+        "fmt",
+        "cargo fmt",
+        vec!["--all".to_string(), "--".to_string(), "--check".to_string()],
+        Some("Verifies codebase formatting".to_string()),
+        HashMap::new(),
+    );
 
     let outcome = gate.execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
@@ -132,7 +138,19 @@ fn test_negative_fmt_gate_fails_on_unformatted_code() -> TestResult {
 #[test]
 fn test_negative_clippy_gate_fails_on_denied_lint() -> TestResult {
     let temp = create_temp_context(NegativeScenario::Clippy)?;
-    let gate = CargoArgvGate::clippy();
+    let gate = Gate::new(
+        "clippy",
+        "cargo clippy",
+        vec![
+            "--workspace".to_string(),
+            "--all-targets".to_string(),
+            "--".to_string(),
+            "-D".to_string(),
+            "warnings".to_string(),
+        ],
+        Some("Executes Clippy linter".to_string()),
+        HashMap::new(),
+    );
 
     let outcome = gate.execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
@@ -152,7 +170,13 @@ fn test_negative_clippy_gate_fails_on_denied_lint() -> TestResult {
 #[test]
 fn test_negative_check_gate_fails_on_type_mismatch() -> TestResult {
     let temp = create_temp_context(NegativeScenario::Check)?;
-    let gate = CargoArgvGate::check();
+    let gate = Gate::new(
+        "check",
+        "cargo check",
+        vec!["--workspace".to_string(), "--all-targets".to_string()],
+        Some("Performs compiler type checking".to_string()),
+        HashMap::new(),
+    );
 
     let outcome = gate.execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
@@ -169,7 +193,13 @@ fn test_negative_check_gate_fails_on_type_mismatch() -> TestResult {
 #[test]
 fn test_negative_build_gate_fails_on_syntax_error() -> TestResult {
     let temp = create_temp_context(NegativeScenario::Build)?;
-    let gate = CargoArgvGate::build();
+    let gate = Gate::new(
+        "build",
+        "cargo build",
+        vec!["--workspace".to_string(), "--all-targets".to_string()],
+        Some("Compiles workspace targets".to_string()),
+        HashMap::new(),
+    );
 
     let outcome = gate.execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
@@ -186,7 +216,13 @@ fn test_negative_build_gate_fails_on_syntax_error() -> TestResult {
 #[test]
 fn test_negative_test_gate_fails_on_assertion_failure() -> TestResult {
     let temp = create_temp_context(NegativeScenario::Test)?;
-    let gate = CargoArgvGate::test();
+    let gate = Gate::new(
+        "test",
+        "cargo test",
+        vec!["--workspace".to_string()],
+        Some("Executes test suites".to_string()),
+        HashMap::new(),
+    );
 
     let outcome = gate.execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);

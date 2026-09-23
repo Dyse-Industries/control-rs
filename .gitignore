@@ -50,8 +50,6 @@
 .agent/
 .claude/
 .cursor/
-.idea/workspace.xml
-.idea/codeStyles/
 
 # Vale styles downloaded packages (preserve project vocabularies)
 .vale/styles/*
@@ -61,7 +59,7 @@ documentation/TODO/
 documentation/**/research/*
 
 # Generated V&V JSON/plots
-examples/*/results/
+**/results/
 
 # SQLite session files (e.g. hdf5/python tooling)
 **/*.ses

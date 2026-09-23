@@ -52,28 +52,66 @@
 pub mod cli;
 pub mod config;
 pub mod error;
-pub mod gates;
-pub mod quality_gate;
+pub mod gate;
 pub mod report;
 pub mod ui;
 
 pub use cli::run_cli;
 pub use config::{GateConfig, GatePolicy};
 pub use error::GateError;
-pub use quality_gate::{GateContext, GateOutcome, QualityGate, Verdict};
+pub use gate::{Gate, GateContext, GateOutcome, Verdict};
 pub use report::ReportAggregator;
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Cleans up the CI artifacts directory and any leftover workspace root artifacts.
+///
+/// Removes the configured output directory (`out_dir`, typically `target/ci-artifacts`)
+/// and removes any stray legacy CI artifacts found in the workspace root.
+///
+/// # Errors
+/// Returns `GateError` if configuration loading or directory deletion fails.
+pub fn clean_artifacts(
+    workspace_root: &Path,
+    config_path: &Path,
+) -> Result<PathBuf, GateError> {
+    let config = GateConfig::load_from_path(config_path)?;
+    let out_dir = workspace_root.join(&config.runner.out_dir);
+
+    if out_dir.exists() {
+        std::fs::remove_dir_all(&out_dir)?;
+    }
+
+    // Remove any stray or legacy CI artifacts from the workspace root
+    let stray_root_artifacts = [
+        "ci-report.md",
+        "mutants.out",
+        "mutants.out.old",
+        "tarpaulin-report.html",
+        "tarpaulin-report.json",
+    ];
+    for artifact in &stray_root_artifacts {
+        let p = workspace_root.join(artifact);
+        if p.is_dir() {
+            let _ = std::fs::remove_dir_all(&p);
+        } else if p.is_file() {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+
+    Ok(out_dir)
+}
+
 fn execute_gate(
-    gate: &Arc<dyn QualityGate>,
+    gate: &Arc<Gate>,
     group_id: Option<&str>,
     style: Option<anstyle::Style>,
     ctx: &GateContext,
     ui_lock: &Mutex<()>,
+    verbose: bool,
 ) {
     let name = gate.name();
     let tag = ui::format_group_tag(group_id, style);
@@ -81,7 +119,8 @@ fn execute_gate(
         let _guard = ui_lock.lock();
         ui::status("Running", format!("{tag}{}", gate.command_display()));
     }
-    match gate.execute(ctx) {
+    let echo = verbose.then(|| ui::format_echo_prefix(&tag, name));
+    match gate.execute_with_echo(ctx, echo.as_deref()) {
         Ok(outcome) => {
             let _guard = ui_lock.lock();
             let summary = outcome
@@ -127,6 +166,7 @@ fn execute_gate(
 /// * `only_gates` - Optional whitelist of gates to execute.
 /// * `skip_gates` - Optional blacklist of gates to skip.
 /// * `up_to_gate` - Optional gate name to stop execution after.
+/// * `clean` - Whether to clean artifacts directory before running.
 ///
 /// # Errors
 /// Returns `GateError` if configuration loading, gate execution, or report rendering fails.
@@ -136,8 +176,13 @@ pub fn run_pipeline(
     only_gates: Option<&[String]>,
     skip_gates: Option<&[String]>,
     up_to_gate: Option<&str>,
+    clean: bool,
+    verbose: bool,
 ) -> Result<bool, GateError> {
     let pipeline_start = Instant::now();
+    if clean {
+        let _ = clean_artifacts(workspace_root, config_path)?;
+    }
     let config = GateConfig::load_from_path(config_path)?;
     let out_dir = workspace_root.join(&config.runner.out_dir);
     std::fs::create_dir_all(&out_dir)?;
@@ -148,7 +193,7 @@ pub fn run_pipeline(
         default_timeout: Duration::from_secs(config.runner.timeout_secs),
     };
 
-    let all_gates = gates::build_all_gates(&config);
+    let all_gates = gate::build_all_gates(&config)?;
     let mut active_gates = Vec::new();
     let mut executed_gate_names = Vec::new();
 
@@ -159,6 +204,8 @@ pub fn run_pipeline(
             if !only.iter().any(|g| g == &name) {
                 continue;
             }
+        } else if config.policy_for(&name) == GatePolicy::Skip {
+            continue;
         }
 
         if let Some(skip) = skip_gates {
@@ -211,8 +258,7 @@ pub fn run_pipeline(
     let ui_lock = Mutex::new(());
 
     if config.execution.parallel {
-        let mut groups: BTreeMap<&str, Vec<Arc<dyn QualityGate>>> =
-            BTreeMap::new();
+        let mut groups: BTreeMap<&str, Vec<Arc<Gate>>> = BTreeMap::new();
 
         for gate in concurrent {
             if let Some((group, _)) =
@@ -240,6 +286,7 @@ pub fn run_pipeline(
                             Some(style),
                             ctx_ref,
                             lock_ref,
+                            verbose,
                         );
                     }
                     let duration = group_start.elapsed().as_secs_f64();
@@ -252,13 +299,20 @@ pub fn run_pipeline(
         });
     } else {
         for gate in concurrent {
-            execute_gate(&gate, None, None, &ctx, &ui_lock);
+            execute_gate(&gate, None, None, &ctx, &ui_lock, verbose);
         }
     }
 
     for gate in exclusive {
         let style = ui::exclusive_style();
-        execute_gate(&gate, Some("exclusive"), Some(style), &ctx, &ui_lock);
+        execute_gate(
+            &gate,
+            Some("exclusive"),
+            Some(style),
+            &ctx,
+            &ui_lock,
+            verbose,
+        );
     }
 
     let aggregator =

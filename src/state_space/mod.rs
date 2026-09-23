@@ -7,7 +7,7 @@
 //! $$\dot{x}(t) = A x(t) + B u(t), \quad y(t) = C x(t) + D u(t)$$
 //!
 //! Discrete-time dynamics:
-//! $$x[k+1] = A x[k] + B u[k], \quad y[k] = C x[k] + D u[k]$$
+//! $$x\[k+1\] = A x\[k\] + B u\[k\], \quad y\[k\] = C x\[k\] + D u\[k\]$$
 //!
 //! # Examples
 //!
@@ -471,8 +471,8 @@ where
 {
     /// Advances discrete state-space dynamics by one sample without mutating `x`:
     ///
-    /// $$y[k] = C x[k] + D u[k]$$
-    /// $$x[k+1] = A x[k] + B u[k]$$
+    /// $$y\[k\] = C x\[k\] + D u\[k\]$$
+    /// $$x\[k+1\] = A x\[k\] + B u\[k\]$$
     #[must_use]
     pub fn step(
         &self,

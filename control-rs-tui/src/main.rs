@@ -1,4 +1,12 @@
-//! Main entrypoint for the `control-rs-tui` dashboard binary.
+//! Interactive terminal console for `control-rs-ets` targets.
+//!
+//! ```text
+//! cargo tui [qemu [arm|arm-sf|riscv32|riscv64] | teensy [PORT]] [OPTIONS]
+//! ```
+//!
+//! Run `cargo tui -- --help` for options. Transport, framing and session
+//! state live in `control-rs-ets-host`; this binary holds layout and input
+//! handling.
 
 #![allow(
     clippy::arithmetic_side_effects,

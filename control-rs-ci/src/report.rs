@@ -7,9 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{GateConfig, GatePolicy};
 use crate::error::GateError;
-use crate::gates::metrics::MetricsReport;
-use crate::gates::valgrind::ValgrindRawReport;
-use crate::quality_gate::{GateOutcome, Verdict};
+use crate::gate::{GateOutcome, Verdict};
 
 /// Maximum budgeted size for `ci-report.md` (64 KiB).
 pub const MAX_REPORT_BYTES: usize = 64 * 1024;
@@ -29,6 +27,18 @@ impl ReportAggregator {
             artifacts_dir,
             workspace_root,
         }
+    }
+
+    /// Returns the configured artifacts directory.
+    #[must_use]
+    pub fn artifacts_dir(&self) -> &Path {
+        &self.artifacts_dir
+    }
+
+    /// Returns the workspace root directory.
+    #[must_use]
+    pub fn workspace_root(&self) -> &Path {
+        &self.workspace_root
     }
 
     /// Ingests all `*.result.json` files found in the artifacts directory.
@@ -92,7 +102,7 @@ impl ReportAggregator {
                             }
                         }
                         None => {
-                            // Missing fail-closed gate fails aggregator (FR-12)
+                            // Missing fail-closed gate fails aggregator (FR-10)
                             return false;
                         }
                     }
@@ -100,6 +110,53 @@ impl ReportAggregator {
             }
             true
         }
+    }
+
+    fn determine_ordered_gate_names(
+        &self,
+        config: &GateConfig,
+        outcomes: &BTreeMap<String, GateOutcome>,
+    ) -> Vec<String> {
+        let mut ordered = Vec::new();
+
+        // 1. User-defined groups in sorted group key order and group element sequence
+        let mut sorted_group_keys: Vec<_> =
+            config.execution.groups.keys().collect();
+        sorted_group_keys.sort();
+        for grp in sorted_group_keys {
+            if let Some(members) = config.execution.groups.get(grp) {
+                for m in members {
+                    if !ordered.contains(m) {
+                        ordered.push(m.clone());
+                    }
+                }
+            }
+        }
+
+        // 2. Exclusive gates
+        for m in &config.execution.exclusive_gates {
+            if !ordered.contains(m) {
+                ordered.push(m.clone());
+            }
+        }
+
+        // 3. Other configured gates
+        let mut other_gates: Vec<_> = config.gates.keys().collect();
+        other_gates.sort();
+        for g in other_gates {
+            if !ordered.contains(g) {
+                ordered.push(g.clone());
+            }
+        }
+
+        // 4. Any remaining outcomes found on disk
+        for g in outcomes.keys() {
+            if !ordered.contains(g) {
+                ordered.push(g.clone());
+            }
+        }
+
+        ordered
     }
 
     /// Generates the complete `ci-report.md` Markdown content.
@@ -126,7 +183,13 @@ impl ReportAggregator {
         md.push_str("| Gate | Verdict | Duration | Exit Code | Summary |\n");
         md.push_str("|:---|:---|:---|:---|:---|\n");
 
-        for outcome in outcomes.values() {
+        let ordered_names = self.determine_ordered_gate_names(config, outcomes);
+
+        for gate_name in &ordered_names {
+            let Some(outcome) = outcomes.get(gate_name) else {
+                continue;
+            };
+
             if let Some(active_subset) = subset {
                 if !active_subset.iter().any(|g| g == &outcome.gate) {
                     continue;
@@ -153,93 +216,13 @@ impl ReportAggregator {
             ));
         }
 
-        // Lightweight Built-in Extraction Section
-        let metrics_json = self.artifacts_dir.join("metrics-raw.json");
-        let valgrind_json = self.artifacts_dir.join("valgrind-raw.json");
-        let geiger_json = self.artifacts_dir.join("geiger-raw.json");
-
-        if metrics_json.exists()
-            || valgrind_json.exists()
-            || geiger_json.exists()
-        {
-            md.push_str("\n### Codebase & Memory Metrics\n\n");
-
-            if metrics_json.exists() {
-                if let Ok(file) = File::open(&metrics_json) {
-                    if let Ok(report) =
-                        serde_json::from_reader::<_, MetricsReport>(file)
-                    {
-                        md.push_str(&format!(
-                            "- **Codebase Lines**: {} code, {} comments, {} blank ({} total across {} files)\n",
-                            report.total_lines.code_lines,
-                            report.total_lines.comment_lines,
-                            report.total_lines.blank_lines,
-                            report.total_lines.total_lines,
-                            report.total_lines.files
-                        ));
-                    }
-                }
-            }
-
-            if geiger_json.exists() {
-                if let Ok(content) = fs::read_to_string(&geiger_json) {
-                    if let Ok(v) =
-                        serde_json::from_str::<serde_json::Value>(&content)
-                    {
-                        if let Some(packages) =
-                            v.get("packages").and_then(|p| p.as_array())
-                        {
-                            let mut unsafe_fns = 0;
-                            let mut unsafe_exprs = 0;
-                            for pkg in packages {
-                                if let Some(used) = pkg
-                                    .get("unsafety")
-                                    .and_then(|u| u.get("used"))
-                                {
-                                    if let Some(fns) = used
-                                        .get("functions")
-                                        .and_then(|f| f.get("unsafe_"))
-                                        .and_then(|u| u.as_u64())
-                                    {
-                                        unsafe_fns += fns;
-                                    }
-                                    if let Some(exprs) = used
-                                        .get("exprs")
-                                        .and_then(|e| e.get("unsafe_"))
-                                        .and_then(|u| u.as_u64())
-                                    {
-                                        unsafe_exprs += exprs;
-                                    }
-                                }
-                            }
-                            md.push_str(&format!(
-                                "- **Unsafe Code Surface (Geiger)**: {} unsafe functions, {} unsafe expressions scanned across {} packages\n",
-                                unsafe_fns, unsafe_exprs, packages.len()
-                            ));
-                        }
-                    }
-                }
-            }
-
-            if valgrind_json.exists() {
-                if let Ok(file) = File::open(&valgrind_json) {
-                    if let Ok(report) =
-                        serde_json::from_reader::<_, ValgrindRawReport>(file)
-                    {
-                        md.push_str(&format!(
-                            "- **Valgrind Memory Leaks**: {} definitely lost bytes, {} indirectly lost bytes ({} memory errors)\n",
-                            report.definitely_lost_bytes,
-                            report.indirectly_lost_bytes,
-                            report.memory_errors
-                        ));
-                    }
-                }
-            }
-        }
-
         // Embed Diagnostics for Failed / Warned Gates
         let mut has_diagnostics = false;
-        for outcome in outcomes.values() {
+        for gate_name in &ordered_names {
+            let Some(outcome) = outcomes.get(gate_name) else {
+                continue;
+            };
+
             if outcome.verdict == Verdict::Fail
                 || outcome.verdict == Verdict::Warn
             {
@@ -270,7 +253,7 @@ impl ReportAggregator {
         Ok(md)
     }
 
-    /// Renders `ci-report.md` and writes it to both the artifacts directory and workspace root.
+    /// Renders `ci-report.md` and writes it to the artifacts directory.
     ///
     /// # Errors
     /// Returns `GateError` if writing fails.
@@ -283,16 +266,13 @@ impl ReportAggregator {
         let md = self.generate_markdown(config, &outcomes, subset)?;
         let is_pass = self.is_passing(config, &outcomes, subset);
 
-        let report_path = self.workspace_root.join("ci-report.md");
-        fs::write(&report_path, &md)?;
-
         let artifact_report_path = self.artifacts_dir.join("ci-report.md");
         if let Some(parent) = artifact_report_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let _ = fs::write(artifact_report_path, &md);
+        fs::write(&artifact_report_path, &md)?;
 
-        Ok((is_pass, report_path))
+        Ok((is_pass, artifact_report_path))
     }
 }
 

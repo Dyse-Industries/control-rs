@@ -110,6 +110,16 @@ fn execute_variant(
             if let Some(bin) = &variant.bin {
                 c.arg("--bin").arg(bin);
             }
+            // The child runs in the suite directory, so a relative
+            // `CARGO_TARGET_DIR` inherited from the gate would resolve to a
+            // second target tree. Anchor it to this process's directory.
+            if let Some(dir) =
+                env::var_os("CARGO_TARGET_DIR").map(PathBuf::from)
+                && dir.is_relative()
+                && let Ok(cwd) = env::current_dir()
+            {
+                c.env("CARGO_TARGET_DIR", cwd.join(dir));
+            }
             c
         }
         "python_script" => {
@@ -223,14 +233,47 @@ fn execute_variant(
 }
 
 fn format_exit_status(status: ExitStatus) -> String {
-    status.code().map_or_else(
-        || "Process terminated by signal".to_string(),
-        |code| format!("Process exited with status code {code}"),
-    )
+    if let Some(code) = status.code() {
+        return format!("Process exited with status code {code}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return format!("Process terminated by signal {signal}");
+        }
+    }
+    "Process terminated without an exit code".to_string()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    use super::format_exit_status;
+
+    #[test]
+    fn test_format_exit_status_reports_signal_number() {
+        // Raw wait status 9: terminated by SIGKILL.
+        assert_eq!(
+            format_exit_status(ExitStatus::from_raw(9)),
+            "Process terminated by signal 9"
+        );
+    }
+
+    #[test]
+    fn test_format_exit_status_reports_exit_code() {
+        // Raw wait status 0x0100: exited with code 1.
+        assert_eq!(
+            format_exit_status(ExitStatus::from_raw(0x0100)),
+            "Process exited with status code 1"
+        );
+    }
 }
 
 /// Resolves Python runtime per C-1 hierarchy:
-/// 1. `PYTHON` env
+/// 1. `PYTHON` environment variable
 /// 2. Active `VIRTUAL_ENV`
 /// 3. Crate-root `.venv`
 /// 4. Local `.venv`

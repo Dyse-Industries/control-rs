@@ -84,7 +84,7 @@ pub mod storage_test_suite {
         assert_eq!(array, [0, 1, 2, 3, 4]);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, debug_assertions))]
     #[test]
     #[should_panic(expected = "assertion `left == right` failed")]
     fn _test_array_from_iterator_too_few() {

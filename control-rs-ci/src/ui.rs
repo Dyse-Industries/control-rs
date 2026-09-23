@@ -37,10 +37,10 @@ pub const HELP_ARG: anstyle::Style = AnsiColor::BrightYellow.on_default();
 /// reserved exclusively for the built-in `exclusive` group.
 pub const GROUP_PALETTE: [anstyle::AnsiColor; 5] = [
     AnsiColor::Cyan,
+    AnsiColor::BrightCyan,
     AnsiColor::Blue,
+    AnsiColor::BrightBlue,
     AnsiColor::Green,
-    AnsiColor::Yellow,
-    AnsiColor::Red,
 ];
 
 /// Legacy alias for `GROUP_PALETTE`.
@@ -68,7 +68,7 @@ pub fn exclusive_style() -> anstyle::Style {
 
 /// Formats a group tag with brackets and color (for example, `[cargo] ` or `[exclusive] `).
 ///
-/// Returns an empty string if `group` is `None` (ungrouped gate) or empty.
+/// Returns an empty string if `group` is `None` (a gate outside any group) or empty.
 #[must_use]
 pub fn format_group_tag(
     group: Option<&str>,
@@ -152,6 +152,19 @@ pub fn failure(status_verb: &str, msg: impl fmt::Display) {
     anstream::eprintln!(
         "{ERROR}{status_verb:>CARGO_STATUS_WIDTH$}{ERROR:#} {msg}"
     );
+}
+
+/// Formats the verbose echo prefix for a gate (for example, `[verify] cross-compare | `).
+#[must_use]
+pub fn format_echo_prefix(tag: &str, gate: &str) -> String {
+    let dim = anstyle::Style::new().dimmed();
+    format!("{tag}{dim}{gate} |{dim:#} ")
+}
+
+/// Prints one line of gate output to stderr behind its echo prefix.
+pub fn gate_output(prefix: &str, line: &str) {
+    init_color();
+    anstream::eprintln!("{prefix}{line}");
 }
 
 /// Prints a standard `error: {msg}` diagnostic to stderr.

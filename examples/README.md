@@ -5,108 +5,54 @@ backends, and Embedded Test Server (ETS) firmware. The crate root
 [`README.md`](../README.md) is the project overview; this file is the
 operator's guide for everything under `examples/`.
 
-None of these packages are workspace members of `control-rs`. The
-numerical-model
-host crate, subprogram backends, QEMU, and Teensy packages each declare their
-own `[workspace]` so their toolchains and link flags stay out of the library
-graph.
+The standalone subprogram backends, QEMU, and Teensy firmware packages each
+declare their own `[workspace]` so their toolchains and link flags stay out of
+the library graph. Domain examples (`dc_motor.rs`, `buck_converter.rs`) are
+built
+directly via the root workspace.
 
 ---
 
 ## Directory index
 
-| Path                                                           | Kind              | What it is                                                           | Run from                                 |
-|:---------------------------------------------------------------|:------------------|:---------------------------------------------------------------------|:-----------------------------------------|
-| [`numerical-models-validation/`](numerical-models-validation/) | Nested host crate | Demo generators + JSON V&V; Python in `python3/`                     | `examples/numerical-models-validation/`  |
-| [`subprograms/`](subprograms/)                                 | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                        |
-| [`qemu/`](qemu/)                                               | Firmware package  | Bare-metal ETS runners (Cortex-M7, RISC-V)                           | `examples/qemu/` or `cargo qemu`         |
-| [`teensy4/`](teensy4/)                                         | Firmware package  | Teensy 4.0 ETS over USB CDC                                          | `examples/teensy4/` or `cargo teensy`    |
+| Path                                                   | Kind              | What it is                                                           | Run from                                    |
+|:-------------------------------------------------------|:------------------|:---------------------------------------------------------------------|:--------------------------------------------|
+| [`dc_motor.rs`](dc_motor.rs)                           | Example binary    | DC motor state-space modeling, Tustin discretization & simulation    | `cargo run --example dc_motor`              |
+| [`buck_converter.rs`](buck_converter.rs)               | Example binary    | Buck converter small-signal TF, frequency analysis & step response   | `cargo run --example buck_converter`        |
+| [`fixed_point_math.rs`](fixed_point_math.rs)           | Example binary    | Q16.16 fixed-point scalar arithmetic, saturation & IIR filter        | `cargo run --example fixed_point_math`      |
+| [`dsp_spectral_analysis.rs`](dsp_spectral_analysis.rs) | Example binary    | Radix-2 FFT spectral analysis, tone detection & IFFT reconstruction  | `cargo run --example dsp_spectral_analysis` |
+| [`subprograms/`](subprograms/)                         | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                           |
+| [`qemu/`](qemu/)                                       | Firmware package  | Bare-metal ETS runners (Cortex-M7, RISC-V)                           | `examples/qemu/` or `cargo qemu`            |
+| [`teensy4/`](teensy4/)                                 | Firmware package  | Teensy 4.0 ETS over USB CDC                                          | `examples/teensy4/` or `cargo teensy`       |
 
 ---
 
-## Prerequisites
+## 1. Domain examples
 
-**Host numerical models** need a Rust toolchain that can build the workspace
-(see [
-`documentation/development-guide.md`](../documentation/development-guide.md))
-and **Python 3.12**. The virtualenv is `.venv` at the **crate root**, not
-under `examples/`. The dedicated
-[
-`.github/workflows/numerical-models.yml`](../.github/workflows/numerical-models.yml)
-workflow installs
-[
-`numerical-models-validation/python3/requirements.txt`](numerical-models-validation/python3/requirements.txt)
-and runs V&V. Locally, from the crate root:
+Pedagogical, standalone demonstrations showing how `control-rs` models, solvers,
+and utilities operate on physical dynamic systems.
+
+Run directly with Cargo:
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r examples/numerical-models-validation/python3/requirements.txt
+cargo run --example dc_motor
+cargo run --example buck_converter
+cargo run --example fixed_point_math
+cargo run --example dsp_spectral_analysis
 ```
 
-**QEMU ETS and the two `no_std` subprogram crates** additionally need:
+| Command                                     | Demonstrates                                                                                                                                                                                                  |
+|:--------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `cargo run --example dc_motor`              | Permanent magnet DC motor continuous state-space modeling, controllability matrix $M_c$, Tustin discretization ($T_s = 10\text{ ms}$), Bode frequency evaluation, and $12\text{ V}$ step transient simulation |
+| `cargo run --example buck_converter`        | Synchronous buck converter small-signal modeling, control-to-output transfer function $G_{vd}(s)$, $LC$ resonance evaluation ($f_0 = 1073\text{ Hz}$), and $100\text{ kHz}$ digital controller step response  |
+| `cargo run --example fixed_point_math`      | Q16.16 fixed-point scalar arithmetic, representation bounds, saturation protection against overflow, and integer-only discrete IIR low-pass filtering                                                         |
+| `cargo run --example dsp_spectral_analysis` | Forward Radix-2 FFT spectral analysis, complex magnitude spectrum extraction, harmonic tone peak detection, and lossless inverse FFT time-domain signal reconstruction                                        |
 
-```bash
-rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi \
-    riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
-```
-
-Install `qemu-system-arm` and `qemu-system-riscv32` (and `qemu-system-riscv64`
-for the 64-bit QEMU ETS binary). The Cortex-M subprogram crate compiles its C
-sources with `clang --target=thumbv7em-none-eabihf`.
-
-**Teensy 4.0** needs `thumbv7em-none-eabihf`, `rust-objcopy`, and
-`teensy_loader_cli`. Details are in [`teensy4/README.md`](teensy4/README.md).
-
-Cargo aliases such as `cargo qemu` and `cargo teensy` are defined in
-[`.cargo/config.toml`](../.cargo/config.toml) and launch the host TUI against
-those firmware packages. They are not substitutes for `cargo run` inside a
-subprogram crate.
-
----
-
-## 1. Numerical models
-
-These binaries live in the nested crate [
-`numerical-models-validation/`](numerical-models-validation/)
-(not root workspace targets). Activate the crate-root `.venv`, then **`cd
-examples/numerical-models-validation/`** before any `cargo run` / `cargo
-test`. Oracle subprocesses use paths relative to that crate (`python3
-python3/<model>_validation.py`).
-
-Each model has a standalone Rust validator binary and Python companion oracle script. Running `cargo run` (or `cargo run --bin validate`) executes all model validations in-process, measures tight nanosecond timings, cross-references Rust and Python outputs via built-in `cross_validate()`, and writes combined payload JSON files under `results/<model>.json`.
-
-```bash
-# crate-root .venv already created and activated (see Prerequisites)
-cd examples/numerical-models-validation
-cargo run
-# or run a single model binary:
-cargo run --bin matrix
-cargo run --bin polynomial
-cargo run --bin state_space
-cargo run --bin transfer_function
-cargo run --bin tensor
-```
-
-| Command | Demonstrates |
-|:------------------------------------|:------------------------------------------------------------------------------|
-| `cargo run` | Execute full in-process validation suite for all 5 models |
-| `cargo run --bin matrix` | Execute standalone Matrix numerical validator and cross-check Python oracle |
-| `cargo run --bin polynomial` | Execute standalone Polynomial numerical validator and cross-check Python oracle |
-| `cargo run --bin state_space` | Execute standalone State-Space numerical validator and cross-check Python oracle |
-| `cargo run --bin transfer_function` | Execute standalone Transfer Function numerical validator and cross-check Python oracle |
-| `cargo run --bin tensor` | Execute standalone Tensor numerical validator and cross-check Python oracle |
-
-### Diagnostic plots
-
-The Python plotting suite (`python3/plot_models.py`) generates high-resolution 4-quadrant benchmark figures under `results/*_details.png` and a multi-panel overview summary under `results/overview_summary.png`:
-
-- **Overview Dashboard**: `results/overview_summary.png`
-- **Matrix Benchmarks**: `results/matrix_details.png` (EKF covariance relative error heatmap, $O(N^3)$ inversion scaling, Hilbert solve latency jitter, decomposition speedups)
-- **Polynomial Benchmarks**: `results/polynomial_details.png` (Horner vs naive evaluation scaling, Newton-Raphson convergence, Wilkinson polynomial residuals with 256-bit Flint ground truth, complex root perturbation sensitivity)
-- **State-Space Benchmarks**: `results/state_space_details.png` (Inverted pendulum phase portrait, ZOH scaling, step computation jitter, controllability/observability construction scaling)
-- **Transfer Function Benchmarks**: `results/transfer_function_details.png` (Bode magnitude & phase frequency warping up to Nyquist, Nyquist polar trajectory with gain/phase margins, Butterworth direct form vs biquad SOS topology stability)
-- **Tensor Benchmarks**: `results/tensor_details.png` (3D saddle interpolation manifold, tensor contraction relative error heatmap, quantized Tanh activation vs TFLite vs SciPy, contraction scaling)
+> **Note on Verification & Benchmarks**: Algorithmic scaling and latency jitter
+> benchmarks are located under `benches/` (run with `cargo bench`).
+> Cross-language
+> numerical oracle validation against SciPy/Python is located under
+> `../control-rs-verification` (run with `cargo compare`).
 
 ---
 
