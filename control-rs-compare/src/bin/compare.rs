@@ -1,51 +1,71 @@
 //! CLI entrypoint for the `compare` runner and comparator (`cargo compare`).
 
-#![allow(
-    clippy::arbitrary_source_item_ordering,
-    clippy::arithmetic_side_effects,
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cmp_owned,
-    clippy::collapsible_if,
-    clippy::doc_markdown,
-    clippy::indexing_slicing,
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::module_name_repetitions,
-    clippy::multiple_crate_versions,
-    clippy::must_use_candidate,
-    clippy::nursery,
-    clippy::similar_names,
-    clippy::struct_excessive_bools,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::uninlined_format_args
-)]
-
-use std::collections::BTreeSet;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use control_rs_compare::compare::{ComparatorOptions, run_comparison};
-use control_rs_compare::config::CompareConfigFile;
+use control_rs_compare::compare::{
+    ComparatorOptions, SignalNames, SuiteNames, run_comparison,
+};
+use control_rs_compare::config::{CompareConfigFile, MasterPlan};
 use control_rs_compare::runner::{RunnerOptions, execute_master_plan};
 
 struct CliArgs {
     config_path: PathBuf,
     results_dir: PathBuf,
-    run_filter: Option<Vec<String>>,
-    skip_run: bool,
-    compare_filter: Option<Vec<String>>,
-    skip_compare: bool,
+    run: Selection,
+    compare: Selection,
     oracle_override: Option<String>,
-    signals: Option<Vec<String>>,
+    signals: Option<SignalNames>,
     timeout_secs: Option<u64>,
     threads: Option<usize>,
     strict: bool,
     bypass_gate: bool,
     quiet: bool,
+}
+
+/// Suite names in command-line order.
+type SuiteList = Vec<String>;
+
+/// Which suites a phase (variant execution or comparison) covers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Selection {
+    /// Every configured suite.
+    All,
+    /// Only the named suites.
+    Only(SuiteList),
+    /// The phase is skipped. Once selected it is never overridden.
+    Skip,
+}
+
+impl Selection {
+    /// Replaces the selection unless the phase was already skipped.
+    fn set(&mut self, next: Self) {
+        if *self != Self::Skip {
+            *self = next;
+        }
+    }
+
+    /// Parses a `--run`/`--compare` value: `skip_words` skip the phase,
+    /// `all_words` select every suite, anything else is a suite list.
+    fn parse(val: &str, skip_words: &[&str], all_words: &[&str]) -> Self {
+        if skip_words.contains(&val) {
+            Self::Skip
+        } else if all_words.contains(&val) {
+            Self::All
+        } else {
+            Self::Only(val.split(',').map(String::from).collect())
+        }
+    }
+
+    /// Suite names when the selection is a list.
+    const fn names(&self) -> Option<&SuiteList> {
+        match self {
+            Self::Only(names) => Some(names),
+            Self::All | Self::Skip => None,
+        }
+    }
 }
 
 impl Default for CliArgs {
@@ -61,10 +81,8 @@ impl Default for CliArgs {
         Self {
             config_path: default_config,
             results_dir: PathBuf::from("results"),
-            run_filter: None,
-            skip_run: false,
-            compare_filter: None,
-            skip_compare: false,
+            run: Selection::All,
+            compare: Selection::All,
             oracle_override: None,
             signals: None,
             timeout_secs: None,
@@ -82,108 +100,78 @@ fn parse_args() -> Result<CliArgs, String> {
 
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--config" | "-c" => {
-                let val = iter.next().ok_or_else(|| {
-                    "--config requires a path argument".to_string()
-                })?;
-                args.config_path = PathBuf::from(val);
-            }
-            "--results-dir" | "--out-dir" | "-o" => {
-                let val = iter.next().ok_or_else(|| {
-                    "--results-dir requires a directory argument".to_string()
-                })?;
-                args.results_dir = PathBuf::from(val);
-            }
-            "--run" => {
-                let val = iter.next().ok_or_else(|| {
-                    "--run requires a target suite or 'all'".to_string()
-                })?;
-                if val == "none" || val == "false" {
-                    args.skip_run = true;
-                } else if val != "all" {
-                    args.run_filter =
-                        Some(val.split(',').map(String::from).collect());
-                }
-            }
-            "--skip-run" | "--no-run" => {
-                args.skip_run = true;
-            }
-            "--compare" => {
-                let val = iter.next().ok_or_else(|| {
-                    "--compare requires a target suite, 'all', or 'false'"
-                        .to_string()
-                })?;
-                if val == "none" || val == "false" {
-                    args.skip_compare = true;
-                } else if val != "all" && val != "true" {
-                    args.compare_filter =
-                        Some(val.split(',').map(String::from).collect());
-                }
-            }
-            "--skip-compare" | "--no-compare" => {
-                args.skip_compare = true;
-            }
-            "--oracle" => {
-                let val = iter.next().ok_or_else(|| {
-                    "--oracle requires a variant name".to_string()
-                })?;
-                args.oracle_override = Some(val);
-            }
-            "--signals" | "--signal" => {
-                let val = iter.next().ok_or_else(|| {
-                    "--signals requires comma-separated signal names"
-                        .to_string()
-                })?;
-                let sigs: Vec<String> = val
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(String::from)
-                    .collect();
-                if let Some(existing) = &mut args.signals {
-                    existing.extend(sigs);
-                } else {
-                    args.signals = Some(sigs);
-                }
-            }
-            "--timeout" => {
-                let val = iter.next().ok_or_else(|| {
-                    "--timeout requires a number of seconds".to_string()
-                })?;
-                let secs: u64 = val
-                    .parse()
-                    .map_err(|_| "Invalid timeout integer".to_string())?;
-                args.timeout_secs = Some(secs);
-            }
-            "--threads" | "-j" => {
-                let val = iter.next().ok_or_else(|| {
-                    "--threads requires a thread count integer".to_string()
-                })?;
-                let n: usize = val
-                    .parse()
-                    .map_err(|_| "Invalid threads integer".to_string())?;
-                args.threads = Some(n);
-            }
-            "--strict" => {
-                args.strict = true;
-            }
-            "--bypass-gate" => {
-                args.bypass_gate = true;
-            }
-            "--quiet" | "-q" => {
-                args.quiet = true;
-            }
+            "--skip-run" | "--no-run" => args.run = Selection::Skip,
+            "--skip-compare" | "--no-compare" => args.compare = Selection::Skip,
+            "--strict" => args.strict = true,
+            "--bypass-gate" => args.bypass_gate = true,
+            "--quiet" | "-q" => args.quiet = true,
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
             }
-            other => {
-                return Err(format!("Unrecognized CLI argument '{other}'"));
-            }
+            flag => apply_valued_flag(&mut args, flag, &mut iter)?,
         }
     }
 
     Ok(args)
+}
+
+/// Applies a flag that takes a value, reading the value from `iter`.
+fn apply_valued_flag(
+    args: &mut CliArgs,
+    flag: &str,
+    iter: &mut impl Iterator<Item = String>,
+) -> Result<(), String> {
+    let mut value = |what: &str| {
+        iter.next().ok_or_else(|| format!("{flag} requires {what}"))
+    };
+    match flag {
+        "--config" | "-c" => {
+            args.config_path = PathBuf::from(value("a path argument")?);
+        }
+        "--results-dir" | "--out-dir" | "-o" => {
+            args.results_dir = PathBuf::from(value("a directory argument")?);
+        }
+        "--run" => {
+            let val = value("a target suite or 'all'")?;
+            args.run
+                .set(Selection::parse(&val, &["none", "false"], &["all"]));
+        }
+        "--compare" => {
+            let val = value("a target suite, 'all', or 'false'")?;
+            args.compare.set(Selection::parse(
+                &val,
+                &["none", "false"],
+                &["all", "true"],
+            ));
+        }
+        "--oracle" => args.oracle_override = Some(value("a variant name")?),
+        "--signals" | "--signal" => {
+            let val = value("comma-separated signal names")?;
+            args.signals.get_or_insert_with(Vec::new).extend(
+                val.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(String::from),
+            );
+        }
+        "--timeout" => {
+            let val = value("a number of seconds")?;
+            args.timeout_secs = Some(
+                val.parse()
+                    .map_err(|_| "Invalid timeout integer".to_string())?,
+            );
+        }
+        "--threads" | "-j" => {
+            let val = value("a thread count integer")?;
+            args.threads = Some(
+                val.parse()
+                    .map_err(|_| "Invalid threads integer".to_string())?,
+            );
+        }
+        other => return Err(format!("Unrecognized CLI argument '{other}'")),
+    }
+    Ok(())
 }
 
 fn print_help() {
@@ -258,93 +246,113 @@ fn main() -> ExitCode {
         .as_ref()
         .and_then(|cfg| cfg.resolve_master_plan(&args.config_path).ok());
 
-    let results_dir = if let Some(plan) = &master_plan {
-        if args.results_dir == std::path::Path::new("results") {
+    let results_dir = match &master_plan {
+        Some(plan) if args.results_dir == Path::new("results") => {
             PathBuf::from(&plan.general.out_dir)
-        } else {
-            args.results_dir.clone()
         }
-    } else {
-        args.results_dir.clone()
+        _ => args.results_dir.clone(),
     };
 
-    let timeout_secs = args
-        .timeout_secs
-        .or_else(|| master_plan.as_ref().map(|p| p.general.timeout_secs))
-        .unwrap_or(120);
-
     // 2. Phase A: Variant Execution (unless skipped)
-    if !args.skip_run {
-        if let Some(plan) = &master_plan {
-            let runner_opts = RunnerOptions {
-                workspace_root: PathBuf::from("."),
-                out_dir: results_dir.clone(),
-                timeout: Duration::from_secs(timeout_secs),
-                quiet: args.quiet,
-            };
+    if args.run != Selection::Skip
+        && let Some(code) =
+            run_variants(&args, master_plan.as_ref(), &results_dir)
+    {
+        return code;
+    }
 
-            let run_filter = args.run_filter.as_deref().unwrap_or(&[]);
-            if let Err(e) = execute_master_plan(plan, &runner_opts, run_filter)
-            {
-                eprintln!("Execution error: {e}");
-                if !args.bypass_gate {
-                    return ExitCode::from(1);
-                }
-            }
-        } else if !args.quiet {
+    // 3. Phase B: Multi-Method Comparison (unless skipped)
+    if args.compare != Selection::Skip
+        && let Some(code) =
+            compare_results(args, master_plan.as_ref(), &results_dir)
+    {
+        return code;
+    }
+
+    ExitCode::SUCCESS
+}
+
+/// Executes every selected variant. Returns an exit code when the run must
+/// stop here.
+fn run_variants(
+    args: &CliArgs,
+    master_plan: Option<&MasterPlan>,
+    results_dir: &Path,
+) -> Option<ExitCode> {
+    let Some(plan) = master_plan else {
+        if !args.quiet {
             println!(
                 "No master plan loaded from '{}', skipping execution phase",
                 args.config_path.display()
             );
         }
-    }
+        return None;
+    };
 
-    // 3. Phase B: Multi-Method Comparison (unless skipped)
-    if !args.skip_compare {
-        let suite_filter_set: Option<BTreeSet<String>> =
-            args.compare_filter.map(|list| list.into_iter().collect());
+    let timeout_secs = args.timeout_secs.unwrap_or(plan.general.timeout_secs);
+    let runner_opts = RunnerOptions {
+        workspace_root: PathBuf::from("."),
+        out_dir: results_dir.to_path_buf(),
+        timeout: Duration::from_secs(timeout_secs),
+        quiet: args.quiet,
+    };
 
-        let num_threads = args
-            .threads
-            .or_else(|| master_plan.as_ref().and_then(|p| p.general.threads));
-
-        let comparator_opts = ComparatorOptions {
-            results_dir: results_dir.clone(),
-            suite_filter: suite_filter_set,
-            oracle_override: args.oracle_override,
-            signals: args.signals,
-            strict: args.strict,
-            quiet: args.quiet,
-            num_threads,
-        };
-
-        match run_comparison(master_plan.as_ref(), &comparator_opts) {
-            Ok(report) => {
-                if let Err(e) = report.save_reports(&results_dir) {
-                    eprintln!("Error saving validation reports: {e}");
-                    return ExitCode::from(1);
-                }
-
-                if !args.quiet {
-                    println!();
-                    println!("{}", report.render_markdown());
-                }
-
-                if report.summary.verdict == "Fail"
-                    && args.strict
-                    && !args.bypass_gate
-                {
-                    return ExitCode::from(1);
-                }
-            }
-            Err(e) => {
-                eprintln!("Comparison error: {e}");
-                if !args.bypass_gate {
-                    return ExitCode::from(1);
-                }
-            }
+    let run_filter = args.run.names().map_or(&[][..], Vec::as_slice);
+    if let Err(e) = execute_master_plan(plan, &runner_opts, run_filter) {
+        eprintln!("Execution error: {e}");
+        if !args.bypass_gate {
+            return Some(ExitCode::from(1));
         }
     }
+    None
+}
 
-    ExitCode::SUCCESS
+/// Compares the result containers and writes the reports. Returns an exit
+/// code when the comparison fails the gate.
+fn compare_results(
+    args: CliArgs,
+    master_plan: Option<&MasterPlan>,
+    results_dir: &Path,
+) -> Option<ExitCode> {
+    let suite_filter: Option<SuiteNames> = args
+        .compare
+        .names()
+        .map(|list| list.iter().cloned().collect());
+
+    let num_threads = args
+        .threads
+        .or_else(|| master_plan.and_then(|p| p.general.threads));
+
+    let comparator_opts = ComparatorOptions {
+        results_dir: results_dir.to_path_buf(),
+        suite_filter,
+        oracle_override: args.oracle_override,
+        signals: args.signals,
+        strict: args.strict,
+        quiet: args.quiet,
+        num_threads,
+    };
+
+    match run_comparison(master_plan, &comparator_opts) {
+        Ok(report) => {
+            if let Err(e) = report.save_reports(results_dir) {
+                eprintln!("Error saving validation reports: {e}");
+                return Some(ExitCode::from(1));
+            }
+
+            if !args.quiet {
+                println!();
+                println!("{}", report.render_markdown());
+            }
+
+            (report.summary.verdict == "Fail"
+                && args.strict
+                && !args.bypass_gate)
+                .then(|| ExitCode::from(1))
+        }
+        Err(e) => {
+            eprintln!("Comparison error: {e}");
+            (!args.bypass_gate).then(|| ExitCode::from(1))
+        }
+    }
 }

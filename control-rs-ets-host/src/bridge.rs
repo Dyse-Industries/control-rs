@@ -48,6 +48,9 @@ use crate::target::{SubprocessTarget, Target};
 
 type WaitResult = Result<Option<std::process::ExitStatus>, std::io::Error>;
 
+/// Join handles for the threads that read target output.
+type ReaderHandles = Vec<JoinHandle<()>>;
+
 /// Host driver (`ETSBridge`) for virtual ETS (QEMU) and ETS (board).
 pub struct ETSBridge {
     inner: BridgeInner,
@@ -55,7 +58,7 @@ pub struct ETSBridge {
     rx_from_target: Receiver<BridgeMessage>,
     target_info: String,
     shutdown: Arc<AtomicBool>,
-    readers: Vec<JoinHandle<()>>,
+    readers: ReaderHandles,
 }
 
 /// Inner bridge enum representing active connection variant.
@@ -194,6 +197,37 @@ impl OwnedTelemetry {
                 test_id,
                 time_us,
             },
+            Telemetry::TargetPanic {
+                file,
+                line,
+                message,
+            } => Self::TargetPanic {
+                file: file.to_string(),
+                line,
+                message: message.to_string(),
+            },
+            Telemetry::TestStateChange {
+                state,
+                suite_id,
+                test_id,
+            } => Self::TestStateChange {
+                state,
+                suite_id,
+                test_id,
+            },
+            Telemetry::SettingInfo { .. }
+            | Telemetry::SuiteInfo { .. }
+            | Telemetry::TestInfo { .. } => Self::from_catalog_entry(tel),
+        }
+    }
+
+    /// Copies a discovery catalog entry (suite, test or setting metadata).
+    ///
+    /// [`Self::from_telemetry`] routes exactly the three catalog variants
+    /// here; any other variant is handed back to it, so the conversion stays
+    /// total without a panic path.
+    fn from_catalog_entry(tel: &Telemetry<'_>) -> Self {
+        match *tel {
             Telemetry::SettingInfo {
                 description,
                 name,
@@ -220,15 +254,6 @@ impl OwnedTelemetry {
                 suite_id,
                 test_count,
             },
-            Telemetry::TargetPanic {
-                file,
-                line,
-                message,
-            } => Self::TargetPanic {
-                file: file.to_string(),
-                line,
-                message: message.to_string(),
-            },
             Telemetry::TestInfo {
                 description,
                 name,
@@ -240,15 +265,7 @@ impl OwnedTelemetry {
                 suite_id,
                 test_id,
             },
-            Telemetry::TestStateChange {
-                state,
-                suite_id,
-                test_id,
-            } => Self::TestStateChange {
-                state,
-                suite_id,
-                test_id,
-            },
+            ref runtime => Self::from_telemetry(runtime),
         }
     }
 }
@@ -256,9 +273,8 @@ impl OwnedTelemetry {
 impl BridgeMessage {
     /// Copies a borrowed telemetry frame into an owned [`BridgeMessage`].
     #[must_use]
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn telemetry(tel: Telemetry<'_>) -> Self {
-        Self::Telemetry(OwnedTelemetry::from_telemetry(&tel))
+    pub fn telemetry(tel: &Telemetry<'_>) -> Self {
+        Self::Telemetry(OwnedTelemetry::from_telemetry(tel))
     }
 }
 
@@ -336,31 +352,7 @@ impl ETSBridge {
         tx: Sender<BridgeMessage>,
         rx: Receiver<BridgeMessage>,
     ) -> Result<Self, HostError> {
-        let mut port = None;
-        let mut attempts = 0u32;
-        let mut last_err = String::new();
-        while port.is_none() {
-            match serial2::SerialPort::open(port_path, baud) {
-                Ok(p) => port = Some(p),
-                Err(e) => {
-                    attempts = attempts.saturating_add(1);
-                    last_err = e.to_string();
-                    if attempts >= 5 {
-                        return Err(HostError::SerialOpen {
-                            port: port_path.to_string(),
-                            attempts,
-                            source: last_err.into(),
-                        });
-                    }
-                    thread::sleep(Duration::from_secs(1));
-                }
-            }
-        }
-        let port = port.ok_or_else(|| HostError::SerialOpen {
-            port: port_path.to_string(),
-            attempts,
-            source: last_err.into(),
-        })?;
+        let port = open_serial_with_retry(port_path, baud)?;
 
         let mut port_clone =
             port.try_clone().map_err(|e| HostError::SerialClone {
@@ -373,32 +365,7 @@ impl ETSBridge {
             })?;
 
         let shutdown = Arc::new(AtomicBool::new(false));
-        let shutdown_r = Arc::clone(&shutdown);
-
-        let reader = thread::spawn(move || {
-            let mut reader = FrameReader::new();
-            let mut raw_line_buf = Vec::new();
-            let mut byte_buf = [0u8; 1];
-
-            loop {
-                if shutdown_r.load(Ordering::Relaxed) {
-                    break;
-                }
-                match port_clone.read(&mut byte_buf) {
-                    Ok(1) => {
-                        let b = byte_buf[0];
-                        process_incoming_byte(
-                            b,
-                            &mut reader,
-                            &mut raw_line_buf,
-                            &tx,
-                        );
-                    }
-                    _ if shutdown_r.load(Ordering::Relaxed) => break,
-                    Ok(_) | Err(_) => {}
-                }
-            }
-        });
+        let reader = spawn_serial_reader(port_clone, tx, Arc::clone(&shutdown));
 
         Ok(Self {
             inner: BridgeInner::Serial { port },
@@ -422,25 +389,8 @@ impl ETSBridge {
             Stdio::piped()
         };
 
-        let mut cmd = StdCommand::new("cargo");
         let crate_dir = target.crate_dir();
-        if !crate_dir.as_os_str().is_empty()
-            && crate_dir != std::path::Path::new(".")
-        {
-            cmd.current_dir(&crate_dir);
-        }
-        cmd.arg("run");
-        if let Some(bin) = &target.bin {
-            cmd.args(["--bin", bin]);
-        }
-        if let Some(triple) = &target.target {
-            cmd.args(["--target", triple]);
-        }
-        for arg in &target.args {
-            cmd.arg(arg);
-        }
-
-        let mut child = cmd
+        let mut child = cargo_run_command(target)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(stderr_stdio)
@@ -461,7 +411,7 @@ impl ETSBridge {
         })?;
 
         let shutdown = Arc::new(AtomicBool::new(false));
-        let mut readers = Vec::new();
+        let mut readers = ReaderHandles::new();
 
         if inherit_stderr {
             readers.push(spawn_qemu_stdout_reader(
@@ -479,35 +429,18 @@ impl ETSBridge {
                 child.stderr.take().ok_or_else(|| HostError::Spawn {
                     source: "Failed to open stderr".into(),
                 })?;
-            let shutdown_e = Arc::clone(&shutdown);
-            readers.push(thread::spawn(move || {
-                let mut reader = std::io::BufReader::new(stderr);
-                let mut line = String::new();
-                while !shutdown_e.load(Ordering::Relaxed) {
-                    match std::io::BufRead::read_line(&mut reader, &mut line) {
-                        Ok(0) | Err(_) => break,
-                        Ok(_) => {
-                            let trimmed = line.trim_end().to_string();
-                            let _ = tx.send(BridgeMessage::RawConsole(trimmed));
-                            line.clear();
-                        }
-                    }
-                }
-            }));
+            readers.push(spawn_stderr_reader(
+                stderr,
+                tx,
+                Arc::clone(&shutdown),
+            ));
         }
-
-        let target_desc = target.display_name();
-        let link_desc = if target.path.is_empty() || target.path == "." {
-            "Subprocess (cargo run)".to_string()
-        } else {
-            format!("Subprocess ({})", target.path)
-        };
 
         Ok(Self {
             inner: BridgeInner::Qemu { child, stdin },
             rx_from_target: rx,
-            target_info: target_desc,
-            link_info: link_desc,
+            target_info: target.display_name(),
+            link_info: subprocess_link_info(target),
             shutdown,
             readers,
         })
@@ -532,8 +465,14 @@ impl ETSBridge {
             }
         })?;
 
+        let frame = buf.get(..len).ok_or_else(|| HostError::Transport {
+            source: format!(
+                "framed command length {len} exceeds the {MAX_FRAME_SIZE} byte buffer"
+            )
+            .into(),
+        })?;
         self.inner
-            .write_frame(&buf[..len])
+            .write_frame(frame)
             .map_err(|e| HostError::Transport {
                 source: format!("I/O failure sending command: {e}").into(),
             })
@@ -558,6 +497,104 @@ impl ETSBridge {
     }
 }
 
+/// Builds the `cargo run` invocation for a subprocess target.
+fn cargo_run_command(target: &SubprocessTarget) -> StdCommand {
+    let mut cmd = StdCommand::new("cargo");
+    let crate_dir = target.crate_dir();
+    if !crate_dir.as_os_str().is_empty()
+        && crate_dir != std::path::Path::new(".")
+    {
+        cmd.current_dir(&crate_dir);
+    }
+    cmd.arg("run");
+    if let Some(bin) = &target.bin {
+        cmd.args(["--bin", bin]);
+    }
+    if let Some(triple) = &target.target {
+        cmd.args(["--target", triple]);
+    }
+    for arg in &target.args {
+        cmd.arg(arg);
+    }
+    cmd
+}
+
+/// Describes the link to a subprocess target for the TUI header.
+fn subprocess_link_info(target: &SubprocessTarget) -> String {
+    if target.path.is_empty() || target.path == "." {
+        "Subprocess (cargo run)".to_string()
+    } else {
+        format!("Subprocess ({})", target.path)
+    }
+}
+
+/// Opens the serial port, retrying once per second for up to five attempts.
+fn open_serial_with_retry(
+    port_path: &str,
+    baud: u32,
+) -> Result<serial2::SerialPort, HostError> {
+    let mut attempts = 0u32;
+    loop {
+        match serial2::SerialPort::open(port_path, baud) {
+            Ok(port) => return Ok(port),
+            Err(e) => {
+                attempts = attempts.saturating_add(1);
+                if attempts >= 5 {
+                    return Err(HostError::SerialOpen {
+                        port: port_path.to_string(),
+                        attempts,
+                        source: e.to_string().into(),
+                    });
+                }
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
+    }
+}
+
+/// Reads the serial link byte by byte until `shutdown` is set, forwarding
+/// framed telemetry plus raw lines.
+fn spawn_serial_reader(
+    port: serial2::SerialPort,
+    tx: Sender<BridgeMessage>,
+    shutdown: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let mut reader = FrameReader::new();
+        let mut raw_line_buf = Vec::new();
+        let mut byte_buf = [0u8; 1];
+
+        while !shutdown.load(Ordering::Relaxed) {
+            if matches!(port.read(&mut byte_buf), Ok(1)) {
+                let [b] = byte_buf;
+                process_incoming_byte(b, &mut reader, &mut raw_line_buf, &tx);
+            }
+        }
+    })
+}
+
+/// Forwards each stderr line of the `cargo run` child as raw console output.
+fn spawn_stderr_reader(
+    stderr: std::process::ChildStderr,
+    tx: Sender<BridgeMessage>,
+    shutdown: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let mut reader = std::io::BufReader::new(stderr);
+        let mut line = String::new();
+        while !shutdown.load(Ordering::Relaxed) {
+            match std::io::BufRead::read_line(&mut reader, &mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let trimmed = line.trim_end().to_string();
+                    let _ = tx.send(BridgeMessage::RawConsole(trimmed));
+                    line.clear();
+                }
+            }
+        }
+    })
+}
+
 /// Reads QEMU `cargo run` stdout and forwards framed telemetry plus raw lines.
 fn spawn_qemu_stdout_reader(
     mut stdout: ChildStdout,
@@ -572,7 +609,7 @@ fn spawn_qemu_stdout_reader(
         while !shutdown.load(Ordering::Relaxed)
             && matches!(stdout.read(&mut byte_buf), Ok(1))
         {
-            let b = byte_buf[0];
+            let [b] = byte_buf;
             process_incoming_byte(
                 b,
                 &mut reader,
@@ -593,7 +630,7 @@ pub fn process_incoming_byte(
     if let Some(payload) = reader.handle_byte(b) {
         match postcard::from_bytes::<Telemetry<'_>>(payload) {
             Ok(telemetry) => {
-                let _ = tx.send(BridgeMessage::telemetry(telemetry));
+                let _ = tx.send(BridgeMessage::telemetry(&telemetry));
             }
             Err(e) => {
                 let _ = tx.send(BridgeMessage::RawConsole(format!(
@@ -836,7 +873,7 @@ mod tests {
         )
         .unwrap();
 
-        for &b in &frame_buf[..frame_len] {
+        for &b in frame_buf.get(..frame_len).unwrap() {
             process_incoming_byte(b, &mut reader, &mut raw_buf, &tx);
         }
 

@@ -1,6 +1,5 @@
 //! Integration tests verifying that builtin CI Cargo quality gates fail on invalid code.
 
-use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::io;
@@ -119,9 +118,8 @@ fn test_negative_fmt_gate_fails_on_unformatted_code() -> TestResult {
         "fmt",
         "cargo fmt",
         vec!["--all".to_string(), "--".to_string(), "--check".to_string()],
-        Some("Verifies codebase formatting".to_string()),
-        HashMap::new(),
-    );
+    )
+    .with_description("Verifies codebase formatting");
 
     let outcome = gate.execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
@@ -148,9 +146,8 @@ fn test_negative_clippy_gate_fails_on_denied_lint() -> TestResult {
             "-D".to_string(),
             "warnings".to_string(),
         ],
-        Some("Executes Clippy linter".to_string()),
-        HashMap::new(),
-    );
+    )
+    .with_description("Executes Clippy linter");
 
     let outcome = gate.execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
@@ -174,9 +171,8 @@ fn test_negative_check_gate_fails_on_type_mismatch() -> TestResult {
         "check",
         "cargo check",
         vec!["--workspace".to_string(), "--all-targets".to_string()],
-        Some("Performs compiler type checking".to_string()),
-        HashMap::new(),
-    );
+    )
+    .with_description("Performs compiler type checking");
 
     let outcome = gate.execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
@@ -197,9 +193,8 @@ fn test_negative_build_gate_fails_on_syntax_error() -> TestResult {
         "build",
         "cargo build",
         vec!["--workspace".to_string(), "--all-targets".to_string()],
-        Some("Compiles workspace targets".to_string()),
-        HashMap::new(),
-    );
+    )
+    .with_description("Compiles workspace targets");
 
     let outcome = gate.execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
@@ -216,13 +211,8 @@ fn test_negative_build_gate_fails_on_syntax_error() -> TestResult {
 #[test]
 fn test_negative_test_gate_fails_on_assertion_failure() -> TestResult {
     let temp = create_temp_context(NegativeScenario::Test)?;
-    let gate = Gate::new(
-        "test",
-        "cargo test",
-        vec!["--workspace".to_string()],
-        Some("Executes test suites".to_string()),
-        HashMap::new(),
-    );
+    let gate = Gate::new("test", "cargo test", vec!["--workspace".to_string()])
+        .with_description("Executes test suites");
 
     let outcome = gate.execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);

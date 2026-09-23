@@ -1,0 +1,41 @@
+name: Restore baseline
+description: >-
+  Downloads a named artifact from the latest successful run of a workflow on
+  main into a directory. A missing run or artifact leaves the gate without a
+  baseline, which is not a failure.
+
+inputs:
+  name:
+    description: Artifact name uploaded by the main branch run.
+    required: true
+  path:
+    description: Directory the artifact contents are restored into.
+    required: true
+  workflow:
+    description: Workflow whose main branch runs hold the baseline.
+    required: false
+    default: Rust-CI
+
+runs:
+  using: composite
+  steps:
+    - name: Download ${{ inputs.name }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        NAME: ${{ inputs.name }}
+        DEST: ${{ inputs.path }}
+        WORKFLOW: ${{ inputs.workflow }}
+      run: |
+        mkdir -p "$DEST"
+        run_id=$(gh run list --branch main --status success --workflow "$WORKFLOW" \
+          --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)
+        if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+          echo "::notice::No successful $WORKFLOW run on main; $NAME has no baseline."
+          exit 0
+        fi
+        if gh run download "$run_id" --name "$NAME" --dir "$DEST"; then
+          echo "Restored $NAME from run $run_id into $DEST"
+        else
+          echo "::notice::Run $run_id has no artifact $NAME; no baseline."
+        fi

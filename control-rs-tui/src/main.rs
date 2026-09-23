@@ -8,18 +8,6 @@
 //! state live in `control-rs-ets-host`; this binary holds layout and input
 //! handling.
 
-#![allow(
-    clippy::arithmetic_side_effects,
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::equatable_if_let,
-    clippy::indexing_slicing,
-    clippy::multiple_crate_versions,
-    clippy::needless_pass_by_ref_mut,
-    clippy::too_many_lines,
-    clippy::type_complexity
-)]
-
 use std::env;
 use std::process::exit;
 

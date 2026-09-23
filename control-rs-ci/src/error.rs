@@ -3,6 +3,9 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// Result of a gate, configuration or reporting operation.
+pub type GateResult<T> = Result<T, GateError>;
+
 /// Core error type representing failures encountered during gate execution and reporting.
 #[derive(Debug, Error)]
 pub enum GateError {

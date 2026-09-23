@@ -3,13 +3,7 @@
 //! Evaluates speedup and asymptotic scaling across worker thread counts
 //! `j = 1..=n_proc` on massive floating-point datasets.
 
-#![allow(
-    missing_docs,
-    clippy::arithmetic_side_effects,
-    clippy::cast_precision_loss,
-    clippy::indexing_slicing,
-    clippy::unwrap_used
-)]
+#![allow(missing_docs)]
 
 use std::num::NonZero;
 
@@ -35,13 +29,15 @@ fn bench_pool_asymptotic_scaling(c: &mut Criterion) {
     for size in dataset_sizes {
         let mut group =
             c.benchmark_group(format!("chunked_pool_scaling_{size}_elements"));
-        #[allow(clippy::cast_possible_truncation)]
-        let bytes = (size * std::mem::size_of::<f64>()) as u64;
-        group.throughput(Throughput::Bytes(bytes));
+        let bytes = size.saturating_mul(std::mem::size_of::<f64>());
+        group.throughput(Throughput::Bytes(
+            u64::try_from(bytes).unwrap_or(u64::MAX),
+        ));
 
         // Generate synthetic floating-point datasets
-        let oracle: Vec<f64> =
-            (0..size).map(|i| (i as f64 * 0.001).sin()).collect();
+        let oracle: Vec<f64> = (0..u32::try_from(size).unwrap_or(u32::MAX))
+            .map(|i| (f64::from(i) * 0.001).sin())
+            .collect();
         let peer: Vec<f64> = oracle.iter().map(|&v| v + 1e-6).collect();
 
         // Benchmark scaling across j = 1..=n_proc threads

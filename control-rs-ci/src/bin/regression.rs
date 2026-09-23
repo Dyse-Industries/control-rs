@@ -1,105 +1,87 @@
 //! Criterion performance regression evaluator and benchmark budget harness.
 //!
-//! Evaluates Criterion benchmark outputs against real-time latency budgets
-//! (for example, 10 µs jitter for flight control loops) and statistical
-//! regression baselines. Executes benchmarks prior to evaluation unless
-//! compare-only mode is requested (see `--help`). A Criterion `base/` baseline
-//! is optional: when the workflow has not restored one into the Criterion
-//! directory, only budgets are checked.
+//! Runs `cargo bench`, echoes Criterion's output and parses it. Each
+//! benchmark's `time:` point estimate is checked against a real-time latency
+//! budget (for example, 10 µs jitter for flight control loops). Criterion
+//! compares every benchmark with its `base/` sample and prints a verdict; a
+//! `regressed` verdict fails the gate. A benchmark without a baseline is only
+//! checked against its budget.
 
-#![allow(
-    missing_docs,
-    clippy::arithmetic_side_effects,
-    clippy::cast_precision_loss,
-    clippy::indexing_slicing,
-    clippy::too_many_lines,
-    clippy::uninlined_format_args
-)]
+#![allow(missing_docs)]
 
-use std::collections::BTreeMap;
-use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
-use serde::Deserialize;
+/// Benchmarks in the order Criterion printed them.
+type Results = Vec<BenchmarkResult>;
 
-#[derive(Debug, Clone, Deserialize)]
-struct EstimateEntry {
-    point_estimate: f64,
+/// Criterion's verdict on the change against the baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    Regressed,
+    Improved,
+    NoChange,
+    WithinNoise,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct CriterionEstimates {
-    mean: Option<EstimateEntry>,
-    median: Option<EstimateEntry>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct BenchmarkMeta {
-    full_id: Option<String>,
-    title: Option<String>,
-}
-
+/// One benchmark as printed by Criterion.
 #[derive(Debug, Clone)]
-struct BenchmarkEvaluation {
+struct BenchmarkResult {
+    /// Benchmark identifier (for example, `jitter/hilbert_32x32_solve`).
     id: String,
-    median_ns: f64,
-    base_median_ns: Option<f64>,
-    delta_pct: Option<f64>,
-    budget_ns: f64,
-    budget_passed: bool,
-    regression_passed: bool,
-    failure_reason: Option<String>,
+    /// `time:` point estimate in nanoseconds.
+    time_ns: f64,
+    /// `change:` point estimate in %, when a baseline exists.
+    change_pct: Option<f64>,
+    /// Criterion's verdict, when a baseline exists.
+    verdict: Option<Verdict>,
 }
 
 #[derive(Debug, Clone)]
 struct CliOptions {
     bench_target: Option<String>,
     run_all: bool,
-    only_compare: bool,
-    threshold_pct: f64,
-    criterion_dir: Option<PathBuf>,
+}
+
+impl Verdict {
+    /// Maps one of Criterion's verdict lines to its verdict.
+    fn from_line(line: &str) -> Option<Self> {
+        match line {
+            "Performance has regressed." => Some(Self::Regressed),
+            "Performance has improved." => Some(Self::Improved),
+            "No change in performance detected." => Some(Self::NoChange),
+            "Change within noise threshold." => Some(Self::WithinNoise),
+            _ => None,
+        }
+    }
+
+    /// Matrix label.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Regressed => "regressed",
+            Self::Improved => "improved",
+            Self::NoChange => "no change",
+            Self::WithinNoise => "within noise",
+        }
+    }
 }
 
 fn parse_cli_args() -> Result<CliOptions, String> {
     let mut args = std::env::args().skip(1);
     let mut bench_target = None;
     let mut run_all = false;
-    let mut only_compare = false;
-    let mut threshold_pct = 15.0; // 15% default noise tolerance
-    let mut criterion_dir = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--all" => {
                 run_all = true;
             }
-            "--only-compare" => {
-                only_compare = true;
-            }
             "--bench" => {
                 if let Some(target) = args.next() {
                     bench_target = Some(target);
                 } else {
                     return Err("Missing argument for --bench".to_string());
-                }
-            }
-            "--threshold" => {
-                if let Some(val_str) = args.next() {
-                    threshold_pct = val_str.parse::<f64>().map_err(|e| {
-                        format!("Invalid float for --threshold: {e}")
-                    })?;
-                } else {
-                    return Err("Missing argument for --threshold".to_string());
-                }
-            }
-            "--criterion-dir" => {
-                if let Some(dir_str) = args.next() {
-                    criterion_dir = Some(PathBuf::from(dir_str));
-                } else {
-                    return Err(
-                        "Missing argument for --criterion-dir".to_string()
-                    );
                 }
             }
             "--help" | "-h" => {
@@ -115,9 +97,6 @@ fn parse_cli_args() -> Result<CliOptions, String> {
     Ok(CliOptions {
         bench_target,
         run_all,
-        only_compare,
-        threshold_pct,
-        criterion_dir,
     })
 }
 
@@ -127,9 +106,6 @@ fn print_help() {
          Options:\n  \
            --bench <NAME>        Run only the specified benchmark target (e.g. jitter, scaling)\n  \
            --all                 Run all workspace benchmark targets\n  \
-           --only-compare        Do not run cargo bench; compare existing Criterion artifacts only\n  \
-           --threshold <PCT>     Maximum acceptable performance regression percentage against baseline (default: 15.0)\n  \
-           --criterion-dir <DIR> Custom Criterion output directory (defaults to target/criterion)\n  \
            -h, --help            Print help information"
     );
 }
@@ -167,21 +143,16 @@ fn format_duration(ns: f64) -> String {
     } else if ns < 1_000_000_000.0 {
         format!("{:.2} ms", ns / 1_000_000.0)
     } else {
-        format!("{:.2} s", ns / 1_000_000.0)
+        format!("{:.2} s", ns / 1_000_000_000.0)
     }
 }
 
-fn run_benchmarks(root: &Path, opts: &CliOptions) -> Result<(), String> {
-    if opts.only_compare {
-        println!(
-            "Notice: Skipping benchmark execution (--only-compare specified). Evaluating existing artifacts in target/criterion."
-        );
-        return Ok(());
-    }
-
+/// Runs `cargo bench`, echoing its standard output, and returns that output.
+fn run_benchmarks(root: &Path, opts: &CliOptions) -> Result<String, String> {
     let mut cmd = Command::new("cargo");
     cmd.current_dir(root);
     cmd.arg("bench");
+    cmd.stdout(Stdio::piped());
 
     if opts.run_all {
         println!("Executing all Criterion benchmarks (cargo bench)...");
@@ -197,13 +168,29 @@ fn run_benchmarks(root: &Path, opts: &CliOptions) -> Result<(), String> {
         cmd.args(["--bench", "jitter"]);
     }
 
-    let status = cmd
-        .status()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to spawn cargo bench: {e}"))?;
+
+    let mut output = String::new();
+    if let Some(stdout) = child.stdout.take() {
+        for line in BufReader::new(stdout).lines() {
+            let line = line.map_err(|e| {
+                format!("Failed to read cargo bench output: {e}")
+            })?;
+            println!("{line}");
+            output.push_str(&line);
+            output.push('\n');
+        }
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("Failed to wait for cargo bench: {e}"))?;
 
     if status.success() {
         println!("Benchmark execution completed successfully.\n");
-        Ok(())
+        Ok(output)
     } else {
         Err(format!(
             "cargo bench failed with exit code {:?}",
@@ -212,145 +199,134 @@ fn run_benchmarks(root: &Path, opts: &CliOptions) -> Result<(), String> {
     }
 }
 
-fn find_estimates_files(dir: &Path, files: &mut Vec<PathBuf>) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                find_estimates_files(&path, files);
-            } else if path.file_name().and_then(|n| n.to_str())
-                == Some("estimates.json")
-                && let Some(parent) = path.parent()
-                && parent.file_name().and_then(|n| n.to_str()) == Some("new")
-            {
-                files.push(path);
-            }
-        }
-    }
-}
+/// Parses Criterion's standard output into one result per benchmark.
+///
+/// Criterion prints an identifier longer than 23 characters on its own line,
+/// followed by an indented `time:` line. Fails on a `time:` or `change:` line
+/// that does not parse, and when the output holds no benchmark.
+fn parse_criterion_output(output: &str) -> Result<Results, String> {
+    let mut results = Results::new();
+    let mut previous = "";
 
-fn read_benchmark_id(bench_dir: &Path, root_criterion: &Path) -> String {
-    let meta_file = bench_dir.join("new").join("benchmark.json");
-    if let Ok(content) = fs::read_to_string(&meta_file)
-        && let Ok(meta) = serde_json::from_str::<BenchmarkMeta>(&content)
-    {
-        if let Some(full_id) = meta.full_id {
-            return full_id;
-        }
-        if let Some(title) = meta.title {
-            return title;
-        }
-    }
-
-    // Fallback: derive ID from relative path
-    if let Ok(rel) = bench_dir.strip_prefix(root_criterion) {
-        return rel.to_string_lossy().to_string();
-    }
-
-    bench_dir.file_name().map_or_else(
-        || "unknown".to_string(),
-        |s| s.to_string_lossy().to_string(),
-    )
-}
-
-fn evaluate_benchmark(
-    new_estimates_path: &Path,
-    root_criterion: &Path,
-    threshold_pct: f64,
-) -> Result<BenchmarkEvaluation, String> {
-    let new_dir = new_estimates_path
-        .parent()
-        .ok_or_else(|| "Invalid estimates path".to_string())?;
-    let bench_dir = new_dir
-        .parent()
-        .ok_or_else(|| "Invalid benchmark directory".to_string())?;
-
-    let id = read_benchmark_id(bench_dir, root_criterion);
-
-    // Read new estimates
-    let new_content = fs::read_to_string(new_estimates_path).map_err(|e| {
-        format!("Failed to read {}: {e}", new_estimates_path.display())
-    })?;
-    let new_est: CriterionEstimates = serde_json::from_str(&new_content)
-        .map_err(|e| {
-            format!("Failed to parse {}: {e}", new_estimates_path.display())
-        })?;
-
-    let median_entry = new_est
-        .median
-        .or(new_est.mean)
-        .ok_or_else(|| format!("No median or mean estimate found in {id}"))?;
-
-    let median_ns = median_entry.point_estimate;
-
-    // Check baseline if present
-    let base_file = bench_dir.join("base").join("estimates.json");
-    let (base_median_ns, delta_pct, regression_passed, reg_err) = if base_file
-        .exists()
-    {
-        if let Ok(base_content) = fs::read_to_string(&base_file)
-            && let Ok(base_est) =
-                serde_json::from_str::<CriterionEstimates>(&base_content)
-            && let Some(base_entry) = base_est.median.or(base_est.mean)
-        {
-            let base_median = base_entry.point_estimate;
-            let delta = if base_median > 0.0 {
-                ((median_ns - base_median) / base_median) * 100.0
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if let Some((head, interval)) = line.split_once("time:") {
+            let id = if head.trim().is_empty() {
+                previous.trim()
             } else {
-                0.0
+                head.trim()
             };
-
-            // Avoid false alarms on sub-microsecond timer jitter: require delta > 50 nanoseconds
-            let is_reg =
-                delta > threshold_pct && (median_ns - base_median) > 50.0;
-            if is_reg {
-                (
-                    Some(base_median),
-                    Some(delta),
-                    false,
-                    Some(format!(
-                        "Regression of +{delta:.2}% exceeds threshold of +{threshold_pct:.1}%"
-                    )),
-                )
-            } else {
-                (Some(base_median), Some(delta), true, None)
+            let time_ns = parse_time_ns(interval)
+                .filter(|_| !id.is_empty())
+                .ok_or_else(|| format!("Unparseable Criterion line: {line}"))?;
+            results.push(BenchmarkResult {
+                id: id.to_string(),
+                time_ns,
+                change_pct: None,
+                verdict: None,
+            });
+        } else if let Some(result) = results.last_mut() {
+            if let Some(interval) = trimmed.strip_prefix("change:") {
+                result.change_pct =
+                    Some(parse_change_pct(interval).ok_or_else(|| {
+                        format!("Unparseable Criterion line: {line}")
+                    })?);
+            } else if let Some(verdict) = Verdict::from_line(trimmed) {
+                result.verdict = Some(verdict);
             }
-        } else {
-            (None, None, true, None)
         }
-    } else {
-        (None, None, true, None)
-    };
+        previous = line;
+    }
 
-    let budget_ns = budget_for_benchmark(&id);
-    let budget_passed = median_ns <= budget_ns;
-    let budget_err = if budget_passed {
-        None
-    } else {
-        Some(format!(
+    if results.is_empty() {
+        return Err("No Criterion benchmark results found".to_string());
+    }
+    Ok(results)
+}
+
+/// Parses the point estimate of a `time:` interval
+/// (`[1.2345 µs 1.2400 µs 1.2500 µs]`) into nanoseconds.
+fn parse_time_ns(interval: &str) -> Option<f64> {
+    let inner = interval.trim().strip_prefix('[')?.split(']').next()?;
+    let mut tokens = inner.split_whitespace().skip(2);
+    let value: f64 = tokens.next()?.parse().ok()?;
+    let scale = match tokens.next()? {
+        "ps" => 1e-3,
+        "ns" => 1.0,
+        "µs" => 1e3,
+        "ms" => 1e6,
+        "s" => 1e9,
+        _ => return None,
+    };
+    Some(value * scale)
+}
+
+/// Parses the point estimate of a `change:` interval
+/// (`[-1.2345% +0.5000% +2.1000%]`) in %.
+fn parse_change_pct(interval: &str) -> Option<f64> {
+    let inner = interval.trim().strip_prefix('[')?.split(']').next()?;
+    inner
+        .split_whitespace()
+        .nth(1)?
+        .strip_suffix('%')?
+        .parse()
+        .ok()
+}
+
+/// Returns why a benchmark fails the gate; empty when it passes.
+fn failures(result: &BenchmarkResult) -> Vec<String> {
+    let budget_ns = budget_for_benchmark(&result.id);
+    let mut reasons = Vec::new();
+    if result.time_ns > budget_ns {
+        reasons.push(format!(
             "Latency {} exceeded cycle budget of {}",
-            format_duration(median_ns),
+            format_duration(result.time_ns),
             format_duration(budget_ns)
-        ))
-    };
+        ));
+    }
+    if result.verdict == Some(Verdict::Regressed) {
+        reasons.push("Criterion reports a performance regression".to_string());
+    }
+    reasons
+}
 
-    let failure_reason = match (budget_err, reg_err) {
-        (Some(b), Some(r)) => Some(format!("{b}; {r}")),
-        (Some(b), None) => Some(b),
-        (None, Some(r)) => Some(r),
-        (None, None) => None,
-    };
+/// Prints the performance and regression matrix.
+fn print_matrix(results: &[BenchmarkResult]) {
+    println!("--- Benchmark Performance & Regression Matrix ---");
+    println!(
+        "{:<42} {:>14} {:>10} {:>12} {:>14} {:>8}",
+        "Benchmark Identifier",
+        "Time",
+        "Change",
+        "Criterion",
+        "Cycle Budget",
+        "Status"
+    );
+    println!("{}", "-".repeat(105));
 
-    Ok(BenchmarkEvaluation {
-        id,
-        median_ns,
-        base_median_ns,
-        delta_pct,
-        budget_ns,
-        budget_passed,
-        regression_passed,
-        failure_reason,
-    })
+    for result in results {
+        let change = result
+            .change_pct
+            .map_or_else(|| "-".to_string(), |c| format!("{c:+.2}%"));
+        let verdict = result.verdict.map_or("no baseline", Verdict::label);
+        let status = if failures(result).is_empty() {
+            "PASS"
+        } else {
+            "FAIL"
+        };
+
+        println!(
+            "{:<42} {:>14} {:>10} {:>12} {:>14} {:>8}",
+            result.id,
+            format_duration(result.time_ns),
+            change,
+            verdict,
+            format_duration(budget_for_benchmark(&result.id)),
+            status
+        );
+    }
+
+    println!("{}", "-".repeat(105));
 }
 
 fn main() {
@@ -368,119 +344,155 @@ fn main() {
     let root = find_workspace_root();
     println!("Workspace root: {}", root.display());
 
-    if let Err(e) = run_benchmarks(&root, &opts) {
-        eprintln!("Error executing benchmarks: {e}");
-        std::process::exit(1);
-    }
-
-    let criterion_dir = opts
-        .criterion_dir
-        .unwrap_or_else(|| root.join("target/criterion"));
-
-    if !criterion_dir.exists() {
-        eprintln!(
-            "Error: Criterion directory not found at {}",
-            criterion_dir.display()
-        );
-        std::process::exit(1);
-    }
-
-    let mut estimate_files = Vec::new();
-    find_estimates_files(&criterion_dir, &mut estimate_files);
-
-    if estimate_files.is_empty() {
-        eprintln!(
-            "Error: No Criterion benchmark estimates found in {}",
-            criterion_dir.display()
-        );
-        std::process::exit(1);
-    }
-
-    let mut evaluations: BTreeMap<String, BenchmarkEvaluation> =
-        BTreeMap::new();
-    let mut parse_errors = Vec::new();
-
-    for path in estimate_files {
-        match evaluate_benchmark(&path, &criterion_dir, opts.threshold_pct) {
-            Ok(eval) => {
-                evaluations.insert(eval.id.clone(), eval);
-            }
-            Err(e) => {
-                parse_errors.push(e);
-            }
+    let results = match run_benchmarks(&root, &opts)
+        .and_then(|output| parse_criterion_output(&output))
+    {
+        Ok(results) => results,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
         }
-    }
+    };
 
-    if !parse_errors.is_empty() {
-        eprintln!("Encountered errors parsing benchmark artifacts:");
-        for err in &parse_errors {
-            eprintln!("  - {err}");
-        }
-        std::process::exit(1);
-    }
+    print_matrix(&results);
+    let failed: Vec<&BenchmarkResult> = results
+        .iter()
+        .filter(|result| !failures(result).is_empty())
+        .collect();
 
-    println!("--- Benchmark Performance & Regression Matrix ---");
-    println!(
-        "{:<42} {:>14} {:>14} {:>10} {:>14} {:>8}",
-        "Benchmark Identifier",
-        "Median Latency",
-        "Baseline",
-        "Change",
-        "Cycle Budget",
-        "Status"
-    );
-    println!("{}", "-".repeat(108));
-
-    let mut failure_count = 0;
-
-    for eval in evaluations.values() {
-        let median_str = format_duration(eval.median_ns);
-        let base_str = eval
-            .base_median_ns
-            .map_or_else(|| "N/A (base)".to_string(), format_duration);
-        let delta_str = eval.delta_pct.map_or_else(
-            || "-".to_string(),
-            |d| {
-                if d >= 0.0 {
-                    format!("+{d:.2}%")
-                } else {
-                    format!("{d:.2}%")
-                }
-            },
-        );
-        let budget_str = format_duration(eval.budget_ns);
-
-        let status = if eval.budget_passed && eval.regression_passed {
-            "PASS"
-        } else {
-            failure_count += 1;
-            "FAIL"
-        };
-
-        println!(
-            "{:<42} {:>14} {:>14} {:>10} {:>14} {:>8}",
-            eval.id, median_str, base_str, delta_str, budget_str, status
-        );
-    }
-
-    println!("{}", "-".repeat(108));
-
-    if failure_count > 0 {
+    if !failed.is_empty() {
         eprintln!(
-            "\nPerformance verification FAILED: {failure_count}/{} benchmark(s) breached latency budgets or regression tolerances.",
-            evaluations.len()
+            "\nPerformance verification FAILED: {}/{} benchmark(s) breached latency budgets or regressed.",
+            failed.len(),
+            results.len()
         );
-        for eval in evaluations.values() {
-            if let Some(ref reason) = eval.failure_reason {
-                eprintln!("  - '{}': {reason}", eval.id);
-            }
+        for result in failed {
+            eprintln!("  - '{}': {}", result.id, failures(result).join("; "));
         }
         std::process::exit(1);
     }
 
     println!(
-        "\nPerformance verification PASSED: All {} benchmark(s) satisfied latency budgets and regression thresholds.",
-        evaluations.len()
+        "\nPerformance verification PASSED: All {} benchmark(s) satisfied latency budgets without regressions.",
+        results.len()
     );
     std::process::exit(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Results, Verdict, failures, format_duration, parse_criterion_output,
+    };
+
+    /// `cargo bench` output: a benchmark without a baseline, then one
+    /// benchmark per Criterion verdict. Identifiers longer than 23 characters
+    /// sit on their own line.
+    const OUTPUT: &str = "
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+jitter/short            time:   [812.34 ps 815.67 ps 819.01 ps]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) high mild
+jitter/hilbert_32x32_solve
+                        time:   [41.123 µs 41.456 µs 41.789 µs]
+                        change: [+20.123% +21.456% +22.789%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+jitter/fast_path        time:   [98.765 ns 99.012 ns 99.345 ns]
+                        change: [-30.123% -29.456% -28.789%] (p = 0.00 < 0.05)
+                        Performance has improved.
+state_space_scaling/zoh_dim/32
+                        time:   [1.2340 ms 1.2345 ms 1.2350 ms]
+                        change: [-1.2345% +0.1234% +1.5678%] (p = 0.45 > 0.05)
+                        No change in performance detected.
+state_space_scaling/zoh_dim/128
+                        time:   [1.2340 s 1.2345 s 1.2350 s]
+                        change: [+1.0123% +2.3456% +3.6789%] (p = 0.01 < 0.05)
+                        Change within noise threshold.
+";
+
+    const fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() <= 1e-9 * b.abs()
+    }
+
+    fn parsed() -> Results {
+        parse_criterion_output(OUTPUT).unwrap()
+    }
+
+    #[test]
+    fn parses_identifiers_verdicts_and_changes() {
+        let results = parsed();
+        let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "jitter/short",
+                "jitter/hilbert_32x32_solve",
+                "jitter/fast_path",
+                "state_space_scaling/zoh_dim/32",
+                "state_space_scaling/zoh_dim/128",
+            ]
+        );
+        assert_eq!(
+            results.iter().map(|r| r.verdict).collect::<Vec<_>>(),
+            [
+                None,
+                Some(Verdict::Regressed),
+                Some(Verdict::Improved),
+                Some(Verdict::NoChange),
+                Some(Verdict::WithinNoise),
+            ]
+        );
+        let changes = [
+            None,
+            Some(21.456),
+            Some(-29.456),
+            Some(0.1234),
+            Some(2.3456),
+        ];
+        for (result, want) in results.iter().zip(changes) {
+            match (result.change_pct, want) {
+                (None, None) => {}
+                (Some(got), Some(want)) => assert!(close(got, want)),
+                other => panic!("{}: {other:?}", result.id),
+            }
+        }
+    }
+
+    #[test]
+    fn converts_time_units_to_nanoseconds() {
+        let expected = [815.67e-3, 41.456e3, 99.012, 1.2345e6, 1.2345e9];
+        for (result, want) in parsed().iter().zip(expected) {
+            assert!(close(result.time_ns, want), "{}: {}", result.id, want);
+        }
+    }
+
+    #[test]
+    fn rejects_output_without_benchmarks() {
+        assert!(parse_criterion_output("").is_err());
+        assert!(parse_criterion_output("running 0 tests\n").is_err());
+    }
+
+    #[test]
+    fn rejects_unparseable_lines() {
+        assert!(parse_criterion_output("a/b time: [1.0 hours]\n").is_err());
+        let bad_change = "a/b time: [1.0 ns 2.0 ns 3.0 ns]\n change: [?]\n";
+        assert!(parse_criterion_output(bad_change).is_err());
+        assert!(parse_criterion_output("  time: [1 ns 2 ns 3 ns]\n").is_err());
+    }
+
+    #[test]
+    fn fails_on_regression_or_budget_only() {
+        let reasons: Vec<usize> =
+            parsed().iter().map(|r| failures(r).len()).collect();
+        // Regressed fails; the 1.23 s benchmark exceeds its 100 ms budget.
+        assert_eq!(reasons, [0, 1, 0, 0, 1]);
+    }
+
+    #[test]
+    fn formats_seconds() {
+        assert_eq!(format_duration(2.5e9), "2.50 s");
+    }
 }

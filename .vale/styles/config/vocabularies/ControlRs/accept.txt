@@ -96,6 +96,7 @@ Eigensolvers
 Embench
 Enqueues
 Enum
+Equispaced
 Esc
 Espressif
 FPUs
@@ -334,6 +335,7 @@ Zarantonello's
 Zaytseva
 Zhang
 Zimmermann
+[Ss]uppressions
 _a
 _b
 _marker
@@ -449,6 +451,7 @@ dereference
 dereferenced
 deserialization
 deserialize
+deserialized
 deserializer
 deserializing
 dest
@@ -457,6 +460,7 @@ dim_max
 dimforge
 discovery_complete
 discretization
+discretizations
 discretize
 discretized
 doctest
@@ -465,6 +469,7 @@ doi
 dotc
 dotu
 downclocked
+downscales
 dsp
 dt
 dummy_suite

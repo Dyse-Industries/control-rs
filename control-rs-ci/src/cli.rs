@@ -1,12 +1,12 @@
 //! Command-line argument parsing and execution for CI and gate runners.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use crate::config::GateConfig;
 use crate::gate::build_all_gates;
-use crate::run_pipeline;
 use crate::ui;
+use crate::{GateFilter, PipelineOptions, run_pipeline};
 
 /// Options parsed from command line arguments.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -71,279 +71,243 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
     let mut options = CliOptions::default();
     let mut i = 1;
     while i < args.len() {
-        let arg = match args.get(i) {
-            Some(a) => a.as_str(),
-            None => break,
-        };
-
-        if arg == "-h" || arg == "--help" {
-            print_usage(binary_name);
-            exit(0);
-        } else if arg == "-l" || arg == "--list" {
-            let workspace_root =
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let config_path = options
-                .config_path
-                .clone()
-                .unwrap_or_else(|| workspace_root.join("gate.toml"));
-            let config =
-                GateConfig::load_from_path(&config_path).unwrap_or_default();
-            let all_gates = build_all_gates(&config).unwrap_or_default();
-            ui::init_color();
-            let h = ui::HELP_HEADER;
-            let f = ui::HELP_FLAG;
-            anstream::println!("{h}Registered Quality Gates:{h:#}");
-            for g in all_gates {
-                anstream::println!(
-                    "  - {f}{:<12}{f:#} : {}",
-                    g.name(),
-                    g.description().unwrap_or("-")
-                );
-            }
-            exit(0);
-        } else if arg == "-X" || arg == "--clean" {
-            options.clean = true;
-        } else if arg == "-v" || arg == "--verbose" {
-            options.verbose = true;
-        } else if arg == "-a" || arg == "--all" {
-            options.run_all = true;
-        } else if arg == "-g" || arg == "--group" {
-            i = i.saturating_add(1);
-            while i < args.len() {
-                let val = match args.get(i) {
-                    Some(a) if !a.starts_with('-') => a.as_str(),
-                    _ => {
-                        i = i.saturating_sub(1);
-                        break;
-                    }
-                };
-                for part in val.split(',') {
-                    let trimmed = part.trim();
-                    if !trimmed.is_empty() {
-                        options.groups.push(trimmed.to_string());
-                    }
-                }
-                i = i.saturating_add(1);
-            }
-        } else if let Some(val) = arg
-            .strip_prefix("--group=")
-            .or_else(|| arg.strip_prefix("-g="))
-        {
-            for part in val.split(',') {
-                let trimmed = part.trim();
-                if !trimmed.is_empty() {
-                    options.groups.push(trimmed.to_string());
-                }
-            }
-        } else if arg == "-o" || arg == "--only" {
-            i = i.saturating_add(1);
-            while i < args.len() {
-                let val = match args.get(i) {
-                    Some(a) if !a.starts_with('-') => a.as_str(),
-                    _ => {
-                        i = i.saturating_sub(1);
-                        break;
-                    }
-                };
-                for part in val.split(',') {
-                    let trimmed = part.trim();
-                    if !trimmed.is_empty() {
-                        options.only_gates.push(trimmed.to_string());
-                    }
-                }
-                i = i.saturating_add(1);
-            }
-        } else if let Some(val) = arg
-            .strip_prefix("--only=")
-            .or_else(|| arg.strip_prefix("-o="))
-        {
-            for part in val.split(',') {
-                let trimmed = part.trim();
-                if !trimmed.is_empty() {
-                    options.only_gates.push(trimmed.to_string());
-                }
-            }
-        } else if arg == "-s" || arg == "--skip" {
-            i = i.saturating_add(1);
-            while i < args.len() {
-                let val = match args.get(i) {
-                    Some(a) if !a.starts_with('-') => a.as_str(),
-                    _ => {
-                        i = i.saturating_sub(1);
-                        break;
-                    }
-                };
-                for part in val.split(',') {
-                    let trimmed = part.trim();
-                    if !trimmed.is_empty() {
-                        options.skip_gates.push(trimmed.to_string());
-                    }
-                }
-                i = i.saturating_add(1);
-            }
-        } else if let Some(val) = arg
-            .strip_prefix("--skip=")
-            .or_else(|| arg.strip_prefix("-s="))
-        {
-            for part in val.split(',') {
-                let trimmed = part.trim();
-                if !trimmed.is_empty() {
-                    options.skip_gates.push(trimmed.to_string());
-                }
-            }
-        } else if arg == "-u" || arg == "--up-to" {
-            i = i.saturating_add(1);
-            if let Some(val) = args.get(i) {
-                options.up_to_gate = Some(val.clone());
-            }
-        } else if let Some(val) = arg
-            .strip_prefix("--up-to=")
-            .or_else(|| arg.strip_prefix("-u="))
-        {
-            options.up_to_gate = Some(val.to_string());
-        } else if arg == "-c" || arg == "--config" {
-            i = i.saturating_add(1);
-            if let Some(val) = args.get(i) {
-                options.config_path = Some(PathBuf::from(val));
-            }
-        } else if let Some(val) = arg
-            .strip_prefix("--config=")
-            .or_else(|| arg.strip_prefix("-c="))
-        {
-            options.config_path = Some(PathBuf::from(val));
-        } else if !arg.starts_with('-') {
-            for part in arg.split(',') {
-                let trimmed = part.trim();
-                if !trimmed.is_empty() {
-                    if trimmed == "clean" {
-                        options.clean = true;
-                    } else if trimmed == "all" {
-                        options.run_all = true;
-                    } else {
-                        options.only_gates.push(trimmed.to_string());
-                    }
-                }
-            }
-        } else {
-            ui::error(format!("Unknown argument: {arg}"));
-            print_usage(binary_name);
-            exit(1);
-        }
-
-        i = i.saturating_add(1);
+        i = parse_one(&mut options, args, i, binary_name);
     }
     options
+}
+
+/// Consumes the argument at `i` (and its values) and returns the index of
+/// the next unconsumed argument. `--help`, `--list` and unknown flags exit.
+fn parse_one(
+    options: &mut CliOptions,
+    args: &[String],
+    i: usize,
+    binary_name: &str,
+) -> usize {
+    let Some(arg) = args.get(i).map(String::as_str) else {
+        return args.len();
+    };
+    let next = i.saturating_add(1);
+    match arg {
+        "-h" | "--help" => {
+            print_usage(binary_name);
+            exit(0);
+        }
+        "-l" | "--list" => {
+            list_gates(options);
+            exit(0);
+        }
+        "-X" | "--clean" => options.clean = true,
+        "-v" | "--verbose" => options.verbose = true,
+        "-a" | "--all" => options.run_all = true,
+        "-g" | "--group" => {
+            return take_values(args, next, &mut options.groups);
+        }
+        "-o" | "--only" => {
+            return take_values(args, next, &mut options.only_gates);
+        }
+        "-s" | "--skip" => {
+            return take_values(args, next, &mut options.skip_gates);
+        }
+        "-u" | "--up-to" => {
+            if let Some(val) = args.get(next) {
+                options.up_to_gate = Some(val.clone());
+            }
+            return next.saturating_add(1);
+        }
+        "-c" | "--config" => {
+            if let Some(val) = args.get(next) {
+                options.config_path = Some(PathBuf::from(val));
+            }
+            return next.saturating_add(1);
+        }
+        _ => parse_inline(options, arg, binary_name),
+    }
+    next
+}
+
+/// Handles `--flag=value` forms, positional gate names and unknown flags.
+fn parse_inline(options: &mut CliOptions, arg: &str, binary_name: &str) {
+    if let Some(val) = inline_value(arg, "--group=", "-g=") {
+        push_list(&mut options.groups, val);
+    } else if let Some(val) = inline_value(arg, "--only=", "-o=") {
+        push_list(&mut options.only_gates, val);
+    } else if let Some(val) = inline_value(arg, "--skip=", "-s=") {
+        push_list(&mut options.skip_gates, val);
+    } else if let Some(val) = inline_value(arg, "--up-to=", "-u=") {
+        options.up_to_gate = Some(val.to_string());
+    } else if let Some(val) = inline_value(arg, "--config=", "-c=") {
+        options.config_path = Some(PathBuf::from(val));
+    } else if !arg.starts_with('-') {
+        for part in arg.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            match part {
+                "clean" => options.clean = true,
+                "all" => options.run_all = true,
+                gate => options.only_gates.push(gate.to_string()),
+            }
+        }
+    } else {
+        ui::error(format!("Unknown argument: {arg}"));
+        print_usage(binary_name);
+        exit(1);
+    }
+}
+
+/// Value of `arg` after the `long` or `short` `=`-terminated prefix.
+fn inline_value<'a>(arg: &'a str, long: &str, short: &str) -> Option<&'a str> {
+    arg.strip_prefix(long).or_else(|| arg.strip_prefix(short))
+}
+
+/// Appends the non-empty, trimmed comma-separated entries of `val`.
+fn push_list(dest: &mut Vec<String>, val: &str) {
+    dest.extend(
+        val.split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_string),
+    );
+}
+
+/// Collects the values following a multi-value flag, starting at `start`,
+/// up to the next argument that begins with `-`. Returns the index of that
+/// argument (or the end).
+fn take_values(args: &[String], start: usize, dest: &mut Vec<String>) -> usize {
+    let mut i = start;
+    while let Some(val) = args.get(i).filter(|a| !a.starts_with('-')) {
+        push_list(dest, val);
+        i = i.saturating_add(1);
+    }
+    i
+}
+
+/// Prints every registered gate with its description.
+fn list_gates(options: &CliOptions) {
+    let config_path = resolve_config_path(options);
+    let config = GateConfig::load_from_path(&config_path).unwrap_or_default();
+    let all_gates = build_all_gates(&config).unwrap_or_default();
+    ui::init_color();
+    let h = ui::HELP_HEADER;
+    let f = ui::HELP_FLAG;
+    anstream::println!("{h}Registered Quality Gates:{h:#}");
+    for g in all_gates {
+        anstream::println!(
+            "  - {f}{:<12}{f:#} : {}",
+            g.name(),
+            g.description().unwrap_or("-")
+        );
+    }
+}
+
+/// Current directory, or `.` when it cannot be read.
+fn workspace_root() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// `--config` when given, otherwise `gate.toml` in the workspace root.
+fn resolve_config_path(options: &CliOptions) -> PathBuf {
+    options
+        .config_path
+        .clone()
+        .unwrap_or_else(|| workspace_root().join("gate.toml"))
 }
 
 /// Runs the CLI application using parsed options.
 pub fn run_cli(binary_name: &str) {
     let args: Vec<String> = std::env::args().collect();
     let mut options = parse_args(&args, binary_name);
-    let workspace_root =
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let config_path = options
-        .config_path
-        .clone()
-        .unwrap_or_else(|| workspace_root.join("gate.toml"));
+    let workspace_root = workspace_root();
+    let config_path = resolve_config_path(&options);
 
     let is_clean_only = options.clean
         && !options.run_all
         && options.groups.is_empty()
         && options.only_gates.is_empty()
         && options.up_to_gate.is_none();
-
     if is_clean_only {
-        ui::init_color();
-        match crate::clean_artifacts(&workspace_root, &config_path) {
-            Ok(out_dir) => {
-                ui::status(
-                    "Cleaned",
-                    format!("Removed CI artifacts in {}", out_dir.display()),
-                );
-                exit(0);
-            }
-            Err(e) => {
-                ui::error(format!("Failed to clean CI artifacts: {e}"));
-                exit(1);
-            }
-        }
+        clean_and_exit(&workspace_root, &config_path);
     }
 
-    let config = match GateConfig::load_from_path(&config_path) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            ui::error(format!("Failed to load configuration: {e}"));
-            exit(1);
-        }
-    };
+    let config = GateConfig::load_from_path(&config_path).unwrap_or_else(|e| {
+        ui::error(format!("Failed to load configuration: {e}"));
+        exit(1);
+    });
 
     // Expand groups specified via --group / -g into options.only_gates
     for group_name in &options.groups {
-        if group_name == "exclusive" {
-            for gate in &config.execution.exclusive_gates {
-                if !options.only_gates.contains(gate) {
-                    options.only_gates.push(gate.clone());
-                }
-            }
-        } else if let Some(members) = config.execution.groups.get(group_name) {
-            for gate in members {
-                if !options.only_gates.contains(gate) {
-                    options.only_gates.push(gate.clone());
-                }
-            }
-        } else {
+        let Some(members) = group_members(&config, group_name) else {
             ui::error(format!("Unknown execution group: '{group_name}'"));
             exit(1);
-        }
+        };
+        push_unique(&mut options.only_gates, members);
     }
 
     // Also expand any positional arguments that match group names
     let mut expanded_gates = Vec::new();
     for gate_or_group in &options.only_gates {
-        if gate_or_group == "exclusive" {
-            for gate in &config.execution.exclusive_gates {
-                if !expanded_gates.contains(gate) {
-                    expanded_gates.push(gate.clone());
-                }
+        match group_members(&config, gate_or_group) {
+            Some(members) => push_unique(&mut expanded_gates, members),
+            None => {
+                push_unique(
+                    &mut expanded_gates,
+                    std::slice::from_ref(gate_or_group),
+                );
             }
-        } else if let Some(members) = config.execution.groups.get(gate_or_group)
-        {
-            for gate in members {
-                if !expanded_gates.contains(gate) {
-                    expanded_gates.push(gate.clone());
-                }
-            }
-        } else if !expanded_gates.contains(gate_or_group) {
-            expanded_gates.push(gate_or_group.clone());
         }
     }
     options.only_gates = expanded_gates;
 
-    let only_ref = if options.run_all || options.only_gates.is_empty() {
-        None
-    } else {
-        Some(options.only_gates.as_slice())
+    let pipeline = PipelineOptions {
+        only_gates: (!options.run_all && !options.only_gates.is_empty())
+            .then_some(options.only_gates.as_slice()),
+        skip_gates: (!options.skip_gates.is_empty())
+            .then_some(options.skip_gates.as_slice()),
+        up_to_gate: options.up_to_gate.as_deref(),
+        clean: options.clean,
+        verbose: options.verbose,
     };
-    let skip_ref = if options.skip_gates.is_empty() {
-        None
-    } else {
-        Some(options.skip_gates.as_slice())
-    };
-
-    match run_pipeline(
-        &workspace_root,
-        &config_path,
-        only_ref,
-        skip_ref,
-        options.up_to_gate.as_deref(),
-        options.clean,
-        options.verbose,
-    ) {
+    match run_pipeline(&workspace_root, &config_path, &pipeline) {
         Ok(true) => exit(0),
         Ok(false) => exit(1),
         Err(e) => {
             ui::error(format!("Fatal error executing CI pipeline: {e}"));
             exit(1);
+        }
+    }
+}
+
+/// Removes CI artifacts and exits with the outcome.
+fn clean_and_exit(workspace_root: &Path, config_path: &Path) -> ! {
+    ui::init_color();
+    match crate::clean_artifacts(workspace_root, config_path) {
+        Ok(out_dir) => {
+            ui::status(
+                "Cleaned",
+                format!("Removed CI artifacts in {}", out_dir.display()),
+            );
+            exit(0);
+        }
+        Err(e) => {
+            ui::error(format!("Failed to clean CI artifacts: {e}"));
+            exit(1);
+        }
+    }
+}
+
+/// Gates of the named group (`exclusive` included), or `None` if no such
+/// group exists.
+fn group_members<'a>(config: &'a GateConfig, name: &str) -> GateFilter<'a> {
+    if name == "exclusive" {
+        Some(&config.execution.exclusive_gates)
+    } else {
+        config.execution.groups.get(name).map(Vec::as_slice)
+    }
+}
+
+/// Appends each of `names` not already in `dest`.
+fn push_unique(dest: &mut Vec<String>, names: &[String]) {
+    for name in names {
+        if !dest.contains(name) {
+            dest.push(name.clone());
         }
     }
 }

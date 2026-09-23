@@ -1,16 +1,21 @@
 //! Report aggregator and Markdown report generator (`ci-report.md`).
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
+use crate::GateFilter;
 use crate::config::{GateConfig, GatePolicy};
-use crate::error::GateError;
-use crate::gate::{GateOutcome, Verdict};
+use crate::error::GateResult;
+use crate::gate::{GateOutcome, RESULT_SUFFIX, Verdict};
 
 /// Maximum budgeted size for `ci-report.md` (64 KiB).
 pub const MAX_REPORT_BYTES: usize = 64 * 1024;
+
+/// Gate outcomes keyed by gate name.
+pub type Outcomes = BTreeMap<String, GateOutcome>;
 
 /// Decentralized artifact aggregator and report generator.
 #[derive(Debug, Clone)]
@@ -19,10 +24,19 @@ pub struct ReportAggregator {
     workspace_root: PathBuf,
 }
 
+/// A rendered `ci-report.md` on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WrittenReport {
+    /// Whether every required fail-closed gate passed.
+    pub pass: bool,
+    /// Location of the written report.
+    pub path: PathBuf,
+}
+
 impl ReportAggregator {
     /// Constructs a new `ReportAggregator`.
     #[must_use]
-    pub fn new(artifacts_dir: PathBuf, workspace_root: PathBuf) -> Self {
+    pub const fn new(artifacts_dir: PathBuf, workspace_root: PathBuf) -> Self {
         Self {
             artifacts_dir,
             workspace_root,
@@ -45,27 +59,22 @@ impl ReportAggregator {
     ///
     /// # Errors
     /// Returns `GateError` if directory scanning fails.
-    pub fn load_outcomes(
-        &self,
-    ) -> Result<BTreeMap<String, GateOutcome>, GateError> {
+    pub fn load_outcomes(&self) -> GateResult<Outcomes> {
         let mut outcomes = BTreeMap::new();
         if !self.artifacts_dir.exists() {
             return Ok(outcomes);
         }
 
-        let entries = fs::read_dir(&self.artifacts_dir)?;
-        for entry in entries {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.ends_with(".result.json") {
-                        if let Ok(outcome) = GateOutcome::load_from_file(&path)
-                        {
-                            outcomes.insert(outcome.gate.clone(), outcome);
-                        }
-                    }
-                }
+        for entry in fs::read_dir(&self.artifacts_dir)? {
+            let path = entry?.path();
+            if path.is_file()
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|name| name.ends_with(RESULT_SUFFIX))
+                && let Ok(outcome) = GateOutcome::load_from_file(&path)
+            {
+                outcomes.insert(outcome.gate.clone(), outcome);
             }
         }
         Ok(outcomes)
@@ -78,85 +87,30 @@ impl ReportAggregator {
     pub fn is_passing(
         &self,
         config: &GateConfig,
-        outcomes: &BTreeMap<String, GateOutcome>,
-        subset: Option<&[String]>,
+        outcomes: &Outcomes,
+        subset: GateFilter<'_>,
     ) -> bool {
-        if let Some(active_subset) = subset {
-            for gate_name in active_subset {
-                if config.policy_for(gate_name) == GatePolicy::Fail {
-                    if let Some(outcome) = outcomes.get(gate_name) {
-                        if outcome.verdict == Verdict::Fail {
-                            return false;
-                        }
-                    }
-                }
-            }
-            true
-        } else {
-            for (gate_name, policy) in &config.gates {
-                if *policy == GatePolicy::Fail {
-                    match outcomes.get(gate_name) {
-                        Some(outcome) => {
-                            if outcome.verdict == Verdict::Fail {
-                                return false;
-                            }
-                        }
-                        None => {
-                            // Missing fail-closed gate fails aggregator (FR-10)
-                            return false;
-                        }
-                    }
-                }
-            }
-            true
-        }
-    }
-
-    fn determine_ordered_gate_names(
-        &self,
-        config: &GateConfig,
-        outcomes: &BTreeMap<String, GateOutcome>,
-    ) -> Vec<String> {
-        let mut ordered = Vec::new();
-
-        // 1. User-defined groups in sorted group key order and group element sequence
-        let mut sorted_group_keys: Vec<_> =
-            config.execution.groups.keys().collect();
-        sorted_group_keys.sort();
-        for grp in sorted_group_keys {
-            if let Some(members) = config.execution.groups.get(grp) {
-                for m in members {
-                    if !ordered.contains(m) {
-                        ordered.push(m.clone());
-                    }
-                }
-            }
-        }
-
-        // 2. Exclusive gates
-        for m in &config.execution.exclusive_gates {
-            if !ordered.contains(m) {
-                ordered.push(m.clone());
-            }
-        }
-
-        // 3. Other configured gates
-        let mut other_gates: Vec<_> = config.gates.keys().collect();
-        other_gates.sort();
-        for g in other_gates {
-            if !ordered.contains(g) {
-                ordered.push(g.clone());
-            }
-        }
-
-        // 4. Any remaining outcomes found on disk
-        for g in outcomes.keys() {
-            if !ordered.contains(g) {
-                ordered.push(g.clone());
-            }
-        }
-
-        ordered
+        let failed = |gate_name: &String| {
+            outcomes
+                .get(gate_name)
+                .is_some_and(|o| o.verdict == Verdict::Fail)
+        };
+        subset.map_or_else(
+            || {
+                // A missing fail-closed gate fails the aggregator (FR-10).
+                config.gates.iter().all(|(gate_name, policy)| {
+                    *policy != GatePolicy::Fail
+                        || outcomes.contains_key(gate_name)
+                            && !failed(gate_name)
+                })
+            },
+            |active_subset| {
+                active_subset.iter().all(|gate_name| {
+                    config.policy_for(gate_name) != GatePolicy::Fail
+                        || !failed(gate_name)
+                })
+            },
+        )
     }
 
     /// Generates the complete `ci-report.md` Markdown content.
@@ -166,83 +120,21 @@ impl ReportAggregator {
     pub fn generate_markdown(
         &self,
         config: &GateConfig,
-        outcomes: &BTreeMap<String, GateOutcome>,
-        subset: Option<&[String]>,
-    ) -> Result<String, GateError> {
+        outcomes: &Outcomes,
+        subset: GateFilter<'_>,
+    ) -> GateResult<String> {
         let mut md = String::new();
-        let is_pass = self.is_passing(config, outcomes, subset);
 
         md.push_str("# Continuous Integration & Verification Report\n\n");
-        if is_pass {
+        if self.is_passing(config, outcomes, subset) {
             md.push_str("![Overall Status: Pass](https://img.shields.io/badge/CI_Status-Pass-brightgreen)\n\n");
         } else {
             md.push_str("![Overall Status: Fail](https://img.shields.io/badge/CI_Status-Fail-red)\n\n");
         }
 
-        md.push_str("### Executive Summary Matrix\n\n");
-        md.push_str("| Gate | Verdict | Duration | Exit Code | Summary |\n");
-        md.push_str("|:---|:---|:---|:---|:---|\n");
-
-        let ordered_names = self.determine_ordered_gate_names(config, outcomes);
-
-        for gate_name in &ordered_names {
-            let Some(outcome) = outcomes.get(gate_name) else {
-                continue;
-            };
-
-            if let Some(active_subset) = subset {
-                if !active_subset.iter().any(|g| g == &outcome.gate) {
-                    continue;
-                }
-            }
-
-            let verdict_badge = match outcome.verdict {
-                Verdict::Pass => "**Pass**",
-                Verdict::Warn => "*Warn*",
-                Verdict::Fail => "**FAIL**",
-                Verdict::Skipped => "Skipped",
-            };
-            let exit_str =
-                outcome.exit_code.map_or("-".to_string(), |c| c.to_string());
-            let summary_str = outcome.summary.as_deref().unwrap_or("-");
-
-            md.push_str(&format!(
-                "| `{}` | {} | {:.2}s | {} | {} |\n",
-                outcome.gate,
-                verdict_badge,
-                outcome.duration_secs,
-                exit_str,
-                summary_str
-            ));
-        }
-
-        // Embed Diagnostics for Failed / Warned Gates
-        let mut has_diagnostics = false;
-        for gate_name in &ordered_names {
-            let Some(outcome) = outcomes.get(gate_name) else {
-                continue;
-            };
-
-            if outcome.verdict == Verdict::Fail
-                || outcome.verdict == Verdict::Warn
-            {
-                if !has_diagnostics {
-                    md.push_str("\n### Failure & Diagnostic Logs\n\n");
-                    has_diagnostics = true;
-                }
-
-                let log_path = self.artifacts_dir.join(&outcome.log_file);
-                let log_tail = read_trailing_lines(&log_path, 30);
-
-                md.push_str(&format!(
-                    "<details>\n<summary><b>Gate: {} ({:?})</b> - {}</summary>\n\n```text\n{}\n```\n</details>\n\n",
-                    outcome.gate,
-                    outcome.verdict,
-                    outcome.summary.as_deref().unwrap_or(""),
-                    log_tail
-                ));
-            }
-        }
+        let ordered_names = ordered_gate_names(config, outcomes);
+        push_summary_matrix(&mut md, &ordered_names, outcomes, subset);
+        self.push_diagnostics(&mut md, &ordered_names, outcomes);
 
         // Check size budget
         if md.len() > MAX_REPORT_BYTES {
@@ -253,6 +145,34 @@ impl ReportAggregator {
         Ok(md)
     }
 
+    /// Appends the log tails of failed and warned gates.
+    fn push_diagnostics(
+        &self,
+        md: &mut String,
+        ordered_names: &[String],
+        outcomes: &Outcomes,
+    ) {
+        let flagged = ordered_names
+            .iter()
+            .filter_map(|name| outcomes.get(name))
+            .filter(|o| matches!(o.verdict, Verdict::Fail | Verdict::Warn));
+        for (idx, outcome) in flagged.enumerate() {
+            if idx == 0 {
+                md.push_str("\n### Failure & Diagnostic Logs\n\n");
+            }
+            let log_path = self.artifacts_dir.join(&outcome.log_file);
+            let log_tail = read_trailing_lines(&log_path, 30);
+            let _ = write!(
+                md,
+                "<details>\n<summary><b>Gate: {} ({:?})</b> - {}</summary>\n\n```text\n{}\n```\n</details>\n\n",
+                outcome.gate,
+                outcome.verdict,
+                outcome.summary.as_deref().unwrap_or(""),
+                log_tail
+            );
+        }
+    }
+
     /// Renders `ci-report.md` and writes it to the artifacts directory.
     ///
     /// # Errors
@@ -260,19 +180,89 @@ impl ReportAggregator {
     pub fn write_report(
         &self,
         config: &GateConfig,
-        subset: Option<&[String]>,
-    ) -> Result<(bool, PathBuf), GateError> {
+        subset: GateFilter<'_>,
+    ) -> GateResult<WrittenReport> {
         let outcomes = self.load_outcomes()?;
         let md = self.generate_markdown(config, &outcomes, subset)?;
-        let is_pass = self.is_passing(config, &outcomes, subset);
+        let pass = self.is_passing(config, &outcomes, subset);
 
-        let artifact_report_path = self.artifacts_dir.join("ci-report.md");
-        if let Some(parent) = artifact_report_path.parent() {
+        let path = self.artifacts_dir.join("ci-report.md");
+        if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&artifact_report_path, &md)?;
+        fs::write(&path, &md)?;
 
-        Ok((is_pass, artifact_report_path))
+        Ok(WrittenReport { pass, path })
+    }
+}
+
+/// Gate names in report order: grouped gates (sorted group keys, member
+/// order), exclusive gates, other configured gates, then any other outcome
+/// found on disk.
+fn ordered_gate_names(config: &GateConfig, outcomes: &Outcomes) -> Vec<String> {
+    let mut ordered = Vec::new();
+    let mut push = |name: &String| {
+        if !ordered.contains(name) {
+            ordered.push(name.clone());
+        }
+    };
+
+    let mut sorted_group_keys: Vec<_> =
+        config.execution.groups.keys().collect();
+    sorted_group_keys.sort();
+    for grp in sorted_group_keys {
+        if let Some(members) = config.execution.groups.get(grp) {
+            members.iter().for_each(&mut push);
+        }
+    }
+    config.execution.exclusive_gates.iter().for_each(&mut push);
+
+    let mut other_gates: Vec<_> = config.gates.keys().collect();
+    other_gates.sort();
+    other_gates.into_iter().for_each(&mut push);
+
+    outcomes.keys().for_each(&mut push);
+    ordered
+}
+
+/// Appends the executive summary table, limited to `subset` when given.
+fn push_summary_matrix(
+    md: &mut String,
+    ordered_names: &[String],
+    outcomes: &Outcomes,
+    subset: GateFilter<'_>,
+) {
+    md.push_str("### Executive Summary Matrix\n\n");
+    md.push_str("| Gate | Verdict | Duration | Exit Code | Summary |\n");
+    md.push_str("|:---|:---|:---|:---|:---|\n");
+
+    for outcome in ordered_names.iter().filter_map(|name| outcomes.get(name)) {
+        if subset
+            .is_some_and(|active| !active.iter().any(|g| g == &outcome.gate))
+        {
+            continue;
+        }
+
+        let verdict_badge = match outcome.verdict {
+            Verdict::Pass => "**Pass**",
+            Verdict::Warn => "*Warn*",
+            Verdict::Fail => "**FAIL**",
+            Verdict::Skipped => "Skipped",
+        };
+        let exit_str = outcome
+            .exit_code
+            .map_or_else(|| "-".to_string(), |c| c.to_string());
+        let summary_str = outcome.summary.as_deref().unwrap_or("-");
+
+        let _ = writeln!(
+            md,
+            "| `{}` | {} | {:.2}s | {} | {} |",
+            outcome.gate,
+            verdict_badge,
+            outcome.duration_secs,
+            exit_str,
+            summary_str
+        );
     }
 }
 

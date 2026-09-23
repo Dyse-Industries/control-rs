@@ -23,6 +23,9 @@ pub enum GatePolicy {
     Skip,
 }
 
+/// Execution groups: group name to the gates it runs.
+pub type GroupMap = HashMap<String, Vec<String>>;
+
 /// Type alias for [`GatePolicy`] matching declarative `gate-mode` terminology.
 pub type GateMode = GatePolicy;
 
@@ -40,67 +43,15 @@ pub struct RunnerConfig {
     pub timeout_secs: u64,
 }
 
-fn default_title() -> String {
-    "control-rs".to_string()
-}
-
-fn default_out_dir() -> PathBuf {
-    PathBuf::from("target/ci-artifacts")
-}
-
-const fn default_timeout_secs() -> u64 {
-    90
-}
-
-impl Default for RunnerConfig {
-    fn default() -> Self {
-        Self {
-            title: default_title(),
-            out_dir: default_out_dir(),
-            timeout_secs: default_timeout_secs(),
-        }
-    }
-}
-
-const fn default_true() -> bool {
-    true
-}
-
-/// Execution schedule, group partitioning, and concurrency configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Execution schedule and group partitioning. Groups always run concurrently.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExecutionConfig {
-    /// If true, executes independent groups concurrently across worker threads.
-    #[serde(default = "default_true")]
-    pub parallel: bool,
     /// List of gate names assigned to exclusive execution.
     #[serde(default)]
     pub exclusive_gates: Vec<String>,
     /// Declarative execution groups: mapping `group_name` -> list of gate names.
     #[serde(default, alias = "lanes", alias = "threads")]
-    pub groups: HashMap<String, Vec<String>>,
-}
-
-impl Default for ExecutionConfig {
-    fn default() -> Self {
-        Self {
-            parallel: true,
-            exclusive_gates: Vec::new(),
-            groups: HashMap::new(),
-        }
-    }
-}
-
-impl ExecutionConfig {
-    /// Normalizes configuration by merging any `groups["exclusive"]` entries into `exclusive_gates`.
-    pub fn normalize(&mut self) {
-        if let Some(mut excl) = self.groups.remove("exclusive") {
-            for g in excl.drain(..) {
-                if !self.exclusive_gates.contains(&g) {
-                    self.exclusive_gates.push(g);
-                }
-            }
-        }
-    }
+    pub groups: GroupMap,
 }
 
 /// Generic declarative gate definition parsed from `gate.toml`.
@@ -128,6 +79,46 @@ pub struct GateDefinition {
     pub skip_exit_codes: Vec<i32>,
 }
 
+/// Top-level workspace quality gate configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GateConfig {
+    /// General runner configuration.
+    #[serde(default)]
+    pub runner: RunnerConfig,
+    /// Multi-lane parallel scheduling and authority configuration.
+    #[serde(default)]
+    pub execution: ExecutionConfig,
+    /// Execution policies mapped by gate name (for example, `fmt = "fail"`).
+    #[serde(default)]
+    pub gates: HashMap<String, GatePolicy>,
+    /// Declarative gate definitions (for example, `[clean]`, `[fmt]`, `[clippy]`, etc.).
+    #[serde(flatten)]
+    pub gate_definitions: HashMap<String, GateDefinition>,
+}
+
+impl Default for RunnerConfig {
+    fn default() -> Self {
+        Self {
+            title: default_title(),
+            out_dir: default_out_dir(),
+            timeout_secs: default_timeout_secs(),
+        }
+    }
+}
+
+impl ExecutionConfig {
+    /// Normalizes configuration by merging any `groups["exclusive"]` entries into `exclusive_gates`.
+    pub fn normalize(&mut self) {
+        if let Some(excl) = self.groups.remove("exclusive") {
+            for g in excl {
+                if !self.exclusive_gates.contains(&g) {
+                    self.exclusive_gates.push(g);
+                }
+            }
+        }
+    }
+}
+
 impl GateDefinition {
     /// Constructs a new `GateDefinition`.
     #[must_use]
@@ -148,23 +139,6 @@ impl GateDefinition {
     pub fn mode(&self) -> GatePolicy {
         self.mode.unwrap_or(GatePolicy::Fail)
     }
-}
-
-/// Top-level workspace quality gate configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct GateConfig {
-    /// General runner configuration.
-    #[serde(default)]
-    pub runner: RunnerConfig,
-    /// Multi-lane parallel scheduling and authority configuration.
-    #[serde(default)]
-    pub execution: ExecutionConfig,
-    /// Execution policies mapped by gate name (for example, `fmt = "fail"`).
-    #[serde(default)]
-    pub gates: HashMap<String, GatePolicy>,
-    /// Declarative gate definitions (for example, `[clean]`, `[fmt]`, `[clippy]`, etc.).
-    #[serde(flatten)]
-    pub gate_definitions: HashMap<String, GateDefinition>,
 }
 
 impl GateConfig {
@@ -208,10 +182,10 @@ impl GateConfig {
     /// Gets the policy for a named gate, defaulting to `GatePolicy::Fail`.
     #[must_use]
     pub fn policy_for(&self, gate_name: &str) -> GatePolicy {
-        if let Some(def) = self.gate_definitions.get(gate_name) {
-            if let Some(mode) = def.mode {
-                return mode;
-            }
+        if let Some(def) = self.gate_definitions.get(gate_name)
+            && let Some(mode) = def.mode
+        {
+            return mode;
         }
         self.gates
             .get(gate_name)
@@ -226,4 +200,16 @@ impl GateConfig {
     pub fn gate_def(&self, gate_name: &str) -> Option<&GateDefinition> {
         self.gate_definitions.get(gate_name)
     }
+}
+
+fn default_title() -> String {
+    "control-rs".to_string()
+}
+
+fn default_out_dir() -> PathBuf {
+    PathBuf::from("target/ci-artifacts")
+}
+
+const fn default_timeout_secs() -> u64 {
+    90
 }

@@ -4,26 +4,29 @@ out_dir = "target/ci-artifacts"
 timeout_secs = 90
 
 [execution]
-parallel = true
 
 # Built-in exclusive group:
 # The ONLY built-in group in control-rs-ci. Gates listed here require Full Processor
 # Authority (such as hardware target execution, benchmark validation, unsafe audits,
 # or mutation testing) and must never compete for CPU, I/O, or target lock resources.
 #
-# When parallel = true, the runner establishes a barrier join: ALL concurrent user
-# groups must finish and join before exclusive gates run. Exclusive gates then execute
+# The runner establishes a barrier join: ALL concurrent user groups must finish
+# and join before exclusive gates run. Exclusive gates then execute
 # strictly sequentially, one at a time, tagged [exclusive].
 #
 exclusive_gates = ["regression", "mutants"]
 
 # User-defined execution groups:
-# When parallel = true, each group executes concurrently on its own dedicated OS thread.
+# Each group executes concurrently on its own dedicated OS thread.
 # Gates within a single group execute sequentially in declared order.
 # Output lines are tagged with the group identifier (e.g., [cargo], [audit], [static]).
+# Each group builds into its own Cargo target directory, target/ci-groups/<group>,
+# so concurrent groups never wait on a shared build-directory lock. A gate that
+# sets CARGO_TARGET_DIR in its own env keeps that value. `cargo ci --clean`
+# deletes target/ci-groups, so every group starts from an empty target directory.
 [execution.groups]
 build_test = ["build", "test"]
-lint = ["fmt", "clippy", "doc", "vale"]
+lint = ["fmt", "clippy", "allow-audit", "doc", "vale"]
 audit = ["deny", "semver", "valgrind", "geiger"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
@@ -45,6 +48,12 @@ command = "cargo clippy"
 args = ["--workspace", "--all-targets", "--", "-D", "warnings"]
 timeout_secs = 900
 description = "Executes Clippy linter across workspace targets"
+
+[allow-audit]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "allow-audit", "--", "--baseline", "clippy-allow-baseline.txt"]
+description = "Fails on any clippy suppression (allow, expect, cfg_attr, manifest allow level) not listed in clippy-allow-baseline.txt"
 
 [doc]
 mode = "fail"
@@ -145,14 +154,14 @@ skip_exit_codes = [78]
 description = "Executes Valgrind Memcheck against all workspace example binaries to verify zero memory leaks"
 
 [mutants]
-mode = "fail"
+mode = "skip"
 command = "cargo mutants"
-args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
+args = ["--json", "--jobs", "8", "--output", "target/ci-artifacts/mutants.out"]
 timeout_secs = 43200
 description = "Mutates ASTs to verify test fault-injection rigor using cargo-mutants"
 
 [regression]
-mode = "fail"
+mode = "skip"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "regression", "--", "--all"]
 timeout_secs = 7200

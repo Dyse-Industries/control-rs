@@ -9,27 +9,8 @@ use anstyle::AnsiColor;
 /// Cargo status-line width: right-aligned 12-char verb.
 pub const CARGO_STATUS_WIDTH: usize = 12;
 
-/// Cargo status `HEADER`: bright green bold verb (for example, `Running`, `Finished`, `Writing`).
-pub const HEADER: anstyle::Style = AnsiColor::BrightGreen.on_default().bold();
-
-/// Cargo status `STATUS_INFO`: cyan bold verb (for example, `Skipping`, `Listing`).
-pub const STATUS_INFO: anstyle::Style = AnsiColor::Cyan.on_default().bold();
-
-/// Cargo `WARNING`: bright yellow bold diagnostic prefix / status verb.
-pub const WARNING: anstyle::Style = AnsiColor::BrightYellow.on_default().bold();
-
 /// Cargo `ERROR`: bright red bold diagnostic prefix / status verb.
 pub const ERROR: anstyle::Style = AnsiColor::BrightRed.on_default().bold();
-
-/// Help header style (bright green bold).
-pub const HELP_HEADER: anstyle::Style =
-    AnsiColor::BrightGreen.on_default().bold();
-
-/// Help flag / subcommand / literal style (cyan).
-pub const HELP_FLAG: anstyle::Style = AnsiColor::Cyan.on_default();
-
-/// Help arg / placeholder style (bright yellow).
-pub const HELP_ARG: anstyle::Style = AnsiColor::BrightYellow.on_default();
 
 /// Muted ANSI color palette for multi-group concurrent execution.
 ///
@@ -43,13 +24,37 @@ pub const GROUP_PALETTE: [anstyle::AnsiColor; 5] = [
     AnsiColor::Green,
 ];
 
+/// Cargo status `HEADER`: bright green bold verb (for example, `Running`, `Finished`, `Writing`).
+pub const HEADER: anstyle::Style = AnsiColor::BrightGreen.on_default().bold();
+
+/// Help arg / placeholder style (bright yellow).
+pub const HELP_ARG: anstyle::Style = AnsiColor::BrightYellow.on_default();
+
+/// Help flag / subcommand / literal style (cyan).
+pub const HELP_FLAG: anstyle::Style = AnsiColor::Cyan.on_default();
+
+/// Help header style (bright green bold).
+pub const HELP_HEADER: anstyle::Style =
+    AnsiColor::BrightGreen.on_default().bold();
+
 /// Legacy alias for `GROUP_PALETTE`.
 pub const LANE_PALETTE: [anstyle::AnsiColor; 5] = GROUP_PALETTE;
+
+/// Cargo status `STATUS_INFO`: cyan bold verb (for example, `Skipping`, `Listing`).
+pub const STATUS_INFO: anstyle::Style = AnsiColor::Cyan.on_default().bold();
+
+/// Cargo `WARNING`: bright yellow bold diagnostic prefix / status verb.
+pub const WARNING: anstyle::Style = AnsiColor::BrightYellow.on_default().bold();
 
 /// Returns a deterministic ANSI color styling from the palette by active group index.
 #[must_use]
 pub fn group_style(index: usize) -> anstyle::Style {
-    GROUP_PALETTE[index % GROUP_PALETTE.len()].on_default()
+    let slot = index.checked_rem(GROUP_PALETTE.len()).unwrap_or(0);
+    GROUP_PALETTE
+        .get(slot)
+        .copied()
+        .unwrap_or(AnsiColor::Cyan)
+        .on_default()
 }
 
 /// Legacy alias for `group_style`.
@@ -62,7 +67,7 @@ pub fn lane_style(index: usize) -> anstyle::Style {
 ///
 /// Uses standard Magenta, giving exclusive execution a unique, non-colliding color.
 #[must_use]
-pub fn exclusive_style() -> anstyle::Style {
+pub const fn exclusive_style() -> anstyle::Style {
     AnsiColor::Magenta.on_default()
 }
 

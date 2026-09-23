@@ -6,83 +6,120 @@
 //! records, decentralized artifact aggregation, and automated Markdown report rendering.
 
 #![deny(missing_docs)]
-#![allow(
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc,
-    clippy::module_name_repetitions,
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::cast_possible_truncation,
-    clippy::too_many_lines,
-    clippy::uninlined_format_args,
-    clippy::shadow_unrelated,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
-    clippy::wildcard_imports,
-    clippy::similar_names,
-    clippy::cognitive_complexity,
-    clippy::match_wildcard_for_single_variants,
-    clippy::type_complexity,
-    clippy::must_use_candidate,
-    clippy::missing_const_for_fn,
-    clippy::arbitrary_source_item_ordering,
-    clippy::multiple_crate_versions,
-    clippy::equatable_if_let,
-    clippy::nursery,
-    clippy::cargo,
-    clippy::collapsible_if,
-    clippy::single_match,
-    clippy::format_push_string,
-    clippy::map_unwrap_or,
-    clippy::if_not_else,
-    clippy::unreadable_literal,
-    clippy::redundant_closure_for_method_calls,
-    clippy::single_match_else,
-    clippy::items_after_statements,
-    clippy::too_many_arguments,
-    clippy::unused_self,
-    clippy::unnecessary_wraps,
-    clippy::unnecessary_literal_bound,
-    clippy::doc_markdown,
-    clippy::bool_to_int_with_if,
-    clippy::branches_sharing_code,
-    clippy::or_fun_call
-)]
-
-pub mod cli;
-pub mod config;
-pub mod error;
-pub mod gate;
-pub mod report;
-pub mod ui;
 
 pub use cli::run_cli;
 pub use config::{GateConfig, GatePolicy};
-pub use error::GateError;
-pub use gate::{Gate, GateContext, GateOutcome, Verdict};
-pub use report::ReportAggregator;
+pub use error::{GateError, GateResult};
+pub use gate::{Gate, GateContext, GateList, GateOutcome, SharedGate, Verdict};
+pub use report::{ReportAggregator, WrittenReport};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Cleans up the CI artifacts directory and any leftover workspace root artifacts.
+pub mod allow_audit;
+pub mod cli;
+
+pub mod config;
+
+pub mod error;
+
+pub mod gate;
+
+pub mod report;
+
+pub mod ui;
+
+/// Workspace-relative directory that holds one Cargo target directory per
+/// execution group (`target/ci-groups/<group>`).
 ///
-/// Removes the configured output directory (`out_dir`, typically `target/ci-artifacts`)
-/// and removes any stray legacy CI artifacts found in the workspace root.
+/// Concurrent groups that share one target directory serialize on Cargo's
+/// build-directory lock. A dedicated directory per group removes that
+/// contention. `--clean` deletes this directory, so every group rebuilds from
+/// an empty target directory.
+pub const GROUP_TARGET_ROOT: &str = "target/ci-groups";
+
+/// Concurrent groups keyed by name, each with its gates in pipeline order.
+type GroupedGates<'a> = BTreeMap<&'a str, GateList>;
+
+/// State shared by every group of one pipeline run.
+#[derive(Debug, Clone, Copy)]
+pub struct RunEnv<'a> {
+    /// Execution context: workspace root, artifact directory, timeout.
+    pub ctx: &'a GateContext,
+    /// Serializes status lines from concurrent groups.
+    pub ui_lock: &'a Mutex<()>,
+    /// Echo each gate's output behind its group tag.
+    pub verbose: bool,
+}
+
+/// One execution group: its name, color and optional Cargo target directory.
+#[derive(Debug, Clone, Copy)]
+pub struct GroupSpec<'a> {
+    /// Group name printed in the tag (or `"exclusive"`).
+    pub name: &'a str,
+    /// Tag color.
+    pub style: anstyle::Style,
+    /// Dedicated `CARGO_TARGET_DIR`, or `None` for the shared one.
+    pub target_dir: Option<&'a Path>,
+}
+
+/// Gate selection and behavior switches for one pipeline run.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PipelineOptions<'a> {
+    /// Run only these gates, when set.
+    pub only_gates: GateFilter<'a>,
+    /// Never run these gates, when set.
+    pub skip_gates: GateFilter<'a>,
+    /// Stop after this gate.
+    pub up_to_gate: Option<&'a str>,
+    /// Clean artifacts before running.
+    pub clean: bool,
+    /// Echo gate output.
+    pub verbose: bool,
+}
+
+/// Optional list of gate names used to filter a run.
+pub type GateFilter<'a> = Option<&'a [String]>;
+
+/// Returns `gate` with `CARGO_TARGET_DIR` set to `target_dir`, unless the gate
+/// already declares its own `CARGO_TARGET_DIR` in `gate.toml`.
+fn with_target_dir(gate: &SharedGate, target_dir: &Path) -> SharedGate {
+    if gate.env.contains_key("CARGO_TARGET_DIR") {
+        return Arc::clone(gate);
+    }
+    let mut scoped = (**gate).clone();
+    scoped.env.insert(
+        "CARGO_TARGET_DIR".to_string(),
+        target_dir.display().to_string(),
+    );
+    Arc::new(scoped)
+}
+
+/// Cleans up the CI artifacts directory, the per-group target directories and
+/// any leftover workspace root artifacts.
+///
+/// Removes the configured output directory (`out_dir`, typically `target/ci-artifacts`),
+/// the per-group Cargo target directories under [`GROUP_TARGET_ROOT`] and any
+/// stray legacy CI artifacts found in the workspace root.
 ///
 /// # Errors
 /// Returns `GateError` if configuration loading or directory deletion fails.
 pub fn clean_artifacts(
     workspace_root: &Path,
     config_path: &Path,
-) -> Result<PathBuf, GateError> {
+) -> GateResult<PathBuf> {
     let config = GateConfig::load_from_path(config_path)?;
     let out_dir = workspace_root.join(&config.runner.out_dir);
 
     if out_dir.exists() {
         std::fs::remove_dir_all(&out_dir)?;
+    }
+
+    let group_targets = workspace_root.join(GROUP_TARGET_ROOT);
+    if group_targets.exists() {
+        std::fs::remove_dir_all(&group_targets)?;
     }
 
     // Remove any stray or legacy CI artifacts from the workspace root
@@ -105,57 +142,83 @@ pub fn clean_artifacts(
     Ok(out_dir)
 }
 
-fn execute_gate(
-    gate: &Arc<Gate>,
-    group_id: Option<&str>,
-    style: Option<anstyle::Style>,
-    ctx: &GateContext,
-    ui_lock: &Mutex<()>,
-    verbose: bool,
-) {
+fn execute_gate(gate: &Gate, tag: &str, env: &RunEnv<'_>) {
     let name = gate.name();
-    let tag = ui::format_group_tag(group_id, style);
     {
-        let _guard = ui_lock.lock();
+        let _guard = env.ui_lock.lock();
         ui::status("Running", format!("{tag}{}", gate.command_display()));
     }
-    let echo = verbose.then(|| ui::format_echo_prefix(&tag, name));
-    match gate.execute_with_echo(ctx, echo.as_deref()) {
+    let echo = env.verbose.then(|| ui::format_echo_prefix(tag, name));
+    match gate.execute_with_echo(env.ctx, echo.as_deref()) {
         Ok(outcome) => {
-            let _guard = ui_lock.lock();
-            let summary = outcome
-                .summary
-                .as_ref()
-                .map_or(String::new(), |s| format!(" ({s})"));
-            match outcome.verdict {
-                Verdict::Pass => ui::status(
-                    "Passed",
-                    format!("{tag}{name} in {:.2}s", outcome.duration_secs),
-                ),
-                Verdict::Warn => ui::warning(
-                    "Warning",
-                    format!(
-                        "{tag}{name} in {:.2}s{summary}",
-                        outcome.duration_secs
-                    ),
-                ),
-                Verdict::Fail => ui::failure(
-                    "Failed",
-                    format!(
-                        "{tag}{name} in {:.2}s{summary}",
-                        outcome.duration_secs
-                    ),
-                ),
-                Verdict::Skipped => {
-                    ui::warning("Skipped", format!("{tag}{name}"));
-                }
-            }
+            let _guard = env.ui_lock.lock();
+            report_outcome(&outcome, tag, name);
         }
         Err(e) => {
-            let _guard = ui_lock.lock();
+            let _guard = env.ui_lock.lock();
             ui::error(format!("{tag}Error executing gate '{name}': {e}"));
         }
     }
+}
+
+/// Prints the status line for a finished gate.
+fn report_outcome(outcome: &GateOutcome, tag: &str, name: &str) {
+    let summary = outcome
+        .summary
+        .as_ref()
+        .map_or_else(String::new, |s| format!(" ({s})"));
+    let secs = outcome.duration_secs;
+    match outcome.verdict {
+        Verdict::Pass => {
+            ui::status("Passed", format!("{tag}{name} in {secs:.2}s"));
+        }
+        Verdict::Warn => {
+            ui::warning(
+                "Warning",
+                format!("{tag}{name} in {secs:.2}s{summary}"),
+            );
+        }
+        Verdict::Fail => {
+            ui::failure(
+                "Failed",
+                format!("{tag}{name} in {secs:.2}s{summary}"),
+            );
+        }
+        Verdict::Skipped => {
+            ui::warning("Skipped", format!("{tag}{name}"));
+        }
+    }
+}
+
+/// Runs `gates` one at a time on the calling thread and returns the elapsed
+/// wall-clock time in seconds.
+///
+/// With `group.target_dir`, the directory is created if missing and every
+/// gate runs with `CARGO_TARGET_DIR` set to it, except a gate that declares
+/// its own `CARGO_TARGET_DIR` in `gate.toml`. Without it, gates inherit the
+/// caller's environment and build in the shared target directory.
+///
+/// The scheduler spawns one thread per group and calls this function on each.
+///
+/// # Errors
+/// Returns `GateError::Io` if the target directory cannot be created.
+pub fn run_group(
+    group: &GroupSpec<'_>,
+    gates: &[SharedGate],
+    env: &RunEnv<'_>,
+) -> GateResult<f64> {
+    let start = Instant::now();
+    if let Some(dir) = group.target_dir {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tag = ui::format_group_tag(Some(group.name), Some(group.style));
+    for gate in gates {
+        let gate = group
+            .target_dir
+            .map_or_else(|| Arc::clone(gate), |dir| with_target_dir(gate, dir));
+        execute_gate(&gate, &tag, env);
+    }
+    Ok(start.elapsed().as_secs_f64())
 }
 
 /// Runs the complete CI quality gate pipeline or filtered subset.
@@ -163,24 +226,19 @@ fn execute_gate(
 /// # Arguments
 /// * `workspace_root` - Root directory of the Cargo workspace.
 /// * `config_path` - Path to `gate.toml`.
-/// * `only_gates` - Optional whitelist of gates to execute.
-/// * `skip_gates` - Optional blacklist of gates to skip.
-/// * `up_to_gate` - Optional gate name to stop execution after.
-/// * `clean` - Whether to clean artifacts directory before running.
+/// * `options` - Gate filters (`only_gates`, `skip_gates`, `up_to_gate`),
+///   whether to clean the artifacts directory first and whether to echo
+///   gate output.
 ///
 /// # Errors
 /// Returns `GateError` if configuration loading, gate execution, or report rendering fails.
 pub fn run_pipeline(
     workspace_root: &Path,
     config_path: &Path,
-    only_gates: Option<&[String]>,
-    skip_gates: Option<&[String]>,
-    up_to_gate: Option<&str>,
-    clean: bool,
-    verbose: bool,
-) -> Result<bool, GateError> {
+    options: &PipelineOptions<'_>,
+) -> GateResult<bool> {
     let pipeline_start = Instant::now();
-    if clean {
+    if options.clean {
         let _ = clean_artifacts(workspace_root, config_path)?;
     }
     let config = GateConfig::load_from_path(config_path)?;
@@ -193,143 +251,196 @@ pub fn run_pipeline(
         default_timeout: Duration::from_secs(config.runner.timeout_secs),
     };
 
-    let all_gates = gate::build_all_gates(&config)?;
-    let mut active_gates = Vec::new();
-    let mut executed_gate_names = Vec::new();
+    let active_gates =
+        select_gates(gate::build_all_gates(&config)?, &config, options);
+    let executed_gate_names: Vec<String> =
+        active_gates.iter().map(|g| g.name().to_string()).collect();
+    remove_stale_results(&out_dir, &executed_gate_names);
 
+    let (groups, exclusive) = partition_gates(active_gates, &config);
+    let ui_lock = Mutex::new(());
+    let env = RunEnv {
+        ctx: &ctx,
+        ui_lock: &ui_lock,
+        verbose: options.verbose,
+    };
+
+    run_concurrent_groups(
+        &groups,
+        &workspace_root.join(GROUP_TARGET_ROOT),
+        &env,
+    )?;
+
+    // Barrier passed: exclusive gates run on the calling thread, one at a time,
+    // in the shared target directory.
+    let exclusive_group = GroupSpec {
+        name: "exclusive",
+        style: ui::exclusive_style(),
+        target_dir: None,
+    };
+    run_group(&exclusive_group, &exclusive, &env)?;
+
+    let aggregator =
+        ReportAggregator::new(out_dir, workspace_root.to_path_buf());
+    let report = aggregator
+        .write_report(&config, Some(executed_gate_names.as_slice()))?;
+    let total_duration = pipeline_start.elapsed().as_secs_f64();
+
+    ui::status("Writing", format!("{}", report.path.display()));
+    if report.pass {
+        ui::status("Finished", format!("ci in {total_duration:.2}s"));
+    } else {
+        ui::failure(
+            "Failed",
+            format!("ci in {total_duration:.2}s (see report for details)"),
+        );
+    }
+
+    Ok(report.pass)
+}
+
+/// Applies the `only`/`skip`/`up_to` filters and `skip` policies to the
+/// configured gates, preserving pipeline order.
+fn select_gates(
+    all_gates: GateList,
+    config: &GateConfig,
+    options: &PipelineOptions<'_>,
+) -> GateList {
+    let mut active_gates = GateList::new();
     for gate in all_gates {
-        let name = gate.name().to_string();
-
-        if let Some(only) = only_gates {
-            if !only.iter().any(|g| g == &name) {
-                continue;
-            }
-        } else if config.policy_for(&name) == GatePolicy::Skip {
+        let name = gate.name();
+        let selected = options.only_gates.map_or_else(
+            || config.policy_for(name) != GatePolicy::Skip,
+            |only| only.iter().any(|g| g == name),
+        );
+        let skipped = options
+            .skip_gates
+            .is_some_and(|skip| skip.iter().any(|g| g == name));
+        if !selected || skipped {
             continue;
         }
 
-        if let Some(skip) = skip_gates {
-            if skip.iter().any(|g| g == &name) {
-                continue;
-            }
-        }
-
-        let is_up_to = up_to_gate.is_some_and(|up_to| up_to == name);
-        executed_gate_names.push(name);
+        let is_up_to = options.up_to_gate.is_some_and(|up_to| up_to == name);
         active_gates.push(gate);
-
         if is_up_to {
             break;
         }
     }
+    active_gates
+}
 
-    // Remove stale results for inactive or skipped gates
-    if let Ok(entries) = std::fs::read_dir(&out_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.ends_with(".result.json") {
-                    let gate_name = name.trim_end_matches(".result.json");
-                    if !executed_gate_names.iter().any(|g| g == gate_name) {
-                        let _ = std::fs::remove_file(&path);
-                    }
-                }
-            }
+/// Removes result artifacts of gates that will not run this time.
+fn remove_stale_results(out_dir: &Path, executed_gate_names: &[String]) {
+    let Ok(entries) = std::fs::read_dir(out_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && let Some(gate_name) = name.strip_suffix(gate::RESULT_SUFFIX)
+            && !executed_gate_names.iter().any(|g| g == gate_name)
+        {
+            let _ = std::fs::remove_file(&path);
         }
     }
+}
 
-    // A gate is exclusive if explicitly declared in `exclusive_gates` OR if it is
-    // unassigned to any group in `execution.groups`. All unassigned gates safely
-    // default to sequential execution with full processor authority.
-    let (exclusive, concurrent): (Vec<_>, Vec<_>) =
-        active_gates.into_iter().partition(|g| {
-            config
-                .execution
-                .exclusive_gates
-                .iter()
-                .any(|e| e == g.name())
-                || !config
-                    .execution
-                    .groups
-                    .values()
-                    .any(|members| members.iter().any(|m| m == g.name()))
-        });
-
-    let ui_lock = Mutex::new(());
-
-    if config.execution.parallel {
-        let mut groups: BTreeMap<&str, Vec<Arc<Gate>>> = BTreeMap::new();
-
-        for gate in concurrent {
-            if let Some((group, _)) =
-                config.execution.groups.iter().find(|(_, members)| {
-                    members.iter().any(|m| m == gate.name())
-                })
-            {
-                groups.entry(group.as_str()).or_default().push(gate);
+/// Splits gates into per-group lists and the exclusive list.
+///
+/// A gate is exclusive if explicitly declared in `exclusive_gates` OR if it is
+/// unassigned to any group in `execution.groups`. All unassigned gates safely
+/// default to sequential execution with full processor authority.
+fn partition_gates(
+    active_gates: GateList,
+    config: &GateConfig,
+) -> (GroupedGates<'_>, GateList) {
+    let groups_cfg = &config.execution.groups;
+    let mut groups = GroupedGates::new();
+    let mut exclusive = GateList::new();
+    for gate in active_gates {
+        let declared_exclusive = config
+            .execution
+            .exclusive_gates
+            .iter()
+            .any(|e| e == gate.name());
+        let group = groups_cfg
+            .iter()
+            .find(|(_, members)| members.iter().any(|m| m == gate.name()));
+        match group {
+            Some((name, _)) if !declared_exclusive => {
+                groups.entry(name.as_str()).or_default().push(gate);
             }
-        }
-
-        std::thread::scope(|s| {
-            for (idx, (group_name, group_gates)) in
-                groups.into_iter().enumerate()
-            {
-                let ctx_ref = &ctx;
-                let lock_ref = &ui_lock;
-                let style = ui::group_style(idx);
-                s.spawn(move || {
-                    let group_start = Instant::now();
-                    for g in &group_gates {
-                        execute_gate(
-                            g,
-                            Some(group_name),
-                            Some(style),
-                            ctx_ref,
-                            lock_ref,
-                            verbose,
-                        );
-                    }
-                    let duration = group_start.elapsed().as_secs_f64();
-                    let _guard = lock_ref.lock();
-                    let tag =
-                        ui::format_group_tag(Some(group_name), Some(style));
-                    ui::status("Joined", format!("{tag}in {duration:.2}s"));
-                });
-            }
-        });
-    } else {
-        for gate in concurrent {
-            execute_gate(&gate, None, None, &ctx, &ui_lock, verbose);
+            _ => exclusive.push(gate),
         }
     }
+    (groups, exclusive)
+}
 
-    for gate in exclusive {
-        let style = ui::exclusive_style();
-        execute_gate(
-            &gate,
-            Some("exclusive"),
-            Some(style),
-            &ctx,
-            &ui_lock,
-            verbose,
+/// Runs every group on its own thread with its own Cargo target directory,
+/// so concurrent groups never wait on each other's build-directory lock.
+fn run_concurrent_groups(
+    groups: &GroupedGates<'_>,
+    group_targets: &Path,
+    env: &RunEnv<'_>,
+) -> GateResult<()> {
+    std::thread::scope(|s| {
+        // Spawn every group before joining any, so the groups overlap.
+        let mut handles = Vec::with_capacity(groups.len());
+        for (idx, (group_name, group_gates)) in groups.iter().enumerate() {
+            let target_dir = group_targets.join(group_name);
+            let style = ui::group_style(idx);
+            handles.push(s.spawn(move || {
+                let group = GroupSpec {
+                    name: group_name,
+                    style,
+                    target_dir: Some(&target_dir),
+                };
+                let duration = run_group(&group, group_gates, env)?;
+                let _guard = env.ui_lock.lock();
+                let tag = ui::format_group_tag(Some(group_name), Some(style));
+                ui::status("Joined", format!("{tag}in {duration:.2}s"));
+                Ok::<(), GateError>(())
+            }));
+        }
+        handles.into_iter().try_for_each(|h| {
+            h.join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn gate_with_env(env: HashMap<String, String>) -> Arc<Gate> {
+        Arc::new(Gate::new("build", "cargo build", Vec::new()).with_env(env))
+    }
+
+    #[test]
+    fn group_target_dir_is_injected() {
+        let dir = Path::new("/ws/target/ci-groups/lint");
+        let scoped = with_target_dir(&gate_with_env(HashMap::new()), dir);
+        assert_eq!(
+            scoped.env.get("CARGO_TARGET_DIR").map(String::as_str),
+            Some("/ws/target/ci-groups/lint")
         );
     }
 
-    let aggregator =
-        ReportAggregator::new(out_dir, workspace_root.to_path_buf());
-    let (is_pass, report_path) = aggregator
-        .write_report(&config, Some(executed_gate_names.as_slice()))?;
-    let total_duration = pipeline_start.elapsed().as_secs_f64();
-
-    ui::status("Writing", format!("{}", report_path.display()));
-    if is_pass {
-        ui::status("Finished", format!("ci in {:.2}s", total_duration));
-    } else {
-        ui::failure(
-            "Failed",
-            format!("ci in {:.2}s (see report for details)", total_duration),
+    #[test]
+    fn declared_target_dir_is_kept() {
+        let env = HashMap::from([(
+            "CARGO_TARGET_DIR".to_string(),
+            "target/geiger".to_string(),
+        )]);
+        let scoped = with_target_dir(
+            &gate_with_env(env),
+            Path::new("/ws/target/ci-groups/audit"),
+        );
+        assert_eq!(
+            scoped.env.get("CARGO_TARGET_DIR").map(String::as_str),
+            Some("target/geiger")
         );
     }
-
-    Ok(is_pass)
 }

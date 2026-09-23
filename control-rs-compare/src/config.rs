@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::compare::SignalNames;
 use crate::error::HarnessError;
 
 /// Backward-compatible type alias for `CompareConfigFile`.
@@ -74,7 +75,7 @@ pub struct SuiteConfig {
 
     /// Optional explicitly provided list of signals/datasets to verify.
     #[serde(default)]
-    pub signals: Option<Vec<String>>,
+    pub signals: Option<SignalNames>,
 
     /// List of execution variants configured for this suite.
     #[serde(default)]
@@ -84,7 +85,7 @@ pub struct SuiteConfig {
 /// Single-source TOML tolerance table containing per-signal numerical tolerances.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToleranceTable {
-    /// Tolerances mapped by signal path (for example, "matrix/a" or "transient/v_out").
+    /// Tolerances mapped by signal path (for example, `matrix/a` or `transient/v_out`).
     #[serde(default)]
     pub tolerances: BTreeMap<String, SignalToleranceConfig>,
 
@@ -132,47 +133,6 @@ pub struct ToleranceMethodConfig {
     pub bound: f64,
 }
 
-impl ToleranceTable {
-    /// Loads a `tolerance_table.toml` file from disk.
-    ///
-    /// # Errors
-    /// Returns `HarnessError::Config` if reading or parsing TOML fails.
-    pub fn load_from_file(path: &Path) -> Result<Self, HarnessError> {
-        let content =
-            fs::read_to_string(path).map_err(|e| HarnessError::Config {
-                path: path.to_path_buf(),
-                message: e.to_string(),
-            })?;
-
-        let parsed: Self =
-            toml::from_str(&content).map_err(|e| HarnessError::Config {
-                path: path.to_path_buf(),
-                message: e.to_string(),
-            })?;
-
-        Ok(parsed)
-    }
-
-    /// Finds the tolerance configuration for a given signal path.
-    #[must_use]
-    pub fn find_signal(&self, signal: &str) -> Option<&SignalToleranceConfig> {
-        if let Some(cfg) = self.tolerances.get(signal) {
-            return Some(cfg);
-        }
-        if let Some(cfg) = self.signals.get(signal) {
-            return Some(cfg);
-        }
-        self.tolerances
-            .values()
-            .chain(self.signals.values())
-            .find(|cfg| cfg.signal.as_deref() == Some(signal))
-    }
-}
-
-fn default_policy() -> String {
-    "all_of".to_string()
-}
-
 /// Execution specification for a single language or model variant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VariantConfig {
@@ -214,6 +174,43 @@ pub struct MasterPlan {
 
     /// All discovered and validated suite configurations.
     pub suites: Vec<SuiteConfig>,
+}
+
+impl ToleranceTable {
+    /// Loads a `tolerance_table.toml` file from disk.
+    ///
+    /// # Errors
+    /// Returns `HarnessError::Config` if reading or parsing TOML fails.
+    pub fn load_from_file(path: &Path) -> Result<Self, HarnessError> {
+        let content =
+            fs::read_to_string(path).map_err(|e| HarnessError::Config {
+                path: path.to_path_buf(),
+                message: e.to_string(),
+            })?;
+
+        let parsed: Self =
+            toml::from_str(&content).map_err(|e| HarnessError::Config {
+                path: path.to_path_buf(),
+                message: e.to_string(),
+            })?;
+
+        Ok(parsed)
+    }
+
+    /// Finds the tolerance configuration for a given signal path.
+    #[must_use]
+    pub fn find_signal(&self, signal: &str) -> Option<&SignalToleranceConfig> {
+        if let Some(cfg) = self.tolerances.get(signal) {
+            return Some(cfg);
+        }
+        if let Some(cfg) = self.signals.get(signal) {
+            return Some(cfg);
+        }
+        self.tolerances
+            .values()
+            .chain(self.signals.values())
+            .find(|cfg| cfg.signal.as_deref() == Some(signal))
+    }
 }
 
 impl Default for CompareGeneralConfig {
@@ -317,6 +314,10 @@ impl CompareConfigFile {
             suites: master_suites,
         })
     }
+}
+
+fn default_policy() -> String {
+    "all_of".to_string()
 }
 
 fn default_title() -> String {

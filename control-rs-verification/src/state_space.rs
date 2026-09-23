@@ -4,17 +4,9 @@
 //! 1. Inverted pendulum continuous model linearized and simulated via ZOH
 //! 2. Phase portrait trajectory ($\theta, \dot{\theta}$)
 //! 3. Closed-loop discrete-time step response trajectory
-//! 4. Matrix exponential ZOH discretization numerical consistency ($A_d, B_d$)
+//! 4. Matrix exponential ZOH discretization numerical consistency (`A_d`, `B_d`)
 
-#![allow(
-    missing_docs,
-    clippy::arithmetic_side_effects,
-    clippy::cast_precision_loss,
-    clippy::indexing_slicing,
-    clippy::suboptimal_flops,
-    clippy::too_many_lines,
-    clippy::unwrap_used
-)]
+#![allow(missing_docs)]
 
 use std::path::Path;
 
@@ -22,12 +14,22 @@ use control_rs::matrix::Owned;
 use control_rs::state_space::ArrayStateSpace;
 
 use crate::h5_writer::H5Writer;
+use crate::numeric::{KernelResult, column, row_major};
+
+/// Sampled `(theta, theta_dot)` trajectory of the pendulum.
+pub struct PhasePortrait {
+    /// Angle samples.
+    pub theta: Vec<f64>,
+    /// Angular-rate samples.
+    pub theta_dot: Vec<f64>,
+}
 
 pub struct PendulumSim {
     pub sys_d: ArrayStateSpace<f64, 2, 1, 1>,
 }
 
 impl PendulumSim {
+    #[must_use]
     pub fn new(omega0: f64, b: f64, dt: f64) -> Self {
         let omega0_sq = omega0 * omega0;
         let a_c =
@@ -41,12 +43,13 @@ impl PendulumSim {
         Self { sys_d }
     }
 
+    #[must_use]
     pub fn simulate(
         &self,
         x0: [f64; 2],
         n_steps: usize,
         u_val: f64,
-    ) -> (Vec<f64>, Vec<f64>) {
+    ) -> PhasePortrait {
         let mut x_k = Owned::<f64, 2, 1>::from_column(x0);
         let u_k = Owned::<f64, 1, 1>::scalar(u_val);
 
@@ -62,9 +65,10 @@ impl PendulumSim {
             x_k = x_next;
         }
 
-        (theta, theta_dot)
+        PhasePortrait { theta, theta_dot }
     }
 
+    #[must_use]
     pub fn step_response(&self, n_steps: usize) -> Vec<f64> {
         let mut x_k = Owned::<f64, 2, 1>::zero();
         let u_k = Owned::<f64, 1, 1>::scalar(1.0);
@@ -82,11 +86,16 @@ impl PendulumSim {
 }
 
 /// Executes the state-space control-rs-verification kernel and writes `target/verification/state_space.rust.h5`.
-pub fn emit_container(output_path: &Path) -> Result<(), String> {
+///
+/// # Errors
+///
+/// Returns an error if a discretized matrix entry cannot be read or the
+/// container cannot be written.
+pub fn emit_container(output_path: &Path) -> KernelResult<()> {
     let mut writer = H5Writer::new();
     let sim = PendulumSim::new(2.0, 0.8, 0.05);
 
-    let (theta, theta_dot) =
+    let PhasePortrait { theta, theta_dot } =
         sim.simulate([std::f64::consts::PI - 0.15, 0.5], 200, 0.0);
     writer.add_dataset("phase_portrait/theta", &theta);
     writer.set_tolerance("phase_portrait/theta", "abs", 1e-4);
@@ -98,19 +107,11 @@ pub fn emit_container(output_path: &Path) -> Result<(), String> {
     writer.add_dataset("transient/step_data", &step_data);
     writer.set_tolerance("transient/step_data", "abs", 1e-4);
 
-    let a_d_mat = [
-        *sim.sys_d.a().get(0, 0).expect("in bounds"),
-        *sim.sys_d.a().get(0, 1).expect("in bounds"),
-        *sim.sys_d.a().get(1, 0).expect("in bounds"),
-        *sim.sys_d.a().get(1, 1).expect("in bounds"),
-    ];
+    let a_d_mat = row_major(&sim.sys_d.a())?;
     writer.add_dataset("discretization/a_d", &a_d_mat);
     writer.set_tolerance("discretization/a_d", "abs", 1e-4);
 
-    let b_d_vec = [
-        *sim.sys_d.b().get(0, 0).expect("in bounds"),
-        *sim.sys_d.b().get(1, 0).expect("in bounds"),
-    ];
+    let b_d_vec = column(&sim.sys_d.b(), 0)?;
     writer.add_dataset("discretization/b_d", &b_d_vec);
     writer.set_tolerance("discretization/b_d", "abs", 1e-4);
 
