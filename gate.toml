@@ -54,13 +54,6 @@ env = { RUSTDOCFLAGS = "-D warnings" }
 timeout_secs = 900
 description = "Builds workspace API documentation with rustdoc warnings denied"
 
-[check]
-mode = "skip"
-command = "cargo check"
-args = ["--workspace", "--all-targets"]
-timeout_secs = 600
-description = "Performs compiler type checking without full codegen"
-
 [build]
 mode = "fail"
 command = "cargo build"
@@ -152,7 +145,7 @@ skip_exit_codes = [78]
 description = "Executes Valgrind Memcheck against all workspace example binaries to verify zero memory leaks"
 
 [mutants]
-mode = "skip"
+mode = "fail"
 command = "cargo mutants"
 args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
 timeout_secs = 43200
