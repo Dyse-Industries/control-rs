@@ -48,6 +48,7 @@
       <w>ardupilot</w>
       <w>asum</w>
       <w>axpy</w>
+      <w>binstall</w>
       <w>blasfeo</w>
       <w>bluss</w>
       <w>bmatrix</w>
@@ -81,6 +82,7 @@
       <w>jobz</w>
       <w>leftarrow</w>
       <w>leftrightarrow</w>
+      <w>libudev</w>
       <w>mathbb</w>
       <w>mult</w>
       <w>naeini</w>
@@ -97,6 +99,7 @@
       <w>roundtrip</w>
       <w>rscal</w>
       <w>rtic</w>
+      <w>rustfmt</w>
       <w>scal</w>
       <w>semihosting</w>
       <w>serde</w>
@@ -110,6 +113,7 @@
       <w>symv</w>
       <w>syrk</w>
       <w>thumbv</w>
+      <w>tomllib</w>
       <w>tpmv</w>
       <w>tpsv</w>
       <w>trmm</w>

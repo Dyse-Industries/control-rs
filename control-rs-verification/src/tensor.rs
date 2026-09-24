@@ -63,30 +63,6 @@ fn tanh_table() -> TableActivation<f32, 61> {
     }
 }
 
-/// Row and column index of a rank-2 tensor element.
-const fn index2(idx: &[usize]) -> (usize, usize) {
-    match *idx {
-        [i, j, ..] => (i, j),
-        [i] => (i, 0),
-        [] => (0, 0),
-    }
-}
-
-/// 61-point tanh lookup table on `[-3, 3]` with 0.1 spacing.
-fn tanh_table() -> TableActivation<f32, 61> {
-    let mut breakpoints = [0.0f32; 61];
-    let mut values = [0.0f32; 61];
-    for (i, (bp, v)) in breakpoints.iter_mut().zip(&mut values).enumerate() {
-        let x = index_f32(i).mul_add(0.1, -3.0);
-        *bp = x;
-        *v = x.tanh();
-    }
-    TableActivation {
-        breakpoints,
-        values,
-    }
-}
-
 fn compute_interpolation_mesh() -> Vec<f64> {
     let center = 7.5_f32;
     let scale = 3.75_f32;
