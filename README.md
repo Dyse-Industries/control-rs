@@ -180,7 +180,8 @@ Architecture-specific subprogram crates under [
 
 - [Documentation index](documentation/README.md): design docs, standards, roadmap
 - [Contributing](CONTRIBUTING.md): design-doc to implementation process
-- [Development Guide](documentation/development-guide.md): prerequisites, cargo aliases, CI
+- [Dependency registry](documentation/dependencies.md): every tool and how to install it
+- [Development Guide](documentation/development-guide.md): cargo aliases, CI
 
 ## Installation
 

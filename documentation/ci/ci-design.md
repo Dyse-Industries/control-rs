@@ -192,7 +192,7 @@ The gate execution lifecycle follows a zero-overhead process runner pattern:
 
 #### 4.3 Declarative Configuration (`gate.toml`)
 
-All quality gates, runner settings, execution groups, and exclusive gates are configured uniformly in `gate.toml` at the workspace root:
+All quality gates, runner settings, execution groups, and exclusive gates are configured uniformly in `.cargo/gate.toml` at the workspace root:
 
 ```toml
 [runner]
@@ -301,7 +301,7 @@ description = "Scans workspace crates for unsafe code blocks and functions"
 [cross-compare]
 mode = "fail"
 command = "cargo run"
-args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", "compare.toml"]
+args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", ".cargo/compare.toml"]
 env = { CARGO_TARGET_DIR = "target/cross-compare" }
 description = "Executes multi-language reference oracles and verifies HDF5 tolerance bounds"
 
@@ -338,7 +338,7 @@ With `-v`/`--verbose` (FR-12), every echoed output line carries the same group t
 
 ```text
      Running [lint] `cargo clippy --workspace --all-targets -- -D warnings`
-     Running [verify] `cargo run --package control-rs-compare --bin compare -- --config compare.toml`
+     Running [verify] `cargo run --package control-rs-compare --bin compare -- --config .cargo/compare.toml`
 [lint] clippy |     Checking control-rs v0.0.0
 [verify] cross-compare | ==> Executing suite: matrix
 [verify] cross-compare |   -> Running variant: rust (rust_bin)

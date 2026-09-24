@@ -70,10 +70,8 @@ impl Selection {
 
 impl Default for CliArgs {
     fn default() -> Self {
-        let default_config = if Path::new("compare.toml").exists() {
-            PathBuf::from("compare.toml")
-        } else if Path::new("oracle.toml").exists() {
-            PathBuf::from("oracle.toml")
+        let default_config = if Path::new(".cargo/compare.toml").exists() {
+            PathBuf::from(".cargo/compare.toml")
         } else {
             PathBuf::from("compare.toml")
         };
@@ -183,7 +181,7 @@ fn print_help() {
     println!();
     println!("OPTIONS:");
     println!(
-        "    -c, --config <FILE>          Path to compare.toml (default: compare.toml)"
+        "    -c, --config <FILE>          Path to compare.toml (default: .cargo/compare.toml, else compare.toml)"
     );
     println!(
         "    -o, --results-dir <DIR>      Output results directory (default: results)"

@@ -42,7 +42,7 @@ pub fn render_usage(binary_name: &str) -> String {
            {f}-o{f:#}, {f}--only{f:#} {a}<gate>{a:#}      Run only the specified gate(s) (comma-separated or repeated)\n  \
            {f}-s{f:#}, {f}--skip{f:#} {a}<gate>{a:#}      Skip the specified gate(s)\n  \
            {f}-u{f:#}, {f}--up-to{f:#} {a}<gate>{a:#}     Run gates up to and including the specified gate\n  \
-           {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: workspace gate.toml)\n  \
+           {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: .cargo/gate.toml)\n  \
            {f}-X{f:#}, {f}--clean{f:#}            Clean previous CI artifacts and reports\n  \
            {f}-a{f:#}, {f}--all{f:#}              Run all registered quality gates\n  \
            {f}-v{f:#}, {f}--verbose{f:#}          Echo each gate's output, prefixed with its group and name\n  \
@@ -203,12 +203,12 @@ fn workspace_root() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
-/// `--config` when given, otherwise `gate.toml` in the workspace root.
+/// `--config` when given, otherwise `.cargo/gate.toml` in the workspace root.
 fn resolve_config_path(options: &CliOptions) -> PathBuf {
     options
         .config_path
         .clone()
-        .unwrap_or_else(|| workspace_root().join("gate.toml"))
+        .unwrap_or_else(|| workspace_root().join(".cargo/gate.toml"))
 }
 
 /// Runs the CLI application using parsed options.

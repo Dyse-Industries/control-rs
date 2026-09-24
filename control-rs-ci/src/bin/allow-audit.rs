@@ -28,7 +28,7 @@ struct AuditArgs {
 fn parse_args() -> Result<AuditArgs, String> {
     let mut parsed = AuditArgs {
         root: PathBuf::from("."),
-        baseline: PathBuf::from("clippy-allow-baseline.txt"),
+        baseline: PathBuf::from(".cargo/clippy-allow-baseline.txt"),
         write: false,
     };
     let mut args = env::args().skip(1);

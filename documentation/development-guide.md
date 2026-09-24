@@ -83,21 +83,8 @@ the target-side infrastructure:
 
 ## Prerequisites
 
-| Requirement | Version / Value | Needed for |
-|:--|:--|:--|
-| Rust toolchain | minimum `1.89.0`; CI also tests stable and beta | Everything |
-| Bare-metal targets | `rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf` | `examples/qemu`, `examples/teensy4`, ETS |
-| QEMU | `qemu-system-arm`, `qemu-system-riscv32`, `qemu-system-riscv64` | `cargo qemu`, virtual ETS |
-| `libudev-dev` | Linux only | Serial transport in `control-rs-ets-host` |
-| Python | 3.12, virtualenv at the workspace root (`.venv`) | `cargo compare`, `cross-compare` gate |
-| `vale` | 3.22, then `vale --config=.vale.ini sync` | `vale` gate |
-| `cargo-tarpaulin` | latest | `cargo coverage`, `coverage` gate |
-| `cargo-deny`, `cargo-geiger`, `cargo-semver-checks` | latest | `deny`, `geiger`, `semver` gates |
-| `cargo-mutants` | latest | `mutants` gate (skipped by default) |
-| `valgrind` | Linux only | `cargo valgrind`, `valgrind` gate |
-| `cargo-binutils` | latest | Linker-section inspection in `control-rs-macros` |
-
-The `valgrind` gate runs on Linux only; CI runs it there.
+The [dependency registry](dependencies.md) lists every tool the workspace
+uses, what needs it and one install block per platform.
 
 ---
 
@@ -171,7 +158,7 @@ parameters in real time.
 
 ## Continuous Integration & Verification
 
-`cargo ci` runs every gate declared in [`gate.toml`](../gate.toml), grouped
+`cargo ci` runs every gate declared in [`.cargo/gate.toml`](../.cargo/gate.toml), grouped
 as in GitHub Actions. `cargo gate` runs a subset. Gate output goes to
 `target/ci-artifacts/<gate>.log`; add `-v` to also stream it to the console,
 each line prefixed with its group and gate (for example

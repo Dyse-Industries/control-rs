@@ -1,7 +1,7 @@
 # `control-rs-ci`
 
 Quality gate runner and report aggregator for the `control-rs` workspace.
-Gates, groups and commands are declared in [`gate.toml`](../gate.toml).
+Gates, groups and commands are declared in [`.cargo/gate.toml`](../.cargo/gate.toml).
 [Design](../documentation/ci/ci-design.md) · [Workspace](../README.md)
 
 ## Usage

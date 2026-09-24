@@ -5,7 +5,8 @@ its infrastructure crates is specified in a design document before it is
 implemented, and the design document is the reference that reviewers,
 tests and CI check the code against.
 
-This guide describes that process. Toolchain setup, cargo aliases and the
+This guide describes that process. Tool installation is in the
+[dependency registry](documentation/dependencies.md); cargo aliases and the
 local CI workflow are in the
 [Development Guide](documentation/development-guide.md).
 
@@ -131,7 +132,7 @@ requirements, public API or architecture needs re-approval before the code
 that depends on it lands.
 
 **Code conventions** (enforced by the workspace lint policy in
-`Cargo.toml` and `clippy.toml`):
+`Cargo.toml` and `.cargo/clippy.toml`):
 
 - Library code returns `Result<T, E>` with a crate-local error enum. No
   `unwrap`, `expect`, `panic!` or `unimplemented!` outside tests
@@ -167,7 +168,7 @@ cargo gate fmt,clippy     # a subset while iterating
 cargo ci -v               # stream gate output, tagged [group] gate
 ```
 
-The gates are declared in [`gate.toml`](gate.toml): `fmt`, `clippy`,
+The gates are declared in [`.cargo/gate.toml`](.cargo/gate.toml): `fmt`, `clippy`,
 `doc`, `vale`, `build`, `test`, `coverage`, `deny`, `semver`, `geiger`,
 `valgrind`, `cross-compare`, `regression` and `mutants`. GitHub Actions
 runs the same gates on every PR, across the supported toolchains from the

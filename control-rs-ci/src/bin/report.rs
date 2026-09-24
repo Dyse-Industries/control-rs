@@ -24,13 +24,13 @@ fn print_usage(binary_name: &str) {
     anstream::println!(
         "{h}Usage:{h:#} {f}{binary_name}{f:#} {a}[OPTIONS]{a:#}\n\n\
          {h}Options:{h:#}\n  \
-           {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: workspace gate.toml)\n  \
+           {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: .cargo/gate.toml)\n  \
            {f}-X{f:#}, {f}--clean{f:#}            Clean CI artifacts and reports\n  \
            {f}-h{f:#}, {f}--help{f:#}             Print help information\n\n\
          {h}Examples:{h:#}\n  \
            {f}{binary_name}{f:#}\n  \
            {f}{binary_name}{f:#} {f}--clean{f:#}\n  \
-           {f}{binary_name}{f:#} {f}--config{f:#} {a}gate.toml{a:#}"
+           {f}{binary_name}{f:#} {f}--config{f:#} {a}.cargo/gate.toml{a:#}"
     );
 }
 
@@ -91,7 +91,7 @@ fn main() {
         env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let config_path = parsed
         .config_path
-        .unwrap_or_else(|| workspace_root.join("gate.toml"));
+        .unwrap_or_else(|| workspace_root.join(".cargo/gate.toml"));
 
     if parsed.clean {
         clean_and_exit(&workspace_root, &config_path);

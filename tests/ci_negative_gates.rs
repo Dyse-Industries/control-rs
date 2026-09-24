@@ -1,5 +1,6 @@
 //! Integration tests verifying that builtin CI Cargo quality gates fail on invalid code.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::io;
@@ -22,6 +23,20 @@ enum NegativeScenario {
 struct TempContext {
     ctx: GateContext,
     out_dir: PathBuf,
+}
+
+impl TempContext {
+    /// Pins the gate's `CARGO_TARGET_DIR` inside this scenario's temp directory.
+    ///
+    /// The nested cargo otherwise inherits the caller's `CARGO_TARGET_DIR`. Under
+    /// `cargo ci`, that is the absolute per-group directory whose build lock the
+    /// enclosing `cargo test` holds, so the nested cargo blocks until it times out.
+    fn isolate(&self, gate: Gate) -> Gate {
+        gate.with_env(HashMap::from([(
+            "CARGO_TARGET_DIR".to_string(),
+            self.out_dir.join("target").display().to_string(),
+        )]))
+    }
 }
 
 impl Drop for TempContext {
@@ -121,7 +136,7 @@ fn test_negative_fmt_gate_fails_on_unformatted_code() -> TestResult {
     )
     .with_description("Verifies codebase formatting");
 
-    let outcome = gate.execute(&temp.ctx)?;
+    let outcome = temp.isolate(gate).execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
     assert_ne!(outcome.exit_code, Some(0));
 
@@ -149,7 +164,7 @@ fn test_negative_clippy_gate_fails_on_denied_lint() -> TestResult {
     )
     .with_description("Executes Clippy linter");
 
-    let outcome = gate.execute(&temp.ctx)?;
+    let outcome = temp.isolate(gate).execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
     assert_ne!(outcome.exit_code, Some(0));
 
@@ -174,7 +189,7 @@ fn test_negative_check_gate_fails_on_type_mismatch() -> TestResult {
     )
     .with_description("Performs compiler type checking");
 
-    let outcome = gate.execute(&temp.ctx)?;
+    let outcome = temp.isolate(gate).execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
     assert_ne!(outcome.exit_code, Some(0));
 
@@ -196,7 +211,7 @@ fn test_negative_build_gate_fails_on_syntax_error() -> TestResult {
     )
     .with_description("Compiles workspace targets");
 
-    let outcome = gate.execute(&temp.ctx)?;
+    let outcome = temp.isolate(gate).execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
     assert_ne!(outcome.exit_code, Some(0));
 
@@ -214,7 +229,7 @@ fn test_negative_test_gate_fails_on_assertion_failure() -> TestResult {
     let gate = Gate::new("test", "cargo test", vec!["--workspace".to_string()])
         .with_description("Executes test suites");
 
-    let outcome = gate.execute(&temp.ctx)?;
+    let outcome = temp.isolate(gate).execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
     assert_ne!(outcome.exit_code, Some(0));
 

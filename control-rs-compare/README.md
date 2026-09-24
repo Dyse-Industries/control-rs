@@ -1,6 +1,6 @@
 # `control-rs-compare`
 
-HDF5 cross-comparison engine: runs the variants declared in [`compare.toml`](../compare.toml)
+HDF5 cross-comparison engine: runs the variants declared in [`.cargo/compare.toml`](../.cargo/compare.toml)
 and compares their outputs against a reference oracle.
 [Design](../documentation/vv/cross-compare-design.md) · [Workspace](../README.md)
 
@@ -25,7 +25,7 @@ pip install -r control-rs-verification/python3/requirements.txt
 cargo compare
 
 # Specify custom configuration file and output directory
-cargo compare --config compare.toml --results-dir target/verification/
+cargo compare --config .cargo/compare.toml --results-dir target/verification/
 
 # Skip variant execution and evaluate pre-existing .h5 containers
 cargo compare --skip-run

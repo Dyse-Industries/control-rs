@@ -631,7 +631,7 @@ pub fn build_all_gates(config: &GateConfig) -> GateResult<GateList> {
             )));
         } else if config.policy_for(&name) != GatePolicy::Skip {
             return Err(GateError::Config {
-                path: PathBuf::from("gate.toml"),
+                path: PathBuf::from(".cargo/gate.toml"),
                 message: format!("Missing [gate] definition for gate '{name}'"),
             });
         }
