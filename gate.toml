@@ -1,0 +1,266 @@
+[runner]
+title = "control-rs"
+out_dir = "target/ci-artifacts"
+timeout_secs = 90
+
+[execution]
+
+# Built-in exclusive group:
+# The ONLY built-in group in control-rs-ci. Gates listed here require Full Processor
+# Authority (such as hardware target execution, benchmark validation, unsafe audits,
+# or mutation testing) and must never compete for CPU, I/O, or target lock resources.
+#
+# The runner establishes a barrier join: ALL concurrent user groups must finish
+# and join before exclusive gates run. Exclusive gates then execute
+# strictly sequentially, one at a time, tagged [exclusive].
+#
+exclusive_gates = [
+    "regression",
+    "mutants",
+    "mutants-storage-0",
+    "mutants-storage-1",
+    "mutants-storage-2",
+    "mutants-storage-3",
+    "mutants-subprograms-0",
+    "mutants-subprograms-1",
+    "mutants-math",
+    "mutants-matrix",
+    "mutants-tensor-tf",
+    "mutants-poly-ss",
+    "mutants-rest",
+]
+
+# User-defined execution groups:
+# Each group executes concurrently on its own dedicated OS thread.
+# Gates within a single group execute sequentially in declared order.
+# Output lines are tagged with the group identifier (e.g., [cargo], [audit], [static]).
+# Each group builds into its own Cargo target directory, target/ci-groups/<group>,
+# so concurrent groups never wait on a shared build-directory lock. A gate that
+# sets CARGO_TARGET_DIR in its own env keeps that value. `cargo ci --clean`
+# deletes target/ci-groups, so every group starts from an empty target directory.
+[execution.groups]
+build_test = ["build", "test"]
+lint = ["fmt", "clippy", "allow-audit", "doc", "vale"]
+audit = ["deny", "semver", "valgrind", "geiger"]
+verify = ["cross-compare"]
+coverage = ["coverage"]
+
+# ==============================================================================
+# Cargo Lane Gates
+# ==============================================================================
+
+[fmt]
+mode = "fail"
+command = "cargo fmt"
+args = ["--all", "--", "--check"]
+timeout_secs = 120
+description = "Verifies codebase formatting conformity with rustfmt"
+
+[clippy]
+mode = "fail"
+command = "cargo clippy"
+args = ["--workspace", "--all-targets", "--", "-D", "warnings"]
+timeout_secs = 900
+description = "Executes Clippy linter across workspace targets"
+
+[allow-audit]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "allow-audit", "--", "--baseline", "clippy-allow-baseline.txt"]
+description = "Fails on any clippy suppression (allow, expect, cfg_attr, manifest allow level) not listed in clippy-allow-baseline.txt"
+
+[doc]
+mode = "fail"
+command = "cargo doc"
+args = ["--workspace", "--no-deps"]
+env = { RUSTDOCFLAGS = "-D warnings" }
+timeout_secs = 900
+description = "Builds workspace API documentation with rustdoc warnings denied"
+
+[build]
+mode = "fail"
+command = "cargo build"
+args = ["--workspace", "--all-targets"]
+timeout_secs = 1200
+description = "Compiles all workspace targets"
+
+[test]
+mode = "fail"
+command = "cargo test"
+args = ["--workspace"]
+timeout_secs = 1200
+description = "Executes host unit and integration test suites"
+
+[coverage]
+mode = "fail"
+command = "cargo tarpaulin"
+args = ["--verbose", "--workspace", "--skip-clean", "--target-dir", "target/tarpaulin", "--color", "never", "--out", "Json", "--output-dir", "target/ci-artifacts"]
+timeout_secs = 5400
+description = "Measures workspace line coverage using cargo-tarpaulin"
+
+# ==============================================================================
+# Audit Lane Gates
+# ==============================================================================
+
+[deny]
+mode = "fail"
+command = "cargo deny"
+args = ["check"]
+timeout_secs = 300
+description = "Audits dependencies for security advisories and license compliance"
+
+[semver]
+mode = "fail"
+command = "cargo semver-checks"
+args = ["check-release", "--baseline-rev", "origin/main"]
+timeout_secs = 1200
+description = "Verifies public API stability against baseline ref"
+
+[vale]
+mode = "fail"
+command = "vale"
+args = [
+    "--config=.vale.ini",
+    "--output=JSON",
+    "documentation",
+    "src",
+    "control-rs-ets",
+    "control-rs-macros",
+    "control-rs-ets-host",
+    "control-rs-tui",
+    "control-rs-ci",
+    "control-rs-compare",
+    "control-rs-verification",
+    "tests",
+    "benches",
+    "examples",
+    "--glob=!**/target/**",
+]
+timeout_secs = 300
+description = "Lints documentation and doc comments for prose style conformity"
+
+# ==============================================================================
+# Exclusive Lane Gates
+# ==============================================================================
+
+[geiger]
+mode = "fail"
+command = "cargo geiger"
+args = ["--output-format", "Json"]
+env = { CARGO_TARGET_DIR = "target/geiger" }
+timeout_secs = 900
+description = "Scans workspace crates for unsafe code blocks and functions"
+
+[cross-compare]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", "compare.toml"]
+env = { CARGO_TARGET_DIR = "target/cross-compare" }
+timeout_secs = 1800
+description = "Executes multi-language reference oracles and verifies HDF5 tolerance bounds"
+
+[valgrind]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "valgrind"]
+timeout_secs = 3600
+skip_exit_codes = [78]
+description = "Executes Valgrind Memcheck against all workspace example binaries to verify zero memory leaks"
+
+[mutants]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
+timeout_secs = 43200
+description = "Mutates ASTs to verify test fault-injection rigor using cargo-mutants"
+
+# Mutation chunks. Each gate is one CI job. The file filters partition the
+# root package: every mutant belongs to exactly one gate, and mutants-rest
+# claims any file outside the listed directories. Chunk sizes target about
+# 250 mutants per gate (measured 2026-09-24, 2428 mutants in total).
+# Chunks of one file share identical filter arguments, so `--shard k/n`
+# partitions the same mutant list.
+
+[mutants-storage-0]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/storage.rs", "--shard", "0/4", "--output", "target/ci-artifacts/mutants-storage-0.out"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/storage.rs, chunk 1 of 4"
+
+[mutants-storage-1]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/storage.rs", "--shard", "1/4", "--output", "target/ci-artifacts/mutants-storage-1.out"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/storage.rs, chunk 2 of 4"
+
+[mutants-storage-2]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/storage.rs", "--shard", "2/4", "--output", "target/ci-artifacts/mutants-storage-2.out"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/storage.rs, chunk 3 of 4"
+
+[mutants-storage-3]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/storage.rs", "--shard", "3/4", "--output", "target/ci-artifacts/mutants-storage-3.out"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/storage.rs, chunk 4 of 4"
+
+[mutants-subprograms-0]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-subprograms-0.out"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/subprograms.rs, chunk 1 of 2"
+
+[mutants-subprograms-1]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-subprograms-1.out"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/subprograms.rs, chunk 2 of 2"
+
+[mutants-math]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/**", "-e", "src/math/storage.rs", "-e", "src/math/subprograms.rs", "--output", "target/ci-artifacts/mutants-math.out"]
+timeout_secs = 19800
+description = "Mutation testing: src/math except storage.rs and subprograms.rs"
+
+[mutants-matrix]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "-f", "src/matrix/**", "--output", "target/ci-artifacts/mutants-matrix.out"]
+timeout_secs = 19800
+description = "Mutation testing: src/matrix"
+
+[mutants-tensor-tf]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "-f", "src/tensor/**", "-f", "src/transfer_function/**", "--output", "target/ci-artifacts/mutants-tensor-tf.out"]
+timeout_secs = 19800
+description = "Mutation testing: src/tensor and src/transfer_function"
+
+[mutants-poly-ss]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "-f", "src/polynomial/**", "-f", "src/state_space/**", "--output", "target/ci-artifacts/mutants-poly-ss.out"]
+timeout_secs = 19800
+description = "Mutation testing: src/polynomial and src/state_space"
+
+[mutants-rest]
+mode = "skip"
+command = "cargo mutants"
+args = ["--json", "-e", "src/math/**", "-e", "src/matrix/**", "-e", "src/tensor/**", "-e", "src/transfer_function/**", "-e", "src/polynomial/**", "-e", "src/state_space/**", "--output", "target/ci-artifacts/mutants-rest.out"]
+timeout_secs = 19800
+description = "Mutation testing: every file not claimed by another mutants-* gate"
+
+[regression]
+mode = "skip"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "regression", "--", "--all"]
+timeout_secs = 7200
+description = "Evaluates Criterion benchmark outputs against performance budgets and regression baselines"
