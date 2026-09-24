@@ -486,8 +486,7 @@ remains attributable:
      Running [lint] `cargo clippy --workspace --all-targets -- -D warnings`
      Running [verify] `cargo run --package control-rs-compare --bin compare -- --config compare.toml`
 [lint] clippy |     Checking control-rs v0.0.0
-[verify] cross-compare | ==> Executing suite: matrix
-[verify] cross-compare |   -> Running variant: rust (rust_bin)
+[verify] cross-compare |      Running matrix/rust (rust_bin)
 [lint] clippy |     Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.41s
       Passed [lint] clippy in 6.52s
 ```
