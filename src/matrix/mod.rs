@@ -24,7 +24,6 @@
 #![allow(
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     clippy::similar_names,
     clippy::needless_range_loop,
     clippy::type_complexity,
@@ -191,9 +190,9 @@ where
             let mut j = 0;
             while j < C {
                 col_major[j][i] = data[i][j];
-                j += 1;
+                j = j.saturating_add(1);
             }
-            i += 1;
+            i = i.saturating_add(1);
         }
         Self::from_array(col_major)
     }
@@ -241,9 +240,9 @@ where
             let mut j = 0;
             while j < C {
                 row_major[i][j] = col_data[j][i];
-                j += 1;
+                j = j.saturating_add(1);
             }
-            i += 1;
+            i = i.saturating_add(1);
         }
         row_major
     }
@@ -459,9 +458,10 @@ where
     {
         for i in 0..BR {
             for j in 0..BC {
-                if let (Some(target), Some(&v)) =
-                    (self.get_mut(row + i, col + j), src.get(i, j))
-                {
+                if let (Some(target), Some(&v)) = (
+                    self.get_mut(row.saturating_add(i), col.saturating_add(j)),
+                    src.get(i, j),
+                ) {
                     *target = v;
                 }
             }
@@ -545,6 +545,92 @@ where
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// Saturating Arithmetic
+//
+// Named forms of the matrix operators. Every element operation routes through
+// the `Scalar` saturating contract (`num-traits-design.md` §4.1), so integer
+// and fixed-point results clamp at the representable bounds and floats keep
+// IEEE semantics. The `core::ops` impls below delegate here.
+////////////////////////////////////////////////////////////////////////////////
+
+impl<T, const R: usize, const C: usize, S> Matrix<T, Const<R>, Const<C>, S>
+where
+    T: Scalar + Copy,
+    Const<R>: Dim,
+    Const<C>: Dim,
+    S: DenseStorage<T, R = Const<R>, C = Const<C>>,
+{
+    /// Element-wise sum `self + rhs` with saturating element arithmetic.
+    #[must_use]
+    pub fn saturating_add<S2>(
+        &self,
+        rhs: &Matrix<T, Const<R>, Const<C>, S2>,
+    ) -> Owned<T, R, C>
+    where
+        S2: DenseStorage<T, R = Const<R>, C = Const<C>>,
+    {
+        let mut out = Owned::<T, R, C>::zero();
+        DefaultBlas::axpy(T::ONE, &self.storage, &mut out.storage);
+        DefaultBlas::axpy(T::ONE, &rhs.storage, &mut out.storage);
+        out
+    }
+
+    /// Element-wise difference `self - rhs` with saturating element arithmetic.
+    #[must_use]
+    pub fn saturating_sub<S2>(
+        &self,
+        rhs: &Matrix<T, Const<R>, Const<C>, S2>,
+    ) -> Owned<T, R, C>
+    where
+        S2: DenseStorage<T, R = Const<R>, C = Const<C>>,
+    {
+        Owned::<T, R, C>::from_fn(|r, c| {
+            // SAFETY: `from_fn` yields `r < R` and `c < C`, the shape of both operands.
+            unsafe {
+                self.storage
+                    .get_unchecked(r, c)
+                    .saturating_sub(rhs.storage.get_unchecked(r, c))
+            }
+        })
+    }
+
+    /// Element-wise negation `-self`, computed as `0 - self` with saturating
+    /// element arithmetic (unsigned elements clamp to zero).
+    #[must_use]
+    pub fn saturating_neg(&self) -> Owned<T, R, C> {
+        Owned::<T, R, C>::from_fn(|r, c| {
+            // SAFETY: `from_fn` yields `r < R` and `c < C`, the shape of `self`.
+            unsafe { T::ZERO.saturating_sub(self.storage.get_unchecked(r, c)) }
+        })
+    }
+
+    /// Scalar product `self * k` with saturating element arithmetic.
+    #[must_use]
+    pub fn saturating_scale(&self, k: T) -> Owned<T, R, C> {
+        let mut out = Owned::<T, R, C>::zero();
+        DefaultBlas::axpy(T::ONE, &self.storage, &mut out.storage);
+        DefaultBlas::scal(k, &mut out.storage);
+        out
+    }
+
+    /// Matrix product `(R x C) * (C x P) -> (R x P)` with saturating element
+    /// arithmetic. Covers matrix-vector products as the `P == 1` case.
+    #[must_use]
+    pub fn saturating_mul<const P: usize, S2>(
+        &self,
+        rhs: &Matrix<T, Const<C>, Const<P>, S2>,
+    ) -> Owned<T, R, P>
+    where
+        Const<P>: Dim,
+        S2: DenseStorage<T, R = Const<C>, C = Const<P>>,
+    {
+        let mut out = Owned::<T, R, P>::zero();
+        self.mul_into(rhs, &mut out);
+        out
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // Operators
 //
 // Implemented for `&Matrix` (matching every worked example in
@@ -568,10 +654,7 @@ where
     type Output = Owned<T, R, C>;
 
     fn add(self, rhs: &'b Matrix<T, Const<R>, Const<C>, S2>) -> Self::Output {
-        let mut out = Owned::<T, R, C>::zero();
-        DefaultBlas::axpy(T::ONE, &self.storage, &mut out.storage);
-        DefaultBlas::axpy(T::ONE, &rhs.storage, &mut out.storage);
-        out
+        self.saturating_add(rhs)
     }
 }
 
@@ -588,10 +671,7 @@ where
     type Output = Owned<T, R, C>;
 
     fn sub(self, rhs: &'b Matrix<T, Const<R>, Const<C>, S2>) -> Self::Output {
-        let mut out = Owned::<T, R, C>::zero();
-        DefaultBlas::axpy(T::ONE, &self.storage, &mut out.storage);
-        DefaultBlas::axpy(T::ZERO - T::ONE, &rhs.storage, &mut out.storage);
-        out
+        self.saturating_sub(rhs)
     }
 }
 
@@ -606,9 +686,7 @@ where
     type Output = Owned<T, R, C>;
 
     fn neg(self) -> Self::Output {
-        let mut out = Owned::<T, R, C>::zero();
-        DefaultBlas::axpy(T::ZERO - T::ONE, &self.storage, &mut out.storage);
-        out
+        self.saturating_neg()
     }
 }
 
@@ -623,10 +701,7 @@ where
     type Output = Owned<T, R, C>;
 
     fn mul(self, rhs: T) -> Self::Output {
-        let mut out = Owned::<T, R, C>::zero();
-        DefaultBlas::axpy(T::ONE, &self.storage, &mut out.storage);
-        DefaultBlas::scal(rhs, &mut out.storage);
-        out
+        self.saturating_scale(rhs)
     }
 }
 
@@ -641,7 +716,7 @@ where
     type Output = Owned<T, R, C>;
 
     fn mul(self, rhs: &T) -> Self::Output {
-        self * *rhs
+        self.saturating_scale(*rhs)
     }
 }
 
@@ -663,9 +738,7 @@ where
     type Output = Owned<T, M, P>;
 
     fn mul(self, rhs: &'b Matrix<T, Const<N>, Const<P>, S2>) -> Self::Output {
-        let mut out = Owned::<T, M, P>::zero();
-        self.mul_into(rhs, &mut out);
-        out
+        self.saturating_mul(rhs)
     }
 }
 
@@ -769,7 +842,9 @@ impl<T, R: Dim, C: Dim, S: DenseStorage<T, R = R, C = C>> Matrix<T, R, C, S> {
         let cs = self.storage.c_stride();
         let ptr = unsafe {
             self.storage.as_ptr().offset(
-                origin_row.cast_signed() * rs + origin_col.cast_signed() * cs,
+                origin_row.cast_signed().saturating_mul(rs).saturating_add(
+                    origin_col.cast_signed().saturating_mul(cs),
+                ),
             )
         };
         let storage = unsafe {
@@ -804,7 +879,7 @@ where
     /// Performs an in-place transposition for square matrices.
     pub fn transpose_mut(&mut self) {
         for i in 0..D {
-            for j in (i + 1)..D {
+            for j in i.saturating_add(1)..D {
                 // Safety: `i < D` and `j < D` per the loop bounds.
                 unsafe {
                     let a = *self.storage.get_unchecked(i, j);
@@ -828,7 +903,7 @@ where
         let mut s = T::ZERO;
         for i in 0..N {
             if let Some(&v) = self.get(i, i) {
-                s = s + v;
+                s = s.saturating_add(&v);
             }
         }
         s
@@ -848,7 +923,7 @@ where
             let mut row = T::ZERO;
             for j in 0..N {
                 if let Some(&v) = self.get(i, j) {
-                    row = row + v.abs();
+                    row = row.saturating_add(&v.abs());
                 }
             }
             if row > best {
@@ -866,46 +941,50 @@ where
     /// Padé $[6/6]$ scaling-and-squaring matrix exponential.
     #[must_use]
     pub fn expm(&self) -> Self {
-        let two = T::ONE + T::ONE;
-        let theta = two + T::ONE;
+        let two = T::ONE.saturating_add(&T::ONE);
+        let theta = two.saturating_add(&T::ONE);
         let mut a_scaled = *self;
         let mut s = 0_u32;
         while a_scaled.inf_norm() > theta && s < 16 {
-            a_scaled = &a_scaled * (T::ONE / two);
-            s += 1;
+            a_scaled = a_scaled.saturating_scale(T::ONE.saturating_div(&two));
+            s = s.saturating_add(1);
         }
 
-        let a2 = &a_scaled * &a_scaled;
-        let a4 = &a2 * &a2;
-        let a6 = &a4 * &a2;
+        let a2 = a_scaled.saturating_mul(&a_scaled);
+        let a4 = a2.saturating_mul(&a2);
+        let a6 = a4.saturating_mul(&a2);
         let (b0, b1, b2, b3, b4, b5, b6) = pade6_coeffs::<T>();
-        let u_inner = &(&(&Owned::<T, N, N>::identity() * b1) + &(&a2 * b3))
-            + &(&a4 * b5);
-        let u = &a_scaled * &u_inner;
-        let v = &(&(&(&Owned::<T, N, N>::identity() * b0) + &(&a2 * b2))
-            + &(&a4 * b4))
-            + &(&a6 * b6);
+        let u_inner = (Owned::<T, N, N>::identity())
+            .saturating_scale(b1)
+            .saturating_add(&a2.saturating_scale(b3))
+            .saturating_add(&a4.saturating_scale(b5));
+        let u = a_scaled.saturating_mul(&u_inner);
+        let v = (Owned::<T, N, N>::identity())
+            .saturating_scale(b0)
+            .saturating_add(&a2.saturating_scale(b2))
+            .saturating_add(&a4.saturating_scale(b4))
+            .saturating_add(&a6.saturating_scale(b6));
 
-        let mut r = &v + &u;
-        if let Ok(lu) = LuDecomposition::decompose(&v - &u) {
+        let mut r = v.saturating_add(&u);
+        if let Ok(lu) = LuDecomposition::decompose(v.saturating_sub(&u)) {
             let _ = lu.solve_mut(&mut r);
         }
         for _ in 0..s {
-            r = &r * &r;
+            r = r.saturating_mul(&r);
         }
         r
     }
 }
 
 fn pade6_coeffs<T: Float + Copy>() -> (T, T, T, T, T, T, T) {
-    let two = T::ONE + T::ONE;
+    let two = T::ONE.saturating_add(&T::ONE);
     (
         T::ONE,
-        T::ONE / two,
-        T::from_usize(5) / T::from_usize(44),
-        T::ONE / T::from_usize(66),
-        T::ONE / T::from_usize(792),
-        T::ONE / T::from_usize(15_840),
-        T::ONE / T::from_usize(665_280),
+        T::ONE.saturating_div(&two),
+        T::from_usize(5).saturating_div(&T::from_usize(44)),
+        T::ONE.saturating_div(&T::from_usize(66)),
+        T::ONE.saturating_div(&T::from_usize(792)),
+        T::ONE.saturating_div(&T::from_usize(15_840)),
+        T::ONE.saturating_div(&T::from_usize(665_280)),
     )
 }

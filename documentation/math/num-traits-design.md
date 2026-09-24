@@ -41,6 +41,14 @@ wrapping vs. saturating).
 - **FR-5 — Implementor Partition**: `Scalar`, `Float`, `Complex<T>`, and
   `Quantized` occupy distinct implementor sets; the partition is the §4.3
   table.
+- **FR-6 — Total Arithmetic Contract**: Every `Scalar` implements
+  `SaturatingAdd`, `SaturatingSub` and `SaturatingMul`; `Signed` adds
+  `SaturatingNeg` and `Float` adds `SaturatingDiv`. Each operation is total:
+  integer and `Quantized` results clamp to `[MIN, MAX]`, floats follow
+  IEEE-754. Library arithmetic on a generic `T` calls these methods, never the
+  `core::ops` operators, so no kernel panics or wraps on overflow for any
+  implementor (§4.4). `clippy::arithmetic_side_effects` is `deny` with no
+  suppression (num-traits, 2024b).
 
 #### 2.2 Non-Functional Requirements
 
@@ -219,26 +227,32 @@ marker with no super trait bounds._
     - `Unsigned` remains a `Sized`-only marker distinguishing unsigned
       primitives from the `AdditiveGroup`/`Signed`/`Float` branch.
 5. **Scalar Tier (`Scalar`)**:
-    - `Scalar` requires `Zero + One + Sub + Mul + Conjugate` and adds
-      `clamp()` / `signum()` (each `where Self: PartialOrd`), without `Div`
-      (FR-2, Alternative 3).
+    - `Scalar` requires `Zero + One + Sub + Mul + SaturatingAdd +
+      SaturatingSub + SaturatingMul + Conjugate` and adds `clamp()` /
+      `signum()` (each `where Self: PartialOrd`), without `Div` (FR-2, FR-6,
+      Alternative 3).
     - Associated type `Real: Scalar<Real = Self> + PartialOrd` with `re()`,
       `im()`, `from_real()`, and `abs2()` (FR-4). `im()` returns `Real::ZERO`
-      on real types. `abs2()` is `re² + im²` (equals `self * self` on reals).
+      on real types. `abs2()` is `re² + im²` (equals `self.saturating_mul(self)`
+      on reals).
       Ordering and clipping of complex values go through `T::Real`.
     - `signum()`'s negative branch is unreachable for unsigned types.
 6. **Signed & Analytic Tier (`Signed`, `Float`, `Radical`, `Exponential`,
    `Trig`)**:
-    - `Signed` extends `AdditiveGroup` with `Neg<Output = Self> + PartialOrd`,
+    - `Signed` extends `AdditiveGroup` with
+      `Neg<Output = Self> + SaturatingNeg + PartialOrd`,
       providing `abs()` and sign predicates. Withheld from `Complex<T>`: BLAS
       1-norms and `Iamax` project through `T::Real` / `abs2()`, not
       `Signed::abs` returning `Complex`.
     - `Float` requires
-      `Scalar + Signed + Radical + Exponential + Trig + Div<Output = Self>` plus
-      `epsilon()`. Implemented only by `f32` and
-      `f64` (FR-5). Division on `Float` follows IEEE-754 (`inf`/`NaN`).
-    - `Complex<T>` implements `Div` when `T: Div` without implementing
-      `Float`. Integer and `Quantized` division remain on `TryDiv`.
+      `Scalar + Signed + Radical + Exponential + Trig + Div<Output = Self> +
+      SaturatingDiv` plus `epsilon()`. Implemented only by `f32` and `f64`
+      (FR-5). Division on `Float` follows IEEE-754 (`inf`/`NaN`).
+    - `Radical` requires `SaturatingAdd + SaturatingMul`; the default
+      `hypot()` is `(x.saturating_mul(x)).saturating_add(y.saturating_mul(y)).sqrt()`.
+    - `Complex<T>` implements `Div` and `SaturatingDiv` when
+      `T: SaturatingDiv` without implementing `Float`. Integer and `Quantized`
+      division use `SaturatingDiv` (total) or `TryDiv` (error-reporting).
 
 #### 4.2 Macro Code Generation
 
@@ -256,9 +270,16 @@ are generated using internal declarative macros:
 - `impl_float!`: Emits `Float`, `Radical`, `Exponential` and `Trig`
   implementations for `f32` and `f64`. `Float: Scalar` is already satisfied
   by the preceding `impl_scalar!` invocation.
-- `Complex<T>`: handwritten `Conjugate` (imaginary negation, `T: Neg`),
-  `Scalar` (`Real = T`, `T: Scalar<Real = T> + Neg`), `AdditiveGroup` (when
-  `T: AdditiveGroup`), and `Div` (when `T: Div`). Does not receive
+- `saturating_div_signed_impl!` / `saturating_div_unsigned_impl!` /
+  `saturating_float_impl!` (`math::ops`): emit `SaturatingDiv` (and
+  `SaturatingNeg` for signed integers) with the §4.4 semantics, and all five
+  saturating traits for `f32`/`f64` as the IEEE-754 operators.
+- `Complex<T>`: handwritten `Conjugate` (imaginary negation,
+  `T: SaturatingNeg`), `Scalar` (`Real = T`,
+  `T: Scalar<Real = T> + SaturatingNeg + PartialOrd`), `AdditiveGroup` (when
+  `T: AdditiveGroup`), the five saturating traits component-wise, and `Div`
+  (when `T: SaturatingDiv`). The `core::ops` operators on `Complex<T>` are
+  implemented with the component saturating methods. Does not receive
   `impl_float!`, `Signed`, `Radical`, `Exponential`, or `Trig`.
 - `Quantized<Repr, SHIFT>`: implements `Scalar` / `Conjugate` (identity) in
   the quantized-scalar module, not via these macros.
@@ -270,12 +291,38 @@ are generated using internal declarative macros:
 | signed integers                                            |   yes    | `Self` |   no    |              both               |            both            |
 | unsigned integers                                          |   yes    | `Self` |   no    |              both               |          neither           |
 | `f32`, `f64`                                               |   yes    | `Self` |   yes   |               no                |            both            |
-| `Complex<T>` where `T: Scalar<Real = T> + Neg`             |   yes    |  `T`   |   no    |               no                |    `AdditiveGroup` only    |
+| `Complex<T>` where `T: Scalar<Real = T> + SaturatingNeg`   |   yes    |  `T`   |   no    |               no                |    `AdditiveGroup` only    |
 | `Quantized<Repr, SHIFT>` where `Repr: Scalar<Real = Repr>` |   yes    | `Self` |   no    |    saturating when `Repr` is    |       follows `Repr`       |
 
 `Div` is not a `Scalar` super trait. `Float` requires it. `Complex<T>`
-implements `Div` when `T: Div`. Integer and `Quantized` division stay on
-`TryDiv`.
+implements `Div` when `T: SaturatingDiv`. Division kernels bound
+`T: Scalar + SaturatingDiv`, which every row of the table satisfies.
+
+#### 4.4 Total Arithmetic Contract (FR-6)
+
+The saturating traits (`math::ops`) take both operands by reference and
+return a value. Generic code uses the trait form `a.saturating_add(&b)`;
+concrete integer code resolves to the inherent `a.saturating_add(b)`.
+
+| Operation            | Signed integer                                             | Unsigned integer                  | `Quantized`                   | `f32`, `f64`      | `Complex<T>`                       |
+|:---------------------|:-----------------------------------------------------------|:----------------------------------|:------------------------------|:------------------|:-----------------------------------|
+| `saturating_add/sub` | clamp to `[MIN, MAX]`                                      | clamp to `[0, MAX]`               | clamp raw to `[MIN, MAX]`     | IEEE-754          | component-wise                     |
+| `saturating_mul`     | clamp to `[MIN, MAX]`                                      | clamp to `[0, MAX]`               | widened product, clamp        | IEEE-754          | `(ac - bd, ad + bc)`, each clamped |
+| `saturating_div`     | `x/0` is `MAX` (`x > 0`), `MIN` (`x < 0`), `0` (`x = 0`); `MIN/-1` is `MAX` | `x/0` is `MAX` (`x > 0`), `0/0` is `0` | `round((a << SHIFT) / b)` ties to even, clamp; `x/0` as the `Repr` integer | IEEE-754 (`±inf`, `NaN`) | `((ac + bd) + (bc - ad)i) / (c² + d²)`, each step saturating |
+| `saturating_neg`     | `-MIN` is `MAX`                                            | not implemented (not `Signed`)    | `-MIN` is `MAX`               | sign-bit flip     | component-wise                     |
+
+Consequences:
+
+- Saturating integer addition is not associative once an intermediate
+  clamps, so a reduction's result depends on summation order at the bounds.
+  Kernels fix their loop order (`subprograms-design.md`), so results are
+  deterministic per build.
+- Within range every operation equals the corresponding operator, so float
+  results are bit-identical to the operator form and integer results differ
+  only where the operator would have panicked (debug) or wrapped (release).
+- `core::ops` impls on library types (`Complex<T>`, `Fixed`, `Matrix`)
+  delegate to the saturating methods, so operator syntax in user code carries
+  the same contract.
 
 ---
 
@@ -307,9 +354,9 @@ implements `Div` when `T: Div`. Integer and `Quantized` division stay on
       overflows), so requiring it on every `Scalar` implementor — including
       plain signed integers and `Quantized` — reintroduces exactly the panic
       surface this hierarchy exists to remove. `Div` stays off `Scalar`.
-      `Float` requires it (IEEE-754 `inf`/`NaN`). `Complex<T>` implements
-      `Div` when `T: Div` without implementing `Float`. Integer and
-      `Quantized` division remain on `TryDiv`.
+      `Float` requires it (IEEE-754 `inf`/`NaN`). Division kernels bound
+      `T: Scalar + SaturatingDiv` instead, which is total on every
+      implementor (§4.4). `TryDiv` remains for callers that need the error.
 4. **Wrapper-Type Semantics (`fixed`-crate Pattern) Instead of Method-Level
    Traits**:
     - _Considered_: Expressing wrapping/saturating behavior through a new type
@@ -345,6 +392,17 @@ implements `Div` when `T: Div`. Integer and `Quantized` division stay on
       `T::Real`. `complex_num.rs` does not implement `Float`, `Signed`,
       `Radical`, `Trig`, or `Exponential` for `Complex<T>`; `Complex<T>` is
       `Scalar` with `Real = T`.
+8. **Operators on Generic `T` with Lint Suppression or Wrapping Semantics**:
+    - _Considered_: Keeping `a + b` on generic `T` and either suppressing
+      `clippy::arithmetic_side_effects` per module or binding kernels to
+      `WrappingAdd`/`WrappingMul`.
+    - _Rejected_: Suppression leaves `Matrix<i32>` kernels that panic in debug
+      and wrap in release, a silent sign flip in a control loop. Wrapping is
+      total but maps overflow to the opposite bound, the worse failure for a
+      feedback signal. Saturation bounds the error and matches Q-format DSP
+      practice (systemonchips.com, 2025). Rewriting operators as
+      `core::ops::Add::add` calls silences the lint without changing the
+      semantics and is also rejected.
 
 ---
 
@@ -404,7 +462,7 @@ the trait hierarchy:
   `T: Float` (trigonometric twiddle factors). BLAS subprograms
   (`subprograms.rs`) validate compile-time ergonomics over `T: Scalar`
   (integers, floats, `Complex<T>`, and later `Quantized`). Field kernels
-  (`Nrm2`, `Trsv`, LAPACK) bound `T: Scalar + Div` with
+  (`Nrm2`, `Trsv`, LAPACK) bound `T: Scalar + SaturatingDiv` with
   `T::Real: Radical` / `Trig` as required, not `T: Float` as a stand-in
   for complex.
 
@@ -435,11 +493,11 @@ and **zero memory footprint**:
    existing `T: Scalar` impls (including the shipped `impl<T: Scalar> Scalar
 for Complex<T>`). Every implementor must name `Real` and provide
    projections. Call sites that used `T: Float` to accept `Complex<T>` must
-   re-bind to `T: Scalar` (ring) or `T: Scalar + Div` with `T::Real: …`
-   (field).
+   re-bind to `T: Scalar` (ring) or `T: Scalar + SaturatingDiv` with
+   `T::Real: …` (field).
 3. **`SafeDiv`/`NonZero<T>` Is Not Yet Specified**: This design keeps `Div`
-   off `Scalar` and defers integer/`Quantized` division to `TryDiv`
-   (`math::ops`). A future `NonZero<T>`-gated `SafeDiv` for
+   off `Scalar`; division kernels use `SaturatingDiv` (total) and callers
+   that must detect `/0` use `TryDiv` (`math::ops`). A future `NonZero<T>`-gated `SafeDiv` for
    validate-once/divide-many hot loops is out of scope and
    needs its own design pass. Generic `NonZero<T>` itself is stable (Rust
    stabilized `generic_nonzero` after RFC 2307 replaced a single generic
@@ -487,6 +545,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | 1.2      | August 22, 2026 | @MitchellDScott | Complex scalar support: added `Conjugate` trait, `Scalar::Real` projection, and retracted `Complex: Float` in favor of `Complex: Scalar`. |
 | 1.3      | August 24, 2026 | @MitchellDScott | Comparison decoupling: dropped `PartialOrd` from `Zero`/`One` and `Complex<T>`, restricting ordering to `Signed` and `Scalar::Real`.      |
 | 1.4      | August 24, 2026 | @MitchellDScott | Full implementation and verification of numeric traits and complex number primitives.                                                     |
+| 1.5      | September 23, 2026 | @MitchellDScott | FR-6 total arithmetic contract: `Scalar` requires the saturating traits, added `SaturatingDiv`/`SaturatingNeg`, §4.4, Alternative 8. `Quantized` implements `SaturatingDiv` (`fixed-num-design.md` §4.3). |
 
 ---
 

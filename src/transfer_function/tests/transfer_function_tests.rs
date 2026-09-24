@@ -1,6 +1,5 @@
 //! # Transfer Function Unit and Verification Tests
 #![allow(
-    clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
     clippy::similar_names,
     clippy::unwrap_used,

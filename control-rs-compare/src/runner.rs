@@ -6,8 +6,16 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use anstyle::AnsiColor;
+
 use crate::config::{MasterPlan, SuiteConfig, VariantConfig};
 use crate::error::HarnessError;
+
+/// Cargo status verb style (bright green bold), matching `control-rs-ci`.
+const HEADER: anstyle::Style = AnsiColor::BrightGreen.on_default().bold();
+
+/// Cargo `warning:` prefix style (bright yellow bold), matching `control-rs-ci`.
+const WARNING: anstyle::Style = AnsiColor::BrightYellow.on_default().bold();
 
 /// Execution options and runtime filters for the variant runner.
 #[derive(Debug, Clone)]
@@ -65,24 +73,23 @@ fn execute_suite(
     python_bin: &Path,
     options: &RunnerOptions,
 ) -> Result<(), HarnessError> {
-    if !options.quiet {
-        println!("==> Executing suite: {}", suite.name);
-    }
-
     for variant in &suite.variants {
         if !options.quiet {
-            println!(
-                "  -> Running variant: {} ({})",
-                variant.name, variant.r#type
+            anstream::println!(
+                "{HEADER}     Running{HEADER:#} {}/{} ({})",
+                suite.name,
+                variant.name,
+                variant.r#type
             );
         }
 
         let res = execute_variant(suite, variant, python_bin, options);
         if let Err(e) = res {
             if variant.optional {
-                eprintln!(
-                    "  [WARN] Optional variant '{}' in suite '{}' failed: {e}",
-                    variant.name, suite.name
+                anstream::eprintln!(
+                    "{WARNING}warning{WARNING:#}: optional variant `{}/{}` failed: {e}",
+                    suite.name,
+                    variant.name
                 );
             } else {
                 return Err(e);

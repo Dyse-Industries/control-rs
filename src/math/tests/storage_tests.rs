@@ -20,7 +20,6 @@
 //!   `test_pivot_storage_identity_and_swap`.
 //! - **FR-6** (BLAS interoperability): `test_storage_gemv_contiguous_storage_interop`.
 #![allow(
-    clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
     clippy::type_complexity,
     clippy::cast_possible_truncation,
@@ -1670,15 +1669,15 @@ mod storage_property_tests {
             vals in proptest::collection::vec(any::<i32>(), 12),
         ) {
             let storage: ArrayStorage<i32, 3, 4> =
-                StorageInit::<i32, Const<3>, Const<4>>::from_fn(|i, j| vals[j * 3 + i]);
+                StorageInit::<i32, Const<3>, Const<4>>::from_fn(|i, j| vals[j.saturating_mul(3).saturating_add(i)]);
 
             for j in 0..4 {
                 for i in 0..3 {
                     prop_assert_eq!(
                         storage.get(i, j),
-                        Some(&vals[j * 3 + i])
+                        Some(&vals[j.saturating_mul(3).saturating_add(i)])
                     );
-                    prop_assert_eq!(storage.offset(i, j), (j * 3 + i) as isize);
+                    prop_assert_eq!(storage.offset(i, j), j.saturating_mul(3).saturating_add(i) as isize);
                 }
             }
             prop_assert_eq!(storage.get(3, 0), None);
@@ -1692,7 +1691,7 @@ mod storage_property_tests {
             vals in proptest::collection::vec(any::<i32>(), 6),
         ) {
             let array: ArrayStorage<i32, 2, 3> =
-                StorageInit::<i32, Const<2>, Const<3>>::from_fn(|i, j| vals[j * 2 + i]);
+                StorageInit::<i32, Const<2>, Const<3>>::from_fn(|i, j| vals[j.saturating_mul(2).saturating_add(i)]);
             let view: StaticStorageView<'_, i32, Const<2>, Const<3>, ColMajor> =
                 StaticStorageView::new(&vals).unwrap();
 
@@ -1716,9 +1715,9 @@ mod storage_property_tests {
             let data = [vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]];
             let packed =
                 SymmetricPackedStorage::<i32, 3, 6>::new(data, UpLo::Upper);
-            for j in 0..3 {
+            for j in 0..3_usize {
                 for i in 0..=j {
-                    let idx = i + (j * (j + 1)) / 2;
+                    let idx = i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2);
                     prop_assert_eq!(packed.packed_index(i, j), Some(idx));
                     prop_assert_eq!(packed.value(i, j), Some(vals[idx]));
                     prop_assert_eq!(packed.value(j, i), Some(vals[idx]));

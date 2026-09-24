@@ -2,7 +2,6 @@
 #![allow(unused_imports)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::many_single_char_names)]
-#![allow(clippy::arithmetic_side_effects)]
 #![allow(clippy::indexing_slicing)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::similar_names)]
@@ -14,6 +13,10 @@ pub mod subprogram_test_suite {
     use crate::math::complex_num::{Complex, Complex32, Complex64};
     use crate::math::num_traits::{One, Scalar, Zero};
     use crate::math::num_types::{Const, Dim};
+    use crate::math::ops::{
+        SaturatingAdd, SaturatingDiv, SaturatingMul, SaturatingNeg,
+        SaturatingSub,
+    };
     use crate::math::storage::{
         ArrayCooStorage, ArrayCscStorage, ArrayCsrStorage, ArraySparseVector,
         ArrayStorage, DenseStorage, DenseStorageMut, Diag,
@@ -120,8 +123,8 @@ pub mod subprogram_test_suite {
         for i in 0..R {
             let mut sum = 0.0;
             for j in 0..C {
-                let d = *unsafe { computed.get_unchecked(i, j) }
-                    - *unsafe { exact.get_unchecked(i, j) };
+                let d = (*unsafe { computed.get_unchecked(i, j) })
+                    .saturating_sub(unsafe { exact.get_unchecked(i, j) });
                 sum += d.abs();
             }
             max = max.max(sum);

@@ -23,7 +23,6 @@
 #![allow(
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     clippy::similar_names,
     clippy::needless_range_loop,
     clippy::type_complexity,
@@ -101,7 +100,7 @@ where
     Const<C>: Dim,
 {
     fn len(&self) -> usize {
-        R * C
+        R.saturating_mul(C)
     }
 
     fn as_slice(&self) -> &[T] {
@@ -135,7 +134,7 @@ where
     Const<C>: Dim,
 {
     fn len(&self) -> usize {
-        R * C
+        R.saturating_mul(C)
     }
 
     fn as_slice(&self) -> &[T] {
@@ -262,7 +261,7 @@ impl<const D0: usize, const D1: usize> TensorLayout for Shape2D<D0, D1> {
 
     fn flat_offset(indices: &[usize]) -> Option<usize> {
         if indices.len() == 2 && indices[0] < D0 && indices[1] < D1 {
-            Some(indices[0] + indices[1] * D0)
+            Some(indices[0].saturating_add(indices[1].saturating_mul(D0)))
         } else {
             None
         }
@@ -292,7 +291,13 @@ impl<const D0: usize, const D1: usize, const D2: usize> TensorLayout
             && indices[1] < D1
             && indices[2] < D2
         {
-            Some(indices[0] + indices[1] * D0 + indices[2] * (D0 * D1))
+            Some(
+                (indices[0])
+                    .saturating_add(indices[1].saturating_mul(D0))
+                    .saturating_add(
+                        indices[2].saturating_mul(D0.saturating_mul(D1)),
+                    ),
+            )
         } else {
             None
         }
@@ -330,10 +335,14 @@ impl<const D0: usize, const D1: usize, const D2: usize, const D3: usize>
             && indices[3] < D3
         {
             Some(
-                indices[0]
-                    + indices[1] * D0
-                    + indices[2] * (D0 * D1)
-                    + indices[3] * (D0 * D1 * D2),
+                (indices[0])
+                    .saturating_add(indices[1].saturating_mul(D0))
+                    .saturating_add(
+                        indices[2].saturating_mul(D0.saturating_mul(D1)),
+                    )
+                    .saturating_add(indices[3].saturating_mul(
+                        D0.saturating_mul(D1).saturating_mul(D2),
+                    )),
             )
         } else {
             None
@@ -534,9 +543,9 @@ where
             let mut j = 0;
             while j < C {
                 row_major[i][j] = col_data[j][i];
-                j += 1;
+                j = j.saturating_add(1);
             }
-            i += 1;
+            i = i.saturating_add(1);
         }
         row_major
     }
@@ -656,8 +665,8 @@ impl<T, const D0: usize, const D1: usize, const D2: usize, const TOTAL: usize>
         if plane >= D2 {
             return None;
         }
-        let start = plane * D0 * D1;
-        let end = start + D0 * D1;
+        let start = plane.saturating_mul(D0).saturating_mul(D1);
+        let end = start.saturating_add(D0.saturating_mul(D1));
         let slice = self.as_slice().get(start..end)?;
         Some(Matrix::from_storage(unsafe {
             StaticStorageView::new_unchecked(slice)
@@ -676,7 +685,9 @@ where
 
     fn add(self, rhs: &'b ArrayTensor<T, R, C>) -> Self::Output {
         ArrayTensor::from_storage(
-            (&self.slice_matrix() + &rhs.slice_matrix()).into_storage(),
+            self.slice_matrix()
+                .saturating_add(&rhs.slice_matrix())
+                .into_storage(),
         )
     }
 }
@@ -692,7 +703,9 @@ where
 
     fn sub(self, rhs: &'b ArrayTensor<T, R, C>) -> Self::Output {
         ArrayTensor::from_storage(
-            (&self.slice_matrix() - &rhs.slice_matrix()).into_storage(),
+            self.slice_matrix()
+                .saturating_sub(&rhs.slice_matrix())
+                .into_storage(),
         )
     }
 }
@@ -706,7 +719,9 @@ where
     type Output = ArrayTensor<T, R, C>;
 
     fn mul(self, rhs: T) -> Self::Output {
-        ArrayTensor::from_storage((&self.slice_matrix() * rhs).into_storage())
+        ArrayTensor::from_storage(
+            self.slice_matrix().saturating_scale(rhs).into_storage(),
+        )
     }
 }
 
@@ -780,19 +795,13 @@ impl<T: Float + Copy, L: TensorLayout, B: FlatBuffer<T>> Tensor<T, L, B> {
 
             for d in 0..rank {
                 let coord = coords.get(d).copied().unwrap_or(T::ZERO);
-                let dim_max = if dims[d] > 0 { dims[d] - 1 } else { 0 };
+                let dim_max = dims[d].saturating_sub(1);
 
                 // Clamp coordinate to grid range [0, dim_max]
                 let clamped = if coord < T::ZERO {
                     T::ZERO
                 } else {
-                    let max_t = {
-                        let mut m = T::ZERO;
-                        for _ in 0..dim_max {
-                            m = m + T::ONE;
-                        }
-                        m
-                    };
+                    let max_t = Self::count_to_scalar(dim_max);
                     if coord > max_t { max_t } else { coord }
                 };
 
@@ -800,37 +809,44 @@ impl<T: Float + Copy, L: TensorLayout, B: FlatBuffer<T>> Tensor<T, L, B> {
                     // Integer floor of clamped coordinate
                     let mut idx = 0usize;
                     let mut acc = T::ZERO;
-                    while idx < dim_max && (acc + T::ONE) <= clamped {
-                        acc = acc + T::ONE;
-                        idx += 1;
+                    while idx < dim_max
+                        && acc.saturating_add(&T::ONE) <= clamped
+                    {
+                        acc = acc.saturating_add(&T::ONE);
+                        idx = idx.saturating_add(1);
                     }
                     idx
                 };
 
-                let frac = clamped - {
-                    let mut acc = T::ZERO;
-                    for _ in 0..base_idx {
-                        acc = acc + T::ONE;
-                    }
-                    acc
-                };
+                let frac =
+                    clamped.saturating_sub(&Self::count_to_scalar(base_idx));
 
                 let is_upper = (corner_mask & (1 << d)) != 0;
                 if is_upper {
-                    corner_indices[d] = (base_idx + 1).min(dim_max);
-                    weight = weight * frac;
+                    corner_indices[d] = base_idx.saturating_add(1).min(dim_max);
+                    weight = weight.saturating_mul(&frac);
                 } else {
                     corner_indices[d] = base_idx;
-                    weight = weight * (T::ONE - frac);
+                    weight =
+                        weight.saturating_mul(&T::ONE.saturating_sub(&frac));
                 }
             }
 
             if let Some(&val) = self.get(&corner_indices[..rank]) {
-                result = result + weight * val;
+                result = result.saturating_add(&weight.saturating_mul(&val));
             }
         }
 
         result
+    }
+
+    /// Converts a grid count `n` to `T` by repeated unit addition, avoiding a lossy cast.
+    fn count_to_scalar(n: usize) -> T {
+        let mut acc = T::ZERO;
+        for _ in 0..n {
+            acc = acc.saturating_add(&T::ONE);
+        }
+        acc
     }
 }
 
@@ -871,24 +887,28 @@ impl<T: Float + Copy, const N: usize> Activation<T> for TableActivation<T, N> {
         if x <= self.breakpoints[0] {
             return self.values[0];
         }
-        if x >= self.breakpoints[N - 1] {
-            return self.values[N - 1];
+        if x >= self.breakpoints[N.saturating_sub(1)] {
+            return self.values[N.saturating_sub(1)];
         }
 
-        for i in 0..(N - 1) {
+        for i in 0..N.saturating_sub(1) {
             let x0 = self.breakpoints[i];
-            let x1 = self.breakpoints[i + 1];
+            let x1 = self.breakpoints[i.saturating_add(1)];
             if x >= x0 && x <= x1 {
-                let dx = x1 - x0;
+                let dx = x1.saturating_sub(&x0);
                 if dx == T::ZERO {
                     return self.values[i];
                 }
-                let t = (x - x0) / dx;
-                return self.values[i]
-                    + t * (self.values[i + 1] - self.values[i]);
+                let t = x.saturating_sub(&x0).saturating_div(&dx);
+                return self.values[i].saturating_add(
+                    &t.saturating_mul(
+                        &(self.values[i.saturating_add(1)])
+                            .saturating_sub(&self.values[i]),
+                    ),
+                );
             }
         }
 
-        self.values[N - 1]
+        self.values[N.saturating_sub(1)]
     }
 }

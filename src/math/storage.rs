@@ -33,7 +33,6 @@
 //!
 //! let _ = SymmetricPackedStorage::<f32, 4, 9>::new([0.0; 9], UpLo::Upper);
 //! ```
-#![allow(clippy::arithmetic_side_effects)]
 
 use crate::math::num_traits::{One, Scalar, Zero};
 use crate::math::num_types::{Const, Dim};
@@ -159,10 +158,10 @@ pub unsafe trait DenseStorage<T> {
 
     /// Maps a logical `(row, column)` index to a physical element offset from [`DenseStorage::as_ptr`].
     #[inline(always)]
-    #[allow(clippy::arithmetic_side_effects)]
     fn offset(&self, r: usize, c: usize) -> isize {
-        (r.cast_signed() * self.r_stride())
-            + (c.cast_signed() * self.c_stride())
+        r.cast_signed()
+            .saturating_mul(self.r_stride())
+            .saturating_add(c.cast_signed().saturating_mul(self.c_stride()))
     }
 
     /// Returns a reference to the element at `(r, c)` without bounds checking.
@@ -212,8 +211,8 @@ pub unsafe trait DenseStorage<T> {
         unsafe {
             StorageView::new_with_strides_unchecked(
                 self.as_ptr().offset(off),
-                -self.r_stride(),
-                -self.c_stride(),
+                self.r_stride().saturating_neg(),
+                self.c_stride().saturating_neg(),
             )
         }
     }
@@ -319,8 +318,8 @@ pub unsafe trait DenseStorageMut<T>: DenseStorage<T> {
         unsafe {
             StorageViewMut::new_with_strides_unchecked(
                 self.as_mut_ptr().offset(off),
-                -self.r_stride(),
-                -self.c_stride(),
+                self.r_stride().saturating_neg(),
+                self.c_stride().saturating_neg(),
             )
         }
     }
@@ -704,7 +703,7 @@ pub unsafe trait CsrStorage<T>: SparseStorage<T> {
     fn row_slice_unchecked(&self, r: usize) -> SlicePair<'_, T> {
         let offsets = self.row_offsets();
         let start = offsets[r];
-        let end = offsets[r + 1];
+        let end = offsets[r.saturating_add(1)];
         (&self.col_indices()[start..end], &self.values()[start..end])
     }
 }
@@ -856,17 +855,15 @@ pub struct PivotStorage<const N: usize> {
 
 impl LayoutMarker for ColMajor {
     const ORDER: MatrixLayout = MatrixLayout::ColMajor;
-    #[allow(clippy::arithmetic_side_effects)]
     fn offset(rows: usize, _cols: usize, i: usize, j: usize) -> isize {
-        (j * rows + i).cast_signed()
+        j.saturating_mul(rows).saturating_add(i).cast_signed()
     }
 }
 
 impl LayoutMarker for RowMajor {
     const ORDER: MatrixLayout = MatrixLayout::RowMajor;
-    #[allow(clippy::arithmetic_side_effects)]
     fn offset(_rows: usize, cols: usize, i: usize, j: usize) -> isize {
-        (i * cols + j).cast_signed()
+        i.saturating_mul(cols).saturating_add(j).cast_signed()
     }
 }
 
@@ -968,7 +965,7 @@ impl<T: Copy, const N: usize> ArrayStorage<T, 1, N> {
         let mut j = 0;
         while j < N {
             arr[j][0] = data[j];
-            j += 1;
+            j = j.saturating_add(1);
         }
         Self::from_array(arr)
     }
@@ -986,7 +983,7 @@ impl<T, const D: usize> ArrayStorage<T, D, D> {
         let mut j = 0;
         while j < D {
             data[j][j] = T::ONE;
-            j += 1;
+            j = j.saturating_add(1);
         }
         Self::from_array(data)
     }
@@ -1002,7 +999,7 @@ impl<T, const D: usize> ArrayStorage<T, D, D> {
         let mut j = 0;
         while j < D {
             data[j][j] = values[j];
-            j += 1;
+            j = j.saturating_add(1);
         }
         Self::from_array(data)
     }
@@ -1029,9 +1026,8 @@ where
         self.data.as_ptr().cast()
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn offset(&self, r: usize, c: usize) -> isize {
-        (c * R + r).cast_signed()
+        c.saturating_mul(R).saturating_add(r).cast_signed()
     }
 
     unsafe fn get_unchecked(&self, r: usize, c: usize) -> &T {
@@ -1139,7 +1135,7 @@ impl<T: Copy, const N: usize> RowArrayStorage<T, N, 1> {
         let mut i = 0;
         while i < N {
             arr[i][0] = data[i];
-            i += 1;
+            i = i.saturating_add(1);
         }
         Self::from_array(arr)
     }
@@ -1157,7 +1153,7 @@ impl<T, const D: usize> RowArrayStorage<T, D, D> {
         let mut j = 0;
         while j < D {
             data[j][j] = T::ONE;
-            j += 1;
+            j = j.saturating_add(1);
         }
         Self::from_array(data)
     }
@@ -1173,7 +1169,7 @@ impl<T, const D: usize> RowArrayStorage<T, D, D> {
         let mut j = 0;
         while j < D {
             data[j][j] = values[j];
-            j += 1;
+            j = j.saturating_add(1);
         }
         Self::from_array(data)
     }
@@ -1200,9 +1196,8 @@ where
         self.data.as_ptr().cast()
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     fn offset(&self, r: usize, c: usize) -> isize {
-        (r * C + c).cast_signed()
+        r.saturating_mul(C).saturating_add(c).cast_signed()
     }
 
     unsafe fn get_unchecked(&self, r: usize, c: usize) -> &T {
@@ -1704,7 +1699,7 @@ where
     }
 }
 
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[allow(clippy::indexing_slicing)]
 unsafe impl<T: Scalar, const N: usize, const PACKED_LEN: usize> PackedStorage<T>
     for SymmetricPackedStorage<T, N, PACKED_LEN>
 where
@@ -1727,14 +1722,24 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    Some(i + (j * (j + 1)) / 2)
+                    Some(i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    ))
                 } else {
                     None
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    Some(i - j + (j * (2 * N - j + 1)) / 2)
+                    Some(
+                        i.saturating_sub(j).saturating_add(
+                            j.saturating_mul(
+                                N.saturating_mul(2)
+                                    .saturating_sub(j)
+                                    .saturating_add(1),
+                            ) / 2,
+                        ),
+                    )
                 } else {
                     None
                 }
@@ -1744,8 +1749,14 @@ where
 
     fn packed_index_unchecked(&self, i: usize, j: usize) -> usize {
         match self.uplo {
-            UpLo::Upper => i + (j * (j + 1)) / 2,
-            UpLo::Lower => i - j + (j * (2 * N - j + 1)) / 2,
+            UpLo::Upper => {
+                i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2)
+            }
+            UpLo::Lower => i.saturating_sub(j).saturating_add(
+                j.saturating_mul(
+                    N.saturating_mul(2).saturating_sub(j).saturating_add(1),
+                ) / 2,
+            ),
         }
     }
 
@@ -1761,12 +1772,17 @@ where
         match self.uplo {
             UpLo::Upper => {
                 let (r, c) = if i <= j { (i, j) } else { (j, i) };
-                let idx = r + (c * (c + 1)) / 2;
+                let idx =
+                    r.saturating_add(c.saturating_mul(c.saturating_add(1)) / 2);
                 self.data[idx].clone()
             }
             UpLo::Lower => {
                 let (r, c) = if i >= j { (i, j) } else { (j, i) };
-                let idx = r - c + (c * (2 * N - c + 1)) / 2;
+                let idx = r.saturating_sub(c).saturating_add(
+                    c.saturating_mul(
+                        N.saturating_mul(2).saturating_sub(c).saturating_add(1),
+                    ) / 2,
+                );
                 self.data[idx].clone()
             }
         }
@@ -1841,7 +1857,7 @@ where
     }
 }
 
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[allow(clippy::indexing_slicing)]
 unsafe impl<T: Scalar, const N: usize, const PACKED_LEN: usize> PackedStorage<T>
     for HermitianPackedStorage<T, N, PACKED_LEN>
 where
@@ -1864,14 +1880,24 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    Some(i + (j * (j + 1)) / 2)
+                    Some(i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    ))
                 } else {
                     None
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    Some(i - j + (j * (2 * N - j + 1)) / 2)
+                    Some(
+                        i.saturating_sub(j).saturating_add(
+                            j.saturating_mul(
+                                N.saturating_mul(2)
+                                    .saturating_sub(j)
+                                    .saturating_add(1),
+                            ) / 2,
+                        ),
+                    )
                 } else {
                     None
                 }
@@ -1881,8 +1907,14 @@ where
 
     fn packed_index_unchecked(&self, i: usize, j: usize) -> usize {
         match self.uplo {
-            UpLo::Upper => i + (j * (j + 1)) / 2,
-            UpLo::Lower => i - j + (j * (2 * N - j + 1)) / 2,
+            UpLo::Upper => {
+                i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2)
+            }
+            UpLo::Lower => i.saturating_sub(j).saturating_add(
+                j.saturating_mul(
+                    N.saturating_mul(2).saturating_sub(j).saturating_add(1),
+                ) / 2,
+            ),
         }
     }
 
@@ -1898,19 +1930,35 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    let idx = i + (j * (j + 1)) / 2;
+                    let idx = i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
-                    let idx = j + (i * (i + 1)) / 2;
+                    let idx = j.saturating_add(
+                        i.saturating_mul(i.saturating_add(1)) / 2,
+                    );
                     self.data[idx].clone().conj()
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    let idx = i - j + (j * (2 * N - j + 1)) / 2;
+                    let idx = i.saturating_sub(j).saturating_add(
+                        j.saturating_mul(
+                            N.saturating_mul(2)
+                                .saturating_sub(j)
+                                .saturating_add(1),
+                        ) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
-                    let idx = j - i + (i * (2 * N - i + 1)) / 2;
+                    let idx = j.saturating_sub(i).saturating_add(
+                        i.saturating_mul(
+                            N.saturating_mul(2)
+                                .saturating_sub(i)
+                                .saturating_add(1),
+                        ) / 2,
+                    );
                     self.data[idx].clone().conj()
                 }
             }
@@ -1985,7 +2033,7 @@ where
     }
 }
 
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[allow(clippy::indexing_slicing)]
 unsafe impl<T: Scalar, const N: usize, const PACKED_LEN: usize> PackedStorage<T>
     for TriangularPackedStorage<T, N, PACKED_LEN>
 where
@@ -2008,14 +2056,24 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    Some(i + (j * (j + 1)) / 2)
+                    Some(i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    ))
                 } else {
                     None
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    Some(i - j + (j * (2 * N - j + 1)) / 2)
+                    Some(
+                        i.saturating_sub(j).saturating_add(
+                            j.saturating_mul(
+                                N.saturating_mul(2)
+                                    .saturating_sub(j)
+                                    .saturating_add(1),
+                            ) / 2,
+                        ),
+                    )
                 } else {
                     None
                 }
@@ -2025,8 +2083,14 @@ where
 
     fn packed_index_unchecked(&self, i: usize, j: usize) -> usize {
         match self.uplo {
-            UpLo::Upper => i + (j * (j + 1)) / 2,
-            UpLo::Lower => i - j + (j * (2 * N - j + 1)) / 2,
+            UpLo::Upper => {
+                i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2)
+            }
+            UpLo::Lower => i.saturating_sub(j).saturating_add(
+                j.saturating_mul(
+                    N.saturating_mul(2).saturating_sub(j).saturating_add(1),
+                ) / 2,
+            ),
         }
     }
 
@@ -2045,7 +2109,9 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    let idx = i + (j * (j + 1)) / 2;
+                    let idx = i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
                     T::ZERO
@@ -2053,7 +2119,13 @@ where
             }
             UpLo::Lower => {
                 if i >= j {
-                    let idx = i - j + (j * (2 * N - j + 1)) / 2;
+                    let idx = i.saturating_sub(j).saturating_add(
+                        j.saturating_mul(
+                            N.saturating_mul(2)
+                                .saturating_sub(j)
+                                .saturating_add(1),
+                        ) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
                     T::ZERO
@@ -2237,7 +2309,7 @@ impl<'a, T, const N: usize> SymmetricPackedView<'a, T, N> {
     /// # Errors
     /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N * (N + 1) / 2`.
     pub const fn new(data: &'a [T], uplo: UpLo) -> ConversionResult<Self> {
-        if data.len() == (N * (N + 1)) / 2 {
+        if data.len() == N.saturating_mul(N.saturating_add(1)) / 2 {
             Ok(Self { data, uplo })
         } else {
             Err(ConversionError::DimensionMismatch)
@@ -2245,7 +2317,7 @@ impl<'a, T, const N: usize> SymmetricPackedView<'a, T, N> {
     }
 }
 
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[allow(clippy::indexing_slicing)]
 unsafe impl<T: Scalar, const N: usize> PackedStorage<T>
     for SymmetricPackedView<'_, T, N>
 where
@@ -2268,14 +2340,24 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    Some(i + (j * (j + 1)) / 2)
+                    Some(i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    ))
                 } else {
                     None
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    Some(i - j + (j * (2 * N - j + 1)) / 2)
+                    Some(
+                        i.saturating_sub(j).saturating_add(
+                            j.saturating_mul(
+                                N.saturating_mul(2)
+                                    .saturating_sub(j)
+                                    .saturating_add(1),
+                            ) / 2,
+                        ),
+                    )
                 } else {
                     None
                 }
@@ -2285,8 +2367,14 @@ where
 
     fn packed_index_unchecked(&self, i: usize, j: usize) -> usize {
         match self.uplo {
-            UpLo::Upper => i + (j * (j + 1)) / 2,
-            UpLo::Lower => i - j + (j * (2 * N - j + 1)) / 2,
+            UpLo::Upper => {
+                i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2)
+            }
+            UpLo::Lower => i.saturating_sub(j).saturating_add(
+                j.saturating_mul(
+                    N.saturating_mul(2).saturating_sub(j).saturating_add(1),
+                ) / 2,
+            ),
         }
     }
 
@@ -2302,12 +2390,17 @@ where
         match self.uplo {
             UpLo::Upper => {
                 let (r, c) = if i <= j { (i, j) } else { (j, i) };
-                let idx = r + (c * (c + 1)) / 2;
+                let idx =
+                    r.saturating_add(c.saturating_mul(c.saturating_add(1)) / 2);
                 self.data[idx].clone()
             }
             UpLo::Lower => {
                 let (r, c) = if i >= j { (i, j) } else { (j, i) };
-                let idx = r - c + (c * (2 * N - c + 1)) / 2;
+                let idx = r.saturating_sub(c).saturating_add(
+                    c.saturating_mul(
+                        N.saturating_mul(2).saturating_sub(c).saturating_add(1),
+                    ) / 2,
+                );
                 self.data[idx].clone()
             }
         }
@@ -2320,7 +2413,7 @@ impl<'a, T, const N: usize> SymmetricPackedViewMut<'a, T, N> {
     /// # Errors
     /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N * (N + 1) / 2`.
     pub const fn new(data: &'a mut [T], uplo: UpLo) -> ConversionResult<Self> {
-        if data.len() == (N * (N + 1)) / 2 {
+        if data.len() == N.saturating_mul(N.saturating_add(1)) / 2 {
             Ok(Self { data, uplo })
         } else {
             Err(ConversionError::DimensionMismatch)
@@ -2328,7 +2421,7 @@ impl<'a, T, const N: usize> SymmetricPackedViewMut<'a, T, N> {
     }
 }
 
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[allow(clippy::indexing_slicing)]
 unsafe impl<T: Scalar, const N: usize> PackedStorage<T>
     for SymmetricPackedViewMut<'_, T, N>
 where
@@ -2351,14 +2444,24 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    Some(i + (j * (j + 1)) / 2)
+                    Some(i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    ))
                 } else {
                     None
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    Some(i - j + (j * (2 * N - j + 1)) / 2)
+                    Some(
+                        i.saturating_sub(j).saturating_add(
+                            j.saturating_mul(
+                                N.saturating_mul(2)
+                                    .saturating_sub(j)
+                                    .saturating_add(1),
+                            ) / 2,
+                        ),
+                    )
                 } else {
                     None
                 }
@@ -2368,8 +2471,14 @@ where
 
     fn packed_index_unchecked(&self, i: usize, j: usize) -> usize {
         match self.uplo {
-            UpLo::Upper => i + (j * (j + 1)) / 2,
-            UpLo::Lower => i - j + (j * (2 * N - j + 1)) / 2,
+            UpLo::Upper => {
+                i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2)
+            }
+            UpLo::Lower => i.saturating_sub(j).saturating_add(
+                j.saturating_mul(
+                    N.saturating_mul(2).saturating_sub(j).saturating_add(1),
+                ) / 2,
+            ),
         }
     }
 
@@ -2385,12 +2494,17 @@ where
         match self.uplo {
             UpLo::Upper => {
                 let (r, c) = if i <= j { (i, j) } else { (j, i) };
-                let idx = r + (c * (c + 1)) / 2;
+                let idx =
+                    r.saturating_add(c.saturating_mul(c.saturating_add(1)) / 2);
                 self.data[idx].clone()
             }
             UpLo::Lower => {
                 let (r, c) = if i >= j { (i, j) } else { (j, i) };
-                let idx = r - c + (c * (2 * N - c + 1)) / 2;
+                let idx = r.saturating_sub(c).saturating_add(
+                    c.saturating_mul(
+                        N.saturating_mul(2).saturating_sub(c).saturating_add(1),
+                    ) / 2,
+                );
                 self.data[idx].clone()
             }
         }
@@ -2430,7 +2544,7 @@ impl<'a, T, const N: usize> HermitianPackedView<'a, T, N> {
     /// # Errors
     /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N * (N + 1) / 2`.
     pub const fn new(data: &'a [T], uplo: UpLo) -> ConversionResult<Self> {
-        if data.len() == (N * (N + 1)) / 2 {
+        if data.len() == N.saturating_mul(N.saturating_add(1)) / 2 {
             Ok(Self { data, uplo })
         } else {
             Err(ConversionError::DimensionMismatch)
@@ -2438,7 +2552,7 @@ impl<'a, T, const N: usize> HermitianPackedView<'a, T, N> {
     }
 }
 
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[allow(clippy::indexing_slicing)]
 unsafe impl<T: Scalar, const N: usize> PackedStorage<T>
     for HermitianPackedView<'_, T, N>
 where
@@ -2461,14 +2575,24 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    Some(i + (j * (j + 1)) / 2)
+                    Some(i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    ))
                 } else {
                     None
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    Some(i - j + (j * (2 * N - j + 1)) / 2)
+                    Some(
+                        i.saturating_sub(j).saturating_add(
+                            j.saturating_mul(
+                                N.saturating_mul(2)
+                                    .saturating_sub(j)
+                                    .saturating_add(1),
+                            ) / 2,
+                        ),
+                    )
                 } else {
                     None
                 }
@@ -2478,8 +2602,14 @@ where
 
     fn packed_index_unchecked(&self, i: usize, j: usize) -> usize {
         match self.uplo {
-            UpLo::Upper => i + (j * (j + 1)) / 2,
-            UpLo::Lower => i - j + (j * (2 * N - j + 1)) / 2,
+            UpLo::Upper => {
+                i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2)
+            }
+            UpLo::Lower => i.saturating_sub(j).saturating_add(
+                j.saturating_mul(
+                    N.saturating_mul(2).saturating_sub(j).saturating_add(1),
+                ) / 2,
+            ),
         }
     }
 
@@ -2495,19 +2625,35 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    let idx = i + (j * (j + 1)) / 2;
+                    let idx = i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
-                    let idx = j + (i * (i + 1)) / 2;
+                    let idx = j.saturating_add(
+                        i.saturating_mul(i.saturating_add(1)) / 2,
+                    );
                     self.data[idx].clone().conj()
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    let idx = i - j + (j * (2 * N - j + 1)) / 2;
+                    let idx = i.saturating_sub(j).saturating_add(
+                        j.saturating_mul(
+                            N.saturating_mul(2)
+                                .saturating_sub(j)
+                                .saturating_add(1),
+                        ) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
-                    let idx = j - i + (i * (2 * N - i + 1)) / 2;
+                    let idx = j.saturating_sub(i).saturating_add(
+                        i.saturating_mul(
+                            N.saturating_mul(2)
+                                .saturating_sub(i)
+                                .saturating_add(1),
+                        ) / 2,
+                    );
                     self.data[idx].clone().conj()
                 }
             }
@@ -2521,7 +2667,7 @@ impl<'a, T, const N: usize> HermitianPackedViewMut<'a, T, N> {
     /// # Errors
     /// Returns [`ConversionError::DimensionMismatch`] if `data.len() != N * (N + 1) / 2`.
     pub const fn new(data: &'a mut [T], uplo: UpLo) -> ConversionResult<Self> {
-        if data.len() == (N * (N + 1)) / 2 {
+        if data.len() == N.saturating_mul(N.saturating_add(1)) / 2 {
             Ok(Self { data, uplo })
         } else {
             Err(ConversionError::DimensionMismatch)
@@ -2529,7 +2675,7 @@ impl<'a, T, const N: usize> HermitianPackedViewMut<'a, T, N> {
     }
 }
 
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[allow(clippy::indexing_slicing)]
 unsafe impl<T: Scalar, const N: usize> PackedStorage<T>
     for HermitianPackedViewMut<'_, T, N>
 where
@@ -2552,14 +2698,24 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    Some(i + (j * (j + 1)) / 2)
+                    Some(i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    ))
                 } else {
                     None
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    Some(i - j + (j * (2 * N - j + 1)) / 2)
+                    Some(
+                        i.saturating_sub(j).saturating_add(
+                            j.saturating_mul(
+                                N.saturating_mul(2)
+                                    .saturating_sub(j)
+                                    .saturating_add(1),
+                            ) / 2,
+                        ),
+                    )
                 } else {
                     None
                 }
@@ -2569,8 +2725,14 @@ where
 
     fn packed_index_unchecked(&self, i: usize, j: usize) -> usize {
         match self.uplo {
-            UpLo::Upper => i + (j * (j + 1)) / 2,
-            UpLo::Lower => i - j + (j * (2 * N - j + 1)) / 2,
+            UpLo::Upper => {
+                i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2)
+            }
+            UpLo::Lower => i.saturating_sub(j).saturating_add(
+                j.saturating_mul(
+                    N.saturating_mul(2).saturating_sub(j).saturating_add(1),
+                ) / 2,
+            ),
         }
     }
 
@@ -2586,19 +2748,35 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    let idx = i + (j * (j + 1)) / 2;
+                    let idx = i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
-                    let idx = j + (i * (i + 1)) / 2;
+                    let idx = j.saturating_add(
+                        i.saturating_mul(i.saturating_add(1)) / 2,
+                    );
                     self.data[idx].clone().conj()
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    let idx = i - j + (j * (2 * N - j + 1)) / 2;
+                    let idx = i.saturating_sub(j).saturating_add(
+                        j.saturating_mul(
+                            N.saturating_mul(2)
+                                .saturating_sub(j)
+                                .saturating_add(1),
+                        ) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
-                    let idx = j - i + (i * (2 * N - i + 1)) / 2;
+                    let idx = j.saturating_sub(i).saturating_add(
+                        i.saturating_mul(
+                            N.saturating_mul(2)
+                                .saturating_sub(i)
+                                .saturating_add(1),
+                        ) / 2,
+                    );
                     self.data[idx].clone().conj()
                 }
             }
@@ -2647,7 +2825,7 @@ impl<'a, T, const N: usize> TriangularPackedView<'a, T, N> {
         uplo: UpLo,
         diag: Diag,
     ) -> ConversionResult<Self> {
-        if data.len() == (N * (N + 1)) / 2 {
+        if data.len() == N.saturating_mul(N.saturating_add(1)) / 2 {
             Ok(Self { data, uplo, diag })
         } else {
             Err(ConversionError::DimensionMismatch)
@@ -2655,7 +2833,7 @@ impl<'a, T, const N: usize> TriangularPackedView<'a, T, N> {
     }
 }
 
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[allow(clippy::indexing_slicing)]
 unsafe impl<T: Scalar, const N: usize> PackedStorage<T>
     for TriangularPackedView<'_, T, N>
 where
@@ -2678,14 +2856,24 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    Some(i + (j * (j + 1)) / 2)
+                    Some(i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    ))
                 } else {
                     None
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    Some(i - j + (j * (2 * N - j + 1)) / 2)
+                    Some(
+                        i.saturating_sub(j).saturating_add(
+                            j.saturating_mul(
+                                N.saturating_mul(2)
+                                    .saturating_sub(j)
+                                    .saturating_add(1),
+                            ) / 2,
+                        ),
+                    )
                 } else {
                     None
                 }
@@ -2695,8 +2883,14 @@ where
 
     fn packed_index_unchecked(&self, i: usize, j: usize) -> usize {
         match self.uplo {
-            UpLo::Upper => i + (j * (j + 1)) / 2,
-            UpLo::Lower => i - j + (j * (2 * N - j + 1)) / 2,
+            UpLo::Upper => {
+                i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2)
+            }
+            UpLo::Lower => i.saturating_sub(j).saturating_add(
+                j.saturating_mul(
+                    N.saturating_mul(2).saturating_sub(j).saturating_add(1),
+                ) / 2,
+            ),
         }
     }
 
@@ -2715,7 +2909,9 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    let idx = i + (j * (j + 1)) / 2;
+                    let idx = i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
                     T::ZERO
@@ -2723,7 +2919,13 @@ where
             }
             UpLo::Lower => {
                 if i >= j {
-                    let idx = i - j + (j * (2 * N - j + 1)) / 2;
+                    let idx = i.saturating_sub(j).saturating_add(
+                        j.saturating_mul(
+                            N.saturating_mul(2)
+                                .saturating_sub(j)
+                                .saturating_add(1),
+                        ) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
                     T::ZERO
@@ -2743,7 +2945,7 @@ impl<'a, T, const N: usize> TriangularPackedViewMut<'a, T, N> {
         uplo: UpLo,
         diag: Diag,
     ) -> ConversionResult<Self> {
-        if data.len() == (N * (N + 1)) / 2 {
+        if data.len() == N.saturating_mul(N.saturating_add(1)) / 2 {
             Ok(Self { data, uplo, diag })
         } else {
             Err(ConversionError::DimensionMismatch)
@@ -2751,7 +2953,7 @@ impl<'a, T, const N: usize> TriangularPackedViewMut<'a, T, N> {
     }
 }
 
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[allow(clippy::indexing_slicing)]
 unsafe impl<T: Scalar, const N: usize> PackedStorage<T>
     for TriangularPackedViewMut<'_, T, N>
 where
@@ -2774,14 +2976,24 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    Some(i + (j * (j + 1)) / 2)
+                    Some(i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    ))
                 } else {
                     None
                 }
             }
             UpLo::Lower => {
                 if i >= j {
-                    Some(i - j + (j * (2 * N - j + 1)) / 2)
+                    Some(
+                        i.saturating_sub(j).saturating_add(
+                            j.saturating_mul(
+                                N.saturating_mul(2)
+                                    .saturating_sub(j)
+                                    .saturating_add(1),
+                            ) / 2,
+                        ),
+                    )
                 } else {
                     None
                 }
@@ -2791,8 +3003,14 @@ where
 
     fn packed_index_unchecked(&self, i: usize, j: usize) -> usize {
         match self.uplo {
-            UpLo::Upper => i + (j * (j + 1)) / 2,
-            UpLo::Lower => i - j + (j * (2 * N - j + 1)) / 2,
+            UpLo::Upper => {
+                i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2)
+            }
+            UpLo::Lower => i.saturating_sub(j).saturating_add(
+                j.saturating_mul(
+                    N.saturating_mul(2).saturating_sub(j).saturating_add(1),
+                ) / 2,
+            ),
         }
     }
 
@@ -2811,7 +3029,9 @@ where
         match self.uplo {
             UpLo::Upper => {
                 if i <= j {
-                    let idx = i + (j * (j + 1)) / 2;
+                    let idx = i.saturating_add(
+                        j.saturating_mul(j.saturating_add(1)) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
                     T::ZERO
@@ -2819,7 +3039,13 @@ where
             }
             UpLo::Lower => {
                 if i >= j {
-                    let idx = i - j + (j * (2 * N - j + 1)) / 2;
+                    let idx = i.saturating_sub(j).saturating_add(
+                        j.saturating_mul(
+                            N.saturating_mul(2)
+                                .saturating_sub(j)
+                                .saturating_add(1),
+                        ) / 2,
+                    );
                     self.data[idx].clone()
                 } else {
                     T::ZERO
@@ -2879,7 +3105,7 @@ impl<T: Zero, const R: usize, const C: usize, const MAX_NNZ: usize>
     /// # Errors
     /// Returns [`StorageError::OutOfBounds`] if either index is out of bounds,
     /// or [`StorageError::CapacityExceeded`] if the buffer is at capacity.
-    #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+    #[allow(clippy::indexing_slicing)]
     pub fn push(&mut self, r: usize, c: usize, val: T) -> StorageResult<()> {
         if r >= R || c >= C {
             return Err(StorageError::OutOfBounds);
@@ -2890,7 +3116,7 @@ impl<T: Zero, const R: usize, const C: usize, const MAX_NNZ: usize>
         self.row_indices[self.nnz] = r;
         self.col_indices[self.nnz] = c;
         self.values[self.nnz] = val;
-        self.nnz += 1;
+        self.nnz = self.nnz.saturating_add(1);
         Ok(())
     }
 }
@@ -2924,7 +3150,7 @@ where
         let mut acc = T::ZERO;
         for i in 0..self.nnz {
             if self.row_indices[i] == r && self.col_indices[i] == c {
-                acc = acc + self.values[i].clone();
+                acc = acc.saturating_add(&(self.values[i].clone()));
             }
         }
         Some(acc)
@@ -2945,14 +3171,13 @@ impl<
     /// Returns [`StorageError::OutOfBounds`] if any coordinate in `coo` is out of bounds.
     #[allow(
         clippy::indexing_slicing,
-        clippy::arithmetic_side_effects,
         clippy::needless_range_loop,
         clippy::too_many_lines
     )]
     pub fn from_coo(
         coo: &ArrayCooStorage<T, R, C, MAX_NNZ>,
     ) -> StorageResult<Self> {
-        debug_assert_eq!(R1, R + 1);
+        debug_assert_eq!(R1, R.saturating_add(1));
 
         // Pass 1: Histogram & row counts
         let mut row_counts = [0usize; R];
@@ -2962,14 +3187,15 @@ impl<
             if r >= R || c >= C {
                 return Err(StorageError::OutOfBounds);
             }
-            row_counts[r] += 1;
+            row_counts[r] = row_counts[r].saturating_add(1);
         }
 
         // Prefix sums -> row_offsets
         let mut row_offsets = [0usize; R1];
         row_offsets[0] = 0;
         for i in 0..R {
-            row_offsets[i + 1] = row_offsets[i] + row_counts[i];
+            row_offsets[i.saturating_add(1)] =
+                row_offsets[i].saturating_add(row_counts[i]);
         }
 
         // Pass 2: Bucket distribution
@@ -2984,7 +3210,7 @@ impl<
             let dest = current_offsets[r];
             temp_cols[dest] = coo.col_indices[k];
             temp_vals[dest] = coo.values[k].clone();
-            current_offsets[r] += 1;
+            current_offsets[r] = current_offsets[r].saturating_add(1);
         }
 
         // Pass 3: In-row sorting & duplicate accumulation
@@ -2996,17 +3222,19 @@ impl<
         for r in 0..R {
             final_offsets[r] = write_idx;
             let start = row_offsets[r];
-            let end = row_offsets[r + 1];
-            let len = end - start;
+            let end = row_offsets[r.saturating_add(1)];
+            let len = end.saturating_sub(start);
 
             if len > 0 {
                 // Insertion sort by column index within row
-                for i in start + 1..end {
+                for i in start.saturating_add(1)..end {
                     let mut j = i;
-                    while j > start && temp_cols[j - 1] > temp_cols[j] {
-                        temp_cols.swap(j - 1, j);
-                        temp_vals.swap(j - 1, j);
-                        j -= 1;
+                    while j > start
+                        && temp_cols[j.saturating_sub(1)] > temp_cols[j]
+                    {
+                        temp_cols.swap(j.saturating_sub(1), j);
+                        temp_vals.swap(j.saturating_sub(1), j);
+                        j = j.saturating_sub(1);
                     }
                 }
 
@@ -3014,22 +3242,22 @@ impl<
                 let mut curr_col = temp_cols[start];
                 let mut curr_val = temp_vals[start].clone();
 
-                for i in start + 1..end {
+                for i in start.saturating_add(1)..end {
                     let next_col = temp_cols[i];
                     let next_val = temp_vals[i].clone();
                     if next_col == curr_col {
-                        curr_val = curr_val + next_val;
+                        curr_val = curr_val.saturating_add(&next_val);
                     } else {
                         final_cols[write_idx] = curr_col;
                         final_vals[write_idx] = curr_val;
-                        write_idx += 1;
+                        write_idx = write_idx.saturating_add(1);
                         curr_col = next_col;
                         curr_val = next_val;
                     }
                 }
                 final_cols[write_idx] = curr_col;
                 final_vals[write_idx] = curr_val;
-                write_idx += 1;
+                write_idx = write_idx.saturating_add(1);
             }
         }
         final_offsets[R] = write_idx;
@@ -3124,7 +3352,7 @@ where
             return None;
         }
         let start = self.row_offsets[r];
-        let end = self.row_offsets[r + 1];
+        let end = self.row_offsets[r.saturating_add(1)];
         for idx in start..end {
             if self.col_indices[idx] == c {
                 return Some(&mut self.values[idx]);
@@ -3152,7 +3380,7 @@ where
     #[allow(clippy::indexing_slicing)]
     unsafe fn set_unchecked(&mut self, r: usize, c: usize, val: T) {
         let start = self.row_offsets[r];
-        let end = self.row_offsets[r + 1];
+        let end = self.row_offsets[r.saturating_add(1)];
         for idx in start..end {
             if self.col_indices[idx] == c {
                 self.values[idx] = val;
@@ -3186,7 +3414,7 @@ where
             return None;
         }
         let start = self.col_offsets[c];
-        let end = self.col_offsets[c + 1];
+        let end = self.col_offsets[c.saturating_add(1)];
         for idx in start..end {
             if self.row_indices[idx] == r {
                 return Some(self.values[idx].clone());
@@ -3244,7 +3472,7 @@ where
             return None;
         }
         let start = self.col_offsets[c];
-        let end = self.col_offsets[c + 1];
+        let end = self.col_offsets[c.saturating_add(1)];
         for idx in start..end {
             if self.row_indices[idx] == r {
                 return Some(&mut self.values[idx]);
@@ -3272,7 +3500,7 @@ where
     #[allow(clippy::indexing_slicing)]
     unsafe fn set_unchecked(&mut self, r: usize, c: usize, val: T) {
         let start = self.col_offsets[c];
-        let end = self.col_offsets[c + 1];
+        let end = self.col_offsets[c.saturating_add(1)];
         for idx in start..end {
             if self.row_indices[idx] == r {
                 self.values[idx] = val;
@@ -3300,7 +3528,7 @@ impl<T: Zero, const N: usize, const MAX_NNZ: usize>
     /// # Errors
     /// Returns [`StorageError::OutOfBounds`] if `idx >= N`,
     /// or [`StorageError::CapacityExceeded`] if the vector is at capacity.
-    #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+    #[allow(clippy::indexing_slicing)]
     pub fn push(&mut self, idx: usize, val: T) -> StorageResult<()> {
         if idx >= N {
             return Err(StorageError::OutOfBounds);
@@ -3310,7 +3538,7 @@ impl<T: Zero, const N: usize, const MAX_NNZ: usize>
         }
         self.indices[self.nnz] = idx;
         self.values[self.nnz] = val;
-        self.nnz += 1;
+        self.nnz = self.nnz.saturating_add(1);
         Ok(())
     }
 }
@@ -3440,7 +3668,7 @@ where
             let val = self.values[k].clone();
             let current: &T = unsafe { dense.get_unchecked(r, c) };
             unsafe {
-                dense.set_unchecked(r, c, current.clone() + val);
+                dense.set_unchecked(r, c, current.saturating_add(&val));
             }
         }
         Ok(dense)
@@ -3464,7 +3692,7 @@ where
         let mut dense = ArrayStorage::zeros();
         for r in 0..R {
             let start = self.row_offsets[r];
-            let end = self.row_offsets[r + 1];
+            let end = self.row_offsets[r.saturating_add(1)];
             for k in start..end {
                 let c = self.col_indices[k];
                 let val = self.values[k].clone();
@@ -3494,7 +3722,7 @@ where
         let mut dense = ArrayStorage::zeros();
         for c in 0..C {
             let start = self.col_offsets[c];
-            let end = self.col_offsets[c + 1];
+            let end = self.col_offsets[c.saturating_add(1)];
             for k in start..end {
                 let r = self.row_indices[k];
                 let val = self.values[k].clone();
@@ -3539,7 +3767,6 @@ impl<
     /// Returns [`StorageError::OutOfBounds`] if any coordinate in `coo` is out of bounds.
     #[allow(
         clippy::indexing_slicing,
-        clippy::arithmetic_side_effects,
         clippy::needless_range_loop,
         clippy::manual_memcpy,
         clippy::too_many_lines
@@ -3547,7 +3774,7 @@ impl<
     pub fn from_coo(
         coo: &ArrayCooStorage<T, R, C, MAX_NNZ>,
     ) -> StorageResult<Self> {
-        debug_assert_eq!(C1, C + 1);
+        debug_assert_eq!(C1, C.saturating_add(1));
 
         // Pass 1: Histogram & column counts
         let mut col_counts = [0usize; C];
@@ -3557,14 +3784,15 @@ impl<
             if r >= R || c >= C {
                 return Err(StorageError::OutOfBounds);
             }
-            col_counts[c] += 1;
+            col_counts[c] = col_counts[c].saturating_add(1);
         }
 
         // Prefix sums -> col_offsets
         let mut col_offsets = [0usize; C1];
         col_offsets[0] = 0;
         for j in 0..C {
-            col_offsets[j + 1] = col_offsets[j] + col_counts[j];
+            col_offsets[j.saturating_add(1)] =
+                col_offsets[j].saturating_add(col_counts[j]);
         }
 
         // Pass 2: Bucket distribution
@@ -3579,7 +3807,7 @@ impl<
             let dest = current_offsets[c];
             temp_rows[dest] = coo.row_indices[k];
             temp_vals[dest] = coo.values[k].clone();
-            current_offsets[c] += 1;
+            current_offsets[c] = current_offsets[c].saturating_add(1);
         }
 
         // Pass 3: In-column sorting & duplicate accumulation
@@ -3591,8 +3819,8 @@ impl<
         for c in 0..C {
             final_offsets[c] = write_idx;
             let start = col_offsets[c];
-            let end = col_offsets[c + 1];
-            let len = end - start;
+            let end = col_offsets[c.saturating_add(1)];
+            let len = end.saturating_sub(start);
 
             if len > 0 {
                 // Collect row indices and values for this column
@@ -3600,8 +3828,8 @@ impl<
                 let mut col_vals: [T; MAX_NNZ] =
                     core::array::from_fn(|_| T::ZERO);
                 for i in 0..len {
-                    col_rows[i] = temp_rows[start + i];
-                    col_vals[i] = temp_vals[start + i].clone();
+                    col_rows[i] = temp_rows[start.saturating_add(i)];
+                    col_vals[i] = temp_vals[start.saturating_add(i)].clone();
                 }
 
                 // Simple insertion sort by row index
@@ -3609,10 +3837,10 @@ impl<
                     let key_row = col_rows[i];
                     let key_val = col_vals[i].clone();
                     let mut j = i;
-                    while j > 0 && col_rows[j - 1] > key_row {
-                        col_rows[j] = col_rows[j - 1];
-                        col_vals[j] = col_vals[j - 1].clone();
-                        j -= 1;
+                    while j > 0 && col_rows[j.saturating_sub(1)] > key_row {
+                        col_rows[j] = col_rows[j.saturating_sub(1)];
+                        col_vals[j] = col_vals[j.saturating_sub(1)].clone();
+                        j = j.saturating_sub(1);
                     }
                     col_rows[j] = key_row;
                     col_vals[j] = key_val;
@@ -3624,18 +3852,19 @@ impl<
 
                 for i in 1..len {
                     if col_rows[i] == curr_row {
-                        curr_val = curr_val + col_vals[i].clone();
+                        curr_val =
+                            curr_val.saturating_add(&(col_vals[i].clone()));
                     } else {
                         final_rows[write_idx] = curr_row;
                         final_vals[write_idx] = curr_val;
-                        write_idx += 1;
+                        write_idx = write_idx.saturating_add(1);
                         curr_row = col_rows[i];
                         curr_val = col_vals[i].clone();
                     }
                 }
                 final_rows[write_idx] = curr_row;
                 final_vals[write_idx] = curr_val;
-                write_idx += 1;
+                write_idx = write_idx.saturating_add(1);
             }
         }
         final_offsets[C] = write_idx;
@@ -3670,13 +3899,13 @@ impl<
 impl<const N: usize> PivotStorage<N> {
     /// Builds the identity permutation `[0, 1, ..., N - 1]`.
     #[must_use]
-    #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+    #[allow(clippy::indexing_slicing)]
     pub const fn identity() -> Self {
         let mut indices = [0usize; N];
         let mut i = 0;
         while i < N {
             indices[i] = i;
-            i += 1;
+            i = i.saturating_add(1);
         }
         Self { indices }
     }
@@ -3755,16 +3984,16 @@ const fn strided_window_fits(
 }
 
 /// Helper function to reverse arrays given to `Polynomial::new()`
-#[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+#[allow(clippy::indexing_slicing)]
 #[inline]
 pub const fn reverse_array<T: Copy, const N: usize>(input: [T; N]) -> [T; N] {
     let mut output = input;
     let mut i = 0;
     while i < N / 2 {
         let tmp = output[i];
-        output[i] = output[N - 1 - i];
-        output[N - 1 - i] = tmp;
-        i += 1;
+        output[i] = output[N.saturating_sub(1).saturating_sub(i)];
+        output[N.saturating_sub(1).saturating_sub(i)] = tmp;
+        i = i.saturating_add(1);
     }
 
     output
@@ -3778,7 +4007,6 @@ pub const fn reverse_array<T: Copy, const N: usize>(input: [T; N]) -> [T; N] {
 ///
 /// # Panics
 /// This function panics in debug builds if the iterator is shorter than `N`.
-#[allow(clippy::arithmetic_side_effects)]
 pub(crate) unsafe fn array_from_iterator<I, T, const N: usize>(
     iterator: I,
 ) -> [T; N]
@@ -3787,12 +4015,12 @@ where
 {
     let mut maybe_uninit_array: UninitArray<T, N> = MaybeUninit::uninit();
     let arr_ptr = maybe_uninit_array.as_mut_ptr().cast::<T>();
-    let mut write_counter = 0;
+    let mut write_counter = 0_usize;
     for (i, b) in (0..N).zip(iterator) {
         unsafe {
             arr_ptr.add(i).write(b);
         }
-        write_counter += 1;
+        write_counter = write_counter.saturating_add(1);
     }
     debug_assert_eq!(write_counter, N);
     unsafe { maybe_uninit_array.assume_init() }
@@ -3800,7 +4028,7 @@ where
 
 /// Copies the `uplo` triangle of `dense` into a packed buffer using the
 /// packed-index map in `storage-design.md` §4.4.
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+#[allow(clippy::indexing_slicing)]
 fn copy_dense_triangle<T: Scalar, const N: usize, const PACKED_LEN: usize>(
     dense: &ArrayStorage<T, N, N>,
     uplo: UpLo,
@@ -3819,8 +4047,14 @@ fn copy_dense_triangle<T: Scalar, const N: usize, const PACKED_LEN: usize>(
                 continue;
             }
             let idx = match uplo {
-                UpLo::Upper => i + (j * (j + 1)) / 2,
-                UpLo::Lower => i - j + (j * (2 * N - j + 1)) / 2,
+                UpLo::Upper => {
+                    i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2)
+                }
+                UpLo::Lower => i.saturating_sub(j).saturating_add(
+                    j.saturating_mul(
+                        N.saturating_mul(2).saturating_sub(j).saturating_add(1),
+                    ) / 2,
+                ),
             };
             data[idx] = unsafe { dense.get_unchecked(i, j).clone() };
         }

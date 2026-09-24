@@ -22,7 +22,6 @@
 #![allow(
     clippy::arbitrary_source_item_ordering,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     clippy::similar_names,
     clippy::needless_range_loop,
     clippy::type_complexity,
@@ -65,6 +64,8 @@ use crate::state_space::StateSpace;
 use core::fmt;
 use core::marker::PhantomData;
 
+use crate::math::ops::SaturatingMul;
+use crate::math::ops::{SaturatingAdd, SaturatingDiv};
 pub use crate::polynomial::RootError;
 
 /// Errors from validating constructors and canonical conversions.
@@ -355,7 +356,7 @@ impl<
         let mut num_val = if n_len > 0 {
             let c = self
                 .num_storage
-                .get(n_len - 1, 0)
+                .get(n_len.saturating_sub(1), 0)
                 .copied()
                 .unwrap_or(T::ZERO);
             Complex::new(c, T::ZERO)
@@ -364,13 +365,15 @@ impl<
         };
         for i in (0..n_len.saturating_sub(1)).rev() {
             let c = self.num_storage.get(i, 0).copied().unwrap_or(T::ZERO);
-            num_val = num_val * s + Complex::new(c, T::ZERO);
+            num_val = num_val
+                .saturating_mul(&s)
+                .saturating_add(&Complex::new(c, T::ZERO));
         }
 
         let mut den_val = if d_len > 0 {
             let c = self
                 .den_storage
-                .get(d_len - 1, 0)
+                .get(d_len.saturating_sub(1), 0)
                 .copied()
                 .unwrap_or(T::ZERO);
             Complex::new(c, T::ZERO)
@@ -379,10 +382,12 @@ impl<
         };
         for i in (0..d_len.saturating_sub(1)).rev() {
             let c = self.den_storage.get(i, 0).copied().unwrap_or(T::ZERO);
-            den_val = den_val * s + Complex::new(c, T::ZERO);
+            den_val = den_val
+                .saturating_mul(&s)
+                .saturating_add(&Complex::new(c, T::ZERO));
         }
 
-        num_val / den_val
+        num_val.saturating_div(&den_val)
     }
 
     /// Evaluates frequency response $H(j\omega)$ (continuous) or $H(e^{j\omega T_s})$ (discrete) at angular frequency `omega`.
@@ -396,7 +401,7 @@ impl<
             }
             Some(dt) => {
                 // Discrete time: z = e^{j * omega * dt} = cos(omega * dt) + j * sin(omega * dt)
-                let theta = omega * dt;
+                let theta = omega.saturating_mul(&dt);
                 let z = Complex::new(theta.cos(), theta.sin());
                 self.evaluate_complex(z)
             }
@@ -407,7 +412,11 @@ impl<
     #[must_use]
     pub fn bode_point(&self, omega: T) -> (T, T) {
         let resp = self.eval_frequency(omega);
-        let mag = (resp.re * resp.re + resp.im * resp.im).sqrt();
+        let mag = resp
+            .re
+            .saturating_mul(&resp.re)
+            .saturating_add(&resp.im.saturating_mul(&resp.im))
+            .sqrt();
         let phase = resp.im.atan2(resp.re);
         (mag, phase)
     }
@@ -805,7 +814,7 @@ where
         B: Scal<T, ArrayStorage<T, ORDER, 1>>
             + Axpy<T, ArrayStorage<T, ORDER, 1>, ArrayStorage<T, ORDER, 1>>,
     {
-        if ORDER + 1 != D || ORDER == 0 {
+        if ORDER.saturating_add(1) != D || ORDER == 0 {
             return Err(TransferFunctionError::ImproperSystem);
         }
         if N > D {
@@ -820,11 +829,15 @@ where
 
         let mut a_col =
             Self::copy_col_prefix::<ORDER, D>(&self.den_storage, ORDER);
-        B::scal(T::ONE / a_n, a_col.storage_mut());
+        B::scal(T::ONE.saturating_div(&a_n), a_col.storage_mut());
 
         // Direct feedthrough d = b_n / a_n when deg(num) == deg(den).
         let d = if N == D {
-            self.num_storage.get(ORDER, 0).copied().unwrap_or(T::ZERO) / a_n
+            self.num_storage
+                .get(ORDER, 0)
+                .copied()
+                .unwrap_or(T::ZERO)
+                .saturating_div(&a_n)
         } else {
             T::ZERO
         };
@@ -832,24 +845,30 @@ where
         // β = b / a_n - d · a
         let mut beta =
             Self::copy_col_prefix::<ORDER, N>(&self.num_storage, ORDER.min(N));
-        B::scal(T::ONE / a_n, beta.storage_mut());
-        B::axpy(T::ZERO - d, a_col.storage(), beta.storage_mut());
+        B::scal(T::ONE.saturating_div(&a_n), beta.storage_mut());
+        B::axpy(
+            T::ZERO.saturating_sub(&d),
+            a_col.storage(),
+            beta.storage_mut(),
+        );
 
         // Controllable companion: ones on the superdiagonal, -a on the last row.
         let mut a_mat = Owned::<T, ORDER, ORDER>::zero();
         for i in 0..(ORDER.saturating_sub(1)) {
-            if let Some(elem) = a_mat.get_mut(i, i + 1) {
+            if let Some(elem) = a_mat.get_mut(i, i.saturating_add(1)) {
                 *elem = T::ONE;
             }
         }
         for i in 0..ORDER {
-            if let Some(elem) = a_mat.get_mut(ORDER - 1, i) {
-                *elem = T::ZERO - a_col.get(i, 0).copied().unwrap_or(T::ZERO);
+            if let Some(elem) = a_mat.get_mut(ORDER.saturating_sub(1), i) {
+                *elem = T::ZERO.saturating_sub(
+                    &a_col.get(i, 0).copied().unwrap_or(T::ZERO),
+                );
             }
         }
 
         let mut b_mat = Owned::<T, ORDER, 1>::zero();
-        if let Some(elem) = b_mat.get_mut(ORDER - 1, 0) {
+        if let Some(elem) = b_mat.get_mut(ORDER.saturating_sub(1), 0) {
             *elem = T::ONE;
         }
 
@@ -898,12 +917,14 @@ where
         sample_time: T,
         prewarp_frequency: Option<T>,
     ) -> ArrayTransferFunction<T, D, D> {
-        let two = T::ONE + T::ONE;
+        let two = T::ONE.saturating_add(&T::ONE);
         let k = match prewarp_frequency {
-            None => two / sample_time,
-            Some(wc) => wc / (wc * sample_time / two).tan(),
+            None => two.saturating_div(&sample_time),
+            Some(wc) => wc.saturating_div(
+                &wc.saturating_mul(&sample_time).saturating_div(&two).tan(),
+            ),
         };
-        let ts_eff = two / k;
+        let ts_eff = two.saturating_div(&k);
         let mut num_coeffs = [T::ZERO; D];
         let n_copy = core::cmp::min(N, D);
         for i in 0..n_copy {

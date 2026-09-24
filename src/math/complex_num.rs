@@ -7,8 +7,9 @@ use crate::math::{
     ArithmeticResult,
     num_traits::{AdditiveGroup, Conjugate, Float, One, Scalar, Zero},
     ops::{
-        Add, Div, Mul, Neg, Sub, TryAdd, TryDiv, TryMul, TrySub, WrappingAdd,
-        WrappingMul, WrappingSub,
+        Add, Div, Mul, Neg, SaturatingAdd, SaturatingDiv, SaturatingMul,
+        SaturatingNeg, SaturatingSub, Sub, TryAdd, TryDiv, TryMul, TrySub,
+        WrappingAdd, WrappingMul, WrappingSub,
     },
 };
 
@@ -75,9 +76,11 @@ impl<T: Float> Complex<T> {
 
     /// Creates a new complex number from polar coordinates (`r`, `theta`).
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn from_polar(r: T, theta: T) -> Self {
-        Self::new(r.clone() * theta.clone().cos(), r * theta.sin())
+    pub fn from_polar(r: &T, theta: &T) -> Self {
+        Self::new(
+            r.saturating_mul(&theta.clone().cos()),
+            r.saturating_mul(&theta.clone().sin()),
+        )
     }
 
     /// Computes the distance from the origin to self.
@@ -95,74 +98,119 @@ impl<T: Float> Complex<T> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Add<Output = T>> Add<Self> for Complex<T> {
+impl<T: SaturatingAdd> Add<Self> for Complex<T> {
     type Output = Self;
-    #[allow(clippy::arithmetic_side_effects)]
+    /// Component-wise sum with the component type's saturating semantics.
     fn add(self, rhs: Self) -> Self::Output {
         Self {
-            re: self.re + rhs.re,
-            im: self.im + rhs.im,
+            re: self.re.saturating_add(&rhs.re),
+            im: self.im.saturating_add(&rhs.im),
         }
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<
-    T: Mul<Output = T>
-        + Add<Output = T>
-        + Sub<Output = T>
-        + Div<Output = T>
-        + Clone,
-> Div for Complex<T>
-{
-    type Output = Self;
-
-    #[allow(clippy::arithmetic_side_effects)]
-    fn div(self, rhs: Self) -> Self::Output {
-        let denominator = (rhs.re.clone() * rhs.re.clone())
-            + (rhs.im.clone() * rhs.im.clone());
-        Self {
-            re: ((self.re.clone() * rhs.re.clone())
-                + (self.im.clone() * rhs.im.clone()))
-                / denominator.clone(),
-            im: ((self.im * rhs.re) - (self.re * rhs.im)) / denominator,
-        }
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-impl<T: Clone + Mul<Output = T> + Add<Output = T> + Sub<Output = T>> Mul
+impl<T: SaturatingAdd + SaturatingSub + SaturatingMul + SaturatingDiv> Div
     for Complex<T>
 {
     type Output = Self;
-    #[allow(clippy::arithmetic_side_effects)]
+
+    /// $(a + bi) / (c + di) = ((ac + bd) - (ad - bc)i) / (c^2 + d^2)$ with the
+    /// component type's saturating semantics.
+    fn div(self, rhs: Self) -> Self::Output {
+        let denominator = rhs
+            .re
+            .saturating_mul(&rhs.re)
+            .saturating_add(&rhs.im.saturating_mul(&rhs.im));
+        Self {
+            re: self
+                .re
+                .saturating_mul(&rhs.re)
+                .saturating_add(&self.im.saturating_mul(&rhs.im))
+                .saturating_div(&denominator),
+            im: self
+                .im
+                .saturating_mul(&rhs.re)
+                .saturating_sub(&self.re.saturating_mul(&rhs.im))
+                .saturating_div(&denominator),
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl<T: SaturatingAdd + SaturatingSub + SaturatingMul> Mul for Complex<T> {
+    type Output = Self;
+    /// $(a + bi)(c + di) = (ac - bd) + (ad + bc)i$ with the component type's
+    /// saturating semantics.
     fn mul(self, rhs: Self) -> Self::Output {
         Self {
-            re: (self.re.clone() * rhs.re.clone())
-                - (self.im.clone() * rhs.im.clone()),
-            im: (self.re.clone() * rhs.im.clone()) + (self.im * rhs.re),
+            re: self
+                .re
+                .saturating_mul(&rhs.re)
+                .saturating_sub(&self.im.saturating_mul(&rhs.im)),
+            im: self
+                .re
+                .saturating_mul(&rhs.im)
+                .saturating_add(&self.im.saturating_mul(&rhs.re)),
         }
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Sub<Output = T>> Sub for Complex<T> {
+impl<T: SaturatingSub> Sub for Complex<T> {
     type Output = Self;
-    #[allow(clippy::arithmetic_side_effects)]
+    /// Component-wise difference with the component type's saturating
+    /// semantics.
     fn sub(self, rhs: Self) -> Self::Output {
         Self {
-            re: self.re - rhs.re,
-            im: self.im - rhs.im,
+            re: self.re.saturating_sub(&rhs.re),
+            im: self.im.saturating_sub(&rhs.im),
         }
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: WrappingAdd> WrappingAdd for Complex<T> {
+impl<T: SaturatingAdd + Clone> SaturatingAdd for Complex<T> {
+    fn saturating_add(&self, v: &Self) -> Self {
+        self.clone().add(v.clone())
+    }
+}
+
+impl<T: SaturatingSub + Clone> SaturatingSub for Complex<T> {
+    fn saturating_sub(&self, v: &Self) -> Self {
+        self.clone().sub(v.clone())
+    }
+}
+
+impl<T: SaturatingAdd + SaturatingSub + SaturatingMul + Clone> SaturatingMul
+    for Complex<T>
+{
+    fn saturating_mul(&self, v: &Self) -> Self {
+        self.clone().mul(v.clone())
+    }
+}
+
+impl<T: SaturatingAdd + SaturatingSub + SaturatingMul + SaturatingDiv + Clone>
+    SaturatingDiv for Complex<T>
+{
+    fn saturating_div(&self, v: &Self) -> Self {
+        self.clone().div(v.clone())
+    }
+}
+
+impl<T: SaturatingNeg + Clone> SaturatingNeg for Complex<T> {
+    fn saturating_neg(&self) -> Self {
+        Self::new(self.re.saturating_neg(), self.im.saturating_neg())
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl<T: WrappingAdd + SaturatingAdd> WrappingAdd for Complex<T> {
     fn wrapping_add(&self, v: &Self) -> Self {
         Self {
             re: self.re.wrapping_add(&v.re),
@@ -173,8 +221,15 @@ impl<T: WrappingAdd> WrappingAdd for Complex<T> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: WrappingAdd + WrappingSub + WrappingMul + Copy> WrappingMul
-    for Complex<T>
+impl<
+    T: WrappingAdd
+        + WrappingSub
+        + WrappingMul
+        + SaturatingAdd
+        + SaturatingSub
+        + SaturatingMul
+        + Copy,
+> WrappingMul for Complex<T>
 {
     fn wrapping_mul(&self, v: &Self) -> Self {
         let re = self
@@ -191,7 +246,7 @@ impl<T: WrappingAdd + WrappingSub + WrappingMul + Copy> WrappingMul
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: WrappingSub> WrappingSub for Complex<T> {
+impl<T: WrappingSub + SaturatingSub> WrappingSub for Complex<T> {
     fn wrapping_sub(&self, v: &Self) -> Self {
         Self {
             re: self.re.wrapping_sub(&v.re),
@@ -202,7 +257,7 @@ impl<T: WrappingSub> WrappingSub for Complex<T> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Add<T, Output = T> + TryAdd<T>> TryAdd for Complex<T> {
+impl<T: SaturatingAdd + TryAdd<T, Output = T>> TryAdd for Complex<T> {
     fn try_add(&self, v: &Self) -> ArithmeticResult<Self::Output> {
         Ok(Self {
             re: self.re.try_add(&v.re)?,
@@ -216,14 +271,14 @@ impl<T: Add<T, Output = T> + TryAdd<T>> TryAdd for Complex<T> {
 impl<T> TryDiv for Complex<T>
 where
     T: Clone
-        + Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + Div<T, Output = T>
-        + TryAdd<T>
-        + TrySub<T>
-        + TryMul<T>
-        + TryDiv<T>,
+        + SaturatingAdd
+        + SaturatingSub
+        + SaturatingMul
+        + SaturatingDiv
+        + TryAdd<T, Output = T>
+        + TrySub<T, Output = T>
+        + TryMul<T, Output = T>
+        + TryDiv<T, Output = T>,
 {
     fn try_div(&self, v: &Self) -> ArithmeticResult<Self::Output> {
         let denominator =
@@ -247,12 +302,12 @@ where
 
 impl<
     T: Clone
-        + Add<T, Output = T>
-        + Sub<T, Output = T>
-        + Mul<T, Output = T>
-        + TryAdd<T>
-        + TrySub<T>
-        + TryMul<T>,
+        + SaturatingAdd
+        + SaturatingSub
+        + SaturatingMul
+        + TryAdd<T, Output = T>
+        + TrySub<T, Output = T>
+        + TryMul<T, Output = T>,
 > TryMul for Complex<T>
 {
     fn try_mul(&self, v: &Self) -> ArithmeticResult<Self::Output> {
@@ -265,7 +320,7 @@ impl<
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Sub<T, Output = T> + TrySub<T, Output = T>> TrySub for Complex<T> {
+impl<T: SaturatingSub + TrySub<T, Output = T>> TrySub for Complex<T> {
     fn try_sub(&self, v: &Self) -> ArithmeticResult<Self::Output> {
         Ok(Self {
             re: self.re.try_sub(&v.re)?,
@@ -278,11 +333,11 @@ impl<T: Sub<T, Output = T> + TrySub<T, Output = T>> TrySub for Complex<T> {
 // Numerical traits for complex numbers
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Neg<Output = T>> Conjugate for Complex<T> {
-    #[allow(clippy::arithmetic_side_effects)]
+impl<T: SaturatingNeg> Conjugate for Complex<T> {
     #[inline(always)]
     fn conj(self) -> Self {
-        Self::new(self.re, -self.im)
+        let im = self.im.saturating_neg();
+        Self::new(self.re, im)
     }
 }
 
@@ -290,14 +345,16 @@ impl<T: Neg<Output = T>> Conjugate for Complex<T> {
 
 impl<T> Scalar for Complex<T>
 where
-    T: Scalar<Real = T> + Neg<Output = T> + PartialOrd,
+    T: Scalar<Real = T> + SaturatingNeg + PartialOrd,
 {
     type Real = T;
 
-    #[allow(clippy::arithmetic_side_effects)]
     #[inline(always)]
     fn abs2(&self) -> Self::Real {
-        self.re.clone() * self.re.clone() + self.im.clone() * self.im.clone()
+        self.re
+            .clone()
+            .saturating_mul(&self.re.clone())
+            .saturating_add(&self.im.saturating_mul(&self.im.clone()))
     }
 
     #[inline(always)]
@@ -318,7 +375,9 @@ where
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: One + Zero + Sub<Output = T>> One for Complex<T> {
+impl<T: One + Zero + SaturatingAdd + SaturatingSub + SaturatingMul> One
+    for Complex<T>
+{
     const ONE: Self = Self {
         re: T::ONE,
         im: T::ZERO,
@@ -327,7 +386,7 @@ impl<T: One + Zero + Sub<Output = T>> One for Complex<T> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Zero> Zero for Complex<T> {
+impl<T: Zero + SaturatingAdd> Zero for Complex<T> {
     const ZERO: Self = Self {
         re: T::ZERO,
         im: T::ZERO,
@@ -336,15 +395,17 @@ impl<T: Zero> Zero for Complex<T> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: AdditiveGroup + Neg<Output = T>> AdditiveGroup for Complex<T> {}
+impl<T: AdditiveGroup + SaturatingAdd + SaturatingSub + SaturatingNeg>
+    AdditiveGroup for Complex<T>
+{
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: Neg<Output = T>> Neg for Complex<T> {
+impl<T: SaturatingNeg> Neg for Complex<T> {
     type Output = Self;
-    #[allow(clippy::arithmetic_side_effects)]
     fn neg(self) -> Self {
-        Self::new(-self.re, -self.im)
+        Self::new(self.re.saturating_neg(), self.im.saturating_neg())
     }
 }
 
@@ -361,40 +422,45 @@ impl<T: Float> Complex<T> {
 
     /// Computes the inverse cosine (arccos) of the complex number.
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn acos(self) -> Self {
-        let two = T::ONE + T::ONE;
-        Self::from_real(T::PI / two) - self.asin()
+        let two = T::ONE.saturating_add(&T::ONE);
+        Self::from_real(T::PI.saturating_div(&two)).saturating_sub(&self.asin())
     }
 
     /// Computes the inverse sine (arcsin) of the complex number.
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn asin(self) -> Self {
         let i = Self::from_imag(T::ONE);
         let one = Self::from_real(T::ONE);
-        let iz = i * self.clone();
-        let root = (one - (self.clone() * self)).sqrt();
-        Self::from_imag(T::ZERO - T::ONE) * (iz + root).ln()
+        let iz = i.saturating_mul(&self);
+        let root = one.saturating_sub(&self.saturating_mul(&self)).sqrt();
+        Self::from_imag(T::ZERO.saturating_sub(&T::ONE))
+            .saturating_mul(&iz.saturating_add(&root).ln())
     }
 
     /// Computes the inverse tangent (arctan) of the complex number.
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn atan(self) -> Self {
-        let two = T::ONE + T::ONE;
+        let two = T::ONE.saturating_add(&T::ONE);
         let i = Self::from_imag(T::ONE);
-        let half_i = Self::from_imag(T::ONE / two);
-        half_i * ((i.clone() + self.clone()) / (i - self)).ln()
+        let half_i = Self::from_imag(T::ONE.saturating_div(&two));
+        half_i.saturating_mul(
+            &i.clone()
+                .saturating_add(&self.clone())
+                .saturating_div(&i.saturating_sub(&self))
+                .ln(),
+        )
     }
 
     /// Computes the cosine of the complex number.
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn cos(self) -> Self {
         let (x, y) = (self.re, self.im);
         let (sinh_y, cosh_y) = (y.clone().sinh(), y.cosh());
-        Self::new(x.clone().cos() * cosh_y, T::ZERO - (x.sin() * sinh_y))
+        Self::new(
+            x.clone().cos().saturating_mul(&cosh_y),
+            T::ZERO.saturating_sub(&x.sin().saturating_mul(&sinh_y)),
+        )
     }
 
     /// Returns the machine epsilon for complex numbers of this precision.
@@ -405,12 +471,11 @@ impl<T: Float> Complex<T> {
 
     /// Computes $e^z$ for the complex number.
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn exp(self) -> Self {
         let exp_re = self.re.exp();
         Self::new(
-            exp_re.clone() * self.im.clone().cos(),
-            exp_re * self.im.sin(),
+            exp_re.saturating_mul(&self.im.clone().cos()),
+            exp_re.saturating_mul(&self.im.sin()),
         )
     }
 
@@ -422,16 +487,14 @@ impl<T: Float> Complex<T> {
 
     /// Computes the base-10 logarithm $\log_{10}(z)$ of the complex number.
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn log10(self) -> Self {
         let ln10 = T::from_usize(10).ln();
-        self.ln() / Self::from_real(ln10)
+        self.ln().saturating_div(&Self::from_real(ln10))
     }
 
     /// Computes $z^n$ for complex $z$ and complex $n$.
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
-    pub fn pow(self, n: Self) -> Self {
+    pub fn pow(self, n: &Self) -> Self {
         if self.is_zero() {
             return if n.is_zero() {
                 Self::one()
@@ -439,47 +502,61 @@ impl<T: Float> Complex<T> {
                 Self::zero()
             };
         }
-        (n * self.ln()).exp()
+        n.saturating_mul(&self.ln()).exp()
     }
 
     /// Computes the sine of the complex number.
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn sin(self) -> Self {
         let (x, y) = (self.re, self.im);
         let sinh_y = y.clone().sinh();
         let cosh_y = y.cosh();
-        Self::new(x.clone().sin() * cosh_y, x.cos() * sinh_y)
+        Self::new(
+            x.clone().sin().saturating_mul(&cosh_y),
+            x.cos().saturating_mul(&sinh_y),
+        )
     }
 
     /// Computes the principal square root of the complex number.
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn sqrt(self) -> Self {
         if self.is_zero() {
             return Self::zero();
         }
-        let two = T::ONE + T::ONE;
+        let two = T::ONE.saturating_add(&T::ONE);
         let r = self.clone().magnitude();
-        let re = ((r + self.re.clone().abs()) / two.clone()).sqrt();
-        let im = self.im.clone().abs() / (two * re.clone());
+        let re = r
+            .saturating_add(&self.re.clone().abs())
+            .saturating_div(&two)
+            .sqrt();
+        let im = self
+            .im
+            .clone()
+            .abs()
+            .saturating_div(&two.saturating_mul(&re));
 
         if self.re >= T::ZERO {
-            Self::new(re, if self.im >= T::ZERO { im } else { T::ZERO - im })
+            Self::new(
+                re,
+                if self.im >= T::ZERO {
+                    im
+                } else {
+                    T::ZERO.saturating_sub(&im)
+                },
+            )
         } else {
             let sign = if self.im >= T::ZERO {
                 T::ONE
             } else {
-                T::ZERO - T::ONE
+                T::ZERO.saturating_sub(&T::ONE)
             };
-            Self::new(im, sign * re)
+            Self::new(im, sign.saturating_mul(&re))
         }
     }
 
     /// Computes the tangent of the complex number.
     #[must_use]
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn tan(self) -> Self {
-        self.clone().sin() / self.cos()
+        self.clone().sin().saturating_div(&self.cos())
     }
 }

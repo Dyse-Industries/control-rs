@@ -408,17 +408,17 @@ mod test {
 
     impl Write for TestWriter<'_> {
         #[allow(clippy::indexing_slicing)]
-        #[allow(clippy::arithmetic_side_effects)]
         fn write_str(&mut self, s: &str) -> fmt::Result {
             let bytes = s.as_bytes();
-            let remaining = self.buf.len() - self.len;
+            let remaining = self.buf.len().saturating_sub(self.len);
 
             if bytes.len() > remaining {
                 return Err(fmt::Error); // Buffer overflow
             }
 
-            self.buf[self.len..self.len + bytes.len()].copy_from_slice(bytes);
-            self.len += bytes.len();
+            self.buf[self.len..self.len.saturating_add(bytes.len())]
+                .copy_from_slice(bytes);
+            self.len = self.len.saturating_add(bytes.len());
             Ok(())
         }
     }

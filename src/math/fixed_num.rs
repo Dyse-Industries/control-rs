@@ -95,7 +95,6 @@
 
 #![allow(clippy::pedantic)]
 #![allow(clippy::arbitrary_source_item_ordering)]
-#![allow(clippy::arithmetic_side_effects)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_precision_loss)]
@@ -117,8 +116,9 @@ use crate::math::{
         U32, U61, U62, U63, U64,
     },
     ops::{
-        Add, AddAssign, Mul, MulAssign, Neg, SaturatingAdd, SaturatingMul,
-        SaturatingSub, Sub, SubAssign, TryAdd, TryMul, TryNeg, TrySub,
+        Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, SaturatingAdd,
+        SaturatingDiv, SaturatingMul, SaturatingNeg, SaturatingSub, Sub,
+        SubAssign, TryAdd, TryDiv, TryMul, TryNeg, TrySub,
     },
 };
 
@@ -148,7 +148,6 @@ pub trait OneRepresentable: private::SealedMarker {}
 pub trait TwoRepresentable: OneRepresentable {}
 
 #[inline]
-#[allow(clippy::arithmetic_side_effects)]
 fn scale_to_f64_factor(shift: usize) -> f64 {
     if shift <= 62 {
         (1u64 << (shift as u32)) as f64
@@ -215,6 +214,15 @@ pub trait FixedRepr:
     /// Checked negation.
     fn checked_neg_repr(self) -> Option<Self>;
 
+    /// Checked division in $Q$ scale: `round((self << shift) / rhs)`, ties to
+    /// even. Returns `None` when `rhs` is zero or the quotient is out of range.
+    fn checked_div_repr(self, rhs: Self, shift: usize) -> Option<Self>;
+
+    /// Saturating division in $Q$ scale. Division by zero returns `MAX_RAW`
+    /// for a positive numerator, `MIN_RAW` for a negative one and zero for
+    /// `0 / 0`. An out-of-range quotient clamps to the bound of its sign.
+    fn saturating_div_repr(self, rhs: Self, shift: usize) -> Self;
+
     /// Saturating addition.
     fn saturating_add_repr(self, rhs: Self) -> Self;
 
@@ -246,6 +254,28 @@ pub trait FixedRepr:
     fn to_f64(self, shift: usize) -> f64;
 }
 
+/// Rounds `num / den` to the nearest integer with ties to even, the rounding
+/// `rescale_product_down` applies to products. Returns `None` when `den == 0`.
+#[inline]
+fn div_round_ties_even(num: u128, den: u128) -> Option<u128> {
+    let quotient = num.checked_div(den)?;
+    let twice_rem = num.checked_rem(den)?.saturating_mul(2);
+    let round_up = twice_rem > den || (twice_rem == den && quotient & 1 == 1);
+    Some(if round_up {
+        quotient.saturating_add(1)
+    } else {
+        quotient
+    })
+}
+
+/// Magnitude of the $Q$-scale quotient `(num << shift) / den`, or `None` when
+/// `den == 0`. `num << shift` cannot overflow: `num < 2^64` and `shift <= 64`.
+#[inline]
+fn fixed_div_magnitude(num: u128, den: u128, shift: usize) -> Option<u128> {
+    let shifted = num.checked_shl(u32::try_from(shift).ok()?)?;
+    div_round_ties_even(shifted, den)
+}
+
 macro_rules! impl_signed_repr {
     ($t:ident, $w:ident, $bits:expr, $bits_dim:ident, $one_max:ident, $two_max:ident) => {
         impl<const SHIFT: usize> private::FixedShiftVal<SHIFT> for $t {
@@ -275,7 +305,6 @@ macro_rules! impl_signed_repr {
             }
 
             #[inline(always)]
-            #[allow(clippy::arithmetic_side_effects)]
             fn wide_mul(a: Self::Wide, b: Self::Wide) -> Self::Wide {
                 a.wrapping_mul(b)
             }
@@ -292,7 +321,6 @@ macro_rules! impl_signed_repr {
             }
 
             #[inline]
-            #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_possible_wrap)]
             fn rescale_product_down(prod: Self::Wide, shift: usize) -> Self {
@@ -324,7 +352,7 @@ macro_rules! impl_signed_repr {
                     if rounded_abs >= min_abs {
                         $t::MIN
                     } else {
-                        -(rounded_abs as $t)
+                        (rounded_abs as $t).saturating_neg()
                     }
                 } else {
                     if rounded_abs >= max_abs {
@@ -336,14 +364,13 @@ macro_rules! impl_signed_repr {
             }
 
             #[inline]
-            #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_possible_wrap)]
             fn rescale_value(self, q: usize, r: usize) -> Self {
                 if r == q {
                     self
                 } else if r > q {
-                    let diff = (r - q) as u32;
+                    let diff = r.saturating_sub(q) as u32;
                     if diff >= $bits {
                         if self > 0 {
                             $t::MAX
@@ -364,14 +391,14 @@ macro_rules! impl_signed_repr {
                         }
                     }
                 } else {
-                    let diff = (q - r) as u32;
+                    let diff = q.saturating_sub(r) as u32;
                     if diff >= $bits {
                         0
                     } else {
                         let is_neg = self < 0;
                         let abs_val = self.unsigned_abs() as u128;
-                        let mask = (1u128 << diff) - 1;
-                        let half = 1u128 << (diff - 1);
+                        let mask = (1u128 << diff).saturating_sub(1);
+                        let half = 1u128 << diff.saturating_sub(1);
                         let rem = abs_val & mask;
                         let truncated = abs_val >> diff;
                         let rounded_abs = if rem > half
@@ -386,7 +413,7 @@ macro_rules! impl_signed_repr {
                             if rounded_abs >= min_abs {
                                 $t::MIN
                             } else {
-                                -(rounded_abs as $t)
+                                (rounded_abs as $t).saturating_neg()
                             }
                         } else {
                             if rounded_abs >= $t::MAX as u128 {
@@ -410,7 +437,6 @@ macro_rules! impl_signed_repr {
             }
 
             #[inline]
-            #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_possible_wrap)]
             fn checked_mul_repr(self, rhs: Self, shift: usize) -> Option<Self> {
@@ -453,7 +479,7 @@ macro_rules! impl_signed_repr {
                         } else if rounded_abs == min_abs {
                             Some($t::MIN)
                         } else {
-                            Some(-(rounded_abs as $t))
+                            Some((rounded_abs as $t).saturating_neg())
                         }
                     } else {
                         if rounded_abs > max_abs {
@@ -468,6 +494,35 @@ macro_rules! impl_signed_repr {
             #[inline(always)]
             fn checked_neg_repr(self) -> Option<Self> {
                 self.checked_neg()
+            }
+
+            #[inline]
+            fn checked_div_repr(self, rhs: Self, shift: usize) -> Option<Self> {
+                let magnitude = fixed_div_magnitude(
+                    u128::from(self.unsigned_abs()),
+                    u128::from(rhs.unsigned_abs()),
+                    shift,
+                )?;
+                if (self < 0) == (rhs < 0) {
+                    $t::try_from(magnitude).ok()
+                } else if magnitude == u128::from($t::MIN.unsigned_abs()) {
+                    Some($t::MIN)
+                } else {
+                    $t::try_from(magnitude).ok().map($t::saturating_neg)
+                }
+            }
+
+            #[inline]
+            fn saturating_div_repr(self, rhs: Self, shift: usize) -> Self {
+                self.checked_div_repr(rhs, shift).unwrap_or(
+                    if rhs == 0 && self == 0 {
+                        0
+                    } else if (self < 0) == (rhs < 0) {
+                        $t::MAX
+                    } else {
+                        $t::MIN
+                    },
+                )
             }
 
             #[inline(always)]
@@ -496,7 +551,6 @@ macro_rules! impl_signed_repr {
             const ONE_RAW: Self = 1;
 
             #[inline]
-            #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
             fn from_f64(val: f64, shift: usize) -> Self {
                 let factor = scale_to_f64_factor(shift);
@@ -513,7 +567,6 @@ macro_rules! impl_signed_repr {
             }
 
             #[inline]
-            #[allow(clippy::arithmetic_side_effects)]
             fn to_f64(self, shift: usize) -> f64 {
                 let factor = scale_to_f64_factor(shift);
                 (self as f64) / factor
@@ -556,7 +609,6 @@ macro_rules! impl_unsigned_repr {
             }
 
             #[inline(always)]
-            #[allow(clippy::arithmetic_side_effects)]
             fn wide_mul(a: Self::Wide, b: Self::Wide) -> Self::Wide {
                 a.wrapping_mul(b)
             }
@@ -571,7 +623,6 @@ macro_rules! impl_unsigned_repr {
             }
 
             #[inline]
-            #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
             fn rescale_product_down(prod: Self::Wide, shift: usize) -> Self {
                 if shift == 0 {
@@ -600,13 +651,12 @@ macro_rules! impl_unsigned_repr {
             }
 
             #[inline]
-            #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
             fn rescale_value(self, q: usize, r: usize) -> Self {
                 if r == q {
                     self
                 } else if r > q {
-                    let diff = (r - q) as u32;
+                    let diff = r.saturating_sub(q) as u32;
                     if diff >= $bits {
                         if self > 0 { $t::MAX } else { 0 }
                     } else {
@@ -618,12 +668,12 @@ macro_rules! impl_unsigned_repr {
                         }
                     }
                 } else {
-                    let diff = (q - r) as u32;
+                    let diff = q.saturating_sub(r) as u32;
                     if diff >= $bits {
                         0
                     } else {
-                        let mask = ((1 as $t) << diff) - 1;
-                        let half = (1 as $t) << (diff - 1);
+                        let mask = ((1 as $t) << diff).saturating_sub(1);
+                        let half = (1 as $t) << diff.saturating_sub(1);
                         let rem = self & mask;
                         let truncated = self >> diff;
                         if rem > half || (rem == half && (truncated & 1) != 0) {
@@ -646,7 +696,6 @@ macro_rules! impl_unsigned_repr {
             }
 
             #[inline]
-            #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
             fn checked_mul_repr(self, rhs: Self, shift: usize) -> Option<Self> {
                 let w_a = self as $w;
@@ -688,6 +737,25 @@ macro_rules! impl_unsigned_repr {
                 if self == 0 { Some(0) } else { None }
             }
 
+            #[inline]
+            fn checked_div_repr(self, rhs: Self, shift: usize) -> Option<Self> {
+                let magnitude = fixed_div_magnitude(
+                    u128::from(self),
+                    u128::from(rhs),
+                    shift,
+                )?;
+                $t::try_from(magnitude).ok()
+            }
+
+            #[inline]
+            fn saturating_div_repr(self, rhs: Self, shift: usize) -> Self {
+                self.checked_div_repr(rhs, shift).unwrap_or(if self == 0 {
+                    0
+                } else {
+                    $t::MAX
+                })
+            }
+
             #[inline(always)]
             fn saturating_add_repr(self, rhs: Self) -> Self {
                 self.saturating_add(rhs)
@@ -714,7 +782,6 @@ macro_rules! impl_unsigned_repr {
             const ONE_RAW: Self = 1;
 
             #[inline]
-            #[allow(clippy::arithmetic_side_effects)]
             #[allow(clippy::cast_possible_truncation)]
             fn from_f64(val: f64, shift: usize) -> Self {
                 if val <= 0.0 {
@@ -730,7 +797,6 @@ macro_rules! impl_unsigned_repr {
             }
 
             #[inline]
-            #[allow(clippy::arithmetic_side_effects)]
             fn to_f64(self, shift: usize) -> f64 {
                 let factor = scale_to_f64_factor(shift);
                 (self as f64) / factor
@@ -942,7 +1008,7 @@ where
 {
     #[inline(always)]
     fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs;
+        *self = self.saturating_add(&rhs);
     }
 }
 
@@ -965,7 +1031,7 @@ where
 {
     #[inline(always)]
     fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
+        *self = self.saturating_sub(&rhs);
     }
 }
 
@@ -989,11 +1055,7 @@ where
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
-        let w_a = self.raw.widen();
-        let w_b = rhs.raw.widen();
-        let w_prod = Repr::wide_mul(w_a, w_b);
-        let raw = Repr::rescale_product_down(w_prod, SHIFT);
-        Self { raw }
+        SaturatingMul::saturating_mul(&self, &rhs)
     }
 }
 
@@ -1003,7 +1065,30 @@ where
 {
     #[inline(always)]
     fn mul_assign(&mut self, rhs: Self) {
-        *self = *self * rhs;
+        *self = self.saturating_mul(&rhs);
+    }
+}
+
+impl<Repr: FixedRepr, const SHIFT: usize> Div for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
+    type Output = Self;
+
+    /// Saturating $Q$-scale quotient; see [`SaturatingDiv`] for `Fixed`.
+    #[inline(always)]
+    fn div(self, rhs: Self) -> Self {
+        SaturatingDiv::saturating_div(&self, &rhs)
+    }
+}
+
+impl<Repr: FixedRepr, const SHIFT: usize> DivAssign for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
+    #[inline(always)]
+    fn div_assign(&mut self, rhs: Self) {
+        *self = self.saturating_div(&rhs);
     }
 }
 
@@ -1043,6 +1128,21 @@ where
     }
 }
 
+impl<Repr: FixedRepr, const SHIFT: usize> TryDiv for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
+    #[inline]
+    fn try_div(&self, v: &Self) -> ArithmeticResult<Self> {
+        if v.raw.is_zero_repr() {
+            return Err(ArithmeticError::DivisionByZero);
+        }
+        Repr::checked_div_repr(self.raw, v.raw, SHIFT)
+            .map(|raw| Self { raw })
+            .ok_or(ArithmeticError::Overflow)
+    }
+}
+
 impl<Repr: FixedRepr, const SHIFT: usize> TryNeg for Fixed<Repr, SHIFT>
 where
     Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
@@ -1061,7 +1161,9 @@ where
 {
     #[inline(always)]
     fn saturating_add(&self, v: &Self) -> Self {
-        *self + *v
+        Self {
+            raw: Repr::saturating_add_repr(self.raw, v.raw),
+        }
     }
 }
 
@@ -1071,7 +1173,9 @@ where
 {
     #[inline(always)]
     fn saturating_sub(&self, v: &Self) -> Self {
-        *self - *v
+        Self {
+            raw: Repr::saturating_sub_repr(self.raw, v.raw),
+        }
     }
 }
 
@@ -1081,7 +1185,38 @@ where
 {
     #[inline(always)]
     fn saturating_mul(&self, v: &Self) -> Self {
-        *self * *v
+        let w_prod = Repr::wide_mul(self.raw.widen(), v.raw.widen());
+        Self {
+            raw: Repr::rescale_product_down(w_prod, SHIFT),
+        }
+    }
+}
+
+/// $Q$-scale division: `raw = round((a.raw << SHIFT) / b.raw)`, ties to even,
+/// formed in `u128` so the shifted numerator is exact. `x / 0` is `MAX` for
+/// `x > 0`, `MIN` for `x < 0` and `0` for `x = 0`; an out-of-range quotient
+/// clamps to the bound of its sign.
+impl<Repr: FixedRepr, const SHIFT: usize> SaturatingDiv for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
+    #[inline(always)]
+    fn saturating_div(&self, v: &Self) -> Self {
+        Self {
+            raw: Repr::saturating_div_repr(self.raw, v.raw, SHIFT),
+        }
+    }
+}
+
+impl<Repr: FixedRepr, const SHIFT: usize> SaturatingNeg for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
+    #[inline(always)]
+    fn saturating_neg(&self) -> Self {
+        Self {
+            raw: Repr::saturating_neg_repr(self.raw),
+        }
     }
 }
 
@@ -1117,7 +1252,7 @@ where
 
     #[inline(always)]
     fn abs2(&self) -> Self::Real {
-        *self * *self
+        self.saturating_mul(self)
     }
 
     #[inline(always)]

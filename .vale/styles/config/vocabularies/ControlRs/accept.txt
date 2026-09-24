@@ -335,6 +335,8 @@ Zarantonello's
 Zaytseva
 Zhang
 Zimmermann
+[Pp]assthrough
+[Ss]harding
 [Ss]uppressions
 _a
 _b

@@ -32,8 +32,8 @@ Software, 2026a).
 > **Backend Type Support & Compile-Time Enforcement**: Subprogram traits must
 > only be implemented by a backend for the scalar types and layouts that the
 > backend natively supports. `DefaultBlas` implements ring kernels for
-> `T: Scalar` (integers, floats, `Complex<T>` with `T: Neg`, later
-> `Quantized`) and field kernels for `T: Scalar + Div` with
+> `T: Scalar` (integers, floats, `Complex<T>` with `T: SaturatingNeg`, later
+> `Quantized`) and field kernels for `T: Scalar + SaturatingDiv` with
 > `T::Real: Radical` / `Trig` as required. `T: Float` is `f32` / `f64` only
 > and is not a stand-in for `Complex<T>` (`num-traits-design.md` FR-5).
 > The example backends (`CmsisDspBlas`, `NmsisDspBlas`) implement traits only
@@ -603,9 +603,14 @@ traits parameterized over scalar types $T$ and storage generic arguments
 `Scalar` from `crate::math::num_traits`; `Conjugate` and `type Real` are
 `Scalar` supertrait / associated type (`num-traits-design.md` FR-3, FR-4).
 Ring kernels require `T: Scalar`. Field kernels (`Nrm2`, `Trsv`, `Potrf`,
-`Geqrf`, `Syev`, `Heev`) require `T: Scalar + Div` with
+`Geqrf`, `Syev`, `Heev`) require `T: Scalar + SaturatingDiv` with
 `T::Real: Radical` / `Trig` as the operation needs. `T: Float` is not a
-bound that accepts `Complex<T>` (`num-traits-design.md` FR-5).
+bound that accepts `Complex<T>` (`num-traits-design.md` FR-5). Kernel
+arithmetic on `T` and `T::Real` calls the saturating methods
+(`num-traits-design.md` FR-6), so integer and fixed-point kernels clamp at
+the representable bounds instead of panicking or wrapping, and float kernels
+are bit-identical to the operator form. Saturating integer reductions are
+order-dependent at the bounds; each kernel's loop order is fixed.
 
 Trait dispatch is organized as static associated function calls on backend
 marker types:
@@ -632,9 +637,9 @@ dispatch overhead (sarah-quinones, 2026b).
 | Category        | Traits                                                                               | Key Mathematical Operations                                                                                                                                                       |                        Bounds                        | Standard Citations                                                     |
 |:----------------|:-------------------------------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------------------------------------------:|:-----------------------------------------------------------------------|
 | **BLAS 1**      | `Axpy`, `Scal`, `RealScal`, `Dotu`, `Dotc`, `Swap`, `Asum`, `Iamax`<br>`Nrm2`, `Rot` | $y \leftarrow \alpha x + y$, $x \leftarrow \alpha_{\mathbb{R}} x$, $x^T y$, $x^H y$, $\arg\max$<br>$\|x\|_2 = \sqrt{\sum \|x_i\|^2}$, Givens rotation                             | `T: Scalar`; `Nrm2`/`Rot`: `T::Real: Radical`/`Trig` | (Lawson et al., 1979; Netlib, 2026)                                    |
-| **BLAS 2**      | `Gemv`, `Geru`, `Gerc`, `Symv`, `Hemv`, `Syr`/`Syr2`, `Her`/`Her2`<br>`Trmv`, `Trsv` | $y \leftarrow \alpha \text{op}(A) x + \beta y$, rank updates, Hermitian updates<br>Triangular matrix-vector and solve ($A_{\text{tri}}^{-1} x$)                                   |        `T: Scalar`; `Trsv`: `T: Scalar + Div`        | (Dongarra et al., 1988; Netlib, 2026)                                  |
-| **Packed BLAS** | `Spmv`, `Hpmv`, `Spr`/`Spr2`, `Hpr`/`Hpr2`<br>`Tpmv`, `Tpsv`                         | Packed symmetric / Hermitian matvec and rank updates<br>Packed triangular matvec and solve                                                                                        |        `T: Scalar`; `Tpsv`: `T: Scalar + Div`        | (Dongarra et al., 1988; Anderson et al., 1999; Netlib, 2026)           |
-| **BLAS 3**      | `Gemm`, `Symm`, `Hemm`, `Syrk`/`Syr2k`, `Herk`/`Her2k`<br>`Trmm`, `Trsm`             | Matrix multiply $C \leftarrow \alpha \text{op}(A)\text{op}(B) + \beta C$, Hermitian updates<br>Triangular matrix multiply and solve ($B \leftarrow \alpha A_{\text{tri}}^{-1} B$) |        `T: Scalar`; `Trsm`: `T: Scalar + Div`        | (Dongarra et al., 1990; Netlib, 2026)                                  |
+| **BLAS 2**      | `Gemv`, `Geru`, `Gerc`, `Symv`, `Hemv`, `Syr`/`Syr2`, `Her`/`Her2`<br>`Trmv`, `Trsv` | $y \leftarrow \alpha \text{op}(A) x + \beta y$, rank updates, Hermitian updates<br>Triangular matrix-vector and solve ($A_{\text{tri}}^{-1} x$)                                   |        `T: Scalar`; `Trsv`: `T: Scalar + SaturatingDiv`        | (Dongarra et al., 1988; Netlib, 2026)                                  |
+| **Packed BLAS** | `Spmv`, `Hpmv`, `Spr`/`Spr2`, `Hpr`/`Hpr2`<br>`Tpmv`, `Tpsv`                         | Packed symmetric / Hermitian matvec and rank updates<br>Packed triangular matvec and solve                                                                                        |        `T: Scalar`; `Tpsv`: `T: Scalar + SaturatingDiv`        | (Dongarra et al., 1988; Anderson et al., 1999; Netlib, 2026)           |
+| **BLAS 3**      | `Gemm`, `Symm`, `Hemm`, `Syrk`/`Syr2k`, `Herk`/`Her2k`<br>`Trmm`, `Trsm`             | Matrix multiply $C \leftarrow \alpha \text{op}(A)\text{op}(B) + \beta C$, Hermitian updates<br>Triangular matrix multiply and solve ($B \leftarrow \alpha A_{\text{tri}}^{-1} B$) |        `T: Scalar`; `Trsm`: `T: Scalar + SaturatingDiv`        | (Dongarra et al., 1990; Netlib, 2026)                                  |
 | **SpBLAS**      | `Csrmv`, `Cscmv`, `Csrmm`, `SpDotu`, `SpDotc`, `SpAxpy`                              | Sparse matrix-vector ($A_{\text{csr}} x$), sparse matrix-matrix, sparse dot                                                                                                       |                     `T: Scalar`                      | (Lawson et al., 1979; sparsemat, 2026a, 2026b; SciPy Developers, 2026) |
 
 #### 4.3 LAPACK Direct Solvers & Factorizations
@@ -1144,7 +1149,7 @@ Disassembly under `opt-level=3` (LLVM 22.1.6) on `x86_64-apple-darwin`,
 
 | Phase                             | Description                                                                                                                                                                                                                                                                                                                     |    Effort     |
 |:----------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------:|
-| **Phase 1: Dense BLAS 1/2/3**     | Implement Level 1 (`Axpy`, `Dotu`, `Dotc`, `Scal`, `RealScal`), Level 2 (`Gemv`, `Geru`, `Gerc`, `Symv`, `Hemv`, `Trsv`), Level 3 (`Gemm`, `Symm`, `Hemm`, `Syrk`, `Herk`, `Trsm`) on `DefaultBlas` over `T: Scalar` (ring) and `T: Scalar + Div` with `T::Real: Radical`/`Trig` (field). Dense operands are `DenseStorage<T>`. |   Complete    |
+| **Phase 1: Dense BLAS 1/2/3**     | Implement Level 1 (`Axpy`, `Dotu`, `Dotc`, `Scal`, `RealScal`), Level 2 (`Gemv`, `Geru`, `Gerc`, `Symv`, `Hemv`, `Trsv`), Level 3 (`Gemm`, `Symm`, `Hemm`, `Syrk`, `Herk`, `Trsm`) on `DefaultBlas` over `T: Scalar` (ring) and `T: Scalar + SaturatingDiv` with `T::Real: Radical`/`Trig` (field). Dense operands are `DenseStorage<T>`. |   Complete    |
 | **Phase 2: Packed BLAS**          | Implement `Spmv`, `Hpmv`, `Tpmv`, `Tpsv`, `Spr`/`Hpr`, `Pptrf` on `DefaultBlas`.                                                                                                                                                                                                                                                |   Complete    |
 | **Phase 3: Sparse BLAS (SpBLAS)** | Implement `Csrmv`, `Cscmv`, `Csrmm`, `SpDotu`, `SpDotc`, `SpAxpy` on `DefaultBlas`.                                                                                                                                                                                                                                             |   Complete    |
 | **Phase 4: LAPACK Solvers**       | Implement `Potrf`/`Potrs` (SPD & HPD), `Geqrf`/`Ormqr`/`Unmqr`, `Getrf`/`Getrs`, `Syev`/`Heev` (Jacobi) on `DefaultBlas` with typed workspaces and `LinAlgError`. `Syev`/`Heev` route through the crate-private `syev_impl`/`heev_impl` budget seam (§4.3).                                                                     | Trait surface |
@@ -1162,6 +1167,7 @@ Disassembly under `opt-level=3` (LLVM 22.1.6) on `x86_64-apple-darwin`,
 | 1.1      | August 24, 2026 | @MitchellDScott | Subprogram trait definitions: standardized Level 1-3 BLAS and LAPACK factorizations (`Getrf`, `Potrf`, `Geqrf`, `Syev`/`Heev`). |
 | 1.2      | August 25, 2026 | @MitchellDScott | Verification closure: defined test oracles, caller-workspace conventions, and packed matrix solver coverage.                    |
 | 1.3      | August 26, 2026 | @MitchellDScott | Backend scope: C-4 excludes external libraries from `src/`; §4.5 recast as an extension point served by example implementors.   |
+| 1.4      | September 23, 2026 | @MitchellDScott | Field kernels bound `T: Scalar + SaturatingDiv`; kernel arithmetic follows the saturating contract (`num-traits-design.md` FR-6). |
 
 ---
 

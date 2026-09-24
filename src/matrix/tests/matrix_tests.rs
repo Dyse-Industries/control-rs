@@ -18,7 +18,6 @@
 //!
 //! Companion-matrix construction is implemented in `Polynomial::companion_matrix`.
 #![allow(
-    clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
     clippy::similar_names,
     clippy::unwrap_used,
@@ -85,7 +84,7 @@ pub mod matrix_test_suite {
     {
         let lu = a.into_lu().unwrap();
         let inv = lu.inverse().unwrap();
-        let product = a * &inv;
+        let product = a.saturating_mul(&inv);
         let err = _inf_norm_from_identity(&product);
         let kappa = a.inf_norm() * inv.inf_norm();
         let bound = INV_ROUNDTRIP_TAU * kappa * f64::EPSILON;
@@ -211,6 +210,38 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*neg.get(0, 0).unwrap(), 0.0);
         assert_almost_eq!(*neg.get(0, 1).unwrap(), -1.0);
         assert_almost_eq!(*neg.get(1, 1).unwrap(), -3.0);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Operators equal the named saturating methods, and integer elements
+    /// clamp at their bounds instead of wrapping (FR-3).
+    fn test_saturating_operators_integer() {
+        let a: Owned<i8, 1, 3> = Matrix::from_fn(|_, j| [-1, 100, 0][j]);
+        let b: Owned<i8, 1, 3> = Matrix::from_fn(|_, j| [i8::MIN, -100, 1][j]);
+
+        let diff = a.saturating_sub(&b);
+        assert_eq!(diff.as_slice(), &[127, 127, -1]);
+        assert_eq!((&a - &b).as_slice(), diff.as_slice());
+
+        let sum = a.saturating_add(&b);
+        assert_eq!(sum.as_slice(), &[i8::MIN, 0, 1]);
+        assert_eq!((&a + &b).as_slice(), sum.as_slice());
+
+        assert_eq!(b.saturating_neg().as_slice(), &[i8::MAX, 100, -1]);
+        assert_eq!((-&b).as_slice(), b.saturating_neg().as_slice());
+
+        assert_eq!(a.saturating_scale(2).as_slice(), &[-2, i8::MAX, 0]);
+        assert_eq!((&a * 2).as_slice(), a.saturating_scale(2).as_slice());
+
+        let u: Owned<u8, 1, 2> = Matrix::from_fn(|_, j| [1, 5][j]);
+        let v: Owned<u8, 1, 2> = Matrix::from_fn(|_, j| [3, 2][j]);
+        assert_eq!(u.saturating_sub(&v).as_slice(), &[0, 3]);
+        assert_eq!(u.saturating_neg().as_slice(), &[0, 0]);
+
+        let col: Owned<i8, 3, 1> = Matrix::from_fn(|i, _| [1, 1, 1][i]);
+        let prod = a.saturating_mul(&col);
+        assert_eq!(prod.as_slice(), &[99]);
+        assert_eq!((&a * &col).as_slice(), prod.as_slice());
     }
 
     #[cfg_attr(test, test)]
@@ -792,7 +823,7 @@ mod matrix_property_tests {
         Const<R>: Dim,
         Const<C>: Dim,
     {
-        Matrix::from_fn(|i, j| vals[j * R + i])
+        Matrix::from_fn(|i, j| vals[j.saturating_mul(R).saturating_add(i)])
     }
 
     proptest! {
@@ -805,9 +836,9 @@ mod matrix_property_tests {
             let a: Owned<f64, 2, 3> = matrix_from_vec(&a_vals);
             let b: Owned<f64, 3, 2> = matrix_from_vec(&b_vals);
 
-            let ab = &a * &b;
+            let ab = a.saturating_mul(&b);
             let lhs = ab.transpose();
-            let rhs = &b.transpose() * &a.transpose();
+            let rhs = b.transpose().saturating_mul(&a.transpose());
 
             for i in 0..2 {
                 for j in 0..2 {
@@ -830,9 +861,9 @@ mod matrix_property_tests {
             let b: Owned<f64, 2, 2> = matrix_from_vec(&b_vals);
             let c: Owned<f64, 2, 2> = matrix_from_vec(&c_vals);
 
-            let sum = &b + &c;
-            let lhs = &a * &sum;
-            let rhs = &(&a * &b) + &(&a * &c);
+            let sum = b.saturating_add(&c);
+            let lhs = a.saturating_mul(&sum);
+            let rhs = a.saturating_mul(&b).saturating_add(&a.saturating_mul(&c));
 
             for i in 0..2 {
                 for j in 0..2 {
@@ -854,8 +885,8 @@ mod matrix_property_tests {
             let b: Owned<f64, 2, 2> = matrix_from_vec(&b_vals);
             let c: Owned<f64, 2, 2> = matrix_from_vec(&c_vals);
 
-            let lhs = &(&a + &b) + &c;
-            let rhs = &a + &(&b + &c);
+            let lhs = a.saturating_add(&b).saturating_add(&c);
+            let rhs = a.saturating_add(&b.saturating_add(&c));
 
             for i in 0..2 {
                 for j in 0..2 {
@@ -879,7 +910,7 @@ mod matrix_property_tests {
             let Ok(inv) = lu.inverse() else {
                 return Ok(());
             };
-            let product = &a * &inv;
+            let product = a.saturating_mul(&inv);
             let ident = Owned::<f64, 2, 2>::identity();
             let mut err = 0.0_f64;
             for i in 0..2 {
@@ -911,7 +942,7 @@ mod matrix_property_tests {
         ) {
             let a: Owned<f64, 2, 2> = matrix_from_vec(&a_vals);
             let b: Owned<f64, 2, 2> = matrix_from_vec(&b_vals);
-            let ab = &a * &b;
+            let ab = a.saturating_mul(&b);
             let lhs = ab.inf_norm();
             let rhs = a.inf_norm() * b.inf_norm();
             let n = 2.0_f64;

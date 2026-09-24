@@ -161,6 +161,26 @@ pub trait SaturatingMul: Sized + Mul<Self, Output = Self> {
     fn saturating_mul(&self, v: &Self) -> Self;
 }
 
+/// Performs total division that never panics.
+///
+/// Integers saturate: `x / 0` is `MAX` for `x > 0`, `MIN` for `x < 0` and
+/// `0` for `x = 0`, and `MIN / -1` is `MAX`. Floats follow IEEE-754
+/// (`x / 0` is `±inf` or `NaN`).
+pub trait SaturatingDiv: Sized + Div<Self, Output = Self> {
+    /// Divides two numbers, saturating at the numeric bounds.
+    #[must_use]
+    fn saturating_div(&self, v: &Self) -> Self;
+}
+
+/// Performs negation that never panics.
+///
+/// Signed integers saturate (`-MIN` is `MAX`). Floats negate the sign bit.
+pub trait SaturatingNeg: Sized + Neg<Output = Self> {
+    /// Negates a number, saturating at the numeric bounds.
+    #[must_use]
+    fn saturating_neg(&self) -> Self;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // --- Integer Implementations ---
 ////////////////////////////////////////////////////////////////////////////////
@@ -175,6 +195,91 @@ macro_rules! binop_impl_int {
                 }
             }
             ////////////////////////////////////////////////////////////////////////////////
+        )+
+    };
+}
+
+macro_rules! saturating_div_signed_impl {
+    ($($t:ty),+) => {
+        $(
+            impl SaturatingDiv for $t {
+                #[inline]
+                fn saturating_div(&self, v: &$t) -> $t {
+                    match (*v == 0, (*self).cmp(&0)) {
+                        (true, core::cmp::Ordering::Greater) => <$t>::MAX,
+                        (true, core::cmp::Ordering::Less) => <$t>::MIN,
+                        (true, core::cmp::Ordering::Equal) => 0,
+                        (false, _) => <$t>::saturating_div(*self, *v),
+                    }
+                }
+            }
+
+            impl SaturatingNeg for $t {
+                #[inline]
+                fn saturating_neg(&self) -> $t {
+                    <$t>::saturating_neg(*self)
+                }
+            }
+        )+
+    };
+}
+
+macro_rules! saturating_div_unsigned_impl {
+    ($($t:ty),+) => {
+        $(
+            impl SaturatingDiv for $t {
+                #[inline]
+                fn saturating_div(&self, v: &$t) -> $t {
+                    match self.checked_div(*v) {
+                        Some(q) => q,
+                        None if *self == 0 => 0,
+                        None => <$t>::MAX,
+                    }
+                }
+            }
+        )+
+    };
+}
+
+macro_rules! saturating_float_impl {
+    ($($t:ty),+) => {
+        $(
+            // IEEE-754 arithmetic is total: overflow rounds to `±inf` and
+            // invalid operations produce `NaN`; nothing panics or wraps.
+            impl SaturatingAdd for $t {
+                #[inline]
+                fn saturating_add(&self, v: &$t) -> $t {
+                    <$t as Add>::add(*self, *v)
+                }
+            }
+
+            impl SaturatingSub for $t {
+                #[inline]
+                fn saturating_sub(&self, v: &$t) -> $t {
+                    <$t as Sub>::sub(*self, *v)
+                }
+            }
+
+            impl SaturatingMul for $t {
+                #[inline]
+                fn saturating_mul(&self, v: &$t) -> $t {
+                    <$t as Mul>::mul(*self, *v)
+                }
+            }
+
+            impl SaturatingDiv for $t {
+                #[inline]
+                fn saturating_div(&self, v: &$t) -> $t {
+                    <$t as Div>::div(*self, *v)
+                }
+            }
+
+            impl SaturatingNeg for $t {
+                #[inline]
+                fn saturating_neg(&self) -> $t {
+                    <$t as Neg>::neg(*self)
+                }
+            }
         )+
     };
 }
@@ -435,6 +540,10 @@ try_div_rem_impl!(
 );
 
 try_float_impl!(f32, f64);
+
+saturating_float_impl!(f32, f64);
+saturating_div_signed_impl!(i8, i16, i32, i64, i128, isize);
+saturating_div_unsigned_impl!(u8, u16, u32, u64, u128, usize);
 
 try_impl_int!(
     TryAdd,

@@ -288,8 +288,10 @@ jobs:
           retention-days: 7
 
   # ============================================================================
-  # Exclusive Gate: mutants (mutation testing)
+  # Exclusive Gates: mutants-* (mutation testing, one job per chunk)
   # ============================================================================
+  # The matrix is every `mutants-*` gate in gate.toml. The gates partition the
+  # root package by file, and the largest files split further with --shard.
   mutants-plan:
     name: Mutation Chunks
     runs-on: ubuntu-latest
@@ -297,13 +299,14 @@ jobs:
       gates: ${{ steps.list.outputs.gates }}
     steps:
       - uses: actions/checkout@v4
+
       - name: List mutants-* gates
         id: list
         shell: python
         run: |
           import json, os, tomllib
           with open(".cargo/gate.toml", "rb") as f:
-              gates = [n for n in tomllib.load(f) if n.startswith("mutants-")]
+              gates = [name for name in tomllib.load(f) if name.startswith("mutants-")]
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write("gates=" + json.dumps(gates) + "\n")
 
@@ -318,14 +321,18 @@ jobs:
         gate: ${{ fromJSON(needs.mutants-plan.outputs.gates) }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+
       - uses: cargo-bins/cargo-binstall@main
       - name: Install cargo-mutants
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: cargo binstall -y cargo-mutants
+
       - name: Run Mutants Gate
         run: cargo ci --verbose --only ${{ matrix.gate }}
+
       - name: Upload Mutants Artifacts
         if: always()
         uses: actions/upload-artifact@v4

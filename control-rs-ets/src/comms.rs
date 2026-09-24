@@ -410,7 +410,6 @@ impl FrameReader {
     /// * `Option<DecodedFrame<'_>>`
     ///     * `Some(frame_payload)` - A byte slice reference to the verified frame payload buffer.
     ///     * `None` - If the frame is still incomplete or the CRC check failed.
-    #[allow(clippy::arithmetic_side_effects)]
     pub fn handle_byte(&mut self, byte: u8) -> Option<DecodedFrame<'_>> {
         match self.state {
             ReaderState::WaitStart1 => {
@@ -446,7 +445,7 @@ impl FrameReader {
                 if let Some(slot) = self.payload_buffer.get_mut(*read) {
                     *slot = byte;
                 }
-                *read += 1;
+                *read = (*read).saturating_add(1);
                 if *read == len {
                     self.state = ReaderState::WaitChecksum1 { len };
                 }
@@ -494,7 +493,6 @@ impl FrameReader {
 
 impl FrameEncoder {
     /// Writes sync, length, and CRC for a payload already sitting at `dest[4..]`.
-    #[allow(clippy::arithmetic_side_effects)]
     fn finish_frame(
         dest: &mut [u8],
         payload_len: usize,
@@ -527,14 +525,16 @@ impl FrameEncoder {
 
         let crc_value = {
             let payload = dest
-                .get(4..4 + payload_len)
+                .get(4..payload_len.saturating_add(4))
                 .ok_or(postcard::Error::SerializeBufferFull)?;
             crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC).checksum(payload)
         };
-        if let Some(slot) = dest.get_mut(4 + payload_len) {
+        if let Some(slot) = dest.get_mut(payload_len.saturating_add(4)) {
             *slot = (crc_value >> 8) as u8;
         }
-        if let Some(slot) = dest.get_mut(4 + payload_len + 1) {
+        if let Some(slot) =
+            dest.get_mut(payload_len.saturating_add(4).saturating_add(1))
+        {
             *slot = (crc_value & 0xFF) as u8;
         }
         Ok(total_len)

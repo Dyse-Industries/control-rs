@@ -325,20 +325,24 @@ statically enforced at compile-time. Conventionally these map to BLAS
 subprograms in [subprograms.rs](../../src/math/subprograms.rs) (Anderson et
 al., 1999; Golub & Van Loan, 2013; Demmel, 1997):
 
-| Operator      | Subprogram              | Level | Binding                     |
-|:--------------|:------------------------|:------|:----------------------------|
-| `Add`         | `Axpy` (`y = αx + y`)   | 1     | `α = T::ONE`                |
-| `Sub`         | `Axpy`                  | 1     | `α = -T::ONE`               |
-| `Neg`         | `Scal`                  | 1     | `α = -T::ONE`               |
-| `Mul<Matrix>` | `Gemm` (`C = αAB + βC`) | 3     | `α = T::ONE`, `β = T::ZERO` |
-| `Mul<Vector>` | `Gemv` (`y = αAx + βy`) | 2     | `α = T::ONE`, `β = T::ZERO` |
+| Operator      | Named method        | Subprogram              | Level | Binding                     |
+|:--------------|:--------------------|:------------------------|:------|:----------------------------|
+| `Add`         | `saturating_add`    | `Axpy` (`y = αx + y`)   | 1     | `α = T::ONE`                |
+| `Sub`         | `saturating_sub`    | element-wise            | 1     | `a[i].saturating_sub(&b[i])` |
+| `Neg`         | `saturating_neg`    | element-wise            | 1     | `T::ZERO.saturating_sub(&a[i])` |
+| `Mul<T>`      | `saturating_scale`  | `Scal`                  | 1     | `α = k`                     |
+| `Mul<Matrix>` | `saturating_mul`    | `Gemm` (`C = αAB + βC`) | 3     | `α = T::ONE`, `β = T::ZERO` |
+| `Mul<Vector>` | `saturating_mul`    | `Gemm`, `P = 1`         | 3     | `α = T::ONE`, `β = T::ZERO` |
 
-`Sub` needs no extra bound: `Sub<Output = Self>` is already a `Scalar`
-supertrait (`num-traits-design.md` §4.1). `Neg` and the $\alpha = -1$
-bindings need a negatable scalar, so they bound `T: Scalar + Signed`, which
-excludes unsigned integers. `Complex<T>` is `AdditiveGroup` but deliberately
-not `Signed` (`num-traits-design.md` §4.3), so complex negation is written
-`T::ZERO - x` and stays at `T: Scalar`.
+Each operator delegates to the named method, and every element operation
+follows the `Scalar` total arithmetic contract (`num-traits-design.md` FR-6,
+§4.4): integer and fixed-point elements clamp at their bounds and floats keep
+IEEE-754 semantics. Library code calls the named methods, so
+`clippy::arithmetic_side_effects` holds without suppression; user code may use
+either form. `Sub` and `Neg` are element-wise rather than `Axpy` with
+$\alpha = -1$, because $-1$ saturates to $0$ for unsigned elements and
+$a + (-1)b$ differs from $a - b$ when $-b$ saturates (`b = MIN`). Both stay at
+`T: Scalar`, admitting unsigned integers and `Complex<T>`.
 
 `Mul<Matrix>` statically enforces $(M \times N) \times (N \times P) \to (M
 \times P)$. The owning output leaf forces the operator impls onto the
@@ -579,7 +583,7 @@ A square matrix `Matrix<T, D, D, S>` converts to its characteristic polynomial
       S: DenseStorage<T, R = D, C = D>,
       D: DimAdd<Const<1>>,
       <D as DimAdd<Const<1>>>::Output: Dim,
-      T: Scalar + Div<Output = T>,
+      T: Scalar + SaturatingDiv,
   {
       type Error = ConversionError;
       // ...
@@ -788,7 +792,7 @@ pub fn solve_lower_triangular_mut<T, const D: usize>(
 ) -> LinAlgResult<()>
 where
     Const<D>: Dim,
-    T: Scalar + Div<Output=T>,
+    T: Scalar + SaturatingDiv,
     T::Real: Radical + PartialOrd,
 {
     // Diagonal screen. `abs2()` is re² + im², so the comparison needs no
@@ -1150,4 +1154,5 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | 1.11     | August 28, 2026 | @MitchellDScott | §6.4 FR-5 artifact is `test_symmetric_construction`; packed storage remains in `storage_tests.rs`. Factor residuals live in `matrix_test_suite`. |
 | 1.12     | August 31, 2026 | @MitchellDScott | Added JAX x64 multi-source cross-validation oracle, updated validation crate paths, and reconciled EKF covariance heatmap tolerances.                 |
 | 1.13      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |
+| 1.14      | September 23, 2026 | @MitchellDScott | §4.5 operators delegate to named saturating methods (`num-traits-design.md` FR-6); `Sub`/`Neg` element-wise; field bounds use `SaturatingDiv`. |
 
