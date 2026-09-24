@@ -1,5 +1,6 @@
 //! Integration tests verifying that builtin CI Cargo quality gates fail on invalid code.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::io;
