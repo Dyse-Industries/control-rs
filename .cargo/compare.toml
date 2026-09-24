@@ -5,5 +5,5 @@ timeout_secs = 120
 strict = true
 
 suites = [
-    "control-rs-verification",
+    "../control-rs-verification",
 ]

@@ -4,17 +4,7 @@
 //! state-space discretization/controllability/observability, tensor contraction,
 //! and polynomial evaluation.
 
-#![allow(
-    missing_docs,
-    clippy::arbitrary_source_item_ordering,
-    clippy::arithmetic_side_effects,
-    clippy::cast_precision_loss,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::large_stack_frames,
-    clippy::suboptimal_flops,
-    clippy::too_many_lines
-)]
+#![allow(missing_docs)]
 
 use std::hint::black_box;
 
@@ -25,20 +15,6 @@ use control_rs::state_space::ArrayStateSpace;
 use control_rs::tensor::ArrayTensor;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
-/// Diagonally dominant matrix generator for stable LU factorization.
-fn dominant_matrix<const N: usize>() -> Owned<f64, N, N>
-where
-    Const<N>: Dim,
-{
-    Owned::<f64, N, N>::from_fn(|i, j| {
-        if i == j {
-            2.0 * ((i + 1) as f64)
-        } else {
-            0.5 / ((i + j + 1) as f64)
-        }
-    })
-}
-
 macro_rules! bench_matrix_inversion_dim {
     ($group:expr, $($N:literal),+ $(,)?) => {
         $({
@@ -48,9 +24,8 @@ macro_rules! bench_matrix_inversion_dim {
                 &$N,
                 |b, _| {
                     b.iter(|| {
-                        let lu = LuDecomposition::decompose(black_box(a))
-                            .expect("LU decompose failed");
-                        lu.inverse().expect("LU inverse failed")
+                        LuDecomposition::decompose(black_box(a))
+                            .and_then(|lu| lu.inverse())
                     });
                 },
             );
@@ -58,24 +33,18 @@ macro_rules! bench_matrix_inversion_dim {
     };
 }
 
-fn bench_matrix_inversion_scaling(c: &mut Criterion) {
-    let mut group = c.benchmark_group("matrix_inversion_scaling");
-    bench_matrix_inversion_dim!(group, 2, 4, 8, 16, 32, 64);
-    group.finish();
-}
-
 macro_rules! bench_state_space_dim {
     ($group:expr, $($N:literal),+ $(,)?) => {
         $({
             let a = Owned::<f64, $N, $N>::from_fn(|i, j| {
                 if i == j {
-                    -0.5 * ((i + 1) as f64)
+                    -0.5 * (index_f64(i) + 1.0)
                 } else {
-                    0.1 / ((i + j + 1) as f64)
+                    0.1 / (index_f64(i) + index_f64(j) + 1.0)
                 }
             });
-            let b = Owned::<f64, $N, 1>::from_fn(|i, _| 1.0 / ((i + 1) as f64));
-            let c = Owned::<f64, 1, $N>::from_fn(|_, j| 1.0 / ((j + 1) as f64));
+            let b = Owned::<f64, $N, 1>::from_fn(|i, _| 1.0 / (index_f64(i) + 1.0));
+            let c = Owned::<f64, 1, $N>::from_fn(|_, j| 1.0 / (index_f64(j) + 1.0));
             let d = Owned::<f64, 1, 1>::scalar(0.0);
             let sys_c = ArrayStateSpace::continuous(a, b, c, d);
 
@@ -112,20 +81,16 @@ macro_rules! bench_state_space_dim {
     };
 }
 
-fn bench_state_space_scaling(c: &mut Criterion) {
-    let mut group = c.benchmark_group("state_space_scaling");
-    bench_state_space_dim!(group, 2, 4, 8, 16, 32, 64, 128);
-    group.finish();
-}
-
 macro_rules! bench_tensor_contract_dim {
     ($group:expr, $($N:literal),+ $(,)?) => {
         $({
             let a = ArrayTensor::<f32, $N, $N>::from_fn(|idx| {
-                (idx[0] as f32 * 0.5 + idx[1] as f32 * 0.3).sin() * 10.0
+                let (i, j) = index2(idx);
+                i.mul_add(0.5, j * 0.3).sin() * 10.0
             });
             let b = ArrayTensor::<f32, $N, $N>::from_fn(|idx| {
-                (idx[0] as f32 * 0.3 - idx[1] as f32 * 0.4).cos() * 5.0
+                let (i, j) = index2(idx);
+                i.mul_add(0.3, -(j * 0.4)).cos() * 5.0
             });
             let mut out = ArrayTensor::<f32, $N, $N>::zero();
 
@@ -142,16 +107,10 @@ macro_rules! bench_tensor_contract_dim {
     };
 }
 
-fn bench_tensor_scaling(c: &mut Criterion) {
-    let mut group = c.benchmark_group("tensor_contraction_scaling");
-    bench_tensor_contract_dim!(group, 4, 8, 16, 32, 64);
-    group.finish();
-}
-
 macro_rules! bench_polynomial_eval_dim {
     ($group:expr, $($deg:literal),+ $(,)?) => {
         $({
-            let coeffs: [f64; $deg + 1] = core::array::from_fn(|i| 1.0 / ((i + 1) as f64));
+            let coeffs: [f64; $deg + 1] = core::array::from_fn(|i| 1.0 / (index_f64(i) + 1.0));
             let poly = ArrayPolynomial::<f64, { $deg + 1 }>::from_coefficients(coeffs);
             $group.bench_with_input(
                 BenchmarkId::new("degree", $deg),
@@ -166,17 +125,101 @@ macro_rules! bench_polynomial_eval_dim {
     };
 }
 
+/// Converts an index to `f64` (exact for every index here).
+fn index_f64(i: usize) -> f64 {
+    f64::from(u32::try_from(i).unwrap_or(u32::MAX))
+}
+
+/// Converts an index to `f32` (exact for every index here).
+fn index_f32(i: usize) -> f32 {
+    f32::from(u16::try_from(i).unwrap_or(u16::MAX))
+}
+
+/// Row and column of a rank-2 tensor index.
+fn index2(idx: &[usize]) -> (f32, f32) {
+    match *idx {
+        [i, j, ..] => (index_f32(i), index_f32(j)),
+        [i] => (index_f32(i), 0.0),
+        [] => (0.0, 0.0),
+    }
+}
+
+/// Diagonally dominant matrix generator for stable LU factorization.
+fn dominant_matrix<const N: usize>() -> Owned<f64, N, N>
+where
+    Const<N>: Dim,
+{
+    Owned::<f64, N, N>::from_fn(|i, j| {
+        if i == j {
+            2.0 * (index_f64(i) + 1.0)
+        } else {
+            0.5 / (index_f64(i) + index_f64(j) + 1.0)
+        }
+    })
+}
+
+fn bench_matrix_inversion_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("matrix_inversion_scaling");
+    bench_matrix_inversion_dim!(group, 2, 4, 8, 16, 32, 64);
+    group.finish();
+}
+
+fn bench_state_space_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("state_space_scaling");
+    bench_state_space_small(&mut group);
+    bench_state_space_large(&mut group);
+    group.finish();
+}
+
+/// Dimensions 2 to 32, whose systems fit comfortably in one stack frame.
+fn bench_state_space_small(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+) {
+    bench_state_space_dim!(group, 2, 4, 8, 16, 32);
+}
+
+/// Dimension 64, in its own stack frame.
+fn bench_state_space_64(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+) {
+    bench_state_space_dim!(group, 64);
+}
+
+/// Dimension 128, in its own stack frame.
+fn bench_state_space_128(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+) {
+    bench_state_space_dim!(group, 128);
+}
+
+/// Dimensions 64 and 128, one stack frame each.
+fn bench_state_space_large(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+) {
+    bench_state_space_64(group);
+    bench_state_space_128(group);
+}
+
+fn bench_tensor_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tensor_contraction_scaling");
+    bench_tensor_contract_dim!(group, 4, 8, 16, 32, 64);
+    group.finish();
+}
+
 fn bench_polynomial_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("polynomial_evaluation_scaling");
     bench_polynomial_eval_dim!(group, 2, 4, 8, 16, 32, 48);
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_matrix_inversion_scaling,
-    bench_state_space_scaling,
-    bench_tensor_scaling,
-    bench_polynomial_scaling
-);
+// Changes within 15 % are noise, not regressions (`cargo regression`).
+criterion_group! {
+    name = benches;
+    config = Criterion::default().noise_threshold(0.15);
+    targets = bench_matrix_inversion_scaling,
+        bench_state_space_scaling,
+        bench_tensor_scaling,
+        bench_polynomial_scaling
+}
+
 criterion_main!(benches);

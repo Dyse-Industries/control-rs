@@ -29,8 +29,11 @@ use control_rs_ets::comms::{Command, TestState};
 use control_rs_ets::settings::SettingValue;
 use control_rs_ets_host::{
     BridgeMessage, ETSBridge, HostError, OwnedTelemetry, SessionAction,
-    SessionState, Target,
+    SessionState, SuiteItem, Target, TestIndex,
 };
+
+/// Result of the interactive event loop.
+type TuiResult = Result<(), Box<dyn std::error::Error>>;
 
 /// Selectable item in the hierarchical metrics table.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,72 +138,24 @@ impl AppState {
 
     /// Rebuilds the flattened list of visible rows based on suite collapse and search filters.
     pub fn rebuild_visible_items(&mut self) {
-        self.visible_items.clear();
         let query = self.filter_query.to_lowercase();
-
-        for (s_idx, suite) in self.session.suites.iter().enumerate() {
-            let suite_matches = suite.name.to_lowercase().contains(&query);
-            let matching_tests: Vec<(usize, &control_rs_ets_host::TestItem)> =
-                suite
-                    .tests
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, t)| {
-                        query.is_empty()
-                            || suite_matches
-                            || t.name.to_lowercase().contains(&query)
-                    })
-                    .collect();
-
-            if !query.is_empty() && !suite_matches && matching_tests.is_empty()
-            {
-                continue;
-            }
-
-            let is_collapsed = self.collapsed_suites.contains(&s_idx);
-            self.visible_items.push(TableItem::Suite {
-                suite_idx: s_idx,
-                name: suite.name.clone(),
-                collapsed: is_collapsed,
-            });
-
-            if !is_collapsed {
-                let setting_count = suite.settings.len();
-                let count = matching_tests.len();
-                for (i, &(t_idx, test)) in matching_tests.iter().enumerate() {
-                    self.visible_items.push(TableItem::Test {
-                        suite_idx: s_idx,
-                        test_idx: t_idx,
-                        name: test.name.clone(),
-                        is_last: i + 1 == count && setting_count == 0,
-                        state: test.state,
-                        cycles: test.cycles,
-                        time_us: test.time_us,
-                        stack_peak: test.stack_peak,
-                    });
-                }
-                for (i, setting) in suite.settings.iter().enumerate() {
-                    self.visible_items.push(TableItem::Setting {
-                        suite_idx: s_idx,
-                        setting_idx: i,
-                        name: setting.name.clone(),
-                        description: setting.description.clone(),
-                        value: format_setting_value(setting.value),
-                        is_last: i + 1 == setting_count,
-                    });
-                }
-            }
-        }
+        self.visible_items = self
+            .session
+            .suites
+            .iter()
+            .enumerate()
+            .flat_map(|(s_idx, suite)| {
+                let collapsed = self.collapsed_suites.contains(&s_idx);
+                suite_rows(s_idx, suite, &query, collapsed)
+            })
+            .collect();
 
         if self.visible_items.is_empty() {
             self.table_state.select(None);
         } else {
+            let last = self.visible_items.len().saturating_sub(1);
             let current = self.table_state.selected().unwrap_or(0);
-            if current >= self.visible_items.len() {
-                self.table_state.select(Some(self.visible_items.len() - 1));
-            } else {
-                self.table_state.select(Some(current));
-            }
+            self.table_state.select(Some(current.min(last)));
         }
     }
 
@@ -210,14 +165,10 @@ impl AppState {
             return;
         }
         let i = match self.table_state.selected() {
-            Some(i) => {
-                if i + 1 >= self.visible_items.len() {
-                    0
-                } else {
-                    i + 1
-                }
+            Some(i) if i.saturating_add(1) < self.visible_items.len() => {
+                i.saturating_add(1)
             }
-            None => 0,
+            Some(_) | None => 0,
         };
         self.table_state.select(Some(i));
     }
@@ -228,13 +179,8 @@ impl AppState {
             return;
         }
         let i = match self.table_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.visible_items.len() - 1
-                } else {
-                    i - 1
-                }
-            }
+            Some(0) => self.visible_items.len().saturating_sub(1),
+            Some(i) => i.saturating_sub(1),
             None => 0,
         };
         self.table_state.select(Some(i));
@@ -242,36 +188,42 @@ impl AppState {
 
     /// Handles Enter on the currently selected item (toggles suite collapse or executes test).
     pub fn toggle_or_run_selected(&mut self, bridge: Option<&mut ETSBridge>) {
-        if let Some(selected) = self.table_state.selected()
-            && let Some(item) = self.visible_items.get(selected).cloned()
-        {
-            match item {
-                TableItem::Suite { suite_idx, .. } => {
-                    if self.collapsed_suites.contains(&suite_idx) {
-                        self.collapsed_suites.remove(&suite_idx);
-                    } else {
-                        self.collapsed_suites.insert(suite_idx);
+        let Some(item) = self
+            .table_state
+            .selected()
+            .and_then(|i| self.visible_items.get(i).cloned())
+        else {
+            return;
+        };
+        match item {
+            TableItem::Suite { suite_idx, .. } => {
+                if !self.collapsed_suites.remove(&suite_idx) {
+                    self.collapsed_suites.insert(suite_idx);
+                }
+                self.rebuild_visible_items();
+            }
+            TableItem::Test {
+                suite_idx,
+                test_idx,
+                ..
+            } => {
+                match case_ids(suite_idx, test_idx) {
+                    Some((suite_id, test_id)) => {
+                        if let Some(action) =
+                            self.session.enqueue_test(suite_id, test_id)
+                        {
+                            self.execute_logged(action, bridge);
+                        }
                     }
-                    self.rebuild_visible_items();
+                    None => self.logs.push(format!(
+                        "> [HOST] test {suite_idx}::{test_idx} is outside the u16 id range"
+                    )),
                 }
-                TableItem::Test {
-                    suite_idx,
-                    test_idx,
-                    ..
-                } => {
-                    if let Some(action) = self
-                        .session
-                        .enqueue_test(suite_idx as u16, test_idx as u16)
-                        && let Err(e) = Self::execute_action(action, bridge)
-                    {
-                        self.logs.push(format!("> [HOST] send failed: {e}"));
-                    }
-                    self.rebuild_visible_items();
-                }
-                TableItem::Setting { value, .. } => {
-                    self.is_editing_setting = true;
-                    self.setting_edit.clone_from(&value);
-                }
+                self.rebuild_visible_items();
+            }
+            TableItem::Setting { value, .. } => {
+                self.is_editing_setting = true;
+                self.setting_edit.clone_from(&value);
             }
         }
     }
@@ -294,6 +246,33 @@ impl AppState {
             }
             SessionAction::PanicRestart => Ok(()),
         }
+    }
+
+    /// Executes `action`, logging a transport failure to the log panel.
+    fn execute_logged(
+        &mut self,
+        action: SessionAction,
+        bridge: Option<&mut ETSBridge>,
+    ) {
+        if let Err(e) = Self::execute_action(action, bridge) {
+            self.logs.push(format!("> [HOST] send failed: {e}"));
+        }
+    }
+
+    /// Sends `cmd`, logging a transport failure to the log panel.
+    fn send_logged(&mut self, bridge: &mut ETSBridge, cmd: &Command) {
+        if let Err(e) = bridge.send_command(cmd) {
+            self.logs.push(format!("> [HOST] send failed: {e}"));
+        }
+    }
+
+    /// Sends `TryReset` then `ListSuites`.
+    ///
+    /// Pairing them lets a serial target still waiting in `handle_failure`
+    /// exit after a lost reset frame.
+    fn request_discovery(&mut self, bridge: &mut ETSBridge) {
+        self.send_logged(bridge, &Command::TryReset);
+        self.send_logged(bridge, &Command::ListSuites);
     }
 
     fn show_selected_setting(&mut self) {
@@ -329,13 +308,17 @@ impl AppState {
         match parse_setting_value(&self.setting_edit, current.value) {
             Ok(value) => {
                 if let Some(b) = bridge
-                    && let Err(e) = b.send_command(&Command::SetSetting {
-                        suite_id: suite_idx as u16,
-                        setting_id: setting_idx as u16,
-                        value,
-                    })
+                    && let Some((suite_id, setting_id)) =
+                        case_ids(suite_idx, setting_idx)
                 {
-                    self.logs.push(format!("> [HOST] send failed: {e}"));
+                    self.send_logged(
+                        b,
+                        &Command::SetSetting {
+                            suite_id,
+                            setting_id,
+                            value,
+                        },
+                    );
                 }
                 if let Some(setting) = self
                     .session
@@ -380,14 +363,56 @@ impl AppState {
                 for action in actions {
                     if matches!(action, SessionAction::PanicRestart) {
                         restart = Some(action);
-                    } else if let Err(e) =
-                        Self::execute_action(action, bridge.as_deref_mut())
-                    {
-                        self.logs.push(format!("> [HOST] send failed: {e}"));
+                    } else {
+                        self.execute_logged(action, bridge.as_deref_mut());
                     }
                 }
                 self.rebuild_visible_items();
                 restart
+            }
+        }
+    }
+
+    /// Handles every pending bridge message. Returns `true` when one of them
+    /// requested a panic restart.
+    fn drain_bridge(&mut self, bridge: &mut ETSBridge) -> bool {
+        let mut need_restart = false;
+        while let Ok(msg) = bridge.receiver().try_recv() {
+            if matches!(
+                self.handle_bridge_message(msg, Some(bridge)),
+                Some(SessionAction::PanicRestart)
+            ) {
+                need_restart = true;
+            }
+        }
+        need_restart
+    }
+
+    /// Recovers from a target panic by re-attaching `bridge` without
+    /// tearing down the terminal. Returns `true` when a new link is up and
+    /// discovery was re-requested.
+    fn reattach(&mut self, bridge: &mut ETSBridge, target: &Target) -> bool {
+        // Drain window for the TryReset frame already written by the
+        // session action handler before closing the link.
+        thread::sleep(Duration::from_millis(50));
+        bridge.terminate();
+        self.logs.push(
+            "> [INFO] Target panicked. Re-attaching bridge...".to_string(),
+        );
+        thread::sleep(Duration::from_secs(1));
+        match ETSBridge::new(target.clone(), false) {
+            Ok(new_bridge) => {
+                *bridge = new_bridge;
+                self.process_exit = None;
+                // Serial targets that miss the pre-terminate TryReset spin in
+                // handle_failure ignoring ListSuites. Retry TryReset on the
+                // new link before rediscovery.
+                self.request_discovery(bridge);
+                true
+            }
+            Err(e) => {
+                self.logs.push(format!("> [HOST] reconnect failed: {e}"));
+                false
             }
         }
     }
@@ -400,140 +425,214 @@ impl AppState {
         bridge: Option<&mut ETSBridge>,
     ) -> bool {
         if self.is_filtering {
-            match key.code {
-                KeyCode::Esc => {
-                    self.is_filtering = false;
-                    self.filter_query.clear();
-                    self.rebuild_visible_items();
-                }
-                KeyCode::Enter => {
-                    self.is_filtering = false;
-                }
-                KeyCode::Backspace => {
-                    self.filter_query.pop();
-                    self.rebuild_visible_items();
-                }
-                KeyCode::Char(c) => {
-                    self.filter_query.push(c);
-                    self.rebuild_visible_items();
-                }
-                _ => {}
-            }
+            self.handle_filter_key(key.code);
             return false;
         }
-
         if self.is_editing_setting {
-            match key.code {
-                KeyCode::Esc => {
-                    self.is_editing_setting = false;
-                    self.setting_edit.clear();
-                }
-                KeyCode::Enter => {
-                    self.commit_setting_edit(bridge);
-                }
-                KeyCode::Backspace => {
-                    self.setting_edit.pop();
-                }
-                KeyCode::Char(c) => {
-                    self.setting_edit.push(c);
-                }
-                _ => {}
-            }
+            self.handle_setting_key(key.code, bridge);
             return false;
         }
+        self.handle_command_key(key.code, bridge)
+    }
 
-        match key.code {
-            KeyCode::Char('q') => true,
-            KeyCode::Char('f') => {
-                self.is_filtering = true;
-                false
+    /// Edits the filter query while the filter prompt is open.
+    fn handle_filter_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc => {
+                self.is_filtering = false;
+                self.filter_query.clear();
+                self.rebuild_visible_items();
             }
-            KeyCode::Char('d') => {
-                self.show_selected_setting();
-                false
+            KeyCode::Enter => {
+                self.is_filtering = false;
             }
+            KeyCode::Backspace => {
+                self.filter_query.pop();
+                self.rebuild_visible_items();
+            }
+            KeyCode::Char(c) => {
+                self.filter_query.push(c);
+                self.rebuild_visible_items();
+            }
+            _ => {}
+        }
+    }
+
+    /// Edits the setting value buffer while the setting prompt is open.
+    fn handle_setting_key(
+        &mut self,
+        code: KeyCode,
+        bridge: Option<&mut ETSBridge>,
+    ) {
+        match code {
+            KeyCode::Esc => {
+                self.is_editing_setting = false;
+                self.setting_edit.clear();
+            }
+            KeyCode::Enter => {
+                self.commit_setting_edit(bridge);
+            }
+            KeyCode::Backspace => {
+                self.setting_edit.pop();
+            }
+            KeyCode::Char(c) => {
+                self.setting_edit.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    /// Dispatches a single-key command. Returns `true` on quit.
+    fn handle_command_key(
+        &mut self,
+        code: KeyCode,
+        bridge: Option<&mut ETSBridge>,
+    ) -> bool {
+        match code {
+            KeyCode::Char('q') => return true,
+            KeyCode::Char('f') => self.is_filtering = true,
+            KeyCode::Char('d') => self.show_selected_setting(),
             KeyCode::Char('r') => {
-                if let Some(action) = self.session.enqueue_all()
-                    && let Err(e) = Self::execute_action(action, bridge)
-                {
-                    self.logs.push(format!("> [HOST] send failed: {e}"));
+                if let Some(action) = self.session.enqueue_all() {
+                    self.execute_logged(action, bridge);
                 }
                 self.rebuild_visible_items();
-                false
             }
             KeyCode::Char('s') => {
                 self.session.stop();
-                if let Some(b) = bridge
-                    && let Err(e) = b.send_command(&Command::TryReset)
-                {
-                    self.logs.push(format!("> [HOST] send failed: {e}"));
+                if let Some(b) = bridge {
+                    self.send_logged(b, &Command::TryReset);
                 }
                 self.rebuild_visible_items();
-                false
             }
             KeyCode::Char('c') => {
-                for i in 0..self.session.suites.len() {
-                    self.collapsed_suites.insert(i);
-                }
+                self.collapsed_suites.extend(0..self.session.suites.len());
                 self.rebuild_visible_items();
-                false
             }
             KeyCode::Char('e') => {
                 self.collapsed_suites.clear();
                 self.rebuild_visible_items();
-                false
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.previous_row();
-                false
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.next_row();
-                false
-            }
-            KeyCode::Enter => {
-                self.toggle_or_run_selected(bridge);
-                false
-            }
-            _ => false,
+            KeyCode::Up | KeyCode::Char('k') => self.previous_row(),
+            KeyCode::Down | KeyCode::Char('j') => self.next_row(),
+            KeyCode::Enter => self.toggle_or_run_selected(bridge),
+            _ => {}
         }
+        false
     }
+}
+
+/// Converts table indices into wire `(suite_id, item_id)`, or `None` when
+/// either index exceeds the `u16` identifier range.
+fn case_ids(suite_idx: usize, item_idx: usize) -> Option<TestIndex> {
+    Some((
+        u16::try_from(suite_idx).ok()?,
+        u16::try_from(item_idx).ok()?,
+    ))
+}
+
+/// Visible rows for one suite: its header, then (unless collapsed) the
+/// tests matching `query` and every setting.
+fn suite_rows(
+    s_idx: usize,
+    suite: &SuiteItem,
+    query: &str,
+    collapsed: bool,
+) -> Vec<TableItem> {
+    let suite_matches = suite.name.to_lowercase().contains(query);
+    let matching_tests: Vec<_> = suite
+        .tests
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| {
+            query.is_empty()
+                || suite_matches
+                || t.name.to_lowercase().contains(query)
+        })
+        .collect();
+
+    if !query.is_empty() && !suite_matches && matching_tests.is_empty() {
+        return Vec::new();
+    }
+
+    let mut rows = vec![TableItem::Suite {
+        suite_idx: s_idx,
+        name: suite.name.clone(),
+        collapsed,
+    }];
+    if collapsed {
+        return rows;
+    }
+
+    let setting_count = suite.settings.len();
+    let last_test = matching_tests.len().checked_sub(1);
+    for (i, &(t_idx, test)) in matching_tests.iter().enumerate() {
+        rows.push(TableItem::Test {
+            suite_idx: s_idx,
+            test_idx: t_idx,
+            name: test.name.clone(),
+            is_last: Some(i) == last_test && setting_count == 0,
+            state: test.state,
+            cycles: test.cycles,
+            time_us: test.time_us,
+            stack_peak: test.stack_peak,
+        });
+    }
+    let last_setting = setting_count.checked_sub(1);
+    for (i, setting) in suite.settings.iter().enumerate() {
+        rows.push(TableItem::Setting {
+            suite_idx: s_idx,
+            setting_idx: i,
+            name: setting.name.clone(),
+            description: setting.description.clone(),
+            value: format_setting_value(setting.value),
+            is_last: Some(i) == last_setting,
+        });
+    }
+    rows
 }
 
 /// Formats a large integer with comma thousand separators (for example, `1,204`).
 #[must_use]
 pub fn format_number(val: u64) -> String {
-    let s = val.to_string();
-    let bytes = s.as_bytes();
-    let mut result = String::new();
-    let len = bytes.len();
-    for (i, &b) in bytes.iter().enumerate() {
-        if i > 0 && (len - i).is_multiple_of(3) {
+    let digits = val.to_string();
+    let mut result = String::with_capacity(digits.len().saturating_mul(2));
+    let mut remaining = digits.len();
+    for c in digits.chars() {
+        if remaining < digits.len() && remaining.is_multiple_of(3) {
             result.push(',');
         }
-        result.push(b as char);
+        result.push(c);
+        remaining = remaining.saturating_sub(1);
     }
     result
 }
 
 /// Formats duration in microseconds into a human-readable string (`µs`, `ms`, `s`).
+///
+/// Millisecond and second values are rounded half-up to two decimals in
+/// integer arithmetic.
 #[must_use]
 pub fn format_duration(us: u64) -> String {
     if us < 1_000 {
         format!("{us}.00µs")
     } else if us < 1_000_000 {
-        let ms = us as f64 / 1_000.0;
-        format!("{ms:.2}ms")
+        let hundredths = us.saturating_add(5) / 10;
+        format!("{}.{:02}ms", hundredths / 100, hundredths % 100)
     } else {
-        let s = us as f64 / 1_000_000.0;
-        format!("{s:.2}s")
+        let hundredths = us.saturating_add(5_000) / 10_000;
+        format!("{}.{:02}s", hundredths / 100, hundredths % 100)
     }
+}
+
+/// Style shared by bold, colored labels.
+fn bold(color: Color) -> Style {
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
 /// Draws the complete TUI interface according to §4.1 layout specification.
 pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
-    let size = frame.area();
-    let chunks = Layout::default()
+    let [header_area, table_area, log_area, footer_area] = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(4),
@@ -541,70 +640,35 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
             Constraint::Length(8),
             Constraint::Length(1),
         ])
-        .split(size);
+        .areas(frame.area());
 
-    // 1. Header (target, link info, running status)
+    frame.render_widget(header_widget(state), header_area);
+    frame.render_stateful_widget(
+        table_widget(&state.visible_items),
+        table_area,
+        &mut state.table_state,
+    );
+    frame.render_widget(log_widget(state, log_area.height), log_area);
+    frame.render_widget(Paragraph::new(footer_line(state)), footer_area);
+}
+
+/// Header panel: target, link, run status and pass/fail totals.
+fn header_widget(state: &AppState) -> Paragraph<'static> {
     let header_line1 =
         format!(" TARGET: {} | LINK: {}", state.target_info, state.link_info);
-    let running_info = if let Some((s_id, t_id)) = state.session.current_running
-    {
-        let s_name = state
-            .session
-            .suites
-            .get(s_id as usize)
-            .map_or("unknown", |s| s.name.as_str());
-        let t_name = state
-            .session
-            .suites
-            .get(s_id as usize)
-            .and_then(|s| s.tests.get(t_id as usize))
-            .map_or("unknown", |t| t.name.as_str());
-        Line::from(vec![
-            Span::styled(
-                " [ RUNNING ] ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!("{s_name}::{t_name}")),
-        ])
-    } else if state.session.discovery_complete {
-        Line::from(vec![
-            Span::styled(
-                " [ IDLE ] ",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("All tests completed or stopped"),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled(
-                " [ DISCOVERING ] ",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("Querying target test suites..."),
-        ])
-    };
 
     let total_tests: usize =
         state.session.suites.iter().map(|s| s.tests.len()).sum();
-    let passed_tests = state
-        .session
-        .results
-        .iter()
-        .filter(|r| r.state == TestState::Passed)
-        .count();
-    let failed_tests = state
-        .session
-        .results
-        .iter()
-        .filter(|r| r.state == TestState::Failed)
-        .count();
-
+    let count_state = |wanted: TestState| {
+        state
+            .session
+            .results
+            .iter()
+            .filter(|r| r.state == wanted)
+            .count()
+    };
+    let passed_tests = count_state(TestState::Passed);
+    let failed_tests = count_state(TestState::Failed);
     let header_line2 = format!(
         " Tests: {total_tests} | Passed: {passed_tests} | Failed: {failed_tests}"
     );
@@ -613,119 +677,49 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
         .borders(Borders::ALL)
         .title(" Embedded Test Server (ETS) Dashboard ")
         .style(Style::default().fg(Color::White));
-    let header_paragraph = Paragraph::new(vec![
+    Paragraph::new(vec![
         Line::from(header_line1),
-        running_info,
+        status_line(&state.session),
         Line::from(header_line2),
     ])
-    .block(header_block);
-    frame.render_widget(header_paragraph, chunks[0]);
+    .block(header_block)
+}
 
-    // 2. Metrics Table
-    let header_cells =
-        ["  Suite / Test / Setting", "Cycles", "Time", "Stack (B)"].map(|h| {
-            Cell::from(h).style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
+/// Running / idle / discovering status line.
+fn status_line(session: &SessionState) -> Line<'static> {
+    let (label, color, detail) =
+        if let Some((s_id, t_id)) = session.current_running {
+            let suite = session.suites.get(usize::from(s_id));
+            let s_name = suite.map_or("unknown", |s| s.name.as_str());
+            let t_name = suite
+                .and_then(|s| s.tests.get(usize::from(t_id)))
+                .map_or("unknown", |t| t.name.as_str());
+            (" [ RUNNING ] ", Color::Cyan, format!("{s_name}::{t_name}"))
+        } else if session.discovery_complete {
+            (
+                " [ IDLE ] ",
+                Color::Green,
+                "All tests completed or stopped".to_string(),
             )
-        });
+        } else {
+            (
+                " [ DISCOVERING ] ",
+                Color::Yellow,
+                "Querying target test suites...".to_string(),
+            )
+        };
+    Line::from(vec![Span::styled(label, bold(color)), Span::raw(detail)])
+}
+
+/// Hierarchical suite / test / setting metrics table.
+fn table_widget(items: &[TableItem]) -> Table<'_> {
+    let header_cells =
+        ["  Suite / Test / Setting", "Cycles", "Time", "Stack (B)"]
+            .map(|h| Cell::from(h).style(bold(Color::Cyan)));
     let table_header = Row::new(header_cells).bottom_margin(0);
 
-    let rows: Vec<Row<'_>> = state
-        .visible_items
-        .iter()
-        .map(|item| match item {
-            TableItem::Suite {
-                name, collapsed, ..
-            } => {
-                let prefix = if *collapsed { "▶" } else { "▼" };
-                Row::new(vec![
-                    Cell::from(format!("{prefix} {name}")).style(
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                ])
-            }
-            TableItem::Test {
-                name,
-                is_last,
-                state: test_state,
-                cycles,
-                time_us,
-                stack_peak,
-                ..
-            } => {
-                let branch = if *is_last { "└─" } else { "├─" };
-                let (cycles_cell, time_cell, stack_cell) = match test_state {
-                    TestState::Running => (
-                        Cell::from("[ RUN... ]").style(
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Cell::from("---"),
-                        Cell::from("---"),
-                    ),
-                    TestState::Pending => (
-                        Cell::from("PENDING")
-                            .style(Style::default().fg(Color::DarkGray)),
-                        Cell::from("---"),
-                        Cell::from("---"),
-                    ),
-                    TestState::Failed => (
-                        Cell::from("FAIL").style(
-                            Style::default()
-                                .fg(Color::Red)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Cell::from(
-                            time_us.map_or("---".to_string(), format_duration),
-                        ),
-                        Cell::from(stack_peak.map_or("---".to_string(), |s| {
-                            format_number(u64::from(s))
-                        })),
-                    ),
-                    TestState::Passed => (
-                        Cell::from(
-                            cycles.map_or("N/A".to_string(), format_number),
-                        )
-                        .style(Style::default().fg(Color::Green)),
-                        Cell::from(
-                            time_us.map_or("N/A".to_string(), format_duration),
-                        ),
-                        Cell::from(stack_peak.map_or("N/A".to_string(), |s| {
-                            format_number(u64::from(s))
-                        })),
-                    ),
-                };
-                let name_cell = Cell::from(format!("  {branch} {name}"));
-                Row::new(vec![name_cell, cycles_cell, time_cell, stack_cell])
-            }
-            TableItem::Setting {
-                name,
-                value,
-                is_last,
-                ..
-            } => {
-                let branch = if *is_last { "└─" } else { "├─" };
-                Row::new(vec![
-                    Cell::from(format!("  {branch} {name}"))
-                        .style(Style::default().fg(Color::Magenta)),
-                    Cell::from(value.as_str()),
-                    Cell::from(""),
-                    Cell::from(""),
-                ])
-            }
-        })
-        .collect();
-
-    let table = Table::new(
-        rows,
+    Table::new(
+        items.iter().map(table_row),
         [
             Constraint::Percentage(50),
             Constraint::Length(16),
@@ -743,11 +737,96 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
         Style::default()
             .bg(Color::Rgb(40, 44, 52))
             .add_modifier(Modifier::BOLD),
-    );
+    )
+}
 
-    frame.render_stateful_widget(table, chunks[1], &mut state.table_state);
+/// One table row for a visible item.
+fn table_row(item: &TableItem) -> Row<'_> {
+    match item {
+        TableItem::Suite {
+            name, collapsed, ..
+        } => {
+            let prefix = if *collapsed { "▶" } else { "▼" };
+            Row::new(vec![
+                Cell::from(format!("{prefix} {name}"))
+                    .style(bold(Color::Yellow)),
+                Cell::from(""),
+                Cell::from(""),
+                Cell::from(""),
+            ])
+        }
+        TableItem::Test { name, is_last, .. } => {
+            let branch = if *is_last { "└─" } else { "├─" };
+            let [cycles_cell, time_cell, stack_cell] = test_metric_cells(item);
+            let name_cell = Cell::from(format!("  {branch} {name}"));
+            Row::new(vec![name_cell, cycles_cell, time_cell, stack_cell])
+        }
+        TableItem::Setting {
+            name,
+            value,
+            is_last,
+            ..
+        } => {
+            let branch = if *is_last { "└─" } else { "├─" };
+            Row::new(vec![
+                Cell::from(format!("  {branch} {name}"))
+                    .style(Style::default().fg(Color::Magenta)),
+                Cell::from(value.as_str()),
+                Cell::from(""),
+                Cell::from(""),
+            ])
+        }
+    }
+}
 
-    // 3. Target Logs Panel
+/// Cycles, time and stack cells for a test row; empty for other rows.
+fn test_metric_cells(item: &TableItem) -> [Cell<'static>; 3] {
+    let TableItem::Test {
+        state,
+        cycles,
+        time_us,
+        stack_peak,
+        ..
+    } = *item
+    else {
+        return [Cell::from(""), Cell::from(""), Cell::from("")];
+    };
+    let stack = |missing: &str| {
+        stack_peak.map_or_else(
+            || missing.to_string(),
+            |s| format_number(u64::from(s)),
+        )
+    };
+    let time = |missing: &str| {
+        time_us.map_or_else(|| missing.to_string(), format_duration)
+    };
+    match state {
+        TestState::Running => [
+            Cell::from("[ RUN... ]").style(bold(Color::Cyan)),
+            Cell::from("---"),
+            Cell::from("---"),
+        ],
+        TestState::Pending => [
+            Cell::from("PENDING").style(Style::default().fg(Color::DarkGray)),
+            Cell::from("---"),
+            Cell::from("---"),
+        ],
+        TestState::Failed => [
+            Cell::from("FAIL").style(bold(Color::Red)),
+            Cell::from(time("---")),
+            Cell::from(stack("---")),
+        ],
+        TestState::Passed => [
+            Cell::from(cycles.map_or_else(|| "N/A".to_string(), format_number))
+                .style(Style::default().fg(Color::Green)),
+            Cell::from(time("N/A")),
+            Cell::from(stack("N/A")),
+        ],
+    }
+}
+
+/// Target log panel, scrolled to the tail when autoscroll is on.
+fn log_widget(state: &AppState, area_height: u16) -> Paragraph<'_> {
     let log_block = Block::default()
         .borders(Borders::BOTTOM)
         .border_style(Style::default().fg(Color::DarkGray))
@@ -756,7 +835,7 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
             Style::default().add_modifier(Modifier::BOLD),
         ));
 
-    let inner_height = chunks[2].height.saturating_sub(1) as usize;
+    let inner_height = usize::from(area_height.saturating_sub(1));
     let scroll_y = if state.autoscroll {
         state.logs.len().saturating_sub(inner_height)
     } else {
@@ -769,80 +848,54 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
         .map(|l| Line::from(l.as_str()))
         .collect();
 
-    let log_widget = Paragraph::new(visible_logs).block(log_block);
-    frame.render_widget(log_widget, chunks[2]);
+    Paragraph::new(visible_logs).block(log_block)
+}
 
-    // 4. Footer Action Bar
-    let footer_content = if state.is_filtering {
-        Line::from(vec![
-            Span::styled(
-                " Filter: ",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(&state.filter_query),
-            Span::styled("▌", Style::default().fg(Color::Yellow)),
-            Span::styled(
-                " (Enter: apply, Esc: clear)",
-                Style::default().fg(Color::DarkGray),
-            ),
-        ])
+/// Footer: the active prompt, or the key legend.
+fn footer_line(state: &AppState) -> Line<'_> {
+    if state.is_filtering {
+        prompt_line(
+            " Filter: ",
+            Color::Yellow,
+            &state.filter_query,
+            " (Enter: apply, Esc: clear)",
+        )
     } else if state.is_editing_setting {
-        Line::from(vec![
-            Span::styled(
-                " SetSetting: ",
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(&state.setting_edit),
-            Span::styled("▌", Style::default().fg(Color::Magenta)),
-            Span::styled(
-                " (Enter: send, Esc: cancel)",
-                Style::default().fg(Color::DarkGray),
-            ),
-        ])
+        prompt_line(
+            " SetSetting: ",
+            Color::Magenta,
+            &state.setting_edit,
+            " (Enter: send, Esc: cancel)",
+        )
     } else {
         Line::from(vec![
-            Span::styled(
-                " (f)",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(" (f)", bold(Color::Cyan)),
             Span::raw("ilter | "),
-            Span::styled(
-                "(r)",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("(r)", bold(Color::Cyan)),
             Span::raw("un all | "),
-            Span::styled(
-                "(s)",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("(s)", bold(Color::Cyan)),
             Span::raw("top | "),
-            Span::styled(
-                "(d)",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("(d)", bold(Color::Cyan)),
             Span::raw("escription | "),
-            Span::styled(
-                "(q)",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("(q)", bold(Color::Cyan)),
             Span::raw("uit"),
         ])
-    };
-    frame.render_widget(Paragraph::new(footer_content), chunks[3]);
+    }
+}
+
+/// An input prompt: label, current buffer, cursor and hint.
+fn prompt_line<'a>(
+    label: &'static str,
+    color: Color,
+    buffer: &'a str,
+    hint: &'static str,
+) -> Line<'a> {
+    Line::from(vec![
+        Span::styled(label, bold(color)),
+        Span::raw(buffer),
+        Span::styled("▌", Style::default().fg(color)),
+        Span::styled(hint, Style::default().fg(Color::DarkGray)),
+    ])
 }
 
 fn format_setting_value(value: SettingValue) -> String {
@@ -907,115 +960,17 @@ fn parse_setting_value(
 /// # Errors
 ///
 /// Returns an error if terminal initialization, crossterm polling, or bridge communication fails.
-pub fn run_tui(
-    mut bridge: ETSBridge,
-    target: &Target,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_tui(mut bridge: ETSBridge, target: &Target) -> TuiResult {
     enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
     let mut state = AppState::new(
         bridge.target_info().to_string(),
         bridge.link_info().to_string(),
     );
-
-    if let Err(e) = bridge.send_command(&Command::TryReset) {
-        state.logs.push(format!("> [HOST] send failed: {e}"));
-    }
-    if let Err(e) = bridge.send_command(&Command::ListSuites) {
-        state.logs.push(format!("> [HOST] send failed: {e}"));
-    }
-    let mut last_discovery = Instant::now();
-
-    let run_res = (|| -> Result<(), Box<dyn std::error::Error>> {
-        loop {
-            // Draw current frame
-            terminal.draw(|f| draw_ui(f, &mut state))?;
-
-            // Poll bridge messages
-            let mut need_restart = false;
-            while let Ok(msg) = bridge.receiver().try_recv() {
-                if let Some(SessionAction::PanicRestart) =
-                    state.handle_bridge_message(msg, Some(&mut bridge))
-                {
-                    need_restart = true;
-                }
-            }
-
-            if !state.session.discovery_complete
-                && last_discovery.elapsed() > Duration::from_millis(500)
-            {
-                // Pair TryReset with ListSuites so a serial target still
-                // waiting in handle_failure can exit after a lost reset frame.
-                if let Err(e) = bridge.send_command(&Command::TryReset) {
-                    state.logs.push(format!("> [HOST] send failed: {e}"));
-                }
-                if let Err(e) = bridge.send_command(&Command::ListSuites) {
-                    state.logs.push(format!("> [HOST] send failed: {e}"));
-                }
-                last_discovery = Instant::now();
-            }
-
-            if let Ok(Some(status)) = bridge.try_wait() {
-                let msg = format!("Target process exited: {status}");
-                state.process_exit = Some(msg.clone());
-                state.logs.push(format!("> [EXIT] {msg}"));
-            }
-
-            // Recover and re-attach bridge on panic restart without tearing down terminal
-            if need_restart {
-                // Drain window for the TryReset frame already written by the
-                // session action handler before closing the link.
-                thread::sleep(Duration::from_millis(50));
-                bridge.terminate();
-                state.logs.push(
-                    "> [INFO] Target panicked. Re-attaching bridge..."
-                        .to_string(),
-                );
-                thread::sleep(Duration::from_secs(1));
-                match ETSBridge::new(target.clone(), false) {
-                    Ok(new_bridge) => {
-                        bridge = new_bridge;
-                        state.process_exit = None;
-                        // Serial targets that miss the pre-terminate TryReset
-                        // spin in handle_failure ignoring ListSuites. Retry
-                        // TryReset on the new link before rediscovery.
-                        if let Err(e) = bridge.send_command(&Command::TryReset)
-                        {
-                            state
-                                .logs
-                                .push(format!("> [HOST] send failed: {e}"));
-                        }
-                        if let Err(e) =
-                            bridge.send_command(&Command::ListSuites)
-                        {
-                            state
-                                .logs
-                                .push(format!("> [HOST] send failed: {e}"));
-                        }
-                        last_discovery = Instant::now();
-                    }
-                    Err(e) => {
-                        state
-                            .logs
-                            .push(format!("> [HOST] reconnect failed: {e}"));
-                    }
-                }
-            }
-
-            // Poll input events
-            if event::poll(Duration::from_millis(30))?
-                && let Event::Key(key) = event::read()?
-                && state.handle_key(key, Some(&mut bridge))
-            {
-                break;
-            }
-        }
-        Ok(())
-    })();
+    let run_res = event_loop(&mut terminal, &mut bridge, target, &mut state);
 
     bridge.terminate();
 
@@ -1025,6 +980,51 @@ pub fn run_tui(
     terminal.show_cursor()?;
 
     run_res
+}
+
+/// Draw, poll the bridge and handle input until the user quits.
+fn event_loop<B>(
+    terminal: &mut Terminal<B>,
+    bridge: &mut ETSBridge,
+    target: &Target,
+    state: &mut AppState,
+) -> TuiResult
+where
+    B: ratatui::backend::Backend,
+    B::Error: 'static,
+{
+    state.request_discovery(bridge);
+    let mut last_discovery = Instant::now();
+
+    loop {
+        terminal.draw(|f| draw_ui(f, state))?;
+
+        let need_restart = state.drain_bridge(bridge);
+
+        if !state.session.discovery_complete
+            && last_discovery.elapsed() > Duration::from_millis(500)
+        {
+            state.request_discovery(bridge);
+            last_discovery = Instant::now();
+        }
+
+        if let Ok(Some(status)) = bridge.try_wait() {
+            let msg = format!("Target process exited: {status}");
+            state.logs.push(format!("> [EXIT] {msg}"));
+            state.process_exit = Some(msg);
+        }
+
+        if need_restart && state.reattach(bridge, target) {
+            last_discovery = Instant::now();
+        }
+
+        if event::poll(Duration::from_millis(30))?
+            && let Event::Key(key) = event::read()?
+            && state.handle_key(key, Some(bridge))
+        {
+            return Ok(());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1038,6 +1038,39 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    /// Delivers one telemetry frame to the session, discarding actions.
+    fn feed(state: &mut AppState, telemetry: &Telemetry<'_>) {
+        let _ = state
+            .session
+            .handle_message(BridgeMessage::telemetry(telemetry));
+    }
+
+    /// Discovers suite 0 named `suite` with `tests` and no settings.
+    fn discover_suite(state: &mut AppState, suite: &str, tests: &[&str]) {
+        feed(
+            state,
+            &Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: suite,
+                description: "",
+                test_count: u16::try_from(tests.len()).unwrap(),
+                setting_count: 0,
+            },
+        );
+        for (test_id, name) in (0u16..).zip(tests) {
+            feed(
+                state,
+                &Telemetry::TestInfo {
+                    suite_id: 0,
+                    test_id,
+                    name,
+                    description: "",
+                },
+            );
+        }
+        feed(state, &Telemetry::DiscoveryComplete);
+    }
+
     #[test]
     fn fr1_fr2_fr3_fr4_scripted_discovery_and_metrics() {
         let mut state = AppState::new(
@@ -1048,60 +1081,38 @@ mod tests {
         assert_eq!(state.link_info, "USB CDC (/dev/ttyACM0)");
 
         // Script discovery
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::SuiteInfo {
-                suite_id: 0,
-                name: "math::storage",
-                description: "",
-                test_count: 2,
-                setting_count: 0,
-            },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::TestInfo {
-                suite_id: 0,
-                test_id: 0,
-                name: "contiguous_storage_alloc",
-                description: "",
-            },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::TestInfo {
-                suite_id: 0,
-                test_id: 1,
-                name: "noncontiguous_storage_dma",
-                description: "",
-            },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::DiscoveryComplete,
-        ));
+        discover_suite(
+            &mut state,
+            "math::storage",
+            &["contiguous_storage_alloc", "noncontiguous_storage_dma"],
+        );
         state.rebuild_visible_items();
 
         assert_eq!(state.visible_items.len(), 3);
         assert!(matches!(
-            &state.visible_items[0],
+            state.visible_items.first().unwrap(),
             TableItem::Suite { name, collapsed: false, .. } if name == "math::storage"
         ));
         assert!(matches!(
-            &state.visible_items[1],
+            state.visible_items.get(1).unwrap(),
             TableItem::Test { name, is_last: false, .. } if name == "contiguous_storage_alloc"
         ));
         assert!(matches!(
-            &state.visible_items[2],
+            state.visible_items.get(2).unwrap(),
             TableItem::Test { name, is_last: true, .. } if name == "noncontiguous_storage_dma"
         ));
 
         // Script metrics (FR-3)
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::MetricReport {
+        feed(
+            &mut state,
+            &Telemetry::MetricReport {
                 suite_id: 0,
                 test_id: 0,
                 cycles: 1204,
                 time_us: 2,
                 stack_peak: 32,
             },
-        ));
+        );
         state.rebuild_visible_items();
 
         if let TableItem::Test {
@@ -1110,7 +1121,7 @@ mod tests {
             stack_peak,
             state: t_state,
             ..
-        } = &state.visible_items[1]
+        } = state.visible_items.get(1).unwrap()
         {
             assert_eq!(*cycles, Some(1204));
             assert_eq!(*time_us, Some(2));
@@ -1155,64 +1166,28 @@ mod tests {
         let mut state = AppState::new("Target".to_string(), "Link".to_string());
 
         // Discover and run test 0
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::SuiteInfo {
-                suite_id: 0,
-                name: "suite",
-                description: "",
-                test_count: 1,
-                setting_count: 0,
-            },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::TestInfo {
-                suite_id: 0,
-                test_id: 0,
-                name: "t0",
-                description: "",
-            },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::DiscoveryComplete,
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::MetricReport {
+        discover_suite(&mut state, "suite", &["t0"]);
+        feed(
+            &mut state,
+            &Telemetry::MetricReport {
                 suite_id: 0,
                 test_id: 0,
                 cycles: 42000,
                 time_us: 100,
                 stack_peak: 64,
             },
-        ));
+        );
 
         // Simulate target crash/reset and re-discovery
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::TargetPanic {
+        feed(
+            &mut state,
+            &Telemetry::TargetPanic {
                 message: "crash",
                 file: "foo.rs",
                 line: 10,
             },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::SuiteInfo {
-                suite_id: 0,
-                name: "suite",
-                description: "",
-                test_count: 1,
-                setting_count: 0,
-            },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::TestInfo {
-                suite_id: 0,
-                test_id: 0,
-                name: "t0",
-                description: "",
-            },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::DiscoveryComplete,
-        ));
+        );
+        discover_suite(&mut state, "suite", &["t0"]);
         state.rebuild_visible_items();
 
         // Cached metrics must still be preserved for t0
@@ -1222,7 +1197,7 @@ mod tests {
             stack_peak,
             state: t_state,
             ..
-        } = &state.visible_items[1]
+        } = state.visible_items.get(1).unwrap()
         {
             assert_eq!(*cycles, Some(42000));
             assert_eq!(*time_us, Some(100));
@@ -1236,34 +1211,35 @@ mod tests {
     #[test]
     fn test_navigation_and_collapse() {
         let mut state = AppState::new("Target".to_string(), "Link".to_string());
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::SuiteInfo {
+        feed(
+            &mut state,
+            &Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite1",
                 description: "",
                 test_count: 2,
                 setting_count: 0,
             },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::TestInfo {
+        );
+        feed(
+            &mut state,
+            &Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 0,
                 name: "test1",
                 description: "",
             },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::TestInfo {
+        );
+        feed(
+            &mut state,
+            &Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 1,
                 name: "test2",
                 description: "",
             },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::DiscoveryComplete,
-        ));
+        );
+        feed(&mut state, &Telemetry::DiscoveryComplete);
         state.rebuild_visible_items();
         assert_eq!(state.visible_items.len(), 3);
 
@@ -1341,30 +1317,30 @@ mod tests {
     /// Method: Requirements-based test
     fn test_setting_description_and_edit() {
         let mut state = AppState::new("Target".to_string(), "Link".to_string());
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::SuiteInfo {
+        feed(
+            &mut state,
+            &Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
                 description: "",
                 test_count: 0,
                 setting_count: 1,
             },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::SettingInfo {
+        );
+        feed(
+            &mut state,
+            &Telemetry::SettingInfo {
                 suite_id: 0,
                 setting_id: 0,
                 name: "cycle_limit",
                 description: "Maximum cycles before test timeout",
                 value: SettingValue::U32(100),
             },
-        ));
-        let _ = state.session.handle_message(BridgeMessage::telemetry(
-            Telemetry::DiscoveryComplete,
-        ));
+        );
+        feed(&mut state, &Telemetry::DiscoveryComplete);
         state.rebuild_visible_items();
         assert!(matches!(
-            &state.visible_items[1],
+            state.visible_items.get(1).unwrap(),
             TableItem::Setting { name, description, .. }
                 if name == "cycle_limit"
                     && description == "Maximum cycles before test timeout"
@@ -1388,7 +1364,15 @@ mod tests {
         assert!(!state.handle_key(make_test_event(KeyCode::Enter), None));
         assert!(!state.is_editing_setting);
         assert_eq!(
-            state.session.suites[0].settings[0].value,
+            state
+                .session
+                .suites
+                .first()
+                .unwrap()
+                .settings
+                .first()
+                .unwrap()
+                .value,
             SettingValue::U32(200)
         );
     }

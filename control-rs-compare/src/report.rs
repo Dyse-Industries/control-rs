@@ -123,7 +123,6 @@ impl ValidationReport {
 
     /// Renders the Executive Summary Markdown document (`cross-val-report.md`).
     #[must_use]
-    #[allow(clippy::too_many_lines)]
     pub fn render_markdown(&self) -> String {
         let mut md = String::new();
 
@@ -173,44 +172,40 @@ impl ValidationReport {
             );
         }
 
-        // Include failure diagnostics if any suites failed
-        let has_failures = self.suites.iter().any(|s| s.status == "Fail");
-        if has_failures {
-            md.push_str("\n### Discrepancy & Diagnostic Details\n\n");
-            for suite in &self.suites {
-                if suite.status == "Fail" {
-                    let _ = writeln!(md, "#### Suite: `{}`\n", suite.name);
-                    if let Some(reason) = &suite.failure_reason {
-                        let _ = writeln!(md, "- **Error**: {reason}\n");
-                    }
-                    for comp in &suite.comparisons {
-                        if comp.verdict == "fail" {
-                            let _ = writeln!(
-                                md,
-                                "- **Signal `{}`** (Pair: `{}` vs `{}`):",
-                                comp.signal, comp.pair.0, comp.pair.1
-                            );
-                            for m in &comp.methods {
-                                if m.verdict == "fail" {
-                                    let _ = writeln!(
-                                        md,
-                                        "  - Method `{}`: observed={:.3e}, bound={:.3e} ({})",
-                                        m.r#type,
-                                        m.observed,
-                                        m.bound,
-                                        m.details
-                                            .as_deref()
-                                            .unwrap_or("exceeded bound")
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    md.push('\n');
+        self.push_diagnostics(&mut md);
+        md
+    }
+
+    /// Appends the failed comparisons of every failed suite.
+    fn push_diagnostics(&self, md: &mut String) {
+        if !self.suites.iter().any(|s| s.status == "Fail") {
+            return;
+        }
+        md.push_str("\n### Discrepancy & Diagnostic Details\n\n");
+        for suite in self.suites.iter().filter(|s| s.status == "Fail") {
+            let _ = writeln!(md, "#### Suite: `{}`\n", suite.name);
+            if let Some(reason) = &suite.failure_reason {
+                let _ = writeln!(md, "- **Error**: {reason}\n");
+            }
+            for comp in suite.comparisons.iter().filter(|c| c.verdict == "fail")
+            {
+                let _ = writeln!(
+                    md,
+                    "- **Signal `{}`** (Pair: `{}` vs `{}`):",
+                    comp.signal, comp.pair.0, comp.pair.1
+                );
+                for m in comp.methods.iter().filter(|m| m.verdict == "fail") {
+                    let _ = writeln!(
+                        md,
+                        "  - Method `{}`: observed={:.3e}, bound={:.3e} ({})",
+                        m.r#type,
+                        m.observed,
+                        m.bound,
+                        m.details.as_deref().unwrap_or("exceeded bound")
+                    );
                 }
             }
+            md.push('\n');
         }
-
-        md
     }
 }

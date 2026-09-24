@@ -3,13 +3,7 @@
 //! Emits structured `.rust.h5` and `.scipy.h5` control-rs-verification containers containing
 //! nested group hierarchies and signal tolerance metadata.
 
-#![allow(
-    missing_docs,
-    clippy::arithmetic_side_effects,
-    clippy::cast_precision_loss,
-    clippy::indexing_slicing,
-    clippy::unwrap_used
-)]
+#![allow(missing_docs)]
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -17,12 +11,18 @@ use std::path::{Path, PathBuf};
 
 use hdf5_pure::{AttrValue, FileBuilder};
 
+/// Datasets keyed by name.
+type Datasets = BTreeMap<String, Vec<f64>>;
+
+/// Comparison measure (for example, `"abs"`) and its bound.
+type Tolerance = (String, f64);
+
 /// Builder for creating and serializing HDF5 containers in pure Rust.
 #[derive(Debug, Default)]
 pub struct H5Writer {
-    root_datasets: BTreeMap<String, Vec<f64>>,
-    groups: BTreeMap<String, BTreeMap<String, Vec<f64>>>,
-    tolerances: BTreeMap<String, (String, f64)>,
+    root_datasets: Datasets,
+    groups: BTreeMap<String, Datasets>,
+    tolerances: BTreeMap<String, Tolerance>,
 }
 
 impl H5Writer {

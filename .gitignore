@@ -10,6 +10,8 @@
 
 
 # Things the control-rs CI might generate.
+**/*.profraw
+
 **/*.diff
 **/clippy.json
 **/ci-report.md

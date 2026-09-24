@@ -629,13 +629,67 @@ pub fn frame_telemetry(
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::indexing_slicing,
-    clippy::similar_names,
-    clippy::too_many_lines
-)]
 mod tests {
     use super::*;
+
+    /// A decoded payload copied into a fixed buffer, with its length.
+    type DecodedPayload<const N: usize> = ([u8; N], usize);
+
+    /// Returns `buf[range]`, failing the test when the range leaves the
+    /// buffer.
+    fn span(buf: &[u8], range: core::ops::Range<usize>) -> &[u8] {
+        buf.get(range)
+            .expect("range must lie inside the frame buffer")
+    }
+
+    /// Returns the byte at `index`, failing the test when it is out of range.
+    fn byte_at(buf: &[u8], index: usize) -> u8 {
+        buf.get(index)
+            .copied()
+            .expect("index must lie inside the frame buffer")
+    }
+
+    /// Big-endian payload length carried in bytes 2 and 3 of a frame.
+    fn header_payload_len(buf: &[u8]) -> usize {
+        usize::from(
+            u16::from(byte_at(buf, 2)) << 8 | u16::from(byte_at(buf, 3)),
+        )
+    }
+
+    /// Feeds `frame` through a fresh `FrameReader` and reports whether any
+    /// byte completed a frame.
+    fn frame_decodes(frame: &[u8]) -> bool {
+        let mut reader = FrameReader::new();
+        frame.iter().any(|&b| reader.handle_byte(b).is_some())
+    }
+
+    /// Feeds `frame` through a fresh `FrameReader` and returns a copy of the
+    /// first payload it yields together with the payload length.
+    fn first_payload<const N: usize>(
+        frame: &[u8],
+    ) -> Option<DecodedPayload<N>> {
+        let mut reader = FrameReader::new();
+        for &b in frame {
+            if let Some(payload) = reader.handle_byte(b) {
+                let mut out = [0u8; N];
+                out.get_mut(..payload.len())?.copy_from_slice(payload);
+                return Some((out, payload.len()));
+            }
+        }
+        None
+    }
+
+    /// Frames `cmd`, decodes it back through `FrameReader` and returns the
+    /// deserialized command.
+    fn command_round_trip(cmd: &Command) -> Command {
+        let mut buf = [0u8; 32];
+        let len = FrameEncoder::frame_command(cmd, &mut buf)
+            .expect("command framing");
+        let (payload, payload_len) = first_payload::<32>(span(&buf, 0..len))
+            .expect("a framed command must decode");
+        postcard::from_bytes(span(&payload, 0..payload_len))
+            .expect("postcard decode command")
+    }
 
     #[test]
     fn test_frame_reader_idle() {
@@ -673,12 +727,9 @@ mod tests {
         let mut reader = FrameReader::new();
         // Noise/orphan 0xAA must not consume the real frame's leading 0xAA.
         assert!(reader.handle_byte(START_BYTE_1).is_none());
-        let mut decoded = false;
-        for &b in &buf[..framed_len] {
-            if reader.handle_byte(b).is_some() {
-                decoded = true;
-            }
-        }
+        let decoded = span(&buf, 0..framed_len)
+            .iter()
+            .any(|&b| reader.handle_byte(b).is_some());
         assert!(
             decoded,
             "valid frame after an orphan 0xAA must still decode"
@@ -814,8 +865,7 @@ mod tests {
         assert_eq!(buf[1], 0x55);
 
         // Length is big-endian and counts the payload only.
-        let payload_len =
-            usize::from(u16::from(buf[2]) << 8 | u16::from(buf[3]));
+        let payload_len = header_payload_len(&buf);
         assert_eq!(n, payload_len + 6);
 
         // The payload is exactly what postcard produces on its own.
@@ -824,17 +874,17 @@ mod tests {
             postcard::to_slice(&Telemetry::DiscoveryComplete, &mut direct)
                 .expect("payload must serialize");
         assert_eq!(payload_len, encoded.len());
-        assert_eq!(&buf[4..4 + payload_len], encoded);
+        assert_eq!(span(&buf, 4..4 + payload_len), encoded);
 
         // CRC over the payload, big-endian, in the last two bytes.
         let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
         let want = crc.checksum(encoded);
-        let got = u16::from(buf[4 + payload_len]) << 8
-            | u16::from(buf[4 + payload_len + 1]);
+        let got = u16::from(byte_at(&buf, 4 + payload_len)) << 8
+            | u16::from(byte_at(&buf, 5 + payload_len));
         assert_eq!(got, want);
 
         // Nothing is written past the frame.
-        assert!(buf[n..].iter().all(|&b| b == 0));
+        assert!(span(&buf, n..buf.len()).iter().all(|&b| b == 0));
     }
 
     /// A buffer smaller than the six framing bytes is rejected before
@@ -843,10 +893,10 @@ mod tests {
     fn test_frame_telemetry_rejects_short_buffers() {
         for len in 0..6usize {
             let mut small = [0u8; 8];
-            let res = frame_telemetry(
-                &Telemetry::DiscoveryComplete,
-                &mut small[..len],
-            );
+            let target = small
+                .get_mut(..len)
+                .expect("len must lie inside the scratch buffer");
+            let res = frame_telemetry(&Telemetry::DiscoveryComplete, target);
             assert!(res.is_err(), "len {len} must be rejected");
             assert!(
                 small.iter().all(|&b| b == 0),
@@ -870,28 +920,17 @@ mod tests {
         let n = frame_telemetry(&Telemetry::DiscoveryComplete, &mut buf)
             .expect("framing must succeed");
 
-        let mut reader = FrameReader::new();
-        let mut decoded = false;
-        for &b in &buf[..n] {
-            if reader.handle_byte(b).is_some() {
-                decoded = true;
-            }
-        }
-        assert!(decoded, "a clean frame must decode");
+        assert!(frame_decodes(span(&buf, 0..n)), "a clean frame must decode");
 
         // Flipping a bit anywhere after the header must break the frame.
         for corrupt_at in 4..n {
             let mut bad = buf;
-            bad[corrupt_at] ^= 0xFF;
-            let mut r = FrameReader::new();
-            let mut ok = false;
-            for &b in &bad[..n] {
-                if r.handle_byte(b).is_some() {
-                    ok = true;
-                }
-            }
+            let target = bad
+                .get_mut(corrupt_at)
+                .expect("corrupt_at must lie inside the frame");
+            *target ^= 0xFF;
             assert!(
-                !ok,
+                !frame_decodes(span(&bad, 0..n)),
                 "corrupting byte {corrupt_at} must fail the CRC check"
             );
         }
@@ -914,9 +953,7 @@ mod tests {
         for v in &variants {
             let mut buf = [0u8; 128];
             let n = frame_telemetry(v, &mut buf).expect("framing");
-            let payload_len =
-                usize::from(u16::from(buf[2]) << 8 | u16::from(buf[3]));
-            assert_eq!(n, payload_len + 6);
+            assert_eq!(n, header_payload_len(&buf) + 6);
             assert_eq!(buf[0], 0xAA);
             assert_eq!(buf[1], 0x55);
             assert!(n >= 6);
@@ -967,39 +1004,14 @@ mod tests {
         assert_eq!(buf[3], 0x04);
         assert_eq!(&buf[4..8], &payload);
 
-        let mut reader = FrameReader::new();
-        let mut decoded_buf = [0u8; 32];
-        let mut decoded_len = 0;
-        for &b in &buf[..len] {
-            if let Some(slice) = reader.handle_byte(b) {
-                decoded_buf[..slice.len()].copy_from_slice(slice);
-                decoded_len = slice.len();
-                break;
-            }
-        }
-        assert_eq!(&decoded_buf[..decoded_len], &payload);
+        let (decoded, decoded_len) = first_payload::<32>(span(&buf, 0..len))
+            .expect("a framed payload must decode");
+        assert_eq!(span(&decoded, 0..decoded_len), &payload);
 
-        let cmd = Command::RunExecutable {
+        let decoded_cmd = command_round_trip(&Command::RunExecutable {
             suite_id: 1,
             test_id: 2,
-        };
-        let mut cmd_buf = [0u8; 32];
-        let cmd_len = FrameEncoder::frame_command(&cmd, &mut cmd_buf)
-            .expect("command framing");
-        let mut cmd_reader = FrameReader::new();
-        let mut decoded_cmd_buf = [0u8; 32];
-        let mut decoded_cmd_len = 0;
-        for &b in &cmd_buf[..cmd_len] {
-            if let Some(slice) = cmd_reader.handle_byte(b) {
-                decoded_cmd_buf[..slice.len()].copy_from_slice(slice);
-                decoded_cmd_len = slice.len();
-                break;
-            }
-        }
-        assert!(decoded_cmd_len > 0);
-        let decoded_cmd: Command =
-            postcard::from_bytes(&decoded_cmd_buf[..decoded_cmd_len])
-                .expect("must deserialize command");
+        });
         match decoded_cmd {
             Command::RunExecutable { suite_id, test_id } => {
                 assert_eq!(suite_id, 1);
@@ -1010,78 +1022,43 @@ mod tests {
     }
 
     #[test]
-    fn test_golden_wire_vectors_commands() {
-        // 1. Command::ListSuites
-        let cmd1 = Command::ListSuites;
-        let mut buf1 = [0u8; 32];
-        let len1 = FrameEncoder::frame_command(&cmd1, &mut buf1)
-            .expect("framing cmd1");
+    fn test_golden_wire_vector_list_suites() {
+        let mut buf = [0u8; 32];
+        let len = FrameEncoder::frame_command(&Command::ListSuites, &mut buf)
+            .expect("framing ListSuites");
         let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
-        let exp_crc1 = crc.checksum(&[0x00]);
-        let expected1 = [
-            0xAA,
-            0x55,
-            0x00,
-            0x01,
-            0x00,
-            (exp_crc1 >> 8) as u8,
-            (exp_crc1 & 0xFF) as u8,
-        ];
-        assert_eq!(&buf1[..len1], &expected1);
+        let exp_crc = crc.checksum(&[0x00]);
+        let crc_hi = u8::try_from(exp_crc >> 8).expect("high byte fits in u8");
+        let crc_lo = u8::try_from(exp_crc & 0xFF).expect("low byte fits in u8");
+        let expected = [0xAA, 0x55, 0x00, 0x01, 0x00, crc_hi, crc_lo];
+        assert_eq!(span(&buf, 0..len), &expected);
+    }
 
-        // 2. Command::RunExecutable { suite_id: 1, test_id: 2 }
-        let cmd2 = Command::RunExecutable {
+    #[test]
+    fn test_golden_wire_vector_run_executable() {
+        let decoded = command_round_trip(&Command::RunExecutable {
             suite_id: 1,
             test_id: 2,
-        };
-        let mut buf2 = [0u8; 32];
-        let len2 = FrameEncoder::frame_command(&cmd2, &mut buf2)
-            .expect("framing cmd2");
-        let mut r = FrameReader::new();
-        let mut d_buf = [0u8; 32];
-        let mut d_len = 0;
-        for &b in &buf2[..len2] {
-            if let Some(s) = r.handle_byte(b) {
-                d_buf[..s.len()].copy_from_slice(s);
-                d_len = s.len();
-                break;
-            }
-        }
-        assert!(d_len > 0);
-        let decoded2: Command = postcard::from_bytes(&d_buf[..d_len])
-            .expect("postcard decode cmd2");
+        });
         assert!(matches!(
-            decoded2,
+            decoded,
             Command::RunExecutable {
                 suite_id: 1,
                 test_id: 2
             }
         ));
-
-        // 3. Command::TryReset
-        let cmd3 = Command::TryReset;
-        let mut buf3 = [0u8; 32];
-        let len3 = FrameEncoder::frame_command(&cmd3, &mut buf3)
-            .expect("framing cmd3");
-        let mut r3 = FrameReader::new();
-        let mut d3_buf = [0u8; 32];
-        let mut d3_len = 0;
-        for &b in &buf3[..len3] {
-            if let Some(s) = r3.handle_byte(b) {
-                d3_buf[..s.len()].copy_from_slice(s);
-                d3_len = s.len();
-                break;
-            }
-        }
-        assert!(d3_len > 0);
-        let decoded3: Command = postcard::from_bytes(&d3_buf[..d3_len])
-            .expect("postcard decode cmd3");
-        assert!(matches!(decoded3, Command::TryReset));
     }
 
     #[test]
-    fn test_golden_wire_vectors_telemetry() {
-        let variants = [
+    fn test_golden_wire_vector_try_reset() {
+        let decoded = command_round_trip(&Command::TryReset);
+        assert!(matches!(decoded, Command::TryReset));
+    }
+
+    /// One instance of every telemetry variant, with payload fields chosen
+    /// to exercise each string and integer encoding.
+    fn golden_telemetry_variants() -> [Telemetry<'static>; 7] {
+        [
             Telemetry::DiscoveryComplete,
             Telemetry::Log(LogMessage {
                 payload: "test log",
@@ -1121,31 +1098,24 @@ mod tests {
                 suite_id: 0,
                 test_id: 1,
             },
-        ];
+        ]
+    }
 
-        for t in &variants {
+    #[test]
+    fn test_golden_wire_vectors_telemetry() {
+        for t in &golden_telemetry_variants() {
             let mut buf = [0u8; 256];
             let len = FrameEncoder::frame_telemetry(t, &mut buf)
                 .expect("telemetry framing");
             assert_eq!(buf[0], 0xAA);
             assert_eq!(buf[1], 0x55);
-            let payload_len =
-                usize::from(u16::from(buf[2]) << 8 | u16::from(buf[3]));
-            assert_eq!(len, payload_len + 6);
+            assert_eq!(len, header_payload_len(&buf) + 6);
 
-            let mut reader = FrameReader::new();
-            let mut dec_buf = [0u8; 256];
-            let mut dec_len = 0;
-            for &b in &buf[..len] {
-                if let Some(s) = reader.handle_byte(b) {
-                    dec_buf[..s.len()].copy_from_slice(s);
-                    dec_len = s.len();
-                    break;
-                }
-            }
-            assert!(dec_len > 0);
+            let (decoded, decoded_len) =
+                first_payload::<256>(span(&buf, 0..len))
+                    .expect("a framed telemetry packet must decode");
             let _dec_t: Telemetry<'_> =
-                postcard::from_bytes(&dec_buf[..dec_len])
+                postcard::from_bytes(span(&decoded, 0..decoded_len))
                     .expect("postcard decode telemetry");
         }
     }

@@ -11,18 +11,6 @@
 //!   y[k] = alpha * x[k] + (1 - alpha) * y[k-1]
 //! - Comparison against ideal double-precision reference to measure quantization residual.
 
-#![allow(
-    clippy::arithmetic_side_effects,
-    clippy::cast_lossless,
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::indexing_slicing,
-    clippy::many_single_char_names,
-    clippy::suboptimal_flops,
-    clippy::too_many_lines,
-    clippy::uninlined_format_args
-)]
-
 use control_rs::math::fixed_num::Fixed;
 use control_rs::math::ops::{SaturatingAdd, SaturatingMul, SaturatingSub};
 
@@ -31,17 +19,22 @@ use control_rs::math::ops::{SaturatingAdd, SaturatingMul, SaturatingSub};
 type Q16 = Fixed<i32, 16>;
 
 fn float_to_q16(val: f64) -> Q16 {
-    let raw = (val * 65536.0).round() as i32;
-    Q16::from_bits(raw)
+    Q16::from_num(val)
 }
 
 fn q16_to_float(val: Q16) -> f64 {
-    (val.to_bits() as f64) / 65536.0
+    val.to_num()
 }
 
 fn main() {
     println!("=== control-rs: Fixed-Point Arithmetic & Filter Example ===");
+    print_format_and_arithmetic();
+    print_saturation();
+    simulate_low_pass();
+}
 
+/// Q16 parameters, resolution and basic arithmetic.
+fn print_format_and_arithmetic() {
     // 1. Inspect Q16 parameters and resolution
     println!("Q16.16 Format Properties:");
     println!("  Fractional shift: {} bits", Q16::SHIFT);
@@ -54,9 +47,11 @@ fn main() {
     let a = float_to_q16(3.75);
     let b = float_to_q16(2.50);
 
-    let sum = a + b;
-    let diff = a - b;
-    let prod = a * b; // Inherent Mul performs wide 64-bit multiplication and 16-bit convergent downscale
+    // Fixed-point arithmetic saturates at the format limits. Multiplication
+    // widens to 64 bits and downscales 16 bits with convergent rounding.
+    let sum = a.saturating_add(&b);
+    let diff = a.saturating_sub(&b);
+    let prod = a.saturating_mul(&b);
 
     println!("Basic Arithmetic (Q16.16):");
     println!("  a = {:.4}, b = {:.4}", q16_to_float(a), q16_to_float(b));
@@ -64,8 +59,10 @@ fn main() {
     println!("  a - b = {:.4} (expected 1.2500)", q16_to_float(diff));
     println!("  a * b = {:.4} (expected 9.3750)", q16_to_float(prod));
     println!();
+}
 
-    // 3. Saturation arithmetic vs overflow
+/// Saturation arithmetic vs overflow.
+fn print_saturation() {
     println!("Saturation Arithmetic Protection:");
     let near_max = float_to_q16(32000.0);
     let delta = float_to_q16(2000.0);
@@ -97,7 +94,10 @@ fn main() {
         q16_to_float(sat_prod)
     );
     println!();
+}
 
+/// Fixed-point discrete low-pass IIR filter against its `f64` reference.
+fn simulate_low_pass() {
     // 4. Fixed-Point Discrete Low-Pass IIR Filter
     // Difference equation: y[k] = alpha * x[k] + (1 - alpha) * y[k-1]
     // Filter parameters: cutoff frequency fc = 10 Hz, sampling fs = 1000 Hz (Ts = 1 ms)
@@ -131,32 +131,29 @@ fn main() {
 
     let mut max_abs_err: f64 = 0.0;
 
-    for k in 0..=50 {
+    for k in 0..=50_u8 {
         if k % 5 == 0 {
             let y_f = q16_to_float(y_fixed);
             let err = (y_f - y_float).abs();
-            if err > max_abs_err {
-                max_abs_err = err;
-            }
+            max_abs_err = max_abs_err.max(err);
             println!(
-                "  {:4} | {:9.1} | {:18.5} | {:18.5} | {:17.2e}",
-                k,
+                "  {k:4} | {:9.1} | {y_f:18.5} | {y_float:18.5} | {err:17.2e}",
                 f64::from(k),
-                y_f,
-                y_float,
-                err
             );
         }
 
         // Advance fixed-point filter: y[k] = alpha * x + (1 - alpha) * y[k-1]
-        y_fixed = (weight_q16 * x_step_fixed) + (decay_q16 * y_fixed);
+        y_fixed = weight_q16
+            .saturating_mul(&x_step_fixed)
+            .saturating_add(&decay_q16.saturating_mul(&y_fixed));
 
         // Advance reference floating-point filter
-        y_float = filter_alpha_f64 * x_step_float + filter_decay_f64 * y_float;
+        y_float =
+            filter_alpha_f64.mul_add(x_step_float, filter_decay_f64 * y_float);
     }
 
     println!();
-    println!("Peak quantization error: {:.4e} (< 2 * Delta)", max_abs_err);
+    println!("Peak quantization error: {max_abs_err:.4e} (< 2 * Delta)");
     println!(
         "Fixed-point simulation completed with 0 heap allocations and 0 FPU instructions."
     );

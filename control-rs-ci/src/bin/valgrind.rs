@@ -8,12 +8,6 @@
 //! (such as macOS Apple Silicon), it logs a diagnostic message and exits 0. On supported
 //! platforms (for example, Linux CI runners), it enforces strict memory safety across all targets.
 
-#![allow(
-    clippy::arithmetic_side_effects,
-    clippy::too_many_lines,
-    clippy::uninlined_format_args
-)]
-
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
@@ -61,11 +55,19 @@ fn build_examples(root: &Path) -> Result<(), String> {
     }
 }
 
+/// Resolves the Cargo target directory from `CARGO_TARGET_DIR`, relative to
+/// `root` when not absolute, defaulting to `<root>/target`.
+fn target_dir(root: &Path) -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR")
+        .map_or_else(|| root.join("target"), |dir| root.join(dir))
+}
+
 fn run_valgrind_on_example(
     root: &Path,
     example_name: &str,
 ) -> ExampleRunResult {
-    let binary_path = root.join("target/debug/examples").join(example_name);
+    let binary_path =
+        target_dir(root).join("debug/examples").join(example_name);
     if !binary_path.exists() {
         return Err(format!(
             "Example binary not found: {}",
@@ -111,7 +113,7 @@ fn main() {
     }
 
     let mut failed_examples: Vec<FailureRecord> = Vec::new();
-    let mut passed_count = 0;
+    let mut passed_count = 0_usize;
 
     for &example in KNOWN_EXAMPLES {
         println!("Running Valgrind Memcheck on example '{example}'...");
@@ -119,7 +121,7 @@ fn main() {
             Ok((status, stderr)) => {
                 if status.success() {
                     println!("  [PASS] '{example}' clean (0 leaks, 0 errors)");
-                    passed_count += 1;
+                    passed_count = passed_count.saturating_add(1);
                 } else {
                     eprintln!(
                         "  [FAIL] '{example}' reported memory errors or leaks (exit code {:?})",

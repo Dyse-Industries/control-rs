@@ -1,0 +1,8 @@
+# Test suites under src/**/tests/ compile into the library for on-target
+# execution, so cargo-mutants does not recognize them as test code. Mutating
+# them measures nothing.
+exclude_globs = ["src/**/tests/**"]
+
+# Doc-tests are expensive and should not be relied on to catch mutants.
+# This allows speeding up the test command run for each mutant.
+additional_cargo_test_args = ["--lib"]

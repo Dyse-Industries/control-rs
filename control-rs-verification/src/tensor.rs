@@ -6,42 +6,82 @@
 //! 3. Fixed-point quantization precision boundaries (`Quantized<i8, 7>`)
 //! 4. `TableActivation` tanh sweep
 
-#![allow(
-    missing_docs,
-    clippy::arithmetic_side_effects,
-    clippy::cast_precision_loss,
-    clippy::indexing_slicing,
-    clippy::suboptimal_flops,
-    clippy::too_many_lines,
-    clippy::unwrap_used
-)]
+#![allow(missing_docs)]
 
 use std::path::Path;
 
 use control_rs::tensor::{Activation, ArrayTensor, Quantized, TableActivation};
 
 use crate::h5_writer::H5Writer;
+use crate::numeric::{KernelResult, index_f32};
 
+/// Interpolation queries per grid axis.
+const EVAL_N: usize = 20;
+
+/// Inputs straddling the `Quantized<i8, 7>` range and resolution limits.
+const Q7_BOUNDARY_INPUTS: [f32; 14] = [
+    -1.5,
+    -1.0,
+    -0.75,
+    -0.5,
+    -0.125,
+    -0.007_812_5,
+    0.0,
+    0.007_812_5,
+    0.125,
+    0.5,
+    0.75,
+    0.992_187_5,
+    1.0,
+    1.5,
+];
+
+type Q7 = Quantized<i8, 7>;
 type Tensor16x16 = ArrayTensor<f32, 16, 16>;
 
-fn compute_interpolation_mesh() -> Vec<f64> {
-    let center = 7.5_f64;
-    let scale = 3.75_f64;
+/// Row and column index of a rank-2 tensor element.
+const fn index2(idx: &[usize]) -> (usize, usize) {
+    match *idx {
+        [i, j, ..] => (i, j),
+        [i] => (i, 0),
+        [] => (0, 0),
+    }
+}
 
+/// 61-point tanh lookup table on `[-3, 3]` with 0.1 spacing.
+fn tanh_table() -> TableActivation<f32, 61> {
+    let mut breakpoints = [0.0f32; 61];
+    let mut values = [0.0f32; 61];
+    for (i, (bp, v)) in breakpoints.iter_mut().zip(&mut values).enumerate() {
+        let x = index_f32(i).mul_add(0.1, -3.0);
+        *bp = x;
+        *v = x.tanh();
+    }
+    TableActivation {
+        breakpoints,
+        values,
+    }
+}
+
+fn compute_interpolation_mesh() -> Vec<f64> {
+    let center = 7.5_f32;
+    let scale = 3.75_f32;
+
+    // Evaluated in `f32`, the grid's storage precision.
     let grid = Tensor16x16::from_fn(|idx| {
-        let x = (idx[0] as f64 - center) / scale;
-        let y = (idx[1] as f64 - center) / scale;
-        (x * x - y * y) as f32
+        let (i, j) = index2(idx);
+        let x = (index_f32(i) - center) / scale;
+        let y = (index_f32(j) - center) / scale;
+        x.mul_add(x, -(y * y))
     });
 
-    const EVAL_N: usize = 20;
-    let mut out = Vec::with_capacity(EVAL_N * EVAL_N);
+    let last = index_f32(EVAL_N.saturating_sub(1));
+    let mut out = Vec::with_capacity(EVAL_N.saturating_mul(EVAL_N));
     for i in 0..EVAL_N {
         for j in 0..EVAL_N {
-            let u = 15.0_f32 * (i as f32) / ((EVAL_N - 1) as f32);
-            let v = 15.0_f32 * (j as f32) / ((EVAL_N - 1) as f32);
-            let val = grid.interpolate(&[u, v]);
-            out.push(val as f64);
+            let u = 15.0_f32 * index_f32(i) / last;
+            let v = 15.0_f32 * index_f32(j) / last;
+            out.push(f64::from(grid.interpolate(&[u, v])));
         }
     }
     out
@@ -49,67 +89,37 @@ fn compute_interpolation_mesh() -> Vec<f64> {
 
 fn compute_tensor_contraction() -> Vec<f64> {
     let tensor_a = Tensor16x16::from_fn(|idx| {
-        let i = idx[0] as f32;
-        let j = idx[1] as f32;
-        (i * 0.5 + j * 0.3).sin() * 10.0
+        let (i, j) = index2(idx);
+        index_f32(i).mul_add(0.5, index_f32(j) * 0.3).sin() * 10.0
     });
 
     let tensor_b = Tensor16x16::from_fn(|idx| {
-        let i = idx[0] as f32;
-        let j = idx[1] as f32;
-        (i * 0.3 - j * 0.4).cos() * 5.0
+        let (i, j) = index2(idx);
+        index_f32(i).mul_add(0.3, -(index_f32(j) * 0.4)).cos() * 5.0
     });
 
     let mut tensor_c = Tensor16x16::zero();
     tensor_a.contract_into(&tensor_b, &mut tensor_c);
 
-    let rows = tensor_c.to_row_arrays();
-    let mut out = Vec::with_capacity(256);
-    for row in &rows {
-        for &val in row {
-            out.push(val as f64);
-        }
-    }
-    out
+    tensor_c
+        .to_row_arrays()
+        .iter()
+        .flatten()
+        .map(|&val| f64::from(val))
+        .collect()
 }
 
 fn compute_quantized_boundaries() -> Vec<f64> {
-    type Q7 = Quantized<i8, 7>;
-    let mut breakpoints = [0.0f32; 61];
-    let mut values = [0.0f32; 61];
-    for i in 0..61 {
-        let x = -3.0f32 + (i as f32) * 0.1f32;
-        breakpoints[i] = x;
-        values[i] = x.tanh();
-    }
-    let tanh_lut = TableActivation {
-        breakpoints,
-        values,
-    };
-
-    let float_inputs = [
-        -1.5_f32, -1.0, -0.75, -0.5, -0.125, -0.0078125, 0.0, 0.0078125, 0.125,
-        0.5, 0.75, 0.9921875, 1.0, 1.5,
-    ];
-
-    let mut outputs = Vec::with_capacity(float_inputs.len());
-    for &x in &float_inputs {
-        let y = tanh_lut.apply(x);
-        let q_y = Q7::quantize(f64::from(y));
-        outputs.push(q_y.dequantize());
-    }
-
-    outputs
+    let tanh_lut = tanh_table();
+    Q7_BOUNDARY_INPUTS
+        .iter()
+        .map(|&x| Q7::quantize(f64::from(tanh_lut.apply(x))).dequantize())
+        .collect()
 }
 
 /// Raw `Quantized<i8, 7>` representation of the boundary inputs.
 fn compute_q7_raw() -> Vec<f64> {
-    type Q7 = Quantized<i8, 7>;
-    let float_inputs = [
-        -1.5_f32, -1.0, -0.75, -0.5, -0.125, -0.0078125, 0.0, 0.0078125, 0.125,
-        0.5, 0.75, 0.9921875, 1.0, 1.5,
-    ];
-    float_inputs
+    Q7_BOUNDARY_INPUTS
         .iter()
         .map(|&x| f64::from(Q7::quantize(f64::from(x)).raw()))
         .collect()
@@ -117,24 +127,18 @@ fn compute_q7_raw() -> Vec<f64> {
 
 /// `TableActivation` tanh (61 breakpoints on [-3, 3]) evaluated at 121 points.
 fn compute_activation_sweep() -> Vec<f64> {
-    let mut breakpoints = [0.0f32; 61];
-    let mut values = [0.0f32; 61];
-    for i in 0..61 {
-        let x = -3.0f32 + (i as f32) * 0.1f32;
-        breakpoints[i] = x;
-        values[i] = x.tanh();
-    }
-    let tanh_lut = TableActivation {
-        breakpoints,
-        values,
-    };
+    let tanh_lut = tanh_table();
     (0..121)
-        .map(|i| f64::from(tanh_lut.apply(-3.0f32 + (i as f32) * 0.05f32)))
+        .map(|i| f64::from(tanh_lut.apply(index_f32(i).mul_add(0.05, -3.0))))
         .collect()
 }
 
 /// Executes the tensor control-rs-verification kernel and writes `target/verification/tensor.rust.h5`.
-pub fn emit_container(output_path: &Path) -> Result<(), String> {
+///
+/// # Errors
+///
+/// Returns an error if the container cannot be written.
+pub fn emit_container(output_path: &Path) -> KernelResult<()> {
     let mut writer = H5Writer::new();
 
     let interp = compute_interpolation_mesh();

@@ -5,7 +5,8 @@ Design documents, standards and planning for the `control-rs` workspace.
 
 | Document | Purpose |
 |:--|:--|
-| [`development-guide.md`](development-guide.md) | Prerequisites, cargo aliases, CI and ETS workflows |
+| [`dependencies.md`](dependencies.md) | Every external tool, what needs it and how to install it |
+| [`development-guide.md`](development-guide.md) | Cargo aliases, CI and ETS workflows |
 | [`design-template.md`](design-template.md) | Template for new design documents |
 | [`doc-standards.md`](doc-standards.md) | Rustdoc and ETS documentation policy |
 | [`roadmap.md`](roadmap.md) | Planned pull requests |
@@ -65,12 +66,12 @@ Design documents, standards and planning for the `control-rs` workspace.
 
 | Design | Status | Implementation |
 |:--|:--|:--|
-| [Continuous Integration & Quality Gate Infrastructure](ci/ci-design.md) | Approved | `control-rs-ci/`, `gate.toml`, `.github/workflows/CI.yml` |
+| [Continuous Integration & Quality Gate Infrastructure](ci/ci-design.md) | Approved | `control-rs-ci/`, `.cargo/gate.toml`, `.github/workflows/CI.yml` |
 
 ## vv
 
 | Design | Status | Implementation |
 |:--|:--|:--|
-| [Cross-Compare Harness & HDF5 Comparison System](vv/cross-compare-design.md) | Approved | `control-rs-compare/`, `compare.toml` |
+| [Cross-Compare Harness & HDF5 Comparison System](vv/cross-compare-design.md) | Approved | `control-rs-compare/`, `.cargo/compare.toml` |
 | [Range-Valued On-Target Property Tests](vv/ets-prop-test-design.md) | Draft | Not implemented |
 | [Requirement Traceability Infrastructure](vv/requirement-traceability-design.md) | Draft | Not implemented |

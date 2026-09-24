@@ -23,6 +23,10 @@ toml = "0.8"
 thiserror = "2.0"
 
 [[bin]]
+name = "allow-audit"
+path = "src/bin/allow-audit.rs"
+
+[[bin]]
 name = "control-rs-ci"
 path = "src/bin/control-rs-ci.rs"
 

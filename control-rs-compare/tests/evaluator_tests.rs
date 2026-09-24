@@ -1,22 +1,80 @@
 //! Unit tests for typed numerical comparison algorithms, recursive dataset discovery,
 //! and tolerance discovery from external tables and HDF5 attributes.
 
-#![allow(
-    clippy::arbitrary_source_item_ordering,
-    clippy::float_cmp,
-    clippy::indexing_slicing,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::unwrap_used
-)]
-
 use control_rs_compare::compare::{
-    ToleranceSpec, compare_dataset, compare_float_arrays,
-    compare_float_arrays_parallel, discover_datasets,
+    SignalTolerancePolicy, ToleranceSpec, compare_dataset,
+    compare_float_arrays, compare_float_arrays_parallel, discover_datasets,
     resolve_signal_tolerances,
 };
 use control_rs_compare::config::ToleranceTable;
 use hdf5_pure::{AttrValue, File, FileBuilder};
+
+/// Error type shared by the fallible helpers and tests.
+type TestError = Box<dyn std::error::Error>;
+
+/// Result of a test or a helper assertion.
+type TestResult = Result<(), TestError>;
+
+/// Serialized container bytes, or the builder error.
+type ContainerBytes = Result<Vec<u8>, TestError>;
+
+/// Tolerance policy, or the container error.
+type PolicyResult = Result<SignalTolerancePolicy, TestError>;
+
+/// Dataset paths a discovery case expects, in sorted order.
+type DatasetPaths = Vec<&'static str>;
+
+/// `(key, value)` attributes set on a dataset.
+type AttrList<'a> = Vec<(&'a str, AttrValue)>;
+
+/// Builds one discovery-case container.
+type Builder = fn() -> ContainerBytes;
+
+struct DiscoveryTestCase {
+    name: &'static str,
+    builder_fn: Builder,
+    expected: DatasetPaths,
+}
+
+/// Asserts that method `idx` of `policy` is `method` with a bit-exact
+/// `bound`: bounds are parsed from TOML or attributes, so equality is exact.
+fn assert_method(
+    policy: &SignalTolerancePolicy,
+    idx: usize,
+    method: &str,
+    bound: f64,
+) -> TestResult {
+    let spec = policy
+        .methods
+        .get(idx)
+        .ok_or_else(|| format!("policy has no method {idx}"))?;
+    assert_eq!(spec.method, method);
+    assert_eq!(
+        spec.bound.to_bits(),
+        bound.to_bits(),
+        "bound {} != {bound}",
+        spec.bound
+    );
+    Ok(())
+}
+
+/// A container holding dataset `sig` = `[1.0, 2.0]` with `attrs`.
+fn attributed_file(attrs: AttrList<'_>) -> Result<File, TestError> {
+    let mut b = FileBuilder::new();
+    let ds = b.create_dataset("sig");
+    ds.with_f64_data(&[1.0, 2.0]);
+    for (key, value) in attrs {
+        ds.set_attr(key, value);
+    }
+    Ok(File::from_bytes(b.finish()?)?)
+}
+
+/// Tolerance policy that `attrs` on dataset `sig` resolve to for `peer`.
+fn attribute_policy(attrs: AttrList<'_>, peer: &str) -> PolicyResult {
+    let file = attributed_file(attrs)?;
+    let ds = file.dataset("sig")?;
+    Ok(resolve_signal_tolerances(Some(&ds), "sig", peer, None))
+}
 
 #[test]
 fn test_abs_comparison() {
@@ -98,86 +156,127 @@ fn test_nan_detection() {
 // Parameterized Dataset Discovery Tests
 // =========================================================================
 
-struct DiscoveryTestCase {
-    name: &'static str,
-    builder_fn: fn() -> Vec<u8>,
-    expected: Vec<&'static str>,
+fn build_empty_container() -> ContainerBytes {
+    Ok(FileBuilder::new().finish()?)
+}
+
+fn build_flat_root_datasets() -> ContainerBytes {
+    let mut b = FileBuilder::new();
+    b.create_dataset("gamma").with_f64_data(&[3.0]);
+    b.create_dataset("alpha").with_f64_data(&[1.0]);
+    b.create_dataset("beta").with_f64_data(&[2.0]);
+    Ok(b.finish()?)
+}
+
+fn build_deeply_nested_hierarchy() -> ContainerBytes {
+    let mut b = FileBuilder::new();
+    let mut g_a = b.create_group("a");
+    g_a.create_dataset("leaf3").with_f64_data(&[3.0]);
+
+    let mut g_b = g_a.create_group("b");
+    let mut g_c = g_b.create_group("c");
+    g_c.create_dataset("leaf2").with_f64_data(&[2.0]);
+
+    let mut g_d = g_c.create_group("d");
+    let mut g_e = g_d.create_group("e");
+    g_e.create_dataset("leaf1").with_f64_data(&[1.0]);
+
+    g_d.add_group(g_e.finish());
+    g_c.add_group(g_d.finish());
+    g_b.add_group(g_c.finish());
+    g_a.add_group(g_b.finish());
+    b.add_group(g_a.finish());
+
+    Ok(b.finish()?)
+}
+
+fn build_multi_branch_complex_tree() -> ContainerBytes {
+    let mut b = FileBuilder::new();
+    b.create_dataset("status").with_f64_data(&[1.0]);
+
+    let mut g_mat = b.create_group("matrix");
+    g_mat.create_dataset("b").with_f64_data(&[2.0]);
+    g_mat.create_dataset("a").with_f64_data(&[1.0]);
+    b.add_group(g_mat.finish());
+
+    let mut g_trans = b.create_group("transient");
+    g_trans.create_dataset("v_out").with_f64_data(&[3.3]);
+    g_trans.create_dataset("i_load").with_f64_data(&[0.5]);
+
+    let mut g_stg1 = g_trans.create_group("stage1");
+    g_stg1.create_dataset("v_node").with_f64_data(&[1.2]);
+    g_trans.add_group(g_stg1.finish());
+
+    b.add_group(g_trans.finish());
+
+    let mut g_tensor = b.create_group("tensor");
+    g_tensor.create_dataset("state").with_f64_data(&[0.0, 1.0]);
+    b.add_group(g_tensor.finish());
+
+    Ok(b.finish()?)
+}
+
+fn build_empty_groups_ignored() -> ContainerBytes {
+    let mut b = FileBuilder::new();
+    let g_empty1 = b.create_group("empty_g1");
+    b.add_group(g_empty1.finish());
+
+    let mut g2 = b.create_group("g2");
+    let g_sub_empty = g2.create_group("empty_sub");
+    g2.add_group(g_sub_empty.finish());
+    g2.create_dataset("valid_ds").with_f64_data(&[42.0]);
+    b.add_group(g2.finish());
+
+    Ok(b.finish()?)
+}
+
+fn build_underscore_metadata_and_internal_excluded() -> ContainerBytes {
+    let mut b = FileBuilder::new();
+    let mut g_meta = b.create_group("_meta");
+    g_meta.create_dataset("timestamp").with_f64_data(&[123.0]);
+    g_meta.create_dataset("git_sha").with_f64_data(&[456.0]);
+    b.add_group(g_meta.finish());
+
+    let mut g_hidden = b.create_group("_hidden");
+    g_hidden.create_dataset("secret").with_f64_data(&[789.0]);
+    b.add_group(g_hidden.finish());
+
+    let mut g_sig = b.create_group("signals");
+    g_sig
+        .create_dataset("_internal_state")
+        .with_f64_data(&[0.0]);
+    g_sig.create_dataset("public_output").with_f64_data(&[1.0]);
+
+    let mut g_sig_hidden = g_sig.create_group("_private_sub");
+    g_sig_hidden.create_dataset("sub_val").with_f64_data(&[2.0]);
+    g_sig.add_group(g_sig_hidden.finish());
+
+    b.add_group(g_sig.finish());
+
+    Ok(b.finish()?)
 }
 
 #[test]
 fn test_parameterized_dataset_discovery() {
-    let test_cases = vec![
+    let test_cases = [
         DiscoveryTestCase {
             name: "empty_container",
-            builder_fn: || {
-                let builder = FileBuilder::new();
-                builder.finish().unwrap()
-            },
+            builder_fn: build_empty_container,
             expected: vec![],
         },
         DiscoveryTestCase {
             name: "flat_root_datasets",
-            builder_fn: || {
-                let mut b = FileBuilder::new();
-                b.create_dataset("gamma").with_f64_data(&[3.0]);
-                b.create_dataset("alpha").with_f64_data(&[1.0]);
-                b.create_dataset("beta").with_f64_data(&[2.0]);
-                b.finish().unwrap()
-            },
+            builder_fn: build_flat_root_datasets,
             expected: vec!["alpha", "beta", "gamma"],
         },
         DiscoveryTestCase {
             name: "deeply_nested_hierarchy",
-            builder_fn: || {
-                let mut b = FileBuilder::new();
-                let mut g_a = b.create_group("a");
-                g_a.create_dataset("leaf3").with_f64_data(&[3.0]);
-
-                let mut g_b = g_a.create_group("b");
-                let mut g_c = g_b.create_group("c");
-                g_c.create_dataset("leaf2").with_f64_data(&[2.0]);
-
-                let mut g_d = g_c.create_group("d");
-                let mut g_e = g_d.create_group("e");
-                g_e.create_dataset("leaf1").with_f64_data(&[1.0]);
-
-                g_d.add_group(g_e.finish());
-                g_c.add_group(g_d.finish());
-                g_b.add_group(g_c.finish());
-                g_a.add_group(g_b.finish());
-                b.add_group(g_a.finish());
-
-                b.finish().unwrap()
-            },
+            builder_fn: build_deeply_nested_hierarchy,
             expected: vec!["a/b/c/d/e/leaf1", "a/b/c/leaf2", "a/leaf3"],
         },
         DiscoveryTestCase {
             name: "multi_branch_complex_tree",
-            builder_fn: || {
-                let mut b = FileBuilder::new();
-                b.create_dataset("status").with_f64_data(&[1.0]);
-
-                let mut g_mat = b.create_group("matrix");
-                g_mat.create_dataset("b").with_f64_data(&[2.0]);
-                g_mat.create_dataset("a").with_f64_data(&[1.0]);
-                b.add_group(g_mat.finish());
-
-                let mut g_trans = b.create_group("transient");
-                g_trans.create_dataset("v_out").with_f64_data(&[3.3]);
-                g_trans.create_dataset("i_load").with_f64_data(&[0.5]);
-
-                let mut g_stg1 = g_trans.create_group("stage1");
-                g_stg1.create_dataset("v_node").with_f64_data(&[1.2]);
-                g_trans.add_group(g_stg1.finish());
-
-                b.add_group(g_trans.finish());
-
-                let mut g_tensor = b.create_group("tensor");
-                g_tensor.create_dataset("state").with_f64_data(&[0.0, 1.0]);
-                b.add_group(g_tensor.finish());
-
-                b.finish().unwrap()
-            },
+            builder_fn: build_multi_branch_complex_tree,
             expected: vec![
                 "matrix/a",
                 "matrix/b",
@@ -190,54 +289,18 @@ fn test_parameterized_dataset_discovery() {
         },
         DiscoveryTestCase {
             name: "empty_groups_ignored",
-            builder_fn: || {
-                let mut b = FileBuilder::new();
-                let g_empty1 = b.create_group("empty_g1");
-                b.add_group(g_empty1.finish());
-
-                let mut g2 = b.create_group("g2");
-                let g_sub_empty = g2.create_group("empty_sub");
-                g2.add_group(g_sub_empty.finish());
-                g2.create_dataset("valid_ds").with_f64_data(&[42.0]);
-                b.add_group(g2.finish());
-
-                b.finish().unwrap()
-            },
+            builder_fn: build_empty_groups_ignored,
             expected: vec!["g2/valid_ds"],
         },
         DiscoveryTestCase {
             name: "underscore_metadata_and_internal_excluded",
-            builder_fn: || {
-                let mut b = FileBuilder::new();
-                let mut g_meta = b.create_group("_meta");
-                g_meta.create_dataset("timestamp").with_f64_data(&[123.0]);
-                g_meta.create_dataset("git_sha").with_f64_data(&[456.0]);
-                b.add_group(g_meta.finish());
-
-                let mut g_hidden = b.create_group("_hidden");
-                g_hidden.create_dataset("secret").with_f64_data(&[789.0]);
-                b.add_group(g_hidden.finish());
-
-                let mut g_sig = b.create_group("signals");
-                g_sig
-                    .create_dataset("_internal_state")
-                    .with_f64_data(&[0.0]);
-                g_sig.create_dataset("public_output").with_f64_data(&[1.0]);
-
-                let mut g_sig_hidden = g_sig.create_group("_private_sub");
-                g_sig_hidden.create_dataset("sub_val").with_f64_data(&[2.0]);
-                g_sig.add_group(g_sig_hidden.finish());
-
-                b.add_group(g_sig.finish());
-
-                b.finish().unwrap()
-            },
+            builder_fn: build_underscore_metadata_and_internal_excluded,
             expected: vec!["signals/public_output"],
         },
     ];
 
     for tc in test_cases {
-        let bytes = (tc.builder_fn)();
+        let bytes = (tc.builder_fn)().unwrap();
         let file = File::from_bytes(bytes).unwrap_or_else(|e| {
             panic!("Failed to parse HDF5 for '{}': {e}", tc.name)
         });
@@ -255,7 +318,7 @@ fn test_parameterized_dataset_discovery() {
 // =========================================================================
 
 #[test]
-fn test_tolerance_discovery_from_table() {
+fn test_tolerance_discovery_from_table() -> TestResult {
     let toml_str = r#"
 [signals."matrix/a"]
 method = "matrix_norm"
@@ -280,18 +343,17 @@ methods = [
         resolve_signal_tolerances(None, "matrix/a", "rust", Some(&table));
     assert_eq!(pol_default.policy, "all_of");
     assert_eq!(pol_default.methods.len(), 1);
-    assert_eq!(pol_default.methods[0].method, "matrix_norm");
-    assert!((pol_default.methods[0].bound - 0.05).abs() < 1e-9);
+    assert_method(&pol_default, 0, "matrix_norm", 0.05)?;
 
     // 2. Peer override: `matlab`
     let pol_matlab =
         resolve_signal_tolerances(None, "matrix/a", "matlab", Some(&table));
-    assert_eq!(pol_matlab.methods[0].bound, 0.10);
+    assert_method(&pol_matlab, 0, "matrix_norm", 0.10)?;
 
     // 3. Peer override: python
     let pol_python =
         resolve_signal_tolerances(None, "matrix/a", "python", Some(&table));
-    assert_eq!(pol_python.methods[0].bound, 0.02);
+    assert_method(&pol_python, 0, "matrix_norm", 0.02)?;
 
     // 4. Multi-method with `any_of` policy
     let pol_trans = resolve_signal_tolerances(
@@ -302,119 +364,113 @@ methods = [
     );
     assert_eq!(pol_trans.policy, "any_of");
     assert_eq!(pol_trans.methods.len(), 2);
-    assert_eq!(pol_trans.methods[0].method, "rel");
-    assert_eq!(pol_trans.methods[0].bound, 0.01);
-    assert_eq!(pol_trans.methods[1].method, "rms");
-    assert_eq!(pol_trans.methods[1].bound, 0.005);
+    assert_method(&pol_trans, 0, "rel", 0.01)?;
+    assert_method(&pol_trans, 1, "rms", 0.005)?;
+    Ok(())
 }
 
+/// Single measure and bound, with a peer override.
 #[test]
-fn test_tolerance_discovery_from_hdf5_attributes() {
-    // 1. Single measure & bound with peer override
-    let mut b1 = FileBuilder::new();
-    let ds1 = b1.create_dataset("sig1");
-    ds1.with_f64_data(&[1.0, 2.0]);
-    ds1.set_attr("measure", AttrValue::String("matrix_norm".to_string()));
-    ds1.set_attr("bound", AttrValue::F64(0.01));
-    ds1.set_attr("bound.matlab", AttrValue::F64(0.05));
-    let bytes1 = b1.finish().unwrap();
-    let file1 = File::from_bytes(bytes1).unwrap();
-    let ds1_obj = file1.dataset("sig1").unwrap();
+fn test_tolerance_attrs_single_measure_with_peer_override() -> TestResult {
+    let attrs = || {
+        vec![
+            ("measure", AttrValue::String("matrix_norm".to_string())),
+            ("bound", AttrValue::F64(0.01)),
+            ("bound.matlab", AttrValue::F64(0.05)),
+        ]
+    };
+    let pol = attribute_policy(attrs(), "rust")?;
+    assert_eq!(pol.methods.len(), 1);
+    assert_method(&pol, 0, "matrix_norm", 0.01)?;
 
-    let pol1 = resolve_signal_tolerances(Some(&ds1_obj), "sig1", "rust", None);
-    assert_eq!(pol1.methods.len(), 1);
-    assert_eq!(pol1.methods[0].method, "matrix_norm");
-    assert_eq!(pol1.methods[0].bound, 0.01);
+    let pol_matlab = attribute_policy(attrs(), "matlab")?;
+    assert_method(&pol_matlab, 0, "matrix_norm", 0.05)?;
+    Ok(())
+}
 
-    let pol1_matlab =
-        resolve_signal_tolerances(Some(&ds1_obj), "sig1", "matlab", None);
-    assert_eq!(pol1_matlab.methods[0].bound, 0.05);
+/// Multi-method JSON attribute with `any_of` policy.
+#[test]
+fn test_tolerance_attrs_multi_method_json() -> TestResult {
+    let pol = attribute_policy(
+        vec![
+            (
+                "methods",
+                AttrValue::String(
+                    r#"[{"type": "rms", "bound": 0.002}, {"type": "rel", "bound": 0.05}]"#
+                        .to_string(),
+                ),
+            ),
+            ("policy", AttrValue::String("any_of".to_string())),
+        ],
+        "rust",
+    )?;
+    assert_eq!(pol.policy, "any_of");
+    assert_eq!(pol.methods.len(), 2);
+    assert_method(&pol, 0, "rms", 0.002)?;
+    assert_method(&pol, 1, "rel", 0.05)?;
+    Ok(())
+}
 
-    // 2. Multi-method JSON attribute with `any_of` policy
-    let mut b2 = FileBuilder::new();
-    let ds2 = b2.create_dataset("sig2");
-    ds2.with_f64_data(&[1.0, 2.0]);
-    ds2.set_attr(
-        "methods",
-        AttrValue::String(
-            r#"[{"type": "rms", "bound": 0.002}, {"type": "rel", "bound": 0.05}]"#
-                .to_string(),
-        ),
-    );
-    ds2.set_attr("policy", AttrValue::String("any_of".to_string()));
-    let bytes2 = b2.finish().unwrap();
-    let file2 = File::from_bytes(bytes2).unwrap();
-    let ds2_obj = file2.dataset("sig2").unwrap();
+/// Fallback default when neither attributes nor a table apply.
+#[test]
+fn test_tolerance_attrs_fallback_default() -> TestResult {
+    let pol = attribute_policy(vec![], "rust")?;
+    assert_eq!(pol.policy, "all_of");
+    assert_eq!(pol.methods.len(), 1);
+    assert_method(&pol, 0, "abs", 1e-4)?;
+    Ok(())
+}
 
-    let pol2 = resolve_signal_tolerances(Some(&ds2_obj), "sig2", "rust", None);
-    assert_eq!(pol2.policy, "any_of");
-    assert_eq!(pol2.methods.len(), 2);
-    assert_eq!(pol2.methods[0].method, "rms");
-    assert_eq!(pol2.methods[0].bound, 0.002);
-    assert_eq!(pol2.methods[1].method, "rel");
-    assert_eq!(pol2.methods[1].bound, 0.05);
+/// Single `method` attribute with an `f32` bound.
+#[test]
+fn test_tolerance_attrs_method_with_f32_bound() -> TestResult {
+    let pol = attribute_policy(
+        vec![
+            ("method", AttrValue::String("rel".to_string())),
+            ("bound", AttrValue::F32(0.005_f32)),
+        ],
+        "rust",
+    )?;
+    assert_eq!(pol.methods.len(), 1);
+    assert_method(&pol, 0, "rel", f64::from(0.005_f32))?;
+    Ok(())
+}
 
-    // 3. Fallback default when no attributes or table
-    let mut b3 = FileBuilder::new();
-    b3.create_dataset("sig3").with_f64_data(&[1.0]);
-    let bytes3 = b3.finish().unwrap();
-    let file3 = File::from_bytes(bytes3).unwrap();
-    let ds3_obj = file3.dataset("sig3").unwrap();
+/// A `bound` attribute alone defaults the method to `abs`.
+#[test]
+fn test_tolerance_attrs_bound_only() -> TestResult {
+    let pol = attribute_policy(vec![("bound", AttrValue::I32(1))], "rust")?;
+    assert_eq!(pol.methods.len(), 1);
+    assert_method(&pol, 0, "abs", 1.0)?;
+    Ok(())
+}
 
-    let pol3 = resolve_signal_tolerances(Some(&ds3_obj), "sig3", "rust", None);
-    assert_eq!(pol3.policy, "all_of");
-    assert_eq!(pol3.methods.len(), 1);
-    assert_eq!(pol3.methods[0].method, "abs");
-    assert_eq!(pol3.methods[0].bound, 1e-4);
-
-    // 4. Single 'method' attribute + F32 bound
-    let mut b4 = FileBuilder::new();
-    let ds4 = b4.create_dataset("sig4");
-    ds4.with_f64_data(&[1.0]);
-    ds4.set_attr("method", AttrValue::String("rel".to_string()));
-    ds4.set_attr("bound", AttrValue::F32(0.005_f32));
-    let bytes4 = b4.finish().unwrap();
-    let file4 = File::from_bytes(bytes4).unwrap();
-    let ds4_obj = file4.dataset("sig4").unwrap();
-
-    let pol4 = resolve_signal_tolerances(Some(&ds4_obj), "sig4", "rust", None);
-    assert_eq!(pol4.methods.len(), 1);
-    assert_eq!(pol4.methods[0].method, "rel");
-    assert!((pol4.methods[0].bound - 0.005).abs() < 1e-6);
-
-    // 5. 'bound' attribute only (defaults to abs)
-    let mut b5 = FileBuilder::new();
-    let ds5 = b5.create_dataset("sig5");
-    ds5.with_f64_data(&[1.0]);
-    ds5.set_attr("bound", AttrValue::I32(1));
-    let bytes5 = b5.finish().unwrap();
-    let file5 = File::from_bytes(bytes5).unwrap();
-    let ds5_obj = file5.dataset("sig5").unwrap();
-
-    let pol5 = resolve_signal_tolerances(Some(&ds5_obj), "sig5", "rust", None);
-    assert_eq!(pol5.methods.len(), 1);
-    assert_eq!(pol5.methods[0].method, "abs");
-    assert_eq!(pol5.methods[0].bound, 1.0);
-
-    // 6. External table takes precedence over dataset attributes
+/// An external table takes precedence over dataset attributes.
+#[test]
+fn test_tolerance_table_precedes_attrs() -> TestResult {
+    let file = attributed_file(vec![
+        ("measure", AttrValue::String("matrix_norm".to_string())),
+        ("bound", AttrValue::F64(0.01)),
+    ])?;
+    let ds = file.dataset("sig")?;
     let table_override: ToleranceTable = toml::from_str(
         r#"
-[signals.sig1]
+[signals.sig]
 method = "rms"
 bound = 0.0001
 "#,
     )
     .unwrap();
 
-    let pol_precedence = resolve_signal_tolerances(
-        Some(&ds1_obj),
-        "sig1",
+    let pol = resolve_signal_tolerances(
+        Some(&ds),
+        "sig",
         "rust",
         Some(&table_override),
     );
-    assert_eq!(pol_precedence.methods.len(), 1);
-    assert_eq!(pol_precedence.methods[0].method, "rms");
-    assert_eq!(pol_precedence.methods[0].bound, 0.0001);
+    assert_eq!(pol.methods.len(), 1);
+    assert_method(&pol, 0, "rms", 0.0001)?;
+    Ok(())
 }
 
 #[test]
@@ -465,16 +521,16 @@ fn test_parameterized_parallel_chunked_equivalence() {
     let methods = ["abs", "rel", "rms", "matrix_norm"];
 
     for &n in &sizes {
-        #[allow(clippy::cast_precision_loss)]
-        let oracle: Vec<f64> =
-            (0..n).map(|i| (i as f64 * 0.001).sin()).collect();
+        let oracle: Vec<f64> = (0..u32::try_from(n).unwrap())
+            .map(|i| (f64::from(i) * 0.001).sin())
+            .collect();
         let peer_pass: Vec<f64> = oracle
             .iter()
             .map(|&v| 1e-6f64.mul_add((v * 0.5).cos(), v))
             .collect();
         let mut peer_fail = peer_pass.clone();
-        if n > 0 {
-            peer_fail[n / 2] += 0.5;
+        if let Some(v) = peer_fail.get_mut(n / 2) {
+            *v += 0.5;
         }
 
         for &method in &methods {
@@ -542,7 +598,7 @@ fn test_parameterized_parallel_chunked_nan_inf_fail_closed() {
             // Test NaN injection
             let oracle = vec![1.0_f64; n];
             let mut peer_nan = vec![1.0_f64; n];
-            peer_nan[bad_idx] = f64::NAN;
+            *peer_nan.get_mut(bad_idx).unwrap() = f64::NAN;
 
             let res_nan = compare_float_arrays_parallel(
                 &oracle, &peer_nan, &tol, threads,
@@ -561,7 +617,7 @@ fn test_parameterized_parallel_chunked_nan_inf_fail_closed() {
 
             // Test Infinity injection
             let mut peer_inf = vec![1.0_f64; n];
-            peer_inf[bad_idx] = f64::INFINITY;
+            *peer_inf.get_mut(bad_idx).unwrap() = f64::INFINITY;
 
             let res_inf = compare_float_arrays_parallel(
                 &oracle, &peer_inf, &tol, threads,

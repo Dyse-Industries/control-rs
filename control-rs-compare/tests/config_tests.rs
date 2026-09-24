@@ -1,7 +1,5 @@
 //! Integration and unit tests for compare.toml deserialization.
 
-#![allow(clippy::indexing_slicing, clippy::unwrap_used)]
-
 use control_rs_compare::config::CompareConfigFile;
 
 #[test]
@@ -40,6 +38,7 @@ output_file = "results/test.scipy.h5"
     assert_eq!(config.compare.out_dir, "custom_results");
     assert_eq!(config.compare.suites.len(), 1);
     assert_eq!(config.inlined_suites.len(), 1);
-    assert_eq!(config.inlined_suites[0].name, "inlined_test");
-    assert_eq!(config.inlined_suites[0].variants.len(), 2);
+    let inlined = config.inlined_suites.first().unwrap();
+    assert_eq!(inlined.name, "inlined_test");
+    assert_eq!(inlined.variants.len(), 2);
 }

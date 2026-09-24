@@ -1,18 +1,10 @@
 //! Integration tests for parallel CI execution and barrier synchronization.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing,
-    clippy::type_complexity
-)]
-
 use control_rs_ci::config::{ExecutionConfig, GateConfig};
 
 #[test]
 fn test_execution_config_defaults() {
     let config = ExecutionConfig::default();
-    assert!(config.parallel);
     assert!(config.exclusive_gates.is_empty());
     assert!(config.groups.is_empty());
 }
@@ -21,7 +13,6 @@ fn test_execution_config_defaults() {
 fn test_execution_config_toml_deserialization() {
     let toml_str = r#"
         [execution]
-        parallel = true
         exclusive_gates = ["cross-compare", "custom-exclusive"]
 
         [execution.groups]
@@ -32,7 +23,6 @@ fn test_execution_config_toml_deserialization() {
 
     let gate_cfg: GateConfig = toml::from_str(toml_str).unwrap();
     let exec = gate_cfg.execution;
-    assert!(exec.parallel);
     assert_eq!(exec.exclusive_gates.len(), 2);
     assert!(
         exec.exclusive_gates
@@ -55,7 +45,6 @@ fn test_execution_config_toml_deserialization() {
 fn test_exclusive_group_normalization() {
     let toml_str = r#"
         [execution]
-        parallel = true
         exclusive_gates = ["cross-compare"]
 
         [execution.groups]
@@ -92,7 +81,6 @@ fn test_exclusive_group_normalization() {
 fn test_unassigned_gate_routes_to_exclusive() {
     let toml_str = r#"
         [execution]
-        parallel = true
         exclusive_gates = ["cross-compare"]
 
         [execution.groups]
@@ -100,17 +88,23 @@ fn test_unassigned_gate_routes_to_exclusive() {
     "#;
 
     let gate_cfg: GateConfig = toml::from_str(toml_str).unwrap();
-    let active = vec!["fmt", "metrics", "cross-compare"];
+    let active = ["fmt", "metrics", "cross-compare"];
 
-    let (exclusive, concurrent): (Vec<_>, Vec<_>) =
-        active.into_iter().partition(|g| {
-            gate_cfg.execution.exclusive_gates.iter().any(|e| e == *g)
-                || !gate_cfg
-                    .execution
-                    .groups
-                    .values()
-                    .any(|members| members.iter().any(|m| m == *g))
-        });
+    let is_exclusive = |g: &&str| {
+        gate_cfg.execution.exclusive_gates.iter().any(|e| e == *g)
+            || !gate_cfg
+                .execution
+                .groups
+                .values()
+                .any(|members| members.iter().any(|m| m == *g))
+    };
+    let exclusive: Vec<&str> =
+        active.iter().copied().filter(is_exclusive).collect();
+    let concurrent: Vec<&str> = active
+        .iter()
+        .copied()
+        .filter(|g| !is_exclusive(g))
+        .collect();
 
     assert_eq!(exclusive, vec!["metrics", "cross-compare"]);
     assert_eq!(concurrent, vec!["fmt"]);

@@ -7,7 +7,7 @@ use control_rs_ets::comms::{Command as CommCommand, TestState};
 
 use crate::bridge::ETSBridge;
 use crate::error::HostError;
-use crate::session::{SessionAction, SessionState};
+use crate::session::{SessionAction, SessionState, TestIndex};
 use crate::target::Target;
 
 /// Execution options controlling timeout and retry parameters for headless runs.
@@ -48,7 +48,7 @@ pub struct RunRecord {
     /// Test outcomes collected during the session.
     pub results: Vec<TestOutcome>,
     /// Tests that remained pending or unexecuted when the run ended `(suite_id, test_id)`.
-    pub pending: Vec<(u16, u16)>,
+    pub pending: Vec<TestIndex>,
     /// Number of target resets performed during execution.
     pub resets: u32,
     /// Terminal abort condition, if the run was aborted (`None` when drained).
@@ -89,6 +89,26 @@ enum AfterPanicRestart {
     Reconnect,
 }
 
+/// Why a headless run stopped, plus an optional note for the console log.
+#[derive(Debug, Default)]
+struct RunEnd {
+    /// Terminal abort condition (`None` when the run drained).
+    abort: Option<Completion>,
+    /// Line appended to the captured console output.
+    note: Option<String>,
+}
+
+/// Live state of one headless run: the link, the session and the counters.
+struct HeadlessRun<'t> {
+    bridge: ETSBridge,
+    target: &'t Target,
+    options: RunOptions,
+    state: SessionState,
+    resets: u32,
+    start_time: Instant,
+    last_send: Instant,
+}
+
 impl Default for RunOptions {
     fn default() -> Self {
         Self {
@@ -106,6 +126,184 @@ impl RunRecord {
             Some(c) => c,
             None => Completion::Drained,
         }
+    }
+}
+
+impl<'t> HeadlessRun<'t> {
+    /// Connects to `target` and prepares an empty session.
+    fn start(
+        target: &'t Target,
+        options: RunOptions,
+    ) -> Result<Self, HostError> {
+        Ok(Self {
+            bridge: ETSBridge::new(target.clone(), true)?,
+            target,
+            options,
+            state: SessionState::new(),
+            resets: 0,
+            start_time: Instant::now(),
+            last_send: Instant::now(),
+        })
+    }
+
+    /// Drives discovery and execution until the session drains (`Ok`) or
+    /// aborts (`Err` with the reason).
+    fn drive(&mut self) -> Result<(), RunEnd> {
+        send_discovery(&mut self.bridge)
+            .map_err(|e| RunEnd::send_failed(&e))?;
+
+        while !self.state.exit_loop {
+            if self.start_time.elapsed() > self.options.timeout {
+                return Err(RunEnd::aborted(Completion::TimedOut));
+            }
+            self.retry_discovery()?;
+            while let Ok(msg) = self.bridge.receiver().try_recv() {
+                let actions = self.state.handle_message(msg);
+                self.apply_actions(actions)?;
+            }
+            if self.check_target_exit()? {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
+    }
+
+    /// Re-sends discovery every 500 ms until the catalog is complete.
+    ///
+    /// Serial targets that miss the post-panic `TryReset` spin forever in
+    /// `handle_failure` and ignore `ListSuites`; rediscovery must keep
+    /// offering `TryReset`.
+    fn retry_discovery(&mut self) -> Result<(), RunEnd> {
+        if !self.state.discovery_complete
+            && self.last_send.elapsed() > Duration::from_millis(500)
+        {
+            send_discovery(&mut self.bridge)
+                .map_err(|e| RunEnd::send_failed(&e))?;
+            self.last_send = Instant::now();
+        }
+        Ok(())
+    }
+
+    /// Executes the actions produced by one message.
+    fn apply_actions(
+        &mut self,
+        actions: Vec<SessionAction>,
+    ) -> Result<(), RunEnd> {
+        for action in actions {
+            match action {
+                SessionAction::Send(cmd) => {
+                    self.bridge
+                        .send_command(&cmd)
+                        .map_err(|e| RunEnd::send_failed(&e))?;
+                }
+                SessionAction::PanicRestart => {
+                    if self.restart_after_panic()? == AfterPanicRestart::Drained
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Kills the target after a panic and reconnects when budget remains.
+    ///
+    /// `TargetPanic` clears `discovery_complete` and may set `exit_loop`
+    /// when no cases remain. Drain is preferred over reset-budget or
+    /// `TargetExited` for that path.
+    fn restart_after_panic(&mut self) -> Result<AfterPanicRestart, RunEnd> {
+        self.resets = self.resets.saturating_add(1);
+        thread::sleep(Duration::from_millis(50));
+        self.bridge.terminate();
+        thread::sleep(Duration::from_secs(1));
+
+        let next = after_panic_restart(
+            self.state.exit_loop,
+            self.resets,
+            self.options.max_resets,
+        );
+        match next {
+            AfterPanicRestart::Drained => {}
+            AfterPanicRestart::ResetBudgetExhausted => {
+                return Err(RunEnd::aborted(Completion::ResetBudgetExhausted));
+            }
+            AfterPanicRestart::Reconnect => {
+                self.bridge = ETSBridge::new(self.target.clone(), true)
+                    .map_err(|e| {
+                        RunEnd::aborted_with(
+                            Completion::ReconnectFailed,
+                            format!("reconnect failed: {e}"),
+                        )
+                    })?;
+                send_discovery(&mut self.bridge)
+                    .map_err(|e| RunEnd::send_failed(&e))?;
+                self.last_send = Instant::now();
+            }
+        }
+        Ok(next)
+    }
+
+    /// Classifies a child exit. Returns `Ok(true)` when the loop should stop
+    /// because the session already drained.
+    ///
+    /// A drained `PanicRestart` already terminated the child. That
+    /// intentional kill is not reclassified as `TargetExited`, even though
+    /// `TargetPanic` left `discovery_complete` false.
+    fn check_target_exit(&mut self) -> Result<bool, RunEnd> {
+        let Ok(Some(status)) = self.bridge.try_wait() else {
+            return Ok(false);
+        };
+        if self.state.exit_loop {
+            return Ok(true);
+        }
+        if is_unexpected_target_exit(
+            self.state.discovery_complete,
+            self.state.current_running.is_some(),
+            self.state.run_queue.is_empty(),
+        ) {
+            return Err(RunEnd::aborted_with(
+                Completion::TargetExited,
+                format!("process exited unexpectedly: {status}"),
+            ));
+        }
+        self.state.exit_loop = true;
+        Ok(false)
+    }
+
+    /// Stops the link and converts the session into a [`RunRecord`].
+    fn finish(mut self, end: RunEnd) -> RunRecord {
+        self.bridge.terminate();
+        finish_record(self.state, self.resets, self.start_time, end)
+    }
+}
+
+impl RunEnd {
+    /// The run drained its queue without aborting.
+    fn drained() -> Self {
+        Self::default()
+    }
+
+    /// The run aborted with `abort` and nothing to add to the console.
+    const fn aborted(abort: Completion) -> Self {
+        Self {
+            abort: Some(abort),
+            note: None,
+        }
+    }
+
+    /// The run aborted with `abort`, appending `note` to the console.
+    const fn aborted_with(abort: Completion, note: String) -> Self {
+        Self {
+            abort: Some(abort),
+            note: Some(note),
+        }
+    }
+
+    /// A command could not be delivered to the target.
+    fn send_failed(e: &HostError) -> Self {
+        Self::aborted_with(Completion::SendFailed, format!("send failed: {e}"))
     }
 }
 
@@ -148,9 +346,8 @@ const fn is_unexpected_target_exit(
 ///
 /// Returns `HostError` if the target cannot be spawned or unexpectedly disconnects
 /// before any session record can be produced.
-#[allow(clippy::needless_pass_by_value)]
 pub fn run_headless_ets(
-    target: Target,
+    target: &Target,
     timeout: Duration,
 ) -> Result<RunRecord, HostError> {
     run_headless_ets_with_options(
@@ -168,168 +365,16 @@ pub fn run_headless_ets(
 ///
 /// Returns `HostError` if the target cannot be spawned or unexpectedly disconnects
 /// before any session record can be produced.
-#[allow(clippy::needless_pass_by_value)]
 pub fn run_headless_ets_with_options(
-    target: Target,
+    target: &Target,
     options: RunOptions,
 ) -> Result<RunRecord, HostError> {
-    let mut bridge = ETSBridge::new(target.clone(), true)?;
-
-    let start_time = Instant::now();
-    let mut last_send = Instant::now();
-    let mut state = SessionState::new();
-    let mut resets = 0u32;
-
-    if let Err(e) = send_discovery(&mut bridge) {
-        bridge.terminate();
-        return Ok(finish_record(
-            state,
-            resets,
-            Some(Completion::SendFailed),
-            start_time,
-            Some(format!("send failed: {e}")),
-        ));
-    }
-
-    while !state.exit_loop {
-        if start_time.elapsed() > options.timeout {
-            bridge.terminate();
-            return Ok(finish_record(
-                state,
-                resets,
-                Some(Completion::TimedOut),
-                start_time,
-                None,
-            ));
-        }
-
-        if !state.discovery_complete
-            && last_send.elapsed() > Duration::from_millis(500)
-        {
-            // Retry TryReset then ListSuites. Serial targets that miss the
-            // post-panic TryReset spin forever in handle_failure and ignore
-            // ListSuites; rediscovery must keep offering TryReset.
-            if let Err(e) = send_discovery(&mut bridge) {
-                bridge.terminate();
-                return Ok(finish_record(
-                    state,
-                    resets,
-                    Some(Completion::SendFailed),
-                    start_time,
-                    Some(format!("send failed: {e}")),
-                ));
-            }
-            last_send = Instant::now();
-        }
-
-        while let Ok(msg) = bridge.receiver().try_recv() {
-            for action in state.handle_message(msg) {
-                match action {
-                    SessionAction::Send(cmd) => {
-                        if let Err(e) = bridge.send_command(&cmd) {
-                            bridge.terminate();
-                            return Ok(finish_record(
-                                state,
-                                resets,
-                                Some(Completion::SendFailed),
-                                start_time,
-                                Some(format!("send failed: {e}")),
-                            ));
-                        }
-                    }
-                    SessionAction::PanicRestart => {
-                        resets = resets.saturating_add(1);
-                        thread::sleep(Duration::from_millis(50));
-                        bridge.terminate();
-                        thread::sleep(Duration::from_secs(1));
-
-                        // TargetPanic clears discovery_complete and may set
-                        // exit_loop when no cases remain. Prefer drain over
-                        // reset-budget / TargetExited for that path.
-                        match after_panic_restart(
-                            state.exit_loop,
-                            resets,
-                            options.max_resets,
-                        ) {
-                            AfterPanicRestart::Drained => break,
-                            AfterPanicRestart::ResetBudgetExhausted => {
-                                return Ok(finish_record(
-                                    state,
-                                    resets,
-                                    Some(Completion::ResetBudgetExhausted),
-                                    start_time,
-                                    None,
-                                ));
-                            }
-                            AfterPanicRestart::Reconnect => {
-                                match ETSBridge::new(target.clone(), true) {
-                                    Ok(new_bridge) => {
-                                        bridge = new_bridge;
-                                        if let Err(e) =
-                                            send_discovery(&mut bridge)
-                                        {
-                                            bridge.terminate();
-                                            return Ok(finish_record(
-                                                state,
-                                                resets,
-                                                Some(Completion::SendFailed),
-                                                start_time,
-                                                Some(format!(
-                                                    "send failed: {e}"
-                                                )),
-                                            ));
-                                        }
-                                        last_send = Instant::now();
-                                    }
-                                    Err(e) => {
-                                        return Ok(finish_record(
-                                            state,
-                                            resets,
-                                            Some(Completion::ReconnectFailed),
-                                            start_time,
-                                            Some(format!(
-                                                "reconnect failed: {e}"
-                                            )),
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Ok(Some(status)) = bridge.try_wait() {
-            // A drained PanicRestart already terminated the child. Do not
-            // reclassify that intentional kill as TargetExited — TargetPanic
-            // left discovery_complete false, which would otherwise match.
-            if state.exit_loop {
-                break;
-            }
-            if is_unexpected_target_exit(
-                state.discovery_complete,
-                state.current_running.is_some(),
-                state.run_queue.is_empty(),
-            ) {
-                bridge.terminate();
-                return Ok(finish_record(
-                    state,
-                    resets,
-                    Some(Completion::TargetExited),
-                    start_time,
-                    Some(format!("process exited unexpectedly: {status}")),
-                ));
-            }
-            state.exit_loop = true;
-        }
-
-        thread::sleep(Duration::from_millis(10));
-    }
-
-    bridge.terminate();
-
-    Ok(finish_record(state, resets, None, start_time, None))
+    let mut run = HeadlessRun::start(target, options)?;
+    let end = match run.drive() {
+        Ok(()) => RunEnd::drained(),
+        Err(end) => end,
+    };
+    Ok(run.finish(end))
 }
 
 /// Sends cooperative reset then suite discovery.
@@ -344,14 +389,14 @@ fn send_discovery(bridge: &mut ETSBridge) -> Result<(), HostError> {
     bridge.send_command(&CommCommand::ListSuites)
 }
 
+/// Builds the [`RunRecord`] for a finished session.
 fn finish_record(
     mut state: SessionState,
     resets: u32,
-    abort: Option<Completion>,
     start_time: Instant,
-    extra: Option<String>,
+    end: RunEnd,
 ) -> RunRecord {
-    if let Some(msg) = extra {
+    if let Some(msg) = end.note {
         state.logs.push_str(&msg);
         if !msg.ends_with('\n') {
             state.logs.push('\n');
@@ -362,7 +407,7 @@ fn finish_record(
         results: state.results,
         pending,
         resets,
-        abort,
+        abort: end.abort,
         elapsed: start_time.elapsed(),
         console: state.logs,
     }
@@ -378,7 +423,7 @@ mod tests {
 
     fn discover_two(state: &mut SessionState) {
         let _ = state.handle_message(BridgeMessage::telemetry(
-            Telemetry::SuiteInfo {
+            &Telemetry::SuiteInfo {
                 suite_id: 0,
                 name: "suite",
                 description: "",
@@ -387,7 +432,7 @@ mod tests {
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(
-            Telemetry::TestInfo {
+            &Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 0,
                 name: "t0",
@@ -395,7 +440,7 @@ mod tests {
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(
-            Telemetry::TestInfo {
+            &Telemetry::TestInfo {
                 suite_id: 0,
                 test_id: 1,
                 name: "t1",
@@ -403,7 +448,7 @@ mod tests {
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(
-            Telemetry::SettingInfo {
+            &Telemetry::SettingInfo {
                 suite_id: 0,
                 setting_id: 0,
                 name: "gain",
@@ -412,7 +457,7 @@ mod tests {
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(
-            Telemetry::DiscoveryComplete,
+            &Telemetry::DiscoveryComplete,
         ));
     }
 
@@ -426,9 +471,8 @@ mod tests {
         let record = finish_record(
             state,
             0,
-            Some(Completion::TimedOut),
             Instant::now(),
-            None,
+            RunEnd::aborted(Completion::TimedOut),
         );
         assert_eq!(record.pending, vec![(0, 0), (0, 1)]);
         assert_eq!(record.results, []);
@@ -440,7 +484,7 @@ mod tests {
         let mut state = SessionState::new();
         discover_two(&mut state);
         let _ = state.handle_message(BridgeMessage::telemetry(
-            Telemetry::TestStateChange {
+            &Telemetry::TestStateChange {
                 suite_id: 0,
                 test_id: 0,
                 state: TestState::Failed,
@@ -452,9 +496,8 @@ mod tests {
         let record = finish_record(
             state,
             0,
-            Some(Completion::TimedOut),
             Instant::now(),
-            None,
+            RunEnd::aborted(Completion::TimedOut),
         );
         assert_eq!(record.pending, vec![(0, 1)]);
         assert_eq!(record.results.len(), 1);
@@ -465,14 +508,14 @@ mod tests {
         let mut state = SessionState::new();
         discover_two(&mut state);
         let _ = state.handle_message(BridgeMessage::telemetry(
-            Telemetry::TestStateChange {
+            &Telemetry::TestStateChange {
                 suite_id: 0,
                 test_id: 0,
                 state: TestState::Passed,
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(
-            Telemetry::MetricReport {
+            &Telemetry::MetricReport {
                 suite_id: 0,
                 test_id: 0,
                 cycles: 10,
@@ -487,9 +530,11 @@ mod tests {
         let record = finish_record(
             state,
             0,
-            Some(Completion::TargetExited),
             Instant::now(),
-            Some("process exited unexpectedly: exit status: 1".to_string()),
+            RunEnd::aborted_with(
+                Completion::TargetExited,
+                "process exited unexpectedly: exit status: 1".to_string(),
+            ),
         );
         assert_eq!(record.results.len(), 1);
         assert_eq!(
@@ -540,7 +585,7 @@ mod tests {
         let mut state = SessionState::new();
         discover_two(&mut state);
         let _ = state.handle_message(BridgeMessage::telemetry(
-            Telemetry::MetricReport {
+            &Telemetry::MetricReport {
                 suite_id: 0,
                 test_id: 0,
                 cycles: 1,
@@ -550,14 +595,14 @@ mod tests {
         ));
         assert_eq!(state.current_running, Some((0, 1)));
         let _ = state.handle_message(BridgeMessage::telemetry(
-            Telemetry::TestStateChange {
+            &Telemetry::TestStateChange {
                 suite_id: 0,
                 test_id: 1,
                 state: TestState::Failed,
             },
         ));
         let actions = state.handle_message(BridgeMessage::telemetry(
-            Telemetry::TargetPanic {
+            &Telemetry::TargetPanic {
                 message: "boom",
                 file: "t.rs",
                 line: 1,

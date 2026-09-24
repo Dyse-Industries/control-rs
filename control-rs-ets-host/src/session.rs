@@ -199,20 +199,45 @@ impl SessionState {
         self.logs.push_str(msg);
     }
 
-    /// Ensures that `self.suites` contains an entry at index `suite_id`.
-    pub fn ensure_suite_slot(&mut self, suite_id: u16) -> &mut SuiteItem {
-        let idx = suite_id as usize;
-        if self.suites.len() <= idx {
-            self.suites.reserve(
-                idx.saturating_add(1).saturating_sub(self.suites.len()),
-            );
-            while self.suites.len() <= idx {
-                #[allow(clippy::cast_possible_truncation)]
-                let next_id = self.suites.len() as u16;
-                self.suites.push(SuiteItem::new(next_id));
-            }
+    /// Ensures that `self.suites` contains an entry at index `suite_id` and
+    /// returns it.
+    ///
+    /// Missing slots below `suite_id` are filled with empty descriptors.
+    /// `None` is returned only when the slot cannot be addressed, which the
+    /// `u16` identifier space rules out on every supported host.
+    pub fn ensure_suite_slot(
+        &mut self,
+        suite_id: u16,
+    ) -> Option<&mut SuiteItem> {
+        if let Ok(first) = u16::try_from(self.suites.len())
+            && first <= suite_id
+        {
+            self.suites.extend((first..=suite_id).map(SuiteItem::new));
         }
-        &mut self.suites[idx]
+        self.suites.get_mut(usize::from(suite_id))
+    }
+
+    /// Suite and test names for `(suite_id, test_id)`, empty when unknown.
+    fn case_names(&self, suite_id: u16, test_id: u16) -> (String, String) {
+        let suite = self.suites.get(usize::from(suite_id));
+        let suite_name = suite.map_or_else(String::new, |s| s.name.clone());
+        let test_name = suite
+            .and_then(|s| s.tests.iter().find(|t| t.test_id == test_id))
+            .map_or_else(String::new, |t| t.name.clone());
+        (suite_name, test_name)
+    }
+
+    /// Mutable access to the discovered test `(suite_id, test_id)`.
+    fn test_mut(
+        &mut self,
+        suite_id: u16,
+        test_id: u16,
+    ) -> Option<&mut TestItem> {
+        self.suites
+            .get_mut(usize::from(suite_id))?
+            .tests
+            .iter_mut()
+            .find(|t| t.test_id == test_id)
     }
 
     /// Returns a reference to a recorded outcome matching `(suite_id, test_id)`.
@@ -340,7 +365,6 @@ impl SessionState {
     }
 
     /// Processes an incoming bridge message and updates session state accordingly.
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     pub fn handle_message(&mut self, msg: BridgeMessage) -> Vec<SessionAction> {
         match msg {
             BridgeMessage::RawConsole(line) => {
@@ -348,357 +372,365 @@ impl SessionState {
                 self.log(&formatted);
                 Vec::new()
             }
-            BridgeMessage::Telemetry(telemetry) => match telemetry {
-                OwnedTelemetry::SuiteInfo {
-                    suite_id,
-                    name,
-                    description,
-                    test_count,
-                    setting_count,
-                } => {
-                    if self.phase == SessionPhase::Running {
-                        return Vec::new();
-                    }
-                    self.ensure_suite_slot(suite_id);
-                    let suite = &mut self.suites[suite_id as usize];
-                    suite.name = name;
-                    suite.description = description;
-                    suite.test_count = test_count;
-                    suite.setting_count = setting_count;
-                    suite.ready_mask |= SUITE_INFO_READY;
-                    if test_count == 0 {
-                        suite.ready_mask |= TESTS_READY;
-                    }
-                    if setting_count == 0 {
-                        suite.ready_mask |= SETTINGS_READY;
-                    }
-                    Vec::new()
-                }
-                OwnedTelemetry::TestInfo {
-                    suite_id,
-                    test_id,
-                    name,
-                    description,
-                } => {
-                    if self.phase == SessionPhase::Running {
-                        return Vec::new();
-                    }
-                    self.ensure_suite_slot(suite_id);
-                    let s_idx = suite_id as usize;
-                    let prev = self.find_outcome(suite_id, test_id);
-                    let state = prev.map_or(TestState::Pending, |p| p.state);
-                    let cycles = prev.and_then(|p| p.cycles);
-                    let time_us = prev.and_then(|p| p.time_us);
-                    let stack_peak = prev.and_then(|p| p.stack_peak);
+            BridgeMessage::Telemetry(telemetry) => {
+                self.handle_telemetry(telemetry)
+            }
+        }
+    }
 
-                    let suite = &mut self.suites[s_idx];
-                    let t_idx = test_id as usize;
-                    if t_idx < 64 {
-                        suite.test_slots_mask |= 1u64 << t_idx;
-                    }
-                    let item = TestItem {
-                        suite_id,
-                        test_id,
-                        suite_name: suite.name.clone(),
-                        name,
-                        description,
-                        state,
-                        cycles,
-                        time_us,
-                        stack_peak,
-                    };
-                    if let Some(existing) =
-                        suite.tests.iter_mut().find(|t| t.test_id == test_id)
-                    {
-                        *existing = item;
-                    } else {
-                        suite.tests.push(item);
-                    }
-                    if suite.test_count > 0
-                        && suite.tests.len() == suite.test_count as usize
-                    {
-                        if suite.test_count <= 64 {
-                            let expected = if suite.test_count == 64 {
-                                u64::MAX
-                            } else {
-                                (1u64 << suite.test_count).saturating_sub(1)
-                            };
-                            if (suite.test_slots_mask & expected) == expected {
-                                suite.ready_mask |= TESTS_READY;
-                            }
-                        } else {
-                            suite.ready_mask |= TESTS_READY;
-                        }
-                    }
-                    Vec::new()
-                }
-                OwnedTelemetry::SettingInfo {
-                    suite_id,
+    /// Dispatches one telemetry frame to its handler.
+    fn handle_telemetry(
+        &mut self,
+        telemetry: OwnedTelemetry,
+    ) -> Vec<SessionAction> {
+        match telemetry {
+            OwnedTelemetry::TestStateChange {
+                suite_id,
+                test_id,
+                state,
+            } => {
+                self.on_test_state_change((suite_id, test_id), state);
+                Vec::new()
+            }
+            OwnedTelemetry::MetricReport {
+                suite_id,
+                test_id,
+                cycles,
+                time_us,
+                stack_peak,
+            } => self.on_metric_report(TestOutcome {
+                suite_id,
+                test_id,
+                suite_name: String::new(),
+                test_name: String::new(),
+                state: TestState::Passed,
+                cycles: Some(cycles),
+                time_us: Some(time_us),
+                stack_peak: Some(stack_peak),
+            }),
+            OwnedTelemetry::TargetPanic {
+                message,
+                file,
+                line,
+            } => self.on_target_panic(&message, &file, line),
+            OwnedTelemetry::Log { .. } => Vec::new(),
+            catalog => self.handle_catalog(catalog),
+        }
+    }
+
+    /// Handles discovery frames. They are ignored once the run has started.
+    fn handle_catalog(
+        &mut self,
+        telemetry: OwnedTelemetry,
+    ) -> Vec<SessionAction> {
+        if self.phase == SessionPhase::Running {
+            return Vec::new();
+        }
+        match telemetry {
+            OwnedTelemetry::SuiteInfo {
+                suite_id,
+                name,
+                description,
+                test_count,
+                setting_count,
+            } => self.on_suite_info(SuiteItem {
+                name,
+                description,
+                test_count,
+                setting_count,
+                ..SuiteItem::new(suite_id)
+            }),
+            OwnedTelemetry::TestInfo {
+                suite_id,
+                test_id,
+                name,
+                description,
+            } => self.on_test_info((suite_id, test_id), name, description),
+            OwnedTelemetry::SettingInfo {
+                suite_id,
+                setting_id,
+                name,
+                value,
+                description,
+            } => self.on_setting_info(
+                suite_id,
+                SettingItem {
                     setting_id,
                     name,
-                    value,
                     description,
-                } => {
-                    if self.phase == SessionPhase::Running {
-                        return Vec::new();
-                    }
-                    self.ensure_suite_slot(suite_id);
-                    let s_idx = suite_id as usize;
-                    let suite = &mut self.suites[s_idx];
-                    let set_idx = setting_id as usize;
-                    if set_idx < 64 {
-                        suite.setting_slots_mask |= 1u64 << set_idx;
-                    }
-                    let item = SettingItem {
-                        setting_id,
-                        name,
-                        description,
-                        value,
-                    };
-                    if let Some(existing) = suite
-                        .settings
-                        .iter_mut()
-                        .find(|s| s.setting_id == setting_id)
-                    {
-                        *existing = item;
-                    } else {
-                        suite.settings.push(item);
-                    }
-                    if suite.setting_count > 0
-                        && suite.settings.len() == suite.setting_count as usize
-                    {
-                        if suite.setting_count <= 64 {
-                            let expected = if suite.setting_count == 64 {
-                                u64::MAX
-                            } else {
-                                (1u64 << suite.setting_count).saturating_sub(1)
-                            };
-                            if (suite.setting_slots_mask & expected) == expected
-                            {
-                                suite.ready_mask |= SETTINGS_READY;
-                            }
-                        } else {
-                            suite.ready_mask |= SETTINGS_READY;
-                        }
-                    }
-                    Vec::new()
+                    value,
+                },
+            ),
+            OwnedTelemetry::DiscoveryComplete => {
+                return self.on_discovery_complete();
+            }
+            OwnedTelemetry::TestStateChange { .. }
+            | OwnedTelemetry::MetricReport { .. }
+            | OwnedTelemetry::TargetPanic { .. }
+            | OwnedTelemetry::Log { .. } => {}
+        }
+        Vec::new()
+    }
+
+    /// Records suite metadata and marks components with a zero count ready.
+    fn on_suite_info(&mut self, info: SuiteItem) {
+        let Some(suite) = self.ensure_suite_slot(info.suite_id) else {
+            return;
+        };
+        suite.name = info.name;
+        suite.description = info.description;
+        suite.test_count = info.test_count;
+        suite.setting_count = info.setting_count;
+        suite.ready_mask |= SUITE_INFO_READY;
+        if info.test_count == 0 {
+            suite.ready_mask |= TESTS_READY;
+        }
+        if info.setting_count == 0 {
+            suite.ready_mask |= SETTINGS_READY;
+        }
+    }
+
+    /// Records a discovered test, carrying over any outcome already seen.
+    fn on_test_info(
+        &mut self,
+        (suite_id, test_id): TestIndex,
+        name: String,
+        description: String,
+    ) {
+        let prev = self.find_outcome(suite_id, test_id);
+        let state = prev.map_or(TestState::Pending, |p| p.state);
+        let cycles = prev.and_then(|p| p.cycles);
+        let time_us = prev.and_then(|p| p.time_us);
+        let stack_peak = prev.and_then(|p| p.stack_peak);
+
+        let Some(suite) = self.ensure_suite_slot(suite_id) else {
+            return;
+        };
+        suite.test_slots_mask |= slot_bit(test_id);
+        let item = TestItem {
+            suite_id,
+            test_id,
+            suite_name: suite.name.clone(),
+            name,
+            description,
+            state,
+            cycles,
+            time_us,
+            stack_peak,
+        };
+        if let Some(existing) =
+            suite.tests.iter_mut().find(|t| t.test_id == test_id)
+        {
+            *existing = item;
+        } else {
+            suite.tests.push(item);
+        }
+        if slots_complete(
+            suite.tests.len(),
+            suite.test_count,
+            suite.test_slots_mask,
+        ) {
+            suite.ready_mask |= TESTS_READY;
+        }
+    }
+
+    /// Records a discovered setting.
+    fn on_setting_info(&mut self, suite_id: u16, item: SettingItem) {
+        let Some(suite) = self.ensure_suite_slot(suite_id) else {
+            return;
+        };
+        suite.setting_slots_mask |= slot_bit(item.setting_id);
+        if let Some(existing) = suite
+            .settings
+            .iter_mut()
+            .find(|s| s.setting_id == item.setting_id)
+        {
+            *existing = item;
+        } else {
+            suite.settings.push(item);
+        }
+        if slots_complete(
+            suite.settings.len(),
+            suite.setting_count,
+            suite.setting_slots_mask,
+        ) {
+            suite.ready_mask |= SETTINGS_READY;
+        }
+    }
+
+    /// Validates the catalog and starts execution, or restarts discovery.
+    fn on_discovery_complete(&mut self) -> Vec<SessionAction> {
+        if self.suites.is_empty()
+            || !self.suites.iter().all(SuiteItem::is_ready)
+        {
+            self.log(
+                "Discovery validation failed (incomplete or non-contiguous slots). Retrying discovery.\n",
+            );
+            for s in &mut self.suites {
+                s.reset_discovery();
+            }
+            return Vec::new();
+        }
+
+        self.run_queue.clear();
+        for suite in &self.suites {
+            for test in &suite.tests {
+                if self.find_outcome(suite.suite_id, test.test_id).is_none() {
+                    self.run_queue.push((suite.suite_id, test.test_id));
                 }
-                OwnedTelemetry::DiscoveryComplete => {
-                    if self.phase == SessionPhase::Running {
-                        return Vec::new();
-                    }
-                    if self.suites.is_empty()
-                        || !self.suites.iter().all(SuiteItem::is_ready)
-                    {
-                        self.log(
-                            "Discovery validation failed (incomplete or non-contiguous slots). Retrying discovery.\n",
-                        );
-                        for s in &mut self.suites {
-                            s.reset_discovery();
-                        }
-                        return Vec::new();
-                    }
+            }
+        }
 
-                    self.run_queue.clear();
-                    for suite in &self.suites {
-                        for test in &suite.tests {
-                            if self
-                                .find_outcome(suite.suite_id, test.test_id)
-                                .is_none()
-                            {
-                                self.run_queue
-                                    .push((suite.suite_id, test.test_id));
-                            }
-                        }
-                    }
+        self.phase = SessionPhase::Running;
+        self.discovery_complete = true;
 
-                    self.phase = SessionPhase::Running;
-                    self.discovery_complete = true;
+        self.start_next_or_exit().into_iter().collect()
+    }
 
-                    self.start_next_or_exit().into_iter().collect()
-                }
-                OwnedTelemetry::TestStateChange {
+    /// Applies a test state transition; a failure is recorded immediately.
+    fn on_test_state_change(
+        &mut self,
+        (suite_id, test_id): TestIndex,
+        new_state: TestState,
+    ) {
+        if let Some(test) = self.test_mut(suite_id, test_id) {
+            test.state = new_state;
+        }
+
+        if new_state == TestState::Failed {
+            let (suite_name, test_name) = self.case_names(suite_id, test_id);
+            if self.find_outcome(suite_id, test_id).is_none() {
+                self.record_outcome(TestOutcome {
                     suite_id,
                     test_id,
-                    state: new_state,
-                } => {
-                    let s_idx = suite_id as usize;
-                    if let Some(suite) = self.suites.get_mut(s_idx)
-                        && let Some(test) = suite
-                            .tests
-                            .iter_mut()
-                            .find(|t| t.test_id == test_id)
-                    {
-                        test.state = new_state;
-                    }
+                    suite_name,
+                    test_name,
+                    state: TestState::Failed,
+                    cycles: None,
+                    time_us: None,
+                    stack_peak: None,
+                });
+            }
+            self.current_running = Some((suite_id, test_id));
+        }
+    }
 
-                    if new_state == TestState::Failed {
-                        let suite_name = self
-                            .suites
-                            .get(s_idx)
-                            .map_or_else(String::new, |s| s.name.clone());
-                        let test_name = self
-                            .suites
-                            .get(s_idx)
-                            .and_then(|s| {
-                                s.tests.iter().find(|t| t.test_id == test_id)
-                            })
-                            .map_or_else(String::new, |t| t.name.clone());
-                        if self.find_outcome(suite_id, test_id).is_none() {
-                            self.record_outcome(TestOutcome {
-                                suite_id,
-                                test_id,
-                                suite_name,
-                                test_name,
-                                state: TestState::Failed,
-                                cycles: None,
-                                time_us: None,
-                                stack_peak: None,
-                            });
-                        }
-                        self.current_running = Some((suite_id, test_id));
-                    }
-                    Vec::new()
-                }
-                OwnedTelemetry::MetricReport {
-                    suite_id,
-                    test_id,
-                    cycles,
-                    time_us,
-                    stack_peak,
-                } => {
-                    let s_idx = suite_id as usize;
-                    if let Some(suite) = self.suites.get_mut(s_idx)
-                        && let Some(test) = suite
-                            .tests
-                            .iter_mut()
-                            .find(|t| t.test_id == test_id)
-                    {
-                        test.state = TestState::Passed;
-                        test.cycles = Some(cycles);
-                        test.time_us = Some(time_us);
-                        test.stack_peak = Some(stack_peak);
-                    }
-                    let suite_name = self
-                        .suites
-                        .get(s_idx)
-                        .map_or_else(String::new, |s| s.name.clone());
-                    let test_name = self
-                        .suites
-                        .get(s_idx)
-                        .and_then(|s| {
-                            s.tests.iter().find(|t| t.test_id == test_id)
-                        })
-                        .map_or_else(String::new, |t| t.name.clone());
-                    self.record_outcome(TestOutcome {
-                        suite_id,
-                        test_id,
-                        suite_name,
-                        test_name,
-                        state: TestState::Passed,
-                        cycles: Some(cycles),
-                        time_us: Some(time_us),
-                        stack_peak: Some(stack_peak),
-                    });
-                    self.start_next_or_exit().into_iter().collect()
-                }
-                OwnedTelemetry::Log { .. } => Vec::new(),
-                OwnedTelemetry::TargetPanic {
-                    message,
-                    file,
-                    line,
-                } => {
-                    let panic_str = format!(
-                        "target panicked: '{message}' at {file}:{line}\n"
-                    );
-                    self.log(&panic_str);
+    /// Records a passing metric report and starts the next queued test.
+    ///
+    /// `report` carries the metrics; its name fields are filled in here.
+    fn on_metric_report(
+        &mut self,
+        mut report: TestOutcome,
+    ) -> Vec<SessionAction> {
+        if let Some(test) = self.test_mut(report.suite_id, report.test_id) {
+            test.state = TestState::Passed;
+            test.cycles = report.cycles;
+            test.time_us = report.time_us;
+            test.stack_peak = report.stack_peak;
+        }
+        (report.suite_name, report.test_name) =
+            self.case_names(report.suite_id, report.test_id);
+        self.record_outcome(report);
+        self.start_next_or_exit().into_iter().collect()
+    }
 
-                    match self.phase {
-                        SessionPhase::Discovering => {
-                            self.log(
-                                "Target panic occurred during discovery phase.\n",
-                            );
-                        }
-                        SessionPhase::Running => {
-                            if let Some((s_id, t_id)) = self.current_running {
-                                let s_idx = s_id as usize;
-                                if let Some(suite) = self.suites.get_mut(s_idx)
-                                    && let Some(test) = suite
-                                        .tests
-                                        .iter_mut()
-                                        .find(|t| t.test_id == t_id)
-                                {
-                                    test.state = TestState::Failed;
-                                    let suite_name = suite.name.clone();
-                                    let test_name = test.name.clone();
-                                    if self.find_outcome(s_id, t_id).is_none() {
-                                        self.record_outcome(TestOutcome {
-                                            suite_id: s_id,
-                                            test_id: t_id,
-                                            suite_name,
-                                            test_name,
-                                            state: TestState::Failed,
-                                            cycles: None,
-                                            time_us: None,
-                                            stack_peak: None,
-                                        });
-                                    }
-                                }
-                            } else {
-                                self.log("Target panic occurred outside test execution in running phase.\n");
-                            }
-                        }
-                        SessionPhase::Recovering => {
-                            self.log(
-                                "Target panic occurred during recovery phase.\n",
-                            );
-                        }
-                    }
+    /// Logs a target panic, fails the in-flight test and requests a restart.
+    fn on_target_panic(
+        &mut self,
+        message: &str,
+        file: &str,
+        line: u32,
+    ) -> Vec<SessionAction> {
+        self.log(&format!("target panicked: '{message}' at {file}:{line}\n"));
 
-                    let remaining_to_run = match self.phase {
-                        SessionPhase::Discovering => true,
-                        SessionPhase::Running | SessionPhase::Recovering => {
-                            self.suites.iter().any(|suite| {
-                                suite.tests.iter().any(|test| {
-                                    self.find_outcome(
-                                        suite.suite_id,
-                                        test.test_id,
-                                    )
-                                    .is_none()
-                                })
-                            })
-                        }
-                    };
+        match self.phase {
+            SessionPhase::Discovering => {
+                self.log("Target panic occurred during discovery phase.\n");
+            }
+            SessionPhase::Running => self.fail_in_flight_test(),
+            SessionPhase::Recovering => {
+                self.log("Target panic occurred during recovery phase.\n");
+            }
+        }
 
-                    self.current_running = None;
-                    for s in &mut self.suites {
-                        s.reset_discovery();
-                    }
+        let remaining_to_run = match self.phase {
+            SessionPhase::Discovering => true,
+            SessionPhase::Running | SessionPhase::Recovering => {
+                self.suites.iter().any(|suite| {
+                    suite.tests.iter().any(|test| {
+                        self.find_outcome(suite.suite_id, test.test_id)
+                            .is_none()
+                    })
+                })
+            }
+        };
 
-                    self.discovery_complete = false;
-                    self.phase = SessionPhase::Recovering;
-                    if !remaining_to_run {
-                        self.exit_loop = true;
-                    }
-                    vec![
-                        SessionAction::Send(CommCommand::TryReset),
-                        SessionAction::PanicRestart,
-                    ]
-                }
-            },
+        self.current_running = None;
+        for s in &mut self.suites {
+            s.reset_discovery();
+        }
+
+        self.discovery_complete = false;
+        self.phase = SessionPhase::Recovering;
+        if !remaining_to_run {
+            self.exit_loop = true;
+        }
+        vec![
+            SessionAction::Send(CommCommand::TryReset),
+            SessionAction::PanicRestart,
+        ]
+    }
+
+    /// Marks the in-flight test failed after a panic in the running phase.
+    fn fail_in_flight_test(&mut self) {
+        let Some((s_id, t_id)) = self.current_running else {
+            self.log(
+                "Target panic occurred outside test execution in running phase.\n",
+            );
+            return;
+        };
+        let Some(test) = self.test_mut(s_id, t_id) else {
+            return;
+        };
+        test.state = TestState::Failed;
+        let (suite_name, test_name) = self.case_names(s_id, t_id);
+        if self.find_outcome(s_id, t_id).is_none() {
+            self.record_outcome(TestOutcome {
+                suite_id: s_id,
+                test_id: t_id,
+                suite_name,
+                test_name,
+                state: TestState::Failed,
+                cycles: None,
+                time_us: None,
+                stack_peak: None,
+            });
         }
     }
 }
 
+/// Bit for slot `id` in a 64-bit slot mask; ids of 64 and above map to 0.
+fn slot_bit(id: u16) -> u64 {
+    1u64.checked_shl(u32::from(id)).unwrap_or(0)
+}
+
+/// Whether `have` items with slot `mask` complete a set of `count` items.
+///
+/// Counts above 64 cannot be tracked per slot and complete on length alone.
+fn slots_complete(have: usize, count: u16, mask: u64) -> bool {
+    if count == 0 || have != usize::from(count) {
+        return false;
+    }
+    let expected = match count {
+        64 => u64::MAX,
+        1..64 => slot_bit(count).saturating_sub(1),
+        _ => return true,
+    };
+    mask & expected == expected
+}
+
 #[cfg(test)]
 mod tests {
-    #![allow(
-        clippy::cast_possible_truncation,
-        clippy::indexing_slicing,
-        clippy::iter_on_single_items,
-        clippy::too_many_lines,
-        clippy::unwrap_used
-    )]
 
     use super::*;
 
@@ -730,7 +762,7 @@ mod tests {
                 setting_id: s,
                 name: format!("setting_{s}"),
                 description: format!("Desc for setting {s}"),
-                value: SettingValue::U8(s as u8),
+                value: SettingValue::U8(u8::try_from(s).unwrap()),
             });
         }
         frames
@@ -752,8 +784,8 @@ mod tests {
 
         // Suite 0 is fully ready in suites vector
         assert_eq!(state.suites.len(), 1);
-        assert!(state.suites[0].is_ready());
-        assert_eq!(state.suites[0].ready_mask, SUITE_READY_MASK);
+        assert!(state.suites.first().unwrap().is_ready());
+        assert_eq!(state.suites.first().unwrap().ready_mask, SUITE_READY_MASK);
         assert!(!state.discovery_complete);
 
         // DiscoveryComplete commits atomically
@@ -762,7 +794,7 @@ mod tests {
         ));
         assert_eq!(actions.len(), 1);
         assert!(matches!(
-            actions[0],
+            *actions.first().unwrap(),
             SessionAction::Send(CommCommand::RunExecutable {
                 suite_id: 0,
                 test_id: 0
@@ -772,8 +804,8 @@ mod tests {
         assert_eq!(state.phase, SessionPhase::Running);
         assert!(state.discovery_complete);
         assert_eq!(state.suites.len(), 1);
-        assert_eq!(state.suites[0].tests.len(), 2);
-        assert_eq!(state.suites[0].settings.len(), 1);
+        assert_eq!(state.suites.first().unwrap().tests.len(), 2);
+        assert_eq!(state.suites.first().unwrap().settings.len(), 1);
         assert_eq!(state.run_queue, vec![(0, 1)]);
         assert_eq!(state.current_running, Some((0, 0)));
     }
@@ -810,8 +842,8 @@ mod tests {
             },
         ));
 
-        assert!(!state.suites[0].is_ready());
-        assert_eq!(state.suites[0].ready_mask & TESTS_READY, 0);
+        assert!(!state.suites.first().unwrap().is_ready());
+        assert_eq!(state.suites.first().unwrap().ready_mask & TESTS_READY, 0);
 
         // DiscoveryComplete fails validation
         let actions = state.handle_message(BridgeMessage::Telemetry(
@@ -849,7 +881,7 @@ mod tests {
         ));
         assert_eq!(actions.len(), 1);
         assert!(matches!(
-            actions[0],
+            *actions.first().unwrap(),
             SessionAction::Send(CommCommand::RunExecutable {
                 suite_id: 0,
                 test_id: 1
@@ -857,9 +889,9 @@ mod tests {
         ));
         assert_eq!(state.current_running, Some((0, 1)));
         assert_eq!(state.results.len(), 1);
-        assert_eq!(state.results[0].state, TestState::Passed);
-        assert_eq!(state.results[0].suite_id, 0);
-        assert_eq!(state.results[0].test_id, 0);
+        assert_eq!(state.results.first().unwrap().state, TestState::Passed);
+        assert_eq!(state.results.first().unwrap().suite_id, 0);
+        assert_eq!(state.results.first().unwrap().test_id, 0);
 
         // Test 1 fails
         let _ = state.handle_message(BridgeMessage::Telemetry(
@@ -870,9 +902,9 @@ mod tests {
             },
         ));
         assert_eq!(state.results.len(), 2);
-        assert_eq!(state.results[1].state, TestState::Failed);
-        assert_eq!(state.results[1].suite_id, 0);
-        assert_eq!(state.results[1].test_id, 1);
+        assert_eq!(state.results.get(1).unwrap().state, TestState::Failed);
+        assert_eq!(state.results.get(1).unwrap().suite_id, 0);
+        assert_eq!(state.results.get(1).unwrap().test_id, 1);
         // Failed state does not advance queue until TargetPanic or complete
         assert_eq!(state.current_running, Some((0, 1)));
     }
@@ -913,17 +945,20 @@ mod tests {
         ));
         assert_eq!(panic_actions.len(), 2);
         assert!(matches!(
-            panic_actions[0],
+            *panic_actions.first().unwrap(),
             SessionAction::Send(CommCommand::TryReset)
         ));
-        assert!(matches!(panic_actions[1], SessionAction::PanicRestart));
+        assert!(matches!(
+            *panic_actions.get(1).unwrap(),
+            SessionAction::PanicRestart
+        ));
 
         assert_eq!(state.phase, SessionPhase::Recovering);
         assert_eq!(state.current_running, None);
         assert_eq!(state.results.len(), 1);
-        assert_eq!(state.results[0].suite_id, 0);
-        assert_eq!(state.results[0].test_id, 0);
-        assert_eq!(state.results[0].state, TestState::Failed);
+        assert_eq!(state.results.first().unwrap().suite_id, 0);
+        assert_eq!(state.results.first().unwrap().test_id, 0);
+        assert_eq!(state.results.first().unwrap().state, TestState::Failed);
     }
 
     #[test]
@@ -1026,7 +1061,7 @@ mod tests {
         // Case 0 and 1 preserved, Case 2 dispatched
         assert_eq!(actions.len(), 1);
         assert!(matches!(
-            actions[0],
+            *actions.first().unwrap(),
             SessionAction::Send(CommCommand::RunExecutable {
                 suite_id: 0,
                 test_id: 2
@@ -1047,9 +1082,9 @@ mod tests {
         ));
         assert!(state.exit_loop);
         assert_eq!(state.results.len(), 3);
-        assert_eq!(state.results[0].state, TestState::Passed);
-        assert_eq!(state.results[1].state, TestState::Failed);
-        assert_eq!(state.results[2].state, TestState::Passed);
+        assert_eq!(state.results.first().unwrap().state, TestState::Passed);
+        assert_eq!(state.results.get(1).unwrap().state, TestState::Failed);
+        assert_eq!(state.results.get(2).unwrap().state, TestState::Passed);
     }
 
     #[test]

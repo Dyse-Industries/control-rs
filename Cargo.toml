@@ -15,6 +15,7 @@ exclude = [
     "examples/teensy4/",
     "examples/subprograms/",
     "ci-report.md",
+    ".cargo/clippy-allow-baseline.txt",
     "ets-results.json",
     "tarpaulin-report.*",
     "tests/fixtures/",

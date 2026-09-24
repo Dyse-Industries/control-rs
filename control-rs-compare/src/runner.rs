@@ -93,14 +93,85 @@ fn execute_suite(
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
 fn execute_variant(
     suite: &SuiteConfig,
     variant: &VariantConfig,
     python_bin: &Path,
     options: &RunnerOptions,
 ) -> Result<(), HarnessError> {
-    let mut cmd = match variant.r#type.as_str() {
+    let mut cmd = variant_command(variant, python_bin)?;
+    cmd.current_dir(&options.workspace_root);
+    cmd.stdout(Stdio::inherit());
+    cmd.stderr(Stdio::inherit());
+
+    if let Some(py_dir) = python_bin.parent() {
+        let current_path = env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{}:{current_path}", py_dir.display()));
+        if let Some(venv_root) = py_dir.parent() {
+            cmd.env("VIRTUAL_ENV", venv_root);
+        }
+    }
+    cmd.env("PYTHON", python_bin);
+
+    let execution_error = |message: String| HarnessError::Execution {
+        suite: suite.name.clone(),
+        variant: variant.name.clone(),
+        message,
+    };
+
+    let start = Instant::now();
+    let mut child = cmd.spawn().map_err(|e| {
+        execution_error(format!("Failed to spawn process: {e}"))
+    })?;
+
+    let poll_interval = Duration::from_millis(50);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(status)) => {
+                return Err(execution_error(format_exit_status(status)));
+            }
+            Ok(None) if start.elapsed() > options.timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(HarnessError::Timeout {
+                    suite: suite.name.clone(),
+                    variant: variant.name.clone(),
+                    timeout_secs: options.timeout.as_secs_f64(),
+                });
+            }
+            Ok(None) => thread::sleep(poll_interval),
+            Err(e) => {
+                let _ = child.kill();
+                return Err(execution_error(format!(
+                    "Process polling error: {e}"
+                )));
+            }
+        }
+    }
+
+    // Verify output container was produced
+    let out_file_path = options.workspace_root.join(&variant.output_file);
+    if !out_file_path.exists() && !variant.optional {
+        return Err(execution_error(format!(
+            "Expected output container '{}' was not created",
+            variant.output_file
+        )));
+    }
+
+    Ok(())
+}
+
+/// Builds the process that runs `variant`, before workspace-wide settings.
+fn variant_command(
+    variant: &VariantConfig,
+    python_bin: &Path,
+) -> Result<Command, HarnessError> {
+    let config_error = |message: String| HarnessError::Config {
+        path: PathBuf::from(&variant.output_file),
+        message,
+    };
+    match variant.r#type.as_str() {
         "rust_bin" => {
             let mut c = Command::new("cargo");
             c.arg("run");
@@ -120,116 +191,34 @@ fn execute_variant(
             {
                 c.env("CARGO_TARGET_DIR", cwd.join(dir));
             }
-            c
+            Ok(c)
         }
         "python_script" => {
+            let script = variant.script.as_ref().ok_or_else(|| {
+                config_error(format!(
+                    "Python variant '{}' missing 'script' specification",
+                    variant.name
+                ))
+            })?;
             let mut c = Command::new(python_bin);
-            if let Some(script) = &variant.script {
-                c.arg(script);
-            } else {
-                return Err(HarnessError::Config {
-                    path: PathBuf::from(&variant.output_file),
-                    message: format!(
-                        "Python variant '{}' missing 'script' specification",
-                        variant.name
-                    ),
-                });
-            }
-            c
+            c.arg(script);
+            Ok(c)
         }
         "command" => {
-            if let Some(command_str) = &variant.command {
-                let mut c = Command::new("sh");
-                c.arg("-c").arg(command_str);
-                c
-            } else {
-                return Err(HarnessError::Config {
-                    path: PathBuf::from(&variant.output_file),
-                    message: format!(
-                        "Command variant '{}' missing 'command' specification",
-                        variant.name
-                    ),
-                });
-            }
+            let command_str = variant.command.as_ref().ok_or_else(|| {
+                config_error(format!(
+                    "Command variant '{}' missing 'command' specification",
+                    variant.name
+                ))
+            })?;
+            let mut c = Command::new("sh");
+            c.arg("-c").arg(command_str);
+            Ok(c)
         }
         unknown => {
-            return Err(HarnessError::Config {
-                path: PathBuf::from(&variant.output_file),
-                message: format!("Unknown variant type '{unknown}'"),
-            });
-        }
-    };
-
-    cmd.current_dir(&options.workspace_root);
-    cmd.stdout(Stdio::inherit());
-    cmd.stderr(Stdio::inherit());
-
-    if let Some(py_dir) = python_bin.parent() {
-        let current_path = env::var("PATH").unwrap_or_default();
-        cmd.env("PATH", format!("{}:{current_path}", py_dir.display()));
-        if let Some(venv_root) = py_dir.parent() {
-            cmd.env("VIRTUAL_ENV", venv_root);
+            Err(config_error(format!("Unknown variant type '{unknown}'")))
         }
     }
-    cmd.env("PYTHON", python_bin);
-
-    let start = Instant::now();
-    let mut child = cmd.spawn().map_err(|e| HarnessError::Execution {
-        suite: suite.name.clone(),
-        variant: variant.name.clone(),
-        message: format!("Failed to spawn process: {e}"),
-    })?;
-
-    let poll_interval = Duration::from_millis(50);
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return Err(HarnessError::Execution {
-                        suite: suite.name.clone(),
-                        variant: variant.name.clone(),
-                        message: format_exit_status(status),
-                    });
-                }
-                break;
-            }
-            Ok(None) => {
-                if start.elapsed() > options.timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(HarnessError::Timeout {
-                        suite: suite.name.clone(),
-                        variant: variant.name.clone(),
-                        timeout_secs: options.timeout.as_secs_f64(),
-                    });
-                }
-                thread::sleep(poll_interval);
-            }
-            Err(e) => {
-                let _ = child.kill();
-                return Err(HarnessError::Execution {
-                    suite: suite.name.clone(),
-                    variant: variant.name.clone(),
-                    message: format!("Process polling error: {e}"),
-                });
-            }
-        }
-    }
-
-    // Verify output container was produced
-    let out_file_path = options.workspace_root.join(&variant.output_file);
-    if !out_file_path.exists() && !variant.optional {
-        return Err(HarnessError::Execution {
-            suite: suite.name.clone(),
-            variant: variant.name.clone(),
-            message: format!(
-                "Expected output container '{}' was not created",
-                variant.output_file
-            ),
-        });
-    }
-
-    Ok(())
 }
 
 fn format_exit_status(status: ExitStatus) -> String {
@@ -244,32 +233,6 @@ fn format_exit_status(status: ExitStatus) -> String {
         }
     }
     "Process terminated without an exit code".to_string()
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use std::os::unix::process::ExitStatusExt;
-    use std::process::ExitStatus;
-
-    use super::format_exit_status;
-
-    #[test]
-    fn test_format_exit_status_reports_signal_number() {
-        // Raw wait status 9: terminated by SIGKILL.
-        assert_eq!(
-            format_exit_status(ExitStatus::from_raw(9)),
-            "Process terminated by signal 9"
-        );
-    }
-
-    #[test]
-    fn test_format_exit_status_reports_exit_code() {
-        // Raw wait status 0x0100: exited with code 1.
-        assert_eq!(
-            format_exit_status(ExitStatus::from_raw(0x0100)),
-            "Process exited with status code 1"
-        );
-    }
 }
 
 /// Resolves Python runtime per C-1 hierarchy:
@@ -311,4 +274,31 @@ pub fn resolve_python_runtime(workspace_root: &Path) -> PathBuf {
 
     // 5. System PATH
     PathBuf::from("python3")
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    use super::format_exit_status;
+
+    #[test]
+    fn test_format_exit_status_reports_signal_number() {
+        // Raw wait status 9: terminated by SIGKILL.
+        assert_eq!(
+            format_exit_status(ExitStatus::from_raw(9)),
+            "Process terminated by signal 9"
+        );
+    }
+
+    #[test]
+    fn test_format_exit_status_reports_exit_code() {
+        // Raw wait status 0x0100: exited with code 1.
+        assert_eq!(
+            format_exit_status(ExitStatus::from_raw(0x0100)),
+            "Process exited with status code 1"
+        );
+    }
 }

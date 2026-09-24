@@ -26,5 +26,8 @@ clippy-json = ["lint", "--message-format=json"]
 clippy-ci = ["clippy-json", "--", "-D", "warnings"]
 
 # Coverage helper
-coverage = ["tarpaulin", "--verbose", "--workspace"]
+coverage = ["tarpaulin", "--config", ".cargo/tarpaulin.toml", "--verbose", "--workspace"]
 coverage-ci = ["coverage", "--color", "never", "--out", "Html", "--out", "Json"]
+[env]
+# clippy.toml lives beside this file.
+CLIPPY_CONF_DIR = { value = ".cargo", relative = true }

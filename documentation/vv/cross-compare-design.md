@@ -74,6 +74,13 @@ numerical tolerance bounds.
   dataset carries a non-zero `missing_ok.<peer>` attribute; an unannotated omission
   fails (FR-10). A peer that provides no oracle signal fails. Per-peer bounds use the
   `bound.<peer>` attribute (C-2).
+- **FR-17 — Baseline Margin Drift**: Before overwriting `cross-val-report.json`,
+  `compare` reads the report already in its output directory as the baseline (the
+  previous local run, or the `main` report restored by the CI workflow). For each
+  method present in both reports, matched by suite, comparison key and method type, it
+  prints a warning when the margin $m = \text{observed}/\text{bound}$ rises by at
+  least 0.1. Methods with a zero bound are skipped. A missing or unreadable baseline
+  prints `no baseline`. Warnings change neither the exit code nor the report.
 
 #### 2.2 Non-Functional Requirements
 
@@ -432,6 +439,9 @@ cargo compare [OPTIONS]
 - `--no-fail`: Generate reports without returning non-zero exit code.
 - `-q, --quiet`: Suppress streaming output.
 
+`compare` reads the `cross-val-report.json` already in the output directory before
+overwriting it and prints the margin drift against it (FR-17).
+
 #### 4.9 HDF5 Multi-Modal Container Schema & Attributes
 
 Each test variant writes an independent HDF5 container:
@@ -753,6 +763,7 @@ results/
 | 1.8 | September 20, 2026 | @MitchellDScott | Unified crate name to `control-rs-compare` with standalone `compare` binary (`cargo compare`), `compare.toml`, recursive `ls`-style dataset discovery, and multi-tier tolerance resolution (TOML table + HDF5 attributes). |
 | 1.9 | September 20, 2026 | @MitchellDScott | Integrated background research on parallel numerical reductions, pairwise tree error bounds (Higham, 2002), reproducible summation (Demmel and Nguyen, 2013), and chunked array I/O (Folk et al., 2011); formulated parallel chunked comparison architecture and comparator worker pool. |
 | 1.10 | September 22, 2026 | @MitchellDScott | Added FR-16 annotated signal omission (`missing_ok.<peer>`) for multi-oracle suites; workspace example references `control-rs-verification`. |
+| 1.11 | September 23, 2026 | @MitchellDScott | Added FR-17 baseline margin drift warnings against the previous `cross-val-report.json` (§4.8). |
 
 ---
 

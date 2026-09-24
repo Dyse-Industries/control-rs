@@ -8,7 +8,9 @@ use control_rs_ci::config::{GateConfig, GateDefinition, GatePolicy};
 use control_rs_ci::gate::{
     Gate, GateContext, GateOutcome, Verdict, build_all_gates,
 };
-use control_rs_ci::report::{MAX_REPORT_BYTES, ReportAggregator};
+use control_rs_ci::report::{
+    MAX_REPORT_BYTES, ReportAggregator, WrittenReport,
+};
 
 #[test]
 fn test_config_parsing_defaults() {
@@ -94,13 +96,8 @@ fn test_generic_gate_execution() {
     let _ = fs::remove_dir_all(&tmp_dir);
     fs::create_dir_all(&out_dir).unwrap();
 
-    let gate = Gate::new(
-        "test_echo",
-        "echo",
-        vec!["hello_world".to_string()],
-        Some("Echo test gate".to_string()),
-        HashMap::new(),
-    );
+    let gate = Gate::new("test_echo", "echo", vec!["hello_world".to_string()])
+        .with_description("Echo test gate");
 
     assert_eq!(gate.name(), "test_echo");
     assert_eq!(gate.description(), Some("Echo test gate"));
@@ -134,13 +131,7 @@ fn test_generic_gate_compound_command() {
     fs::create_dir_all(&out_dir).unwrap();
 
     // Compound command "echo foo" with additional arguments `["bar"]`
-    let gate = Gate::new(
-        "compound_test",
-        "echo foo",
-        vec!["bar".to_string()],
-        None,
-        HashMap::new(),
-    );
+    let gate = Gate::new("compound_test", "echo foo", vec!["bar".to_string()]);
 
     assert_eq!(gate.command_display(), "`echo foo bar`");
 
@@ -199,8 +190,10 @@ fn test_report_aggregator_generation() {
 
     let aggregator =
         ReportAggregator::new(artifacts_dir.clone(), tmp_dir.clone());
-    let (is_pass, report_path) =
-        aggregator.write_report(&config, None).unwrap();
+    let WrittenReport {
+        pass: is_pass,
+        path: report_path,
+    } = aggregator.write_report(&config, None).unwrap();
 
     assert!(is_pass);
     assert!(report_path.exists());
@@ -250,7 +243,10 @@ fn test_report_aggregator_subset_filtering() {
 
     let aggregator =
         ReportAggregator::new(artifacts_dir.clone(), tmp_dir.clone());
-    let (is_pass, report_path) = aggregator
+    let WrittenReport {
+        pass: is_pass,
+        path: report_path,
+    } = aggregator
         .write_report(&config, Some(&["fmt".to_string()]))
         .unwrap();
 
@@ -662,8 +658,6 @@ fn test_gate_echo_preserves_log_and_verdict() {
             "-c".to_string(),
             "echo to_stdout; echo to_stderr 1>&2; exit 3".to_string(),
         ],
-        None,
-        HashMap::new(),
     );
     let ctx = GateContext {
         workspace_root: tmp_dir.clone(),

@@ -5,6 +5,36 @@ use std::process::Command;
 
 use crate::error::HostError;
 
+/// Result of parsing target CLI arguments; the error is a user-facing message.
+pub type ArgResult<T> = Result<T, String>;
+
+/// Outcome of [`Target::parse`]: `Ok(None)` selects every target (or none
+/// was named), `Ok(Some(_))` exactly one.
+pub type ParseOutcome = ArgResult<Option<Target>>;
+
+/// Outcome of [`parse_targets`]: every target named on the command line.
+pub type ParsedTargets = ArgResult<Vec<Target>>;
+
+/// A QEMU target triple and its human-readable description.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QemuShorthand {
+    /// Rust target triple, for example `thumbv7em-none-eabihf`.
+    pub triple: &'static str,
+    /// Display name shown in the TUI and reports.
+    pub description: &'static str,
+}
+
+/// Accumulated state while scanning target CLI arguments.
+#[derive(Debug)]
+struct TargetArgs {
+    path: String,
+    targets: Vec<SubprocessTarget>,
+    extra_args: Vec<String>,
+    is_serial: bool,
+    port: Option<String>,
+    baud: u32,
+    qemu_mode: bool,
+}
 /// Target details for QEMU.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QemuTargetDetails {
@@ -208,19 +238,21 @@ impl Target {
         args: &[String],
         default_qemu_arch: &str,
         default_teensy_port: &str,
-    ) -> Result<Option<Self>, String> {
+    ) -> ParseOutcome {
         let mut targets = parse_targets(args)?;
         if targets.is_empty() {
             if default_qemu_arch == "all" {
                 return Ok(None);
             }
             return Ok(map_shorthand(default_qemu_arch)
-                .map(|(t, n)| Self::Subprocess(qemu_example_target(t, n))));
+                .map(|arch| Self::Subprocess(qemu_example_target(arch))));
         }
         if targets.len() > 1 {
             return Ok(None);
         }
-        let mut target = targets.remove(0);
+        let Some(mut target) = targets.pop() else {
+            return Ok(None);
+        };
         if let Self::Serial { ref mut port, .. } = target
             && port == "/dev/teensy"
             && default_teensy_port != "/dev/teensy"
@@ -231,28 +263,177 @@ impl Target {
     }
 }
 
+impl TargetArgs {
+    /// Empty scan state with the default path and baud rate.
+    fn new() -> Self {
+        Self {
+            path: String::from("."),
+            targets: Vec::new(),
+            extra_args: Vec::new(),
+            is_serial: false,
+            port: None,
+            baud: 115_200,
+            qemu_mode: false,
+        }
+    }
+
+    /// Consumes `arg`, pulling its value from `iter` when the flag takes one.
+    /// Returns `false` once `--` has forwarded the remaining arguments.
+    fn take<'a, I>(&mut self, arg: &str, iter: &mut I) -> ArgResult<bool>
+    where
+        I: Iterator<Item = &'a String>,
+    {
+        match arg {
+            "--" => {
+                self.extra_args.extend(iter.cloned());
+                return Ok(false);
+            }
+            "--manifest-path" | "--path" | "-p" => {
+                self.path = flag_value(iter, "--manifest-path")?;
+            }
+            "--target" | "-t" => {
+                self.push_triple(&flag_value(iter, "--target")?);
+            }
+            "--bin" | "-b" => self.set_bin(flag_value(iter, "--bin")?),
+            "--args" => {
+                self.extra_args.push(flag_value(iter, "--args")?);
+            }
+            "--release" => {
+                if !self.extra_args.iter().any(|a| a == "--release") {
+                    self.extra_args.push("--release".to_string());
+                }
+            }
+            "--port" => self.set_port(flag_value(iter, "--port")?),
+            "--baud" => {
+                self.baud = flag_value(iter, "--baud")?
+                    .parse()
+                    .map_err(|e| format!("Invalid baud: {e}"))?;
+                self.is_serial = true;
+            }
+            word => self.take_word(word)?,
+        }
+        Ok(true)
+    }
+
+    /// Consumes a positional word or a flag without a value.
+    fn take_word(&mut self, word: &str) -> ArgResult<()> {
+        match word {
+            "--serial" | "teensy" => self.is_serial = true,
+            "qemu" => self.qemu_mode = true,
+            "all" => {
+                for sh in ["arm", "arm-sf", "riscv32", "riscv64"] {
+                    if let Some(arch) = map_shorthand(sh) {
+                        self.targets.push(qemu_example_target(arch));
+                    }
+                }
+            }
+            p if p.starts_with("/dev/") => self.set_port(p.to_string()),
+            b if self.is_serial && b.parse::<u32>().is_ok() => {
+                if let Ok(val) = b.parse() {
+                    self.baud = val;
+                }
+            }
+            sh => {
+                let arch = map_shorthand(sh)
+                    .ok_or_else(|| format!("Unknown argument: {sh}"))?;
+                self.targets.push(qemu_example_target(arch));
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds a `--target <triple>[:<bin>]` subprocess target.
+    fn push_triple(&mut self, val: &str) {
+        let (triple, bin) = val.split_once(':').map_or_else(
+            || (val.to_string(), None),
+            |(t, b)| (t.to_string(), Some(b.to_string())),
+        );
+        let mut sub = SubprocessTarget::new(".").with_target(triple);
+        if let Some(b) = bin {
+            sub = sub.with_bin(b);
+        }
+        self.targets.push(sub);
+    }
+
+    /// Sets the binary of the last target, or adds a target for it.
+    fn set_bin(&mut self, bin: String) {
+        if let Some(last) = self.targets.last_mut() {
+            last.bin = Some(bin);
+        } else {
+            self.targets.push(SubprocessTarget::new(".").with_bin(bin));
+        }
+    }
+
+    /// Selects a serial link on `port`.
+    fn set_port(&mut self, port: String) {
+        self.port = Some(port);
+        self.is_serial = true;
+    }
+
+    /// Resolves the scanned arguments into targets.
+    fn finish(mut self) -> Vec<Target> {
+        if self.is_serial {
+            let port = self.port.unwrap_or_else(|| "/dev/teensy".to_string());
+            return vec![Target::Serial {
+                port,
+                baud: self.baud,
+            }];
+        }
+
+        let uses_known_qemu_triple = self.targets.iter().any(|t| {
+            t.target.as_deref().and_then(qemu_bin_for_triple).is_some()
+        });
+        if (self.qemu_mode || uses_known_qemu_triple)
+            && (self.path.is_empty() || self.path == ".")
+        {
+            self.path = String::from("examples/qemu");
+        }
+
+        for t in &mut self.targets {
+            if t.path.is_empty() || t.path == "." {
+                t.path.clone_from(&self.path);
+            }
+            if t.bin.is_none()
+                && let Some(triple) = t.target.as_deref()
+                && let Some(bin) = qemu_bin_for_triple(triple)
+            {
+                t.bin = Some(bin.to_string());
+            }
+            for a in &self.extra_args {
+                if !t.args.contains(a) {
+                    t.args.push(a.clone());
+                }
+            }
+        }
+
+        self.targets.into_iter().map(Target::Subprocess).collect()
+    }
+}
+
 /// Maps common target architecture shorthand strings to target triple and description.
 #[must_use]
-pub fn map_shorthand(s: &str) -> Option<(&'static str, &'static str)> {
-    match s {
+pub fn map_shorthand(s: &str) -> Option<QemuShorthand> {
+    let (triple, description) = match s {
         "arm" | "arm-hf" | "thumbv7em-none-eabihf" => {
-            Some(("thumbv7em-none-eabihf", "ARM HF (thumbv7em-none-eabihf)"))
+            ("thumbv7em-none-eabihf", "ARM HF (thumbv7em-none-eabihf)")
         }
         "arm-sf" | "arm-soft" | "thumbv7em-none-eabi" => {
-            Some(("thumbv7em-none-eabi", "ARM SF (thumbv7em-none-eabi)"))
+            ("thumbv7em-none-eabi", "ARM SF (thumbv7em-none-eabi)")
         }
-        "riscv" | "riscv32" | "risc-v" | "riscv32imac-unknown-none-elf" => {
-            Some((
-                "riscv32imac-unknown-none-elf",
-                "RISC-V 32 (riscv32imac-unknown-none-elf)",
-            ))
-        }
-        "riscv64" | "risc-v64" | "riscv64gc-unknown-none-elf" => Some((
+        "riscv" | "riscv32" | "risc-v" | "riscv32imac-unknown-none-elf" => (
+            "riscv32imac-unknown-none-elf",
+            "RISC-V 32 (riscv32imac-unknown-none-elf)",
+        ),
+        "riscv64" | "risc-v64" | "riscv64gc-unknown-none-elf" => (
             "riscv64gc-unknown-none-elf",
             "RISC-V 64 (riscv64gc-unknown-none-elf)",
-        )),
-        _ => None,
-    }
+        ),
+        _ => return None,
+    };
+    Some(QemuShorthand {
+        triple,
+        description,
+    })
 }
 
 /// Maps a QEMU target triple onto the example firmware binary name.
@@ -270,11 +451,11 @@ fn qemu_bin_for_triple(triple: &str) -> Option<&'static str> {
 }
 
 /// Example-firmware subprocess for a QEMU shorthand triple.
-fn qemu_example_target(triple: &str, name: &str) -> SubprocessTarget {
+fn qemu_example_target(arch: QemuShorthand) -> SubprocessTarget {
     let mut sub = SubprocessTarget::new("examples/qemu")
-        .with_target(triple)
-        .with_name(name);
-    if let Some(bin) = qemu_bin_for_triple(triple) {
+        .with_target(arch.triple)
+        .with_name(arch.description);
+    if let Some(bin) = qemu_bin_for_triple(arch.triple) {
         sub = sub.with_bin(bin);
     }
     sub
@@ -285,7 +466,7 @@ fn qemu_example_target(triple: &str, name: &str) -> SubprocessTarget {
 /// # Errors
 ///
 /// Returns an error if argument values are missing or unrecognized.
-pub fn parse_targets(args: &[String]) -> Result<Vec<Target>, String> {
+pub fn parse_targets(args: &[String]) -> ParsedTargets {
     let mut iter = args.iter().peekable();
     if iter.peek().is_some_and(|a| !a.starts_with('-')) {
         iter.next();
@@ -294,126 +475,23 @@ pub fn parse_targets(args: &[String]) -> Result<Vec<Target>, String> {
         iter.next();
     }
 
-    let mut path = String::from(".");
-    let mut targets = Vec::new();
-    let mut extra_args = Vec::new();
-    let mut is_serial = false;
-    let mut port = None;
-    let mut baud = 115_200;
-    let mut qemu_mode = false;
-
+    let mut scan = TargetArgs::new();
     while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--" => {
-                extra_args.extend(iter.map(Clone::clone));
-                break;
-            }
-            "--manifest-path" | "--path" | "-p" => {
-                path.clone_from(
-                    iter.next().ok_or("Missing value for --manifest-path")?,
-                );
-            }
-            "--target" | "-t" => {
-                let val = iter.next().ok_or("Missing value for --target")?;
-                let (triple, bin) = val.split_once(':').map_or_else(
-                    || (val.clone(), None),
-                    |(t, b)| (t.to_string(), Some(b.to_string())),
-                );
-                let mut sub = SubprocessTarget::new(".").with_target(triple);
-                if let Some(b) = bin {
-                    sub = sub.with_bin(b);
-                }
-                targets.push(sub);
-            }
-            "--bin" | "-b" => {
-                let b = iter.next().ok_or("Missing value for --bin")?.clone();
-                if let Some(last) = targets.last_mut() {
-                    last.bin = Some(b);
-                } else {
-                    targets.push(SubprocessTarget::new(".").with_bin(b));
-                }
-            }
-            "--args" => {
-                extra_args.push(
-                    iter.next().ok_or("Missing value for --args")?.clone(),
-                );
-            }
-            "--release" => {
-                if !extra_args.iter().any(|a| a == "--release") {
-                    extra_args.push("--release".to_string());
-                }
-            }
-            "--serial" | "teensy" => is_serial = true,
-            "--port" => {
-                port = Some(
-                    iter.next().ok_or("Missing value for --port")?.clone(),
-                );
-                is_serial = true;
-            }
-            "--baud" => {
-                baud = iter
-                    .next()
-                    .ok_or("Missing value for --baud")?
-                    .parse()
-                    .map_err(|e| format!("Invalid baud: {e}"))?;
-                is_serial = true;
-            }
-            "qemu" => qemu_mode = true,
-            "all" => {
-                for sh in ["arm", "arm-sf", "riscv32", "riscv64"] {
-                    if let Some((t, n)) = map_shorthand(sh) {
-                        targets.push(qemu_example_target(t, n));
-                    }
-                }
-            }
-            p if p.starts_with("/dev/") => {
-                port = Some(p.to_string());
-                is_serial = true;
-            }
-            b if is_serial && b.parse::<u32>().is_ok() => {
-                if let Ok(val) = b.parse() {
-                    baud = val;
-                }
-            }
-            sh if map_shorthand(sh).is_some() => {
-                let (t, n) = map_shorthand(sh).unwrap_or(("", ""));
-                targets.push(qemu_example_target(t, n));
-            }
-            other => return Err(format!("Unknown argument: {other}")),
+        if !scan.take(arg, &mut iter)? {
+            break;
         }
     }
+    Ok(scan.finish())
+}
 
-    if is_serial {
-        let p = port.unwrap_or_else(|| "/dev/teensy".to_string());
-        return Ok(vec![Target::Serial { port: p, baud }]);
-    }
-
-    let uses_known_qemu_triple = targets
-        .iter()
-        .any(|t| t.target.as_deref().and_then(qemu_bin_for_triple).is_some());
-    if (qemu_mode || uses_known_qemu_triple) && (path.is_empty() || path == ".")
-    {
-        path = String::from("examples/qemu");
-    }
-
-    for t in &mut targets {
-        if t.path.is_empty() || t.path == "." {
-            t.path.clone_from(&path);
-        }
-        if t.bin.is_none()
-            && let Some(triple) = t.target.as_deref()
-            && let Some(bin) = qemu_bin_for_triple(triple)
-        {
-            t.bin = Some(bin.to_string());
-        }
-        for a in &extra_args {
-            if !t.args.contains(a) {
-                t.args.push(a.clone());
-            }
-        }
-    }
-
-    Ok(targets.into_iter().map(Target::Subprocess).collect())
+/// Returns the value following `flag`, or the missing-value error.
+fn flag_value<'a, I>(iter: &mut I, flag: &str) -> ArgResult<String>
+where
+    I: Iterator<Item = &'a String>,
+{
+    iter.next()
+        .cloned()
+        .ok_or_else(|| format!("Missing value for {flag}"))
 }
 
 /// Derives the expected ELF path for a subprocess target if binary is known.
@@ -557,7 +635,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(targets.len(), 1);
-        if let Target::Subprocess(ref sub) = targets[0] {
+        if let Some(Target::Subprocess(sub)) = targets.first() {
             assert_eq!(sub.path, "examples/qemu/Cargo.toml");
             assert_eq!(sub.crate_dir(), Path::new("examples/qemu"));
         } else {
@@ -640,7 +718,7 @@ mod tests {
         let targets =
             parse_targets(&["tui".to_string(), "arm".to_string()]).unwrap();
         assert_eq!(targets.len(), 1);
-        if let Target::Subprocess(sub) = &targets[0] {
+        if let Some(Target::Subprocess(sub)) = targets.first() {
             assert!(
                 sub.path.contains("examples/qemu"),
                 "path = {}, expected examples/qemu",
@@ -671,7 +749,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(targets.len(), 1);
-        if let Target::Subprocess(sub) = &targets[0] {
+        if let Some(Target::Subprocess(sub)) = targets.first() {
             assert!(
                 sub.path.contains("examples/qemu"),
                 "path = {}, expected examples/qemu",

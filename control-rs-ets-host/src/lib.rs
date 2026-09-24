@@ -3,14 +3,6 @@
 //! Provides `ETSBridge` transport abstraction, framed packet communication,
 //! interactive session state management, and headless target execution (`run_headless_ets`).
 
-#![allow(
-    clippy::indexing_slicing,
-    clippy::multiple_crate_versions,
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    clippy::type_complexity
-)]
-
 pub use bridge::{BridgeMessage, ETSBridge, OwnedTelemetry};
 pub use error::HostError;
 pub use runner::{
