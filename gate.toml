@@ -121,7 +121,7 @@ mode = "fail"
 command = "vale"
 args = [
     "--config=.vale.ini",
-    "--output=JSON",
+    "--output=line",
     "documentation",
     "src",
     "control-rs-ets",

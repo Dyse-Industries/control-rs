@@ -8,18 +8,48 @@
 
 ### 1. Introduction
 
-High-assurance control systems and embedded firmware require verifiable, reproducible, and automated quality gating. `control-rs-ci` provides a modular quality gate runner, report aggregator, and verification harness for `control-rs` and downstream safety-critical embedded systems.
+High-assurance control systems and embedded firmware require verifiable,
+reproducible, and automated quality gating. `control-rs-ci` provides a modular
+quality gate runner, report aggregator, and verification harness for
+`control-rs` and downstream safety-critical embedded systems.
 
-The gating and reporting infrastructure follows a **generic gate runner, minimal-parsing design principle**:
+The gating and reporting infrastructure follows a **generic gate runner,
+minimal-parsing design principle**:
 
-- **Generic Gate Runner & Zero Gate Dependence**: The gate running engine has zero hardcoded dependence on specific gate names or behaviors. The earlier concept of "built-in" gates is obsolete; every quality gate is defined uniformly by its declarative configuration in `gate.toml`.
-- **Single Concrete Gate Type**: All quality gates use a single concrete `Gate` struct without trait abstractions (`QualityGate`), dynamic dispatch (`dyn QualityGate`), or struct proliferation. Every gate executes via the same concrete process lifecycle.
-- **Uniform Command & Argument Configuration**: Each gate in `gate.toml` declares its executable and base subcommand via `command` (for example, `"cargo clean"`, `"cargo fmt"`, `"cargo clippy"`, `"cargo deny"`, `"vale"`), optional additional arguments via `args`, optional `description`, and optional environment variables via `env`. Subcommands are not repeated in `args`: for `[clean]`, `command = "cargo clean"` requires no extra arguments (`args = []` or omitted), eliminating redundant `args = ["clean"]`.
-- **Process Isolation & Log Separation**: Gates execute underlying tools without intermediate schema translation. Full `stdout` and `stderr` streams are captured to a dedicated log file (`target/ci-artifacts/<gate>.log`), and tool-native JSON or data files stay in their native format at the path set by the gate's `args`.
-- **Standardized Execution Outcomes**: Gates record structured execution metadata (`GateOutcome`: gate name, verdict, duration, exit code, summary, and log path) written to `target/ci-artifacts/<gate>.result.json`.
-- **Zero-Parsing Minimalist Aggregation**: The report aggregator (`control-rs-ci report`) operates generically, rendering `target/ci-artifacts/ci-report.md` directly from `GateOutcome` records and tool logs without requiring specialized per-gate code.
-- **Multi-Lane Parallel Scheduling**: Independent execution groups execute concurrently on a bounded worker pool (`max_jobs`), while exclusive gates execute sequentially following a barrier join.
-- **Gate Opacity**: The runner knows a gate only by its declared command, arguments, environment, timeout and policy, and by the exit status and artifacts it produces. Internal parallelism, sharding and output formats belong to the gate's own arguments.
+- **Generic Gate Runner & Zero Gate Dependence**: The gate running engine has
+  zero hardcoded dependence on specific gate names or behaviors. The earlier
+  concept of "built-in" gates is obsolete; every quality gate is defined
+  uniformly by its declarative configuration in `gate.toml`.
+- **Single Concrete Gate Type**: All quality gates use a single concrete `Gate`
+  struct without trait abstractions (`QualityGate`), dynamic dispatch
+  (`dyn QualityGate`), or struct proliferation. Every gate executes via the same
+  concrete process lifecycle.
+- **Uniform Command & Argument Configuration**: Each gate in `gate.toml`
+  declares its executable and base subcommand via `command` (for example,
+  `"cargo clean"`, `"cargo fmt"`, `"cargo clippy"`, `"cargo deny"`, `"vale"`),
+  optional additional arguments via `args`, optional `description`, and optional
+  environment variables via `env`. Subcommands are not repeated in `args`: for
+  `[clean]`, `command = "cargo clean"` requires no extra arguments (`args = []`
+  or omitted), eliminating redundant `args = ["clean"]`.
+- **Process Isolation & Log Separation**: Gates execute underlying tools without
+  intermediate schema translation. Full `stdout` and `stderr` streams are
+  captured to a dedicated log file (`target/ci-artifacts/<gate>.log`), and
+  tool-native JSON or data files stay in their native format at the path set by
+  the gate's `args`.
+- **Standardized Execution Outcomes**: Gates record structured execution
+  metadata (`GateOutcome`: gate name, verdict, duration, exit code, summary, and
+  log path) written to `target/ci-artifacts/<gate>.result.json`.
+- **Zero-Parsing Minimalist Aggregation**: The report aggregator
+  (`control-rs-ci report`) operates generically, rendering
+  `target/ci-artifacts/ci-report.md` directly from `GateOutcome` records and
+  tool logs without requiring specialized per-gate code.
+- **Multi-Lane Parallel Scheduling**: Independent execution groups execute
+  concurrently on a bounded worker pool (`max_jobs`), while exclusive gates
+  execute sequentially following a barrier join.
+- **Gate Opacity**: The runner knows a gate only by its declared command,
+  arguments, environment, timeout and policy, and by the exit status and
+  artifacts it produces. Internal parallelism, sharding and output formats
+  belong to the gate's own arguments.
 
 ---
 
@@ -27,39 +57,92 @@ The gating and reporting infrastructure follows a **generic gate runner, minimal
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Generic Gate Execution**: The runner must execute any quality gate declared in `gate.toml` under `[<gate>]`, supporting compiler checks, linters, tests, coverage, security audits, and user-defined verification harnesses.
-- **FR-2 — Single Concrete Gate Model**: All quality gates must be represented and executed via a single concrete `Gate` type without gate-specific traits, sub-types, or dynamic dispatch.
-- **FR-3 — Declarative Workspace Configuration (`gate.toml`)**: Runner settings, execution groups, exclusive gates, and individual gate execution definitions must be declared in a workspace-root `gate.toml` without hardcoded fallback vectors in runner source code.
-- **FR-4 — Subcommand & Flag Economy**: The runner must parse compound command strings (for example `command = "cargo clean"`) and optional argument vectors (`args`) without forcing repetition of subcommand names in arguments.
-- **FR-5 — Process & Log Stream Isolation**: Every gate must stream 100% of its `stdout` and `stderr` output to `target/ci-artifacts/<gate>.log` and record standardized metadata to `target/ci-artifacts/<gate>.result.json`.
-- **FR-6 — Structured Tool Degradation**: Absence or failure of an external tool must surface as a structured warning in `GateOutcome` and log a diagnostic to `<gate>.log` rather than aborting or panicking when the gate policy is `warn`.
-- **FR-7 — Bounded Execution Timeouts**: Target executions and host gates must execute under explicit wall-clock bounds, terminating hung processes cleanly.
-- **FR-8 — Multi-Lane Parallel Execution**: The runner must support partitioning quality gates into independent concurrent execution groups declared in `gate.toml` (`[execution.groups]`), executing groups concurrently across worker threads while preserving sequential execution within each group.
-- **FR-9 — Exclusive Processor Authority Barriers**: Gates requiring unrestricted access to CPU, memory bandwidth, or Cargo locks must declare membership in `exclusive_gates`. The runner must drain and join all active background group threads before dispatching exclusive gates sequentially.
-- **FR-10 — Fail-Closed Report Aggregation**: The report aggregator (`control-rs-ci report`) must derive overall pipeline success strictly from gate policies applied to `GateOutcome` verdicts. Any missing, corrupt, or failing fail-closed gate must fail the aggregator with a non-zero exit code.
-- **FR-11 — Artifact Relocation & Cleanup**: All CI outputs must be written exclusively to `target/ci-artifacts/`. The runner and CLI tools must provide clean operations (`cargo ci clean`, `cargo gate clean`, `cargo report --clean`) to remove previous artifacts.
-- **FR-12 — Attributed Live Output**: On request (`-v`/`--verbose`), the runner must echo every line of each gate's `stdout` and `stderr` to the console as it is produced, prefixed with the gate's execution group and name, while still satisfying FR-5.
-- **FR-13 — Bounded Group Concurrency**: The runner must bound the number of concurrently executing groups by a limit declared in `gate.toml` (`[execution] max_jobs`) and overridable on the command line (`--max-jobs <n>`), defaulting to the number of declared groups. Groups beyond the limit must start in declaration order as running groups complete.
-- **FR-14 — Gate Argument Passthrough**: The `gate` binary must append user-supplied arguments following a `--` separator to the argument vector of exactly one selected gate, after the gate's configured `args`, without inspecting or rewriting them. A passthrough with zero or more than one selected gate must fail before any gate executes.
+- **FR-1 — Generic Gate Execution**: The runner must execute any quality gate
+  declared in `gate.toml` under `[<gate>]`, supporting compiler checks, linters,
+  tests, coverage, security audits, and user-defined verification harnesses.
+- **FR-2 — Single Concrete Gate Model**: All quality gates must be represented
+  and executed via a single concrete `Gate` type without gate-specific traits,
+  subtypes, or dynamic dispatch.
+- **FR-3 — Declarative Workspace Configuration (`gate.toml`)**: Runner settings,
+  execution groups, exclusive gates, and individual gate execution definitions
+  must be declared in a workspace-root `gate.toml` without hardcoded fallback
+  vectors in runner source code.
+- **FR-4 — Subcommand & Flag Economy**: The runner must parse compound command
+  strings (for example `command = "cargo clean"`) and optional argument vectors
+  (`args`) without forcing repetition of subcommand names in arguments.
+- **FR-5 — Process & Log Stream Isolation**: Every gate must stream 100% of its
+  `stdout` and `stderr` output to `target/ci-artifacts/<gate>.log` and record
+  standardized metadata to `target/ci-artifacts/<gate>.result.json`.
+- **FR-6 — Structured Tool Degradation**: Absence or failure of an external tool
+  must surface as a structured warning in `GateOutcome` and log a diagnostic to
+  `<gate>.log` rather than aborting or panicking when the gate policy is `warn`.
+- **FR-7 — Bounded Execution Timeouts**: Target executions and host gates must
+  execute under explicit wall-clock bounds, terminating hung processes cleanly.
+- **FR-8 — Multi-Lane Parallel Execution**: The runner must support partitioning
+  quality gates into independent concurrent execution groups declared in
+  `gate.toml` (`[execution.groups]`), executing groups concurrently across
+  worker threads while preserving sequential execution within each group.
+- **FR-9 — Exclusive Processor Authority Barriers**: Gates requiring
+  unrestricted access to CPU, memory bandwidth, or Cargo locks must declare
+  membership in `exclusive_gates`. The runner must drain and join all active
+  background group threads before dispatching exclusive gates sequentially.
+- **FR-10 — Fail-Closed Report Aggregation**: The report aggregator
+  (`control-rs-ci report`) must derive overall pipeline success strictly from
+  gate policies applied to `GateOutcome` verdicts. Any missing, corrupt, or
+  failing fail-closed gate must fail the aggregator with a non-zero exit code.
+- **FR-11 — Artifact Relocation & Cleanup**: All CI outputs must be written
+  exclusively to `target/ci-artifacts/`. The runner and CLI tools must provide
+  clean operations (`cargo ci clean`, `cargo gate clean`,
+  `cargo report --clean`) to remove previous artifacts.
+- **FR-12 — Attributed Live Output**: On request (`-v`/`--verbose`), the runner
+  must echo every line of each gate's `stdout` and `stderr` to the console as it
+  is produced, prefixed with the gate's execution group and name, while still
+  satisfying FR-5.
+- **FR-13 — Bounded Group Concurrency**: The runner must bound the number of
+  concurrently executing groups by a limit declared in `gate.toml`
+  (`[execution] max_jobs`) and overridable on the command line
+  (`--max-jobs <n>`), defaulting to the number of declared groups. Groups beyond
+  the limit must start in declaration order as running groups complete.
+- **FR-14 — Gate Argument Passthrough**: The `gate` binary must append
+  user-supplied arguments following a `--` separator to the argument vector of
+  exactly one selected gate, after the gate's configured `args`, without
+  inspecting or rewriting them. A passthrough with zero or more than one
+  selected gate must fail before any gate executes.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Zero Continuous Allocation**: The runner software operates with zero persistent allocation overhead during execution.
-- **NFR-2 — Outcome Schema Stability**: The `GateOutcome` JSON schema and Markdown report structure (`ci-report.md`) must remain stable and versioned across releases.
-- **NFR-3 — Headless Dependency Floor**: The runner's dependency closure must contain zero GUI, terminal-event, or interactive styling crates.
+- **NFR-1 — Zero Continuous Allocation**: The runner software operates with zero
+  persistent allocation overhead during execution.
+- **NFR-2 — Outcome Schema Stability**: The `GateOutcome` JSON schema and
+  Markdown report structure (`ci-report.md`) must remain stable and versioned
+  across releases.
+- **NFR-3 — Headless Dependency Floor**: The runner's dependency closure must
+  contain zero GUI, terminal-event, or interactive styling crates.
 
 #### 2.3 Constraints
 
-- **C-1 — Step Summary Size Budget**: `ci-report.md` is budgeted to $\le 64\,\text{KiB}$ for human readability and fast PR rendering, with an absolute platform ceiling of 1 MiB ($1{,}048{,}576$ bytes) imposed by GitHub Actions step summaries [1].
-- **C-2 — Single MSRV Baseline**: All host tooling and runner crates must conform to the workspace `rust-version`.
-- **C-3 — Advisory / Fail-Closed Agreement**: Workflow jobs marked `continue-on-error` must match gates configured as `warn`. A fail-closed gate (`fail`) must not be bypassed.
-- **C-4 — Gate Opacity**: The runner depends only on a gate's declared `command`, `args`, `env`, `timeout_secs` and `mode`, and on its exit status and produced artifacts. The runner must not inject, parse or rewrite gate arguments or environment to control a gate's internal behavior (for example worker counts, shard selection or output format).
+- **C-1 — Step Summary Size Budget**: `ci-report.md` is budgeted
+  to $\le 64\,\text{KiB}$ for human readability and fast PR rendering, with an
+  absolute platform ceiling of 1 MiB ($1{,}048{,}576$ bytes) imposed by GitHub
+  Actions step summaries [1].
+- **C-2 — Single MSRV Baseline**: All host tooling and runner crates must
+  conform to the workspace `rust-version`.
+- **C-3 — Advisory / Fail-Closed Agreement**: Workflow jobs marked
+  `continue-on-error` must match gates configured as `warn`. A fail-closed gate
+  (`fail`) must not be bypassed.
+- **C-4 — Gate Opacity**: The runner depends only on a gate's declared
+  `command`, `args`, `env`, `timeout_secs` and `mode`, and on its exit status
+  and produced artifacts. The runner must not inject, parse or rewrite gate
+  arguments or environment to control a gate's internal behavior (for example
+  worker counts, shard selection or output format).
 
 ---
 
 ### 3. Technical Overview
 
-`control-rs-ci` decouples quality gate execution from report generation while minimizing parsing overhead. Gates execute concurrently across dedicated worker threads or sequentially under exclusive authority:
+`control-rs-ci` decouples quality gate execution from report generation while
+minimizing parsing overhead. Gates execute concurrently across dedicated worker
+threads or sequentially under exclusive authority:
 
 ```mermaid
 flowchart TD
@@ -70,16 +153,16 @@ flowchart TD
     subgraph Runner["Generic Runner Engine (control-rs-ci / gate)"]
         GC["GateConfig<br/><i>Vec&lt;Gate&gt; (Single Concrete Type)</i>"]
         SCHED["Topology Scheduler<br/><i>Group Partitioning &amp; Exclusive Assignment</i>"]
-        
+
         subgraph Groups["Bounded Worker Pool (≤ max_jobs scoped threads)"]
             direction TB
             G1["Group 1<br/>Gate 1 → Gate 2 → ..."]
             G2["Group 2<br/>Gate 3 → Gate 4 → ..."]
             GN["Group N (queued until a worker frees)<br/>Gate i → ..."]
         end
-        
+
         BARRIER{"Barrier Join<br/><i>Wait for all concurrent groups</i>"}
-        
+
         subgraph Exclusive["Sequential Exclusive Execution"]
             EX["Exclusive Lane (Main Thread)<br/>Exclusive Gate 1 → Exclusive Gate 2 → ..."]
         end
@@ -104,7 +187,8 @@ flowchart TD
     RES & LOG --> AGG --> MD
 ```
 
-Developers retain single-command local verification through `cargo ci` or targeted gate execution (`cargo gate`).
+Developers retain single-command local verification through `cargo ci` or
+targeted gate execution (`cargo gate`).
 
 ---
 
@@ -112,17 +196,25 @@ Developers retain single-command local verification through `cargo ci` or target
 
 #### 4.1 Crate & Binary Structure
 
-`control-rs-ci` provides a core library (`lib.rs`) containing generic gate dispatch, configuration parsing, scheduler coordination, artifact cleanup, and report rendering logic. The package exposes focused binary targets:
+`control-rs-ci` provides a core library (`lib.rs`) containing generic gate
+dispatch, configuration parsing, scheduler coordination, artifact cleanup, and
+report rendering logic. The package exposes focused binary targets:
 
-| Binary / Command | Alias              | Responsibility                                                  |
-|:-----------------|:-------------------|:----------------------------------------------------------------|
-| `control-rs-ci`  | `cargo ci`         | Monolithic coordinator and quality gate runner                  |
+| Binary / Command | Alias              | Responsibility                                                                                         |
+|:-----------------|:-------------------|:-------------------------------------------------------------------------------------------------------|
+| `control-rs-ci`  | `cargo ci`         | Monolithic coordinator and quality gate runner                                                         |
 | `gate`           | `cargo gate`       | Targeted quality gate execution (`--only`, `--skip`, `--up-to`) and argument passthrough (`-- <args>`) |
-| `report`         | `cargo report`     | JSON artifact aggregator rendering `ci-report.md`               |
-| `regression`     | `cargo regression` | Performance regression evaluator and benchmark budget harness   |
-| `valgrind`       | `cargo valgrind`   | Multi-example Valgrind Memcheck memory leak and safety runner   |
+| `report`         | `cargo report`     | JSON artifact aggregator rendering `ci-report.md`                                                      |
+| `regression`     | `cargo regression` | Performance regression evaluator and benchmark budget harness                                          |
+| `valgrind`       | `cargo valgrind`   | Multi-example Valgrind Memcheck memory leak and safety runner                                          |
 
-`cargo ci` and `cargo gate` share one option set: `--group`, `--only`, `--skip`, `--up-to`, `--config`, `--clean`, `--all`, `--list`, `--max-jobs` and `-v`/`--verbose`. Only `cargo gate` accepts a `--` separator (§4.8); `cargo ci` rejects it. Without `--verbose` the console shows status lines only and gate output goes to the log alone; with it, gate output is also echoed live (§4.4). GitHub Actions invokes every lane with `--verbose`, so each gate's output appears in its step console.
+`cargo ci` and `cargo gate` share one option set: `--group`, `--only`, `--skip`,
+`--up-to`, `--config`, `--clean`, `--all`, `--list`, `--max-jobs` and `-v`/
+`--verbose`. Only `cargo gate` accepts a `--` separator (§4.8); `cargo ci`
+rejects it. Without `--verbose` the console shows status lines only and gate
+output goes to the log alone; with it, gate output is also echoed live (§4.4).
+GitHub Actions invokes every lane with `--verbose`, so each gate's output
+appears in its step console.
 
 #### 4.2 Concrete Gate Model & Lifecycle
 
@@ -187,16 +279,39 @@ impl Gate {
 
 The gate execution lifecycle follows a zero-overhead process runner pattern:
 
-1. **Command String Decomposition**: The `command` string defines the executable and base subcommand (for example, `"cargo clean"`, `"cargo fmt"`, `"cargo clippy"`, `"cargo deny"`, `"cargo semver-checks"`, `"vale"`). Initial whitespace-separated tokens are split into the binary and initial arguments.
-2. **Argument Concatenation**: Any flags in `args` are appended to the invocation. Subcommands are not repeated in `args`: for `[clean]`, `command = "cargo clean"` requires no extra arguments (`args = []` or omitted), completely eliminating redundant `args = ["clean"]`. Arguments passed through `cargo gate <gate> -- <args>` are appended last (§4.8). The runner treats every argument as opaque (C-4).
-3. **Log Redirection**: Every gate redirects `stdout` and `stderr` directly into its dedicated log file (`target/ci-artifacts/<gate>.log`). With `-v`/`--verbose`, the runner reads both streams through pipes, writes each line to the same log and echoes it to `stderr` behind a `[<group>] <gate> | ` prefix. Line order is then preserved within each stream but not across the two streams. Pumps still draining 2 s after the gate exits are detached so that a surviving descendant holding the pipe cannot stall the pipeline.
-4. **Native Artifacts**: Tools that write data files keep their native format at the path set in the gate's `args` (for example, `tarpaulin` writes `target/ci-artifacts/tarpaulin-report.json`). Tools that print JSON (`geiger`, `vale`) leave it in `<gate>.log`.
-5. **Outcome Metadata**: Each gate writes a standardized `<gate>.result.json` containing the `GateOutcome`.
-6. **Structured Degradation**: If an external executable or cargo subcommand is absent from the host, gates operating under `warn` policy log a diagnostic and record `Verdict::Warn` without failing the pipeline.
+1. **Command String Decomposition**: The `command` string defines the executable
+   and base subcommand (for example, `"cargo clean"`, `"cargo fmt"`,
+   `"cargo clippy"`, `"cargo deny"`, `"cargo semver-checks"`, `"vale"`). Initial
+   whitespace-separated tokens are split into the binary and initial arguments.
+2. **Argument Concatenation**: Any flags in `args` are appended to the
+   invocation. Subcommands are not repeated in `args`: for `[clean]`,
+   `command = "cargo clean"` requires no extra arguments (`args = []` or
+   omitted), completely eliminating redundant `args = ["clean"]`. Arguments
+   passed through `cargo gate <gate> -- <args>` are appended last (§4.8). The
+   runner treats every argument as opaque (C-4).
+3. **Log Redirection**: Every gate redirects `stdout` and `stderr` directly into
+   its dedicated log file (`target/ci-artifacts/<gate>.log`). With `-v`/
+   `--verbose`, the runner reads both streams through pipes, writes each line to
+   the same log and echoes it to `stderr` behind a `[<group>] <gate> | ` prefix.
+   Line order is then preserved within each stream but not across the two
+   streams. Pumps still draining 2 s after the gate exits are detached so that a
+   surviving descendant holding the pipe cannot stall the pipeline.
+4. **Native Artifacts**: Tools that write data files keep their native format at
+   the path set in the gate's `args` (for example, `tarpaulin` writes
+   `target/ci-artifacts/tarpaulin-report.json`). Tools that print JSON
+   (`geiger`) leave it in `<gate>.log`. `vale` prints one alert per line
+   (`--output=line`, `<path>:<line>:<col>:<check>:<message>`), so a log tail in
+   the report shows whole alerts with their locations.
+5. **Outcome Metadata**: Each gate writes a standardized `<gate>.result.json`
+   containing the `GateOutcome`.
+6. **Structured Degradation**: If an external executable or cargo subcommand is
+   absent from the host, gates operating under `warn` policy log a diagnostic
+   and record `Verdict::Warn` without failing the pipeline.
 
 #### 4.3 Declarative Configuration (`gate.toml`)
 
-All quality gates, runner settings, execution groups, and exclusive gates are configured uniformly in `.cargo/gate.toml` at the workspace root:
+All quality gates, runner settings, execution groups, and exclusive gates are
+configured uniformly in `gate.toml` at the workspace root:
 
 ```toml
 [runner]
@@ -279,7 +394,7 @@ mode = "fail"
 command = "vale"
 args = [
     "--config=.vale.ini",
-    "--output=JSON",
+    "--output=line",
     "documentation",
     "src",
     "control-rs-ets",
@@ -306,7 +421,7 @@ description = "Scans workspace crates for unsafe code blocks and functions"
 [cross-compare]
 mode = "fail"
 command = "cargo run"
-args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", ".cargo/compare.toml"]
+args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", "compare.toml"]
 env = { CARGO_TARGET_DIR = "target/cross-compare" }
 description = "Executes multi-language reference oracles and verifies HDF5 tolerance bounds"
 
@@ -335,15 +450,41 @@ description = "Evaluates Criterion benchmark outputs against performance budgets
 The execution topology partitions active gates into two tiers:
 
 1. **User-Defined Groups (`[execution.groups]`)**:
-   Named concurrency lanes (for example, `cargo`, `audit`, `static`). The scheduler spawns $\min(\text{max\_jobs}, \text{groups})$ scoped worker threads via `std::thread::scope`. Workers pull groups from a shared queue in declaration order, so at most `max_jobs` groups run at once and a queued group starts when a running group completes. `max_jobs` resolves from `--max-jobs`, then `[execution] max_jobs`, then the number of declared groups; zero is a configuration error. `max_jobs` counts groups only: it does not constrain threads or processes a gate spawns internally, which the gate's own arguments control (C-4). Gates within a single group execute sequentially in their declared order. Output lines display colored group tags (for example `[cargo] `, `[audit] `, `[static] `). Each group runs with `CARGO_TARGET_DIR=target/ci-groups/<group>`, so concurrent groups never serialize on Cargo's build-directory lock. A gate whose `env` sets `CARGO_TARGET_DIR` keeps its own value. `--clean` deletes `target/ci-groups`. Exclusive gates use the default `target/`. One function, `run_group(name, gates, target_dir, ...)`, runs a gate list sequentially for both cases: each worker calls it with the dequeued group's target directory, then the main thread calls it on the main thread for the exclusive list with no target directory. The former `[execution] parallel` switch is removed; the key is ignored if present.
+   Named concurrency lanes (for example, `cargo`, `audit`, `static`). The
+   scheduler spawns $\min (\text{max\_jobs}, \text{groups})$ scoped worker
+   threads via `std::thread::scope`. Workers pull groups from a shared queue in
+   declaration order, so at most `max_jobs` groups run at once and a queued
+   group starts when a running group completes. `max_jobs` resolves from
+   `--max-jobs`, then `[execution] max_jobs`, then the number of declared
+   groups; zero is a configuration error. `max_jobs` counts groups only: it does
+   not constrain threads or processes a gate spawns internally, which the gate's
+   own arguments control (C-4). Gates within a single group execute sequentially
+   in their declared order. Output lines display colored group tags (for example
+   `[cargo] `, `[audit] `, `[static] `). Each group runs with
+   `CARGO_TARGET_DIR=target/ci-groups/<group>`, so concurrent groups never
+   serialize on Cargo's build-directory lock. A gate whose `env` sets
+   `CARGO_TARGET_DIR` keeps its own value. `--clean` deletes `target/ci-groups`.
+   Exclusive gates use the default `target/`. One function,
+   `run_group(name, gates, target_dir, ...)`, runs a gate list sequentially for
+   both cases: each worker calls it with the different group's target
+   directory, then the main thread calls it for the exclusive list with no
+   target directory. The former `[execution] parallel` switch is removed; the
+   key is ignored if present.
 2. **Exclusive Group (`exclusive_gates` and Unassigned Gates)**:
-   Gates requiring full processor authority (such as `geiger`, `cross-compare`, `valgrind`, `mutants`, `regression`) or any active gate omitted from `[execution.groups]`. The runner establishes a strict **barrier join**: all group threads must complete and join before exclusive gates begin. Exclusive gates execute strictly sequentially, one at a time, displaying the `[exclusive] ` tag.
+   Gates requiring full processor authority (such as `geiger`, `cross-compare`,
+   `valgrind`, `mutants`, `regression`) or any active gate omitted from
+   `[execution.groups]`. The runner establishes a strict **barrier join**: all
+   group threads must complete and join before exclusive gates begin. Exclusive
+   gates execute strictly sequentially, one at a time, displaying the
+   `[exclusive] ` tag.
 
-With `-v`/`--verbose` (FR-12), every echoed output line carries the same group tag followed by the gate name, so interleaved output from concurrent groups remains attributable:
+With `-v`/`--verbose` (FR-12), every echoed output line carries the same group
+tag followed by the gate name, so interleaved output from concurrent groups
+remains attributable:
 
 ```text
      Running [lint] `cargo clippy --workspace --all-targets -- -D warnings`
-     Running [verify] `cargo run --package control-rs-compare --bin compare -- --config .cargo/compare.toml`
+     Running [verify] `cargo run --package control-rs-compare --bin compare -- --config compare.toml`
 [lint] clippy |     Checking control-rs v0.0.0
 [verify] cross-compare | ==> Executing suite: matrix
 [verify] cross-compare |   -> Running variant: rust (rust_bin)
@@ -351,61 +492,120 @@ With `-v`/`--verbose` (FR-12), every echoed output line carries the same group t
       Passed [lint] clippy in 6.52s
 ```
 
-The tag keeps the group's color and the gate name is dimmed. Both are stripped when `stderr` is not a terminal or `CARGO_TERM_COLOR=never`, so CI logs stay plain text. Each line is written to `stderr` in a single call, so lines from different gates interleave but are never split.
+The tag keeps the group's color and the gate name is dimmed. Both are stripped
+when `stderr` is not a terminal or `CARGO_TERM_COLOR=never`, so CI logs stay
+plain text. Each line is written to `stderr` in a single call, so lines from
+different gates interleave but are never split.
 
 #### 4.5 Report Aggregation & Artifact Protocol
 
-`control-rs-ci report` operates as a gate-agnostic artifact aggregator producing `target/ci-artifacts/ci-report.md`:
+`control-rs-ci report` operates as a gate-agnostic artifact aggregator producing
+`target/ci-artifacts/ci-report.md`:
 
-1. **Gate-Agnostic Outcome Ingestion**: The aggregator has zero compile-time dependencies on specific gates or internal gate modules. It scans `target/ci-artifacts/*.result.json` for generic `GateOutcome` instances.
-2. **Preserved Pipeline Ordering**: To ensure intuitive and deterministic reporting, status table rows are sequenced by their declaration order in `gate.toml` (groups in declaration order, followed by exclusive gates and any unassigned gates), rather than random filesystem or alphabetical order.
-3. **Generic Summary Matrix Rendering**: Each row renders the gate name, badge verdict (`**Pass**`, `*Warn*`, `**FAIL**`, `Skipped`), elapsed duration, process exit code, and the `summary` string from `GateOutcome.summary`. Any gate (standard cargo tool, shell script, or custom CLI) can supply arbitrary concise summary metrics without requiring custom report code.
-4. **Policy Evaluation**: Evaluates all gate verdicts against declared policies in `gate.toml`. Any failed or omitted fail-closed gate causes the aggregator to exit non-zero (FR-10).
-5. **Decoupled Metric Reporting**: Gates provide arbitrary concise outcome summaries through their `GateOutcome.summary` field, rendered directly in the matrix without requiring custom parser logic in `report.rs`.
-6. **Failure Diagnostics**: Embeds trailing log snippets (20–40 lines) from `<gate>.log` into expandable Markdown `<details>` sections for failing or warning gates.
-7. **Size Budget**: Enforces $\le 64\,\text{KiB}$ maximum report size (C-1) by truncating embedded logs when necessary.
+1. **Gate-Agnostic Outcome Ingestion**: The aggregator has zero compile-time
+   dependencies on specific gates or internal gate modules. It scans
+   `target/ci-artifacts/*.result.json` for generic `GateOutcome` instances.
+2. **Preserved Pipeline Ordering**: To ensure intuitive and deterministic
+   reporting, status table rows are sequenced by their declaration order in
+   `gate.toml` (groups in declaration order, followed by exclusive gates and any
+   unassigned gates), rather than random filesystem or alphabetical order.
+3. **Generic Summary Matrix Rendering**: Each row renders the gate name, badge
+   verdict (`**Pass**`, `*Warn*`, `**FAIL**`, `Skipped`), elapsed duration,
+   process exit code, and the `summary` string from `GateOutcome.summary`. Any
+   gate (standard cargo tool, shell script, or custom CLI) can supply arbitrary
+   concise summary metrics without requiring custom report code.
+4. **Policy Evaluation**: Evaluates all gate verdicts against declared policies
+   in `gate.toml`. Any failed or omitted fail-closed gate causes the aggregator
+   to exit non-zero (FR-10).
+5. **Decoupled Metric Reporting**: Gates provide arbitrary concise outcome
+   summaries through their `GateOutcome.summary` field, rendered directly in the
+   matrix without requiring custom parser logic in `report.rs`.
+6. **Failure Diagnostics**: Embeds trailing log snippets (20–40 lines) from
+   `<gate>.log` into expandable Markdown `<details>` sections for failing or
+   warning gates.
+7. **Size Budget**: Enforces $\le 64\,\text{KiB}$ maximum report size (C-1) by
+   truncating embedded logs when necessary.
 
 #### 4.6 Artifact Relocation & Cleanup
 
-All CI artifacts reside under `target/ci-artifacts/`. Cleanup is supported via `clean_artifacts`:
-- Invoked via `cargo ci clean`, `cargo ci --clean`, `cargo gate clean`, or `cargo report --clean`.
+All CI artifacts reside under `target/ci-artifacts/`. Cleanup is supported via
+`clean_artifacts`:
+
+- Invoked via `cargo ci clean`, `cargo ci --clean`, `cargo gate clean`, or
+  `cargo report --clean`.
 - Recursively deletes `target/ci-artifacts/`.
-- Removes legacy/stray root artifacts (`ci-report.md`, `mutants.out`, `tarpaulin-report.*`).
+- Removes legacy/stray root artifacts (`ci-report.md`, `mutants.out`,
+  `tarpaulin-report.*`).
 
 #### 4.7 Performance Regression Harness (`regression`)
 
-Criterion benchmarks (`benches/jitter.rs`, `benches/scaling.rs`) compute empirical timing distributions and confidence intervals, but exit with code 0 by default even when performance degrades. To enforce hard real-time latency deadlines and performance regression bounds within automated quality gates, `control-rs-ci` provides a dedicated `regression` binary (`cargo regression`):
+Criterion benchmarks (`benches/jitter.rs`, `benches/scaling.rs`) compute
+empirical timing distributions and confidence intervals, but exit with code 0 by
+default even when performance degrades. To enforce hard real-time latency
+deadlines and performance regression bounds within automated quality gates,
+`control-rs-ci` provides a dedicated `regression` binary (`cargo regression`):
 
-1. **Benchmark Execution**: The harness runs `cargo bench` itself (`--all` for every workspace bench target, `--bench <NAME>` for one) and reads Criterion's standard output, echoing each line. The workflow never runs benchmarks on the harness's behalf.
-2. **Criterion Ingestion**: For every benchmark in the run, parses the identifier, the `time:` point estimate and, when Criterion compared against a baseline, the `change:` point estimate and Criterion's verdict. The verdict and its p-value exist only in this output; Criterion does not persist them.
-3. **Timing Budget Verification**: Asserts the `time:` point estimate (Criterion's slope estimate, or the mean when no slope is available) against upper-bound cycle budgets (such as $\le 10\,\mu\text{s}$ jitter for flight control loops).
-4. **Statistical Regression Detection**: A benchmark regresses when Criterion reports `Performance has regressed.`: the change is significant ($p < 0.05$) and the confidence interval of the mean change lies above the noise threshold. The benches set the noise threshold to 15 % in their Criterion configuration. Criterion compares the new sample with `target/criterion/<benchmark_id>/base/`, then copies `new/` to `base/`. The baseline is the `target/criterion` artifact of the last successful `main` run, which the workflow restores before the gate runs. A benchmark without a `change:` line has no baseline: the harness reports `no baseline` and checks the budget only; the absence is not a failure.
-5. **Deterministic Fail-Closed Gating**: Emits exit code 0 if all monitored benchmarks satisfy budget and regression constraints, or exits non-zero with structured failure diagnostics, enabling fail-closed gating under `gate.toml`. A failed `cargo bench`, or output in which no benchmark parses, also exits non-zero.
+1. **Benchmark Execution**: The harness runs `cargo bench` itself (`--all` for
+   every workspace bench target, `--bench <NAME>` for one) and reads Criterion's
+   standard output, echoing each line. The workflow never runs benchmarks on the
+   harness's behalf.
+2. **Criterion Ingestion**: For every benchmark in the run, parses the
+   identifier, the `time:` point estimate and, when Criterion compared against a
+   baseline, the `change:` point estimate and Criterion's verdict. The verdict
+   and its p-value exist only in this output; Criterion does not persist them.
+3. **Timing Budget Verification**: Asserts the `time:` point estimate
+   (Criterion's slope estimate, or the mean when no slope is available) against
+   upper-bound cycle budgets (such as $\le 10\,\mu\text{s}$ jitter for flight
+   control loops).
+4. **Statistical Regression Detection**: A benchmark regresses when Criterion
+   reports `Performance has regressed.`: the change is significant ($p < 0.05$)
+   and the confidence interval of the mean change lies above the noise
+   threshold. The benches set the noise threshold to 15 % in their Criterion
+   configuration. Criterion compares the new sample with
+   `target/criterion/<benchmark_id>/base/`, then copies `new/` to `base/`. The
+   baseline is the `target/criterion` artifact of the last successful `main`
+   run, which the workflow restores before the gate runs. A benchmark without a
+   `change:` line has no baseline: the harness reports `no baseline` and checks
+   the budget only; the absence is not a failure.
+5. **Deterministic Fail-Closed Gating**: Emits exit code 0 if all monitored
+   benchmarks satisfy budget and regression constraints, or exits non-zero with
+   structured failure diagnostics, enabling fail-closed gating under
+   `gate.toml`. A failed `cargo bench`, or output in which no benchmark parses,
+   also exits non-zero.
 
 #### 4.8 Gate Argument Passthrough
 
-`cargo gate <gate> -- <args>...` runs one gate with `<args>` appended to its argument vector after the configured `args`. The selection before `--` must resolve to exactly one gate (a positional name or `--only <gate>`); zero or several selected gates exit non-zero before any gate executes. The runner does not inspect the appended arguments (C-4), so their meaning follows from the gate's own configuration: for a gate whose `args` already end in `--` (for example `clippy`), appended arguments reach the inner tool.
+`cargo gate <gate> -- <args>...` runs one gate with `<args>` appended to its
+argument vector after the configured `args`. The selection before `--` must
+resolve to exactly one gate (a positional name or `--only <gate>`); zero or
+several selected gates exit non-zero before any gate executes. The runner does
+not inspect the appended arguments (C-4), so their meaning follows from the
+gate's own configuration: for a gate whose `args` already end in `--` (for
+example `clippy`), appended arguments reach the inner tool.
 
 ```text
 cargo gate mutants -- --shard 3/8 --jobs 4
 cargo gate test -- --test-threads 1
 ```
 
-The passthrough lives in `cargo gate` only. `cargo ci` runs a pipeline of many gates, where one argument list has no single target. The `Running` console line prints the effective invocation, configured and appended arguments together, through `Gate::command_display`.
+The passthrough lives in `cargo gate` only. `cargo ci` runs a pipeline of many
+gates, where one argument list has no single target. The `Running` console line
+prints the effective invocation, configured and appended arguments together,
+through `Gate::command_display`.
 
 ---
 
 ### 5. Alternatives
 
-| Alternative | Rejected Because | Reference |
-|:------------|:-----------------|:----------|
-| **Trait Hierarchy (`QualityGate` + `dyn QualityGate`)** | Trait abstractions added structural complexity, boilerplate, and dynamic dispatch without benefit, as all quality gates share the exact same command execution and monitoring lifecycle. | |
-| **Hardcoded Built-In Gates vs. Custom Gates Split** | Hardcoding specific gate names and schemas in the runner prevented flexible argument configuration, created inconsistent TOML schemas, and forced code modifications in `control-rs-ci` for every new tool. | |
-| **In-Tree Custom Tool Binaries** | Introducing custom helper binaries (for example bespoke LOC scanners or git validators) bloats the codebase and violates runner generality. Delegating to standard CLI tools (`git diff`, standard cargo subcommands) via `command` and `args` in `gate.toml` eliminates unnecessary code. | |
-| **Monolithic Single-Runner CI** | Monolithic execution prevents parallel job fan-out in GitHub Actions, dramatically increasing PR cycle times. | [1] |
-| **Runner-Injected Worker Counts** | Substituting a runner-derived value (for example `available_parallelism()`) into gate arguments assumes every gate accepts a worker count in a known form. Most gates do not, and the rest spell it differently, which violates C-4. | |
-| **Passthrough on `cargo ci`** | A single argument list has no unambiguous target across a multi-gate pipeline; per-gate passthrough syntax would duplicate `gate.toml`. | |
-| **Shell Script Orchestration** | Hand-rolled shell scripts drift across local and CI environments, lack structured artifact generation, and cannot provide compile-time shape verification or robust timeout isolation. | |
+| Alternative                                             | Rejected Because                                                                                                                                                                                                                                                                           | Reference |
+|:--------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------|
+| **Trait Hierarchy (`QualityGate` + `dyn QualityGate`)** | Trait abstractions added structural complexity, boilerplate, and dynamic dispatch without benefit, as all quality gates share the exact same command execution and monitoring lifecycle.                                                                                                   |           |
+| **Hardcoded Built-In Gates vs. Custom Gates Split**     | Hardcoding specific gate names and schemas in the runner prevented flexible argument configuration, created inconsistent TOML schemas, and forced code modifications in `control-rs-ci` for every new tool.                                                                                |           |
+| **In-Tree Custom Tool Binaries**                        | Introducing custom helper binaries (for example bespoke LOC scanners or git validators) bloats the codebase and violates runner generality. Delegating to standard CLI tools (`git diff`, standard cargo subcommands) via `command` and `args` in `gate.toml` eliminates unnecessary code. |           |
+| **Monolithic Single-Runner CI**                         | Monolithic execution prevents parallel job fan-out in GitHub Actions, dramatically increasing PR cycle times.                                                                                                                                                                              | [1]       |
+| **Runner-Injected Worker Counts**                       | Substituting a runner-derived value (for example `available_parallelism()`) into gate arguments assumes every gate accepts a worker count in a known form. Most gates do not, and the rest spell it differently, which violates C-4.                                                       |           |
+| **Passthrough on `cargo ci`**                           | A single argument list has no unambiguous target across a multi-gate pipeline; per-gate passthrough syntax would duplicate `gate.toml`.                                                                                                                                                    |           |
+| **Shell Script Orchestration**                          | Hand-rolled shell scripts drift across local and CI environments, lack structured artifact generation, and cannot provide compile-time shape verification or robust timeout isolation.                                                                                                     |           |
 
 ---
 
@@ -413,83 +613,95 @@ The passthrough lives in `cargo gate` only. `cargo ci` runs a pipeline of many g
 
 #### 6.1 Plan
 
-| Kind   | Step                                  | Establishes                                                                                                              |
-|:-------|:--------------------------------------|:-------------------------------------------------------------------------------------------------------------------------|
-| `test` | Gate Execution & Lifecycle Tests      | Dispatches command and arguments, tracks duration, captures stdout/stderr to `<gate>.log`, and records `<gate>.result.json`. |
-| `test` | Gate Configuration & Validation Tests | Verifies that all enabled gates require explicit configuration in `gate.toml` with zero hardcoded fallbacks.             |
-| `test` | Compound Command Parsing Tests        | Verifies compound command strings (for example `command = "cargo clean"`) execute correctly without redundant arguments.        |
-| `test` | Multi-Lane Parallel Execution Tests   | Verifies concurrent group execution and barrier synchronization before exclusive gates.                                  |
-| `test` | Bounded Concurrency Tests             | Verifies at most `max_jobs` groups overlap, queued groups start in declaration order, the default equals the group count, and `max_jobs = 0` is rejected (FR-13). |
+| Kind   | Step                                  | Establishes                                                                                                                                                                                        |
+|:-------|:--------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `test` | Gate Execution & Lifecycle Tests      | Dispatches command and arguments, tracks duration, captures stdout/stderr to `<gate>.log`, and records `<gate>.result.json`.                                                                       |
+| `test` | Gate Configuration & Validation Tests | Verifies that all enabled gates require explicit configuration in `gate.toml` with zero hardcoded fallbacks.                                                                                       |
+| `test` | Compound Command Parsing Tests        | Verifies compound command strings (for example `command = "cargo clean"`) execute correctly without redundant arguments.                                                                           |
+| `test` | Multi-Lane Parallel Execution Tests   | Verifies concurrent group execution and barrier synchronization before exclusive gates.                                                                                                            |
+| `test` | Bounded Concurrency Tests             | Verifies at most `max_jobs` groups overlap, queued groups start in declaration order, the default equals the group count, and `max_jobs = 0` is rejected (FR-13).                                  |
 | `test` | Argument Passthrough Tests            | Verifies `cargo gate <gate> -- <args>` appends `<args>` verbatim after the configured `args`, that zero or several selected gates fail before execution, and that `cargo ci` rejects `--` (FR-14). |
-| `test` | Artifact Cleanup Tests                | Verifies `clean_artifacts` removes `target/ci-artifacts/` and scrubs legacy workspace root files.                         |
-| `test` | Report Aggregation Tests              | Verifies `ci-report.md` generation, fail-closed policy enforcement, and size budget compliance ($\le 64\,\text{KiB}$).   |
-| `test` | Tool Degradation Tests                | Verifies uninstalled tools log diagnostics and emit `Verdict::Warn` when policy is `warn`.                               |
-| `test` | Verbose Echo Tests                    | Verifies `-v`/`--verbose` parsing, and that an echoed gate still records both streams in `<gate>.log` with the correct exit code and verdict (FR-5, FR-12). |
+| `test` | Artifact Cleanup Tests                | Verifies `clean_artifacts` removes `target/ci-artifacts/` and scrubs legacy workspace root files.                                                                                                  |
+| `test` | Report Aggregation Tests              | Verifies `ci-report.md` generation, fail-closed policy enforcement, and size budget compliance ($\le 64\,\text{KiB}$).                                                                             |
+| `test` | Tool Degradation Tests                | Verifies uninstalled tools log diagnostics and emit `Verdict::Warn` when policy is `warn`.                                                                                                         |
+| `test` | Verbose Echo Tests                    | Verifies `-v`/`--verbose` parsing, and that an echoed gate still records both streams in `<gate>.log` with the correct exit code and verdict (FR-5, FR-12).                                        |
 
 #### 6.2 Acceptance
 
-| Claim                             | Oracle                     | Measure        | Bound                                                                                    |
-|:----------------------------------|:---------------------------|:---------------|:-----------------------------------------------------------------------------------------|
-| **Gate Exit Code Accuracy**       | Process Exit Status        | Exact Equality | Process returns code 0 on all-pass; non-zero on any fail-closed gate failure             |
-| **Log File Isolation**            | Filesystem Artifact        | Exact Match    | 100% of process stdout/stderr stream is captured into `target/ci-artifacts/<gate>.log`   |
-| **GateOutcome Metadata Accuracy** | Serialization Oracle       | Exact Match    | `<gate>.result.json` matches actual process exit status and duration $\pm 50\,\text{ms}$ |
-| **Execution Timeout Enforcement** | System Monotonic Clock     | Absolute Time  | Process terminated within $\pm 500\,\text{ms}$ of configured `timeout_secs`              |
+| Claim                             | Oracle                                | Measure         | Bound                                                                                          |
+|:----------------------------------|:--------------------------------------|:----------------|:-----------------------------------------------------------------------------------------------|
+| **Gate Exit Code Accuracy**       | Process Exit Status                   | Exact Equality  | Process returns code 0 on all-pass; non-zero on any fail-closed gate failure                   |
+| **Log File Isolation**            | Filesystem Artifact                   | Exact Match     | 100% of process stdout/stderr stream is captured into `target/ci-artifacts/<gate>.log`         |
+| **GateOutcome Metadata Accuracy** | Serialization Oracle                  | Exact Match     | `<gate>.result.json` matches actual process exit status and duration $\pm 50\,\text{ms}$       |
+| **Execution Timeout Enforcement** | System Monotonic Clock                | Absolute Time   | Process terminated within $\pm 500\,\text{ms}$ of configured `timeout_secs`                    |
 | **Group Concurrency Bound**       | Gate-written start and end timestamps | Maximum overlap | Concurrently running groups $\le$ `max_jobs` for every `max_jobs` in $\{1, 2, \text{groups}\}$ |
-| **Passthrough Argument Fidelity** | argv recorded by a probe gate | Exact Match | Recorded argv equals configured `args` followed by the passthrough arguments, byte for byte |
-| **Step Summary Size Budget**      | Serialized Byte Count      | Absolute Size  | `ci-report.md` size $\le 64\,\text{KiB}$ target ($< 1\,\text{MiB}$ platform ceiling) [1] |
+| **Passthrough Argument Fidelity** | argv recorded by a probe gate         | Exact Match     | Recorded argv equals configured `args` followed by the passthrough arguments, byte for byte    |
+| **Step Summary Size Budget**      | Serialized Byte Count                 | Absolute Size   | `ci-report.md` size $\le 64\,\text{KiB}$ target ($< 1\,\text{MiB}$ platform ceiling) [1]       |
 
 #### 6.3 Limits
 
-- Verification establishes host-level process orchestration and reporting correctness; target electrical timing and hardware execution require physical hardware runners.
+- Verification establishes host-level process orchestration and reporting
+  correctness; target electrical timing and hardware execution require physical
+  hardware runners.
 
 ---
 
 ### 7. Performance & Resource Considerations
 
-- **Step Summary Limit**: `ci-report.md` is budgeted for $\le 64\,\text{KiB}$ (typically 5–20 KiB) for responsive human inspection and stays strictly under the 1 MiB GitHub Actions limit [1].
-- **Process & Timeout Bounds**: Gate processes are spawned with bounded timeouts (default 90s) to prevent hung runner instances.
-- **Memory Footprint**: `control-rs-ci` operates with zero continuous memory allocation overhead; artifact ingestion streams JSON data directly to report renderers.
+- **Step Summary Limit**: `ci-report.md` is budgeted for $\le 64\,\text{KiB}$
+  (typically 5–20 KiB) for responsive human inspection and stays strictly under
+  the 1 MiB GitHub Actions limit [1].
+- **Process & Timeout Bounds**: Gate processes are spawned with bounded timeouts
+  (default 90s) to prevent hung runner instances.
+- **Memory Footprint**: `control-rs-ci` operates with zero continuous memory
+  allocation overhead; artifact ingestion streams JSON data directly to report
+  renderers.
 
 ---
 
 ### 8. Risks & Open Questions
 
-- **Toolchain MSRV Drift**: External cargo subcommands (`cargo-tarpaulin`, `cargo-deny`, `cargo-geiger`, `cargo-semver-checks`) must remain compatible with the workspace `rust-version`.
+- **Toolchain MSRV Drift**: External cargo subcommands (`cargo-tarpaulin`,
+  `cargo-deny`, `cargo-geiger`, `cargo-semver-checks`) must remain compatible
+  with the workspace `rust-version`.
 
 ---
 
 ### 9. Development Plan
 
-| Phase / Task                                                      | Description                                                                                                                                                                                                            | Estimated Effort |
-|:------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Phase 1: Generic Gate Engine & Concrete Model**                 | Implement single concrete `Gate` type, process spawning with stdout/stderr redirection, `GateOutcome` schema, generic `gate.toml` parser with no hardcoded gate fallbacks, and artifact cleanup operations.          | 3                |
-| **Phase 2: Generic Gate Configuration & Artifact Relocation**     | Standardize all gate execution around declarative `command` and `args` in `gate.toml`, relocate all CI output strictly to `target/ci-artifacts/`, and update report aggregator.                                | 2                |
-| **Phase 3: Multi-Lane Parallel Execution & Barrier Join**        | Implement declarative multi-lane parallel scheduler using `std::thread::scope`, `[execution.groups]` in `gate.toml`, and barrier synchronization for `exclusive_gates`.                                              | 3                |
-| **Phase 4: Performance Regression Harness (`regression`)**        | Implement `regression` binary in `control-rs-ci`, Criterion output ingestion, budget threshold evaluation, and `gate.toml` gate integration.                                                               | 2                |
-| **Phase 5: Bounded Concurrency & Argument Passthrough**           | Replace one-thread-per-group with a `max_jobs` worker pool over a group queue, add `--max-jobs`, and add `--` passthrough to `cargo gate` with single-gate validation.                                                  | 2                |
+| Phase / Task                                                  | Description                                                                                                                                                                                                 | Estimated Effort |
+|:--------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
+| **Phase 1: Generic Gate Engine & Concrete Model**             | Implement single concrete `Gate` type, process spawning with stdout/stderr redirection, `GateOutcome` schema, generic `gate.toml` parser with no hardcoded gate fallbacks, and artifact cleanup operations. | 3                |
+| **Phase 2: Generic Gate Configuration & Artifact Relocation** | Standardize all gate execution around declarative `command` and `args` in `gate.toml`, relocate all CI output strictly to `target/ci-artifacts/`, and update report aggregator.                             | 2                |
+| **Phase 3: Multi-Lane Parallel Execution & Barrier Join**     | Implement declarative multi-lane parallel scheduler using `std::thread::scope`, `[execution.groups]` in `gate.toml`, and barrier synchronization for `exclusive_gates`.                                     | 3                |
+| **Phase 4: Performance Regression Harness (`regression`)**    | Implement `regression` binary in `control-rs-ci`, Criterion output ingestion, budget threshold evaluation, and `gate.toml` gate integration.                                                                | 2                |
+| **Phase 5: Bounded Concurrency & Argument Passthrough**       | Replace one-thread-per-group with a `max_jobs` worker pool over a group queue, add `--max-jobs`, and add `--` passthrough to `cargo gate` with single-gate validation.                                      | 2                |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date               | Author          | Description                                                                                                                                                                                                                     |
-|:---------|:-------------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 24, 2026       | @MitchellDScott | Initial CI design document.                                                                                                                                                                                                     |
-| 1.5      | September 13, 2026 | @MitchellDScott | Decentralized tool architecture: split into standalone binaries backed by reusable `lib.rs` and JSON artifact exchange protocol.                                                                                                |
-| 1.10     | September 20, 2026 | @MitchellDScott | Declarative multi-lane parallel execution (`[execution.groups]`), exclusive processor authority barrier synchronization (`exclusive_gates`), and concurrency resource allocation.                                             |
-| 1.15     | September 21, 2026 | @MitchellDScott | Generic quality gate runner architecture: eliminated `QualityGate` trait in favor of a single concrete `Gate` type, unified `gate.toml` configuration (`command` and optional `args`), and extracted `metrics`/`git` tools. |
-| 1.16     | September 21, 2026 | @MitchellDScott | Updated Mermaid architecture diagram to reflect generic execution lanes, barrier join, and gate-agnostic report aggregation with pipeline ordering.                                                                             |
-| 1.17     | September 21, 2026 | @MitchellDScott | Streamlined generic gate runner: eliminated bespoke in-tree tools (`ci-metrics`, `ci-git`) and raw artifact parsing in favor of standard CLI commands and pure generic reporting.                                               |
-| 1.18     | September 21, 2026 | @MitchellDScott | Integrated performance regression harness (`regression`) and benchmark budget gating for Criterion suites.                                                                                     |
-| 1.19     | September 21, 2026 | @MitchellDScott | Decentralized gate mode configuration: moved execution policies directly into individual `[<gate>]` tables via `mode`, eliminated redundant centralized `[gates]` section, and organized tables into execution lanes.         |
-| 1.20     | September 22, 2026 | @MitchellDScott | Added fail-closed `doc` gate (`cargo doc --workspace --no-deps`, `RUSTDOCFLAGS="-D warnings"`) to the lint group. |
-| 1.21     | September 22, 2026 | @MitchellDScott | Added `-v`/`--verbose` live output echo with group and gate attribution (FR-12, §4.1, §4.4) and enabled it in every GitHub Actions lane. |
-| 1.22     | September 23, 2026 | @MitchellDScott | Per-group Cargo target directories (`target/ci-groups/<group>`) remove build-lock contention between concurrent groups; `--clean` deletes them. Groups always run in parallel through one `run_group` function; `[execution] parallel` removed. |
-| 1.23     | September 23, 2026 | @MitchellDScott | `regression` takes budget estimates and regression verdicts from Criterion's printed output instead of `estimates.json`; `--only-compare` removed. Native artifacts stay at tool-defined paths; the `<gate>-raw.json` convention is removed. |
+| Revision | Date               | Author          | Description                                                                                                                                                                                                                                                                       |
+|:---------|:-------------------|:----------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | May 24, 2026       | @MitchellDScott | Initial CI design document.                                                                                                                                                                                                                                                       |
+| 1.5      | September 13, 2026 | @MitchellDScott | Decentralized tool architecture: split into standalone binaries backed by reusable `lib.rs` and JSON artifact exchange protocol.                                                                                                                                                  |
+| 1.10     | September 20, 2026 | @MitchellDScott | Declarative multi-lane parallel execution (`[execution.groups]`), exclusive processor authority barrier synchronization (`exclusive_gates`), and concurrency resource allocation.                                                                                                 |
+| 1.15     | September 21, 2026 | @MitchellDScott | Generic quality gate runner architecture: eliminated `QualityGate` trait in favor of a single concrete `Gate` type, unified `gate.toml` configuration (`command` and optional `args`), and extracted `metrics`/`git` tools.                                                       |
+| 1.16     | September 21, 2026 | @MitchellDScott | Updated Mermaid architecture diagram to reflect generic execution lanes, barrier join, and gate-agnostic report aggregation with pipeline ordering.                                                                                                                               |
+| 1.17     | September 21, 2026 | @MitchellDScott | Streamlined generic gate runner: eliminated bespoke in-tree tools (`ci-metrics`, `ci-git`) and raw artifact parsing in favor of standard CLI commands and pure generic reporting.                                                                                                 |
+| 1.18     | September 21, 2026 | @MitchellDScott | Integrated performance regression harness (`regression`) and benchmark budget gating for Criterion suites.                                                                                                                                                                        |
+| 1.19     | September 21, 2026 | @MitchellDScott | Decentralized gate mode configuration: moved execution policies directly into individual `[<gate>]` tables via `mode`, eliminated redundant centralized `[gates]` section, and organized tables into execution lanes.                                                             |
+| 1.20     | September 22, 2026 | @MitchellDScott | Added fail-closed `doc` gate (`cargo doc --workspace --no-deps`, `RUSTDOCFLAGS="-D warnings"`) to the lint group.                                                                                                                                                                 |
+| 1.21     | September 22, 2026 | @MitchellDScott | Added `-v`/`--verbose` live output echo with group and gate attribution (FR-12, §4.1, §4.4) and enabled it in every GitHub Actions lane.                                                                                                                                          |
+| 1.22     | September 23, 2026 | @MitchellDScott | Per-group Cargo target directories (`target/ci-groups/<group>`) remove build-lock contention between concurrent groups; `--clean` deletes them. Groups always run in parallel through one `run_group` function; `[execution] parallel` removed.                                   |
+| 1.23     | September 23, 2026 | @MitchellDScott | `regression` takes budget estimates and regression verdicts from Criterion's printed output instead of `estimates.json`; `--only-compare` removed. Native artifacts stay at tool-defined paths; the `<gate>-raw.json` convention is removed.                                      |
 | 1.24     | September 24, 2026 | @MitchellDScott | Restored the concurrency allocation requirement dropped in #60 as FR-13 (`max_jobs` bounds concurrent groups, §4.4). Added FR-14 argument passthrough through `cargo gate` (§4.8) and C-4 gate opacity: gate worker counts and sharding belong to gate arguments, not the runner. |
+| 1.25     | September 24, 2026 | @MitchellDScott | `vale` switched from `--output=JSON` to `--output=line` so the report's log tail carries whole alerts with file and line (§4.2, §4.3).                                                                                                                                            |
 
 ---
 
 ## References
 
-[1] GitHub, "Workflow commands for GitHub Actions," *GitHub Docs*. [Online]. Available: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands. Accessed: Sep. 9, 2026.
+[1] GitHub, "Workflow commands for GitHub Actions," *GitHub Docs*. [Online].
+Available: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands.
+Accessed: Sep. 9, 2026.
