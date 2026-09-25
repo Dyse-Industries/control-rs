@@ -40,8 +40,6 @@ fi
 
 status "Running" "clean, build, check, lint in main workspace"
 cargo clean
-cargo build
-cargo check
 cargo lint
 
 NESTED=(
@@ -59,7 +57,9 @@ for crate in "${NESTED[@]}"; do
     (
       cd "$REPO_ROOT/$crate"
       cargo clean
-      cargo lint
+      cargo fmt
+      cargo check
+      cargo build
     )
   fi
 done
