@@ -176,6 +176,13 @@ runs the other gates on every PR, across the supported toolchains from the
 MSRV (`1.89.0`) to beta. Some gates need extra tools or are Linux-only;
 see the Development Guide.
 
+A pre-commit hook is tracked at [`.github/pre-commit`](.github/pre-commit).
+Install it once after cloning:
+
+```sh
+git config core.hooksPath .github/
+```
+
 ---
 
 ## 7. Pull requests

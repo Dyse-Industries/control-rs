@@ -11,6 +11,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
+use control_rs_ci::ui;
+
 const KNOWN_EXAMPLES: &[&str] = &[
     "dc_motor",
     "buck_converter",
@@ -20,6 +22,7 @@ const KNOWN_EXAMPLES: &[&str] = &[
 
 type ExampleRunResult = Result<(ExitStatus, String), String>;
 type FailureRecord = (String, String);
+type CheckResult = (usize, Vec<FailureRecord>);
 
 fn find_workspace_root() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -92,67 +95,92 @@ fn run_valgrind_on_example(
     Ok((output.status, stderr))
 }
 
-fn main() {
-    println!("=== control-rs Valgrind Memcheck Multi-Example Runner ===");
+/// Runs Valgrind on every known example, returning pass count and failures.
+fn check_examples(root: &Path) -> CheckResult {
+    let mut failed: Vec<FailureRecord> = Vec::new();
+    let mut passed = 0_usize;
 
+    for &example in KNOWN_EXAMPLES {
+        ui::status("Running", format!("Valgrind Memcheck on '{example}'"));
+        match run_valgrind_on_example(root, example) {
+            Ok((status, stderr)) => {
+                if status.success() {
+                    ui::status(
+                        "Passed",
+                        format!("'{example}' clean (0 leaks, 0 errors)"),
+                    );
+                    passed = passed.saturating_add(1);
+                } else {
+                    ui::failure(
+                        "Failed",
+                        format!(
+                            "'{example}' reported memory errors or leaks \
+                             (exit code {:?})",
+                            status.code()
+                        ),
+                    );
+                    failed.push((example.to_string(), stderr));
+                }
+            }
+            Err(e) => {
+                ui::failure(
+                    "Error",
+                    format!("'{example}' execution error: {e}"),
+                );
+                failed.push((example.to_string(), e));
+            }
+        }
+    }
+
+    (passed, failed)
+}
+
+/// Prints the final verdict and exits with the appropriate code.
+fn report(passed: usize, failed: &[FailureRecord]) -> ! {
+    if failed.is_empty() {
+        ui::status(
+            "Finished",
+            format!(
+                "Valgrind Memcheck passed across all \
+                 {passed} examples (0 leaks, 0 errors)"
+            ),
+        );
+        std::process::exit(0);
+    }
+    ui::failure(
+        "Failed",
+        format!(
+            "Valgrind Memcheck on {}/{} examples",
+            failed.len(),
+            KNOWN_EXAMPLES.len()
+        ),
+    );
+    for (name, log) in failed {
+        ui::error(format!("'{name}' failure log:\n{log}"));
+    }
+    std::process::exit(1);
+}
+
+fn main() {
     if !is_valgrind_available() {
-        println!(
-            "Notice: 'valgrind' is not installed or supported natively on this host (e.g., macOS Apple Silicon).\n\
-             Skipping memory checks (degraded). Valgrind is enforced on Linux CI environments."
+        ui::warn_diag(
+            "'valgrind' is not installed or supported natively on this host \
+             (e.g., macOS Apple Silicon). \
+             Skipping memory checks (degraded). \
+             Valgrind is enforced on Linux CI environments.",
         );
         std::process::exit(78);
     }
 
     let root = find_workspace_root();
-    println!("Workspace root: {}", root.display());
+    ui::status_info("Workspace", root.display());
 
-    println!("Building all workspace examples...");
+    ui::status("Building", "all workspace examples");
     if let Err(e) = build_examples(&root) {
-        eprintln!("Error compiling examples: {e}");
+        ui::error(format!("compiling examples: {e}"));
         std::process::exit(1);
     }
 
-    let mut failed_examples: Vec<FailureRecord> = Vec::new();
-    let mut passed_count = 0_usize;
-
-    for &example in KNOWN_EXAMPLES {
-        println!("Running Valgrind Memcheck on example '{example}'...");
-        match run_valgrind_on_example(&root, example) {
-            Ok((status, stderr)) => {
-                if status.success() {
-                    println!("  [PASS] '{example}' clean (0 leaks, 0 errors)");
-                    passed_count = passed_count.saturating_add(1);
-                } else {
-                    eprintln!(
-                        "  [FAIL] '{example}' reported memory errors or leaks (exit code {:?})",
-                        status.code()
-                    );
-                    failed_examples.push((example.to_string(), stderr));
-                }
-            }
-            Err(e) => {
-                eprintln!("  [ERROR] '{example}' execution error: {e}");
-                failed_examples.push((example.to_string(), e));
-            }
-        }
-    }
-
-    println!();
-    if failed_examples.is_empty() {
-        println!(
-            "Valgrind Memcheck passed cleanly across all {passed_count} examples (0 leaks, 0 errors)."
-        );
-        std::process::exit(0);
-    } else {
-        eprintln!(
-            "Valgrind Memcheck FAILED on {}/{} examples:",
-            failed_examples.len(),
-            KNOWN_EXAMPLES.len()
-        );
-        for (name, log) in &failed_examples {
-            eprintln!("--- Example '{name}' Failure Log ---");
-            eprintln!("{log}");
-        }
-        std::process::exit(1);
-    }
+    let (passed, failed) = check_examples(&root);
+    report(passed, &failed);
 }
