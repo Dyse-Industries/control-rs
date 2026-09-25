@@ -28,6 +28,9 @@ const ITERS_L1: u32 = 200;
 const ITERS_L2: u32 = 80;
 const ITERS_L3: u32 = 20;
 
+/// Row-major `R x C` fixture, the layout `RowArrayStorage::from_array` takes.
+type RowMajorArray<T, const R: usize, const C: usize> = [[T; C]; R];
+
 fn fill_vec<const N: usize>() -> [f32; N] {
     let mut a = [0.0f32; N];
     let mut i = 0;
@@ -38,7 +41,7 @@ fn fill_vec<const N: usize>() -> [f32; N] {
     a
 }
 
-fn fill_mat<const R: usize, const C: usize>() -> [[f32; C]; R] {
+fn fill_mat<const R: usize, const C: usize>() -> RowMajorArray<f32, R, C> {
     let mut a = [[0.0f32; C]; R];
     let mut r = 0;
     while r < R {
@@ -53,8 +56,8 @@ fn fill_mat<const R: usize, const C: usize>() -> [[f32; C]; R] {
 }
 
 fn transpose<const R: usize, const C: usize>(
-    a: &[[f32; C]; R],
-) -> [[f32; R]; C] {
+    a: &RowMajorArray<f32, R, C>,
+) -> RowMajorArray<f32, C, R> {
     let mut t = [[0.0f32; R]; C];
     let mut r = 0;
     while r < R {
@@ -68,7 +71,7 @@ fn transpose<const R: usize, const C: usize>(
     t
 }
 
-fn fill_spd<const N: usize>() -> [[f32; N]; N] {
+fn fill_spd<const N: usize>() -> RowMajorArray<f32, N, N> {
     let mut a = [[0.0f32; N]; N];
     let mut r = 0;
     while r < N {
@@ -82,7 +85,7 @@ fn fill_spd<const N: usize>() -> [[f32; N]; N] {
     a
 }
 
-fn fill_upper<const N: usize>() -> [[f32; N]; N] {
+fn fill_upper<const N: usize>() -> RowMajorArray<f32, N, N> {
     let mut a = [[0.0f32; N]; N];
     let mut r = 0;
     while r < N {
@@ -100,7 +103,7 @@ fn fill_upper<const N: usize>() -> [[f32; N]; N] {
     a
 }
 
-fn fill_rhs<const R: usize, const C: usize>() -> [[f32; C]; R] {
+fn fill_rhs<const R: usize, const C: usize>() -> RowMajorArray<f32, R, C> {
     let mut a = [[0.0f32; C]; R];
     let mut r = 0;
     while r < R {
@@ -157,8 +160,7 @@ fn report(
     label: &str,
     diff: f32,
     limit: f32,
-    backend_cy: u32,
-    default_cy: u32,
+    (backend_cy, default_cy): (u32, u32),
 ) {
     let ratio = if backend_cy == 0 {
         0.0
@@ -216,7 +218,7 @@ fn main() -> ! {
             DefaultBlas::scal(2.5, &mut x_ref);
             black_box(x_ref.as_slice());
         });
-        report("Scal (N=64)", diff_scal, 1e-5, be, re);
+        report("Scal (N=64)", diff_scal, 1e-5, (be, re));
 
         let x_dot = ArrayStorage::<f32, N_L1, 1>::from_array([x_arr]);
         let dot_cmsis = CmsisDspBlas::dotu(&x_dot, &y_s);
@@ -228,7 +230,7 @@ fn main() -> ! {
         let re = bench_cy(ITERS_L1, || {
             black_box(DefaultBlas::dotu(&x_dot, &y_s));
         });
-        report("Dotu (N=64)", diff_dot, 1e-4, be, re);
+        report("Dotu (N=64)", diff_dot, 1e-4, (be, re));
     }
 
     {
@@ -271,7 +273,7 @@ fn main() -> ! {
             );
             black_box(vy_ref.as_slice());
         });
-        report("Gemv NoTrans (32x32)", diff_gemv, 2e-4, be, re);
+        report("Gemv NoTrans (32x32)", diff_gemv, 2e-4, (be, re));
 
         let vx_t = ArrayStorage::<f32, GV, 1>::from_array([fill_vec::<GV>()]);
         let mut vy_t_cmsis =
@@ -311,7 +313,7 @@ fn main() -> ! {
             );
             black_box(vy_t_ref.as_slice());
         });
-        report("Gemv Trans (32x32)", diff_gemv_t, 2e-4, be, re);
+        report("Gemv Trans (32x32)", diff_gemv_t, 2e-4, (be, re));
     }
 
     {
@@ -367,7 +369,7 @@ fn main() -> ! {
             );
             black_box(c_ref.as_slice());
         });
-        report("Gemm NoTrans (32x32 * 32x32)", diff_gemm, 5e-4, be, re);
+        report("Gemm NoTrans (32x32 * 32x32)", diff_gemm, 5e-4, (be, re));
 
         let a_t_mat =
             RowArrayStorage::<f32, GM, GM>::from_array(transpose(&a_data));
@@ -419,7 +421,7 @@ fn main() -> ! {
             );
             black_box(c_t_ref.as_slice());
         });
-        report("Gemm Trans A (32x32 * 32x32)", diff_gemm_t, 5e-4, be, re);
+        report("Gemm Trans A (32x32 * 32x32)", diff_gemm_t, 5e-4, (be, re));
     }
 
     {
@@ -444,7 +446,7 @@ fn main() -> ! {
                 RowArrayStorage::<f32, FACT, FACT>::from_array(spd_data);
             let _ = black_box(DefaultBlas::potrf(UpLo::Lower, &mut tmp));
         });
-        report("Potrf (8x8 SPD)", diff_chol, 1e-4, be, re);
+        report("Potrf (8x8 SPD)", diff_chol, 1e-4, (be, re));
 
         let u_data = fill_upper::<FACT>();
         let rhs_data = fill_rhs::<FACT, RHS_N>();
@@ -500,7 +502,7 @@ fn main() -> ! {
                 &mut tmp,
             ));
         });
-        report("Trsm (8x8 solve)", diff_trsm, 1e-4, be, re);
+        report("Trsm (8x8 solve)", diff_trsm, 1e-4, (be, re));
     }
 
     {
@@ -562,13 +564,14 @@ fn main() -> ! {
             "Gemv Strided Subview (4x4, stride=2)",
             diff_strided,
             1e-5,
-            be,
-            re,
+            (be, re),
         );
     }
 
     hprintln!("\nAll Cortex-M CMSIS-DSP subprogram checks PASSED.");
     debug::exit(debug::EXIT_SUCCESS);
 
-    loop {}
+    loop {
+        cortex_m::asm::wfi();
+    }
 }

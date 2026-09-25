@@ -57,8 +57,7 @@ for crate in "${NESTED[@]}"; do
       cd "$REPO_ROOT/$crate"
       cargo clean
       cargo fmt
-      cargo check
-      cargo build
+      cargo clippy
     )
   fi
 done

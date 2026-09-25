@@ -26,45 +26,48 @@ const ITERS_L1: u32 = 800;
 const ITERS_L2: u32 = 120;
 const ITERS_L3: u32 = 40;
 
+/// Row-major `R x C` fixture, the layout `RowArrayStorage::from_array` takes.
+type RowMajorArray<T, const R: usize, const C: usize> = [[T; C]; R];
+
 fn fill_vec_f32<const N: usize>() -> [f32; N] {
     let mut a = [0.0f32; N];
-    for i in 0..N {
-        a[i] = (i % 17) as f32 * 0.125 + 0.5;
+    for (i, v) in a.iter_mut().enumerate() {
+        *v = (i % 17) as f32 * 0.125 + 0.5;
     }
     a
 }
 
 fn fill_vec_f64<const N: usize>() -> [f64; N] {
     let mut a = [0.0f64; N];
-    for i in 0..N {
-        a[i] = (i % 17) as f64 * 0.125 + 0.5;
+    for (i, v) in a.iter_mut().enumerate() {
+        *v = (i % 17) as f64 * 0.125 + 0.5;
     }
     a
 }
 
-fn fill_mat_f32<const R: usize, const C: usize>() -> [[f32; C]; R] {
+fn fill_mat_f32<const R: usize, const C: usize>() -> RowMajorArray<f32, R, C> {
     let mut a = [[0.0f32; C]; R];
-    for r in 0..R {
-        for c in 0..C {
-            a[r][c] = ((r + 3 * c) % 13) as f32 * 0.05 + 0.1;
+    for (r, row) in a.iter_mut().enumerate() {
+        for (c, v) in row.iter_mut().enumerate() {
+            *v = ((r + 3 * c) % 13) as f32 * 0.05 + 0.1;
         }
     }
     a
 }
 
-fn fill_mat_f64<const R: usize, const C: usize>() -> [[f64; C]; R] {
+fn fill_mat_f64<const R: usize, const C: usize>() -> RowMajorArray<f64, R, C> {
     let mut a = [[0.0f64; C]; R];
-    for r in 0..R {
-        for c in 0..C {
-            a[r][c] = ((r + 3 * c) % 13) as f64 * 0.05 + 0.1;
+    for (r, row) in a.iter_mut().enumerate() {
+        for (c, v) in row.iter_mut().enumerate() {
+            *v = ((r + 3 * c) % 13) as f64 * 0.05 + 0.1;
         }
     }
     a
 }
 
 fn transpose_f32<const R: usize, const C: usize>(
-    a: &[[f32; C]; R],
-) -> [[f32; R]; C] {
+    a: &RowMajorArray<f32, R, C>,
+) -> RowMajorArray<f32, C, R> {
     let mut t = [[0.0f32; R]; C];
     for r in 0..R {
         for c in 0..C {
@@ -102,8 +105,7 @@ fn report<T: Copy + PartialOrd + core::fmt::LowerExp>(
     label: &str,
     diff: T,
     limit: T,
-    backend_ns: u64,
-    default_ns: u64,
+    (backend_ns, default_ns): (u64, u64),
 ) {
     let ratio = if backend_ns == 0 {
         0.0
@@ -136,7 +138,7 @@ fn test_neon_f32() {
         DefaultBlas::axpy(2.5, &x_s, &mut y_s_ref);
         black_box(y_s_ref.as_slice());
     });
-    report(&format!("Axpy (N={N_L1})"), diff, 1e-4, be, re);
+    report(&format!("Axpy (N={N_L1})"), diff, 1e-4, (be, re));
 
     let mut x_scal_neon = ArrayStorage::<f32, N_L1, 1>::from_array([x_arr]);
     let mut x_scal_ref = ArrayStorage::<f32, N_L1, 1>::from_array([x_arr]);
@@ -151,7 +153,7 @@ fn test_neon_f32() {
         DefaultBlas::scal(3.0, &mut x_scal_ref);
         black_box(x_scal_ref.as_slice());
     });
-    report(&format!("Scal (N={N_L1})"), diff_scal, 1e-4, be, re);
+    report(&format!("Scal (N={N_L1})"), diff_scal, 1e-4, (be, re));
 
     let y_dot = ArrayStorage::<f32, N_L1, 1>::from_array([y_init]);
     let dot_neon = NeonBlas::dotu(&x_s, &y_dot);
@@ -163,7 +165,7 @@ fn test_neon_f32() {
     let re = bench_ns(ITERS_L1, || {
         black_box(DefaultBlas::dotu(&x_s, &y_dot));
     });
-    report(&format!("Dotu (N={N_L1})"), diff_dot, 1e-3, be, re);
+    report(&format!("Dotu (N={N_L1})"), diff_dot, 1e-3, (be, re));
 
     let nrm_neon = NeonBlas::nrm2(&x_s);
     let nrm_ref = DefaultBlas::nrm2(&x_s);
@@ -174,7 +176,7 @@ fn test_neon_f32() {
     let re = bench_ns(ITERS_L1, || {
         black_box(DefaultBlas::nrm2(&x_s));
     });
-    report(&format!("Nrm2 (N={N_L1})"), diff_nrm, 1e-3, be, re);
+    report(&format!("Nrm2 (N={N_L1})"), diff_nrm, 1e-3, (be, re));
 
     let a_gemv_data = fill_mat_f32::<GV_M, GV_N>();
     let vx_data = fill_vec_f32::<GV_N>();
@@ -200,8 +202,7 @@ fn test_neon_f32() {
         &format!("Gemv NoTrans ({GV_M}x{GV_N})"),
         diff_gemv,
         2e-3,
-        be,
-        re,
+        (be, re),
     );
 
     let vx_t =
@@ -225,8 +226,7 @@ fn test_neon_f32() {
         &format!("Gemv Trans ({GV_N}x{GV_M})"),
         diff_gemv_t,
         2e-3,
-        be,
-        re,
+        (be, re),
     );
 
     let a_gemm_data = fill_mat_f32::<GM_M, GM_K>();
@@ -285,8 +285,7 @@ fn test_neon_f32() {
         &format!("Gemm NoTrans ({GM_M}x{GM_K} * {GM_K}x{GM_N})"),
         diff_gemm,
         5e-3,
-        be,
-        re,
+        (be, re),
     );
 
     let a_t_mat = RowArrayStorage::<f32, GM_K, GM_M>::from_array(
@@ -343,8 +342,7 @@ fn test_neon_f32() {
         &format!("Gemm Trans A ({GM_M}x{GM_K} * {GM_K}x{GM_N})"),
         diff_gemm_t,
         5e-3,
-        be,
-        re,
+        (be, re),
     );
 }
 
@@ -368,7 +366,7 @@ fn test_neon_f64() {
         DefaultBlas::axpy(2.5, &x_s, &mut y_s_ref);
         black_box(y_s_ref.as_slice());
     });
-    report(&format!("Axpy (f64, N={N_L1})"), diff, 1e-10, be, re);
+    report(&format!("Axpy (f64, N={N_L1})"), diff, 1e-10, (be, re));
 
     let y_dot = ArrayStorage::<f64, N_L1, 1>::from_array([y_init]);
     let dot_neon = NeonBlas::dotu(&x_s, &y_dot);
@@ -380,7 +378,7 @@ fn test_neon_f64() {
     let re = bench_ns(ITERS_L1, || {
         black_box(DefaultBlas::dotu(&x_s, &y_dot));
     });
-    report(&format!("Dotu (f64, N={N_L1})"), diff_dot, 1e-9, be, re);
+    report(&format!("Dotu (f64, N={N_L1})"), diff_dot, 1e-9, (be, re));
 
     let nrm_neon = NeonBlas::nrm2(&x_s);
     let nrm_ref = DefaultBlas::nrm2(&x_s);
@@ -391,7 +389,7 @@ fn test_neon_f64() {
     let re = bench_ns(ITERS_L1, || {
         black_box(DefaultBlas::nrm2(&x_s));
     });
-    report(&format!("Nrm2 (f64, N={N_L1})"), diff_nrm, 1e-9, be, re);
+    report(&format!("Nrm2 (f64, N={N_L1})"), diff_nrm, 1e-9, (be, re));
 
     let a_gemv_data = fill_mat_f64::<GV_M, GV_N>();
     let vx_data = fill_vec_f64::<GV_N>();
@@ -416,8 +414,7 @@ fn test_neon_f64() {
         &format!("Gemv NoTrans (f64, {GV_M}x{GV_N})"),
         diff_gemv,
         1e-9,
-        be,
-        re,
+        (be, re),
     );
 
     let a_gemm_data = fill_mat_f64::<GM_M, GM_K>();
@@ -475,8 +472,7 @@ fn test_neon_f64() {
         &format!("Gemm NoTrans (f64, {GM_M}x{GM_K} * {GM_K}x{GM_N})"),
         diff_gemm,
         1e-8,
-        be,
-        re,
+        (be, re),
     );
 }
 
@@ -538,8 +534,7 @@ fn test_strided_fallback() {
         "Gemv Strided Subview (8x8, stride=2)",
         diff_strided,
         1e-5,
-        be,
-        re,
+        (be, re),
     );
 }
 
@@ -572,7 +567,7 @@ fn main() {
             DefaultBlas::axpy(2.5, &x_s, &mut y_s_ref);
             black_box(y_s_ref.as_slice());
         });
-        report(&format!("Accelerate Axpy (N={N_L1})"), diff, 1e-4, be, re);
+        report(&format!("Accelerate Axpy (N={N_L1})"), diff, 1e-4, (be, re));
 
         let a_data = fill_mat_f32::<GM_M, GM_K>();
         let b_data = fill_mat_f32::<GM_K, GM_N>();
@@ -631,8 +626,7 @@ fn main() {
             &format!("Accelerate Gemm ({GM_M}x{GM_K} * {GM_K}x{GM_N})"),
             diff_g,
             5e-3,
-            be,
-            re,
+            (be, re),
         );
     }
 
