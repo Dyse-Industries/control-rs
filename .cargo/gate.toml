@@ -53,7 +53,7 @@ exclusive_gates = [
 # deletes target/ci-groups, so every group starts from an empty target directory.
 [execution.groups]
 build_test = ["build", "test"]
-lint = ["fmt", "clippy", "allow-audit", "doc", "vale"]
+lint = ["fmt", "clippy", "allow-audit", "vale", "doc"]
 audit = ["deny", "semver", "valgrind", "geiger"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
