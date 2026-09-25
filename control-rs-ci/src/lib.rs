@@ -82,6 +82,9 @@ pub struct PipelineOptions<'a> {
     pub clean: bool,
     /// Echo gate output.
     pub verbose: bool,
+    /// Arguments appended to the selected gate's `args` (FR-14). Non-empty
+    /// only when exactly one gate is selected.
+    pub extra_args: &'a [String],
 }
 
 /// Optional list of gate names used to filter a run.
@@ -99,6 +102,16 @@ fn with_target_dir(gate: &SharedGate, target_dir: &Path) -> SharedGate {
         target_dir.display().to_string(),
     );
     Arc::new(scoped)
+}
+
+/// Returns `gate` with `extra` appended after its configured `args`.
+fn with_extra_args(gate: &SharedGate, extra: &[String]) -> SharedGate {
+    if extra.is_empty() {
+        return Arc::clone(gate);
+    }
+    let mut extended = (**gate).clone();
+    extended.args.extend_from_slice(extra);
+    Arc::new(extended)
 }
 
 /// Cleans up the CI artifacts directory, the per-group target directories and
@@ -255,8 +268,7 @@ pub fn run_pipeline(
         default_timeout: Duration::from_secs(config.runner.timeout_secs),
     };
 
-    let selected =
-        select_gates(gate::build_all_gates(&config)?, &config, options);
+    let selected = selected_with_passthrough(&config, config_path, options)?;
     let executed_gate_names: Vec<String> =
         selected.iter().map(|g| g.name().to_string()).collect();
     remove_stale_results(&out_dir, &executed_gate_names);
@@ -348,6 +360,34 @@ fn select_gates(
         }
     }
     active_gates
+}
+
+/// Selected gates for this run, with `options.extra_args` appended to the
+/// single selected gate (FR-14).
+///
+/// # Errors
+/// Returns `GateError::Config` when extra arguments are given and the
+/// selection is not exactly one gate, or when gates cannot be built.
+fn selected_with_passthrough(
+    config: &GateConfig,
+    config_path: &Path,
+    options: &PipelineOptions<'_>,
+) -> GateResult<GateList> {
+    let selected =
+        select_gates(gate::build_all_gates(config)?, config, options);
+    if !options.extra_args.is_empty() && selected.len() != 1 {
+        return Err(GateError::Config {
+            path: config_path.to_path_buf(),
+            message: format!(
+                "argument passthrough needs exactly one selected gate, found {}",
+                selected.len()
+            ),
+        });
+    }
+    Ok(selected
+        .iter()
+        .map(|g| with_extra_args(g, options.extra_args))
+        .collect())
 }
 
 /// Removes result artifacts of gates that will not run this time.
@@ -447,6 +487,23 @@ mod tests {
             scoped.env.get("CARGO_TARGET_DIR").map(String::as_str),
             Some("/ws/target/ci-groups/lint")
         );
+    }
+
+    #[test]
+    fn extra_args_follow_configured_args() {
+        let gate = Arc::new(Gate::new(
+            "mutants",
+            "cargo mutants",
+            vec!["--json".to_string()],
+        ));
+        let extra = ["--jobs".to_string(), "8".to_string()];
+        let extended = with_extra_args(&gate, &extra);
+        assert_eq!(extended.args, ["--json", "--jobs", "8"]);
+        assert_eq!(
+            extended.command_display(),
+            "`cargo mutants --json --jobs 8`"
+        );
+        assert!(Arc::ptr_eq(&with_extra_args(&gate, &[]), &gate));
     }
 
     #[test]

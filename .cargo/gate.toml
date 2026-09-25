@@ -192,9 +192,9 @@ timeout_secs = 3600
 skip_exit_codes = [78]
 description = "Executes Valgrind Memcheck against all workspace example binaries to verify zero memory leaks"
 
-# Disabled: superseded by the mutants-* chunks below.
 [mutants]
-mode = "skip"
+mode = "fail"
+default = false
 command = "cargo mutants"
 args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
 timeout_secs = 43200

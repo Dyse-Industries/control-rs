@@ -625,6 +625,10 @@ cargo gate mutants -- --shard 3/8 --jobs 4
 cargo gate test -- --test-threads 1
 ```
 
+`cargo gate --help` shows the `[-- <ARGS>...]` form. A rejected passthrough
+exits 2 with a diagnostic; `run_pipeline` repeats the one-gate check, so a
+library caller cannot append arguments to more than one gate.
+
 The passthrough lives in `cargo gate` only. `cargo ci` runs a pipeline of many
 gates, where one argument list has no single target. The `Running` console line
 prints the effective invocation, configured and appended arguments together,
@@ -829,6 +833,7 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.26     | September 24, 2026 | @MitchellDScott | Restored target verification that #60 removed without a revision row (former FR-1 two-tier verification, FR-2 target emulation, FR-6 empty-verification exit, C-1, C-2) as FR-17 to FR-19, C-5 and C-6; physical runners stay with roadmap PR9. Added FR-15 selection vs policy (`default`), FR-16 process-tree termination, `cwd`, §4.9 `ets` and the `target` group; §4.3 synced with `.cargo/gate.toml`, which §4.3 now names as the configuration path; §5 narrows the in-tree binary rejection to replacements for standard tools. |
 | 1.27     | September 24, 2026 | @MitchellDScott | `regression` budgets from `--budgets` TOML (`.cargo/regression.toml`), unregistered benchmark fails, workspace from the current directory (§4.7). Baseline restore from the newest `main` run carrying the artifact. Workspace-crate mutation gates (§4.3). §4.10 `allow-audit` counts per file and lint, fails on stale entries and on growth against `--base-ref`. |
 | 1.28     | September 25, 2026 | @MitchellDScott | §4.9: the `ets` binary prints a line per case and the full target console for every target. |
+| 1.29     | September 25, 2026 | @MitchellDScott | FR-14 implemented: `cargo gate` parses `-- <args>`; §4.8 records the exit code and the library-level check. Revision 1.24 specified it without an implementation. |
 
 ---
 

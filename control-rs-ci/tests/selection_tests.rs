@@ -1,5 +1,5 @@
-//! Selection vs policy (FR-15), working directory and process-tree
-//! termination (FR-16) tests.
+//! Selection vs policy (FR-15), argument passthrough (FR-14), working
+//! directory and process-tree termination (FR-16) tests.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,6 +30,19 @@ command = "false"
 mode = "skip"
 command = "touch"
 args = ["disabled-ran"]
+"#;
+
+const PASSTHROUGH_CONFIG: &str = r#"
+[runner]
+out_dir = "artifacts"
+timeout_secs = 30
+
+[touch]
+command = "touch"
+args = ["configured"]
+
+[other]
+command = "true"
 "#;
 
 /// Fresh workspace under the system temp directory with `gate.toml` holding
@@ -105,6 +118,35 @@ fn selected_disabled_gate_is_recorded_skipped_without_running() {
         Verdict::Skipped
     );
     assert!(!root.join("disabled-ran").exists());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn passthrough_appends_after_configured_args() {
+    let (root, cfg) = workspace("passthrough", PASSTHROUGH_CONFIG);
+    let only = vec!["touch".to_string()];
+    let extra = vec!["appended".to_string()];
+    let options = PipelineOptions {
+        only_gates: Some(&only),
+        extra_args: &extra,
+        ..PipelineOptions::default()
+    };
+    assert!(run_pipeline(&root, &cfg, &options).unwrap());
+    assert!(root.join("configured").exists());
+    assert!(root.join("appended").exists());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn passthrough_with_several_gates_fails_before_running() {
+    let (root, cfg) = workspace("passthrough_many", PASSTHROUGH_CONFIG);
+    let extra = vec!["appended".to_string()];
+    let options = PipelineOptions {
+        extra_args: &extra,
+        ..PipelineOptions::default()
+    };
+    assert!(run_pipeline(&root, &cfg, &options).is_err());
+    assert!(!root.join("configured").exists());
     let _ = fs::remove_dir_all(&root);
 }
 
