@@ -1,8 +1,10 @@
 name: Restore baseline
 description: >-
-  Downloads a named artifact from the latest successful run of a workflow on
-  main into a directory. A missing run or artifact leaves the gate without a
-  baseline, which is not a failure.
+  Downloads the newest unexpired copy of a named artifact uploaded by a main
+  branch run into a directory. The run's overall conclusion does not matter:
+  baseline artifacts are uploaded only by jobs that passed, so one failing job
+  elsewhere in a main run does not drop every baseline. A missing artifact
+  leaves the gate without a baseline, which is not a failure.
 
 inputs:
   name:
@@ -11,10 +13,6 @@ inputs:
   path:
     description: Directory the artifact contents are restored into.
     required: true
-  workflow:
-    description: Workflow whose main branch runs hold the baseline.
-    required: false
-    default: Rust-CI
 
 runs:
   using: composite
@@ -25,17 +23,17 @@ runs:
         GH_TOKEN: ${{ github.token }}
         NAME: ${{ inputs.name }}
         DEST: ${{ inputs.path }}
-        WORKFLOW: ${{ inputs.workflow }}
       run: |
         mkdir -p "$DEST"
-        run_id=$(gh run list --branch main --status success --workflow "$WORKFLOW" \
-          --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)
-        if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
-          echo "::notice::No successful $WORKFLOW run on main; $NAME has no baseline."
+        run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=100" \
+          --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main")]
+                | sort_by(.created_at) | last | .workflow_run.id // empty' 2>/dev/null || true)
+        if [ -z "$run_id" ]; then
+          echo "::notice::No unexpired $NAME artifact from main; no baseline."
           exit 0
         fi
         if gh run download "$run_id" --name "$NAME" --dir "$DEST"; then
           echo "Restored $NAME from run $run_id into $DEST"
         else
-          echo "::notice::Run $run_id has no artifact $NAME; no baseline."
+          echo "::notice::Could not download $NAME from run $run_id; no baseline."
         fi

@@ -102,6 +102,7 @@ to simplify development, testing, formatting, linting and coverage reporting:
 |                                        | `cargo compare`     | `run --package control-rs-compare --bin compare --`            | Executes reference oracles and compares HDF5 dataset results.       |
 |                                        | `cargo valgrind`    | `run --package control-rs-ci --bin valgrind --`                | Runs Valgrind Memcheck against the workspace example binaries.      |
 |                                        | `cargo regression`  | `run --package control-rs-ci --bin regression --`              | Checks `criterion` results against budgets and baselines.      |
+|                                        | `cargo ets`         | `run --package control-rs-ci --bin ets --`                     | Builds ETS firmware and runs its suites headless (`cargo ets qemu all --release`). |
 | **Interactive TUI**                    | `cargo tui`         | `run --package control-rs-tui --`                              | Launches the interactive TUI console dashboard.                     |
 | **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | TUI → virtual ETS (QEMU ARM Cortex-M7).                             |
 |                                        | `cargo teensy`      | `cargo tui teensy`                                             | TUI → ETS (Teensy 4.0/4.1 over serial).                             |
@@ -159,14 +160,17 @@ parameters in real time.
 ## Continuous Integration & Verification
 
 `cargo ci` runs every gate declared in [`.cargo/gate.toml`](../.cargo/gate.toml), grouped
-as in GitHub Actions. `cargo gate` runs a subset. Gate output goes to
+as in GitHub Actions, except gates marked `default = false` (the mutation chunks
+and `regression`), which run when named or with `--all`. The `target` group
+needs the rustup targets and QEMU listed in [dependencies](dependencies.md). `cargo gate` runs a subset. Gate output goes to
 `target/ci-artifacts/<gate>.log`; add `-v` to also stream it to the console,
 each line prefixed with its group and gate (for example
 `[verify] cross-compare | ...`), as the GitHub Actions lanes do.
 
 ```bash
-cargo ci                  # all gates
-cargo ci -v               # all gates, output streamed with [group] gate prefixes
+cargo ci                  # default gates
+cargo ci --all            # also the default = false gates (mutation chunks, regression)
+cargo ci -v               # default gates, output streamed with [group] gate prefixes
 cargo gate fmt,clippy     # selected gates
 cargo coverage            # console coverage
 cargo coverage-ci         # HTML and JSON coverage reports

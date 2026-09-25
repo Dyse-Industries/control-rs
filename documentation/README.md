@@ -73,5 +73,5 @@ Design documents, standards and planning for the `control-rs` workspace.
 | Design | Status | Implementation |
 |:--|:--|:--|
 | [Cross-Compare Harness & HDF5 Comparison System](vv/cross-compare-design.md) | Approved | `control-rs-compare/`, `.cargo/compare.toml` |
-| [Range-Valued On-Target Property Tests](vv/ets-prop-test-design.md) | Draft | Not implemented |
+| [Range-Valued On-Target Property Tests](vv/ets-prop-test-design.md) | Deferred | Not planned; property tests are written manually |
 | [Requirement Traceability Infrastructure](vv/requirement-traceability-design.md) | Draft | Not implemented |

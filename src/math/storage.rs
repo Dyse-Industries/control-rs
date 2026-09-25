@@ -3768,7 +3768,6 @@ impl<
     #[allow(
         clippy::indexing_slicing,
         clippy::needless_range_loop,
-        clippy::manual_memcpy,
         clippy::too_many_lines
     )]
     pub fn from_coo(

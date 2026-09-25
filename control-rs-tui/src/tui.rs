@@ -653,6 +653,29 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
 }
 
 /// Header panel: target, link, run status and pass/fail totals.
+/// Target metadata from `TargetInfo` (FR-1), or the FR-8 mismatch.
+fn target_details(session: &SessionState) -> String {
+    if let Some(target) = session.protocol_mismatch {
+        return format!(
+            " | PROTOCOL MISMATCH: host v{}, target v{target}",
+            control_rs_ets::comms::PROTOCOL_VERSION
+        );
+    }
+    session.target_info.map_or_else(String::new, |info| {
+        let fpu = match info.fpu_flags & 0b11 {
+            0 => "none",
+            1 => "single",
+            _ => "double",
+        };
+        format!(
+            " | Protocol v{} | Board {:#06x} | Clock {} MHz | FPU {fpu}",
+            info.protocol_version,
+            info.board_id,
+            info.core_clock_hz / 1_000_000
+        )
+    })
+}
+
 fn header_widget(state: &AppState) -> Paragraph<'static> {
     let header_line1 =
         format!(" TARGET: {} | LINK: {}", state.target_info, state.link_info);
@@ -670,7 +693,8 @@ fn header_widget(state: &AppState) -> Paragraph<'static> {
     let passed_tests = count_state(TestState::Passed);
     let failed_tests = count_state(TestState::Failed);
     let header_line2 = format!(
-        " Tests: {total_tests} | Passed: {passed_tests} | Failed: {failed_tests}"
+        " Tests: {total_tests} | Passed: {passed_tests} | Failed: {failed_tests}{}",
+        target_details(&state.session)
     );
 
     let header_block = Block::default()
@@ -1034,6 +1058,14 @@ mod tests {
     use control_rs_ets::settings::SettingValue;
     use crossterm::event::KeyModifiers;
 
+    /// `TargetInfo` matching the host's protocol, sent before discovery ends.
+    const TARGET_INFO: Telemetry<'static> = Telemetry::TargetInfo {
+        protocol_version: control_rs_ets::comms::PROTOCOL_VERSION,
+        board_id: 0,
+        core_clock_hz: 0,
+        fpu_flags: 0,
+    };
+
     fn make_test_event(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -1068,6 +1100,7 @@ mod tests {
                 },
             );
         }
+        feed(state, &TARGET_INFO);
         feed(state, &Telemetry::DiscoveryComplete);
     }
 
@@ -1239,6 +1272,7 @@ mod tests {
                 description: "",
             },
         );
+        feed(&mut state, &TARGET_INFO);
         feed(&mut state, &Telemetry::DiscoveryComplete);
         state.rebuild_visible_items();
         assert_eq!(state.visible_items.len(), 3);
@@ -1337,6 +1371,7 @@ mod tests {
                 value: SettingValue::U32(100),
             },
         );
+        feed(&mut state, &TARGET_INFO);
         feed(&mut state, &Telemetry::DiscoveryComplete);
         state.rebuild_visible_items();
         assert!(matches!(

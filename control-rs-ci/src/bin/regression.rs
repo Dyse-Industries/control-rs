@@ -6,9 +6,14 @@
 //! compares every benchmark with its `base/` sample and prints a verdict; a
 //! `regressed` verdict fails the gate. A benchmark without a baseline is only
 //! checked against its budget.
+//!
+//! Budgets come from a TOML file (`--budgets`, default
+//! `.cargo/regression.toml`). A key names a benchmark identifier exactly, or a
+//! prefix when it ends in `*`; the exact key wins, then the longest prefix. A
+//! benchmark that matches no key fails the gate. The harness runs in the
+//! current directory, which the gate runner sets to the workspace root.
 
-#![allow(missing_docs)]
-
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -38,10 +43,65 @@ struct BenchmarkResult {
     verdict: Option<Verdict>,
 }
 
+/// Command-line options.
 #[derive(Debug, Clone)]
 struct CliOptions {
+    /// `--bench <NAME>`: run one bench target.
     bench_target: Option<String>,
+    /// `--all`: run every bench target.
     run_all: bool,
+    /// `--budgets <FILE>`: budget table.
+    budgets: PathBuf,
+}
+
+/// Latency budgets in nanoseconds, keyed by benchmark identifier or by a
+/// prefix ending in `*`.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Budgets {
+    /// Exact identifiers.
+    exact: BTreeMap<String, f64>,
+    /// Prefixes (the key without its trailing `*`).
+    prefixes: BTreeMap<String, f64>,
+}
+
+/// On-disk form: `[budgets]` maps keys to durations such as `"10 us"`.
+#[derive(Debug, serde::Deserialize)]
+struct BudgetFile {
+    /// Key to duration string.
+    budgets: BTreeMap<String, String>,
+}
+
+impl Budgets {
+    /// Parses a budget file's contents.
+    fn parse(text: &str) -> Result<Self, String> {
+        let file: BudgetFile =
+            toml::from_str(text).map_err(|e| format!("budget file: {e}"))?;
+        let mut budgets = Self::default();
+        for (key, value) in file.budgets {
+            let ns = parse_duration_ns(&value).ok_or_else(|| {
+                format!("budget '{key}': unparseable duration '{value}'")
+            })?;
+            match key.strip_suffix('*') {
+                Some(prefix) => budgets.prefixes.insert(prefix.to_string(), ns),
+                None => budgets.exact.insert(key, ns),
+            };
+        }
+        if budgets.exact.is_empty() && budgets.prefixes.is_empty() {
+            return Err("budget file declares no budgets".to_string());
+        }
+        Ok(budgets)
+    }
+
+    /// Budget for `id`: the exact key, else the longest matching prefix.
+    fn for_id(&self, id: &str) -> Option<f64> {
+        self.exact.get(id).copied().or_else(|| {
+            self.prefixes
+                .iter()
+                .filter(|(prefix, _)| id.starts_with(prefix.as_str()))
+                .max_by_key(|(prefix, _)| prefix.len())
+                .map(|(_, ns)| *ns)
+        })
+    }
 }
 
 impl Verdict {
@@ -67,10 +127,29 @@ impl Verdict {
     }
 }
 
+/// Parses `"<number> <unit>"` (`ns`, `us`, `µs`, `ms`, `s`) into nanoseconds.
+fn parse_duration_ns(text: &str) -> Option<f64> {
+    let text = text.trim();
+    let split = text
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(text.len());
+    let (number, unit) = text.split_at(split);
+    let value: f64 = number.parse().ok()?;
+    let scale = match unit.trim() {
+        "ns" => 1.0,
+        "us" | "µs" => 1e3,
+        "ms" => 1e6,
+        "s" => 1e9,
+        _ => return None,
+    };
+    (value > 0.0).then_some(value * scale)
+}
+
 fn parse_cli_args() -> Result<CliOptions, String> {
     let mut args = std::env::args().skip(1);
     let mut bench_target = None;
     let mut run_all = false;
+    let mut budgets = PathBuf::from(".cargo/regression.toml");
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -83,6 +162,12 @@ fn parse_cli_args() -> Result<CliOptions, String> {
                 } else {
                     return Err("Missing argument for --bench".to_string());
                 }
+            }
+            "--budgets" => {
+                budgets = args
+                    .next()
+                    .map(PathBuf::from)
+                    .ok_or("Missing argument for --budgets")?;
             }
             "--help" | "-h" => {
                 print_help();
@@ -97,6 +182,7 @@ fn parse_cli_args() -> Result<CliOptions, String> {
     Ok(CliOptions {
         bench_target,
         run_all,
+        budgets,
     })
 }
 
@@ -106,33 +192,9 @@ fn print_help() {
          Options:\n  \
            --bench <NAME>        Run only the specified benchmark target (e.g. jitter, scaling)\n  \
            --all                 Run all workspace benchmark targets\n  \
+           --budgets <FILE>      Budget table [default: .cargo/regression.toml]\n  \
            -h, --help            Print help information"
     );
-}
-
-fn find_workspace_root() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if let Some(parent) = manifest_dir.parent()
-        && parent.join("Cargo.toml").exists()
-    {
-        return parent.to_path_buf();
-    }
-    manifest_dir
-}
-
-fn budget_for_benchmark(id: &str) -> f64 {
-    match id {
-        "jitter/state_space_step_response"
-        | "jitter/ekf_8x8_covariance_update" => 10_000.0, // 10 µs
-        "jitter/hilbert_32x32_solve" => 100_000.0, // 100 µs
-        s if s.starts_with("jitter/") => 50_000.0, // 50 µs
-        s if s.starts_with("state_space_scaling/zoh_dim/128") => 100_000_000.0, // 100 ms
-        s if s.starts_with("state_space_scaling/") => 50_000_000.0, // 50 ms
-        s if s.starts_with("matrix_inversion_scaling/") => 10_000_000.0, // 10 ms
-        s if s.starts_with("tensor_contraction_scaling/") => 10_000_000.0, // 10 ms
-        s if s.starts_with("polynomial_evaluation_scaling/") => 1_000_000.0, // 1 ms
-        _ => 100_000_000.0, // 100 ms default budget
-    }
 }
 
 fn format_duration(ns: f64) -> String {
@@ -274,15 +336,18 @@ fn parse_change_pct(interval: &str) -> Option<f64> {
 }
 
 /// Returns why a benchmark fails the gate; empty when it passes.
-fn failures(result: &BenchmarkResult) -> Vec<String> {
-    let budget_ns = budget_for_benchmark(&result.id);
+fn failures(result: &BenchmarkResult, budgets: &Budgets) -> Vec<String> {
     let mut reasons = Vec::new();
-    if result.time_ns > budget_ns {
-        reasons.push(format!(
-            "Latency {} exceeded cycle budget of {}",
-            format_duration(result.time_ns),
-            format_duration(budget_ns)
-        ));
+    match budgets.for_id(&result.id) {
+        Some(budget_ns) if result.time_ns > budget_ns => {
+            reasons.push(format!(
+                "Latency {} exceeded cycle budget of {}",
+                format_duration(result.time_ns),
+                format_duration(budget_ns)
+            ));
+        }
+        Some(_) => {}
+        None => reasons.push("No budget registered".to_string()),
     }
     if result.verdict == Some(Verdict::Regressed) {
         reasons.push("Criterion reports a performance regression".to_string());
@@ -291,7 +356,7 @@ fn failures(result: &BenchmarkResult) -> Vec<String> {
 }
 
 /// Prints the performance and regression matrix.
-fn print_matrix(results: &[BenchmarkResult]) {
+fn print_matrix(results: &[BenchmarkResult], budgets: &Budgets) {
     println!("--- Benchmark Performance & Regression Matrix ---");
     println!(
         "{:<42} {:>14} {:>10} {:>12} {:>14} {:>8}",
@@ -309,7 +374,7 @@ fn print_matrix(results: &[BenchmarkResult]) {
             .change_pct
             .map_or_else(|| "-".to_string(), |c| format!("{c:+.2}%"));
         let verdict = result.verdict.map_or("no baseline", Verdict::label);
-        let status = if failures(result).is_empty() {
+        let status = if failures(result, budgets).is_empty() {
             "PASS"
         } else {
             "FAIL"
@@ -321,7 +386,9 @@ fn print_matrix(results: &[BenchmarkResult]) {
             format_duration(result.time_ns),
             change,
             verdict,
-            format_duration(budget_for_benchmark(&result.id)),
+            budgets
+                .for_id(&result.id)
+                .map_or_else(|| "none".to_string(), format_duration),
             status
         );
     }
@@ -341,7 +408,17 @@ fn main() {
         }
     };
 
-    let root = find_workspace_root();
+    let budgets = match std::fs::read_to_string(&opts.budgets)
+        .map_err(|e| format!("{}: {e}", opts.budgets.display()))
+        .and_then(|text| Budgets::parse(&text))
+    {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    };
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     println!("Workspace root: {}", root.display());
 
     let results = match run_benchmarks(&root, &opts)
@@ -354,10 +431,10 @@ fn main() {
         }
     };
 
-    print_matrix(&results);
+    print_matrix(&results, &budgets);
     let failed: Vec<&BenchmarkResult> = results
         .iter()
-        .filter(|result| !failures(result).is_empty())
+        .filter(|result| !failures(result, &budgets).is_empty())
         .collect();
 
     if !failed.is_empty() {
@@ -367,7 +444,11 @@ fn main() {
             results.len()
         );
         for result in failed {
-            eprintln!("  - '{}': {}", result.id, failures(result).join("; "));
+            eprintln!(
+                "  - '{}': {}",
+                result.id,
+                failures(result, &budgets).join("; ")
+            );
         }
         std::process::exit(1);
     }
@@ -382,8 +463,17 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        Results, Verdict, failures, format_duration, parse_criterion_output,
+        Budgets, Results, Verdict, failures, format_duration,
+        parse_criterion_output, parse_duration_ns,
     };
+
+    const BUDGETS: &str = r#"
+[budgets]
+"jitter/hilbert_32x32_solve" = "100 us"
+"jitter/*" = "50 us"
+"state_space_scaling/zoh_dim/128" = "100 ms"
+"state_space_scaling/*" = "50 ms"
+"#;
 
     /// `cargo bench` output: a benchmark without a baseline, then one
     /// benchmark per Criterion verdict. Identifiers longer than 23 characters
@@ -412,6 +502,10 @@ state_space_scaling/zoh_dim/128
                         change: [+1.0123% +2.3456% +3.6789%] (p = 0.01 < 0.05)
                         Change within noise threshold.
 ";
+
+    fn budgets() -> Budgets {
+        Budgets::parse(BUDGETS).unwrap()
+    }
 
     const fn close(a: f64, b: f64) -> bool {
         (a - b).abs() <= 1e-9 * b.abs()
@@ -485,10 +579,51 @@ state_space_scaling/zoh_dim/128
 
     #[test]
     fn fails_on_regression_or_budget_only() {
+        let b = budgets();
         let reasons: Vec<usize> =
-            parsed().iter().map(|r| failures(r).len()).collect();
+            parsed().iter().map(|r| failures(r, &b).len()).collect();
         // Regressed fails; the 1.23 s benchmark exceeds its 100 ms budget.
         assert_eq!(reasons, [0, 1, 0, 0, 1]);
+    }
+
+    #[test]
+    fn resolves_exact_before_longest_prefix() {
+        let b = budgets();
+        assert_eq!(b.for_id("jitter/hilbert_32x32_solve"), Some(100e3));
+        assert_eq!(b.for_id("jitter/other"), Some(50e3));
+        assert_eq!(b.for_id("state_space_scaling/zoh_dim/128"), Some(100e6));
+        assert_eq!(b.for_id("state_space_scaling/zoh_dim/32"), Some(50e6));
+        assert_eq!(b.for_id("tensor/unknown"), None);
+    }
+
+    #[test]
+    fn unregistered_benchmark_fails() {
+        let b = Budgets::parse("[budgets]\n\"jitter/*\" = \"1 s\"\n").unwrap();
+        let unknown = parse_criterion_output(
+            "other/bench             time:   [1.0 ns 2.0 ns 3.0 ns]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            failures(unknown.first().unwrap(), &b),
+            ["No budget registered"]
+        );
+    }
+
+    #[test]
+    fn rejects_bad_budget_files() {
+        assert!(Budgets::parse("[budgets]\n").is_err());
+        assert!(Budgets::parse("[budgets]\n\"a\" = \"10 hours\"\n").is_err());
+        assert!(Budgets::parse("[budgets]\n\"a\" = \"0 ns\"\n").is_err());
+        assert!(Budgets::parse("budgets = 3").is_err());
+    }
+
+    #[test]
+    fn parses_duration_units() {
+        assert_eq!(parse_duration_ns("10 us"), Some(10e3));
+        assert_eq!(parse_duration_ns("10µs"), Some(10e3));
+        assert_eq!(parse_duration_ns("1.5 ms"), Some(1.5e6));
+        assert_eq!(parse_duration_ns("2 s"), Some(2e9));
+        assert_eq!(parse_duration_ns("ns"), None);
     }
 
     #[test]

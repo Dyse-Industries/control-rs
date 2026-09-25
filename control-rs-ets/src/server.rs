@@ -18,7 +18,9 @@
 use core::sync::atomic::{AtomicIsize, Ordering};
 
 use crate::SuiteDescriptor;
-use crate::comms::{Command, CommsLock, HostComms, Telemetry, TestState};
+use crate::comms::{
+    Command, CommsLock, HostComms, PROTOCOL_VERSION, Telemetry, TestState,
+};
 use crate::settings::SettingValue;
 
 // --- Static variables ---
@@ -573,6 +575,14 @@ where
     }
 
     fn stream_discovery(&mut self) -> ServerResult<C::Error> {
+        let cpu = &self.context.cpu_utils;
+        let info = Telemetry::TargetInfo {
+            protocol_version: PROTOCOL_VERSION,
+            board_id: cpu.board_id(),
+            core_clock_hz: cpu.core_clock_hz(),
+            fpu_flags: cpu.fpu_flags(),
+        };
+        let _ = self.context.send_telemetry_locked(&info)?;
         for (suite_id, &suite) in (0_u16..).zip(self.suites.iter()) {
             let _ =
                 self.context.send_telemetry_locked(&Telemetry::SuiteInfo {
@@ -724,6 +734,8 @@ mod tests {
     }
 
     type RawPayloads = Vec<Vec<u8>>;
+    /// Borrowed run of encoded telemetry frames.
+    type Frames<'a> = &'a [Vec<u8>];
     type SettingsSlice = &'static [&'static dyn Setting];
 
     impl CPUProfiler for HostCPUProfiler {
@@ -1016,6 +1028,24 @@ mod tests {
         assert_eq!(utils.get_sp(), 0);
     }
 
+    /// Asserts that `payloads` opens with a matching `TargetInfo` and
+    /// returns the frames after it.
+    fn after_target_info(payloads: &RawPayloads) -> Frames<'_> {
+        assert!(payloads.len() >= 5);
+        let info: Telemetry<'_> =
+            postcard::from_bytes(payloads.first().unwrap()).unwrap();
+        assert!(matches!(
+            info,
+            Telemetry::TargetInfo {
+                protocol_version: crate::comms::PROTOCOL_VERSION,
+                board_id: 0,
+                core_clock_hz: 0,
+                ..
+            }
+        ));
+        payloads.get(1..).unwrap()
+    }
+
     #[test]
     fn test_server_discovery() {
         let _ = TEST_U8_SETTING.set(SettingValue::U8(42));
@@ -1030,9 +1060,8 @@ mod tests {
         let res = server.run();
         assert_eq!(res, Err("Exit loop"));
 
-        // Check telemetry sent
-        let p = &server.context.comms.payloads;
-        assert!(p.len() >= 4);
+        // TargetInfo leads every discovery stream.
+        let p = after_target_info(&server.context.comms.payloads);
 
         let t0: Telemetry<'_> =
             postcard::from_bytes(p.first().unwrap()).unwrap();

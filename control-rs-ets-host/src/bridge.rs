@@ -162,6 +162,17 @@ pub enum OwnedTelemetry {
         /// Test id.
         test_id: u16,
     },
+    /// Wire-contract revision and target metadata (FR-8).
+    TargetInfo {
+        /// Target's `PROTOCOL_VERSION`.
+        protocol_version: u8,
+        /// Board identifier (`0` when unknown).
+        board_id: u16,
+        /// Core clock in hertz (`0` when unknown).
+        core_clock_hz: u32,
+        /// FPU bits: 0 single, 1 double precision.
+        fpu_flags: u8,
+    },
 }
 
 /// Message type sent from the background reader thread to the host controller or UI.
@@ -214,6 +225,17 @@ impl OwnedTelemetry {
                 state,
                 suite_id,
                 test_id,
+            },
+            Telemetry::TargetInfo {
+                protocol_version,
+                board_id,
+                core_clock_hz,
+                fpu_flags,
+            } => Self::TargetInfo {
+                protocol_version,
+                board_id,
+                core_clock_hz,
+                fpu_flags,
             },
             Telemetry::SettingInfo { .. }
             | Telemetry::SuiteInfo { .. }

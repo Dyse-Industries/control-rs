@@ -1,6 +1,6 @@
 # Requirement Traceability Infrastructure (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_19,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -178,16 +178,16 @@ evidence:
   },
   "requirements": [
     {
-      "id": "FR-1",
-      "title": "Two-Tier Target Verification",
+      "id": "FR-18",
+      "title": "Virtual Target Execution",
       "status": "Verified",
       "document": "documentation/ci/ci-design.md",
-      "line": 26,
+      "line": 124,
       "covering_tests": [
-        { "name": "tests::test_qemu_execution", "verdict": "Passed" }
+        { "name": "ets::tests::drained_run_with_passing_tests_passes", "verdict": "Passed" }
       ],
       "source_links": [
-        { "file": "control-rs-ci/src/runner.rs", "line": 45 }
+        { "file": "control-rs-ci/src/ets.rs", "line": 67 }
       ]
     }
   ]
@@ -248,6 +248,15 @@ evidence:
 - **Macro Expansion Visibility**: Tracing markers generated inside complex
   declarative macros may require macro expansion (`cargo expand`) if lexical
   scanning is insufficient.
+- **Requirement Identity**: Every design document numbers its own `FR-1..`,
+  `NFR-1..` and `C-1..`, so a bare marker such as `#[req_trace("FR-1")]`
+  matches a requirement in each of the 23 designs. FR-2 needs a
+  document-qualified form (for example `#[req_trace("ci::FR-1")]`) before
+  Phase 1; the qualifier syntax is undecided.
+- **Locator Grammar**: `ets-prop-test-design.md` §6.3 and
+  `embedded-test-server-design.md` §6.3 once cited `test:` and `budget:`
+  locators from an earlier revision of this design. No current document
+  defines a locator grammar; the §4 markers replace it.
 
 ---
 
@@ -267,6 +276,7 @@ evidence:
 | Revision | Date               | Author          | Description                                                    |
 |:---------|:-------------------|:----------------|:---------------------------------------------------------------|
 | 1.0      | September 19, 2026 | @MitchellDScott | Initial standalone design doc for requirement traceability gate. |
+| 1.1      | September 24, 2026 | @MitchellDScott | §4.4 example uses a current `ci-design.md` requirement. §8 records the document-qualified marker need and the retired locator grammar. |
 
 ---
 

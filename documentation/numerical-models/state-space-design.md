@@ -1,6 +1,6 @@
 # State-Space Model Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -178,10 +178,10 @@ pub type StateSpace<T, const NX: usize, const NU: usize, const NY: usize> = Stat
     Const<NX>,
     Const<NU>,
     Const<NY>,
-    DenseArray<T, NX, NX>,
-    DenseArray<T, NX, NU>,
-    DenseArray<T, NY, NX>,
-    DenseArray<T, NY, NU>,
+    ArrayStorage<T, NX, NX>,
+    ArrayStorage<T, NX, NU>,
+    ArrayStorage<T, NY, NX>,
+    ArrayStorage<T, NY, NU>,
 >;
 
 /// Sibling model alias for standard stack-allocated array storage
@@ -271,7 +271,10 @@ revision; callers holding a non-contiguous backend must materialize an owned
 #### 4.4 Error Handling
 
 Following the crate-wide error strategy, fallible operations return
-`Result<T, Error>` via a crate-local `thiserror` enum rather than panicking.
+`Result<T, Error>` rather than panicking. The error type is a crate-local enum deriving `Debug, Clone, Copy, PartialEq, Eq` with a
+hand-written `core::fmt::Display` and `impl core::error::Error`
+(`error-design.md` NFR-1); the root crate depends only on `libm`, so there is
+no `thiserror` derive.
 Two operations are fallible:
 
 - **Feedback (§4.7)**: forms the loop
@@ -287,15 +290,16 @@ Two operations are fallible:
   $D_d = D + C_d B h$ with $M = I - hA$ and $h = T_s/2$.
 
 ```rust
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateSpaceError {
-    #[error("feedback loop matrix (I - sign*D2*D1) is singular to working precision"
-    )]
+    /// Feedback loop matrix (I - sign*D2*D1) is singular to working precision.
     SingularLoopMatrix,
-    #[error("Tustin discretization operator (I - Ts/2 * A) is singular to working precision"
-    )]
+    /// Tustin discretization operator (I - Ts/2 * A) is singular to working precision.
     SingularDiscretizationOperator,
 }
+
+impl core::fmt::Display for StateSpaceError { /* one message per variant */ }
+impl core::error::Error for StateSpaceError {}
 ```
 
 Both variants reuse the same singularity-detection check shown above.
@@ -326,8 +330,8 @@ matching the posture already adopted for `TransferFunction::evaluate_complex`
   not `Dim::USIZE` products.
 - **Borrowed views**: `ArrayStateSpace::view()` / `view_mut()`
   (`storage-design.md` FR-2). Wrapping an erased-length slice goes through
-  `StorageView::new`, which is fallible with
-  `ConversionError::DimensionMismatch`.
+  `StaticStorageView::new` or `StorageView::new_with_strides`, both fallible
+  with `ConversionError::DimensionMismatch`.
 
 #### 4.6 State Propagation & Time-Domain Simulation
 
@@ -338,29 +342,30 @@ vector $u \in \mathbb{R}^{N_u}$, compute next state $x_{next}$ and
 output $y \in \mathbb{R}^{N_y}$:
 
 ```rust
-impl<T, NX: Dim, NU: Dim, NY: Dim, Sa, Sb, Sc, Sd> StateSpaceCore<T, NX, NU, NY, Sa, Sb, Sc, Sd>
+impl<T: Scalar + Copy, const NX: usize, const NU: usize, const NY: usize>
+    StateSpace<T, NX, NU, NY>
 where
-    Sa: DenseStorage<T, R=NX, C=NX>,
-    Sb: DenseStorage<T, R=NX, C=NU>,
-    Sc: DenseStorage<T, R=NY, C=NX>,
-    Sd: DenseStorage<T, R=NY, C=NU>,
+    Const<NX>: Dim,
+    Const<NU>: Dim,
+    Const<NY>: Dim,
 {
-    pub fn step<Sx, Su>(
+    pub fn step(
         &self,
-        x: &Matrix<T, NX, Const<1>, Sx>,
-        u: &Matrix<T, NU, Const<1>, Su>,
-    ) -> (ArrayMatrix<T, NX, Const<1>>, ArrayMatrix<T, NY, Const<1>>)
-    where
-        Sx: DenseStorage<T, R=NX, C=Const<1>>,
-        Su: DenseStorage<T, R=NU, C=Const<1>>,
-        T: Copy + Zero + Add<Output=T> + Mul<Output=T>,
-    {
-        let x_next = self.a_matrix() * x + self.b_matrix() * u;
-        let y = self.c_matrix() * x + self.d_matrix() * u;
+        x: &Owned<T, NX, 1>,
+        u: &Owned<T, NU, 1>,
+    ) -> (Owned<T, NX, 1>, Owned<T, NY, 1>) {
+        let x_next = self.a_matrix().saturating_mul(x).saturating_add(&self.b_matrix().saturating_mul(u));
+        let y = self.c_matrix().saturating_mul(x).saturating_add(&self.d_matrix().saturating_mul(u));
         (x_next, y)
     }
 }
 ```
+
+`step` is defined on the owned const-generic alias `StateSpace<T, NX, NU, NY>`
+and bound only by `T: Scalar + Copy`. Every product and sum calls the
+saturating matrix methods (`num-traits-design.md` FR-6,
+`matrix-design.md` §4.5), so integer and fixed-point plants clamp at their
+bounds instead of wrapping.
 
 ##### Continuous State Derivative ($\dot{x} = A x + B u$)
 
@@ -441,7 +446,7 @@ $$H(s) = C (s I - A)^{-1} B + D = \frac{C \text{adj}(sI - A) B + D \det(sI - A)}
 
 The strongest evidence for Alternative C is the zero-$D$ specialization
 above. The same "avoid wrapping the natural lower-level peer type" decision
-is made independently by `transfer-function-design.md` §6 for
+is made independently by `transfer-function-design.md` §5 for
 `TransferFunction` vs. `Polynomial`, for compatible reasons.
 
 ---
@@ -527,21 +532,23 @@ is made independently by `transfer-function-design.md` §6 for
 - MIMO transfer-function conversions using minimal McMillan-degree state
   realizations are deferred.
 - Transfer-function realization at denominator degree $> 32$ is not verified
-  against C-2 ($N_x \le 32$). The example crate includes a 2-state stiff ZOH
-  case ([`numerical-models-design.md`](numerical-models-design.md) §6.6).
+  against C-2 ($N_x \le 32$). The stiff plant $A=\mathrm{diag}(-200,-0.5)$ is
+  not yet in the verification suite ([`numerical-models-design.md`](numerical-models-design.md) §5.2).
 
 ---
 
 ### 7. Performance & Resource Considerations
 
-- **Stack Allocation Limits**: Large state vectors (for example, $N_x = 32$)
-  require $32 \times 32 = 1024$ elements for matrix $A$, exactly
-  `matrix-design.md` §2.3's per-matrix budget. Storing via `DenseStorage`
-  enables static buffer placement or borrowed views, preventing embedded stack
-  overflow for $A$/$B$/$C$/$D$ themselves.
-- **ZOH Is Not Accommodated at $N_x = 32$**: the augmented matrix $M$
-  is $(N_x + N_u)$-square (§4.8), so a 32-state system cannot be ZOH-discretized
-  with even a single input without flattening bounds.
+- **Stack Allocation Limits**: Dimensions are bounded per axis by
+  `num-types-design.md` C-1 and carry no element cap (`matrix-design.md`
+  C-2). A 32-state $A$ is $32 \times 32 = 1024$ elements, 4 KiB in `f32` and
+  8 KiB in `f64`. Storing via `DenseStorage` enables static buffer placement
+  or borrowed views, preventing embedded stack overflow for $A$/$B$/$C$/$D$
+  themselves.
+- **ZOH Footprint at $N_x = 32$**: the augmented matrix $M$ is
+  $(N_x + N_u)$-square (§4.8). A 32-state, 1-input system needs a
+  $33 \times 33$ $M$ (4.3 KiB in `f32`) plus its temporaries; the types admit
+  it and the target stack is the limit.
 - **ZOH Workspace Multiplier**: scaling-and-squaring at a competitive Padé
   degree requires on the order of six additional $(N_x+N_u)$-square temporaries
   beyond $M$ itself. A 24-state, 8-input system needs
@@ -600,7 +607,7 @@ is made independently by `transfer-function-design.md` §6 for
 | **Step 3: System Interconnections**           | Implement `series`, `parallel` and fallible `feedback` (loop-matrix solve, `StateSpaceError::SingularLoopMatrix`) with compile-time `Dim` arithmetic.                                                                               | 2.0 Days         |
 | **Step 4: Discretization**                    | Implement ZOH (Van Loan augmented matrix, scaling-and-squaring with precision-dependent Padé degree selection §4.8, Al-Mohy/Higham overscaling correction) and fallible Tustin (`StateSpaceError::SingularDiscretizationOperator`). | 4.5 Days         |
 | **Step 5: Structural Analysis & Conversions** | Implement controllability/observability matrix generation (scoped as definitional, §4.9), similarity transforms ($z=Tx$) and Hessenberg-reduction-based SISO transfer function conversion.                                          | 3.0 Days         |
-| **Step 6: Tests & Documentation**             | Unit tests, `proptest` suites, `python-control`/MATLAB cross-validation, long-horizon fixed-point recursion tests and crate-level documentation per [`design-template.md`](../design-template.md) §6.                                                     | 3.0 Days         |
+| **Step 6: Tests & Documentation**             | Unit tests, `proptest` suites, `python-control`/MATLAB cross-validation, long-horizon fixed-point recursion tests and crate-level documentation (§6).                                                     | 3.0 Days         |
 
 ---
 
@@ -710,3 +717,4 @@ is made independently by `transfer-function-design.md` §6 for
 | 1.10     | August 31, 2026 | @MitchellDScott | Added harold multi-source cross-validation oracle and updated validation crate paths.                                                 |
 | 1.11      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` (SciPy oracle) and listed the cases not yet cross-validated. |
 | 1.12      | September 23, 2026 | @MitchellDScott | Field bounds use `T: Scalar + SaturatingDiv` (`num-traits-design.md` FR-6). |
+| 1.13      | September 24, 2026 | @MitchellDScott | §4.6 `step` matches shipped code (`T: Scalar + Copy`, saturating products). §4.4 error enum without `thiserror`. §7 bounds recomputed per axis. `ArrayStorage` alias, view constructors, TF §5 reference and §6.7 coverage claim corrected. |

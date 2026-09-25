@@ -1,6 +1,6 @@
 # Crate-Wide Error Module (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -53,9 +53,12 @@ failure in the course of computation (Anderson et al., 1999).
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Convention Compliance**: Follows the crate-wide `thiserror`-enum
-  convention already established by `matrix-design.md` and
-  `state-space-design.md`.
+- **NFR-1 — Convention Compliance**: Every error type is a plain enum
+  deriving `Debug, Clone, Copy, PartialEq, Eq`, with a hand-written
+  `core::fmt::Display` and an `impl core::error::Error`. The root crate takes
+  no proc-macro error dependency (`thiserror`); its only dependency is `libm`.
+  `state-space-design.md` §4.4, `transfer-function-design.md` §4.5 and
+  `polynomial-design.md` follow the same form.
 
 ---
 
@@ -159,10 +162,13 @@ cost over using the raw storage type" (uom, 2026).
   Length is erased from `&[T]`;
   `&[T; R::USIZE * C::USIZE]` requires `generic_const_exprs`. Both view
   families remain the shipped `ConversionError` producers.
-- `Matrix → Polynomial` (Faddeev–LeVerrier,
-  `../numerical-models/matrix-design.md` §4.8.1) fails "if the scalar type
-  cannot perform division, if numerical overflow occurs or if capacity is
-  insufficient" — a numeric-value condition, not a `Dim` mismatch.
+- `Polynomial → Matrix` companion form
+  (`../numerical-models/polynomial-design.md` §4.7.1) is the one shipped
+  cross-model conversion. It returns `DimensionMismatch` when the
+  destination `DEG` does not satisfy `DEG + 1 == N` (the destination's
+  const parameter is chosen independently of `N`, so the relation is not
+  enforced by the signature) or `DEG == 0`. No `Matrix → Polynomial`
+  conversion ships (`../numerical-models/matrix-design.md` §4.8.1).
 - Dense ↔ packed ↔ sparse conversions whose destination capacity is a
   runtime `nnz` against a typed `MAX_NNZ` still use `StorageError`
   (`CapacityExceeded`); a true shape incompatibility that survives the
@@ -181,14 +187,11 @@ keep an equivalent value-dependent check at runtime: `Cholesky::new`
 "Returns `None` if the input matrix is not definite-positive" (nalgebra,
 2026), with no compile-time alternative offered.
 
-**`LayoutMismatch` stays removed.** Rank and size of
-`Matrix` / `Polynomial` / `Tensor` conversions are `TensorLayout<Size = …>`
-bounds. If that bound holds, a size mismatch cannot occur (FR-2). Rank is
-an associated constant of `Layout`. Both belong in the type system.
-Infallible `From` conversions (e.g.
-`From<Matrix<T, R, C, …>> for Tensor<T, Layout, B>` where
-`Layout: TensorLayout<Size = <R as DimMul<C>>::Output>`) fail at compile
-time (`error[E0277]` / `error[E0308]`).
+**`LayoutMismatch` stays removed.** No `Matrix` / `Polynomial` / `Tensor`
+`From` conversion ships. The shipped tensor–matrix path is a zero-copy view
+over a shared `ArrayStorage<T, R, C>` leaf (`tensor-design.md` §4.10), whose
+rank and shape are const parameters, so a layout mismatch cannot occur at
+run time (FR-2).
 
 #### 4.3 `StorageError`
 
@@ -323,17 +326,13 @@ to `Potrf` is a `matrix-design.md` change, not this module's.
    coverage (`src/math/tests/storage_tests.rs`) — unaffected (§4.2).
 2. Convolution against a runtime slice is a **current** gate, not deferred
    to polynomial landing. A short `output` buffer returns
-   `Err(ConversionError::DimensionMismatch)`, not a panic. When
-   `Matrix → Polynomial` and `Polynomial → Matrix` land, each
-   `ConversionError` variant they produce (`DimensionMismatch`,
-   `NonMonicPolynomial`) needs a dedicated failure-path unit test, matching
+   `Err(ConversionError::DimensionMismatch)`, not a panic. The shipped
+   `Polynomial → Matrix` companion conversion produces `DimensionMismatch`
+   and `NonMonicPolynomial`; each needs a dedicated failure-path unit test, matching
    the existing pattern in `src/math/mod.rs`'s `Display` tests and
    `storage_tests.rs`.
-3. When the `From` + `TensorLayout<Size = …>` conversions (§4.2) land, add
-   a `compile_fail` doctest demonstrating that a `Layout` whose `Size`
-   does not match the source shape fails to compile rather than returning
-   `Err`. This item is not a current gate; it waits on
-   `../numerical-models/tensor-design.md` `From` conversions.
+3. No tensor `From` conversion ships (§4.2), so no layout-mismatch
+   `compile_fail` doctest is required.
 4. Add `Display` / `Error` unit tests for every `StorageError` variant when
    the enum lands. When storage Phases 2–4 land (`storage-design.md` §9),
    each producer listed in §4.3 needs a dedicated failure-path test:
@@ -381,41 +380,41 @@ add no allocation.
 - **Downstream Tensor conversions**:
   `../numerical-models/matrix-design.md` §4.8.2,
   `../numerical-models/polynomial-design.md` §4.7.2 and
-  `../numerical-models/tensor-design.md` §4.11 specify infallible `From`
-  bounded by `TensorLayout<Size = …>`. Rank-marker traits (`Rank1Layout` /
-  `Rank2Layout`) are not part of that surface; `Size` is the bound.
+  `../numerical-models/tensor-design.md` §4.10 record that no `From`
+  conversion ships: `TensorLayout::SIZE` is a `usize` constant, not a `Dim`
+  type, so the bound needs `generic_const_exprs`.
 - **Sibling-doc alignment**:
   `storage-design.md` §3.3 / §4.6 omits `StorageError::DimensionMismatch`.
   `subprograms-design.md` §3.3 omits `LinAlgError::DimensionMismatch`.
   `polynomial-design.md` §4.5 names `ConversionError::DimensionMismatch`
   from `Convolution`. FR-3 holds at those three documents. `src/math/dsp.rs`
-  currently panics on a short output; §6 item 2 is the current producer
-  gate.
+  returns that arm on a short output (`dsp.rs` `convolve_input`), meeting
+  §6 item 2. Interconnection callers in `transfer_function` currently
+  discard it (`transfer-function-design.md` §8).
 - **`faer-rs` unresearched (open, low priority)**:
   faer-rs's dimension-mismatch convention is not established from its
   crate-level docs. Eigen and the ndarray/LAPACK family already cover
   both branches of §4 (statically decidable vs. value-dependent).
-- **Matrix Cholesky mapping (open)**: Shipped
-  `CholeskyDecomposition` / `LdltDecomposition` report a non-positive
-  pivot as `SingularMatrix`. `Potrf` reports `NotPositiveDefinite`.
-  Whether `matrix-design.md` wrappers switch when they call `Potrf` is
-  deferred to that document.
+- **Matrix Cholesky mapping (resolved)**: The Cholesky wrappers call
+  `Potrf` and return its `NotPositiveDefinite`
+  (`src/matrix/decomposition.rs`, `matrix-design.md` §4.7). `LdltDecomposition`
+  returns `SingularMatrix` on a zero pivot, which is a singularity rather
+  than a definiteness failure.
 - **Workspace signatures (assumption)**: `subprograms-design.md` keeps
   `tau` / `work` / `ipiv` as slices, so `WorkspaceTooSmall` stays. If those
   arguments become `[T; N]` / `[usize; N]`, the variant becomes dead under
   FR-2 and is removed.
-- **Assumption**: No `StorageError` producers exist in shipped code
-  (confirmed by repository search). Adding the enum is not a breaking
-  change. Removing `LinAlgError::NonSquareMatrix` is a public-enum break
-  with no live producer.
+- **`StorageError` producers**: `set` and the packed/sparse checked
+  accessors in `src/math/storage.rs` return `OutOfBounds` and
+  `InvalidStructuralInvariant`. `LinAlgError::NonSquareMatrix` is removed
+  (Step 4).
 - **Shipped producers**:
   `StorageView` / `StorageViewMut::new_with_strides` and
-  `StaticStorageView` / `StaticStorageViewMut::new` remain the shipped
-  `ConversionError` producers (§4.2). `StorageError` has no shipped
-  producers. Shipped `LinAlgError` producers return only `SingularMatrix`.
-  `NonSquareMatrix` has Display coverage and no producer. As-yet-unimplemented
-  `Matrix` / `Polynomial` / `Tensor` conversions remain as specified in the
-  numerical-model drafts.
+  `StaticStorageView` / `StaticStorageViewMut::new`, `Convolution` and the
+  `Polynomial → Matrix` companion conversion are the shipped
+  `ConversionError` producers (§4.2). Shipped `LinAlgError` producers return
+  `SingularMatrix`, `NotPositiveDefinite` (Cholesky via `Potrf`) and
+  `WorkspaceTooSmall` (QR workspaces).
 
 ---
 
@@ -424,11 +423,11 @@ add no allocation.
 | Task / Feature                     | Description                                                                                                                                              | Estimated Effort           |
 |:-----------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------|:---------------------------|
 | Step 1: Narrow `ConversionError`   | Remove `LayoutMismatch` from the enum (§3); update `Display`/`Error` impls and their tests in `src/math/mod.rs`.                                         | Complete                   |
-| Step 2: Align dependent model docs | `matrix-design.md` §4.8.2, `polynomial-design.md` §4.7.2, `tensor-design.md` §4.11 use the `From` + `Size` shape.                                        | Complete                   |
+| Step 2: Align dependent model docs | `matrix-design.md` §4.8, `polynomial-design.md` §4.7.2, `tensor-design.md` §4.10 describe the shipped conversion surface (no tensor `From`).         | Complete                   |
 | Step 3: Add `StorageError`         | Land the enum, `StorageResult`, `Display`/`Error` impls, and Display tests in `src/math/mod.rs` (§3, §4.3). View constructors stay on `ConversionError`. | Complete                   |
 | Step 4: Align `LinAlgError`        | Add `NotPositiveDefinite`, `WorkspaceTooSmall`, `MaxIterationsReached`; remove `NonSquareMatrix`; keep `SingularMatrix`. Update Display tests.           | Complete                   |
 | Step 5: Producer tests             | Storage Phases 2–4 and subprograms Phase 4 attach the failure-path tests in §6 items 4–5.                                                                | — (owned by those designs) |
-| Step 6: Convolution producer       | `dsp.rs` `Convolution` returns `Err(ConversionError::DimensionMismatch)` on a short output (§6 item 2); a panic / `#[should_panic]` test is a defect.    | Current gate               |
+| Step 6: Convolution producer       | `dsp.rs` `Convolution` returns `Err(ConversionError::DimensionMismatch)` on a short output (§6 item 2); a panic / `#[should_panic]` test is a defect.    | Complete                   |
 
 ---
 
@@ -441,6 +440,7 @@ add no allocation.
 | 1.2      | August 18, 2026 | @MitchellDScott | Infallible conversions: transitioned cross-model conversions (`Matrix`, `Polynomial`, `Tensor`) to compile-time layout bounds, eliminating runtime checks. |
 | 1.3      | August 22, 2026 | @MitchellDScott | Enum canonicalization: standardized error variants across `StorageError` and `LinAlgError` without cross-enum duplication.                                 |
 | 1.4      | August 26, 2026 | @MitchellDScott | Storage retarget: updated error semantics for inherent structured projection constructors (`from_dense_diagonal`, `from_dense_triangle`).                  |
+| 1.5      | September 24, 2026 | @MitchellDScott | NFR-1 convention is plain derive plus hand-written `Display` / `core::error::Error` (no `thiserror`). §4.2, §6 and §8 describe the shipped conversion surface: companion `Polynomial → Matrix` only, no tensor `From`. Cholesky mapping resolved (`NotPositiveDefinite`). `StorageError` producers and Step 6 recorded as shipped. |
 
 ---
 

@@ -1,6 +1,6 @@
 # Cross-Compare Harness & HDF5 Comparison System (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_19,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -28,7 +28,8 @@ numerical tolerance bounds.
 
 - **FR-1 — Typed HDF5 Variant Container**: Each execution variant (for example,
   `rust`, `scipy`, `jax`, `ngspice`) emits its results to an independent HDF5 file
-  formatted as `results/<suite>.<variant>.h5`. Datasets carry typed floating-point
+  formatted as `<out_dir>/<suite>.<variant>.h5` (the workspace configuration
+  uses `target/verification/`). Datasets carry typed floating-point
   arrays (`f64`, 1D/2D) and string logs.
 - **FR-2 — Unified Standalone Runner & Comparator CLI (`compare`)**: `control-rs-compare`
   publishes a standalone binary `compare` (`cargo compare`) that parses `compare.toml`,
@@ -52,7 +53,7 @@ numerical tolerance bounds.
   declare `control-rs-compare` or `control-rs-ci` in their dependencies; they interact
   solely through `.rust.h5` output and `compare.toml`.
 - **FR-9 — Isolated Suite Emitters**: Running an example suite directly computes only
-  native Rust math and emits `results/<suite>.rust.h5`.
+  native Rust math and emits `<out_dir>/<suite>.rust.h5`.
 - **FR-10 — Fail-Closed Discrepancy Accumulation**: Missing datasets, dimension
   mismatches, NaNs/infinities, and tolerance breaches are accumulated and terminate
   with non-zero exit code.
@@ -85,7 +86,9 @@ numerical tolerance bounds.
 #### 2.2 Non-Functional Requirements
 
 - **NFR-1 — Publishable Crate Standards**: Both `control-rs-compare` and
-  `control-rs-ci` must meet crates.io publication standards (Rust API Guidelines
+  `control-rs-ci` must meet crates.io publication standards, so that the
+  release pipeline (roadmap PR10) can publish them; both are `publish = false`
+  today (Rust API Guidelines
   C-METADATA, SemVer adherence, permissive MIT/Apache-2.0 licensing, and complete
   documentation) (Rust API Guidelines, 2026; The Cargo Book, 2026).
 - **NFR-2 — Strict Isolation from Embedded Toolbox**: Zero host-runner,
@@ -109,7 +112,7 @@ numerical tolerance bounds.
   (2) oracle dataset HDF5 attributes (`methods`, `measure`/`method`, `bound`, `bound.<peer>`),
   or (3) fallback default (`abs` $\le 10^{-4}$, `policy = "all_of"`).
 - **C-3 — Decoupled Non-Rust Visualization**: Diagnostic plot generators
-  must read exclusively from persisted `results/*.h5` files using Python
+  must read exclusively from persisted `<out_dir>/*.h5` files using Python
   (`matplotlib` with headless `agg` backend). Visualizations must not be
   implemented in Rust and must not affect gate pass/fail status.
 - **C-4 — Published Binary Naming**: The unified runner and comparator
@@ -131,16 +134,16 @@ multi-method evaluation, and diagnostic visualization:
 flowchart TD
     subgraph Config["Unified Modular compare.toml Schema"]
         direction TB
-        RootTOML["<b>Root compare.toml</b><br/>• Global settings (out_dir, timeout)<br/>• <code>suites = ['examples/buck-converter', ...]</code><br/>• <i>(Optional) inlined [[suite]] variants</i>"]
-        SuiteTOML["<b>examples/buck-converter/compare.toml</b><br/>• Same schema: <code>[[suite]]</code> + <code>[[suite.variants]]</code><br/>• Declares tolerance table & explicit signals"]
+        RootTOML["<b>Root compare.toml</b><br/>• Global settings (out_dir, timeout)<br/>• <code>suites = ['../control-rs-verification']</code><br/>• <i>(Optional) inlined [[suite]] variants</i>"]
+        SuiteTOML["<b>control-rs-verification/compare.toml</b><br/>• Same schema: <code>[[suite]]</code> + <code>[[suite.variants]]</code><br/>• Declares tolerance table & explicit signals"]
         RootTOML -. References / Merges .-> SuiteTOML
     end
 
-    subgraph Storage["Standardized Results Storage (results/)"]
+    subgraph Storage["Standardized Results Storage (target/verification/)"]
         direction TB
-        RustH5["results/buck_converter.rust.h5<br/><i>(Float Arrays, Text Logs, JSON)</i>"]
-        OracleH5["results/buck_converter.scipy.h5<br/><i>(True Oracle + Method Attributes)</i>"]
-        PeerH5["results/buck_converter.ngspice.h5<br/><i>(SPICE Switched Model)</i>"]
+        RustH5["target/verification/matrix.rust.h5<br/><i>(Float Arrays, Text Logs, JSON)</i>"]
+        OracleH5["target/verification/matrix.scipy.h5<br/><i>(True Oracle + Method Attributes)</i>"]
+        PeerH5["target/verification/matrix.jax.h5<br/><i>(Alternative-Library Peer)</i>"]
     end
 
     subgraph Comparison["Multi-Method Comparison Engine (compare)"]
@@ -150,14 +153,14 @@ flowchart TD
             TextEval["<b>Text & Exact</b><br/><code>exact_match</code>, <code>string_diff</code>"]
             TolDiscovery["<b>Tolerance Discovery</b><br/>TOML Table &rarr; HDF5 Attributes &rarr; Fallback"]
         end
-        CompareEngine["Comparator CLI: <code>compare --results-dir results/</code>"]
+        CompareEngine["Comparator CLI: <code>compare --config .cargo/compare.toml</code>"]
         ReportJSON["cross-val-report.json<br/><i>(Per-method findings & scores)</i>"]
         ReportMD["cross-val-report.md<br/><i>(Executive Summary)</i>"]
         GateVerdict["Custom Gate Status (Pass / Discrepancy)"]
     end
 
     subgraph Diagnostics["Diagnostic Plotting (Python Only)"]
-        MatplotlibPlots["Matplotlib Plot Generator<br/><code>python3 examples/buck-converter/python3/plot_buck_converter.py</code><br/><i>(PNG/SVG Figure Output)</i>"]
+        MatplotlibPlots["Matplotlib Plot Generator<br/><code>python3 control-rs-verification/python3/plot_&lt;suite&gt;.py</code> (not shipped)<br/><i>(PNG/SVG Figure Output)</i>"]
     end
 
     Config --> Storage
@@ -175,10 +178,12 @@ flowchart TD
 
 #### 4.1 Crate & Binary Distribution Model
 
-`control-rs-compare` is published to crates.io with the standalone binary `compare`:
+`control-rs-compare` is structured for crates.io publication with the
+standalone binary `compare`. It is `publish = false` until the release
+pipeline (roadmap PR10); the manifest below shows the publishable metadata:
 
 ```toml
-# control-rs-compare/Cargo.toml (Published Crate)
+# control-rs-compare/Cargo.toml
 [package]
 name = "control-rs-compare"
 version = "0.1.0"
@@ -318,73 +323,55 @@ pub struct VariantConfig {
 }
 ```
 
-##### 1. Workspace Root Example (`compare.toml`)
+##### 1. Workspace Root Example (`.cargo/compare.toml`)
 
 ```toml
-# compare.toml (workspace root)
+# .cargo/compare.toml (the workspace root configuration)
 [compare]
-title = "control-rs Cross-Validation Suite"
+title = "control-rs Cross-Comparison Suite"
 out_dir = "target/verification"
 timeout_secs = 120
 strict = true
 
-# Referenced suite directories (each contains its own compare.toml)
+# Referenced suite directories, relative to this file
 suites = [
-    "control-rs-verification",
+    "../control-rs-verification",
 ]
-
-# (Optional) Inlined suite defined from outside the suite folder
-[[suite]]
-name = "ad_hoc_experiment"
-true_oracle = "scipy"
-tolerance_table = "examples/support/tolerances/experiment.toml"
-
-[[suite.variants]]
-name = "rust"
-type = "rust_bin"
-manifest_path = "examples/experiment/Cargo.toml"
-bin = "experiment_bin"
-output_file = "results/experiment.rust.h5"
-
-[[suite.variants]]
-name = "scipy"
-type = "python_script"
-script = "examples/experiment/python3/experiment_oracle.py"
-output_file = "results/experiment.scipy.h5"
 ```
 
-##### 2. Per-Suite Example (`examples/buck-converter/compare.toml`)
+A root file may also inline `[[suite]]` blocks with the same schema as a
+per-suite file (§4.5 rule 3); the workspace configuration does not.
+
+##### 2. Per-Suite Example (`control-rs-verification/compare.toml`, excerpt)
 
 ```toml
-# examples/buck-converter/compare.toml
+# control-rs-verification/compare.toml
 [compare]
-out_dir = "results"
+out_dir = "../target/verification"
 timeout_secs = 90
 
 [[suite]]
-name = "buck_converter"
+name = "matrix"
 true_oracle = "scipy"
-tolerance_table = "tolerances/buck_converter.toml"
 
 [[suite.variants]]
 name = "rust"
 type = "rust_bin"
 manifest_path = "Cargo.toml"
-bin = "buck_converter"
-output_file = "results/buck_converter.rust.h5"
+bin = "validate"
+output_file = "../target/verification/matrix.rust.h5"
 
 [[suite.variants]]
 name = "scipy"
 type = "python_script"
-script = "python3/buck_converter_oracle.py"
-output_file = "results/buck_converter.scipy.h5"
+script = "python3/matrix_oracle.py"
+output_file = "../target/verification/matrix.scipy.h5"
 
 [[suite.variants]]
-name = "ngspice"
-type = "command"
-command = "ngspice -b spice/buck_switched.cir"
-output_file = "results/buck_converter.ngspice.h5"
-optional = true
+name = "jax"
+type = "python_script"
+script = "python3/matrix_jax_oracle.py"
+output_file = "../target/verification/matrix.jax.h5"
 ```
 
 #### 4.6 Recursive Config Resolution & Path Normalization
@@ -403,23 +390,25 @@ When `compare` loads a config:
 
 #### 4.7 CI Custom Gate Integration (`control-rs-ci`)
 
-`control-rs-ci` registers the comparison system as a standard custom gate
-in `gate.toml`:
+`control-rs-ci` runs the comparison as an ordinary gate declared in
+`.cargo/gate.toml` (`ci-design.md` §4.3), in the `verify` group:
 
 ```toml
-# gate.toml
-[[gates]]
-name = "cross-val"
-description = "Host-side oracle cross-validation and HDF5 numerical tolerance gate"
-command = "compare --config compare.toml"
-report_json = "results/cross-val-report.json"
-report_md = "results/cross-val-report.md"
-blocking = true
+[cross-compare]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", ".cargo/compare.toml"]
+env = { CARGO_TARGET_DIR = "target/cross-compare" }
+timeout_secs = 1800
 ```
+
+The runner reads only the exit status and the captured log; it does not
+parse `cross-val-report.json` or `cross-val-report.md` (`ci-design.md` FR-10,
+§4.5). The reports stay in `out_dir` as native artifacts.
 
 #### 4.8 Standalone Result Comparison Engine (`compare`)
 
-The published `compare` binary operates on `--config` or `--results-dir`:
+The `compare` binary operates on `--config` or `--results-dir`:
 
 ```bash
 compare [OPTIONS]
@@ -427,8 +416,8 @@ cargo compare [OPTIONS]
 ```
 
 ##### CLI Options
-- `-c, --config <FILE>`: Path to `compare.toml` (default: `compare.toml`).
-- `-o, --results-dir <DIR>`: Directory containing `.h5` files (default: `results`).
+- `-c, --config <FILE>`: Path to `compare.toml` (default: `.cargo/compare.toml`, else `compare.toml`).
+- `-o, --results-dir <DIR>`: Directory containing `.h5` files (default: the configuration's `out_dir`, else `results`).
 - `--run <SUITES>`: Suites to execute (`all`, `none`, or `s1,s2`).
 - `--skip-run`: Suites to not execute.
 - `--compare <SUITES>`: Suites to compare (`all`, `none`, or `s1,s2`).
@@ -439,14 +428,16 @@ cargo compare [OPTIONS]
 - `--no-fail`: Generate reports without returning non-zero exit code.
 - `-q, --quiet`: Suppress streaming output.
 
-`compare` reads the `cross-val-report.json` already in the output directory before
-overwriting it and prints the margin drift against it (FR-17).
+FR-17 specifies that `compare` reads the `cross-val-report.json` already in the
+output directory before overwriting it and prints the margin drift against it.
+It is not implemented (§9 Phase 6); the CI workflow already restores the
+baseline report.
 
 #### 4.9 HDF5 Multi-Modal Container Schema & Attributes
 
 Each test variant writes an independent HDF5 container:
 
-$$\text{results/}<\text{suite}>.<\text{variant}>.\text{h5}$$
+$$<\text{out\_dir}>/<\text{suite}>.<\text{variant}>.\text{h5}$$
 
 ##### Multi-Modal Dataset Layout
 ```
@@ -557,15 +548,10 @@ pub fn compare_float_arrays_parallel(
 
 #### 4.11 Diagnostic Plotting Pipeline (Python Matplotlib)
 
-Companion plotting scripts (`examples/<suite>/python3/plot_<suite>.py`) load
-`.h5` containers from `results/` and emit publication-grade static figures:
-
-```
-results/
-├── buck_converter_plot.png
-├── dc_motor_plot.png
-└── numerical_models_plot.png
-```
+Companion plotting scripts (`control-rs-verification/python3/plot_<suite>.py`)
+load `.h5` containers from `target/verification/` and emit static figures
+beside them (`target/verification/<suite>_plot.png`). No plotting script
+ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
 
 - **Non-Rust Implementation**: Authoring in Python using `matplotlib` (with headless
   `agg` backend) and `control_rs_plot` provides flexible visual styling without
@@ -643,9 +629,9 @@ results/
 | :--- | :--- |
 | **Status** | Pass |
 | **Suites Verified** | 7 / 7 passed (8.42s total) |
-| **Authoritative Table** | examples/buck-converter/tolerances/buck_converter.toml (12 bounds) |
+| **Authoritative Table** | `<suite>` tolerance table (12 bounds) |
 | **Regression Artifacts** | `cross-val-report.json`, `cross-val-report.md` |
-| **Diagnostic Plots** | `results/buck_converter_plot.png`, `results/dc_motor_plot.png` |
+| **Diagnostic Plots** | `target/verification/<suite>_plot.png` |
 
 | Suite | Status | Duration | Comparisons | Methods Evaluated |
 | :--- | :--- | :--- | :--- | :--- |
@@ -684,7 +670,7 @@ results/
 | `test` | Unified configuration schema parser tests | Verifies loading child `suites`, inlined `[[suite]]` definitions, path normalizations, and overrides. |
 | `test` | Multi-Modal HDF5 container tests | Verifies reading and writing numeric arrays, UTF-8 string datasets, and JSON attributes. |
 | `test` | Fail-closed discrepancy tests | Asserts that missing datasets, shape mismatches, NaNs, and stale timestamps trigger non-zero exit. |
-| `cross-check` | Custom gate integration test in `control-rs-ci` | Executes `cargo ci` with `cross-val` custom gate registered, confirming end-to-end report generation. |
+| `cross-check` | Custom gate integration test in `control-rs-ci` | Executes `cargo ci` with the `cross-compare` gate registered, confirming end-to-end report generation. |
 
 #### 6.2 Acceptance
 
@@ -725,8 +711,8 @@ results/
 
 - **External Library Version Drift**: Minor numerical discrepancies in reference
   libraries (for example, SciPy eigenvalue algorithm updates) can shift machine-precision
-  residuals. Documenting exact reference versions in C-8 envelopes and TOML
-  provenance headers mitigates this risk.
+  residuals. Documenting exact reference versions in the provenance headers of
+  the C-2 tolerance tables mitigates this risk.
 - **Embedding Model Weight Distribution**: For `semantic_similarity` evaluations,
   relying on lightweight local token models ensures offline
   reproducibility in CI without requiring live API keys or cloud connections.
@@ -742,9 +728,10 @@ results/
 |:---|:---|:---|
 | **Phase 1: `control-rs-compare` Engine & Evaluators (`compare`)** | Implement numerical evaluators (`abs`, `rel`, `rms`, `matrix_norm`), composite policies (`all_of`/`any_of`), and standalone `compare` binary. | Complete |
 | **Phase 2: Unified Config Loader & Variant Runner** | Implement unified modular `compare.toml` parser (supporting child `suites` and inlined `[[suite]]`), Python runtime resolution, timeout management, and `--signals` filtering. | Complete |
-| **Phase 3: `control-rs-ci` Custom Gate Integration** | Register `cross-val` custom gate in `gate.toml` and wire report ingestion into `ci-report.md`. | Complete |
+| **Phase 3: `control-rs-ci` Gate Integration** | Declare the `cross-compare` gate in `.cargo/gate.toml`; the runner reports its exit status and log tail without parsing the comparison reports. | Complete |
 | **Phase 4: Dynamic HDF5 Discovery & Multi-Tier Tolerances** | Implement recursive group hierarchy dataset discovery (`ls`-style), external TOML tolerance tables, and HDF5 dataset attribute resolution. | Complete |
-| **Phase 5: Parallel Chunked Evaluation & Worker Pool** | Implement `compare_float_arrays_parallel` using `std::thread::scope`, map-reduce partial statistics reduction, and `--threads` CLI/config concurrency options. | Active |
+| **Phase 5: Parallel Chunked Evaluation & Worker Pool** | Implement `compare_float_arrays_parallel` using `std::thread::scope`, map-reduce partial statistics reduction, and `--threads` CLI/config concurrency options. | Complete |
+| **Phase 6: Baseline Margin Drift** | Implement FR-17: read the prior `cross-val-report.json` from `out_dir`, match methods by suite, key and type, and warn on a margin rise of at least 0.1. | Planned |
 
 ---
 
@@ -764,6 +751,7 @@ results/
 | 1.9 | September 20, 2026 | @MitchellDScott | Integrated background research on parallel numerical reductions, pairwise tree error bounds (Higham, 2002), reproducible summation (Demmel and Nguyen, 2013), and chunked array I/O (Folk et al., 2011); formulated parallel chunked comparison architecture and comparator worker pool. |
 | 1.10 | September 22, 2026 | @MitchellDScott | Added FR-16 annotated signal omission (`missing_ok.<peer>`) for multi-oracle suites; workspace example references `control-rs-verification`. |
 | 1.11 | September 23, 2026 | @MitchellDScott | Added FR-17 baseline margin drift warnings against the previous `cross-val-report.json` (§4.8). |
+| 1.12      | September 24, 2026 | @MitchellDScott | Gate is the `.cargo/gate.toml` `[cross-compare]` table, not parsed by the runner. Containers live in `<out_dir>` (`target/verification/`); root and per-suite examples match the shipped files. FR-17 and FR-11 marked unimplemented; Phase 5 complete, Phase 6 added. Crates are `publish = false` until PR10. |
 
 ---
 

@@ -41,16 +41,8 @@
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::option_if_let_else,
-    clippy::must_use_candidate,
     clippy::many_single_char_names,
-    clippy::collapsible_if,
-    clippy::use_self,
-    clippy::too_many_arguments,
-    clippy::missing_const_for_fn,
-    clippy::cast_lossless,
-    clippy::borrow_as_ptr,
-    clippy::ptr_as_ptr
+    clippy::too_many_arguments
 )]
 
 #[cfg(any(test, feature = "ets"))]
@@ -368,7 +360,7 @@ where
 {
     /// Zero-copy [`MatrixSlice`] over $A$.
     #[must_use]
-    pub fn a_matrix(&self) -> MatrixSlice<'_, T, Const<NX>, Const<NX>> {
+    pub const fn a_matrix(&self) -> MatrixSlice<'_, T, Const<NX>, Const<NX>> {
         // SAFETY: `ArrayStorage<T, NX, NX>` length is exactly `NX * NX`.
         Matrix::from_storage(unsafe {
             StaticStorageView::new_unchecked(self.a_storage.as_slice())
@@ -377,7 +369,7 @@ where
 
     /// Zero-copy [`MatrixSlice`] over $B$.
     #[must_use]
-    pub fn b_matrix(&self) -> MatrixSlice<'_, T, Const<NX>, Const<NU>> {
+    pub const fn b_matrix(&self) -> MatrixSlice<'_, T, Const<NX>, Const<NU>> {
         Matrix::from_storage(unsafe {
             StaticStorageView::new_unchecked(self.b_storage.as_slice())
         })
@@ -385,7 +377,7 @@ where
 
     /// Zero-copy [`MatrixSlice`] over $C$.
     #[must_use]
-    pub fn c_matrix(&self) -> MatrixSlice<'_, T, Const<NY>, Const<NX>> {
+    pub const fn c_matrix(&self) -> MatrixSlice<'_, T, Const<NY>, Const<NX>> {
         Matrix::from_storage(unsafe {
             StaticStorageView::new_unchecked(self.c_storage.as_slice())
         })
@@ -393,7 +385,7 @@ where
 
     /// Zero-copy [`MatrixSlice`] over $D$.
     #[must_use]
-    pub fn d_matrix(&self) -> MatrixSlice<'_, T, Const<NY>, Const<NU>> {
+    pub const fn d_matrix(&self) -> MatrixSlice<'_, T, Const<NY>, Const<NU>> {
         Matrix::from_storage(unsafe {
             StaticStorageView::new_unchecked(self.d_storage.as_slice())
         })
@@ -401,7 +393,7 @@ where
 
     /// Owned copy of $A$ (storage is `Copy` when `T` is).
     #[must_use]
-    pub fn a(&self) -> Owned<T, NX, NX>
+    pub const fn a(&self) -> Owned<T, NX, NX>
     where
         T: Copy,
     {
@@ -410,7 +402,7 @@ where
 
     /// Owned copy of $B$.
     #[must_use]
-    pub fn b(&self) -> Owned<T, NX, NU>
+    pub const fn b(&self) -> Owned<T, NX, NU>
     where
         T: Copy,
     {
@@ -419,7 +411,7 @@ where
 
     /// Owned copy of $C$.
     #[must_use]
-    pub fn c(&self) -> Owned<T, NY, NX>
+    pub const fn c(&self) -> Owned<T, NY, NX>
     where
         T: Copy,
     {
@@ -428,7 +420,7 @@ where
 
     /// Owned copy of $D$.
     #[must_use]
-    pub fn d(&self) -> Owned<T, NY, NU>
+    pub const fn d(&self) -> Owned<T, NY, NU>
     where
         T: Copy,
     {
@@ -899,10 +891,10 @@ where
             }
         }
 
-        match self.sample_time {
-            None => ArrayTransferFunction::continuous(num, den),
-            Some(dt) => ArrayTransferFunction::discrete(num, den, dt),
-        }
+        self.sample_time.map_or_else(
+            || ArrayTransferFunction::continuous(num, den),
+            |dt| ArrayTransferFunction::discrete(num, den, dt),
+        )
     }
 }
 

@@ -21,6 +21,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 thiserror = "2.0"
+control-rs-ets = { path = "../control-rs-ets", version = "0.1.0" }
+control-rs-ets-host = { path = "../control-rs-ets-host", version = "0.1.0" }
 
 [[bin]]
 name = "allow-audit"
@@ -29,6 +31,10 @@ path = "src/bin/allow-audit.rs"
 [[bin]]
 name = "control-rs-ci"
 path = "src/bin/control-rs-ci.rs"
+
+[[bin]]
+name = "ets"
+path = "src/bin/ets.rs"
 
 [[bin]]
 name = "gate"

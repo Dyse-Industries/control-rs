@@ -44,7 +44,7 @@ pub fn render_usage(binary_name: &str) -> String {
            {f}-u{f:#}, {f}--up-to{f:#} {a}<gate>{a:#}     Run gates up to and including the specified gate\n  \
            {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: .cargo/gate.toml)\n  \
            {f}-X{f:#}, {f}--clean{f:#}            Clean previous CI artifacts and reports\n  \
-           {f}-a{f:#}, {f}--all{f:#}              Run all registered quality gates\n  \
+           {f}-a{f:#}, {f}--all{f:#}              Run every enabled gate, including default = false gates\n  \
            {f}-v{f:#}, {f}--verbose{f:#}          Echo each gate's output, prefixed with its group and name\n  \
            {f}-l{f:#}, {f}--list{f:#}             List all registered quality gates\n  \
            {f}-h{f:#}, {f}--help{f:#}             Print help information\n\n\
@@ -262,6 +262,7 @@ pub fn run_cli(binary_name: &str) {
         skip_gates: (!options.skip_gates.is_empty())
             .then_some(options.skip_gates.as_slice()),
         up_to_gate: options.up_to_gate.as_deref(),
+        all: options.run_all,
         clean: options.clean,
         verbose: options.verbose,
     };

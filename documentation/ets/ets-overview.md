@@ -43,8 +43,12 @@ domains, each specified by an authoritative design document:
 
 ### 3. Technical Overview
 
-The published crate `control-rs` acts as an umbrella crate, re-exporting the
-necessary tooling components so users only need a single dependency.
+`control-rs` does not re-export the tooling crates. Its `ets` feature enables
+`control-rs-ets` and `control-rs-macros` as optional dependencies so the
+library's own suites compile for on-target execution. Every host tooling
+crate (`control-rs-ets-host`, `control-rs-tui`, `control-rs-ci`,
+`control-rs-compare`, `control-rs-verification`) is `publish = false`;
+publication is roadmap PR10.
 
 **Workspace crates:**
 

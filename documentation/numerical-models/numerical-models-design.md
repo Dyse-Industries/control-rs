@@ -1,6 +1,6 @@
 # Numerical Models Integration & Examples (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_22,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -20,9 +20,11 @@ Primary usage scenarios:
    compute the same cases and write one container per library:
    `<model>_oracle.py` (NumPy/SciPy, the true oracle) and
    `<model>_<library>_oracle.py` (JAX, python-flint, ONNX Runtime, TFLite).
-3. **Comparison**: `cargo compare` runs every variant declared in
-   `control-rs-verification/compare.toml` and compares each container against
-   the SciPy oracle under the dataset tolerances.
+3. **Comparison**: `cargo compare` loads the workspace configuration
+   `.cargo/compare.toml`, which names `control-rs-verification` as its suite
+   directory; that directory's `compare.toml` declares every variant. Each
+   container is compared against the SciPy oracle under the dataset
+   tolerances.
 
 ---
 
@@ -184,3 +186,4 @@ Acceptance items specified in the model designs with no signal in the suite:
 | 1.17     | August 29, 2026     | @MitchellDScott     | Migrated to self-contained model validators (`src/<model>_validation.rs` & `python3/<model>_validation.py`), added central in-process `src/main.rs` orchestrator, integrated strict `cross_validation()` checking, and added tight nanosecond operation timers. |
 | **1.18** | **August 31, 2026** | **@MitchellDScott** | **Added alternative-library oracles (JAX x64, python-flint 256-bit arb ball arithmetic, and harold LTI toolbox) across cross-validation suites, reconciled covariance heatmap vs direct inversion tolerances, and updated validation paths.**                      |
 | 1.19     | September 22, 2026  | @MitchellDScott     | Restated for the `control-rs-verification` / `cargo compare` architecture: per-model HDF5 emitters writing to `target/verification/`, SciPy true oracle, alternative-library oracles (JAX, python-flint, ONNX Runtime, TFLite) as suite variants with per-peer bounds and `missing_ok.<library>` omissions, restored CCF realization, Q7 raw and `TableActivation` sweep signals; timing moved to criterion benches. |
+| 1.20      | September 24, 2026 | @MitchellDScott | Comparison loads `.cargo/compare.toml`, whose suite directory is `control-rs-verification`. |

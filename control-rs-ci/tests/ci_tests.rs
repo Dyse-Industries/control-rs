@@ -54,6 +54,8 @@ fn test_config_parsing_defaults() {
             description: None,
             env: HashMap::new(),
             mode: None,
+            default: true,
+            cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),
         })
@@ -66,6 +68,8 @@ fn test_config_parsing_defaults() {
             description: None,
             env: HashMap::new(),
             mode: None,
+            default: true,
+            cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),
         })
@@ -492,6 +496,8 @@ fn test_gate_definition_parsing() {
             description: Some("Compiles all targets".to_string()),
             env: HashMap::new(),
             mode: None,
+            default: true,
+            cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),
         })
@@ -506,6 +512,8 @@ fn test_gate_definition_parsing() {
             description: None,
             env: HashMap::new(),
             mode: None,
+            default: true,
+            cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),
         })

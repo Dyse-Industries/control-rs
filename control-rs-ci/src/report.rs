@@ -81,7 +81,8 @@ impl ReportAggregator {
     }
 
     /// Evaluates fail-closed gate policy across ingested outcomes.
-    /// If `subset` is provided, only gates in the subset are required to be present.
+    /// Without `subset`, every `fail` gate must have a non-failing result.
+    /// With `subset`, only the `fail` gates in the subset are required.
     /// Returns true if all required `fail`-policy gates passed.
     #[must_use]
     pub fn is_passing(
@@ -105,9 +106,11 @@ impl ReportAggregator {
                 })
             },
             |active_subset| {
+                // A selected fail-closed gate without a result fails (FR-15).
                 active_subset.iter().all(|gate_name| {
                     config.policy_for(gate_name) != GatePolicy::Fail
-                        || !failed(gate_name)
+                        || outcomes.contains_key(gate_name)
+                            && !failed(gate_name)
                 })
             },
         )

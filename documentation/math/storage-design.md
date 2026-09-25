@@ -1,6 +1,6 @@
 # Storage Backends & Data Layouts (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -797,7 +797,7 @@ C-compatible enumerations (Netlib, 2026):
   `DimensionMismatch`,
   `NonMonicPolynomial`).
 - **`StorageError`**: Governs indexing, mutation, and structural invariant
-  violations (`error-design.md` FR-3, C-5). Shape conditions already pinned by
+  violations (`error-design.md` FR-3; C-5). Shape conditions already pinned by
   `Dim` parameters are compile errors. Erased-length wrapping
   (`StorageView::new_with_strides` and `StaticStorageView::new`) and DSP
   convolution against a runtime slice stay on
@@ -951,7 +951,7 @@ accelerator backends once `num-traits-design.md` admits half-width scalars.
   `ContiguousStorage`; a helper bounded on that marker must not accept the
   reverse view. `StorageView::new_with_strides` on a slice whose length cannot
   cover the strided `R × C` window returns
-  `ConversionError::DimensionMismatch` (`error-design.md` C-5). Unit-diag and
+  `ConversionError::DimensionMismatch` (C-5; `error-design.md` FR-3). Unit-diag and
   Hermitian `set(i, i, …)` with \(i \ge N\) return `OutOfBounds`, not
   `ImmutableUnitDiagonal` / `InvalidHermitianDiagonal`.
 - **Level 3 (Conversions & Infallibility)**: Round-trip conversions between
@@ -1036,14 +1036,12 @@ $MAX\_NNZ \cdot (\mathrm{size\_of}(T) + \mathrm{size\_of}(\mathrm{usize})) + \ma
   fixed at compile time while live `nnz <= MAX_NNZ` is data
   (rust-embedded, 2026a). `CapacityExceeded` is the runtime arm.
 - **Error-enum alignment**: `StorageError` matches
-  `error-design.md` FR-3 and C-5. `DimensionMismatch` is not an arm of this
+  `error-design.md` FR-3 and this document's C-5. `DimensionMismatch` is not an arm of this
   enum.
-- **Numerical-model consumers (assumption)**: `matrix-design.md`,
+- **Numerical-model consumers (resolved)**: `matrix-design.md`,
   `polynomial-design.md`, `state-space-design.md`,
-  `transfer-function-design.md`, and `tensor-design.md` still name
-  `MatrixStorage` / `BlasStorage` rather than `DenseStorage<T>`. Those
-  documents stay Draft; this spec does not silently rename those types
-  onto `DenseStorage<T>`.
+  `transfer-function-design.md`, and `tensor-design.md` are Approved and name
+  `DenseStorage<T>` / `Storage`; none uses `MatrixStorage` or `BlasStorage`.
 - **`StaticStorageView<T, R, C, O>` stride contract**:
   `StaticStorageView<T, R, C, O>` /
   `StaticStorageViewMut<T, R, C, O>` strides
@@ -1307,6 +1305,7 @@ Accessed: Aug. 18, 2026.
 | 1.0      | August 21, 2026 | @MitchellDScott | Extracted storage backend designs into dedicated modular specification.                                                                               |
 | 1.1      | August 21, 2026 | @MitchellDScott | Backend expansions: added strided views, complex/Hermitian storage (`HermitianPackedStorage`), and sparse backends (COO/CSR/CSC).                    |
 | 1.2      | August 22, 2026 | @MitchellDScott | Dimension parameterization: bound storage traits to type-level dimensions (`R: Dim, C: Dim`).                                                         |
+| 1.3      | September 24, 2026 | @MitchellDScott | §8 consumer note resolved (model docs use `DenseStorage` / `Storage`); C-5 citations attributed to this document. |
 | 2.0      | August 24, 2026 | @MitchellDScott | Decoupled storage subsystems: established distinct `DenseStorage`, `PackedStorage`, and `SparseStorage` architectures without cross-subsystem inheritance. |
 | 2.1      | August 24, 2026 | @MitchellDScott | Strided view refinement: separated runtime strided views (`StorageView` / `StorageViewMut`) from compile-time marker views (`StaticStorageView`).    |
 | 2.2      | August 25, 2026 | @MitchellDScott | Inherent structured projections: replaced `FromDenseStorage` with inherent projection constructors (`from_dense_diagonal`, `from_dense_triangle`).    |

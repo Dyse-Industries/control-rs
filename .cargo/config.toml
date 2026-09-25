@@ -7,6 +7,7 @@ report = ["run", "--package", "control-rs-ci", "--bin", "report", "--"]
 compare = ["run", "--package", "control-rs-compare", "--bin", "compare", "--"]
 valgrind = ["run", "--package", "control-rs-ci", "--bin", "valgrind", "--"]
 regression = ["run", "--package", "control-rs-ci", "--bin", "regression", "--"]
+ets = ["run", "--package", "control-rs-ci", "--bin", "ets", "--"]
 
 # Interactive TUI
 tui = ["run", "--package", "control-rs-tui", "--"]

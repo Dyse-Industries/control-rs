@@ -1,6 +1,6 @@
 # Matrix Type & Structural Specializations (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -79,9 +79,13 @@ Primary usage scenarios:
 
 - **C-1 — Stable Rust Toolchain**: Code must compile on `stable` Rust without
   requiring incomplete experimental features (`generic_const_exprs`).
-- **C-2 — Stack Footprint Limit**: Matrix dimension capacities are statically
-  bounded ($R, C \le 128$) to ensure stack allocations do not exceed embedded
-  microcontroller memory limits.
+- **C-2 — Stack Footprint Limit**: Each of `R` and `C` is a `Dim`, so it lies
+  in the `num-types-design.md` C-1 set ($0..=1024$ plus $2048$, $4096$,
+  $8192$, $16384$). The element count $R \times C$ carries no type-level
+  bound: `ArrayStorage` is a nested array and no API names the flattened
+  product as a `Dim`. An owned matrix occupies $R \times C \times
+  \text{size\_of}(T)$ bytes of stack, which the caller budgets against target
+  RAM (§7).
 - **C-3 — `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
   standard library dependencies.
 - **C-4 — In-Place Factorization Mutability**: In-place matrix decompositions
@@ -249,7 +253,7 @@ Each has a `_mut` counterpart (`as_mut_slice`, `&mut S`) on the
 corresponding `ContiguousStorageMut`/`DenseStorageMut` bound.
 
 Subprogram traits are parameterized over the storage types themselves
-(`subprograms-design.md` FR-9): a call site passes `&self.storage`, and the
+(`subprograms-design.md` §4.1): a call site passes `&self.storage`, and the
 kernel reads shape from `S::R`/`S::C` and addresses through `as_ptr()` plus
 the leaf's strides. Kernels do not take flattened or nested array operands,
 so call sites carry no `Const<R>: DimMul<Const<C>, Output = …>` bound and no
@@ -386,7 +390,7 @@ requires `Div` (`num-traits-design.md` FR-2).
 
 Kernels take typed storage operands, so layout parameters are properties
 the kernel reads off the operand's own type rather than const generics at
-the call site (FR-5; `subprograms-design.md` FR-9). `Matrix` supplies:
+the call site (FR-5; `subprograms-design.md` §4.1). `Matrix` supplies:
 
 | Kernel input            | Source                                                                |
 |:------------------------|:----------------------------------------------------------------------|
@@ -403,10 +407,14 @@ with the strides swapped, which the Level 1 kernels consume directly
 (`storage-design.md` FR-2).
 
 *Backend Selection*: `Matrix<T, R, C, S>` dispatches through associated
-functions on a backend marker type — `DefaultBlas` for the pure-Rust
-reference path, `CmsisDspBlas` / `NmsisDspBlas` under their target features
-(`subprograms-design.md` §4.8). The backend is fixed by the target triple at
-compile time, so it is not a 5th generic parameter on the `Matrix` struct.
+functions on a backend marker type. `src/` ships one backend, `DefaultBlas`,
+the pure-Rust reference path, and no backend is selected by target feature
+or `cfg` (`subprograms-design.md` C-4, §4.5). The `_with::<B>` operations
+(`mul_into_with`, `contract_into_with`) take the backend as a type parameter
+at the call site, so an accelerated backend (the CMSIS-DSP, NMSIS-DSP, NEON
+and Accelerate examples under `examples/subprograms/`) plugs in without a
+dependency of this crate on a board support package or vendor library. The
+backend is not a 5th generic parameter on the `Matrix` struct.
 
 #### 4.6. Core Operations
 
@@ -450,7 +458,7 @@ Similar to structural specializations, matrix factorizations are exposed as
 dedicated **Decomposition Objects**.
 
 Every factorization mutates its factors in place, so each decomposition
-object holds an owning strided leaf implementing `DenseStorageMut<T>` (C-3).
+object holds an owning strided leaf implementing `DenseStorageMut<T>` (C-4).
 A packed input is converted to a dense working copy through `ToDenseStorage`
 (`storage-design.md` FR-7) before factorization, except where a packed
 LAPACK routine exists: `Pptrf`/`Pptrs` factor and solve directly in the
@@ -461,7 +469,9 @@ reimplementing them. `into_lu` calls `Getrf`, `solve_mut` calls `Getrs`,
 the Cholesky path calls `Potrf`/`Potrs`, and QR calls
 `Geqrf` followed by `Ormqr` (real) or `Unmqr` (complex). Each returns
 `LinAlgResult<()>`, whose arms are `NotPositiveDefinite`, `SingularMatrix`,
-`WorkspaceTooSmall` and `MaxIterationsReached` (`error-design.md` §3).
+`WorkspaceTooSmall` and `MaxIterationsReached` (`error-design.md` §3). Cholesky
+returns `Potrf`'s `NotPositiveDefinite` for a non-positive pivot; $LDL^T$
+returns `SingularMatrix` for a zero pivot.
 
 The struct definitions below match shipped code (`src/matrix/decomposition.rs`),
 using concrete `const D: usize` parameters with `Const<D>: Dim` bounds so that
@@ -571,56 +581,29 @@ where
 
 #### 4.8. Interoperability & Conversions
 
-##### 4.8.1. Conversion to Polynomial
+##### 4.8.1. Characteristic Polynomial
 
-A square matrix `Matrix<T, D, D, S>` converts to its characteristic polynomial
-`Polynomial<T, <D as DimAdd<Const<1>>>::Output>`.
+No `Matrix` → `Polynomial` conversion ships. The characteristic polynomial
+$\det(sI - A)$ is computed only inside `StateSpace::to_transfer_function`
+(`state-space-design.md` §4.9) by the Faddeev–LeVerrier recurrence
+(Faddeev & Faddeeva, 1963), bounded by `T: Float` because the recurrence
+divides by the step index. It writes into caller-sized coefficient arrays
+and returns no error. The reverse direction ships as
+`TryFrom<&ArrayPolynomial<T, N>> for Owned<T, DEG, DEG>`, the companion
+matrix (`polynomial-design.md` §4.7.1), which returns
+`ConversionError::DimensionMismatch` when `DEG + 1 != N` or `DEG == 0` and
+`ConversionError::NonMonicPolynomial` for a non-monic input.
 
-- **Type Signature**:
-  ```rust
-  impl<T, D: Dim, S> TryFrom<Matrix<T, D, D, S>> for Polynomial<T, <D as DimAdd<Const<1>>>::Output>
-  where
-      S: DenseStorage<T, R = D, C = D>,
-      D: DimAdd<Const<1>>,
-      <D as DimAdd<Const<1>>>::Output: Dim,
-      T: Scalar + SaturatingDiv,
-  {
-      type Error = ConversionError;
-      // ...
-  }
-  ```
-- **Behavior**: Coefficients are computed using the Faddeev-LeVerrier
-  algorithm (Faddeev & Faddeeva, 1963). The recurrence divides by the step
-  index, hence the `Div` bound; `T: Scalar` alone excludes division
-  (`num-traits-design.md` §4.1, Alternative 3), and integer scalars route
-  through `TryDiv` instead of this conversion.
-- **Failure Condition**: Returns `ConversionError::DimensionMismatch` when
-  the coefficient capacity erased from the destination type cannot hold
-  $D + 1$ terms. `ConversionError` is defined once in `src/math/mod.rs`
-  (`error-design.md` FR-1).
+##### 4.8.2. Tensor Interoperability
 
-##### 4.8.2. Conversion to Tensor
-
-Converts a 2D matrix to a rank-2 `Tensor<T, Layout, B>`.
-
-- **Type Signature**:
-  ```rust
-  impl<T, R: Dim, C: Dim, S, Layout: TensorLayout> From<Matrix<T, R, C, S>> for Tensor<T, Layout, S>
-  where
-      S: ContiguousStorage<T, R = R, C = C>,
-      Layout: TensorLayout<Size = <R as DimMul<C>>::Output>,
-  {
-      // Preserves backing buffer zero-copy when compile-time size and rank 2 match
-  }
-  ```
-- **Behavior**: Maps the leaf's padding-free slice directly into the flat
-  buffer representation of the `Tensor`. The `ContiguousStorage` bound is
-  what makes the mapping zero-copy: a strided `StorageView` has no such
-  slice and converts by element copy instead.
-- **Infallible Compile-Time Bound**: Dimensions and rank are verified statically
-  at compile time via `Layout: TensorLayout<Size = <R as DimMul<C>>::Output>`.
-  This conversion cannot produce `ConversionError::LayoutMismatch`
-  (`error-design.md` §3).
+No `From<Matrix>` for `Tensor` conversion ships. A rank-2 `ArrayTensor<T, R, C>`
+is backed by the same `ArrayStorage<T, R, C>` leaf as `Owned<T, R, C>` and
+exposes it as a zero-copy matrix view through `slice_matrix()`, which is how
+`contract_into` reaches `Gemm` (`tensor-design.md` §4.10). A general
+`TensorLayout` exposes its size as the associated constant `SIZE: usize`,
+not as a `Dim` type, so a `From` conversion bounded by the element count
+cannot be stated without `generic_const_exprs` (C-1) and is not scheduled
+(§8).
 
 #### 4.9. Error Handling & Element Lookup
 
@@ -771,9 +754,9 @@ Both forms are first-class: a full-square wrapper trades $N^2$ storage for
 the dense kernels (`Trmv`, `Trsv`, `Symv`, `Hemv`); the packed aliases
 (§4.1.1) trade a non-linear index map for $N(N+1)/2$ storage and reach the
 packed kernels (`Tpmv`, `Tpsv`, `Spmv`, `Hpmv`; `subprograms-design.md`
-FR-3). Hardware acceleration is not the deciding factor between them, since
-`subprograms-design.md` §4.8 delegates the packed routines to `DefaultBlas`
-on every backend. Choose packed when the $\approx 2\times$ space saving
+FR-3). Hardware acceleration is not the deciding factor between them: `src/`
+implements the packed routines only on `DefaultBlas`
+(`subprograms-design.md` §4.5), and no example backend overrides them. Choose packed when the $\approx 2\times$ space saving
 matters and dense when the operand feeds a Level 3 routine.
 
 ##### 4.10.1. Forward and Backward Substitution
@@ -1025,18 +1008,21 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
   §8 open questions to dedicated sparse linear dynamics scoping).
 - Trans-architecture floating-point bitwise equivalence is not claimed across
   differing hardware FPU implementations (FMA vs non-FMA rounding differences).
-- $1024\times 1024$ GEMM/LU cache-stress is not in the example crate; host
-  generators use Hilbert $n=8$ and GEMM $n=64$
-  ([`numerical-models-design.md`](numerical-models-design.md) §6.6). MCU C-2
-  ($R, C \le 128$) is unchanged.
+- $1024\times 1024$ GEMM/LU cache-stress is not in the verification suite,
+  which solves a $10 \times 10$ Hilbert system
+  ([`numerical-models-design.md`](numerical-models-design.md) §5.1); GEMM
+  scaling is timed by the criterion benches (`benches/scaling.rs`). C-2
+  places no element cap; the limit is target stack.
 
 ---
 
 ### 7. Performance & Resource Considerations
 
-- **Stack Overhead**: Inline stack-allocated matrix capacities are strictly
-  capped at $128 \times 128$ elements ($R::USIZE \times C::USIZE \le 16{,}384$),
-  matching the `Const<N>: Dim` range of `num-types-design.md` C-1 and C-3.
+- **Stack Overhead**: Each axis is bounded by `num-types-design.md` C-1; the
+  element count is not type-bounded (C-2). Reference footprints: $8 \times 8$
+  `f64` is 512 B, $32 \times 32$ `f32` is 4 KiB, $32 \times 32$ `f64` is
+  8 KiB and $128 \times 128$ `f64` is 128 KiB, which exceeds the RAM of most
+  Cortex-M parts. The §5.5 algorithm choices target $N \le 32$.
 - **Static Memory Footprint**: Dense array storage
   requires $R \times C \times \text{size\_of}(T)$ bytes on stack;
   symmetric/triangular packed storage
@@ -1064,7 +1050,7 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
   structures (analogous to `Symmetric`) are necessary beyond type aliases is an
   open API design question.
 - **Sparse Dynamics Matrix Scoping**: Sparse matrix storage (`storage-design.md`
-  FR-11..FR-15) and SpBLAS routines (`subprograms-design.md` FR-5) remain
+  FR-4..FR-6) and SpBLAS routines (`subprograms-design.md` FR-5) remain
   unconsumed by the core `Matrix` wrapper. Scoping whether sparse linear
   dynamics belong in `Matrix` or directly in `state-space-design.md` is an open
   question.
@@ -1080,7 +1066,7 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | **Step 3: Solvers**          | Wrap `Getrf`/`Getrs` for LU, add $LDL^T$, determinants, and in-place inversion over `DenseStorageMut`.                                                                                                                                  | 2.0 Days         |
 | **Step 4: Specializations**  | Create `UpperTriangular`, `LowerTriangular`, `Symmetric` wrappers and their packed counterparts.                                                                                                                                        | 1.5 Days         |
 | **Step 5: Factorizations**   | Wrap `Potrf`/`Potrs` (Cholesky, real and complex) and `Geqrf`/`Ormqr`/`Unmqr` (QR) with typed workspaces.                                                                                                                               | 2.0 Days         |
-| **Step 6: Verification**     | Set up `proptest` suites, dual-subsystem and strided-view coverage (§6.1), complex-scalar cases, ARM DWT cycle profiling, and Cachegrind setups per [`design-template.md`](../design-template.md) §6.                                                          | 2.5 Days         |
+| **Step 6: Verification**     | Set up `proptest` suites, dual-subsystem and strided-view coverage (§6.1), complex-scalar cases, ARM DWT cycle profiling, and Cachegrind setups (§6).                                                          | 2.5 Days         |
 | **Step 7: Interoperability** | Implement conversions between `Matrix`, `Polynomial` (Faddeev-LeVerrier), and `Tensor`.                                                                                                                                                 | 2.0 Days         |
 
 ---
@@ -1155,4 +1141,5 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 | 1.12     | August 31, 2026 | @MitchellDScott | Added JAX x64 multi-source cross-validation oracle, updated validation crate paths, and reconciled EKF covariance heatmap tolerances.                 |
 | 1.13      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |
 | 1.14      | September 23, 2026 | @MitchellDScott | §4.5 operators delegate to named saturating methods (`num-traits-design.md` FR-6); `Sub`/`Neg` element-wise; field bounds use `SaturatingDiv`. |
+| 1.15      | September 24, 2026 | @MitchellDScott | Backends: only `DefaultBlas` in `src/`; accelerated backends are `examples/subprograms` markers passed to `_with::<B>` (A2). §4.8 records the shipped conversion surface (no `Matrix → Polynomial` or `Matrix → Tensor`). C-2 and §7 recomputed per axis with no element cap. Cholesky error mapping; C-4 reference; storage FR-4..FR-6; §6.7 coverage claims. |
 

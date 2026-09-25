@@ -53,7 +53,10 @@ jobs:
     name: Lint & Prose
     runs-on: ubuntu-latest
     steps:
+      # Full history so allow-audit can read the baseline at origin/main.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -92,11 +95,8 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
 
-      - name: Install Targets
-        run: rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
-
       - name: Install apt packages
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
       - name: Run Build & Test Group
         run: cargo ci --verbose --group build_test
@@ -109,13 +109,31 @@ jobs:
           path: target/ci-artifacts/
           retention-days: 7
 
-      - name: Upload ETS Results Artifact
-        if: always() && matrix.rust == 'stable'
+  # ============================================================================
+  # Group: target (target-build, ets)
+  # ============================================================================
+  target:
+    name: Target Build & QEMU ETS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf, thumbv7em-none-eabi, riscv32imac-unknown-none-elf, riscv64gc-unknown-none-elf
+
+      - name: Install QEMU
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev qemu-system-arm qemu-system-misc
+
+      - name: Run Target Group
+        run: cargo ci --verbose --group target
+
+      - name: Upload Target Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ets-results-${{ matrix.rust }}
-          path: ets-results.json
-          if-no-files-found: ignore
+          name: ci-artifacts-target
+          path: target/ci-artifacts/
           retention-days: 30
 
   # ============================================================================
@@ -347,7 +365,7 @@ jobs:
   report:
     name: Aggregate Report
     runs-on: ubuntu-latest
-    needs: [ lint, build_test, audit, verify, coverage, regression, mutants ]
+    needs: [ lint, build_test, target, audit, verify, coverage, regression, mutants ]
     if: always()
     permissions:
       pull-requests: write
@@ -403,10 +421,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Log in to crates.io
-        run: cargo login "${{ secrets.CRATES_IO_TOKEN }}"
       - name: Publish workspace crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        # Dependency order. A version already on crates.io is skipped (a
+        # re-run after a partial publish); any other publish error fails the job.
         run: |
-          cargo publish --package control-rs-macros || true
-          cargo publish --package control-rs-ets || true
-          cargo publish --package control-rs
+          set -euo pipefail
+          for pkg in control-rs-macros control-rs-ets control-rs; do
+            version=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r --arg p "$pkg" '.packages[] | select(.name == $p) | .version')
+            status=$(curl -s -o /dev/null -w '%{http_code}' \
+              -A "control-rs-ci (github.com/Dyse-Industries/control-rs)" \
+              "https://crates.io/api/v1/crates/$pkg/$version")
+            if [ "$status" = "200" ]; then
+              echo "::notice::$pkg $version is already published; skipping."
+              continue
+            fi
+            cargo publish --package "$pkg"
+          done

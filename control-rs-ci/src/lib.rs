@@ -25,6 +25,8 @@ pub mod config;
 
 pub mod error;
 
+pub mod ets;
+
 pub mod gate;
 
 pub mod report;
@@ -74,6 +76,8 @@ pub struct PipelineOptions<'a> {
     pub skip_gates: GateFilter<'a>,
     /// Stop after this gate.
     pub up_to_gate: Option<&'a str>,
+    /// Without `only_gates`, also select `default = false` gates.
+    pub all: bool,
     /// Clean artifacts before running.
     pub clean: bool,
     /// Echo gate output.
@@ -251,11 +255,20 @@ pub fn run_pipeline(
         default_timeout: Duration::from_secs(config.runner.timeout_secs),
     };
 
-    let active_gates =
+    let selected =
         select_gates(gate::build_all_gates(&config)?, &config, options);
     let executed_gate_names: Vec<String> =
-        active_gates.iter().map(|g| g.name().to_string()).collect();
+        selected.iter().map(|g| g.name().to_string()).collect();
     remove_stale_results(&out_dir, &executed_gate_names);
+
+    // A disabled gate selected by name records `Skipped` and does not run.
+    let (disabled, active_gates): (GateList, GateList) = selected
+        .into_iter()
+        .partition(|g| g.mode() == GatePolicy::Skip);
+    for gate in &disabled {
+        let outcome = gate.record_disabled(&ctx)?;
+        report_outcome(&outcome, "", gate.name());
+    }
 
     let (groups, exclusive) = partition_gates(active_gates, &config);
     let ui_lock = Mutex::new(());
@@ -299,8 +312,13 @@ pub fn run_pipeline(
     Ok(report.pass)
 }
 
-/// Applies the `only`/`skip`/`up_to` filters and `skip` policies to the
+/// Applies the `only`/`skip`/`up_to` filters and default selection to the
 /// configured gates, preserving pipeline order.
+///
+/// Without `only_gates`, a gate is selected when its policy is not `skip`
+/// and, unless `all` is set, its definition does not set `default = false`.
+/// Gates named in `only_gates` are selected whatever their policy; the caller
+/// records disabled ones as `Skipped` instead of running them.
 fn select_gates(
     all_gates: GateList,
     config: &GateConfig,
@@ -310,7 +328,10 @@ fn select_gates(
     for gate in all_gates {
         let name = gate.name();
         let selected = options.only_gates.map_or_else(
-            || config.policy_for(name) != GatePolicy::Skip,
+            || {
+                config.policy_for(name) != GatePolicy::Skip
+                    && (options.all || gate.default)
+            },
             |only| only.iter().any(|g| g == name),
         );
         let skipped = options

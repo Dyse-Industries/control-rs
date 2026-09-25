@@ -33,9 +33,7 @@
     clippy::missing_panics_doc,
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::option_if_let_else,
-    clippy::must_use_candidate
+    clippy::cast_sign_loss
 )]
 
 use super::{LowerTriangular, Owned, Symmetric, UpperTriangular};
@@ -754,10 +752,10 @@ where
         )?;
         for i in 0..R {
             for j in 0..C {
-                if i > j {
-                    if let Some(elem) = self.get_mut(i, j) {
-                        *elem = T::ZERO;
-                    }
+                if i > j
+                    && let Some(elem) = self.get_mut(i, j)
+                {
+                    *elem = T::ZERO;
                 }
             }
         }

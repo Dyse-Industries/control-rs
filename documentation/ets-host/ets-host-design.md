@@ -1,6 +1,6 @@
 # Host ETS Library (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_9,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -13,12 +13,12 @@ Test Server. It owns the connection to a target, the wire framing, and the
 command/telemetry session that drives test discovery and execution. It renders
 nothing and runs no repository quality gates.
 
-The host orchestration layer already exists: `ETSBridge` and the headless
-run loop drive QEMU targets on `ubuntu-latest` today. It
-is currently compiled inside `control-rs-xtask` alongside the terminal
-dashboard and the CI runner, so no consumer can take the transport without
-also taking `ratatui`, `crossterm`, and the repository's lint tasks. This
-document specifies that layer as an independent library crate.
+The host orchestration layer began inside the removed `control-rs-xtask`,
+compiled alongside the terminal dashboard and the CI runner, so no consumer
+could take the transport without also taking `ratatui`, `crossterm`, and the
+repository's lint tasks. This document specifies that layer as an independent
+library crate, consumed by `control-rs-tui` and by the `ets` gate binary of
+`control-rs-ci`.
 
 **Scenario 1 — Headless target execution.** A CI runner builds a target ELF,
 opens a session, discovers suites, runs them to completion, and receives a
@@ -196,17 +196,20 @@ while leaving the CRC valid, so skew presents as a correctly framed message
 decoded as the wrong variant rather than as a transport error. The encoding
 rule and the absence of any cross-revision compatibility guarantee are
 established in `../ets/host-comm-design.md` §4.2.1, which owns the wire
-contract. FR-8 is **outstanding**: `control-rs-ets::comms` does not export
-`PROTOCOL_VERSION`, `Telemetry` has no `TargetInfo` variant, and
-`HostError::ProtocolMismatch` is reserved but never constructed. The host
-therefore cannot refuse a foreign revision at session open. That handshake is
-host-comm Step 4 (a protocol bump), not a host-only repair. Until it lands,
-decode of a CRC-valid frame is not evidence that both ends agree on variant
-meaning.
+contract. FR-8 is implemented: the target sends `Telemetry::TargetInfo` as the
+first discovery frame, carrying `control-rs-ets::comms::PROTOCOL_VERSION`
+(currently 1; 0 is reserved for pre-handshake firmware), board ID, core clock
+and FPU flags. `SessionState` records it as `target_info`. A foreign
+`protocol_version`, or a `DiscoveryComplete` with no preceding `TargetInfo`,
+sets `protocol_mismatch` (target version, or 0), ends the drive loop and
+ignores every later frame. The runner then terminates the bridge and returns
+`HostError::ProtocolMismatch { host, target }`. Decode of a CRC-valid frame is
+evidence of variant agreement only after this check passes.
 
 #### 4.4. Session State Machine
 
-1. **Discovery (Per-Suite Ready Bitmask)** — send `ListSuites` and populate `SuiteItem`
+1. **Discovery (Per-Suite Ready Bitmask)** — send `ListSuites`; the first
+   reply is `TargetInfo`, checked as in §4.3. Populate `SuiteItem`
    descriptors directly. Incoming frames update integer readiness bitmasks
    (`SUITE_INFO_READY`, `TESTS_READY`, `SETTINGS_READY`). On `DiscoveryComplete`,
    readiness is validated in $O(1)$ by asserting `suite.ready_mask == SUITE_READY_MASK`.
@@ -241,7 +244,7 @@ points the existing implementation already surfaces as strings:
 | `SerialClone { source }` | The reader half of an opened port cannot be cloned |
 | `Spawn { source }` | The subprocess transport cannot be spawned, or its pipes cannot be taken |
 | `Transport { source }` | A read or write on an established link fails |
-| `ProtocolMismatch { host, target }` | Reserved for FR-8; not raised until `TargetInfo` exists on the wire |
+| `ProtocolMismatch { host, target }` | `TargetInfo.protocol_version` differs from the host's `PROTOCOL_VERSION`, or discovery completes without `TargetInfo` (`target = 0`) |
 | `Discovery` | Reserved; a session that never completes discovery currently returns `Ok` with `abort: Some(Completion::TimedOut)` |
 
 Serial opening retries 5 times at 1 s intervals before returning
@@ -272,8 +275,10 @@ TestOutcome {
 }
 ```
 
-`TestOutcome` is field-identical to the `HeadlessTestResult` the task runner
-serializes today, and `ets-results.json` remains a JSON array of these objects.
+`TestOutcome` is field-identical to the `HeadlessTestResult` the removed task
+runner serialized. `control-rs-ci`'s `ets` binary now writes
+`ets-results.json` as a JSON array with one entry per target, each carrying
+the target name, its verdict and the full `RunRecord` (`ci-design.md` §4.9).
 `RunRecord` explicitly records the collected outcomes, unexecuted pending test
 indices, total resets performed, terminal abort condition, elapsed duration,
 and raw console logs. `EtsRunResult` is retained as a type alias for `RunRecord`.
@@ -366,7 +371,7 @@ aborting, and that the dependency closure stays free of presentation crates.
 | Static analysis | `cargo tree -p control-rs-ets-host -e normal`; `cargo clippy-ci` |
 | Resource usage evaluation | Process and thread accounting after a killed session |
 | On-target execution | The QEMU virtual ETS matrix and one physical serial session |
-| Back-to-back comparison | Outcomes compared against the deprecated `control-rs-xtask` baseline for the same targets |
+| Verdict evaluation | The `ets` CI gate judges every QEMU target's `RunRecord` (`ci-design.md` FR-19) |
 | Coverage measurement | `cargo coverage` |
 
 The golden vectors are the mechanism that makes C-2 testable. They live beside
@@ -381,8 +386,9 @@ is exercised by validation rather than unit tests; reader-thread teardown
 races, which are not deterministically reachable from a test; and the
 `SerialClone` variant, reachable only from an OS-level failure.
 
-1. **QEMU matrix**: Run every virtual ETS target through `run_headless_ets` and
-   compare outcomes against the deprecated `control-rs-xtask` baseline.
+1. **QEMU matrix**: Run every virtual ETS target through
+   `run_headless_ets_with_options` in the `ets` CI gate (`ci-design.md` §4.9);
+   every target must drain with at least one case and none failed or pending.
 2. **Hardware session**: Run a physical serial session end to end, including a
    deliberate target panic and recovery.
 3. **Downstream consumption (Scenario 3)**: Build a crate outside this
@@ -395,7 +401,7 @@ races, which are not deterministically reachable from a test; and the
 | Frame round trip | The encoder's own output re-read by `FrameReader` | Byte equality | Exact |
 | Corrupted frame rejection | A frame with one flipped payload byte | Frames delivered to the session | 0 |
 | Golden vector stability | Checked-in bytes per variant | Byte equality | Exact |
-| Protocol mismatch detection | Reserved until `Telemetry::TargetInfo` exists (host-comm Step 4) | Session behaviour | Outstanding FR-8; `ProtocolMismatch` is not constructed |
+| Protocol mismatch detection | Scripted stream with a foreign `protocol_version`, and one with no `TargetInfo` before `DiscoveryComplete` | Session behaviour | Loop exits; later frames ignored; runner returns `ProtocolMismatch` |
 | Panic recovery retains results | Scripted stream with a panic after *n* cases | Results present after reset | *n*, none lost |
 | Reset budget | Stream that panics on every case | Reset cycles performed | Exactly `max_resets`, with `abort: Some(Completion::ResetBudgetExhausted)` |
 | Timeout bound | Target that never completes | Wall-clock time to return | Within the supplied bound plus 1 s, `abort: Some(Completion::TimedOut)` |
@@ -403,7 +409,7 @@ races, which are not deterministically reachable from a test; and the
 | QEMU shorthand path | Architecture name without `--manifest-path` | Spawn directory and binary | QEMU example crate and its target binary, not workspace root |
 | Send failure | Broken transport on `ListSuites` | `RunRecord.abort` | `Some(Completion::SendFailed)`, results retained |
 | Dependency floor | `cargo tree` output | Terminal-rendering or terminal-event crates present | 0 |
-| Outcome agreement | Deprecated `control-rs-xtask` baseline on the same QEMU targets | Per-case state, suite and test name | Exact match |
+| Outcome completeness | `ets` gate over every declared QEMU target | Cases passed, pending, aborted | $\ge 1$ passed, 0 pending, no abort, per target |
 
 Cycle, duration and stack-peak telemetry are passed through unmodified from the
 target, so this plan states no numeric bound on them; their accuracy is
@@ -437,10 +443,10 @@ established by `../ets/cpu-profiler-design.md`, not here.
 
 ### 8. Risks & Open Questions
 
-* **FR-8 wire handshake**: `PROTOCOL_VERSION` / `Telemetry::TargetInfo` are
-  not on the wire. The `ProtocolMismatch` error variant is reserved. The
-  crate depends on `control-rs-ets` `0.1.0` (Cargo caret). How versions move
-  together at release time is undecided.
+* **Release versioning**: FR-8 rejects wire skew at session open, but the
+  crate depends on `control-rs-ets` `0.1.0` (Cargo caret). How crate versions
+  move together at release time is undecided. `TargetInfo` has not been
+  exercised on a physical target (PR9).
 * **Serial enumeration**: Port paths are supplied by the caller. Automatic
   device discovery, as offered by board-aware harnesses (pytest-embedded,
   2026), is unspecified.
@@ -450,8 +456,8 @@ established by `../ets/cpu-profiler-design.md`, not here.
   consumer. Not decided; it is a `control-rs-ets` change, not one this crate
   can make.
 * **Emulator scope**: The subprocess transport currently assumes QEMU. Renode
-  models peripherals QEMU does not [8], and is referenced by the CI
-  design; whether it becomes a third transport or stays a CI-level concern is
+  models peripherals QEMU does not [8]; the CI design does not use it.
+  Whether it becomes a third transport or stays a CI-level concern is
   unresolved.
 
 ---
@@ -464,7 +470,7 @@ established by `../ets/cpu-profiler-design.md`, not here.
 | **Phase 2: Session extraction**           | Move the discovery and run-queue state machine out of the task runner; cover it with mock-stream tests.       | 4                       |
 | **Phase 3: Headless entrypoint**          | Promote the headless loop to `run_headless_ets` with a caller-supplied timeout and structured result.         | 3                       |
 | **Phase 4: Consumer cutover**             | Point `control-rs-tui` and `control-rs-ci` at this crate; confirm the QEMU matrix reproduces current results. | 3                       |
-| **Phase 5: Shorthand, protocol, and send errors** | Repair: default QEMU shorthand to the example crate and its bins (FR-9); implement `PROTOCOL_VERSION` / `TargetInfo` or demote FR-8; surface send failures; always write ETS JSON; share command framing with the target; same default serial port for interactive and CI aliases; restore QEMU wall-clock headroom. Tests: 6.2 shorthand and protocol-mismatch rows; send-failure row. | 4 |
+| **Phase 5: Shorthand, protocol, and send errors** | Repair: default QEMU shorthand to the example crate and its bins (FR-9); implement `PROTOCOL_VERSION` / `TargetInfo` (done, FR-8); surface send failures; always write ETS JSON; share command framing with the target; same default serial port for interactive and CI aliases; restore QEMU wall-clock headroom. Tests: 6.2 shorthand and protocol-mismatch rows; send-failure row. | 4 |
 
 ---
 
@@ -479,6 +485,8 @@ established by `../ets/cpu-profiler-design.md`, not here.
 | 1.4      | September 16, 2026 | @MitchellDScott | FR-9 QEMU shorthand names the example crate; 6.2 shorthand and send-failure rows; §9 Phase 5. |
 | 1.5      | September 18, 2026 | @MitchellDScott | Renamed `ServerBridge` to `ETSBridge`, and updated execution result to recorded `RunRecord` data model. |
 | 1.6      | September 18, 2026 | @MitchellDScott | FR-8 marked outstanding (no `PROTOCOL_VERSION` / `TargetInfo` on the wire); `terminate` teardown; send and reconnect keep partial `RunRecord`s; host `crc` dropped. |
+| 1.7      | September 24, 2026 | @MitchellDScott | Phase 4 consumer cutover completed for `control-rs-ci`: the `ets` gate drives `run_headless_ets_with_options` and writes `ets-results.json` (per-target entries, §4.6); the §6.1 QEMU matrix step runs in CI instead of against the removed `control-rs-xtask`; §1, §6.1 back-to-back row, §6.2 outcome row and §8 Renode note no longer cite the removed crate or a Renode CI use. |
+| 1.8      | September 24, 2026 | @MitchellDScott | FR-8 implemented: `TargetInfo` first in discovery, `SessionState::target_info` / `protocol_mismatch`, runner returns `ProtocolMismatch`; §4.3, error table, §6.2 row and §8 updated. |
 
 ---
 

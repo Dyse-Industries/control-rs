@@ -3,7 +3,9 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use control_rs_ets::comms::{Command as CommCommand, TestState};
+use control_rs_ets::comms::{
+    Command as CommCommand, PROTOCOL_VERSION, TestState,
+};
 
 use crate::bridge::ETSBridge;
 use crate::error::HostError;
@@ -374,6 +376,15 @@ pub fn run_headless_ets_with_options(
         Ok(()) => RunEnd::drained(),
         Err(end) => end,
     };
+    // FR-8: a wire-contract mismatch means no result from this session can
+    // be trusted, so it is an error rather than a `RunRecord`.
+    if let Some(target_version) = run.state.protocol_mismatch {
+        run.bridge.terminate();
+        return Err(HostError::ProtocolMismatch {
+            host: u32::from(PROTOCOL_VERSION),
+            target: u32::from(target_version),
+        });
+    }
     Ok(run.finish(end))
 }
 
@@ -421,6 +432,18 @@ mod tests {
 
     use crate::bridge::BridgeMessage;
 
+    /// A session that already received a matching `TargetInfo` (FR-8).
+    fn matched() -> SessionState {
+        let mut s = SessionState::new();
+        s.target_info = Some(crate::session::TargetInfo {
+            protocol_version: control_rs_ets::comms::PROTOCOL_VERSION,
+            board_id: 0,
+            core_clock_hz: 0,
+            fpu_flags: 0,
+        });
+        s
+    }
+
     fn discover_two(state: &mut SessionState) {
         let _ = state.handle_message(BridgeMessage::telemetry(
             &Telemetry::SuiteInfo {
@@ -463,7 +486,7 @@ mod tests {
 
     #[test]
     fn finish_record_includes_in_flight_case_in_pending() {
-        let mut state = SessionState::new();
+        let mut state = matched();
         discover_two(&mut state);
         assert_eq!(state.current_running, Some((0, 0)));
         assert_eq!(state.run_queue, vec![(0, 1)]);
@@ -481,7 +504,7 @@ mod tests {
 
     #[test]
     fn finish_record_omits_in_flight_when_already_recorded() {
-        let mut state = SessionState::new();
+        let mut state = matched();
         discover_two(&mut state);
         let _ = state.handle_message(BridgeMessage::telemetry(
             &Telemetry::TestStateChange {
@@ -505,7 +528,7 @@ mod tests {
 
     #[test]
     fn target_exit_mid_run_retains_results_as_abort() {
-        let mut state = SessionState::new();
+        let mut state = matched();
         discover_two(&mut state);
         let _ = state.handle_message(BridgeMessage::telemetry(
             &Telemetry::TestStateChange {
@@ -582,7 +605,7 @@ mod tests {
 
     #[test]
     fn last_case_panic_sets_exit_loop_with_discovery_incomplete() {
-        let mut state = SessionState::new();
+        let mut state = matched();
         discover_two(&mut state);
         let _ = state.handle_message(BridgeMessage::telemetry(
             &Telemetry::MetricReport {

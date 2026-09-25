@@ -1,6 +1,6 @@
 # Exportable Test Suites (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_9,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -29,7 +29,7 @@ registry, requiring zero boilerplate and little runtime overhead.
   discoverable across modules and crates at runtime without central registration
   tables.
 - **FR-2 — Dynamic Parameter Configuration**: Settings on the target must be
-  adjustable from the host (`control-rs-tui` or `control-rs-ci`) via typed
+  adjustable from the host (`control-rs-tui`) via typed
   get/set accessors.
 - **FR-3 — Embedded Metadata**: Test suites and cases must include descriptive
   metadata and doc-strings stored directly in Flash memory.
@@ -64,9 +64,12 @@ The Exportable Test Suites framework consists of three main components:
    `#[ets_setup]`) that abstract the boilerplate of creating descriptors and
    wrapping test main functions.
 3. **Host-side Tooling (`control-rs-ets-host` & `control-rs-ci`)**: Transport
-   library and automation scripts that cross-compile firmware, parse ELF files
-   to discover test suites and drive test execution headlessly or via
-   `control-rs-tui`.
+   library and gate binary that cross-compile firmware, discover suites over
+   the wire in a discovery-mode session (`Command::TryReset`, then
+   `Command::ListSuites`, answered by `TargetInfo`, then `SuiteInfo` / `TestInfo`
+   telemetry) and
+   drive test execution headlessly or via `control-rs-tui`. The host does not
+   parse the ELF.
 
 ```mermaid
 flowchart TD
@@ -98,9 +101,10 @@ flowchart TD
 #### 4.1. Linker-Based Distributed Test Discovery
 
 Instead of building a dynamic test registry at runtime, the framework utilizes a
-linker-based distributed slice mechanism. Procedural macros generate
-`SuiteDescriptor` instances for each suite and place them in a custom ELF memory
-section named `.ets_test_suites`.
+linker-based distributed slice mechanism. Procedural macros generate one
+`SuiteDescriptor` static per suite and place a `&'static SuiteDescriptor`
+pointer to it (`SUITE_DESCRIPTOR_PTR`) in a custom ELF memory section named
+`.ets_test_suites` (`macros-design.md` §4.1).
 
 During compilation, the `control-rs-ets` build script (`build.rs`) generates a
 linker script fragment named `ets_suites.x` containing the following section
@@ -120,9 +124,11 @@ SECTIONS
 }
 ```
 
-This forces the linker to aggregate all `SuiteDescriptor` static structures
-contiguously inside Flash memory (ROM) bounded by the hidden start and end
-symbols.
+This forces the linker to aggregate the descriptor pointers contiguously
+inside Flash memory (ROM) bounded by the hidden start and end symbols, which
+the server reads as a `&'static [&'static SuiteDescriptor]`
+(`control-rs-ets::util`). The descriptors themselves stay in ordinary
+read-only data.
 
 
 The mechanism this section specifies exists because cross-crate linker-section
@@ -154,11 +160,11 @@ To prevent this, the crate implements a multi-tiered retention strategy:
 2. **`KEEP` Linker Directive**: Wrapping the section wildcard as
    `KEEP (*(.ets_test_suites))` forces the linker to preserve these blocks
    regardless of references.
-3. **`--gc-keep-exported` Linker Flag**: Injected via `build.rs` to retain
-   default visibility symbols in the ELF dynamic symbol table, enabling host
-   tools to resolve them by name.
-4. **Undefined Symbol Forcing (`-u`)**: Forces the linker to treat specific
-   symbols as undefined, compelling their inclusion from library archives.
+Items 1 and 2 are the shipped strategy (`control-rs-ets/build.rs` emits the
+`KEEP` fragment and no linker flags). Two further mitigations are not used:
+`--gc-keep-exported` and undefined-symbol forcing (`-u`). Discovery runs over
+the wire, so no host tool resolves descriptor symbols by name, and `KEEP` plus
+the §6.3 descriptor-set check already cover the cross-crate discard risk.
 
 This multi-tiered strategy also hedges against
 [rust-lang/rust#67209](https://github.com/rust-lang/rust/issues/67209), an
@@ -313,12 +319,13 @@ Interactive testing sessions follow a strict state-machine flow:
 * **`static_init` runtime initialization**: Rejected. `static_init` is `no_std`
   only on Linux or Redox using futex system calls, or relies on spin-loop runtime
   features [6], neither of which is viable on bare metal.
-* **`linkme::DistributedSlice`**: Rejected for composite suite descriptors.
-  `linkme` [1] is designed for flat, homogeneous slices. Adopting it would force
-  splitting `SuiteDescriptor` into separate independently registered slices for
-  tests and settings that require reconciliation at runtime. It also inherits
-  cross-crate discard risks ([2], [3]), which the explicit linker script and
-  `KEEP` directive defined in §4.1 resolve directly.
+* **`linkme::DistributedSlice`**: Not adopted. `linkme` 0.3.37 is `#![no_std]` and handles `target_os = "none"` through the ELF `__start_`/`__stop_` section symbols (source of `linkme-impl` `declaration.rs`), so neither `std` nor element homogeneity rules it out: the `.ets_test_suites` section already holds a homogeneous slice of `&'static SuiteDescriptor`. The
+  hand-rolled mechanism is a linker fragment and two boundary symbols, already
+  shipped; on bare metal a custom `SECTIONS` script (for example
+  `cortex-m-rt`'s `link.x`) must still place the section explicitly, so `linkme`
+  would add a proc-macro dependency without removing linker-script work. It
+  also inherits the cross-crate discard risk ([2], [3]) that §4.1's `KEEP`
+  directive addresses.
 * **`embedded-test` test harness**: Rejected as the primary harness, though
   acknowledged as relevant prior art. `embedded-test` reads test information
   directly from the ELF file, flashes tests in batch, and resets the target device
@@ -464,7 +471,7 @@ descriptor statics, which are data.
 | **Step 1: Core Structs & Traits**           | Define `SuiteDescriptor`, `Setting` trait and type-safe atomic settings wrappers.                                 | 0.5 days         |
 | **Step 2: Linker Script & Injection**       | Develop the `build.rs` script to generate the custom `ets_suites.x` script fragment containing `KEEP` directives. | 0.5 days         |
 | **Step 3: Target Server State Machine**     | Implement the on-target Server's state machine, timestamp-based lifecycle tracking and panic handlers.            | 0.5 days         |
-| **Step 4: Host-Side ELF Discovery** | Implement ELF section parsing (using `goblin`/`elf`) inside `control-rs-ets-host` to autodiscover suites.             | 0.5 days         |
+| **Step 4: Host-Side Wire Discovery** — *Shipped* | Discovery-mode session in `control-rs-ets-host` (`TryReset` + `ListSuites`, `SuiteInfo`/`TestInfo` replies); no ELF parsing. | Complete         |
 
 ---
 
@@ -481,6 +488,8 @@ descriptor statics, which are data.
 | 1.6      | September 9, 2026 | @MitchellDScott | Structural hardening: demoted badge to Draft, numbered §2 subsections, eliminated rogue FR-4, mapped NFR-4 to §6.7, mapped C-2/C-3 in §6.4, clarified firmware deployment and attribute extensions, standardized references. |
 | 1.7      | September 9, 2026 | @MitchellDScott | Dropped the author-year / `[n]` mapping table. |
 | 1.8      | September 18, 2026 | @MitchellDScott | Serial/QEMU isolation: bridge connects to already-running firmware; `TryReset` is cooperative, not a power cycle. |
+| 1.9      | September 24, 2026 | @MitchellDScott | FR-2 names `control-rs-tui` as the settings editor; the `control-rs-ci` `ets` gate runs suites headless and edits no settings. Discovery is over the wire (no host ELF parsing, Step 4 shipped); the section holds `&'static SuiteDescriptor` pointers; unused `--gc-keep-exported` / `-u` retention dropped; `linkme` row restated. |
+| 1.10     | September 24, 2026 | @MitchellDScott | Discovery replies begin with `TargetInfo` (host-comm Step 4). |
 
 ---
 

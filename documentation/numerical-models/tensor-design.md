@@ -1,6 +1,6 @@
 # Tensor Type & Low-Cost Inference (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -19,8 +19,9 @@ Primary usage scenarios:
   multilinear grid interpolation in deterministic time without dynamic
   allocation.
 - **Microcontroller Neural Network Inference**: Executing feedforward inference
-  for quantized (Q7/Q15/integer) pre-trained neural networks and TinyML state
-  estimators using tensor contractions.
+  for quantized pre-trained neural networks and TinyML state estimators using
+  tensor contractions. Weights arrive in interchange formats (Q7, Q15) and are
+  rescaled to a `Scalar` computation scale before contraction.
 - **Multidimensional Physical State Modeling**: Representing higher-rank
   physical tensors (such as rank-4 elasticity tensors or stress/strain fields)
   and performing contractions along arbitrary tensor axes.
@@ -49,16 +50,23 @@ Primary usage scenarios:
 - **FR-4 — Quantized Fixed-Point Inference**: Performs tensor arithmetic and
   activation functions over quantized integer representations (`SHIFT`
   fixed-point scaling) without floating-point emulation or dynamic memory
-  allocation (Wu et al., 2020).
+  allocation (Wu et al., 2020). Quantization, dequantization and elementwise
+  arithmetic accept every `Quantized<Repr, SHIFT>`; contraction routes through
+  `Gemm` and requires `T: Scalar`, which excludes the interchange formats
+  `Q7` and `Q15` (`fixed-num-design.md` FR-7, `num-traits-design.md` §4.3).
 - **FR-5 — Nonlinear Activation Functions**: Applies elementwise activation
   functions (such as ReLU and piecewise-linear table activations) in-place over
   tensor buffers for embedded TinyML controller evaluation (Lai et al., 2018).
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — Bounded Stack Allocation**: Total element storage per tensor is
-  capped at 1,024 elements ($\le 4\text{ KB}$ for 32-bit types) to protect
-  microcontroller stack bounds.
+- **NFR-1 — Bounded Stack Allocation**: The element count of a tensor is the
+  compile-time constant `Layout::SIZE`, so its footprint
+  `SIZE × size_of::<T>()` is known before the program runs. The type system
+  enforces no element cap: rank-2 array tensors take each axis from
+  `num-types-design.md` C-1, and higher-rank shapes are plain `usize`
+  constants. The MCU budget of 1,024 elements ($4\text{ KB}$ for 32-bit types)
+  is a deployment guideline checked with `size_of` assertions.
 - **NFR-2 — Real-Time Inference Latency**: Multilinear interpolation and tensor
   contraction execute in bounded cycle counts without dynamic layout branching.
 
@@ -222,7 +230,9 @@ where
     B: FlatBuffer<T>,
     T: Float,
 {
-    pub fn interpolate(&self, coords: &[T; Layout::RANK]) -> T { /* ... */ }
+    // coords.len() must equal Layout::RANK; a `[T; Layout::RANK]` array
+    // would need generic_const_exprs (matrix-design.md C-1).
+    pub fn interpolate(&self, coords: &[T]) -> T { /* ... */ }
 }
 ```
 
@@ -294,27 +304,25 @@ ML framework.
 
 `ConversionError` is defined once, canonically, in
 [`error-design.md`](../math/error-design.md) (`DimensionMismatch`,
-`NonMonicPolynomial`).
-Because rank and shape dimensions are verified statically at compile time
-via `TensorLayout<Size = ...>`, cross-model layout conversions are
-infallible compile-time operations:
+`NonMonicPolynomial`). The shipped interoperability surface is:
 
-- **To `Matrix`**:
-  `From<Tensor<T, Layout, B>> for Matrix<T, R, C, Dense<T, R, C, B>>`
-  when `Layout: TensorLayout<Size = <R as DimMul<C>>::Output>` and
-  `Layout::RANK == 2`,
-  preserving storage zero-copy.
-- **To `Polynomial`**:
-  `From<Tensor<T, Layout, B>> for Polynomial<T, N, Dense<T, N, Const<1>, B>>`
-  when `Layout: TensorLayout<Size = N>` and `Layout::RANK == 1`,
-  preserving storage zero-copy.
+- **To `Matrix` (view)**: a rank-2 `ArrayTensor<T, R, C>` is backed by
+  `ArrayStorage<T, R, C>`, the same leaf as `Owned<T, R, C>`, and
+  `slice_matrix()` returns a zero-copy `MatrixSlice<'_, T, Const<R>, Const<C>>`
+  over it. `contract_into` / `contract_into_with::<B>` use this view to call
+  `Gemm` (`T: Scalar`).
+- **No `From` conversions**: `TensorLayout` exposes rank and size as the
+  associated constants `RANK` and `SIZE`, not as `Dim` types, so a `From`
+  conversion to `Matrix` or `Polynomial` bounded by element count cannot be
+  stated without `generic_const_exprs` (`matrix-design.md` C-1). None ships
+  and none is scheduled.
 
 System-identification outputs (Volterra/NARX kernels, N4SID state-space
 matrices) are, in practice, 2D (CP-decomposed factor matrices or state-space
 matrices, not dense high-rank tensors — Batselier, Chen, & Wong, 2016), so
-this existing 2D conversion path is the relevant interoperability surface
-for that target application; no rank-N-specific system-identification API
-is required.
+the rank-2 view path is the relevant interoperability surface for that
+target application; no rank-N-specific system-identification API is
+required.
 
 #### 4.11. Error Handling & State Management
 
@@ -476,7 +484,7 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | FR-3 — Tensor Contraction & Matrix Slicing   | Property-based test, Back-to-back comparison     | `src/tensor/tests/tensor_tests.rs::test_tensor_contract`             |
 | FR-4 — Quantized Fixed-Point Inference       | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_quantized_scalar_operations` |
 | FR-5 — Nonlinear Activation Functions        | Requirements-based test                          | `src/tensor/tests/tensor_tests.rs::test_activations`                 |
-| NFR-1 — Bounded Stack Allocation             | Resource usage evaluation                        | `size_of` assertions; element cap $S \le 1024$                       |
+| NFR-1 — Bounded Stack Allocation             | Resource usage evaluation                        | `size_of` assertions against the 1,024-element MCU budget            |
 | NFR-2 — Real-Time Inference Latency          | On-target execution                              | ETS suite `tensor_test_suite`                                        |
 | C-1 — Out of Scope Capabilities              | Inspection                                       | Training/ONNX parsers absent from `src/tensor/`                      |
 | C-2 — Static Quantization Parameter Encoding | Compile-time shape check                         | `Quantized<Repr, SHIFT>` const generic                               |
@@ -504,17 +512,16 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
   are excluded.
 - Automatic deep learning framework graph import (ONNX/TFLite converter tools)
   is deferred to future tooling.
-- Grids larger than NFR-1 $S\le 1024$ are not in the example crate; host
+- Grids larger than the NFR-1 1,024-element budget are not in the example crate; host
   interpolation uses $16\times 16$
-  ([`numerical-models-design.md`](numerical-models-design.md) §6.6).
+  ([`numerical-models-design.md`](numerical-models-design.md) §5.1).
 
 ---
 
 ### 7. Performance & Resource Considerations
 
-- **Stack Overhead**: Inline tensor capacities are bounded by the total element
-  ceiling $S \le 1{,}024$ ($4\text{ KB}$ for `f32`, $1\text{ KB}$ for
-  `Quantized<i8, 7>`), matching NFR-1.
+- **Stack Overhead**: At the NFR-1 budget of 1,024 elements a tensor is
+  $4\text{ KB}$ in `f32` and $1\text{ KB}$ in `Quantized<i8, 7>`.
 - **Memory Footprint**: `Quantized<i8, 7>` achieves a $4\times$ reduction in
   weight/activation RAM compared to `f32`.
 - **Zero-Copy Views**: `TensorView` and `TensorViewMut` operate over borrowed
@@ -549,7 +556,7 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | **Phase 2: Element Ops & Contraction**       | Operator overloads, `contract_into`/`contract_into_dynamic`, `permute`, `as_view`/`slice_inplace`.                                                                                                              | 2.5 Days         |
 | **Phase 3: Grid Interpolation & Activation** | Multilinear `interpolate`, `Activation` trait, `Relu`, `TableActivation`.                                                                                                                                       | 2.5 Days         |
 | **Phase 4: Quantized Scalar Type**           | `Quantized<Repr, SHIFT>` with full `Zero`/`One`/`Scalar` arithmetic `num_traits` impls (correct rounding/saturation semantics), quantize/dequantize, integration across existing generic `T` paths in `Tensor`. | 3.5 Days         |
-| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial` per [`design-template.md`](../design-template.md) §6.        | 3.0 Days         |
+| **Phase 5: Verification & Interoperability** | `proptest` suites, golden-value regression against SciPy/NumPy references, ARM hardware benchmarks, `TryFrom` conversions to `Matrix`/`Polynomial` (§6).        | 3.0 Days         |
 
 ---
 
@@ -609,3 +616,4 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 | 1.8      | August 28, 2026 | @MitchellDScott | Example crate: $16\times 16$ curved-grid interpolation and non-dyadic Q7. NFR-1 cap unchanged.                                 |
 | 1.9      | August 31, 2026 | @MitchellDScott | Updated numerical-models validation crate and script paths to `examples/numerical-models-validation/`.                         |
 | 1.10      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |
+| 1.11      | September 24, 2026 | @MitchellDScott | FR-4: contraction requires `Scalar`, which excludes `Q7`/`Q15`. §4.10: shipped surface is the `slice_matrix()` view; no `From` conversion. NFR-1 restated as a compile-time footprint with a 1,024-element MCU budget. `interpolate` takes `&[T]`. |

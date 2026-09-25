@@ -32,14 +32,8 @@
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::option_if_let_else,
-    clippy::must_use_candidate,
     clippy::many_single_char_names,
-    clippy::collapsible_if,
-    clippy::use_self,
     clippy::too_many_arguments,
-    clippy::missing_const_for_fn,
-    clippy::cast_lossless,
     clippy::missing_safety_doc
 )]
 
@@ -104,11 +98,11 @@ where
     }
 
     fn as_slice(&self) -> &[T] {
-        ArrayStorage::as_slice(self)
+        Self::as_slice(self)
     }
 
     fn as_ptr(&self) -> *const T {
-        ArrayStorage::as_slice(self).as_ptr()
+        Self::as_slice(self).as_ptr()
     }
 }
 
@@ -119,11 +113,11 @@ where
     Const<C>: Dim,
 {
     fn as_mut_slice(&mut self) -> &mut [T] {
-        ArrayStorage::as_mut_slice(self)
+        Self::as_mut_slice(self)
     }
 
     fn as_mut_ptr(&mut self) -> *mut T {
-        ArrayStorage::as_mut_slice(self).as_mut_ptr()
+        Self::as_mut_slice(self).as_mut_ptr()
     }
 }
 
@@ -138,11 +132,11 @@ where
     }
 
     fn as_slice(&self) -> &[T] {
-        RowArrayStorage::as_slice(self)
+        Self::as_slice(self)
     }
 
     fn as_ptr(&self) -> *const T {
-        RowArrayStorage::as_slice(self).as_ptr()
+        Self::as_slice(self).as_ptr()
     }
 }
 
@@ -153,11 +147,11 @@ where
     Const<C>: Dim,
 {
     fn as_mut_slice(&mut self) -> &mut [T] {
-        RowArrayStorage::as_mut_slice(self)
+        Self::as_mut_slice(self)
     }
 
     fn as_mut_ptr(&mut self) -> *mut T {
-        RowArrayStorage::as_mut_slice(self).as_mut_ptr()
+        Self::as_mut_slice(self).as_mut_ptr()
     }
 }
 
