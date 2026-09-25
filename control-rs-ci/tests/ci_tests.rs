@@ -54,6 +54,8 @@ fn test_config_parsing_defaults() {
             description: None,
             env: HashMap::new(),
             mode: None,
+            default: true,
+            cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),
         })
@@ -66,6 +68,8 @@ fn test_config_parsing_defaults() {
             description: None,
             env: HashMap::new(),
             mode: None,
+            default: true,
+            cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),
         })
@@ -332,6 +336,54 @@ fn test_cli_args_parsing() {
 }
 
 #[test]
+fn test_cli_passthrough_parsing_and_rules() {
+    use control_rs_ci::cli::{
+        PASSTHROUGH_BINARY, check_passthrough, parse_args,
+    };
+
+    let to_args = |v: &[&str]| -> Vec<String> {
+        v.iter().map(|a| (*a).to_string()).collect()
+    };
+    let config: GateConfig = toml::from_str(
+        "[mutants]\ncommand = \"cargo mutants\"\n[fmt]\ncommand = \"cargo fmt\"\n",
+    )
+    .unwrap();
+
+    let args =
+        to_args(&["gate", "--only", "mutants", "--", "--jobs", "8", "-v"]);
+    let options = parse_args(&args, PASSTHROUGH_BINARY);
+    assert_eq!(options.only_gates, vec!["mutants"]);
+    assert!(!options.verbose, "flags after `--` belong to the gate");
+    assert_eq!(
+        options.passthrough.as_deref(),
+        Some(&to_args(&["--jobs", "8", "-v"])[..])
+    );
+    assert!(check_passthrough(PASSTHROUGH_BINARY, &options, &config).is_ok());
+    assert!(check_passthrough("cargo ci", &options, &config).is_err());
+
+    let empty =
+        parse_args(&to_args(&["gate", "fmt", "--"]), PASSTHROUGH_BINARY);
+    assert_eq!(empty.passthrough, Some(Vec::new()));
+
+    let rejected = [
+        to_args(&["gate", "--only", "mutants,fmt", "--", "-x"]),
+        to_args(&["gate", "--", "-x"]),
+        to_args(&["gate", "--all", "mutants", "--", "-x"]),
+        to_args(&["gate", "mutants", "--skip", "mutants", "--", "-x"]),
+        to_args(&["gate", "missing", "--", "-x"]),
+    ];
+    for args in &rejected {
+        let options = parse_args(args, PASSTHROUGH_BINARY);
+        assert!(
+            check_passthrough(PASSTHROUGH_BINARY, &options, &config).is_err(),
+            "{args:?} must be rejected"
+        );
+    }
+    let plain = parse_args(&to_args(&["gate", "fmt"]), PASSTHROUGH_BINARY);
+    assert!(check_passthrough("cargo ci", &plain, &config).is_ok());
+}
+
+#[test]
 fn test_cli_multi_token_parsing() {
     use control_rs_ci::cli::parse_args;
 
@@ -492,6 +544,8 @@ fn test_gate_definition_parsing() {
             description: Some("Compiles all targets".to_string()),
             env: HashMap::new(),
             mode: None,
+            default: true,
+            cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),
         })
@@ -506,6 +560,8 @@ fn test_gate_definition_parsing() {
             description: None,
             env: HashMap::new(),
             mode: None,
+            default: true,
+            cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),
         })

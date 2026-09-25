@@ -41,8 +41,6 @@
 //! ```
 #![allow(clippy::arbitrary_source_item_ordering)]
 #![allow(clippy::type_complexity)]
-#![allow(clippy::use_self)]
-#![allow(clippy::manual_div_ceil)]
 #![allow(unused_macro_rules)]
 
 use core::marker::PhantomData;
@@ -169,8 +167,8 @@ impl<U: Dim, B: Bit> Dim for UInt<U, B> {
 // DimAdd
 ////////////////////////////////////////////////////////////////////////////////
 
-impl DimAdd<UTerm> for UTerm {
-    type Output = UTerm;
+impl DimAdd<Self> for UTerm {
+    type Output = Self;
 }
 
 impl<U, B> DimAdd<UInt<U, B>> for UTerm
@@ -224,8 +222,8 @@ where
 // DimSub
 ////////////////////////////////////////////////////////////////////////////////
 
-impl DimSub<UTerm> for UTerm {
-    type Output = UTerm;
+impl DimSub<Self> for UTerm {
+    type Output = Self;
 }
 
 impl<U, B> DimSub<UTerm> for UInt<U, B>
@@ -248,12 +246,12 @@ where
 // DimMul
 ////////////////////////////////////////////////////////////////////////////////
 
-impl DimMul<UTerm> for UTerm {
-    type Output = UTerm;
+impl DimMul<Self> for UTerm {
+    type Output = Self;
 }
 
 impl<U, B> DimMul<UInt<U, B>> for UTerm {
-    type Output = UTerm;
+    type Output = Self;
 }
 
 impl<U, B> DimMul<UTerm> for UInt<U, B>
@@ -286,8 +284,8 @@ where
 // DimMax / DimMin
 ////////////////////////////////////////////////////////////////////////////////
 
-impl DimMax<UTerm> for UTerm {
-    type Output = UTerm;
+impl DimMax<Self> for UTerm {
+    type Output = Self;
 }
 
 impl<U, B> DimMax<UInt<U, B>> for UTerm
@@ -315,15 +313,15 @@ where
         PrivateMaxOut<Self, UInt<Ur, Br>, Compare<Self, UInt<Ur, Br>>>;
 }
 
-impl DimMin<UTerm> for UTerm {
-    type Output = UTerm;
+impl DimMin<Self> for UTerm {
+    type Output = Self;
 }
 
 impl<U, B> DimMin<UInt<U, B>> for UTerm
 where
     UInt<U, B>: Dim,
 {
-    type Output = UTerm;
+    type Output = Self;
 }
 
 impl<U, B> DimMin<UTerm> for UInt<U, B>
@@ -348,15 +346,15 @@ where
 // DimBitAnd
 ////////////////////////////////////////////////////////////////////////////////
 
-impl DimBitAnd<UTerm> for UTerm {
-    type Output = UTerm;
+impl DimBitAnd<Self> for UTerm {
+    type Output = Self;
 }
 
 impl<U, B> DimBitAnd<UInt<U, B>> for UTerm
 where
     UInt<U, B>: Dim,
 {
-    type Output = UTerm;
+    type Output = Self;
 }
 
 impl<U, B> DimBitAnd<UTerm> for UInt<U, B>
@@ -380,8 +378,8 @@ where
 // DimBitOr
 ////////////////////////////////////////////////////////////////////////////////
 
-impl DimBitOr<UTerm> for UTerm {
-    type Output = UTerm;
+impl DimBitOr<Self> for UTerm {
+    type Output = Self;
 }
 
 impl<U, B> DimBitOr<UInt<U, B>> for UTerm
@@ -411,8 +409,8 @@ where
 // DimBitXor
 ////////////////////////////////////////////////////////////////////////////////
 
-impl DimBitXor<UTerm> for UTerm {
-    type Output = UTerm;
+impl DimBitXor<Self> for UTerm {
+    type Output = Self;
 }
 
 impl<U, B> DimBitXor<UInt<U, B>> for UTerm
@@ -505,7 +503,6 @@ mod private {
     //!
     //! Carry, borrow, trim, comparison, and max/min selection stay here so the
     //! public `Dim*` traits only mention dimension types.
-    #![allow(clippy::use_self)]
 
     use super::{B0, B1, UInt, UTerm};
 
@@ -607,11 +604,11 @@ mod private {
     ////////////////////////////////////////////////////////////////////////////////
 
     impl AddBit<B0> for UTerm {
-        type Output = UTerm;
+        type Output = Self;
     }
 
     impl AddBit<B1> for UTerm {
-        type Output = UInt<UTerm, B1>;
+        type Output = UInt<Self, B1>;
     }
 
     impl<U, B> AddBit<B0> for UInt<U, B> {
@@ -634,7 +631,7 @@ mod private {
     ////////////////////////////////////////////////////////////////////////////////
 
     impl SubBit<B0> for UTerm {
-        type Output = UTerm;
+        type Output = Self;
     }
 
     impl<U, B> SubBit<B0> for UInt<U, B> {
@@ -660,8 +657,8 @@ mod private {
     // PrivateSub
     ////////////////////////////////////////////////////////////////////////////////
 
-    impl PrivateSub<UTerm> for UTerm {
-        type Output = UTerm;
+    impl PrivateSub<Self> for UTerm {
+        type Output = Self;
     }
 
     impl<U, B> PrivateSub<UTerm> for UInt<U, B> {
@@ -702,7 +699,7 @@ mod private {
     ////////////////////////////////////////////////////////////////////////////////
 
     impl<Rhs> PrivateAnd<Rhs> for UTerm {
-        type Output = UTerm;
+        type Output = Self;
     }
 
     impl<U, B> PrivateAnd<UTerm> for UInt<U, B> {
@@ -834,11 +831,11 @@ mod private {
     }
 
     impl AttachBit<B0> for UTerm {
-        type Output = UTerm;
+        type Output = Self;
     }
 
     impl AttachBit<B1> for UTerm {
-        type Output = UInt<UTerm, B1>;
+        type Output = UInt<Self, B1>;
     }
 
     impl<U, B> AttachBit<B0> for UInt<U, B> {
@@ -896,7 +893,7 @@ mod private {
         type Output = Greater;
     }
 
-    impl<SoFar> PrivateCmp<UTerm, SoFar> for UTerm {
+    impl<SoFar> PrivateCmp<Self, SoFar> for UTerm {
         type Output = SoFar;
     }
 
@@ -956,8 +953,8 @@ macro_rules! impl_dim_single {
         impl Dim for Const<{ $val }> {
             const USIZE: usize = $val;
             type TypeNum = UInt<
-                <Const<{ ($val) / 2 }> as Dim>::TypeNum,
-                <() as SelectBit<{ ($val) % 2 }>>::Output,
+                <Const<{ ($val) >> 1 }> as Dim>::TypeNum,
+                <() as SelectBit<{ ($val) & 1 }>>::Output,
             >;
         }
     };

@@ -1,6 +1,8 @@
 //! Discovery, run queue and session state machine for host-side ETS.
 
-use control_rs_ets::comms::{Command as CommCommand, TestState};
+use control_rs_ets::comms::{
+    Command as CommCommand, PROTOCOL_VERSION, TestState,
+};
 use control_rs_ets::settings::SettingValue;
 
 use crate::bridge::{BridgeMessage, OwnedTelemetry};
@@ -110,6 +112,25 @@ pub struct SessionState {
     pub run_queue: Vec<TestIndex>,
     /// Discovered suites and their tests/settings.
     pub suites: Vec<SuiteItem>,
+    /// Latest `TargetInfo` received (FR-8).
+    pub target_info: Option<TargetInfo>,
+    /// Target protocol version that differs from the host's
+    /// `PROTOCOL_VERSION` (`0` when discovery completed without `TargetInfo`).
+    /// Once set, every further message is ignored.
+    pub protocol_mismatch: Option<u8>,
+}
+
+/// Target metadata from `Telemetry::TargetInfo`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TargetInfo {
+    /// Target's `PROTOCOL_VERSION`.
+    pub protocol_version: u8,
+    /// Board identifier (`0` when unknown).
+    pub board_id: u16,
+    /// Core clock in hertz (`0` when unknown).
+    pub core_clock_hz: u32,
+    /// FPU bits: 0 single, 1 double precision.
+    pub fpu_flags: u8,
 }
 
 /// Side effects requested by [`SessionState`] while processing bridge messages.
@@ -191,6 +212,8 @@ impl SessionState {
             results: Vec::new(),
             run_queue: Vec::new(),
             suites: Vec::new(),
+            target_info: None,
+            protocol_mismatch: None,
         }
     }
 
@@ -366,6 +389,9 @@ impl SessionState {
 
     /// Processes an incoming bridge message and updates session state accordingly.
     pub fn handle_message(&mut self, msg: BridgeMessage) -> Vec<SessionAction> {
+        if self.protocol_mismatch.is_some() {
+            return Vec::new();
+        }
         match msg {
             BridgeMessage::RawConsole(line) => {
                 let formatted = format!("      [ETS] {line}\n");
@@ -414,6 +440,20 @@ impl SessionState {
                 line,
             } => self.on_target_panic(&message, &file, line),
             OwnedTelemetry::Log { .. } => Vec::new(),
+            OwnedTelemetry::TargetInfo {
+                protocol_version,
+                board_id,
+                core_clock_hz,
+                fpu_flags,
+            } => {
+                self.on_target_info(TargetInfo {
+                    protocol_version,
+                    board_id,
+                    core_clock_hz,
+                    fpu_flags,
+                });
+                Vec::new()
+            }
             catalog => self.handle_catalog(catalog),
         }
     }
@@ -467,6 +507,7 @@ impl SessionState {
             OwnedTelemetry::TestStateChange { .. }
             | OwnedTelemetry::MetricReport { .. }
             | OwnedTelemetry::TargetPanic { .. }
+            | OwnedTelemetry::TargetInfo { .. }
             | OwnedTelemetry::Log { .. } => {}
         }
         Vec::new()
@@ -559,7 +600,29 @@ impl SessionState {
     }
 
     /// Validates the catalog and starts execution, or restarts discovery.
+    /// Records target metadata and checks the wire contract (FR-8).
+    fn on_target_info(&mut self, info: TargetInfo) {
+        self.target_info = Some(info);
+        if info.protocol_version != PROTOCOL_VERSION {
+            self.reject_protocol(info.protocol_version);
+        }
+    }
+
+    /// Ends the session on a wire-contract mismatch; `0` means the target
+    /// never sent `TargetInfo`.
+    fn reject_protocol(&mut self, target: u8) {
+        self.log(&format!(
+            "Protocol mismatch: host expects {PROTOCOL_VERSION}, target reported {target}. Ending session.\n"
+        ));
+        self.protocol_mismatch = Some(target);
+        self.exit_loop = true;
+    }
+
     fn on_discovery_complete(&mut self) -> Vec<SessionAction> {
+        if self.target_info.is_none() {
+            self.reject_protocol(0);
+            return Vec::new();
+        }
         if self.suites.is_empty()
             || !self.suites.iter().all(SuiteItem::is_ready)
         {
@@ -731,8 +794,19 @@ fn slots_complete(have: usize, count: u16, mask: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
+
+    /// A session that already received a matching `TargetInfo` (FR-8).
+    fn matched() -> SessionState {
+        let mut s = SessionState::new();
+        s.target_info = Some(crate::session::TargetInfo {
+            protocol_version: control_rs_ets::comms::PROTOCOL_VERSION,
+            board_id: 0,
+            core_clock_hz: 0,
+            fpu_flags: 0,
+        });
+        s
+    }
 
     fn make_test_suite_telemetry(
         suite_id: u16,
@@ -770,7 +844,7 @@ mod tests {
 
     #[test]
     fn test_bitmask_discovery_and_readiness() {
-        let mut state = SessionState::new();
+        let mut state = matched();
         assert_eq!(state.phase, SessionPhase::Discovering);
         assert!(!state.discovery_complete);
         assert!(state.suites.is_empty());
@@ -812,7 +886,7 @@ mod tests {
 
     #[test]
     fn test_validation_rejects_incomplete_test_slots() {
-        let mut state = SessionState::new();
+        let mut state = matched();
 
         // Send SuiteInfo expecting 3 tests
         let _ = state.handle_message(BridgeMessage::Telemetry(
@@ -857,7 +931,7 @@ mod tests {
 
     #[test]
     fn ci_ets_state_runs_queue_and_records_pass_fail() {
-        let mut state = SessionState::new();
+        let mut state = matched();
 
         let frames = make_test_suite_telemetry(0, "Suite0", 2, 0);
         for f in frames {
@@ -911,7 +985,7 @@ mod tests {
 
     #[test]
     fn failed_before_target_panic_does_not_blame_next_test() {
-        let mut state = SessionState::new();
+        let mut state = matched();
 
         let frames = make_test_suite_telemetry(0, "Suite0", 3, 0);
         for f in frames {
@@ -963,7 +1037,7 @@ mod tests {
 
     #[test]
     fn duplicate_discovery_complete_does_not_requeue_in_flight() {
-        let mut state = SessionState::new();
+        let mut state = matched();
         let frames = make_test_suite_telemetry(0, "Suite0", 2, 0);
         for f in frames {
             let _ = state.handle_message(BridgeMessage::Telemetry(f));
@@ -985,7 +1059,7 @@ mod tests {
 
     #[test]
     fn enqueue_all_while_running_excludes_in_flight_case() {
-        let mut state = SessionState::new();
+        let mut state = matched();
         let frames = make_test_suite_telemetry(0, "Suite0", 3, 0);
         for f in frames {
             let _ = state.handle_message(BridgeMessage::Telemetry(f));
@@ -1002,7 +1076,7 @@ mod tests {
 
     #[test]
     fn pre_discovery_target_panic_does_not_false_drain() {
-        let mut state = SessionState::new();
+        let mut state = matched();
         let actions = state.handle_message(BridgeMessage::Telemetry(
             OwnedTelemetry::TargetPanic {
                 message: "early boot panic".to_string(),
@@ -1017,7 +1091,7 @@ mod tests {
 
     #[test]
     fn ci_ets_state_telemetry_metrics_and_rediscovery() {
-        let mut state = SessionState::new();
+        let mut state = matched();
         let frames = make_test_suite_telemetry(0, "S0", 3, 0);
         for f in frames {
             let _ = state.handle_message(BridgeMessage::Telemetry(f));
@@ -1089,7 +1163,7 @@ mod tests {
 
     #[test]
     fn pending_cases_includes_in_flight_before_queue() {
-        let mut state = SessionState::new();
+        let mut state = matched();
         let frames = make_test_suite_telemetry(0, "S0", 3, 0);
         for f in frames {
             let _ = state.handle_message(BridgeMessage::Telemetry(f));
@@ -1104,7 +1178,7 @@ mod tests {
 
     #[test]
     fn session_enqueue_and_stop_helpers() {
-        let mut state = SessionState::new();
+        let mut state = matched();
         let frames = make_test_suite_telemetry(0, "S0", 2, 0);
         for f in frames {
             let _ = state.handle_message(BridgeMessage::Telemetry(f));
@@ -1126,5 +1200,62 @@ mod tests {
                 test_id: 1
             }))
         ));
+    }
+
+    #[test]
+    fn foreign_protocol_version_ends_session_and_ignores_later_frames() {
+        let mut state = SessionState::new();
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            &control_rs_ets::comms::Telemetry::TargetInfo {
+                protocol_version: control_rs_ets::comms::PROTOCOL_VERSION
+                    .wrapping_add(1),
+                board_id: 7,
+                core_clock_hz: 600_000_000,
+                fpu_flags: 1,
+            },
+        ));
+        assert_eq!(
+            state.protocol_mismatch,
+            Some(control_rs_ets::comms::PROTOCOL_VERSION.wrapping_add(1))
+        );
+        assert!(state.exit_loop);
+        let actions = state.handle_message(BridgeMessage::telemetry(
+            &control_rs_ets::comms::Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "s",
+                description: "",
+                test_count: 0,
+                setting_count: 0,
+            },
+        ));
+        assert!(actions.is_empty());
+        assert!(state.suites.is_empty());
+    }
+
+    #[test]
+    fn discovery_without_target_info_is_a_mismatch() {
+        let mut state = SessionState::new();
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            &control_rs_ets::comms::Telemetry::DiscoveryComplete,
+        ));
+        assert_eq!(state.protocol_mismatch, Some(0));
+    }
+
+    #[test]
+    fn matching_target_info_is_recorded() {
+        let mut state = SessionState::new();
+        let _ = state.handle_message(BridgeMessage::telemetry(
+            &control_rs_ets::comms::Telemetry::TargetInfo {
+                protocol_version: control_rs_ets::comms::PROTOCOL_VERSION,
+                board_id: 7,
+                core_clock_hz: 600_000_000,
+                fpu_flags: 1,
+            },
+        ));
+        assert_eq!(state.protocol_mismatch, None);
+        assert_eq!(
+            state.target_info.map(|t| t.core_clock_hz),
+            Some(600_000_000)
+        );
     }
 }

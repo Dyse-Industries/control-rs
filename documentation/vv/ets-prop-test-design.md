@@ -1,7 +1,7 @@
 # Range-Valued On-Target Property Tests (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_8,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Deferred-lightgrey)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -68,7 +68,7 @@ Usage scenarios:
 - **C-3 — Existing suite registration is unchanged**: No new procedural macro
   and no change to how ETS suites are declared or discovered.
 - **C-4 — Does not replace host oracle validation**: Cross-checks against host
-  oracles conformant to `documentation/vv/oracle-harness-design.md` remain the
+  oracles conformant to `documentation/vv/cross-compare-design.md` remain the
   validation layer; this design adds a verification technique beside them.
 
 ---
@@ -239,7 +239,7 @@ surface to cover at this revision.
 A range-valued property replaces any sampled test whose kernel is generic over
 the scalar bound, requiring the property test to reach the same verdict on the
 same inputs. Host oracle cross-validation conformant to
-`documentation/vv/oracle-harness-design.md` stays in place as the
+`documentation/vv/cross-compare-design.md` stays in place as the
 independent-implementation check (C-4).
 
 #### 6.2 Acceptance
@@ -258,8 +258,8 @@ never by exact equality.
 #### 6.3 Limits
 
 - **FR-1..FR-5, NFR-1..NFR-3, C-1..C-3**: no range type in `src/math` and no
-  `test:` locator exists. Planned methods in 6.2 are the contract once the
-  type lands.
+  test covers them. Planned methods in 6.2 are the contract if the type is
+  ever built.
 - Conformance to IEEE Std 1788-2015 is not claimed.
 - Enclosure tightness over long operation sequences is not bounded.
 
@@ -324,6 +324,7 @@ Cortex-M target is a measurement that has not been taken.
 | 1.0      | September 8, 2026 | @MitchellDScott | Initial draft.                                                                                                                                                                                                      |
 | 1.1      | September 9, 2026 | @MitchellDScott | Structural hardening: converted §6.4 from prose into complete traceability table mapping all requirements, updated badge to standard dialect, mapped catalogue methods in §6.2, standardized revision history. |
 | 1.2      | September 15, 2026 | @MitchellDScott | Locator-only §6.4; unimplemented range type listed in 6.7; citations removed from FR bodies. |
+| 1.3      | September 24, 2026 | @MitchellDScott | Deferred: removed from the roadmap. Suite authors write range-valued property tests manually in ETS suites; the crate ships no range type. C-4 and §6.1 cite `cross-compare-design.md` (renamed from `oracle-harness-design.md`). |
 
 ---
 

@@ -1,6 +1,6 @@
 # Procedural Macros for Distributed Test Discovery (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_9,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -219,20 +219,19 @@ function. It replaces the function with the primary entrypoint:
 * **Manual Registration Array**: Developers could manually declare a global
   array of function pointers. This is rejected due to high maintenance overhead,
   boilerplate and the risk of developer error when adding new tests.
-* **`linkme::distributed_slice`**: Rejected, on ownership rather than on
-  capability. The mechanism is architecturally identical to the hand-rolled
+* **`linkme::distributed_slice`**: Rejected, on ownership and dependency cost
+  rather than on capability. The mechanism is architecturally identical to the hand-rolled
   section scheme: a distributed slice is "a collection of static elements that
   are gathered into a contiguous section of the binary by the linker"
   (linkme, 2026), whose elements "may be defined individually from anywhere in
   the dependency graph of the final binary" (linkme, 2026), which is exactly
   the property FR-2 needs. The crate describes itself as "safe cross-platform
-  linker shenanigans" (linkme, 2026). Its documentation states no `no_std` or
-  bare-metal support, so adopting it would make the target build depend on a
-  property no primary source asserts; and it would surrender project-owned
-  control of the `.ets_test_suites` section name and the
-  `ets_suites.x` / `build.rs` linker coordination. *Assumption to verify if this
-  is revisited: that `linkme` does not in fact support the Cortex-M and RISC-V
-  targets in the matrix. The absence of a claim is not a claim of absence.*
+  linker shenanigans" (linkme, 2026). `linkme` 0.3.37 is `#![no_std]` and handles `target_os = "none"` through the ELF `__start_`/`__stop_` section symbols (source of `linkme-impl` `declaration.rs`), so neither `std` nor element homogeneity rules it out: the `.ets_test_suites` section already holds a homogeneous slice of `&'static SuiteDescriptor`. The hand-rolled
+  scheme is a linker fragment and two boundary symbols; adopting `linkme`
+  would add a proc-macro dependency and surrender project-owned control of the
+  `.ets_test_suites` section name and the `ets_suites.x` / `build.rs` linker
+  coordination, while a bare-metal `SECTIONS` script must place the section
+  either way.
 * **`inventory` (constructor-based registration)**: Rejected on mechanism.
   `inventory` offers "typed distributed plugin registration" into which plugins
   "can be registered from any source file linked into your application"
@@ -300,16 +299,14 @@ than by coverage of the generator; and `trybuild` fixtures, which are inputs.
 
 #### 6.3 Limits
 
-- `#[analysis_budget]` procedural macro: Static analysis budget attributes
-  requested by `control-rs-static-analyzer` are deferred and not verified in
-  this release; budget metadata generation will be specified in a future
-  macros revision.
+- `#[analysis_budget]` procedural macro: not specified. Its consumer,
+  `control-rs-static-analyzer`, does not exist (the static-analyzer design and its `analyze` gate were withdrawn on 2026-09-14).
 - `#[ets_setup]` panic diagnostics: Error reporting via spanned `syn::Error`
   rather than macro panic is tracked as Step 5 hardening and is not verified in
   current builds.
-- That the hand-rolled section scheme is more portable than `linkme`. Neither
-  crate's documentation states bare-metal support, so the comparison in §5 rests
-  on ownership and on the absence of a claim, not on measured portability.
+- That the hand-rolled section scheme is more portable than `linkme`. Both
+  target bare metal; the §5 decision rests on ownership and dependency cost,
+  not on measured portability.
 - Linker behaviour outside LLD and GNU ld. The section and script coordination
   is exercised only with the linkers the matrix uses.
 - Proc-macro hygiene against adversarial input. Compile-fail cases cover
@@ -355,9 +352,6 @@ than by coverage of the generator; and `trybuild` fixtures, which are inputs.
   impls that the transformation logic does not appear to use. A feature audit
   should confirm whether it can be dropped to narrow the proc-macro2/syn API
   surface.
-* **`linkme` Re-Evaluation**: Ruling `linkme` in or out definitively requires
-  exercising it against a real bare-metal target (QEMU or Teensy 4), since its
-  official platform list conflicts with unofficial claims of embedded support.
 
 ---
 
@@ -389,6 +383,7 @@ Steps 1–4 are implemented in `control-rs-macros/src/lib.rs`; discovery via
 | 1.5      | September 9, 2026 | @MitchellDScott | Evidence pass: replaced the pre-evidence research file with a quotes-only pair, cited the `linkme` and `inventory` rejections and the `link_section` semantics, corrected the linkme rejection from a capability claim to an ownership one, restructured §6 per `vv-standards.md`. |
 | 1.6      | September 9, 2026 | @MitchellDScott | Structural hardening: numbered §2 subsections 2.1-2.3, fixed cross-reference to ../ets/embedded-test-server-design.md, recorded #[analysis_budget] deferral in §6.7, standardized reference ordering. |
 | 1.7      | September 9, 2026 | @MitchellDScott | Dropped the author-year / `[n]` mapping table. |
+| 1.8      | September 24, 2026 | @MitchellDScott | `linkme` rejection rests on ownership and dependency cost: 0.3.37 is `no_std` and supports `target_os = "none"`; re-evaluation closed. `#[analysis_budget]` dropped with the withdrawn static-analyzer. |
 
 ---
 

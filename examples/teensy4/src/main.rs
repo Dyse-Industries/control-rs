@@ -23,6 +23,8 @@ use usb_device::device::{
 };
 use usbd_serial::SerialPort;
 
+type UsbBus = UsbBusAllocator<BusAdapter>;
+
 // --- Millisecond Counter & SysTick Interrupt Handler ---
 
 static MILLISECONDS: AtomicU32 = AtomicU32::new(0);
@@ -169,14 +171,11 @@ pub mod teensy_pid_suite {
             SettingValue::U32(v) => v,
             _ => 0,
         };
-        assert!(kp >= 500 && kp <= 5000);
+        assert!((500..=5000).contains(&kp));
     }
 
     fn test_intentional_failure() {
-        assert!(
-            false,
-            "Intentionally failed to demonstrate TUI state retention"
-        );
+        panic!("Intentionally failed to demonstrate TUI state retention");
     }
 }
 
@@ -226,7 +225,7 @@ fn setup() -> Context<TeensyComms, CortexMProfiler> {
     // 3. Set up the USB device stack statically
     static mut EP_MEMORY: EndpointMemory<1024> = EndpointMemory::new();
     static mut EP_STATE: EndpointState = EndpointState::max_endpoints();
-    static mut USB_BUS: Option<UsbBusAllocator<BusAdapter>> = None;
+    static mut USB_BUS: Option<UsbBus> = None;
 
     let ep_memory = unsafe { &mut *core::ptr::addr_of_mut!(EP_MEMORY) };
     let ep_state = unsafe { &mut *core::ptr::addr_of_mut!(EP_STATE) };

@@ -412,16 +412,22 @@ impl<X: DenseStorage<f64>> Nrm2<f64, X> for Avx2Blas {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
-unsafe fn gemv_notrans_rowmajor_f32_avx2(
-    m: usize,
-    n: usize,
-    alpha: f32,
-    a_ptr: *const f32,
-    lda: isize,
-    x_ptr: *const f32,
-    beta: f32,
-    y_ptr: *mut f32,
+unsafe fn gemv_notrans_rowmajor_f32_avx2<
+    A: DenseStorage<f32>,
+    X: DenseStorage<f32>,
+    Y: DenseStorageMut<f32>,
+>(
+    (alpha, beta): (f32, f32),
+    a: &A,
+    x: &X,
+    y: &mut Y,
 ) {
+    let m = a.rows();
+    let n = a.cols();
+    let lda = a.r_stride();
+    let a_ptr = a.as_ptr();
+    let x_ptr = x.as_ptr();
+    let y_ptr = y.as_mut_ptr();
     let chunks = n / 8;
     let rem = n % 8;
 
@@ -451,16 +457,22 @@ unsafe fn gemv_notrans_rowmajor_f32_avx2(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
-unsafe fn gemv_notrans_rowmajor_f64_avx2(
-    m: usize,
-    n: usize,
-    alpha: f64,
-    a_ptr: *const f64,
-    lda: isize,
-    x_ptr: *const f64,
-    beta: f64,
-    y_ptr: *mut f64,
+unsafe fn gemv_notrans_rowmajor_f64_avx2<
+    A: DenseStorage<f64>,
+    X: DenseStorage<f64>,
+    Y: DenseStorageMut<f64>,
+>(
+    (alpha, beta): (f64, f64),
+    a: &A,
+    x: &X,
+    y: &mut Y,
 ) {
+    let m = a.rows();
+    let n = a.cols();
+    let lda = a.r_stride();
+    let a_ptr = a.as_ptr();
+    let x_ptr = x.as_ptr();
+    let y_ptr = y.as_mut_ptr();
     let chunks = n / 4;
     let rem = n % 4;
 
@@ -515,16 +527,7 @@ impl<A: DenseStorage<f32>, X: DenseStorage<f32>, Y: DenseStorageMut<f32>>
                     && y_stride == 1
                 {
                     unsafe {
-                        gemv_notrans_rowmajor_f32_avx2(
-                            a.rows(),
-                            a.cols(),
-                            alpha,
-                            a.as_ptr(),
-                            a.r_stride(),
-                            x.as_ptr(),
-                            beta,
-                            y.as_mut_ptr(),
-                        );
+                        gemv_notrans_rowmajor_f32_avx2((alpha, beta), a, x, y);
                     }
                     return;
                 }
@@ -561,16 +564,7 @@ impl<A: DenseStorage<f64>, X: DenseStorage<f64>, Y: DenseStorageMut<f64>>
                     && y_stride == 1
                 {
                     unsafe {
-                        gemv_notrans_rowmajor_f64_avx2(
-                            a.rows(),
-                            a.cols(),
-                            alpha,
-                            a.as_ptr(),
-                            a.r_stride(),
-                            x.as_ptr(),
-                            beta,
-                            y.as_mut_ptr(),
-                        );
+                        gemv_notrans_rowmajor_f64_avx2((alpha, beta), a, x, y);
                     }
                     return;
                 }
@@ -586,19 +580,25 @@ impl<A: DenseStorage<f64>, X: DenseStorage<f64>, Y: DenseStorageMut<f64>>
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
-unsafe fn gemm_notrans_rowmajor_f32_avx2(
-    m: usize,
-    n: usize,
-    k: usize,
-    alpha: f32,
-    a_ptr: *const f32,
-    a_lda: isize,
-    b_ptr: *const f32,
-    b_ldb: isize,
-    beta: f32,
-    c_ptr: *mut f32,
-    c_ldc: isize,
+unsafe fn gemm_notrans_rowmajor_f32_avx2<
+    A: DenseStorage<f32>,
+    B: DenseStorage<f32>,
+    C: DenseStorageMut<f32>,
+>(
+    (alpha, beta): (f32, f32),
+    a: &A,
+    b: &B,
+    c: &mut C,
 ) {
+    let m = a.rows();
+    let n = b.cols();
+    let k = a.cols();
+    let a_lda = a.r_stride();
+    let b_ldb = b.r_stride();
+    let c_ldc = c.r_stride();
+    let a_ptr = a.as_ptr();
+    let b_ptr = b.as_ptr();
+    let c_ptr = c.as_mut_ptr();
     let n_chunks = n / 8;
     let n_rem = n % 8;
 
@@ -641,19 +641,25 @@ unsafe fn gemm_notrans_rowmajor_f32_avx2(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
-unsafe fn gemm_notrans_rowmajor_f64_avx2(
-    m: usize,
-    n: usize,
-    k: usize,
-    alpha: f64,
-    a_ptr: *const f64,
-    a_lda: isize,
-    b_ptr: *const f64,
-    b_ldb: isize,
-    beta: f64,
-    c_ptr: *mut f64,
-    c_ldc: isize,
+unsafe fn gemm_notrans_rowmajor_f64_avx2<
+    A: DenseStorage<f64>,
+    B: DenseStorage<f64>,
+    C: DenseStorageMut<f64>,
+>(
+    (alpha, beta): (f64, f64),
+    a: &A,
+    b: &B,
+    c: &mut C,
 ) {
+    let m = a.rows();
+    let n = b.cols();
+    let k = a.cols();
+    let a_lda = a.r_stride();
+    let b_ldb = b.r_stride();
+    let c_ldc = c.r_stride();
+    let a_ptr = a.as_ptr();
+    let b_ptr = b.as_ptr();
+    let c_ptr = c.as_mut_ptr();
     let n_chunks = n / 4;
     let n_rem = n % 4;
 
@@ -711,30 +717,16 @@ impl<A: DenseStorage<f32>, B: DenseStorage<f32>, C: DenseStorageMut<f32>>
         {
             if std::arch::is_x86_feature_detected!("avx2")
                 && std::arch::is_x86_feature_detected!("fma")
+                && ta == Trans::NoTrans
+                && tb == Trans::NoTrans
+                && a.c_stride() == 1
+                && b.c_stride() == 1
+                && c.c_stride() == 1
             {
-                if ta == Trans::NoTrans
-                    && tb == Trans::NoTrans
-                    && a.c_stride() == 1
-                    && b.c_stride() == 1
-                    && c.c_stride() == 1
-                {
-                    unsafe {
-                        gemm_notrans_rowmajor_f32_avx2(
-                            a.rows(),
-                            b.cols(),
-                            a.cols(),
-                            alpha,
-                            a.as_ptr(),
-                            a.r_stride(),
-                            b.as_ptr(),
-                            b.r_stride(),
-                            beta,
-                            c.as_mut_ptr(),
-                            c.r_stride(),
-                        );
-                    }
-                    return;
+                unsafe {
+                    gemm_notrans_rowmajor_f32_avx2((alpha, beta), a, b, c);
                 }
+                return;
             }
         }
         DefaultBlas::gemm(ta, tb, alpha, a, b, beta, c);
@@ -758,30 +750,16 @@ impl<A: DenseStorage<f64>, B: DenseStorage<f64>, C: DenseStorageMut<f64>>
         {
             if std::arch::is_x86_feature_detected!("avx2")
                 && std::arch::is_x86_feature_detected!("fma")
+                && ta == Trans::NoTrans
+                && tb == Trans::NoTrans
+                && a.c_stride() == 1
+                && b.c_stride() == 1
+                && c.c_stride() == 1
             {
-                if ta == Trans::NoTrans
-                    && tb == Trans::NoTrans
-                    && a.c_stride() == 1
-                    && b.c_stride() == 1
-                    && c.c_stride() == 1
-                {
-                    unsafe {
-                        gemm_notrans_rowmajor_f64_avx2(
-                            a.rows(),
-                            b.cols(),
-                            a.cols(),
-                            alpha,
-                            a.as_ptr(),
-                            a.r_stride(),
-                            b.as_ptr(),
-                            b.r_stride(),
-                            beta,
-                            c.as_mut_ptr(),
-                            c.r_stride(),
-                        );
-                    }
-                    return;
+                unsafe {
+                    gemm_notrans_rowmajor_f64_avx2((alpha, beta), a, b, c);
                 }
+                return;
             }
         }
         DefaultBlas::gemm(ta, tb, alpha, a, b, beta, c);

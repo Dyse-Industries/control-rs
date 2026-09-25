@@ -3,4 +3,8 @@ engine = "Llvm"
 all-features = true
 exclude-files = [
     "documentation/*",
+    "target/*",
+    "examples/*/target/*",
+    "benches/*",
+    "tests/*"
 ]

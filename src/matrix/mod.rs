@@ -33,14 +33,8 @@
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::option_if_let_else,
-    clippy::must_use_candidate,
     clippy::many_single_char_names,
-    clippy::collapsible_if,
-    clippy::use_self,
-    clippy::too_many_arguments,
-    clippy::missing_const_for_fn,
-    clippy::cast_lossless
+    clippy::too_many_arguments
 )]
 
 pub mod decomposition;
@@ -372,7 +366,7 @@ impl<T, R: Dim, C: Dim, S: Storage<T, R, C>> Matrix<T, R, C, S> {
     }
 
     /// Mutably borrows the underlying storage backend.
-    pub fn storage_mut(&mut self) -> &mut S {
+    pub const fn storage_mut(&mut self) -> &mut S {
         &mut self.storage
     }
 
@@ -954,12 +948,12 @@ where
         let a4 = a2.saturating_mul(&a2);
         let a6 = a4.saturating_mul(&a2);
         let (b0, b1, b2, b3, b4, b5, b6) = pade6_coeffs::<T>();
-        let u_inner = (Owned::<T, N, N>::identity())
+        let u_inner = (Self::identity())
             .saturating_scale(b1)
             .saturating_add(&a2.saturating_scale(b3))
             .saturating_add(&a4.saturating_scale(b5));
         let u = a_scaled.saturating_mul(&u_inner);
-        let v = (Owned::<T, N, N>::identity())
+        let v = (Self::identity())
             .saturating_scale(b0)
             .saturating_add(&a2.saturating_scale(b2))
             .saturating_add(&a4.saturating_scale(b4))

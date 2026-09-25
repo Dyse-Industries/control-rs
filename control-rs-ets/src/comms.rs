@@ -55,6 +55,13 @@ pub const FRAME_OVERHEAD: usize = 6;
 pub const MAX_FRAME_SIZE: usize = 518;
 /// Maximum postcard payload bytes in one frame.
 pub const MAX_PAYLOAD_SIZE: usize = 512;
+/// Wire-contract revision carried in [`Telemetry::TargetInfo`].
+///
+/// Incremented whenever `Command` or `Telemetry` gains, loses or reorders a
+/// variant, or a variant's payload changes shape. Variants are append-only.
+/// `0` is reserved for firmware that predates the handshake and never sends
+/// `TargetInfo`.
+pub const PROTOCOL_VERSION: u8 = 1;
 const START_BYTE_1: u8 = 0xAA;
 const START_BYTE_2: u8 = 0x55;
 
@@ -264,6 +271,19 @@ pub enum Telemetry<'a> {
         suite_id: u16,
         /// The ID of the test.
         test_id: u16,
+    },
+    /// Wire-contract revision and target hardware metadata, sent first in
+    /// every discovery stream. Appended last so its discriminant does not
+    /// shift the existing variants.
+    TargetInfo {
+        /// The target's [`PROTOCOL_VERSION`].
+        protocol_version: u8,
+        /// Board identifier chosen by the profiler (`0` when unknown).
+        board_id: u16,
+        /// Core clock frequency in hertz (`0` when unknown).
+        core_clock_hz: u32,
+        /// FPU capability bits: bit 0 single precision, bit 1 double precision.
+        fpu_flags: u8,
     },
 }
 
@@ -1057,7 +1077,7 @@ mod tests {
 
     /// One instance of every telemetry variant, with payload fields chosen
     /// to exercise each string and integer encoding.
-    fn golden_telemetry_variants() -> [Telemetry<'static>; 7] {
+    fn golden_telemetry_variants() -> [Telemetry<'static>; 8] {
         [
             Telemetry::DiscoveryComplete,
             Telemetry::Log(LogMessage {
@@ -1098,7 +1118,33 @@ mod tests {
                 suite_id: 0,
                 test_id: 1,
             },
+            Telemetry::TargetInfo {
+                protocol_version: PROTOCOL_VERSION,
+                board_id: 0x0401,
+                core_clock_hz: 600_000_000,
+                fpu_flags: 1,
+            },
         ]
+    }
+
+    /// Checked-in postcard bytes for `TargetInfo`: variant index 8, then
+    /// the version byte, then varint `board_id`, `core_clock_hz` and the
+    /// flags byte. A change here is a wire break and must bump
+    /// `PROTOCOL_VERSION`.
+    #[test]
+    fn test_golden_wire_vector_target_info() {
+        let info = Telemetry::TargetInfo {
+            protocol_version: 1,
+            board_id: 0x0401,
+            core_clock_hz: 600_000_000,
+            fpu_flags: 1,
+        };
+        let mut buf = [0u8; 32];
+        let bytes = postcard::to_slice(&info, &mut buf).expect("encode");
+        assert_eq!(
+            bytes,
+            &[0x08, 0x01, 0x81, 0x08, 0x80, 0x8C, 0x8D, 0x9E, 0x02, 0x01]
+        );
     }
 
     #[test]

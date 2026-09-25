@@ -1,6 +1,6 @@
 # Fixed-Point Scalar Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -619,8 +619,9 @@ sequence an integer core would otherwise run (ARM, 1996).
    kernel computation.
 2. **Downstream Rescale Models**: Downstream tensor models specifying
    `Quantized<i8, 7>` on `Scalar`-bound operations must be updated to either
-   use computation scales ($\text{SHIFT} \le 5$) or introduce explicit
-   interchange-to-computation rescales.
+   use computation scales ($\text{SHIFT} \le 6$ for `i8`, the
+   $\text{BITS} - 2$ bound; $\le 5$ where `SaturatingInteger` is required)
+   or introduce explicit interchange-to-computation rescales.
 3. **Definition Placement**: `Fixed<Repr, SHIFT>` is canonically placed in
    `src/math/fixed_num.rs` with `Quantized` re-exported, cleanly decoupling
    tensor crates from fixed-point representation internals.
@@ -668,6 +669,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | 1.2      | August 25, 2026 | @MitchellDScott | Representability gating: established sealed `OneRepresentable` / `TwoRepresentable` marker traits with compile-time failure verification. |
 | 1.3      | August 31, 2026 | @MitchellDScott | Dim trait bound integration: formalize type-level `DimMax` bounds, streamline `FixedRepr`, and unify compile-time scale gating.           |
 | 1.4      | September 23, 2026 | @MitchellDScott | Division: `Div`, `DivAssign`, `SaturatingDiv` and `TryDiv` with a pre-shifted `u128` quotient and ties-to-even rounding (FR-3, §4.3). |
+| 1.5      | September 24, 2026 | @MitchellDScott | §8 rescale note: `i8` computation scales are `SHIFT <= 6` (`Scalar`) and `<= 5` (`SaturatingInteger`). |
 
 ---
 

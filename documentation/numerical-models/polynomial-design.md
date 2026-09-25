@@ -1,6 +1,6 @@
 # Polynomial Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -27,7 +27,7 @@ Primary usage scenarios:
   and jerk profiles.
 - **Characteristic Polynomials & Stability Analysis**: Constructing
   characteristic polynomials ($\det(\lambda I - A) = 0$) and computing
-  polynomial roots via companion matrix eigen-decomposition to evaluate
+  polynomial roots by simultaneous iteration (`roots()`) to evaluate
   closed-loop system poles and stability margins.
 - **Second-Order System & Biquad Analysis**: Extracting poles, zeros, damping
   ratios ($\zeta$), and natural frequencies ($\omega_n$) in $O(1)$ deterministic
@@ -65,8 +65,13 @@ Primary usage scenarios:
   ($r \in \mathbb{C}^N$) of a polynomial of capacity $N$ into a fixed-size worst-case buffer
   `[Complex<T>; N]` without heap allocation or generic buffer parameters. Dispatches hierarchically
   to $O(1)$ direct closed-form solutions for linear ($N=2$) and quadratic ($N=3$) cases,
-  and Aberth simultaneous root iteration (`aberth_roots`) for degree $\ge 3$ ($N \ge 4$).
-  Returns an explicit typed `RootError` if the leading coefficient is zero or iteration fails to converge.
+  and Durand–Kerner (Weierstrass) simultaneous iteration seeded on Aberth's
+  initial circle (`aberth_roots`, alias `durand_kerner_roots`) for degree
+  $\ge 3$ ($N \ge 4$), bounded at 80 Jacobi-style sweeps.
+  Returns `RootError::ZeroLeadingCoefficient` if the leading coefficient is
+  zero. `RootError::ConvergenceFailure` is declared but not yet returned: a
+  sweep budget exhausted before the step tolerance is met returns the last
+  iterate (§8).
 
 #### 2.2. Non-Functional Requirements
 
@@ -78,9 +83,10 @@ Primary usage scenarios:
 
 #### 2.3. Constraints
 
-- **C-1 — Maximum Degree Bound**: Polynomial degree is statically
-  bounded ($N \le 1024$) to prevent stack overflow on microcontroller targets (
-  `num-types-design.md` C-1).
+- **C-1 — Capacity Bound**: The coefficient capacity `N` is a `Dim` from
+  the `num-types-design.md` C-1 set ($0..=1024$ plus $2048$, $4096$, $8192$,
+  $16384$), so degree is at most $N - 1$. Stack cost is
+  $N \times \text{size\_of}(T)$ per polynomial.
 - **C-2 — `#![no_std]` / Zero Heap Allocation**: All polynomial representations
   and operations operate strictly on fixed stack arrays or borrowed memory
   slices.
@@ -96,8 +102,9 @@ hierarchy to a single column, it reuses `ArrayStorage<T, N, 1>` for owning
 values and `StorageView<'a, T, N, Const<1>>` for borrowed slices.
 
 The module provides Horner polynomial evaluation, discrete convolution
-multiplication, fallible polynomial division, trajectory spline generation, and
-companion-matrix conversion for root finding, while operating entirely within
+multiplication, fallible polynomial division, trajectory spline generation,
+simultaneous-iteration root finding and companion-matrix conversion, while
+operating entirely within
 `#![no_std]` stack allocations.
 
 ---
@@ -208,7 +215,7 @@ where
 ```
 
 Level 1 kernels take the typed storage operand directly
-(`subprograms-design.md` FR-9): shape comes from `S::R::USIZE` and
+(`subprograms-design.md` §4.1): shape comes from `S::R::USIZE` and
 addressing from `as_ptr()` plus the leaf's strides, both monomorphization
 constants on an owning array leaf, so LLVM folds the loop bounds
 (`storage-design.md` NFR-3), with no `as_array::<N>() -> &[T; N]` accessor
@@ -224,9 +231,10 @@ analogue here.
 
 Borrowed views are constructed through `storage-design.md` FR-2:
 `ArrayPolynomial::view()` / `view_mut()` copy `N` from the owning alias's
-const generic. `StorageView::new` is the only path that wraps an
-erased-length slice, and it is fallible with
-`ConversionError::DimensionMismatch` (`storage-design.md` §4.6).
+const generic. `StaticStorageView::new` (packed layout) and
+`StorageView::new_with_strides` (explicit strides) are the paths that wrap an
+erased-length slice; both are fallible with
+`ConversionError::DimensionMismatch` (`storage-design.md` §4.2).
 
 #### 4.4. Instantiation & Constructors
 
@@ -351,7 +359,7 @@ provides two interfaces:
       /// Computes the two complex roots of a degree-2 quadratic polynomial using the Muller/Higham stabilized formula.
       pub fn quadratic_roots(&self) -> Result<[Complex<T>; 2], RootError> { /* ... */ }
 
-      /// Computes the roots of a polynomial with capacity N >= 4 via Aberth initial seeding and simultaneous iteration.
+      /// Computes the roots of a polynomial with capacity N >= 4 by Durand-Kerner iteration from Aberth's initial circle.
       pub fn aberth_roots(&self) -> Result<[Complex<T>; N], RootError> { /* ... */ }
 
       /// High-level generic root solver dispatching to line_intercept (N=2), quadratic_roots (N=3),
@@ -365,8 +373,9 @@ provides two interfaces:
 ##### 4.7.1. Conversion to Matrix (Companion Form)
 
 A monic polynomial of degree $n = N - 1$ converts to its $n \times n$
-companion matrix in Controllable Canonical Form, enabling $O(N^2)$-time,
-$O(N)$-space companion-matrix QR rootfinding.
+companion matrix in Controllable Canonical Form, for state-space realization
+and for eigenvalue cross-checks of `roots()`. Root finding does not go
+through this matrix (§4.6, §5.1).
 
 - **Type Signature**:
   ```rust
@@ -402,28 +411,11 @@ $O(N)$-space companion-matrix QR rootfinding.
 
 ##### 4.7.2. Conversion to Tensor
 
-Converts flat coefficient data into a 1D `Tensor<T, Layout, B>`, mirroring
-`matrix-design.md` §4.8.2's `Matrix` → `Tensor` conversion.
-
-- **Type Signature**:
-  ```rust
-  impl<T, N: Dim, S, Layout: TensorLayout> From<Polynomial<T, N, S>> for Tensor<T, Layout, S>
-  where
-      S: ContiguousStorage<T, R = N, C = Const<1>>,
-      Layout: TensorLayout<Size = N>,
-  {
-      // Preserves backing buffer zero-copy when compile-time size and rank 1 match
-  }
-  ```
-- **Behavior**: Maps the leaf's padding-free slice directly into the flat
-  buffer representation of the `Tensor`. The `ContiguousStorage` bound is
-  what makes the mapping zero-copy; a strided `StorageView` has no such
-  slice and converts by element copy
-  (`tensor-design.md` §4.1, `FlatBuffer<T>`).
-- **Infallible Compile-Time Bound**: Dimensions and rank are verified statically
-  at compile time via `Layout: TensorLayout<Size = N>`.
-  This conversion cannot produce `ConversionError::LayoutMismatch`
-  (`error-design.md` §3).
+No `Polynomial` → `Tensor` conversion ships. A general `TensorLayout`
+exposes its size as the associated constant `SIZE: usize`, not as a `Dim`
+type, so the bound `Layout: TensorLayout<Size = N>` cannot be stated
+without `generic_const_exprs`. Coefficient data reaches tensor code as a
+slice (`as_slice()`) when needed.
 
 #### 4.8. Error Handling & State Management
 
@@ -474,38 +466,37 @@ pub enum RootError {
   the divisor's leading coefficient shrinks toward (but does not reach)
   zero — a documented conditioning caveat, not a `DivisionError` variant
   (§4.6).
-- **Host/Design-Time Scope**: `div_rem` and companion-matrix root-finding
+- **Host/Design-Time Scope**: `div_rem` and simultaneous-iteration root-finding
   have no established fixed-point (Q31/Q15) numerical precedent in DSP
   reference libraries (unlike Horner evaluation and convolution, both
   standard fixed-point DSP primitives). These two operations are intended
   for floating-point, design-time use (for example, offline controller synthesis,
   coefficient generation), not on-target fixed-point runtime paths.
-- **Panic Path in `mul_with_conv`'s Dependency**: shipped
-  `Convolution::convolve_input` ([`src/math/dsp.rs`](../../src/math/dsp.rs)) panics via
-  `assert!` on an undersized caller-provided output buffer, violating the
-  crate's no-panic-outside-tests-and-examples rule ([`CLAUDE.md`](../../CLAUDE.md)) and
-  `subprograms-design.md` NFR-3. `mul_with_conv` (§4.5) delegates to it
-  directly. The correction (`assert!` → `debug_assert!`, matching the
-  `debug_assert_eq!` precondition convention `Gemv`/`Gemm` already use in
-  `subprograms.rs`) is a required pre-implementation fix, tracked in §7.
+- **Undersized Convolution Output**: `Convolution::convolve_input`
+  ([`src/math/dsp.rs`](../../src/math/dsp.rs)) returns
+  `Err(ConversionError::DimensionMismatch)` when the output buffer is shorter
+  than `input_len + kernel_len - 1` (`error-design.md` §9 Step 6). The
+  `mul_poly` family sizes the output as the caller's `P`; an undersized `P`
+  leaves the product truncated because the error is not propagated (§8).
 
 ---
 
 ### 5. Alternatives
 
-#### 5.1. Aberth–Ehrlich Simultaneous Iteration (rejected for root-finding)
+#### 5.1. Companion-Matrix QR Eigenvalues (rejected for root-finding)
 
-The Rust `aberth` crate (docs.rs, 2026) demonstrates a viable, `no_std`,
-array-backed alternative to companion-matrix QR eigenvalue root-finding,
-using simultaneous Aberth–Ehrlich iteration (cubic convergence for simple
-roots). It was not chosen because its convergence rate is data-dependent
-(cubic for simple roots, only linear for multiple or tightly clustered
-roots), violating §2.2's Deterministic Execution non-functional
-requirement. The companion-matrix QR approach (Bini et al., 2010; Aurentz
-et al., 2015) keeps root-finding structurally consistent with the rest of
-the crate's fixed-operation-count posture — the same determinism-over-
-convergence-speed tradeoff `matrix-design.md` §5.5 applies when preferring
-$LDL^T$ over pivoted alternatives for embedded targets.
+Companion-matrix QR (Bini et al., 2010; Aurentz et al., 2015) computes roots
+as eigenvalues with backward stability in the polynomial's coefficients. It
+was not chosen for `roots()`: the crate has no general nonsymmetric
+eigensolver (`subprograms-design.md` FR-8 covers symmetric and Hermitian
+only), and an $n \times n$ companion matrix costs $O(N^2)$ stack against the
+$O(N)$ root buffer. The shipped solver is Durand–Kerner simultaneous
+iteration from Aberth's initial circle (docs.rs, 2026). Its seeds are
+deterministic and its sweep count is capped at 80, so execution is bounded;
+its convergence rate is not (quadratic for simple roots, linear for
+multiple or clustered roots), which the §6.3 clustered-root case measures.
+Full Aberth–Ehrlich correction terms would raise the simple-root rate to
+cubic at the same cost bound and remain a candidate (§8).
 
 #### 5.2. FFT-Based Polynomial Multiplication (rejected for `mul_poly`/`mul_with_conv`)
 
@@ -515,21 +506,19 @@ comparable magnitude (van der Hoeven, 2008) — an assumption this crate
 cannot make about arbitrary user-supplied coefficients. This is consistent
 with CMSIS-DSP's own guidance that direct convolution, not an FFT-based
 approach, is appropriate below its documented long-vector cutoff (ARM
-CMSIS-DSP, 2025), which comfortably covers this crate's 127-element
-capacity ceiling (§2.3 C-4).
+CMSIS-DSP, 2025), which covers the contiguous capacities of C-1
+($N \le 1024$).
 
 #### 5.3. Single Unified Multiplication Method (rejected)
 
-Merging `mul_poly` and `mul_with_conv` into one method was considered,
-since they are currently algorithmically identical (§4.5). They are kept
-separate so that `mul_with_conv` alone can later delegate to a hardware- or
-fixed-point-specialized `Convolution<T>` implementation without changing
-`mul_poly`'s own, strictly broader bound (`T: Copy + Zero + Add<Output=T> +
-Mul<Output=T>`, satisfied by `T: Scalar`, §4.5 — no `Float` required, so
-`mul_poly` already works for fixed-point, integer and complex `T` today) or
-requiring downstream callers of
-`mul_poly` to opt into `Convolution<T>`'s narrower, `Float`-only
-specialization.
+Merging `mul_poly` and `mul_with_conv` into one method was considered. Both
+are defined for `T: Scalar + Copy` (§4.5) and both call
+`mul_poly_with::<DefaultDsp, _, _>`; `Convolution<T>` is itself declared over
+`T: Scalar`, so neither narrows the scalar set. They are kept as separate
+names so that the explicit-backend form `mul_poly_with::<C>` is the single
+place a hardware- or fixed-point-specialized `Convolution<T>` plugs in
+(`subprograms-design.md` §4.5), while `mul_poly` stays the default-backend
+entry point.
 
 #### 5.4. Companion Form as the Only `Matrix` Conversion (rejected)
 
@@ -603,7 +592,7 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 | Quadratic roots (distinct real)   | Analytic $(x-r_1)(x-r_2)$ with $r_1 \gg r_2$       | Relative error              | $\|r_i - \hat{r}_i\| \le 2\epsilon$                                                                       | Muller cancellation-free formulation (Higham, 2002)            |
 | Quadratic roots (complex pair)    | Oscillator $s^2 + 2\zeta\omega_n s + \omega_n^2$   | Absolute error              | $\|r_i - \hat{r}_i\|_\infty \le \epsilon \omega_n$                                                        | Exact discriminant splitting                                   |
 | Quadratic roots (degenerate $c_2=0$) | Degenerate $c_2 = 0$ polynomial                 | Exact equality              | `Err(RootError::ZeroLeadingCoefficient)`                                                                 | Precondition failure contract                                  |
-| Companion roots (degree $\ge 3$)  | Manufactured roots (for example, quartic $s^4+6s^3+18s^2+30s+25$) | Absolute error       | $\|r_i - \hat{r}_i\|_\infty \le 10^{-10}$                                                                 | Durand-Kerner companion decomposition                          |
+| Companion roots (degree $\ge 3$)  | Manufactured roots (for example, quartic $s^4+6s^3+18s^2+30s+25$) | Absolute error       | $\|r_i - \hat{r}_i\|_\infty \le 10^{-10}$                                                                 | Durand–Kerner iteration from Aberth seeds                          |
 
 #### 6.4. Traceability
 
@@ -642,10 +631,9 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 
 - Root finding for ill-conditioned polynomials with high multiplicity roots (
   where condition number $\kappa(p) \to \infty$) is not guaranteed to achieve
-  backward stability without multi-precision arithmetic. The example crate
-  evaluates clustered-root Horner at degree 16
-  ([`numerical-models-design.md`](numerical-models-design.md) §6.6); root
-  *finding* for $\kappa(p)\to\infty$ is still not claimed.
+  backward stability without multi-precision arithmetic. The clustered-root
+  sweep $(x-1)^8(x-1.01)^8$ is not yet in the verification suite
+  ([`numerical-models-design.md`](numerical-models-design.md) §5.2); root *finding* for $\kappa(p)\to\infty$ is not claimed.
 - Fixed-point Horner evaluation without per-iteration dynamic scaling may suffer
   precision degradation for dynamic ranges $> 2^{16}$.
 
@@ -669,9 +657,18 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
   products that maintain a wide accumulator, Horner's method feeds the
   accumulator back into the multiplicand at each step, requiring per-iteration
   scaling in fixed-point / Q-format representations.
-- **Root-Finding Precision Scope**: Polynomial root finding via companion matrix
-  QR iterations requires floating-point scalar support (`T: Float`); integer
-  and fixed-point coefficient types are out of scope for eigenvalue extraction.
+- **Root-Finding Precision Scope**: Simultaneous-iteration root finding
+  requires floating-point scalar support (`T: Float`); integer and fixed-point
+  coefficient types are out of scope for root extraction.
+- **Unreported Non-Convergence**: `aberth_roots` returns the last iterate when
+  the 80-sweep budget runs out; `RootError::ConvergenceFailure` exists but is
+  never produced (FR-7).
+- **Unreported Truncation**: `mul_poly_with` discards the `Convolution`
+  capacity error, so an output capacity `P` below `N + M - 1` truncates the
+  product silently (§4.8.3).
+- **Full Aberth–Ehrlich Correction**: adding the Aberth correction term to the
+  shipped Durand–Kerner sweep would raise the simple-root convergence rate from
+  quadratic to cubic at the same bounded cost (§5.1); not scheduled.
 
 ---
 
@@ -683,7 +680,7 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 | **Step 2: Core Arithmetic**                 | `Add`/`Sub`/`Neg` operator overloads, `mul_poly`, `mul_with_conv` via `Convolution<T>`.                                                                                                         | 2.0 Days         |
 | **Step 3: Evaluation, Calculus & Division** | Horner `evaluate`, derivative/integral methods, `div_rem` with `DivisionError` and the near-singular caveat.                                                                                    | 2.5 Days         |
 | **Step 4: Interoperability**                | Companion-`Matrix` `TryFrom` conversion, column-copy `From` conversion (§5.4), `Tensor` conversion, cross-check against `matrix-design.md`'s reverse Faddeev–LeVerrier conversion.              | 2.0 Days         |
-| **Step 5: Verification**                    | `proptest` algebraic invariants, host/qemu unit tests, release-codegen check that `evaluate` retains zero panic paths, cubic-spline trajectory validation example per [`design-template.md`](../design-template.md) §6. | 2.0 Days         |
+| **Step 5: Verification**                    | `proptest` algebraic invariants, host/qemu unit tests, release-codegen check that `evaluate` retains zero panic paths, cubic-spline trajectory validation example (§6). | 2.0 Days         |
 
 ---
 
@@ -765,3 +762,4 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 | 1.13     | September 1, 2026 | @MitchellDScott | Updated root-finding methods (`roots()`, `companion_roots()`) to return worst-case buffer `[Complex<T>; N]` directly from type bounds without generic parameters. |
 | 1.14     | September 1, 2026 | @MitchellDScott | Extracted `aberth_solver` helper and renamed `companion_roots` to `aberth_roots` (`durand_kerner_roots`). |
 | 1.15      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |
+| 1.16      | September 24, 2026 | @MitchellDScott | Root finding is Durand–Kerner from Aberth seeds, 80-sweep cap (FR-7, §4.6); §5.1 rejects companion QR instead of Aberth; `ConvergenceFailure` and output truncation recorded in §8. §4.7.2: no tensor conversion ships. C-1 capacity recomputed. §4.8.3 convolution returns `Err`. §5.3 bounds match code. View constructors and FR-9 reference corrected. |

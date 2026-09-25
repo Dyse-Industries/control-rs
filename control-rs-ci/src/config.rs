@@ -19,7 +19,8 @@ pub enum GatePolicy {
     Fail,
     /// Gate executes; failure reports a warning but does not block.
     Warn,
-    /// Gate execution is skipped entirely.
+    /// Gate is disabled: it never executes, and an explicit selection
+    /// records `Verdict::Skipped`.
     Skip,
 }
 
@@ -71,6 +72,13 @@ pub struct GateDefinition {
     /// Optional execution mode / policy for this gate (for example, `"fail"`, `"warn"`, `"skip"`).
     #[serde(default)]
     pub mode: Option<GatePolicy>,
+    /// Whether an unfiltered run selects this gate. A `false` gate runs only
+    /// when named by `--only`, `--group` or `--all`, under its `mode`.
+    #[serde(default = "default_true")]
+    pub default: bool,
+    /// Working directory, relative to the workspace root.
+    #[serde(default)]
+    pub cwd: Option<PathBuf>,
     /// Optional execution timeout in seconds for this specific gate.
     #[serde(default)]
     pub timeout_secs: Option<u64>,
@@ -129,6 +137,8 @@ impl GateDefinition {
             description: None,
             env: HashMap::new(),
             mode: None,
+            default: true,
+            cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),
         }
@@ -193,6 +203,17 @@ impl GateConfig {
             .unwrap_or(GatePolicy::Fail)
     }
 
+    /// Whether an unfiltered run selects the named gate: its policy is not
+    /// `skip` and its definition does not set `default = false`.
+    #[must_use]
+    pub fn selected_by_default(&self, gate_name: &str) -> bool {
+        self.policy_for(gate_name) != GatePolicy::Skip
+            && self
+                .gate_definitions
+                .get(gate_name)
+                .is_none_or(|d| d.default)
+    }
+
     /// Resolves the gate definition for a named quality gate from `gate.toml`.
     ///
     /// Returns `None` if the corresponding `[<gate_name>]` table is missing.
@@ -200,6 +221,10 @@ impl GateConfig {
     pub fn gate_def(&self, gate_name: &str) -> Option<&GateDefinition> {
         self.gate_definitions.get(gate_name)
     }
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 fn default_title() -> String {

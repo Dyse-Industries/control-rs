@@ -30,14 +30,8 @@
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::option_if_let_else,
-    clippy::must_use_candidate,
     clippy::many_single_char_names,
-    clippy::collapsible_if,
-    clippy::use_self,
-    clippy::too_many_arguments,
-    clippy::missing_const_for_fn,
-    clippy::cast_lossless
+    clippy::too_many_arguments
 )]
 
 #[cfg(any(test, feature = "ets"))]
@@ -284,7 +278,7 @@ impl<T, N: Dim, S: Storage<T, N, Const<1>>> Polynomial<T, N, S> {
     }
 
     /// Mutably borrows the underlying storage backend.
-    pub fn storage_mut(&mut self) -> &mut S {
+    pub const fn storage_mut(&mut self) -> &mut S {
         &mut self.storage
     }
 
@@ -344,10 +338,10 @@ impl<T: Scalar + Copy, N: Dim, S: Storage<T, N, Const<1>>> Polynomial<T, N, S> {
     pub fn degree(&self) -> Option<usize> {
         let cap = self.capacity();
         for i in (0..cap).rev() {
-            if let Some(&c) = self.get(i) {
-                if c != T::ZERO {
-                    return Some(i);
-                }
+            if let Some(&c) = self.get(i)
+                && c != T::ZERO
+            {
+                return Some(i);
             }
         }
         None
@@ -488,8 +482,8 @@ where
     ///
     /// $$\frac{d}{dx} \left( \sum_{i=0}^{N-1} c_i x^i \right) = \sum_{i=1}^{N-1} i c_i x^{i-1}$$
     #[must_use]
-    pub fn derivative(&self) -> ArrayPolynomial<T, N> {
-        let mut out = ArrayPolynomial::<T, N>::zero();
+    pub fn derivative(&self) -> Self {
+        let mut out = Self::zero();
         for i in 1..N {
             let factor = {
                 let mut f = T::ZERO;
@@ -498,10 +492,10 @@ where
                 }
                 f
             };
-            if let Some(&c) = self.get(i) {
-                if let Some(out_c) = out.get_mut(i.saturating_sub(1)) {
-                    *out_c = factor.saturating_mul(&c);
-                }
+            if let Some(&c) = self.get(i)
+                && let Some(out_c) = out.get_mut(i.saturating_sub(1))
+            {
+                *out_c = factor.saturating_mul(&c);
             }
         }
         out
@@ -563,8 +557,8 @@ where
     ///
     /// $$\int \left( \sum_{i=0}^{N-2} c_i x^i \right) dx = c_0 + \sum_{i=0}^{N-2} \frac{c_i}{i+1} x^{i+1}$$
     #[must_use]
-    pub fn integral(&self, c0: T) -> ArrayPolynomial<T, N> {
-        let mut out = ArrayPolynomial::<T, N>::zero();
+    pub fn integral(&self, c0: T) -> Self {
+        let mut out = Self::zero();
         if let Some(target) = out.get_mut(0) {
             *target = c0;
         }
@@ -576,10 +570,10 @@ where
                 }
                 d
             };
-            if let Some(&c) = self.get(i) {
-                if let Some(target) = out.get_mut(i.saturating_add(1)) {
-                    *target = c.saturating_div(&divisor);
-                }
+            if let Some(&c) = self.get(i)
+                && let Some(target) = out.get_mut(i.saturating_add(1))
+            {
+                *target = c.saturating_div(&divisor);
             }
         }
         out

@@ -84,6 +84,16 @@ pub mod ffi {
 }
 
 // Fallback Rust implementations of NMSIS C symbols, active when C static library is not compiled
+
+/// Rust stand-in for `riscv_scale_f32`: writes `src[i] * scale` to `dst[i]`
+/// for each `i < block_size`.
+///
+/// # Safety
+///
+/// The caller must ensure that:
+/// - `src` is valid for reads and `dst` is valid for writes of `block_size`
+///   properly aligned `f32` values.
+/// - `dst` either equals `src` (in-place scaling) or does not overlap it.
 #[cfg(not(feature = "c_nmsis"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riscv_scale_f32(
@@ -97,6 +107,15 @@ pub unsafe extern "C" fn riscv_scale_f32(
     }
 }
 
+/// Rust stand-in for `riscv_dot_prod_f32`: writes the dot product of the
+/// first `block_size` elements of `src_a` and `src_b` to `result`.
+///
+/// # Safety
+///
+/// The caller must ensure that:
+/// - `src_a` and `src_b` are each valid for reads of `block_size` properly
+///   aligned `f32` values.
+/// - `result` is valid for a write of one properly aligned `f32`.
 #[cfg(not(feature = "c_nmsis"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riscv_dot_prod_f32(
@@ -112,6 +131,17 @@ pub unsafe extern "C" fn riscv_dot_prod_f32(
     *result = sum;
 }
 
+/// Rust stand-in for `riscv_cmplx_dot_prod_f32`: writes the conjugated dot
+/// product `sum(conj(a[i]) * b[i])` over `num_samples` interleaved
+/// `(re, im)` pairs to `real_result` and `imag_result`.
+///
+/// # Safety
+///
+/// The caller must ensure that:
+/// - `src_a` and `src_b` are each valid for reads of `2 * num_samples`
+///   properly aligned `f32` values.
+/// - `real_result` and `imag_result` are each valid for a write of one
+///   properly aligned `f32`.
 #[cfg(not(feature = "c_nmsis"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riscv_cmplx_dot_prod_f32(
@@ -135,6 +165,17 @@ pub unsafe extern "C" fn riscv_cmplx_dot_prod_f32(
     *imag_result = sum_i;
 }
 
+/// Rust stand-in for `riscv_mat_vec_mult_f32`: writes the product of the
+/// row-major matrix `src_mat` and the vector `p_vec` to `p_dst`.
+///
+/// # Safety
+///
+/// The caller must ensure that:
+/// - `src_mat` points to a valid `RiscvMatrixInstanceF32` whose `p_data` is
+///   valid for reads of `num_rows * num_cols` properly aligned `f32` values.
+/// - `p_vec` is valid for reads of `num_cols` properly aligned `f32` values.
+/// - `p_dst` is valid for writes of `num_rows` properly aligned `f32` values
+///   and overlaps neither the matrix data nor `p_vec`.
 #[cfg(not(feature = "c_nmsis"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riscv_mat_vec_mult_f32(
@@ -154,6 +195,21 @@ pub unsafe extern "C" fn riscv_mat_vec_mult_f32(
     }
 }
 
+/// Rust stand-in for `riscv_mat_mult_f32`: writes the row-major product
+/// `src_a * src_b` to `dst`.
+///
+/// Returns `0` on success, or `-3` (`RISCV_MATH_SIZE_MISMATCH`) before any
+/// `p_data` access when the three shapes do not chain.
+///
+/// # Safety
+///
+/// The caller must ensure that:
+/// - `src_a`, `src_b` and `dst` each point to a valid
+///   `RiscvMatrixInstanceF32`.
+/// - The `p_data` of each instance is valid for `num_rows * num_cols`
+///   properly aligned `f32` values: reads for `src_a` and `src_b`, writes for
+///   `dst`.
+/// - The data of `dst` overlaps neither the data of `src_a` nor of `src_b`.
 #[cfg(not(feature = "c_nmsis"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riscv_mat_mult_f32(
@@ -188,6 +244,22 @@ pub unsafe extern "C" fn riscv_mat_mult_f32(
     0
 }
 
+/// Rust stand-in for `riscv_mat_cholesky_f32`: writes the lower-triangular
+/// Cholesky factor of the `n x n` matrix `src` to `dst`, where `n` is the
+/// `num_rows` of `src`. Entries above the diagonal keep the values of `src`.
+///
+/// Returns `0` on success, or `-7` (`RISCV_MATH_DECOMPOSITION_FAILURE`) when
+/// the matrix is not positive definite.
+///
+/// # Safety
+///
+/// The caller must ensure that:
+/// - `src` and `dst` each point to a valid `RiscvMatrixInstanceF32`.
+/// - The `p_data` of `src` is valid for reads, and the `p_data` of `dst` is
+///   valid for reads and writes, of `n * n` properly aligned `f32` values.
+///   Unlike the C reference, this stand-in does not check the shapes.
+/// - The two `p_data` pointers are either equal (in-place factorization) or
+///   do not overlap.
 #[cfg(not(feature = "c_nmsis"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riscv_mat_cholesky_f32(
@@ -228,6 +300,25 @@ pub unsafe extern "C" fn riscv_mat_cholesky_f32(
     0
 }
 
+/// Rust stand-in for `riscv_mat_solve_upper_triangular_f32`: solves
+/// `src_a * X = src_b` by back substitution and writes `X` to `dst`, where
+/// `src_a` is `n x n` upper triangular and `src_b` is `n x m`, with `n` the
+/// `num_rows` of `src_a` and `m` the `num_cols` of `src_b`.
+///
+/// Returns `0` on success, or `-5` (`RISCV_MATH_SINGULAR`) on a zero
+/// diagonal entry.
+///
+/// # Safety
+///
+/// The caller must ensure that:
+/// - `src_a`, `src_b` and `dst` each point to a valid
+///   `RiscvMatrixInstanceF32`.
+/// - The `p_data` of `src_a` is valid for reads of `n * n` properly aligned
+///   `f32` values, the `p_data` of `src_b` for reads of `n * m`, and the
+///   `p_data` of `dst` for reads and writes of `n * m`. Unlike the C
+///   reference, this stand-in does not check the shapes.
+/// - The `p_data` of `dst` either equals that of `src_b` (in-place solve) or
+///   overlaps neither input.
 #[cfg(not(feature = "c_nmsis"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn riscv_mat_solve_upper_triangular_f32(

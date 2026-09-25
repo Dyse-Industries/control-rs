@@ -1,6 +1,6 @@
 # Transfer Function Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -77,8 +77,9 @@ Primary usage scenarios:
   degree $n = D - 1 \ge m = N - 1$, proper transfer function).
 - **C-2 — Non-Zero Leading Denominator**: Leading denominator
   coefficient $a_{D-1}$ must be non-zero ($a_{D-1} \neq 0$).
-- **C-3 — Capacity Bound**: Numerator and denominator polynomial capacities are
-  bounded ($N, D \le 1024$) per `num-types-design.md` C-1.
+- **C-3 — Capacity Bound**: Numerator and denominator capacities `N`, `D` are
+  `Dim`s from the `num-types-design.md` C-1 set ($0..=1024$ plus $2048$,
+  $4096$, $8192$, $16384$).
 - **C-4 — `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
   standard library dependencies.
 
@@ -172,17 +173,26 @@ ArrayMatrix<ArrayTransferFunction<T, N, D>, R, C>;
 
 #### 4.5 Error Handling
 
-Following the crate-wide error strategy, fallible constructors return
-`Result<T, Error>` via a crate-local `thiserror` enum rather than panicking.
-The only runtime-checked invariant at construction is §2.3's Denominator
-Validity constraint ($D \ge 1$, non-zero leading coefficient $a_{D-1}$, C-2):
+Following the crate-wide error strategy, fallible constructors and canonical
+conversions return `Result<T, Error>` rather than panicking. The error type is
+a crate-local enum deriving `Debug, Clone, Copy, PartialEq, Eq` with a
+hand-written `core::fmt::Display` and `impl core::error::Error`
+(`error-design.md` NFR-1); the root crate depends only on `libm`, so there is
+no `thiserror` derive. The runtime-checked invariants are §2.3's Denominator Validity
+constraint ($D \ge 1$, non-zero leading coefficient $a_{D-1}$, C-2) and
+properness ($N \le D$, C-1) for the canonical conversions:
 
 ```rust
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferFunctionError {
-    #[error("denominator leading coefficient must be non-zero")]
+    /// Denominator leading coefficient is zero.
     ZeroLeadingDenominatorCoefficient,
+    /// Numerator degree exceeds denominator degree (N > D).
+    ImproperSystem,
 }
+
+impl core::fmt::Display for TransferFunctionError { /* one message per variant */ }
+impl core::error::Error for TransferFunctionError {}
 ```
 
 Runtime constructors that accept caller-supplied coefficients (any
@@ -215,17 +225,17 @@ $$\text{Num}(s) = \text{Horner}(B, s), \quad \text{Den}(s) = \text{Horner}(A, s)
 $$H(s) = \frac{\text{Num}(s)}{\text{Den}(s)}$$
 
 ```rust
-impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, R=N, C=Const<1>>, Sd: DenseStorage<T, R=D, C=Const<1>>> TransferFunction<T, N, D, Sn, Sd> {
-    pub fn evaluate_complex(&self, s: Complex<T>) -> Complex<T>
-    where
-        T: Copy + Zero + One + Add<Output=T> + Mul<Output=T>,
-    {
-        let num_val = horner_eval_storage(&self.num_storage, s);
-        let den_val = horner_eval_storage(&self.den_storage, s);
-        num_val / den_val
-    }
+impl<T: Float + Copy, N: Dim, D: Dim, Sn: Storage<T, N, Const<1>>, Sd: Storage<T, D, Const<1>>>
+    TransferFunction<T, N, D, Sn, Sd>
+{
+    pub fn evaluate_complex(&self, s: Complex<T>) -> Complex<T>;
 }
 ```
+
+Horner evaluation and the final division use the saturating `Complex<T>`
+methods (`num-traits-design.md` FR-6). The bound is `T: Float` because
+frequency response is evaluated on the real-valued float coefficients the
+realization and discretization paths produce.
 
 **Near-Pole Conditioning**: Horner's method is backward-stable. Evaluation
 near a pole is ill-conditioned (Higham, 2002, Ch. 5) and is not compensated.
@@ -243,27 +253,31 @@ Numerator dimension bound: $(N_1 + N_2 - 1)$. Denominator dimension
 bound: $(D_1 + D_2 - 1)$.
 
 ```rust
-impl<T, N1: Dim, D1: Dim, Sn1: DenseStorage<T, R=N1, C=Const<1>>, Sd1: DenseStorage<T, R=D1, C=Const<1>>> TransferFunction<T, N1, D1, Sn1, Sd1> {
-    pub fn series<N2: Dim, D2: Dim, Sn2: DenseStorage<T, R=N2, C=Const<1>>, Sd2: DenseStorage<T, R=D2, C=Const<1>>>(
+impl<T: Scalar + Copy, const N1: usize, const D1: usize> ArrayTransferFunction<T, N1, D1>
+where
+    Const<N1>: Dim,
+    Const<D1>: Dim,
+{
+    pub fn series<const N2: usize, const D2: usize, const NOUT: usize, const DOUT: usize>(
         &self,
-        other: &TransferFunction<T, N2, D2, Sn2, Sd2>,
-    ) -> TransferFunction<
-        T,
-        <<N1 as DimAdd<N2>>::Output as DimSub<Const<1>>>::Output,
-        <<D1 as DimAdd<D2>>::Output as DimSub<Const<1>>>::Output,
-    >
-    where
-        N1: DimAdd<N2>,
-        <N1 as DimAdd<N2>>::Output: DimSub<Const<1>>,
-        D1: DimAdd<D2>,
-        <D1 as DimAdd<D2>>::Output: DimSub<Const<1>>,
-        T: Copy + Zero + Add<Output=T> + Mul<Output=T>,
-    {
-        // Executes direct DSP convolution on self.num_storage and other.num_storage
-        // ...
-    }
+        rhs: &ArrayTransferFunction<T, N2, D2>,
+    ) -> ArrayTransferFunction<T, NOUT, DOUT>;
+
+    // Explicit backend: `C: Convolution<T>` (DSP).
+    pub fn series_with<C, const N2: usize, const D2: usize, const NOUT: usize, const DOUT: usize>(
+        &self,
+        rhs: &ArrayTransferFunction<T, N2, D2>,
+    ) -> ArrayTransferFunction<T, NOUT, DOUT>;
 }
 ```
+
+Interconnections are defined on the owned const-generic alias. The caller
+names the output capacities `NOUT` and `DOUT`; they must cover the bounds
+above ($N_1 + N_2 - 1$, $D_1 + D_2 - 1$). Arithmetic runs through the
+`Convolution` and `Axpy` backends on `T: Scalar`, which call the saturating
+methods (`num-traits-design.md` FR-6). `series`, `parallel` and `feedback`
+use `DefaultDsp` and `DefaultBlas`; the `_with` forms take the backends as
+type parameters.
 
 ##### Parallel Connection
 
@@ -284,29 +298,23 @@ degree bounds, not their sum and is expressed via `DimMax` rather than a
 further `DimAdd`:
 
 ```rust
-impl<T, N1: Dim, D1: Dim, Sn1: DenseStorage<T, R=N1, C=Const<1>>, Sd1: DenseStorage<T, R=D1, C=Const<1>>> TransferFunction<T, N1, D1, Sn1, Sd1> {
-    pub fn feedback<N2: Dim, D2: Dim, Sn2: DenseStorage<T, R=N2, C=Const<1>>, Sd2: DenseStorage<T, R=D2, C=Const<1>>>(
+impl<T: Scalar + Copy, const N1: usize, const D1: usize> ArrayTransferFunction<T, N1, D1>
+where
+    Const<N1>: Dim,
+    Const<D1>: Dim,
+{
+    // NOUT >= N1 + D2 - 1; DOUT >= max(D1 + D2 - 1, N1 + N2 - 1).
+    pub fn feedback<const N2: usize, const D2: usize, const NOUT: usize, const DOUT: usize>(
         &self,
-        other: &TransferFunction<T, N2, D2, Sn2, Sd2>,
-    ) -> TransferFunction<
-        T,
-        <<N1 as DimAdd<D2>>::Output as DimSub<Const<1>>>::Output,
-        <<<D1 as DimAdd<D2>>::Output as DimSub<Const<1>>>::Output as DimMax<<<N1 as DimAdd<N2>>::Output as DimSub<Const<1>>>::Output>>::Output,
-    >
-    where
-        N1: DimAdd<D2> + DimAdd<N2>,
-        <N1 as DimAdd<D2>>::Output: DimSub<Const<1>>,
-        <N1 as DimAdd<N2>>::Output: DimSub<Const<1>>,
-        D1: DimAdd<D2>,
-        <D1 as DimAdd<D2>>::Output: DimSub<Const<1>>,
-        <<D1 as DimAdd<D2>>::Output as DimSub<Const<1>>>::Output: DimMax<<<N1 as DimAdd<N2>>::Output as DimSub<Const<1>>>::Output>,
-        T: Copy + Zero + Add<Output=T> + Mul<Output=T>,
-    {
-        // num = B1 * A2 (DSP convolution); den = A1*A2 + sign * B1*B2
-        // ...
-    }
+        rhs: &ArrayTransferFunction<T, N2, D2>,
+    ) -> ArrayTransferFunction<T, NOUT, DOUT>;
 }
 ```
+
+The numerator is $B_1 A_2$; the denominator is $A_1 A_2$ plus $B_1 B_2$
+accumulated with `Axpy`. An output capacity below the stated bound is not
+rejected today: the convolution error is discarded and the result is
+truncated (§8).
 
 This mirrors the algebra used by reference implementations exactly —
 `python-control`'s `feedback()` computes
@@ -319,8 +327,8 @@ the reference source, not just the textbook identity.
 
 Unlike MATLAB or `python-control`, which default to non-minimal returns on
 `series`/`parallel`/`feedback` and leave pole-zero cancellation to an explicit
-`minreal()` call, the return types above produce exact-dimension arrays
-derived from the polynomial product bounds directly. No pole-zero
+`minreal()` call, the caller-named output capacities above hold the full
+polynomial products. No pole-zero
 cancellation is attempted during interconnection arithmetic: exact
 cancellation requires root-finding (or polynomial GCD computation), both of
 which are numerically ill-conditioned for floating-point coefficients
@@ -347,29 +355,27 @@ fills relative degree $r > 0$ with $(z+1)^r$, so the discrete result is
 biproper with capacities `(D, D)`, matching ZOH.
 
 ```rust
-impl<T, N: Dim, D: Dim, Sn: DenseStorage<T, R=N, C=Const<1>>, Sd: DenseStorage<T, R=D, C=Const<1>>> TransferFunction<T, N, D, Sn, Sd> {
+impl<T: Float + Copy, const N: usize, const D: usize> ArrayTransferFunction<T, N, D>
+where
+    Const<N>: Dim,
+    Const<D>: Dim,
+{
     pub fn to_discrete_tustin(
         &self,
         sample_time: T,
         prewarp_frequency: Option<T>,
-    ) -> ArrayTransferFunction<T, D, D>
-    where
-        T: Scalar + SaturatingDiv,
-        T::Real: Trig,
-    {
-        // Direct algebraic expansion over numerator and denominator storage
-        // ...
-    }
+    ) -> ArrayTransferFunction<T, D, D>;
 }
 ```
 
-The bound is `T: Scalar + SaturatingDiv` with `T::Real: Trig` rather than `T: Float`:
-the pre-warping path needs `tan()`, which `Trig` supplies on the real
-projection, and the $\frac{2}{T_s}$ factor needs division, which `Scalar`
-deliberately excludes (`num-traits-design.md` FR-2, Alternative 3). Binding
-the real projection rather than `Float` keeps the path open to complex
-coefficients, since `num-traits-design.md` FR-5 restricts `Float` to
-`f32`/`f64`.
+The shipped bound is `T: Float`: pre-warping needs `tan()` and the
+$\frac{2}{T_s}$ factor needs division. The method is infallible. FR-4's
+ill-conditioning error is not implemented for Tustin: a zero `sample_time`
+or a pre-warp product at a pole of `tan` saturates instead of returning an
+error. `StateSpace::to_discrete_tustin` returns
+`StateSpaceError::SingularDiscretizationOperator` for the same class of
+input (`state-space-design.md` §4.8), so the two models do not yet share one
+discretization error contract (§8).
 
 ##### Zero-Order Hold (ZOH)
 
@@ -386,15 +392,27 @@ numerical profiles:
 
 ```rust
 impl<T: Float + Copy, const N: usize, const D: usize> ArrayTransferFunction<T, N, D> {
-    pub fn to_discrete_zoh(&self, sample_time: T) -> LinAlgResult<Self> { /* ... */ }
+    // ORDER is the state dimension D - 1.
+    pub fn to_discrete_zoh<const ORDER: usize>(
+        &self,
+        sample_time: T,
+    ) -> LinAlgResult<ArrayTransferFunction<T, D, D>>
+    where
+        Const<ORDER>: Dim;
 }
 ```
+
+The error is `LinAlgError::SingularMatrix` when the canonical realization
+fails (zero leading denominator coefficient); the Van Loan step itself is
+infallible.
 
 - **Transfer-function-direct (deferred)**: $G(z) = (1 - z^{-1})\,
   \mathcal{Z}\left[\mathcal{L}^{-1}\left\{\frac{G(s)}{s}\right\}\right]$,
   via partial-fraction expansion of $G(s)/s$ followed by table-based
-  $z$-transform of each term (Franklin et al., 1998). Deferred to §6.7 / §8
-  until a pole solver exists. The state-space-mediated path remains available
+  $z$-transform of each term (Franklin et al., 1998). Deferred (§8): poles
+  are available through `Polynomial::roots()` (§4.11), but residues at
+  repeated or clustered poles are ill-conditioned and no residue computation
+  is specified. The state-space-mediated path remains available
   independently through explicit use of §4.10 plus a `StateSpace`
   discretization method.
 
@@ -426,37 +444,6 @@ numerically fragile above low system order (MathWorks, `canon`; Yang &
 Jones, 2026). This revision uses it for its structural value (characteristic
 polynomial coefficients explicit in $\mathbf{A}$); balanced or modal
 realization is future work (§8).
-
-
-
----
-
-### 5. Alternatives
-
-| Architecture Option                     | Advantages                                                                                                                                                                                                        | Disadvantages                                                                                                                                                                                         | Decision     |
-|:----------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------|
-| **Wrapping `Polynomial`**               | Reuses existing polynomial methods.                                                                                                                                                                               | Breaks container peer model; adds artificial coupling; forces extra abstraction layers — the same rationale `state-space-design.md` uses to reject wrapping `Matrix` fields directly.                 | **Rejected** |
-| **Second-Order-Sections (SOS) Cascade** | Standard embedded-DSP answer to coefficient sensitivity growing with filter order (ARM CMSIS-DSP `BiquadCascadeDF2T`; Rust `biquad` crate); bounds conditioning per-stage rather than across the full polynomial. | Cannot represent an arbitrary rational transfer function, only designed filters reducible to cascaded biquads; would require a structurally different type from this general $N/D$ container.         | **Rejected** |
-| **Direct Storage Wrapper (Chosen)**     | Symmetric with `Matrix` and `Polynomial`; zero cost; direct access to `Dim`/DSP/BLAS; supports views and ROM storage.                                                                                             | Requires implementing evaluation and convolution calls against storage directly; flat coefficient representation inherits the coefficient-sensitivity growth SOS is designed to avoid, at high order. | **Selected** |
-
----
-
-### 6. Verification & Validation
-
-#### 6.1. Objectives
-
-- Demonstrate compile-time verification of numerator and denominator polynomial
-  capacities.
-- Demonstrate numerical accuracy of frequency response evaluation ($H(j\omega)$
-  and Bode magnitude/phase).
-- Demonstrate algebraic exactness of series, parallel, and feedback transfer
-  function connections.
-- Demonstrate numerical correctness of Tustin (bilinear with pre-warping) and
-  direct ZOH discretization.
-- Demonstrate exact state-space matrix conversions for Controllable and
-  Observable Canonical Forms.
-- Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
-  deterministic real-time performance.
 
 #### 4.11 Pole and Zero Extraction
 
@@ -508,20 +495,34 @@ where
 
 ---
 
-### 5. Implementation Alternatives
+### 5. Alternatives
 
-#### 5.1 Evaluated Alternatives
-
-- **Transfer-Function-Direct Partial Fraction Expansion vs State-Space Mediation for ZOH**:
-  Direct partial-fraction ZOH requires finding exact complex poles and calculating residue coefficients. Delegating pole finding directly to `Polynomial::roots()` enables closed-form $\mathcal{O}(1)$ pole extraction for second-order systems ($D=3$) while preserving companion-form state-space conversion for higher degrees ($D > 3$).
+| Architecture Option                     | Advantages                                                                                                                                                                                                        | Disadvantages                                                                                                                                                                                         | Decision     |
+|:----------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------|
+| **Wrapping `Polynomial`**               | Reuses existing polynomial methods.                                                                                                                                                                               | Breaks container peer model; adds artificial coupling; forces extra abstraction layers — the same rationale `state-space-design.md` uses to reject wrapping `Matrix` fields directly.                 | **Rejected** |
+| **Second-Order-Sections (SOS) Cascade** | Standard embedded-DSP answer to coefficient sensitivity growing with filter order (ARM CMSIS-DSP `BiquadCascadeDF2T`; Rust `biquad` crate); bounds conditioning per-stage rather than across the full polynomial. | Cannot represent an arbitrary rational transfer function, only designed filters reducible to cascaded biquads; would require a structurally different type from this general $N/D$ container.         | **Rejected** |
+| **Direct Storage Wrapper (Chosen)**     | Symmetric with `Matrix` and `Polynomial`; zero cost; direct access to `Dim`/DSP/BLAS; supports views and ROM storage.                                                                                             | Requires implementing evaluation and convolution calls against storage directly; flat coefficient representation inherits the coefficient-sensitivity growth SOS is designed to avoid, at high order. | **Selected** |
+| **Transfer-function-direct ZOH by partial fractions** | Avoids the companion-form conditioning of the state-space-mediated path (§4.10). Poles are available from `Polynomial::roots()` (§4.11), in closed form for $D = 3$. | Residues at repeated or clustered poles are ill-conditioned and no residue computation is specified. | **Deferred** (§8) |
 
 ---
 
-### 6. Verification and Validation
+### 6. Verification & Validation
 
-#### 6.1. Principles
+#### 6.1. Objectives
 
-The verification approach aligns with [`design-template.md`](../design-template.md) §6.
+- Demonstrate compile-time verification of numerator and denominator polynomial
+  capacities.
+- Demonstrate numerical accuracy of frequency response evaluation ($H(j\omega)$
+  and Bode magnitude/phase).
+- Demonstrate algebraic exactness of series, parallel, and feedback transfer
+  function connections.
+- Demonstrate numerical correctness of Tustin (bilinear with pre-warping) and
+  state-space-mediated ZOH discretization.
+- Demonstrate exact state-space matrix conversions for Controllable and
+  Observable Canonical Forms.
+- Demonstrate zero dynamic heap allocation in `#![no_std]` execution and
+  deterministic real-time performance.
+
 Validation compares against NumPy / SciPy reference models.
 
 #### 6.2. Methods
@@ -547,8 +548,8 @@ Validation compares against NumPy / SciPy reference models.
 | Tustin discretization frequency mapping       | $\omega_d = \frac{2}{T_s} \arctan(\frac{\omega_a T_s}{2})$ | Relative error | $\le 5\epsilon$                                                                                                                       | Bilinear mapping identity (Franklin et al., 1998)                 |
 | Canonical state-space eigenvalue equivalence  | Roots of denominator polynomial $D(s)$                     | Absolute error | $\|\lambda_i(A_c) - p_i\| \le \mathcal{O}(\epsilon \kappa(D))$                                                                        | Companion matrix spectral equivalence (Kenney & Laub, 1988)       |
 | 2nd-order transfer function poles and zeros   | Analytic quadratic roots via `Polynomial::roots`           | Absolute error | $\|p_i - \hat{p}_i\|_\infty \le \epsilon \omega_n$                                                                                    | Muller/Higham stabilized quadratic formulation                    |
-| Higher-order poles and zeros                  | Companion-form Durand-Kerner roots via `Polynomial::roots` | Absolute error | $\|p_i - \hat{p}_i\|_\infty \le 10^{-10}$                                                                                             | Multi-tier generic polynomial root solver                         |
-| Zero leading denominator validation           | Denominator with zero leading coefficient                  | Exact equality | `Err(TransferFunctionError::ZeroLeadingDenominator)`                                                                                  | Precondition failure contract                                     |
+| Higher-order poles and zeros                  | Durand–Kerner roots via `Polynomial::roots`                | Absolute error | $\|p_i - \hat{p}_i\|_\infty \le 10^{-10}$                                                                                             | Multi-tier generic polynomial root solver                         |
+| Zero leading denominator validation           | Denominator with zero leading coefficient                  | Exact equality | `Err(TransferFunctionError::ZeroLeadingDenominatorCoefficient)`                                                                       | Precondition failure contract                                     |
 | Strictly improper transfer function rejection | System with $N > D$ in strictly proper contexts            | Exact equality | `Err(TransferFunctionError::ImproperSystem)`                                                                                          | Properness contract                                               |
 | Zero-allocation execution                     | Host allocator interception                                | Exact equality | 0 heap allocations                                                                                                                    | NFR-1 `#![no_std]` invariant                                      |
 
@@ -562,18 +563,12 @@ Validation compares against NumPy / SciPy reference models.
 | FR-4 — System Discretization                          | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_tustin_prewarped`                                                            |
 | FR-5 — State-Space Canonical Realization              | Requirements-based test                          | `src/transfer_function/tests/transfer_function_tests.rs::test_controllable_canonical_form`, `test_ccf_eigenvalues_match_denominator_roots` |
 | FR-6 — Generic Pole and Zero Extraction               | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_poles_and_zeros`                                            |
-
-| NFR-1 — Deterministic Fixed-Memory Execution | Resource usage evaluation |
-`#![no_std]` host allocator audit |
-| NFR-2 — Real-Time Frequency Sweep Throughput | Resource usage evaluation |
-`clippy::large_stack_arrays` CI check |
-| C-1 — Properness Precondition | Compile-time shape check | Static properness
-shape assertions |
-| C-2 — Non-Zero Leading Denominator | Requirements-based test | Zero leading
-coefficient error assertion |
-| C-3 — Capacity Bound | Compile-time shape check | Static size bounds checks |
-| C-4 — `#![no_std]` Environment | Resource usage evaluation | Compilation under
-`#![no_std]` target triples |
+| NFR-1 — Deterministic Fixed-Memory Execution          | Resource usage evaluation                        | `#![no_std]` host allocator audit                                                                                                          |
+| NFR-2 — Real-Time Frequency Sweep Throughput          | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                                                                                                      |
+| C-1 — Properness Precondition                         | Compile-time shape check                         | Static properness shape assertions                                                                                                         |
+| C-2 — Non-Zero Leading Denominator                    | Requirements-based test                          | Zero leading coefficient error assertion                                                                                                   |
+| C-3 — Capacity Bound                                  | Compile-time shape check                         | Static size bounds checks                                                                                                                  |
+| C-4 — `#![no_std]` Environment                        | Resource usage evaluation                        | Compilation under `#![no_std]` target triples                                                                                              |
 
 #### 6.5. Coverage
 
@@ -600,9 +595,9 @@ coefficient error assertion |
 - Transfer-function-direct partial-fraction ZOH is not implemented; public
   `to_discrete_zoh` uses controllable canonical form plus Van Loan ZOH (§4.9).
 - Controllable-canonical realization at denominator degree $> 32$ is not
-  verified against `state-space-design.md` C-2 ($N_x \le 32$). The example
-  crate sweeps clustered-pole $H(s)=1/[(s+1)^4(s+1.01)^4]$ on 128 frequencies
-  ([`numerical-models-design.md`](numerical-models-design.md) §6.6).
+  verified against `state-space-design.md` C-2 ($N_x \le 32$). The
+  clustered-pole response $H(s)=1/[(s+1)^4(s+1.01)^4]$ is not yet in the
+  verification suite ([`numerical-models-design.md`](numerical-models-design.md) §5.2).
 
 ---
 
@@ -623,9 +618,17 @@ coefficient error assertion |
   poles/zeros (§4.8). A `minreal`-equivalent capacity-reducing operation is not
   yet scoped; whether and how to offer one is deferred.
 - **Partial-Fraction Conditioning for ZOH**: Transfer-function-direct ZOH via
-  partial fractions is deferred until a pole solver exists (§4.9, §6.7). Public
+  partial fractions is deferred: poles come from `Polynomial::roots()`, but
+  residues at repeated or clustered poles are ill-conditioned (§4.9). Public
   `to_discrete_zoh` uses the state-space-mediated path and inherits §4.10
   companion-form conditioning.
+- **Discretization Error Contract**: `to_discrete_tustin` is infallible while
+  `StateSpace::to_discrete_tustin` returns `SingularDiscretizationOperator`,
+  and FR-4's ill-conditioning error is unimplemented here (§4.9). One contract
+  across both models is undecided.
+- **Interconnection Capacity Check**: `series`, `parallel` and `feedback`
+  discard the convolution's capacity error, so an undersized `NOUT` or `DOUT`
+  truncates silently (§4.8).
 - **Canonical Form Scope**: Controllable/observable canonical form (§4.10) is
   numerically fragile above low system order (Kenney & Laub, 1988; Yang & Jones,
   2026). Balanced or modal realization is identified as the
@@ -636,11 +639,12 @@ coefficient error assertion |
   measured Bode-sweep accuracy proves insufficient once implemented, compensated
   Horner evaluation (Graillat, Langlois, & Louvet, 2006) is the identified
   mitigation path.
-- **Analytic Scalar Bounds**: `to_discrete_tustin` (§4.9) binds
-  `T: Scalar + SaturatingDiv` with `T::Real: Trig`, following `num-traits-design.md` §4.1.
-  Separately, `Convolution<T>` (`src/math/dsp.rs`) is currently declared over
-  `T: Float`, which accepts a narrower scalar set than the ring arithmetic
-  paths. Widening it to `T: Scalar` is tracked in `polynomial-design.md` §7.
+- **Analytic Scalar Bounds**: `to_discrete_tustin`, `to_discrete_zoh`,
+  `evaluate_complex` and the canonical realizations bind `T: Float` (§4.7,
+  §4.9, §4.10). Widening them to `T: Scalar + SaturatingDiv` with
+  `T::Real: Trig` would admit complex coefficients (`num-traits-design.md`
+  FR-5) and is not scheduled. `Convolution<T>` (`src/math/dsp.rs`) is declared
+  over `T: Scalar`.
 
 ---
 
@@ -653,7 +657,7 @@ coefficient error assertion |
 | **Phase 3: Algebra & DSP Convolution**      | Implement series, parallel and feedback connections using direct DSP convolution.                                                                                                                                 | 1.5 Days         |
 | **Phase 4: Discretization**                 | Bilinear (Tustin, with pre-warping) transform and transfer-function-direct ZOH, including partial-fraction decomposition (§8's closely spaced/repeated-pole conditioning risk must be bounded, not assumed away). | 2.5 Days         |
 | **Phase 5: State-Space Conversion**         | Controllable and Observable Canonical Form conversions.                                                                                                                                                           | 1.5 Days         |
-| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites and cross-validation against two external reference implementations (MATLAB, `python-control`) per [`design-template.md`](../design-template.md) §6.                                | 2.0 Days         |
+| **Phase 6: Verification Suite**             | Unit tests, `proptest` suites and cross-validation against two external reference implementations (MATLAB, `python-control`) (§6).                                | 2.0 Days         |
 
 ---
 
@@ -718,6 +722,7 @@ coefficient error assertion |
 | 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-pole $H(j\omega)$ ($N>50$); realization at degree $>32$ stays in §6.7. Caps unchanged.                        |
 | 1.8      | August 28, 2026 | @MitchellDScott | Tustin returns biproper `(D, D)` after clearing $(z+1)^{D-1}$ (matches ZOH).                                                            |
 | 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-4 `test_tustin_prewarped` and FR-5 CCF eigenvalue match live in `transfer_function_test_suite`.                                 |
+| 1.10      | September 24, 2026 | @MitchellDScott | Structure repaired (§4.11 in §4, one §5, one §6, traceability table rejoined). §4.5 error enum without `thiserror`. §4.7–§4.9 signatures match code (`T: Float` evaluation and discretization, caller-sized `NOUT`/`DOUT`). Discretization error contract and silent truncation recorded in §8. ZOH deferral no longer waits on a pole solver. C-3 recomputed. |
 | 2.0      | August 30, 2026 | @MitchellDScott | Reverted Butterworth constructor from `transfer_function` module; deferred filter synthesis to future `filters/` crate module.          |
 | 2.1      | August 31, 2026 | @MitchellDScott | Added harold multi-source frequency response / discretization cross-validation oracle and updated validation crate paths.                |
 | 2.2      | September 1, 2026 | @MitchellDScott | Added FR-6: Generic pole and zero extraction `poles<const ORDER>()` and `zeros<const DEG>()` delegating to `Polynomial::roots()`.        |

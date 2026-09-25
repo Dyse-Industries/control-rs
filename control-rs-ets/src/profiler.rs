@@ -44,6 +44,18 @@
 /// assert_eq!(profiler.get_nanos(), 1000);
 /// ```
 pub trait CPUProfiler {
+    /// Board identifier reported in `Telemetry::TargetInfo`; `0` when the
+    /// profiler does not know the board.
+    fn board_id(&self) -> u16 {
+        0
+    }
+
+    /// Core clock frequency in hertz reported in `Telemetry::TargetInfo`;
+    /// `0` when unknown.
+    fn core_clock_hz(&self) -> u32 {
+        0
+    }
+
     /// Disables interrupts and runs the given closure, returning its result.
     ///
     /// This ensures that the test function is executed without interruption, preventing context
@@ -80,6 +92,16 @@ pub trait CPUProfiler {
     #[allow(clippy::empty_loop)]
     fn exit(&self) -> ! {
         loop {}
+    }
+
+    /// FPU capability bits reported in `Telemetry::TargetInfo`: bit 0 single
+    /// precision, bit 1 double precision. The default derives them from the
+    /// compilation target.
+    fn fpu_flags(&self) -> u8 {
+        let single =
+            u8::from(cfg!(target_abi = "eabihf") || cfg!(target_feature = "f"));
+        let double = u8::from(cfg!(target_feature = "d"));
+        single | (double << 1)
     }
 
     /// Get the current CPU cycle count.
@@ -246,6 +268,10 @@ impl CortexMProfiler {
 
 #[cfg(target_arch = "arm")]
 impl CPUProfiler for CortexMProfiler {
+    fn core_clock_hz(&self) -> u32 {
+        self.clock_frequency
+    }
+
     fn disable_interrupts<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,
@@ -342,6 +368,10 @@ impl RiscvProfiler {
 
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 impl CPUProfiler for RiscvProfiler {
+    fn core_clock_hz(&self) -> u32 {
+        self.clock_frequency
+    }
+
     fn disable_interrupts<F, R>(&self, f: F) -> R
     where
         F: FnOnce() -> R,

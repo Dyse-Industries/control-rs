@@ -10,12 +10,7 @@
 //!
 //! Firmware usage: `examples/qemu` and `examples/teensy4` in the repository.
 
-#![allow(
-    unused_extern_crates,
-    clippy::uninlined_format_args,
-    clippy::manual_let_else,
-    clippy::match_wildcard_for_single_variants
-)]
+#![allow(unused_extern_crates)]
 
 extern crate proc_macro;
 use proc_macro::TokenStream;
@@ -49,7 +44,7 @@ fn extract_doc_string(attrs: &[syn::Attribute]) -> String {
     let full_doc = full_doc.trim();
     if full_doc.chars().count() > 160 {
         let truncated: String = full_doc.chars().take(157).collect();
-        format!("{}...", truncated)
+        format!("{truncated}...")
     } else {
         full_doc.to_string()
     }
@@ -271,15 +266,12 @@ fn ets_setup_impl(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     };
     let setup_name = &setup_fn.sig.ident;
 
-    let return_type = match &setup_fn.sig.output {
-        syn::ReturnType::Type(_, ty) => ty,
-        _ => {
-            return syn::Error::new_spanned(
-                &setup_fn.sig,
-                "setup function must return a Context<C, P>",
-            )
-            .to_compile_error();
-        }
+    let syn::ReturnType::Type(_, return_type) = &setup_fn.sig.output else {
+        return syn::Error::new_spanned(
+            &setup_fn.sig,
+            "setup function must return a Context<C, P>",
+        )
+        .to_compile_error();
     };
 
     let Some((c_ty, p_ty)) = extract_context_generics(return_type) else {
@@ -508,6 +500,22 @@ mod tests {
         let extracted = extract_doc_string(&long.attrs);
         assert!(extracted.ends_with("..."));
         assert!(extracted.chars().count() <= 160);
+    }
+
+    #[test]
+    fn extract_doc_string_keeps_exactly_160_chars() {
+        let doc = "b".repeat(160);
+        let item: ItemFn = parse_quote! {
+            #[doc = #doc]
+            fn boundary() {}
+        };
+        assert_eq!(extract_doc_string(&item.attrs), doc);
+    }
+
+    #[test]
+    fn qualified_self_types_are_not_settings() {
+        let qualified: syn::Type = parse_quote!(<Wrapper as Trait>::u8);
+        assert_eq!(get_atomic_wrapper_name(&qualified), None);
     }
 
     #[test]

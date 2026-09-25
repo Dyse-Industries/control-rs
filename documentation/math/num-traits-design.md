@@ -1,6 +1,6 @@
 # Numeric Trait Hierarchy (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -282,7 +282,11 @@ are generated using internal declarative macros:
   implemented with the component saturating methods. Does not receive
   `impl_float!`, `Signed`, `Radical`, `Exponential`, or `Trig`.
 - `Quantized<Repr, SHIFT>`: implements `Scalar` / `Conjugate` (identity) in
-  the quantized-scalar module, not via these macros.
+  the quantized-scalar module, not via these macros. `Scalar` requires `1`
+  to be representable at `SHIFT` (`fixed-num-design.md` FR-7): signed
+  `SHIFT <= BITS - 2`, unsigned `SHIFT <= BITS - 1`. The interchange formats
+  `Q7`, `Q15`, `Q31` and `Q63` are therefore not `Scalar`; `UQ7` and the
+  other unsigned formats are.
 
 #### 4.3 Implementor Partition (FR-5)
 
@@ -292,7 +296,7 @@ are generated using internal declarative macros:
 | unsigned integers                                          |   yes    | `Self` |   no    |              both               |          neither           |
 | `f32`, `f64`                                               |   yes    | `Self` |   yes   |               no                |            both            |
 | `Complex<T>` where `T: Scalar<Real = T> + SaturatingNeg`   |   yes    |  `T`   |   no    |               no                |    `AdditiveGroup` only    |
-| `Quantized<Repr, SHIFT>` where `Repr: Scalar<Real = Repr>` |   yes    | `Self` |   no    |    saturating when `Repr` is    |       follows `Repr`       |
+| `Quantized<Repr, SHIFT>` where `Repr: Scalar<Real = Repr>` and `1` is representable at `SHIFT` |   yes    | `Self` |   no    |    saturating when `Repr` is    |       follows `Repr`       |
 
 `Div` is not a `Scalar` super trait. `Float` requires it. `Complex<T>`
 implements `Div` when `T: SaturatingDiv`. Division kernels bound
@@ -546,6 +550,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | 1.3      | August 24, 2026 | @MitchellDScott | Comparison decoupling: dropped `PartialOrd` from `Zero`/`One` and `Complex<T>`, restricting ordering to `Signed` and `Scalar::Real`.      |
 | 1.4      | August 24, 2026 | @MitchellDScott | Full implementation and verification of numeric traits and complex number primitives.                                                     |
 | 1.5      | September 23, 2026 | @MitchellDScott | FR-6 total arithmetic contract: `Scalar` requires the saturating traits, added `SaturatingDiv`/`SaturatingNeg`, §4.4, Alternative 8. `Quantized` implements `SaturatingDiv` (`fixed-num-design.md` §4.3). |
+| 1.6      | September 24, 2026 | @MitchellDScott | §4.2 and §4.3: `Quantized` is `Scalar` only where `1` is representable (`fixed-num-design.md` FR-7); `Q7`/`Q15`/`Q31`/`Q63` are not. |
 
 ---
 

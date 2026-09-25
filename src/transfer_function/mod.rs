@@ -31,14 +31,8 @@
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::option_if_let_else,
-    clippy::must_use_candidate,
     clippy::many_single_char_names,
-    clippy::collapsible_if,
-    clippy::use_self,
-    clippy::too_many_arguments,
-    clippy::missing_const_for_fn,
-    clippy::cast_lossless
+    clippy::too_many_arguments
 )]
 
 #[cfg(any(test, feature = "ets"))]
@@ -393,19 +387,15 @@ impl<
     /// Evaluates frequency response $H(j\omega)$ (continuous) or $H(e^{j\omega T_s})$ (discrete) at angular frequency `omega`.
     #[must_use]
     pub fn eval_frequency(&self, omega: T) -> Complex<T> {
-        match self.sample_time {
-            None => {
-                // Continuous time: s = j * omega
-                let s = Complex::new(T::ZERO, omega);
-                self.evaluate_complex(s)
-            }
-            Some(dt) => {
-                // Discrete time: z = e^{j * omega * dt} = cos(omega * dt) + j * sin(omega * dt)
+        // Continuous: s = j omega. Discrete: z = e^{j omega dt}.
+        let point = self.sample_time.map_or_else(
+            || Complex::new(T::ZERO, omega),
+            |dt| {
                 let theta = omega.saturating_mul(&dt);
-                let z = Complex::new(theta.cos(), theta.sin());
-                self.evaluate_complex(z)
-            }
-        }
+                Complex::new(theta.cos(), theta.sin())
+            },
+        );
+        self.evaluate_complex(point)
     }
 
     /// Evaluates Bode magnitude $|H(j\omega)|$ and phase $\angle H(j\omega)$ (in radians).
@@ -726,10 +716,10 @@ where
     {
         let (a_mat, b_mat, c_mat, d_mat) =
             self.canonical_blocks_with::<B, ORDER>()?;
-        Ok(match self.sample_time {
-            None => StateSpace::continuous(a_mat, b_mat, c_mat, d_mat),
-            Some(dt) => StateSpace::discrete(a_mat, b_mat, c_mat, d_mat, dt),
-        })
+        Ok(self.sample_time.map_or_else(
+            || StateSpace::continuous(a_mat, b_mat, c_mat, d_mat),
+            |dt| StateSpace::discrete(a_mat, b_mat, c_mat, d_mat, dt),
+        ))
     }
 
     /// Converts a proper transfer function ($N \le D$) into Controllable Canonical Form.
@@ -781,10 +771,10 @@ where
         let a_mat = a_ccf.transpose();
         let b_mat = c_ccf.transpose();
         let c_mat = b_ccf.transpose();
-        Ok(match self.sample_time {
-            None => StateSpace::continuous(a_mat, b_mat, c_mat, d_mat),
-            Some(dt) => StateSpace::discrete(a_mat, b_mat, c_mat, d_mat, dt),
-        })
+        Ok(self.sample_time.map_or_else(
+            || StateSpace::continuous(a_mat, b_mat, c_mat, d_mat),
+            |dt| StateSpace::discrete(a_mat, b_mat, c_mat, d_mat, dt),
+        ))
     }
 
     /// Observable canonical form (dual of last-row CCF).
@@ -918,12 +908,14 @@ where
         prewarp_frequency: Option<T>,
     ) -> ArrayTransferFunction<T, D, D> {
         let two = T::ONE.saturating_add(&T::ONE);
-        let k = match prewarp_frequency {
-            None => two.saturating_div(&sample_time),
-            Some(wc) => wc.saturating_div(
-                &wc.saturating_mul(&sample_time).saturating_div(&two).tan(),
-            ),
-        };
+        let k = prewarp_frequency.map_or_else(
+            || two.saturating_div(&sample_time),
+            |wc| {
+                wc.saturating_div(
+                    &wc.saturating_mul(&sample_time).saturating_div(&two).tan(),
+                )
+            },
+        );
         let ts_eff = two.saturating_div(&k);
         let mut num_coeffs = [T::ZERO; D];
         let n_copy = core::cmp::min(N, D);

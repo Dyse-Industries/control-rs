@@ -88,10 +88,8 @@ SECTIONS
                 .arg("-o")
                 .arg(&obj)
                 .status();
-            if let Ok(s) = status {
-                if s.success() {
-                    println!("cargo:rustc-link-arg={}", obj.display());
-                }
+            if status.is_ok_and(|s| s.success()) {
+                println!("cargo:rustc-link-arg={}", obj.display());
             }
         }
     }

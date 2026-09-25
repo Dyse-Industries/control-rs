@@ -4,10 +4,12 @@
 //! `#![allow]`, `#[expect]` and `#[cfg_attr(.., allow|expect(..))]`
 //! attributes in Rust sources and from `"allow"` levels in the
 //! `[lints.clippy]` and `[workspace.lints.clippy]` manifest tables, and
-//! compares the result with a checked-in baseline. Any suppression that the
-//! baseline does not list is a new suppression and fails the audit.
+//! compares the result with a checked-in baseline. The audit counts
+//! suppression sites per file and lint: a count above the baseline is a new
+//! suppression and fails, and a count below it is a stale baseline entry that
+//! must be shrunk with `--write`, so a removed suppression cannot return.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -18,16 +20,20 @@ const SUPPRESSING_ATTRS: [&str; 2] = ["allow", "expect"];
 /// One suppressed lint in one file, rendered as `<path> clippy::<lint>`.
 pub type Suppression = String;
 
-/// Every suppression found, sorted.
-pub type Suppressions = BTreeSet<Suppression>;
+/// Suppression sites per lint name within one source.
+pub type LintCounts = BTreeMap<String, usize>;
 
-/// Difference between the suppressions found and the baseline.
+/// Every suppression found, with its number of sites, sorted.
+pub type Suppressions = BTreeMap<Suppression, usize>;
+
+/// Difference between the suppressions found and the baseline, one rendered
+/// line per entry (`<path> clippy::<lint>: <found> vs <baseline>`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AuditDiff {
-    /// Suppressions present in the tree but not in the baseline.
-    pub added: Vec<Suppression>,
-    /// Baseline entries no longer present in the tree.
-    pub stale: Vec<Suppression>,
+    /// Entries with more sites in the tree than the baseline allows.
+    pub added: Vec<String>,
+    /// Entries with fewer sites in the tree than the baseline lists.
+    pub stale: Vec<String>,
 }
 
 /// Returns the clippy lints suppressed by attributes in Rust `source`.
@@ -36,7 +42,7 @@ pub struct AuditDiff {
 /// so documentation or test fixtures that show an attribute do not count as
 /// a suppression.
 #[must_use]
-pub fn scan_rust_source(source: &str) -> BTreeSet<String> {
+pub fn scan_rust_source(source: &str) -> LintCounts {
     let uncommented: String = source
         .lines()
         .filter(|line| !line.trim_start().starts_with("//"))
@@ -44,7 +50,7 @@ pub fn scan_rust_source(source: &str) -> BTreeSet<String> {
         .join("\n");
     let code = strip_string_literals(&uncommented);
 
-    let mut lints = BTreeSet::new();
+    let mut lints = LintCounts::new();
     for (idx, _) in code.match_indices('#') {
         let Some(after) = code.get(idx..).and_then(|tail| {
             tail.strip_prefix("#[").or_else(|| tail.strip_prefix("#!["))
@@ -53,7 +59,10 @@ pub fn scan_rust_source(source: &str) -> BTreeSet<String> {
         };
         let body = attribute_body(after);
         if suppresses(body) {
-            lints.extend(clippy_lints(body));
+            for lint in clippy_lints(body) {
+                let n = lints.entry(lint).or_insert(0);
+                *n = n.saturating_add(1);
+            }
         }
     }
     lints
@@ -62,8 +71,8 @@ pub fn scan_rust_source(source: &str) -> BTreeSet<String> {
 /// Returns the clippy lints set to `"allow"` in a manifest's
 /// `[lints.clippy]` or `[workspace.lints.clippy]` table.
 #[must_use]
-pub fn scan_manifest(manifest: &str) -> BTreeSet<String> {
-    let mut lints = BTreeSet::new();
+pub fn scan_manifest(manifest: &str) -> LintCounts {
+    let mut lints = LintCounts::new();
     let mut in_clippy_table = false;
     for line in manifest.lines().map(str::trim) {
         if line.starts_with('[') {
@@ -75,7 +84,8 @@ pub fn scan_manifest(manifest: &str) -> BTreeSet<String> {
             && let Some((name, value)) = line.split_once('=')
             && value.contains("\"allow\"")
         {
-            lints.insert(name.trim().to_string());
+            let n = lints.entry(name.trim().to_string()).or_insert(0);
+            *n = n.saturating_add(1);
         }
     }
     lints
@@ -93,15 +103,29 @@ pub fn collect(root: &Path) -> io::Result<Suppressions> {
     Ok(found)
 }
 
-/// Parses a baseline file: one suppression per line, `#` comments and blank
-/// lines ignored.
+/// Parses a baseline file: one `<path> clippy::<lint> <count>` per line.
+///
+/// `#` comments and blank lines are ignored. A line without a count (the format
+/// before counts were recorded) allows any number of sites, so an old
+/// baseline read through `--base-ref` still bounds which entries exist.
 #[must_use]
 pub fn parse_baseline(text: &str) -> Suppressions {
-    text.lines()
+    let mut out = Suppressions::new();
+    for line in text
+        .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_string)
-        .collect()
+    {
+        let (entry, count) = match line.rsplit_once(' ') {
+            Some((head, tail)) if tail.parse::<usize>().is_ok() => {
+                (head.trim(), tail.parse().unwrap_or(usize::MAX))
+            }
+            _ => (line, usize::MAX),
+        };
+        let n = out.entry(entry.to_string()).or_insert(0);
+        *n = n.saturating_add(count);
+    }
+    out
 }
 
 /// Renders suppressions as a baseline file.
@@ -110,21 +134,37 @@ pub fn render_baseline(found: &Suppressions) -> String {
     let mut out = String::from(
         "# Clippy suppressions that predate the allow audit.\n\
          # Generated by `cargo run -p control-rs-ci --bin allow-audit -- --write`.\n\
-         # Entries may only be removed. Every new suppression fails the audit.\n",
+         # Format: <path> clippy::<lint> <sites>. Counts may only shrink.\n",
     );
-    for entry in found {
+    for (entry, count) in found {
         out.push_str(entry);
+        out.push(' ');
+        out.push_str(&count.to_string());
         out.push('\n');
     }
     out
+}
+
+/// Entries whose count in `current` exceeds their count in `base`, rendered
+/// as in [`AuditDiff`]. Used to check that a branch did not grow the
+/// baseline relative to its merge target.
+#[must_use]
+pub fn growth(current: &Suppressions, base: &Suppressions) -> Vec<String> {
+    current
+        .iter()
+        .filter_map(|(entry, &count)| {
+            let allowed = base.get(entry).copied().unwrap_or(0);
+            (count > allowed).then(|| format!("{entry}: {count} vs {allowed}"))
+        })
+        .collect()
 }
 
 /// Compares the suppressions `found` with `baseline`.
 #[must_use]
 pub fn diff(found: &Suppressions, baseline: &Suppressions) -> AuditDiff {
     AuditDiff {
-        added: found.difference(baseline).cloned().collect(),
-        stale: baseline.difference(found).cloned().collect(),
+        added: growth(found, baseline),
+        stale: growth(baseline, found),
     }
 }
 
@@ -261,11 +301,10 @@ fn visit(root: &Path, dir: &Path, found: &mut Suppressions) -> io::Result<()> {
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
-        found.extend(
-            lints
-                .into_iter()
-                .map(|lint| format!("{rel} clippy::{lint}")),
-        );
+        for (lint, count) in lints {
+            let n = found.entry(format!("{rel} clippy::{lint}")).or_insert(0);
+            *n = n.saturating_add(count);
+        }
     }
     Ok(())
 }
@@ -274,6 +313,9 @@ fn visit(root: &Path, dir: &Path, found: &mut Suppressions) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    /// Suppression entries with their site counts.
+    type Entries<'a> = &'a [(&'a str, usize)];
+
     #[test]
     fn finds_outer_inner_and_expect_attributes() {
         let src = "#![allow(clippy::too_many_lines)]\n\
@@ -281,7 +323,7 @@ mod tests {
                    fn a() {}\n\
                    #[expect(clippy::unwrap_used, reason = \"x\")]\n\
                    fn b() {}\n";
-        let lints: Vec<_> = scan_rust_source(src).into_iter().collect();
+        let lints: Vec<_> = scan_rust_source(src).into_keys().collect();
         assert_eq!(
             lints,
             ["indexing_slicing", "too_many_lines", "unwrap_used"]
@@ -293,7 +335,7 @@ mod tests {
         let src = "#![allow(\n    clippy::cast_lossless,\n    clippy::panic\n)]\n\
                    #[cfg_attr(feature = \"ets\", allow(clippy::unwrap_used))]\n\
                    mod m {}\n";
-        let lints: Vec<_> = scan_rust_source(src).into_iter().collect();
+        let lints: Vec<_> = scan_rust_source(src).into_keys().collect();
         assert_eq!(lints, ["cast_lossless", "panic", "unwrap_used"]);
     }
 
@@ -317,7 +359,7 @@ mod tests {
             #[allow(clippy::indexing_slicing)]
             fn f() {}
         "##;
-        let lints: Vec<_> = scan_rust_source(src).into_iter().collect();
+        let lints: Vec<_> = scan_rust_source(src).into_keys().collect();
         assert_eq!(lints, ["indexing_slicing"]);
     }
 
@@ -329,28 +371,59 @@ mod tests {
                         pedantic = \"deny\"\n\
                         [dependencies]\n\
                         allow = \"allow\"\n";
-        let lints: Vec<_> = scan_manifest(manifest).into_iter().collect();
+        let lints: Vec<_> = scan_manifest(manifest).into_keys().collect();
         assert_eq!(lints, ["inline_always"]);
+    }
+
+    fn sup(entries: Entries<'_>) -> Suppressions {
+        entries
+            .iter()
+            .map(|(e, c)| ((*e).to_string(), *c))
+            .collect()
     }
 
     #[test]
     fn diff_separates_added_and_stale() {
-        let found: Suppressions = ["a.rs clippy::x", "b.rs clippy::y"]
-            .map(String::from)
-            .into();
-        let baseline: Suppressions = ["a.rs clippy::x", "c.rs clippy::z"]
-            .map(String::from)
-            .into();
+        let found = sup(&[("a.rs clippy::x", 1), ("b.rs clippy::y", 1)]);
+        let baseline = sup(&[("a.rs clippy::x", 1), ("c.rs clippy::z", 1)]);
         let result = diff(&found, &baseline);
-        assert_eq!(result.added, ["b.rs clippy::y"]);
-        assert_eq!(result.stale, ["c.rs clippy::z"]);
+        assert_eq!(result.added, ["b.rs clippy::y: 1 vs 0"]);
+        assert_eq!(result.stale, ["c.rs clippy::z: 1 vs 0"]);
     }
 
     #[test]
-    fn baseline_round_trips() {
-        let found: Suppressions = ["a.rs clippy::x", "b.rs clippy::y"]
-            .map(String::from)
-            .into();
+    fn counts_new_sites_of_a_baselined_lint() {
+        let src = "#[allow(clippy::panic)]\nfn a() {}\n\
+                   #[allow(clippy::panic)]\nfn b() {}\n";
+        assert_eq!(scan_rust_source(src).get("panic"), Some(&2));
+        let found = sup(&[("a.rs clippy::panic", 2)]);
+        let baseline = sup(&[("a.rs clippy::panic", 1)]);
+        assert_eq!(
+            diff(&found, &baseline).added,
+            ["a.rs clippy::panic: 2 vs 1"]
+        );
+        assert!(diff(&baseline, &baseline).stale.is_empty());
+        assert_eq!(
+            diff(&baseline, &found).stale,
+            ["a.rs clippy::panic: 2 vs 1"]
+        );
+    }
+
+    #[test]
+    fn baseline_round_trips_and_reads_countless_lines() {
+        let found = sup(&[("a.rs clippy::x", 3), ("b.rs clippy::y", 1)]);
         assert_eq!(parse_baseline(&render_baseline(&found)), found);
+        assert_eq!(
+            parse_baseline("# c\na.rs clippy::x\n"),
+            sup(&[("a.rs clippy::x", usize::MAX)])
+        );
+    }
+
+    #[test]
+    fn growth_against_base_ref() {
+        let base = sup(&[("a.rs clippy::x", 2)]);
+        let current = sup(&[("a.rs clippy::x", 2), ("b.rs clippy::y", 1)]);
+        assert_eq!(growth(&current, &base), ["b.rs clippy::y: 1 vs 0"]);
+        assert!(growth(&base, &base).is_empty());
     }
 }

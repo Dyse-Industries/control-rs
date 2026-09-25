@@ -1,6 +1,6 @@
 # Embedded Test Server (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_9,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -36,7 +36,7 @@ waiting for commands.
   before initiating system recovery.
 - **FR-5 — Cooperative lockup recovery**: If a test stops responding, the target
   services a cooperative reset request from the host. Hardware watchdog
-  recovery is out of scope (6.7).
+  recovery is out of scope (§6.3).
 
 #### 2.2 Non-Functional Requirements
 
@@ -80,8 +80,9 @@ Embedded Test Server (virtual ETS) under QEMU.
       SEGGER RTT for data transport.
     - **Distributed Test Sections**: Test functions compiled into a dedicated
       ELF memory section.
-    - **Watchdog & Panic Handler**: Systems ensuring target safety, diagnostic
-      capture and system reset.
+    - **Panic Handler**: Diagnostic capture, then a reset once the host sends
+      `Command::TryReset` (FR-5). No hardware watchdog is armed in this
+      release (§4.3).
 
 ```mermaid
 flowchart TD
@@ -99,10 +100,8 @@ flowchart TD
     subgraph MCU ["Target Microcontroller (control-rs-ets)"]
         direction TB
         Server["Server"]
-        WatchDog["WDT"]
         Registry[".ets_test_suites Section"]
         Server -->|Polls/Executes| Registry
-        Server -->|kicks| WatchDog
     end
 ```
 
@@ -119,8 +118,8 @@ from target-specific peripheral drivers:
 ```
 control-rs (Root Workspace)
 ├── control-rs-ets/       # Target-side server event loop, settings registry and profiling (no_std)
-├── control-rs-ets-host/  # Host transport, framing, and headless runner library (published)
-├── control-rs-tui/       # Standalone interactive terminal console binary (published)
+├── control-rs-ets-host/  # Host transport, framing, and headless runner library (publish = false)
+├── control-rs-tui/       # Standalone interactive terminal console binary (publish = false)
 ├── control-rs-ci/        # Repository quality-gate runner binary (publish = false)
 ├── control-rs-macros/    # Procedural macros for test suite setup and registry generation
 ├── examples/             # Target binary examples (qemu/teensy4) executing on-device
@@ -201,10 +200,14 @@ Before rebooting, the panic handler constructs a diagnostic payload:
 - Hardware interlock states.
 - System Handler Control and State Register to capture fault details.
 
-##### Programmatic Reset: SCB vs. WDT
+##### Reset Path
 
-- **Hard Resets**: If a test panics during a DMA write, a soft reset will reboot
-  the CPU but leave the DMA active, corrupting RAM after the reboot.
+After sending the black box, the handler disables interrupts, polls for
+`Command::TryReset` and then calls `CPUProfiler::reset()`, which on Cortex-M
+is `SCB::sys_reset` (`control-rs-ets/src/util.rs` `handle_failure`). A soft
+reset restarts the core but can leave a peripheral such as DMA active, which
+may corrupt RAM after the reboot. The hardware-reset path that avoids this
+is the task watchdog of §4.3, deferred with it.
 
 If the system requires recovery from board-level power failures, external
 supervisor ICs and bulk capacitors are integrated to allow the MCU to gracefully
@@ -215,17 +218,18 @@ shut down and prevent NVRAM corruption.
 ```mermaid
 stateDiagram-v2
     [*] --> Init: Power On / Reset
-    Init --> Idle: Init Peripherals & WDT
+    Init --> Idle: Init Peripherals
     Idle --> Executing: Command (IRQs disabled)
     Executing --> Idle: Test Success
     Executing --> PanicHandler: Panic / Fault
-    Executing --> [*]: Hang → WDT Reset
+    Executing --> [*]: Hang → host session timeout
 
     state PanicHandler {
         [*] --> Capture: SHCSR & Line Info
         Capture --> SendBox: Framed Black Box
+        SendBox --> AwaitReset: poll for TryReset
     }
-    PanicHandler --> Init: Hardware Reset
+    PanicHandler --> Init: CPUProfiler::reset (SCB soft reset)
 ```
 
 ---
@@ -240,22 +244,23 @@ stateDiagram-v2
       operations [1]. This introduces millisecond-level timing overhead,
       destroying the real-time determinism.
 
-#### 5.2. Soft Reset (SCB::sys_reset)
+#### 5.2. Soft Reset (SCB::sys_reset) vs. Watchdog Starvation
 
 * Using the CPU System Control Block to reboot.
-    - *Reason for Rejection*: Leaves peripherals (like DMA) active, risking
-      post-reboot memory corruption (Heisenbugs). Watchdog starvation is chosen
-      for a guaranteed clean state.
+    - *Status*: Shipped as the MVP reset (§4.4), triggered by the host's
+      `TryReset`. It can leave peripherals (like DMA) active, risking
+      post-reboot memory corruption. Watchdog starvation gives a clean state
+      and is deferred with the task watchdog (§4.3).
 
 #### 5.3. Third-Party Distributed Slice (`linkme`)
 
 * A distributed slice is "a collection of static elements that are gathered into a contiguous section of the binary by the linker", whose elements "may be defined individually from anywhere in the dependency graph of the final binary" [2]. Adopting `linkme::DistributedSlice` in place of the hand-rolled
   `.ets_test_suites` linker section.
-    - *Reason Not Adopted*: The custom mechanism is already implemented,
-      tested and shipped (§4.2). Adopting `linkme` would trade that
-      working code for reduced linker-script maintenance burden and
-      `linkme`'s existing cross-platform linker-section portability; whether
-      the migration is worth the churn remains open (§8).
+    - *Reason Not Adopted*: `linkme` 0.3.37 is `#![no_std]` and handles `target_os = "none"` through the ELF `__start_`/`__stop_` section symbols (source of `linkme-impl` `declaration.rs`), so neither `std` nor element homogeneity rules it out: the `.ets_test_suites` section already holds a homogeneous slice of `&'static SuiteDescriptor`. The custom mechanism is
+      already implemented, tested and shipped (§4.2), and a bare-metal
+      `SECTIONS` script must place the section either way, so `linkme` would
+      add a dependency without removing linker-script work. Decided; not
+      revisited (`macros-design.md` §5).
 
 #### 5.4. COBS Byte-Stuffed Framing
 
@@ -295,8 +300,8 @@ is used by both FreeRTOS and Zephyr RTOS" and works by painting the stack with a
 known value and measuring the highest location disturbed [3]. Its
 complement, per-function static usage from `-fstack-usage`, is "difficult to use
 when trying to analyze nested function calls" [3], which is why
-the runtime high-water mark is the primary measure here and static analysis is
-a separate task (`../ci/static-analyzer-design.md`).
+the runtime high-water mark is the primary measure here. No static stack
+analysis gate exists (the static-analyzer design and its `analyze` gate were withdrawn on 2026-09-14).
 
 Target: 80% line coverage of host-testable server logic, measured with
 `cargo coverage`.
@@ -332,9 +337,9 @@ statics, which are data.
   cooperative executive loop without an active WDT; lockup recovery is FR-5
   cooperative reset plus host session timeout.
 - **NFR-1 (microsecond telemetry jitter)**: no measured on-target jitter
-  bound is recorded; QEMU cycle figures are indicative per `ci-design.md` C-2.
-- **C-2 (32 KB flash / 8 KB RAM)**: no `budget:` locator is enforced; the
-  bound remains a design cap pending a size gate.
+  bound is recorded; QEMU cycle figures are indicative per `ci-design.md` C-6.
+- **C-2 (32 KB flash / 8 KB RAM)**: no size gate enforces the bound; it
+  remains a design cap.
 - Panic capture across a brownout, and descriptor-section corruption at
   runtime, are not established.
 
@@ -377,17 +382,14 @@ statics, which are data.
   lockup hazard (§2) at the scheduler level rather than via watchdog
   multiplexing. Adopting it would represent a broader change to the target
   execution model and is deferred.
-* **Test Discovery Dependency Tradeoff**: Replacing the custom
-  `.ets_test_suites` mechanism with `linkme` (§5.3) trades working code for
-  reduced linker-script maintenance burden; this trade remains open.
 * **CI Orchestration Precedent**: Golioth's self-hosted-runner-with-hardware-labels
   pattern [8] is the primary reference model for CI integration with attached
   hardware, informing the host-side dependency partitioning across
   `control-rs-ets-host` and `control-rs-ci`.
-* **TUI Distribution**: Resolved. The console ships as the standalone
-  published binary `control-rs-tui`, installable with `cargo install`, so an
-  end user consuming `control-rs` as a published crate obtains it without this
-  repository. See `documentation/tui/tui-design.md`.
+* **TUI Distribution**: The console is the standalone binary
+  `control-rs-tui`, intended for `cargo install`. It is `publish = false`
+  today, so users build it from this repository until the release pipeline
+  (roadmap PR10) publishes it. See `documentation/tui/tui-design.md`.
 
 ---
 
@@ -399,7 +401,7 @@ statics, which are data.
 | **Step 2: Postcard Messaging & Sync-Byte Framing** — *Shipped* | Postcard message schemas and sync-byte + length + CRC-16 framing, implemented per the `HostComms` design.                                                                        | Complete         |
 | **Step 3: ETS & Driver Integration**                           | Implement target-side server loop with UART DMA / RTT drivers. Blocking-HAL vs. Embassy driver model undecided — no `embassy` dependency currently exists in the workspace (§8). | 3 days           |
 | **Step 4: Watchdog & Panic Recovery**                          | Integrate multiplexed virtual task watchdogs (custom or adopted, §8) and custom HardFault panic handler.                                                                         | 2 days           |
-| **Step 5: Host Orchestrator (`control-rs-ci`)**                | Build host-side CLI parser, ELF discovery tool, and headless test driver using `control-rs-ets-host`.                                                                            | 3 days           |
+| **Step 5: Host Orchestrator (`control-rs-ci`)** — *Shipped*    | `ets` gate binary: CLI parser, wire-discovery session and headless test driver using `control-rs-ets-host` (`ci-design.md` §4.9).                                                               | 3 days           |
 
 ---
 
@@ -416,6 +418,7 @@ statics, which are data.
 | 1.6      | September 9, 2026 | @MitchellDScott | Citation pass: converted numeric cites to author-year, replaced the mid-document reference list with a full IEEE list at the end, grounded the watchdog, linker and stack-measurement claims, restructured §6 per `vv-standards.md`. |
 | 1.7      | September 9, 2026 | @MitchellDScott | Hardening pass: demoted status badge to Draft, rebuilt §6.4 traceability table (mapped FR-4/FR-5, eliminated phantom NFR-3), deferred watchdog to §6.7, removed TUI console from §9 Step 5, and standardized References. |
 | 1.8      | September 15, 2026 | @MitchellDScott | Locator-only §6.4; FR-5 is cooperative reset; NFR-1 and C-2 listed in 6.7 until measured. |
+| 1.9      | September 24, 2026 | @MitchellDScott | §6.3 cites `ci-design.md` C-6 (indicative emulation timing), renumbered from C-2 in its revision 1.26. No watchdog in diagrams or §4.4/§4.5 (reset is `SCB::sys_reset` after `TryReset`); §5.3 `linkme` decided (`no_std`, not adopted); Step 5 shipped as the `ets` gate; tooling crates `publish = false`; static-analyzer and `budget:` references removed. |
 
 ---
 

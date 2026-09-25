@@ -1,6 +1,6 @@
 # CPUProfiler Design Document
 
-![Date Badge](https://img.shields.io/badge/Date-September_9,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -39,8 +39,9 @@ hooks to the end-user or silicon vendor.
 
 - **C-1 — Strict `#![no_std]`, Zero Heap**: Consistent with the rest of
   `control-rs-ets`.
-- **C-2 — Target Architectures**: ARM Cortex-M (ARMv6/7/8-M) and RISC-V (
-  RV32/RV64); ARMv6-M has no DWT cycle counter (§8).
+- **C-2 — Target Architectures**: ARM Cortex-M (ARMv7-M, ARMv8-M) and RISC-V (
+  RV32/RV64). ARMv6-M has no DWT cycle counter; whether it is in scope is
+  open (§8, §9 Step 3).
 
 ---
 
@@ -60,6 +61,16 @@ The core of the abstraction is the `CPUProfiler` trait, defined in
 
 ```rust
 pub trait CPUProfiler {
+    /// Board identifier for `Telemetry::TargetInfo`; `0` when unknown.
+    fn board_id(&self) -> u16 {
+        0
+    }
+
+    /// Core clock in hertz for `Telemetry::TargetInfo`; `0` when unknown.
+    fn core_clock_hz(&self) -> u32 {
+        0
+    }
+
     /// Disables interrupts and runs the given closure, returning its result.
     fn disable_interrupts<F, R>(&self, f: F) -> R
     where
@@ -74,6 +85,14 @@ pub trait CPUProfiler {
     /// Exits the application/environment using target-specific mechanisms.
     fn exit(&self) -> ! {
         loop {}
+    }
+
+    /// FPU bits for `Telemetry::TargetInfo`: bit 0 single, bit 1 double,
+    /// derived from the compilation target by default.
+    fn fpu_flags(&self) -> u8 {
+        let single = u8::from(cfg!(target_abi = "eabihf") || cfg!(target_feature = "f"));
+        let double = u8::from(cfg!(target_feature = "d"));
+        single | (double << 1)
     }
 
     /// Get the current CPU cycle count.
@@ -100,6 +119,11 @@ pub trait CPUProfiler {
     }
 }
 ```
+
+`board_id`, `core_clock_hz` and `fpu_flags` feed `Telemetry::TargetInfo`
+(`host-comm-design.md` §4.2.1). `CortexMProfiler` and `RiscvProfiler` return
+their configured `clock_frequency` from `core_clock_hz`; no shipped profiler
+sets a board ID.
 
 ---
 
@@ -140,6 +164,8 @@ impl CPUProfiler for HostCPUProfiler {
     fn reset(&self) -> ! {
         panic!("reset called");
     }
+    // paint_stack, read_stack_peak, disable_interrupts and
+    // disable_interrupts_permanently use the trait's provided defaults (FR-6).
 }
 ```
 
@@ -187,10 +213,11 @@ impl CPUProfiler for CortexMProfiler {
 }
 ```
 
-`reset()` performs a host-commanded warm reboot (for example, `Command::TryReset`).
-Crash recovery does not use it: ETS's panic path relies on watchdog
-starvation for a hard reset, since a soft `SCB` reset leaves peripherals and
-active DMA running (see `embedded-test-server-design.md` §4.4).
+`reset()` performs a host-commanded warm reboot. ETS's panic path calls it
+after the host sends `Command::TryReset`; on Cortex-M it is
+`SCB::sys_reset`, which can leave peripherals and active DMA running
+(`embedded-test-server-design.md` §4.4). A watchdog-starvation hard reset is
+deferred with the task watchdog (`embedded-test-server-design.md` §4.3).
 
 ---
 
@@ -207,10 +234,10 @@ active DMA running (see `embedded-test-server-design.md` §4.4).
   measure, retained as a complement. `cargo-call-stack` is a whole-program stack
   analyzer but relies on experimental `-Z stack-sizes` [9], and inline assembly
   breaks LLVM's stack usage analysis [9]. Compiler-emitted per-function usage
-  from `-fstack-usage` does not readily analyze nested call trees [4]. Static
-  analysis is therefore delegated to CI (`documentation/ci/static-analyzer-design.md`),
-  with runtime stack painting providing empirical high-water marks and link-time
-  tools (`flip-link`) providing complementary overflow protection.
+  from `-fstack-usage` does not readily analyze nested call trees [4]. Runtime
+  stack painting therefore provides the empirical high-water mark, with
+  link-time tools (`flip-link`) as complementary overflow protection. No
+  static stack analysis gate exists (the static-analyzer design and its `analyze` gate were withdrawn on 2026-09-14).
 * **Tick-based timekeeping**: Rejected. A tickless monotonic avoids periodic
   interrupts to count ticks [10], whereas SysTick-based periodic tick generation
   incurs high interrupt rates [11] that perturb execution duration and jitter
@@ -286,7 +313,7 @@ same reason the overhead itself is bounded.
 
 - Absolute accuracy of cycle counts under emulation. QEMU states no cycle or
   timing model, so emulated figures are indicative per
-  `documentation/ci/ci-design.md` C-2; only hardware runs measure.
+  `documentation/ci/ci-design.md` C-6; only hardware runs measure.
 - Stack usage of interrupt handlers and inline assembly. Painting measures what
   ran on the measured stack; static analysis of these paths is explicitly
   unavailable, since inline assembly "breaks LLVM's stack usage analysis"
@@ -354,7 +381,7 @@ same reason the overhead itself is bounded.
 | **Step 1: Trait & Target Impls**         | Define `CPUProfiler` and implement `CortexMProfiler`/`RiscvProfiler` in `control-rs-ets::profiler`.             | Shipped         |
 | **Step 2: Overflow-Safe Cycle Counting** | Add DWT wraparound handling (extend technique) and verify RV32 `mcycle`/`mcycleh` combination.                  | 0.5 day         |
 | **Step 3: ARMv6-M Decision**             | Either add a SysTick-only fallback for Cortex-M0/M0+ or document the restriction as a non-goal.                 | 0.5 day         |
-| **Step 4: CI Static Analysis Integration** | Integrate with `control-rs-static-analyzer` (`documentation/ci/static-analyzer-design.md`); evaluate `flip-link` complementary protection. | 1.0 day |
+| **Step 4: Overflow Protection** | Evaluate `flip-link` complementary protection. Static-analyzer integration is dropped with that design (withdrawn 2026-09-14). | 1.0 day |
 
 ---
 
@@ -368,6 +395,8 @@ same reason the overhead itself is bounded.
 | 1.3      | September 9, 2026 | @MitchellDScott | Citation pass: grounded the DWT, critical-section and stack-painting mechanisms, added four evidence-backed alternatives, restructured §6 from prose into 6.1-6.7 per `vv-standards.md` with numeric acceptance bounds. |
 | 1.4      | September 9, 2026 | @MitchellDScott | Structural hardening: numbered §2 subsections 2.1-2.3, reconciled Step 4 with static-analyzer-design, standardized reference ordering. |
 | 1.5      | September 9, 2026 | @MitchellDScott | Dropped the author-year / `[n]` mapping table. |
+| 1.6      | September 24, 2026 | @MitchellDScott | §6.3 cites `ci-design.md` C-6 (indicative emulation timing), renumbered from C-2 in its revision 1.26. Crash reset calls `CPUProfiler::reset` after `TryReset`; static-analyzer references removed with that design; C-2 scope and `HostCPUProfiler` defaults clarified. |
+| 1.7      | September 24, 2026 | @MitchellDScott | Provided methods `board_id`, `core_clock_hz` and `fpu_flags` supply `Telemetry::TargetInfo`. |
 
 ---
 

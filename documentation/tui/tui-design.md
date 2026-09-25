@@ -1,6 +1,6 @@
 # Terminal User Interface (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_9,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -134,11 +134,13 @@ developer situational awareness:
  (f)ilter | (r)un all | (s)top | (q)uit
 ```
 
-1. **Header Dashboard**: Displays target hardware configuration details and
-   active communication link information.
+1. **Header Dashboard**: Displays the link, and from `SessionState::target_info`
+   the protocol revision, board ID, core clock (MHz) and FPU class (FR-1).
+   A rejected session shows `PROTOCOL MISMATCH` with both revisions. Debug
+   link parameters beyond the configured port are not shown.
 2. **Hierarchical Metrics Table**: A collapsible tree table showing test
-   namespaces, cycle metrics, temporal duration (calculated on the host by
-   dividing target cycle delta by core frequency) and peak stack memory usage in
+   namespaces, cycle metrics, temporal duration (the target-reported `time_us`,
+   passed through unmodified by `control-rs-ets-host`) and peak stack memory usage in
    bytes.
 3. **Logs Panel**: A live log terminal streaming output from the target.
 4. **Footer Action Bar**: Displays available key shortcuts.
@@ -254,7 +256,7 @@ real terminal.
 | Target process exit | Spawned QEMU exits | Dashboard state | Exit surfaced; session not left looking connected |
 | Setting description | Key bound to description | Setting text shown | Matches the suite registry |
 
-No frame-rate bound is asserted. See 6.7.
+No frame-rate bound is asserted. See §6.3.
 
 #### 6.3 Limits
 
@@ -318,6 +320,8 @@ No frame-rate bound is asserted. See 6.7.
 | 1.7      | September 15, 2026 | @MitchellDScott | NFR-1 is diff-only repaint; 16 ms budget is not a requirement and is not traced. |
 | 1.8      | September 16, 2026 | @MitchellDScott | FR-6 session liveness, FR-7 suite setting inspection and edit; 6.2 discovery/exit/setting rows; §9 Step 4. |
 | 1.9      | September 18, 2026 | @MitchellDScott | Packaging alignment: updated host bridge references to `control-rs-ets-host::ETSBridge`. |
+| 1.10      | September 24, 2026 | @MitchellDScott | Duration column shows the target-reported `time_us`; §6.3 reference corrected. |
+| 1.11     | September 24, 2026 | @MitchellDScott | FR-1 header shows `TargetInfo` protocol, board, clock and FPU, or the protocol mismatch. |
 
 ---
 

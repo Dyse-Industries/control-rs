@@ -119,6 +119,10 @@ pub struct Gate {
     pub timeout: Duration,
     /// Exit codes reported as `Verdict::Skipped`.
     pub skip_exit_codes: Vec<i32>,
+    /// Whether an unfiltered run selects this gate.
+    pub default: bool,
+    /// Working directory relative to the workspace root.
+    pub cwd: Option<PathBuf>,
 }
 
 impl GroupManifest {
@@ -211,6 +215,8 @@ impl Gate {
             mode: GatePolicy::Fail,
             timeout: Duration::from_secs(300),
             skip_exit_codes: Vec::new(),
+            default: true,
+            cwd: None,
         }
     }
 
@@ -246,6 +252,8 @@ impl Gate {
                 def.timeout_secs.unwrap_or(default_timeout_secs),
             ),
             skip_exit_codes: def.skip_exit_codes.clone(),
+            default: def.default,
+            cwd: def.cwd.clone(),
         }
     }
 
@@ -274,6 +282,30 @@ impl Gate {
     #[must_use]
     pub fn description(&self) -> Option<&str> {
         self.description.as_deref()
+    }
+
+    /// Records and saves the outcome of a gate disabled by `mode = "skip"`
+    /// that was selected explicitly. The gate does not execute.
+    ///
+    /// # Errors
+    /// Returns `GateError` if the outcome artifact cannot be written.
+    pub fn record_disabled(
+        &self,
+        ctx: &GateContext,
+    ) -> GateResult<GateOutcome> {
+        let outcome = GateOutcome {
+            gate: self.name.clone(),
+            verdict: Verdict::Skipped,
+            exit_code: None,
+            duration_secs: 0.0,
+            summary: Some(format!(
+                "{} disabled by mode = \"skip\"; not executed",
+                self.name
+            )),
+            log_file: format!("{}.log", self.name),
+        };
+        let _ = outcome.save_to_dir(&ctx.out_dir)?;
+        Ok(outcome)
     }
 
     /// Formatted command line string for display.
@@ -360,7 +392,10 @@ impl Gate {
         let mut words = self.command.split_whitespace();
         let program = words.next().unwrap_or(&self.command);
         let mut cmd = Command::new(program);
-        cmd.current_dir(workspace_root);
+        cmd.current_dir(self.cwd.as_ref().map_or_else(
+            || workspace_root.to_path_buf(),
+            |d| workspace_root.join(d),
+        ));
         cmd.args(words);
         cmd.args(&self.args);
         cmd.envs(&self.env);
@@ -555,15 +590,65 @@ fn drain_pumps(pumps: Pumps) {
     }
 }
 
+/// Kills the gate process and every descendant (FR-16).
+///
+/// Walks the tree top-down: each process is stopped before its children are
+/// listed, so no process in the tree can fork after it has been visited. Every
+/// stopped process is then killed. Gates stay in the runner's process group so
+/// a terminal interrupt still reaches them; this walk is what bounds their
+/// descendants on timeout. Without `pgrep`, only the gate process is killed.
 #[cfg(unix)]
 fn terminate_tree(child: &mut std::process::Child, pid: u32) {
+    let tree = stop_tree(pid);
+    for id in &tree {
+        signal(*id, "-KILL");
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Stops `root` and all of its descendants, returning their process ids in
+/// visit order.
+#[cfg(unix)]
+fn stop_tree(root: u32) -> Vec<u32> {
+    let mut tree = vec![root];
+    let mut next = 0;
+    while let Some(&id) = tree.get(next) {
+        signal(id, "-STOP");
+        for child in children_of(id) {
+            if !tree.contains(&child) {
+                tree.push(child);
+            }
+        }
+        next = next.saturating_add(1);
+    }
+    tree
+}
+
+/// Direct children of `pid`, as listed by `pgrep -P`.
+#[cfg(unix)]
+fn children_of(pid: u32) -> Vec<u32> {
+    Command::new("pgrep")
+        .args(["-P", &pid.to_string()])
+        .stderr(Stdio::null())
+        .output()
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|l| l.trim().parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Sends `sig` (for example `-KILL`) to one process through `kill`.
+#[cfg(unix)]
+fn signal(pid: u32, sig: &str) {
     let _ = Command::new("kill")
-        .args(["-KILL", &format!("-{pid}")])
+        .args([sig, &pid.to_string()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[cfg(not(unix))]

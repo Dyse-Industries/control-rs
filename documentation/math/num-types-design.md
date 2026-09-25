@@ -1,6 +1,6 @@
 # Numeric Types (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-August_25,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -13,8 +13,10 @@ systems, tensors, transfer functions) is parameterized over fixed dimensions
 that must be known and checked before the program runs. Catching a dimension
 mismatch (for example, multiplying a $3 \times 4$ matrix by a $5 \times 2$ matrix) at
 compile time rather than as a runtime panic guarantees safety in embedded
-control systems. Matrix storage targets 128×128 shapes; flattened products
-such as $128 \times 128 = 16384$ must be expressible as type-level results.
+control systems. Dimensions are per axis: matrix, polynomial, tensor and
+state-space capacities each bind one `Dim` per axis. Products such as
+$128 \times 128 = 16384$ remain expressible as type-level results through the
+binary encoding, but no shipped consumer bounds on a flattened product.
 
 ---
 
@@ -345,9 +347,10 @@ projections.
 
 `Storage<T, R: Dim, C: Dim>` is the first consumer (`storage-design.md` C-4).
 Array leaves bind `Const<R>` / `Const<C>` for every C-1 `R`, `C`, including
-values that have no `U*` alias. Matrix/polynomial/tensor designs use
-`DimMul` products that may exceed both aliases and C-1 (C-2); confirm
-`as_array::<16384>()` can name `Const<16384>: Dim`.
+values that have no `U*` alias. Array leaves are nested arrays
+(`[[T; R]; C]`), so no consumer names the flattened `Const<R * C>`;
+`storage-design.md` §5 rejects a flattened `as_array` accessor. `DimMul`
+products that exceed C-1 stay unnamed `UInt` trees (C-2).
 
 ---
 
@@ -373,9 +376,11 @@ values that have no `U*` alias. Matrix/polynomial/tensor designs use
    reads `N` directly (Crozet, 2026). This module's `Const` arithmetic is
    $O(\log N)$ via the binary tree, not $O(1)$ from the literal. Not yet
    measured against crate build time.
-2. **Sparse `Const<N>: Dim` above 1024.** Flattened sizes in $1025..16383$
-   other than $2048, 4096, 8192, 16384$ have no `Dim` impl. Fill the gap only
-   if a consumer's `as_array::<N>()` bound requires it.
+2. **Sparse `Const<N>: Dim` above 1024.** Sizes in $1025..16383$ other than
+   $2048, 4096, 8192, 16384$ have no `Dim` impl. No shipped consumer needs a
+   per-axis dimension above 1024 or a flattened product as a `Dim`; the
+   powers of two remain for the product pin (§6.1). Fill the gap only if a
+   consumer bounds on one.
 3. **No type-level division or ordering beyond max/min.** `DimDiv` / `DimOrd`
    stay open until a consumer needs them.
 
@@ -402,6 +407,7 @@ values that have no `U*` alias. Matrix/polynomial/tensor designs use
 | 1.2      | August 23, 2026 | @MitchellDScott | Type-level bitwise operations: added `DimBitAnd`, `DimBitOr`, and `DimBitXor` traits and verification tests.                          |
 | 1.3      | August 25, 2026 | @MitchellDScott | Operator forwarding: simplified dimension operator implementations across `DimAdd`, `DimSub`, and `DimMul`.                         |
 | 1.4      | August 25, 2026 | @MitchellDScott | Full test suite verification and compile-time dimension validation.                                                                   |
+| 1.5      | September 24, 2026 | @MitchellDScott | Dimensions are per axis; no shipped consumer bounds on a flattened product. §6.2 drops the rejected `as_array`; §8 item 2 restated. |
 
 ---
 

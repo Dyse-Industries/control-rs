@@ -8,6 +8,12 @@ use crate::gate::build_all_gates;
 use crate::ui;
 use crate::{GateFilter, PipelineOptions, run_pipeline};
 
+/// The only binary that accepts `-- <args>` passthrough (FR-14).
+pub const PASSTHROUGH_BINARY: &str = "cargo gate";
+
+/// Arguments after `--`, or `None` when no `--` was given.
+pub type Passthrough = Option<Vec<String>>;
+
 /// Options parsed from command line arguments.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CliOptions {
@@ -27,6 +33,8 @@ pub struct CliOptions {
     pub run_all: bool,
     /// Echo each gate's output to stderr as it runs.
     pub verbose: bool,
+    /// Arguments after `--`, appended to the one selected gate (FR-14).
+    pub passthrough: Passthrough,
 }
 
 /// Formats the help and usage string using cargo-style terminal colors.
@@ -35,8 +43,18 @@ pub fn render_usage(binary_name: &str) -> String {
     let h = ui::HELP_HEADER;
     let f = ui::HELP_FLAG;
     let a = ui::HELP_ARG;
+    let (usage_tail, example_tail) = if binary_name == PASSTHROUGH_BINARY {
+        (
+            format!(" {a}[-- <ARGS>...]{a:#}"),
+            format!(
+                "\n  {f}{binary_name}{f:#} {f}--only{f:#} {a}mutants -- --jobs 8{a:#}"
+            ),
+        )
+    } else {
+        (String::new(), String::new())
+    };
     format!(
-        "{h}Usage:{h:#} {f}{binary_name}{f:#} {a}[OPTIONS]{a:#} {a}[GATES]...{a:#}\n\n\
+        "{h}Usage:{h:#} {f}{binary_name}{f:#} {a}[OPTIONS]{a:#} {a}[GATES]...{a:#}{usage_tail}\n\n\
          {h}Options:{h:#}\n  \
            {f}-g{f:#}, {f}--group{f:#} {a}<group>{a:#}    Run all quality gates in the specified group(s)\n  \
            {f}-o{f:#}, {f}--only{f:#} {a}<gate>{a:#}      Run only the specified gate(s) (comma-separated or repeated)\n  \
@@ -44,7 +62,7 @@ pub fn render_usage(binary_name: &str) -> String {
            {f}-u{f:#}, {f}--up-to{f:#} {a}<gate>{a:#}     Run gates up to and including the specified gate\n  \
            {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: .cargo/gate.toml)\n  \
            {f}-X{f:#}, {f}--clean{f:#}            Clean previous CI artifacts and reports\n  \
-           {f}-a{f:#}, {f}--all{f:#}              Run all registered quality gates\n  \
+           {f}-a{f:#}, {f}--all{f:#}              Run every enabled gate, including default = false gates\n  \
            {f}-v{f:#}, {f}--verbose{f:#}          Echo each gate's output, prefixed with its group and name\n  \
            {f}-l{f:#}, {f}--list{f:#}             List all registered quality gates\n  \
            {f}-h{f:#}, {f}--help{f:#}             Print help information\n\n\
@@ -55,7 +73,7 @@ pub fn render_usage(binary_name: &str) -> String {
            {f}{binary_name}{f:#} {f}--only{f:#} {a}fmt,clippy{a:#}\n  \
            {f}{binary_name}{f:#} {f}--verbose{f:#} {f}--group{f:#} {a}verify{a:#}\n  \
            {f}{binary_name}{f:#} {a}fmt{a:#}\n  \
-           {f}{binary_name}{f:#} {f}--up-to{f:#} {a}test{a:#}"
+           {f}{binary_name}{f:#} {f}--up-to{f:#} {a}test{a:#}{example_tail}"
     )
 }
 
@@ -89,6 +107,12 @@ fn parse_one(
     };
     let next = i.saturating_add(1);
     match arg {
+        "--" => {
+            options.passthrough = Some(
+                args.get(next..).map(<[String]>::to_vec).unwrap_or_default(),
+            );
+            return args.len();
+        }
         "-h" | "--help" => {
             print_usage(binary_name);
             exit(0);
@@ -256,14 +280,21 @@ pub fn run_cli(binary_name: &str) {
     }
     options.only_gates = expanded_gates;
 
+    if let Err(e) = check_passthrough(binary_name, &options, &config) {
+        ui::error(e);
+        exit(2);
+    }
+
     let pipeline = PipelineOptions {
         only_gates: (!options.run_all && !options.only_gates.is_empty())
             .then_some(options.only_gates.as_slice()),
         skip_gates: (!options.skip_gates.is_empty())
             .then_some(options.skip_gates.as_slice()),
         up_to_gate: options.up_to_gate.as_deref(),
+        all: options.run_all,
         clean: options.clean,
         verbose: options.verbose,
+        extra_args: options.passthrough.as_deref().unwrap_or_default(),
     };
     match run_pipeline(&workspace_root, &config_path, &pipeline) {
         Ok(true) => exit(0),
@@ -273,6 +304,43 @@ pub fn run_cli(binary_name: &str) {
             exit(1);
         }
     }
+}
+
+/// Checks the FR-14 passthrough rules once groups are expanded: `--` is
+/// accepted by [`PASSTHROUGH_BINARY`] only, and the selection before it must
+/// resolve to exactly one configured gate.
+///
+/// # Errors
+/// Returns the diagnostic to print when a rule is violated.
+pub fn check_passthrough(
+    binary_name: &str,
+    options: &CliOptions,
+    config: &GateConfig,
+) -> Result<(), String> {
+    if options.passthrough.is_none() {
+        return Ok(());
+    }
+    if binary_name != PASSTHROUGH_BINARY {
+        return Err(format!(
+            "`--` is accepted by `{PASSTHROUGH_BINARY}` only; `{binary_name}` runs many gates"
+        ));
+    }
+    let single = match options.only_gates.as_slice() {
+        [gate] if !options.run_all && options.up_to_gate.is_none() => gate,
+        _ => {
+            return Err(
+                "`--` requires exactly one selected gate (`--only <gate>` or a positional name)"
+                    .to_string(),
+            );
+        }
+    };
+    if options.skip_gates.contains(single) {
+        return Err(format!("`--` target '{single}' is also skipped"));
+    }
+    if config.gate_def(single).is_none() {
+        return Err(format!("unknown gate '{single}'"));
+    }
+    Ok(())
 }
 
 /// Removes CI artifacts and exits with the outcome.
