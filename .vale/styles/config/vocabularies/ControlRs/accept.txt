@@ -148,6 +148,7 @@ Hpmv
 Hpr
 Hwang
 ICs
+IDEs
 ISRs
 Igual
 Implementability
@@ -336,6 +337,7 @@ Zaytseva
 Zhang
 Zimmermann
 [Pp]assthrough
+[Rr]egexes
 [Ss]harding
 [Ss]uppressions
 _a
@@ -374,6 +376,7 @@ b_i
 b_n
 backend's
 backpropagation
+backticked
 backtrace
 backtraces
 basename

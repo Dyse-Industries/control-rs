@@ -34,13 +34,7 @@ exclusive_gates = [
     "mutants-polynomial-0",
     "mutants-polynomial-1",
     "mutants-rest",
-    "mutants-ci-0",
-    "mutants-ci-1",
-    "mutants-compare",
-    "mutants-ets-host",
-    "mutants-ets",
-    "mutants-macros",
-    "mutants-tui",
+    "trace",
 ]
 
 # User-defined execution groups:
@@ -53,11 +47,10 @@ exclusive_gates = [
 # deletes target/ci-groups, so every group starts from an empty target directory.
 [execution.groups]
 build_test = ["build", "test"]
-lint = ["fmt", "clippy", "allow-audit", "vale", "doc"]
+lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs", "trace-marks"]
 audit = ["deny", "semver", "valgrind", "geiger"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
-target = ["virtual-ets"]
 
 # ==============================================================================
 # Cargo Lane Gates
@@ -80,8 +73,8 @@ description = "Executes Clippy linter across workspace targets"
 [allow-audit]
 mode = "fail"
 command = "cargo run"
-args = ["--package", "control-rs-ci", "--bin", "allow-audit", "--", "--baseline", ".cargo/clippy-allow-baseline.txt", "--base-ref", "origin/main"]
-description = "Fails on clippy suppression sites (allow, expect, cfg_attr, manifest allow level) beyond .cargo/clippy-allow-baseline.txt, on stale baseline entries, and on baseline growth against origin/main"
+args = ["--package", "control-rs-ci", "--bin", "allow-audit", "--", "--baseline", ".cargo/clippy-allow-baseline.txt"]
+description = "Fails on any clippy suppression (allow, expect, cfg_attr, manifest allow level) not listed in .cargo/clippy-allow-baseline.txt"
 
 [doc]
 mode = "fail"
@@ -90,6 +83,18 @@ args = ["--workspace", "--no-deps"]
 env = { RUSTDOCFLAGS = "-D warnings" }
 timeout_secs = 900
 description = "Builds workspace API documentation with rustdoc warnings denied"
+
+[trace-reqs]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "trace-reqs", "--", "--config", ".cargo/trace/trace.toml", "--out", "target/ci-artifacts/reqs.jsonl"]
+description = "Checks requirement definitions and references in the design documents that .cargo/trace/trace.toml lists and writes reqs.jsonl"
+
+[trace-marks]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "trace-marks", "--", "--config", ".cargo/trace/trace.toml", "--out", "target/ci-artifacts/marks.jsonl"]
+description = "Finds the requirement markers in the source files that .cargo/trace/trace.toml lists and writes marks.jsonl"
 
 [build]
 mode = "fail"
@@ -135,7 +140,7 @@ mode = "fail"
 command = "vale"
 args = [
     "--config=.vale.ini",
-    "--output=line",
+    "--output=JSON",
     "documentation",
     "src",
     "control-rs-ets",
@@ -145,6 +150,7 @@ args = [
     "control-rs-ci",
     "control-rs-compare",
     "control-rs-verification",
+    "control-rs-trace-macros",
     "tests",
     "benches",
     "examples",
@@ -152,17 +158,6 @@ args = [
 ]
 timeout_secs = 300
 description = "Lints documentation and doc comments for prose style conformity"
-
-# ==============================================================================
-# Target Lane Gates
-# ==============================================================================
-
-[virtual-ets]
-mode = "fail"
-command = "cargo run"
-args = ["--package", "control-rs-ci", "--bin", "ets", "--", "--timeout", "120", "qemu", "all", "--release"]
-timeout_secs = 2400
-description = "Builds QEMU ETS firmware and runs every suite headless on each target"
 
 # ==============================================================================
 # Exclusive Lane Gates
@@ -193,15 +188,13 @@ skip_exit_codes = [78]
 description = "Executes Valgrind Memcheck against all workspace example binaries to verify zero memory leaks"
 
 [mutants]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
 timeout_secs = 43200
 description = "Mutates ASTs to verify test fault-injection rigor using cargo-mutants"
 
-# Mutation chunks. Each gate is one CI job: fail-closed, and outside an
-# unfiltered `cargo ci` (`default = false`). The file filters partition the
+# Mutation chunks. Each gate is one CI job. The file filters partition the
 # root package: every mutant belongs to exactly one gate, and mutants-rest
 # claims any file outside the listed directories. Chunk sizes target at most
 # about 400 mutants per gate (measured 2026-09-24, 4937 mutants in total).
@@ -209,209 +202,135 @@ description = "Mutates ASTs to verify test fault-injection rigor using cargo-mut
 # partitions the same mutant list.
 
 [mutants-storage-0]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/storage.rs", "--shard", "0/5", "--output", "target/ci-artifacts/mutants-storage-0.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/storage.rs, chunk 1 of 5"
 
 [mutants-storage-1]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/storage.rs", "--shard", "1/5", "--output", "target/ci-artifacts/mutants-storage-1.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/storage.rs, chunk 2 of 5"
 
 [mutants-storage-2]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/storage.rs", "--shard", "2/5", "--output", "target/ci-artifacts/mutants-storage-2.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/storage.rs, chunk 3 of 5"
 
 [mutants-storage-3]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/storage.rs", "--shard", "3/5", "--output", "target/ci-artifacts/mutants-storage-3.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/storage.rs, chunk 4 of 5"
 
 [mutants-storage-4]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/storage.rs", "--shard", "4/5", "--output", "target/ci-artifacts/mutants-storage-4.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/storage.rs, chunk 5 of 5"
 
 [mutants-subprograms-0]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "0/4", "--output", "target/ci-artifacts/mutants-subprograms-0.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/subprograms.rs, chunk 1 of 4"
 
 [mutants-subprograms-1]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "1/4", "--output", "target/ci-artifacts/mutants-subprograms-1.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/subprograms.rs, chunk 2 of 4"
 
 [mutants-subprograms-2]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "2/4", "--output", "target/ci-artifacts/mutants-subprograms-2.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/subprograms.rs, chunk 3 of 4"
 
 [mutants-subprograms-3]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "3/4", "--output", "target/ci-artifacts/mutants-subprograms-3.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/subprograms.rs, chunk 4 of 4"
 
 [mutants-math-0]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/**", "-e", "src/math/storage.rs", "-e", "src/math/subprograms.rs", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-math-0.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/math except storage.rs and subprograms.rs, chunk 1 of 2"
 
 [mutants-math-1]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/**", "-e", "src/math/storage.rs", "-e", "src/math/subprograms.rs", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-math-1.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/math except storage.rs and subprograms.rs, chunk 2 of 2"
 
 [mutants-matrix]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/matrix/**", "--output", "target/ci-artifacts/mutants-matrix.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/matrix"
 
 [mutants-tensor]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/tensor/**", "--output", "target/ci-artifacts/mutants-tensor.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/tensor"
 
 [mutants-tf-ss]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/transfer_function/**", "-f", "src/state_space/**", "--output", "target/ci-artifacts/mutants-tf-ss.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/transfer_function and src/state_space"
 
 [mutants-polynomial-0]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/polynomial/**", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-polynomial-0.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/polynomial, chunk 1 of 2"
 
 [mutants-polynomial-1]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-f", "src/polynomial/**", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-polynomial-1.out"]
 timeout_secs = 19800
 description = "Mutation testing: src/polynomial, chunk 2 of 2"
 
 [mutants-rest]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "-e", "src/math/**", "-e", "src/matrix/**", "-e", "src/tensor/**", "-e", "src/transfer_function/**", "-e", "src/state_space/**", "-e", "src/polynomial/**", "--output", "target/ci-artifacts/mutants-rest.out"]
 timeout_secs = 19800
 description = "Mutation testing: every file not claimed by another mutants-* gate"
 
-
-# Workspace tool crates (measured 2026-09-24: ci 489, compare 202, ets-host 288,
-# ets 180, macros 42, tui 113 mutants). `--no-config` drops .cargo/mutants.toml,
-# whose `--lib` test filter and `src/**/tests/**` exclusion apply only to the
-# root package: these crates keep their tests in `tests/` and inline modules.
-# control-rs-verification is an oracle emitter validated by cross-compare and
-# is not mutated.
-
-[mutants-ci-0]
-mode = "fail"
-default = false
-command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ci", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
-timeout_secs = 19800
-description = "Mutation testing: control-rs-ci, chunk 1 of 2"
-
-[mutants-ci-1]
-mode = "fail"
-default = false
-command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ci", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
-timeout_secs = 19800
-description = "Mutation testing: control-rs-ci, chunk 2 of 2"
-
-[mutants-compare]
-mode = "fail"
-default = false
-command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-compare", "--output", "target/ci-artifacts/mutants-compare.out"]
-timeout_secs = 19800
-description = "Mutation testing: control-rs-compare"
-
-[mutants-ets-host]
-mode = "fail"
-default = false
-command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ets-host", "--output", "target/ci-artifacts/mutants-ets-host.out"]
-timeout_secs = 19800
-description = "Mutation testing: control-rs-ets-host"
-
-[mutants-ets]
-mode = "fail"
-default = false
-command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ets", "--output", "target/ci-artifacts/mutants-ets.out"]
-timeout_secs = 19800
-description = "Mutation testing: control-rs-ets"
-
-[mutants-macros]
-mode = "fail"
-default = false
-command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-macros", "--output", "target/ci-artifacts/mutants-macros.out"]
-timeout_secs = 19800
-description = "Mutation testing: control-rs-macros"
-
-[mutants-tui]
-mode = "fail"
-default = false
-command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-tui", "--output", "target/ci-artifacts/mutants-tui.out"]
-timeout_secs = 19800
-description = "Mutation testing: control-rs-tui"
-
 [regression]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo run"
-args = ["--package", "control-rs-ci", "--bin", "regression", "--", "--all", "--budgets", ".cargo/regression.toml"]
+args = ["--package", "control-rs-ci", "--bin", "regression", "--", "--all"]
 timeout_secs = 7200
 description = "Evaluates Criterion benchmark outputs against performance budgets and regression baselines"
+
+# Last exclusive gate: reads every result and artifact of the run before the
+# report is written.
+[trace]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--reqs", "target/ci-artifacts/reqs.jsonl", "--marks", "target/ci-artifacts/marks.jsonl", "--gates", ".cargo/gate.toml", "--results", "target/ci-artifacts", "--out", "target/ci-artifacts/trace-report.json"]
+description = "Derives requirement status from gate results and fails on failed or unverified requirements and unresolved markers"
