@@ -7,8 +7,7 @@ retired = []
 exclude_phrases = []
 
 [references]
-plan = '^\|[^|]+\| `[a-z-]+` +\|'
-acceptance = '^\|(?:[^|]*\|){5}$'
+verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
 
 [markers]
 files = ["src", "tests", "benches"]

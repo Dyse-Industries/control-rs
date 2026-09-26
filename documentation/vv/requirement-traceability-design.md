@@ -10,13 +10,12 @@
 
 Requirements in `control-rs` are written first, in the Requirements section of
 each design document, and the design follows from them. This document
-specifies the tooling that checks every requirement is planned for verification
-and has an acceptance criterion, and links it to the gate results that verify
-it.
+specifies the tooling that checks every requirement has a verification row
+with a gate and criterion, and links it to the gate results that verify it.
 
 The tooling rests on two concepts. A **definition** is the one line where a
 requirement ID is introduced. A **reference** is any other line that names the
-ID for a stated purpose, such as a verification-plan row or an acceptance row.
+ID for a stated purpose, such as a verification-table row.
 Three small binaries in `control-rs-ci` handle one step each:
 
 - `trace-reqs` finds definitions and references in Markdown, checks them and
@@ -141,24 +140,17 @@ tools; and any systems-engineering view.
      shall return `None` from `value(i, j)` when `i` or `j` is out of bounds.
    ```
 
-2. **Plan its verification** with a row in the Plan table. The `Gate` cell names
-   the gate whose result is the evidence:
+2. **State its verification** with a row in the Verification table. The `Gates`
+   cell names the gate whose result is the evidence; `Criterion` is one sentence
+   stating the pass condition, including any bound:
 
    ```markdown
-   | Requirements | Kind   | Gate   | Step                                   |
-   |:-------------|:-------|:-------|:---------------------------------------|
-   | FR-3         | `test` | `test` | Sweep (i, j) over [0, N]² for SP/HP/TP |
+   | Requirements | Gates  | Criterion                                                          |
+   |:-------------|:-------|:-------------------------------------------------------------------|
+   | FR-3         | `test` | `value(i, j)` is `None` iff i = N or j = N over [0, N]², SP/HP/TP |
    ```
 
-3. **State its acceptance** with a row in the Acceptance table:
-
-   ```markdown
-   | Requirements | Claim                 | Oracle      | Measure      | Bound              |
-   |:-------------|:----------------------|:------------|:-------------|:-------------------|
-   | FR-3         | Out-of-bounds is None | Index sweep | `None` count | iff i = N or j = N |
-   ```
-
-4. **Mark the test** that verifies it, optionally, so the link survives in
+3. **Mark the test** that verifies it, optionally, so the link survives in
    code. Rust uses the `#[req]` attribute; any other language uses the marker
    text the configuration names, such as `// req: storage#FR-3`:
 
@@ -168,11 +160,11 @@ tools; and any systems-engineering view.
    fn packed_value_out_of_bounds_is_none() { /* ... */ }
    ```
 
-5. **Run `cargo trace-reqs`.** Each problem prints as `path:line: message`,
+4. **Run `cargo trace-reqs`.** Each problem prints as `path:line: message`,
    which the editor turns into a clickable link:
 
    ```text
-   documentation/math/storage-design.md:42: storage#FR-3 has no acceptance reference
+   documentation/math/storage-design.md:42: storage#FR-3 has no verification reference
    ```
 
 To withdraw a requirement, delete its definition and add its qualified ID to
@@ -195,18 +187,10 @@ the same six fields:
 {
   "schema": 1,
   "id": "storage#FR-3",
-  "kind": "plan",
+  "kind": "verification",
   "file": "documentation/math/storage-design.md",
   "line": 210,
-  "text": "| FR-3 | `test` | `test` | Sweep (i, j) over [0, N]² for SP/HP/TP |"
-}
-{
-  "schema": 1,
-  "id": "storage#FR-3",
-  "kind": "acceptance",
-  "file": "documentation/math/storage-design.md",
-  "line": 218,
-  "text": "| FR-3 | Out-of-bounds is None | Index sweep | `None` count | iff i = N or j = N |"
+  "text": "| FR-3 | `test` | `value(i, j)` is `None` iff i = N or j = N over [0, N]², SP/HP/TP |"
 }
 {
   "schema": 1,
@@ -219,7 +203,7 @@ the same six fields:
 ```
 
 Grouping rows by `id` gives everything known about a requirement; filtering by
-`kind` gives every plan row, every acceptance row or every marker. No field
+`kind` gives every verification row or every marker. No field
 depends on configuration to be understood.
 
 ### Data Flow
@@ -267,8 +251,7 @@ retired = []
 exclude_phrases = []
 
 [references]
-plan = '^\|[^|]+\| `[a-z-]+` +\|'
-acceptance = '^\|(?:[^|]*\|){5}$'
+verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
 
 [markers]
 files = ["src", "tests", "benches"]
@@ -290,10 +273,9 @@ marker = "#[req("
 | `markers.suffixes` | File-name endings of the source files to read, such as `.rs`                                                   |
 | `markers.marker`   | Text that makes a source line a marker, such as `#[req(`                                                       |
 
-In the template, a plan row has a backticked kind in its second cell and an
-acceptance row has exactly five cells, which is all the two reference patterns
-test. `trace-marks` reads `id`, `doc` and `[markers]`; without `[markers]` it
-writes an empty `marks.jsonl`.
+In the template, a verification row is a pipe-table row whose first cell starts
+with a requirement ID. `trace-marks` reads `id`, `doc` and `[markers]`; without
+`[markers]` it writes an empty `marks.jsonl`.
 
 ### File Selection
 
@@ -420,8 +402,8 @@ stay in place.
 
 ### Adoption
 
-Existing plan and acceptance tables carry no Requirements column, so every
-existing requirement would report two `missing` defects. `files` is therefore
+Existing verification tables carry no Requirements column, so every
+existing requirement would report a `missing` defect. `files` is therefore
 the adoption mechanism: it lists documents one by one as each is migrated and
 becomes the directory `documentation` when the last one is done. A document outside `files` is
 not checked at all; a document inside it is checked in full.
@@ -455,29 +437,17 @@ not checked at all; a document inside it is checked in full.
 
 ## Verification & Validation
 
-### Plan
+### Verification
 
-| Requirements                                    | Kind         | Gate                        | Step                                                                                                                                                                                                                                                                     |
-|:------------------------------------------------|:-------------|:----------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| FR-1, FR-2, FR-3                                | `test`       | `test`                      | Matching fixtures: fenced blocks, first-ID definitions, indented continuation, multiple IDs per reference line, lines matching two patterns, local and qualified IDs; selection fixtures: file root, directory root by suffix, missing root, symbolic links not followed |
-| FR-4, FR-9                                      | `test`       | `test`                      | Check fixtures: one positive and one negative per check; diagnostic line format and exit status                                                                                                                                                                          |
-| FR-5                                            | `test`       | `test`                      | Phrase fixtures: backtick removal, every match reported, an empty list disables the rule                                                                                                                                                                                 |
-| FR-6, FR-7, NFR-4                               | `test`       | `test`                      | Row fixtures: field set, sort order, byte-identical reruns; marker fixtures: one row per qualified ID, a non-Rust marker, unqualified and missing IDs; `#[req]` fixtures: item unchanged, a malformed ID fails to compile                                                |
-| FR-8                                            | `test`       | `test`                      | Status fixtures: one per Status Derivation row plus an unresolved marker                                                                                                                                                                                                 |
-| NFR-1                                           | `example`    | `trace-reqs`, `trace-marks` | Run all three binaries on the `control-rs` workspace                                                                                                                                                                                                                     |
-| NFR-2, NFR-3, C-1, C-2, C-3, C-4, C-5, C-6, C-7 | `inspection` |                             | Review the implementation diff against each constraint                                                                                                                                                                                                                   |
-
-### Acceptance
-
-| Requirements                                    | Claim                      | Oracle                          | Measure                             | Bound                                                         |
-|:------------------------------------------------|:---------------------------|:--------------------------------|:------------------------------------|:--------------------------------------------------------------|
-| FR-1, FR-2, FR-3                                | **Matching exactness**     | Matching fixtures               | Rows vs expected                    | Exact match                                                   |
-| FR-4, FR-5                                      | **Check exactness**        | Check and phrase fixtures       | Defects vs expected                 | Every expected defect per positive fixture, none per negative |
-| FR-9                                            | **Diagnostic format**      | Fixtures                        | Lines matching `^[^:]+:[0-9]+: .+$` | 100 %; exit 0 iff no defect                                   |
-| FR-6, FR-7, NFR-4                               | **Row stability**          | Two runs on an unchanged corpus | Byte comparison; field set          | Identical; exactly the six Artifacts fields                   |
-| FR-8                                            | **Status derivation**      | Status fixtures                 | Status and exit status              | Exact match per row                                           |
-| NFR-1                                           | **Latency**                | Workspace run                   | Median wall-clock of 5 runs         | $< 1.0\,\text{s}$ per binary                                  |
-| NFR-2, NFR-3, C-1, C-2, C-3, C-4, C-5, C-6, C-7 | **Constraint conformance** | Review                          | Violations found                    | 0                                                             |
+| Requirements                                      | Gates                       | Criterion                                                                                                                                                                                                                                                                |
+|:--------------------------------------------------|:----------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| FR-1, FR-2, FR-3                                  | `test`                      | Matching fixtures produce exactly the expected rows: fenced blocks, first-ID definitions, indented continuation, multiple IDs per reference line, lines matching two patterns, local and qualified IDs; selection fixtures cover file root, directory root, missing root |
+| FR-4, FR-9                                        | `test`                      | Every expected defect per positive check fixture, none per negative; diagnostic lines match `^[^:]+:[0-9]+: .+$`; exit 0 iff no defect                                                                                                                                  |
+| FR-5                                              | `test`                      | Every match reported outside code spans, an empty list disables the rule                                                                                                                                                                                                 |
+| FR-6, FR-7, NFR-4                                 | `test`                      | Two runs on an unchanged corpus are byte-identical; rows carry exactly the six Artifacts fields; marker fixtures: one row per qualified ID, unqualified and missing IDs reported                                                                                          |
+| FR-8                                              | `test`                      | Status and exit status match exactly per Status Derivation row; an unresolved marker fails the trace                                                                                                                                                                     |
+| NFR-1                                             | `trace-reqs`, `trace-marks` | Median of 5 runs < 1.0 s per binary                                                                                                                                                                                                                                     |
+| NFR-2, NFR-3, C-1, C-2, C-3, C-4, C-5, C-6, C-7 |                             | Review: the diff adds no violation of any constraint                                                                                                                                                                                                                     |
 
 ### Limits
 
@@ -485,15 +455,13 @@ not checked at all; a document inside it is checked in full.
   gate still counts as passed; `trace-check` cannot observe it.
 - Markers are found by text. A marker line inside a comment or string literal
   counts like any other.
-- Acceptance rows are not evaluated; their correctness is a review concern.
 - A misspelled gate name is not a gate, so the requirement reads `Unchecked`
   rather than failing. The report lists `Unchecked` requirements for review.
 - `trace` cannot serve as evidence: `trace-check` runs as that gate, so the
   current run's `trace` result does not exist while it reads results.
-- Every ID on a reference line counts, including one mentioned in the step
-  text, and so does every backticked gate name: the Kind `` `test` `` also
-  names gate `test`. Keeping IDs in the first cell and gate names in the Gate
-  cell avoids unintended references.
+- Every ID on a verification row counts, including one mentioned in the
+  criterion text, and so does every backticked gate name. Keeping IDs in the
+  first cell and gate names in the Gates cell avoids unintended references.
 - A requirement deleted without being added to `retired` is not detected;
   review of the diff is the control.
 - Phrase checks are lexical. They catch configured patterns, not ambiguity in
@@ -505,8 +473,8 @@ not checked at all; a document inside it is checked in full.
 
 - All three binaries are single-pass and line-oriented; each line is tested
   against a handful of compiled patterns. Cost is dominated by file I/O.
-- Artifacts are small: roughly 800 rows once all 268 requirements carry a plan
-  and an acceptance reference.
+- Artifacts are small: roughly 540 rows once all 268 requirements carry a
+  verification reference.
 - `regex` 1.13 brings `aho-corasick`, `memchr`, `regex-automata` and
   `regex-syntax`, with no proc-macro crate. `control-rs-compare` already
   depends on it, so the lockfile gains no crate.
@@ -518,12 +486,8 @@ not checked at all; a document inside it is checked in full.
 
 ## Risks & Open Questions
 
-- **Row-shape patterns.** The template's plan and acceptance rows are told
-  apart by cell shape. A layout whose rows look alike needs distinguishing
-  text; a line matching both yields a reference of each kind, which the
-  `missing` check does not catch.
 - **Migration effort.** Each of the 23 documents needs a Requirements column in
-  its Plan and Acceptance tables before it joins `files`. Converting numbered
+  its Verification table before it joins `files`. Converting numbered
   headings (586) and `§n` cross-references (472) to the unnumbered template is
   separate editorial work that the tracer does not depend on.
 - **Document renames.** Renaming a design document changes every qualified ID
@@ -553,6 +517,7 @@ not checked at all; a document inside it is checked in full.
 | 1.7      | September 26, 2026 | @MitchellDScott | Stated symbolic-link handling for glob walks: links to directories are not entered during a walk, links to files are selected under their own path, dangling links are ignored and links named in a glob's leading components are resolved. Added the double-selection limit and symbolic-link fixtures to the Plan.                                                                                                                                            |
 | 1.8      | September 26, 2026 | @MitchellDScott | Dropped `require_phrases`; each match of an `exclude_phrases` pattern is a defect that quotes the match. The Acceptance bound for the checks counts every expected defect. Reference [6] follows the research record, and the ISO/IEC/IEEE 29148 citation is removed until a quoted source exists.                                                                                                                                                              |
 | 1.9      | September 26, 2026 | @MitchellDScott | Markers are found in source text: `trace-marks` reads `[markers]` (roots, suffixes, marker text) and works for any language; `#[req]` checks its IDs and writes nothing. Globs replaced by roots plus suffix, with symbolic links never followed; `depth` removed. Removed the link-record Limits and the compiler-path and editor-expansion Risks; the gate-name overlap joins the reference-line Limit.                                                       |
+| 1.10     | September 26, 2026 | @MitchellDScott | Merged Plan and Acceptance into a single Verification table (`Requirements \| Gates \| Criterion`). One reference kind `verification` replaces `plan` and `acceptance`; the pattern matches a row whose first cell starts with a requirement ID. Removed the Kind column, the gate-name overlap Limit, the row-shape Risk, and the acceptance-not-evaluated Limit. Updated template, `trace.toml`, tracer tests. |
 
 ---
 

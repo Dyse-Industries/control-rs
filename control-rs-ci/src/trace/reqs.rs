@@ -375,13 +375,9 @@ mod tests {
 
 - **FR-1 — Size**: The widget shall report its size.
 
-| Requirements | Kind   | Gate   | Step |
-|:-------------|:-------|:-------|:-----|
-| FR-1         | `test` | `test` | Size |
-
-| Requirements | Claim | Oracle | Measure | Bound |
-|:-------------|:------|:-------|:--------|:------|
-| FR-1         | Size  | Test   | Bytes   | Exact |
+| Requirements | Gates  | Criterion        |
+|:-------------|:-------|:-----------------|
+| FR-1         | `test` | Exact size match |
 ";
 
     const FILE: &str = "docs/widget-design.md";
@@ -394,8 +390,7 @@ definition = '^- \*\*(?:FR|NFR|C)-'
 "#;
 
     const REFERENCES: &str = r"[references]
-plan = '^\|[^|]+\| `[a-z-]+` +\|'
-acceptance = '^\|(?:[^|]*\|){5}$'
+verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
 ";
 
     /// A row's kind, ID and line.
@@ -435,8 +430,7 @@ acceptance = '^\|(?:[^|]*\|){5}$'
             scan(CLEAN, &rules()),
             [
                 expect("definition", "widget#FR-1", 3),
-                expect("plan", "widget#FR-1", 7),
-                expect("acceptance", "widget#FR-1", 11),
+                expect("verification", "widget#FR-1", 7),
             ]
         );
     }
@@ -484,13 +478,13 @@ acceptance = '^\|(?:[^|]*\|){5}$'
 
     #[test]
     fn reference_lines_record_every_local_and_qualified_id() {
-        let source = "| FR-1, storage#FR-3 | `test` | `test` | Step FR-2 |\n";
+        let source = "| FR-1, storage#FR-3 | `test` | Criterion FR-2 |\n";
         assert_eq!(
             scan(source, &rules()),
             [
-                expect("plan", "widget#FR-1", 1),
-                expect("plan", "storage#FR-3", 1),
-                expect("plan", "widget#FR-2", 1),
+                expect("verification", "widget#FR-1", 1),
+                expect("verification", "storage#FR-3", 1),
+                expect("verification", "widget#FR-2", 1),
             ]
         );
     }
@@ -501,10 +495,10 @@ acceptance = '^\|(?:[^|]*\|){5}$'
         let config: TraceConfig = toml::from_str(&text).unwrap();
         let rules = config.rules(Path::new("trace.toml")).unwrap();
         assert_eq!(
-            scan("| FR-1 | `test` | `test` | Step |\n", &rules),
+            scan("| FR-1 | `test` | Criterion |\n", &rules),
             [
                 expect("any", "widget#FR-1", 1),
-                expect("plan", "widget#FR-1", 1)
+                expect("verification", "widget#FR-1", 1)
             ]
         );
     }
@@ -513,7 +507,7 @@ acceptance = '^\|(?:[^|]*\|){5}$'
     fn rows_carry_normalized_text() {
         let rows = scan_markdown(FILE, CLEAN, &rules());
         let plan = rows.get(1).unwrap();
-        assert_eq!(plan.text, "| FR-1 | `test` | `test` | Size |");
+        assert_eq!(plan.text, "| FR-1 | `test` | Exact size match |");
     }
 
     #[test]
@@ -534,7 +528,7 @@ acceptance = '^\|(?:[^|]*\|){5}$'
         let defects = check(&scan_markdown(FILE, &source, &rules()), &rules());
         assert_eq!(defects.len(), 1);
         let defect = defects.first().unwrap();
-        assert_eq!(defect.line, 13);
+        assert_eq!(defect.line, 9);
         assert_eq!(
             defect.message,
             "widget#FR-1 is defined more than once; first definition at \
@@ -544,7 +538,7 @@ acceptance = '^\|(?:[^|]*\|){5}$'
 
     #[test]
     fn reference_to_an_undefined_id_is_unresolved() {
-        let source = format!("{CLEAN}| FR-7 | `test` | `test` | Other |\n");
+        let source = format!("{CLEAN}| FR-7 | `test` | Other |\n");
         assert_eq!(messages(&source, &rules()), ["widget#FR-7 is not defined"]);
     }
 
@@ -552,12 +546,10 @@ acceptance = '^\|(?:[^|]*\|){5}$'
     fn definition_without_a_kind_of_reference_is_missing_it() {
         let source = "\
 - **FR-1 — Size**: The widget shall report its size.
-
-| FR-1 | `test` | `test` | Size |
 ";
         assert_eq!(
             messages(source, &rules()),
-            ["widget#FR-1 has no acceptance reference"]
+            ["widget#FR-1 has no verification reference"]
         );
     }
 
@@ -567,7 +559,7 @@ acceptance = '^\|(?:[^|]*\|){5}$'
         let defects = messages(CLEAN, &retired);
         assert_eq!(
             defects.iter().filter(|m| m.ends_with("is retired")).count(),
-            3
+            2
         );
         assert!(
             messages(CLEAN, &rules_with("retired = [\"widget#FR-2\"]"))

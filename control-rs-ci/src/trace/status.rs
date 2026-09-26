@@ -264,8 +264,8 @@ mod tests {
         }
     }
 
-    /// A definition with one plan row naming `gate`, or none when empty. The
-    /// kind cell, `example`, is not a gate name.
+    /// A definition with one verification row naming `gate`, or none when
+    /// empty. The kind cell, `example`, is not a gate name.
     fn requirement(id: &str, gate: &str) -> Vec<Row> {
         let cell = if gate.is_empty() {
             String::new()
@@ -274,7 +274,7 @@ mod tests {
         };
         vec![
             row(id, DEFINITION, "- **FR-1 — A**: It shall work."),
-            row(id, "plan", &format!("| FR-1 | `example` | {cell} | Step |")),
+            row(id, "verification", &format!("| FR-1 | {cell} | Step |")),
         ]
     }
 
@@ -313,7 +313,7 @@ mod tests {
             ("lint".to_string(), Verdict::Warn),
         ]);
         let mut reqs = requirement("w#FR-1", "test");
-        reqs.push(row("w#FR-1", "acceptance", "| FR-1 | `lint` | a | b | c |"));
+        reqs.push(row("w#FR-1", "verification", "| FR-1 | `lint` | a |"));
         assert_eq!(status(&reqs, &verdicts), (Status::Verified, true));
     }
 

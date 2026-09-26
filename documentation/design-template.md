@@ -70,28 +70,21 @@ Describe any architecture or implementation choices that were considered but not
 
 The plan for showing this component is correct and meets its requirements.
 
-### Plan
+### Verification
 
-How each requirement is verified. Every approved requirement appears in at
-least one row; the `Gate` cell names the gate whose result is the evidence, or
-stays empty for `analysis` and `inspection`.
+How each requirement is verified and what "passed" means. Every approved
+requirement appears in at least one row. The `Gates` cell names the gate whose
+result is the evidence; an empty cell means the requirement is checked by
+review and reads `Unchecked`. `Criterion` is one sentence stating the
+pass condition, including any bound. Specific tests are linked by `#[req]`
+markers in the code, not named in the doc.
 
-| Requirements | Kind          | Gate  | Step  |
-|:-------------|:--------------|:------|:------|
-| FR-1         | `test`        | [...] | [...] |
-| FR-2, NFR-1  | `bench`       | [...] | [...] |
-| FR-2         | `example`     | [...] | [...] |
-| FR-1         | `cross-check` | [...] | [...] |
-| C-1          | `inspection`  |       | [...] |
-
-### Acceptance
-
-What accepts each requirement: numerical claims, quantitative bounds and pass
-criteria. Every approved requirement appears in at least one row.
-
-| Requirements | Claim | Oracle | Measure | Bound |
-|:-------------|:------|:-------|:--------|:------|
-| FR-1         | [...] | [...]  | [...]   | [...] |
+| Requirements | Gates        | Criterion |
+|:-------------|:-------------|:----------|
+| FR-1         | `test`       | [...]     |
+| FR-2, NFR-1  | `bench`      | [...]     |
+| FR-2         | `example`    | [...]     |
+| C-1          |              | [...]     |
 
 ### Limits
 
