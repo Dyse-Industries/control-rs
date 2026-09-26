@@ -1,0 +1,186 @@
+{
+  "$schema": "../../target/trace/schema/storage.schema.json",
+  "area": "storage",
+  "requirements": [
+    {
+      "id": "storage#FR-1",
+      "title": "Decoupled Storage Subsystems Architecture",
+      "status": "draft",
+      "text": [
+        "Provide distinct,",
+        "zero-cost storage subsystem contracts across dense strided arrays (",
+        "`DenseStorage<T>` / `Storage<T, R, C>`), packed structured matrices (",
+        "`PackedStorage<T>`), and compressed sparse backends (`SparseStorage<T>`).",
+        "Subsystems share no common raw supertrait, preserving zero-cost abstraction",
+        "without forcing artificial unification between dense contiguous indexing,",
+        "packed triangular layout math, and CSR/CSC compressed buffers. Each",
+        "subsystem exposes type-level or runtime dimension queries (`R: Dim, C: Dim`",
+        "/ `rows()`, `cols()`), safe element retrieval (`Option<&T>` / `Option<T>`),",
+        "and safe modification (`Result<(), StorageError>`)."
+      ]
+    },
+    {
+      "id": "storage#FR-2",
+      "title": "Dense Strided Storage & Views",
+      "status": "draft",
+      "text": [
+        "- Unsafe immutable and mutable base pointer traits with signed `isize`",
+        "  strides and checked/unchecked accessors.",
+        "- Zero-copy strided views supporting runtime strides, compile-time layouts (",
+        "  `LayoutMarker`), transposition ($RS \\leftrightarrow CS$), and vector",
+        "  reversal.",
+        "- Unsafe contiguity markers (`ContiguousStorage`, `ContiguousStorageMut`)",
+        "  exposing direct continuous slice access (`&[T]`, `&mut [T]`) for",
+        "  C-ABI/BLAS interop.",
+        "- Fixed-capacity stack backends (`ArrayStorage`, `RowArrayStorage`) backed",
+        "  by nested inline arrays (`[[T; R]; C]`, `[[T; C]; R]`)."
+      ]
+    },
+    {
+      "id": "storage#FR-3",
+      "title": "Packed Structured Storage",
+      "status": "draft",
+      "text": [
+        "- Decouple physical slot lookup (`packed_index`) from algebraic entry",
+        "  evaluation (`value`).",
+        "- Fixed stack leaves and zero-copy non-owning views for Symmetric (SP),",
+        "  Hermitian (HP), Triangular (TP with Unit/NonUnit diagonal), and Diagonal",
+        "  structures.",
+        "- In-place mutation restricted to physical stored slots, rejecting implicit",
+        "  writes with `StorageError`."
+      ]
+    },
+    {
+      "id": "storage#FR-4",
+      "title": "Compressed Sparse Storage & In-Place Modification",
+      "status": "draft",
+      "text": [
+        "- Abstract sparse matrix traits for row-compressed (CSR) and",
+        "  column-compressed (CSC) formats with zero-copy row/column slicing.",
+        "- Safe and unchecked in-place value modification of existing non-zeros",
+        "  without structural reallocation."
+      ]
+    },
+    {
+      "id": "storage#FR-5",
+      "title": "Incremental Sparse Assembly & Stack Compression",
+      "status": "draft",
+      "text": [
+        "- Fixed-capacity Coordinate (COO) assembly buffer supporting incremental",
+        "  `push`.",
+        "- Stack-allocated $O(\\text{nnz} + R)$ 3-pass sorting and duplicate",
+        "  accumulation compressing COO triplets into canonical sorted CSR/CSC",
+        "  storage without dynamic heap allocation."
+      ]
+    },
+    {
+      "id": "storage#FR-6",
+      "title": "1-D Sparse Vectors",
+      "status": "draft",
+      "text": [
+        "Dedicated trait (`SparseVectorStorage`),",
+        "fixed-capacity stack leaf (`ArraySparseVector`), and borrowed view (",
+        "`ViewSparseVector`) over parallel index and value slices for Level-1 SpBLAS",
+        "operations."
+      ]
+    },
+    {
+      "id": "storage#FR-7",
+      "title": "Layout Conversions & Numeric Support",
+      "status": "draft",
+      "text": [
+        "- Conversion to dense (`ToDenseStorage`) and between compressed layouts",
+        "  (`ToCsrStorage`, `ToCscStorage`) across dense, packed, and sparse",
+        "  backends. Recovering a structured layout from a dense operand is a",
+        "  projection, not a conversion: it selects a part and discards the rest,",
+        "  so the caller names the part. Projecting then converting back to dense",
+        "  reproduces the selected part and the layout tags that named it.",
+        "- Generic scalar support (`T: Scalar`) across real primitives, fixed-point (",
+        "  `Quantized`), and complex numbers (`Complex<T>`), enforcing conjugate",
+        "  reflection and validating real diagonals on write."
+      ]
+    },
+    {
+      "id": "storage#NFR-1",
+      "title": "`#![no_std]` Compatibility",
+      "status": "draft",
+      "text": [
+        "Core storage executes with zero",
+        "dynamic heap allocation."
+      ]
+    },
+    {
+      "id": "storage#NFR-2",
+      "title": "Compile-Time Verification",
+      "status": "draft",
+      "text": [
+        "Fixed capacities and array lengths are",
+        "checked statically at compile time without unstable `generic_const_exprs`."
+      ]
+    },
+    {
+      "id": "storage#NFR-3",
+      "title": "Zero-Branch Codegen",
+      "status": "draft",
+      "text": [
+        "Unchecked pointer indexing compiles to",
+        "branchless instructions with 0 panic paths at `opt-level=3`."
+      ]
+    },
+    {
+      "id": "storage#C-1",
+      "title": "Strided Index Arithmetic",
+      "status": "draft",
+      "text": [
+        "Pointer offset",
+        "is $r \\cdot RS + c \\cdot CS$ using `isize` arithmetic."
+      ]
+    },
+    {
+      "id": "storage#C-2",
+      "title": "Const Bounds Invariant",
+      "status": "draft",
+      "text": [
+        "Packed array lengths require $L = N(N+1)/2$",
+        "enforced via const assertions."
+      ]
+    },
+    {
+      "id": "storage#C-3",
+      "title": "Defensive & Unchecked Safety Contract",
+      "status": "draft",
+      "text": [
+        "Safe accessors validate",
+        "bounds; `unsafe` accessors require caller-proven bounds. `DenseStorage` and",
+        "`DenseStorageMut` are `unsafe trait`s to guarantee backing pointer validity."
+      ]
+    },
+    {
+      "id": "storage#C-4",
+      "title": "Dim Call Site",
+      "status": "draft",
+      "text": [
+        "Dimension types come from `num-types-design.md`'s",
+        "`Dim` trait; this document does not define its own dimension representation."
+      ]
+    },
+    {
+      "id": "storage#C-5",
+      "title": "Error Invariant Boundary",
+      "status": "draft",
+      "text": [
+        "Fallible indexing and structural",
+        "violations return `StorageError`; shape mismatches against runtime slices",
+        "return `ConversionError::DimensionMismatch` per `error-design.md`."
+      ]
+    },
+    {
+      "verified_by":,
+      "accept":,
+      "id": "",
+      "title": "",
+      "status": "",
+      "text": []
+    }
+  ]
+}
