@@ -37,6 +37,11 @@ pub struct CliOptions {
     pub passthrough: Passthrough,
 }
 
+struct SplitArgs<'a> {
+    parser_args: &'a [String],
+    passthrough: Passthrough,
+}
+
 /// Formats the help and usage string using cargo-style terminal colors.
 #[must_use]
 pub fn render_usage(binary_name: &str) -> String {
@@ -85,29 +90,14 @@ pub fn print_usage(binary_name: &str) {
 
 /// Parses CLI arguments into `CliOptions`.
 #[must_use]
-#[allow(clippy::too_many_lines)]
 pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
     use lexopt::prelude::*;
     let mut options = CliOptions::default();
 
-    let mut dash_dash_idx = args.len();
-    for (i, arg) in args.iter().enumerate() {
-        if arg == "--" {
-            dash_dash_idx = i;
-            break;
-        }
-    }
+    let split = split_passthrough(args);
+    options.passthrough = split.passthrough;
 
-    if dash_dash_idx < args.len() {
-        options.passthrough = Some(
-            args.get(dash_dash_idx.saturating_add(1)..)
-                .unwrap_or(&[])
-                .to_vec(),
-        );
-    }
-
-    let parser_args = args.get(0..dash_dash_idx).unwrap_or(&[]);
-    let mut parser = lexopt::Parser::from_iter(parser_args);
+    let mut parser = lexopt::Parser::from_iter(split.parser_args);
 
     while let Some(arg) = parser.next().unwrap_or_else(|e| {
         ui::error(format!("{e}"));
@@ -126,84 +116,30 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
             Short('v') | Long("verbose") => options.verbose = true,
             Short('a') | Long("all") => options.run_all = true,
             Short('g') | Long("group") => {
-                let val = parser
-                    .value()
-                    .unwrap_or_else(|e| {
-                        ui::error(format!("{e}"));
-                        exit(1);
-                    })
-                    .string()
-                    .unwrap_or_else(|e| {
-                        ui::error(format!("Invalid UTF-8: {e:?}"));
-                        exit(1);
-                    });
-                push_list(&mut options.groups, &val);
-            }
-            Short('o') | Long("only") => {
-                let val = parser
-                    .value()
-                    .unwrap_or_else(|e| {
-                        ui::error(format!("{e}"));
-                        exit(1);
-                    })
-                    .string()
-                    .unwrap_or_else(|e| {
-                        ui::error(format!("Invalid UTF-8: {e:?}"));
-                        exit(1);
-                    });
-                push_list(&mut options.only_gates, &val);
-            }
-            Short('s') | Long("skip") => {
-                let val = parser
-                    .value()
-                    .unwrap_or_else(|e| {
-                        ui::error(format!("{e}"));
-                        exit(1);
-                    })
-                    .string()
-                    .unwrap_or_else(|e| {
-                        ui::error(format!("Invalid UTF-8: {e:?}"));
-                        exit(1);
-                    });
-                push_list(&mut options.skip_gates, &val);
-            }
-            Short('u') | Long("up-to") => {
-                options.up_to_gate = Some(
-                    parser
-                        .value()
-                        .unwrap_or_else(|e| {
-                            ui::error(format!("{e}"));
-                            exit(1);
-                        })
-                        .string()
-                        .unwrap_or_else(|e| {
-                            ui::error(format!("Invalid UTF-8: {e:?}"));
-                            exit(1);
-                        }),
+                push_list(
+                    &mut options.groups,
+                    &parse_string_value(&mut parser),
                 );
             }
+            Short('o') | Long("only") => {
+                push_list(
+                    &mut options.only_gates,
+                    &parse_string_value(&mut parser),
+                );
+            }
+            Short('s') | Long("skip") => {
+                push_list(
+                    &mut options.skip_gates,
+                    &parse_string_value(&mut parser),
+                );
+            }
+            Short('u') | Long("up-to") => {
+                options.up_to_gate = Some(parse_string_value(&mut parser));
+            }
             Short('c') | Long("config") => {
-                options.config_path =
-                    Some(PathBuf::from(parser.value().unwrap_or_else(|e| {
-                        ui::error(format!("{e}"));
-                        exit(1);
-                    })));
+                options.config_path = Some(parse_path_value(&mut parser));
             }
-            Value(val) => {
-                let s = val.string().unwrap_or_else(|e| {
-                    ui::error(format!("Invalid UTF-8: {e:?}"));
-                    exit(1);
-                });
-                for part in
-                    s.split(',').map(str::trim).filter(|p| !p.is_empty())
-                {
-                    match part {
-                        "clean" => options.clean = true,
-                        "all" => options.run_all = true,
-                        gate => options.only_gates.push(gate.to_string()),
-                    }
-                }
-            }
+            Value(val) => handle_positional_value(val, &mut options),
             _ => {
                 ui::error(format!("Unknown argument: {arg:?}"));
                 print_usage(binary_name);
@@ -213,6 +149,63 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
     }
 
     options
+}
+
+fn split_passthrough(args: &[String]) -> SplitArgs<'_> {
+    let mut dash_dash_idx = args.len();
+    for (i, arg) in args.iter().enumerate() {
+        if arg == "--" {
+            dash_dash_idx = i;
+            break;
+        }
+    }
+    let passthrough = (dash_dash_idx < args.len()).then(|| {
+        args.get(dash_dash_idx.saturating_add(1)..)
+            .unwrap_or(&[])
+            .to_vec()
+    });
+    let parser_args = args.get(0..dash_dash_idx).unwrap_or(&[]);
+    SplitArgs {
+        parser_args,
+        passthrough,
+    }
+}
+
+fn handle_positional_value(val: std::ffi::OsString, options: &mut CliOptions) {
+    use lexopt::prelude::*;
+    let s = val.string().unwrap_or_else(|e| {
+        ui::error(format!("Invalid UTF-8: {e:?}"));
+        exit(1);
+    });
+    for part in s.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        match part {
+            "clean" => options.clean = true,
+            "all" => options.run_all = true,
+            gate => options.only_gates.push(gate.to_string()),
+        }
+    }
+}
+
+fn parse_string_value(parser: &mut lexopt::Parser) -> String {
+    use lexopt::prelude::*;
+    parser
+        .value()
+        .unwrap_or_else(|e| {
+            ui::error(format!("{e}"));
+            exit(1);
+        })
+        .string()
+        .unwrap_or_else(|e| {
+            ui::error(format!("Invalid UTF-8: {e:?}"));
+            exit(1);
+        })
+}
+
+fn parse_path_value(parser: &mut lexopt::Parser) -> PathBuf {
+    PathBuf::from(parser.value().unwrap_or_else(|e| {
+        ui::error(format!("{e}"));
+        exit(1);
+    }))
 }
 
 /// Appends the non-empty, trimmed comma-separated entries of `val`.
