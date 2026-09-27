@@ -33,7 +33,7 @@ fn setup_scenario_reqs(fixture_workspace: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(&docs_dir)?;
     fs::write(
         docs_dir.join("widget-design.md"),
-        "- **FR-1**: Size\n- **FR-1**: Size duplicate\n\n| FR-1 | test | OK |\n",
+        "- **FR-1**: Size\n- **FR-1**: Size duplicate\n\n| VC-1 | FR-1 | `test` | OK |\n",
     )
 }
 
@@ -42,13 +42,13 @@ fn setup_scenario_marks(fixture_workspace: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(&src_dir)?;
     fs::write(
         src_dir.join("lib.rs"),
-        format!("#[{}(FR-999)]\nfn dummy() {{}}\n", "req"), // Undefined requirement
+        format!("#[{}(FR-999)]\nfn dummy() {{}}\n", "req"), // Unqualified ID
     )?;
     let docs_dir = fixture_workspace.join("docs");
     fs::create_dir_all(&docs_dir)?;
     fs::write(
         docs_dir.join("widget-design.md"),
-        "- **FR-1**: Size\n\n| FR-1 | test | OK |\n",
+        "- **FR-1**: Size\n\n| VC-1 | FR-1 | `test` | OK |\n",
     )
 }
 
@@ -79,10 +79,6 @@ fn setup_scenario_check(fixture_workspace: &std::path::Path) -> io::Result<()> {
     fs::write(
         fixture_workspace.join("target/ci-artifacts/marks.jsonl"),
         "",
-    )?;
-    fs::write(
-        fixture_workspace.join(".cargo/gate.toml"),
-        "[test]\ncommand=\"cargo test\"\n",
     )
 }
 
@@ -108,7 +104,7 @@ fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
     fs::write(
         trace_dir.join("trace.toml"),
         format!(
-            "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_suffix = \"-design\"\ndefinition = '^- \\*\\*FR-'\nretired = []\n[references]\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\n[markers]\nfiles = [\"src\"]\nsuffixes = [\".rs\"]\nmarker = \"#[{}(\"\n",
+            "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_suffix = \"-design\"\ndefinition = '^- \\*\\*FR-'\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\nmethods = [\"test\", \"review\"]\nmarked_methods = [\"test\"]\nretired = []\n[markers]\nfiles = [\"src\"]\nsuffixes = [\".rs\"]\nmarker = \"#[{}(\"\n",
             "req"
         ),
     )?;
@@ -163,7 +159,7 @@ fn test_negative_trace_reqs_gate_fails_on_duplicate_def() -> TestResult {
 }
 
 #[test]
-fn test_negative_trace_check_gate_fails_on_unverified_req() -> TestResult {
+fn test_negative_trace_check_gate_fails_on_uncovered_condition() -> TestResult {
     let temp = create_temp_context(NegativeScenario::Check)?;
     let gate = Gate::new(
         "trace-check",
@@ -175,15 +171,11 @@ fn test_negative_trace_check_gate_fails_on_unverified_req() -> TestResult {
             "target/ci-artifacts/reqs.jsonl".to_string(),
             "--marks".to_string(),
             "target/ci-artifacts/marks.jsonl".to_string(),
-            "--gates".to_string(),
-            ".cargo/gate.toml".to_string(),
-            "--results".to_string(),
-            "target/ci-artifacts".to_string(),
             "--out".to_string(),
             "target/ci-artifacts/trace-report.json".to_string(),
         ],
     )
-    .with_description("Derives status");
+    .with_description("Derives condition coverage");
 
     let outcome = gate.execute(&temp.ctx)?;
     assert_eq!(outcome.verdict, Verdict::Fail);
@@ -193,8 +185,8 @@ fn test_negative_trace_check_gate_fails_on_unverified_req() -> TestResult {
     assert!(log_file.exists());
     let log = fs::read_to_string(&log_file).unwrap_or_default();
     assert!(
-        log.contains("Unverified") || log.contains("defect"),
-        "Log didn't contain Unverified or defect:
+        log.contains("widget#VC-1 has no marked test"),
+        "Log didn't report the uncovered condition:
 {log}"
     );
 

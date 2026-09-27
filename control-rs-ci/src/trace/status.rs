@@ -1,60 +1,65 @@
-//! Requirement status from gate results.
+//! Requirement and condition status derivation.
 //!
-//! A requirement's gates are the gate names that appear in code spans on its
-//! reference rows. The first matching condition sets its status: any gate
-//! failed, any gate without a result or skipped, every gate passed or warned,
-//! and no gate named.
+//! Each condition takes a status:
+//! - `Covered`: method in `marked_methods` and at least one matching marker exists.
+//! - `Uncovered`: method in `marked_methods` and no matching marker exists (fails gate).
+//! - `Review`: method is outside `marked_methods` (passes gate).
+//!
+//! A requirement takes the worst status among its conditions in order
+//! `Uncovered` > `Review` > `Covered`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use super::reqs::TraceConfig;
 use super::{
-    CONDITION, DEFINITION, Defect, Defects, MARKER, Row, SCHEMA, code_spans,
-    write_file,
+    CONDITION, DEFINITION, Defect, Defects, MARKER, Row, SCHEMA, write_file,
 };
-use crate::config::GateConfig;
-use crate::error::{GateError, GateResult};
-use crate::gate::{GateOutcome, RESULT_SUFFIX, Verdict};
+use crate::error::GateResult;
 
 /// A report and its defects.
 pub type Derived = (TraceReport, Defects);
 
-/// Gate names.
-pub type GateNames = BTreeSet<String>;
+/// Rows by qualified ID, first occurrence kept.
+type ById<'a> = BTreeMap<&'a str, &'a Row>;
 
-/// Verdict of each named gate; `None` when the gate has no result.
-pub type GateVerdicts = BTreeMap<String, Option<Verdict>>;
+/// Rows of one kind by ID, and the IDs in order of first occurrence.
+type Indexed<'a> = (ById<'a>, Vec<&'a str>);
 
-/// Gates named by each requirement or condition, by qualified ID.
-pub type NamedGates = BTreeMap<String, GateNames>;
-
-/// Recorded verdicts by gate name. A gate without a usable result is absent.
-pub type Verdicts = BTreeMap<String, Verdict>;
-
-/// Conditions grouped by their parent requirement ID.
-type ConditionsByParent<'a> = BTreeMap<&'a str, Vec<&'a Row>>;
-
-/// Derived evaluation outcome: status, gate verdicts, and child condition statuses.
-type Evaluation = (Status, GateVerdicts, Vec<ConditionStatus>);
-
-/// Count of occurrences for each marker ID.
-type MarkerCounts<'a> = BTreeMap<&'a str, usize>;
+/// Marker rows by the qualified ID they name.
+type MarkersById<'a> = BTreeMap<&'a str, Vec<&'a Row>>;
 
 /// Status of one requirement or condition.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
 )]
 pub enum Status {
-    /// A gate verdict is `fail`.
-    Failed,
-    /// A gate has no result, or its verdict is `skipped`, or a required marker is missing.
-    Unverified,
-    /// At least one gate/marker, and every gate passed or warned.
-    Verified,
-    /// No gate is named.
-    Unchecked,
+    /// Method in `marked_methods` and at least one marker.
+    Covered,
+    /// Method outside `marked_methods`; awaits sign-off.
+    Review,
+    /// Method in `marked_methods` and no marker; fails the gate.
+    Uncovered,
+}
+
+/// Location of a test marker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MarkerLocation {
+    /// Path relative to the working directory.
+    pub file: String,
+    /// 1-based line number of the marker span.
+    pub line: usize,
 }
 
 /// One condition's status in `trace-report.json`.
@@ -62,14 +67,17 @@ pub enum Status {
 pub struct ConditionStatus {
     /// Qualified Condition ID.
     pub id: String,
-    /// Parent requirement ID.
-    pub parent: String,
+    /// Parent requirement IDs.
+    pub parents: Vec<String>,
+    /// Verification method.
+    pub method: String,
     /// Derived status.
     pub status: Status,
-    /// Verdict of each named gate; `None` when the gate has no result.
-    pub gates: GateVerdicts,
     /// Number of matching test markers found in source text.
     pub marker_count: usize,
+    /// Locations of matching markers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<MarkerLocation>,
 }
 
 /// One requirement's entry in `trace-report.json`.
@@ -79,81 +87,59 @@ pub struct RequirementStatus {
     pub id: String,
     /// Derived status.
     pub status: Status,
-    /// Verdict of each named gate; `None` when the gate has no result.
-    pub gates: GateVerdicts,
-    /// Child verification conditions, if defined.
+    /// Child verification conditions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conditions: Vec<ConditionStatus>,
 }
 
-/// Count of requirements per status.
+/// A review condition awaiting sign-off.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReviewCondition {
+    /// Qualified condition ID.
+    pub id: String,
+    /// Parent requirement IDs.
+    pub parents: Vec<String>,
+    /// Verification method.
+    pub method: String,
+    /// Path of the defining document.
+    pub file: String,
+    /// 1-based line number of the condition row.
+    pub line: usize,
+}
+
+/// Count of conditions per status.
 pub type StatusCounts = BTreeMap<Status, usize>;
-
-struct Accumulator<'a> {
-    counts: &'a mut StatusCounts,
-    defects: &'a mut Defects,
-}
-
-struct Context<'a> {
-    named: &'a NamedGates,
-    verdicts: &'a Verdicts,
-    marker_counts: &'a MarkerCounts<'a>,
-    test_gates: &'a [String],
-}
-
-/// Execution context for deriving requirement and condition status.
-#[derive(Debug, Clone, Copy)]
-pub struct GateContext<'a> {
-    /// Gate names defined in the configuration.
-    pub names: &'a GateNames,
-    /// Recorded verdicts for gates with results.
-    pub verdicts: &'a Verdicts,
-    /// Gates requiring a test marker.
-    pub test_gates: &'a [String],
-}
 
 /// `trace-report.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TraceReport {
     /// Report format version.
     pub schema: u32,
-    /// Number of requirements per status.
+    /// Number of conditions per status.
     pub counts: StatusCounts,
     /// One entry per requirement, in the order of their first definition.
     pub requirements: Vec<RequirementStatus>,
-    /// Marker rows whose ID has no definition.
+    /// Review conditions awaiting sign-off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review: Vec<ReviewCondition>,
+    /// Marker rows that could not be resolved or name a requirement.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unresolved_markers: Vec<Row>,
 }
 
-impl<'a> GateContext<'a> {
-    /// Creates a new gate context.
-    #[must_use]
-    pub const fn new(
-        names: &'a GateNames,
-        verdicts: &'a Verdicts,
-        test_gates: &'a [String],
-    ) -> Self {
-        Self {
-            names,
-            verdicts,
-            test_gates,
-        }
-    }
-}
-
 impl TraceReport {
-    /// Whether no requirement is `Failed` or `Unverified` and every marker
-    /// resolves to a definition.
+    /// Whether no condition/requirement is `Uncovered` and all markers are valid.
     #[must_use]
     pub fn passes(&self) -> bool {
         self.unresolved_markers.is_empty()
-            && self.requirements.iter().all(|r| {
-                !matches!(r.status, Status::Failed | Status::Unverified)
-            })
+            && self.counts.get(&Status::Uncovered).copied().unwrap_or(0) == 0
+            && self
+                .requirements
+                .iter()
+                .all(|r| r.status != Status::Uncovered)
     }
 
-    /// Writes the report as pretty-printed JSON, creating the parent
-    /// directory.
+    /// Writes the report as pretty-printed JSON, creating the parent directory.
     ///
     /// # Errors
     /// `GateError::Io` or `GateError::Json` on failure.
@@ -164,312 +150,168 @@ impl TraceReport {
     }
 }
 
-/// Names of the gates that `gate.toml` defines.
-///
-/// # Errors
-/// `GateError::Config` if the file is missing or does not parse.
-pub fn gate_names(path: &Path) -> GateResult<GateNames> {
-    if !path.is_file() {
-        return Err(GateError::Config {
-            path: path.to_path_buf(),
-            message: "file not found".to_string(),
-        });
+/// The first row of each ID among `rows` of `kind`, and the IDs in order of
+/// first occurrence.
+fn first_by_id<'a>(rows: &'a [Row], kind: &str) -> Indexed<'a> {
+    let mut by_id = ById::new();
+    let mut order = Vec::new();
+    for row in rows.iter().filter(|r| r.kind == kind) {
+        if !by_id.contains_key(row.id.as_str()) {
+            order.push(row.id.as_str());
+            by_id.insert(row.id.as_str(), row);
+        }
     }
-    Ok(GateConfig::load_from_path(path)?
-        .gate_definitions
-        .into_keys()
-        .collect())
+    (by_id, order)
 }
 
-/// The recorded verdict of each gate in `gates` that has a readable
-/// `<gate>.result.json` in `dir`.
-#[must_use]
-pub fn load_verdicts(dir: &Path, gates: &GateNames) -> Verdicts {
-    gates
+/// The markers that name a requirement or no defined condition, with one
+/// defect each.
+fn marker_defects(
+    marks: &[Row],
+    definitions: &ById<'_>,
+    conditions: &ById<'_>,
+    defects: &mut Defects,
+) -> Vec<Row> {
+    let mut unresolved = Vec::new();
+    for mark in marks.iter().filter(|m| m.kind == MARKER) {
+        let message = if definitions.contains_key(mark.id.as_str()) {
+            format!(
+                "marker {} names a requirement; markers name verification \
+                 conditions",
+                mark.id
+            )
+        } else if conditions.contains_key(mark.id.as_str()) {
+            continue;
+        } else {
+            format!("marker {} names no defined condition", mark.id)
+        };
+        defects.push(Defect::at(mark, message));
+        unresolved.push(mark.clone());
+    }
+    unresolved
+}
+
+/// The status of one condition row given the markers that name it.
+fn condition_status(
+    row: &Row,
+    markers: &MarkersById<'_>,
+    config: &TraceConfig,
+) -> ConditionStatus {
+    let found = markers.get(row.id.as_str()).map_or(&[][..], Vec::as_slice);
+    let method = row.method.clone().unwrap_or_default();
+    let status = if !config.marked_methods.contains(&method) {
+        Status::Review
+    } else if found.is_empty() {
+        Status::Uncovered
+    } else {
+        Status::Covered
+    };
+    ConditionStatus {
+        id: row.id.clone(),
+        parents: row.parents.clone(),
+        method,
+        status,
+        marker_count: found.len(),
+        markers: found
+            .iter()
+            .map(|m| MarkerLocation {
+                file: m.file.clone(),
+                line: m.line,
+            })
+            .collect(),
+    }
+}
+
+/// The worst status of `conditions`; `Uncovered` when there are none.
+fn worst(conditions: &[ConditionStatus]) -> Status {
+    conditions
         .iter()
-        .filter_map(|gate| {
-            let path = dir.join(format!("{gate}{RESULT_SUFFIX}"));
-            GateOutcome::load_from_file(&path)
-                .ok()
-                .map(|outcome| (gate.clone(), outcome.verdict))
+        .map(|c| c.status)
+        .max()
+        .unwrap_or(Status::Uncovered)
+}
+
+/// One entry per requirement in `order`, each with its conditions sorted by
+/// ID and the worst of their statuses.
+fn requirement_statuses(
+    order: &[&str],
+    evaluated: &[ConditionStatus],
+) -> Vec<RequirementStatus> {
+    order
+        .iter()
+        .map(|&id| {
+            let mut children: Vec<ConditionStatus> = evaluated
+                .iter()
+                .filter(|c| c.parents.iter().any(|p| p == id))
+                .cloned()
+                .collect();
+            children.sort_by(|a, b| a.id.cmp(&b.id));
+            RequirementStatus {
+                id: id.to_string(),
+                status: worst(&children),
+                conditions: children,
+            }
         })
         .collect()
 }
 
-/// The gates named in code spans on the reference rows of each requirement or condition.
+/// Derives condition and requirement status from the rows of `trace-reqs`
+/// and `trace-marks`.
 #[must_use]
-pub fn named_gates(reqs: &[Row], gate_names: &GateNames) -> NamedGates {
-    let mut named = NamedGates::new();
-    for row in reqs
-        .iter()
-        .filter(|r| r.kind != DEFINITION && r.kind != MARKER)
-    {
-        let gates = named.entry(row.id.clone()).or_default();
-        for span in code_spans(&row.text) {
-            let name = span.content.trim();
-            if gate_names.contains(name) {
-                gates.insert(name.to_string());
-            }
-        }
-    }
-    named
-}
-
-fn count_markers<'a>(marks: &'a [Row]) -> MarkerCounts<'a> {
-    let mut marker_counts: MarkerCounts<'a> = BTreeMap::new();
+pub fn derive(reqs: &[Row], marks: &[Row], config: &TraceConfig) -> Derived {
+    let (definitions, order) = first_by_id(reqs, DEFINITION);
+    let (conditions, condition_order) = first_by_id(reqs, CONDITION);
+    let mut markers = MarkersById::new();
     for mark in marks.iter().filter(|m| m.kind == MARKER) {
-        let count = marker_counts.entry(mark.id.as_str()).or_default();
-        *count = count.saturating_add(1);
-    }
-    marker_counts
-}
-
-fn group_conditions_by_parent<'a>(reqs: &'a [Row]) -> ConditionsByParent<'a> {
-    let mut conditions_by_parent: ConditionsByParent<'a> = BTreeMap::new();
-    for row in reqs.iter().filter(|r| r.kind == CONDITION) {
-        if let Some(parent) = &row.parent {
-            conditions_by_parent
-                .entry(parent.as_str())
-                .or_default()
-                .push(row);
-        }
-    }
-    conditions_by_parent
-}
-
-fn evaluate_conditions(
-    definition: &Row,
-    cond_rows: &[&Row],
-    ctx: &Context<'_>,
-) -> Evaluation {
-    let mut cond_statuses = Vec::new();
-    let mut all_gates = BTreeMap::new();
-    for cond_row in cond_rows {
-        let c_gates: GateVerdicts = ctx
-            .named
-            .get(&cond_row.id)
-            .into_iter()
-            .flatten()
-            .map(|gate| (gate.clone(), ctx.verdicts.get(gate).copied()))
-            .collect();
-        for (g, v) in &c_gates {
-            all_gates.entry(g.clone()).or_insert(*v);
-        }
-        let m_count = ctx
-            .marker_counts
-            .get(cond_row.id.as_str())
-            .copied()
-            .unwrap_or(0)
-            .saturating_add(
-                ctx.marker_counts
-                    .get(definition.id.as_str())
-                    .copied()
-                    .unwrap_or(0),
-            );
-        let c_status = condition_status_of(&c_gates, m_count, ctx.test_gates);
-        cond_statuses.push(ConditionStatus {
-            id: cond_row.id.clone(),
-            parent: definition.id.clone(),
-            status: c_status,
-            gates: c_gates,
-            marker_count: m_count,
-        });
+        markers.entry(mark.id.as_str()).or_default().push(mark);
     }
 
-    let req_status = aggregate_condition_status(&cond_statuses);
-    (req_status, all_gates, cond_statuses)
-}
-
-fn condition_unverified_reason(
-    c: &ConditionStatus,
-    test_gates: &[String],
-) -> String {
-    let reason = failure(c.status, &c.gates).unwrap_or_else(|| {
-        if c.marker_count == 0 && c.gates.keys().any(|g| test_gates.contains(g))
-        {
-            "no test marker".to_string()
-        } else {
-            "unverified".to_string()
-        }
-    });
-    format!("{}: {reason}", c.id)
-}
-
-fn process_definition(
-    definition: &Row,
-    conditions_by_parent: &ConditionsByParent<'_>,
-    ctx: &Context<'_>,
-    acc: &mut Accumulator<'_>,
-) -> RequirementStatus {
-    let empty: Vec<&Row> = Vec::new();
-    let cond_rows = conditions_by_parent
-        .get(definition.id.as_str())
-        .unwrap_or(&empty);
-    let (status, gates, conditions) =
-        evaluate_conditions(definition, cond_rows, ctx);
-
-    if let Some(count) = acc.counts.get_mut(&status) {
-        *count = count.saturating_add(1);
-    }
-
-    if status == Status::Failed || status == Status::Unverified {
-        if !conditions.is_empty() {
-            let unverified_reasons: Vec<String> = conditions
-                .iter()
-                .filter(|c| {
-                    c.status == Status::Failed || c.status == Status::Unverified
-                })
-                .map(|c| condition_unverified_reason(c, ctx.test_gates))
-                .collect();
-            acc.defects.push(Defect::at(
-                definition,
-                format!(
-                    "{} is {status:?}: [{}]",
-                    definition.id,
-                    unverified_reasons.join("; ")
-                ),
-            ));
-        } else if let Some(reason) = failure(status, &gates) {
-            acc.defects.push(Defect::at(
-                definition,
-                format!("{} is {status:?}: {reason}", definition.id),
-            ));
-        }
-    }
-
-    RequirementStatus {
-        id: definition.id.clone(),
-        status,
-        gates,
-        conditions,
-    }
-}
-
-/// The report and its defects: each `Failed` or `Unverified` requirement at
-/// its first definition, and each marker whose ID has no definition.
-#[must_use]
-pub fn derive(reqs: &[Row], marks: &[Row], gates: &GateContext<'_>) -> Derived {
-    let named = named_gates(reqs, gates.names);
-    let marker_counts = count_markers(marks);
-    let conditions_by_parent = group_conditions_by_parent(reqs);
-    let ctx = Context {
-        named: &named,
-        verdicts: gates.verdicts,
-        marker_counts: &marker_counts,
-        test_gates: gates.test_gates,
-    };
-
-    let mut counts: StatusCounts = [
-        Status::Failed,
-        Status::Unverified,
-        Status::Verified,
-        Status::Unchecked,
-    ]
-    .into_iter()
-    .map(|status| (status, 0))
-    .collect();
-
-    let defined: BTreeSet<&str> = reqs
-        .iter()
-        .filter(|r| r.kind == DEFINITION || r.kind == CONDITION)
-        .map(|r| r.id.as_str())
-        .collect();
-
-    let mut seen_reqs = BTreeSet::new();
-    let mut requirements = Vec::new();
     let mut defects = Vec::new();
-    let mut acc = Accumulator {
-        counts: &mut counts,
-        defects: &mut defects,
-    };
+    let unresolved_markers =
+        marker_defects(marks, &definitions, &conditions, &mut defects);
 
-    for definition in reqs.iter().filter(|r| r.kind == DEFINITION) {
-        if seen_reqs.insert(definition.id.as_str()) {
-            requirements.push(process_definition(
-                definition,
-                &conditions_by_parent,
-                &ctx,
-                &mut acc,
-            ));
+    let mut counts: StatusCounts =
+        [Status::Covered, Status::Review, Status::Uncovered]
+            .into_iter()
+            .map(|status| (status, 0))
+            .collect();
+    let mut evaluated = Vec::new();
+    let mut review = Vec::new();
+    for row in condition_order.iter().filter_map(|id| conditions.get(id)) {
+        let status = condition_status(row, &markers, config);
+        if let Some(count) = counts.get_mut(&status.status) {
+            *count = count.saturating_add(1);
         }
+        match status.status {
+            Status::Uncovered => defects.push(Defect::at(
+                row,
+                format!("{} has no marked test", row.id),
+            )),
+            Status::Review => review.push(ReviewCondition {
+                id: row.id.clone(),
+                parents: row.parents.clone(),
+                method: status.method.clone(),
+                file: row.file.clone(),
+                line: row.line,
+            }),
+            Status::Covered => {}
+        }
+        evaluated.push(status);
     }
 
-    let unresolved_markers: Vec<Row> = marks
-        .iter()
-        .filter(|m| m.kind == MARKER && !defined.contains(m.id.as_str()))
-        .cloned()
-        .collect();
-    for marker in &unresolved_markers {
-        defects.push(Defect::at(
-            marker,
-            format!("{} has no definition", marker.id),
-        ));
-    }
+    let requirements = requirement_statuses(&order, &evaluated);
 
+    defects.sort_by(|a, b| {
+        (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))
+    });
     let report = TraceReport {
         schema: SCHEMA,
         counts,
         requirements,
+        review,
         unresolved_markers,
     };
     (report, defects)
-}
-
-/// The status derived for a condition from its gates and markers.
-fn condition_status_of(
-    gates: &GateVerdicts,
-    marker_count: usize,
-    test_gates: &[String],
-) -> Status {
-    if gates.is_empty() {
-        Status::Unchecked
-    } else if gates.values().any(|v| *v == Some(Verdict::Fail)) {
-        Status::Failed
-    } else if gates
-        .values()
-        .any(|v| matches!(v, None | Some(Verdict::Skipped)))
-        || (gates.keys().any(|g| test_gates.contains(g)) && marker_count == 0)
-    {
-        Status::Unverified
-    } else {
-        Status::Verified
-    }
-}
-
-/// The status aggregated across child conditions.
-fn aggregate_condition_status(conditions: &[ConditionStatus]) -> Status {
-    if conditions.is_empty() {
-        Status::Unchecked
-    } else if conditions.iter().any(|c| c.status == Status::Failed) {
-        Status::Failed
-    } else if conditions.iter().any(|c| c.status == Status::Unverified) {
-        Status::Unverified
-    } else if conditions.iter().all(|c| c.status == Status::Unchecked) {
-        Status::Unchecked
-    } else {
-        Status::Verified
-    }
-}
-
-/// The status the first matching condition gives a requirement's gates.
-/// Why a `Failed` or `Unverified` requirement fails the trace.
-fn failure(status: Status, gates: &GateVerdicts) -> Option<String> {
-    let reasons: Vec<String> = gates
-        .iter()
-        .filter_map(|(gate, verdict)| match (status, verdict) {
-            (Status::Failed, Some(Verdict::Fail)) => {
-                Some(format!("gate {gate} failed"))
-            }
-            (Status::Unverified, None) => {
-                Some(format!("gate {gate} has no result"))
-            }
-            (Status::Unverified, Some(Verdict::Skipped)) => {
-                Some(format!("gate {gate} was skipped"))
-            }
-            _ => None,
-        })
-        .collect();
-    (!reasons.is_empty()).then(|| reasons.join(", "))
 }
 
 #[cfg(test)]
@@ -478,222 +320,173 @@ mod tests {
 
     const PFX: &str = concat!("#[", "req(",);
 
+    fn default_config() -> TraceConfig {
+        TraceConfig {
+            id: r"(?:FR|NFR|C)-[0-9]+[a-z]?".to_string(),
+            condition: r"VC-[0-9]+(?:\.[0-9]+[a-z]?)?".to_string(),
+            doc: "[a-z0-9-]+".to_string(),
+            files: vec!["docs".to_string()],
+            doc_suffix: "-design".to_string(),
+            definition: r"^- \*\*(?:FR|NFR|C)-".to_string(),
+            verification: r"^\| *(?:[a-z0-9-]+#)?VC-".to_string(),
+            methods: vec![
+                "test".to_string(),
+                "analysis".to_string(),
+                "inspection".to_string(),
+                "review".to_string(),
+            ],
+            marked_methods: vec!["test".to_string()],
+            retired: vec![],
+            exclude_phrases: vec![],
+            markers: None,
+        }
+    }
+
     fn row(id: &str, kind: &str, text: &str) -> Row {
         Row {
             schema: SCHEMA,
             id: id.to_string(),
             kind: kind.to_string(),
-            parent: None,
+            parents: Vec::new(),
+            method: None,
             file: "docs/w-design.md".to_string(),
             line: 1,
             text: text.to_string(),
         }
     }
 
-    fn condition_row(id: &str, parent: &str, text: &str) -> Row {
+    fn condition_row(id: &str, parent: &str, method: &str, text: &str) -> Row {
         Row {
             schema: SCHEMA,
             id: id.to_string(),
             kind: CONDITION.to_string(),
-            parent: Some(parent.to_string()),
+            parents: vec![parent.to_string()],
+            method: Some(method.to_string()),
             file: "docs/w-design.md".to_string(),
             line: 1,
             text: text.to_string(),
         }
     }
 
-    /// A definition with one verification row naming `gate`, or none when
-    /// empty. The kind cell, `example`, is not a gate name.
-    fn requirement(id: &str, gate: &str) -> Vec<Row> {
-        let cell = if gate.is_empty() {
-            String::new()
-        } else {
-            format!("`{gate}`")
-        };
-        vec![
-            row(id, DEFINITION, "- **FR-1 — A**: It shall work."),
-            condition_row(
-                &format!("{id}-VC"),
-                id,
-                &format!("| {id}-VC | FR-1 | {cell} | Step |"),
-            ),
-        ]
-    }
-
-    fn names() -> GateNames {
-        ["build", "lint", "test"].map(String::from).into()
-    }
-
-    fn status(reqs: &[Row], verdicts: &Verdicts) -> (Status, bool) {
-        let names = names();
-        let test_gates = ["test".to_string()];
-        let ctx = GateContext::new(&names, verdicts, &test_gates);
-        let (report, defects) = derive(reqs, &[], &ctx);
-        let status = report.requirements.first().map(|r| r.status);
-        (status.unwrap(), defects.is_empty() && report.passes())
-    }
-
     #[test]
-    fn a_failed_gate_fails_the_requirement() {
-        let verdicts = Verdicts::from([("build".to_string(), Verdict::Fail)]);
-        let reqs = requirement("w#FR-1", "build");
-        assert_eq!(status(&reqs, &verdicts), (Status::Failed, false));
-    }
-
-    #[test]
-    fn a_gate_without_result_or_skipped_leaves_it_unverified() {
-        let reqs = requirement("w#FR-1", "lint");
-        assert_eq!(
-            status(&reqs, &Verdicts::new()),
-            (Status::Unverified, false)
-        );
-        let skipped = Verdicts::from([("lint".to_string(), Verdict::Skipped)]);
-        assert_eq!(status(&reqs, &skipped), (Status::Unverified, false));
-    }
-
-    #[test]
-    fn passing_or_warning_gates_verify_it() {
-        let verdicts = Verdicts::from([
-            ("build".to_string(), Verdict::Pass),
-            ("lint".to_string(), Verdict::Warn),
-        ]);
-        let mut reqs = requirement("w#FR-1", "build");
-        reqs.push(row("w#FR-1", "verification", "| FR-1 | `lint` | a |"));
-        assert_eq!(status(&reqs, &verdicts), (Status::Verified, true));
-    }
-
-    #[test]
-    fn a_requirement_naming_no_gate_is_unchecked() {
-        let reqs = requirement("w#FR-1", "");
-        assert_eq!(status(&reqs, &Verdicts::new()), (Status::Unchecked, true));
-    }
-
-    #[test]
-    fn a_marker_without_definition_fails_the_trace() {
-        let reqs = requirement("w#FR-1", "");
-        let marks = [row("w#FR-9", MARKER, "fn t")];
-        let names = names();
-        let test_gates = ["test".to_string()];
-        let verdicts = Verdicts::new();
-        let gates = GateContext::new(&names, &verdicts, &test_gates);
-        let (report, defects) = derive(&reqs, &marks, &gates);
-        assert!(!report.passes());
-        assert_eq!(report.unresolved_markers.len(), 1);
-        let messages: Vec<_> =
-            defects.iter().map(ToString::to_string).collect();
-        assert_eq!(messages, ["docs/w-design.md:1: w#FR-9 has no definition"]);
-    }
-
-    #[test]
-    fn counts_cover_every_status_and_duplicates_count_once() {
-        let mut reqs = requirement("w#FR-1", "");
-        reqs.extend(requirement("w#FR-1", ""));
-        let names = names();
-        let test_gates = ["test".to_string()];
-        let verdicts = Verdicts::new();
-        let gates = GateContext::new(&names, &verdicts, &test_gates);
-        let (report, _) = derive(&reqs, &[], &gates);
-        assert_eq!(report.requirements.len(), 1);
-        assert_eq!(report.counts.len(), 4);
-        assert_eq!(report.counts.get(&Status::Unchecked), Some(&1));
-    }
-
-    #[test]
-    fn failure_messages_name_the_gate() {
-        let reqs = requirement("w#FR-1", "build");
-        let names = names();
-        let test_gates = ["test".to_string()];
-        let verdicts = Verdicts::new();
-        let gates = GateContext::new(&names, &verdicts, &test_gates);
-        let (_, defects) = derive(&reqs, &[], &gates);
-        let messages: Vec<_> =
-            defects.iter().map(|d| d.message.as_str()).collect();
-        assert_eq!(
-            messages,
-            ["w#FR-1 is Unverified: [w#FR-1-VC: gate build has no result]"]
-        );
-    }
-
-    #[test]
-    fn verification_condition_requires_marker_for_test_gate() {
-        let verdicts = Verdicts::from([("test".to_string(), Verdict::Pass)]);
+    fn marked_test_condition_is_covered() {
         let reqs = vec![
             row("w#FR-1", DEFINITION, "- **FR-1 — A**: Work."),
             condition_row(
                 "w#VC-1.1",
                 "w#FR-1",
+                "test",
                 "| VC-1.1 | FR-1 | `test` | Step |",
             ),
         ];
-        let names = names();
-        let test_gates = ["test".to_string()];
-        let gates = GateContext::new(&names, &verdicts, &test_gates);
-        // Without marker -> Unverified
-        let (report, defects) = derive(&reqs, &[], &gates);
-        assert_eq!(
-            report.requirements.first().map(|r| r.status),
-            Some(Status::Unverified)
-        );
-        assert!(!report.passes());
-        assert_eq!(
-            defects.first().map(|d| d.message.as_str()),
-            Some("w#FR-1 is Unverified: [w#VC-1.1: no test marker]")
-        );
-
-        // With marker -> Verified
         let mark_text = format!("{PFX}\"w#VC-1.1\")]");
         let marks = [row("w#VC-1.1", MARKER, &mark_text)];
-        let (report_pass, defects_pass) = derive(&reqs, &marks, &gates);
+        let config = default_config();
+        let (report, defects) = derive(&reqs, &marks, &config);
+
         assert_eq!(
-            report_pass.requirements.first().map(|r| r.status),
-            Some(Status::Verified)
+            report.requirements.first().map(|r| r.status),
+            Some(Status::Covered)
         );
-        assert!(report_pass.passes());
-        assert!(defects_pass.is_empty());
+        assert!(report.passes());
+        assert!(defects.is_empty());
+        assert_eq!(report.counts.get(&Status::Covered), Some(&1));
     }
 
     #[test]
-    fn multiple_conditions_conjunction_determines_requirement_status() {
-        let verdicts = Verdicts::from([("test".to_string(), Verdict::Pass)]);
+    fn unmarked_test_condition_is_uncovered_and_fails() {
         let reqs = vec![
             row("w#FR-1", DEFINITION, "- **FR-1 — A**: Work."),
             condition_row(
                 "w#VC-1.1",
                 "w#FR-1",
-                "| VC-1.1 | FR-1 | `test` | Step 1 |",
-            ),
-            condition_row(
-                "w#VC-1.2",
-                "w#FR-1",
-                "| VC-1.2 | FR-1 | `test` | Step 2 |",
+                "test",
+                "| VC-1.1 | FR-1 | `test` | Step |",
             ),
         ];
-        // Only VC-1.1 marked -> FR-1 remains Unverified
-        let m1 = format!("{PFX}\"w#VC-1.1\")]");
-        let m2 = format!("{PFX}\"w#VC-1.2\")]");
-        let marks = [row("w#VC-1.1", MARKER, &m1)];
-        let names = names();
-        let test_gates = ["test".to_string()];
-        let gates = GateContext::new(&names, &verdicts, &test_gates);
-        let (report, defects) = derive(&reqs, &marks, &gates);
+        let config = default_config();
+        let (report, defects) = derive(&reqs, &[], &config);
+
         assert_eq!(
             report.requirements.first().map(|r| r.status),
-            Some(Status::Unverified)
+            Some(Status::Uncovered)
         );
+        assert!(!report.passes());
+        assert_eq!(defects.len(), 1);
         assert_eq!(
             defects.first().map(|d| d.message.as_str()),
-            Some("w#FR-1 is Unverified: [w#VC-1.2: no test marker]")
+            Some("w#VC-1.1 has no marked test")
         );
+        assert_eq!(report.counts.get(&Status::Uncovered), Some(&1));
+    }
 
-        // Both marked -> FR-1 Verified
-        let marks_both =
-            [row("w#VC-1.1", MARKER, &m1), row("w#VC-1.2", MARKER, &m2)];
-        let (report_both, defects_both) = derive(&reqs, &marks_both, &gates);
+    #[test]
+    fn review_condition_takes_review_status() {
+        let reqs = vec![
+            row("w#FR-1", DEFINITION, "- **FR-1 — A**: Work."),
+            condition_row(
+                "w#VC-1.1",
+                "w#FR-1",
+                "review",
+                "| VC-1.1 | FR-1 | `review` | Manual inspection |",
+            ),
+        ];
+        let config = default_config();
+        let (report, defects) = derive(&reqs, &[], &config);
+
         assert_eq!(
-            report_both.requirements.first().map(|r| r.status),
-            Some(Status::Verified)
+            report.requirements.first().map(|r| r.status),
+            Some(Status::Review)
         );
-        assert!(report_both.passes());
-        assert!(defects_both.is_empty());
+        assert!(report.passes());
+        assert!(defects.is_empty());
+        assert_eq!(report.counts.get(&Status::Review), Some(&1));
+        assert_eq!(report.review.len(), 1);
+    }
+
+    #[test]
+    fn marker_naming_requirement_is_a_defect() {
+        let reqs = vec![
+            row("w#FR-1", DEFINITION, "- **FR-1 — A**: Work."),
+            condition_row(
+                "w#VC-1.1",
+                "w#FR-1",
+                "test",
+                "| VC-1.1 | FR-1 | `test` | Step |",
+            ),
+        ];
+        let marks = [row("w#FR-1", MARKER, "fn t")];
+        let config = default_config();
+        let (report, defects) = derive(&reqs, &marks, &config);
+
+        assert!(!report.passes());
+        assert!(
+            defects
+                .iter()
+                .any(|d| d.message.contains("names a requirement"))
+        );
+    }
+
+    #[test]
+    fn marker_naming_undefined_condition_is_a_defect() {
+        let reqs = vec![
+            row("w#FR-1", DEFINITION, "- **FR-1 — A**: Work."),
+            condition_row(
+                "w#VC-1.1",
+                "w#FR-1",
+                "test",
+                "| VC-1.1 | FR-1 | `test` | Step |",
+            ),
+        ];
+        let marks = [row("w#VC-9.9", MARKER, "fn t")];
+        let config = default_config();
+        let (report, defects) = derive(&reqs, &marks, &config);
+
+        assert!(!report.passes());
+        assert!(
+            defects
+                .iter()
+                .any(|d| { d.message.contains("names no defined condition") })
+        );
     }
 }

@@ -304,7 +304,7 @@ marker = "#[req("
 | Key                | Meaning                                                                                                        |
 |:-------------------|:---------------------------------------------------------------------------------------------------------------|
 | `id`               | Regex for one requirement ID                                                                                   |
-| `condition`        | Regex for one condition ID; optional (defaults to `\\bVC-[0-9]+(?:\\.[0-9]+[a-z]?)?\\b`)                        |
+| `condition`        | Regex for one condition ID; optional (defaults to `VC-[0-9]+(?:\.[0-9]+[a-z]?)?`)                              |
 | `doc`              | Regex for the document name in a qualified ID `<doc>#<id>`                                                     |
 | `files`            | Markdown files, and directories whose `<doc_suffix>.md` files are read (see [File Selection](#file-selection)) |
 | `doc_suffix`       | Text removed from the file stem to form the document name; optional                                            |
@@ -312,7 +312,6 @@ marker = "#[req("
 | `verification`     | Regex for a line that defines a condition                                                                      |
 | `methods`          | Verification methods a condition may name                                                                      |
 | `marked_methods`   | The subset of `methods` whose conditions need at least one marker                                              |
-| `test_gates`       | The gate names that require a marker to be considered Verified; optional (defaults to `test`)                  |
 | `retired`          | Qualified IDs that must not be defined or referenced again                                                     |
 | `exclude_phrases`  | Regexes; each match in definition text is a defect; optional                                                   |
 | `markers.files`    | Source files, and directories whose files ending in a suffix are read; `[markers]` is optional                 |
@@ -550,7 +549,6 @@ Four choices keep the stronger levels additive:
   review of the diff is the control.
 - Phrase checks are lexical. They catch configured patterns, not ambiguity in
   general.
-- A gate with `default = false` (like `nightly`) is not run by default during local `cargo ci`. Conditions verified solely by such gates will read as `Unverified` in the local report until the gate is executed (for example, via `cargo ci --gate nightly`).
 
 ---
 
@@ -615,6 +613,7 @@ Four choices keep the stronger levels additive:
 | 1.10     | September 26, 2026 | @MitchellDScott | Merged Plan and Acceptance into a single Verification table (`Requirements \| Gates \| Criterion`). One reference kind `verification` replaces `plan` and `acceptance`; the pattern matches a row whose first cell starts with a requirement ID. Removed the Kind column, the gate-name overlap Limit, the row-shape Risk, and the acceptance-not-evaluated Limit. Updated template, `trace.toml`, tracer tests.                                                 |
 | 1.11     | September 26, 2026 | @MitchellDScott | Upgraded to 3-tier hierarchy (Requirement → Verification Conditions → Tests). Added condition extraction (`VC-x.y`), `parent` linking in row schema, multi-line marker look-ahead, and hierarchical condition status derivation requiring marker evidence for test gates.                                                                                                                                                                                     |
 | 1.12     | September 27, 2026 | @MitchellDScott | Condition coverage replaces gate linkage: requirements are decisions decomposed into conditions, tests link to conditions only, and `trace-check` reads no gate result (C-4, C-8). `Method` replaces `Gates`; `[references]` and direct requirement rows removed; word-bounded IDs; `parents` and `method` on condition rows; parenthesis-balanced marker spans; reserved `=<tag>` marker grammar and Extension Path; File Selection requirement (FR-10); schema 2; `trace` moves to the `lint` group. |
+| 1.13     | September 27, 2026 | @MitchellDScott | Removed the `test_gates` key and the `default = false` gate Limit left from rev 1.11; `condition` default written without doubled escapes. Implementation aligned: `methods` and `marked_methods` required, `row` and `method` checks, tagged-ID and unclosed-span defects, `#[req]` rejects tags. |
 
 ---
 

@@ -1,7 +1,7 @@
-//! `#[req]`: marks an item with the requirements it verifies.
+//! `#[req]`: marks an item with the verification conditions it covers.
 //!
-//! The attribute checks that each argument is a qualified requirement ID and
-//! returns the item unchanged. It writes nothing: `trace-marks` finds markers
+//! The attribute checks that each argument is a qualified condition ID
+//! without a tag and returns the item unchanged. It writes nothing: `trace-marks` finds markers
 //! by reading source text, so the link does not depend on what a build
 //! compiles.
 
@@ -14,13 +14,13 @@ use syn::{LitStr, Token};
 /// The qualified IDs of one attribute, or the error to report.
 type Ids = syn::Result<Vec<String>>;
 
-/// Marks an item with the requirements it verifies.
+/// Marks an item with the verification conditions it covers.
 ///
-/// The arguments are qualified requirement IDs, `<doc>#<id>`, as string
+/// The arguments are qualified condition IDs, `<doc>#<id>`, as string
 /// literals. The item is returned unchanged.
 ///
 /// ```ignore
-/// #[req("storage#FR-3", "storage#FR-4")]
+/// #[req("storage#VC-3.1", "storage#VC-4.1")]
 /// #[test]
 /// fn packed_value_bounds() {}
 /// ```
@@ -30,8 +30,17 @@ type Ids = syn::Result<Vec<String>>;
 /// ```compile_fail
 /// use control_rs_trace_macros::req;
 ///
-/// #[req("FR-3")]
+/// #[req("VC-3.1")]
 /// fn unqualified() {}
+/// ```
+///
+/// A tag, `<doc>#<id>=<tag>`, is reserved and fails to compile:
+///
+/// ```compile_fail
+/// use control_rs_trace_macros::req;
+///
+/// #[req("storage#VC-3.1=true")]
+/// fn tagged() {}
 /// ```
 #[proc_macro_attribute]
 pub fn req(args: TokenStream, item: TokenStream) -> TokenStream {
@@ -53,14 +62,19 @@ fn parse_ids(args: TokenStream2) -> Ids {
         return Err(syn::Error::new(
             Span::call_site(),
             "`#[req]` needs at least one qualified ID, such as \
-             \"storage#FR-3\"",
+             \"storage#VC-3.1\"",
         ));
     }
     literals
         .iter()
         .map(|literal| {
             let id = literal.value();
-            if is_qualified(&id) {
+            if id.contains('=') {
+                Err(syn::Error::new(
+                    literal.span(),
+                    format!("`{id}` carries a tag, reserved in this revision"),
+                ))
+            } else if is_qualified(&id) {
                 Ok(id)
             } else {
                 Err(syn::Error::new(
@@ -101,5 +115,6 @@ mod tests {
         assert!(parse_ids(quote!()).is_err());
         assert!(parse_ids(quote!("FR-1")).is_err());
         assert!(parse_ids(quote!(a)).is_err());
+        assert!(parse_ids(quote!("a#VC-1.1=true")).is_err());
     }
 }

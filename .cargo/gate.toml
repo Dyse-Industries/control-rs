@@ -41,7 +41,6 @@ exclusive_gates = [
     "mutants-ets",
     "mutants-macros",
     "mutants-tui",
-    "trace",
 ]
 
 # User-defined execution groups:
@@ -54,7 +53,7 @@ exclusive_gates = [
 # deletes target/ci-groups, so every group starts from an empty target directory.
 [execution.groups]
 build_test = ["build", "test"]
-lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs", "trace-marks"]
+lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs", "trace-marks", "trace"]
 audit = ["deny", "semver", "valgrind", "geiger"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
@@ -96,13 +95,20 @@ description = "Builds workspace API documentation with rustdoc warnings denied"
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "trace-reqs", "--", "--config", ".cargo/trace/trace.toml", "--out", "target/ci-artifacts/reqs.jsonl"]
-description = "Checks requirement definitions and references in the design documents that .cargo/trace/trace.toml lists and writes reqs.jsonl"
+description = "Checks requirement definitions and verification conditions in the design documents that .cargo/trace/trace.toml lists and writes reqs.jsonl"
 
 [trace-marks]
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "trace-marks", "--", "--config", ".cargo/trace/trace.toml", "--out", "target/ci-artifacts/marks.jsonl"]
 description = "Finds the requirement markers in the source files that .cargo/trace/trace.toml lists and writes marks.jsonl"
+
+# Runs after trace-reqs and trace-marks in the lint group and reads their rows.
+[trace]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--config", ".cargo/trace/trace.toml", "--reqs", "target/ci-artifacts/reqs.jsonl", "--marks", "target/ci-artifacts/marks.jsonl", "--out", "target/ci-artifacts/trace-report.json"]
+description = "Derives condition coverage from reqs.jsonl and marks.jsonl and fails on uncovered test conditions and unresolved markers"
 
 [build]
 mode = "fail"
@@ -428,11 +434,3 @@ command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "regression", "--", "--all", "--budgets", ".cargo/regression.toml"]
 timeout_secs = 7200
 description = "Evaluates Criterion benchmark outputs against performance budgets and regression baselines"
-
-# Last exclusive gate: reads every result and artifact of the run before the
-# report is written.
-[trace]
-mode = "fail"
-command = "cargo run"
-args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--config", ".cargo/trace/trace.toml", "--reqs", "target/ci-artifacts/reqs.jsonl", "--marks", "target/ci-artifacts/marks.jsonl", "--gates", ".cargo/gate.toml", "--results", "target/ci-artifacts", "--out", "target/ci-artifacts/trace-report.json"]
-description = "Derives requirement status from gate results and fails on failed or unverified requirements and unresolved markers"

@@ -1,10 +1,11 @@
-//! Requirement definitions and references in Markdown.
+//! Requirement definitions and verification conditions in Markdown.
 //!
 //! The matching rules are the whole parser. Lines inside fenced code blocks
-//! are skipped. A line that matches `definition` defines the first ID on it,
-//! and its text runs on through the indented lines that follow. A line that
-//! matches a reference pattern references every ID on it, once per matching
-//! pattern.
+//! are skipped. A line that matches `definition` defines the first
+//! requirement ID on it, and its text runs on through the indented lines that
+//! follow. A line that matches `verification` defines the condition ID on it;
+//! every other requirement ID on the line is a parent and the code span that
+//! names a method is its method.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -13,7 +14,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 use super::{
-    CONDITION, DEFINITION, Defect, MARKER, Row, SCHEMA, normalize, read_text,
+    CONDITION, DEFINITION, Defect, Row, SCHEMA, normalize, read_text,
     strip_code_spans,
 };
 use crate::error::{GateError, GateResult};
@@ -30,11 +31,16 @@ type Fence = (char, usize);
 /// A line outside fenced code blocks: its 1-based number and text.
 type Line<'a> = (usize, &'a str);
 
-/// ID occurrences on a marker line: qualified, or written without `<doc>#`.
-pub type MarkedIds = Vec<Result<String, String>>;
-
-/// Reference kinds, by name, with the pattern of their lines.
-type References = Vec<(String, Regex)>;
+/// One ID occurrence in a marker span.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarkedId {
+    /// A qualified ID, `<doc>#<id>`.
+    Qualified(String),
+    /// An ID written without `<doc>#`.
+    Unqualified(String),
+    /// An ID followed by `=<tag>`, reserved for the extension path.
+    Tagged(String),
+}
 
 /// A `trace.toml`: the patterns that find requirements in Markdown.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -55,8 +61,12 @@ pub struct TraceConfig {
     pub doc_suffix: String,
     /// Pattern for a line that defines a requirement.
     pub definition: String,
-    /// Reference kinds by name, each with the pattern of its lines.
-    pub references: BTreeMap<String, String>,
+    /// Pattern for a line that defines a verification condition.
+    pub verification: String,
+    /// Verification methods a condition may name.
+    pub methods: Vec<String>,
+    /// The subset of methods whose conditions need at least one marker.
+    pub marked_methods: Vec<String>,
     /// Qualified IDs that must not be defined or referenced again.
     pub retired: Vec<String>,
     /// Each match of one of these patterns in definition text is a defect.
@@ -65,9 +75,6 @@ pub struct TraceConfig {
     /// Where `trace-marks` finds markers; none when absent.
     #[serde(default)]
     pub markers: Option<MarkerConfig>,
-    /// The gate names that require a marker to be considered Verified.
-    #[serde(default = "default_test_gates")]
-    pub test_gates: Vec<String>,
 }
 
 /// The `[markers]` table of a `trace.toml`.
@@ -92,8 +99,10 @@ pub struct Rules {
     condition_occurrence: Regex,
     /// A defining line.
     definition: Regex,
-    /// Reference kinds, by name, with the pattern of their lines.
-    references: References,
+    /// A verification condition line.
+    verification: Regex,
+    /// Verification methods a condition may name.
+    methods: Vec<String>,
     /// Text removed from a file stem to form its document name.
     doc_suffix: String,
     /// IDs that must not appear.
@@ -130,8 +139,7 @@ impl TraceConfig {
     /// Compiles the patterns; `path` names the configuration in errors.
     ///
     /// # Errors
-    /// `GateError::Config` for an invalid pattern or a reference kind named
-    /// `definition` or `marker`.
+    /// `GateError::Config` for an invalid pattern.
     pub fn rules(&self, path: &Path) -> GateResult<Rules> {
         let error = |message: String| GateError::Config {
             path: path.to_path_buf(),
@@ -142,31 +150,32 @@ impl TraceConfig {
                 error(format!("`{key}` is not a valid pattern: {e}"))
             })
         };
-        let mut references = Vec::new();
-        for (kind, pattern) in &self.references {
-            if kind == DEFINITION || kind == MARKER {
-                return Err(error(format!(
-                    "reference kind `{kind}` is reserved"
-                )));
-            }
-            references.push((kind.clone(), compile(kind, pattern)?));
+        if let Some(m) = self
+            .marked_methods
+            .iter()
+            .find(|m| !self.methods.contains(m))
+        {
+            return Err(error(format!(
+                "marked method `{m}` is not in `methods`"
+            )));
         }
         compile("doc", &self.doc)?;
         compile("id", &self.id)?;
         compile("condition", &self.condition)?;
         let occurrence = format!(
-            "(?:(?P<trace_doc>{})#)?(?P<trace_id>{})",
+            r"(?:(?P<trace_doc>{})#)?\b(?P<trace_id>{})\b",
             self.doc, self.id
         );
         let condition_occurrence = format!(
-            "(?:(?P<trace_doc>{})#)?(?P<trace_id>{})",
+            r"(?:(?P<trace_doc>{})#)?\b(?P<trace_id>{})\b",
             self.doc, self.condition
         );
         Ok(Rules {
             occurrence: compile("id", &occurrence)?,
             condition_occurrence: compile("condition", &condition_occurrence)?,
             definition: compile("definition", &self.definition)?,
-            references,
+            verification: compile("verification", &self.verification)?,
+            methods: self.methods.clone(),
             doc_suffix: self.doc_suffix.clone(),
             retired: self.retired.iter().cloned().collect(),
             exclude: self
@@ -208,18 +217,24 @@ impl Rules {
             })
     }
 
-    /// The ID occurrences on a marker line, left to right: `Ok` with the
-    /// qualified ID, or `Err` with an ID written without `<doc>#`.
+    /// Whether `name` is one of the configured verification methods.
     #[must_use]
-    pub fn marked_ids(&self, line: &str) -> MarkedIds {
+    pub fn is_method(&self, name: &str) -> bool {
+        self.methods.iter().any(|m| m == name)
+    }
+
+    /// The ID occurrences in a marker span, left to right. A requirement ID
+    /// inside a condition ID is not an occurrence.
+    #[must_use]
+    pub fn marked_ids(&self, text: &str) -> Vec<MarkedId> {
         let cond_matches: Vec<_> =
-            self.condition_occurrence.captures_iter(line).collect();
+            self.condition_occurrence.captures_iter(text).collect();
         let cond_spans: Vec<_> = cond_matches
             .iter()
             .filter_map(|c| c.get(0).map(|m| m.range()))
             .collect();
 
-        let req_matches = self.occurrence.captures_iter(line).filter(|caps| {
+        let req_matches = self.occurrence.captures_iter(text).filter(|caps| {
             caps.get(0).is_none_or(|m| {
                 !cond_spans
                     .iter()
@@ -232,11 +247,19 @@ impl Rules {
         matches
             .into_iter()
             .filter_map(|caps| {
+                let whole = caps.get(0)?;
                 let id = caps.name("trace_id")?.as_str();
-                Some(caps.name("trace_doc").map_or_else(
-                    || Err(id.to_string()),
-                    |doc| Ok(format!("{}#{id}", doc.as_str())),
-                ))
+                let written = whole.as_str();
+                let tagged = text
+                    .get(whole.end()..)
+                    .is_some_and(|rest| rest.starts_with('='));
+                Some(if tagged {
+                    MarkedId::Tagged(written.to_string())
+                } else if let Some(doc) = caps.name("trace_doc") {
+                    MarkedId::Qualified(format!("{}#{id}", doc.as_str()))
+                } else {
+                    MarkedId::Unqualified(id.to_string())
+                })
             })
             .collect()
     }
@@ -253,53 +276,65 @@ pub fn doc_name(file: &str, suffix: &str) -> String {
         .map_or_else(|| stem.clone(), str::to_owned)
 }
 
-fn scan_condition_reference(
+fn scan_condition_line(
     line: &str,
-    c_caps: &regex::Captures<'_>,
     at: At<'_>,
     ctx: &ScanContext<'_>,
-) -> Vec<Row> {
-    let mut rows = Vec::new();
-    let Some(c_id) = c_caps.name("trace_id").map(|m| m.as_str()) else {
-        return rows;
-    };
-    let c_doc = c_caps.name("trace_doc").map_or(ctx.doc, |m| m.as_str());
+) -> Option<Row> {
+    let cond_caps = ctx.rules.condition_occurrence.captures(line)?;
+    let c_id = cond_caps.name("trace_id")?.as_str();
+    let c_doc = cond_caps.name("trace_doc").map_or(ctx.doc, |m| m.as_str());
     let cond_qualified = format!("{c_doc}#{c_id}");
-    let c_span = c_caps.get(0).map_or(0..0, |m| m.range());
+    let cond_spans: Vec<_> = ctx
+        .rules
+        .condition_occurrence
+        .find_iter(line)
+        .map(|m| m.range())
+        .collect();
 
-    let parent_ids: Vec<String> = ctx
+    let mut parents: Vec<String> = ctx
         .rules
         .occurrence
         .captures_iter(line)
         .filter_map(|caps| {
             let m = caps.get(0)?;
-            if m.start() >= c_span.end || m.end() <= c_span.start {
-                let id = caps.name("trace_id")?.as_str();
-                let owner =
-                    caps.name("trace_doc").map_or(ctx.doc, |d| d.as_str());
-                Some(format!("{owner}#{id}"))
-            } else {
-                None
+            if cond_spans
+                .iter()
+                .any(|c| m.start() < c.end && m.end() > c.start)
+            {
+                return None;
             }
+            let id = caps.name("trace_id")?.as_str();
+            let owner = caps.name("trace_doc").map_or(ctx.doc, |d| d.as_str());
+            Some(format!("{owner}#{id}"))
         })
         .collect();
 
-    if parent_ids.is_empty() {
-        rows.push(condition_row(cond_qualified, None, at, line));
-    } else {
-        for pid in parent_ids {
-            rows.push(condition_row(
-                cond_qualified.clone(),
-                Some(pid),
-                at,
-                line,
-            ));
-        }
-    }
-    rows
+    let mut seen = BTreeSet::new();
+    parents.retain(|p| seen.insert(p.clone()));
+
+    // The method is the code span whose content is in `methods`; failing
+    // that, the first code span that holds no ID, so that `check` reports it
+    // as outside `methods`.
+    let spans = super::code_spans(line);
+    let method = spans
+        .iter()
+        .find(|s| ctx.rules.is_method(s.content))
+        .or_else(|| {
+            spans.iter().find(|s| {
+                !ctx.rules.occurrence.is_match(s.content)
+                    && !ctx.rules.condition_occurrence.is_match(s.content)
+            })
+        })
+        .map(|s| s.content.to_string());
+
+    let mut condition = row(cond_qualified, CONDITION, at, line);
+    condition.parents = parents;
+    condition.method = method;
+    Some(condition)
 }
 
-/// The definition, condition and reference rows of one Markdown document.
+/// The definition and condition rows of one Markdown document.
 ///
 /// `file` is the path recorded in each row; its stem, less the configured
 /// suffix, names the document.
@@ -315,20 +350,10 @@ pub fn scan_markdown(file: &str, source: &str, rules: &Rules) -> Vec<Row> {
             && let Some(id) = rules.ids(line, &doc).next()
         {
             rows.push(row(id, DEFINITION, at, &definition_text(&lines, idx)));
-        }
-        for (kind, pattern) in &rules.references {
-            if pattern.is_match(line) {
-                if let Some(c_caps) = rules.condition_occurrence.captures(line)
-                {
-                    rows.extend(scan_condition_reference(
-                        line, &c_caps, at, &ctx,
-                    ));
-                } else {
-                    rows.extend(
-                        rules.ids(line, &doc).map(|id| row(id, kind, at, line)),
-                    );
-                }
-            }
+        } else if rules.verification.is_match(line)
+            && let Some(row) = scan_condition_line(line, at, &ctx)
+        {
+            rows.push(row);
         }
     }
     rows
@@ -337,7 +362,6 @@ pub fn scan_markdown(file: &str, source: &str, rules: &Rules) -> Vec<Row> {
 fn check_duplicate_definitions(
     definitions: &Definitions<'_>,
     conditions: &[&Row],
-    references: &[&Row],
     defects: &mut Vec<Defect>,
 ) {
     for (&id, found) in definitions {
@@ -352,12 +376,11 @@ fn check_duplicate_definitions(
         }
         if let Some(first) = found.first() {
             let has_cond =
-                conditions.iter().any(|c| c.parent.as_deref() == Some(id));
-            let has_ref = references.iter().any(|r| r.id == id);
-            if !has_cond && !has_ref {
+                conditions.iter().any(|c| c.parents.iter().any(|p| p == id));
+            if !has_cond {
                 defects.push(Defect::at(
                     first,
-                    format!("{id} has no verification condition or reference"),
+                    format!("{id} has no verification condition"),
                 ));
             }
         }
@@ -396,36 +419,64 @@ fn check_condition_parents(
     defects: &mut Vec<Defect>,
 ) {
     for condition in conditions {
-        if let Some(parent) = &condition.parent {
-            if !definitions.contains_key(parent.as_str()) {
-                defects.push(Defect::at(
-                    condition,
-                    format!(
-                        "condition {} references undefined requirement {parent}",
-                        condition.id
-                    ),
-                ));
-            }
-        } else {
+        if condition.parents.is_empty() {
             defects.push(Defect::at(
                 condition,
                 format!("condition {} has no parent requirement", condition.id),
             ));
+        } else {
+            for parent in &condition.parents {
+                if !definitions.contains_key(parent.as_str()) {
+                    defects.push(Defect::at(
+                        condition,
+                        format!(
+                            "condition {} references undefined requirement {parent}",
+                            condition.id
+                        ),
+                    ));
+                }
+            }
         }
     }
 }
 
-fn check_dangling_references(
-    references: &[&Row],
-    definitions: &Definitions<'_>,
+fn check_condition_methods(
+    conditions: &[&Row],
+    rules: &Rules,
     defects: &mut Vec<Defect>,
 ) {
-    for reference in references {
-        if !definitions.contains_key(reference.id.as_str()) {
+    for condition in conditions {
+        let id = &condition.id;
+        let ids = rules
+            .condition_occurrence
+            .find_iter(&condition.text)
+            .count();
+        if ids > 1 {
             defects.push(Defect::at(
-                reference,
-                format!("{} is not defined", reference.id),
+                condition,
+                format!(
+                    "verification row of {id} names more than one condition ID"
+                ),
             ));
+        }
+        let methods = super::code_spans(&condition.text)
+            .iter()
+            .filter(|s| rules.is_method(s.content))
+            .count();
+        let message = match &condition.method {
+            None => {
+                Some(format!("condition {id} names no verification method"))
+            }
+            Some(m) if !rules.is_method(m) => {
+                Some(format!("condition {id} names unknown method `{m}`"))
+            }
+            Some(_) if methods > 1 => {
+                Some(format!("condition {id} names more than one method"))
+            }
+            Some(_) => None,
+        };
+        if let Some(message) = message {
+            defects.push(Defect::at(condition, message));
         }
     }
 }
@@ -443,24 +494,19 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
     }
     let conditions: Vec<&Row> =
         rows.iter().filter(|r| r.kind == CONDITION).collect();
-    let references: Vec<&Row> = rows
-        .iter()
-        .filter(|r| r.kind != DEFINITION && r.kind != CONDITION)
-        .collect();
     let mut defects = Vec::new();
 
-    check_duplicate_definitions(
-        &definitions,
-        &conditions,
-        &references,
-        &mut defects,
-    );
+    check_duplicate_definitions(&definitions, &conditions, &mut defects);
     check_duplicate_conditions(&condition_defs, &mut defects);
     check_condition_parents(&conditions, &definitions, &mut defects);
-    check_dangling_references(&references, &definitions, &mut defects);
+    check_condition_methods(&conditions, rules, &mut defects);
 
-    for row in rows.iter().filter(|r| rules.retired.contains(&r.id)) {
-        defects.push(Defect::at(row, format!("{} is retired", row.id)));
+    for row in rows {
+        for id in std::iter::once(&row.id).chain(&row.parents) {
+            if rules.retired.contains(id) {
+                defects.push(Defect::at(row, format!("{id} is retired")));
+            }
+        }
     }
 
     for definition in rows.iter().filter(|r| r.kind == DEFINITION) {
@@ -545,12 +591,8 @@ fn definition_text(lines: &[Line<'_>], idx: usize) -> String {
     parts.join("\n")
 }
 
-fn default_test_gates() -> Vec<String> {
-    vec!["test".to_string()]
-}
-
 fn default_condition_pattern() -> String {
-    r"VC-(?:[A-Z0-9-]+|[0-9]+)(?:\.[0-9]+[a-z]?)?".to_string()
+    r"VC-[0-9]+(?:\.[0-9]+[a-z]?)?".to_string()
 }
 
 /// A row of the current schema at `at`, a file and line, with its text
@@ -560,26 +602,8 @@ pub(super) fn row(id: String, kind: &str, at: At<'_>, text: &str) -> Row {
         schema: SCHEMA,
         id,
         kind: kind.to_string(),
-        parent: None,
-        file: at.0.to_string(),
-        line: at.1,
-        text: normalize(text),
-    }
-}
-
-/// A condition row of the current schema at `at`, a file and line, with its text
-/// normalized.
-pub(super) fn condition_row(
-    id: String,
-    parent: Option<String>,
-    at: At<'_>,
-    text: &str,
-) -> Row {
-    Row {
-        schema: SCHEMA,
-        id,
-        kind: CONDITION.to_string(),
-        parent,
+        parents: Vec::new(),
+        method: None,
         file: at.0.to_string(),
         line: at.1,
         text: normalize(text),
@@ -596,29 +620,29 @@ mod tests {
 
 - **FR-1 — Size**: The widget shall report its size.
 
-| Requirements | Gates  | Criterion        |
-|:-------------|:-------|:-----------------|
-| FR-1         | `test` | Exact size match |
+| Condition | Requirement | Method | Criterion |
+|:----------|:------------|:-------|:----------|
+| VC-1.1    | FR-1        | `test` | Exact size match |
 ";
 
     const FILE: &str = "docs/widget-design.md";
 
     const KEYS: &str = r#"id = '(?:FR|NFR|C)-[0-9]+[a-z]?'
+condition = 'VC-[0-9]+(?:\.[0-9]+[a-z]?)?'
 doc = '[a-z0-9-]+'
 files = ["docs/*-design.md"]
 doc_suffix = "-design"
 definition = '^- \*\*(?:FR|NFR|C)-'
+verification = '^\| *(?:[a-z0-9-]+#)?VC-'
+methods = ["test", "analysis", "inspection", "review"]
+marked_methods = ["test"]
 "#;
-
-    const REFERENCES: &str = r"[references]
-verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
-";
 
     /// A row's kind, ID and line.
     type Found = (String, String, usize);
 
     fn rules_with(keys: &str) -> Rules {
-        let text = format!("{KEYS}{keys}\n{REFERENCES}");
+        let text = format!("{KEYS}{keys}");
         let config: TraceConfig = toml::from_str(&text).unwrap();
         config.rules(Path::new("trace.toml")).unwrap()
     }
@@ -652,7 +676,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
             scan(CLEAN, &rules()),
             [
                 expect("definition", "widget#FR-1", 3),
-                expect("verification", "widget#FR-1", 7),
+                expect("condition", "widget#VC-1.1", 7),
             ]
         );
     }
@@ -667,7 +691,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
 ```
 
    ```text
-   | FR-3 | `test` | `test` | indented fence |
+   | VC-3.1 | FR-3 | `test` | indented fence |
    ```
 
 ~~~
@@ -701,37 +725,24 @@ verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
     #[req("requirement-traceability#VC-2.1", "requirement-traceability#VC-3.1")]
     #[test]
     fn reference_lines_record_every_local_and_qualified_id() {
-        let source = "| FR-1, storage#FR-3 | `test` | Criterion FR-2 |\n";
+        let source =
+            "| VC-1.1 | FR-1, storage#FR-3 | `test` | Criterion FR-2 |\n";
+        let rows = scan_markdown(FILE, source, &rules());
+        assert_eq!(rows.len(), 1);
+        let cond = rows.first().unwrap();
+        assert_eq!(cond.id, "widget#VC-1.1");
         assert_eq!(
-            scan(source, &rules()),
-            [
-                expect("verification", "widget#FR-1", 1),
-                expect("verification", "storage#FR-3", 1),
-                expect("verification", "widget#FR-2", 1),
-            ]
+            cond.parents,
+            ["widget#FR-1", "storage#FR-3", "widget#FR-2"]
         );
-    }
-
-    #[req("requirement-traceability#VC-2.1")]
-    #[test]
-    fn a_line_matching_two_patterns_yields_one_reference_per_pattern() {
-        let text = format!("{KEYS}retired = []\n{REFERENCES}any = '^\\|'\n");
-        let config: TraceConfig = toml::from_str(&text).unwrap();
-        let rules = config.rules(Path::new("trace.toml")).unwrap();
-        assert_eq!(
-            scan("| FR-1 | `test` | Criterion |\n", &rules),
-            [
-                expect("any", "widget#FR-1", 1),
-                expect("verification", "widget#FR-1", 1)
-            ]
-        );
+        assert_eq!(cond.method, Some("test".to_string()));
     }
 
     #[test]
     fn rows_carry_normalized_text() {
         let rows = scan_markdown(FILE, CLEAN, &rules());
         let plan = rows.get(1).unwrap();
-        assert_eq!(plan.text, "| FR-1 | `test` | Exact size match |");
+        assert_eq!(plan.text, "| VC-1.1 | FR-1 | `test` | Exact size match |");
     }
 
     #[req("requirement-traceability#VC-3.1")]
@@ -763,8 +774,13 @@ verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
 
     #[test]
     fn reference_to_an_undefined_id_is_unresolved() {
-        let source = format!("{CLEAN}| FR-7 | `test` | Other |\n");
-        assert_eq!(messages(&source, &rules()), ["widget#FR-7 is not defined"]);
+        let source = format!("{CLEAN}| VC-7.1 | FR-7 | `test` | Other |\n");
+        assert_eq!(
+            messages(&source, &rules()),
+            [
+                "condition widget#VC-7.1 references undefined requirement widget#FR-7"
+            ]
+        );
     }
 
     #[test]
@@ -774,7 +790,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
 ";
         assert_eq!(
             messages(source, &rules()),
-            ["widget#FR-1 has no verification condition or reference"]
+            ["widget#FR-1 has no verification condition"]
         );
     }
 
@@ -820,22 +836,15 @@ verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
 
     #[test]
     fn unknown_keys_and_reserved_kinds_are_rejected() {
-        for key in ["extra = 1", "require_phrases = []"] {
-            let unknown = format!("{KEYS}retired = []\n{key}\n{REFERENCES}");
+        for key in ["extra = 1", "require_phrases = []", "references = {}"] {
+            let unknown = format!("{KEYS}retired = []\n{key}");
             assert!(toml::from_str::<TraceConfig>(&unknown).is_err(), "{key}");
         }
-        let reserved =
-            format!("{KEYS}retired = []\n{REFERENCES}marker = '^x'\n");
-        let config: TraceConfig = toml::from_str(&reserved).unwrap();
-        assert!(matches!(
-            config.rules(Path::new("trace.toml")),
-            Err(GateError::Config { .. })
-        ));
     }
 
     #[test]
     fn invalid_patterns_are_rejected() {
-        let bad = format!("{KEYS}retired = []\n{REFERENCES}")
+        let bad = format!("{KEYS}retired = []")
             .replace("definition = '^- \\*\\*", "definition = '(");
         let config: TraceConfig = toml::from_str(&bad).unwrap();
         assert!(matches!(
@@ -844,34 +853,91 @@ verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
         ));
     }
 
-    fn rules_for_conditions() -> Rules {
-        let text = format!(
-            "{KEYS}retired = []\n[references]\nverification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n"
-        );
-        let config: TraceConfig = toml::from_str(&text).unwrap();
-        config.rules(Path::new("trace.toml")).unwrap()
-    }
-
     #[test]
     fn scan_condition_finds_parents() {
         let source = "| VC-1.1 | FR-1, FR-2 | `test` |";
-        let found = scan_markdown(FILE, source, &rules_for_conditions());
-        assert_eq!(found.len(), 2);
+        let found = scan_markdown(FILE, source, &rules());
+        assert_eq!(found.len(), 1);
 
         let first = found.first().unwrap();
         assert_eq!(first.id, "widget#VC-1.1");
-        assert_eq!(first.parent, Some("widget#FR-1".to_string()));
-
-        let second = found.get(1).unwrap();
-        assert_eq!(second.id, "widget#VC-1.1");
-        assert_eq!(second.parent, Some("widget#FR-2".to_string()));
+        assert_eq!(
+            first.parents,
+            ["widget#FR-1".to_string(), "widget#FR-2".to_string()]
+        );
+        assert_eq!(first.method, Some("test".to_string()));
     }
 
     #[test]
     fn condition_without_parents_is_an_orphan() {
         let source = "| VC-1.1 | | `test` |";
-        let found = scan_markdown(FILE, source, &rules_for_conditions());
-        let defects = check(&found, &rules_for_conditions());
+        let found = scan_markdown(FILE, source, &rules());
+        let defects = check(&found, &rules());
         assert!(defects.iter().any(|d| d.message.contains("has no parent")));
+    }
+
+    #[req("requirement-traceability#VC-3.1")]
+    #[test]
+    fn ids_inside_longer_tokens_or_condition_ids_are_not_parents() {
+        let source = "| VC-1.1 | FR-1 | `test` | Per IEC-61508 and XFR-2 |\n";
+        let rows = scan_markdown(FILE, source, &rules());
+        assert_eq!(
+            rows.first().map(|r| r.parents.as_slice()),
+            Some(["widget#FR-1".to_string()].as_slice())
+        );
+    }
+
+    #[req("requirement-traceability#VC-4.1")]
+    #[test]
+    fn row_and_method_defects_are_reported() {
+        let cases = [
+            (
+                "| VC-1.1 | VC-1.2 | FR-1 | `test` | Two |",
+                "verification row of widget#VC-1.1 names more than one \
+                 condition ID",
+            ),
+            (
+                "| VC-1.1 | FR-1 | Plain |",
+                "condition widget#VC-1.1 names no verification method",
+            ),
+            (
+                "| VC-1.1 | FR-1 | `demo` | Other |",
+                "condition widget#VC-1.1 names unknown method `demo`",
+            ),
+            (
+                "| VC-1.1 | FR-1 | `test` | `review` |",
+                "condition widget#VC-1.1 names more than one method",
+            ),
+        ];
+        for (line, message) in cases {
+            let source = format!(
+                "- **FR-1 — Size**: The widget shall report.\n\n{line}\n"
+            );
+            assert_eq!(messages(&source, &rules()), [message], "{line}");
+        }
+    }
+
+    #[test]
+    fn a_marked_method_outside_methods_is_rejected() {
+        let text = format!("{KEYS}retired = []").replace(
+            "marked_methods = [\"test\"]",
+            "marked_methods = [\"fuzz\"]",
+        );
+        let config: TraceConfig = toml::from_str(&text).unwrap();
+        assert!(matches!(
+            config.rules(Path::new("trace.toml")),
+            Err(GateError::Config { .. })
+        ));
+    }
+
+    #[req("requirement-traceability#VC-2.1")]
+    #[test]
+    fn a_parent_named_twice_is_recorded_once() {
+        let source = "| VC-1.1 | FR-1 | `test` | FR-1 holds iff both hold |\n";
+        let rows = scan_markdown(FILE, source, &rules());
+        assert_eq!(
+            rows.first().map(|r| r.parents.as_slice()),
+            Some(["widget#FR-1".to_string()].as_slice())
+        );
     }
 }

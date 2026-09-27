@@ -1,24 +1,72 @@
 //! Source markers, found by reading source text.
 //!
-//! A line that contains the configured marker text is a marker. It yields one
-//! `marker` row per qualified ID `<doc>#<id>` on it, with the line as its
-//! text. The scan reads text only, so markers work in any source language and
+//! A line that contains the configured marker text starts a marker span,
+//! extended while a parenthesis opened after the marker text is unclosed. The
+//! span yields one `marker` row per qualified ID `<doc>#<id>` in it, with the
+//! span as its text. The scan reads text only, so markers work in any source language and
 //! do not depend on what a build compiles.
 
 use std::path::Path;
 
-use super::reqs::{MarkerConfig, Rules, row};
+use super::reqs::{MarkedId, MarkerConfig, Rules, row};
 use super::select::select;
 use super::{Defect, Defects, MARKER, Rows, read_text, sort_rows};
 use crate::error::GateResult;
 
-/// Marker rows and the defects of marker lines.
+/// Maximum number of lines in one marker span.
+const SPAN_LINES: usize = 16;
+
+/// Marker rows and the defects of marker spans.
 pub type Scan = (Rows, Defects);
 
-/// The marker rows of one source file and the defects of its marker lines.
+/// A marker span: its text, the index of its last line and whether it closed.
+type Span = (String, usize, bool);
+
+/// Open minus close parentheses in `text`.
+fn paren_balance(text: &str) -> isize {
+    text.chars().fold(0, |bal: isize, c| match c {
+        '(' => bal.saturating_add(1),
+        ')' => bal.saturating_sub(1),
+        _ => bal,
+    })
+}
+
+/// The marker span that starts at `lines[idx]`: its text, the index of its
+/// last line and whether it closed within [`SPAN_LINES`].
 ///
-/// A marker line with an ID written without `<doc>#`, or with no ID at all,
-/// is a defect. Multi-line attribute markers are supported.
+/// The span extends past the marker line only while a parenthesis opened
+/// after the marker text is unclosed.
+fn span(lines: &[&str], idx: usize, marker: &str) -> Span {
+    let first = lines.get(idx).copied().unwrap_or_default();
+    let mut text = first.to_string();
+    let after = first.find(marker).map_or("", |pos| {
+        first
+            .get(pos.saturating_add(marker.len())..)
+            .unwrap_or_default()
+    });
+    let mut balance =
+        paren_balance(after).saturating_add(isize::from(marker.contains('(')));
+    let mut last = idx;
+    while balance > 0 {
+        let next = last.saturating_add(1);
+        let Some(line) = lines.get(next) else {
+            return (text, last, false);
+        };
+        if next.saturating_sub(idx) >= SPAN_LINES {
+            return (text, last, false);
+        }
+        text.push('\n');
+        text.push_str(line);
+        balance = balance.saturating_add(paren_balance(line));
+        last = next;
+    }
+    (text, last, true)
+}
+
+/// The marker rows of one source file and the defects of its marker spans.
+///
+/// A span with no ID, an ID written without `<doc>#`, an ID with a tag and a
+/// span still unclosed at 16 lines are defects.
 #[must_use]
 pub fn scan_source(
     file: &str,
@@ -30,52 +78,41 @@ pub fn scan_source(
     let mut defects = Vec::new();
     let lines: Vec<&str> = source.lines().collect();
     let mut idx = 0;
-    while idx < lines.len() {
-        let Some(&line) = lines.get(idx) else {
-            break;
-        };
+    while let Some(&line) = lines.get(idx) {
         if !line.contains(marker) {
             idx = idx.saturating_add(1);
             continue;
         }
-        let start_line = idx.saturating_add(1);
-        let at = (file, start_line);
-        let mut text = line.to_string();
-        if line.contains(marker) && marker.contains('(') && !line.contains(')')
-        {
-            let mut lookahead = idx.saturating_add(1);
-            while lookahead < lines.len() && lookahead <= idx.saturating_add(15)
-            {
-                let Some(&next_line) = lines.get(lookahead) else {
-                    break;
-                };
-                text.push(' ');
-                text.push_str(next_line);
-                if next_line.contains(')') {
-                    idx = lookahead;
-                    break;
-                }
-                lookahead = lookahead.saturating_add(1);
-            }
-        }
-        let ids = rules.marked_ids(&text);
+        let at = (file, idx.saturating_add(1));
+        let (text, last, closed) = span(&lines, idx, marker);
         let defect = |message: String| Defect {
             file: file.to_string(),
             line: at.1,
             message,
         };
+        if !closed {
+            defects.push(defect(format!(
+                "marker span is unclosed at {SPAN_LINES} lines"
+            )));
+        }
+        let ids = rules.marked_ids(&text);
         if ids.is_empty() {
             defects.push(defect("marker names no requirement ID".to_string()));
         }
         for id in ids {
             match id {
-                Ok(id) => rows.push(row(id, MARKER, at, &text)),
-                Err(id) => defects.push(defect(format!(
+                MarkedId::Qualified(id) => {
+                    rows.push(row(id, MARKER, at, &text));
+                }
+                MarkedId::Unqualified(id) => defects.push(defect(format!(
                     "marker ID {id} is not qualified as <doc>#<id>"
+                ))),
+                MarkedId::Tagged(id) => defects.push(defect(format!(
+                    "marker ID {id} carries a tag, reserved in this revision"
                 ))),
             }
         }
-        idx = idx.saturating_add(1);
+        idx = last.saturating_add(1);
     }
     (rows, defects)
 }
@@ -106,15 +143,19 @@ pub fn collect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use control_rs_trace_macros::req;
+
     use crate::trace::reqs::TraceConfig;
 
     const CONFIG: &str = r"id = '(?:FR|NFR|C)-[0-9]+[a-z]?'
+condition = 'VC-[0-9]+(?:\.[0-9]+[a-z]?)?'
 doc = '[a-z0-9-]+'
 files = []
 definition = '^- \*\*'
+verification = '^\|'
+methods = ['test']
+marked_methods = ['test']
 retired = []
-
-[references]
 ";
 
     const PFX: &str = concat!("#[", "req(",);
@@ -168,5 +209,57 @@ retired = []
         let source = "// widget#FR-1 is mentioned here\nfn f() {}\n";
         let (rows, defects) = scan_source("src/a.rs", source, PFX, &rules());
         assert!(rows.is_empty() && defects.is_empty());
+    }
+
+    #[req("requirement-traceability#VC-7.1")]
+    #[test]
+    fn comment_markers_stop_at_their_line_and_attributes_span_to_close() {
+        let c = "// req: widget#VC-1.1\nint g(int x) { return f(x); }\n";
+        let (rows, defects) = scan_source("src/g.c", c, "// req:", &rules());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows.first().map(|r| r.text.as_str()),
+            Some("// req: widget#VC-1.1")
+        );
+        assert!(defects.is_empty());
+        let py = "# req: widget#VC-1.1\ndef g(x):\n    return f(x)\n";
+        let (rows, _) = scan_source("src/g.py", py, "# req:", &rules());
+        assert_eq!(
+            rows.first().map(|r| r.text.as_str()),
+            Some("# req: widget#VC-1.1")
+        );
+        let rust = format!(
+            "{PFX}\n    \"widget#VC-1.1\",\n    \"widget#VC-2.1\"\n)]\nfn t(x: (u8, u8)) {{}}\n"
+        );
+        let (rows, defects) = scan_source("src/a.rs", &rust, PFX, &rules());
+        let ids: Vec<_> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["widget#VC-1.1", "widget#VC-2.1"]);
+        assert!(rows.iter().all(|r| r.line == 1 && !r.text.contains("fn t")));
+        assert!(defects.is_empty());
+    }
+
+    #[req("requirement-traceability#VC-7.2")]
+    #[test]
+    fn tagged_ids_and_unclosed_spans_are_defects() {
+        let tagged = format!("{PFX}\"widget#VC-1.1=true\")]\n");
+        let (rows, defects) = scan_source("src/a.rs", &tagged, PFX, &rules());
+        assert!(rows.is_empty());
+        let messages: Vec<_> =
+            defects.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            messages,
+            [
+                "src/a.rs:1: marker ID widget#VC-1.1 carries a tag, reserved in \
+              this revision"
+            ]
+        );
+        let open = format!("{PFX}\"widget#VC-1.1\",\n{}", "//\n".repeat(20));
+        let (_, defects) = scan_source("src/a.rs", &open, PFX, &rules());
+        let messages: Vec<_> =
+            defects.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            messages,
+            ["src/a.rs:1: marker span is unclosed at 16 lines"]
+        );
     }
 }

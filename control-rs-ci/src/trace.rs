@@ -1,8 +1,9 @@
 //! Requirement traceability.
 //!
-//! `trace-reqs` records the requirement definitions and references it finds
-//! in Markdown, `trace-marks` records the markers it finds in source text, and
-//! `trace-check` joins both with gate results. Every occurrence of a requirement ID is one [`Row`].
+//! `trace-reqs` records the requirement definitions and verification
+//! conditions it finds in Markdown, `trace-marks` records the markers it finds
+//! in source text, and `trace-check` derives condition coverage from both. It
+//! reads no gate result. Each definition, condition and marker is one [`Row`].
 
 use std::fmt;
 use std::fs;
@@ -20,7 +21,7 @@ pub mod reqs;
 pub mod select;
 pub mod status;
 
-/// Row kind of a verification condition / decision.
+/// Row kind of a verification condition.
 pub const CONDITION: &str = "condition";
 
 /// Row kind of a requirement definition.
@@ -81,11 +82,14 @@ pub struct Row {
     pub schema: u32,
     /// Qualified ID, `<doc>#<id>`.
     pub id: String,
-    /// [`DEFINITION`], [`CONDITION`], a reference kind or [`MARKER`].
+    /// [`DEFINITION`], [`CONDITION`], or [`MARKER`].
     pub kind: String,
-    /// Parent requirement ID for conditions, `<doc>#<id>`.
+    /// Parent requirement IDs for conditions, `<doc>#<id>`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<String>,
+    /// Verification method for conditions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent: Option<String>,
+    pub method: Option<String>,
     /// Path relative to the working directory.
     pub file: String,
     /// 1-based line number.
@@ -343,7 +347,8 @@ mod tests {
             schema: SCHEMA,
             id: "doc#FR-1".to_string(),
             kind: DEFINITION.to_string(),
-            parent: None,
+            parents: Vec::new(),
+            method: None,
             file: file.to_string(),
             line,
             text: String::new(),
