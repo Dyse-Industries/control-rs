@@ -434,5 +434,5 @@ description = "Evaluates Criterion benchmark outputs against performance budgets
 [trace]
 mode = "fail"
 command = "cargo run"
-args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--reqs", "target/ci-artifacts/reqs.jsonl", "--marks", "target/ci-artifacts/marks.jsonl", "--gates", ".cargo/gate.toml", "--results", "target/ci-artifacts", "--out", "target/ci-artifacts/trace-report.json"]
+args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--config", ".cargo/trace/trace.toml", "--reqs", "target/ci-artifacts/reqs.jsonl", "--marks", "target/ci-artifacts/marks.jsonl", "--gates", ".cargo/gate.toml", "--results", "target/ci-artifacts", "--out", "target/ci-artifacts/trace-report.json"]
 description = "Derives requirement status from gate results and fails on failed or unverified requirements and unresolved markers"

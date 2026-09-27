@@ -65,6 +65,9 @@ pub struct TraceConfig {
     /// Where `trace-marks` finds markers; none when absent.
     #[serde(default)]
     pub markers: Option<MarkerConfig>,
+    /// The gate names that require a marker to be considered Verified.
+    #[serde(default = "default_test_gates")]
+    pub test_gates: Vec<String>,
 }
 
 /// The `[markers]` table of a `trace.toml`.
@@ -542,6 +545,10 @@ fn definition_text(lines: &[Line<'_>], idx: usize) -> String {
     parts.join("\n")
 }
 
+fn default_test_gates() -> Vec<String> {
+    vec!["test".to_string()]
+}
+
 fn default_condition_pattern() -> String {
     r"VC-(?:[A-Z0-9-]+|[0-9]+)(?:\.[0-9]+[a-z]?)?".to_string()
 }
@@ -835,5 +842,36 @@ verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
             config.rules(Path::new("trace.toml")),
             Err(GateError::Config { .. })
         ));
+    }
+
+    fn rules_for_conditions() -> Rules {
+        let text = format!(
+            "{KEYS}retired = []\n[references]\nverification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n"
+        );
+        let config: TraceConfig = toml::from_str(&text).unwrap();
+        config.rules(Path::new("trace.toml")).unwrap()
+    }
+
+    #[test]
+    fn scan_condition_finds_parents() {
+        let source = "| VC-1.1 | FR-1, FR-2 | `test` |";
+        let found = scan_markdown(FILE, source, &rules_for_conditions());
+        assert_eq!(found.len(), 2);
+
+        let first = found.first().unwrap();
+        assert_eq!(first.id, "widget#VC-1.1");
+        assert_eq!(first.parent, Some("widget#FR-1".to_string()));
+
+        let second = found.get(1).unwrap();
+        assert_eq!(second.id, "widget#VC-1.1");
+        assert_eq!(second.parent, Some("widget#FR-2".to_string()));
+    }
+
+    #[test]
+    fn condition_without_parents_is_an_orphan() {
+        let source = "| VC-1.1 | | `test` |";
+        let found = scan_markdown(FILE, source, &rules_for_conditions());
+        let defects = check(&found, &rules_for_conditions());
+        assert!(defects.iter().any(|d| d.message.contains("has no parent")));
     }
 }

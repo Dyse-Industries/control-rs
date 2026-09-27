@@ -14,12 +14,19 @@ use control_rs_ci::trace::{
 use control_rs_ci::ui;
 
 /// Command-line synopsis.
-const USAGE: &str = "trace-check --reqs <reqs.jsonl> --marks <marks.jsonl> \
+const USAGE: &str = "trace-check --config <trace.toml> --reqs <reqs.jsonl> --marks <marks.jsonl> \
                      --gates <gate.toml> --results <dir> \
                      --out <trace-report.json>";
 
 fn main() -> ExitCode {
-    let flags = ["--reqs", "--marks", "--gates", "--results", "--out"];
+    let flags = [
+        "--config",
+        "--reqs",
+        "--marks",
+        "--gates",
+        "--results",
+        "--out",
+    ];
     let paths = match cli_args(USAGE, flags) {
         Ok(paths) => paths,
         Err(code) => return code,
@@ -35,13 +42,16 @@ fn main() -> ExitCode {
 
 /// Derives the report from the recorded artifacts and writes it.
 fn run(
-    [reqs, marks, gates, results, out]: &FlagValues<5>,
+    [config, reqs, marks, gates, results, out]: &FlagValues<6>,
 ) -> GateResult<Derived> {
     let reqs = read_rows(reqs)?;
     let marks = read_rows(marks)?;
+    let trace_cfg = control_rs_ci::trace::reqs::TraceConfig::load(config)?;
     let names = status::gate_names(gates)?;
     let verdicts = status::load_verdicts(results, &names);
-    let (report, defects) = status::derive(&reqs, &marks, &names, &verdicts);
+    let gates_ctx =
+        status::GateContext::new(&names, &verdicts, &trace_cfg.test_gates);
+    let (report, defects) = status::derive(&reqs, &marks, &gates_ctx);
     report.write(out)?;
     ui::status("Writing", out.display());
     Ok((report, defects))

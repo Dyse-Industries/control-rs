@@ -41,7 +41,8 @@ pub fn scan_source(
         let start_line = idx.saturating_add(1);
         let at = (file, start_line);
         let mut text = line.to_string();
-        if line.contains(marker) && !line.contains(')') {
+        if line.contains(marker) && marker.contains('(') && !line.contains(')')
+        {
             let mut lookahead = idx.saturating_add(1);
             while lookahead < lines.len() && lookahead <= idx.saturating_add(15)
             {

@@ -98,6 +98,18 @@ struct Context<'a> {
     named: &'a NamedGates,
     verdicts: &'a Verdicts,
     marker_counts: &'a MarkerCounts<'a>,
+    test_gates: &'a [String],
+}
+
+/// Execution context for deriving requirement and condition status.
+#[derive(Debug, Clone, Copy)]
+pub struct GateContext<'a> {
+    /// Gate names defined in the configuration.
+    pub names: &'a GateNames,
+    /// Recorded verdicts for gates with results.
+    pub verdicts: &'a Verdicts,
+    /// Gates requiring a test marker.
+    pub test_gates: &'a [String],
 }
 
 /// `trace-report.json`.
@@ -111,6 +123,22 @@ pub struct TraceReport {
     pub requirements: Vec<RequirementStatus>,
     /// Marker rows whose ID has no definition.
     pub unresolved_markers: Vec<Row>,
+}
+
+impl<'a> GateContext<'a> {
+    /// Creates a new gate context.
+    #[must_use]
+    pub const fn new(
+        names: &'a GateNames,
+        verdicts: &'a Verdicts,
+        test_gates: &'a [String],
+    ) -> Self {
+        Self {
+            names,
+            verdicts,
+            test_gates,
+        }
+    }
 }
 
 impl TraceReport {
@@ -238,7 +266,7 @@ fn evaluate_conditions(
                     .copied()
                     .unwrap_or(0),
             );
-        let c_status = condition_status_of(&c_gates, m_count);
+        let c_status = condition_status_of(&c_gates, m_count, ctx.test_gates);
         cond_statuses.push(ConditionStatus {
             id: cond_row.id.clone(),
             parent: definition.id.clone(),
@@ -252,24 +280,13 @@ fn evaluate_conditions(
     (req_status, all_gates, cond_statuses)
 }
 
-fn evaluate_direct(
-    definition: &Row,
-    named: &NamedGates,
-    verdicts: &Verdicts,
-) -> Evaluation {
-    let direct_gates: GateVerdicts = named
-        .get(&definition.id)
-        .into_iter()
-        .flatten()
-        .map(|gate| (gate.clone(), verdicts.get(gate).copied()))
-        .collect();
-    let req_status = status_of(&direct_gates);
-    (req_status, direct_gates, Vec::new())
-}
-
-fn condition_unverified_reason(c: &ConditionStatus) -> String {
+fn condition_unverified_reason(
+    c: &ConditionStatus,
+    test_gates: &[String],
+) -> String {
     let reason = failure(c.status, &c.gates).unwrap_or_else(|| {
-        if c.marker_count == 0 && c.gates.keys().any(|g| g.contains("test")) {
+        if c.marker_count == 0 && c.gates.keys().any(|g| test_gates.contains(g))
+        {
             "no test marker".to_string()
         } else {
             "unverified".to_string()
@@ -284,12 +301,12 @@ fn process_definition(
     ctx: &Context<'_>,
     acc: &mut Accumulator<'_>,
 ) -> RequirementStatus {
-    let (status, gates, conditions) = conditions_by_parent
+    let empty: Vec<&Row> = Vec::new();
+    let cond_rows = conditions_by_parent
         .get(definition.id.as_str())
-        .map_or_else(
-            || evaluate_direct(definition, ctx.named, ctx.verdicts),
-            |cond_rows| evaluate_conditions(definition, cond_rows, ctx),
-        );
+        .unwrap_or(&empty);
+    let (status, gates, conditions) =
+        evaluate_conditions(definition, cond_rows, ctx);
 
     if let Some(count) = acc.counts.get_mut(&status) {
         *count = count.saturating_add(1);
@@ -302,7 +319,7 @@ fn process_definition(
                 .filter(|c| {
                     c.status == Status::Failed || c.status == Status::Unverified
                 })
-                .map(condition_unverified_reason)
+                .map(|c| condition_unverified_reason(c, ctx.test_gates))
                 .collect();
             acc.defects.push(Defect::at(
                 definition,
@@ -331,19 +348,15 @@ fn process_definition(
 /// The report and its defects: each `Failed` or `Unverified` requirement at
 /// its first definition, and each marker whose ID has no definition.
 #[must_use]
-pub fn derive(
-    reqs: &[Row],
-    marks: &[Row],
-    gate_names: &GateNames,
-    verdicts: &Verdicts,
-) -> Derived {
-    let named = named_gates(reqs, gate_names);
+pub fn derive(reqs: &[Row], marks: &[Row], gates: &GateContext<'_>) -> Derived {
+    let named = named_gates(reqs, gates.names);
     let marker_counts = count_markers(marks);
     let conditions_by_parent = group_conditions_by_parent(reqs);
     let ctx = Context {
         named: &named,
-        verdicts,
+        verdicts: gates.verdicts,
         marker_counts: &marker_counts,
+        test_gates: gates.test_gates,
     };
 
     let mut counts: StatusCounts = [
@@ -403,7 +416,11 @@ pub fn derive(
 }
 
 /// The status derived for a condition from its gates and markers.
-fn condition_status_of(gates: &GateVerdicts, marker_count: usize) -> Status {
+fn condition_status_of(
+    gates: &GateVerdicts,
+    marker_count: usize,
+    test_gates: &[String],
+) -> Status {
     if gates.is_empty() {
         Status::Unchecked
     } else if gates.values().any(|v| *v == Some(Verdict::Fail)) {
@@ -411,7 +428,7 @@ fn condition_status_of(gates: &GateVerdicts, marker_count: usize) -> Status {
     } else if gates
         .values()
         .any(|v| matches!(v, None | Some(Verdict::Skipped)))
-        || (gates.keys().any(|g| g.contains("test")) && marker_count == 0)
+        || (gates.keys().any(|g| test_gates.contains(g)) && marker_count == 0)
     {
         Status::Unverified
     } else {
@@ -435,21 +452,6 @@ fn aggregate_condition_status(conditions: &[ConditionStatus]) -> Status {
 }
 
 /// The status the first matching condition gives a requirement's gates.
-fn status_of(gates: &GateVerdicts) -> Status {
-    if gates.is_empty() {
-        Status::Unchecked
-    } else if gates.values().any(|v| *v == Some(Verdict::Fail)) {
-        Status::Failed
-    } else if gates
-        .values()
-        .any(|v| matches!(v, None | Some(Verdict::Skipped)))
-    {
-        Status::Unverified
-    } else {
-        Status::Verified
-    }
-}
-
 /// Why a `Failed` or `Unverified` requirement fails the trace.
 fn failure(status: Status, gates: &GateVerdicts) -> Option<String> {
     let reasons: Vec<String> = gates
@@ -510,24 +512,31 @@ mod tests {
         };
         vec![
             row(id, DEFINITION, "- **FR-1 — A**: It shall work."),
-            row(id, "verification", &format!("| FR-1 | {cell} | Step |")),
+            condition_row(
+                &format!("{id}-VC"),
+                id,
+                &format!("| {id}-VC | FR-1 | {cell} | Step |"),
+            ),
         ]
     }
 
     fn names() -> GateNames {
-        ["test", "lint"].map(String::from).into()
+        ["build", "lint", "test"].map(String::from).into()
     }
 
     fn status(reqs: &[Row], verdicts: &Verdicts) -> (Status, bool) {
-        let (report, defects) = derive(reqs, &[], &names(), verdicts);
+        let names = names();
+        let test_gates = ["test".to_string()];
+        let ctx = GateContext::new(&names, verdicts, &test_gates);
+        let (report, defects) = derive(reqs, &[], &ctx);
         let status = report.requirements.first().map(|r| r.status);
         (status.unwrap(), defects.is_empty() && report.passes())
     }
 
     #[test]
     fn a_failed_gate_fails_the_requirement() {
-        let verdicts = Verdicts::from([("test".to_string(), Verdict::Fail)]);
-        let reqs = requirement("w#FR-1", "test");
+        let verdicts = Verdicts::from([("build".to_string(), Verdict::Fail)]);
+        let reqs = requirement("w#FR-1", "build");
         assert_eq!(status(&reqs, &verdicts), (Status::Failed, false));
     }
 
@@ -545,10 +554,10 @@ mod tests {
     #[test]
     fn passing_or_warning_gates_verify_it() {
         let verdicts = Verdicts::from([
-            ("test".to_string(), Verdict::Pass),
+            ("build".to_string(), Verdict::Pass),
             ("lint".to_string(), Verdict::Warn),
         ]);
-        let mut reqs = requirement("w#FR-1", "test");
+        let mut reqs = requirement("w#FR-1", "build");
         reqs.push(row("w#FR-1", "verification", "| FR-1 | `lint` | a |"));
         assert_eq!(status(&reqs, &verdicts), (Status::Verified, true));
     }
@@ -563,8 +572,11 @@ mod tests {
     fn a_marker_without_definition_fails_the_trace() {
         let reqs = requirement("w#FR-1", "");
         let marks = [row("w#FR-9", MARKER, "fn t")];
-        let (report, defects) =
-            derive(&reqs, &marks, &names(), &Verdicts::new());
+        let names = names();
+        let test_gates = ["test".to_string()];
+        let verdicts = Verdicts::new();
+        let gates = GateContext::new(&names, &verdicts, &test_gates);
+        let (report, defects) = derive(&reqs, &marks, &gates);
         assert!(!report.passes());
         assert_eq!(report.unresolved_markers.len(), 1);
         let messages: Vec<_> =
@@ -576,7 +588,11 @@ mod tests {
     fn counts_cover_every_status_and_duplicates_count_once() {
         let mut reqs = requirement("w#FR-1", "");
         reqs.extend(requirement("w#FR-1", ""));
-        let (report, _) = derive(&reqs, &[], &names(), &Verdicts::new());
+        let names = names();
+        let test_gates = ["test".to_string()];
+        let verdicts = Verdicts::new();
+        let gates = GateContext::new(&names, &verdicts, &test_gates);
+        let (report, _) = derive(&reqs, &[], &gates);
         assert_eq!(report.requirements.len(), 1);
         assert_eq!(report.counts.len(), 4);
         assert_eq!(report.counts.get(&Status::Unchecked), Some(&1));
@@ -584,11 +600,18 @@ mod tests {
 
     #[test]
     fn failure_messages_name_the_gate() {
-        let reqs = requirement("w#FR-1", "test");
-        let (_, defects) = derive(&reqs, &[], &names(), &Verdicts::new());
+        let reqs = requirement("w#FR-1", "build");
+        let names = names();
+        let test_gates = ["test".to_string()];
+        let verdicts = Verdicts::new();
+        let gates = GateContext::new(&names, &verdicts, &test_gates);
+        let (_, defects) = derive(&reqs, &[], &gates);
         let messages: Vec<_> =
             defects.iter().map(|d| d.message.as_str()).collect();
-        assert_eq!(messages, ["w#FR-1 is Unverified: gate test has no result"]);
+        assert_eq!(
+            messages,
+            ["w#FR-1 is Unverified: [w#FR-1-VC: gate build has no result]"]
+        );
     }
 
     #[test]
@@ -602,8 +625,11 @@ mod tests {
                 "| VC-1.1 | FR-1 | `test` | Step |",
             ),
         ];
+        let names = names();
+        let test_gates = ["test".to_string()];
+        let gates = GateContext::new(&names, &verdicts, &test_gates);
         // Without marker -> Unverified
-        let (report, defects) = derive(&reqs, &[], &names(), &verdicts);
+        let (report, defects) = derive(&reqs, &[], &gates);
         assert_eq!(
             report.requirements.first().map(|r| r.status),
             Some(Status::Unverified)
@@ -617,8 +643,7 @@ mod tests {
         // With marker -> Verified
         let mark_text = format!("{PFX}\"w#VC-1.1\")]");
         let marks = [row("w#VC-1.1", MARKER, &mark_text)];
-        let (report_pass, defects_pass) =
-            derive(&reqs, &marks, &names(), &verdicts);
+        let (report_pass, defects_pass) = derive(&reqs, &marks, &gates);
         assert_eq!(
             report_pass.requirements.first().map(|r| r.status),
             Some(Status::Verified)
@@ -647,7 +672,10 @@ mod tests {
         let m1 = format!("{PFX}\"w#VC-1.1\")]");
         let m2 = format!("{PFX}\"w#VC-1.2\")]");
         let marks = [row("w#VC-1.1", MARKER, &m1)];
-        let (report, defects) = derive(&reqs, &marks, &names(), &verdicts);
+        let names = names();
+        let test_gates = ["test".to_string()];
+        let gates = GateContext::new(&names, &verdicts, &test_gates);
+        let (report, defects) = derive(&reqs, &marks, &gates);
         assert_eq!(
             report.requirements.first().map(|r| r.status),
             Some(Status::Unverified)
@@ -660,8 +688,7 @@ mod tests {
         // Both marked -> FR-1 Verified
         let marks_both =
             [row("w#VC-1.1", MARKER, &m1), row("w#VC-1.2", MARKER, &m2)];
-        let (report_both, defects_both) =
-            derive(&reqs, &marks_both, &names(), &verdicts);
+        let (report_both, defects_both) = derive(&reqs, &marks_both, &gates);
         assert_eq!(
             report_both.requirements.first().map(|r| r.status),
             Some(Status::Verified)

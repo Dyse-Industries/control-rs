@@ -18,7 +18,7 @@ mod cli {
 
 | Requirements | Gates  | Criterion        |
 |:-------------|:-------|:-----------------|
-| FR-1         | `test` | Exact size match |
+| VC-1.1       | FR-1   | `test` | Exact size match |
 ";
 
     /// A duplicate definition, a missing verification reference and an
@@ -27,7 +27,9 @@ mod cli {
 - **FR-1 — Size**: The widget shall report its size.
 - **FR-1 — Again**: The widget shall repeat.
 
-| FR-7 | `test` | Other |
+| Requirements | Gates |
+|:-------------|:------|
+| VC-7.1       | FR-7  |
 ";
 
     /// A `gate.toml` that defines gate `test`.
@@ -39,7 +41,9 @@ mod cli {
     const UNCHECKED: &str = "\
 - **FR-1 — Size**: The widget shall report its size.
 
-| FR-1 |  | Review |
+| Requirements | Gates |
+|:-------------|:------|
+| VC-1.1       | FR-1  |
 ";
 
     /// A file to create: its path and contents.
@@ -54,7 +58,7 @@ mod cli {
              definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
              retired = []\n\n\
              [references]\n\
-             verification = '^\\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'\n\n\
+             verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\n\
              [markers]\n\
              files = [\"src\"]\n\
              suffixes = [\".rs\"]\n\
@@ -174,6 +178,10 @@ mod cli {
     fn a_clean_document_passes_and_writes_its_rows() {
         let dir = workdir("clean", &[("docs/widget-design.md", CLEAN)]);
         let output = trace_reqs(&dir);
+        if output.status.code() != Some(0) {
+            println!("STDOUT: {}", String::from_utf8_lossy(&output.stdout));
+            println!("STDERR: {}", String::from_utf8_lossy(&output.stderr));
+        }
         assert_eq!(output.status.code(), Some(0));
         assert!(stdout_lines(&output).is_empty());
         let kinds: Vec<_> = rows(&dir.join("out/reqs.jsonl"))
@@ -199,7 +207,7 @@ mod cli {
                  condition or reference",
                 "docs/widget-design.md:2: widget#FR-1 is defined more than \
                  once; first definition at docs/widget-design.md:1",
-                "docs/widget-design.md:4: widget#FR-7 is not defined",
+                "docs/widget-design.md:6: condition widget#VC-7.1 references undefined requirement widget#FR-7",
             ]
         );
     }
@@ -285,7 +293,6 @@ mod cli {
         assert_eq!(trace_reqs(&dir).status.code(), Some(2));
     }
 
-    #[req("requirement-traceability#VC-10.1")]
     #[test]
     fn roots_select_suffixed_files_below_directories_and_named_files() {
         let dir = workdir(
@@ -319,7 +326,6 @@ mod cli {
         );
     }
 
-    #[req("requirement-traceability#VC-10.1")]
     #[test]
     fn a_missing_root_is_a_configuration_error() {
         let dir = workdir("missing-root", &[]);
@@ -327,7 +333,6 @@ mod cli {
     }
 
     #[cfg(unix)]
-    #[req("requirement-traceability#VC-10.1")]
     #[test]
     fn symbolic_links_are_never_followed() {
         let dir = workdir(
@@ -351,10 +356,7 @@ mod cli {
         assert_eq!(files, ["docs/widget-design.md".to_string()].into());
     }
 
-    #[req(
-        "requirement-traceability#VC-6.1",
-        "requirement-traceability#VC-10.1"
-    )]
+    #[req("requirement-traceability#VC-6.1")]
     #[test]
     fn trace_marks_scans_source_in_order_and_reruns_identically() {
         let f1 =
@@ -489,7 +491,7 @@ mod cli {
              definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
              retired = []\n\n\
              [references]\n\
-             verification = '^\\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C|VC)-'\n\n\
+             verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\n\
              [markers]\n\
              files = [\"src\"]\n\
              suffixes = [\".rs\"]\n\

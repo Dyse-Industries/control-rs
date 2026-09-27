@@ -165,14 +165,13 @@ impl ReportAggregator {
             }
             let log_path = self.artifacts_dir.join(&outcome.log_file);
             let log_tail = read_trailing_lines(&log_path, 30);
-            let summary_str = outcome
-                .summary
-                .as_deref()
-                .map_or_else(String::new, strip_ansi);
             let _ = write!(
                 md,
                 "<details>\n<summary><b>Gate: {} ({:?})</b> - {}</summary>\n\n```text\n{}\n```\n</details>\n\n",
-                outcome.gate, outcome.verdict, summary_str, log_tail
+                outcome.gate,
+                outcome.verdict,
+                outcome.summary.as_deref().unwrap_or(""),
+                log_tail
             );
         }
     }
@@ -256,10 +255,7 @@ fn push_summary_matrix(
         let exit_str = outcome
             .exit_code
             .map_or_else(|| "-".to_string(), |c| c.to_string());
-        let summary_str = outcome
-            .summary
-            .as_deref()
-            .map_or_else(|| "-".to_string(), strip_ansi);
+        let summary_str = outcome.summary.as_deref().unwrap_or("-");
 
         let _ = writeln!(
             md,
@@ -280,7 +276,7 @@ fn read_trailing_lines(path: &Path, max_lines: usize) -> String {
     let reader = BufReader::new(file);
     let mut lines = Vec::new();
     for line in reader.lines().map_while(Result::ok) {
-        lines.push(strip_ansi(&line));
+        lines.push(line);
     }
 
     let start_idx = lines.len().saturating_sub(max_lines);
@@ -288,61 +284,4 @@ fn read_trailing_lines(path: &Path, max_lines: usize) -> String {
         .get(start_idx..)
         .map(|slice| slice.join("\n"))
         .unwrap_or_default()
-}
-
-/// Strips ANSI escape sequences (for example SGR color/style codes, cursor controls)
-/// from a string slice so log snippets format cleanly in Markdown.
-#[must_use]
-pub fn strip_ansi(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            if let Some(&next) = chars.peek() {
-                chars.next();
-                if next == '[' {
-                    // CSI sequence: ESC [ ... [0x40-0x7E]
-                    for c in chars.by_ref() {
-                        if ('\x40'..='\x7e').contains(&c) {
-                            break;
-                        }
-                    }
-                } else if next == ']' {
-                    // OSC sequence: ESC ] ... (BEL \x07 or ST ESC \)
-                    let mut prev_was_esc = false;
-                    for c in chars.by_ref() {
-                        if c == '\x07' || (prev_was_esc && c == '\\') {
-                            break;
-                        }
-                        prev_was_esc = c == '\x1b';
-                    }
-                }
-                // Other 2-character escape sequences consumed by chars.next()
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_strip_ansi_colors() {
-        let colored = "\x1b[1m\x1b[92m   Compiling\x1b[0m control-rs-ci v0.1.0\n\x1b[1m\x1b[91m      Failed\x1b[0m 0 Failed,";
-        let cleaned = strip_ansi(colored);
-        assert_eq!(
-            cleaned,
-            "   Compiling control-rs-ci v0.1.0\n      Failed 0 Failed,"
-        );
-    }
-
-    #[test]
-    fn test_strip_ansi_plain_text() {
-        let plain = "normal text without escapes";
-        assert_eq!(strip_ansi(plain), plain);
-    }
 }

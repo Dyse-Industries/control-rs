@@ -1,7 +1,7 @@
 # Requirement Traceability Infrastructure (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-September_27,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -304,7 +304,7 @@ marker = "#[req("
 | Key                | Meaning                                                                                                        |
 |:-------------------|:---------------------------------------------------------------------------------------------------------------|
 | `id`               | Regex for one requirement ID                                                                                   |
-| `condition`        | Regex for one condition ID                                                                                     |
+| `condition`        | Regex for one condition ID; optional (defaults to `\\bVC-[0-9]+(?:\\.[0-9]+[a-z]?)?\\b`)                        |
 | `doc`              | Regex for the document name in a qualified ID `<doc>#<id>`                                                     |
 | `files`            | Markdown files, and directories whose `<doc_suffix>.md` files are read (see [File Selection](#file-selection)) |
 | `doc_suffix`       | Text removed from the file stem to form the document name; optional                                            |
@@ -312,6 +312,7 @@ marker = "#[req("
 | `verification`     | Regex for a line that defines a condition                                                                      |
 | `methods`          | Verification methods a condition may name                                                                      |
 | `marked_methods`   | The subset of `methods` whose conditions need at least one marker                                              |
+| `test_gates`       | The gate names that require a marker to be considered Verified; optional (defaults to `test`)                  |
 | `retired`          | Qualified IDs that must not be defined or referenced again                                                     |
 | `exclude_phrases`  | Regexes; each match in definition text is a defect; optional                                                   |
 | `markers.files`    | Source files, and directories whose files ending in a suffix are read; `[markers]` is optional                 |
@@ -549,6 +550,7 @@ Four choices keep the stronger levels additive:
   review of the diff is the control.
 - Phrase checks are lexical. They catch configured patterns, not ambiguity in
   general.
+- A gate with `default = false` (like `nightly`) is not run by default during local `cargo ci`. Conditions verified solely by such gates will read as `Unverified` in the local report until the gate is executed (for example, via `cargo ci --gate nightly`).
 
 ---
 

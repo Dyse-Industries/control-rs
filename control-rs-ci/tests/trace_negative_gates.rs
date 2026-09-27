@@ -169,6 +169,8 @@ fn test_negative_trace_check_gate_fails_on_unverified_req() -> TestResult {
         "trace-check",
         env!("CARGO_BIN_EXE_trace-check"),
         vec![
+            "--config".to_string(),
+            ".cargo/trace/trace.toml".to_string(),
             "--reqs".to_string(),
             "target/ci-artifacts/reqs.jsonl".to_string(),
             "--marks".to_string(),
