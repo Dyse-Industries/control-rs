@@ -688,8 +688,13 @@ impl TestIndexIndicator {
 }
 
 #[cfg(test)]
+extern crate std;
+
+#[cfg(test)]
+pub(crate) static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
-    extern crate std;
     use super::*;
     use crate::comms::{Command, HostComms, Telemetry, TestState};
     use crate::profiler::CPUProfiler;
@@ -967,6 +972,9 @@ mod tests {
 
     #[test]
     fn test_server_exit() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let res =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut s = Server::new(
@@ -1007,6 +1015,9 @@ mod tests {
 
     #[test]
     fn test_index_indicator() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let indicator = TestIndexIndicator::new();
         assert!(indicator.get().is_none());
 
@@ -1048,6 +1059,9 @@ mod tests {
 
     #[test]
     fn test_server_discovery() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let _ = TEST_U8_SETTING.set(SettingValue::U8(42));
         let comms = MockComms {
             commands: std::vec![Command::ListSuites],
@@ -1106,6 +1120,9 @@ mod tests {
 
     #[test]
     fn test_server_ok_to_reset() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let comms = MockComms {
             commands: std::vec![Command::TryReset],
             payloads: Vec::new(),
@@ -1121,6 +1138,9 @@ mod tests {
 
     #[test]
     fn test_server_out_of_bounds() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let comms = MockComms {
             commands: std::vec![
                 Command::RunExecutable {
@@ -1161,6 +1181,9 @@ mod tests {
 
     #[test]
     fn test_server_poll_command_error() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let comms = MockComms {
             commands: Vec::new(),
             payloads: Vec::new(),
@@ -1175,6 +1198,9 @@ mod tests {
 
     #[test]
     fn test_server_run_test() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         TEST_CALLED.store(false, Ordering::SeqCst);
         let comms = MockComms {
             commands: std::vec![Command::RunExecutable {
@@ -1231,6 +1257,9 @@ mod tests {
 
     #[test]
     fn test_server_set_setting() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let comms = MockComms {
             commands: std::vec![Command::SetSetting {
                 suite_id: 0,
@@ -1264,6 +1293,9 @@ mod tests {
 
     #[test]
     fn test_server_set_setting_type_mismatch() {
+        let _guard = TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let comms = MockComms {
             commands: std::vec![Command::SetSetting {
                 suite_id: 0,

@@ -273,7 +273,6 @@ pub fn run_pipeline(
     let selected = selected_with_passthrough(&config, config_path, options)?;
     let executed_gate_names: Vec<String> =
         selected.iter().map(|g| g.name().to_string()).collect();
-    remove_stale_results(&out_dir, &executed_gate_names);
 
     // A disabled gate selected by name records `Skipped` and does not run.
     let (disabled, active_gates): (GateList, GateList) = selected
@@ -390,22 +389,6 @@ fn selected_with_passthrough(
         .iter()
         .map(|g| with_extra_args(g, options.extra_args))
         .collect())
-}
-
-/// Removes result artifacts of gates that will not run this time.
-fn remove_stale_results(out_dir: &Path, executed_gate_names: &[String]) {
-    let Ok(entries) = std::fs::read_dir(out_dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if let Some(name) = path.file_name().and_then(|n| n.to_str())
-            && let Some(gate_name) = name.strip_suffix(gate::RESULT_SUFFIX)
-            && !executed_gate_names.iter().any(|g| g == gate_name)
-        {
-            let _ = std::fs::remove_file(&path);
-        }
-    }
 }
 
 /// Splits gates into per-group lists and the exclusive list.

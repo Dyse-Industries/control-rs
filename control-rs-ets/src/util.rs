@@ -428,6 +428,9 @@ mod tests {
 
     #[test]
     fn test_handle_failure_comms_disabled() {
+        let _guard = crate::server::TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let comms = MockComms {
             commands: std::vec![],
             payloads: std::vec![],
@@ -444,6 +447,9 @@ mod tests {
     fn test_handle_failure_comms_idle() {
         use crate::server::{CURRENT_SUITE, CURRENT_TEST};
 
+        let _guard = crate::server::TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         CURRENT_SUITE.set_idle();
         CURRENT_TEST.set_idle();
         let comms = MockComms {
@@ -475,6 +481,9 @@ mod tests {
     fn test_handle_failure_comms_active() {
         use crate::server::{CURRENT_SUITE, CURRENT_TEST};
 
+        let _guard = crate::server::TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         CURRENT_SUITE.set_active(1);
         CURRENT_TEST.set_active(2);
         let comms = MockComms {
@@ -514,6 +523,9 @@ mod tests {
 
     #[test]
     fn test_handle_exception_fn() {
+        let _guard = crate::server::TEST_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let comms = MockComms {
             commands: std::vec![],
             payloads: std::vec![],
