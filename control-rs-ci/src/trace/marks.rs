@@ -18,7 +18,7 @@ pub type Scan = (Rows, Defects);
 /// The marker rows of one source file and the defects of its marker lines.
 ///
 /// A marker line with an ID written without `<doc>#`, or with no ID at all,
-/// is a defect.
+/// is a defect. Multi-line attribute markers are supported.
 #[must_use]
 pub fn scan_source(
     file: &str,
@@ -28,12 +28,36 @@ pub fn scan_source(
 ) -> Scan {
     let mut rows = Vec::new();
     let mut defects = Vec::new();
-    for (idx, line) in source.lines().enumerate() {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut idx = 0;
+    while idx < lines.len() {
+        let Some(&line) = lines.get(idx) else {
+            break;
+        };
         if !line.contains(marker) {
+            idx = idx.saturating_add(1);
             continue;
         }
-        let at = (file, idx.saturating_add(1));
-        let ids = rules.marked_ids(line);
+        let start_line = idx.saturating_add(1);
+        let at = (file, start_line);
+        let mut text = line.to_string();
+        if line.contains(marker) && !line.contains(')') {
+            let mut lookahead = idx.saturating_add(1);
+            while lookahead < lines.len() && lookahead <= idx.saturating_add(15)
+            {
+                let Some(&next_line) = lines.get(lookahead) else {
+                    break;
+                };
+                text.push(' ');
+                text.push_str(next_line);
+                if next_line.contains(')') {
+                    idx = lookahead;
+                    break;
+                }
+                lookahead = lookahead.saturating_add(1);
+            }
+        }
+        let ids = rules.marked_ids(&text);
         let defect = |message: String| Defect {
             file: file.to_string(),
             line: at.1,
@@ -44,12 +68,13 @@ pub fn scan_source(
         }
         for id in ids {
             match id {
-                Ok(id) => rows.push(row(id, MARKER, at, line)),
+                Ok(id) => rows.push(row(id, MARKER, at, &text)),
                 Err(id) => defects.push(defect(format!(
                     "marker ID {id} is not qualified as <doc>#<id>"
                 ))),
             }
         }
+        idx = idx.saturating_add(1);
     }
     (rows, defects)
 }
@@ -91,6 +116,8 @@ retired = []
 [references]
 ";
 
+    const PFX: &str = concat!("#[", "req(",);
+
     fn rules() -> Rules {
         let config: TraceConfig = toml::from_str(CONFIG).unwrap();
         config.rules(Path::new("trace.toml")).unwrap()
@@ -98,15 +125,15 @@ retired = []
 
     #[test]
     fn a_marker_line_yields_one_row_per_qualified_id() {
-        let source = "\n#[req(\"widget#FR-1\", \"widget#NFR-2\")]\n#[test]\n";
-        let (rows, defects) =
-            scan_source("src/a.rs", source, "#[req(", &rules());
+        let source =
+            format!("\n{PFX}\"widget#FR-1\", \"widget#NFR-2\")]\n#[test]\n");
+        let (rows, defects) = scan_source("src/a.rs", &source, PFX, &rules());
         let ids: Vec<_> = rows.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, ["widget#FR-1", "widget#NFR-2"]);
         assert!(rows.iter().all(|r| r.kind == MARKER && r.line == 2));
         assert_eq!(
             rows.first().map(|r| r.text.as_str()),
-            Some("#[req(\"widget#FR-1\", \"widget#NFR-2\")]")
+            Some(format!("{PFX}\"widget#FR-1\", \"widget#NFR-2\")]").as_str())
         );
         assert!(defects.is_empty());
     }
@@ -121,9 +148,8 @@ retired = []
 
     #[test]
     fn unqualified_or_missing_ids_on_a_marker_line_are_defects() {
-        let source = "#[req(\"FR-1\")]\n#[req()]\nfn f() {}\n";
-        let (rows, defects) =
-            scan_source("src/a.rs", source, "#[req(", &rules());
+        let source = format!("{PFX}\"FR-1\")]\n{PFX})]\nfn f() {{}}\n");
+        let (rows, defects) = scan_source("src/a.rs", &source, PFX, &rules());
         assert!(rows.is_empty());
         let messages: Vec<_> =
             defects.iter().map(ToString::to_string).collect();
@@ -139,8 +165,7 @@ retired = []
     #[test]
     fn lines_without_the_marker_text_are_ignored() {
         let source = "// widget#FR-1 is mentioned here\nfn f() {}\n";
-        let (rows, defects) =
-            scan_source("src/a.rs", source, "#[req(", &rules());
+        let (rows, defects) = scan_source("src/a.rs", source, PFX, &rules());
         assert!(rows.is_empty() && defects.is_empty());
     }
 }

@@ -20,6 +20,9 @@ pub mod reqs;
 pub mod select;
 pub mod status;
 
+/// Row kind of a verification condition / decision.
+pub const CONDITION: &str = "condition";
+
 /// Row kind of a requirement definition.
 pub const DEFINITION: &str = "definition";
 
@@ -69,8 +72,8 @@ pub struct Defect {
     pub message: String,
 }
 
-/// One occurrence of one requirement ID: a line of `reqs.jsonl` or
-/// `marks.jsonl`.
+/// One occurrence of one requirement or condition ID: a line of `reqs.jsonl`
+/// or `marks.jsonl`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Row {
@@ -78,8 +81,11 @@ pub struct Row {
     pub schema: u32,
     /// Qualified ID, `<doc>#<id>`.
     pub id: String,
-    /// [`DEFINITION`], a reference kind or [`MARKER`].
+    /// [`DEFINITION`], [`CONDITION`], a reference kind or [`MARKER`].
     pub kind: String,
+    /// Parent requirement ID for conditions, `<doc>#<id>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
     /// Path relative to the working directory.
     pub file: String,
     /// 1-based line number.
@@ -336,6 +342,7 @@ mod tests {
             schema: SCHEMA,
             id: "doc#FR-1".to_string(),
             kind: DEFINITION.to_string(),
+            parent: None,
             file: file.to_string(),
             line,
             text: String::new(),

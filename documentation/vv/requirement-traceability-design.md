@@ -243,6 +243,7 @@ rules (`files.associations` in VS Code, file-type patterns in JetBrains IDEs).
 
 ```toml
 id = '(?:FR|NFR|C)-[0-9]+[a-z]?'
+condition = 'VC-(?:[A-Z0-9-]+|[0-9]+)(?:\.[0-9]+[a-z]?)?'
 doc = '[a-z0-9-]+'
 files = ["documentation/vv/requirement-traceability-design.md"]
 doc_suffix = "-design"
@@ -251,10 +252,10 @@ retired = []
 exclude_phrases = []
 
 [references]
-verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
+verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C|VC)-'
 
 [markers]
-files = ["src", "tests", "benches"]
+files = ["src", "tests", "benches", "control-rs-trace-macros/tests", "control-rs-ci/tests"]
 suffixes = [".rs"]
 marker = "#[req("
 ```
@@ -262,6 +263,7 @@ marker = "#[req("
 | Key                | Meaning                                                                                                        |
 |:-------------------|:---------------------------------------------------------------------------------------------------------------|
 | `id`               | Regex for one requirement ID                                                                                   |
+| `condition`        | Regex for one verification condition ID (`VC-x.y`); optional (defaults to `VC-(?:[A-Z0-9-]+|[0-9]+)...`)       |
 | `doc`              | Regex for the document name in a qualified ID `<doc>#<id>`                                                     |
 | `files`            | Markdown files, and directories whose `<doc_suffix>.md` files are read (see [File Selection](#file-selection)) |
 | `doc_suffix`       | Text removed from the file stem to form the document name; optional                                            |
@@ -274,7 +276,7 @@ marker = "#[req("
 | `markers.marker`   | Text that makes a source line a marker, such as `#[req(`                                                       |
 
 In the template, a verification row is a pipe-table row whose first cell starts
-with a requirement ID. `trace-marks` reads `id`, `doc` and `[markers]`; without
+with a condition ID (`VC-x.y`) or a requirement ID. `trace-marks` reads `id`, `condition`, `doc` and `[markers]`; without
 `[markers]` it writes an empty `marks.jsonl`.
 
 ### File Selection
@@ -294,12 +296,13 @@ The rules below are the whole parser:
 
 1. Lines inside fenced code blocks, including indented fences, are skipped,
    so examples are inert.
-2. An ID occurrence is a match of `id`, optionally preceded by a match of `doc`
+2. An ID occurrence is a match of `id` or `condition`, optionally preceded by a match of `doc`
    and `#`.
 3. A line that matches `definition` defines the first ID on it. Its text is the
    line plus the indented lines that follow it.
-4. A line that matches a reference pattern references every ID on it. A line
-   may match more than one pattern and then yields one reference per pattern.
+4. A line that matches a reference pattern references every ID on it. When a line contains
+   a condition ID (`VC-x.y`), it defines a verification condition row with `kind = "condition"`,
+   linking to its parent requirement ID on the same line.
 5. The document name is the file stem with `doc_suffix` removed:
    `storage-design.md` becomes `storage`. An ID written without `<doc>#` belongs
    to the document it appears in.
@@ -308,22 +311,24 @@ The rules below are the whole parser:
 
 ### Checks
 
-| Check            | Defect                                                                                       |
-|:-----------------|:---------------------------------------------------------------------------------------------|
-| `duplicate`      | An ID is defined more than once                                                              |
-| `unresolved`     | A reference names an ID that is not defined                                                  |
-| `missing`        | A defined ID has no reference of a configured kind; the message names the kind               |
-| `retired`        | A retired ID is defined or referenced                                                        |
-| `exclude-phrase` | A match of an `exclude_phrases` pattern in definition text; one defect per match, quoting it |
+| Check            | Defect                                                                                                    |
+|:-----------------|:----------------------------------------------------------------------------------------------------------|
+| `duplicate`      | An ID or condition ID is defined more than once                                                           |
+| `unresolved`     | A reference or condition names a requirement ID that is not defined                                       |
+| `missing`        | A defined requirement has no verification conditions or references of a configured kind                   |
+| `retired`        | A retired ID is defined or referenced                                                                     |
+| `exclude-phrase` | A match of an `exclude_phrases` pattern in definition text; one defect per match, quoting it              |
 
 The phrase check follows the lexical-smell approach of Femmer et al. [6]; the
 patterns are the project's choice.
 
 ### Source Markers
 
-A **marker line** is a source line that contains the `markers.marker` text.
+A **marker line** is a source line that contains the `markers.marker` text (such as
+`#[req("...")]` in Rust, `# req: ...` in Python, or `// req: ...` in C).
 Each qualified ID `<doc>#<id>` on it yields one `marker` row whose `text` is the
-line. A marker line with no ID, or with an ID written without `<doc>#`, is a
+line. Multi-line Rust attributes (for example, wrapped by `rustfmt`) are scanned up to the
+closing delimiter. A marker line with no ID, or with an ID written without `<doc>#`, is a
 defect. `trace-marks` reads text only, so markers work in any language and do
 not depend on what a build compiles.
 
@@ -334,7 +339,7 @@ qualified IDs as string arguments. It lives in its own proc-macro crate,
 with its `req` attribute macro [8]:
 
 ```rust
-#[req("storage#FR-3", "storage#FR-4")]
+#[req("storage#VC-3.1", "storage#VC-3.2")]
 #[test]
 fn packed_value_bounds() { /* ... */ }
 ```
@@ -342,26 +347,32 @@ fn packed_value_bounds() { /* ... */ }
 The macro returns the item unchanged and writes nothing; an argument that is
 not `<doc>#<id>` is a compile error.
 
-Markers are optional. They are the mechanism for tracing mutation-gate repairs:
-a test added to kill a mutant carries the marker of the requirement it
-protects.
+Markers link specific tests directly to verification conditions. When a condition
+specifies a `test` gate, `trace-check` requires matching marker evidence from
+`marks.jsonl` to verify the condition.
 
 ### Status Derivation
 
-A requirement's **gates** are the gate names from `gate.toml` that appear in
-backticks on any of its reference rows. Evidence is gate-level: a gate that
-passes has passed every test it ran. `trace-check` reads each
-`<gate>.result.json` `verdict` (`pass`, `warn`, `fail`, `skipped`) as defined in
-`ci-design.md`.
+Traceability follows a 3-tier model: **Requirement $\to$ Verification Conditions $\to$ Tests**.
 
-| Condition (first match wins)                       | Status       | Fails gate |
-|:---------------------------------------------------|:-------------|:-----------|
-| Any gate verdict is `fail`                         | `Failed`     | yes        |
-| Any gate has no result, or verdict `skipped`       | `Unverified` | yes        |
-| At least one gate, and every gate `pass` or `warn` | `Verified`   | no         |
-| No gate named                                      | `Unchecked`  | no         |
+Each condition evaluates the gate results and marker evidence:
+- **Condition Gates**: Gate names from `gate.toml` that appear in backticks on the condition row.
+- **Marker Evidence**: If any named gate contains `"test"`, the condition requires at least one matching marker in `marks.jsonl`.
 
-A `marker` row whose ID has no definition row fails the gate.
+| Condition Status (first match wins)                                            | Status       | Fails gate |
+|:-------------------------------------------------------------------------------|:-------------|:-----------|
+| Any gate verdict is `fail`                                                     | `Failed`     | yes        |
+| Any gate has no result, or verdict `skipped`                                   | `Unverified` | yes        |
+| Gate contains `"test"` and matching marker count is 0                          | `Unverified` | yes        |
+| At least one gate, all gates `pass` or `warn`, and test marker evidence exists | `Verified`   | no         |
+| No gate named                                                                  | `Unchecked`  | no         |
+
+A requirement's status is the conjunction across all its child verification conditions:
+$$\text{Status}(\text{Req}) = \bigwedge_{c \in \text{Conditions}(\text{Req})} \text{Status}(c)$$
+
+If any child condition is `Failed`, the requirement is `Failed`. If any is `Unverified`, the requirement is `Unverified` (with diagnostics naming the exact unverified condition). If all conditions are `Verified`, the requirement is `Verified`.
+
+A `marker` row whose ID has no definition or condition row fails the gate.
 `trace-report.json` holds `schema`, a count per status, one entry per
 requirement (ID, status, gate verdicts) and the unresolved markers.
 
@@ -371,7 +382,8 @@ requirement (ID, status, gate verdicts) and the unresolved markers.
 |:---------|:---------------------------------------------------------------------------------------------|
 | `schema` | Row format version (NFR-4)                                                                   |
 | `id`     | Qualified ID, `<doc>#<id>`                                                                   |
-| `kind`   | `definition`, a reference kind from `[references]`, or `marker`                              |
+| `kind`   | `definition`, `condition`, a reference kind from `[references]`, or `marker`                 |
+| `parent` | Optional parent qualified requirement ID (present on `condition` rows)                       |
 | `file`   | Path relative to the working directory                                                       |
 | `line`   | 1-based line number                                                                          |
 | `text`   | The matched line; for a definition, its full text; for a marker, the item's keyword and name |
@@ -439,15 +451,22 @@ not checked at all; a document inside it is checked in full.
 
 ### Verification
 
-| Requirements                                      | Gates                       | Criterion                                                                                                                                                                                                                                                                |
-|:--------------------------------------------------|:----------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| FR-1, FR-2, FR-3                                  | `test`                      | Matching fixtures produce exactly the expected rows: fenced blocks, first-ID definitions, indented continuation, multiple IDs per reference line, lines matching two patterns, local and qualified IDs; selection fixtures cover file root, directory root, missing root |
-| FR-4, FR-9                                        | `test`                      | Every expected defect per positive check fixture, none per negative; diagnostic lines match `^[^:]+:[0-9]+: .+$`; exit 0 iff no defect                                                                                                                                  |
-| FR-5                                              | `test`                      | Every match reported outside code spans, an empty list disables the rule                                                                                                                                                                                                 |
-| FR-6, FR-7, NFR-4                                 | `test`                      | Two runs on an unchanged corpus are byte-identical; rows carry exactly the six Artifacts fields; marker fixtures: one row per qualified ID, unqualified and missing IDs reported                                                                                          |
-| FR-8                                              | `test`                      | Status and exit status match exactly per Status Derivation row; an unresolved marker fails the trace                                                                                                                                                                     |
-| NFR-1                                             | `trace-reqs`, `trace-marks` | Median of 5 runs < 1.0 s per binary                                                                                                                                                                                                                                     |
-| NFR-2, NFR-3, C-1, C-2, C-3, C-4, C-5, C-6, C-7 |                             | Review: the diff adds no violation of any constraint                                                                                                                                                                                                                     |
+| Condition | Requirement                                       | Gates                       | Criterion                                                                                                                                                                                                                                                                |
+|:----------|:--------------------------------------------------|:----------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| VC-1.1    | FR-1                                              | `test`                      | Matching definition fixtures produce exactly expected definition rows with normalized text and indented continuation                                                                                                                                                      |
+| VC-2.1    | FR-2                                              | `test`                      | Matching reference fixtures produce exactly expected reference rows for each configured kind                                                                                                                                                                             |
+| VC-3.1    | FR-3                                              | `test`                      | Qualification matches `<doc>#<id>` across local and qualified IDs so equal IDs in different documents never collide                                                                                                                                                      |
+| VC-4.1    | FR-4                                              | `test`                      | Every expected defect detected per positive check fixture (duplicate definition, undefined reference, missing verification reference, retired ID)                                                                                                                        |
+| VC-5.1    | FR-5                                              | `test`                      | Every exclude phrase match reported outside code spans, an empty list disables the rule                                                                                                                                                                                 |
+| VC-6.1    | FR-6                                              | `test`                      | Two runs on an unchanged corpus produce byte-identical JSONL requirement rows                                                                                                                                                                                            |
+| VC-7.1    | FR-7                                              | `test`                      | Polyglot marker scanning extracts one row per qualified ID and reports unqualified and empty markers as defects                                                                                                                                                          |
+| VC-8.1    | FR-8                                              | `test`                      | Hierarchical status derivation checks gates and test marker evidence, exiting 0 iff all requirements are verified or unchecked                                                                                                                                           |
+| VC-9.1    | FR-9                                              | `test`                      | Diagnostic lines match `^[^:]+:[0-9]+: .+$` with non-zero exit code on defects                                                                                                                                                                                           |
+| VC-10.1   | NFR-1                                             | `trace-reqs`, `trace-marks` | Median of 5 runs < 1.0 s per binary                                                                                                                                                                                                                                     |
+| VC-11.1   | NFR-2                                             |                             | Review: procedural attribute macro expands transparently with zero runtime overhead                                                                                                                                                                                     |
+| VC-12.1   | NFR-3                                             |                             | Review: dependency budget verified via `cargo tree` with no unexpected transitive dependencies                                                                                                                                                                           |
+| VC-13.1   | NFR-4                                             | `test`                      | Schema versioning integer present in all artifact rows and reports                                                                                                                                                                                                       |
+| VC-14.1   | C-1, C-2, C-3, C-4, C-5, C-6, C-7                 |                             | Review: the diff adds no violation of any constraint                                                                                                                                                                                                                     |
 
 ### Limits
 
@@ -518,6 +537,7 @@ not checked at all; a document inside it is checked in full.
 | 1.8      | September 26, 2026 | @MitchellDScott | Dropped `require_phrases`; each match of an `exclude_phrases` pattern is a defect that quotes the match. The Acceptance bound for the checks counts every expected defect. Reference [6] follows the research record, and the ISO/IEC/IEEE 29148 citation is removed until a quoted source exists.                                                                                                                                                              |
 | 1.9      | September 26, 2026 | @MitchellDScott | Markers are found in source text: `trace-marks` reads `[markers]` (roots, suffixes, marker text) and works for any language; `#[req]` checks its IDs and writes nothing. Globs replaced by roots plus suffix, with symbolic links never followed; `depth` removed. Removed the link-record Limits and the compiler-path and editor-expansion Risks; the gate-name overlap joins the reference-line Limit.                                                       |
 | 1.10     | September 26, 2026 | @MitchellDScott | Merged Plan and Acceptance into a single Verification table (`Requirements \| Gates \| Criterion`). One reference kind `verification` replaces `plan` and `acceptance`; the pattern matches a row whose first cell starts with a requirement ID. Removed the Kind column, the gate-name overlap Limit, the row-shape Risk, and the acceptance-not-evaluated Limit. Updated template, `trace.toml`, tracer tests. |
+| 1.11     | September 26, 2026 | @MitchellDScott | Upgraded to 3-tier hierarchy (Requirement $\to$ Verification Conditions $\to$ Tests). Added condition extraction (`VC-x.y`), `parent` linking in row schema, multi-line marker look-ahead, and hierarchical condition status derivation requiring marker evidence for test gates. |
 
 ---
 

@@ -7,6 +7,7 @@ mod cli {
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
 
+    use control_rs_trace_macros::req;
     use regex::Regex;
     use serde_json::Value;
 
@@ -18,24 +19,6 @@ mod cli {
 |:-------------|:-------|:-----------------|
 | FR-1         | `test` | Exact size match |
 ";
-
-    /// The template's patterns, reading the `*-design.md` files under `docs`
-    /// and markers in the `.rs` files under `src`.
-    const CONFIG: &str = r##"id = '(?:FR|NFR|C)-[0-9]+[a-z]?'
-doc = '[a-z0-9-]+'
-files = ["docs"]
-doc_suffix = "-design"
-definition = '^- \*\*(?:FR|NFR|C)-'
-retired = []
-
-[references]
-verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
-
-[markers]
-files = ["src"]
-suffixes = [".rs"]
-marker = "#[req("
-"##;
 
     /// A duplicate definition, a missing verification reference and an
     /// unresolved reference.
@@ -49,6 +32,8 @@ marker = "#[req("
     /// A `gate.toml` that defines gate `test`.
     const GATES: &str = "[test]\ncommand = \"cargo test\"\n";
 
+    const REQ_PREFIX: &str = concat!("#[", "req(",);
+
     /// A requirement whose plan names no gate.
     const UNCHECKED: &str = "\
 - **FR-1 — Size**: The widget shall report its size.
@@ -59,14 +44,34 @@ marker = "#[req("
     /// A file to create: its path and contents.
     type Fixture<'a> = (&'a str, &'a str);
 
+    fn config() -> String {
+        format!(
+            "id = '(?:FR|NFR|C)-[0-9]+[a-z]?'\n\
+             doc = '[a-z0-9-]+'\n\
+             files = [\"docs\"]\n\
+             doc_suffix = \"-design\"\n\
+             definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
+             retired = []\n\n\
+             [references]\n\
+             verification = '^\\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'\n\n\
+             [markers]\n\
+             files = [\"src\"]\n\
+             suffixes = [\".rs\"]\n\
+             marker = \"{REQ_PREFIX}\"\n"
+        )
+    }
+
     /// A fresh working directory holding the configuration and `files`.
     fn workdir(name: &str, files: &[Fixture<'_>]) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("control_rs_ci_trace_{name}"));
         let _ = fs::remove_dir_all(&dir);
-        for (path, text) in [("trace.toml", CONFIG), ("gate.toml", GATES)]
-            .iter()
-            .chain(files)
+        let cfg_str = config();
+        for (path, text) in
+            [("trace.toml", cfg_str.as_str()), ("gate.toml", GATES)]
+                .iter()
+                .copied()
+                .chain(files.iter().copied())
         {
             let path = dir.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -163,6 +168,7 @@ marker = "#[req("
         )
     }
 
+    #[req("requirement-traceability#VC-1.1", "requirement-traceability#VC-6.1")]
     #[test]
     fn a_clean_document_passes_and_writes_its_rows() {
         let dir = workdir("clean", &[("docs/widget-design.md", CLEAN)]);
@@ -176,6 +182,7 @@ marker = "#[req("
         assert_eq!(kinds, ["definition", "verification"]);
     }
 
+    #[req("requirement-traceability#VC-4.1", "requirement-traceability#VC-9.1")]
     #[test]
     fn defects_print_as_path_line_message_and_fail_the_run() {
         let dir = workdir("defects", &[("docs/widget-design.md", DEFECTIVE)]);
@@ -188,7 +195,7 @@ marker = "#[req("
             lines,
             [
                 "docs/widget-design.md:1: widget#FR-1 has no verification \
-                 reference",
+                 condition or reference",
                 "docs/widget-design.md:2: widget#FR-1 is defined more than \
                  once; first definition at docs/widget-design.md:1",
                 "docs/widget-design.md:4: widget#FR-7 is not defined",
@@ -196,6 +203,10 @@ marker = "#[req("
         );
     }
 
+    #[req(
+        "requirement-traceability#VC-6.1",
+        "requirement-traceability#VC-13.1"
+    )]
     #[test]
     fn rows_have_the_six_fields_and_reruns_are_identical() {
         let dir = workdir("rows", &[("docs/widget-design.md", DEFECTIVE)]);
@@ -223,6 +234,7 @@ marker = "#[req("
         assert!(lines.is_sorted());
     }
 
+    #[req("requirement-traceability#VC-9.1")]
     #[test]
     fn usage_and_configuration_errors_exit_with_code_two() {
         let dir = workdir("usage", &[]);
@@ -232,6 +244,7 @@ marker = "#[req("
         assert_eq!(trace_reqs(&dir).status.code(), Some(2));
     }
 
+    #[req("requirement-traceability#VC-1.1")]
     #[test]
     fn roots_select_suffixed_files_below_directories_and_named_files() {
         let dir = workdir(
@@ -243,11 +256,11 @@ marker = "#[req("
                 ("extra/solo.md", CLEAN),
             ],
         );
-        let config = CONFIG.replace(
+        let config_str = config().replace(
             "files = [\"docs\"]",
             "files = [\"docs\", \"extra/solo.md\"]",
         );
-        fs::write(dir.join("trace.toml"), config).unwrap();
+        fs::write(dir.join("trace.toml"), config_str).unwrap();
         assert_eq!(trace_reqs(&dir).status.code(), Some(0));
         let files: BTreeSet<String> = rows(&dir.join("out/reqs.jsonl"))
             .iter()
@@ -265,6 +278,7 @@ marker = "#[req("
         );
     }
 
+    #[req("requirement-traceability#VC-1.1")]
     #[test]
     fn a_missing_root_is_a_configuration_error() {
         let dir = workdir("missing-root", &[]);
@@ -272,6 +286,7 @@ marker = "#[req("
     }
 
     #[cfg(unix)]
+    #[req("requirement-traceability#VC-1.1")]
     #[test]
     fn symbolic_links_are_never_followed() {
         let dir = workdir(
@@ -295,14 +310,19 @@ marker = "#[req("
         assert_eq!(files, ["docs/widget-design.md".to_string()].into());
     }
 
+    #[req("requirement-traceability#VC-6.1")]
     #[test]
     fn trace_marks_scans_source_in_order_and_reruns_identically() {
+        let f1 =
+            format!("{REQ_PREFIX}\"widget#FR-1\")]\n#[test]\nfn t() {{}}\n");
+        let f2 = format!("\n\n{REQ_PREFIX}\"widget#FR-2\")]\nfn u() {{}}\n");
+        let f3 = format!("{REQ_PREFIX}\"widget#FR-3\")]\n");
         let dir = workdir(
             "marks",
             &[
-                ("src/b.rs", "#[req(\"widget#FR-1\")]\n#[test]\nfn t() {}\n"),
-                ("src/a/c.rs", "\n\n#[req(\"widget#FR-2\")]\nfn u() {}\n"),
-                ("src/notes.txt", "#[req(\"widget#FR-3\")]\n"),
+                ("src/b.rs", &f1),
+                ("src/a/c.rs", &f2),
+                ("src/notes.txt", &f3),
             ],
         );
         assert!(trace_marks(&dir).status.success());
@@ -322,9 +342,11 @@ marker = "#[req("
         assert_eq!(fs::read(dir.join("out/marks.jsonl")).unwrap(), first);
     }
 
+    #[req("requirement-traceability#VC-6.1", "requirement-traceability#VC-9.1")]
     #[test]
     fn an_unqualified_marker_fails_trace_marks() {
-        let dir = workdir("bad-marker", &[("src/a.rs", "#[req(\"FR-1\")]\n")]);
+        let bad = format!("{REQ_PREFIX}\"FR-1\")]\n");
+        let dir = workdir("bad-marker", &[("src/a.rs", &bad)]);
         let output = trace_marks(&dir);
         assert_eq!(output.status.code(), Some(1));
         assert_eq!(
@@ -333,6 +355,7 @@ marker = "#[req("
         );
     }
 
+    #[req("requirement-traceability#VC-8.1")]
     #[test]
     fn a_passing_gate_verifies_and_the_trace_passes() {
         let pass = result("pass");
@@ -347,6 +370,7 @@ marker = "#[req("
         );
     }
 
+    #[req("requirement-traceability#VC-8.1")]
     #[test]
     fn a_failing_gate_fails_the_trace() {
         let fail = result("fail");
@@ -356,6 +380,7 @@ marker = "#[req("
         assert_eq!(text(&report, "/requirements/0/status"), Some("Failed"));
     }
 
+    #[req("requirement-traceability#VC-8.1")]
     #[test]
     fn a_missing_or_skipped_result_leaves_it_unverified() {
         let (code, report) = check("unverified", CLEAN, &[]);
@@ -371,6 +396,7 @@ marker = "#[req("
         assert_eq!(code, 1);
     }
 
+    #[req("requirement-traceability#VC-8.1")]
     #[test]
     fn a_requirement_without_gate_is_unchecked_and_passes() {
         let (code, report) = check("unchecked", UNCHECKED, &[]);
@@ -378,6 +404,7 @@ marker = "#[req("
         assert_eq!(text(&report, "/requirements/0/status"), Some("Unchecked"));
     }
 
+    #[req("requirement-traceability#VC-8.1")]
     #[test]
     fn an_unresolved_marker_fails_the_trace() {
         let pass = result("pass");
@@ -396,5 +423,62 @@ marker = "#[req("
             text(&report, "/unresolved_markers/0/id"),
             Some("widget#FR-9")
         );
+    }
+
+    #[req("requirement-traceability#VC-8.1")]
+    #[test]
+    fn verification_condition_matrix_end_to_end() {
+        const COND_DOC: &str = "\
+- **FR-1 — Size**: The widget shall report its size.
+
+| Condition | Requirement | Gates  | Verification Method |
+|:----------|:------------|:-------|:--------------------|
+| VC-1.1    | FR-1        | `test` | Exact size match    |
+| VC-1.2    | FR-1        | `test` | Empty boundary check |
+";
+        let cond_config = format!(
+            "id = '(?:FR|NFR|C)-[0-9]+[a-z]?'\n\
+             condition = 'VC-(?:[A-Z0-9-]+|[0-9]+)(?:\\.[0-9]+[a-z]?)?'\n\
+             doc = '[a-z0-9-]+'\n\
+             files = [\"docs\"]\n\
+             doc_suffix = \"-design\"\n\
+             definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
+             retired = []\n\n\
+             [references]\n\
+             verification = '^\\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C|VC)-'\n\n\
+             [markers]\n\
+             files = [\"src\"]\n\
+             suffixes = [\".rs\"]\n\
+             marker = \"{REQ_PREFIX}\"\n"
+        );
+        let pass = result("pass");
+        let fsrc = format!(
+            "{REQ_PREFIX}\"widget#VC-1.1\")]\nfn t1() {{}}\n{REQ_PREFIX}\"widget#VC-1.2\")]\nfn t2() {{}}\n"
+        );
+        let dir = workdir(
+            "conditions_e2e",
+            &[
+                ("trace.toml", &cond_config),
+                ("docs/widget-design.md", COND_DOC),
+                ("results/test.result.json", &pass),
+                ("src/lib.rs", &fsrc),
+            ],
+        );
+        let reqs_out = trace_reqs(&dir);
+        assert_eq!(
+            reqs_out.status.code(),
+            Some(0),
+            "reqs failed: {:?}",
+            stdout_lines(&reqs_out)
+        );
+        let marks_out = trace_marks(&dir);
+        assert_eq!(marks_out.status.code(), Some(0));
+        let check_out = trace_check(&dir);
+        assert_eq!(check_out.status.code(), Some(0));
+        let report: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("out/trace-report.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(text(&report, "/requirements/0/status"), Some("Verified"));
     }
 }

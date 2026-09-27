@@ -66,3 +66,6 @@ path = "src/bin/trace-marks.rs"
 name = "trace-check"
 path = "src/bin/trace-check.rs"
 
+[dev-dependencies]
+control-rs-trace-macros = { path = "../control-rs-trace-macros", version = "0.1.0" }
+

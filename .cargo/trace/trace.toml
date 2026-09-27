@@ -1,4 +1,5 @@
 id = '(?:FR|NFR|C)-[0-9]+[a-z]?'
+condition = 'VC-(?:[A-Z0-9-]+|[0-9]+)(?:\.[0-9]+[a-z]?)?'
 doc = '[a-z0-9-]+'
 files = ["documentation/vv/requirement-traceability-design.md"]
 doc_suffix = "-design"
@@ -7,9 +8,9 @@ retired = []
 exclude_phrases = []
 
 [references]
-verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
+verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C|VC)-'
 
 [markers]
-files = ["src", "tests", "benches"]
+files = ["src", "tests", "benches", "control-rs-trace-macros/tests", "control-rs-ci/src", "control-rs-ci/tests"]
 suffixes = [".rs"]
 marker = "#[req("

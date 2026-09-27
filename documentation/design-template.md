@@ -72,19 +72,19 @@ The plan for showing this component is correct and meets its requirements.
 
 ### Verification
 
-How each requirement is verified and what "passed" means. Every approved
-requirement appears in at least one row. The `Gates` cell names the gate whose
-result is the evidence; an empty cell means the requirement is checked by
-review and reads `Unchecked`. `Criterion` is one sentence stating the
-pass condition, including any bound. Specific tests are linked by `#[req]`
-markers in the code, not named in the doc.
+How each requirement is verified and what "passed" means. Each requirement is
+partitioned into verification conditions and decision criteria (`VC-x.y`). The `Gates`
+cell names the gate whose result is the evidence; an empty cell means the condition is
+checked by review and reads `Unchecked`. `Criterion` is one sentence stating the
+pass condition, including any bound. Specific tests assert these conditions and link
+to them via markers (`#[req("doc#VC-x.y")]` in Rust or comments `# req: doc#VC-x.y`).
 
-| Requirements | Gates        | Criterion |
-|:-------------|:-------------|:----------|
-| FR-1         | `test`       | [...]     |
-| FR-2, NFR-1  | `bench`      | [...]     |
-| FR-2         | `example`    | [...]     |
-| C-1          |              | [...]     |
+| Condition | Requirement | Gates        | Criterion |
+|:----------|:------------|:-------------|:----------|
+| VC-1.1    | FR-1        | `test`       | [...]     |
+| VC-2.1    | FR-2        | `bench`      | [...]     |
+| VC-2.2    | FR-2        | `example`    | [...]     |
+| VC-3.1    | C-1         |              | [...]     |
 
 ### Limits
 

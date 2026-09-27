@@ -8,7 +8,7 @@
   - [x] **PR3-1**: Multi-Oracle Differential Test Harness (`control-rs-compare`) ([#59](https://github.com/Dyse-Industries/control-rs/pull/59); [cross-compare](vv/cross-compare-design.md))
   - [ ] **PR3-2**: CI Gate — Performance & Benchmarking (`regression`) ([#60](https://github.com/Dyse-Industries/control-rs/pull/60); [ci](ci/ci-design.md) §4.7)
   - [ ] **PR3-3**: CI Cleanup & ETS Gate — Gate Selection vs Policy, Process-Tree Timeouts, Bare-Metal Target Build & QEMU ETS Execution (`control-rs-ci`) ([ci](ci/ci-design.md))
-  - [ ] **PR3-4**: CI Gate — Requirement Traceability (`trace`) ([requirement-traceability](vv/requirement-traceability-design.md))
+  - [x] **PR3-4**: CI Gate — Requirement Traceability (`trace`) ([requirement-traceability](vv/requirement-traceability-design.md))
 - [ ] **PR4**: Classical Control Synthesis & Math Core (`src/classical_tools`)
 - [ ] **PR5**: Modern Control Toolbox & State Observers (`src/modern_control`)
 - [ ] **PR6**: System Identification (SysID) & Frequency Estimation (`src/sysid`)
