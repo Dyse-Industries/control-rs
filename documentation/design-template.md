@@ -106,11 +106,7 @@ Acknowledge any unspecified details, technical risks, design assumptions, or ope
 
 ## Development Plan
 
-| Phase  | Requirements | Effort | Status |
-|:------|:-------------|:-------|:-------|
-| 1. [Name] | [FR-1, C-1] | [n days] | Planned |
-| 2. [Name] | [FR-2, NFR-1] | [n days] | Planned |
-| 3. [Name] | [FR-3] | [n days] | Planned |
+Include the required implementation tasks and phases:
 
 | Phase / Task | Description | Estimated Effort |
 |:-------------|:------------|:-----------------|

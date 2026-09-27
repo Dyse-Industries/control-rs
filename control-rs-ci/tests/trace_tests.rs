@@ -14,13 +14,9 @@ mod cli {
     const CLEAN: &str = "\
 - **FR-1 — Size**: The widget shall report its size.
 
-| Requirements | Kind   | Gate   | Step |
-|:-------------|:-------|:-------|:-----|
-| FR-1         | `test` | `test` | Size |
-
-| Requirements | Claim | Oracle | Measure | Bound |
-|:-------------|:------|:-------|:--------|:------|
-| FR-1         | Size  | Test   | Bytes   | Exact |
+| Requirements | Gates  | Criterion        |
+|:-------------|:-------|:-----------------|
+| FR-1         | `test` | Exact size match |
 ";
 
     /// The template's patterns, reading the `*-design.md` files under `docs`
@@ -33,8 +29,7 @@ definition = '^- \*\*(?:FR|NFR|C)-'
 retired = []
 
 [references]
-plan = '^\|[^|]+\| `[a-z-]+` +\|'
-acceptance = '^\|(?:[^|]*\|){5}$'
+verification = '^\| *(?:[a-z0-9-]+#)?(?:FR|NFR|C)-'
 
 [markers]
 files = ["src"]
@@ -42,13 +37,13 @@ suffixes = [".rs"]
 marker = "#[req("
 "##;
 
-    /// A duplicate definition, a missing acceptance reference and an
+    /// A duplicate definition, a missing verification reference and an
     /// unresolved reference.
     const DEFECTIVE: &str = "\
 - **FR-1 — Size**: The widget shall report its size.
 - **FR-1 — Again**: The widget shall repeat.
 
-| FR-1, FR-7 | `test` | `test` | Size |
+| FR-7 | `test` | Other |
 ";
 
     /// A `gate.toml` that defines gate `test`.
@@ -58,9 +53,7 @@ marker = "#[req("
     const UNCHECKED: &str = "\
 - **FR-1 — Size**: The widget shall report its size.
 
-| FR-1 | `inspection` |  | Review |
-
-| FR-1 | Size | Review | Violations | 0 |
+| FR-1 |  | Review |
 ";
 
     /// A file to create: its path and contents.
@@ -180,7 +173,7 @@ marker = "#[req("
             .iter()
             .map(|row| text(row, "/kind").unwrap().to_string())
             .collect();
-        assert_eq!(kinds, ["definition", "plan", "acceptance"]);
+        assert_eq!(kinds, ["definition", "verification"]);
     }
 
     #[test]
@@ -194,7 +187,7 @@ marker = "#[req("
         assert_eq!(
             lines,
             [
-                "docs/widget-design.md:1: widget#FR-1 has no acceptance \
+                "docs/widget-design.md:1: widget#FR-1 has no verification \
                  reference",
                 "docs/widget-design.md:2: widget#FR-1 is defined more than \
                  once; first definition at docs/widget-design.md:1",
