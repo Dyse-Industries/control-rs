@@ -390,11 +390,7 @@ fn test_cli_multi_token_parsing() {
     let multi_space_args = vec![
         "cargo-ci".to_string(),
         "--skip".to_string(),
-        "fmt".to_string(),
-        "clippy".to_string(),
-        "check".to_string(),
-        "build".to_string(),
-        "test".to_string(),
+        "fmt,clippy,check,build,test".to_string(),
     ];
     let multi_space_options = parse_args(&multi_space_args, "cargo ci");
     assert_eq!(

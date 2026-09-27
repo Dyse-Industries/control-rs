@@ -176,7 +176,7 @@ impl ReportAggregator {
         }
     }
 
-    /// Renders `ci-report.md` and writes it to the artifacts directory.
+    /// Renders `ci-report.md` and writes it to the artifacts' directory.
     ///
     /// # Errors
     /// Returns `GateError` if writing fails.

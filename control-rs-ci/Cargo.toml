@@ -23,6 +23,7 @@ toml = "0.8"
 thiserror = "2.0"
 control-rs-ets = { path = "../control-rs-ets", version = "0.1.0" }
 control-rs-ets-host = { path = "../control-rs-ets-host", version = "0.1.0" }
+lexopt = "0.3"
 
 [[bin]]
 name = "allow-audit"

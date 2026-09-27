@@ -85,101 +85,134 @@ pub fn print_usage(binary_name: &str) {
 
 /// Parses CLI arguments into `CliOptions`.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
+    use lexopt::prelude::*;
     let mut options = CliOptions::default();
-    let mut i = 1;
-    while i < args.len() {
-        i = parse_one(&mut options, args, i, binary_name);
-    }
-    options
-}
 
-/// Consumes the argument at `i` (and its values) and returns the index of
-/// the next unconsumed argument. `--help`, `--list` and unknown flags exit.
-fn parse_one(
-    options: &mut CliOptions,
-    args: &[String],
-    i: usize,
-    binary_name: &str,
-) -> usize {
-    let Some(arg) = args.get(i).map(String::as_str) else {
-        return args.len();
-    };
-    let next = i.saturating_add(1);
-    match arg {
-        "--" => {
-            options.passthrough = Some(
-                args.get(next..).map(<[String]>::to_vec).unwrap_or_default(),
-            );
-            return args.len();
+    let mut dash_dash_idx = args.len();
+    for (i, arg) in args.iter().enumerate() {
+        if arg == "--" {
+            dash_dash_idx = i;
+            break;
         }
-        "-h" | "--help" => {
-            print_usage(binary_name);
-            exit(0);
-        }
-        "-l" | "--list" => {
-            list_gates(options);
-            exit(0);
-        }
-        "-X" | "--clean" => options.clean = true,
-        "-v" | "--verbose" => options.verbose = true,
-        "-a" | "--all" => options.run_all = true,
-        "-g" | "--group" => {
-            return take_values(args, next, &mut options.groups);
-        }
-        "-o" | "--only" => {
-            return take_values(args, next, &mut options.only_gates);
-        }
-        "-s" | "--skip" => {
-            return take_values(args, next, &mut options.skip_gates);
-        }
-        "-u" | "--up-to" => {
-            if let Some(val) = args.get(next) {
-                options.up_to_gate = Some(val.clone());
-            }
-            return next.saturating_add(1);
-        }
-        "-c" | "--config" => {
-            if let Some(val) = args.get(next) {
-                options.config_path = Some(PathBuf::from(val));
-            }
-            return next.saturating_add(1);
-        }
-        _ => parse_inline(options, arg, binary_name),
     }
-    next
-}
 
-/// Handles `--flag=value` forms, positional gate names and unknown flags.
-fn parse_inline(options: &mut CliOptions, arg: &str, binary_name: &str) {
-    if let Some(val) = inline_value(arg, "--group=", "-g=") {
-        push_list(&mut options.groups, val);
-    } else if let Some(val) = inline_value(arg, "--only=", "-o=") {
-        push_list(&mut options.only_gates, val);
-    } else if let Some(val) = inline_value(arg, "--skip=", "-s=") {
-        push_list(&mut options.skip_gates, val);
-    } else if let Some(val) = inline_value(arg, "--up-to=", "-u=") {
-        options.up_to_gate = Some(val.to_string());
-    } else if let Some(val) = inline_value(arg, "--config=", "-c=") {
-        options.config_path = Some(PathBuf::from(val));
-    } else if !arg.starts_with('-') {
-        for part in arg.split(',').map(str::trim).filter(|p| !p.is_empty()) {
-            match part {
-                "clean" => options.clean = true,
-                "all" => options.run_all = true,
-                gate => options.only_gates.push(gate.to_string()),
-            }
-        }
-    } else {
-        ui::error(format!("Unknown argument: {arg}"));
-        print_usage(binary_name);
+    if dash_dash_idx < args.len() {
+        options.passthrough = Some(
+            args.get(dash_dash_idx.saturating_add(1)..)
+                .unwrap_or(&[])
+                .to_vec(),
+        );
+    }
+
+    let parser_args = args.get(0..dash_dash_idx).unwrap_or(&[]);
+    let mut parser = lexopt::Parser::from_iter(parser_args);
+
+    while let Some(arg) = parser.next().unwrap_or_else(|e| {
+        ui::error(format!("{e}"));
         exit(1);
+    }) {
+        match arg {
+            Short('h') | Long("help") => {
+                print_usage(binary_name);
+                exit(0);
+            }
+            Short('l') | Long("list") => {
+                list_gates(&options);
+                exit(0);
+            }
+            Short('X') | Long("clean") => options.clean = true,
+            Short('v') | Long("verbose") => options.verbose = true,
+            Short('a') | Long("all") => options.run_all = true,
+            Short('g') | Long("group") => {
+                let val = parser
+                    .value()
+                    .unwrap_or_else(|e| {
+                        ui::error(format!("{e}"));
+                        exit(1);
+                    })
+                    .string()
+                    .unwrap_or_else(|e| {
+                        ui::error(format!("Invalid UTF-8: {e:?}"));
+                        exit(1);
+                    });
+                push_list(&mut options.groups, &val);
+            }
+            Short('o') | Long("only") => {
+                let val = parser
+                    .value()
+                    .unwrap_or_else(|e| {
+                        ui::error(format!("{e}"));
+                        exit(1);
+                    })
+                    .string()
+                    .unwrap_or_else(|e| {
+                        ui::error(format!("Invalid UTF-8: {e:?}"));
+                        exit(1);
+                    });
+                push_list(&mut options.only_gates, &val);
+            }
+            Short('s') | Long("skip") => {
+                let val = parser
+                    .value()
+                    .unwrap_or_else(|e| {
+                        ui::error(format!("{e}"));
+                        exit(1);
+                    })
+                    .string()
+                    .unwrap_or_else(|e| {
+                        ui::error(format!("Invalid UTF-8: {e:?}"));
+                        exit(1);
+                    });
+                push_list(&mut options.skip_gates, &val);
+            }
+            Short('u') | Long("up-to") => {
+                options.up_to_gate = Some(
+                    parser
+                        .value()
+                        .unwrap_or_else(|e| {
+                            ui::error(format!("{e}"));
+                            exit(1);
+                        })
+                        .string()
+                        .unwrap_or_else(|e| {
+                            ui::error(format!("Invalid UTF-8: {e:?}"));
+                            exit(1);
+                        }),
+                );
+            }
+            Short('c') | Long("config") => {
+                options.config_path =
+                    Some(PathBuf::from(parser.value().unwrap_or_else(|e| {
+                        ui::error(format!("{e}"));
+                        exit(1);
+                    })));
+            }
+            Value(val) => {
+                let s = val.string().unwrap_or_else(|e| {
+                    ui::error(format!("Invalid UTF-8: {e:?}"));
+                    exit(1);
+                });
+                for part in
+                    s.split(',').map(str::trim).filter(|p| !p.is_empty())
+                {
+                    match part {
+                        "clean" => options.clean = true,
+                        "all" => options.run_all = true,
+                        gate => options.only_gates.push(gate.to_string()),
+                    }
+                }
+            }
+            _ => {
+                ui::error(format!("Unknown argument: {arg:?}"));
+                print_usage(binary_name);
+                exit(1);
+            }
+        }
     }
-}
 
-/// Value of `arg` after the `long` or `short` `=`-terminated prefix.
-fn inline_value<'a>(arg: &'a str, long: &str, short: &str) -> Option<&'a str> {
-    arg.strip_prefix(long).or_else(|| arg.strip_prefix(short))
+    options
 }
 
 /// Appends the non-empty, trimmed comma-separated entries of `val`.
@@ -190,18 +223,6 @@ fn push_list(dest: &mut Vec<String>, val: &str) {
             .filter(|p| !p.is_empty())
             .map(str::to_string),
     );
-}
-
-/// Collects the values following a multi-value flag, starting at `start`,
-/// up to the next argument that begins with `-`. Returns the index of that
-/// argument (or the end).
-fn take_values(args: &[String], start: usize, dest: &mut Vec<String>) -> usize {
-    let mut i = start;
-    while let Some(val) = args.get(i).filter(|a| !a.starts_with('-')) {
-        push_list(dest, val);
-        i = i.saturating_add(1);
-    }
-    i
 }
 
 /// Prints every registered gate with its description.

@@ -399,6 +399,7 @@ impl Gate {
         cmd.args(words);
         cmd.args(&self.args);
         cmd.envs(&self.env);
+        cmd.env("CARGO_TERM_COLOR", crate::ui::cargo_color_env());
         cmd
     }
 

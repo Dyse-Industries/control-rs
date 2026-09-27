@@ -108,17 +108,36 @@ pub fn init_color() {
     cargo_color_choice().write_global();
 }
 
-fn parse_cargo_color_choice(val: Option<&str>) -> ColorChoice {
+fn parse_cargo_color_choice(
+    val: Option<&str>,
+    no_color: bool,
+    is_dumb: bool,
+) -> ColorChoice {
     match val {
         Some("always") => ColorChoice::Always,
         Some("never") => ColorChoice::Never,
+        _ if no_color || is_dumb => ColorChoice::Never,
         _ => ColorChoice::Auto,
     }
 }
 
-fn cargo_color_choice() -> ColorChoice {
+/// Evaluates the terminal color choice based on `CARGO_TERM_COLOR`, `NO_COLOR`, and `TERM`.
+#[must_use]
+pub fn cargo_color_choice() -> ColorChoice {
     let var = env::var("CARGO_TERM_COLOR").ok();
-    parse_cargo_color_choice(var.as_deref())
+    let no_color = env::var_os("NO_COLOR").is_some();
+    let is_dumb = env::var("TERM").as_deref() == Ok("dumb");
+    parse_cargo_color_choice(var.as_deref(), no_color, is_dumb)
+}
+
+/// Returns the string value for `CARGO_TERM_COLOR` based on the evaluated choice.
+#[must_use]
+pub fn cargo_color_env() -> &'static str {
+    match cargo_color_choice() {
+        ColorChoice::Always => "always",
+        ColorChoice::Never => "never",
+        _ => "auto",
+    }
 }
 
 /// Formats a cargo-style status line without color.
@@ -204,15 +223,48 @@ mod tests {
     #[test]
     fn test_cargo_color_choice() {
         assert_eq!(
-            parse_cargo_color_choice(Some("always")),
+            parse_cargo_color_choice(Some("always"), false, false),
             ColorChoice::Always
         );
-        assert_eq!(parse_cargo_color_choice(Some("never")), ColorChoice::Never);
-        assert_eq!(parse_cargo_color_choice(Some("auto")), ColorChoice::Auto);
-        assert_eq!(parse_cargo_color_choice(None), ColorChoice::Auto);
         assert_eq!(
-            parse_cargo_color_choice(Some("unknown")),
+            parse_cargo_color_choice(Some("never"), false, false),
+            ColorChoice::Never
+        );
+        assert_eq!(
+            parse_cargo_color_choice(Some("auto"), false, false),
             ColorChoice::Auto
+        );
+        assert_eq!(
+            parse_cargo_color_choice(None, false, false),
+            ColorChoice::Auto
+        );
+        assert_eq!(
+            parse_cargo_color_choice(Some("unknown"), false, false),
+            ColorChoice::Auto
+        );
+
+        // NO_COLOR and TERM=dumb overrides auto
+        assert_eq!(
+            parse_cargo_color_choice(None, true, false),
+            ColorChoice::Never
+        );
+        assert_eq!(
+            parse_cargo_color_choice(None, false, true),
+            ColorChoice::Never
+        );
+        assert_eq!(
+            parse_cargo_color_choice(Some("auto"), true, false),
+            ColorChoice::Never
+        );
+
+        // always/never take precedence over NO_COLOR
+        assert_eq!(
+            parse_cargo_color_choice(Some("always"), true, true),
+            ColorChoice::Always
+        );
+        assert_eq!(
+            parse_cargo_color_choice(Some("never"), true, true),
+            ColorChoice::Never
         );
     }
 
