@@ -28,7 +28,64 @@ impl Drop for TempContext {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+fn setup_scenario_reqs(fixture_workspace: &std::path::Path) -> io::Result<()> {
+    let docs_dir = fixture_workspace.join("docs");
+    fs::create_dir_all(&docs_dir)?;
+    fs::write(
+        docs_dir.join("widget-design.md"),
+        "- **FR-1**: Size\n- **FR-1**: Size duplicate\n\n| FR-1 | test | OK |\n",
+    )
+}
+
+fn setup_scenario_marks(fixture_workspace: &std::path::Path) -> io::Result<()> {
+    let src_dir = fixture_workspace.join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        src_dir.join("lib.rs"),
+        format!("#[{}(FR-999)]\nfn dummy() {{}}\n", "req"), // Undefined requirement
+    )?;
+    let docs_dir = fixture_workspace.join("docs");
+    fs::create_dir_all(&docs_dir)?;
+    fs::write(
+        docs_dir.join("widget-design.md"),
+        "- **FR-1**: Size\n\n| FR-1 | test | OK |\n",
+    )
+}
+
+fn setup_scenario_check(fixture_workspace: &std::path::Path) -> io::Result<()> {
+    let docs_dir = fixture_workspace.join("docs");
+    fs::create_dir_all(&docs_dir)?;
+    fs::write(
+        docs_dir.join("widget-design.md"),
+        "- **FR-1**: Size\n\n| VC-1 | FR-1 | `test` | OK |\n",
+    )?;
+
+    fs::create_dir_all(fixture_workspace.join("target/ci-artifacts"))?;
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_trace-reqs"))
+        .current_dir(fixture_workspace)
+        .args([
+            "--config",
+            ".cargo/trace/trace.toml",
+            "--out",
+            "target/ci-artifacts/reqs.jsonl",
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "trace-reqs failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::write(
+        fixture_workspace.join("target/ci-artifacts/marks.jsonl"),
+        "",
+    )?;
+    fs::write(
+        fixture_workspace.join(".cargo/gate.toml"),
+        "[test]\ncommand=\"cargo test\"\n",
+    )
+}
+
 fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
     let out_dir = std::env::temp_dir().join(format!(
         "control_rs_ci_trace_neg_{:?}_{}",
@@ -50,71 +107,16 @@ fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
     fs::create_dir_all(&trace_dir)?;
     fs::write(
         trace_dir.join("trace.toml"),
-        "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_suffix = \"-design\"\ndefinition = '^- \\*\\*FR-'\nretired = []\n[references]\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\n[markers]\nfiles = [\"src\"]\nsuffixes = [\".rs\"]\nmarker = \"#[req(\"\n",
+        format!(
+            "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_suffix = \"-design\"\ndefinition = '^- \\*\\*FR-'\nretired = []\n[references]\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\n[markers]\nfiles = [\"src\"]\nsuffixes = [\".rs\"]\nmarker = \"#[{}(\"\n",
+            "req"
+        ),
     )?;
 
     match scenario {
-        NegativeScenario::Reqs => {
-            let docs_dir = fixture_workspace.join("docs");
-            fs::create_dir_all(&docs_dir)?;
-            fs::write(
-                docs_dir.join("widget-design.md"),
-                "- **FR-1**: Size\n- **FR-1**: Size duplicate\n\n| FR-1 | test | OK |\n",
-            )?;
-        }
-        NegativeScenario::Marks => {
-            let src_dir = fixture_workspace.join("src");
-            fs::create_dir_all(&src_dir)?;
-            fs::write(
-                src_dir.join("lib.rs"),
-                "#[req(FR-999)]\nfn dummy() {}\n", // Undefined requirement
-            )?;
-            let docs_dir = fixture_workspace.join("docs");
-            fs::create_dir_all(&docs_dir)?;
-            fs::write(
-                docs_dir.join("widget-design.md"),
-                "- **FR-1**: Size\n\n| FR-1 | test | OK |\n",
-            )?;
-            // Write a dummy reqs.jsonl so trace-marks can run, actually trace-marks doesn't strictly need reqs.jsonl to run, it just extracts markers.
-            // Wait, trace-marks parses source. If we pass --out marks.jsonl it writes it. It might fail on parsing error, but let's test trace-check instead for dangling.
-        }
-        NegativeScenario::Check => {
-            // Unverified requirement.
-            let docs_dir = fixture_workspace.join("docs");
-            fs::create_dir_all(&docs_dir)?;
-            fs::write(
-                docs_dir.join("widget-design.md"),
-                "- **FR-1**: Size\n\n| VC-1 | FR-1 | `test` | OK |\n",
-            )?;
-
-            // Requirements json
-            fs::create_dir_all(fixture_workspace.join("target/ci-artifacts"))?;
-            // Generate reqs.jsonl using trace-reqs
-            let output =
-                std::process::Command::new(env!("CARGO_BIN_EXE_trace-reqs"))
-                    .current_dir(&fixture_workspace)
-                    .args([
-                        "--config",
-                        ".cargo/trace/trace.toml",
-                        "--out",
-                        "target/ci-artifacts/reqs.jsonl",
-                    ])
-                    .output()?;
-            assert!(
-                output.status.success(),
-                "trace-reqs failed: {:?}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-
-            fs::write(
-                fixture_workspace.join("target/ci-artifacts/marks.jsonl"),
-                "",
-            )?;
-            fs::write(
-                fixture_workspace.join(".cargo/gate.toml"),
-                "[test]\ncommand=\"cargo test\"\n",
-            )?;
-        }
+        NegativeScenario::Reqs => setup_scenario_reqs(&fixture_workspace)?,
+        NegativeScenario::Marks => setup_scenario_marks(&fixture_workspace)?,
+        NegativeScenario::Check => setup_scenario_check(&fixture_workspace)?,
     }
 
     let logs_dir = out_dir.join("logs");

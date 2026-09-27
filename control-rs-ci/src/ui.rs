@@ -37,9 +37,6 @@ pub const HELP_FLAG: anstyle::Style = AnsiColor::Cyan.on_default();
 pub const HELP_HEADER: anstyle::Style =
     AnsiColor::BrightGreen.on_default().bold();
 
-/// Legacy alias for `GROUP_PALETTE`.
-pub const LANE_PALETTE: [anstyle::AnsiColor; 5] = GROUP_PALETTE;
-
 /// Cargo status `STATUS_INFO`: cyan bold verb (for example, `Skipping`, `Listing`).
 pub const STATUS_INFO: anstyle::Style = AnsiColor::Cyan.on_default().bold();
 
@@ -55,12 +52,6 @@ pub fn group_style(index: usize) -> anstyle::Style {
         .copied()
         .unwrap_or(AnsiColor::Cyan)
         .on_default()
-}
-
-/// Legacy alias for `group_style`.
-#[must_use]
-pub fn lane_style(index: usize) -> anstyle::Style {
-    group_style(index)
 }
 
 /// Returns the distinct ANSI color styling for the built-in exclusive group.
@@ -88,15 +79,6 @@ pub fn format_group_tag(
         }
         _ => String::new(),
     }
-}
-
-/// Legacy alias for `format_group_tag`.
-#[must_use]
-pub fn format_lane_tag(
-    lane: Option<&str>,
-    style: Option<anstyle::Style>,
-) -> String {
-    format_group_tag(lane, style)
 }
 
 /// Apply cargo-compatible color choice to anstream's global default.
@@ -138,12 +120,6 @@ pub fn cargo_color_env() -> &'static str {
         ColorChoice::Never => "never",
         _ => "auto",
     }
-}
-
-/// Formats a cargo-style status line without color.
-#[must_use]
-pub fn format_status(status: &str, msg: impl fmt::Display) -> String {
-    format!("{status:>CARGO_STATUS_WIDTH$} {msg}")
 }
 
 /// Prints a cargo-style green status line to stderr (for example, `     Running gate`).
@@ -208,19 +184,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cargo_status_12_column_width() {
-        assert_eq!(format_status("Running", "fmt"), "     Running fmt");
-        assert_eq!(
-            format_status("Finished", "ci-pipeline"),
-            "    Finished ci-pipeline"
-        );
-        assert_eq!(
-            format_status("Passed", "test in 0.5s"),
-            "      Passed test in 0.5s"
-        );
-    }
-
-    #[test]
     fn test_cargo_color_choice() {
         assert_eq!(
             parse_cargo_color_choice(Some("always"), false, false),
@@ -269,29 +232,29 @@ mod tests {
     }
 
     #[test]
-    fn test_lane_tags_and_styles() {
-        assert_eq!(format_lane_tag(None, None), "");
-        assert_eq!(format_lane_tag(Some(""), None), "");
-        assert_eq!(format_lane_tag(Some("exclusive"), None), "[exclusive] ");
-        assert_eq!(format_lane_tag(Some("cargo"), None), "[cargo] ");
+    fn test_group_tags_and_styles() {
+        assert_eq!(format_group_tag(None, None), "");
+        assert_eq!(format_group_tag(Some(""), None), "");
+        assert_eq!(format_group_tag(Some("exclusive"), None), "[exclusive] ");
+        assert_eq!(format_group_tag(Some("cargo"), None), "[cargo] ");
 
         let excl_style = exclusive_style();
         let excl_tag = format_group_tag(Some("exclusive"), Some(excl_style));
         assert!(excl_tag.contains("[exclusive]"));
 
-        let style0 = lane_style(0);
-        let tag0 = format_lane_tag(Some("cargo"), Some(style0));
+        let style0 = group_style(0);
+        let tag0 = format_group_tag(Some("cargo"), Some(style0));
         assert!(tag0.contains("[cargo]"));
         assert!(tag0.ends_with(' '));
 
-        let style1 = lane_style(1);
-        let tag1 = format_lane_tag(Some("audit"), Some(style1));
+        let style1 = group_style(1);
+        let tag1 = format_group_tag(Some("audit"), Some(style1));
         assert!(tag1.contains("[audit]"));
         assert!(tag1.ends_with(' '));
         assert_ne!(tag0, tag1);
 
-        let style2 = lane_style(2);
-        let tag2 = format_lane_tag(Some("static"), Some(style2));
+        let style2 = group_style(2);
+        let tag2 = format_group_tag(Some("static"), Some(style2));
         assert!(tag2.contains("[static]"));
         assert!(tag2.ends_with(' '));
         assert_ne!(tag1, tag2);
