@@ -336,6 +336,7 @@ fn with_path(path: &Path, error: &io::Error) -> GateError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use control_rs_trace_macros::req;
 
     fn row(file: &str, line: usize) -> Row {
         Row {
@@ -397,6 +398,7 @@ mod tests {
         assert_eq!(read_rows(&path).unwrap(), rows);
     }
 
+    #[req("requirement-traceability#VC-14.1")]
     #[test]
     fn rows_of_another_schema_are_rejected() {
         let dir = std::env::temp_dir().join("control_rs_ci_trace_unit_schema");

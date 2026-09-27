@@ -7,6 +7,7 @@ mod cli {
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
 
+    use control_rs_ci::trace::SCHEMA;
     use control_rs_trace_macros::req;
     use regex::Regex;
     use serde_json::Value;
@@ -205,7 +206,7 @@ mod cli {
 
     #[req(
         "requirement-traceability#VC-6.1",
-        "requirement-traceability#VC-13.1"
+        "requirement-traceability#VC-14.1"
     )]
     #[test]
     fn rows_have_the_six_fields_and_reruns_are_identical() {
@@ -234,6 +235,46 @@ mod cli {
         assert!(lines.is_sorted());
     }
 
+    #[req("requirement-traceability#VC-14.1")]
+    #[test]
+    fn every_row_and_the_report_carry_the_schema_version() {
+        let marker = format!("{REQ_PREFIX}\"widget#FR-1\")]\nfn t() {{}}\n");
+        let dir = workdir(
+            "schema",
+            &[("docs/widget-design.md", CLEAN), ("src/a.rs", &marker)],
+        );
+        assert!(trace_reqs(&dir).status.success());
+        assert!(trace_marks(&dir).status.success());
+        trace_check(&dir);
+        let schema = Some(u64::from(SCHEMA));
+        let reqs = rows(&dir.join("out/reqs.jsonl"));
+        let marks = rows(&dir.join("out/marks.jsonl"));
+        assert!(!reqs.is_empty() && !marks.is_empty());
+        for row in reqs.iter().chain(&marks) {
+            assert_eq!(row.pointer("/schema").and_then(Value::as_u64), schema);
+        }
+        let report: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("out/trace-report.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(report.pointer("/schema").and_then(Value::as_u64), schema);
+    }
+
+    #[req("requirement-traceability#VC-14.1")]
+    #[test]
+    fn trace_check_rejects_rows_of_another_schema() {
+        let other = format!(
+            "{{\"schema\":{},\"id\":\"widget#FR-1\",\"kind\":\"definition\",\
+             \"file\":\"docs/widget-design.md\",\"line\":1,\"text\":\"x\"}}\n",
+            SCHEMA.saturating_add(1)
+        );
+        let dir = workdir(
+            "schema-other",
+            &[("out/reqs.jsonl", &other), ("out/marks.jsonl", "")],
+        );
+        assert_eq!(trace_check(&dir).status.code(), Some(2));
+    }
+
     #[req("requirement-traceability#VC-9.1")]
     #[test]
     fn usage_and_configuration_errors_exit_with_code_two() {
@@ -244,7 +285,7 @@ mod cli {
         assert_eq!(trace_reqs(&dir).status.code(), Some(2));
     }
 
-    #[req("requirement-traceability#VC-1.1")]
+    #[req("requirement-traceability#VC-10.1")]
     #[test]
     fn roots_select_suffixed_files_below_directories_and_named_files() {
         let dir = workdir(
@@ -278,7 +319,7 @@ mod cli {
         );
     }
 
-    #[req("requirement-traceability#VC-1.1")]
+    #[req("requirement-traceability#VC-10.1")]
     #[test]
     fn a_missing_root_is_a_configuration_error() {
         let dir = workdir("missing-root", &[]);
@@ -286,7 +327,7 @@ mod cli {
     }
 
     #[cfg(unix)]
-    #[req("requirement-traceability#VC-1.1")]
+    #[req("requirement-traceability#VC-10.1")]
     #[test]
     fn symbolic_links_are_never_followed() {
         let dir = workdir(
@@ -310,7 +351,10 @@ mod cli {
         assert_eq!(files, ["docs/widget-design.md".to_string()].into());
     }
 
-    #[req("requirement-traceability#VC-6.1")]
+    #[req(
+        "requirement-traceability#VC-6.1",
+        "requirement-traceability#VC-10.1"
+    )]
     #[test]
     fn trace_marks_scans_source_in_order_and_reruns_identically() {
         let f1 =

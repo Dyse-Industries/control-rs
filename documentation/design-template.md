@@ -72,19 +72,22 @@ The plan for showing this component is correct and meets its requirements.
 
 ### Verification
 
-How each requirement is verified and what "passed" means. Each requirement is
-partitioned into verification conditions and decision criteria (`VC-x.y`). The `Gates`
-cell names the gate whose result is the evidence; an empty cell means the condition is
-checked by review and reads `Unchecked`. `Criterion` is one sentence stating the
-pass condition, including any bound. Specific tests assert these conditions and link
-to them via markers (`#[req("doc#VC-x.y")]` in Rust or comments `# req: doc#VC-x.y`).
+How each requirement is verified. Each requirement is a decision: decompose it
+into verification conditions (`VC-x.y`), one row each, and state in the first
+condition's `Criterion` how the conditions combine into the requirement.
+`Method` is one of `test`, `analysis`, `inspection` or `review`. A `test`
+condition needs at least one test that names it with a marker
+(`#[req("doc#VC-x.y")]` in Rust, `// req: doc#VC-x.y` in other languages);
+other methods are listed for review sign-off. `Criterion` is one sentence
+stating the pass condition, including any bound, and names no other condition
+ID or method.
 
-| Condition | Requirement | Gates        | Criterion |
-|:----------|:------------|:-------------|:----------|
-| VC-1.1    | FR-1        | `test`       | [...]     |
-| VC-2.1    | FR-2        | `bench`      | [...]     |
-| VC-2.2    | FR-2        | `example`    | [...]     |
-| VC-3.1    | C-1         |              | [...]     |
+| Condition | Requirement | Method     | Criterion                                  |
+|:----------|:------------|:-----------|:-------------------------------------------|
+| VC-1.1    | FR-1        | `test`     | [...]; FR-1 holds iff both conditions hold |
+| VC-1.2    | FR-1        | `test`     | [...]                                      |
+| VC-2.1    | NFR-1       | `analysis` | [...]                                      |
+| VC-3.1    | C-1         | `review`   | [...]                                      |
 
 ### Limits
 

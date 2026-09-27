@@ -44,6 +44,7 @@ Cachegrind
 Canonicalize
 Carnelos
 Charpoly
+Chilenski
 Cholesky
 Claessen
 Clippy
@@ -132,8 +133,10 @@ Hankel
 Hardcoded
 Hardcoding
 Hatzl
+Hayhurst
 Heatmap
 Heev
+Heimdahl
 Heisenbugs
 Hemm
 Hemv
@@ -251,6 +254,7 @@ Puzikova
 QEMU
 Quantizes
 Qx
+Rajan
 Rapita
 Ratatui
 Redox
@@ -261,6 +265,7 @@ Replot
 Representability
 Retarget
 Riccati
+Rierson
 Ronacher
 Runciman
 Runge
@@ -282,6 +287,7 @@ Sorensen
 Soro
 Spiteri
 Spr
+Staats
 Statefully
 Strideless
 Subdiagonal
@@ -320,12 +326,14 @@ Validators
 Vandebril
 Vandermonde
 Varints
+Veerhusen
 Vendoring
 Vin
 Virtualenv
 Volterra
 Watchpoint
 Weiser
+Whalen
 Wray
 Wycheproof
 YAML
