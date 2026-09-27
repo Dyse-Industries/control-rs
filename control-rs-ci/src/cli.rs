@@ -139,6 +139,11 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
             Short('c') | Long("config") => {
                 options.config_path = Some(parse_path_value(&mut parser));
             }
+            Long("color") => {
+                let color_val = parse_string_value(&mut parser);
+                // unsafe because `set_var` is unsafe in 2024 edition, but safe here since we are single-threaded at startup
+                unsafe { std::env::set_var("CARGO_TERM_COLOR", color_val) };
+            }
             Value(val) => handle_positional_value(val, &mut options),
             _ => {
                 ui::error(format!("Unknown argument: {arg:?}"));
