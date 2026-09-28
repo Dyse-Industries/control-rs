@@ -132,7 +132,7 @@ pub fn code_spans(text: &str) -> Vec<CodeSpan<'_>> {
     let mut spans = Vec::new();
     let mut pos = 0;
     while let Some((open, len)) = backtick_run(text, pos) {
-        let body = open.saturating_add(len);
+        let body = open.saturating_add(len.max(1));
         let mut search = body;
         let mut close = None;
         while let Some((at, run)) = backtick_run(text, search) {
@@ -140,19 +140,19 @@ pub fn code_spans(text: &str) -> Vec<CodeSpan<'_>> {
                 close = Some(at);
                 break;
             }
-            search = at.saturating_add(run);
+            search = at.saturating_add(run.max(1));
         }
         let Some(at) = close else {
-            pos = body;
+            pos = body.max(open.saturating_add(1));
             continue;
         };
-        let end = at.saturating_add(len);
+        let end = at.saturating_add(len.max(1));
         spans.push(CodeSpan {
             start: open,
             end,
             content: text.get(body..at).unwrap_or_default(),
         });
-        pos = end;
+        pos = end.max(open.saturating_add(1));
     }
     spans
 }
@@ -326,6 +326,9 @@ fn backtick_run(text: &str, from: usize) -> Option<Run> {
         .bytes()
         .take_while(|&b| b == b'`')
         .count();
+    if len == 0 {
+        return None;
+    }
     Some((start, len))
 }
 
@@ -366,6 +369,22 @@ mod tests {
         let contents: Vec<_> =
             code_spans(text).iter().map(|s| s.content).collect();
         assert_eq!(contents, ["b", "c ` d"]);
+
+        assert!(code_spans("").is_empty());
+        assert!(code_spans("plain text").is_empty());
+        assert!(code_spans("`").is_empty());
+        assert!(code_spans("``").is_empty());
+        assert!(code_spans("```").is_empty());
+
+        let mixed = "`open ``other`";
+        let mixed_contents: Vec<_> =
+            code_spans(mixed).iter().map(|s| s.content).collect();
+        assert_eq!(mixed_contents, ["open ``other"]);
+
+        let triple = "```outer `nested` outer```";
+        let triple_contents: Vec<_> =
+            code_spans(triple).iter().map(|s| s.content).collect();
+        assert_eq!(triple_contents, ["outer `nested` outer"]);
     }
 
     #[test]

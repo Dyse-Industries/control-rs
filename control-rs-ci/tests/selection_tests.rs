@@ -122,6 +122,21 @@ fn selected_disabled_gate_is_recorded_skipped_without_running() {
 }
 
 #[test]
+fn empty_selection_fails_without_running_or_reporting() {
+    let (root, cfg) = workspace("empty", CONFIG);
+    let only: Vec<String> = Vec::new();
+    let options = PipelineOptions {
+        only_gates: Some(&only),
+        ..PipelineOptions::default()
+    };
+    let passed = run_pipeline(&root, &cfg, &options).unwrap();
+    assert!(!passed, "a run that selects no gates must not pass");
+    assert!(outcome(&root, "pass").is_none());
+    assert!(!root.join("artifacts/ci-report.md").exists());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn passthrough_appends_after_configured_args() {
     let (root, cfg) = workspace("passthrough", PASSTHROUGH_CONFIG);
     let only = vec!["touch".to_string()];

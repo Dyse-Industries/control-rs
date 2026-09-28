@@ -139,11 +139,6 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
             Short('c') | Long("config") => {
                 options.config_path = Some(parse_path_value(&mut parser));
             }
-            Long("color") => {
-                let color_val = parse_string_value(&mut parser);
-                // unsafe because `set_var` is unsafe in 2024 edition, but safe here since we are single-threaded at startup
-                unsafe { std::env::set_var("CARGO_TERM_COLOR", color_val) };
-            }
             Value(val) => handle_positional_value(val, &mut options),
             _ => {
                 ui::error(format!("Unknown argument: {arg:?}"));
@@ -275,29 +270,13 @@ pub fn run_cli(binary_name: &str) {
         exit(1);
     });
 
-    // Expand groups specified via --group / -g into options.only_gates
-    for group_name in &options.groups {
-        let Some(members) = group_members(&config, group_name) else {
-            ui::error(format!("Unknown execution group: '{group_name}'"));
-            exit(1);
-        };
-        push_unique(&mut options.only_gates, members);
+    // A selection given on the command line stays a selection even when every
+    // name in it is unknown, so it selects nothing rather than the defaults.
+    let selection_requested =
+        !options.groups.is_empty() || !options.only_gates.is_empty();
+    for warning in resolve_selection(&mut options, &config) {
+        ui::warn_diag(warning);
     }
-
-    // Also expand any positional arguments that match group names
-    let mut expanded_gates = Vec::new();
-    for gate_or_group in &options.only_gates {
-        match group_members(&config, gate_or_group) {
-            Some(members) => push_unique(&mut expanded_gates, members),
-            None => {
-                push_unique(
-                    &mut expanded_gates,
-                    std::slice::from_ref(gate_or_group),
-                );
-            }
-        }
-    }
-    options.only_gates = expanded_gates;
 
     if let Err(e) = check_passthrough(binary_name, &options, &config) {
         ui::error(e);
@@ -305,7 +284,7 @@ pub fn run_cli(binary_name: &str) {
     }
 
     let pipeline = PipelineOptions {
-        only_gates: (!options.run_all && !options.only_gates.is_empty())
+        only_gates: (!options.run_all && selection_requested)
             .then_some(options.only_gates.as_slice()),
         skip_gates: (!options.skip_gates.is_empty())
             .then_some(options.skip_gates.as_slice()),
@@ -323,6 +302,43 @@ pub fn run_cli(binary_name: &str) {
             exit(1);
         }
     }
+}
+
+/// Expands the group names in `options.groups` and `options.only_gates` into
+/// their member gates and drops names that match no configured gate or group.
+///
+/// Returns one warning per unknown name, including unknown `--skip` and
+/// `--up-to` gates, which are kept and match nothing.
+pub fn resolve_selection(
+    options: &mut CliOptions,
+    config: &GateConfig,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let mut expanded = Vec::new();
+    for group_name in &options.groups {
+        match group_members(config, group_name) {
+            Some(members) => push_unique(&mut expanded, members),
+            None => warnings.push(format!("unknown group '{group_name}'")),
+        }
+    }
+    for name in &options.only_gates {
+        if let Some(members) = group_members(config, name) {
+            push_unique(&mut expanded, members);
+        } else if config.gate_def(name).is_some() {
+            push_unique(&mut expanded, std::slice::from_ref(name));
+        } else {
+            warnings.push(format!("unknown gate or group '{name}'"));
+        }
+    }
+    options.only_gates = expanded;
+
+    let filters = options.skip_gates.iter().chain(&options.up_to_gate);
+    for name in filters {
+        if config.gate_def(name).is_none() {
+            warnings.push(format!("unknown gate '{name}'"));
+        }
+    }
+    warnings
 }
 
 /// Checks the FR-14 passthrough rules once groups are expanded: `--` is

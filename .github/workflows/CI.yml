@@ -385,9 +385,6 @@ jobs:
           path: target/ci-artifacts/
           merge-multiple: true
 
-      - name: Trace Requirements
-        run: cargo gate --verbose trace
-
       - name: Generate CI Report
         if: always()
         run: cargo run --package control-rs-ci --bin report --

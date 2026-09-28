@@ -28,11 +28,20 @@ type Definitions<'a> = BTreeMap<&'a str, Vec<&'a Row>>;
 /// A fence: its character and length.
 type Fence = (char, usize);
 
+/// An open fence: its fence specification and 1-based start line.
+type OpenFence = (Fence, usize);
+
 /// A line outside fenced code blocks: its 1-based number and text.
 type Line<'a> = (usize, &'a str);
 
+/// Visible lines and an optional unclosed fence start line.
+type VisibleLines<'a> = (Vec<Line<'a>>, Option<usize>);
+
+/// Scanned rows and scan defects of a Markdown document.
+pub type MarkdownScan = (Vec<Row>, Vec<Defect>);
+
 /// One ID occurrence in a marker span.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MarkedId {
     /// A qualified ID, `<doc>#<id>`.
     Qualified(String),
@@ -49,7 +58,6 @@ pub struct TraceConfig {
     /// Pattern for one requirement ID.
     pub id: String,
     /// Pattern for one verification condition ID (for example, `VC-1.1`).
-    #[serde(default = "default_condition_pattern")]
     pub condition: String,
     /// Pattern for the document name in a qualified ID `<doc>#<id>`.
     pub doc: String,
@@ -223,25 +231,11 @@ impl Rules {
         self.methods.iter().any(|m| m == name)
     }
 
-    /// The ID occurrences in a marker span, left to right. A requirement ID
-    /// inside a condition ID is not an occurrence.
+    /// The ID occurrences in a marker span, left to right.
     #[must_use]
     pub fn marked_ids(&self, text: &str) -> Vec<MarkedId> {
-        let cond_matches: Vec<_> =
-            self.condition_occurrence.captures_iter(text).collect();
-        let cond_spans: Vec<_> = cond_matches
-            .iter()
-            .filter_map(|c| c.get(0).map(|m| m.range()))
-            .collect();
-
-        let req_matches = self.occurrence.captures_iter(text).filter(|caps| {
-            caps.get(0).is_none_or(|m| {
-                !cond_spans
-                    .iter()
-                    .any(|cs| m.start() < cs.end && m.end() > cs.start)
-            })
-        });
-
+        let cond_matches = self.condition_occurrence.captures_iter(text);
+        let req_matches = self.occurrence.captures_iter(text);
         let mut matches: Vec<_> = req_matches.chain(cond_matches).collect();
         matches.sort_by_key(|caps| caps.get(0).map_or(0, |m| m.start()));
         matches
@@ -276,34 +270,29 @@ pub fn doc_name(file: &str, suffix: &str) -> String {
         .map_or_else(|| stem.clone(), str::to_owned)
 }
 
+/// The first cell of a Markdown table line.
+fn first_cell(line: &str) -> &str {
+    let trimmed = line.trim_start();
+    let rest = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    rest.split('|').next().unwrap_or(rest).trim()
+}
+
 fn scan_condition_line(
     line: &str,
+    cell: &str,
     at: At<'_>,
     ctx: &ScanContext<'_>,
 ) -> Option<Row> {
-    let cond_caps = ctx.rules.condition_occurrence.captures(line)?;
+    let cond_caps = ctx.rules.condition_occurrence.captures(cell)?;
     let c_id = cond_caps.name("trace_id")?.as_str();
     let c_doc = cond_caps.name("trace_doc").map_or(ctx.doc, |m| m.as_str());
     let cond_qualified = format!("{c_doc}#{c_id}");
-    let cond_spans: Vec<_> = ctx
-        .rules
-        .condition_occurrence
-        .find_iter(line)
-        .map(|m| m.range())
-        .collect();
 
     let mut parents: Vec<String> = ctx
         .rules
         .occurrence
         .captures_iter(line)
         .filter_map(|caps| {
-            let m = caps.get(0)?;
-            if cond_spans
-                .iter()
-                .any(|c| m.start() < c.end && m.end() > c.start)
-            {
-                return None;
-            }
             let id = caps.name("trace_id")?.as_str();
             let owner = caps.name("trace_doc").map_or(ctx.doc, |d| d.as_str());
             Some(format!("{owner}#{id}"))
@@ -334,29 +323,55 @@ fn scan_condition_line(
     Some(condition)
 }
 
-/// The definition and condition rows of one Markdown document.
+/// The definition and condition rows of one Markdown document, and any scan defects.
 ///
 /// `file` is the path recorded in each row; its stem, less the configured
 /// suffix, names the document.
 #[must_use]
-pub fn scan_markdown(file: &str, source: &str, rules: &Rules) -> Vec<Row> {
+pub fn scan_markdown(file: &str, source: &str, rules: &Rules) -> MarkdownScan {
     let doc = doc_name(file, &rules.doc_suffix);
     let ctx = ScanContext { doc: &doc, rules };
-    let lines = visible_lines(source);
+    let (lines, unclosed) = visible_lines(source);
     let mut rows = Vec::new();
+    let mut defects = Vec::new();
+
+    if let Some(open_line) = unclosed {
+        defects.push(Defect {
+            file: file.to_string(),
+            line: open_line,
+            message: "fenced code block is unclosed".to_string(),
+        });
+    }
+
     for (idx, &(number, line)) in lines.iter().enumerate() {
         let at = (file, number);
         if rules.definition.is_match(line)
             && let Some(id) = rules.ids(line, &doc).next()
         {
             rows.push(row(id, DEFINITION, at, &definition_text(&lines, idx)));
-        } else if rules.verification.is_match(line)
-            && let Some(row) = scan_condition_line(line, at, &ctx)
-        {
-            rows.push(row);
+        } else if rules.verification.is_match(line) {
+            let cell = first_cell(line);
+            match scan_condition_line(line, cell, at, &ctx) {
+                Some(row) => rows.push(row),
+                None => defects.push(Defect {
+                    file: file.to_string(),
+                    line: number,
+                    message: "verification row names no condition ID"
+                        .to_string(),
+                }),
+            }
         }
     }
-    rows
+
+    if !rows.iter().any(|r| r.kind == DEFINITION) {
+        defects.push(Defect {
+            file: file.to_string(),
+            line: 1,
+            message: format!("document {doc} defines no requirements"),
+        });
+    }
+
+    (rows, defects)
 }
 
 fn check_duplicate_definitions(
@@ -538,24 +553,27 @@ fn phrase_defects(definition: &Row, rules: &Rules) -> Vec<Defect> {
     defects
 }
 
-/// The lines outside fenced code blocks, with their 1-based numbers.
-fn visible_lines(source: &str) -> Vec<Line<'_>> {
-    let mut fence = None;
+/// The lines outside fenced code blocks, with their 1-based numbers, and
+/// whether an unclosed fence was reached at EOF.
+fn visible_lines(source: &str) -> VisibleLines<'_> {
+    let mut fence: Option<OpenFence> = None;
     let mut lines = Vec::new();
     for (idx, line) in source.lines().enumerate() {
+        let line_num = idx.saturating_add(1);
         match fence {
-            Some(open) => {
+            Some((open, _)) => {
                 if closes(line, open) {
                     fence = None;
                 }
             }
             None => match opens(line) {
-                Some(open) => fence = Some(open),
-                None => lines.push((idx.saturating_add(1), line)),
+                Some(open) => fence = Some((open, line_num)),
+                None => lines.push((line_num, line)),
             },
         }
     }
-    lines
+    let unclosed = fence.map(|(_, line_num)| line_num);
+    (lines, unclosed)
 }
 
 /// The fence character and length when `line` opens a fenced code block.
@@ -589,10 +607,6 @@ fn definition_text(lines: &[Line<'_>], idx: usize) -> String {
         parts.push(line);
     }
     parts.join("\n")
-}
-
-fn default_condition_pattern() -> String {
-    r"VC-[0-9]+(?:\.[0-9]+[a-z]?)?".to_string()
 }
 
 /// A row of the current schema at `at`, a file and line, with its text
@@ -653,16 +667,19 @@ marked_methods = ["test"]
 
     fn scan(source: &str, rules: &Rules) -> Vec<Found> {
         scan_markdown(FILE, source, rules)
+            .0
             .into_iter()
             .map(|r| (r.kind, r.id, r.line))
             .collect()
     }
 
     fn messages(source: &str, rules: &Rules) -> Vec<String> {
-        check(&scan_markdown(FILE, source, rules), rules)
-            .iter()
-            .map(|d| d.message.clone())
-            .collect()
+        let (rows, mut defects) = scan_markdown(FILE, source, rules);
+        defects.extend(check(&rows, rules));
+        defects.sort_by(|a, b| {
+            (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))
+        });
+        defects.iter().map(|d| d.message.clone()).collect()
     }
 
     fn expect(kind: &str, id: &str, line: usize) -> Found {
@@ -712,7 +729,7 @@ marked_methods = ["test"]
 
   Not this paragraph.
 ";
-        let rows = scan_markdown(FILE, source, &rules());
+        let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(rows.len(), 1);
         let definition = rows.first().unwrap();
         assert_eq!(definition.id, "widget#FR-1");
@@ -727,7 +744,7 @@ marked_methods = ["test"]
     fn reference_lines_record_every_local_and_qualified_id() {
         let source =
             "| VC-1.1 | FR-1, storage#FR-3 | `test` | Criterion FR-2 |\n";
-        let rows = scan_markdown(FILE, source, &rules());
+        let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(rows.len(), 1);
         let cond = rows.first().unwrap();
         assert_eq!(cond.id, "widget#VC-1.1");
@@ -740,7 +757,7 @@ marked_methods = ["test"]
 
     #[test]
     fn rows_carry_normalized_text() {
-        let rows = scan_markdown(FILE, CLEAN, &rules());
+        let (rows, _) = scan_markdown(FILE, CLEAN, &rules());
         let plan = rows.get(1).unwrap();
         assert_eq!(plan.text, "| VC-1.1 | FR-1 | `test` | Exact size match |");
     }
@@ -761,7 +778,8 @@ marked_methods = ["test"]
     #[test]
     fn duplicate_definition_is_reported_once_at_the_second() {
         let source = format!("{CLEAN}\n- **FR-1 — Again**: It shall repeat.\n");
-        let defects = check(&scan_markdown(FILE, &source, &rules()), &rules());
+        let (rows, _) = scan_markdown(FILE, &source, &rules());
+        let defects = check(&rows, &rules());
         assert_eq!(defects.len(), 1);
         let defect = defects.first().unwrap();
         assert_eq!(defect.line, 9);
@@ -856,7 +874,7 @@ marked_methods = ["test"]
     #[test]
     fn scan_condition_finds_parents() {
         let source = "| VC-1.1 | FR-1, FR-2 | `test` |";
-        let found = scan_markdown(FILE, source, &rules());
+        let (found, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(found.len(), 1);
 
         let first = found.first().unwrap();
@@ -871,8 +889,8 @@ marked_methods = ["test"]
     #[test]
     fn condition_without_parents_is_an_orphan() {
         let source = "| VC-1.1 | | `test` |";
-        let found = scan_markdown(FILE, source, &rules());
-        let defects = check(&found, &rules());
+        let (found, mut defects) = scan_markdown(FILE, source, &rules());
+        defects.extend(check(&found, &rules()));
         assert!(defects.iter().any(|d| d.message.contains("has no parent")));
     }
 
@@ -880,7 +898,7 @@ marked_methods = ["test"]
     #[test]
     fn ids_inside_longer_tokens_or_condition_ids_are_not_parents() {
         let source = "| VC-1.1 | FR-1 | `test` | Per IEC-61508 and XFR-2 |\n";
-        let rows = scan_markdown(FILE, source, &rules());
+        let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(
             rows.first().map(|r| r.parents.as_slice()),
             Some(["widget#FR-1".to_string()].as_slice())
@@ -934,10 +952,101 @@ marked_methods = ["test"]
     #[test]
     fn a_parent_named_twice_is_recorded_once() {
         let source = "| VC-1.1 | FR-1 | `test` | FR-1 holds iff both hold |\n";
-        let rows = scan_markdown(FILE, source, &rules());
+        let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(
             rows.first().map(|r| r.parents.as_slice()),
             Some(["widget#FR-1".to_string()].as_slice())
         );
+    }
+
+    #[test]
+    fn condition_pattern_is_required() {
+        let missing =
+            KEYS.replace("condition = 'VC-[0-9]+(?:\\.[0-9]+[a-z]?)?'\n", "");
+        let toml_str = format!("{missing}retired = []");
+        assert!(toml::from_str::<TraceConfig>(&toml_str).is_err());
+    }
+
+    #[test]
+    fn unclosed_fence_is_reported_as_defect() {
+        let source =
+            "- **FR-1 — Size**: shall report.\n\n```text\nunclosed fence\n";
+        let (rows, defects) = scan_markdown(FILE, source, &rules());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(defects.len(), 1);
+        assert_eq!(defects.first().map(|d| d.line), Some(3));
+        assert_eq!(
+            defects.first().map(|d| d.message.as_str()),
+            Some("fenced code block is unclosed")
+        );
+    }
+
+    #[test]
+    fn document_with_no_definitions_is_a_defect() {
+        let source = "| VC-1.1 | FR-1 | `test` | Orphan |\n";
+        let (rows, defects) = scan_markdown(FILE, source, &rules());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(defects.len(), 1);
+        assert_eq!(defects.first().map(|d| d.line), Some(1));
+        assert_eq!(
+            defects.first().map(|d| d.message.as_str()),
+            Some("document widget defines no requirements")
+        );
+    }
+
+    #[test]
+    fn verification_row_first_cell_validation() {
+        let bad = "- **FR-1 — Size**: shall report.\n\n| VC-X | FR-1 | `test` | see VC-9.1 |\n";
+        let defects = messages(bad, &rules());
+        assert!(
+            defects
+                .iter()
+                .any(|d| d == "verification row names no condition ID")
+        );
+
+        let good = "- **FR-1 — Size**: shall report.\n\n| VC-1.1 | FR-1 | `test` | Valid |\n";
+        let (rows, defects) = scan_markdown(FILE, good, &rules());
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.get(1).map(|r| r.id.as_str()), Some("widget#VC-1.1"));
+        assert!(defects.is_empty());
+    }
+
+    #[test]
+    fn fence_opens_and_closes_edge_cases() {
+        assert_eq!(opens("```"), Some(('`', 3)));
+        assert_eq!(opens("```markdown"), Some(('`', 3)));
+        assert_eq!(opens("~~~"), Some(('~', 3)));
+        assert_eq!(opens("~~~~"), Some(('~', 4)));
+        assert_eq!(opens("``"), None);
+        assert_eq!(opens("```foo`bar"), None);
+        assert_eq!(opens("~~~foo`bar"), Some(('~', 3)));
+        assert_eq!(opens("   ```"), Some(('`', 3)));
+
+        assert!(closes("```", ('`', 3)));
+        assert!(closes("````", ('`', 3)));
+        assert!(!closes("``", ('`', 3)));
+        assert!(!closes("~~~", ('`', 3)));
+        assert!(!closes("``` extra", ('`', 3)));
+        assert!(closes("   ```   ", ('`', 3)));
+    }
+
+    #[test]
+    fn definition_text_indentation_boundaries() {
+        let lines: Vec<Line<'_>> = vec![
+            (1, "- **FR-1**: first line"),
+            (2, "  continuation with spaces"),
+            (3, "\tcontinuation with tab"),
+            (4, ""),
+            (5, "  after blank line"),
+        ];
+        let text = definition_text(&lines, 0);
+        assert_eq!(
+            text,
+            "- **FR-1**: first line\n  continuation with spaces\n\tcontinuation with tab"
+        );
+
+        let single: Vec<Line<'_>> =
+            vec![(1, "- **FR-2**: solo line"), (2, "next paragraph")];
+        assert_eq!(definition_text(&single, 0), "- **FR-2**: solo line");
     }
 }

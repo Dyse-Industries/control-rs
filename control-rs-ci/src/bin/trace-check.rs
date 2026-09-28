@@ -34,6 +34,9 @@ fn main() -> ExitCode {
 
 /// Derives the report from the recorded artifacts and writes it.
 fn run([config, reqs, marks, out]: &FlagValues<4>) -> GateResult<Derived> {
+    if out.exists() {
+        let _ = std::fs::remove_file(out);
+    }
     let reqs = read_rows(reqs)?;
     let marks = read_rows(marks)?;
     let trace_cfg = control_rs_ci::trace::reqs::TraceConfig::load(config)?;

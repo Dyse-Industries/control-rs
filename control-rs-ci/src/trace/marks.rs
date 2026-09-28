@@ -13,6 +13,9 @@ use super::select::select;
 use super::{Defect, Defects, MARKER, Rows, read_text, sort_rows};
 use crate::error::GateResult;
 
+const ATTR_OPEN: &str = concat!("#", "[");
+const RUST_REQ: &str = concat!("#", "[", "req(");
+
 /// Maximum number of lines in one marker span.
 const SPAN_LINES: usize = 16;
 
@@ -21,6 +24,9 @@ pub type Scan = (Rows, Defects);
 
 /// A marker span: its text, the index of its last line and whether it closed.
 type Span = (String, usize, bool);
+
+/// Matched marker: slice after the delimiter and start position.
+type MarkerMatch<'a> = (&'a str, usize);
 
 /// Open minus close parentheses in `text`.
 fn paren_balance(text: &str) -> isize {
@@ -31,6 +37,37 @@ fn paren_balance(text: &str) -> isize {
     })
 }
 
+/// Finds the start of the marker and the slice following its opening delimiter.
+fn find_marker<'a>(line: &'a str, marker: &str) -> Option<MarkerMatch<'a>> {
+    if marker == RUST_REQ {
+        let mut search_from = 0;
+        while let Some(open_bracket) = line[search_from..].find(ATTR_OPEN) {
+            let start = search_from.saturating_add(open_bracket);
+            let after_bracket = &line[start.saturating_add(2)..];
+            let trimmed = after_bracket.trim_start();
+            let rest = trimmed.rfind("::").map_or(trimmed, |path_end| {
+                &trimmed[path_end.saturating_add(2)..]
+            });
+            if let Some(req_rest) = rest.strip_prefix("req") {
+                let req_trimmed = req_rest.trim_start();
+                if let Some(paren_rest) = req_trimmed.strip_prefix('(') {
+                    let match_end = line.len().saturating_sub(paren_rest.len());
+                    return Some((&line[match_end..], start));
+                }
+            }
+            search_from = start.saturating_add(2);
+        }
+        None
+    } else {
+        line.find(marker).map(|pos| {
+            let after = line
+                .get(pos.saturating_add(marker.len())..)
+                .unwrap_or_default();
+            (after, pos)
+        })
+    }
+}
+
 /// The marker span that starts at `lines[idx]`: its text, the index of its
 /// last line and whether it closed within [`SPAN_LINES`].
 ///
@@ -39,13 +76,10 @@ fn paren_balance(text: &str) -> isize {
 fn span(lines: &[&str], idx: usize, marker: &str) -> Span {
     let first = lines.get(idx).copied().unwrap_or_default();
     let mut text = first.to_string();
-    let after = first.find(marker).map_or("", |pos| {
-        first
-            .get(pos.saturating_add(marker.len())..)
-            .unwrap_or_default()
-    });
+    let (after, _) = find_marker(first, marker).unwrap_or_default();
+    let has_paren = marker.contains('(') || marker == RUST_REQ;
     let mut balance =
-        paren_balance(after).saturating_add(isize::from(marker.contains('(')));
+        paren_balance(after).saturating_add(isize::from(has_paren));
     let mut last = idx;
     while balance > 0 {
         let next = last.saturating_add(1);
@@ -79,7 +113,7 @@ pub fn scan_source(
     let lines: Vec<&str> = source.lines().collect();
     let mut idx = 0;
     while let Some(&line) = lines.get(idx) {
-        if !line.contains(marker) {
+        if find_marker(line, marker).is_none() {
             idx = idx.saturating_add(1);
             continue;
         }
@@ -95,10 +129,12 @@ pub fn scan_source(
                 "marker span is unclosed at {SPAN_LINES} lines"
             )));
         }
-        let ids = rules.marked_ids(&text);
+        let mut ids = rules.marked_ids(&text);
         if ids.is_empty() {
             defects.push(defect("marker names no requirement ID".to_string()));
         }
+        let mut seen = std::collections::BTreeSet::new();
+        ids.retain(|id| seen.insert(id.clone()));
         for id in ids {
             match id {
                 MarkedId::Qualified(id) => {
@@ -261,5 +297,55 @@ retired = []
             messages,
             ["src/a.rs:1: marker span is unclosed at 16 lines"]
         );
+    }
+
+    #[test]
+    fn duplicate_id_in_same_span_is_deduplicated() {
+        let source = format!(
+            "{PFX}\"widget#VC-1.1\", \"widget#VC-1.1\")]\nfn test_a() {{}}\n"
+        );
+        let (rows, defects) = scan_source("src/a.rs", &source, PFX, &rules());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.first().map(|r| r.id.as_str()), Some("widget#VC-1.1"));
+        assert!(defects.is_empty());
+    }
+
+    #[test]
+    fn qualified_req_macro_and_spaces_are_recognized() {
+        let hash = "#";
+        let cases = [
+            format!(
+                "{hash}[control_rs_trace_macros::req(\"widget#VC-1.1\")]\nfn t1() {{}}\n"
+            ),
+            format!("{hash}[req (\"widget#VC-1.1\")]\nfn t2() {{}}\n"),
+            format!("{hash}[crate::req(\"widget#VC-1.1\")]\nfn t3() {{}}\n"),
+        ];
+        for source in cases {
+            let (rows, defects) =
+                scan_source("src/a.rs", &source, PFX, &rules());
+            assert_eq!(rows.len(), 1, "failed for: {source}");
+            assert_eq!(
+                rows.first().map(|r| r.id.as_str()),
+                Some("widget#VC-1.1")
+            );
+            assert!(defects.is_empty());
+        }
+    }
+
+    #[test]
+    fn paren_balance_handles_nested_and_unbalanced_parentheses() {
+        assert_eq!(paren_balance(""), 0);
+        assert_eq!(paren_balance("abc"), 0);
+        assert_eq!(paren_balance("(a (b) c)"), 0);
+        assert_eq!(paren_balance("((a)"), 1);
+        assert_eq!(paren_balance("(((a)"), 2);
+        assert_eq!(paren_balance(")"), -1);
+        assert_eq!(paren_balance("))"), -2);
+
+        let nested = format!("{PFX}(\"widget#VC-1.1\"))]\nfn t() {{}}\n");
+        let (rows, defects) = scan_source("src/a.rs", &nested, PFX, &rules());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.first().map(|r| r.id.as_str()), Some("widget#VC-1.1"));
+        assert!(defects.is_empty());
     }
 }

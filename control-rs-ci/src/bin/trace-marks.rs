@@ -35,6 +35,9 @@ fn main() -> ExitCode {
 /// Scans the selected source files, writes their rows to `out` and returns
 /// the defects.
 fn run(config_path: &Path, out: &Path) -> GateResult<Defects> {
+    if out.exists() {
+        let _ = std::fs::remove_file(out);
+    }
     let config = TraceConfig::load(config_path)?;
     let rules = config.rules(config_path)?;
     let (rows, defects) = match &config.markers {
