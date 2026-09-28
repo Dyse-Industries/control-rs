@@ -31,7 +31,7 @@ pub const DEFINITION: &str = "definition";
 pub const MARKER: &str = "marker";
 
 /// Row and report format version, incremented on every incompatible change.
-pub const SCHEMA: u32 = 2;
+pub const SCHEMA: u32 = 3;
 
 /// Exit code of a usage, configuration or I/O error.
 pub const USAGE_ERROR: u8 = 2;
@@ -155,19 +155,6 @@ pub fn code_spans(text: &str) -> Vec<CodeSpan<'_>> {
         pos = end.max(open.saturating_add(1));
     }
     spans
-}
-
-/// `text` with each code span deleted, backticks included.
-#[must_use]
-pub fn strip_code_spans(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut pos = 0;
-    for span in code_spans(text) {
-        out.push_str(text.get(pos..span.start).unwrap_or_default());
-        pos = span.end;
-    }
-    out.push_str(text.get(pos..).unwrap_or_default());
-    out
 }
 
 /// Sorts rows by `file`, then `line`, keeping the order of rows that tie.
@@ -399,15 +386,6 @@ mod tests {
         let triple_contents: Vec<_> =
             code_spans(triple).iter().map(|s| s.content).collect();
         assert_eq!(triple_contents, ["outer `nested` outer"]);
-    }
-
-    #[test]
-    fn strip_code_spans_removes_spans_and_backticks() {
-        assert_eq!(
-            strip_code_spans("shall return `None` from `value(i, j)` now"),
-            "shall return  from  now"
-        );
-        assert_eq!(strip_code_spans("an `unclosed span"), "an `unclosed span");
     }
 
     #[test]

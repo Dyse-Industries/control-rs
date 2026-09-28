@@ -33,7 +33,7 @@ fn setup_scenario_reqs(fixture_workspace: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(&docs_dir)?;
     fs::write(
         docs_dir.join("widget-design.md"),
-        "- **FR-1**: Size\n- **FR-1**: Size duplicate\n\n| VC-1 | FR-1 | `test` | OK |\n",
+        "# Widget (widget)\n\n- **FR-1**: Size\n- **FR-1**: Size duplicate\n\n| VC-1 | FR-1 | `test` | OK |\n",
     )
 }
 
@@ -48,7 +48,7 @@ fn setup_scenario_marks(fixture_workspace: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(&docs_dir)?;
     fs::write(
         docs_dir.join("widget-design.md"),
-        "- **FR-1**: Size\n\n| VC-1 | FR-1 | `test` | OK |\n",
+        "# Widget (widget)\n\n- **FR-1**: Size\n\n| VC-1 | FR-1 | `test` | OK |\n",
     )
 }
 
@@ -57,7 +57,7 @@ fn setup_scenario_check(fixture_workspace: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(&docs_dir)?;
     fs::write(
         docs_dir.join("widget-design.md"),
-        "- **FR-1**: Size\n\n| VC-1 | FR-1 | `test` | OK |\n",
+        "# Widget (widget)\n\n- **FR-1**: Size\n\n| VC-1 | FR-1 | `test` | OK |\n",
     )?;
 
     fs::create_dir_all(fixture_workspace.join("target/ci-artifacts"))?;
@@ -104,7 +104,7 @@ fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
     fs::write(
         trace_dir.join("trace.toml"),
         format!(
-            "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_suffix = \"-design\"\ndefinition = '^- \\*\\*FR-'\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\nmethods = [\"test\", \"review\"]\nmarked_methods = [\"test\"]\nretired = []\n[markers]\nfiles = [\"src\"]\nsuffixes = [\".rs\"]\nmarker = \"#[{}(\"\n",
+            "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_id = '^#\\s+.*\\((?P<doc>[a-z]+)\\)'\ndefinition = '^- \\*\\*FR-'\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\nmethods = [\"test\", \"review\"]\nmarked_methods = [\"test\"]\nretired = []\n[markers]\nfiles = [\"src\"]\nsuffixes = [\".rs\"]\nmarker = \"#[{}(\"\n",
             "req"
         ),
     )?;

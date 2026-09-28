@@ -502,32 +502,50 @@ pub mod num_trait_test_suite {
     fn test_num_trait_hypot_length() {
         let a = 3.0f32;
         let b = 4.0f32;
-        assert_almost_eq!(a.hypot(b), 5.0);
+        assert_almost_eq!(a.hypot(b), 5.0, 1e-5_f32);
     }
 
     #[cfg_attr(test, test)]
     /// Verifies custom atan2 implementation outputs across boundary angles and quadrants.
     fn test_num_trait_atan2_quadrants() {
         // Origin
-        assert_almost_eq!(0.0f32.atan2(0.0), 0.0);
+        assert_almost_eq!(0.0f32.atan2(0.0), 0.0, 1e-5_f32);
 
         // Axis Bounds
-        assert_almost_eq!(0.0f32.atan2(1.0), 0.0); // Positive X
-        assert_almost_eq!(0.0f32.atan2(-1.0), core::f32::consts::PI); // Negative X
-        assert_almost_eq!(1.0f32.atan2(0.0), core::f32::consts::PI / 2.0); // Positive Y
-        assert_almost_eq!(-1.0f32.atan2(0.0), -core::f32::consts::PI / 2.0); // Negative Y
+        assert_almost_eq!(0.0f32.atan2(1.0), 0.0, 1e-5_f32); // Positive X
+        assert_almost_eq!(0.0f32.atan2(-1.0), core::f32::consts::PI, 1e-5_f32); // Negative X
+        assert_almost_eq!(
+            1.0f32.atan2(0.0),
+            core::f32::consts::PI / 2.0,
+            1e-5_f32
+        ); // Positive Y
+        assert_almost_eq!(
+            -1.0f32.atan2(0.0),
+            -core::f32::consts::PI / 2.0,
+            1e-5_f32
+        ); // Negative Y
 
         // Standard Quadrants
-        assert_almost_eq!(1.0f32.atan2(1.0), core::f32::consts::PI / 4.0); // Q1
+        assert_almost_eq!(
+            1.0f32.atan2(1.0),
+            core::f32::consts::PI / 4.0,
+            1e-5_f32
+        ); // Q1
         assert_almost_eq!(
             1.0f32.atan2(-1.0),
-            3.0 * core::f32::consts::PI / 4.0
+            3.0 * core::f32::consts::PI / 4.0,
+            1e-5_f32
         ); // Q2
         assert_almost_eq!(
             -1.0f32.atan2(-1.0),
-            -3.0 * core::f32::consts::PI / 4.0
+            -3.0 * core::f32::consts::PI / 4.0,
+            1e-5_f32
         ); // Q3
-        assert_almost_eq!(-1.0f32.atan2(1.0), -core::f32::consts::PI / 4.0); // Q4
+        assert_almost_eq!(
+            -1.0f32.atan2(1.0),
+            -core::f32::consts::PI / 4.0,
+            1e-5_f32
+        ); // Q4
     }
 
     #[cfg_attr(test, test)]

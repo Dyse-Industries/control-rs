@@ -56,6 +56,7 @@ Comms
 Comput
 Config
 Const
+Cofer
 Coppit
 Croz
 Crozet
@@ -69,6 +70,7 @@ Dabbelt
 Davie
 Deduplication
 Deliverables
+Delseny
 Demmel
 Dequantization
 Dequantizes
@@ -186,6 +188,7 @@ Lai
 Lanczos
 Langlois
 Laub
+Ledinot
 Leuven
 Lindblad
 Liu
@@ -208,8 +211,10 @@ Microcontrollers
 Middleware
 Miri
 Moler
+Monate
 Monic
 Monomorphized
+Moy
 Mudge
 Mul
 Mullis
@@ -242,6 +247,7 @@ Pendleton
 Pirova
 Plotly
 Politano
+Postcondition
 Ponzio
 Potrf
 Potrs
@@ -687,6 +693,7 @@ partialord
 peano
 pluggable
 pointwise
+postcondition
 potrf
 potrs
 pptrf
@@ -866,6 +873,7 @@ virtualized
 vpetrigo
 vtable
 wgpu
+Wiels
 wip
 workspace's
 x_d

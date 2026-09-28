@@ -49,6 +49,9 @@ fn run([config, reqs, marks, out]: &FlagValues<4>) -> GateResult<Derived> {
 /// Prints the defects and the count per status; the exit code is a failure
 /// unless the trace passes.
 fn finish(report: &TraceReport, defects: &[Defect]) -> ExitCode {
+    for warning in &report.warnings {
+        ui::warning("Warning", warning.to_string());
+    }
     print_defects(defects);
     let counts = report
         .counts

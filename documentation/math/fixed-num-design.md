@@ -1,4 +1,4 @@
-# Fixed-Point Scalar Type (Design Document)
+# Fixed-Point Scalar Type (fixed-num)
 
 ![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
@@ -515,6 +515,24 @@ of method-level traits. This design inherits that decision.
 ### 6. Verification & Validation
 
 #### 6.1 Verification
+
+| Condition | Requirement | Method     | Criterion                                                                                                           |
+|:----------|:------------|:-----------|:--------------------------------------------------------------------------------------------------------------------|
+| VC-1.1    | FR-1        | `test`     | `SHIFT` scale parameter is validated at compile time via `DimMax` dimension bounds                                  |
+| VC-2.1    | FR-2        | `test`     | Fixed values equal $\text{raw} \cdot 2^{-\text{SHIFT}}$ with quantization step $\Delta = 2^{-\text{SHIFT}}$         |
+| VC-3.1    | FR-3        | `test`     | Saturating arithmetic operators (`Add`, `Sub`, `Neg`, `Mul`, `Div`) saturate to min/max without panicking or wrapping |
+| VC-3.2    | FR-3        | `proof`    | Bounded model checking proves `Fixed::saturating_div` produces bounded representation without panic                 |
+| VC-3.3    | FR-3        | `test`     | Fallible operations (`TryAdd`, `TrySub`, `TryMul`, `TryDiv`, `TryNeg`) return explicit error variants on overflow   |
+| VC-4.1    | FR-4        | `test`     | Widening multiplication forms exact double-width product with round-ties-to-even rescale                            |
+| VC-5.1    | FR-5        | `test`     | Scale conversion (`rescale`) shifts left or right and saturates destination overflow                                |
+| VC-6.1    | FR-6        | `test`     | Type implements `Zero`, `One`, `Conjugate`, `Scalar`, and `SaturatingInteger` and excludes `Float`/`Trig`           |
+| VC-7.1    | FR-7        | `test`     | Numeric traits are gated and withheld when unity or two cannot be represented in the fractional span                |
+| VC-8.1    | NFR-1       | `test`     | Size and alignment of `Fixed<Repr, SHIFT>` equal those of `Repr` with zero storage overhead for `SHIFT`              |
+| VC-9.1    | NFR-2       | `review`   | Arithmetic compiles to direct integer instructions without runtime scale bookkeeping or trampolines                 |
+| VC-10.1   | C-1         | `review`   | Implementation uses `core` only without heap allocation or `std` dependencies                                       |
+| VC-11.1   | C-2         | `review`   | Module introduces zero new external crate dependencies                                                              |
+| VC-12.1   | C-3         | `test`     | Scale parameter is bounded within `0..=BITS` via compile-time dimension assertions                                   |
+| VC-13.1   | C-4         | `review`   | Implementation performs no bare un-checked or un-saturating primitive arithmetic operations                         |
 
 1. **Constant and Range Unit Tests** (`fixed_num_tests.rs`): `DELTA`
    equals `from_bits(1)` and its `f64` value equals `2^(−SHIFT)`; `MIN` and

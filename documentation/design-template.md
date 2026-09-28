@@ -1,4 +1,4 @@
-# Type/Module Name (Design Document)
+# Type/Module Name (<slug>)
 
 ![Date Badge](https://img.shields.io/badge/Date-Month_D,_YYYY-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
@@ -152,8 +152,9 @@ ID or method.
 
 | Condition | Requirement | Method     | Criterion                                  |
 |:----------|:------------|:-----------|:-------------------------------------------|
-| VC-1.1    | FR-1        | `test`     | [...]; FR-1 holds iff both conditions hold |
+| VC-1.1    | FR-1        | `test`     | [...]; FR-1 holds iff all conditions hold  |
 | VC-1.2    | FR-1        | `test`     | [...]                                      |
+| VC-1.3    | FR-1        | `proof`    | [...]                                      |
 | VC-2.1    | NFR-1       | `analysis` | [...]                                      |
 | VC-3.1    | C-1         | `review`   | [...]                                      |
 
@@ -162,11 +163,28 @@ Coverage: [target]% line coverage of [crate or module], measured with `cargo cov
 <!--
 The requirement tracer (`vv/requirement-traceability-design.md`) parses this table.
 - One row per condition. Decompose every FR, NFR and C into at least one VC row.
-- Method is one of `test`, `analysis`, `inspection`, or `review`.
-  - `test`: covered by a test marker `#[req("doc#VC-x.y")]` in test code.
-  - `analysis`: verified through mathematical analysis or formal proof.
+- Method is one of `test`, `proof`, `analysis`, `inspection`, or `review`.
+  - `test`: covered by a test marker `#[req("doc#VC-x.y")]` on `#[test]`.
+  - `proof`: covered by a proof marker `#[req("doc#VC-x.y")]` on `#[kani::proof]`
+    or `#[kani::proof_for_contract]`. Bounded model checking evaluates all input
+    combinations within the assumed domain.
+  - `analysis`: verified through mathematical analysis or manual calculation.
   - `inspection`: verified by visual code inspection or artifact audit.
   - `review`: verified by engineering or safety review sign-off.
+- Author obligations for `proof` conditions:
+  - O-1 (Assertion encodes Criterion): The Criterion decision is asserted as
+    `assert!(decision == f(c_1, ..., c_n))` or encoded in `#[kani::ensures]`.
+  - O-2 (Domain stated): Assumptions (`kani::assume` or `#[kani::requires]`)
+    explicitly define domain Δ; review compares assumptions against requirements.
+  - O-3 (Non-vacuity): `kani::cover!(c_i)` and `kani::cover!(!c_i)` witness each
+    predicate value and independence pair, preventing vacuous pass.
+  - O-4 (Bounds stated): Loop unwinding bound k and dimension limits are stated;
+    unwinding assertions remain enabled.
+- Where MC/DC applies: A verification condition is a property to discharge
+  (always true in a correct implementation; has no independence pair of its own).
+  MC/DC is evaluated over the input premise predicates in a condition's definition.
+  For `test`, tagged tests exercise premise combinations; for `proof`, `cover!`
+  witnesses establish satisfaction of each premise combination and independence pair.
 - Criterion is a single declarative sentence with the exact pass bound.
 - The `coverage` gate measures line coverage but enforces no threshold, so a
   reviewer checks the target stated here.
