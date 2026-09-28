@@ -384,6 +384,45 @@ fn test_cli_passthrough_parsing_and_rules() {
 }
 
 #[test]
+fn test_cli_unknown_selection_names_warn_and_drop() {
+    use control_rs_ci::cli::{parse_args, resolve_selection};
+
+    let mut config: GateConfig = toml::from_str(
+        "[execution.groups]\nlint = [\"fmt\"]\n\
+         [fmt]\ncommand = \"cargo fmt\"\n[test]\ncommand = \"cargo test\"\n",
+    )
+    .unwrap();
+    config.normalize();
+    let args: Vec<String> = [
+        "gate",
+        "bench",
+        "test",
+        "--group",
+        "lint,nope",
+        "--skip",
+        "gone",
+        "--up-to",
+        "none",
+    ]
+    .iter()
+    .map(|a| (*a).to_string())
+    .collect();
+    let mut options = parse_args(&args, "cargo gate");
+    let warnings = resolve_selection(&mut options, &config);
+
+    assert_eq!(options.only_gates, vec!["fmt", "test"]);
+    assert_eq!(
+        warnings,
+        vec![
+            "unknown group 'nope'",
+            "unknown gate or group 'bench'",
+            "unknown gate 'gone'",
+            "unknown gate 'none'",
+        ]
+    );
+}
+
+#[test]
 fn test_cli_multi_token_parsing() {
     use control_rs_ci::cli::parse_args;
 

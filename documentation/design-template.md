@@ -138,36 +138,38 @@ One row per rejected option. Where possible, state the reason in terms of §2
 
 The plan for showing this component is correct and meets its requirements.
 
-#### 6.1 Plan
+#### 6.1 Verification
 
-| Kind | Step | Establishes | Requirements |
-|:-----|:-----|:------------|:-------------|
-| `test` | [...] | [...] | [FR-1, FR-2] |
-| `bench` | [...] | [...] | [NFR-1] |
-| `example` | [...] | [...] | [...] |
-| `cross-check` | [...] | [...] | [...] |
-| `gate` | [...] | [...] | [C-1] |
+How each requirement is verified. Each requirement is a decision: decompose it
+into verification conditions (`VC-x.y`), one row each, and state in the first
+condition's `Criterion` how the conditions combine into the requirement.
+`Method` is one of `test`, `analysis`, `inspection` or `review`. A `test`
+condition needs at least one test that names it with a marker
+(`#[req("doc#VC-x.y")]` in Rust, `// req: doc#VC-x.y` in other languages);
+other methods are listed for review sign-off. `Criterion` is one sentence
+stating the pass condition, including any bound, and names no other condition
+ID or method.
+
+| Condition | Requirement | Method     | Criterion                                  |
+|:----------|:------------|:-----------|:-------------------------------------------|
+| VC-1.1    | FR-1        | `test`     | [...]; FR-1 holds iff both conditions hold |
+| VC-1.2    | FR-1        | `test`     | [...]                                      |
+| VC-2.1    | NFR-1       | `analysis` | [...]                                      |
+| VC-3.1    | C-1         | `review`   | [...]                                      |
 
 Coverage: [target]% line coverage of [crate or module], measured with `cargo coverage`. Excluded: [item and reason].
 
 <!--
-Kinds, one word per row. Omit a kind the component does not use.
-- `test`: unit, integration, property and doctests, and ETS suites.
-- `bench`: criterion benches. The `regression` gate enforces the budget keyed
-  in `.cargo/regression.toml`.
-- `example`: a runnable example. Fitness evidence, not proof of correctness.
-- `cross-check`: `cargo compare` against an independent oracle.
-- `gate`: another `cargo ci` gate, such as `clippy`, `deny`, `geiger` or a
-  `no_std` target build.
-
-Every FR, NFR and C appears in the Requirements column of at least one row.
-The tracer reports as-built status once code exists; this column is the
-design-time intent a reviewer checks before any code exists
-(CONTRIBUTING.md §4). A requirement that only human review can check is
-listed in 6.3.
-
-The `coverage` gate measures line coverage but enforces no threshold, so a
-reviewer checks the target stated here.
+The requirement tracer (`vv/requirement-traceability-design.md`) parses this table.
+- One row per condition. Decompose every FR, NFR and C into at least one VC row.
+- Method is one of `test`, `analysis`, `inspection`, or `review`.
+  - `test`: covered by a test marker `#[req("doc#VC-x.y")]` in test code.
+  - `analysis`: verified through mathematical analysis or formal proof.
+  - `inspection`: verified by visual code inspection or artifact audit.
+  - `review`: verified by engineering or safety review sign-off.
+- Criterion is a single declarative sentence with the exact pass bound.
+- The `coverage` gate measures line coverage but enforces no threshold, so a
+  reviewer checks the target stated here.
 -->
 
 #### 6.2 Acceptance

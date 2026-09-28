@@ -387,7 +387,7 @@ exclusive_gates = [
 
 [execution.groups]
 build_test = ["build", "test"]
-lint = ["fmt", "clippy", "allow-audit", "doc", "vale"]
+lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs", "trace-marks", "trace"]
 audit = ["deny", "semver", "valgrind", "geiger"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
@@ -834,6 +834,7 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.27     | September 24, 2026 | @MitchellDScott | `regression` budgets from `--budgets` TOML (`.cargo/regression.toml`), unregistered benchmark fails, workspace from the current directory (§4.7). Baseline restore from the newest `main` run carrying the artifact. Workspace-crate mutation gates (§4.3). §4.10 `allow-audit` counts per file and lint, fails on stale entries and on growth against `--base-ref`. |
 | 1.28     | September 25, 2026 | @MitchellDScott | §4.9: the `ets` binary prints a line per case and the full target console for every target. |
 | 1.29     | September 25, 2026 | @MitchellDScott | FR-14 implemented: `cargo gate` parses `-- <args>`; §4.8 records the exit code and the library-level check. Revision 1.24 specified it without an implementation. |
+| 1.30     | September 27, 2026 | @MitchellDScott | Added requirement traceability gates (`trace-reqs`, `trace-marks`, `trace`) to the `lint` group (§4.3) backed by `control-rs-ci/src/trace/`. |
 
 ---
 

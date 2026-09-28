@@ -31,6 +31,7 @@ members = [
     "control-rs-ci",
     "control-rs-compare",
     "control-rs-verification",
+    "control-rs-trace-macros",
 ]
 default-members = ["."]
 

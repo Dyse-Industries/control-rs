@@ -16,10 +16,12 @@ on:
       - 'control-rs-tui/**'
       - 'control-rs-ci/**'
       - 'control-rs-compare/**'
+      - 'control-rs-trace-macros/**'
       - 'documentation/**'
       - '.github/workflows/**'
       - '*.toml'
       - '.cargo/*.toml'
+      - '.cargo/trace/**'
       - '.vale.ini'
   pull_request:
     branches: [ "main" ]
@@ -35,10 +37,12 @@ on:
       - 'control-rs-tui/**'
       - 'control-rs-ci/**'
       - 'control-rs-compare/**'
+      - 'control-rs-trace-macros/**'
       - 'documentation/**'
       - '.github/workflows/**'
       - '*.toml'
       - '.cargo/*.toml'
+      - '.cargo/trace/**'
       - '.vale.ini'
 
 concurrency:
@@ -382,6 +386,7 @@ jobs:
           merge-multiple: true
 
       - name: Generate CI Report
+        if: always()
         run: cargo run --package control-rs-ci --bin report --
 
       - name: Build Documentation

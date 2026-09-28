@@ -31,6 +31,8 @@ pub mod gate;
 
 pub mod report;
 
+pub mod trace;
+
 pub mod ui;
 
 /// Workspace-relative directory that holds one Cargo target directory per
@@ -269,6 +271,10 @@ pub fn run_pipeline(
     };
 
     let selected = selected_with_passthrough(&config, config_path, options)?;
+    if selected.is_empty() {
+        ui::warn_diag("no gates selected; `--list` shows the registered gates");
+        return Ok(false);
+    }
     let executed_gate_names: Vec<String> =
         selected.iter().map(|g| g.name().to_string()).collect();
     remove_stale_results(&out_dir, &executed_gate_names);

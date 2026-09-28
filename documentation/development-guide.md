@@ -103,6 +103,9 @@ to simplify development, testing, formatting, linting and coverage reporting:
 |                                        | `cargo valgrind`    | `run --package control-rs-ci --bin valgrind --`                | Runs Valgrind Memcheck against the workspace example binaries.      |
 |                                        | `cargo regression`  | `run --package control-rs-ci --bin regression --`              | Checks `criterion` results against budgets and baselines.      |
 |                                        | `cargo ets`         | `run --package control-rs-ci --bin ets --`                     | Builds ETS firmware and runs its suites headless (`cargo ets qemu all --release`). |
+|                                        | `cargo trace-reqs`  | `run --package control-rs-ci --bin trace-reqs -- …`            | Checks requirements in the design documents; writes `reqs.jsonl`.   |
+|                                        | `cargo trace-marks` | `run --package control-rs-ci --bin trace-marks -- …`           | Finds requirement markers in source text and writes `marks.jsonl`.  |
+|                                        | `cargo trace-check` | `run --package control-rs-ci --bin trace-check -- …`           | Derives condition coverage from `reqs.jsonl` and `marks.jsonl`.     |
 | **Interactive TUI**                    | `cargo tui`         | `run --package control-rs-tui --`                              | Launches the interactive TUI console dashboard.                     |
 | **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | TUI → virtual ETS (QEMU ARM Cortex-M7).                             |
 |                                        | `cargo teensy`      | `cargo tui teensy`                                             | TUI → ETS (Teensy 4.0/4.1 over serial).                             |
