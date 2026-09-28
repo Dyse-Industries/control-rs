@@ -17,7 +17,7 @@ mod trace_gap {
          condition = 'VC-[0-9]+(?:\\.[0-9]+[a-z]?)?'\n\
          doc = '[a-z0-9-]+'\n\
          files = [\"docs\"]\n\
-         doc_suffix = \"-design\"\n\
+         doc_id = '^#\\s+.*\\((?P<doc>[a-z0-9-]+)\\)'\n\
          definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
          verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\
          methods = [\"test\", \"analysis\", \"inspection\", \"review\"]\n\
@@ -85,6 +85,8 @@ mod trace_gap {
     #[test]
     fn the_fallback_method_is_the_first_code_span_without_any_id() {
         let doc = "\
+# Widget (widget)
+
 - **FR-1 — Size**: The widget shall report its size.
 
 | Condition | Requirement | Method | Criterion |
