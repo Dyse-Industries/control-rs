@@ -424,7 +424,7 @@ description = "Mutation testing: every file not claimed by another mutants-* gat
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "gate\\.rs:605:5: replace terminate_tree with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--exclude-re", "bin/ets\\.rs:[0-9]+:[0-9]+: replace > with >= in main", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
+args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "gate\\.rs:605:5: replace terminate_tree with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 1 of 2"
 
@@ -432,7 +432,7 @@ description = "Mutation testing: control-rs-ci, chunk 1 of 2"
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "gate\\.rs:605:5: replace terminate_tree with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--exclude-re", "bin/ets\\.rs:[0-9]+:[0-9]+: replace > with >= in main", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
+args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "gate\\.rs:605:5: replace terminate_tree with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 2 of 2"
 
@@ -457,7 +457,7 @@ description = "Mutation testing: control-rs-compare"
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ets-host", "--exclude-re", "replace RunEnd::drained -> Self with Default::default\\(\\)", "--exclude-re", "HeadlessRun<'t>::(drive|retry_discovery|apply_actions)", "--exclude-re", "in spawn_(serial|stderr|qemu_stdout)_reader", "--exclude-re", "<impl Drop for ETSBridge>::drop", "--exclude-re", "target\\.rs:544:", "--output", "target/ci-artifacts/mutants-ets-host.out"]
+args = ["--json", "--no-config", "--package", "control-rs-ets-host", "--exclude-re", "replace RunEnd::drained -> Self with Default::default\\(\\)", "--exclude-re", "replace > with >= in HeadlessRun<'t>::(drive|retry_discovery)", "--output", "target/ci-artifacts/mutants-ets-host.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ets-host"
 
@@ -470,7 +470,7 @@ description = "Mutation testing: control-rs-ets-host"
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ets", "--exclude-re", "replace \\| with \\^ in FrameReader::handle_byte", "--exclude-re", "replace < with (==|<=) in FrameEncoder::serialize_then_frame", "--exclude-re", "<impl CPUProfiler for (CortexMProfiler|RiscvProfiler)>", "--exclude-re", "CPUProfiler::fpu_flags", "--output", "target/ci-artifacts/mutants-ets.out"]
+args = ["--json", "--no-config", "--package", "control-rs-ets", "--exclude-re", "replace \\| with \\^ in FrameReader::handle_byte", "--exclude-re", "replace < with (==|<=) in FrameEncoder::serialize_then_frame", "--exclude-re", "<impl CPUProfiler for (CortexMProfiler|RiscvProfiler)>", "--exclude-re", "replace CPUProfiler::fpu_flags -> u8 with 0", "--output", "target/ci-artifacts/mutants-ets.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ets"
 
@@ -482,15 +482,11 @@ args = ["--json", "--no-config", "--package", "control-rs-macros", "--output", "
 timeout_secs = 19800
 description = "Mutation testing: control-rs-macros"
 
-# The interactive event loop needs a live terminal and bridge, and the reader
-# threads, `Drop` and headless drive loop need a live link; they are not
-# exercised without changing the reviewed source, so their mutants are excluded.
-
 [mutants-tui]
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-tui", "--exclude-re", "event_loop", "--output", "target/ci-artifacts/mutants-tui.out"]
+args = ["--json", "--no-config", "--package", "control-rs-tui", "--output", "target/ci-artifacts/mutants-tui.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-tui"
 

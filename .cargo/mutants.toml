@@ -14,8 +14,6 @@ additional_cargo_test_args = ["--lib"]
 exclude_re = [
     "replace < with (>|<=) in FFT::fft_complex",
     "replace < with <= in <impl level1::(Asum|Iamax)<",
-    # Both branches of the relative-scale maximum give one value on a tie.
-    "replace > with >= in almost_eq_eps",
     # Aberth iteration bookkeeping: `>=` re-assigns an equal value and the
     # convergence test only decides when to stop refining an already
     # converged iterate.

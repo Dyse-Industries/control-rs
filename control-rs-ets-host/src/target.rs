@@ -531,18 +531,12 @@ pub fn target_elf_path(target: &SubprocessTarget) -> String {
     }
 }
 
-/// Helper function to build the target binary before running ETS or virtual ETS.
-///
-/// # Errors
-///
-/// Returns `HostError::Build` if `cargo build` fails or returns a non-zero exit code.
-pub fn build_target_elf(
-    target: &SubprocessTarget,
-) -> Result<String, HostError> {
+/// The `cargo build` invocation for `target`, run in `crate_dir` unless that
+/// is the current directory.
+fn cargo_build_command(target: &SubprocessTarget, crate_dir: &Path) -> Command {
     let mut cmd = Command::new("cargo");
-    let crate_dir = target.crate_dir();
     if !crate_dir.as_os_str().is_empty() && crate_dir != Path::new(".") {
-        cmd.current_dir(&crate_dir);
+        cmd.current_dir(crate_dir);
     }
     cmd.arg("build");
     if let Some(bin) = &target.bin {
@@ -554,15 +548,29 @@ pub fn build_target_elf(
     for arg in &target.args {
         cmd.arg(arg);
     }
+    cmd
+}
 
-    let status = cmd.status().map_err(|e| HostError::Build {
-        target: target.display_name(),
-        source: format!(
-            "Failed to spawn cargo build in '{}': {e}",
-            crate_dir.display()
-        )
-        .into(),
-    })?;
+/// Helper function to build the target binary before running ETS or virtual ETS.
+///
+/// # Errors
+///
+/// Returns `HostError::Build` if `cargo build` fails or returns a non-zero exit code.
+pub fn build_target_elf(
+    target: &SubprocessTarget,
+) -> Result<String, HostError> {
+    let crate_dir = target.crate_dir();
+    let status =
+        cargo_build_command(target, &crate_dir)
+            .status()
+            .map_err(|e| HostError::Build {
+                target: target.display_name(),
+                source: format!(
+                    "Failed to spawn cargo build in '{}': {e}",
+                    crate_dir.display()
+                )
+                .into(),
+            })?;
 
     if !status.success() {
         return Err(HostError::Build {
@@ -1016,6 +1024,30 @@ mod tests {
             .with_arg("--release");
         assert_eq!(target_elf_path(&nested), "crates/x/target/release/b");
         assert_eq!(target_elf_path(&SubprocessTarget::new(".")), "");
+    }
+
+    #[test]
+    fn build_commands_run_in_the_crate_directory_only_when_it_differs() {
+        let dir = |path: &str| {
+            let sub = SubprocessTarget::new(path);
+            cargo_build_command(&sub, &sub.crate_dir())
+                .get_current_dir()
+                .map(Path::to_path_buf)
+        };
+        assert_eq!(dir("examples/qemu"), Some(PathBuf::from("examples/qemu")));
+        assert_eq!(dir("."), None);
+        assert_eq!(dir(""), None);
+
+        let sub = SubprocessTarget::new(".")
+            .with_bin("b")
+            .with_target("t")
+            .with_arg("--release");
+        let cmd = cargo_build_command(&sub, &sub.crate_dir());
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, ["build", "--bin", "b", "--target", "t", "--release"]);
     }
 
     #[test]

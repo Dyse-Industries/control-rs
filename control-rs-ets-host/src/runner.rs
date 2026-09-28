@@ -432,6 +432,160 @@ mod tests {
 
     use crate::bridge::BridgeMessage;
 
+    #[cfg(unix)]
+    mod headless {
+        use std::sync::mpsc::Sender;
+        use std::sync::{Arc, Mutex};
+
+        use super::*;
+        use crate::bridge::FakeBridge;
+
+        type Written = Arc<Mutex<Vec<u8>>>;
+
+        /// A run over a fake link with the handles that drive it.
+        type FakeRun<'t> = (HeadlessRun<'t>, Sender<BridgeMessage>, Written);
+
+        fn serial_target() -> Target {
+            Target::Serial {
+                port: "/dev/none".to_string(),
+                baud: 1,
+            }
+        }
+
+        fn fake_run(
+            target: &Target,
+            timeout: Duration,
+            exit_after_polls: Option<usize>,
+        ) -> FakeRun<'_> {
+            let FakeBridge {
+                bridge,
+                tx,
+                written,
+            } = ETSBridge::fake(exit_after_polls);
+            let run = HeadlessRun {
+                bridge,
+                target,
+                options: RunOptions {
+                    timeout,
+                    max_resets: 3,
+                },
+                state: SessionState::new(),
+                resets: 0,
+                start_time: Instant::now(),
+                last_send: Instant::now(),
+            };
+            (run, tx, written)
+        }
+
+        fn written_len(written: &Written) -> usize {
+            written.lock().map_or(usize::MAX, |w| w.len())
+        }
+
+        /// Messages that complete discovery of an empty suite.
+        fn discover_empty(tx: &Sender<BridgeMessage>) {
+            for tel in [
+                Telemetry::TargetInfo {
+                    protocol_version: PROTOCOL_VERSION,
+                    board_id: 0,
+                    core_clock_hz: 0,
+                    fpu_flags: 0,
+                },
+                Telemetry::SuiteInfo {
+                    suite_id: 0,
+                    name: "s",
+                    description: "",
+                    test_count: 0,
+                    setting_count: 0,
+                },
+                Telemetry::DiscoveryComplete,
+            ] {
+                tx.send(BridgeMessage::telemetry(&tel)).unwrap();
+            }
+        }
+
+        #[test]
+        fn drive_processes_messages_until_the_session_drains() {
+            let target = serial_target();
+            let (mut run, tx, written) =
+                fake_run(&target, Duration::from_secs(30), None);
+            discover_empty(&tx);
+            assert!(run.drive().is_ok());
+            assert!(run.state.discovery_complete);
+            assert!(run.state.exit_loop);
+            assert!(written_len(&written) > 0, "discovery was requested");
+        }
+
+        #[test]
+        fn drive_times_out_when_discovery_never_completes() {
+            let target = serial_target();
+            let (mut run, _tx, _written) =
+                fake_run(&target, Duration::from_millis(60), Some(400));
+            let start = Instant::now();
+            let end = run.drive().unwrap_err();
+            assert_eq!(end.abort, Some(Completion::TimedOut));
+            assert!(start.elapsed() < Duration::from_secs(2));
+        }
+
+        #[test]
+        fn discovery_is_repeated_only_while_incomplete_and_after_half_a_second()
+        {
+            let target = serial_target();
+            let stale = |run: &mut HeadlessRun<'_>| {
+                run.last_send = Instant::now()
+                    .checked_sub(Duration::from_millis(700))
+                    .unwrap();
+            };
+
+            // Incomplete and stale: resend and restart the interval.
+            let (mut run, _tx, written) =
+                fake_run(&target, Duration::from_secs(30), None);
+            stale(&mut run);
+            let before = run.last_send;
+            assert!(run.retry_discovery().is_ok());
+            assert!(written_len(&written) > 0);
+            assert!(run.last_send > before);
+
+            // Incomplete but recent: wait.
+            let (mut run, _tx, written) =
+                fake_run(&target, Duration::from_secs(30), None);
+            assert!(run.retry_discovery().is_ok());
+            assert_eq!(written_len(&written), 0);
+
+            // Complete: never resend, however stale.
+            let (mut run, _tx, written) =
+                fake_run(&target, Duration::from_secs(30), None);
+            run.state.discovery_complete = true;
+            stale(&mut run);
+            assert!(run.retry_discovery().is_ok());
+            assert_eq!(written_len(&written), 0);
+        }
+
+        #[test]
+        fn a_drained_panic_restart_stops_processing_further_actions() {
+            let target = serial_target();
+            let (mut run, _tx, written) =
+                fake_run(&target, Duration::from_secs(30), None);
+            run.state.exit_loop = true;
+            let actions = vec![
+                SessionAction::PanicRestart,
+                SessionAction::Send(CommCommand::TryReset),
+            ];
+            assert!(run.apply_actions(actions).is_ok());
+            assert_eq!(written_len(&written), 0, "actions after the drain ran");
+            assert!(run.bridge.is_shut_down());
+        }
+
+        #[test]
+        fn actions_are_sent_to_the_target_in_order() {
+            let target = serial_target();
+            let (mut run, _tx, written) =
+                fake_run(&target, Duration::from_secs(30), None);
+            let actions = vec![SessionAction::Send(CommCommand::TryReset)];
+            assert!(run.apply_actions(actions).is_ok());
+            assert!(written_len(&written) > 0);
+        }
+    }
+
     /// A session that already received a matching `TargetInfo` (FR-8).
     fn matched() -> SessionState {
         let mut s = SessionState::new();

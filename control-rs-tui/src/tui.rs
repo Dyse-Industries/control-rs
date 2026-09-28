@@ -32,8 +32,17 @@ use control_rs_ets_host::{
     SessionState, SuiteItem, Target, TestIndex,
 };
 
+/// How long the session may stay undiscovered before discovery is re-sent.
+const DISCOVERY_RETRY: Duration = Duration::from_millis(500);
+
 /// Result of the interactive event loop.
 type TuiResult = Result<(), Box<dyn std::error::Error>>;
+
+/// The connection the event loop drives: the bridge and the target it reaches.
+struct Link<'a> {
+    bridge: &'a mut ETSBridge,
+    target: &'a Target,
+}
 
 /// Selectable item in the hierarchical metrics table.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1017,6 +1026,35 @@ where
     B: ratatui::backend::Backend,
     B::Error: 'static,
 {
+    let link = Link { bridge, target };
+    run_event_loop(terminal, link, state, |wait| {
+        if event::poll(wait)? {
+            Ok(Some(event::read()?))
+        } else {
+            Ok(None)
+        }
+    })
+}
+
+/// Whether discovery should be requested again: it is still incomplete and
+/// the last request is older than [`DISCOVERY_RETRY`].
+fn discovery_due(discovery_complete: bool, since_last: Duration) -> bool {
+    !discovery_complete && since_last > DISCOVERY_RETRY
+}
+
+/// The event loop over any source of terminal events: `next_event` waits up
+/// to the given time for one.
+fn run_event_loop<B>(
+    terminal: &mut Terminal<B>,
+    link: Link<'_>,
+    state: &mut AppState,
+    mut next_event: impl FnMut(Duration) -> std::io::Result<Option<Event>>,
+) -> TuiResult
+where
+    B: ratatui::backend::Backend,
+    B::Error: 'static,
+{
+    let Link { bridge, target } = link;
     state.request_discovery(bridge);
     let mut last_discovery = Instant::now();
 
@@ -1025,9 +1063,10 @@ where
 
         let need_restart = state.drain_bridge(bridge);
 
-        if !state.session.discovery_complete
-            && last_discovery.elapsed() > Duration::from_millis(500)
-        {
+        if discovery_due(
+            state.session.discovery_complete,
+            last_discovery.elapsed(),
+        ) {
             state.request_discovery(bridge);
             last_discovery = Instant::now();
         }
@@ -1042,8 +1081,7 @@ where
             last_discovery = Instant::now();
         }
 
-        if event::poll(Duration::from_millis(30))?
-            && let Event::Key(key) = event::read()?
+        if let Some(Event::Key(key)) = next_event(Duration::from_millis(30))?
             && state.handle_key(key, Some(bridge))
         {
             return Ok(());
@@ -1057,6 +1095,110 @@ mod tests {
     use control_rs_ets::comms::Telemetry;
     use control_rs_ets::settings::SettingValue;
     use crossterm::event::KeyModifiers;
+
+    #[cfg(unix)]
+    mod event_loop {
+        use control_rs_ets_host::FakeBridge;
+        use crossterm::event::Event;
+        use ratatui::backend::TestBackend;
+
+        use super::*;
+
+        fn serial_target() -> Target {
+            Target::Serial {
+                port: "/dev/control-rs-tui-no-such-port".to_string(),
+                baud: 115_200,
+            }
+        }
+
+        fn quit_key() -> Event {
+            Event::Key(make_test_event(KeyCode::Char('q')))
+        }
+
+        #[test]
+        fn quitting_ends_the_loop_without_reattaching() {
+            let FakeBridge {
+                mut bridge,
+                written,
+                ..
+            } = ETSBridge::fake(None);
+            let mut state = AppState::new("T".to_string(), "L".to_string());
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            let mut events = std::iter::once(quit_key());
+            let target = serial_target();
+            let link = Link {
+                bridge: &mut bridge,
+                target: &target,
+            };
+            let result =
+                run_event_loop(&mut terminal, link, &mut state, |_| {
+                    Ok(events.next())
+                });
+            assert!(result.is_ok());
+            assert!(
+                !state.logs.iter().any(|l| l.contains("Re-attaching")),
+                "no panic was reported: {:?}",
+                state.logs
+            );
+            assert!(
+                written.lock().map_or(0, |w| w.len()) > 0,
+                "discovery was requested"
+            );
+        }
+
+        #[test]
+        fn a_target_panic_triggers_a_reattach_attempt() {
+            let FakeBridge { mut bridge, tx, .. } = ETSBridge::fake(None);
+            tx.send(BridgeMessage::telemetry(&Telemetry::TargetPanic {
+                message: "boom",
+                file: "f.rs",
+                line: 1,
+            }))
+            .unwrap();
+            let mut state = AppState::new("T".to_string(), "L".to_string());
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            let mut events = std::iter::once(quit_key());
+            let target = serial_target();
+            let link = Link {
+                bridge: &mut bridge,
+                target: &target,
+            };
+            let result =
+                run_event_loop(&mut terminal, link, &mut state, |_| {
+                    Ok(events.next())
+                });
+            assert!(result.is_ok());
+            assert!(
+                state.logs.iter().any(|l| l.contains("Re-attaching bridge")),
+                "{:?}",
+                state.logs
+            );
+            assert!(
+                state.logs.iter().any(|l| l.contains("reconnect failed")),
+                "the serial port does not exist: {:?}",
+                state.logs
+            );
+        }
+
+        #[test]
+        fn a_target_that_exits_is_reported_in_the_log() {
+            let FakeBridge { mut bridge, .. } = ETSBridge::fake(Some(1));
+            let mut state = AppState::new("T".to_string(), "L".to_string());
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            let mut events = std::iter::once(quit_key());
+            let target = serial_target();
+            let link = Link {
+                bridge: &mut bridge,
+                target: &target,
+            };
+            run_event_loop(&mut terminal, link, &mut state, |_| {
+                Ok(events.next())
+            })
+            .unwrap();
+            assert!(state.process_exit.is_some());
+            assert!(state.logs.iter().any(|l| l.contains("[EXIT]")));
+        }
+    }
 
     /// `TargetInfo` matching the host's protocol, sent before discovery ends.
     const TARGET_INFO: Telemetry<'static> = Telemetry::TargetInfo {
@@ -1623,6 +1765,15 @@ mod tests {
             Ok(SettingValue::U8(12))
         );
         assert!(parse_setting_value("x", SettingValue::U8(0)).is_err());
+    }
+
+    #[test]
+    fn discovery_is_repeated_only_while_incomplete_and_after_half_a_second() {
+        let half = Duration::from_millis(500);
+        assert!(discovery_due(false, half + Duration::from_millis(1)));
+        assert!(!discovery_due(false, half), "exactly half a second waits");
+        assert!(!discovery_due(false, Duration::from_millis(100)));
+        assert!(!discovery_due(true, Duration::from_secs(60)));
     }
 
     fn screen(terminal: &Terminal<ratatui::backend::TestBackend>) -> String {

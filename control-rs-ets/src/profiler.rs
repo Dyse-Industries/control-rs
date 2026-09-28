@@ -98,10 +98,11 @@ pub trait CPUProfiler {
     /// precision, bit 1 double precision. The default derives them from the
     /// compilation target.
     fn fpu_flags(&self) -> u8 {
-        let single =
-            u8::from(cfg!(target_abi = "eabihf") || cfg!(target_feature = "f"));
-        let double = u8::from(cfg!(target_feature = "d"));
-        single | (double << 1)
+        fpu_flags_from(
+            cfg!(target_abi = "eabihf"),
+            cfg!(target_feature = "f"),
+            cfg!(target_feature = "d"),
+        )
     }
 
     /// Get the current CPU cycle count.
@@ -231,6 +232,22 @@ pub trait CPUProfiler {
     #[allow(clippy::empty_loop)]
     fn reset(&self) -> ! {
         loop {}
+    }
+}
+
+/// FPU capability bits for the given target properties: bit 0 is set for a
+/// hard-float ABI or the single-precision feature, bit 1 for double precision.
+#[must_use]
+const fn fpu_flags_from(
+    hard_float_abi: bool,
+    single: bool,
+    double: bool,
+) -> u8 {
+    match (hard_float_abi || single, double) {
+        (false, false) => 0b00,
+        (true, false) => 0b01,
+        (false, true) => 0b10,
+        (true, true) => 0b11,
     }
 }
 
@@ -489,5 +506,36 @@ mod tests {
 
         let peak2 = unsafe { profiler.read_stack_peak(sp) };
         assert_eq!(peak2, 112);
+    }
+
+    #[test]
+    fn fpu_flags_combine_abi_single_and_double_precision() {
+        let cases = [
+            (false, false, false, 0b00),
+            (true, false, false, 0b01),
+            (false, true, false, 0b01),
+            (true, true, false, 0b01),
+            (false, false, true, 0b10),
+            (true, false, true, 0b11),
+            (false, true, true, 0b11),
+            (true, true, true, 0b11),
+        ];
+        for (abi, single, double, want) in cases {
+            assert_eq!(
+                fpu_flags_from(abi, single, double),
+                want,
+                "{abi} {single} {double}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_default_fpu_flags_describe_the_compilation_target() {
+        let expected = fpu_flags_from(
+            cfg!(target_abi = "eabihf"),
+            cfg!(target_feature = "f"),
+            cfg!(target_feature = "d"),
+        );
+        assert_eq!(TestProfiler::new().fpu_flags(), expected);
     }
 }

@@ -541,6 +541,13 @@ for the root package only, so the workspace gates pass `--no-config`.
 `cross-compare` validates. The CI matrix runs one job per gate whose name
 starts with `mutants-`.
 
+A mutant that no test can distinguish from the original (for example `>=`
+for `>` on values that cannot tie, or code compiled only for another target)
+is excluded with `exclude_re` in `.cargo/mutants.toml` or with `--exclude-re`
+in the gate's `args`, next to a comment stating why. Exclusions are reviewed
+like code; the shards of one file carry identical exclusions so `--shard`
+partitions one list.
+
 #### 4.4 Concurrency Topology & Scheduling
 
 Selected gates run in three stages, in this order (FR-8, FR-9, FR-13):

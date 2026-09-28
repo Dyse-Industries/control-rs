@@ -275,6 +275,7 @@ small enough not to distort what it measures.
 |:-------|:----------|
 | Back-to-back comparison | `get_cycles()` delta against `get_nanos()` across a proven delay loop (`cortex_m::asm::delay`) |
 | Requirements-based test | `#[test]` on mock profilers over wraparound, zero-length and maximal intervals |
+| Requirements-based test | `#[test]` over every combination of the target's hard-float, single-precision and double-precision properties for the `fpu_flags` default |
 | Static analysis | Linker-symbol bounds check on `paint_stack` and `read_stack_peak` against `_stack_start` and `_stack_end` |
 | Metamorphic relation | Painting then running a known-depth call chain; measured peak must increase monotonically with depth |
 | Resource usage evaluation | Overhead of the generic wrapper and the critical-section closure, measured in cycles |
@@ -397,6 +398,7 @@ same reason the overhead itself is bounded.
 | 1.5      | September 9, 2026 | @MitchellDScott | Dropped the author-year / `[n]` mapping table. |
 | 1.6      | September 24, 2026 | @MitchellDScott | §6.3 cites `ci-design.md` C-6 (indicative emulation timing), renumbered from C-2 in its revision 1.26. Crash reset calls `CPUProfiler::reset` after `TryReset`; static-analyzer references removed with that design; C-2 scope and `HostCPUProfiler` defaults clarified. |
 | 1.7      | September 24, 2026 | @MitchellDScott | Provided methods `board_id`, `core_clock_hz` and `fpu_flags` supply `Telemetry::TargetInfo`. |
+| 1.8      | September 28, 2026 | @MitchellDScott | The `fpu_flags` default computes its bits in a private pure function of the target properties so each combination is testable on a host. |
 
 ---
 

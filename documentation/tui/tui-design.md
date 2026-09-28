@@ -225,6 +225,7 @@ transport logic of its own.
 | Requirements-based test | `#[test]` feeding a scripted `BridgeMessage` stream into the application state and asserting the resulting tree, telemetry table and log buffer |
 | Requirements-based test | `#[test]` mapping each bound key to the command it emits |
 | Metamorphic relation | `#[test]` asserting that a reset followed by re-discovery leaves cached per-case metrics unchanged |
+| Requirements-based test | `#[test]` running the event loop over an injected event source and an in-memory `ETSBridge` link (`control-rs-ets-host` `fake-link`, a dev-dependency only) to assert re-discovery timing and panic re-attachment |
 | Static analysis | `cargo tree -p control-rs-tui -e normal`; source inspection for framing or serial code in this crate |
 | Inspection | Layout review against §4.1 on the smallest supported terminal size; structural buffer diffing inspection |
 | On-target execution | Interactive session against a QEMU target and a physical board |
@@ -322,6 +323,7 @@ No frame-rate bound is asserted. See §6.3.
 | 1.9      | September 18, 2026 | @MitchellDScott | Packaging alignment: updated host bridge references to `control-rs-ets-host::ETSBridge`. |
 | 1.10      | September 24, 2026 | @MitchellDScott | Duration column shows the target-reported `time_us`; §6.3 reference corrected. |
 | 1.11     | September 24, 2026 | @MitchellDScott | FR-1 header shows `TargetInfo` protocol, board, clock and FPU, or the protocol mismatch. |
+| 1.12     | September 28, 2026 | @MitchellDScott | The event loop takes its input from an injected event source (the terminal is the production source) and the discovery retry decision is a pure function, so the loop is testable without a terminal. |
 
 ---
 
