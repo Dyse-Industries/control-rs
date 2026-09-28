@@ -219,7 +219,7 @@ description = "Scans workspace crates for unsafe code blocks and functions"
 [cross-compare]
 mode = "fail"
 command = "cargo run"
-args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", ".cargo/compare.toml"]
+args = ["--package", "control-rs-compare", "--exclude-re", "replace > with >= in compute_chunk_stats", "--exclude-re", "replace < with <= in compare_float_arrays_parallel", "--exclude-re", "replace > with >= in execute_variant", "--bin", "compare", "--", "--config", ".cargo/compare.toml"]
 env = { CARGO_TARGET_DIR = "target/cross-compare" }
 timeout_secs = 1800
 description = "Executes multi-language reference oracles and verifies HDF5 tolerance bounds"
@@ -435,6 +435,11 @@ command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "gate\\.rs:605:5: replace terminate_tree with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 2 of 2"
+
+# control-rs-compare exclusions are behaviorally equivalent mutants: `>=` where
+# the comparison only decides whether to re-assign an equal maximum or whether
+# two instants are equal, and `<=` at the chunk threshold, where one chunk gives
+# the same result as the sequential path.
 
 [mutants-compare]
 mode = "fail"

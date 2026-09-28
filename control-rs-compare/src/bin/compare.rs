@@ -354,3 +354,26 @@ fn compare_results(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{CliArgs, apply_valued_flag};
+
+    #[test]
+    fn signals_are_split_trimmed_and_accumulated() {
+        let mut args = CliArgs::default();
+        let mut first = std::iter::once("a, b,,  ,c".to_string());
+        apply_valued_flag(&mut args, "--signals", &mut first).unwrap();
+        let mut second = std::iter::once("d".to_string());
+        apply_valued_flag(&mut args, "--signal", &mut second).unwrap();
+        assert_eq!(
+            args.signals,
+            Some(vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string()
+            ])
+        );
+    }
+}
