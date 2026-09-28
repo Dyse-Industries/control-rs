@@ -8,6 +8,10 @@ pub mod fixed_num_tests;
 pub mod num_trait_tests;
 pub mod num_type_tests;
 pub mod op_tests;
+#[cfg(test)]
+pub mod storage_layout_tests;
+#[cfg(test)]
+pub mod storage_sparse_tests;
 pub mod storage_tests;
 #[cfg(test)]
 pub mod subprogram_kernel_tests;
