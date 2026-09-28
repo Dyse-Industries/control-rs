@@ -9,6 +9,8 @@ pub mod num_trait_tests;
 pub mod num_type_tests;
 pub mod op_tests;
 pub mod storage_tests;
+#[cfg(test)]
+pub mod subprogram_kernel_tests;
 pub mod subprogram_tests;
 
 /// Grouped re-exports of all ETS suite descriptors to force link them in example binaries.

@@ -180,6 +180,18 @@ pub mod dsp_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// An empty operand returns early and leaves a non-empty output untouched.
+    fn test_dsp_convolution_empty_operand_leaves_output() {
+        let mut out_a = [9.0_f64; 3];
+        DefaultDsp::convolve_input(&[1.0, 2.0, 3.0], &[], &mut out_a).unwrap();
+        assert!(out_a.iter().all(|v| (*v - 9.0).abs() < f64::EPSILON));
+
+        let mut out_b = [9.0_f64; 3];
+        DefaultDsp::convolve_input(&[], &[1.0, 2.0, 3.0], &mut out_b).unwrap();
+        assert!(out_b.iter().all(|v| (*v - 9.0).abs() < f64::EPSILON));
+    }
+
+    #[cfg_attr(test, test)]
     /// Leaves `output[expected_len..]` unchanged when the buffer is longer
     /// than `input_len + kernel_len - 1`.
     fn test_dsp_convolution_leftover_output_tail() {
