@@ -19,6 +19,12 @@ use crate::error::{GateError, GateResult};
 /// A file and line.
 pub(super) type At<'a> = (&'a str, usize);
 
+/// First row declaring a document ID by document name.
+type DocFirstFile<'a> = BTreeMap<&'a str, &'a Row>;
+
+/// A document ID and file path pair for reporting collisions.
+type DocFilePair<'a> = (&'a str, &'a str);
+
 /// Definition rows by ID.
 type Definitions<'a> = BTreeMap<&'a str, Vec<&'a Row>>;
 
@@ -58,12 +64,11 @@ pub struct TraceConfig {
     pub condition: String,
     /// Pattern for the document name in a qualified ID `<doc>#<id>`.
     pub doc: String,
-    /// Markdown files, and directories whose `<doc_suffix>.md` files are
-    /// read.
+    /// Markdown files, and directories whose Markdown files are read.
     pub files: Vec<String>,
-    /// Text removed from a file stem to form the document name.
-    #[serde(default)]
-    pub doc_suffix: String,
+    /// Pattern matching the document ID declaration in a Markdown document.
+    #[serde(default = "default_doc_id")]
+    pub doc_id: String,
     /// Pattern for a line that defines a requirement.
     pub definition: String,
     /// Pattern for a line that defines a verification condition.
@@ -120,8 +125,8 @@ pub struct Rules {
     verification: Regex,
     /// Verification methods a condition may name.
     methods: Vec<String>,
-    /// Text removed from a file stem to form its document name.
-    doc_suffix: String,
+    /// Pattern matching the document ID declaration in Markdown.
+    doc_id: Regex,
     /// IDs that must not appear.
     retired: BTreeSet<String>,
 }
@@ -132,10 +137,10 @@ struct ScanContext<'a> {
 }
 
 impl TraceConfig {
-    /// The file-name ending of the Markdown files a directory root selects.
+    /// The file-name endings of the Markdown files a directory root selects.
     #[must_use]
     pub fn doc_suffixes(&self) -> Vec<String> {
-        vec![format!("{}.md", self.doc_suffix)]
+        vec![".md".to_string()]
     }
 
     /// Reads and parses a `trace.toml`.
@@ -177,6 +182,7 @@ impl TraceConfig {
         compile("doc", &self.doc)?;
         compile("id", &self.id)?;
         compile("condition", &self.condition)?;
+        compile("doc_id", &self.doc_id)?;
         let occurrence = format!(
             r"(?:(?P<trace_doc>{})#)?\b(?P<trace_id>{})\b",
             self.doc, self.id
@@ -191,7 +197,7 @@ impl TraceConfig {
             definition: compile("definition", &self.definition)?,
             verification: compile("verification", &self.verification)?,
             methods: self.methods.clone(),
-            doc_suffix: self.doc_suffix.clone(),
+            doc_id: compile("doc_id", &self.doc_id)?,
             retired: self.retired.iter().cloned().collect(),
         })
     }
@@ -246,15 +252,50 @@ impl Rules {
     }
 }
 
-/// The document name of `file`: its stem without `suffix`.
-#[must_use]
-pub fn doc_name(file: &str, suffix: &str) -> String {
-    let stem = Path::new(file)
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    stem.strip_suffix(suffix)
-        .map_or_else(|| stem.clone(), str::to_owned)
+fn default_doc_id() -> String {
+    r"^#\s+.*\((?P<doc>[a-z0-9-]+)\)".to_string()
+}
+
+/// Finds the declared document ID in `lines` using `rules.doc_id`, returning
+/// the declared ID or reporting scan defects.
+fn extract_doc_id<'a>(
+    file: &str,
+    lines: &'a [Line<'_>],
+    rules: &Rules,
+    defects: &mut Vec<Defect>,
+) -> Option<&'a str> {
+    let mut declared: Option<At<'a>> = None;
+    for &(number, line) in lines {
+        if let Some(caps) = rules.doc_id.captures(line) {
+            let id = caps
+                .name("doc")
+                .map(|m| m.as_str())
+                .or_else(|| caps.get(1).map(|m| m.as_str()))
+                .unwrap_or_else(|| caps.get(0).map_or("", |m| m.as_str()));
+            if let Some((existing_id, _)) = declared {
+                if existing_id != id {
+                    defects.push(Defect {
+                        file: file.to_string(),
+                        line: number,
+                        message: format!(
+                            "duplicate document ID declaration `{id}`"
+                        ),
+                    });
+                }
+            } else {
+                declared = Some((id, number));
+            }
+        }
+    }
+    if declared.is_none() {
+        defects.push(Defect {
+            file: file.to_string(),
+            line: 1,
+            message: "missing document ID declaration matching doc_id"
+                .to_string(),
+        });
+    }
+    declared.map(|(id, _)| id)
 }
 
 /// The first cell of a Markdown table line.
@@ -312,12 +353,10 @@ fn scan_condition_line(
 
 /// The definition and condition rows of one Markdown document, and any scan defects.
 ///
-/// `file` is the path recorded in each row; its stem, less the configured
-/// suffix, names the document.
+/// `file` is the path recorded in each row; its document ID is extracted from
+/// the first line matching `rules.doc_id`.
 #[must_use]
 pub fn scan_markdown(file: &str, source: &str, rules: &Rules) -> MarkdownScan {
-    let doc = doc_name(file, &rules.doc_suffix);
-    let ctx = ScanContext { doc: &doc, rules };
     let (lines, unclosed) = visible_lines(source);
     let mut rows = Vec::new();
     let mut defects = Vec::new();
@@ -330,10 +369,18 @@ pub fn scan_markdown(file: &str, source: &str, rules: &Rules) -> MarkdownScan {
         });
     }
 
+    let fallback_stem = Path::new(file)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let declared_doc = extract_doc_id(file, &lines, rules, &mut defects);
+    let doc = declared_doc.unwrap_or(&fallback_stem);
+    let ctx = ScanContext { doc, rules };
+
     for (idx, &(number, line)) in lines.iter().enumerate() {
         let at = (file, number);
         if rules.definition.is_match(line)
-            && let Some(id) = rules.ids(line, &doc).next()
+            && let Some(id) = rules.ids(line, doc).next()
         {
             rows.push(row(id, DEFINITION, at, &definition_text(&lines, idx)));
         } else if rules.verification.is_match(line) {
@@ -483,6 +530,30 @@ fn check_condition_methods(
     }
 }
 
+fn check_duplicate_document_ids(rows: &[Row], defects: &mut Vec<Defect>) {
+    let mut doc_first_file = DocFirstFile::new();
+    let mut reported: BTreeSet<DocFilePair<'_>> = BTreeSet::new();
+    for row in rows.iter().filter(|r| r.kind == DEFINITION) {
+        if let Some(doc) = row.id.split('#').next() {
+            if let Some(first) = doc_first_file.get(doc) {
+                if first.file != row.file
+                    && reported.insert((doc, row.file.as_str()))
+                {
+                    defects.push(Defect::at(
+                        row,
+                        format!(
+                            "document ID `{doc}` is defined in multiple files; also defined in {}",
+                            first.file
+                        ),
+                    ));
+                }
+            } else {
+                doc_first_file.insert(doc, row);
+            }
+        }
+    }
+}
+
 /// The defects in `rows`, sorted by file, then line.
 #[must_use]
 pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
@@ -502,6 +573,7 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
     check_duplicate_conditions(&condition_defs, &mut defects);
     check_condition_parents(&conditions, &definitions, &mut defects);
     check_condition_methods(&conditions, rules, &mut defects);
+    check_duplicate_document_ids(rows, &mut defects);
 
     for row in rows {
         for id in std::iter::once(&row.id).chain(&row.parents) {
@@ -594,7 +666,7 @@ mod tests {
     use control_rs_trace_macros::req;
 
     const CLEAN: &str = "\
-# Widget
+# Widget (widget)
 
 - **FR-1 — Size**: The widget shall report its size.
 
@@ -609,7 +681,7 @@ mod tests {
 condition = 'VC-[0-9]+(?:\.[0-9]+[a-z]?)?'
 doc = '[a-z0-9-]+'
 files = ["docs/*-design.md"]
-doc_suffix = "-design"
+doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 methods = ["test", "analysis", "inspection", "review"]
@@ -665,6 +737,8 @@ marked_methods = ["test"]
     #[test]
     fn fenced_blocks_are_skipped() {
         let source = "\
+# Widget (widget)
+
 - **FR-1 — A**: The unit shall work.
 
 ```markdown
@@ -681,13 +755,15 @@ marked_methods = ["test"]
 ";
         assert_eq!(
             scan(source, &rules()),
-            [expect("definition", "widget#FR-1", 1)]
+            [expect("definition", "widget#FR-1", 3)]
         );
     }
 
     #[test]
     fn definitions_take_the_first_id_and_indented_lines() {
         let source = "\
+# Widget (widget)
+
 - **FR-1 — A**: The unit shall match FR-2 and
   keep going.
 
@@ -706,8 +782,7 @@ marked_methods = ["test"]
     #[req("requirement-traceability#VC-2.1", "requirement-traceability#VC-3.1")]
     #[test]
     fn reference_lines_record_every_local_and_qualified_id() {
-        let source =
-            "| VC-1.1 | FR-1, storage#FR-3 | `test` | Criterion FR-2 |\n";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1, storage#FR-3 | `test` | Criterion FR-2 |\n";
         let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(rows.len(), 1);
         let cond = rows.first().unwrap();
@@ -728,10 +803,47 @@ marked_methods = ["test"]
 
     #[req("requirement-traceability#VC-3.1")]
     #[test]
-    fn doc_name_is_the_stem_without_the_suffix() {
-        assert_eq!(doc_name("a/storage-design.md", "-design"), "storage");
-        assert_eq!(doc_name("a/ets-overview.md", "-design"), "ets-overview");
-        assert_eq!(doc_name("a/x-design.md", ""), "x-design");
+    fn doc_id_is_extracted_from_the_title_declaration() {
+        let source = "# Storage Backends (storage)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n";
+        let (rows, defects) =
+            scan_markdown("docs/storage.md", source, &rules());
+        assert!(defects.is_empty(), "{defects:?}");
+        assert_eq!(rows.first().unwrap().id, "storage#FR-1");
+    }
+
+    #[test]
+    fn missing_doc_id_declaration_is_reported_as_defect() {
+        let source = "# Storage Backends\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n";
+        let (rows, defects) =
+            scan_markdown("docs/storage.md", source, &rules());
+        assert_eq!(defects.len(), 1);
+        assert_eq!(defects.first().map(|d| d.line), Some(1));
+        assert_eq!(
+            defects.first().map(|d| d.message.as_str()),
+            Some("missing document ID declaration matching doc_id")
+        );
+        assert_eq!(rows.first().unwrap().id, "storage#FR-1");
+    }
+
+    #[test]
+    fn duplicate_doc_id_across_files_is_reported() {
+        let (rows1, _) = scan_markdown(
+            "docs/a.md",
+            "# Doc A (widget)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n",
+            &rules(),
+        );
+        let (rows2, _) = scan_markdown(
+            "docs/b.md",
+            "# Doc B (widget)\n\n- **FR-2**: Desc\n\n| VC-2.1 | FR-2 | `test` | C |\n",
+            &rules(),
+        );
+        let all_rows = [rows1, rows2].concat();
+        let defects = check(&all_rows, &rules());
+        assert!(
+            defects.iter().any(|d| d
+                .message
+                .contains("document ID `widget` is defined in multiple files"))
+        );
     }
 
     #[test]
@@ -768,6 +880,8 @@ marked_methods = ["test"]
     #[test]
     fn definition_without_a_kind_of_reference_is_missing_it() {
         let source = "\
+# Widget (widget)
+
 - **FR-1 — Size**: The widget shall report its size.
 ";
         assert_eq!(
@@ -794,6 +908,7 @@ marked_methods = ["test"]
     fn unknown_keys_and_reserved_kinds_are_rejected() {
         for key in [
             "extra = 1",
+            "doc_suffix = \"-design\"",
             "exclude_phrases = []",
             "require_phrases = []",
             "references = {}",
@@ -816,7 +931,7 @@ marked_methods = ["test"]
 
     #[test]
     fn scan_condition_finds_parents() {
-        let source = "| VC-1.1 | FR-1, FR-2 | `test` |";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1, FR-2 | `test` |";
         let (found, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(found.len(), 1);
 
@@ -840,7 +955,7 @@ marked_methods = ["test"]
     #[req("requirement-traceability#VC-3.1")]
     #[test]
     fn ids_inside_longer_tokens_or_condition_ids_are_not_parents() {
-        let source = "| VC-1.1 | FR-1 | `test` | Per IEC-61508 and XFR-2 |\n";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `test` | Per IEC-61508 and XFR-2 |\n";
         let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(
             rows.first().map(|r| r.parents.as_slice()),
@@ -872,7 +987,7 @@ marked_methods = ["test"]
         ];
         for (line, message) in cases {
             let source = format!(
-                "- **FR-1 — Size**: The widget shall report.\n\n{line}\n"
+                "# Widget (widget)\n\n- **FR-1 — Size**: The widget shall report.\n\n{line}\n"
             );
             assert_eq!(messages(&source, &rules()), [message], "{line}");
         }
@@ -894,7 +1009,7 @@ marked_methods = ["test"]
     #[req("requirement-traceability#VC-2.1")]
     #[test]
     fn a_parent_named_twice_is_recorded_once() {
-        let source = "| VC-1.1 | FR-1 | `test` | FR-1 holds iff both hold |\n";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `test` | FR-1 holds iff both hold |\n";
         let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(
             rows.first().map(|r| r.parents.as_slice()),
@@ -912,12 +1027,11 @@ marked_methods = ["test"]
 
     #[test]
     fn unclosed_fence_is_reported_as_defect() {
-        let source =
-            "- **FR-1 — Size**: shall report.\n\n```text\nunclosed fence\n";
+        let source = "# Widget (widget)\n\n- **FR-1 — Size**: shall report.\n\n```text\nunclosed fence\n";
         let (rows, defects) = scan_markdown(FILE, source, &rules());
         assert_eq!(rows.len(), 1);
         assert_eq!(defects.len(), 1);
-        assert_eq!(defects.first().map(|d| d.line), Some(3));
+        assert_eq!(defects.first().map(|d| d.line), Some(5));
         assert_eq!(
             defects.first().map(|d| d.message.as_str()),
             Some("fenced code block is unclosed")
@@ -926,7 +1040,8 @@ marked_methods = ["test"]
 
     #[test]
     fn document_with_no_definitions_is_a_defect() {
-        let source = "| VC-1.1 | FR-1 | `test` | Orphan |\n";
+        let source =
+            "# Widget (widget)\n\n| VC-1.1 | FR-1 | `test` | Orphan |\n";
         let (rows, defects) = scan_markdown(FILE, source, &rules());
         assert_eq!(rows.len(), 1);
         assert_eq!(defects.len(), 1);
@@ -939,7 +1054,7 @@ marked_methods = ["test"]
 
     #[test]
     fn verification_row_first_cell_validation() {
-        let bad = "- **FR-1 — Size**: shall report.\n\n| VC-X | FR-1 | `test` | see VC-9.1 |\n";
+        let bad = "# Widget (widget)\n\n- **FR-1 — Size**: shall report.\n\n| VC-X | FR-1 | `test` | see VC-9.1 |\n";
         let defects = messages(bad, &rules());
         assert!(
             defects
@@ -947,7 +1062,7 @@ marked_methods = ["test"]
                 .any(|d| d == "verification row names no condition ID")
         );
 
-        let good = "- **FR-1 — Size**: shall report.\n\n| VC-1.1 | FR-1 | `test` | Valid |\n";
+        let good = "# Widget (widget)\n\n- **FR-1 — Size**: shall report.\n\n| VC-1.1 | FR-1 | `test` | Valid |\n";
         let (rows, defects) = scan_markdown(FILE, good, &rules());
         assert_eq!(rows.len(), 2);
         assert_eq!(rows.get(1).map(|r| r.id.as_str()), Some("widget#VC-1.1"));

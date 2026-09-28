@@ -5,7 +5,7 @@ files = [
     "documentation/vv/requirement-traceability-design.md",
     "documentation/math/fixed-num-design.md",
 ]
-doc_suffix = "-design"
+doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 methods = ["test", "proof", "analysis", "inspection", "review"]

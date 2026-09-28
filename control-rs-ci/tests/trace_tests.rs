@@ -14,6 +14,8 @@ mod cli {
 
     /// A document without defects: one requirement and one `test` condition.
     const CLEAN: &str = "\
+# Widget (widget)
+
 - **FR-1 — Size**: The widget shall report its size.
 
 | Condition | Requirement | Method | Criterion        |
@@ -24,6 +26,8 @@ mod cli {
     /// A duplicate definition, a requirement without condition and a
     /// condition with an undefined parent.
     const DEFECTIVE: &str = "\
+# Widget (widget)
+
 - **FR-1 — Size**: The widget shall report its size.
 - **FR-1 — Again**: The widget shall repeat.
 
@@ -35,6 +39,8 @@ mod cli {
     /// Three requirements: one `test` condition each for FR-1 and FR-2 and a
     /// `review` condition for FR-3.
     const MATRIX: &str = "\
+# Widget (widget)
+
 - **FR-1 — Size**: The widget shall report its size.
 - **FR-2 — Mass**: The widget shall report its mass.
 - **FR-3 — Style**: The widget shall follow the style guide.
@@ -57,7 +63,7 @@ mod cli {
              condition = 'VC-[0-9]+(?:\\.[0-9]+[a-z]?)?'\n\
              doc = '[a-z0-9-]+'\n\
              files = [\"docs\"]\n\
-             doc_suffix = \"-design\"\n\
+             doc_id = '^#\\s+.*\\((?P<doc>[a-z0-9-]+)\\)'\n\
              definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
              verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\
              methods = [\"test\", \"analysis\", \"inspection\", \"review\"]\n\
@@ -195,11 +201,11 @@ mod cli {
         assert_eq!(
             lines,
             [
-                "docs/widget-design.md:1: widget#FR-1 has no verification \
+                "docs/widget-design.md:3: widget#FR-1 has no verification \
                  condition",
-                "docs/widget-design.md:2: widget#FR-1 is defined more than \
-                 once; first definition at docs/widget-design.md:1",
-                "docs/widget-design.md:6: condition widget#VC-7.1 references \
+                "docs/widget-design.md:4: widget#FR-1 is defined more than \
+                 once; first definition at docs/widget-design.md:3",
+                "docs/widget-design.md:8: condition widget#VC-7.1 references \
                  undefined requirement widget#FR-7",
             ]
         );
@@ -295,13 +301,15 @@ mod cli {
     #[req("requirement-traceability#VC-10.1")]
     #[test]
     fn roots_select_suffixed_files_below_directories_and_named_files() {
+        let gadget = CLEAN.replace("Widget (widget)", "Gadget (gadget)");
+        let solo = CLEAN.replace("Widget (widget)", "Solo (solo)");
         let dir = workdir(
             "roots",
             &[
                 ("docs/widget-design.md", CLEAN),
-                ("docs/deep/gadget-design.md", CLEAN),
-                ("docs/notes.md", "- **FR-1 — Stray**: not read."),
-                ("extra/solo.md", CLEAN),
+                ("docs/deep/gadget-design.md", &gadget),
+                ("docs/notes.txt", "- **FR-1 — Stray**: not read."),
+                ("extra/solo.md", &solo),
             ],
         );
         let config_str = config().replace(
@@ -323,6 +331,27 @@ mod cli {
             ]
             .map(String::from)
             .into()
+        );
+    }
+
+    #[test]
+    fn missing_doc_id_declaration_fails_trace_reqs() {
+        let missing_id = "\
+- **FR-1 — Size**: The widget shall report its size.
+
+| Condition | Requirement | Method | Criterion |
+|:----------|:------------|:-------|:----------|
+| VC-1.1    | FR-1        | `test` | Exact size match |
+";
+        let dir =
+            workdir("missing-id", &[("docs/widget-design.md", missing_id)]);
+        let output = trace_reqs(&dir);
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(
+            stdout_lines(&output),
+            [
+                "docs/widget-design.md:1: missing document ID declaration matching doc_id"
+            ]
         );
     }
 

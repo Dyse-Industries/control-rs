@@ -1,4 +1,4 @@
-# Requirement Traceability Infrastructure (Design Document)
+# Requirement Traceability Infrastructure (requirement-traceability)
 
 ![Date Badge](https://img.shields.io/badge/Date-September_27,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
@@ -90,15 +90,15 @@ editing tools; and any systems-engineering view.
   line as `id`, every requirement ID outside condition IDs as `parents`, and
   the method named in a code span as `method`.
 - **FR-3 — Qualified IDs**: `trace-reqs` shall qualify every recorded ID as
-  `<doc>#<id>` per [Matching Rules](#matching-rules), so that equal IDs in
-  different documents never collide, and shall recognize an ID only at word
-  boundaries.
-- **FR-4 — Checks**: `trace-reqs` shall report as a defect: a requirement or
-  condition defined more than once; a condition with no parent or with an
-  undefined parent; a verification row with no condition ID or with more than
-  one; a condition row with no method, with more than one, or with one outside
-  `methods`; a defined requirement with no condition; and a retired ID that is
-  defined or referenced.
+  `<doc>#<id>` per [Matching Rules](#matching-rules), with `<doc>` extracted by
+  the `doc_id` pattern, so that equal IDs in different documents never collide,
+  and shall recognize an ID only at word boundaries.
+- **FR-4 — Checks**: `trace-reqs` shall report as a defect: a missing document ID
+  declaration matching `doc_id`; a document, requirement or condition defined
+  more than once; a condition with no parent or with an undefined parent; a
+  verification row with no condition ID or with more than one; a condition row
+  with no method, with more than one, or with one outside `methods`; a defined
+  requirement with no condition; and a retired ID that is defined or referenced.
 - **FR-6 — Requirement Rows**: `trace-reqs` shall write `reqs.jsonl` with one
   row per definition and per condition, in the row schema of
   [Artifacts](#artifacts).
@@ -293,7 +293,7 @@ id = '(?:FR|NFR|C)-[0-9]+[a-z]?'
 condition = 'VC-[0-9]+(?:\.[0-9]+[a-z]?)?'
 doc = '[a-z0-9-]+'
 files = ["documentation/vv/requirement-traceability-design.md"]
-doc_suffix = "-design"
+doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 methods = ["test", "proof", "analysis", "inspection", "review"]
@@ -322,8 +322,8 @@ marker = "#[req("
 | `id`               | Regex for one requirement ID                                                                                   |
 | `condition`        | Regex for one condition ID; optional (defaults to `VC-[0-9]+(?:\.[0-9]+[a-z]?)?`)                              |
 | `doc`              | Regex for the document name in a qualified ID `<doc>#<id>`                                                     |
-| `files`            | Markdown files, and directories whose `<doc_suffix>.md` files are read (see [File Selection](#file-selection)) |
-| `doc_suffix`       | Text removed from the file stem to form the document name; optional                                            |
+| `files`            | Markdown files, and directories whose `.md` files are read (see [File Selection](#file-selection))             |
+| `doc_id`           | Regex for the document ID declaration; optional (defaults to `^#\s+.*\((?P<doc>[a-z0-9-]+)\)`)                |
 | `definition`       | Regex for a line that defines a requirement                                                                    |
 | `verification`     | Regex for a line that defines a condition                                                                      |
 | `methods`          | Verification methods a condition may name                                                                      |
@@ -342,7 +342,7 @@ Without `[markers]`, `trace-marks` writes an empty `marks.jsonl`.
 
 - A root that is a file is selected.
 - A root that is a directory selects every file below it whose name ends in a
-  suffix: `<doc_suffix>.md` for `files`, each of `markers.suffixes` for
+  suffix: `.md` for `files`, each of `markers.suffixes` for
   `markers.files`.
 - Symbolic links are never followed, so a walk cannot loop.
 - A root that is missing, or is neither a file nor a directory, is an error.
@@ -362,15 +362,17 @@ The rules below are the whole parser:
 4. A line that matches `verification` defines the condition ID on it. Every
    requirement ID on the line is a parent, and the one code span whose content
    is in `methods` is the method.
-5. The document name is the file stem with `doc_suffix` removed:
-   `storage-design.md` becomes `storage`. An ID written without `<doc>#`
-   belongs to the document it appears in.
+5. The document name is the `<doc>` captured by the `doc_id` pattern on the
+   first matching line: `# Title (storage)` yields `storage`. An ID written
+   without `<doc>#` belongs to the document it appears in. A document with no
+   line matching `doc_id` is a defect.
 
 ### Checks
 
 | Check            | Defect                                                                                   |
 |:-----------------|:-----------------------------------------------------------------------------------------|
-| `duplicate`      | A requirement or condition ID is defined more than once                                  |
+| `doc_id`         | A document contains no line matching `doc_id`, or multiple conflicting declarations      |
+| `duplicate`      | A requirement, condition, or document ID is defined more than once                       |
 | `unresolved`     | A condition names a parent that is not defined                                           |
 | `orphan`         | A condition names no parent                                                              |
 | `row`            | A verification row names no condition ID, or more than one                               |

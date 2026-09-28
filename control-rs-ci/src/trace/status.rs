@@ -1011,7 +1011,7 @@ mod tests {
             condition: r"VC-[0-9]+(?:\.[0-9]+[a-z]?)?".to_string(),
             doc: "[a-z0-9-]+".to_string(),
             files: vec!["docs".to_string()],
-            doc_suffix: "-design".to_string(),
+            doc_id: r"^#\s+.*\((?P<doc>[a-z0-9-]+)\)".to_string(),
             definition: r"^- \*\*(?:FR|NFR|C)-".to_string(),
             verification: r"^\| *(?:[a-z0-9-]+#)?VC-".to_string(),
             methods: vec![

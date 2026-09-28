@@ -1,4 +1,4 @@
-# Type/Module Name (Design Document)
+# Type/Module Name (<slug>)
 
 ![Date Badge](https://img.shields.io/badge/Date-Month_D,_YYYY-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)

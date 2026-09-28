@@ -1,4 +1,4 @@
-# Fixed-Point Scalar Type (Design Document)
+# Fixed-Point Scalar Type (fixed-num)
 
 ![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
