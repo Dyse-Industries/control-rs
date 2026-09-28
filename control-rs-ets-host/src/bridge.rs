@@ -47,8 +47,8 @@ use crate::error::HostError;
 use crate::target::{SubprocessTarget, Target};
 
 /// Bytes written to an in-memory test link, shared with the test.
-#[cfg(all(test, unix))]
-pub(crate) type SharedBytes = Arc<std::sync::Mutex<Vec<u8>>>;
+#[cfg(all(any(test, feature = "fake-link"), unix))]
+pub type SharedBytes = Arc<std::sync::Mutex<Vec<u8>>>;
 
 type WaitResult = Result<Option<std::process::ExitStatus>, std::io::Error>;
 
@@ -80,23 +80,23 @@ enum BridgeInner {
         port: serial2::SerialPort,
     },
     /// In-memory link recording written frames (tests only).
-    #[cfg(all(test, unix))]
+    #[cfg(all(any(test, feature = "fake-link"), unix))]
     Fake(FakeLink),
 }
 
 /// An [`ETSBridge`] over an in-memory link with its test handles.
-#[cfg(all(test, unix))]
-pub(crate) struct FakeBridge {
+#[cfg(all(any(test, feature = "fake-link"), unix))]
+pub struct FakeBridge {
     /// The bridge under test.
-    pub(crate) bridge: ETSBridge,
+    pub bridge: ETSBridge,
     /// Feeds messages to the bridge as if the target sent them.
-    pub(crate) tx: Sender<BridgeMessage>,
+    pub tx: Sender<BridgeMessage>,
     /// Bytes the bridge has written to the target.
-    pub(crate) written: SharedBytes,
+    pub written: SharedBytes,
 }
 
 /// State of the in-memory test link.
-#[cfg(all(test, unix))]
+#[cfg(all(any(test, feature = "fake-link"), unix))]
 pub(crate) struct FakeLink {
     /// Every byte written to the link.
     pub(crate) written: SharedBytes,
@@ -338,7 +338,7 @@ impl BridgeInner {
             Self::Serial { port } => {
                 port.write_all(frame).and_then(|()| port.flush())
             }
-            #[cfg(all(test, unix))]
+            #[cfg(all(any(test, feature = "fake-link"), unix))]
             Self::Fake(link) => {
                 link.written
                     .lock()
@@ -366,7 +366,7 @@ impl ETSBridge {
                 let _ = child.kill();
             }
             BridgeInner::Serial { .. } => {}
-            #[cfg(all(test, unix))]
+            #[cfg(all(any(test, feature = "fake-link"), unix))]
             BridgeInner::Fake(_) => {}
         }
         for handle in self.readers.drain(..) {
@@ -554,7 +554,7 @@ impl ETSBridge {
         match &mut self.inner {
             BridgeInner::Qemu { child, .. } => child.try_wait(),
             BridgeInner::Serial { .. } => Ok(None),
-            #[cfg(all(test, unix))]
+            #[cfg(all(any(test, feature = "fake-link"), unix))]
             BridgeInner::Fake(link) => {
                 use std::os::unix::process::ExitStatusExt;
                 link.polls = link.polls.saturating_add(1);
@@ -568,8 +568,9 @@ impl ETSBridge {
 
     /// A bridge over an in-memory link, with the sender that feeds it messages
     /// and the frames written to it (tests only).
-    #[cfg(all(test, unix))]
-    pub(crate) fn fake(exit_after_polls: Option<usize>) -> FakeBridge {
+    #[cfg(all(any(test, feature = "fake-link"), unix))]
+    #[must_use]
+    pub fn fake(exit_after_polls: Option<usize>) -> FakeBridge {
         let (tx, rx) = channel();
         let written = Arc::new(std::sync::Mutex::new(Vec::new()));
         let bridge = Self {
@@ -592,8 +593,9 @@ impl ETSBridge {
     }
 
     /// Whether the shutdown flag is set (tests only).
-    #[cfg(all(test, unix))]
-    pub(crate) fn is_shut_down(&self) -> bool {
+    #[cfg(all(any(test, feature = "fake-link"), unix))]
+    #[must_use]
+    pub fn is_shut_down(&self) -> bool {
         self.shutdown.load(Ordering::SeqCst)
     }
 }

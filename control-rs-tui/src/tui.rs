@@ -32,8 +32,17 @@ use control_rs_ets_host::{
     SessionState, SuiteItem, Target, TestIndex,
 };
 
+/// How long the session may stay undiscovered before discovery is re-sent.
+const DISCOVERY_RETRY: Duration = Duration::from_millis(500);
+
 /// Result of the interactive event loop.
 type TuiResult = Result<(), Box<dyn std::error::Error>>;
+
+/// The connection the event loop drives: the bridge and the target it reaches.
+struct Link<'a> {
+    bridge: &'a mut ETSBridge,
+    target: &'a Target,
+}
 
 /// Selectable item in the hierarchical metrics table.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1017,6 +1026,35 @@ where
     B: ratatui::backend::Backend,
     B::Error: 'static,
 {
+    let link = Link { bridge, target };
+    run_event_loop(terminal, link, state, |wait| {
+        if event::poll(wait)? {
+            Ok(Some(event::read()?))
+        } else {
+            Ok(None)
+        }
+    })
+}
+
+/// Whether discovery should be requested again: it is still incomplete and
+/// the last request is older than [`DISCOVERY_RETRY`].
+fn discovery_due(discovery_complete: bool, since_last: Duration) -> bool {
+    !discovery_complete && since_last > DISCOVERY_RETRY
+}
+
+/// The event loop over any source of terminal events: `next_event` waits up
+/// to the given time for one.
+fn run_event_loop<B>(
+    terminal: &mut Terminal<B>,
+    link: Link<'_>,
+    state: &mut AppState,
+    mut next_event: impl FnMut(Duration) -> std::io::Result<Option<Event>>,
+) -> TuiResult
+where
+    B: ratatui::backend::Backend,
+    B::Error: 'static,
+{
+    let Link { bridge, target } = link;
     state.request_discovery(bridge);
     let mut last_discovery = Instant::now();
 
@@ -1025,9 +1063,10 @@ where
 
         let need_restart = state.drain_bridge(bridge);
 
-        if !state.session.discovery_complete
-            && last_discovery.elapsed() > Duration::from_millis(500)
-        {
+        if discovery_due(
+            state.session.discovery_complete,
+            last_discovery.elapsed(),
+        ) {
             state.request_discovery(bridge);
             last_discovery = Instant::now();
         }
@@ -1042,8 +1081,7 @@ where
             last_discovery = Instant::now();
         }
 
-        if event::poll(Duration::from_millis(30))?
-            && let Event::Key(key) = event::read()?
+        if let Some(Event::Key(key)) = next_event(Duration::from_millis(30))?
             && state.handle_key(key, Some(bridge))
         {
             return Ok(());
@@ -1057,6 +1095,110 @@ mod tests {
     use control_rs_ets::comms::Telemetry;
     use control_rs_ets::settings::SettingValue;
     use crossterm::event::KeyModifiers;
+
+    #[cfg(unix)]
+    mod event_loop {
+        use control_rs_ets_host::FakeBridge;
+        use crossterm::event::Event;
+        use ratatui::backend::TestBackend;
+
+        use super::*;
+
+        fn serial_target() -> Target {
+            Target::Serial {
+                port: "/dev/control-rs-tui-no-such-port".to_string(),
+                baud: 115_200,
+            }
+        }
+
+        fn quit_key() -> Event {
+            Event::Key(make_test_event(KeyCode::Char('q')))
+        }
+
+        #[test]
+        fn quitting_ends_the_loop_without_reattaching() {
+            let FakeBridge {
+                mut bridge,
+                written,
+                ..
+            } = ETSBridge::fake(None);
+            let mut state = AppState::new("T".to_string(), "L".to_string());
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            let mut events = std::iter::once(quit_key());
+            let target = serial_target();
+            let link = Link {
+                bridge: &mut bridge,
+                target: &target,
+            };
+            let result =
+                run_event_loop(&mut terminal, link, &mut state, |_| {
+                    Ok(events.next())
+                });
+            assert!(result.is_ok());
+            assert!(
+                !state.logs.iter().any(|l| l.contains("Re-attaching")),
+                "no panic was reported: {:?}",
+                state.logs
+            );
+            assert!(
+                written.lock().map_or(0, |w| w.len()) > 0,
+                "discovery was requested"
+            );
+        }
+
+        #[test]
+        fn a_target_panic_triggers_a_reattach_attempt() {
+            let FakeBridge { mut bridge, tx, .. } = ETSBridge::fake(None);
+            tx.send(BridgeMessage::telemetry(&Telemetry::TargetPanic {
+                message: "boom",
+                file: "f.rs",
+                line: 1,
+            }))
+            .unwrap();
+            let mut state = AppState::new("T".to_string(), "L".to_string());
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            let mut events = std::iter::once(quit_key());
+            let target = serial_target();
+            let link = Link {
+                bridge: &mut bridge,
+                target: &target,
+            };
+            let result =
+                run_event_loop(&mut terminal, link, &mut state, |_| {
+                    Ok(events.next())
+                });
+            assert!(result.is_ok());
+            assert!(
+                state.logs.iter().any(|l| l.contains("Re-attaching bridge")),
+                "{:?}",
+                state.logs
+            );
+            assert!(
+                state.logs.iter().any(|l| l.contains("reconnect failed")),
+                "the serial port does not exist: {:?}",
+                state.logs
+            );
+        }
+
+        #[test]
+        fn a_target_that_exits_is_reported_in_the_log() {
+            let FakeBridge { mut bridge, .. } = ETSBridge::fake(Some(1));
+            let mut state = AppState::new("T".to_string(), "L".to_string());
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            let mut events = std::iter::once(quit_key());
+            let target = serial_target();
+            let link = Link {
+                bridge: &mut bridge,
+                target: &target,
+            };
+            run_event_loop(&mut terminal, link, &mut state, |_| {
+                Ok(events.next())
+            })
+            .unwrap();
+            assert!(state.process_exit.is_some());
+            assert!(state.logs.iter().any(|l| l.contains("[EXIT]")));
+        }
+    }
 
     /// `TargetInfo` matching the host's protocol, sent before discovery ends.
     const TARGET_INFO: Telemetry<'static> = Telemetry::TargetInfo {
@@ -1410,5 +1552,273 @@ mod tests {
                 .value,
             SettingValue::U32(200)
         );
+    }
+
+    /// Discovers suite 0 named `alpha` with tests `one`, `two` and `settings`
+    /// numbered settings.
+    fn discover_alpha(state: &mut AppState, settings: u16) {
+        feed(
+            state,
+            &Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "Alpha",
+                description: "",
+                test_count: 2,
+                setting_count: settings,
+            },
+        );
+        for (test_id, name) in [(0u16, "One"), (1, "Two")] {
+            feed(
+                state,
+                &Telemetry::TestInfo {
+                    suite_id: 0,
+                    test_id,
+                    name,
+                    description: "",
+                },
+            );
+        }
+        for setting_id in 0..settings {
+            feed(
+                state,
+                &Telemetry::SettingInfo {
+                    suite_id: 0,
+                    setting_id,
+                    name: "gain",
+                    description: "",
+                    value: SettingValue::U8(1),
+                },
+            );
+        }
+        feed(state, &TARGET_INFO);
+        feed(state, &Telemetry::DiscoveryComplete);
+    }
+
+    fn row_names(rows: &[TableItem]) -> Vec<String> {
+        rows.iter()
+            .map(|row| match row {
+                TableItem::Suite { name, .. }
+                | TableItem::Test { name, .. }
+                | TableItem::Setting { name, .. } => name.clone(),
+            })
+            .collect()
+    }
+
+    fn last_flags(rows: &[TableItem]) -> Vec<bool> {
+        rows.iter()
+            .filter_map(|row| match row {
+                TableItem::Test { is_last, .. }
+                | TableItem::Setting { is_last, .. } => Some(*is_last),
+                TableItem::Suite { .. } => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_filter_prompt_applies_edits_and_closes() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        state.handle_key(make_test_event(KeyCode::Char('f')), None);
+        for c in "ab".chars() {
+            state.handle_key(make_test_event(KeyCode::Char(c)), None);
+        }
+        state.handle_key(make_test_event(KeyCode::Backspace), None);
+        assert_eq!(state.filter_query, "a");
+        assert!(state.is_filtering);
+        state.handle_key(make_test_event(KeyCode::Enter), None);
+        assert!(!state.is_filtering, "Enter closes the prompt");
+        assert_eq!(state.filter_query, "a", "and keeps the query");
+    }
+
+    #[test]
+    fn escape_cancels_a_setting_edit() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        discover_alpha(&mut state, 1);
+        state.rebuild_visible_items();
+        state.table_state.select(Some(3));
+        state.handle_key(make_test_event(KeyCode::Enter), None);
+        assert!(state.is_editing_setting);
+        state.handle_key(make_test_event(KeyCode::Char('9')), None);
+        state.handle_key(make_test_event(KeyCode::Esc), None);
+        assert!(!state.is_editing_setting);
+        assert_eq!(state.setting_edit, "");
+        let value = state
+            .session
+            .suites
+            .first()
+            .unwrap()
+            .settings
+            .first()
+            .unwrap()
+            .value;
+        assert_eq!(value, SettingValue::U8(1), "nothing was committed");
+    }
+
+    #[test]
+    fn r_runs_every_test_again_after_a_stop() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        discover_alpha(&mut state, 0);
+        state.handle_key(make_test_event(KeyCode::Char('s')), None);
+        assert!(state.session.current_running.is_none());
+        state.handle_key(make_test_event(KeyCode::Char('r')), None);
+        assert!(state.session.current_running.is_some());
+    }
+
+    #[test]
+    fn rows_follow_the_filter_query_and_collapse_state() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        discover_alpha(&mut state, 2);
+        let suite = state.session.suites.first().unwrap().clone();
+
+        let all = suite_rows(0, &suite, "", false);
+        assert_eq!(row_names(&all), ["Alpha", "One", "Two", "gain", "gain"]);
+        assert_eq!(last_flags(&all), [false, false, false, true]);
+
+        let by_suite = suite_rows(0, &suite, "alpha", false);
+        assert!(
+            row_names(&by_suite)
+                .starts_with(&["Alpha", "One", "Two"].map(String::from))
+        );
+
+        let by_test = suite_rows(0, &suite, "two", false);
+        assert_eq!(row_names(&by_test), ["Alpha", "Two", "gain", "gain"]);
+
+        assert!(suite_rows(0, &suite, "zzz", false).is_empty());
+
+        let collapsed = suite_rows(0, &suite, "", true);
+        assert_eq!(row_names(&collapsed), ["Alpha"]);
+    }
+
+    #[test]
+    fn the_last_test_closes_the_branch_only_without_settings() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        discover_alpha(&mut state, 0);
+        let suite = state.session.suites.first().unwrap().clone();
+        let rows = suite_rows(0, &suite, "", false);
+        assert_eq!(last_flags(&rows), [false, true]);
+    }
+
+    #[test]
+    fn a_suite_without_tests_still_shows_its_header() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        feed(
+            &mut state,
+            &Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "Empty",
+                description: "",
+                test_count: 0,
+                setting_count: 0,
+            },
+        );
+        let suite = state.session.suites.first().unwrap().clone();
+        assert_eq!(row_names(&suite_rows(0, &suite, "", false)), ["Empty"]);
+        assert!(suite_rows(0, &suite, "zzz", false).is_empty());
+    }
+
+    #[test]
+    fn durations_change_unit_exactly_at_a_thousand() {
+        assert_eq!(format_duration(999), "999.00µs");
+        assert_eq!(format_duration(1_000), "1.00ms");
+        assert_eq!(format_duration(999_999), "1000.00ms");
+        assert_eq!(format_duration(1_000_000), "1.00s");
+    }
+
+    #[test]
+    fn target_details_report_the_fpu_and_the_mismatch() {
+        let details = |fpu_flags: u8| {
+            let mut session = SessionState::new();
+            session.target_info = Some(control_rs_ets_host::TargetInfo {
+                protocol_version: 1,
+                board_id: 0x2a,
+                core_clock_hz: 600_000_000,
+                fpu_flags,
+            });
+            target_details(&session)
+        };
+        assert!(details(0).ends_with("FPU none"), "{}", details(0));
+        assert!(details(1).ends_with("FPU single"), "{}", details(1));
+        assert!(details(2).ends_with("FPU double"), "{}", details(2));
+        assert!(details(3).ends_with("FPU double"), "{}", details(3));
+        assert!(
+            details(0b100).ends_with("FPU none"),
+            "high bits are ignored"
+        );
+        assert!(details(0).contains("Board 0x002a | Clock 600 MHz"));
+
+        let mut session = SessionState::new();
+        session.protocol_mismatch = Some(9);
+        assert!(target_details(&session).contains("PROTOCOL MISMATCH"));
+        assert_eq!(target_details(&SessionState::new()), "");
+    }
+
+    #[test]
+    fn boolean_settings_accept_words_and_digits() {
+        let parse =
+            |raw: &str| parse_setting_value(raw, SettingValue::Bool(false));
+        assert_eq!(parse("true"), Ok(SettingValue::Bool(true)));
+        assert_eq!(parse(" 1 "), Ok(SettingValue::Bool(true)));
+        assert_eq!(parse("false"), Ok(SettingValue::Bool(false)));
+        assert_eq!(parse("0"), Ok(SettingValue::Bool(false)));
+        assert!(parse("yes").is_err());
+        assert_eq!(
+            parse_setting_value("12", SettingValue::U8(0)),
+            Ok(SettingValue::U8(12))
+        );
+        assert!(parse_setting_value("x", SettingValue::U8(0)).is_err());
+    }
+
+    #[test]
+    fn discovery_is_repeated_only_while_incomplete_and_after_half_a_second() {
+        let half = Duration::from_millis(500);
+        assert!(discovery_due(false, half + Duration::from_millis(1)));
+        assert!(!discovery_due(false, half), "exactly half a second waits");
+        assert!(!discovery_due(false, Duration::from_millis(100)));
+        assert!(!discovery_due(true, Duration::from_secs(60)));
+    }
+
+    fn screen(terminal: &Terminal<ratatui::backend::TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push_str(buffer.cell((x, y)).map_or(" ", |c| c.symbol()));
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn the_header_counts_passed_and_failed_tests() {
+        let mut state = AppState::new("Board".to_string(), "Link".to_string());
+        discover_alpha(&mut state, 0);
+        feed(
+            &mut state,
+            &Telemetry::MetricReport {
+                suite_id: 0,
+                test_id: 0,
+                cycles: 1,
+                time_us: 1,
+                stack_peak: 1,
+            },
+        );
+        feed(
+            &mut state,
+            &Telemetry::TestStateChange {
+                suite_id: 0,
+                test_id: 1,
+                state: TestState::Failed,
+            },
+        );
+        state.rebuild_visible_items();
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        // Rendered alone: the dashboard's four-line header clips the totals.
+        terminal
+            .draw(|f| f.render_widget(header_widget(&state), f.area()))
+            .unwrap();
+        let text = screen(&terminal);
+        assert!(text.contains("Tests: 2 | Passed: 1 | Failed: 1"), "{text}");
+        assert!(text.contains("TARGET: Board | LINK: Link"), "{text}");
     }
 }

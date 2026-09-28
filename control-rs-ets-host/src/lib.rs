@@ -3,6 +3,8 @@
 //! Provides `ETSBridge` transport abstraction, framed packet communication,
 //! interactive session state management, and headless target execution (`run_headless_ets`).
 
+#[cfg(all(any(test, feature = "fake-link"), unix))]
+pub use bridge::FakeBridge;
 pub use bridge::{BridgeMessage, ETSBridge, OwnedTelemetry};
 pub use error::HostError;
 pub use runner::{
