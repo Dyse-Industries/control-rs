@@ -11,9 +11,8 @@ pub use crate::compare::{
     run_comparison,
 };
 pub use crate::config::{
-    CompareConfigFile, CompareGeneralConfig, MasterPlan, OracleConfigFile,
-    OracleGeneralConfig, SignalToleranceConfig, SuiteConfig,
-    ToleranceMethodConfig, ToleranceTable, VariantConfig,
+    CompareConfigFile, CompareGeneralConfig, MasterPlan, SignalToleranceConfig,
+    SuiteConfig, ToleranceMethodConfig, ToleranceTable, VariantConfig,
 };
 pub use crate::error::HarnessError;
 pub use crate::report::ValidationReport;

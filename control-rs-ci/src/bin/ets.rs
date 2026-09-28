@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::Duration;
 
+use control_rs_ci::cli::USAGE_EXIT;
 use control_rs_ci::ets::{TargetResult, case_line};
 use control_rs_ci::ui;
 use control_rs_ets::comms::TestState;
@@ -64,7 +65,7 @@ fn print_usage() {
 fn flag_value<T: std::str::FromStr>(value: Option<&String>, flag: &str) -> T {
     value.and_then(|v| v.parse().ok()).unwrap_or_else(|| {
         ui::error(format!("{flag} requires a valid value"));
-        exit(2);
+        exit(USAGE_EXIT);
     })
 }
 
@@ -173,11 +174,11 @@ fn main() {
     let parsed = parse_args(&args);
     let targets = parse_targets(&parsed.target_args).unwrap_or_else(|e| {
         ui::error(e);
-        exit(2);
+        exit(USAGE_EXIT);
     });
     if targets.is_empty() {
         ui::error("no targets named; nothing would be verified");
-        exit(1);
+        exit(USAGE_EXIT);
     }
 
     let results: Vec<TargetResult> = targets

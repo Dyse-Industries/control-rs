@@ -210,21 +210,6 @@ impl Rules {
         })
     }
 
-    /// The qualified condition IDs on `line`, left to right.
-    pub fn condition_ids<'a>(
-        &'a self,
-        line: &'a str,
-        doc: &'a str,
-    ) -> impl Iterator<Item = String> + 'a {
-        self.condition_occurrence
-            .captures_iter(line)
-            .filter_map(move |caps| {
-                let id = caps.name("trace_id")?.as_str();
-                let owner = caps.name("trace_doc").map_or(doc, |m| m.as_str());
-                Some(format!("{owner}#{id}"))
-            })
-    }
-
     /// Whether `name` is one of the configured verification methods.
     #[must_use]
     pub fn is_method(&self, name: &str) -> bool {

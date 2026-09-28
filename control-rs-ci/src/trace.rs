@@ -415,7 +415,10 @@ mod tests {
 
     #[test]
     fn rows_round_trip_through_json_lines() {
-        let dir = std::env::temp_dir().join("control_rs_ci_trace_unit_rows");
+        let dir = std::env::temp_dir().join(format!(
+            "control_rs_ci_trace_unit_rows_{}",
+            std::process::id()
+        ));
         let path = dir.join("rows.jsonl");
         let rows = vec![row("a.md", 1), row("a.md", 2)];
         write_rows(&path, &rows).unwrap();
@@ -425,7 +428,10 @@ mod tests {
     #[req("requirement-traceability#VC-14.1")]
     #[test]
     fn rows_of_another_schema_are_rejected() {
-        let dir = std::env::temp_dir().join("control_rs_ci_trace_unit_schema");
+        let dir = std::env::temp_dir().join(format!(
+            "control_rs_ci_trace_unit_schema_{}",
+            std::process::id()
+        ));
         let path = dir.join("rows.jsonl");
         let mut other = row("a.md", 1);
         other.schema = SCHEMA.saturating_add(1);

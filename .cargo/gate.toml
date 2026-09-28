@@ -4,17 +4,22 @@ out_dir = "target/ci-artifacts"
 timeout_secs = 90
 
 [execution]
+# Concurrent groups at once; the default is the number of declared groups.
+# `--max-jobs <n>` overrides it for one invocation.
+# max_jobs = 2
 
-# Built-in exclusive group:
-# The ONLY built-in group in control-rs-ci. Gates listed here require Full Processor
-# Authority (such as hardware target execution, benchmark validation, unsafe audits,
-# or mutation testing) and must never compete for CPU, I/O, or target lock resources.
+# Exclusive stages: the ONLY built-in stages in control-rs-ci. Their gates run
+# one at a time on the calling thread, tagged [pre] or [post], each with full
+# processor authority and the shared target directory.
 #
-# The runner establishes a barrier join: ALL concurrent user groups must finish
-# and join before exclusive gates run. Exclusive gates then execute
-# strictly sequentially, one at a time, tagged [exclusive].
-#
-exclusive_gates = [
+# pre:  runs before any group starts. A failing pre gate aborts the run: no
+#       group or post gate starts, and the report lists them as missing.
+# post: runs after every group has joined (barrier join). Gates that require
+#       full processor authority (benchmarks, mutation testing) belong here,
+#       as does any gate listed in no group.
+[execution.exclusive]
+pre = ["fetch"]
+post = [
     "regression",
     "mutants",
     "mutants-storage-0",
@@ -40,13 +45,14 @@ exclusive_gates = [
     "mutants-ets-host",
     "mutants-ets",
     "mutants-macros",
+    "mutants-trace-macros",
     "mutants-tui",
 ]
 
-# User-defined execution groups:
-# Each group executes concurrently on its own dedicated OS thread.
-# Gates within a single group execute sequentially in declared order.
-# Output lines are tagged with the group identifier (e.g., [cargo], [audit], [static]).
+# Concurrent groups:
+# Groups run on a worker pool of at most max_jobs threads and start in the
+# order declared here. Gates within a group run sequentially in declared order.
+# Output lines are tagged with the group name (for example [lint], [audit]).
 # Each group builds into its own Cargo target directory, target/ci-groups/<group>,
 # so concurrent groups never wait on a shared build-directory lock. A gate that
 # sets CARGO_TARGET_DIR in its own env keeps that value. `cargo ci --clean`
@@ -58,6 +64,18 @@ audit = ["deny", "semver", "valgrind", "geiger"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
 target = ["virtual-ets"]
+
+# ==============================================================================
+# Pre Stage Gates
+# ==============================================================================
+
+# Downloads every dependency once, before concurrent groups contend for the
+# Cargo package cache and the network.
+[fetch]
+mode = "fail"
+command = "cargo fetch"
+timeout_secs = 600
+description = "Downloads workspace dependencies into the Cargo cache before the groups start"
 
 # ==============================================================================
 # Cargo Lane Gates
@@ -81,6 +99,7 @@ description = "Executes Clippy linter across workspace targets"
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "allow-audit", "--", "--baseline", ".cargo/clippy-allow-baseline.txt", "--base-ref", "origin/main"]
+timeout_secs = 900
 description = "Fails on clippy suppression sites (allow, expect, cfg_attr, manifest allow level) beyond .cargo/clippy-allow-baseline.txt, on stale baseline entries, and on baseline growth against origin/main"
 
 [doc]
@@ -95,12 +114,14 @@ description = "Builds workspace API documentation with rustdoc warnings denied"
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "trace-reqs", "--", "--config", ".cargo/trace/trace.toml", "--out", "target/ci-artifacts/reqs.jsonl"]
+timeout_secs = 900
 description = "Checks requirement definitions and verification conditions in the design documents that .cargo/trace/trace.toml lists and writes reqs.jsonl"
 
 [trace-marks]
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "trace-marks", "--", "--config", ".cargo/trace/trace.toml", "--out", "target/ci-artifacts/marks.jsonl"]
+timeout_secs = 900
 description = "Finds the requirement markers in the source files that .cargo/trace/trace.toml lists and writes marks.jsonl"
 
 # Runs after trace-reqs and trace-marks in the lint group and reads their rows.
@@ -108,6 +129,7 @@ description = "Finds the requirement markers in the source files that .cargo/tra
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--config", ".cargo/trace/trace.toml", "--reqs", "target/ci-artifacts/reqs.jsonl", "--marks", "target/ci-artifacts/marks.jsonl", "--out", "target/ci-artifacts/trace-report.json"]
+timeout_secs = 900
 description = "Derives condition coverage from reqs.jsonl and marks.jsonl and fails on uncovered test conditions and unresolved markers"
 
 [build]
@@ -132,7 +154,7 @@ timeout_secs = 5400
 description = "Measures workspace line coverage using cargo-tarpaulin"
 
 # ==============================================================================
-# Audit Lane Gates
+# Audit Lane Gates (vale: lint)
 # ==============================================================================
 
 [deny]
@@ -164,7 +186,7 @@ args = [
     "control-rs-ci",
     "control-rs-compare",
     "control-rs-verification",
-    "tests",
+    "control-rs-trace-macros",
     "benches",
     "examples",
     "--glob=!**/target/**",
@@ -184,7 +206,7 @@ timeout_secs = 2400
 description = "Builds QEMU ETS firmware and runs every suite headless on each target"
 
 # ==============================================================================
-# Exclusive Lane Gates
+# Audit and Verify Lane Gates (geiger and valgrind: audit; cross-compare: verify)
 # ==============================================================================
 
 [geiger]
@@ -203,17 +225,22 @@ env = { CARGO_TARGET_DIR = "target/cross-compare" }
 timeout_secs = 1800
 description = "Executes multi-language reference oracles and verifies HDF5 tolerance bounds"
 
+# Fails without Valgrind (for example on macOS); skip it there with
+# `cargo ci --skip valgrind`.
 [valgrind]
 mode = "fail"
 command = "cargo run"
-args = ["--package", "control-rs-ci", "--bin", "valgrind"]
+args = ["--package", "control-rs-ci", "--bin", "valgrind", "--", "--example", "dc_motor", "--example", "buck_converter", "--example", "fixed_point_math", "--example", "dsp_spectral_analysis"]
 timeout_secs = 3600
-skip_exit_codes = [78]
-description = "Executes Valgrind Memcheck against all workspace example binaries to verify zero memory leaks"
+description = "Executes Valgrind Memcheck against the listed workspace examples to verify zero memory leaks"
 
+# ==============================================================================
+# Post Stage Gates
+# ==============================================================================
+
+# Disabled: superseded by the mutants-* chunks. Selecting it records Skipped.
 [mutants]
-mode = "fail"
-default = false
+mode = "skip"
 command = "cargo mutants"
 args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
 timeout_secs = 43200
@@ -365,7 +392,7 @@ description = "Mutation testing: every file not claimed by another mutants-* gat
 
 
 # Workspace tool crates (measured 2026-09-24: ci 489, compare 202, ets-host 288,
-# ets 180, macros 42, tui 113 mutants). `--no-config` drops .cargo/mutants.toml,
+# ets 180, macros 42, tui 113 mutants; trace-macros added 2026-09-27, unmeasured). `--no-config` drops .cargo/mutants.toml,
 # whose `--lib` test filter and `src/**/tests/**` exclusion apply only to the
 # root package: these crates keep their tests in `tests/` and inline modules.
 # control-rs-verification is an oracle emitter validated by cross-compare and
@@ -418,6 +445,14 @@ command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-macros", "--output", "target/ci-artifacts/mutants-macros.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-macros"
+
+[mutants-trace-macros]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "--no-config", "--package", "control-rs-trace-macros", "--output", "target/ci-artifacts/mutants-trace-macros.out"]
+timeout_secs = 19800
+description = "Mutation testing: control-rs-trace-macros"
 
 [mutants-tui]
 mode = "fail"

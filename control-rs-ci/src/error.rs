@@ -45,8 +45,4 @@ pub enum GateError {
         /// Detail message.
         message: String,
     },
-
-    /// Git command or repository inspection error.
-    #[error("Git error: {0}")]
-    Git(String),
 }

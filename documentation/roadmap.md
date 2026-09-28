@@ -20,6 +20,13 @@
     - [x] **PR3-4**: CI Gate — Requirement Traceability (`trace`) (
       [requirement-traceability](vv/requirement-traceability-design.md))
     - [ ] **PR3-5**: Technical Debt & Verification Hardening
+      ([ci](ci/ci-design.md) rev 1.32)
+        - [x] Exclusive `pre`/`post` stages with the `fetch` gate; groups in
+          declaration order; bounded concurrency (`max_jobs`)
+        - [x] Configuration validation, versioned gate outcomes, budget-safe
+          report, fail-closed `valgrind`, retired schema and dead code removed
+        - [ ] Design-template migration of `ci-design.md` (numbered headings,
+          `VC` rows, trace coverage)
 - [ ] **PR4**: Classical Control Synthesis & Math Core (`src/classical_tools`)
 - [ ] **PR5**: Modern Control Toolbox & State Observers (`src/modern_control`)
 - [ ] **PR6**: System Identification (SysID) & Frequency Estimation
@@ -29,6 +36,9 @@
   `src/math/subprograms`; accelerated backends as examples in
   `examples/subprograms`) ([subprograms](math/subprograms-design.md))
 - [ ] **PR9**: CI Workflow Hardening & Physical-Target ETS Runners (Teensy 4.1)
+    - Teensy 4.1 `target-build` gate (`ci-design.md` FR-17; ITCM layout)
+    - Workflow: build cache, pinned actions and tools, top-level
+      `permissions:`, no duplicate `cargo doc` in the report job
 - [ ] **PR10**: Automated Git Release System & Release Pipeline
 - [ ] **PR11**: Flight Examples, Documentation Consolidation & Initial Release
   (`v0.1.0`)

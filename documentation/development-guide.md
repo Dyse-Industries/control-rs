@@ -111,10 +111,10 @@ to simplify development, testing, formatting, linting and coverage reporting:
 |                                        | `cargo teensy`      | `cargo tui teensy`                                             | TUI → ETS (Teensy 4.0/4.1 over serial).                             |
 | **Formatting**                         | `cargo fmt-all`     | `fmt --all`                                                    | Automatically formats all Rust files in the workspace.              |
 |                                        | `cargo fmt-check`   | `fmt --all -- --check`                                         | Checks that all files conform to formatting rules.                  |
-| **Linting**                            | `cargo lint`        | `clippy --workspace --lib --bins --tests --examples --benches` | Runs Clippy lints across all packages and targets.                  |
-|                                        | `cargo clippy-json` | `cargo lint --message-format=json`                             | Runs Clippy lints and outputs findings in JSON format.              |
-|                                        | `cargo clippy-ci`   | `cargo clippy-json -- -D warnings`                             | Runs Clippy CI lints, treating all warnings as compiler errors.     |
-| **Coverage**                           | `cargo coverage`    | `tarpaulin --verbose --workspace`                              | Measures test code coverage via `cargo-tarpaulin`.                  |
+| **Linting**                            | `cargo lint`        | `run --package control-rs-ci --bin gate -- lint`               | Runs the full `lint` group via `cargo gate`.                        |
+|                                        | `cargo clippy-json` | `clippy --workspace --all-targets --message-format=json`       | Runs Clippy lints and outputs findings in JSON format.              |
+|                                        | `cargo clippy-ci`   | `run --package control-rs-ci --bin gate -- clippy`             | Runs the Clippy gate via `cargo gate`, denying all warnings.        |
+| **Coverage**                           | `cargo coverage`    | `tarpaulin --config .cargo/tarpaulin.toml --verbose --workspace` | Measures test code coverage via `cargo-tarpaulin`.                  |
 |                                        | `cargo coverage-ci` | `cargo coverage --color never --out Html --out Json`           | Runs coverage in CI mode, exporting reports in HTML and JSON.       |
 
 ---
@@ -162,10 +162,13 @@ parameters in real time.
 
 ## Continuous Integration & Verification
 
-`cargo ci` runs every gate declared in [`.cargo/gate.toml`](../.cargo/gate.toml), grouped
-as in GitHub Actions, except gates marked `default = false` (the mutation chunks
-and `regression`), which run when named or with `--all`. The `target` group
-needs the rustup targets and QEMU listed in [dependencies](dependencies.md). `cargo gate` runs a subset. Gate output goes to
+`cargo ci` runs every gate declared in [`.cargo/gate.toml`](../.cargo/gate.toml)
+in three stages: the `pre` gates (`fetch`), then the groups in parallel (as in
+GitHub Actions), then the `post` gates. Gates marked `default = false` (the
+mutation chunks and `regression`) run only when named or with `--all`, and
+`mode = "skip"` gates never run. The `target` group needs the rustup targets and
+QEMU listed in [dependencies](dependencies.md), and the `valgrind` gate needs
+Valgrind (on macOS: `cargo ci --skip valgrind`). `cargo gate` runs a subset. Gate output goes to
 `target/ci-artifacts/<gate>.log`; add `-v` to also stream it to the console,
 each line prefixed with its group and gate (for example
 `[verify] cross-compare | ...`), as the GitHub Actions lanes do.
@@ -173,6 +176,7 @@ each line prefixed with its group and gate (for example
 ```bash
 cargo ci                  # default gates
 cargo ci --all            # also the default = false gates (mutation chunks, regression)
+cargo ci --max-jobs 2     # at most two groups at once
 cargo ci -v               # default gates, output streamed with [group] gate prefixes
 cargo gate fmt,clippy     # selected gates
 cargo coverage            # console coverage

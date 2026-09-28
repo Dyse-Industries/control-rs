@@ -4,7 +4,7 @@ set -e
 # Pre-commit hook to format code and run clean, build, check, lint in the
 # main workspace, nested validation crates, and pedagogical example crates.
 #
-# Install: cp scripts/git-hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+# Install once after cloning: git config core.hooksPath .github/ (see CONTRIBUTING.md).
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"

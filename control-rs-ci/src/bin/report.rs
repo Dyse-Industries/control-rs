@@ -4,6 +4,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 
+use control_rs_ci::GateError;
+use control_rs_ci::cli::USAGE_EXIT;
 use control_rs_ci::config::GateConfig;
 use control_rs_ci::report::ReportAggregator;
 use control_rs_ci::ui;
@@ -48,9 +50,11 @@ fn parse_report_args(args: &[String]) -> ReportArgs {
         } else if arg == "-X" || arg == "--clean" || arg == "clean" {
             parsed.clean = true;
         } else if arg == "-c" || arg == "--config" {
-            if let Some(val) = rest.next() {
-                parsed.config_path = Some(PathBuf::from(val));
-            }
+            let Some(val) = rest.next() else {
+                ui::error(format!("{arg} requires a path"));
+                exit(USAGE_EXIT);
+            };
+            parsed.config_path = Some(PathBuf::from(val));
         } else if let Some(val) = arg
             .strip_prefix("--config=")
             .or_else(|| arg.strip_prefix("-c="))
@@ -59,7 +63,7 @@ fn parse_report_args(args: &[String]) -> ReportArgs {
         } else {
             ui::error(format!("Unknown argument: {arg}"));
             print_usage("cargo report");
-            exit(1);
+            exit(USAGE_EXIT);
         }
     }
     parsed
@@ -78,7 +82,11 @@ fn clean_and_exit(workspace_root: &Path, config_path: &Path) -> ! {
         }
         Err(e) => {
             ui::error(format!("Failed to clean CI artifacts: {e}"));
-            exit(1);
+            exit(if matches!(e, GateError::Config { .. }) {
+                USAGE_EXIT
+            } else {
+                1
+            });
         }
     }
 }
@@ -101,7 +109,7 @@ fn main() {
         Ok(c) => c,
         Err(e) => {
             ui::error(format!("Failed to load gate.toml: {e}"));
-            exit(1);
+            exit(USAGE_EXIT);
         }
     };
 

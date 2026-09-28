@@ -18,6 +18,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use control_rs_ci::cli::USAGE_EXIT;
+
 /// Benchmarks in the order Criterion printed them.
 type Results = Vec<BenchmarkResult>;
 
@@ -404,7 +406,7 @@ fn main() {
         Err(e) => {
             eprintln!("Error: {e}\n");
             print_help();
-            std::process::exit(1);
+            std::process::exit(USAGE_EXIT);
         }
     };
 
@@ -415,7 +417,7 @@ fn main() {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Error: {e}");
-            std::process::exit(1);
+            std::process::exit(USAGE_EXIT);
         }
     };
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));

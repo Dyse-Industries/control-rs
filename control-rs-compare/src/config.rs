@@ -9,17 +9,11 @@ use serde::{Deserialize, Serialize};
 use crate::compare::SignalNames;
 use crate::error::HarnessError;
 
-/// Backward-compatible type alias for `CompareConfigFile`.
-pub type OracleConfigFile = CompareConfigFile;
-
-/// Backward-compatible type alias for `CompareGeneralConfig`.
-pub type OracleGeneralConfig = CompareGeneralConfig;
-
 /// Root or suite-level `compare.toml` configuration document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CompareConfigFile {
     /// General orchestrator settings.
-    #[serde(default, alias = "oracle")]
+    #[serde(default)]
     pub compare: CompareGeneralConfig,
 
     /// Optional child suite directory paths to load recursively.

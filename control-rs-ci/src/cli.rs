@@ -6,10 +6,14 @@ use std::process::exit;
 use crate::config::GateConfig;
 use crate::gate::build_all_gates;
 use crate::ui;
-use crate::{GateFilter, PipelineOptions, run_pipeline};
+use crate::{PipelineOptions, run_pipeline};
 
 /// The only binary that accepts `-- <args>` passthrough (FR-14).
 pub const PASSTHROUGH_BINARY: &str = "cargo gate";
+
+/// Exit status for a usage or configuration error, shared by every
+/// `control-rs-ci` binary. Gate failures exit 1.
+pub const USAGE_EXIT: i32 = 2;
 
 /// Arguments after `--`, or `None` when no `--` was given.
 pub type Passthrough = Option<Vec<String>>;
@@ -35,6 +39,8 @@ pub struct CliOptions {
     pub verbose: bool,
     /// Arguments after `--`, appended to the one selected gate (FR-14).
     pub passthrough: Passthrough,
+    /// Bounded group concurrency limit (FR-13).
+    pub max_jobs: Option<usize>,
 }
 
 struct SplitArgs<'a> {
@@ -68,6 +74,7 @@ pub fn render_usage(binary_name: &str) -> String {
            {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: .cargo/gate.toml)\n  \
            {f}-X{f:#}, {f}--clean{f:#}            Clean previous CI artifacts and reports\n  \
            {f}-a{f:#}, {f}--all{f:#}              Run every enabled gate, including default = false gates\n  \
+           {f}-j{f:#}, {f}--max-jobs{f:#} {a}<n>{a:#}     Bound concurrent execution groups\n  \
            {f}-v{f:#}, {f}--verbose{f:#}          Echo each gate's output, prefixed with its group and name\n  \
            {f}-l{f:#}, {f}--list{f:#}             List all registered quality gates\n  \
            {f}-h{f:#}, {f}--help{f:#}             Print help information\n\n\
@@ -98,23 +105,25 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
     options.passthrough = split.passthrough;
 
     let mut parser = lexopt::Parser::from_iter(split.parser_args);
+    // `--list` acts after parsing, so a later `--config` applies to it.
+    let mut list = false;
 
     while let Some(arg) = parser.next().unwrap_or_else(|e| {
         ui::error(format!("{e}"));
-        exit(1);
+        exit(USAGE_EXIT);
     }) {
         match arg {
             Short('h') | Long("help") => {
                 print_usage(binary_name);
                 exit(0);
             }
-            Short('l') | Long("list") => {
-                list_gates(&options);
-                exit(0);
-            }
+            Short('l') | Long("list") => list = true,
             Short('X') | Long("clean") => options.clean = true,
             Short('v') | Long("verbose") => options.verbose = true,
             Short('a') | Long("all") => options.run_all = true,
+            Short('j') | Long("max-jobs") => {
+                options.max_jobs = Some(parse_usize_value(&mut parser));
+            }
             Short('g') | Long("group") => {
                 push_list(
                     &mut options.groups,
@@ -143,11 +152,15 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
             _ => {
                 ui::error(format!("Unknown argument: {arg:?}"));
                 print_usage(binary_name);
-                exit(1);
+                exit(USAGE_EXIT);
             }
         }
     }
 
+    if list {
+        list_gates(&options);
+        exit(0);
+    }
     options
 }
 
@@ -175,7 +188,7 @@ fn handle_positional_value(val: std::ffi::OsString, options: &mut CliOptions) {
     use lexopt::prelude::*;
     let s = val.string().unwrap_or_else(|e| {
         ui::error(format!("Invalid UTF-8: {e:?}"));
-        exit(1);
+        exit(USAGE_EXIT);
     });
     for part in s.split(',').map(str::trim).filter(|p| !p.is_empty()) {
         match part {
@@ -192,20 +205,28 @@ fn parse_string_value(parser: &mut lexopt::Parser) -> String {
         .value()
         .unwrap_or_else(|e| {
             ui::error(format!("{e}"));
-            exit(1);
+            exit(USAGE_EXIT);
         })
         .string()
         .unwrap_or_else(|e| {
             ui::error(format!("Invalid UTF-8: {e:?}"));
-            exit(1);
+            exit(USAGE_EXIT);
         })
 }
 
 fn parse_path_value(parser: &mut lexopt::Parser) -> PathBuf {
     PathBuf::from(parser.value().unwrap_or_else(|e| {
         ui::error(format!("{e}"));
-        exit(1);
+        exit(USAGE_EXIT);
     }))
+}
+
+fn parse_usize_value(parser: &mut lexopt::Parser) -> usize {
+    let s = parse_string_value(parser);
+    s.parse::<usize>().unwrap_or_else(|e| {
+        ui::error(format!("invalid integer value '{s}': {e}"));
+        exit(USAGE_EXIT);
+    })
 }
 
 /// Appends the non-empty, trimmed comma-separated entries of `val`.
@@ -221,8 +242,11 @@ fn push_list(dest: &mut Vec<String>, val: &str) {
 /// Prints every registered gate with its description.
 fn list_gates(options: &CliOptions) {
     let config_path = resolve_config_path(options);
-    let config = GateConfig::load_from_path(&config_path).unwrap_or_default();
-    let all_gates = build_all_gates(&config).unwrap_or_default();
+    let config = GateConfig::load_from_path(&config_path).unwrap_or_else(|e| {
+        ui::error(format!("Failed to load configuration: {e}"));
+        exit(USAGE_EXIT);
+    });
+    let all_gates = build_all_gates(&config);
     ui::init_color();
     let h = ui::HELP_HEADER;
     let f = ui::HELP_FLAG;
@@ -267,24 +291,30 @@ pub fn run_cli(binary_name: &str) {
 
     let config = GateConfig::load_from_path(&config_path).unwrap_or_else(|e| {
         ui::error(format!("Failed to load configuration: {e}"));
-        exit(1);
+        exit(USAGE_EXIT);
     });
+
+    if options.run_all && selection_requested(&options) {
+        ui::error(
+            "`--all` selects every gate; it cannot be combined with `--group`, `--only` or gate names",
+        );
+        exit(USAGE_EXIT);
+    }
 
     // A selection given on the command line stays a selection even when every
     // name in it is unknown, so it selects nothing rather than the defaults.
-    let selection_requested =
-        !options.groups.is_empty() || !options.only_gates.is_empty();
+    let selection_requested = selection_requested(&options);
     for warning in resolve_selection(&mut options, &config) {
         ui::warn_diag(warning);
     }
 
     if let Err(e) = check_passthrough(binary_name, &options, &config) {
         ui::error(e);
-        exit(2);
+        exit(USAGE_EXIT);
     }
 
     let pipeline = PipelineOptions {
-        only_gates: (!options.run_all && selection_requested)
+        only_gates: selection_requested
             .then_some(options.only_gates.as_slice()),
         skip_gates: (!options.skip_gates.is_empty())
             .then_some(options.skip_gates.as_slice()),
@@ -293,10 +323,15 @@ pub fn run_cli(binary_name: &str) {
         clean: options.clean,
         verbose: options.verbose,
         extra_args: options.passthrough.as_deref().unwrap_or_default(),
+        max_jobs: options.max_jobs,
     };
     match run_pipeline(&workspace_root, &config_path, &pipeline) {
         Ok(true) => exit(0),
         Ok(false) => exit(1),
+        Err(e @ crate::GateError::Config { .. }) => {
+            ui::error(format!("{e}"));
+            exit(USAGE_EXIT);
+        }
         Err(e) => {
             ui::error(format!("Fatal error executing CI pipeline: {e}"));
             exit(1);
@@ -316,14 +351,14 @@ pub fn resolve_selection(
     let mut warnings = Vec::new();
     let mut expanded = Vec::new();
     for group_name in &options.groups {
-        match group_members(config, group_name) {
-            Some(members) => push_unique(&mut expanded, members),
+        match config.group_members(group_name) {
+            Some(members) => push_unique(&mut expanded, &members),
             None => warnings.push(format!("unknown group '{group_name}'")),
         }
     }
     for name in &options.only_gates {
-        if let Some(members) = group_members(config, name) {
-            push_unique(&mut expanded, members);
+        if let Some(members) = config.group_members(name) {
+            push_unique(&mut expanded, &members);
         } else if config.gate_def(name).is_some() {
             push_unique(&mut expanded, std::slice::from_ref(name));
         } else {
@@ -391,19 +426,18 @@ fn clean_and_exit(workspace_root: &Path, config_path: &Path) -> ! {
         }
         Err(e) => {
             ui::error(format!("Failed to clean CI artifacts: {e}"));
-            exit(1);
+            exit(if matches!(e, crate::GateError::Config { .. }) {
+                USAGE_EXIT
+            } else {
+                1
+            });
         }
     }
 }
 
-/// Gates of the named group (`exclusive` included), or `None` if no such
-/// group exists.
-fn group_members<'a>(config: &'a GateConfig, name: &str) -> GateFilter<'a> {
-    if name == "exclusive" {
-        Some(&config.execution.exclusive_gates)
-    } else {
-        config.execution.groups.get(name).map(Vec::as_slice)
-    }
+/// Whether the command line names groups or gates.
+const fn selection_requested(options: &CliOptions) -> bool {
+    !options.groups.is_empty() || !options.only_gates.is_empty()
 }
 
 /// Appends each of `names` not already in `dest`.

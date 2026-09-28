@@ -18,7 +18,6 @@ exclude = [
     ".cargo/clippy-allow-baseline.txt",
     "ets-results.json",
     "tarpaulin-report.*",
-    "tests/fixtures/",
 ]
 
 [workspace]
@@ -84,7 +83,6 @@ ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
 
 [dev-dependencies]
 proptest = "1"
-control-rs-ci = { path = "control-rs-ci" }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 [[bench]]

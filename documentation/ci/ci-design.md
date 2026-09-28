@@ -1,6 +1,6 @@
 # Continuous Integration & Quality Gate Infrastructure (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_25,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_27,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -43,9 +43,10 @@ minimal-parsing design principle**:
   (`control-rs-ci report`) operates generically, rendering
   `target/ci-artifacts/ci-report.md` directly from `GateOutcome` records and
   tool logs without requiring specialized per-gate code.
-- **Multi-Lane Parallel Scheduling**: Independent execution groups execute
-  concurrently on a bounded worker pool (`max_jobs`), while exclusive gates
-  execute sequentially following a barrier join.
+- **Staged Parallel Scheduling**: Exclusive `pre` gates run first, one at a
+  time; independent execution groups then run concurrently on a bounded worker
+  pool (`max_jobs`); exclusive `post` gates run last, one at a time, after a
+  barrier join.
 - **Gate Opacity**: The runner knows a gate only by its declared command,
   arguments, environment, working directory, timeout, policy and default
   selection, and by the exit status and artifacts it produces. Internal parallelism, sharding and output formats
@@ -64,9 +65,11 @@ minimal-parsing design principle**:
   and executed via a single concrete `Gate` type without gate-specific traits,
   subtypes, or dynamic dispatch.
 - **FR-3 — Declarative Workspace Configuration (`gate.toml`)**: Runner settings,
-  execution groups, exclusive gates, and individual gate execution definitions
+  execution groups, exclusive stages, and individual gate execution definitions
   must be declared in a workspace-root `gate.toml` without hardcoded fallback
-  vectors in runner source code.
+  vectors in runner source code. A missing file, an unknown key, a scheduled
+  gate without a definition and a gate scheduled twice are configuration
+  errors.
 - **FR-4 — Subcommand & Flag Economy**: The runner must parse compound command
   strings (for example `command = "cargo clean"`) and optional argument vectors
   (`args`) without forcing repetition of subcommand names in arguments.
@@ -82,10 +85,12 @@ minimal-parsing design principle**:
   quality gates into independent concurrent execution groups declared in
   `gate.toml` (`[execution.groups]`), executing groups concurrently across
   worker threads while preserving sequential execution within each group.
-- **FR-9 — Exclusive Processor Authority Barriers**: Gates requiring
-  unrestricted access to CPU, memory bandwidth, or Cargo locks must declare
-  membership in `exclusive_gates`. The runner must drain and join all active
-  background group threads before dispatching exclusive gates sequentially.
+- **FR-9 — Exclusive Stages**: Gates that must run alone declare membership in
+  `[execution.exclusive]` `pre` or `post`. The runner must run `pre` gates
+  sequentially before any group starts, and must start no group or `post` gate
+  after a `pre` gate records `Verdict::Fail`. It must drain and join every group
+  before dispatching `post` gates sequentially. A gate in no group runs in
+  `post`.
 - **FR-10 — Fail-Closed Report Aggregation**: The report aggregator
   (`control-rs-ci report`) must derive overall pipeline success strictly from
   gate policies applied to `GateOutcome` verdicts. Any missing, corrupt, or
@@ -118,9 +123,10 @@ minimal-parsing design principle**:
 - **FR-16 — Process-Tree Termination**: A gate that exceeds its timeout must be
   terminated together with every descendant process it started, so no build,
   benchmark or emulator outlives the gate that launched it.
-- **FR-17 — Bare-Metal Target Build**: The pipeline must compile the target
-  firmware for every embedded target declared in `gate.toml`, including targets
-  that CI cannot execute (Teensy 4.1), and fail when any build fails.
+- **FR-17 — Bare-Metal Target Build (deferred to PR9)**: The pipeline must
+  compile the target firmware for every embedded target declared in
+  `gate.toml`, including targets that CI cannot execute (Teensy 4.1), and fail
+  when any build fails. No gate implements it yet (§4.9, §8).
 - **FR-18 — Virtual Target Execution**: The pipeline must build the ETS
   firmware for every QEMU target declared in `gate.toml`, run its suites to
   completion through `control-rs-ets-host` under a per-target wall-clock bound,
@@ -134,11 +140,13 @@ minimal-parsing design principle**:
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Zero Continuous Allocation**: The runner software operates with zero
-  persistent allocation overhead during execution.
+- **NFR-1 — Zero Continuous Allocation (withdrawn)**: Withdrawn in revision
+  1.32. The claim was not measurable as stated and did not hold: the report
+  reads each log tail into memory.
 - **NFR-2 — Outcome Schema Stability**: The `GateOutcome` JSON schema and
   Markdown report structure (`ci-report.md`) must remain stable and versioned
-  across releases.
+  across releases. Every `GateOutcome` carries `schema`; `report` rejects a
+  record of another version and lists it in the report.
 - **NFR-3 — Headless Dependency Floor**: The runner's dependency closure must
   contain zero GUI, terminal-event, or interactive styling crates.
 
@@ -154,15 +162,15 @@ minimal-parsing design principle**:
   `continue-on-error` must match gates configured as `warn`. A fail-closed gate
   (`fail`) must not be bypassed.
 - **C-4 — Gate Opacity**: The runner depends only on a gate's declared
-  `command`, `args`, `env`, `cwd`, `timeout_secs`, `mode` and `default`, and on
-  its exit status and produced artifacts. The runner must not inject, parse or rewrite gate
+  `command`, `args`, `env`, `cwd`, `timeout_secs`, `mode`, `default` and
+  `skip_exit_codes`, and on its exit status and produced artifacts. The runner must not inject, parse or rewrite gate
   arguments or environment to control a gate's internal behavior (for example
   worker counts, shard selection or output format).
 - **C-5 — Target Architectures**: Embedded targets are ARM Cortex-M
   (`thumbv7em-none-eabihf`, `thumbv7em-none-eabi`) and RISC-V
   (`riscv32imac-unknown-none-elf`, `riscv64gc-unknown-none-elf`) under QEMU,
   and the NXP i.MX RT1062 (Teensy 4.1, `thumbv7em-none-eabihf`) as a build-only
-  target. Host tooling runs on `x86_64` and `aarch64`.
+  target once FR-17 lands (PR9). Host tooling runs on `x86_64` and `aarch64`.
 - **C-6 — Indicative Emulation Timing**: Virtual QEMU execution is indicative
   only and does not model microarchitectural cache or bus contention. Cycle
   counts from QEMU are recorded, never gated; precise timing requires physical
@@ -173,18 +181,22 @@ minimal-parsing design principle**:
 ### 3. Technical Overview
 
 `control-rs-ci` decouples quality gate execution from report generation while
-minimizing parsing overhead. Gates execute concurrently across dedicated worker
-threads or sequentially under exclusive authority:
+minimizing parsing overhead. Gates run in three stages: exclusive `pre` gates,
+concurrent groups on a bounded worker pool, then exclusive `post` gates:
 
 ```mermaid
 flowchart TD
     subgraph Config["Workspace Configuration (gate.toml)"]
-        CFG["gate.toml<br/><i>[runner], [execution.groups], [&lt;gate&gt;]</i>"]
+        CFG["gate.toml<br/><i>[runner], [execution.exclusive], [execution.groups], [&lt;gate&gt;]</i>"]
     end
 
     subgraph Runner["Generic Runner Engine (control-rs-ci / gate)"]
         GC["GateConfig<br/><i>Vec&lt;Gate&gt; (Single Concrete Type)</i>"]
-        SCHED["Topology Scheduler<br/><i>Group Partitioning &amp; Exclusive Assignment</i>"]
+        SCHED["Topology Scheduler<br/><i>Stage and Group Partitioning</i>"]
+
+        subgraph Pre["Sequential Pre Stage"]
+            PRE["Pre Lane (Main Thread)<br/>Pre Gate 1 → ... (a Fail aborts the run)"]
+        end
 
         subgraph Groups["Bounded Worker Pool (≤ max_jobs scoped threads)"]
             direction TB
@@ -195,8 +207,8 @@ flowchart TD
 
         BARRIER{"Barrier Join<br/><i>Wait for all concurrent groups</i>"}
 
-        subgraph Exclusive["Sequential Exclusive Execution"]
-            EX["Exclusive Lane (Main Thread)<br/>Exclusive Gate 1 → Exclusive Gate 2 → ..."]
+        subgraph Post["Sequential Post Stage"]
+            EX["Post Lane (Main Thread)<br/>Post Gate 1 → Post Gate 2 → ..."]
         end
     end
 
@@ -210,11 +222,11 @@ flowchart TD
         MD["target/ci-artifacts/ci-report.md"]
     end
 
-    CFG --> GC --> SCHED
-    SCHED --> G1 & G2 & GN
+    CFG --> GC --> SCHED --> PRE
+    PRE --> G1 & G2 & GN
     G1 & G2 & GN --> BARRIER
     BARRIER --> EX
-    G1 & G2 & GN --> RES & LOG
+    PRE & G1 & G2 & GN --> RES & LOG
     EX --> RES & LOG
     RES & LOG --> AGG --> MD
 ```
@@ -239,13 +251,20 @@ report rendering logic. The package exposes focused binary targets:
 | `report`         | `cargo report`     | JSON artifact aggregator rendering `ci-report.md`                                                      |
 | `regression`     | `cargo regression` | Performance regression evaluator and benchmark budget harness                                          |
 | `allow-audit`    | (gate only)        | Clippy suppression ratchet against `.cargo/clippy-allow-baseline.txt` (§4.10)                          |
-| `valgrind`       | `cargo valgrind`   | Multi-example Valgrind Memcheck memory leak and safety runner                                          |
+| `valgrind`       | `cargo valgrind`   | Valgrind Memcheck over the examples named by `--example`; fails without Valgrind                       |
 | `ets`            | `cargo ets`        | Headless ETS runner: builds target firmware and runs its suites through `control-rs-ets-host` (§4.9)  |
+| `trace-reqs`     | `cargo trace-reqs` | Requirement and verification-condition rows from the listed design documents (`reqs.jsonl`)            |
+| `trace-marks`    | `cargo trace-marks`| Requirement markers found in source text (`marks.jsonl`)                                               |
+| `trace-check`    | `cargo trace-check`| Condition coverage from both row files (`trace-report.json`), gate `trace`                             |
 
 `cargo ci` and `cargo gate` share one option set: `--group`, `--only`, `--skip`,
 `--up-to`, `--config`, `--clean`, `--all`, `--list`, `--max-jobs` and `-v`/
 `--verbose`. Only `cargo gate` accepts a `--` separator (§4.8); `cargo ci`
-rejects it. Without `--verbose` the console shows status lines only and gate
+rejects it. `--group` also accepts `pre`, `post` and `exclusive` (both stages).
+The positional words `clean` and `all` act as `--clean` and `--all`, so a gate
+with either name is selected with `--only`. `--all` selects every enabled gate
+and is rejected together with `--group`, `--only` or gate names. Every binary
+exits 1 on a gate failure and 2 on a usage or configuration error. Without `--verbose` the console shows status lines only and gate
 output goes to the log alone; with it, gate output is also echoed live (§4.4).
 GitHub Actions invokes every lane with `--verbose`, so each gate's output
 appears in its step console.
@@ -257,6 +276,7 @@ Every quality gate is represented by a single concrete `Gate` struct:
 ```rust
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GateOutcome {
+    pub schema: u32,                     // OUTCOME_SCHEMA (NFR-2)
     pub gate: String,
     pub verdict: Verdict,                // Pass | Warn | Fail | Skipped
     pub exit_code: Option<i32>,
@@ -276,6 +296,7 @@ pub enum Verdict {
 
 /// Generic declarative gate definition parsed from `gate.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GateDefinition {
     /// Command string to execute (e.g., `"cargo clean"`, `"cargo fmt"`, `"vale"`).
     pub command: String,
@@ -313,6 +334,11 @@ pub struct Gate {
     pub args: Vec<String>,
     pub description: Option<String>,
     pub env: std::collections::HashMap<String, String>,
+    pub mode: GatePolicy,
+    pub timeout: Duration,               // timeout_secs, else [runner] timeout_secs
+    pub skip_exit_codes: Vec<i32>,
+    pub default: bool,
+    pub cwd: Option<PathBuf>,
 }
 
 impl Gate {
@@ -352,7 +378,9 @@ The gate execution lifecycle follows a zero-overhead process runner pattern:
    containing the `GateOutcome`.
 6. **Structured Degradation**: If an external executable or cargo subcommand is
    absent from the host, gates operating under `warn` policy log a diagnostic
-   and record `Verdict::Warn` without failing the pipeline.
+   and record `Verdict::Warn` without failing the pipeline. Under `fail` the
+   same absence records `Verdict::Fail`: a host without a tool skips its gate
+   explicitly (`--skip`), never silently.
 7. **Timeout and Tree Termination**: A gate that exceeds `timeout_secs` is
    terminated with its whole process tree (FR-16). The runner stops the gate
    process, then each descendant found through `pgrep -P`, top-down, so no
@@ -363,7 +391,7 @@ The gate execution lifecycle follows a zero-overhead process runner pattern:
 
 #### 4.3 Declarative Configuration (`gate.toml`)
 
-All quality gates, runner settings, execution groups, and exclusive gates are
+All quality gates, runner settings, execution groups, and exclusive stages are
 configured uniformly in `.cargo/gate.toml` (`--config` overrides the path):
 
 ```toml
@@ -374,7 +402,10 @@ timeout_secs = 90
 
 [execution]
 max_jobs = 2    # optional: concurrent groups; default is the number of groups
-exclusive_gates = [
+
+[execution.exclusive]
+pre = ["fetch"]
+post = [
     "regression",
     "mutants",
     "mutants-storage-0",
@@ -391,7 +422,13 @@ lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs", "trace-mark
 audit = ["deny", "semver", "valgrind", "geiger"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
-target = ["target-build", "ets"]
+target = ["virtual-ets"]
+
+[fetch]
+mode = "fail"
+command = "cargo fetch"
+timeout_secs = 600
+description = "Downloads workspace dependencies into the Cargo cache before the groups start"
 
 [clippy]
 mode = "fail"
@@ -405,15 +442,7 @@ command = "vale"
 args = ["--config=.vale.ini", "--output=line", "documentation", "src", "..."]
 description = "Lints documentation and doc comments for prose style conformity"
 
-[target-build]
-mode = "fail"
-command = "cargo build"
-args = ["--release"]
-cwd = "examples/teensy4"
-timeout_secs = 1800
-description = "Builds firmware for embedded targets without an emulator (Teensy 4.1)"
-
-[ets]
+[virtual-ets]
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "ets", "--", "--timeout", "120", "qemu", "all", "--release"]
@@ -451,6 +480,12 @@ timeout_secs = 7200
 ```
 
 The listing is abridged; `.cargo/gate.toml` is the complete configuration.
+Every table other than `[runner]` and `[execution]` is a gate. Unknown keys are
+rejected, and so are a gate listed in `pre`, `post` or a group without a
+`[<gate>]` table, a gate listed twice across them, a group named `pre`, `post`
+or `exclusive`, and `max_jobs = 0`. The retired `exclusive_gates` list,
+central `[gates]` policy table, `lanes`/`threads` aliases and `parallel` switch
+are rejected as unknown keys.
 `mode` sets the policy and `default` the unfiltered selection (FR-15):
 
 | `mode`  | `default` | Unfiltered `cargo ci` | Selected by name or group | Verdict counts   |
@@ -465,8 +500,8 @@ The listing is abridged; `.cargo/gate.toml` is the complete configuration.
 
 Mutation testing covers the root package in `mutants-<file>-<k>` chunks and
 each workspace tool crate in its own gate: `mutants-ci-0`/`-1` (sharded),
-`mutants-compare`, `mutants-ets-host`, `mutants-ets`, `mutants-macros` and
-`mutants-tui`. The root `.cargo/mutants.toml` restricts mutation to `--lib`
+`mutants-compare`, `mutants-ets-host`, `mutants-ets`, `mutants-macros`,
+`mutants-trace-macros` and `mutants-tui`. The root `.cargo/mutants.toml` restricts mutation to `--lib`
 for the root package only, so the workspace gates pass `--no-config`.
 `control-rs-verification` is not mutated: it emits oracles that
 `cross-compare` validates. The CI matrix runs one job per gate whose name
@@ -474,42 +509,53 @@ starts with `mutants-`.
 
 #### 4.4 Concurrency Topology & Scheduling
 
-The execution topology partitions active gates into two tiers:
+Selected gates run in three stages, in this order (FR-8, FR-9, FR-13):
 
-1. **User-Defined Groups (`[execution.groups]`)**:
-   Named concurrency lanes (for example, `cargo`, `audit`, `static`). The
-   scheduler spawns $\min (\text{max\_jobs}, \text{groups})$ scoped worker
-   threads via `std::thread::scope`. Workers pull groups from a shared queue in
-   declaration order, so at most `max_jobs` groups run at once and a queued
-   group starts when a running group completes. `max_jobs` resolves from
-   `--max-jobs`, then `[execution] max_jobs`, then the number of declared
-   groups; zero is a configuration error. `max_jobs` counts groups only: it does
-   not constrain threads or processes a gate spawns internally, which the gate's
-   own arguments control (C-4). Gates within a single group execute sequentially
-   in their declared order. Output lines display colored group tags (for example
-   `[cargo] `, `[audit] `, `[static] `). Each group runs with
+1. **`pre` (`[execution.exclusive] pre`)**: gates that must finish before any
+   group starts, such as `fetch` (`cargo fetch`, which fills the Cargo package
+   cache so concurrent groups do not contend for it). They run one at a time on
+   the calling thread, tagged `[pre]`, in the shared target directory. If a
+   `pre` gate records `Verdict::Fail`, the runner prints `Aborted` and starts no
+   group and no `post` gate; their results are absent, so the report fails them
+   (FR-10, FR-15). A `pre` gate runs only when selected, like any gate: an
+   unfiltered `cargo ci` selects it, `cargo ci --group lint` does not. The
+   `lint` job runs `cargo ci --group pre,lint`, so the full report (FR-10)
+   finds a `fetch` result.
+2. **Groups (`[execution.groups]`)**: named concurrency lanes. The scheduler
+   spawns $\min (\text{max\_jobs}, \text{groups})$ scoped worker threads via
+   `std::thread::scope`. Workers pull groups from a shared queue in declaration
+   order, so at most `max_jobs` groups run at once and a queued group starts
+   when a running group completes. `max_jobs` resolves from `--max-jobs`, then
+   `[execution] max_jobs`, then the number of declared groups; zero is a
+   configuration error. `max_jobs` counts groups only: it does not constrain
+   threads or processes a gate spawns internally, which the gate's own
+   arguments control (C-4). Gates within a single group execute sequentially in
+   their declared order, and each group's lines carry its colored tag (for
+   example `[lint] `). Each group runs with
    `CARGO_TARGET_DIR=target/ci-groups/<group>`, so concurrent groups never
    serialize on Cargo's build-directory lock. A gate whose `env` sets
    `CARGO_TARGET_DIR` keeps its own value. `--clean` deletes `target/ci-groups`.
-   Exclusive gates use the default `target/`. One function,
-   `run_group(name, gates, target_dir, ...)`, runs a gate list sequentially for
-   both cases: each worker calls it with the different group's target
-   directory, then the main thread calls it for the exclusive list with no
-   target directory. The former `[execution] parallel` switch is removed; the
-   key is ignored if present.
-2. **Exclusive Group (`exclusive_gates` and Unassigned Gates)**:
-   Gates requiring full processor authority (such as `geiger`, `cross-compare`,
-   `valgrind`, `mutants`, `regression`) or any active gate omitted from
-   `[execution.groups]`. The runner establishes a strict **barrier join**: all
-   group threads must complete and join before exclusive gates begin. Exclusive
-   gates execute strictly sequentially, one at a time, displaying the
-   `[exclusive] ` tag.
+3. **`post` (`[execution.exclusive] post` and unassigned gates)**: gates that
+   need full processor authority (`mutants-*`, `regression`) and any active gate
+   listed in no group. After every group has joined (barrier join), they run one
+   at a time on the calling thread, tagged `[post]`, in the shared target
+   directory.
+
+One function, `run_group(group, gates, env)`, runs a gate list sequentially for
+all three cases: the calling thread calls it for `pre` and `post` with no
+target directory, and each pool worker calls it with its group's target
+directory. It reports whether any gate failed, which decides the `pre` abort.
+`--group pre`, `--group post` and `--group exclusive` (both stages) address the
+stages like a group. `--up-to` follows pipeline order: `pre`, the groups in
+declaration order, then `post`.
 
 With `-v`/`--verbose` (FR-12), every echoed output line carries the same group
 tag followed by the gate name, so interleaved output from concurrent groups
 remains attributable:
 
 ```text
+     Running [pre] `cargo fetch`
+      Passed [pre] fetch in 3.10s
      Running [lint] `cargo clippy --workspace --all-targets -- -D warnings`
      Running [verify] `cargo run --package control-rs-compare --bin compare -- --config .cargo/compare.toml`
 [lint] clippy |     Checking control-rs v0.0.0
@@ -530,11 +576,13 @@ different gates interleave but are never split.
 
 1. **Gate-Agnostic Outcome Ingestion**: The aggregator has zero compile-time
    dependencies on specific gates or internal gate modules. It scans
-   `target/ci-artifacts/*.result.json` for generic `GateOutcome` instances.
-2. **Preserved Pipeline Ordering**: To ensure intuitive and deterministic
-   reporting, status table rows are sequenced by their declaration order in
-   `gate.toml` (groups in declaration order, followed by exclusive gates and any
-   unassigned gates), rather than random filesystem or alphabetical order.
+   `target/ci-artifacts/*.result.json` for generic `GateOutcome` instances. A
+   record that cannot be read, cannot be parsed or has another `schema` is
+   listed under "Rejected Result Records" and counts as missing (NFR-2).
+2. **Preserved Pipeline Ordering**: Status table rows follow pipeline order:
+   `pre` gates, the groups in declaration order, `post` gates, then any other
+   defined gate by name. A required gate without a result gets a `**MISSING**`
+   row.
 3. **Generic Summary Matrix Rendering**: Each row renders the gate name, badge
    verdict (`**Pass**`, `*Warn*`, `**FAIL**`, `Skipped`), elapsed duration,
    process exit code, and the `summary` string from `GateOutcome.summary`. Any
@@ -551,8 +599,10 @@ different gates interleave but are never split.
 6. **Failure Diagnostics**: Embeds trailing log snippets (20–40 lines) from
    `<gate>.log` into expandable Markdown `<details>` sections for failing or
    warning gates.
-7. **Size Budget**: Enforces $\le 64\,\text{KiB}$ maximum report size (C-1) by
-   truncating embedded logs when necessary.
+7. **Size Budget**: Enforces $\le 64\,\text{KiB}$ maximum report size (C-1).
+   Each embedded log tail is shortened to the space left, cut on a UTF-8
+   character boundary, so every code fence stays closed; tails that no longer
+   fit are omitted and named. Summary cells escape `|` and line breaks.
 
 #### 4.6 Artifact Relocation & Cleanup
 
@@ -564,6 +614,10 @@ All CI artifacts reside under `target/ci-artifacts/`. Cleanup is supported via
 - Recursively deletes `target/ci-artifacts/`.
 - Removes legacy/stray root artifacts (`ci-report.md`, `mutants.out`,
   `tarpaulin-report.*`).
+
+Independently of cleaning, every pipeline run first deletes all
+`<gate>.result.json` files in `out_dir`, so a result from an earlier run never
+stands in for a gate that did not run in this one.
 
 #### 4.7 Performance Regression Harness (`regression`)
 
@@ -636,16 +690,20 @@ through `Gate::command_display`.
 
 #### 4.9 Target Build & Virtual ETS Execution (`ets`)
 
-Two gates in the `target` group produce the embedded evidence (FR-17, FR-18):
+Embedded evidence is produced under the `target` group (FR-17, FR-18). In
+`.cargo/gate.toml`, the active target gate is `virtual-ets`:
 
-- `target-build` compiles firmware that CI cannot execute. It runs
-  `cargo build --release` with `cwd` set to the firmware crate, so the crate's
-  own `.cargo/config.toml` supplies the target triple and linker scripts.
-- `ets` runs the `ets` binary, which forwards its target arguments unchanged to
-  `control_rs_ets_host::target::parse_targets`. The same target syntax as
-  `cargo tui` applies (`qemu all`, `qemu arm riscv32`, `--target <triple>`,
-  `teensy --port <path>`). Example crate paths come from that syntax and from
-  `control-rs-ets-host`, never from `control-rs-ci` source.
+- `virtual-ets` runs the `ets` binary (`cargo run --package control-rs-ci --bin ets -- --timeout 120 qemu all --release`),
+  which forwards target arguments to `control_rs_ets_host::target::parse_targets`.
+  The same target syntax as `cargo tui` applies (`qemu all`, `qemu arm riscv32`,
+  `--target <triple>`, `teensy --port <path>`). Example crate paths come from that
+  syntax and from `control-rs-ets-host`, never from `control-rs-ci` source.
+- `target-build` (compiling firmware for bare-metal targets without an emulator,
+  such as `examples/teensy4`, FR-17) is deferred to roadmap PR9. Compiling
+  `examples/teensy4` currently exceeds the default 192 KiB ITCM link boundary of
+  `teensy4-bsp` by ~239 KiB when linking the complete workspace model suite.
+  PR9 addresses linker-script memory partitioning (placing `.text` and tables into
+  Flash and OCRAM) alongside hardware test runner orchestration.
 
 For each target, `ets`:
 
@@ -726,11 +784,12 @@ The `lint` job checks out full history for `--base-ref`.
 | `test` | Gate Execution & Lifecycle Tests      | Dispatches command and arguments, tracks duration, captures stdout/stderr to `<gate>.log`, and records `<gate>.result.json`.                                                                       |
 | `test` | Gate Configuration & Validation Tests | Verifies that all enabled gates require explicit configuration in `gate.toml` with zero hardcoded fallbacks.                                                                                       |
 | `test` | Compound Command Parsing Tests        | Verifies compound command strings (for example `command = "cargo clean"`) execute correctly without redundant arguments.                                                                           |
-| `test` | Multi-Lane Parallel Execution Tests   | Verifies concurrent group execution and barrier synchronization before exclusive gates.                                                                                                            |
-| `test` | Bounded Concurrency Tests             | Verifies at most `max_jobs` groups overlap, queued groups start in declaration order, the default equals the group count, and `max_jobs = 0` is rejected (FR-13).                                  |
+| `test` | Exclusive Stage Tests                 | Verifies `pre` gates finish before any group starts, `post` gates start after every group ends, a failed `pre` gate leaves every other selected gate unexecuted and reported missing, a stale result never stands in for an unexecuted gate, and a `pre` gate runs only when selected (FR-9). |
+| `test` | Bounded Concurrency Tests             | Probe gates stamp their start and end: peak overlap equals `max_jobs` for $\{1, 2, 3\}$ over three groups, one worker starts them in declaration order (declared out of alphabetical order), and `max_jobs = 0` is rejected (FR-13). |
+| `test` | Configuration Validation Tests        | Verifies a missing file, unknown keys, retired keys, unscheduled or doubly scheduled gates and reserved group names are configuration errors (FR-3).                                                |
 | `test` | Argument Passthrough Tests            | Verifies `cargo gate <gate> -- <args>` appends `<args>` verbatim after the configured `args`, that zero or several selected gates fail before execution, and that `cargo ci` rejects `--` (FR-14). |
 | `test` | Artifact Cleanup Tests                | Verifies `clean_artifacts` removes `target/ci-artifacts/` and scrubs legacy workspace root files.                                                                                                  |
-| `test` | Report Aggregation Tests              | Verifies `ci-report.md` generation, fail-closed policy enforcement, and size budget compliance ($\le 64\,\text{KiB}$).                                                                             |
+| `test` | Report Aggregation Tests              | Verifies `ci-report.md` generation, fail-closed policy enforcement, `**MISSING**` rows, rejected records of another schema (NFR-2), and the size budget ($\le 64\,\text{KiB}$) with multi-byte log tails. |
 | `test` | Tool Degradation Tests                | Verifies uninstalled tools log diagnostics and emit `Verdict::Warn` when policy is `warn`.                                                                                                         |
 | `test` | Selection & Policy Tests              | Verifies `default = false` gates are left out of an unfiltered run and `--all` includes them, a selected `default = false` gate fails its invocation on `Fail`, a selected `skip` gate records `Skipped` without executing, and a missing selected `fail` result fails (FR-15). |
 | `test` | Process-Tree Termination Tests        | Verifies a timed-out gate leaves no live descendant: a probe gate records the id of a background grandchild, which must be gone after the timeout (FR-16).                                    |
@@ -757,9 +816,11 @@ The `lint` job checks out full history for `--base-ref`.
 - Verification establishes host-level process orchestration and reporting
   correctness; target electrical timing and hardware execution require physical
   hardware runners.
-- Physical-target execution (Teensy 4.1 over serial) is not run in CI; the
-  `ets` binary accepts serial targets, and the runner itself belongs to roadmap
-  PR9. Teensy 4.1 evidence is limited to the firmware build (FR-17).
+- Physical-target execution (Teensy 4.1 over serial) and bare-metal compilation
+  (`target-build`) are deferred to roadmap PR9. The Teensy 4.1 firmware
+  currently overflows `teensy4-bsp`'s default 192 KiB ITCM limit when linking
+  the full workspace model suite. Target verification in CI is provided via the
+  `virtual-ets` gate under QEMU emulation (FR-18).
 - QEMU timing is indicative (C-6); `ets-results.json` cycle counts are not
   compared against any bound.
 - The workspace mutation gates other than `mutants-macros` (0 missed) had no
@@ -767,6 +828,9 @@ The `lint` job checks out full history for `--base-ref`.
   established, until their first CI run.
 - Process-tree termination depends on `pgrep`; where it is absent, only the
   direct gate process is killed.
+- The bounded-concurrency test infers overlap from probe-gate timestamps with
+  0.4 s sleeps; a host too loaded to start three short shell processes within
+  that window can under-report peak overlap.
 
 ---
 
@@ -777,9 +841,9 @@ The `lint` job checks out full history for `--base-ref`.
   the 1 MiB GitHub Actions limit [1].
 - **Process & Timeout Bounds**: Gate processes are spawned with bounded timeouts
   (default 90s) to prevent hung runner instances.
-- **Memory Footprint**: `control-rs-ci` operates with zero continuous memory
-  allocation overhead; artifact ingestion streams JSON data directly to report
-  renderers.
+- **Memory Footprint**: The report holds at most 30 lines of each flagged
+  gate's log and one record per gate; the runner holds one `Gate` per selected
+  gate. No bound is enforced (NFR-1 withdrawn).
 
 ---
 
@@ -796,6 +860,24 @@ The `lint` job checks out full history for `--base-ref`.
 - **Emulator Availability**: `ets` fails when `qemu-system-*` or a rustup
   target is missing, consistent with fail-closed tool handling; a local
   `cargo ci` without them fails the `target` group.
+- **Teensy 4.1 ITCM Memory Budget**: Compiling `examples/teensy4` against the
+  workspace numerical model and verification suites exceeds the 192 KiB ITCM
+  region of `teensy4-bsp`'s default linker script by ~239 KiB. Resolving this
+  requires memory layout partitioning (moving code and read-only tables to Flash
+  and OCRAM) as part of roadmap PR9; until then, `target-build` remains omitted
+  from `gate.toml`'s default `target` group in favor of `virtual-ets`.
+- **Deferred Technical Debt** (recorded 2026-09-27 review, not resolved here):
+  - `ci-design.md` keeps numbered `§` headings and the pre-`VC` §6 layout, and
+    is not in `.cargo/trace/trace.toml` `files`, so no CI requirement is traced.
+    Closed by the design-template corpus migration.
+  - Workflow (roadmap PR9): the report job rebuilds `cargo doc`, duplicating the
+    `doc` gate; `CI.yml` has no top-level `permissions:`;
+    `cargo-bins/cargo-binstall@main` is unpinned; no job caches builds; every
+    pull request runs every `mutants-*` job and `regression`.
+  - `mutants-trace-macros` has no measured mutant count; `mutants-ci-*` now also
+    run `ci_negative_gates`, whose nested Cargo builds lengthen each mutant.
+  - Tracer limits from its own design stay open: markers in comments or string
+    literals count, and only the `#[req(` form is recognized.
 
 ---
 
@@ -808,7 +890,8 @@ The `lint` job checks out full history for `--base-ref`.
 | **Phase 3: Multi-Lane Parallel Execution & Barrier Join**     | Implement declarative multi-lane parallel scheduler using `std::thread::scope`, `[execution.groups]` in `gate.toml`, and barrier synchronization for `exclusive_gates`.                                     | 3                |
 | **Phase 4: Performance Regression Harness (`regression`)**    | Implement `regression` binary in `control-rs-ci`, Criterion output ingestion, budget threshold evaluation, and `gate.toml` gate integration.                                                                | 2                |
 | **Phase 5: Bounded Concurrency & Argument Passthrough**       | Replace one-thread-per-group with a `max_jobs` worker pool over a group queue, add `--max-jobs`, and add `--` passthrough to `cargo gate` with single-gate validation.                                      | 2                |
-| **Phase 6: Selection, Tree Termination & Target Gates**       | Split `default` from `mode` (FR-15) and require selected results; terminate process trees on timeout (FR-16); add `cwd`, the `target-build` gate and the `ets` binary and gate (FR-17 to FR-19); align CI jobs. | 3                |
+| **Phase 6: Selection, Tree Termination & Target Gates**       | Split `default` from `mode` (FR-15) and require selected results; terminate process trees on timeout (FR-16); add `cwd` and the `ets` binary and gate (FR-18, FR-19); align CI jobs. The `target-build` gate (FR-17) moves to PR9. | 3                |
+| **Phase 7: Exclusive Stages & Debt Repair**                   | Split `exclusive_gates` into `pre` and `post` with the `fetch` gate; declaration order; configuration validation; versioned outcomes; budget-safe report; valgrind fail-closed; remove retired schema and dead code.   | 2                |
 
 ---
 
@@ -835,6 +918,8 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.28     | September 25, 2026 | @MitchellDScott | §4.9: the `ets` binary prints a line per case and the full target console for every target. |
 | 1.29     | September 25, 2026 | @MitchellDScott | FR-14 implemented: `cargo gate` parses `-- <args>`; §4.8 records the exit code and the library-level check. Revision 1.24 specified it without an implementation. |
 | 1.30     | September 27, 2026 | @MitchellDScott | Added requirement traceability gates (`trace-reqs`, `trace-marks`, `trace`) to the `lint` group (§4.3) backed by `control-rs-ci/src/trace/`. |
+| 1.31     | September 27, 2026 | @MitchellDScott | Implemented bounded group concurrency (`max_jobs` / FR-13) in runner library and CLI; aligned cargo aliases (`clippy-ci`, `clippy-json`); documented `virtual-ets` active gate and deferred `target-build` (Teensy 4.1 ITCM overflow) to PR9. |
+| 1.32     | September 27, 2026 | @MitchellDScott | FR-9: `[execution.exclusive]` `pre` and `post` replace `exclusive_gates`; a failed `pre` gate aborts the run; `fetch` is the first `pre` gate (§4.3, §4.4). Groups run and report in declaration order (FR-13, §4.5). FR-3 configuration validation. FR-17 marked deferred. NFR-1 withdrawn; NFR-2 `schema` field. `[mutants]` is `mode = "skip"` as §4.3 already stated. Report budget cuts on character boundaries; `**MISSING**` and rejected-record rows. Exit code 2 for usage and configuration errors. §8 deferred-debt list. |
 
 ---
 
