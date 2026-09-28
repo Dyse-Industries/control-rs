@@ -57,8 +57,9 @@ numerical tolerance bounds.
 - **FR-10 — Fail-Closed Discrepancy Accumulation**: Missing datasets, dimension
   mismatches, NaNs/infinities, and tolerance breaches are accumulated and terminate
   with non-zero exit code.
-- **FR-11 — Decoupled Diagnostic Plot Generation**: Companion plotting scripts
-  (`python3/plot_<suite>.py`) ingest persisted `.h5` files and generate static figures.
+- **FR-11 — Decoupled Diagnostic Plot Generation (withdrawn)**: Withdrawn as a
+  binary functional requirement in revision 1.13; diagnostic visualization is
+  provided by non-Rust companion scripts governed by C-3.
 - **FR-12 — Pure Rust HDF5 Compatibility**: Reading and writing `.h5` containers
   operates via pure-Rust implementations to eliminate host C-library compiler and
   version drift.
@@ -752,6 +753,7 @@ ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
 | 1.10 | September 22, 2026 | @MitchellDScott | Added FR-16 annotated signal omission (`missing_ok.<peer>`) for multi-oracle suites; workspace example references `control-rs-verification`. |
 | 1.11 | September 23, 2026 | @MitchellDScott | Added FR-17 baseline margin drift warnings against the previous `cross-val-report.json` (§4.8). |
 | 1.12      | September 24, 2026 | @MitchellDScott | Gate is the `.cargo/gate.toml` `[cross-compare]` table, not parsed by the runner. Containers live in `<out_dir>` (`target/verification/`); root and per-suite examples match the shipped files. FR-17 and FR-11 marked unimplemented; Phase 5 complete, Phase 6 added. Crates are `publish = false` until PR10. |
+| 1.13      | September 27, 2026 | @MitchellDScott | Demoted FR-11 (diagnostic plotting is non-Rust companion tooling per C-3); reaffirmed FR-17 planned status under Phase 6. |
 
 ---
 

@@ -149,7 +149,22 @@ A small trait local to the module supplies `next_up`/`next_down` for `f32` and
 existing implementor, including the fixed-point type, to answer a question that
 only binary floats have.
 
-#### 4.4 Suite integration
+#### 4.4 Saturating arithmetic contract
+
+`control-rs` numeric abstractions require the `Scalar` trait, which in turn
+incorporates saturating arithmetic operations (`SaturatingAdd`, `SaturatingSub`,
+`SaturatingMul`). For `Interval<T>`:
+
+- Endpoints follow saturating behavior at the representable float bounds: if outward
+  rounding or arithmetic exceeds finite representation, the affected endpoint
+  saturates to its respective signed infinity (`-T::INFINITY` for `lo`, `+T::INFINITY`
+  for `hi`).
+- Sound enclosure (FR-2) is preserved: a saturated interval $[-\infty, +\infty]$
+  remains a sound (if conservative) over-approximation of the exact real result.
+- A property evaluation (FR-4) encountering saturated infinite endpoints fails its
+  acceptance bound rather than producing a false positive or silently narrowing.
+
+#### 4.5 Suite integration
 
 A property is an ordinary generic function over the crate's scalar bound. A
 suite entry is a concrete zero-argument function that instantiates that property
@@ -325,6 +340,7 @@ Cortex-M target is a measurement that has not been taken.
 | 1.1      | September 9, 2026 | @MitchellDScott | Structural hardening: converted §6.4 from prose into complete traceability table mapping all requirements, updated badge to standard dialect, mapped catalogue methods in §6.2, standardized revision history. |
 | 1.2      | September 15, 2026 | @MitchellDScott | Locator-only §6.4; unimplemented range type listed in 6.7; citations removed from FR bodies. |
 | 1.3      | September 24, 2026 | @MitchellDScott | Deferred: removed from the roadmap. Suite authors write range-valued property tests manually in ETS suites; the crate ships no range type. C-4 and §6.1 cite `cross-compare-design.md` (renamed from `oracle-harness-design.md`). |
+| 1.4      | September 27, 2026 | @MitchellDScott | Added saturating arithmetic contract specification (§4.4) for Scalar trait adherence. |
 
 ---
 

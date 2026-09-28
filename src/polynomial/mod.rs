@@ -65,6 +65,21 @@ pub enum DivisionError {
     DegreeMismatch,
 }
 
+impl core::fmt::Display for DivisionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ZeroLeadingCoefficient => {
+                write!(f, "divisor leading coefficient is zero")
+            }
+            Self::DegreeMismatch => {
+                write!(f, "divisor degree exceeds dividend degree")
+            }
+        }
+    }
+}
+
+impl core::error::Error for DivisionError {}
+
 /// Errors returned by polynomial root finding and transfer function pole/zero extraction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RootError {
@@ -514,6 +529,7 @@ where
         Const<P>: Dim,
     {
         let mut out = ArrayPolynomial::<T, P>::zero();
+        // Silently discards ConversionError::DimensionMismatch if P < N + M - 1 (polynomial-design.md §8).
         let _ = C::convolve_input(
             self.as_slice(),
             rhs.as_slice(),
@@ -815,6 +831,10 @@ where
     ///
     /// # Errors
     /// Returns [`RootError::ZeroLeadingCoefficient`] if the leading coefficient is zero.
+    ///
+    /// If the 80-sweep iteration budget is exhausted before reaching convergence
+    /// tolerance, the last iterate is returned (`polynomial-design.md` §8).
+    /// [`RootError::ConvergenceFailure`] is reserved for future strict-convergence paths.
     pub fn aberth_roots(&self) -> Result<[Complex<T>; N], RootError> {
         let deg = N.saturating_sub(1);
         let leading = *self.get(deg).unwrap_or(&T::ZERO);
