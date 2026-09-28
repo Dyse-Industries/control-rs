@@ -235,7 +235,7 @@ fn main() {
     ui::status("Writing", parsed.out.display());
 
     let failed = results.iter().filter(|r| !r.passed).count();
-    if failed != 0 {
+    if failed > 0 {
         ui::failure(
             "Failed",
             format!("{failed} of {} target(s)", results.len()),

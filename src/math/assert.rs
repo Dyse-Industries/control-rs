@@ -132,9 +132,8 @@ where
     let abs_b = T::abs(b.clone());
     a.try_sub(b).map(|diff| {
         let abs_diff = T::abs(diff);
-        let scaled = |m: &T| epsilon.try_mul(m).unwrap_or(T::ZERO);
-        abs_diff <= scaled(&abs_a)
-            || abs_diff <= scaled(&abs_b)
+        let largest = if abs_a > abs_b { abs_a } else { abs_b };
+        abs_diff <= epsilon.try_mul(&largest).unwrap_or(T::ZERO)
             || abs_diff < epsilon.clone()
     })
 }
