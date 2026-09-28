@@ -20,13 +20,19 @@
     - [x] **PR3-4**: CI Gate — Requirement Traceability (`trace`) (
       [requirement-traceability](vv/requirement-traceability-design.md))
     - [ ] **PR3-5**: Technical Debt & Verification Hardening
-      ([ci](ci/ci-design.md) rev 1.32)
+      ([ci](ci/ci-design.md) rev 1.33)
         - [x] Exclusive `pre`/`post` stages with the `fetch` gate; groups in
           declaration order; bounded concurrency (`max_jobs`)
         - [x] Configuration validation, versioned gate outcomes, budget-safe
           report, fail-closed `valgrind`, retired schema and dead code removed
-        - [ ] Design-template migration of `ci-design.md` (numbered headings,
-          `VC` rows, trace coverage)
+    - [ ] **PR3-6**: Formal Verification & Dynamic Analysis Gates (`kani`,
+      `miri`)
+      ([ci](ci/ci-design.md), [requirement-traceability](vv/requirement-traceability-design.md))
+        - Revive `kani` and `miri` quality gates in `gate.toml` with dedicated
+          verification harnesses
+        - Requirement tracing integration: support proof/verification methods
+          on conditions; linker verifies that Kani and Miri results agree with
+          declared condition requirements
 - [ ] **PR4**: Classical Control Synthesis & Math Core (`src/classical_tools`)
 - [ ] **PR5**: Modern Control Toolbox & State Observers (`src/modern_control`)
 - [ ] **PR6**: System Identification (SysID) & Frequency Estimation

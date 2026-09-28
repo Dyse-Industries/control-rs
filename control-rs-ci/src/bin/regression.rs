@@ -18,7 +18,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use control_rs_ci::cli::USAGE_EXIT;
+use control_rs_ci::cli::{USAGE_EXIT, arg_spelling};
+use control_rs_ci::ui;
 
 /// Benchmarks in the order Criterion printed them.
 type Results = Vec<BenchmarkResult>;
@@ -44,6 +45,9 @@ struct BenchmarkResult {
     /// Criterion's verdict, when a baseline exists.
     verdict: Option<Verdict>,
 }
+
+/// Parsed options, `None` for `--help`, or a usage error.
+type ParsedCli = Result<Option<CliOptions>, String>;
 
 /// Command-line options.
 #[derive(Debug, Clone)]
@@ -147,55 +151,59 @@ fn parse_duration_ns(text: &str) -> Option<f64> {
     (value > 0.0).then_some(value * scale)
 }
 
-fn parse_cli_args() -> Result<CliOptions, String> {
-    let mut args = std::env::args().skip(1);
+/// Parses the command line (program name first); `Ok(None)` means `--help`.
+fn parse_cli_args(args: impl IntoIterator<Item = String>) -> ParsedCli {
+    use lexopt::prelude::*;
+    let mut parser = lexopt::Parser::from_iter(args);
     let mut bench_target = None;
     let mut run_all = false;
     let mut budgets = PathBuf::from(".cargo/regression.toml");
 
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--all" => {
+    while let Some(arg) = parser.next().map_err(|e| e.to_string())? {
+        match arg {
+            Long("all") => {
                 run_all = true;
             }
-            "--bench" => {
-                if let Some(target) = args.next() {
-                    bench_target = Some(target);
-                } else {
-                    return Err("Missing argument for --bench".to_string());
-                }
+            Long("bench") => {
+                let target = parser
+                    .value()
+                    .map_err(|_| "Missing argument for --bench".to_string())?
+                    .string()
+                    .map_err(|e| format!("Invalid UTF-8: {e:?}"))?;
+                bench_target = Some(target);
             }
-            "--budgets" => {
-                budgets = args
-                    .next()
-                    .map(PathBuf::from)
-                    .ok_or("Missing argument for --budgets")?;
+            Long("budgets") => {
+                let val = parser.value().map_err(|_| {
+                    "Missing argument for --budgets".to_string()
+                })?;
+                budgets = PathBuf::from(val);
             }
-            "--help" | "-h" => {
-                print_help();
-                std::process::exit(0);
-            }
-            unknown => {
-                return Err(format!("Unknown option: {unknown}"));
+            Short('h') | Long("help") => return Ok(None),
+            _ => {
+                return Err(format!("Unknown option: {}", arg_spelling(&arg)));
             }
         }
     }
 
-    Ok(CliOptions {
+    Ok(Some(CliOptions {
         bench_target,
         run_all,
         budgets,
-    })
+    }))
 }
 
 fn print_help() {
-    println!(
-        "Usage: cargo regression [OPTIONS]\n\n\
-         Options:\n  \
-           --bench <NAME>        Run only the specified benchmark target (e.g. jitter, scaling)\n  \
-           --all                 Run all workspace benchmark targets\n  \
-           --budgets <FILE>      Budget table [default: .cargo/regression.toml]\n  \
-           -h, --help            Print help information"
+    ui::init_color();
+    let h = ui::HELP_HEADER;
+    let f = ui::HELP_FLAG;
+    let a = ui::HELP_ARG;
+    anstream::println!(
+        "{h}Usage:{h:#} {f}cargo regression{f:#} {a}[OPTIONS]{a:#}\n\n\
+         {h}Options:{h:#}\n  \
+           {f}--bench{f:#} {a}<NAME>{a:#}        Run only the specified benchmark target (e.g. jitter, scaling)\n  \
+           {f}--all{f:#}                 Run all workspace benchmark targets\n  \
+           {f}--budgets{f:#} {a}<FILE>{a:#}      Budget table [default: .cargo/regression.toml]\n  \
+           {f}-h{f:#}, {f}--help{f:#}            Print help information"
     );
 }
 
@@ -401,10 +409,14 @@ fn print_matrix(results: &[BenchmarkResult], budgets: &Budgets) {
 fn main() {
     println!("=== control-rs Performance Regression & Budget Harness ===");
 
-    let opts = match parse_cli_args() {
-        Ok(o) => o,
+    let opts = match parse_cli_args(std::env::args()) {
+        Ok(Some(o)) => o,
+        Ok(None) => {
+            print_help();
+            std::process::exit(0);
+        }
         Err(e) => {
-            eprintln!("Error: {e}\n");
+            ui::error(format!("{e}\n"));
             print_help();
             std::process::exit(USAGE_EXIT);
         }
@@ -465,7 +477,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        Budgets, Results, Verdict, failures, format_duration,
+        Budgets, Results, Verdict, failures, format_duration, parse_cli_args,
         parse_criterion_output, parse_duration_ns,
     };
 
@@ -631,5 +643,29 @@ state_space_scaling/zoh_dim/128
     #[test]
     fn formats_seconds() {
         assert_eq!(format_duration(2.5e9), "2.50 s");
+    }
+
+    fn cli(list: &[&str]) -> super::ParsedCli {
+        parse_cli_args(
+            std::iter::once("regression")
+                .chain(list.iter().copied())
+                .map(ToString::to_string),
+        )
+    }
+
+    #[test]
+    fn cli_options_parse_and_errors_name_the_argument() {
+        let opts = cli(&["--bench", "jitter", "--budgets=b.toml"])
+            .unwrap()
+            .unwrap();
+        assert_eq!(opts.bench_target.as_deref(), Some("jitter"));
+        assert_eq!(opts.budgets.to_str(), Some("b.toml"));
+        assert!(!opts.run_all);
+        assert!(cli(&["--all"]).unwrap().unwrap().run_all);
+        assert!(cli(&["-h"]).unwrap().is_none());
+        assert_eq!(cli(&["--nope"]).err().unwrap(), "Unknown option: --nope");
+        assert_eq!(cli(&["-x"]).err().unwrap(), "Unknown option: -x");
+        assert_eq!(cli(&["stray"]).err().unwrap(), "Unknown option: stray");
+        assert!(cli(&["--bench"]).is_err());
     }
 }

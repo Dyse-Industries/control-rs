@@ -1,6 +1,6 @@
 # Continuous Integration & Quality Gate Infrastructure (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_27,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_28,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -698,6 +698,10 @@ Embedded evidence is produced under the `target` group (FR-17, FR-18). In
   The same target syntax as `cargo tui` applies (`qemu all`, `qemu arm riscv32`,
   `--target <triple>`, `teensy --port <path>`). Example crate paths come from that
   syntax and from `control-rs-ets-host`, never from `control-rs-ci` source.
+  `ets` consumes only `--timeout`, `--max-resets`, `--out` and `--help`. Any
+  other option is forwarded with its attached value split off
+  (`--baud=115200` becomes `--baud 115200`), and arguments from the first `--`
+  on are forwarded verbatim, so `parse_targets` passes them to `cargo build`.
 - `target-build` (compiling firmware for bare-metal targets without an emulator,
   such as `examples/teensy4`, FR-17) is deferred to roadmap PR9. Compiling
   `examples/teensy4` currently exceeds the default 192 KiB ITCM link boundary of
@@ -920,6 +924,7 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.30     | September 27, 2026 | @MitchellDScott | Added requirement traceability gates (`trace-reqs`, `trace-marks`, `trace`) to the `lint` group (§4.3) backed by `control-rs-ci/src/trace/`. |
 | 1.31     | September 27, 2026 | @MitchellDScott | Implemented bounded group concurrency (`max_jobs` / FR-13) in runner library and CLI; aligned cargo aliases (`clippy-ci`, `clippy-json`); documented `virtual-ets` active gate and deferred `target-build` (Teensy 4.1 ITCM overflow) to PR9. |
 | 1.32     | September 27, 2026 | @MitchellDScott | FR-9: `[execution.exclusive]` `pre` and `post` replace `exclusive_gates`; a failed `pre` gate aborts the run; `fetch` is the first `pre` gate (§4.3, §4.4). Groups run and report in declaration order (FR-13, §4.5). FR-3 configuration validation. FR-17 marked deferred. NFR-1 withdrawn; NFR-2 `schema` field. `[mutants]` is `mode = "skip"` as §4.3 already stated. Report budget cuts on character boundaries; `**MISSING**` and rejected-record rows. Exit code 2 for usage and configuration errors. §8 deferred-debt list. |
+| 1.33     | September 28, 2026 | @MitchellDScott | `ets`, `report`, `regression`, `allow-audit`, `valgrind` and the `trace-*` binaries parse arguments with `lexopt`; `allow-audit` and `valgrind` accept `-h`/`--help`; usage errors name the argument as typed and exit 2. §4.9: `ets` forwards arguments after `--` verbatim and splits attached values of forwarded options. |
 
 ---
 

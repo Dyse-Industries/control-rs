@@ -270,21 +270,35 @@ pub fn parse_flags<const N: usize>(
     args: impl IntoIterator<Item = String>,
     flags: [&str; N],
 ) -> Result<FlagValues<N>, String> {
+    use lexopt::prelude::*;
     let mut values: [Slot; N] = std::array::from_fn(|_| None);
-    let mut args = args.into_iter();
-    while let Some(arg) = args.next() {
-        let slot = flags
-            .iter()
-            .position(|flag| *flag == arg)
-            .and_then(|idx| values.get_mut(idx))
-            .ok_or_else(|| format!("unknown argument `{arg}`"))?;
-        if slot.is_some() {
-            return Err(format!("`{arg}` is given more than once"));
+    let mut parser =
+        lexopt::Parser::from_iter(std::iter::once(String::new()).chain(args));
+    while let Some(arg) = parser.next().map_err(|e| e.to_string())? {
+        match arg {
+            Long(name) => {
+                let full = format!("--{name}");
+                let slot = flags
+                    .iter()
+                    .position(|flag| *flag == full)
+                    .and_then(|idx| values.get_mut(idx))
+                    .ok_or_else(|| format!("unknown argument `{full}`"))?;
+                if slot.is_some() {
+                    return Err(format!("`{full}` is given more than once"));
+                }
+                let val = parser
+                    .value()
+                    .map_err(|_| format!("`{full}` needs a value"))?;
+                *slot = Some(PathBuf::from(val));
+            }
+            Short(c) => return Err(format!("unknown argument `-{c}`")),
+            Value(val) => {
+                return Err(format!(
+                    "unknown argument `{}`",
+                    val.to_string_lossy()
+                ));
+            }
         }
-        let value = args
-            .next()
-            .ok_or_else(|| format!("`{arg}` needs a value"))?;
-        *slot = Some(PathBuf::from(value));
     }
     if let Some((flag, _)) =
         flags.iter().zip(&values).find(|(_, value)| value.is_none())

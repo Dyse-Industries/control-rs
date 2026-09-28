@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
-use control_rs_ci::cli::USAGE_EXIT;
+use control_rs_ci::cli::{USAGE_EXIT, arg_spelling};
 use control_rs_ci::ui;
 
 /// Example names from the command line.
@@ -24,19 +24,47 @@ type ExampleRunResult = Result<(ExitStatus, String), String>;
 type FailureRecord = (String, String);
 type CheckResult = (usize, Vec<FailureRecord>);
 
+fn print_usage() {
+    ui::init_color();
+    let h = ui::HELP_HEADER;
+    let f = ui::HELP_FLAG;
+    let a = ui::HELP_ARG;
+    anstream::println!(
+        "{h}Usage:{h:#} {f}cargo valgrind{f:#} {f}--example{f:#} {a}<name>{a:#} [{f}--example{f:#} {a}<name>{a:#}...]\n\n\
+         {h}Options:{h:#}\n  \
+           {f}--example{f:#} {a}<name>{a:#}    Example target to run under Valgrind (repeatable)\n  \
+           {f}-h{f:#}, {f}--help{f:#}           Print help information"
+    );
+}
+
 /// Example names from `--example <name>` pairs; any other argument is a
 /// usage error.
 fn parse_examples(args: &[String]) -> Result<ExampleNames, String> {
+    use lexopt::prelude::*;
+    let mut parser = lexopt::Parser::from_iter(
+        std::iter::once(String::new()).chain(args.iter().cloned()),
+    );
     let mut examples = Vec::new();
-    let mut rest = args.iter();
-    while let Some(arg) = rest.next() {
-        if arg == "--example" {
-            let name = rest
-                .next()
-                .ok_or_else(|| "--example requires a name".to_string())?;
-            examples.push(name.clone());
-        } else {
-            return Err(format!("unknown argument '{arg}'"));
+    while let Some(arg) = parser.next().map_err(|e| e.to_string())? {
+        match arg {
+            Long("example") => {
+                let name = parser
+                    .value()
+                    .map_err(|_| "--example requires a name".to_string())?
+                    .string()
+                    .map_err(|e| format!("Invalid UTF-8: {e:?}"))?;
+                examples.push(name);
+            }
+            Short('h') | Long("help") => {
+                print_usage();
+                std::process::exit(0);
+            }
+            _ => {
+                return Err(format!(
+                    "unknown argument '{}'",
+                    arg_spelling(&arg)
+                ));
+            }
         }
     }
     if examples.is_empty() {

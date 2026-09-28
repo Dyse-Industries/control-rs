@@ -167,6 +167,7 @@ KaTeX
 Kacker
 Kailath
 Kalman
+Kani
 Kaufmann
 Ke
 Kenney
@@ -205,6 +206,7 @@ Micikevicius
 Microcontroller
 Microcontrollers
 Middleware
+Miri
 Moler
 Monic
 Monomorphized
@@ -596,6 +598,7 @@ leftrightarrow
 len
 len_hi
 len_lo
+lexopt
 libm
 libtest
 linkme

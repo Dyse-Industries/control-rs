@@ -278,6 +278,15 @@ mod runner {
     }
 
     #[test]
+    fn test_arg_spelling_matches_the_command_line() {
+        use control_rs_ci::cli::arg_spelling;
+        use lexopt::Arg;
+        assert_eq!(arg_spelling(&Arg::Long("config")), "--config");
+        assert_eq!(arg_spelling(&Arg::Short('c')), "-c");
+        assert_eq!(arg_spelling(&Arg::Value("x".into())), "x");
+    }
+
+    #[test]
     fn test_cli_args_parsing() {
         use control_rs_ci::cli::parse_args;
 

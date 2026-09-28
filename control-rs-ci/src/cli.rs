@@ -48,6 +48,17 @@ struct SplitArgs<'a> {
     passthrough: Passthrough,
 }
 
+/// Command-line spelling of a lexopt argument (`--name`, `-c` or the bare
+/// value), for usage errors.
+#[must_use]
+pub fn arg_spelling(arg: &lexopt::Arg<'_>) -> String {
+    match arg {
+        lexopt::Arg::Long(name) => format!("--{name}"),
+        lexopt::Arg::Short(c) => format!("-{c}"),
+        lexopt::Arg::Value(val) => val.to_string_lossy().into_owned(),
+    }
+}
+
 /// Formats the help and usage string using cargo-style terminal colors.
 #[must_use]
 pub fn render_usage(binary_name: &str) -> String {
