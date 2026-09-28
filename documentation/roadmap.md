@@ -30,9 +30,9 @@
       ([ci](ci/ci-design.md), [requirement-traceability](vv/requirement-traceability-design.md))
         - Revive `kani` and `miri` quality gates in `gate.toml` with dedicated
           verification harnesses
-        - Requirement tracing integration: support proof/verification methods
-          on conditions; linker verifies that Kani and Miri results agree with
-          declared condition requirements
+        - Requirement tracing integration: tracer derives condition status
+          by reading per-item Kani and test results in post, verifying that
+          formal proofs and dynamic analysis agree with declared conditions
 - [ ] **PR4**: Classical Control Synthesis & Math Core (`src/classical_tools`)
 - [ ] **PR5**: Modern Control Toolbox & State Observers (`src/modern_control`)
 - [ ] **PR6**: System Identification (SysID) & Frequency Estimation

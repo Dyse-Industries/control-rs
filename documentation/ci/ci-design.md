@@ -137,6 +137,17 @@ minimal-parsing design principle**:
   reset budget, send or reconnect failure, target exit) or reports a failed
   test must exit non-zero, preventing false passes from misconfigured targets
   or filters.
+- **FR-20 — Model Checking & Formal Verification (deferred to PR3-6)**: The
+  pipeline must execute bounded model checking over declared proof harnesses via
+  `kani`, verify that zero assertions, unwinding limits, or cover predicates
+  fail, and fail closed when zero harnesses are executed (empty-target rule) or
+  when any harness fails.
+- **FR-21 — Undefined Behavior & Pointer Provenance Analysis (deferred to PR3-6)**:
+  The pipeline must execute target test suites under `miri` across host and
+  cross-interpreted 32-bit targets (`i686-unknown-linux-gnu`), detecting undefined
+  behavior, memory leaks, and pointer provenance violations, failing closed when
+  zero tests execute, on any detected UB, or when ignored tests exceed the
+  committed baseline.
 
 #### 2.2 Non-Functional Requirements
 
@@ -882,6 +893,11 @@ The `lint` job checks out full history for `--base-ref`.
     run `ci_negative_gates`, whose nested Cargo builds lengthen each mutant.
   - Tracer limits from its own design stay open: markers in comments or string
     literals count, and only the `#[req(` form is recognized.
+  - Formal verification and dynamic analysis (`kani`, `miri`): deferred to
+    PR3-6 (FR-20, FR-21).
+  - Fuzz testing (`fuzz`) and static concurrency checking (`lockbud`): deferred
+    until dedicated fuzzing harnesses (`fuzz/`) and concurrency audit targets
+    are authored.
 
 ---
 
@@ -925,6 +941,7 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.31     | September 27, 2026 | @MitchellDScott | Implemented bounded group concurrency (`max_jobs` / FR-13) in runner library and CLI; aligned cargo aliases (`clippy-ci`, `clippy-json`); documented `virtual-ets` active gate and deferred `target-build` (Teensy 4.1 ITCM overflow) to PR9. |
 | 1.32     | September 27, 2026 | @MitchellDScott | FR-9: `[execution.exclusive]` `pre` and `post` replace `exclusive_gates`; a failed `pre` gate aborts the run; `fetch` is the first `pre` gate (§4.3, §4.4). Groups run and report in declaration order (FR-13, §4.5). FR-3 configuration validation. FR-17 marked deferred. NFR-1 withdrawn; NFR-2 `schema` field. `[mutants]` is `mode = "skip"` as §4.3 already stated. Report budget cuts on character boundaries; `**MISSING**` and rejected-record rows. Exit code 2 for usage and configuration errors. §8 deferred-debt list. |
 | 1.33     | September 28, 2026 | @MitchellDScott | `ets`, `report`, `regression`, `allow-audit`, `valgrind` and the `trace-*` binaries parse arguments with `lexopt`; `allow-audit` and `valgrind` accept `-h`/`--help`; usage errors name the argument as typed and exit 2. §4.9: `ets` forwards arguments after `--` verbatim and splits attached values of forwarded options. |
+| 1.34     | September 28, 2026 | @MitchellDScott | Recorded FR-20 (`kani`) and FR-21 (`miri`) deferred to PR3-6 with the empty-target fail-closed rule; recorded `fuzz` and `lockbud` as deferred technical debt (§8). |
 
 ---
 
