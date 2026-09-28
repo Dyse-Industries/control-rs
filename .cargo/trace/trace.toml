@@ -1,17 +1,22 @@
 id = '(?:FR|NFR|C)-[0-9]+[a-z]?'
 condition = 'VC-[0-9]+(?:\.[0-9]+[a-z]?)?'
 doc = '[a-z0-9-]+'
-files = ["documentation/vv/requirement-traceability-design.md"]
+files = [
+    "documentation/vv/requirement-traceability-design.md",
+    "documentation/math/fixed-num-design.md",
+]
 doc_suffix = "-design"
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 methods = ["test", "proof", "analysis", "inspection", "review"]
 marked_methods = ["test", "proof"]
-retired = []
-exclude_phrases = []
+retired = [
+    "requirement-traceability#FR-5",
+    "requirement-traceability#VC-5.1",
+]
 
 [method.test]
-item_rule = "#\\[test\\]|#\\[tokio::test\\]"
+item_rule = "#\\[test\\]|#\\[tokio::test\\]|#\\[cfg_attr\\(test,\\s*test\\)\\]"
 result_artifact = "target/ci-artifacts/test.log"
 
 [method.proof]

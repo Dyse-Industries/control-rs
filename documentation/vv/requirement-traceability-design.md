@@ -99,8 +99,6 @@ editing tools; and any systems-engineering view.
   one; a condition row with no method, with more than one, or with one outside
   `methods`; a defined requirement with no condition; and a retired ID that is
   defined or referenced.
-- **FR-5 — Phrase Rules**: `trace-reqs` shall report as a defect each match of
-  an `exclude_phrases` pattern in definition text.
 - **FR-6 — Requirement Rows**: `trace-reqs` shall write `reqs.jsonl` with one
   row per definition and per condition, in the row schema of
   [Artifacts](#artifacts).
@@ -300,11 +298,13 @@ definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 methods = ["test", "proof", "analysis", "inspection", "review"]
 marked_methods = ["test", "proof"]
-retired = []
-exclude_phrases = []
+retired = [
+    "requirement-traceability#FR-5",
+    "requirement-traceability#VC-5.1",
+]
 
 [method.test]
-item_rule = "#\\[test\\]|#\\[tokio::test\\]"
+item_rule = "#\\[test\\]|#\\[tokio::test\\]|#\\[cfg_attr\\(test,\\s*test\\)\\]"
 result_artifact = "target/ci-artifacts/test.log"
 
 [method.proof]
@@ -330,7 +330,6 @@ marker = "#[req("
 | `marked_methods`   | The subset of `methods` whose conditions need at least one marker                                              |
 | `method.<m>`       | Item rule regex and result artifact path for marked method `<m>`                                               |
 | `retired`          | Qualified IDs that must not be defined or referenced again                                                     |
-| `exclude_phrases`  | Regexes; each match in definition text is a defect; optional                                                   |
 | `markers.files`    | Source files, and directories whose files ending in a suffix are read; `[markers]` is optional                 |
 | `markers.suffixes` | File-name endings of the source files to read, such as `.rs`                                                   |
 | `markers.marker`   | Text that makes a source line a marker, such as `#[req(`                                                       |
@@ -366,8 +365,6 @@ The rules below are the whole parser:
 5. The document name is the file stem with `doc_suffix` removed:
    `storage-design.md` becomes `storage`. An ID written without `<doc>#`
    belongs to the document it appears in.
-6. The phrase rule runs on definition text with backtick spans removed, so
-   identifiers never match.
 
 ### Checks
 
@@ -380,10 +377,6 @@ The rules below are the whole parser:
 | `method`         | A condition names no method, more than one, or one outside `methods`                     |
 | `missing`        | A defined requirement has no condition                                                   |
 | `retired`        | A retired ID is defined or referenced                                                    |
-| `exclude-phrase` | A match of an `exclude_phrases` pattern in definition text; one defect per match, quoted |
-
-The phrase check follows the lexical-smell approach of Femmer et al. (2016);
-the patterns are the project's choice.
 
 ### Source Markers
 
@@ -410,7 +403,8 @@ returns the item unchanged and writes nothing; an argument that is not
 
 Marked verification items must satisfy the configured `item_rule` for their
 method:
-- For `test`, the marked item must match `#[test]` or `#[tokio::test]`.
+- For `test`, the marked item must match `#[test]`, `#[tokio::test]`, or
+  `#[cfg_attr(test, test)]`.
 - For `proof`, the marked item must match `#[kani::proof]` or
   `#[kani::proof_for_contract]`.
 
@@ -473,8 +467,7 @@ unresolved markers, and interpreter warnings (W-1 and W-2).
 | `text`    | The matched line; for a definition, its full text; for a marker, its span  |
 
 In `text`, each run of whitespace, line breaks included, becomes one space, and
-none remains at either end. A wrapped definition therefore reads as one line,
-and a phrase pattern matches across the wrap.
+none remains at either end. A wrapped definition therefore reads as one line.
 
 Rows are sorted by `file`, then `line`. Examples are in
 [Reading the Output](#reading-the-output).
@@ -548,7 +541,7 @@ Four choices keep the stronger levels additive:
 | **Link records written by `#[req]` at compile time**                              | Records depended on what a build compiled and on the build cache, went stale until a clean build, and editors that expand macros wrote records for unsaved edits. Reading source text has none of these failure modes.   | n/a                    |
 | **Globs with `!` exclusions and `depth`**                                         | A glob engine and a symbolic-link rule table to select a handful of directories; roots plus a suffix select the same files.                                                                                              | n/a                    |
 | **Hand-written matcher instead of the `regex` crate**                             | Users would learn a bespoke pattern language; regular expressions are already known. The cost is one dependency (NFR-3).                                                                                                 | n/a                    |
-| **Requirement smells as a Vale style**                                            | Vale cannot scope rules to requirement text; the rules would fire on rationale prose. Vale remains the prose gate.                                                                                                       | n/a                    |
+| **Requirement prose and smell linting in the tracer**                             | Requirement prose quality belongs to Vale and compiler linting to Clippy; the tracer focuses strictly on traceability.                                    | n/a                    |
 | **Editor plugins, schemas or a language server**                                  | Adds per-editor machinery; `path:line: message` works everywhere (C-2).                                                                                                                                                  | n/a                    |
 | **OpenFastTrace (Java)**                                                          | Adds a Java runtime to CI.                                                                                                                                                                                               | OpenFastTrace (2026a, 2026b) |
 | **StrictDoc (Python)**                                                            | Adds a Python toolchain and its own `.sdoc` grammar.                                                                                                                                                                     | StrictDoc (2026)       |
@@ -567,7 +560,6 @@ Four choices keep the stronger levels additive:
 | VC-2.1    | FR-2                                            | `test`   | A condition row yields one row with every parent and its method; a row with more than one parent yields one row                           |
 | VC-3.1    | FR-3                                            | `test`   | Local and qualified IDs resolve to `<doc>#<id>`; an ID inside a longer token or inside a condition ID is not recorded                 |
 | VC-4.1    | FR-4                                            | `test`   | One fixture per defect kind of the Checks table yields exactly that defect                                                            |
-| VC-5.1    | FR-5                                            | `test`   | Every excluded-phrase match outside code spans is reported; an empty list disables the rule                                           |
 | VC-6.1    | FR-6                                            | `test`   | Two runs on an unchanged corpus produce byte-identical `reqs.jsonl`                                                                   |
 | VC-7.1    | FR-7                                            | `test`   | Python and C markers followed by code yield the marker line only; a wrapped Rust attribute spans to its closing parenthesis; both hold |
 | VC-7.2    | FR-7                                            | `test`   | An unqualified ID, a tagged ID, an empty marker and a span unclosed at 16 lines are each one defect                                   |
@@ -597,8 +589,6 @@ Four choices keep the stronger levels additive:
   code span is a defect. Criteria therefore name neither.
 - A requirement deleted without being added to `retired` is not detected;
   review of the diff is the control.
-- Phrase checks are lexical. They catch configured patterns, not ambiguity in
-  general.
 
 ---
 
@@ -684,52 +674,48 @@ pp. 25–36, doi: 10.1145/1146238.1146242.
 for Requirements-Based Testing: Evaluation of Effectiveness," in *Proc. 2nd
 NASA Formal Methods Symp. (NFM 2010)*, Washington, DC, USA, 2010.
 
-[4] H. Femmer, D. Méndez Fernández, S. Wagner, and S. Eder, "Rapid quality
-assurance with Requirements Smells," *Journal of Systems and Software*, 2016,
-doi: 10.1016/j.jss.2016.02.047.
-
-[5] M. Hatzl, *mantra-rust-macros* (Version 0.7.8). [Online]. Available:
+[4] M. Hatzl, *mantra-rust-macros* (Version 0.7.8). [Online]. Available:
 https://docs.rs/crate/mantra-rust-macros/latest. Accessed: Sep. 11, 2026.
 
-[6] Rust Project Developers, "coverage: Remove all unstable support for MC/DC
+[5] Rust Project Developers, "coverage: Remove all unstable support for MC/DC
 instrumentation (#144999)," in *rust-lang/rust*. [Online]. Available:
 https://github.com/rust-lang/rust/commit/562222b73765a326fa800a075814deaf627874df.
 Accessed: Sep. 27, 2026.
 
-[7] The Rust Project Developers, "3558-libtest-json," *The Rust RFC Book*.
+[6] The Rust Project Developers, "3558-libtest-json," *The Rust RFC Book*.
 [Online]. Available: https://rust-lang.github.io/rfcs/3558-libtest-json.html.
 Accessed: Sep. 11, 2026.
 
-[8] OpenFastTrace, "doc/user_guide.md," in *itsallcode/openfasttrace*.
+[7] OpenFastTrace, "doc/user_guide.md," in *itsallcode/openfasttrace*.
 [Online]. Available:
 https://github.com/itsallcode/openfasttrace/blob/main/doc/user_guide.md.
 Accessed: Sep. 11, 2026.
 
-[9] OpenFastTrace, "doc/spec/system_requirements.md," in
+[8] OpenFastTrace, "doc/spec/system_requirements.md," in
 *itsallcode/openfasttrace*. [Online]. Available:
 https://github.com/itsallcode/openfasttrace/blob/main/doc/spec/system_requirements.md.
 Accessed: Sep. 11, 2026.
 
-[10] StrictDoc, "User Guide," *StrictDoc Documentation*. [Online]. Available:
+[9] StrictDoc, "User Guide," *StrictDoc Documentation*. [Online]. Available:
 https://strictdoc.readthedocs.io/en/stable/stable/docs/strictdoc_01_user_guide.html.
 Accessed: Sep. 11, 2026.
 
-[11] M. Hatzl, "README.md," in *mhatzl/mantra*. [Online]. Available:
+[10] M. Hatzl, "README.md," in *mhatzl/mantra*. [Online]. Available:
 https://github.com/mhatzl/mantra. Accessed: Sep. 11, 2026.
 
-[12] Doorstop, "Validating Requirements," *Doorstop Documentation*. [Online].
+[11] Doorstop, "Validating Requirements," *Doorstop Documentation*. [Online].
 Available: https://doorstop.readthedocs.io/en/latest/cli/validation.html.
 Accessed: Sep. 11, 2026.
 
-[13] Kani Rust Verifier Contributors, "The Kani Rust Verifier Documentation and
+[12] Kani Rust Verifier Contributors, "The Kani Rust Verifier Documentation and
 Source," *model-checking/kani GitHub repository*. [Online]. Available:
 https://github.com/model-checking/kani. Accessed: Sep. 28, 2026.
 
-[14] Y. Moy, E. Ledinot, H. Delseny, V. Wiels, and B. Monate, "Testing or
+[13] Y. Moy, E. Ledinot, H. Delseny, V. Wiels, and B. Monate, "Testing or
 Formal Verification: DO-178C Alternatives and Industrial Experience," *IEEE
 Software*, vol. 30, no. 3, pp. 50–57, 2013, doi: 10.1109/MS.2013.43.
 
-[15] D. Cofer and S. P. Miller, "Formal Methods Case Studies for DO-333," NASA
+[14] D. Cofer and S. P. Miller, "Formal Methods Case Studies for DO-333," NASA
 Langley Research Center, Hampton, VA, USA, Rep. no. NASA/CR-2014-218244, 2014.
 [Online]. Available:
 https://shemesh.larc.nasa.gov/people/bld/ftp/NASA-CR-2014-218244.pdf. Accessed:

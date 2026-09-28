@@ -33,18 +33,24 @@
         - Requirement tracing integration: tracer derives condition status
           by reading per-item Kani and test results in post, verifying that
           formal proofs and dynamic analysis agree with declared conditions
-- [ ] **PR4**: Classical Control Synthesis & Math Core (`src/classical_tools`)
-- [ ] **PR5**: Modern Control Toolbox & State Observers (`src/modern_control`)
-- [ ] **PR6**: System Identification (SysID) & Frequency Estimation
+- [ ] **PR4**: Workspace Verification Retrofit & Gate Hardening
+    - Review and update all existing approved design documents (`math`, `numerical-models`, `ets`, etc.) with requirement traceability decomposition tables (`VC-*`)
+    - Retrofit implementation test suites with `#[req]` markers to establish complete traceability coverage
+    - Author formal bounded model checking harnesses (`kani`) for core safety invariants across numerical and algebraic modules
+    - Harden implementations against undefined behavior under `miri` and mutation testing under `mutants`
+    - Allocate dedicated sprints per design document and submodule implementation to repair and activate the new quality gates
+- [ ] **PR5**: Classical Control Synthesis & Math Core (`src/classical_tools`)
+- [ ] **PR6**: Modern Control Toolbox & State Observers (`src/modern_control`)
+- [ ] **PR7**: System Identification (SysID) & Frequency Estimation
   (`src/sysid`)
-- [ ] **PR7**: Safety Validation & Run-Time Assurance (`src/validation`)
-- [ ] **PR8**: Hardware Acceleration & Architecture Subprograms (traits in
+- [ ] **PR8**: Safety Validation & Run-Time Assurance (`src/validation`)
+- [ ] **PR9**: Hardware Acceleration & Architecture Subprograms (traits in
   `src/math/subprograms`; accelerated backends as examples in
   `examples/subprograms`) ([subprograms](math/subprograms-design.md))
-- [ ] **PR9**: CI Workflow Hardening & Physical-Target ETS Runners (Teensy 4.1)
+- [ ] **PR10**: CI Workflow Hardening & Physical-Target ETS Runners (Teensy 4.1)
     - Teensy 4.1 `target-build` gate (`ci-design.md` FR-17; ITCM layout)
     - Workflow: build cache, pinned actions and tools, top-level
       `permissions:`, no duplicate `cargo doc` in the report job
-- [ ] **PR10**: Automated Git Release System & Release Pipeline
-- [ ] **PR11**: Flight Examples, Documentation Consolidation & Initial Release
+- [ ] **PR11**: Automated Git Release System & Release Pipeline
+- [ ] **PR12**: Flight Examples, Documentation Consolidation & Initial Release
   (`v0.1.0`)

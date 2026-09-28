@@ -1358,7 +1358,7 @@ mod proofs {
     use super::*;
     use control_rs_trace_macros::req;
 
-    #[req("requirement-traceability#VC-16.1")]
+    #[req("requirement-traceability#VC-16.1", "fixed-num#VC-3.2")]
     #[kani::proof]
     #[kani::unwind(2)]
     pub fn prove_fixed_saturating_div() {

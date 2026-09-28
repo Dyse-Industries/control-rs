@@ -1024,7 +1024,6 @@ mod tests {
             marked_methods: vec!["test".to_string(), "proof".to_string()],
             method,
             retired: vec![],
-            exclude_phrases: vec![],
             markers: None,
         }
     }

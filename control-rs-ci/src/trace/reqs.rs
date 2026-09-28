@@ -13,10 +13,7 @@ use std::path::Path;
 use regex::Regex;
 use serde::Deserialize;
 
-use super::{
-    CONDITION, DEFINITION, Defect, Row, SCHEMA, normalize, read_text,
-    strip_code_spans,
-};
+use super::{CONDITION, DEFINITION, Defect, Row, SCHEMA, normalize, read_text};
 use crate::error::{GateError, GateResult};
 
 /// A file and line.
@@ -80,9 +77,6 @@ pub struct TraceConfig {
     pub method: BTreeMap<String, MethodConfig>,
     /// Qualified IDs that must not be defined or referenced again.
     pub retired: Vec<String>,
-    /// Each match of one of these patterns in definition text is a defect.
-    #[serde(default)]
-    pub exclude_phrases: Vec<String>,
     /// Where `trace-marks` finds markers; none when absent.
     #[serde(default)]
     pub markers: Option<MarkerConfig>,
@@ -130,8 +124,6 @@ pub struct Rules {
     doc_suffix: String,
     /// IDs that must not appear.
     retired: BTreeSet<String>,
-    /// Phrases that must not appear in definition text.
-    exclude: Vec<Regex>,
 }
 
 struct ScanContext<'a> {
@@ -201,11 +193,6 @@ impl TraceConfig {
             methods: self.methods.clone(),
             doc_suffix: self.doc_suffix.clone(),
             retired: self.retired.iter().cloned().collect(),
-            exclude: self
-                .exclude_phrases
-                .iter()
-                .map(|p| compile("exclude_phrases", p))
-                .collect::<GateResult<_>>()?,
         })
     }
 }
@@ -524,32 +511,9 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
         }
     }
 
-    for definition in rows.iter().filter(|r| r.kind == DEFINITION) {
-        defects.extend(phrase_defects(definition, rules));
-    }
     defects.sort_by(|a, b| {
         (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))
     });
-    defects
-}
-
-/// The phrase-rule defects of one definition row: one per match of each
-/// excluded phrase.
-fn phrase_defects(definition: &Row, rules: &Rules) -> Vec<Defect> {
-    let text = strip_code_spans(&definition.text);
-    let mut defects = Vec::new();
-    for pattern in &rules.exclude {
-        for found in pattern.find_iter(&text) {
-            defects.push(Defect::at(
-                definition,
-                format!(
-                    "{} contains the excluded phrase \"{}\"",
-                    definition.id,
-                    found.as_str()
-                ),
-            ));
-        }
-    }
     defects
 }
 
@@ -826,35 +790,14 @@ marked_methods = ["test"]
         );
     }
 
-    #[req("requirement-traceability#VC-5.1")]
-    #[test]
-    fn every_excluded_phrase_match_is_reported_outside_code_spans() {
-        let exclude = rules_with(
-            "retired = []\nexclude_phrases = ['\\bshould\\b', '\\bmay\\b']",
-        );
-        let quoted = CLEAN.replace("shall report", "shall `should` report");
-        assert!(messages(&quoted, &exclude).is_empty());
-        let source = CLEAN
-            .replace("shall report its size", "should report, may be should");
-        assert_eq!(
-            messages(&source, &exclude),
-            [
-                "widget#FR-1 contains the excluded phrase \"should\"",
-                "widget#FR-1 contains the excluded phrase \"should\"",
-                "widget#FR-1 contains the excluded phrase \"may\"",
-            ]
-        );
-    }
-
-    #[test]
-    fn an_empty_exclude_list_disables_the_rule() {
-        let source = CLEAN.replace("shall report", "should report");
-        assert!(messages(&source, &rules()).is_empty());
-    }
-
     #[test]
     fn unknown_keys_and_reserved_kinds_are_rejected() {
-        for key in ["extra = 1", "require_phrases = []", "references = {}"] {
+        for key in [
+            "extra = 1",
+            "exclude_phrases = []",
+            "require_phrases = []",
+            "references = {}",
+        ] {
             let unknown = format!("{KEYS}retired = []\n{key}");
             assert!(toml::from_str::<TraceConfig>(&unknown).is_err(), "{key}");
         }
