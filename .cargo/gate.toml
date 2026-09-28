@@ -449,11 +449,15 @@ args = ["--json", "--no-config", "--package", "control-rs-compare", "--output", 
 timeout_secs = 19800
 description = "Mutation testing: control-rs-compare"
 
+# control-rs-ets-host exclusions are behaviorally equivalent mutants: `>=` on two
+# instants (a wall-clock comparison that cannot tie) and `RunEnd::drained`, which
+# already returns `Default::default()`.
+
 [mutants-ets-host]
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ets-host", "--output", "target/ci-artifacts/mutants-ets-host.out"]
+args = ["--json", "--no-config", "--package", "control-rs-ets-host", "--exclude-re", "replace RunEnd::drained -> Self with Default::default\\(\\)", "--exclude-re", "replace > with >= in HeadlessRun<'t>::(drive|retry_discovery)", "--output", "target/ci-artifacts/mutants-ets-host.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ets-host"
 
