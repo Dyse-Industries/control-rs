@@ -56,6 +56,7 @@
 # Vale styles downloaded packages (preserve project vocabularies)
 .vale/styles/*
 !.vale/styles/config/
+!.vale/styles/ControlRs/
 
 documentation/TODO/
 documentation/**/research/*

@@ -1,0 +1,13 @@
+extends: existence
+message: "Use present tense ('calculates', 'returns') rather than future tense ('%s')."
+link: documentation/doc-standards.md
+level: warning
+ignorecase: true
+tokens:
+  - will calculate
+  - will return
+  - will provide
+  - will implement
+  - will execute
+  - will evaluate
+  - will panic

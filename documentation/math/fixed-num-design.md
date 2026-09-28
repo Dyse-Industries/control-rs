@@ -255,7 +255,7 @@ Because operands share identical scaling factors, no rescaling is required (ARM,
 
 Multiplying two numbers with scale factor $2^{-\text{SHIFT}}$ produces an
 intermediate product with scale $2^{-2\text{SHIFT}}$ (ARM, 1996). To prevent
-overflow and retain precision prior to rescaling, multiplication executes across
+overflow and retain precision before rescaling, multiplication executes across
 four steps:
 
 ```mermaid
@@ -270,7 +270,7 @@ flowchart LR
 ```
 
 _Figure 2: Four-step widening multiplication path ensuring full intermediate
-precision prior to convergent rounding and saturating narrowing._
+precision before convergent rounding and saturating narrowing._
 
 ##### Division
 
@@ -653,7 +653,7 @@ sequence an integer core would otherwise run (ARM, 1996).
    `num_types.rs` already carries a far larger enumeration without a measured
    compile-time problem, so the risk is assumed low, but neither figure has
    been measured. If it does become material, the enumeration can be narrowed
-   to the widths downstream models actually instantiate.
+   to the widths downstream models instantiate.
 7. **Marker Visibility**: `OneRepresentable` and `TwoRepresentable` are sealed
    and exist to carry a predicate, not to be named by callers. Whether they
    are `pub` (appearing in rustdoc and in every `Scalar` bound's `where`

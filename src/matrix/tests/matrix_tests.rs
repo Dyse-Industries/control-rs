@@ -643,7 +643,7 @@ pub mod matrix_test_suite {
 
     #[cfg_attr(test, test)]
     /// Unlike `LU`/`LDL^T`, `into_qr` itself never fails on a rank-deficient
-    /// matrix (`matrix-design.md` §5.5) — the resulting `R` factor simply
+    /// matrix (`matrix-design.md` §5.5) — the resulting `R` factor
     /// carries a near-zero pivot, which `solve_mut` reports as
     /// `LinAlgError::SingularMatrix` rather than dividing by it.
     fn test_qr_solve_singular_matrix_errors() {

@@ -13,7 +13,7 @@
 //! Subtraction underflow is a `compile_fail` doctest on `num_types` itself
 //! (`U2 - U5`). This suite lives behind
 //! `#[cfg(any(test, feature = "ets"))]`, which `rustdoc`'s doctest extraction
-//! does not set, so `compile_fail` examples placed here never actually run.
+//! does not set, so `compile_fail` examples placed here never run.
 //!
 //! ## Functional Requirement Coverage (`num-types-design.md`)
 //!

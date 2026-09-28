@@ -136,7 +136,7 @@ pub type SettingsSlice = &'static [&'static dyn Setting];
 ///     }
 /// ];
 /// static SUITE: SuiteDescriptor = SuiteDescriptor {
-///     description: "My Test Suite",
+///     description: "Example Test Suite",
 ///     executables: EXECS,
 ///     name: "my_suite",
 ///     settings: &[],

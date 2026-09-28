@@ -1,0 +1,15 @@
+extends: existence
+message: "Omit defensive filler or conversational padding ('%s'). State technical facts and invariants directly."
+link: documentation/doc-standards.md
+level: warning
+ignorecase: true
+tokens:
+  - obviously
+  - clearly
+  - simply
+  - basically
+  - actually
+  - it is easy to see
+  - needless to say
+  - it should be noted that
+  - it is important to note

@@ -294,7 +294,7 @@ impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
         F: FnOnce(),
     {
         let sp = self.cpu_utils.get_sp();
-        // SAFETY: We retrieve the active stack pointer `sp` immediately before painting.
+        // SAFETY: The active stack pointer `sp` is retrieved immediately before painting.
         // The implementation of `paint_stack` handles bounds calculations and enforces a safety
         // margin to protect active call frames.
         unsafe {
@@ -314,7 +314,7 @@ impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
             end_cycles = self.cpu_utils.get_cycles();
         });
 
-        // SAFETY: We query the peak stack usage relative to the same stack pointer `sp` used
+        // SAFETY: The peak stack usage is queried relative to the same stack pointer `sp` used
         // to paint the stack. The stack was painted with sentinel bytes and reading occurs within
         // the valid boundaries calculated during the painting phase.
         let elapsed_stack = unsafe { self.cpu_utils.read_stack_peak(sp) };

@@ -66,7 +66,7 @@ SECTIONS
             .unwrap();
     }
 
-    // Generate the linker script containing our ETS test suites custom section.
+    // Generate the linker script containing the ETS test suites custom section.
     // This defines the symbols `__ets_test_suites_start` and `__ets_test_suites_end`
     // surrounding the `.ets_test_suites` section in flash memory.
     // The target-side ETS runner reads between these boundaries to dynamically discover

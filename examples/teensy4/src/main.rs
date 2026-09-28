@@ -37,7 +37,7 @@ fn SysTick() {
 // --- Communication Implementation ---
 //
 // The ETS testing framework uses the `HostComms` trait to define target-to-host
-// communication. On the Teensy 4.0, we implement this using a USB CDC virtual serial
+// communication. On the Teensy 4.0, this is implemented using a USB CDC virtual serial
 // port. Telemetry is serialized using Postcard and framed with `frame_telemetry`,
 // then transmitted over USB. Incoming bytes are passed to `FrameReader` to reassemble
 // host commands.
@@ -181,7 +181,7 @@ pub mod teensy_pid_suite {
 
 // --- Profiler Implementation for ARM Cortex-M ---
 //
-// We use the ETS crate's built-in `CortexMProfiler` to implement the target-agnostic
+// The ETS crate's built-in `CortexMProfiler` implements the target-agnostic
 // `CPUProfiler` trait. It reads clock cycles from the ARM DWT cycle counter and tracks
 // real-time duration using the ARM SysTick timer. It also paints/profiles stack space.
 
@@ -234,7 +234,7 @@ fn setup() -> Context<TeensyComms, CortexMProfiler> {
     const SPEED: Speed = Speed::LowFull;
     let bus_adapter = BusAdapter::with_speed(usb, ep_memory, ep_state, SPEED);
 
-    // Disable interrupts since we are polling manually
+    // Disable interrupts during manual polling
     bus_adapter.set_interrupts(false);
 
     let usb_bus = usb_bus_opt.insert(UsbBusAllocator::new(bus_adapter));

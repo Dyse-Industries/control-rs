@@ -1,0 +1,8 @@
+{
+  "name": "ControlRs",
+  "description": "Prose, perspective, and technical style rules for control-rs safety-critical control software.",
+  "version": "0.1.0",
+  "author": "Dyse Industries / control-rs",
+  "homepage": "https://github.com/Dyse-Industries/control-rs",
+  "vale_version": ">=3.0.0"
+}

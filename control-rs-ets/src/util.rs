@@ -323,7 +323,7 @@ pub unsafe fn handle_exception<
     msg: &str,
     comms_ok: bool,
 ) -> ! {
-    // SAFETY: We propagate the safety context to `handle_failure` using the current exception information.
+    // SAFETY: Propagates the safety context to `handle_failure` using the current exception information.
     unsafe {
         handle_failure(context, msg, "exception_handler", 0, comms_ok);
     }

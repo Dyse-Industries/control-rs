@@ -822,8 +822,8 @@ a sequence of planar rotators guarantees normwise backward stability.
 
 #### 5.1. Convenience Methods vs. Explicit Decompositions
 
-We evaluated exposing convenient, immutable linear algebra signatures like
-`invert(&self) -> Matrix<T, D, D>`. We explicitly rejected this pattern because:
+Exposing convenient, immutable linear algebra signatures like
+`invert(&self) -> Matrix<T, D, D>` was evaluated and rejected because:
 
 - **Hidden Stack Allocations**: Returning new matrix structures from
   heavy $O(N^3)$ operations masks large internal stack allocations, risking
@@ -839,8 +839,8 @@ We evaluated exposing convenient, immutable linear algebra signatures like
 
 #### 5.2. Const Generics vs. Type-Level Traits (`Dim`)
 
-We evaluated using raw const generics (`[[T; R]; C]`) as the primary matrix
-interface versus type-level dimension traits (`Dim`).
+Using raw const generics (`[[T; R]; C]`) as the primary matrix
+interface versus type-level dimension traits (`Dim`) was evaluated:
 
 - **Raw Const Generics Limitations**: Stable Rust currently limits const generic
   arithmetic in public trait bounds (for example, expressing that
@@ -864,7 +864,7 @@ bypassed for two primary reasons:
 2. **Custom `Zero` and `One` traits**: expose associated constants (`T::ZERO`/
    `T::ONE`).
 3. **Audit Footprint**: Complete auditing of dependency source code is
-   difficult with more dependencies. `nalgebra` has a large number of
+   difficult with more dependencies. `nalgebra` has many
    dependencies.
 
 While `nalgebra` was bypassed as a direct dependency, the matrix architecture is

@@ -1,0 +1,15 @@
+extends: existence
+message: "Consider simplifying bloated phrase '%s'."
+link: documentation/doc-standards.md
+level: warning
+ignorecase: true
+tokens:
+  - in order to
+  - prior to
+  - at this point in time
+  - at the present time
+  - a large number of
+  - due to the fact that
+  - for the purpose of
+  - with the exception of
+  - in the event that
