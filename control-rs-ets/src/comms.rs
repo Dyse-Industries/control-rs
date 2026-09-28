@@ -655,6 +655,12 @@ mod tests {
     /// A decoded payload copied into a fixed buffer, with its length.
     type DecodedPayload<const N: usize> = ([u8; N], usize);
 
+    /// Scratch frame buffer with a little slack beyond the largest frame.
+    type FrameBuf = [u8; MAX_FRAME_SIZE + 8];
+
+    /// A framed buffer and the frame length, or the framing error.
+    type Framed = Result<(FrameBuf, usize), postcard::Error>;
+
     /// Returns `buf[range]`, failing the test when the range leaves the
     /// buffer.
     fn span(buf: &[u8], range: core::ops::Range<usize>) -> &[u8] {
@@ -1164,5 +1170,58 @@ mod tests {
                 postcard::from_bytes(span(&decoded, 0..decoded_len))
                     .expect("postcard decode telemetry");
         }
+    }
+
+    /// Frames `payload` into a buffer of exactly `dest_len` bytes.
+    fn frame_into(payload: &[u8], dest_len: usize) -> Framed {
+        let mut dest = [0u8; MAX_FRAME_SIZE + 8];
+        let target = dest
+            .get_mut(..dest_len)
+            .expect("dest_len must lie inside the scratch buffer");
+        let len = FrameEncoder::frame_payload(payload, target)?;
+        Ok((dest, len))
+    }
+
+    #[test]
+    fn a_maximum_size_payload_frames_and_decodes() {
+        let payload = [0x5A_u8; MAX_PAYLOAD_SIZE];
+        let (frame, len) =
+            frame_into(&payload, MAX_FRAME_SIZE).expect("a full payload fits");
+        assert_eq!(len, MAX_FRAME_SIZE);
+        assert_eq!(header_payload_len(&frame), MAX_PAYLOAD_SIZE);
+        let mut reader = FrameReader::new();
+        let decoded = span(&frame, 0..len)
+            .iter()
+            .find_map(|&b| reader.handle_byte(b).map(<[u8]>::len));
+        assert_eq!(decoded, Some(MAX_PAYLOAD_SIZE));
+    }
+
+    #[test]
+    fn an_oversized_payload_is_refused() {
+        let payload = [0u8; MAX_PAYLOAD_SIZE + 1];
+        assert!(frame_into(&payload, MAX_FRAME_SIZE + 8).is_err());
+    }
+
+    #[test]
+    fn framing_needs_room_for_the_whole_frame() {
+        let payload = [7u8; 10];
+        let total = payload.len() + FRAME_OVERHEAD;
+        let (frame, len) = frame_into(&payload, total).expect("an exact fit");
+        assert_eq!(len, total);
+        assert!(frame_decodes(span(&frame, 0..len)));
+        assert!(matches!(
+            frame_into(&payload, total - 1),
+            Err(postcard::Error::SerializeBufferFull)
+        ));
+    }
+
+    #[test]
+    fn the_length_field_is_big_endian_across_both_bytes() {
+        let payload = [1u8; 300];
+        let (frame, len) =
+            frame_into(&payload, MAX_FRAME_SIZE).expect("framing");
+        assert_eq!(byte_at(&frame, 2), 1, "high byte of 300");
+        assert_eq!(byte_at(&frame, 3), 44, "low byte of 300");
+        assert!(frame_decodes(span(&frame, 0..len)));
     }
 }

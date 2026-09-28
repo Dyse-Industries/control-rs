@@ -889,7 +889,7 @@ mod tests {
             Target::Subprocess(SubprocessTarget { target: Some(ref t), .. })
                 if t == "riscv32imac-unknown-none-elf"
         ));
-        // Several targets are left to the caller.
+        // A request naming more than one target is left to the caller.
         assert!(
             Target::parse(&words(&["bin", "arm", "riscv32"]), "arm", "/dev/x")
                 .unwrap()

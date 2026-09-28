@@ -461,11 +461,16 @@ args = ["--json", "--no-config", "--package", "control-rs-ets-host", "--exclude-
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ets-host"
 
+# control-rs-ets exclusions: `|` versus `^` joins two bytes with disjoint bits;
+# a frame buffer shorter than six bytes cannot hold a payload either way; the
+# Cortex-M and RISC-V profilers only compile for their own targets; and the
+# default FPU flags are zero on the host that runs the mutation test.
+
 [mutants-ets]
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ets", "--output", "target/ci-artifacts/mutants-ets.out"]
+args = ["--json", "--no-config", "--package", "control-rs-ets", "--exclude-re", "replace \\| with \\^ in FrameReader::handle_byte", "--exclude-re", "replace < with (==|<=) in FrameEncoder::serialize_then_frame", "--exclude-re", "<impl CPUProfiler for (CortexMProfiler|RiscvProfiler)>", "--exclude-re", "replace CPUProfiler::fpu_flags -> u8 with 0", "--output", "target/ci-artifacts/mutants-ets.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ets"
 
