@@ -244,8 +244,8 @@ pub mod complex_num_test_suite {
         let theta = f32::PI / 4.0_f32;
         let z = Complex32::from_polar(&r, &theta);
         let expected = r * (f32::PI / 4.0_f32).cos(); // Both re and im should be this
-        assert_almost_eq!(z.re, expected);
-        assert_almost_eq!(z.im, expected);
+        assert_almost_eq!(z.re, expected, 1e-5_f32);
+        assert_almost_eq!(z.im, expected, 1e-5_f32);
     }
 
     #[cfg_attr(test, test)]

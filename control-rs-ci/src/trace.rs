@@ -31,7 +31,7 @@ pub const DEFINITION: &str = "definition";
 pub const MARKER: &str = "marker";
 
 /// Row and report format version, incremented on every incompatible change.
-pub const SCHEMA: u32 = 2;
+pub const SCHEMA: u32 = 3;
 
 /// Exit code of a usage, configuration or I/O error.
 pub const USAGE_ERROR: u8 = 2;

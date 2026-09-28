@@ -75,6 +75,9 @@ pub struct TraceConfig {
     pub methods: Vec<String>,
     /// The subset of methods whose conditions need at least one marker.
     pub marked_methods: Vec<String>,
+    /// Item rules and result artifacts per method.
+    #[serde(default)]
+    pub method: BTreeMap<String, MethodConfig>,
     /// Qualified IDs that must not be defined or referenced again.
     pub retired: Vec<String>,
     /// Each match of one of these patterns in definition text is a defect.
@@ -83,6 +86,18 @@ pub struct TraceConfig {
     /// Where `trace-marks` finds markers; none when absent.
     #[serde(default)]
     pub markers: Option<MarkerConfig>,
+}
+
+/// The `[method.<name>]` table of a `trace.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MethodConfig {
+    /// Regex pattern matching the item attribute or declaration (for example, `#[test]`).
+    #[serde(default)]
+    pub item_rule: Option<String>,
+    /// Relative path to the verification result log artifact (for example, `target/ci-artifacts/test.log`).
+    #[serde(default)]
+    pub result_artifact: Option<String>,
 }
 
 /// The `[markers]` table of a `trace.toml`.

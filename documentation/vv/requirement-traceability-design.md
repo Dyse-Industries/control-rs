@@ -11,18 +11,18 @@
 Requirements in `control-rs` are written first, in the Requirements section of
 each design document, and the design follows from them. This document
 specifies the tooling that checks every requirement is decomposed into
-verification conditions and that every condition verified by test is linked
-to a test.
+verification conditions and that every condition verified by test or formal
+proof is linked to a test or proof harness.
 
 The decomposition follows the vocabulary of MC/DC: a decision is a Boolean
 expression composed of conditions and Boolean operators, and a condition
 contains no Boolean operator (Hayhurst et al., 2001). A requirement statement
 is the decision; its verification conditions are the conditions. Coverage
 criteria of this shape can be defined directly on requirements rather than on
-code, which keeps the resulting tests traceable to the requirements they
+code, which keeps the resulting verification traceable to the requirements they
 exercise (Whalen et al., 2006). The weakest such criterion asks for at least
 one test per requirement (Staats et al., 2010); this design asks for at least
-one linked test per condition and leaves the stronger criteria open (see
+one linked verification item per condition and leaves the stronger criteria open (see
 [Extension Path](#extension-path)).
 
 The tooling rests on three concepts. A **definition** is the one line where a
@@ -44,10 +44,10 @@ one step each:
 | Actor                     | Action                                                                          | Touches                                          |
 |:--------------------------|:--------------------------------------------------------------------------------|:-------------------------------------------------|
 | Author                    | Writes requirements and their verification conditions first, then the design   | One Markdown file, in any editor                 |
-| Test author               | Marks each test with the conditions it exercises                                | Source files                                     |
+| Verification author       | Marks each test or proof harness with the conditions it exercises               | Source files                                     |
 | Reviewer                  | Reads requirements, conditions and criteria in a pull request                   | Rendered Markdown on GitHub                      |
 | Linter (local or CI)      | Reports missing, duplicate or unresolved IDs with `path:line: message`          | The same Markdown and source files               |
-| Tracer (CI)               | Reports which conditions have linked tests and which await review               | `reqs.jsonl`, `marks.jsonl`, `trace-report.json` |
+| Tracer (CI)               | Reports condition coverage and per-item verification status                     | `reqs.jsonl`, `marks.jsonl`, `trace-report.json` |
 | Systems engineer (future) | Builds hierarchies, allocations and verification matrices                       | External tools that read the `.jsonl` files      |
 
 Three principles follow from the table:
@@ -68,13 +68,13 @@ template. External users of `control-rs-ci` describe their own layout with the
 same few patterns (see [Configuration](#configuration)).
 
 **Scope.** In scope: definitions, conditions, markers, the checks over them,
-the Requirement → Condition → Test hierarchy inside one design document,
-coverage derivation and the three artifacts. Out of scope: test outcomes,
-which the gates own; test adequacy; condition, decision and MC/DC coverage of
-requirements (see [Extension Path](#extension-path)); code-level structural
-coverage; requirement-to-requirement hierarchies; citation, reference and
-general document style, which an external, unpublished review tool owns;
-requirement editing tools; and any systems-engineering view.
+the Requirement → Condition → Verification Item hierarchy inside one design document,
+coverage and item status derivation, and the generated artifacts. Out of scope:
+test adequacy; condition, decision and MC/DC coverage of requirements (see
+[Extension Path](#extension-path)); code-level structural coverage;
+requirement-to-requirement hierarchies; citation, reference and general
+document style, which an external, unpublished review tool owns; requirement
+editing tools; and any systems-engineering view.
 
 ---
 
@@ -110,8 +110,8 @@ requirement editing tools; and any systems-engineering view.
   with a tag, and a span still unclosed at 16 lines.
 - **FR-8 — Coverage Verdict**: `trace-check` shall derive condition and
   requirement status per [Status Derivation](#status-derivation), write
-  `trace-report.json`, and exit 0 iff no condition is `Uncovered`, every marker
-  names a defined condition and no marker names a requirement.
+  `trace-report.json`, and exit 0 iff no condition is `Uncovered` or `Fail`, every
+  marker names a defined condition, and no marker names a requirement.
 - **FR-9 — Diagnostic Format**: `trace-reqs`, `trace-marks` and `trace-check`
   shall report each defect as one `path:line: message` line and shall exit
   non-zero when any defect exists.
@@ -139,9 +139,9 @@ requirement editing tools; and any systems-engineering view.
   shall ship no editor plugin, schema, snippet or language server.
 - **C-3 — Paths from Configuration**: Every input and output path of the three
   binaries shall arrive from a command-line argument or the configuration file.
-- **C-4 — Read-Only Inputs**: The tracer shall run no test, build or gate and
-  shall read no gate result; it reads Markdown, source text, the configuration
-  and its own artifacts.
+- **C-4 — Read-Only Inputs**: The tracer shall run no test, build or gate; it
+  reads Markdown, source text, the configuration, its own artifacts, and
+  per-item test and proof verification artifacts from `target/ci-artifacts/`.
 - **C-5 — External Systems Tooling**: Hierarchy views, allocation, verification
   matrices and model export shall consume the `.jsonl` files outside this
   workspace's CI path.
@@ -149,8 +149,9 @@ requirement editing tools; and any systems-engineering view.
   `target/ci-artifacts/` when run as gates; `#[req]` shall write nothing.
 - **C-7 — Document Style Exclusion**: `trace-reqs` shall check no citation,
   reference or general document style.
-- **C-8 — Coverage, Not Outcome**: The tracer shall report whether conditions
-  are covered by marked tests, never whether a requirement passed.
+- **C-8 — Per-Item Verification Status**: The tracer shall derive condition
+  status from per-item test and proof results; it shall never infer condition
+  status from aggregate gate verdicts.
 
 ---
 
@@ -177,14 +178,19 @@ requirement editing tools; and any systems-engineering view.
    | VC-3.2    | FR-3        | `test`   | Column index out of bounds gives `None`                          |
    ```
 
-3. **Mark the tests** that exercise each `test` condition. Rust uses the
-   `#[req]` attribute; any other language uses the marker text the
-   configuration names, such as `// req: storage#VC-3.1`:
+3. **Mark the tests and proof harnesses** that exercise each `test` or
+   `proof` condition. Rust uses the `#[req]` attribute placed on `#[test]`
+   functions or `#[kani::proof]` harnesses; any other language uses the marker
+   text the configuration names, such as `// req: storage#VC-3.1`:
 
    ```rust
    #[req("storage#VC-3.1", "storage#VC-3.2")]
    #[test]
    fn packed_value_out_of_bounds_is_none() { /* ... */ }
+
+   #[req("fixed#VC-3.1")]
+   #[kani::proof]
+   fn prove_saturating_div_no_panic() { /* ... */ }
    ```
 
 4. **Run `cargo trace-reqs`, `cargo trace-marks` and `cargo trace-check`.**
@@ -248,6 +254,7 @@ flowchart LR
     TM --> MJ["marks.jsonl"]
     RJ --> TC["trace-check"]
     MJ --> TC
+    Res["target/ci-artifacts/<br/>test & proof outputs"] --> TC
     TC --> Rep["trace-report.json"]
     TC --> Exit["exit status"]
     RJ -.-> Ext["external systems tool<br/><i>outside CI (C-5)</i>"]
@@ -258,13 +265,14 @@ flowchart LR
 ```mermaid
 flowchart LR
     R["Requirement (decision)<br/>FR-n, NFR-n, C-n"] -->|"1..n"| V["Verification condition<br/>VC-x.y, method"]
-    V -->|"method in marked_methods: 1..n"| T["Test<br/>marker"]
+    V -->|"method in marked_methods: 1..n"| T["Test or Proof<br/>marker"]
     V -.->|"other methods: 0..n"| T
 ```
 
 A condition may have more than one parent, such as one review condition covering
-every constraint. Test outcomes stay outside the model: a marked test that
-fails already fails the gate that runs it (C-8).
+every constraint. Verification outcomes are derived from per-item results: a
+marked test or proof harness evaluates to a boolean pass or fail, and `trace-check`
+aggregates item outcomes into condition statuses (C-8).
 
 **Where requirements live.** Requirements stay in the design documents.
 Measured on 2026-09-26, the corpus holds 268 requirements in 23
@@ -290,10 +298,18 @@ files = ["documentation/vv/requirement-traceability-design.md"]
 doc_suffix = "-design"
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
-methods = ["test", "analysis", "inspection", "review"]
-marked_methods = ["test"]
+methods = ["test", "proof", "analysis", "inspection", "review"]
+marked_methods = ["test", "proof"]
 retired = []
 exclude_phrases = []
+
+[method.test]
+item_rule = "#\\[test\\]|#\\[tokio::test\\]"
+result_artifact = "target/ci-artifacts/test.log"
+
+[method.proof]
+item_rule = "#\\[kani::(?:proof|proof_for_contract)\\]"
+result_artifact = "target/ci-artifacts/kani.log"
 
 [markers]
 files = ["src", "tests", "benches", "control-rs-trace-macros/tests", "control-rs-ci/src", "control-rs-ci/tests"]
@@ -312,6 +328,7 @@ marker = "#[req("
 | `verification`     | Regex for a line that defines a condition                                                                      |
 | `methods`          | Verification methods a condition may name                                                                      |
 | `marked_methods`   | The subset of `methods` whose conditions need at least one marker                                              |
+| `method.<m>`       | Item rule regex and result artifact path for marked method `<m>`                                               |
 | `retired`          | Qualified IDs that must not be defined or referenced again                                                     |
 | `exclude_phrases`  | Regexes; each match in definition text is a defect; optional                                                   |
 | `markers.files`    | Source files, and directories whose files ending in a suffix are read; `[markers]` is optional                 |
@@ -391,31 +408,62 @@ item, as mantra does with its `req` attribute macro (Hatzl, 2026b). The macro
 returns the item unchanged and writes nothing; an argument that is not
 `<doc>#<id>`, or that carries a tag, is a compile error.
 
+Marked verification items must satisfy the configured `item_rule` for their
+method:
+- For `test`, the marked item must match `#[test]` or `#[tokio::test]`.
+- For `proof`, the marked item must match `#[kani::proof]` or
+  `#[kani::proof_for_contract]`.
+
+`trace-marks` records each marker span, and `trace-check` validates that the
+target item matches the expected item rule.
+
 ### Status Derivation
 
-Each condition takes one status:
+Condition status is derived from marked verification items and their execution
+results in `target/ci-artifacts/`:
 
-| Condition                                          | Status      | Fails gate |
-|:---------------------------------------------------|:------------|:-----------|
-| Method in `marked_methods`, at least one marker    | `Covered`   | no         |
-| Method in `marked_methods`, no marker              | `Uncovered` | yes        |
-| Method outside `marked_methods`                    | `Review`    | no         |
+| Condition                                                  | Status      | Fails gate |
+|:-----------------------------------------------------------|:------------|:-----------|
+| Method in `marked_methods`, marked items exist, all passed | `Pass`      | no         |
+| Method in `marked_methods`, any marked item failed         | `Fail`      | yes        |
+| Method in `marked_methods`, no result recorded for item    | `Unrun`     | yes        |
+| Method in `marked_methods`, no marker in source text       | `Uncovered` | yes        |
+| Method outside `marked_methods`                            | `Review`    | no         |
+
+`trace-check` reads per-item results using deterministic tool-specific rules:
+- **Test results (`test.log`)**: Line-oriented libtest output. A test line
+  `test <path> ... ok` maps to a passing item; `test <path> ... FAILED` maps to
+  a failed item.
+- **Proof results (`kani.log`)**: Bounded model checking output. A harness
+  `Checking harness <path>...` maps to a passing item iff Kani reports
+  `VERIFICATION:- SUCCESSFUL` and all evaluated cover properties are
+  `SATISFIED`. An assertion failure, unwinding failure, or unsatisfiable cover
+  witness maps to a failed item.
+
+**Interpreter enforcement and warnings.** Miri serves as a secondary interpreter
+for test execution rather than a distinct verification method. When processing
+test items, `trace-check` emits two classes of non-fatal warnings:
+- **W-1 (`cfg_attr(miri, ignore)` present)**: Emitted when a marked test item
+  contains a Miri ignore attribute, signaling conditional omission under
+  undefined behavior analysis.
+- **W-2 (Unexecuted under Miri)**: Emitted when a marked test item recorded in
+  `test.log` is absent from `miri.log`.
 
 A requirement takes the worst status of its conditions, in the order
-`Uncovered`, `Review`, `Covered`. A marker counts toward every condition it
-names. A marker that names a requirement, or an ID with no definition or
-condition row, fails the gate.
+`Fail`, `Unrun`, `Uncovered`, `Review`, `Pass`. A marker counts toward every
+condition it names. A marker that names a requirement, or an ID with no
+definition or condition row, fails the gate.
 
-`trace-report.json` holds `schema`, the number of conditions per status, one
-entry per requirement (ID, status and its conditions with method, status and
-marker locations), the `Review` conditions awaiting sign-off and the marker
-defects.
+`trace-report.json` holds `schema` (3), summary counts per status, one entry
+per requirement (ID, status, and child conditions with method, status, marker
+locations, and item outcomes), the `Review` conditions awaiting sign-off,
+unresolved markers, and interpreter warnings (W-1 and W-2).
 
 ### Artifacts
 
 | Field     | Meaning                                                                    |
 |:----------|:---------------------------------------------------------------------------|
-| `schema`  | Row format version, `2` (NFR-4)                                            |
+| `schema`  | Row format version, `3` (NFR-4)                                            |
 | `id`      | Qualified ID, `<doc>#<id>`                                                 |
 | `kind`    | `definition`, `condition` or `marker`                                      |
 | `parents` | Condition rows only: qualified parent requirement IDs                      |
@@ -433,16 +481,17 @@ Rows are sorted by `file`, then `line`. Examples are in
 
 ### Invocation and Gate Wiring
 
-| Binary        | Gate and placement                     | Arguments                                                                                                                                         |
-|:--------------|:---------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------|
-| `trace-reqs`  | `trace-reqs`, `lint` group             | `--config .cargo/trace/trace.toml --out target/ci-artifacts/reqs.jsonl`                                                                           |
-| `trace-marks` | `trace-marks`, `lint` group            | `--config .cargo/trace/trace.toml --out target/ci-artifacts/marks.jsonl`                                                                          |
-| `trace-check` | `trace`, `lint` group after the others | `--config .cargo/trace/trace.toml --reqs target/ci-artifacts/reqs.jsonl --marks target/ci-artifacts/marks.jsonl --out target/ci-artifacts/trace-report.json` |
+| Binary        | Gate and placement                      | Arguments                                                                                                                                         |
+|:--------------|:----------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------|
+| `trace-reqs`  | `trace-reqs`, `lint` group              | `--config .cargo/trace/trace.toml --out target/ci-artifacts/reqs.jsonl`                                                                           |
+| `trace-marks` | `trace-marks`, `lint` group             | `--config .cargo/trace/trace.toml --out target/ci-artifacts/marks.jsonl`                                                                          |
+| `trace-check` | `trace`, `post` exclusive stage         | `--config .cargo/trace/trace.toml --reqs target/ci-artifacts/reqs.jsonl --marks target/ci-artifacts/marks.jsonl --out target/ci-artifacts/trace-report.json` |
 
-Gates within a group run in declared order, so `trace` reads the rows its two
-predecessors wrote in the same run. It reads no gate result (C-4) and needs no
-place among the exclusive gates. The lint job uploads `trace-report.json` with
-the rest of its artifacts.
+`trace-reqs` and `trace-marks` run early in the concurrent `lint` group to
+extract requirement definitions and source markers. `trace-check` runs in the
+`post` exclusive stage after test execution and `kani` formal verification
+complete, ensuring all per-item verification result logs are present in
+`target/ci-artifacts/` before condition status derivation.
 
 ### Adoption
 
@@ -528,16 +577,17 @@ Four choices keep the stronger levels additive:
 | VC-11.1   | NFR-1                                           | `review` | Median of 5 runs under 1.0 s per binary on the workspace                                                                              |
 | VC-12.1   | NFR-2                                           | `test`   | A marked struct, function and test behave as unmarked; a tagged or unqualified argument fails to compile                              |
 | VC-13.1   | NFR-3                                           | `review` | `cargo tree` shows no dependency beyond the budget                                                                                    |
-| VC-14.1   | NFR-4                                           | `test`   | Every row and the report carry `schema` 2; a row of another schema is rejected                                                        |
+| VC-14.1   | NFR-4                                           | `test`   | Every row and the report carry `schema` 3; a row of another schema is rejected                                                        |
 | VC-15.1   | C-1, C-2, C-3, C-4, C-5, C-6, C-7, C-8          | `review` | The diff adds no violation of any constraint                                                                                          |
+| VC-16.1   | C-4, C-8                                        | `proof`  | Bounded model checking verifies that marked proof harnesses satisfy safety and non-vacuity contracts without panic                    |
 
 ### Limits
 
-- The tracer shows that each `test` condition has a marked test. It does not
-  show that the test drives the condition both ways or shows its independent
-  effect on the requirement; the Criterion states the combination and review
-  checks it.
-- A marker's claim is not checked against what the test does.
+- The tracer shows that each `test` and `proof` condition has a marked
+  verification item. It does not show that the test drives the condition both
+  ways or shows its independent effect on the requirement; the Criterion states
+  the combination and review checks it.
+- A marker's claim is not checked against what the test or proof harness does.
 - A marked test that is compiled out or ignored still counts; the log of the
   gate that runs it is the evidence that it ran.
 - Markers are found by text. A marker line inside a comment or string literal
@@ -598,6 +648,7 @@ Four choices keep the stronger levels additive:
 | **Phase 3: `trace-check`**                | Coverage derivation per Status Derivation, report schema 2, `--config` in place of gate inputs.                                                                                | 1                |
 | **Phase 4: Gate wiring**                  | `trace` joins the `lint` group; the report job's trace step and the runner's retention of other gates' results go (`ci-design.md`).                                            | 1                |
 | **Phase 5: Corpus migration**             | Add condition IDs and methods to each document's Verification table and add the document to `files`. One pull request per area.                                                | 3                |
+| **Phase 6: Proof & Item Status (PR3-6)**  | `proof` method and `#[kani::proof]` item rule; per-item result evaluation in `trace-check` from `test.log` and `kani.log`; Miri interpreter warnings W-1 and W-2; schema 3; `trace` moved to `post` stage. | 2                |
 
 ---
 
@@ -614,6 +665,7 @@ Four choices keep the stronger levels additive:
 | 1.11     | September 26, 2026 | @MitchellDScott | Upgraded to 3-tier hierarchy (Requirement → Verification Conditions → Tests). Added condition extraction (`VC-x.y`), `parent` linking in row schema, multi-line marker look-ahead, and hierarchical condition status derivation requiring marker evidence for test gates.                                                                                                                                                                                     |
 | 1.12     | September 27, 2026 | @MitchellDScott | Condition coverage replaces gate linkage: requirements are decisions decomposed into conditions, tests link to conditions only, and `trace-check` reads no gate result (C-4, C-8). `Method` replaces `Gates`; `[references]` and direct requirement rows removed; word-bounded IDs; `parents` and `method` on condition rows; parenthesis-balanced marker spans; reserved `=<tag>` marker grammar and Extension Path; File Selection requirement (FR-10); schema 2; `trace` moves to the `lint` group. |
 | 1.13     | September 27, 2026 | @MitchellDScott | Removed the `test_gates` key and the `default = false` gate Limit left from rev 1.11; `condition` default written without doubled escapes. Implementation aligned: `methods` and `marked_methods` required, `row` and `method` checks, tagged-ID and unclosed-span defects, `#[req]` rejects tags. |
+| 1.14     | September 28, 2026 | @MitchellDScott | Upgraded for formal methods and per-item verification status (PR3-6): added `proof` method and `#[method.proof]` (`#[kani::proof]`); updated C-4 and C-8 to evaluate per-item test and proof result logs (`test.log`, `kani.log`); defined condition statuses `Pass`, `Fail`, `Unrun`, `Uncovered`, and `Review`; added Miri interpreter warnings W-1 and W-2; moved `trace` to `post` exclusive stage; bumped schema to 3. Added DO-333 and Kani references. |
 
 ---
 
@@ -668,3 +720,17 @@ https://github.com/mhatzl/mantra. Accessed: Sep. 11, 2026.
 [12] Doorstop, "Validating Requirements," *Doorstop Documentation*. [Online].
 Available: https://doorstop.readthedocs.io/en/latest/cli/validation.html.
 Accessed: Sep. 11, 2026.
+
+[13] Kani Rust Verifier Contributors, "The Kani Rust Verifier Documentation and
+Source," *model-checking/kani GitHub repository*. [Online]. Available:
+https://github.com/model-checking/kani. Accessed: Sep. 28, 2026.
+
+[14] Y. Moy, E. Ledinot, H. Delseny, V. Wiels, and B. Monate, "Testing or
+Formal Verification: DO-178C Alternatives and Industrial Experience," *IEEE
+Software*, vol. 30, no. 3, pp. 50–57, 2013, doi: 10.1109/MS.2013.43.
+
+[15] D. Cofer and S. P. Miller, "Formal Methods Case Studies for DO-333," NASA
+Langley Research Center, Hampton, VA, USA, Rep. no. NASA/CR-2014-218244, 2014.
+[Online]. Available:
+https://shemesh.larc.nasa.gov/people/bld/ftp/NASA-CR-2014-218244.pdf. Accessed:
+Sep. 28, 2026.

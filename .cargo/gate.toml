@@ -20,6 +20,8 @@ timeout_secs = 90
 [execution.exclusive]
 pre = ["fetch"]
 post = [
+    "kani",
+    "trace",
     "regression",
     "mutants",
     "mutants-storage-0",
@@ -59,7 +61,8 @@ post = [
 # deletes target/ci-groups, so every group starts from an empty target directory.
 [execution.groups]
 build_test = ["build", "test"]
-lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs", "trace-marks", "trace"]
+dynamic = ["miri"]
+lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs", "trace-marks"]
 audit = ["deny", "semver", "valgrind", "geiger"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
@@ -124,14 +127,6 @@ args = ["--package", "control-rs-ci", "--bin", "trace-marks", "--", "--config", 
 timeout_secs = 900
 description = "Finds the requirement markers in the source files that .cargo/trace/trace.toml lists and writes marks.jsonl"
 
-# Runs after trace-reqs and trace-marks in the lint group and reads their rows.
-[trace]
-mode = "fail"
-command = "cargo run"
-args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--config", ".cargo/trace/trace.toml", "--reqs", "target/ci-artifacts/reqs.jsonl", "--marks", "target/ci-artifacts/marks.jsonl", "--out", "target/ci-artifacts/trace-report.json"]
-timeout_secs = 900
-description = "Derives condition coverage from reqs.jsonl and marks.jsonl and fails on uncovered test conditions and unresolved markers"
-
 [build]
 mode = "fail"
 command = "cargo build"
@@ -145,6 +140,18 @@ command = "cargo test"
 args = ["--workspace"]
 timeout_secs = 1200
 description = "Executes host unit and integration test suites"
+
+# ==============================================================================
+# Dynamic Analysis Lane Gates (dynamic)
+# ==============================================================================
+
+[miri]
+mode = "fail"
+command = "cargo +nightly miri"
+args = ["test", "-p", "control-rs", "--lib"]
+env = { MIRIFLAGS = "-Zmiri-disable-isolation", PROPTEST_DISABLE_FAILURE_PERSISTENCE = "1", PROPTEST_CASES = "8" }
+timeout_secs = 600
+description = "Executes library unit tests under Miri interpreter detecting undefined behavior and memory leaks"
 
 [coverage]
 mode = "fail"
@@ -237,6 +244,21 @@ description = "Executes Valgrind Memcheck against the listed workspace examples 
 # ==============================================================================
 # Post Stage Gates
 # ==============================================================================
+
+[kani]
+mode = "fail"
+command = "cargo kani"
+args = ["-p", "control-rs", "--tests"]
+timeout_secs = 600
+description = "Executes bounded model checking over declared #[kani::proof] harnesses"
+
+# Runs in the post exclusive stage after test and kani outputs are recorded.
+[trace]
+mode = "fail"
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--config", ".cargo/trace/trace.toml", "--reqs", "target/ci-artifacts/reqs.jsonl", "--marks", "target/ci-artifacts/marks.jsonl", "--out", "target/ci-artifacts/trace-report.json"]
+timeout_secs = 900
+description = "Derives condition verification status from reqs, marks, test and kani artifacts"
 
 # Disabled: superseded by the mutants-* chunks. Selecting it records Skipped.
 [mutants]

@@ -41,9 +41,10 @@ repository = "https://github.com/Dyse-Industries/control-rs.git"
 rust-version = "1.89.0"
 
 [workspace.lints.rust]
-unused = "deny"
+unused = { level = "deny", priority = -1 }
 missing_docs = "deny"
-rust_2018_idioms = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [workspace.lints.clippy]
 inline_always = { level = "allow", priority = 1 }
@@ -73,7 +74,7 @@ approx_constant = "deny"
 workspace = true
 
 [dependencies]
-libm = "0.2.16"
+libm = { version = "0.2.16", default-features = false }
 control-rs-macros = { path = "control-rs-macros", version = "0.1.0", optional = true }
 control-rs-ets = { path = "control-rs-ets", version = "0.1.0", optional = true }
 
@@ -84,6 +85,7 @@ ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
 [dev-dependencies]
 proptest = "1"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+control-rs-trace-macros = { path = "control-rs-trace-macros", version = "0.1.0" }
 
 [[bench]]
 name = "scaling"

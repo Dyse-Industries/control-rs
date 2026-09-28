@@ -428,10 +428,10 @@ mod cli {
             text(&report, &format!("/requirements/{i}/status"))
                 .map(str::to_string)
         };
-        assert_eq!(status(0).as_deref(), Some("Covered"));
+        assert_eq!(status(0).as_deref(), Some("Pass"));
         assert_eq!(status(1).as_deref(), Some("Uncovered"));
         assert_eq!(status(2).as_deref(), Some("Review"));
-        for (key, count) in [("Covered", 1), ("Uncovered", 1), ("Review", 1)] {
+        for (key, count) in [("Pass", 1), ("Uncovered", 1), ("Review", 1)] {
             assert_eq!(
                 report
                     .pointer(&format!("/counts/{key}"))
@@ -467,7 +467,7 @@ mod cli {
         let (code, report) =
             check("on-requirement", CLEAN, &[("out/marks.jsonl", &marks)]);
         assert_eq!(code, 1);
-        assert_eq!(text(&report, "/requirements/0/status"), Some("Covered"));
+        assert_eq!(text(&report, "/requirements/0/status"), Some("Pass"));
         assert_eq!(
             text(&report, "/unresolved_markers/0/id"),
             Some("widget#FR-1")
@@ -512,7 +512,7 @@ mod cli {
             &fs::read_to_string(dir.join("out/trace-report.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(text(&report, "/requirements/0/status"), Some("Covered"));
-        assert_eq!(text(&report, "/requirements/1/status"), Some("Covered"));
+        assert_eq!(text(&report, "/requirements/0/status"), Some("Pass"));
+        assert_eq!(text(&report, "/requirements/1/status"), Some("Pass"));
     }
 }

@@ -5,10 +5,18 @@ files = ["documentation/vv/requirement-traceability-design.md"]
 doc_suffix = "-design"
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
-methods = ["test", "analysis", "inspection", "review"]
-marked_methods = ["test"]
+methods = ["test", "proof", "analysis", "inspection", "review"]
+marked_methods = ["test", "proof"]
 retired = []
 exclude_phrases = []
+
+[method.test]
+item_rule = "#\\[test\\]|#\\[tokio::test\\]"
+result_artifact = "target/ci-artifacts/test.log"
+
+[method.proof]
+item_rule = "#\\[kani::(?:proof|proof_for_contract)\\]"
+result_artifact = "target/ci-artifacts/kani.log"
 
 [markers]
 files = ["src", "benches", "control-rs-trace-macros/tests", "control-rs-ci/src", "control-rs-ci/tests"]

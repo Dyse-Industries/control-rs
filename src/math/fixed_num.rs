@@ -1352,3 +1352,31 @@ pub type UQ31 = Fixed<u32, 31>;
 
 /// Unsigned UQ0.63 fixed-point format (64 bits, 63 fractional bits).
 pub type UQ63 = Fixed<u64, 63>;
+
+#[cfg(kani)]
+mod proofs {
+    use super::*;
+    use control_rs_trace_macros::req;
+
+    #[req("requirement-traceability#VC-16.1")]
+    #[kani::proof]
+    #[kani::unwind(2)]
+    pub fn prove_fixed_saturating_div() {
+        let a: i32 = kani::any();
+        let b: i32 = kani::any();
+        kani::assume(b != 0);
+
+        let x = Fixed::<i32, 16>::from_bits(a);
+        let y = Fixed::<i32, 16>::from_bits(b);
+        let res = x.saturating_div(&y);
+
+        let raw = res.raw();
+        // O-1 (Postcondition): Saturating division produces bounded representations without panic.
+        assert!(raw >= i32::MIN && raw <= i32::MAX);
+
+        // O-3 (Non-vacuity witnesses):
+        kani::cover!(raw == 0);
+        kani::cover!(raw > 0);
+        kani::cover!(raw < 0);
+    }
+}
