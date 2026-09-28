@@ -482,9 +482,10 @@ args = ["--workspace"]
 timeout_secs = 600
 description = "Executes bounded model checking over declared #[kani::proof] harnesses"
 
-# Disabled: superseded by the mutants-* chunks.
+# Monolithic mutation testing: default = false (superseded in CI by the mutants-* chunks; run locally with `cargo gate mutants`).
 [mutants]
-mode = "skip"
+mode = "fail"
+default = false
 command = "cargo mutants"
 args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
 
@@ -986,6 +987,8 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.35     | September 28, 2026 | @MitchellDScott | Un-deferred FR-20 (`kani`) and FR-21 (`miri`) for PR3-6. Specified `kani` in `post` exclusive stage and `miri` in dedicated `dynamic` execution group; moved `trace` to `post` after `kani` (§4.3). Added Miri and Kani references.                                                                                                                                                                                                                                                                                                     |
 | 1.36     | September 28, 2026 | @MitchellDScott | Removed the `trace-marks` gate and `mutants-trace-macros`; `trace` reads `reqs.jsonl` and the result logs only. |
 | 1.37     | September 29, 2026 | @MitchellDScott | Renamed `dynamic` group to `miri` (§4.3). Extracted `valgrind` from `audit` into a dedicated `valgrind` group so `audit` runs cleanly in pre-commit without requiring host Valgrind support. |
+| 1.38     | September 30, 2026 | @MitchellDScott | §4.7 `regression` runs the baseline benchmarks (merge base with `main`, or the previous `main` tip) in the same job on the same runner, so no `baseline-regression` artifact is uploaded or restored; `restore-baseline` stays for the coverage and mutation baselines. |
+| 1.39     | September 30, 2026 | @MitchellDScott | Restored `[mutants]` to `mode = "fail"` with `default = false` so targeted execution (`cargo gate mutants`) runs locally (§4.3, §4.8). |
 
 ---
 
@@ -1002,4 +1005,3 @@ Available: https://github.com/rust-lang/miri. Accessed: Sep. 28, 2026.
 [3] Kani Rust Verifier Contributors, "The Kani Rust Verifier Documentation and
 Source," *model-checking/kani GitHub repository*. [Online]. Available:
 https://github.com/model-checking/kani. Accessed: Sep. 28, 2026.
-| 1.38     | September 30, 2026 | @MitchellDScott | §4.7 `regression` runs the baseline benchmarks (merge base with `main`, or the previous `main` tip) in the same job on the same runner, so no `baseline-regression` artifact is uploaded or restored; `restore-baseline` stays for the coverage and mutation baselines. |

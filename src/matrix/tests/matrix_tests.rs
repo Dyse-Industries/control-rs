@@ -365,7 +365,16 @@ pub mod matrix_test_suite {
         });
         let mut packed = a;
         let mut pivots = [0usize; 3];
-        packed.lu_decompose_mut(&mut pivots).unwrap();
+        let exchanges = packed.lu_decompose_mut(&mut pivots).unwrap();
+        assert_eq!(exchanges, 0);
+
+        let mut swap_mat =
+            Owned::<f64, 2, 2>::from_row_arrays([[0.0, 1.0], [1.0, 0.0]]);
+        let mut swap_pivots = [0usize; 2];
+        let swap_exchanges =
+            swap_mat.lu_decompose_mut(&mut swap_pivots).unwrap();
+        assert_eq!(swap_exchanges, 1);
+        assert_eq!(swap_pivots[0], 1);
 
         let mut pa = a;
         for k in 0..3 {
@@ -754,6 +763,23 @@ pub mod matrix_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    fn test_qr_rect_square() {
+        let a: Owned<f64, 2, 2> =
+            Owned::from_fn(|i, j| [[3.0, 1.0], [4.0, 2.0]][i][j]);
+        let qr = a.into_qr_rect().unwrap();
+        let recon = &qr.q * &qr.r;
+        for i in 0..2 {
+            for j in 0..2 {
+                assert_almost_eq!(
+                    *recon.get(i, j).unwrap(),
+                    *a.get(i, j).unwrap(),
+                    1e-9
+                );
+            }
+        }
+    }
+
+    #[cfg_attr(test, test)]
     fn test_matrix_storage_views_and_mul_into() {
         let mut m = Owned::<f64, 2, 2>::diagonal([3.0, 4.0]);
         assert_eq!(m.cols(), 2);
@@ -809,6 +835,48 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*dest.get(1, 1).unwrap(), 1.0);
         assert_almost_eq!(*dest.get(2, 2).unwrap(), 1.0);
         assert_almost_eq!(*dest.get(0, 0).unwrap(), 0.0);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_from_and_to_row_arrays() {
+        let rows = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let mat = Owned::<f64, 2, 3>::from_row_arrays(rows);
+        assert_eq!(*mat.get(0, 0).unwrap(), 1.0);
+        assert_eq!(*mat.get(0, 1).unwrap(), 2.0);
+        assert_eq!(*mat.get(0, 2).unwrap(), 3.0);
+        assert_eq!(*mat.get(1, 0).unwrap(), 4.0);
+        assert_eq!(*mat.get(1, 1).unwrap(), 5.0);
+        assert_eq!(*mat.get(1, 2).unwrap(), 6.0);
+        let back = mat.to_row_arrays();
+        assert_eq!(back, rows);
+
+        let rows_3x2 = [[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]];
+        let mat_3x2 = Owned::<f64, 3, 2>::from_row_arrays(rows_3x2);
+        assert_eq!(mat_3x2.to_row_arrays(), rows_3x2);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_expm_non_trivial() {
+        // Skew-symmetric 2D rotation: [[0, -theta], [theta, 0]]
+        // exp(A) = [[cos(theta), -sin(theta)], [sin(theta), cos(theta)]]
+        let theta = 0.5f64;
+        let rot =
+            Owned::<f64, 2, 2>::from_row_arrays([[0.0, -theta], [theta, 0.0]]);
+        let exp_rot = rot.expm();
+        let cos_theta = 0.877_582_561_890_372_8;
+        let sin_theta = 0.479_425_538_604_203_5;
+        assert_almost_eq!(*exp_rot.get(0, 0).unwrap(), cos_theta, 1e-8);
+        assert_almost_eq!(*exp_rot.get(0, 1).unwrap(), -sin_theta, 1e-8);
+        assert_almost_eq!(*exp_rot.get(1, 0).unwrap(), sin_theta, 1e-8);
+        assert_almost_eq!(*exp_rot.get(1, 1).unwrap(), cos_theta, 1e-8);
+
+        // `Nilpotent` matrix: A = [[0, 2], [0, 0]], A^2 = 0 => exp(A) = I + A
+        let nil = Owned::<f64, 2, 2>::from_row_arrays([[0.0, 2.0], [0.0, 0.0]]);
+        let exp_nil = nil.expm();
+        assert_almost_eq!(*exp_nil.get(0, 0).unwrap(), 1.0, 1e-8);
+        assert_almost_eq!(*exp_nil.get(0, 1).unwrap(), 2.0, 1e-8);
+        assert_almost_eq!(*exp_nil.get(1, 0).unwrap(), 0.0, 1e-8);
+        assert_almost_eq!(*exp_nil.get(1, 1).unwrap(), 1.0, 1e-8);
     }
 }
 

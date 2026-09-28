@@ -13,7 +13,9 @@
 pub mod tensor_test_suite {
     use crate::assert_almost_eq;
     use crate::tensor::{
-        Activation, ArrayTensor, Axes2D, Quantized, Relu, TableActivation,
+        Activation, ArrayTensor, Axes2D, FlatBuffer, FlatBufferMut, Quantized,
+        Relu, Shape1D, Shape2D, Shape3D, Shape4D, TableActivation,
+        TensorLayout,
     };
 
     #[cfg_attr(test, test)]
@@ -29,6 +31,59 @@ pub mod tensor_test_suite {
         assert_eq!(t.get(&[1, 1]), Some(&4.0));
         assert_eq!(t.get(&[0, 2]), Some(&5.0));
         assert_eq!(t.get(&[1, 2]), Some(&6.0));
+
+        let rows = t.to_row_arrays();
+        assert_eq!(rows, [[1.0, 3.0, 5.0], [2.0, 4.0, 6.0]]);
+
+        // FlatBuffer & FlatBufferMut contracts
+        let buf = *t.buffer();
+        assert!(!buf.is_empty());
+        assert_eq!(buf.len(), 6);
+        assert!(!buf.as_ptr().is_null());
+        assert_eq!(buf.as_slice().len(), 6);
+        let mut buf_mut = *t.buffer();
+        assert!(!buf_mut.as_mut_ptr().is_null());
+        assert_eq!(buf_mut.as_mut_slice().len(), 6);
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_tensor_layout_shape_boundaries() {
+        // Shape1D boundary
+        assert_eq!(Shape1D::<4>::flat_offset(&[0]), Some(0));
+        assert_eq!(Shape1D::<4>::flat_offset(&[3]), Some(3));
+        assert_eq!(Shape1D::<4>::flat_offset(&[4]), None);
+        assert_eq!(Shape1D::<4>::flat_offset(&[5]), None);
+        assert_eq!(Shape1D::<4>::flat_offset(&[]), None);
+        assert_eq!(Shape1D::<4>::flat_offset(&[1, 2]), None);
+
+        // Shape2D boundary
+        assert_eq!(Shape2D::<2, 3>::flat_offset(&[0, 0]), Some(0));
+        assert_eq!(Shape2D::<2, 3>::flat_offset(&[1, 2]), Some(5));
+        assert_eq!(Shape2D::<2, 3>::flat_offset(&[2, 0]), None);
+        assert_eq!(Shape2D::<2, 3>::flat_offset(&[0, 3]), None);
+        assert_eq!(Shape2D::<2, 3>::flat_offset(&[2, 3]), None);
+        assert_eq!(Shape2D::<2, 3>::flat_offset(&[1]), None);
+
+        // Shape3D boundary
+        assert_eq!(
+            Shape3D::<2, 3, 4>::flat_offset(&[1, 2, 3]),
+            Some(1 + 2 * 2 + 3 * 6)
+        );
+        assert_eq!(Shape3D::<2, 3, 4>::flat_offset(&[2, 0, 0]), None);
+        assert_eq!(Shape3D::<2, 3, 4>::flat_offset(&[0, 3, 0]), None);
+        assert_eq!(Shape3D::<2, 3, 4>::flat_offset(&[0, 0, 4]), None);
+        assert_eq!(Shape3D::<2, 3, 4>::flat_offset(&[1, 2]), None);
+
+        // Shape4D boundary
+        assert_eq!(
+            Shape4D::<2, 3, 4, 5>::flat_offset(&[1, 2, 3, 4]),
+            Some(1 + 2 * 2 + 3 * 6 + 4 * 24)
+        );
+        assert_eq!(Shape4D::<2, 3, 4, 5>::flat_offset(&[2, 0, 0, 0]), None);
+        assert_eq!(Shape4D::<2, 3, 4, 5>::flat_offset(&[0, 3, 0, 0]), None);
+        assert_eq!(Shape4D::<2, 3, 4, 5>::flat_offset(&[0, 0, 4, 0]), None);
+        assert_eq!(Shape4D::<2, 3, 4, 5>::flat_offset(&[0, 0, 0, 5]), None);
+        assert_eq!(Shape4D::<2, 3, 4, 5>::flat_offset(&[1, 2, 3]), None);
     }
 
     #[cfg_attr(test, test)]

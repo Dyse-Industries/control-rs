@@ -252,9 +252,10 @@ args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--config", 
 timeout_secs = 900
 description = "Derives condition verification status from reqs and the libtest, kani, pytest and gtest result logs"
 
-# Disabled: superseded by the mutants-* chunks. Selecting it records Skipped.
+# Monolithic mutation testing: default = false (superseded in CI by the mutants-* chunks; run locally with `cargo gate mutants`).
 [mutants]
-mode = "skip"
+mode = "fail"
+default = false
 command = "cargo mutants"
 args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
 timeout_secs = 43200

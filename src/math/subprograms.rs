@@ -1564,11 +1564,7 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorageMut<T>> level2::Trmv<T, A, X>
             (UpLo::Upper, Trans::NoTrans)
                 | (UpLo::Lower, Trans::Trans | Trans::ConjTrans)
         );
-        let mut i = if forward { 0 } else { n };
-        while if forward { i < n } else { i > 0 } {
-            if !forward {
-                i = i.saturating_sub(1);
-            }
+        let step = |i: usize, x: &mut X| {
             let mut acc = T::ZERO;
             for j in 0..n {
                 let (r, c) = match trans {
@@ -1600,8 +1596,15 @@ impl<T: Scalar, A: DenseStorage<T>, X: DenseStorageMut<T>> level2::Trmv<T, A, X>
             unsafe {
                 x.set_unchecked(rx, cx, acc);
             }
-            if forward {
-                i = i.saturating_add(1);
+        };
+
+        if forward {
+            for i in 0..n {
+                step(i, x);
+            }
+        } else {
+            for i in (0..n).rev() {
+                step(i, x);
             }
         }
     }
@@ -1977,11 +1980,7 @@ impl<T: Scalar, TP: PackedStorage<T>, X: DenseStorageMut<T>>
             (UpLo::Upper, Trans::NoTrans)
                 | (UpLo::Lower, Trans::Trans | Trans::ConjTrans)
         );
-        let mut i = if forward { 0 } else { n };
-        while if forward { i < n } else { i > 0 } {
-            if !forward {
-                i = i.saturating_sub(1);
-            }
+        let step = |i: usize, x: &mut X| {
             let mut acc = T::ZERO;
             for j in 0..n {
                 let (r, c) = match trans {
@@ -2013,8 +2012,15 @@ impl<T: Scalar, TP: PackedStorage<T>, X: DenseStorageMut<T>>
             unsafe {
                 x.set_unchecked(rx, cx, acc);
             }
-            if forward {
-                i = i.saturating_add(1);
+        };
+
+        if forward {
+            for i in 0..n {
+                step(i, x);
+            }
+        } else {
+            for i in (0..n).rev() {
+                step(i, x);
             }
         }
     }
@@ -4456,12 +4462,11 @@ fn ev_should_stop<R: Float>(
     max_iter: usize,
 ) -> LinAlgResult<bool> {
     let eps = R::epsilon();
-    let converged = max_off.clone() <= eps;
-    if converged || iter >= max_iter {
-        if iter >= max_iter && !converged {
-            return Err(LinAlgError::MaxIterationsReached);
-        }
+    if max_off.clone() <= eps {
         return Ok(true);
+    }
+    if iter >= max_iter {
+        return Err(LinAlgError::MaxIterationsReached);
     }
     Ok(false)
 }

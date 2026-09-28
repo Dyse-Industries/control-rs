@@ -141,6 +141,21 @@ pub mod polynomial_test_suite {
         assert_almost_eq!(quot.get(1).copied().unwrap(), 4.0, 1e-12);
         assert_almost_eq!(rem.get(0).copied().unwrap(), 0.0, 1e-12);
 
+        // Equal degree division: (3 + 4x) / (1 + 2x) = 2 rem 1
+        let n2 = ArrayPolynomial::<f64, 2>::from_coefficients([3.0, 4.0]);
+        let d2 = ArrayPolynomial::<f64, 2>::from_coefficients([1.0, 2.0]);
+        let (q_eq, r_eq) = n2.div_rem::<2, 1, 1>(&d2).unwrap();
+        assert_almost_eq!(q_eq.get(0).copied().unwrap(), 2.0, 1e-12);
+        assert_almost_eq!(r_eq.get(0).copied().unwrap(), 1.0, 1e-12);
+
+        // `from_roots` coverage
+        let pr = ArrayPolynomial::<f64, 3>::from_roots([2.0, 3.0, 0.0]);
+        assert_eq!(pr.to_coefficients(), [6.0, -5.0, 1.0]);
+        let pr0 = ArrayPolynomial::<f64, 0>::from_roots([]);
+        assert_eq!(pr0.to_coefficients(), []);
+        let pr1 = ArrayPolynomial::<f64, 1>::from_roots([0.0]);
+        assert_eq!(pr1.to_coefficients(), [1.0]);
+
         let zero_den = ArrayPolynomial::<f64, 2>::zero();
         let err_zero = DivisionError::ZeroLeadingCoefficient;
         let err_deg = DivisionError::DegreeMismatch;

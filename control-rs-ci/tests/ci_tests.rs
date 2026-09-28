@@ -883,4 +883,22 @@ mod runner {
 
         let _ = fs::remove_dir_all(&tmp_dir);
     }
+
+    #[test]
+    fn test_workspace_gate_toml_mutants_is_executable() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_gate_toml =
+            manifest_dir.parent().unwrap().join(".cargo/gate.toml");
+        let config = GateConfig::load_from_path(&workspace_gate_toml).unwrap();
+        assert_eq!(
+            config.policy_for("mutants"),
+            control_rs_ci::config::GatePolicy::Fail,
+            "mutants gate must be executable (not mode = skip)"
+        );
+        let mutants_def = config.gate_definitions.get("mutants").unwrap();
+        assert!(
+            !mutants_def.default,
+            "mutants gate must not run by default in unfiltered CI"
+        );
+    }
 }

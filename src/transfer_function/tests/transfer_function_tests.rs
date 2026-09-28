@@ -100,6 +100,14 @@ pub mod transfer_function_test_suite {
             ),
             Err(TransferFunctionError::ImproperSystem)
         );
+        let proper = ArrayTransferFunction::<f64, 2, 2>::try_continuous(
+            [1.0, 2.0],
+            [1.0, 2.0],
+        )
+        .unwrap();
+        assert!(proper.is_continuous());
+        assert!(!proper.is_discrete());
+
         let ok = ArrayTransferFunction::<f64, 1, 2>::try_discrete(
             [1.0],
             [1.0, 1.0],

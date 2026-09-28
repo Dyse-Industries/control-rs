@@ -63,7 +63,10 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
                 data.swap(i, j);
             }
             let mut m = N >> 1;
-            while m >= 1 && j >= m {
+            for _ in 0..usize::BITS {
+                if m == 0 || j < m {
+                    break;
+                }
                 j = j.saturating_sub(m);
                 m >>= 1;
             }
@@ -75,7 +78,7 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
         let ptr = data.as_mut_ptr();
         let two_pi = T::PI.saturating_mul(&T::ONE.saturating_add(&T::ONE));
         let mut stage_len = 1;
-        while stage_len < N {
+        for _ in 0..N.trailing_zeros() {
             let step = stage_len << 1;
 
             // Calculate the angular step for this stage

@@ -432,6 +432,24 @@ pub mod fixed_num_test_suite {
         );
         assert_eq!(u_max.try_mul(&u_max), Err(ArithmeticError::Overflow));
     }
+
+    #[cfg_attr(test, test)]
+    fn test_scale_to_f64_factor_boundary_shifts() {
+        type Q62 = Fixed<i64, 62>;
+        type Q63 = Fixed<i64, 63>;
+        type UQ64 = Fixed<u64, 64>;
+
+        let q62 = Q62::from_num(0.5);
+        assert!((q62.to_num() - 0.5).abs() < 1e-15);
+
+        let q63 = Q63::from_num(0.5);
+        assert!((q63.to_num() - 0.5).abs() < 1e-15);
+
+        let uq64 = UQ64::from_num(0.25);
+        assert!((uq64.to_num() - 0.25).abs() < 1e-15);
+
+        assert!(Q62::from_num(1.0).is_one());
+    }
 }
 
 // Property-based coverage of product exactness and rescale round-tripping

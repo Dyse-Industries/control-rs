@@ -135,14 +135,38 @@ pub mod state_space_test_suite {
         let g = ArrayStateSpace::continuous(a, b, c, d);
         let h = ArrayStateSpace::continuous(a, b, c, d);
 
+        assert!(g.is_continuous());
+        assert!(!g.is_discrete());
+
         let ser = g.series::<1, 1, 2>(&h);
         assert_eq!(ser.a().rows(), 2);
+        assert!(ser.is_continuous());
 
         let par = g.parallel::<1, 2>(&h);
         assert_almost_eq!(par.d().get(0, 0).copied().unwrap(), 0.0, 1e-12);
+        assert!(par.is_continuous());
 
         let cl = g.feedback::<1, 2>(&h, -1.0).unwrap();
         assert_eq!(cl.a().rows(), 2);
+        assert!(cl.is_continuous());
+
+        // Discrete systems interconnection
+        let g_d = ArrayStateSpace::discrete(a, b, c, d, 0.05);
+        let h_d = ArrayStateSpace::discrete(a, b, c, d, 0.05);
+        assert!(!g_d.is_continuous());
+        assert!(g_d.is_discrete());
+
+        let ser_d = g_d.series::<1, 1, 2>(&h_d);
+        assert_eq!(ser_d.sample_time, Some(0.05));
+        assert!(ser_d.is_discrete());
+
+        let par_d = g_d.parallel::<1, 2>(&h_d);
+        assert_eq!(par_d.sample_time, Some(0.05));
+        assert!(par_d.is_discrete());
+
+        let cl_d = g_d.feedback::<1, 2>(&h_d, -1.0).unwrap();
+        assert_eq!(cl_d.sample_time, Some(0.05));
+        assert!(cl_d.is_discrete());
 
         let ident_fb = ArrayStateSpace::continuous(
             Owned::<f64, 1, 1>::zero(),

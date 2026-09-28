@@ -3274,13 +3274,14 @@ impl<
             if len > 0 {
                 // Insertion sort by column index within row
                 for i in start.saturating_add(1)..end {
-                    let mut j = i;
-                    while j > start
-                        && temp_cols[j.saturating_sub(1)] > temp_cols[j]
-                    {
-                        temp_cols.swap(j.saturating_sub(1), j);
-                        temp_vals.swap(j.saturating_sub(1), j);
-                        j = j.saturating_sub(1);
+                    for j in (start.saturating_add(1)..=i).rev() {
+                        let prev = j.saturating_sub(1);
+                        if temp_cols[prev] > temp_cols[j] {
+                            temp_cols.swap(prev, j);
+                            temp_vals.swap(prev, j);
+                        } else {
+                            break;
+                        }
                     }
                 }
 
@@ -3881,14 +3882,18 @@ impl<
                 for i in 1..len {
                     let key_row = col_rows[i];
                     let key_val = col_vals[i].clone();
-                    let mut j = i;
-                    while j > 0 && col_rows[j.saturating_sub(1)] > key_row {
-                        col_rows[j] = col_rows[j.saturating_sub(1)];
-                        col_vals[j] = col_vals[j.saturating_sub(1)].clone();
-                        j = j.saturating_sub(1);
+                    let mut insert_pos = i;
+                    for k in (0..i).rev() {
+                        if col_rows[k] > key_row {
+                            col_rows[k.saturating_add(1)] = col_rows[k];
+                            col_vals[k.saturating_add(1)] = col_vals[k].clone();
+                            insert_pos = k;
+                        } else {
+                            break;
+                        }
                     }
-                    col_rows[j] = key_row;
-                    col_vals[j] = key_val;
+                    col_rows[insert_pos] = key_row;
+                    col_vals[insert_pos] = key_val;
                 }
 
                 // Accumulate duplicates
