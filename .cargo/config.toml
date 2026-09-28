@@ -28,8 +28,8 @@ fmt-all = ["fmt", "--all"]
 
 # Clippy Helper
 lint = ["gate", "lint"]
-clippy-json = ["lint", "--", "--message-format=json"]
-clippy-ci = ["clippy-json", "-D", "warnings"]
+clippy-json = ["clippy", "--workspace", "--all-targets", "--message-format=json"]
+clippy-ci = ["gate", "clippy"]
 
 # Coverage helper
 coverage = ["tarpaulin", "--config", ".cargo/tarpaulin.toml", "--verbose", "--workspace"]

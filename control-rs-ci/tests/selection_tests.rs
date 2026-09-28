@@ -48,7 +48,8 @@ command = "true"
 /// Fresh workspace under the system temp directory with `gate.toml` holding
 /// `config`. Returns the workspace root and the config path.
 fn workspace(name: &str, config: &str) -> (PathBuf, PathBuf) {
-    let root = std::env::temp_dir().join(format!("control_rs_ci_sel_{name}"));
+    let root = std::env::temp_dir()
+        .join(format!("control_rs_ci_sel_{name}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let config_path = root.join("gate.toml");
     let written = fs::create_dir_all(&root)
@@ -167,7 +168,7 @@ fn passthrough_with_several_gates_fails_before_running() {
 
 #[test]
 fn missing_selected_fail_result_fails() {
-    let config: GateConfig = toml::from_str(CONFIG).unwrap();
+    let config = GateConfig::parse(CONFIG, Path::new("gate.toml")).unwrap();
     let aggregator = ReportAggregator::new(PathBuf::new(), PathBuf::new());
     let subset = vec!["pass".to_string()];
     assert!(!aggregator.is_passing(&config, &Outcomes::new(), Some(&subset)));
@@ -175,13 +176,13 @@ fn missing_selected_fail_result_fails() {
 
 #[test]
 fn full_report_requires_non_default_fail_gates() {
-    let mut config: GateConfig = toml::from_str(CONFIG).unwrap();
-    config.normalize();
+    let config = GateConfig::parse(CONFIG, Path::new("gate.toml")).unwrap();
     let aggregator = ReportAggregator::new(PathBuf::new(), PathBuf::new());
     let mut outcomes = Outcomes::new();
     outcomes.insert(
         "pass".to_string(),
         GateOutcome {
+            schema: control_rs_ci::gate::OUTCOME_SCHEMA,
             gate: "pass".to_string(),
             verdict: Verdict::Pass,
             exit_code: Some(0),
@@ -229,7 +230,8 @@ fn is_dead(pid: &str) -> bool {
 #[cfg(unix)]
 #[test]
 fn timeout_kills_descendants() {
-    let root = std::env::temp_dir().join("control_rs_ci_sel_tree");
+    let root = std::env::temp_dir()
+        .join(format!("control_rs_ci_sel_tree_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     let mut gate = Gate::new(

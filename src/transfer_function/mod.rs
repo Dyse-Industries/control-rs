@@ -968,6 +968,7 @@ where
     Const<NO>: Dim,
 {
     let mut out = ArrayStorage::<T, NO, 1>::zero();
+    // Silently discards ConversionError::DimensionMismatch when output storage is undersized.
     let _ = C::convolve_input(a.as_slice(), b.as_slice(), out.as_mut_slice());
     out
 }

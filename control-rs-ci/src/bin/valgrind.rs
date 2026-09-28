@@ -1,37 +1,76 @@
-//! Multi-example Valgrind Memcheck runner for control-rs.
+//! Multi-example Valgrind Memcheck runner (`cargo valgrind`).
 //!
-//! Iterates through all workspace domain examples, executing Valgrind Memcheck
-//! to verify zero memory leaks and zero invalid reads/writes across numerical models,
-//! fixed-point filters, and DSP algorithms.
+//! Builds the examples of the package in the current directory and runs
+//! Valgrind Memcheck on each example named by `--example`, failing on any
+//! leak or invalid access.
 //!
-//! Handles platform degradation gracefully: on environments without native Valgrind
-//! (such as macOS Apple Silicon), it logs a diagnostic message and exits 0. On supported
-//! platforms (for example, Linux CI runners), it enforces strict memory safety across all targets.
+//! ```text
+//! cargo valgrind --example dc_motor --example buck_converter
+//! ```
+//!
+//! Fails closed: without a `valgrind` executable (for example on macOS) it
+//! exits 1, so a host without Valgrind skips the gate explicitly with
+//! `cargo ci --skip valgrind`. No example named is a usage error (exit 2).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
+use control_rs_ci::cli::{USAGE_EXIT, arg_spelling};
 use control_rs_ci::ui;
 
-const KNOWN_EXAMPLES: &[&str] = &[
-    "dc_motor",
-    "buck_converter",
-    "fixed_point_math",
-    "dsp_spectral_analysis",
-];
-
+/// Example names from the command line.
+type ExampleNames = Vec<String>;
 type ExampleRunResult = Result<(ExitStatus, String), String>;
 type FailureRecord = (String, String);
 type CheckResult = (usize, Vec<FailureRecord>);
 
-fn find_workspace_root() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if let Some(parent) = manifest_dir.parent()
-        && parent.join("Cargo.toml").exists()
-    {
-        return parent.to_path_buf();
+fn print_usage() {
+    ui::init_color();
+    let h = ui::HELP_HEADER;
+    let f = ui::HELP_FLAG;
+    let a = ui::HELP_ARG;
+    anstream::println!(
+        "{h}Usage:{h:#} {f}cargo valgrind{f:#} {f}--example{f:#} {a}<name>{a:#} [{f}--example{f:#} {a}<name>{a:#}...]\n\n\
+         {h}Options:{h:#}\n  \
+           {f}--example{f:#} {a}<name>{a:#}    Example target to run under Valgrind (repeatable)\n  \
+           {f}-h{f:#}, {f}--help{f:#}           Print help information"
+    );
+}
+
+/// Example names from `--example <name>` pairs; any other argument is a
+/// usage error.
+fn parse_examples(args: &[String]) -> Result<ExampleNames, String> {
+    use lexopt::prelude::*;
+    let mut parser = lexopt::Parser::from_iter(
+        std::iter::once(String::new()).chain(args.iter().cloned()),
+    );
+    let mut examples = Vec::new();
+    while let Some(arg) = parser.next().map_err(|e| e.to_string())? {
+        match arg {
+            Long("example") => {
+                let name = parser
+                    .value()
+                    .map_err(|_| "--example requires a name".to_string())?
+                    .string()
+                    .map_err(|e| format!("Invalid UTF-8: {e:?}"))?;
+                examples.push(name);
+            }
+            Short('h') | Long("help") => {
+                print_usage();
+                std::process::exit(0);
+            }
+            _ => {
+                return Err(format!(
+                    "unknown argument '{}'",
+                    arg_spelling(&arg)
+                ));
+            }
+        }
     }
-    manifest_dir
+    if examples.is_empty() {
+        return Err("no example named; nothing would be checked".to_string());
+    }
+    Ok(examples)
 }
 
 fn is_valgrind_available() -> bool {
@@ -95,12 +134,12 @@ fn run_valgrind_on_example(
     Ok((output.status, stderr))
 }
 
-/// Runs Valgrind on every known example, returning pass count and failures.
-fn check_examples(root: &Path) -> CheckResult {
+/// Runs Valgrind on every named example, returning pass count and failures.
+fn check_examples(root: &Path, examples: &[String]) -> CheckResult {
     let mut failed: Vec<FailureRecord> = Vec::new();
     let mut passed = 0_usize;
 
-    for &example in KNOWN_EXAMPLES {
+    for example in examples {
         ui::status("Running", format!("Valgrind Memcheck on '{example}'"));
         match run_valgrind_on_example(root, example) {
             Ok((status, stderr)) => {
@@ -119,7 +158,7 @@ fn check_examples(root: &Path) -> CheckResult {
                             status.code()
                         ),
                     );
-                    failed.push((example.to_string(), stderr));
+                    failed.push((example.clone(), stderr));
                 }
             }
             Err(e) => {
@@ -127,7 +166,7 @@ fn check_examples(root: &Path) -> CheckResult {
                     "Error",
                     format!("'{example}' execution error: {e}"),
                 );
-                failed.push((example.to_string(), e));
+                failed.push((example.clone(), e));
             }
         }
     }
@@ -136,7 +175,7 @@ fn check_examples(root: &Path) -> CheckResult {
 }
 
 /// Prints the final verdict and exits with the appropriate code.
-fn report(passed: usize, failed: &[FailureRecord]) -> ! {
+fn report(passed: usize, failed: &[FailureRecord], total: usize) -> ! {
     if failed.is_empty() {
         ui::status(
             "Finished",
@@ -149,11 +188,7 @@ fn report(passed: usize, failed: &[FailureRecord]) -> ! {
     }
     ui::failure(
         "Failed",
-        format!(
-            "Valgrind Memcheck on {}/{} examples",
-            failed.len(),
-            KNOWN_EXAMPLES.len()
-        ),
+        format!("Valgrind Memcheck on {}/{} examples", failed.len(), total),
     );
     for (name, log) in failed {
         ui::error(format!("'{name}' failure log:\n{log}"));
@@ -162,25 +197,52 @@ fn report(passed: usize, failed: &[FailureRecord]) -> ! {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let examples = parse_examples(&args).unwrap_or_else(|e| {
+        ui::error(format!("{e}; usage: cargo valgrind --example <name>..."));
+        std::process::exit(USAGE_EXIT);
+    });
     if !is_valgrind_available() {
-        ui::warn_diag(
-            "'valgrind' is not installed or supported natively on this host \
-             (e.g., macOS Apple Silicon). \
-             Skipping memory checks (degraded). \
-             Valgrind is enforced on Linux CI environments.",
+        ui::error(
+            "'valgrind' is not installed or not supported on this host; \
+             skip the gate explicitly with `cargo ci --skip valgrind`",
         );
-        std::process::exit(78);
+        std::process::exit(1);
     }
 
-    let root = find_workspace_root();
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     ui::status_info("Workspace", root.display());
 
-    ui::status("Building", "all workspace examples");
+    ui::status("Building", "workspace examples");
     if let Err(e) = build_examples(&root) {
         ui::error(format!("compiling examples: {e}"));
         std::process::exit(1);
     }
 
-    let (passed, failed) = check_examples(&root);
-    report(passed, &failed);
+    let (passed, failed) = check_examples(&root, &examples);
+    report(passed, &failed, examples.len());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_examples;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn examples_come_from_repeated_flags() {
+        assert_eq!(
+            parse_examples(&args(&["--example", "a", "--example", "b"])),
+            Ok(vec!["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn empty_or_malformed_arguments_are_rejected() {
+        assert!(parse_examples(&[]).is_err());
+        assert!(parse_examples(&args(&["--example"])).is_err());
+        assert!(parse_examples(&args(&["dc_motor"])).is_err());
+    }
 }

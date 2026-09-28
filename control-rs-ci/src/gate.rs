@@ -11,11 +11,14 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{GateConfig, GateDefinition, GatePolicy};
+use crate::config::{
+    DEFAULT_TIMEOUT_SECS, GateConfig, GateDefinition, GatePolicy,
+};
 use crate::error::{GateError, GateResult};
 
-/// Suffix of the per-group dispatch manifest artifact.
-pub const MANIFEST_SUFFIX: &str = ".group.json";
+/// Version of the `GateOutcome` record, incremented on every incompatible
+/// change (NFR-2). `report` rejects records of any other version.
+pub const OUTCOME_SCHEMA: u32 = 1;
 
 /// Upper bound on the wait for output pumps after the gate process exits.
 ///
@@ -25,9 +28,6 @@ const PUMP_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Suffix of the per-gate outcome artifact.
 pub const RESULT_SUFFIX: &str = ".result.json";
-
-/// Every group manifest found in an artifact directory.
-pub type Manifests = Vec<GroupManifest>;
 
 /// A gate shared between the scheduler and its group threads.
 pub type SharedGate = Arc<Gate>;
@@ -49,15 +49,6 @@ struct Finished {
     duration_secs: f64,
 }
 
-/// Record of the gates a group was asked to dispatch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GroupManifest {
-    /// Group name (or "exclusive").
-    pub group: String,
-    /// Gates dispatched by this group, in execution order.
-    pub gates: Vec<String>,
-}
-
 /// Outcome verdict classification for a quality gate execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -75,6 +66,8 @@ pub enum Verdict {
 /// Standardized metadata record written to `<gate>.result.json` after execution.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GateOutcome {
+    /// Record version; [`OUTCOME_SCHEMA`] when written by this crate.
+    pub schema: u32,
     /// Unique identifier / slug of the gate (for example, "fmt", "valgrind").
     pub gate: String,
     /// High-level verdict outcome.
@@ -125,46 +118,6 @@ pub struct Gate {
     pub cwd: Option<PathBuf>,
 }
 
-impl GroupManifest {
-    /// Writes this manifest to `<out_dir>/<group>.group.json`.
-    ///
-    /// # Errors
-    /// Returns `GateError::Io` or `GateError::Json` on failure.
-    pub fn save_to_dir(&self, out_dir: &Path) -> GateResult<PathBuf> {
-        std::fs::create_dir_all(out_dir)?;
-        let manifest_path =
-            out_dir.join(format!("{}{MANIFEST_SUFFIX}", self.group));
-        let file = File::create(&manifest_path)?;
-        serde_json::to_writer_pretty(file, self)?;
-        Ok(manifest_path)
-    }
-
-    /// Loads all manifest records found in a directory.
-    ///
-    /// # Errors
-    /// Returns `GateError` if directory access fails.
-    pub fn load_all(out_dir: &Path) -> GateResult<Manifests> {
-        let mut manifests = Vec::new();
-        if !out_dir.exists() {
-            return Ok(manifests);
-        }
-        for entry in std::fs::read_dir(out_dir)?.flatten() {
-            let path = entry.path();
-            if path.is_file()
-                && let Some(name) = path.file_name().and_then(|n| n.to_str())
-                && name.ends_with(MANIFEST_SUFFIX)
-            {
-                let file = File::open(&path)?;
-                if let Ok(m) = serde_json::from_reader(file) {
-                    manifests.push(m);
-                }
-            }
-        }
-        manifests.sort_by(|a, b| a.group.cmp(&b.group));
-        Ok(manifests)
-    }
-}
-
 impl GateOutcome {
     /// Writes this gate outcome to `<out_dir>/<gate>.result.json`.
     ///
@@ -213,7 +166,7 @@ impl Gate {
             description: None,
             env: HashMap::new(),
             mode: GatePolicy::Fail,
-            timeout: Duration::from_secs(300),
+            timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             skip_exit_codes: Vec::new(),
             default: true,
             cwd: None,
@@ -234,9 +187,10 @@ impl Gate {
         self
     }
 
-    /// Constructs a `Gate` from a parsed `GateDefinition` with fallback timeout.
+    /// Constructs a `Gate` from a parsed `GateDefinition`; a definition
+    /// without `timeout_secs` gets `default_timeout_secs`.
     #[must_use]
-    pub fn from_definition_with_timeout(
+    pub fn from_definition(
         name: impl Into<String>,
         def: &GateDefinition,
         default_timeout_secs: u64,
@@ -255,15 +209,6 @@ impl Gate {
             default: def.default,
             cwd: def.cwd.clone(),
         }
-    }
-
-    /// Constructs a `Gate` from a parsed `GateDefinition`.
-    #[must_use]
-    pub fn from_definition(
-        name: impl Into<String>,
-        def: &GateDefinition,
-    ) -> Self {
-        Self::from_definition_with_timeout(name, def, 300)
     }
 
     /// Returns the name of this gate.
@@ -294,6 +239,7 @@ impl Gate {
         ctx: &GateContext,
     ) -> GateResult<GateOutcome> {
         let outcome = GateOutcome {
+            schema: OUTCOME_SCHEMA,
             gate: self.name.clone(),
             verdict: Verdict::Skipped,
             exit_code: None,
@@ -443,6 +389,7 @@ impl Gate {
         };
 
         GateOutcome {
+            schema: OUTCOME_SCHEMA,
             gate: self.name.clone(),
             verdict,
             exit_code,
@@ -459,6 +406,7 @@ impl Gate {
         summary: String,
     ) -> GateOutcome {
         GateOutcome {
+            schema: OUTCOME_SCHEMA,
             gate: self.name.clone(),
             verdict: self.failure_verdict(),
             exit_code: None,
@@ -658,70 +606,17 @@ fn terminate_tree(child: &mut std::process::Child, _pid: u32) {
     let _ = child.wait();
 }
 
-/// Instantiates all configured quality gates according to the workspace configuration.
-///
-/// Gates are gathered in deterministic pipeline order:
-/// 1. Grouped gates from `[execution.groups]` in sorted group key order and member sequence.
-/// 2. Exclusive gates from `exclusive_gates`.
-/// 3. Any additional gates defined in `[gates]`.
-/// 4. Any remaining gate definitions in `gate_definitions`.
-///
-/// # Errors
-/// Returns `GateError::Config` if an active gate is missing its `[<gate>]` definition table in `gate.toml`.
-pub fn build_all_gates(config: &GateConfig) -> GateResult<GateList> {
-    let mut names = Vec::new();
-
-    let mut sorted_group_keys: Vec<_> =
-        config.execution.groups.keys().collect();
-    sorted_group_keys.sort();
-    for grp in sorted_group_keys {
-        if let Some(members) = config.execution.groups.get(grp) {
-            for m in members {
-                if !names.contains(m) {
-                    names.push(m.clone());
-                }
-            }
-        }
-    }
-
-    for m in &config.execution.exclusive_gates {
-        if !names.contains(m) {
-            names.push(m.clone());
-        }
-    }
-
-    let mut other_gates: Vec<_> = config.gates.keys().collect();
-    other_gates.sort();
-    for g in other_gates {
-        if !names.contains(g) {
-            names.push(g.clone());
-        }
-    }
-
-    let mut remaining_defs: Vec<_> = config.gate_definitions.keys().collect();
-    remaining_defs.sort();
-    for g in remaining_defs {
-        if !names.contains(g) {
-            names.push(g.clone());
-        }
-    }
-
+/// Instantiates every configured gate in [`GateConfig::pipeline_order`].
+#[must_use]
+pub fn build_all_gates(config: &GateConfig) -> GateList {
     let default_timeout = config.runner.timeout_secs;
-    let mut gates = Vec::new();
-    for name in names {
-        if let Some(def) = config.gate_def(&name) {
-            gates.push(Arc::new(Gate::from_definition_with_timeout(
-                name,
-                def,
-                default_timeout,
-            )));
-        } else if config.policy_for(&name) != GatePolicy::Skip {
-            return Err(GateError::Config {
-                path: PathBuf::from(".cargo/gate.toml"),
-                message: format!("Missing [gate] definition for gate '{name}'"),
-            });
-        }
-    }
-
-    Ok(gates)
+    config
+        .pipeline_order()
+        .into_iter()
+        .filter_map(|name| {
+            config.gate_def(name).map(|def| {
+                Arc::new(Gate::from_definition(name, def, default_timeout))
+            })
+        })
+        .collect()
 }

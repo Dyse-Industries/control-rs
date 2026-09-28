@@ -167,6 +167,7 @@ KaTeX
 Kacker
 Kailath
 Kalman
+Kani
 Kaufmann
 Ke
 Kenney
@@ -205,6 +206,7 @@ Micikevicius
 Microcontroller
 Microcontrollers
 Middleware
+Miri
 Moler
 Monic
 Monomorphized
@@ -407,6 +409,7 @@ bootloader
 borrowck
 breakpoint
 brightgreen
+buck_converter
 buf
 bumpless
 c_i
@@ -447,6 +450,7 @@ cutoff_freq
 cutover
 cycle_limit
 d_hat
+dc_motor
 debuginfo
 dedupe
 deduplicated
@@ -500,6 +504,7 @@ elementwise
 emami
 endianness
 entrywise
+env
 enum
 enums
 exascale
@@ -593,6 +598,7 @@ leftrightarrow
 len
 len_hi
 len_lo
+lexopt
 libm
 libtest
 linkme
@@ -685,6 +691,7 @@ potrf
 potrs
 pptrf
 pptrs
+pre
 precompensator
 prepends
 prescalers

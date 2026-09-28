@@ -3,9 +3,10 @@
 //! Defines dimension types and bounds for matrix and tensor storage using
 //! compile-time binary (typenum-style) unsigned arithmetic.
 //!
-//! Representation depth is O(log N). Named aliases cover `U0..=U1024` plus
-//! `U2048`, `U4096`, `U8192`, and `U16384`. Products such as `U128 * U128`
-//! resolve even when the result has no name other than those extras.
+//! Representation depth is O(log N). Named aliases cover `U0..=U128` plus
+//! powers of two `U256`, `U512`, `U1024`, `U2048`, `U4096`, `U8192`, and `U16384`.
+//! Products such as `U128 * U128` resolve even when the result has no name
+//! other than those extras.
 //!
 //! `Const<N>` is a ZST const-generic bridge onto the canonical `UInt`/`UTerm`
 //! tree. It has no runtime constructor: a runtime integer cannot be tied to

@@ -54,7 +54,8 @@ pub fn group_style(index: usize) -> anstyle::Style {
         .on_default()
 }
 
-/// Returns the distinct ANSI color styling for the built-in exclusive group.
+/// Returns the distinct ANSI color styling for the exclusive `pre` and
+/// `post` stages.
 ///
 /// Uses standard Magenta, giving exclusive execution a unique, non-colliding color.
 #[must_use]
@@ -62,7 +63,7 @@ pub const fn exclusive_style() -> anstyle::Style {
     AnsiColor::Magenta.on_default()
 }
 
-/// Formats a group tag with brackets and color (for example, `[cargo] ` or `[exclusive] `).
+/// Formats a group tag with brackets and color (for example, `[lint] ` or `[pre] `).
 ///
 /// Returns an empty string if `group` is `None` (a gate outside any group) or empty.
 #[must_use]
@@ -235,12 +236,12 @@ mod tests {
     fn test_group_tags_and_styles() {
         assert_eq!(format_group_tag(None, None), "");
         assert_eq!(format_group_tag(Some(""), None), "");
-        assert_eq!(format_group_tag(Some("exclusive"), None), "[exclusive] ");
+        assert_eq!(format_group_tag(Some("post"), None), "[post] ");
         assert_eq!(format_group_tag(Some("cargo"), None), "[cargo] ");
 
         let excl_style = exclusive_style();
-        let excl_tag = format_group_tag(Some("exclusive"), Some(excl_style));
-        assert!(excl_tag.contains("[exclusive]"));
+        let excl_tag = format_group_tag(Some("pre"), Some(excl_style));
+        assert!(excl_tag.contains("[pre]"));
 
         let style0 = group_style(0);
         let tag0 = format_group_tag(Some("cargo"), Some(style0));

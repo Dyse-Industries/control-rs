@@ -11,6 +11,6 @@ retired = []
 exclude_phrases = []
 
 [markers]
-files = ["src", "tests", "benches", "control-rs-trace-macros/tests", "control-rs-ci/src", "control-rs-ci/tests"]
+files = ["src", "benches", "control-rs-trace-macros/tests", "control-rs-ci/src", "control-rs-ci/tests"]
 suffixes = [".rs"]
 marker = "#[req("

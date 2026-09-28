@@ -28,7 +28,7 @@ cargo binstall -y cargo-deny cargo-geiger cargo-semver-checks \
 
 # System packages
 sudo apt-get update
-sudo apt-get install -y libudev-dev qemu-system valgrind clang teensy-loader-cli
+sudo apt-get install -y qemu-system valgrind clang teensy-loader-cli
 
 # Vale, pinned to the CI version
 curl -fsSL https://github.com/vale-cli/vale/releases/download/v3.22.0/vale_3.22.0_Linux_64-bit.tar.gz \
@@ -69,14 +69,14 @@ source .venv/bin/activate
 pip install -r control-rs-verification/python3/requirements.txt
 ```
 
-`valgrind` and `libudev-dev` have no macOS install. The `valgrind` gate runs
-in CI on Linux, and the serial transport uses the native macOS API.
+`valgrind` has no macOS install. The `valgrind` gate fails without it, so a
+macOS run skips it explicitly: `cargo ci --skip valgrind`. CI runs it on Linux.
 
 ### Check the installation
 
 ```bash
 cargo gate --list   # every gate declared in gate.toml
-cargo ci -v         # runs every gate; a gate whose tool is missing fails
+cargo ci -v         # runs every default gate; a gate whose tool is missing fails
 ```
 
 ---
@@ -112,7 +112,6 @@ cargo ci -v         # runs every gate; a gate whose tool is missing fails
 | `vale`                                                                 | `3.22.0`     | `vale` gate                                                | release tarball, then `vale --config=.vale.ini sync`    | release tarball, then `vale --config=.vale.ini sync`                        |
 | QEMU (`qemu-system-arm`, `qemu-system-riscv32`, `qemu-system-riscv64`) | distribution | `cargo qemu`, `ets` gate, `examples/subprograms` runners   | `apt-get install qemu-system`                           | `brew install qemu`                                                         |
 | `valgrind`                                                             | distribution | `valgrind` gate, `cargo valgrind`                          | `apt-get install valgrind`                              | Linux only                                                                  |
-| `libudev-dev`                                                          | distribution | Serial transport in `control-rs-ets-host`                  | `apt-get install libudev-dev`                           | not needed                                                                  |
 | `clang`                                                                | distribution | C sources in `examples/subprograms/thumbv7em`              | `apt-get install clang`                                 | `brew install llvm`                                                         |
 | `teensy_loader_cli`                                                    | distribution | Flashing `examples/teensy4`                                | `apt-get install teensy-loader-cli`                     | `brew install teensy_loader_cli`                                            |
 | Netlib CBLAS and BLAS (`libcblas`, `libblas`)                          | distribution | `examples/subprograms/x86_64` with `--features cblas` only | any package providing both libraries on the linker path | not needed; `aarch64` uses `--features accelerate` and the system framework |

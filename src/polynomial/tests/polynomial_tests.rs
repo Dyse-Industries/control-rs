@@ -142,6 +142,37 @@ pub mod polynomial_test_suite {
         assert_almost_eq!(rem.get(0).copied().unwrap(), 0.0, 1e-12);
 
         let zero_den = ArrayPolynomial::<f64, 2>::zero();
+        let err_zero = DivisionError::ZeroLeadingCoefficient;
+        let err_deg = DivisionError::DegreeMismatch;
+        {
+            use core::fmt::Write;
+            struct StackBuf([u8; 192], usize);
+            impl Write for StackBuf {
+                fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                    let rest = self.0.len().saturating_sub(self.1);
+                    let n = rest.min(s.len());
+                    self.0[self.1..self.1 + n]
+                        .copy_from_slice(&s.as_bytes()[..n]);
+                    self.1 += n;
+                    Ok(())
+                }
+            }
+            let mut buf_zero = StackBuf([0u8; 192], 0);
+            write!(&mut buf_zero, "{err_zero}").unwrap();
+            assert_eq!(
+                core::str::from_utf8(&buf_zero.0[..buf_zero.1]).unwrap(),
+                "divisor leading coefficient is zero"
+            );
+            let mut buf_deg = StackBuf([0u8; 192], 0);
+            write!(&mut buf_deg, "{err_deg}").unwrap();
+            assert_eq!(
+                core::str::from_utf8(&buf_deg.0[..buf_deg.1]).unwrap(),
+                "divisor degree exceeds dividend degree"
+            );
+            let err_ref: &dyn core::error::Error = &err_zero;
+            assert!(err_ref.source().is_none());
+        }
+
         assert_eq!(
             num.div_rem::<2, 2, 1>(&zero_den),
             Err(DivisionError::ZeroLeadingCoefficient)

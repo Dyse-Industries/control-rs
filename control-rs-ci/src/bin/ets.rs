@@ -6,18 +6,20 @@
 //! target passes.
 //!
 //! ```text
-//! cargo ets [--timeout <secs>] [--max-resets <n>] [--out <path>] <targets>...
+//! cargo ets [--timeout <secs>] [--max-resets <n>] [--out <path>] <targets>... [-- <cargo args>...]
 //! cargo ets --timeout 120 qemu all --release
 //! ```
 //!
-//! Target arguments use the `cargo tui` syntax and are passed unchanged to
-//! `control_rs_ets_host::target::parse_targets`.
+//! Target arguments use the `cargo tui` syntax and are passed to
+//! `control_rs_ets_host::target::parse_targets`; arguments after `--` reach
+//! it verbatim and are forwarded to `cargo build`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::Duration;
 
+use control_rs_ci::cli::{USAGE_EXIT, arg_spelling};
 use control_rs_ci::ets::{TargetResult, case_line};
 use control_rs_ci::ui;
 use control_rs_ets::comms::TestState;
@@ -29,6 +31,9 @@ use control_rs_ets_host::{
 
 /// Default result file, inside the CI artifact directory.
 const DEFAULT_OUT: &str = "target/ci-artifacts/ets-results.json";
+
+/// Parsed options, `None` for `--help`, or a usage error.
+type ParsedArgs = Result<Option<EtsArgs>, String>;
 
 /// Options owned by this binary; everything else names targets.
 struct EtsArgs {
@@ -46,7 +51,7 @@ fn print_usage() {
     let f = ui::HELP_FLAG;
     let a = ui::HELP_ARG;
     anstream::println!(
-        "{h}Usage:{h:#} {f}cargo ets{f:#} {a}[OPTIONS]{a:#} {a}<TARGETS>...{a:#}\n\n\
+        "{h}Usage:{h:#} {f}cargo ets{f:#} {a}[OPTIONS]{a:#} {a}<TARGETS>...{a:#} [{f}--{f:#} {a}<CARGO_ARGS>...{a:#}]\n\n\
          {h}Options:{h:#}\n  \
            {f}--timeout{f:#} {a}<secs>{a:#}     Whole-session bound per target [default: 120]\n  \
            {f}--max-resets{f:#} {a}<n>{a:#}     Target resets allowed per session [default: 3]\n  \
@@ -59,16 +64,30 @@ fn print_usage() {
     );
 }
 
-/// Value following `flag`, parsed; exits with a usage error when missing or
-/// malformed.
-fn flag_value<T: std::str::FromStr>(value: Option<&String>, flag: &str) -> T {
-    value.and_then(|v| v.parse().ok()).unwrap_or_else(|| {
-        ui::error(format!("{flag} requires a valid value"));
-        exit(2);
-    })
+/// Value of `flag`, parsed as `T`.
+fn parse_number<T: std::str::FromStr>(
+    parser: &mut lexopt::Parser,
+    flag: &str,
+) -> Result<T, String> {
+    use lexopt::prelude::*;
+    parser
+        .value()
+        .ok()
+        .and_then(|v| v.string().ok())
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| format!("{flag} requires a valid value"))
 }
 
-fn parse_args(args: &[String]) -> EtsArgs {
+/// Parses this binary's options; `Ok(None)` means `--help`.
+///
+/// Arguments from the first `--` on are forwarded verbatim, `--` included, so
+/// `parse_targets` passes them to cargo. Before it, any option this binary
+/// does not own is forwarded as the flag followed by its attached value, if
+/// any (`--baud=115200` becomes `--baud 115200`).
+fn parse_args(args: &[String]) -> ParsedArgs {
+    use lexopt::prelude::*;
+    let split = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    let (own, passthrough) = args.split_at(split);
     let mut parsed = EtsArgs {
         options: RunOptions {
             timeout: Duration::from_secs(120),
@@ -78,28 +97,38 @@ fn parse_args(args: &[String]) -> EtsArgs {
         // `parse_targets` skips a leading program name.
         target_args: vec!["ets".to_string()],
     };
-    let mut rest = args.iter().skip(1);
-    while let Some(arg) = rest.next() {
-        match arg.as_str() {
-            "-h" | "--help" => {
-                print_usage();
-                exit(0);
+    let utf8 = |val: std::ffi::OsString| {
+        val.string().map_err(|e| format!("Invalid UTF-8: {e:?}"))
+    };
+    let mut parser = lexopt::Parser::from_iter(own);
+    while let Some(arg) = parser.next().map_err(|e| e.to_string())? {
+        match arg {
+            Short('h') | Long("help") => return Ok(None),
+            Long("timeout") => {
+                let secs = parse_number::<u64>(&mut parser, "--timeout")?;
+                parsed.options.timeout = Duration::from_secs(secs);
             }
-            "--timeout" => {
-                parsed.options.timeout =
-                    Duration::from_secs(flag_value(rest.next(), "--timeout"));
-            }
-            "--max-resets" => {
+            Long("max-resets") => {
                 parsed.options.max_resets =
-                    flag_value(rest.next(), "--max-resets");
+                    parse_number(&mut parser, "--max-resets")?;
             }
-            "--out" => {
-                parsed.out = flag_value(rest.next(), "--out");
+            Long("out") => {
+                let val = parser
+                    .value()
+                    .map_err(|_| "--out requires a path".to_string())?;
+                parsed.out = PathBuf::from(val);
             }
-            _ => parsed.target_args.push(arg.clone()),
+            Long(_) | Short(_) => {
+                parsed.target_args.push(arg_spelling(&arg));
+                if let Some(val) = parser.optional_value() {
+                    parsed.target_args.push(utf8(val)?);
+                }
+            }
+            Value(val) => parsed.target_args.push(utf8(val)?),
         }
     }
-    parsed
+    parsed.target_args.extend_from_slice(passthrough);
+    Ok(Some(parsed))
 }
 
 /// Builds (for subprocess targets) and runs one target.
@@ -170,14 +199,24 @@ fn write_results(path: &Path, results: &[TargetResult]) -> Result<(), String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let parsed = parse_args(&args);
+    let parsed = match parse_args(&args) {
+        Ok(Some(parsed)) => parsed,
+        Ok(None) => {
+            print_usage();
+            exit(0);
+        }
+        Err(e) => {
+            ui::error(e);
+            exit(USAGE_EXIT);
+        }
+    };
     let targets = parse_targets(&parsed.target_args).unwrap_or_else(|e| {
         ui::error(e);
-        exit(2);
+        exit(USAGE_EXIT);
     });
     if targets.is_empty() {
         ui::error("no targets named; nothing would be verified");
-        exit(1);
+        exit(USAGE_EXIT);
     }
 
     let results: Vec<TargetResult> = targets
@@ -204,4 +243,77 @@ fn main() {
         exit(1);
     }
     ui::status("Finished", format!("{} target(s) passed", results.len()));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{DEFAULT_OUT, parse_args};
+
+    fn args(list: &[&str]) -> Vec<String> {
+        std::iter::once("ets")
+            .chain(list.iter().copied())
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    fn targets(list: &[&str]) -> Vec<String> {
+        parse_args(&args(list)).unwrap().unwrap().target_args
+    }
+
+    #[test]
+    fn own_options_are_taken_and_targets_forwarded() {
+        let parsed = parse_args(&args(&[
+            "--timeout=5",
+            "qemu",
+            "--max-resets",
+            "7",
+            "arm",
+            "--out",
+            "r.json",
+            "--release",
+        ]))
+        .unwrap()
+        .unwrap();
+        assert_eq!(parsed.options.timeout, Duration::from_secs(5));
+        assert_eq!(parsed.options.max_resets, 7);
+        assert_eq!(parsed.out.to_str(), Some("r.json"));
+        assert_eq!(parsed.target_args, ["ets", "qemu", "arm", "--release"]);
+    }
+
+    #[test]
+    fn defaults_hold_without_options() {
+        let parsed = parse_args(&args(&["qemu", "all"])).unwrap().unwrap();
+        assert_eq!(parsed.options.timeout, Duration::from_secs(120));
+        assert_eq!(parsed.out.to_str(), Some(DEFAULT_OUT));
+    }
+
+    #[test]
+    fn arguments_after_dash_dash_are_forwarded_verbatim() {
+        assert_eq!(
+            targets(&["qemu", "arm", "--", "--features", "a,b", "--timeout"]),
+            ["ets", "qemu", "arm", "--", "--features", "a,b", "--timeout"]
+        );
+    }
+
+    #[test]
+    fn attached_values_are_split_for_parse_targets() {
+        assert_eq!(
+            targets(&["teensy", "--baud=115200", "-p/dev/x", "--port", "p"]),
+            [
+                "ets", "teensy", "--baud", "115200", "-p", "/dev/x", "--port",
+                "p"
+            ]
+        );
+    }
+
+    #[test]
+    fn help_and_bad_values_are_distinguished() {
+        assert!(parse_args(&args(&["--help"])).unwrap().is_none());
+        assert!(parse_args(&args(&["-h", "qemu"])).unwrap().is_none());
+        for bad in [&["--timeout"][..], &["--timeout", "x"], &["--out"]] {
+            assert!(parse_args(&args(bad)).is_err(), "{bad:?}");
+        }
+    }
 }
