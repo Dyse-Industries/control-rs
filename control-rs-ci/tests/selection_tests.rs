@@ -32,6 +32,24 @@ command = "touch"
 args = ["disabled-ran"]
 "#;
 
+const ORDERED_CONFIG: &str = r#"
+[runner]
+out_dir = "artifacts"
+timeout_secs = 30
+
+[execution.groups]
+main = ["first", "second", "third"]
+
+[first]
+command = "true"
+
+[second]
+command = "true"
+
+[third]
+command = "true"
+"#;
+
 const PASSTHROUGH_CONFIG: &str = r#"
 [runner]
 out_dir = "artifacts"
@@ -239,7 +257,7 @@ fn timeout_kills_descendants() {
         "sh",
         vec![
             "-c".to_string(),
-            "sleep 60 & echo $! > grandchild.pid; wait".to_string(),
+            "sleep 10 & echo $! > grandchild.pid; wait".to_string(),
         ],
     );
     gate.timeout = Duration::from_secs(1);
@@ -260,5 +278,34 @@ fn timeout_kills_descendants() {
         std::thread::sleep(Duration::from_millis(50));
     }
     assert!(is_dead(pid), "grandchild {pid} outlived the timed-out gate");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn skip_removes_only_the_named_gates() {
+    let (root, cfg) = workspace("skip", ORDERED_CONFIG);
+    let skip = vec!["second".to_string()];
+    let options = PipelineOptions {
+        skip_gates: Some(&skip),
+        ..PipelineOptions::default()
+    };
+    assert!(run_pipeline(&root, &cfg, &options).unwrap());
+    assert!(outcome(&root, "first").is_some());
+    assert!(outcome(&root, "second").is_none());
+    assert!(outcome(&root, "third").is_some());
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn up_to_stops_after_the_named_gate() {
+    let (root, cfg) = workspace("up_to", ORDERED_CONFIG);
+    let options = PipelineOptions {
+        up_to_gate: Some("second"),
+        ..PipelineOptions::default()
+    };
+    assert!(run_pipeline(&root, &cfg, &options).unwrap());
+    assert!(outcome(&root, "first").is_some());
+    assert!(outcome(&root, "second").is_some());
+    assert!(outcome(&root, "third").is_none());
     let _ = fs::remove_dir_all(&root);
 }

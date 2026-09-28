@@ -426,4 +426,91 @@ mod tests {
         assert_eq!(growth(&current, &base), ["b.rs clippy::y: 1 vs 0"]);
         assert!(growth(&base, &base).is_empty());
     }
+
+    fn lints_of(src: &str) -> Vec<String> {
+        scan_rust_source(src).into_keys().collect()
+    }
+
+    #[test]
+    fn raw_strings_hide_embedded_quotes_and_attributes() {
+        // A raw string may contain bare quotes; only its `"#` terminator ends it.
+        let src = "const A: &str = r#\"say \"hi\" #[allow(clippy::panic)]\"#;\n\
+                   #[allow(clippy::indexing_slicing)]\nfn f() {}\n";
+        assert_eq!(lints_of(src), ["indexing_slicing"]);
+    }
+
+    #[test]
+    fn escaped_quotes_do_not_end_a_string() {
+        let src = "const A: &str = \"say \\\" #[allow(clippy::panic)]\";\n\
+                   #[allow(clippy::indexing_slicing)]\nfn f() {}\n";
+        assert_eq!(lints_of(src), ["indexing_slicing"]);
+    }
+
+    #[test]
+    fn hash_after_a_raw_string_terminator_starts_an_attribute() {
+        // Zero delimiters: the `#` after the closing quote is not part of it.
+        assert_eq!(
+            lints_of("r\"x\"#[allow(clippy::panic)] fn f() {}"),
+            ["panic"]
+        );
+        // One delimiter: exactly one `#` closes the string.
+        assert_eq!(
+            lints_of("r#\"x\"##[allow(clippy::panic)] fn f() {}"),
+            ["panic"]
+        );
+    }
+
+    #[test]
+    fn code_after_a_raw_string_is_still_scanned() {
+        let src =
+            "const A: &str = r#\"x\"# ;\n#[allow(clippy::panic)]\nfn f() {}\n";
+        assert_eq!(lints_of(src), ["panic"]);
+    }
+
+    #[test]
+    fn attribute_bodies_may_contain_nested_brackets() {
+        let src = "#[cfg_attr(x = [1], allow(clippy::panic))]\nfn f() {}\n";
+        assert_eq!(lints_of(src), ["panic"]);
+    }
+
+    #[test]
+    fn cfg_attr_without_a_suppression_is_ignored() {
+        assert!(
+            lints_of("#[cfg_attr(test, deny(clippy::panic))]\nfn f() {}")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn collect_reads_sources_and_manifests_but_skips_target_and_hidden() {
+        let root = std::env::temp_dir()
+            .join(format!("control_rs_allow_audit_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let allow = "#[allow(clippy::panic)]\nfn f() {}\n";
+        for (path, body) in [
+            ("a.rs", allow),
+            ("sub/b.rs", allow),
+            ("target/c.rs", allow),
+            (".hidden/d.rs", allow),
+            ("notes.txt", allow),
+            (
+                "Cargo.toml",
+                "[workspace.lints.clippy]\ninline_always = \"allow\"\n",
+            ),
+        ] {
+            let file = root.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, body).unwrap();
+        }
+        let found = collect(&root).unwrap();
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            found,
+            sup(&[
+                ("Cargo.toml clippy::inline_always", 1),
+                ("a.rs clippy::panic", 1),
+                ("sub/b.rs clippy::panic", 1),
+            ])
+        );
+    }
 }
