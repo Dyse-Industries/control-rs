@@ -19,26 +19,24 @@
       ([#63](https://github.com/Dyse-Industries/control-rs/pull/63); [ci](ci/ci-design.md))
     - [x] **PR3-4**: CI Gate — Requirement Traceability (`trace`) (
       [requirement-traceability](vv/requirement-traceability-design.md))
-    - [ ] **PR3-5**: Technical Debt & Verification Hardening
-      ([ci](ci/ci-design.md) rev 1.33)
+    - [x] **PR3-5**: Technical Debt & Verification Hardening
+      ([#67](https://github.com/Dyse-Industries/control-rs/pull/67); [ci](ci/ci-design.md) rev 1.33)
         - [x] Exclusive `pre`/`post` stages with the `fetch` gate; groups in
           declaration order; bounded concurrency (`max_jobs`)
         - [x] Configuration validation, versioned gate outcomes, budget-safe
           report, fail-closed `valgrind`, retired schema and dead code removed
-    - [ ] **PR3-6**: Formal Verification & Dynamic Analysis Gates (`kani`,
-      `miri`)
-      ([ci](ci/ci-design.md), [requirement-traceability](vv/requirement-traceability-design.md))
-        - Revive `kani` and `miri` quality gates in `gate.toml` with dedicated
-          verification harnesses
-        - Requirement tracing integration: tracer derives condition status
-          by reading per-item Kani and test results in post, verifying that
-          formal proofs and dynamic analysis agree with declared conditions
-- [ ] **PR4**: Workspace Verification Retrofit & Gate Hardening
-    - Review and update all existing approved design documents (`math`, `numerical-models`, `ets`, etc.) with requirement traceability decomposition tables (`VC-*`)
-    - Retrofit implementation test suites with `#[req]` markers to establish complete traceability coverage
-    - Author formal bounded model checking harnesses (`kani`) for core safety invariants across numerical and algebraic modules
-    - Harden implementations against undefined behavior under `miri` and mutation testing under `mutants`
-    - Allocate dedicated sprints per design document and submodule implementation to repair and activate the new quality gates
+    - [x] **PR3-6**: Formal Verification & Dynamic Analysis Gates (`kani`, `miri`)
+      ([#69](https://github.com/Dyse-Industries/control-rs/pull/69); gates failing at merge; repaired in PR3-7)
+    - [ ] **PR3-7**: Main Repair — Patch Failing Gates
+        - Reproduce each failing gate on `main` with `cargo ci` and patch it
+          minimally, with no redesign
+    - [ ] **PR3-8**: Requirement Traceability Redesign (`trace`)
+        - `Target`-cell traceability replaces the `#[req]` macro; remove
+          `control-rs-trace-macros`, `trace-marks` and `trace/marks.rs`
+    - [ ] **PR3-9**: Workspace Audit & Cleanup
+        - Review PR3 against its design docs, reconcile docs, gate config and
+          tests, and remove stray additions
+- [ ] **PR4**: Design Hardening, Trace Wiring and Test Updates
 - [ ] **PR5**: Classical Control Synthesis & Math Core (`src/classical_tools`)
 - [ ] **PR6**: Modern Control Toolbox & State Observers (`src/modern_control`)
 - [ ] **PR7**: System Identification (SysID) & Frequency Estimation

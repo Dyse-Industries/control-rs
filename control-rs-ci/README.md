@@ -15,8 +15,7 @@ Gates, groups and commands are declared in [`.cargo/gate.toml`](../.cargo/gate.t
 | `cargo regression` | `regression` | Criterion results against budgets and baselines |
 | `cargo ets <targets>` | `ets` | Builds ETS firmware and runs its suites headless, writing `ets-results.json` |
 | `cargo trace-reqs` | `trace-reqs` | Checks requirement definitions and verification conditions in configured design documents; writes `reqs.jsonl` |
-| `cargo trace-marks` | `trace-marks` | Finds requirement markers in source text and writes `marks.jsonl` |
-| `cargo trace-check` | `trace-check` | Derives condition coverage from `reqs.jsonl` and `marks.jsonl` (gate `trace`); writes `trace-report.json` |
+| `cargo trace-check` | `trace-check` | Derives condition status from `reqs.jsonl` and the result logs (gate `trace`); writes `trace-report.json` |
 
 ```sh
 cargo ci --list            # registered gates

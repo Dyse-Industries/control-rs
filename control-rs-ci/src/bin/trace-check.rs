@@ -1,8 +1,8 @@
 //! Requirement trace (`cargo trace-check`, gate `trace`).
 //!
-//! Checks verification condition coverage from `reqs.jsonl` and `marks.jsonl`,
-//! writes `trace-report.json` and fails when a condition is `Uncovered` or a marker
-//! is unresolved or names a requirement.
+//! Checks each verification condition of `reqs.jsonl` against the result logs
+//! of its method, writes `trace-report.json` and fails when a condition is
+//! `Uncovered`, `Unrun` or `Fail`.
 
 use std::process::ExitCode;
 
@@ -14,11 +14,10 @@ use control_rs_ci::trace::{
 use control_rs_ci::ui;
 
 /// Command-line synopsis.
-const USAGE: &str = "trace-check --config <trace.toml> --reqs <reqs.jsonl> --marks <marks.jsonl> \
-                     --out <trace-report.json>";
+const USAGE: &str = "trace-check --config <trace.toml> --reqs <reqs.jsonl> --out <trace-report.json>";
 
 fn main() -> ExitCode {
-    let flags = ["--config", "--reqs", "--marks", "--out"];
+    let flags = ["--config", "--reqs", "--out"];
     let paths = match cli_args(USAGE, flags) {
         Ok(paths) => paths,
         Err(code) => return code,
@@ -33,14 +32,13 @@ fn main() -> ExitCode {
 }
 
 /// Derives the report from the recorded artifacts and writes it.
-fn run([config, reqs, marks, out]: &FlagValues<4>) -> GateResult<Derived> {
+fn run([config, reqs, out]: &FlagValues<3>) -> GateResult<Derived> {
     if out.exists() {
         let _ = std::fs::remove_file(out);
     }
     let reqs = read_rows(reqs)?;
-    let marks = read_rows(marks)?;
     let trace_cfg = control_rs_ci::trace::reqs::TraceConfig::load(config)?;
-    let (report, defects) = status::derive(&reqs, &marks, &trace_cfg);
+    let (report, defects) = status::derive(&reqs, &trace_cfg);
     report.write(out)?;
     ui::status("Writing", out.display());
     Ok((report, defects))

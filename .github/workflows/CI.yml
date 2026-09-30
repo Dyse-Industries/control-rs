@@ -56,7 +56,7 @@ concurrency:
 jobs:
   # ============================================================================
   # Stage pre (fetch) and group lint (fmt, clippy, allow-audit, doc, vale,
-  # trace-reqs, trace-marks)
+  # trace-reqs)
   # ============================================================================
   lint:
     name: Lint & Prose

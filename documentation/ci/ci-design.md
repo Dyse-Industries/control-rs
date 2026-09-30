@@ -269,8 +269,7 @@ report rendering logic. The package exposes focused binary targets:
 | `valgrind`       | `cargo valgrind`    | Valgrind Memcheck over the examples named by `--example`; fails without Valgrind                       |
 | `ets`            | `cargo ets`         | Headless ETS runner: builds target firmware and runs its suites through `control-rs-ets-host` (§4.9)   |
 | `trace-reqs`     | `cargo trace-reqs`  | Requirement and verification-condition rows from the listed design documents (`reqs.jsonl`)            |
-| `trace-marks`    | `cargo trace-marks` | Requirement markers found in source text (`marks.jsonl`)                                               |
-| `trace-check`    | `cargo trace-check` | Condition coverage from both row files (`trace-report.json`), gate `trace`                             |
+| `trace-check`    | `cargo trace-check` | Condition status from `reqs.jsonl` and the result logs (`trace-report.json`), gate `trace`             |
 
 `cargo ci` and `cargo gate` share one option set: `--group`, `--only`, `--skip`,
 `--up-to`, `--config`, `--clean`, `--all`, `--list`, `--max-jobs` and `-v`/
@@ -436,7 +435,7 @@ post = [
 
 [execution.groups]
 build_test = ["build", "test"]
-lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs", "trace-marks"]
+lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs"]
 audit = ["deny", "semver", "valgrind", "geiger"]
 verify = ["cross-compare"]
 dynamic = ["miri"]
@@ -533,8 +532,7 @@ are rejected as unknown keys.
 
 Mutation testing covers the root package in `mutants-<file>-<k>` chunks and
 each workspace tool crate in its own gate: `mutants-ci-0`/`-1` (sharded),
-`mutants-compare`, `mutants-ets-host`, `mutants-ets`, `mutants-macros`,
-`mutants-trace-macros` and `mutants-tui`. The root `.cargo/mutants.toml`
+`mutants-compare`, `mutants-ets-host`, `mutants-ets`, `mutants-macros` and `mutants-tui`. The root `.cargo/mutants.toml`
 restricts mutation to `--lib`
 for the root package only, so the workspace gates pass `--no-config`.
 `control-rs-verification` is not mutated: it emits oracles that
@@ -930,11 +928,10 @@ The `lint` job checks out full history for `--base-ref`.
       `doc` gate; `CI.yml` has no top-level `permissions:`;
       `cargo-bins/cargo-binstall@main` is unpinned; no job caches builds; every
       pull request runs every `mutants-*` job and `regression`.
-    - `mutants-trace-macros` has no measured mutant count; `mutants-ci-*` now
-      also
+    - `mutants-ci-*` now also
       run `ci_negative_gates`, whose nested Cargo builds lengthen each mutant.
-    - Tracer limits from its own design stay open: markers in comments or string
-      literals count, and only the `#[req(` form is recognized.
+    - Tracer limits from its own design stay open: a target is checked only
+      for presence and a pass in its result log, not against what it tests.
     - Fuzz testing (`fuzz`) and static concurrency checking (`lockbud`):deferred
       until dedicated fuzzing harnesses (`fuzz/`) and concurrency audit targets
       are authored.
@@ -983,6 +980,7 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.33     | September 28, 2026 | @MitchellDScott | `ets`, `report`, `regression`, `allow-audit`, `valgrind` and the `trace-*` binaries parse arguments with `lexopt`; `allow-audit` and `valgrind` accept `-h`/`--help`; usage errors name the argument as typed and exit 2. §4.9: `ets` forwards arguments after `--` verbatim and splits attached values of forwarded options.                                                                                                                                                                                                           |
 | 1.34     | September 28, 2026 | @MitchellDScott | Recorded FR-20 (`kani`) and FR-21 (`miri`) deferred to PR3-6 with the empty-target fail-closed rule; recorded `fuzz` and `lockbud` as deferred technical debt (§8).                                                                                                                                                                                                                                                                                                                                                                     |
 | 1.35     | September 28, 2026 | @MitchellDScott | Un-deferred FR-20 (`kani`) and FR-21 (`miri`) for PR3-6. Specified `kani` in `post` exclusive stage and `miri` in dedicated `dynamic` execution group; moved `trace` to `post` after `kani` (§4.3). Added Miri and Kani references.                                                                                                                                                                                                                                                                                                     |
+| 1.36     | September 28, 2026 | @MitchellDScott | Removed the `trace-marks` gate and `mutants-trace-macros`; `trace` reads `reqs.jsonl` and the result logs only. |
 
 ---
 

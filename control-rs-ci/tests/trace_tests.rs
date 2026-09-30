@@ -1,4 +1,4 @@
-//! Command-line tests of `trace-reqs`, `trace-marks` and `trace-check`.
+//! Command-line tests of `trace-reqs` and `trace-check`.
 
 #[cfg(test)]
 mod cli {
@@ -8,19 +8,18 @@ mod cli {
     use std::process::{Command, Output};
 
     use control_rs_ci::trace::SCHEMA;
-    use control_rs_trace_macros::req;
     use regex::Regex;
     use serde_json::Value;
 
-    /// A document without defects: one requirement and one `test` condition.
+    /// A document without defects: one requirement and one `libtest` condition.
     const CLEAN: &str = "\
 # Widget (widget)
 
 - **FR-1 — Size**: The widget shall report its size.
 
-| Condition | Requirement | Method | Criterion        |
-|:----------|:------------|:-------|:-----------------|
-| VC-1.1    | FR-1        | `test` | Exact size match |
+| Condition | Requirement | Method    | Target                | Criterion        |
+|:----------|:------------|:----------|:----------------------|:-----------------|
+| VC-1.1    | FR-1        | `libtest` | `widget::tests::size` | Exact size match |
 ";
 
     /// A duplicate definition, a requirement without condition and a
@@ -31,13 +30,13 @@ mod cli {
 - **FR-1 — Size**: The widget shall report its size.
 - **FR-1 — Again**: The widget shall repeat.
 
-| Condition | Requirement | Method | Criterion |
-|:----------|:------------|:-------|:----------|
-| VC-7.1    | FR-7        | `test` | Other     |
+| Condition | Requirement | Method    | Target | Criterion |
+|:----------|:------------|:----------|:-------|:----------|
+| VC-7.1    | FR-7        | `libtest` | `a::t` | Other     |
 ";
 
-    /// Three requirements: one `test` condition each for FR-1 and FR-2 and a
-    /// `review` condition for FR-3.
+    /// Three requirements: one `libtest` condition each for FR-1 and FR-2 and
+    /// a `review` condition for FR-3.
     const MATRIX: &str = "\
 # Widget (widget)
 
@@ -45,35 +44,30 @@ mod cli {
 - **FR-2 — Mass**: The widget shall report its mass.
 - **FR-3 — Style**: The widget shall follow the style guide.
 
-| Condition | Requirement | Method   | Criterion        |
-|:----------|:------------|:---------|:-----------------|
-| VC-1.1    | FR-1        | `test`   | Exact size match |
-| VC-2.1    | FR-2        | `test`   | Exact mass match |
-| VC-3.1    | FR-3        | `review` | Style review     |
+| Condition | Requirement | Method    | Target                | Criterion        |
+|:----------|:------------|:----------|:----------------------|:-----------------|
+| VC-1.1    | FR-1        | `libtest` | `widget::tests::size` | Exact size match |
+| VC-2.1    | FR-2        | `libtest` | `widget::tests::mass` | Exact mass match |
+| VC-3.1    | FR-3        | `review`  | —                     | Style review     |
 ";
-
-    const REQ_PREFIX: &str = concat!("#[", "req(",);
 
     /// A file to create: its path and contents.
     type Fixture<'a> = (&'a str, &'a str);
 
     fn config() -> String {
-        format!(
-            "id = '(?:FR|NFR|C)-[0-9]+[a-z]?'\n\
-             condition = 'VC-[0-9]+(?:\\.[0-9]+[a-z]?)?'\n\
-             doc = '[a-z0-9-]+'\n\
-             files = [\"docs\"]\n\
-             doc_id = '^#\\s+.*\\((?P<doc>[a-z0-9-]+)\\)'\n\
-             definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
-             verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\
-             methods = [\"test\", \"analysis\", \"inspection\", \"review\"]\n\
-             marked_methods = [\"test\"]\n\
-             retired = []\n\n\
-             [markers]\n\
-             files = [\"src\"]\n\
-             suffixes = [\".rs\"]\n\
-             marker = \"{REQ_PREFIX}\"\n"
-        )
+        "id = '(?:FR|NFR|C)-[0-9]+[a-z]?'\n\
+         condition = 'VC-[0-9]+(?:\\.[0-9]+[a-z]?)?'\n\
+         doc = '[a-z0-9-]+'\n\
+         files = [\"docs\"]\n\
+         doc_id = '^#\\s+.*\\((?P<doc>[a-z0-9-]+)\\)'\n\
+         definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
+         verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\
+         methods = [\"libtest\", \"analysis\", \"inspection\", \"review\"]\n\
+         automated_methods = [\"libtest\"]\n\
+         retired = []\n\n\
+         [method.libtest]\n\
+         result_artifact = \"out/test.log\"\n"
+            .to_string()
     }
 
     /// A fresh working directory holding the configuration and `files`.
@@ -108,14 +102,6 @@ mod cli {
         )
     }
 
-    fn trace_marks(dir: &Path) -> Output {
-        run(
-            env!("CARGO_BIN_EXE_trace-marks"),
-            dir,
-            &["--config", "trace.toml", "--out", "out/marks.jsonl"],
-        )
-    }
-
     fn trace_check(dir: &Path) -> Output {
         run(
             env!("CARGO_BIN_EXE_trace-check"),
@@ -125,8 +111,6 @@ mod cli {
                 "trace.toml",
                 "--reqs",
                 "out/reqs.jsonl",
-                "--marks",
-                "out/marks.jsonl",
                 "--out",
                 "out/trace-report.json",
             ],
@@ -153,11 +137,10 @@ mod cli {
         value.pointer(pointer).and_then(Value::as_str)
     }
 
-    /// Runs `trace-reqs` on `doc`, then `trace-check` with the given marker
-    /// rows and fixtures; returns the check's exit code and report.
+    /// Runs `trace-reqs` on `doc`, then `trace-check` with the given
+    /// fixtures; returns the check's exit code and report.
     fn check(name: &str, doc: &str, extra: &[Fixture<'_>]) -> (i32, Value) {
-        let mut files =
-            vec![("docs/widget-design.md", doc), ("out/marks.jsonl", "")];
+        let mut files = vec![("docs/widget-design.md", doc)];
         files.extend_from_slice(extra);
         let dir = workdir(name, &files);
         assert!(trace_reqs(&dir).status.success());
@@ -170,7 +153,6 @@ mod cli {
         )
     }
 
-    #[req("requirement-traceability#VC-1.1", "requirement-traceability#VC-6.1")]
     #[test]
     fn a_clean_document_passes_and_writes_its_rows() {
         let dir = workdir("clean", &[("docs/widget-design.md", CLEAN)]);
@@ -182,14 +164,18 @@ mod cli {
             stdout_lines(&output)
         );
         assert!(stdout_lines(&output).is_empty());
-        let kinds: Vec<_> = rows(&dir.join("out/reqs.jsonl"))
+        let rows = rows(&dir.join("out/reqs.jsonl"));
+        let kinds: Vec<_> = rows
             .iter()
             .map(|row| text(row, "/kind").unwrap().to_string())
             .collect();
         assert_eq!(kinds, ["definition", "condition"]);
+        assert_eq!(
+            rows.get(1).and_then(|r| text(r, "/targets/0")),
+            Some("widget::tests::size")
+        );
     }
 
-    #[req("requirement-traceability#VC-4.1", "requirement-traceability#VC-9.1")]
     #[test]
     fn defects_print_as_path_line_message_and_fail_the_run() {
         let dir = workdir("defects", &[("docs/widget-design.md", DEFECTIVE)]);
@@ -211,10 +197,6 @@ mod cli {
         );
     }
 
-    #[req(
-        "requirement-traceability#VC-6.1",
-        "requirement-traceability#VC-14.1"
-    )]
     #[test]
     fn rows_have_the_schema_fields_and_reruns_are_identical() {
         let dir = workdir("rows", &[("docs/widget-design.md", DEFECTIVE)]);
@@ -233,7 +215,7 @@ mod cli {
                 .collect();
             let mut fields: BTreeSet<&str> = common.into();
             if text(row, "/kind") == Some("condition") {
-                fields.extend(["parents", "method"]);
+                fields.extend(["parents", "method", "targets"]);
             }
             assert_eq!(keys, fields);
             assert_eq!(
@@ -248,22 +230,21 @@ mod cli {
         assert!(lines.is_sorted());
     }
 
-    #[req("requirement-traceability#VC-14.1")]
     #[test]
     fn every_row_and_the_report_carry_the_schema_version() {
-        let marker = format!("{REQ_PREFIX}\"widget#VC-1.1\")]\nfn t() {{}}\n");
         let dir = workdir(
             "schema",
-            &[("docs/widget-design.md", CLEAN), ("src/a.rs", &marker)],
+            &[
+                ("docs/widget-design.md", CLEAN),
+                ("out/test.log", "test widget::tests::size ... ok\n"),
+            ],
         );
         assert!(trace_reqs(&dir).status.success());
-        assert!(trace_marks(&dir).status.success());
-        trace_check(&dir);
+        assert!(trace_check(&dir).status.success());
         let schema = Some(u64::from(SCHEMA));
         let reqs = rows(&dir.join("out/reqs.jsonl"));
-        let marks = rows(&dir.join("out/marks.jsonl"));
-        assert!(!reqs.is_empty() && !marks.is_empty());
-        for row in reqs.iter().chain(&marks) {
+        assert!(!reqs.is_empty());
+        for row in &reqs {
             assert_eq!(row.pointer("/schema").and_then(Value::as_u64), schema);
         }
         let report: Value = serde_json::from_str(
@@ -273,7 +254,6 @@ mod cli {
         assert_eq!(report.pointer("/schema").and_then(Value::as_u64), schema);
     }
 
-    #[req("requirement-traceability#VC-14.1")]
     #[test]
     fn trace_check_rejects_rows_of_another_schema() {
         let other = format!(
@@ -281,14 +261,10 @@ mod cli {
              \"file\":\"docs/widget-design.md\",\"line\":1,\"text\":\"x\"}}\n",
             SCHEMA.saturating_add(1)
         );
-        let dir = workdir(
-            "schema-other",
-            &[("out/reqs.jsonl", &other), ("out/marks.jsonl", "")],
-        );
+        let dir = workdir("schema-other", &[("out/reqs.jsonl", &other)]);
         assert_eq!(trace_check(&dir).status.code(), Some(2));
     }
 
-    #[req("requirement-traceability#VC-9.1")]
     #[test]
     fn usage_and_configuration_errors_exit_with_code_two() {
         let dir = workdir("usage", &[]);
@@ -298,7 +274,6 @@ mod cli {
         assert_eq!(trace_reqs(&dir).status.code(), Some(2));
     }
 
-    #[req("requirement-traceability#VC-10.1")]
     #[test]
     fn roots_select_suffixed_files_below_directories_and_named_files() {
         let gadget = CLEAN.replace("Widget (widget)", "Gadget (gadget)");
@@ -339,9 +314,9 @@ mod cli {
         let missing_id = "\
 - **FR-1 — Size**: The widget shall report its size.
 
-| Condition | Requirement | Method | Criterion |
-|:----------|:------------|:-------|:----------|
-| VC-1.1    | FR-1        | `test` | Exact size match |
+| Condition | Requirement | Method    | Target | Criterion |
+|:----------|:------------|:----------|:-------|:----------|
+| VC-1.1    | FR-1        | `libtest` | `a::t` | Exact size match |
 ";
         let dir =
             workdir("missing-id", &[("docs/widget-design.md", missing_id)]);
@@ -355,7 +330,6 @@ mod cli {
         );
     }
 
-    #[req("requirement-traceability#VC-10.1")]
     #[test]
     fn a_missing_root_is_a_configuration_error() {
         let dir = workdir("missing-root", &[]);
@@ -363,7 +337,6 @@ mod cli {
     }
 
     #[cfg(unix)]
-    #[req("requirement-traceability#VC-10.1")]
     #[test]
     fn symbolic_links_are_never_followed() {
         let dir = workdir(
@@ -387,80 +360,19 @@ mod cli {
         assert_eq!(files, ["docs/widget-design.md".to_string()].into());
     }
 
-    #[req(
-        "requirement-traceability#VC-6.1",
-        "requirement-traceability#VC-10.1"
-    )]
     #[test]
-    fn trace_marks_scans_source_in_order_and_reruns_identically() {
-        let f1 =
-            format!("{REQ_PREFIX}\"widget#VC-1.1\")]\n#[test]\nfn t() {{}}\n");
-        let f2 = format!("\n\n{REQ_PREFIX}\"widget#VC-2.1\")]\nfn u() {{}}\n");
-        let f3 = format!("{REQ_PREFIX}\"widget#VC-3.1\")]\n");
-        let dir = workdir(
-            "marks",
-            &[
-                ("src/b.rs", &f1),
-                ("src/a/c.rs", &f2),
-                ("src/notes.txt", &f3),
-            ],
-        );
-        assert!(trace_marks(&dir).status.success());
-        let first = fs::read(dir.join("out/marks.jsonl")).unwrap();
-        let found: Vec<String> = rows(&dir.join("out/marks.jsonl"))
-            .iter()
-            .map(|row| {
-                format!(
-                    "{}:{}",
-                    text(row, "/file").unwrap(),
-                    text(row, "/id").unwrap()
-                )
-            })
-            .collect();
-        assert_eq!(
-            found,
-            ["src/a/c.rs:widget#VC-2.1", "src/b.rs:widget#VC-1.1"]
-        );
-        trace_marks(&dir);
-        assert_eq!(fs::read(dir.join("out/marks.jsonl")).unwrap(), first);
-    }
-
-    #[req("requirement-traceability#VC-6.1", "requirement-traceability#VC-9.1")]
-    #[test]
-    fn an_unqualified_marker_fails_trace_marks() {
-        let bad = format!("{REQ_PREFIX}\"VC-1.1\")]\n");
-        let dir = workdir("bad-marker", &[("src/a.rs", &bad)]);
-        let output = trace_marks(&dir);
-        assert_eq!(output.status.code(), Some(1));
-        assert_eq!(
-            stdout_lines(&output),
-            ["src/a.rs:1: marker ID VC-1.1 is not qualified as <doc>#<id>"]
-        );
-    }
-
-    /// A marker row of the current schema naming `id` at `src/a.rs:line`.
-    fn marker(id: &str, line: usize) -> String {
-        format!(
-            "{{\"schema\":{SCHEMA},\"id\":\"{id}\",\"kind\":\"marker\",\
-             \"file\":\"src/a.rs\",\"line\":{line},\"text\":\"fn t\"}}\n"
-        )
-    }
-
-    #[req("requirement-traceability#VC-8.1")]
-    #[test]
-    fn covered_uncovered_and_review_conditions_take_their_status() {
-        let marks = marker("widget#VC-1.1", 1);
-        let (code, report) =
-            check("matrix", MATRIX, &[("out/marks.jsonl", &marks)]);
+    fn passed_unrun_and_review_conditions_take_their_status() {
+        let log = "test widget::tests::size ... ok\n";
+        let (code, report) = check("matrix", MATRIX, &[("out/test.log", log)]);
         assert_eq!(code, 1);
         let status = |i: usize| {
             text(&report, &format!("/requirements/{i}/status"))
                 .map(str::to_string)
         };
         assert_eq!(status(0).as_deref(), Some("Pass"));
-        assert_eq!(status(1).as_deref(), Some("Uncovered"));
+        assert_eq!(status(1).as_deref(), Some("Unrun"));
         assert_eq!(status(2).as_deref(), Some("Review"));
-        for (key, count) in [("Pass", 1), ("Uncovered", 1), ("Review", 1)] {
+        for (key, count) in [("Pass", 1), ("Unrun", 1), ("Review", 1)] {
             assert_eq!(
                 report
                     .pointer(&format!("/counts/{key}"))
@@ -470,78 +382,36 @@ mod cli {
             );
         }
         assert_eq!(
-            text(&report, "/requirements/0/conditions/0/markers/0/file"),
-            Some("src/a.rs")
+            text(&report, "/requirements/0/conditions/0/items/0/target"),
+            Some("widget::tests::size")
         );
         assert_eq!(text(&report, "/review/0/id"), Some("widget#VC-3.1"));
         assert_eq!(text(&report, "/review/0/method"), Some("review"));
     }
 
-    #[req("requirement-traceability#VC-8.1")]
     #[test]
-    fn every_test_condition_covered_passes_and_review_does_not_fail() {
-        let marks =
-            [marker("widget#VC-1.1", 1), marker("widget#VC-2.1", 5)].concat();
-        let (code, report) =
-            check("covered", MATRIX, &[("out/marks.jsonl", &marks)]);
+    fn every_automated_target_passed_passes_and_review_does_not_fail() {
+        let log = "test widget::tests::size ... ok\n\
+                   test widget::tests::mass ... ok\n";
+        let (code, report) = check("covered", MATRIX, &[("out/test.log", log)]);
         assert_eq!(code, 0);
         assert_eq!(text(&report, "/requirements/2/status"), Some("Review"));
     }
 
-    #[req("requirement-traceability#VC-8.1")]
     #[test]
-    fn a_marker_on_a_requirement_fails_the_trace() {
-        let marks =
-            [marker("widget#VC-1.1", 1), marker("widget#FR-1", 5)].concat();
-        let (code, report) =
-            check("on-requirement", CLEAN, &[("out/marks.jsonl", &marks)]);
-        assert_eq!(code, 1);
-        assert_eq!(text(&report, "/requirements/0/status"), Some("Pass"));
-        assert_eq!(
-            text(&report, "/unresolved_markers/0/id"),
-            Some("widget#FR-1")
-        );
-    }
-
-    #[req("requirement-traceability#VC-8.1", "requirement-traceability#VC-9.1")]
-    #[test]
-    fn an_unresolved_marker_fails_the_trace() {
-        let marks =
-            [marker("widget#VC-1.1", 1), marker("widget#VC-9.9", 4)].concat();
+    fn a_failed_target_fails_the_trace_with_a_located_defect() {
+        let log = "test widget::tests::size ... FAILED\n";
         let dir = workdir(
-            "unresolved",
-            &[
-                ("docs/widget-design.md", CLEAN),
-                ("out/marks.jsonl", &marks),
-            ],
+            "failed",
+            &[("docs/widget-design.md", CLEAN), ("out/test.log", log)],
         );
         assert!(trace_reqs(&dir).status.success());
         let output = trace_check(&dir);
         assert_eq!(output.status.code(), Some(1));
         assert_eq!(
             stdout_lines(&output),
-            ["src/a.rs:4: marker widget#VC-9.9 names no defined condition"]
+            ["docs/widget-design.md:7: condition widget#VC-1.1 target \
+                 'widget::tests::size' failed in test.log"]
         );
-    }
-
-    #[req("requirement-traceability#VC-8.1")]
-    #[test]
-    fn scanned_markers_cover_conditions_end_to_end() {
-        let src = format!(
-            "{REQ_PREFIX}\n    \"widget#VC-1.1\",\n    \"widget#VC-2.1\"\n)]\nfn t() {{}}\n"
-        );
-        let dir = workdir(
-            "end-to-end",
-            &[("docs/widget-design.md", MATRIX), ("src/lib.rs", &src)],
-        );
-        assert!(trace_reqs(&dir).status.success());
-        assert!(trace_marks(&dir).status.success());
-        assert_eq!(trace_check(&dir).status.code(), Some(0));
-        let report: Value = serde_json::from_str(
-            &fs::read_to_string(dir.join("out/trace-report.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(text(&report, "/requirements/0/status"), Some("Pass"));
-        assert_eq!(text(&report, "/requirements/1/status"), Some("Pass"));
     }
 }

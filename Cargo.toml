@@ -30,7 +30,6 @@ members = [
     "control-rs-ci",
     "control-rs-compare",
     "control-rs-verification",
-    "control-rs-trace-macros",
 ]
 default-members = ["."]
 
@@ -85,7 +84,6 @@ ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
 [dev-dependencies]
 proptest = "1"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
-control-rs-trace-macros = { path = "control-rs-trace-macros", version = "0.1.0" }
 
 [[bench]]
 name = "scaling"

@@ -1,9 +1,10 @@
 //! Requirement traceability.
 //!
 //! `trace-reqs` records the requirement definitions and verification
-//! conditions it finds in Markdown, `trace-marks` records the markers it finds
-//! in source text, and `trace-check` derives condition coverage from both. It
-//! reads no gate result. Each definition, condition and marker is one [`Row`].
+//! conditions it finds in Markdown, including the fully qualified test or
+//! harness targets each condition names, and `trace-check` derives condition
+//! status from those targets and the result logs of the gates. Each definition
+//! and condition is one [`Row`].
 
 use std::fmt;
 use std::fs;
@@ -16,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use crate::error::{GateError, GateResult};
 use crate::ui;
 
-pub mod marks;
 pub mod reqs;
 pub mod select;
 pub mod status;
@@ -27,11 +27,8 @@ pub const CONDITION: &str = "condition";
 /// Row kind of a requirement definition.
 pub const DEFINITION: &str = "definition";
 
-/// Row kind of a source marker.
-pub const MARKER: &str = "marker";
-
 /// Row and report format version, incremented on every incompatible change.
-pub const SCHEMA: u32 = 3;
+pub const SCHEMA: u32 = 4;
 
 /// Exit code of a usage, configuration or I/O error.
 pub const USAGE_ERROR: u8 = 2;
@@ -73,8 +70,7 @@ pub struct Defect {
     pub message: String,
 }
 
-/// One occurrence of one requirement or condition ID: a line of `reqs.jsonl`
-/// or `marks.jsonl`.
+/// One occurrence of one requirement or condition ID: a line of `reqs.jsonl`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Row {
@@ -82,7 +78,7 @@ pub struct Row {
     pub schema: u32,
     /// Qualified ID, `<doc>#<id>`.
     pub id: String,
-    /// [`DEFINITION`], [`CONDITION`], or [`MARKER`].
+    /// [`DEFINITION`] or [`CONDITION`].
     pub kind: String,
     /// Parent requirement IDs for conditions, `<doc>#<id>`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -90,6 +86,9 @@ pub struct Row {
     /// Verification method for conditions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
+    /// Test or harness identifiers a condition names in its `Target` cell.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<String>,
     /// Path relative to the working directory.
     pub file: String,
     /// 1-based line number.
@@ -344,7 +343,6 @@ fn with_path(path: &Path, error: &io::Error) -> GateError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use control_rs_trace_macros::req;
 
     fn row(file: &str, line: usize) -> Row {
         Row {
@@ -353,6 +351,7 @@ mod tests {
             kind: DEFINITION.to_string(),
             parents: Vec::new(),
             method: None,
+            targets: Vec::new(),
             file: file.to_string(),
             line,
             text: String::new(),
@@ -417,7 +416,6 @@ mod tests {
         assert_eq!(read_rows(&path).unwrap(), rows);
     }
 
-    #[req("requirement-traceability#VC-14.1")]
     #[test]
     fn rows_of_another_schema_are_rejected() {
         let dir = std::env::temp_dir().join(format!(

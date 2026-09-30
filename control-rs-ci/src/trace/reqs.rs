@@ -4,8 +4,9 @@
 //! are skipped. A line that matches `definition` defines the first
 //! requirement ID on it, and its text runs on through the indented lines that
 //! follow. A line that matches `verification` defines the condition ID on it;
-//! every other requirement ID on the line is a parent and the code span that
-//! names a method is its method.
+//! every other requirement ID on the line is a parent, the code span that
+//! names a method is its method and the code spans of the fourth cell are its
+//! targets.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -43,17 +44,6 @@ type VisibleLines<'a> = (Vec<Line<'a>>, Option<usize>);
 /// Scanned rows and scan defects of a Markdown document.
 pub type MarkdownScan = (Vec<Row>, Vec<Defect>);
 
-/// One ID occurrence in a marker span.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum MarkedId {
-    /// A qualified ID, `<doc>#<id>`.
-    Qualified(String),
-    /// An ID written without `<doc>#`.
-    Unqualified(String),
-    /// An ID followed by `=<tag>`, reserved for the extension path.
-    Tagged(String),
-}
-
 /// A `trace.toml`: the patterns that find requirements in Markdown.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,40 +65,23 @@ pub struct TraceConfig {
     pub verification: String,
     /// Verification methods a condition may name.
     pub methods: Vec<String>,
-    /// The subset of methods whose conditions need at least one marker.
-    pub marked_methods: Vec<String>,
-    /// Item rules and result artifacts per method.
+    /// The subset of methods whose conditions name targets that a result
+    /// artifact must record as passed.
+    pub automated_methods: Vec<String>,
+    /// Result artifact per method.
     #[serde(default)]
     pub method: BTreeMap<String, MethodConfig>,
     /// Qualified IDs that must not be defined or referenced again.
     pub retired: Vec<String>,
-    /// Where `trace-marks` finds markers; none when absent.
-    #[serde(default)]
-    pub markers: Option<MarkerConfig>,
 }
 
 /// The `[method.<name>]` table of a `trace.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MethodConfig {
-    /// Regex pattern matching the item attribute or declaration (for example, `#[test]`).
-    #[serde(default)]
-    pub item_rule: Option<String>,
     /// Relative path to the verification result log artifact (for example, `target/ci-artifacts/test.log`).
     #[serde(default)]
     pub result_artifact: Option<String>,
-}
-
-/// The `[markers]` table of a `trace.toml`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MarkerConfig {
-    /// Source files, and directories whose files ending in a suffix are read.
-    pub files: Vec<String>,
-    /// File-name endings of the source files to read, such as `.rs`.
-    pub suffixes: Vec<String>,
-    /// Text that makes a line a marker attribute or prefix.
-    pub marker: String,
 }
 
 /// The compiled patterns of a [`TraceConfig`].
@@ -170,14 +143,21 @@ impl TraceConfig {
                 error(format!("`{key}` is not a valid pattern: {e}"))
             })
         };
-        if let Some(m) = self
-            .marked_methods
-            .iter()
-            .find(|m| !self.methods.contains(m))
-        {
-            return Err(error(format!(
-                "marked method `{m}` is not in `methods`"
-            )));
+        for m in &self.automated_methods {
+            if !self.methods.contains(m) {
+                return Err(error(format!(
+                    "automated method `{m}` is not in `methods`"
+                )));
+            }
+            let has_artifact = self
+                .method
+                .get(m)
+                .is_some_and(|c| c.result_artifact.is_some());
+            if !has_artifact {
+                return Err(error(format!(
+                    "automated method `{m}` has no `result_artifact`"
+                )));
+            }
         }
         compile("doc", &self.doc)?;
         compile("id", &self.id)?;
@@ -222,33 +202,6 @@ impl Rules {
     #[must_use]
     pub fn is_method(&self, name: &str) -> bool {
         self.methods.iter().any(|m| m == name)
-    }
-
-    /// The ID occurrences in a marker span, left to right.
-    #[must_use]
-    pub fn marked_ids(&self, text: &str) -> Vec<MarkedId> {
-        let cond_matches = self.condition_occurrence.captures_iter(text);
-        let req_matches = self.occurrence.captures_iter(text);
-        let mut matches: Vec<_> = req_matches.chain(cond_matches).collect();
-        matches.sort_by_key(|caps| caps.get(0).map_or(0, |m| m.start()));
-        matches
-            .into_iter()
-            .filter_map(|caps| {
-                let whole = caps.get(0)?;
-                let id = caps.name("trace_id")?.as_str();
-                let written = whole.as_str();
-                let tagged = text
-                    .get(whole.end()..)
-                    .is_some_and(|rest| rest.starts_with('='));
-                Some(if tagged {
-                    MarkedId::Tagged(written.to_string())
-                } else if let Some(doc) = caps.name("trace_doc") {
-                    MarkedId::Qualified(format!("{}#{id}", doc.as_str()))
-                } else {
-                    MarkedId::Unqualified(id.to_string())
-                })
-            })
-            .collect()
     }
 }
 
@@ -305,6 +258,26 @@ fn first_cell(line: &str) -> &str {
     rest.split('|').next().unwrap_or(rest).trim()
 }
 
+/// The code spans of the fourth cell of a table line with five or more cells.
+fn targets(line: &str) -> Vec<String> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    let cells: Vec<&str> = inner.split('|').collect();
+    if cells.len() < 5 {
+        return Vec::new();
+    }
+    cells
+        .get(3)
+        .map(|cell| {
+            super::code_spans(cell)
+                .iter()
+                .map(|s| s.content.trim().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn scan_condition_line(
     line: &str,
     cell: &str,
@@ -348,6 +321,7 @@ fn scan_condition_line(
     let mut condition = row(cond_qualified, CONDITION, at, line);
     condition.parents = parents;
     condition.method = method;
+    condition.targets = targets(line);
     Some(condition)
 }
 
@@ -654,6 +628,7 @@ pub(super) fn row(id: String, kind: &str, at: At<'_>, text: &str) -> Row {
         kind: kind.to_string(),
         parents: Vec::new(),
         method: None,
+        targets: Vec::new(),
         file: at.0.to_string(),
         line: at.1,
         text: normalize(text),
@@ -663,7 +638,6 @@ pub(super) fn row(id: String, kind: &str, at: At<'_>, text: &str) -> Row {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use control_rs_trace_macros::req;
 
     const CLEAN: &str = "\
 # Widget (widget)
@@ -685,7 +659,7 @@ doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 methods = ["test", "analysis", "inspection", "review"]
-marked_methods = ["test"]
+automated_methods = []
 "#;
 
     /// A row's kind, ID and line.
@@ -722,7 +696,6 @@ marked_methods = ["test"]
         (kind.to_string(), id.to_string(), line)
     }
 
-    #[req("requirement-traceability#VC-1.1", "requirement-traceability#VC-2.1")]
     #[test]
     fn template_rows_are_found() {
         assert_eq!(
@@ -779,7 +752,6 @@ marked_methods = ["test"]
         );
     }
 
-    #[req("requirement-traceability#VC-2.1", "requirement-traceability#VC-3.1")]
     #[test]
     fn reference_lines_record_every_local_and_qualified_id() {
         let source = "# Widget (widget)\n\n| VC-1.1 | FR-1, storage#FR-3 | `test` | Criterion FR-2 |\n";
@@ -801,7 +773,6 @@ marked_methods = ["test"]
         assert_eq!(plan.text, "| VC-1.1 | FR-1 | `test` | Exact size match |");
     }
 
-    #[req("requirement-traceability#VC-3.1")]
     #[test]
     fn doc_id_is_extracted_from_the_title_declaration() {
         let source = "# Storage Backends (storage)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n";
@@ -952,7 +923,6 @@ marked_methods = ["test"]
         assert!(defects.iter().any(|d| d.message.contains("has no parent")));
     }
 
-    #[req("requirement-traceability#VC-3.1")]
     #[test]
     fn ids_inside_longer_tokens_or_condition_ids_are_not_parents() {
         let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `test` | Per IEC-61508 and XFR-2 |\n";
@@ -963,7 +933,6 @@ marked_methods = ["test"]
         );
     }
 
-    #[req("requirement-traceability#VC-4.1")]
     #[test]
     fn row_and_method_defects_are_reported() {
         let cases = [
@@ -994,19 +963,44 @@ marked_methods = ["test"]
     }
 
     #[test]
-    fn a_marked_method_outside_methods_is_rejected() {
-        let text = format!("{KEYS}retired = []").replace(
-            "marked_methods = [\"test\"]",
-            "marked_methods = [\"fuzz\"]",
-        );
-        let config: TraceConfig = toml::from_str(&text).unwrap();
-        assert!(matches!(
-            config.rules(Path::new("trace.toml")),
-            Err(GateError::Config { .. })
+    fn an_automated_method_needs_a_listed_name_and_a_result_artifact() {
+        let rejected = |method: &str, tail: &str| {
+            let text = format!("{KEYS}retired = []{tail}").replace(
+                "automated_methods = []",
+                &format!("automated_methods = [\"{method}\"]"),
+            );
+            let config: TraceConfig = toml::from_str(&text).unwrap();
+            matches!(
+                config.rules(Path::new("trace.toml")),
+                Err(GateError::Config { .. })
+            )
+        };
+        assert!(rejected("fuzz", ""));
+        assert!(rejected("test", ""));
+        assert!(!rejected(
+            "test",
+            "\n[method.test]\nresult_artifact = \"t.log\"\n"
         ));
     }
 
-    #[req("requirement-traceability#VC-2.1")]
+    #[test]
+    fn targets_are_the_code_spans_of_the_fourth_cell() {
+        let source = "# Widget (widget)\n\n\
+            | VC-1.1 | FR-1 | `test` | `a::t::x`, `a::t::y` | `z` Crit |\n\
+            | VC-1.2 | FR-1 | `review` | — | Crit |\n\
+            | VC-1.3 | FR-1 | `test` | Crit |\n";
+        let (rows, _) = scan_markdown(FILE, source, &rules());
+        let targets: Vec<_> = rows.iter().map(|r| r.targets.clone()).collect();
+        assert_eq!(
+            targets,
+            [
+                vec!["a::t::x".to_string(), "a::t::y".to_string()],
+                vec![],
+                vec![]
+            ]
+        );
+    }
+
     #[test]
     fn a_parent_named_twice_is_recorded_once() {
         let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `test` | FR-1 holds iff both hold |\n";
