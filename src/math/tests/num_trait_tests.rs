@@ -334,6 +334,21 @@ pub mod num_trait_test_suite {
     // --- Test Executables ---
 
     #[cfg_attr(test, test)]
+    /// `Scalar::clamp` bounds a value; equality returns the value unchanged.
+    fn test_scalar_clamp_bounds() {
+        // Called through the trait: `f64::clamp` would shadow the method.
+        // Bits compare exactly and tell the signed zeros apart, which `==`
+        // does not: equality with a bound must return the value unchanged.
+        let clamp =
+            |x: f64, lo: f64, hi: f64| Scalar::clamp(x, lo, hi).to_bits();
+        assert_eq!(clamp(-2.0, -1.0, 1.0), (-1.0_f64).to_bits());
+        assert_eq!(clamp(2.0, -1.0, 1.0), 1.0_f64.to_bits());
+        assert_eq!(clamp(0.5, -1.0, 1.0), 0.5_f64.to_bits());
+        assert_eq!(clamp(0.0, -0.0, 1.0), 0.0_f64.to_bits());
+        assert_eq!(clamp(0.0, -1.0, -0.0), 0.0_f64.to_bits());
+    }
+
+    #[cfg_attr(test, test)]
     /// Verifies properties of the Scalar trait across all supported
     /// primitive types (FR-3 of `num-traits-design.md`).
     fn test_num_trait_scalar_properties() {

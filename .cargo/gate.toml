@@ -441,11 +441,15 @@ description = "Mutation testing: control-rs-ci, chunk 2 of 2"
 # two instants are equal, and `<=` at the chunk threshold, where one chunk gives
 # the same result as the sequential path.
 
+# control-rs-compare exclusions are behaviorally equivalent mutants: `>=` on a
+# running maximum re-assigns an equal value, the serial and parallel array
+# comparisons return the same result on either side of the chunk threshold, and
+# the run-time limit only moves by one clock tick.
 [mutants-compare]
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-compare", "--output", "target/ci-artifacts/mutants-compare.out"]
+args = ["--json", "--no-config", "--package", "control-rs-compare", "--exclude-re", "replace > with >= in compute_chunk_stats", "--exclude-re", "replace < with <= in compare_float_arrays_parallel", "--exclude-re", "replace > with >= in execute_variant", "--output", "target/ci-artifacts/mutants-compare.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-compare"
 

@@ -41,7 +41,7 @@ pub mod tests;
 
 use crate::math::complex_num::Complex;
 use crate::math::dsp::{Convolution, DefaultDsp};
-use crate::math::num_traits::{Float, Scalar, Zero};
+use crate::math::num_traits::{Float, Scalar};
 use crate::math::num_types::{Const, Dim, DimAdd, DimMax};
 use crate::math::storage::{
     ArrayStorage, ContiguousStorage, DenseStorage, DenseStorageMut, Storage,
@@ -346,17 +346,15 @@ impl<
         let d_len = self.den_storage.rows();
 
         // `saturating_sub(1)` avoids `usize` underflow when length is 0
-        // (`0usize - 1` wraps to `usize::MAX` and would spin forever).
-        let mut num_val = if n_len > 0 {
-            let c = self
-                .num_storage
+        // (`0usize - 1` wraps to `usize::MAX` and would spin forever); the
+        // missing coefficient then reads as zero.
+        let mut num_val = Complex::new(
+            self.num_storage
                 .get(n_len.saturating_sub(1), 0)
                 .copied()
-                .unwrap_or(T::ZERO);
-            Complex::new(c, T::ZERO)
-        } else {
-            Complex::ZERO
-        };
+                .unwrap_or(T::ZERO),
+            T::ZERO,
+        );
         for i in (0..n_len.saturating_sub(1)).rev() {
             let c = self.num_storage.get(i, 0).copied().unwrap_or(T::ZERO);
             num_val = num_val
@@ -364,16 +362,13 @@ impl<
                 .saturating_add(&Complex::new(c, T::ZERO));
         }
 
-        let mut den_val = if d_len > 0 {
-            let c = self
-                .den_storage
+        let mut den_val = Complex::new(
+            self.den_storage
                 .get(d_len.saturating_sub(1), 0)
                 .copied()
-                .unwrap_or(T::ZERO);
-            Complex::new(c, T::ZERO)
-        } else {
-            Complex::ZERO
-        };
+                .unwrap_or(T::ZERO),
+            T::ZERO,
+        );
         for i in (0..d_len.saturating_sub(1)).rev() {
             let c = self.den_storage.get(i, 0).copied().unwrap_or(T::ZERO);
             den_val = den_val

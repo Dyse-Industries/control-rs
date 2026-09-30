@@ -387,3 +387,16 @@ fn clean_path(path: &Path) -> PathBuf {
     }
     components.into_iter().collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::clean_path;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn current_dir_components_are_dropped_and_parent_dirs_fold() {
+        assert_eq!(clean_path(Path::new("./a/b")), PathBuf::from("a/b"));
+        assert_eq!(clean_path(Path::new("a/../b")), PathBuf::from("b"));
+        assert_eq!(clean_path(Path::new("../a")), PathBuf::from("../a"));
+    }
+}

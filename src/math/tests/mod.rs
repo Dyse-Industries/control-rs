@@ -9,11 +9,13 @@ pub mod num_trait_tests;
 pub mod num_type_tests;
 pub mod op_tests;
 #[cfg(test)]
+#[cfg(not(kani))]
 pub mod storage_layout_tests;
 #[cfg(test)]
 pub mod storage_sparse_tests;
 pub mod storage_tests;
 #[cfg(test)]
+#[cfg(not(kani))]
 pub mod subprogram_kernel_tests;
 pub mod subprogram_tests;
 

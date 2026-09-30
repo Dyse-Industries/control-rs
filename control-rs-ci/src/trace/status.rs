@@ -662,6 +662,9 @@ mod tests {
 
     use crate::trace::reqs::MethodConfig;
 
+    /// A condition status and how many conditions have it.
+    type Count = (Status, usize);
+
     fn test_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "control_rs_ci_status_{name}_{}_{}",
@@ -674,6 +677,70 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("target/ci-artifacts")).unwrap();
         dir
+    }
+
+    fn report(counts: &[Count], requirements: &[Status]) -> TraceReport {
+        TraceReport {
+            schema: 4,
+            counts: counts.iter().copied().collect(),
+            requirements: requirements
+                .iter()
+                .enumerate()
+                .map(|(n, status)| RequirementStatus {
+                    id: format!("widget#FR-{n}"),
+                    status: *status,
+                    conditions: Vec::new(),
+                })
+                .collect(),
+            review: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_report_passes_only_without_fail_unrun_or_uncovered() {
+        assert!(
+            report(
+                &[(Status::Pass, 3), (Status::Review, 1)],
+                &[Status::Pass, Status::Review]
+            )
+            .passes()
+        );
+        for bad in [Status::Fail, Status::Unrun, Status::Uncovered] {
+            assert!(!report(&[(bad, 1)], &[Status::Pass]).passes(), "{bad:?}");
+            assert!(!report(&[], &[bad]).passes(), "{bad:?} requirement");
+        }
+    }
+
+    #[test]
+    fn any_kani_failure_marker_fails_a_harness_that_also_succeeded() {
+        for marker in [
+            "VERIFICATION:- FAILED",
+            "- Status: FAILURE",
+            "- Status: UNSATISFIABLE",
+            "** 1 of 2 cover properties satisfied",
+        ] {
+            let log = format!(
+                "Checking harness h::bad...\n{marker}\nVERIFICATION:- SUCCESSFUL\n"
+            );
+            assert_eq!(
+                parse_kani_results(&log).get("h::bad"),
+                Some(&false),
+                "{marker}"
+            );
+        }
+        let ok = "Checking harness h::ok...\n** 2 of 2 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
+        assert_eq!(parse_kani_results(ok).get("h::ok"), Some(&true));
+    }
+
+    #[test]
+    fn each_result_format_has_a_parser() {
+        let py = parse_artifact("pytest", "tests/a.py::t PASSED\n").unwrap();
+        assert_eq!(py.get("tests/a.py::t"), Some(&true));
+        let gt = parse_artifact("gtest", "[       OK ] Suite.Case (1 ms)\n")
+            .unwrap();
+        assert_eq!(gt.get("Suite.Case"), Some(&true));
+        assert!(parse_artifact("unknown", "").is_none());
     }
 
     fn write_log(dir: &Path, name: &str, text: &str) {

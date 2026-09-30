@@ -19,4 +19,10 @@ exclude_re = [
     # converged iterate.
     "replace > with >= in Polynomial<T, Const<N>, S>::aberth_(initial_seeds|solver)",
     "replace < with (==|<=) in Polynomial<T, Const<N>, S>::aberth_solver",
+    # The loop only skips the matrix update after the last coefficient, which
+    # nothing reads; performing it too changes no result.
+    "replace < with <= in StateSpace<T, NX, 1, 1>::to_transfer_function",
+    # Kani harnesses compile only under `cfg(kani)`; the `kani` gate checks
+    # them, and no unit test can reach them.
+    "proofs::prove_",
 ]

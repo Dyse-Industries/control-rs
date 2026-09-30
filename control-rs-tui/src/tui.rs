@@ -1104,6 +1104,8 @@ mod tests {
 
         use super::*;
 
+        type Poll = std::io::Result<Option<Event>>;
+
         fn serial_target() -> Target {
             Target::Serial {
                 port: "/dev/control-rs-tui-no-such-port".to_string(),
@@ -1115,6 +1117,18 @@ mod tests {
             Event::Key(make_test_event(KeyCode::Char('q')))
         }
 
+        /// Yields one quit key, then nothing. A loop that ignores the key
+        /// polls again, so the poll count is bounded to fail instead of spin.
+        fn quit_once() -> impl FnMut(Duration) -> Poll {
+            let mut pending = Some(quit_key());
+            let mut polls = 0_u32;
+            move |_| {
+                polls = polls.saturating_add(1);
+                assert!(polls <= 1_000, "the quit key did not end the loop");
+                Ok(pending.take())
+            }
+        }
+
         #[test]
         fn quitting_ends_the_loop_without_reattaching() {
             let FakeBridge {
@@ -1124,16 +1138,13 @@ mod tests {
             } = ETSBridge::fake(None);
             let mut state = AppState::new("T".to_string(), "L".to_string());
             let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-            let mut events = std::iter::once(quit_key());
             let target = serial_target();
             let link = Link {
                 bridge: &mut bridge,
                 target: &target,
             };
             let result =
-                run_event_loop(&mut terminal, link, &mut state, |_| {
-                    Ok(events.next())
-                });
+                run_event_loop(&mut terminal, link, &mut state, quit_once());
             assert!(result.is_ok());
             assert!(
                 !state.logs.iter().any(|l| l.contains("Re-attaching")),
@@ -1157,16 +1168,13 @@ mod tests {
             .unwrap();
             let mut state = AppState::new("T".to_string(), "L".to_string());
             let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-            let mut events = std::iter::once(quit_key());
             let target = serial_target();
             let link = Link {
                 bridge: &mut bridge,
                 target: &target,
             };
             let result =
-                run_event_loop(&mut terminal, link, &mut state, |_| {
-                    Ok(events.next())
-                });
+                run_event_loop(&mut terminal, link, &mut state, quit_once());
             assert!(result.is_ok());
             assert!(
                 state.logs.iter().any(|l| l.contains("Re-attaching bridge")),
@@ -1185,16 +1193,13 @@ mod tests {
             let FakeBridge { mut bridge, .. } = ETSBridge::fake(Some(1));
             let mut state = AppState::new("T".to_string(), "L".to_string());
             let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-            let mut events = std::iter::once(quit_key());
             let target = serial_target();
             let link = Link {
                 bridge: &mut bridge,
                 target: &target,
             };
-            run_event_loop(&mut terminal, link, &mut state, |_| {
-                Ok(events.next())
-            })
-            .unwrap();
+            run_event_loop(&mut terminal, link, &mut state, quit_once())
+                .unwrap();
             assert!(state.process_exit.is_some());
             assert!(state.logs.iter().any(|l| l.contains("[EXIT]")));
         }
@@ -1791,7 +1796,29 @@ mod tests {
     #[test]
     fn the_header_counts_passed_and_failed_tests() {
         let mut state = AppState::new("Board".to_string(), "Link".to_string());
-        discover_alpha(&mut state, 0);
+        // One passing and two failing tests make the passed and failed counts
+        // differ from each other and from their complements.
+        feed(
+            &mut state,
+            &Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "Alpha",
+                description: "",
+                test_count: 3,
+                setting_count: 0,
+            },
+        );
+        for (test_id, name) in [(0u16, "One"), (1, "Two"), (2, "Three")] {
+            feed(
+                &mut state,
+                &Telemetry::TestInfo {
+                    suite_id: 0,
+                    test_id,
+                    name,
+                    description: "",
+                },
+            );
+        }
         feed(
             &mut state,
             &Telemetry::MetricReport {
@@ -1802,14 +1829,16 @@ mod tests {
                 stack_peak: 1,
             },
         );
-        feed(
-            &mut state,
-            &Telemetry::TestStateChange {
-                suite_id: 0,
-                test_id: 1,
-                state: TestState::Failed,
-            },
-        );
+        for test_id in [1, 2] {
+            feed(
+                &mut state,
+                &Telemetry::TestStateChange {
+                    suite_id: 0,
+                    test_id,
+                    state: TestState::Failed,
+                },
+            );
+        }
         state.rebuild_visible_items();
         let mut terminal =
             Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
@@ -1818,7 +1847,7 @@ mod tests {
             .draw(|f| f.render_widget(header_widget(&state), f.area()))
             .unwrap();
         let text = screen(&terminal);
-        assert!(text.contains("Tests: 2 | Passed: 1 | Failed: 1"), "{text}");
+        assert!(text.contains("Tests: 3 | Passed: 1 | Failed: 2"), "{text}");
         assert!(text.contains("TARGET: Board | LINK: Link"), "{text}");
     }
 }

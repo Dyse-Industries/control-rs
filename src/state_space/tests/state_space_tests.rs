@@ -193,6 +193,27 @@ pub mod state_space_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// A third-order controllable canonical model converts to its transfer
+    /// function: every Faddeev-LeVerrier step and numerator term matters.
+    fn test_to_transfer_function_third_order() {
+        // H(s) = (3 s^2 + 2 s + 1) / (s^3 + 6 s^2 + 11 s + 6) + 2
+        let a = Owned::<f64, 3, 3>::from_fn(|i, j| {
+            [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [-6.0, -11.0, -6.0]][i][j]
+        });
+        let b = Owned::<f64, 3, 1>::from_fn(|i, _| [0.0, 0.0, 1.0][i]);
+        let c = Owned::<f64, 1, 3>::from_fn(|_, j| [1.0, 2.0, 3.0][j]);
+        let d = Owned::<f64, 1, 1>::from_fn(|_, _| 2.0);
+        let tf =
+            ArrayStateSpace::continuous(a, b, c, d).to_transfer_function::<4>();
+        let den = [6.0, 11.0, 6.0, 1.0];
+        let num = [13.0, 24.0, 15.0, 2.0];
+        for i in 0..4 {
+            assert_almost_eq!(tf.den_slice()[i], den[i], 1e-9);
+            assert_almost_eq!(tf.num_slice()[i], num[i], 1e-9);
+        }
+    }
+
+    #[cfg_attr(test, test)]
     fn test_ctrb_obsv_tf() {
         let a = Owned::<f64, 1, 1>::from_fn(|_, _| -2.0);
         let b = Owned::<f64, 1, 1>::from_fn(|_, _| 3.0);

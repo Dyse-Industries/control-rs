@@ -440,6 +440,14 @@ mod tests {
     }
 
     #[test]
+    fn a_raw_string_with_bare_quotes_hides_the_text_between_them() {
+        // Read as ordinary strings, the quotes would expose the attribute.
+        let src = "const A: &str = r#\"a\" #[allow(clippy::panic)] \"b\"#;\n\
+                   #[allow(clippy::indexing_slicing)]\nfn f() {}\n";
+        assert_eq!(lints_of(src), ["indexing_slicing"]);
+    }
+
+    #[test]
     fn escaped_quotes_do_not_end_a_string() {
         let src = "const A: &str = \"say \\\" #[allow(clippy::panic)]\";\n\
                    #[allow(clippy::indexing_slicing)]\nfn f() {}\n";
