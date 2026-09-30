@@ -284,11 +284,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@nightly
 
-      - uses: cargo-bins/cargo-binstall@main
-      - name: Install cargo-kani
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: cargo binstall -y cargo-kani
+      - name: Install Kani
+        run: |
+          cargo install --locked kani-verifier --version 0.68.0
+          cargo kani setup
 
       - name: Run Kani Gate
         run: cargo ci --verbose --only kani
@@ -377,29 +376,44 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Restore Criterion Baseline
-        uses: ./.github/actions/restore-baseline
-        with:
-          name: baseline-regression
-          path: target/criterion
+      # Criterion compares against target/criterion/<id>/base, so the baseline
+      # is benchmarked on this runner before the gate runs: timings from a
+      # different machine shift every benchmark by more than the noise
+      # threshold. A missing or failing baseline run leaves the gate without
+      # one, which is not a failure.
+      - name: Benchmark Baseline
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            base=$(git merge-base "origin/$BASE_REF" HEAD)
+          else
+            base="$BEFORE"
+          fi
+          if [ -z "$base" ] || [ "$base" = "$(git rev-parse HEAD)" ] \
+            || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "::notice::No baseline revision; benchmarks run without one."
+            exit 0
+          fi
+          git worktree add ../baseline "$base"
+          if (cd ../baseline && cargo bench); then
+            mkdir -p target
+            cp -R ../baseline/target/criterion target/criterion
+          else
+            echo "::notice::Baseline benchmarks failed at $base; no baseline."
+          fi
 
       - name: Run Regression Gate
         run: cargo ci --verbose --only regression
-
-      - name: Upload Criterion Baseline
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: baseline-regression
-          path: target/criterion/
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Upload Regression Artifacts
         if: always()

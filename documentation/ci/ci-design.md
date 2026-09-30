@@ -685,10 +685,13 @@ deadlines and performance regression bounds within automated quality gates,
    threshold. The benches set the noise threshold to 15 % in their Criterion
    configuration. Criterion compares the new sample with
    `target/criterion/<benchmark_id>/base/`, then copies `new/` to `base/`. The
-   baseline is the `target/criterion` artifact of the newest `main` run that
-   uploaded it, whatever that run's conclusion, restored by
-   `.github/actions/restore-baseline` before the gate runs, so one failed
-   gate on `main` does not discard every baseline. A benchmark without a
+   baseline runs in the same job, on the same runner, before the gate
+   runs: the job checks out the merge base with `main` (the previous tip of
+   `main` on a push), runs `cargo bench` there and copies its
+   `target/criterion` into the working tree. A baseline from another runner
+   shifts every benchmark by more than the noise threshold, so no artifact is
+   carried between runs. If the baseline revision is missing or its benchmarks
+   fail, the gate runs without one. A benchmark without a
    `change:` line has no baseline: the harness reports `no baseline` and checks
    the budget only; the absence is not a failure.
 5. **Deterministic Fail-Closed Gating**: Emits exit code 0 if all monitored
@@ -999,3 +1002,4 @@ Available: https://github.com/rust-lang/miri. Accessed: Sep. 28, 2026.
 [3] Kani Rust Verifier Contributors, "The Kani Rust Verifier Documentation and
 Source," *model-checking/kani GitHub repository*. [Online]. Available:
 https://github.com/model-checking/kani. Accessed: Sep. 28, 2026.
+| 1.38     | September 30, 2026 | @MitchellDScott | §4.7 `regression` runs the baseline benchmarks (merge base with `main`, or the previous `main` tip) in the same job on the same runner, so no `baseline-regression` artifact is uploaded or restored; `restore-baseline` stays for the coverage and mutation baselines. |
