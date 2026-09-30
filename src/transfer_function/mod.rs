@@ -42,7 +42,7 @@ pub mod tests;
 use crate::math::complex_num::Complex;
 use crate::math::dsp::{Convolution, DefaultDsp};
 use crate::math::num_traits::{Float, Scalar, Zero};
-use crate::math::num_types::{Const, Dim};
+use crate::math::num_types::{Const, Dim, DimAdd, DimMax};
 use crate::math::storage::{
     ArrayStorage, ContiguousStorage, DenseStorage, DenseStorageMut, Storage,
     StorageView, StorageViewMut,
@@ -514,6 +514,17 @@ where
     }
 }
 
+/// Canonical type-level encoding of `Const<N>`.
+type TypeNum<const N: usize> = <Const<N> as Dim>::TypeNum;
+
+/// Type-level sum `A + B`.
+type Sum<A, B> = <A as DimAdd<B>>::Output;
+
+/// Type-level `N + 1`, the length bound `N` coefficients must cover after a
+/// convolution: a capacity `C` holds `A + B - 1` coefficients iff
+/// `A + B <= C + 1`.
+type Succ<const N: usize> = Sum<TypeNum<N>, Const<1>>;
+
 ////////////////////////////////////////////////////////////////////////////////
 // System Interconnections & Algebra
 ////////////////////////////////////////////////////////////////////////////////
@@ -541,6 +552,12 @@ where
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        TypeNum<N1>: DimAdd<TypeNum<N2>>,
+        TypeNum<D1>: DimAdd<TypeNum<D2>>,
+        TypeNum<NOUT>: DimAdd<Const<1>>,
+        TypeNum<DOUT>: DimAdd<Const<1>>,
+        Sum<TypeNum<N1>, TypeNum<N2>>: DimMax<Succ<NOUT>, Output = Succ<NOUT>>,
+        Sum<TypeNum<D1>, TypeNum<D2>>: DimMax<Succ<DOUT>, Output = Succ<DOUT>>,
     {
         let num_storage = convolve_poly::<C, T, N1, N2, NOUT>(
             &self.num_storage,
@@ -561,6 +578,18 @@ where
     /// Series (cascade) connection: $H_{\text{series}} = H_1 \cdot H_2 = \frac{B_1 B_2}{A_1 A_2}$.
     ///
     /// Capacity: $N_{\text{out}} = N_1 + N_2 - 1$, $D_{\text{out}} = D_1 + D_2 - 1$.
+    ///
+    /// # Compile-time capacity contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// let h = ArrayTransferFunction::<f64, 1, 2>::continuous(
+    ///     [1.0], [1.0, 1.0],
+    /// );
+    /// // The denominator needs 2 + 2 - 1 = 3 coefficients.
+    /// let _ = h.series::<1, 2, 1, 2>(&h);
+    /// ```
     pub fn series<
         const N2: usize,
         const D2: usize,
@@ -575,6 +604,12 @@ where
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        TypeNum<N1>: DimAdd<TypeNum<N2>>,
+        TypeNum<D1>: DimAdd<TypeNum<D2>>,
+        TypeNum<NOUT>: DimAdd<Const<1>>,
+        TypeNum<DOUT>: DimAdd<Const<1>>,
+        Sum<TypeNum<N1>, TypeNum<N2>>: DimMax<Succ<NOUT>, Output = Succ<NOUT>>,
+        Sum<TypeNum<D1>, TypeNum<D2>>: DimMax<Succ<DOUT>, Output = Succ<DOUT>>,
     {
         self.series_with::<DefaultDsp, N2, D2, NOUT, DOUT>(rhs)
     }
@@ -598,6 +633,14 @@ where
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        TypeNum<N1>: DimAdd<TypeNum<D2>>,
+        TypeNum<N2>: DimAdd<TypeNum<D1>>,
+        TypeNum<D1>: DimAdd<TypeNum<D2>>,
+        TypeNum<NOUT>: DimAdd<Const<1>>,
+        TypeNum<DOUT>: DimAdd<Const<1>>,
+        Sum<TypeNum<N1>, TypeNum<D2>>: DimMax<Succ<NOUT>, Output = Succ<NOUT>>,
+        Sum<TypeNum<N2>, TypeNum<D1>>: DimMax<Succ<NOUT>, Output = Succ<NOUT>>,
+        Sum<TypeNum<D1>, TypeNum<D2>>: DimMax<Succ<DOUT>, Output = Succ<DOUT>>,
     {
         let mut num = convolve_poly::<C, T, N1, D2, NOUT>(
             &self.num_storage,
@@ -618,6 +661,18 @@ where
     /// Parallel connection: $H_1 + H_2 = (B_1 A_2 + B_2 A_1) / (A_1 A_2)$.
     ///
     /// `NOUT >= N1+D2-1` and `NOUT >= N2+D1-1`; `DOUT >= D1+D2-1`.
+    ///
+    /// # Compile-time capacity contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// let h = ArrayTransferFunction::<f64, 1, 2>::continuous(
+    ///     [1.0], [1.0, 1.0],
+    /// );
+    /// // The numerator needs 1 + 2 - 1 = 2 coefficients.
+    /// let _ = h.parallel::<1, 2, 1, 3>(&h);
+    /// ```
     pub fn parallel<
         const N2: usize,
         const D2: usize,
@@ -632,6 +687,14 @@ where
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        TypeNum<N1>: DimAdd<TypeNum<D2>>,
+        TypeNum<N2>: DimAdd<TypeNum<D1>>,
+        TypeNum<D1>: DimAdd<TypeNum<D2>>,
+        TypeNum<NOUT>: DimAdd<Const<1>>,
+        TypeNum<DOUT>: DimAdd<Const<1>>,
+        Sum<TypeNum<N1>, TypeNum<D2>>: DimMax<Succ<NOUT>, Output = Succ<NOUT>>,
+        Sum<TypeNum<N2>, TypeNum<D1>>: DimMax<Succ<NOUT>, Output = Succ<NOUT>>,
+        Sum<TypeNum<D1>, TypeNum<D2>>: DimMax<Succ<DOUT>, Output = Succ<DOUT>>,
     {
         self.parallel_with::<DefaultDsp, DefaultBlas, N2, D2, NOUT, DOUT>(rhs)
     }
@@ -655,6 +718,13 @@ where
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        TypeNum<N1>: DimAdd<TypeNum<D2>> + DimAdd<TypeNum<N2>>,
+        TypeNum<D1>: DimAdd<TypeNum<D2>>,
+        TypeNum<NOUT>: DimAdd<Const<1>>,
+        TypeNum<DOUT>: DimAdd<Const<1>>,
+        Sum<TypeNum<N1>, TypeNum<D2>>: DimMax<Succ<NOUT>, Output = Succ<NOUT>>,
+        Sum<TypeNum<D1>, TypeNum<D2>>: DimMax<Succ<DOUT>, Output = Succ<DOUT>>,
+        Sum<TypeNum<N1>, TypeNum<N2>>: DimMax<Succ<DOUT>, Output = Succ<DOUT>>,
     {
         let num = convolve_poly::<C, T, N1, D2, NOUT>(
             &self.num_storage,
@@ -675,6 +745,18 @@ where
     /// Negative feedback: $H_1 / (1 + H_1 H_2) = (B_1 A_2) / (A_1 A_2 + B_1 B_2)$.
     ///
     /// `NOUT >= N1+D2-1`; `DOUT` is at least the larger of `D1+D2-1` and `N1+N2-1`.
+    ///
+    /// # Compile-time capacity contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// let h = ArrayTransferFunction::<f64, 1, 2>::continuous(
+    ///     [1.0], [1.0, 1.0],
+    /// );
+    /// // The numerator needs 1 + 2 - 1 = 2 coefficients.
+    /// let _ = h.feedback::<1, 2, 1, 3>(&h);
+    /// ```
     pub fn feedback<
         const N2: usize,
         const D2: usize,
@@ -689,6 +771,13 @@ where
         Const<D2>: Dim,
         Const<NOUT>: Dim,
         Const<DOUT>: Dim,
+        TypeNum<N1>: DimAdd<TypeNum<D2>> + DimAdd<TypeNum<N2>>,
+        TypeNum<D1>: DimAdd<TypeNum<D2>>,
+        TypeNum<NOUT>: DimAdd<Const<1>>,
+        TypeNum<DOUT>: DimAdd<Const<1>>,
+        Sum<TypeNum<N1>, TypeNum<D2>>: DimMax<Succ<NOUT>, Output = Succ<NOUT>>,
+        Sum<TypeNum<D1>, TypeNum<D2>>: DimMax<Succ<DOUT>, Output = Succ<DOUT>>,
+        Sum<TypeNum<N1>, TypeNum<N2>>: DimMax<Succ<DOUT>, Output = Succ<DOUT>>,
     {
         self.feedback_with::<DefaultDsp, DefaultBlas, N2, D2, NOUT, DOUT>(rhs)
     }
@@ -709,6 +798,8 @@ where
         &self,
     ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
     where
+        TypeNum<ORDER>: DimAdd<Const<1>>,
+        Const<D>: Dim<TypeNum = Succ<ORDER>>,
         Const<ORDER>: Dim,
         Const<1>: Dim,
         B: Scal<T, ArrayStorage<T, ORDER, 1>>
@@ -746,10 +837,22 @@ where
     /// # Errors
     /// Returns [`TransferFunctionError`] if $N > D$, $D < 2$, or the leading
     /// denominator coefficient is zero.
+    ///
+    /// # Compile-time capacity contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// let h = ArrayTransferFunction::<f64, 1, 3>::continuous([1.0], [1.0, 1.0, 1.0]);
+    /// // Three denominator coefficients give 2 states.
+    /// let _ = h.to_controllable_canonical_form::<3>();
+    /// ```
     pub fn to_controllable_canonical_form<const ORDER: usize>(
         &self,
     ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
     where
+        TypeNum<ORDER>: DimAdd<Const<1>>,
+        Const<D>: Dim<TypeNum = Succ<ORDER>>,
         Const<ORDER>: Dim,
         Const<1>: Dim,
     {
@@ -761,6 +864,8 @@ where
         &self,
     ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
     where
+        TypeNum<ORDER>: DimAdd<Const<1>>,
+        Const<D>: Dim<TypeNum = Succ<ORDER>>,
         Const<ORDER>: Dim,
         Const<1>: Dim,
         B: Scal<T, ArrayStorage<T, ORDER, 1>>
@@ -778,10 +883,24 @@ where
     }
 
     /// Observable canonical form (dual of last-row CCF).
+    ///
+    /// # Compile-time capacity contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// let h = ArrayTransferFunction::<f64, 1, 3>::continuous(
+    ///     [1.0], [1.0, 1.0, 1.0],
+    /// );
+    /// // Three denominator coefficients give 2 states.
+    /// let _ = h.to_observable_canonical_form::<3>();
+    /// ```
     pub fn to_observable_canonical_form<const ORDER: usize>(
         &self,
     ) -> Result<StateSpace<T, ORDER, 1, 1>, TransferFunctionError>
     where
+        TypeNum<ORDER>: DimAdd<Const<1>>,
+        Const<D>: Dim<TypeNum = Succ<ORDER>>,
         Const<ORDER>: Dim,
         Const<1>: Dim,
     {
@@ -804,7 +923,7 @@ where
         B: Scal<T, ArrayStorage<T, ORDER, 1>>
             + Axpy<T, ArrayStorage<T, ORDER, 1>, ArrayStorage<T, ORDER, 1>>,
     {
-        if ORDER.saturating_add(1) != D || ORDER == 0 {
+        if ORDER == 0 {
             return Err(TransferFunctionError::ImproperSystem);
         }
         if N > D {
@@ -937,11 +1056,23 @@ where
     /// ZOH via last-row CCF, Van Loan `StateSpace::to_discrete_zoh`, then SISO TF.
     ///
     /// `ORDER` is the state dimension $D-1$.
+    ///
+    /// # Compile-time capacity contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::transfer_function::ArrayTransferFunction;
+    ///
+    /// let h = ArrayTransferFunction::<f64, 1, 3>::continuous([1.0], [1.0, 1.0, 1.0]);
+    /// // Three denominator coefficients give 2 states.
+    /// let _ = h.to_discrete_zoh::<3>(0.1);
+    /// ```
     pub fn to_discrete_zoh<const ORDER: usize>(
         &self,
         sample_time: T,
     ) -> LinAlgResult<ArrayTransferFunction<T, D, D>>
     where
+        TypeNum<ORDER>: DimAdd<Const<1>>,
+        Const<D>: Dim<TypeNum = Succ<ORDER>>,
         Const<ORDER>: Dim,
     {
         let ss = self

@@ -1008,6 +1008,23 @@ pub mod storage_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// Verifies an unchecked mutable window and a cross-layout block copy.
+    fn test_storage_submatrix_mut_unchecked() {
+        let mut dst = ArrayStorage::<f64, 3, 3>::zeros();
+        let src =
+            RowArrayStorage::<f64, 2, 2>::from_array([[1.0, 2.0], [3.0, 4.0]]);
+        // SAFETY: the 2x2 block at (1, 1) lies inside the 3x3 destination.
+        unsafe { dst.submatrix_mut_unchecked(1, 1) }.copy_from(&src);
+        assert_eq!(dst.get(1, 1), Some(&1.0));
+        assert_eq!(dst.get(1, 2), Some(&2.0));
+        assert_eq!(dst.get(2, 1), Some(&3.0));
+        assert_eq!(dst.get(2, 2), Some(&4.0));
+        assert_eq!(dst.get(0, 0), Some(&0.0));
+        assert_eq!(dst.get(0, 2), Some(&0.0));
+        assert_eq!(dst.get(2, 0), Some(&0.0));
+    }
+
+    #[cfg_attr(test, test)]
     /// Verifies view checked vs unchecked access.
     fn test_storage_view_checked_unchecked() {
         let slice = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];

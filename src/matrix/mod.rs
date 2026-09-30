@@ -432,37 +432,6 @@ impl<T, R: Dim, C: Dim, S: StorageMut<T, R, C>> Matrix<T, R, C, S> {
     }
 }
 
-impl<T: Copy, const R: usize, const C: usize, S>
-    Matrix<T, Const<R>, Const<C>, S>
-where
-    Const<R>: Dim,
-    Const<C>: Dim,
-    S: StorageMut<T, Const<R>, Const<C>>,
-{
-    /// Copies `src` into this matrix starting at `(row, col)`.
-    pub fn write_block<const BR: usize, const BC: usize, S2>(
-        &mut self,
-        row: usize,
-        col: usize,
-        src: &Matrix<T, Const<BR>, Const<BC>, S2>,
-    ) where
-        Const<BR>: Dim,
-        Const<BC>: Dim,
-        S2: Storage<T, Const<BR>, Const<BC>>,
-    {
-        for i in 0..BR {
-            for j in 0..BC {
-                if let (Some(target), Some(&v)) = (
-                    self.get_mut(row.saturating_add(i), col.saturating_add(j)),
-                    src.get(i, j),
-                ) {
-                    *target = v;
-                }
-            }
-        }
-    }
-}
-
 impl<T, R: Dim, C: Dim, S: Storage<T, R, C> + ContiguousStorage<T>>
     Matrix<T, R, C, S>
 {

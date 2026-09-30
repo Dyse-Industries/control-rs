@@ -312,9 +312,11 @@ where
 ```
 
 The numerator is $B_1 A_2$; the denominator is $A_1 A_2$ plus $B_1 B_2$
-accumulated with `Axpy`. An output capacity below the stated bound is not
-rejected today: the convolution error is discarded and the result is
-truncated (§8).
+accumulated with `Axpy`. Each capacity bound is a type-level constraint:
+for a sum $a + b - 1 \le C$ the signature requires
+$\max(a + b,\ C + 1) = C + 1$ over the canonical `TypeNum` encodings
+(`DimAdd`, `DimMax`), so an undersized `NOUT` or `DOUT` is a type error
+(`E0271`).
 
 This mirrors the algebra used by reference implementations exactly —
 `python-control`'s `feedback()` computes
@@ -392,7 +394,7 @@ numerical profiles:
 
 ```rust
 impl<T: Float + Copy, const N: usize, const D: usize> ArrayTransferFunction<T, N, D> {
-    // ORDER is the state dimension D - 1.
+    // ORDER is the state dimension D - 1; `TypeNum<ORDER> + 1 == TypeNum<D>`.
     pub fn to_discrete_zoh<const ORDER: usize>(
         &self,
         sample_time: T,
@@ -561,7 +563,7 @@ Validation compares against NumPy / SciPy reference models.
 | FR-2 — Frequency Response Evaluation                  | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_frequency_response_continuous`                                               |
 | FR-3 — Rational System Algebra                        | Property-based test, Back-to-back comparison     | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_series`                                                    |
 | FR-4 — System Discretization                          | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_tustin_prewarped`                                                            |
-| FR-5 — State-Space Canonical Realization              | Requirements-based test                          | `src/transfer_function/tests/transfer_function_tests.rs::test_controllable_canonical_form`, `test_ccf_eigenvalues_match_denominator_roots` |
+| FR-5 — State-Space Canonical Realization              | Requirements-based test                          | `src/transfer_function/tests/transfer_function_tests.rs::test_controllable_canonical_form`, `test_ccf_eigenvalues_match_denominator_roots`; `compile_fail` doctests on the canonical forms and `to_discrete_zoh` |
 | FR-6 — Generic Pole and Zero Extraction               | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_poles_and_zeros`                                            |
 | NFR-1 — Deterministic Fixed-Memory Execution          | Resource usage evaluation                        | `#![no_std]` host allocator audit                                                                                                          |
 | NFR-2 — Real-Time Frequency Sweep Throughput          | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                                                                                                      |
@@ -626,9 +628,6 @@ Validation compares against NumPy / SciPy reference models.
   `StateSpace::to_discrete_tustin` returns `SingularDiscretizationOperator`,
   and FR-4's ill-conditioning error is unimplemented here (§4.9). One contract
   across both models is undecided.
-- **Interconnection Capacity Check**: `series`, `parallel` and `feedback`
-  discard the convolution's capacity error, so an undersized `NOUT` or `DOUT`
-  truncates silently (§4.8).
 - **Canonical Form Scope**: Controllable/observable canonical form (§4.10) is
   numerically fragile above low system order (Kenney & Laub, 1988; Yang & Jones,
   2026). Balanced or modal realization is identified as the
@@ -729,3 +728,4 @@ Validation compares against NumPy / SciPy reference models.
 | 2.3      | September 1, 2026 | @MitchellDScott | Updated `poles()` and `zeros()` to return worst-case buffers `[Complex<T>; D]` and `[Complex<T>; N]` directly from type bounds without generic parameters. |
 | 2.4      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` (SciPy oracle) and listed the cases not yet cross-validated. |
 | 2.5      | September 23, 2026 | @MitchellDScott | Field bounds use `T: Scalar + SaturatingDiv` (`num-traits-design.md` FR-6). |
+| 2.6      | September 30, 2026 | @MitchellDScott | Output capacities of `series`, `parallel`, `feedback` and `ORDER` of the canonical forms and `to_discrete_zoh` are type-level constraints (`DimAdd`, `DimMax`); the silent-truncation limitation is removed from §4.8 and §8. |

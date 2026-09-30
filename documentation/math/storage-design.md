@@ -127,6 +127,8 @@ classDiagram
         +as_mut_ptr() *mut T
         +get_mut_unchecked(r: usize, c: usize) &mut T
         +set_unchecked(r: usize, c: usize, val: T)
+        +submatrix_mut_unchecked(row: usize, col: usize) impl DenseStorageMut
+        +copy_from(src: DenseStorage)
     }
 
     class ContiguousStorage~T~ {
@@ -1309,3 +1311,4 @@ Accessed: Aug. 18, 2026.
 | 2.0      | August 24, 2026 | @MitchellDScott | Decoupled storage subsystems: established distinct `DenseStorage`, `PackedStorage`, and `SparseStorage` architectures without cross-subsystem inheritance. |
 | 2.1      | August 24, 2026 | @MitchellDScott | Strided view refinement: separated runtime strided views (`StorageView` / `StorageViewMut`) from compile-time marker views (`StaticStorageView`).    |
 | 2.2      | August 25, 2026 | @MitchellDScott | Inherent structured projections: replaced `FromDenseStorage` with inherent projection constructors (`from_dense_diagonal`, `from_dense_triangle`).    |
+| 2.3      | September 30, 2026 | @MitchellDScott | `DenseStorageMut` gains `unsafe submatrix_mut_unchecked` (mutable strided window; caller proves the window fits) and safe same-shape `copy_from`; block placement in numerical models goes through them. |
