@@ -60,9 +60,10 @@ post = [
 # deletes target/ci-groups, so every group starts from an empty target directory.
 [execution.groups]
 build_test = ["build", "test"]
-dynamic = ["miri"]
+miri = ["miri"]
 lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs"]
-audit = ["deny", "semver", "valgrind", "geiger"]
+audit = ["deny", "semver", "geiger"]
+valgrind = ["valgrind"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
 target = ["virtual-ets"]
@@ -134,7 +135,7 @@ timeout_secs = 1200
 description = "Executes host unit and integration test suites"
 
 # ==============================================================================
-# Dynamic Analysis Lane Gates (dynamic)
+# Undefined Behavior Analysis Lane Gates (miri)
 # ==============================================================================
 
 [miri]

@@ -144,7 +144,7 @@ jobs:
           retention-days: 30
 
   # ============================================================================
-  # Group: audit (deny, semver, valgrind, geiger)
+  # Groups: audit & valgrind (deny, semver, geiger, valgrind)
   # ============================================================================
   audit:
     name: Security & Memory Safety Audit
@@ -165,8 +165,8 @@ jobs:
       - name: Install Valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
 
-      - name: Run Audit Group
-        run: cargo ci --verbose --group audit
+      - name: Run Audit and Valgrind Groups
+        run: cargo ci --verbose --group audit,valgrind
 
       - name: Upload Audit Artifacts
         if: always()
@@ -302,10 +302,10 @@ jobs:
           retention-days: 7
 
   # ============================================================================
-  # Post stage: dynamic (miri dynamic analysis)
+  # Group: miri (undefined behavior analysis)
   # ============================================================================
-  dynamic:
-    name: Dynamic Analysis (Miri)
+  miri:
+    name: Undefined Behavior Analysis (Miri)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -314,14 +314,14 @@ jobs:
         with:
           components: miri
 
-      - name: Run Dynamic Group
-        run: cargo ci --verbose --group dynamic
+      - name: Run Miri Group
+        run: cargo ci --verbose --group miri
 
-      - name: Upload Dynamic Artifacts
+      - name: Upload Miri Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-artifacts-dynamic
+          name: ci-artifacts-miri
           path: target/ci-artifacts/
           retention-days: 7
 
@@ -469,7 +469,7 @@ jobs:
   report:
     name: Aggregate Report
     runs-on: ubuntu-latest
-    needs: [ lint, build_test, target, audit, verify, coverage, regression, mutants, kani, dynamic, trace ]
+    needs: [ lint, build_test, target, audit, verify, coverage, regression, mutants, kani, miri, trace ]
     if: always()
     permissions:
       pull-requests: write

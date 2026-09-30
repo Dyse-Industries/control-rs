@@ -435,10 +435,11 @@ post = [
 
 [execution.groups]
 build_test = ["build", "test"]
+miri = ["miri"]
 lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs"]
-audit = ["deny", "semver", "valgrind", "geiger"]
+audit = ["deny", "semver", "geiger"]
+valgrind = ["valgrind"]
 verify = ["cross-compare"]
-dynamic = ["miri"]
 coverage = ["coverage"]
 target = ["virtual-ets"]
 
@@ -981,6 +982,7 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.34     | September 28, 2026 | @MitchellDScott | Recorded FR-20 (`kani`) and FR-21 (`miri`) deferred to PR3-6 with the empty-target fail-closed rule; recorded `fuzz` and `lockbud` as deferred technical debt (§8).                                                                                                                                                                                                                                                                                                                                                                     |
 | 1.35     | September 28, 2026 | @MitchellDScott | Un-deferred FR-20 (`kani`) and FR-21 (`miri`) for PR3-6. Specified `kani` in `post` exclusive stage and `miri` in dedicated `dynamic` execution group; moved `trace` to `post` after `kani` (§4.3). Added Miri and Kani references.                                                                                                                                                                                                                                                                                                     |
 | 1.36     | September 28, 2026 | @MitchellDScott | Removed the `trace-marks` gate and `mutants-trace-macros`; `trace` reads `reqs.jsonl` and the result logs only. |
+| 1.37     | September 29, 2026 | @MitchellDScott | Renamed `dynamic` group to `miri` (§4.3). Extracted `valgrind` from `audit` into a dedicated `valgrind` group so `audit` runs cleanly in pre-commit without requiring host Valgrind support. |
 
 ---
 
