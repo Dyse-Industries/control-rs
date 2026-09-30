@@ -1,4 +1,4 @@
-//! Trace scanner edge cases: custom marker spans and fallback method cells.
+//! Trace scanner edge case: the fallback method cell.
 
 #[cfg(test)]
 mod trace_gap {
@@ -11,8 +11,8 @@ mod trace_gap {
     /// A file to create: its path and contents.
     type Fixture<'a> = (&'a str, &'a str);
 
-    fn config(marker: &str) -> String {
-        format!(
+    fn config() -> String {
+        String::from(
             "id = '(?:FR|NFR|C)-[0-9]+[a-z]?'\n\
          condition = 'VC-[0-9]+(?:\\.[0-9]+[a-z]?)?'\n\
          doc = '[a-z0-9-]+'\n\
@@ -20,23 +20,21 @@ mod trace_gap {
          doc_id = '^#\\s+.*\\((?P<doc>[a-z0-9-]+)\\)'\n\
          definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
          verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\
-         methods = [\"test\", \"analysis\", \"inspection\", \"review\"]\n\
-         marked_methods = [\"test\"]\n\
+         methods = [\"libtest\", \"analysis\", \"inspection\", \"review\"]\n\
+         automated_methods = [\"libtest\"]\n\
          retired = []\n\n\
-         [markers]\n\
-         files = [\"src\"]\n\
-         suffixes = [\".rs\"]\n\
-         marker = \"{marker}\"\n"
+         [method.libtest]\n\
+         result_artifact = \"test.log\"\n",
         )
     }
 
-    fn workdir(name: &str, marker: &str, files: &[Fixture<'_>]) -> PathBuf {
+    fn workdir(name: &str, files: &[Fixture<'_>]) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "control_rs_ci_trace_gap_{name}_{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);
-        let cfg = config(marker);
+        let cfg = config();
         for (path, text) in std::iter::once(("trace.toml", cfg.as_str()))
             .chain(files.iter().copied())
         {
@@ -64,25 +62,6 @@ mod trace_gap {
     }
 
     #[test]
-    fn a_parenthesised_custom_marker_spans_lines_until_it_closes() {
-        let source = "// req(\n    \"widget#VC-1.1\",\n    \"widget#VC-2.1\"\n)\nfn t() {}\n";
-        let dir = workdir("span", "// req(", &[("src/a.rs", source)]);
-        let output =
-            run(env!("CARGO_BIN_EXE_trace-marks"), &dir, "out/marks.jsonl");
-        assert_eq!(output.status.code(), Some(0), "{output:?}");
-        let ids: Vec<_> = rows(&dir.join("out/marks.jsonl"))
-            .iter()
-            .filter_map(|row| {
-                row.pointer("/id")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .collect();
-        assert_eq!(ids, ["widget#VC-1.1", "widget#VC-2.1"]);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn the_fallback_method_is_the_first_code_span_without_any_id() {
         let doc = "\
 # Widget (widget)
@@ -93,8 +72,7 @@ mod trace_gap {
 |:----------|:------------|:-------|:----------|
 | VC-1.1    | FR-1        | `FR-1` `bogus` | Exact |
 ";
-        let dir =
-            workdir("method", "unused", &[("docs/widget-design.md", doc)]);
+        let dir = workdir("method", &[("docs/widget-design.md", doc)]);
         // The unknown method makes the run fail, but the rows are still written.
         let _ = run(env!("CARGO_BIN_EXE_trace-reqs"), &dir, "out/reqs.jsonl");
         let methods: Vec<_> = rows(&dir.join("out/reqs.jsonl"))
