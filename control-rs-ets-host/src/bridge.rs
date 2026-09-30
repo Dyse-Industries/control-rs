@@ -1184,7 +1184,34 @@ mod tests {
         let shutdown = AtomicBool::new(false);
         let script = steps("ok\nnext\n");
         let mut reader = Script::new(&script, &shutdown, true);
-        pump_stream(|buf| Ok(reader.next(buf)), &tx, &shutdown);
+        let done = AtomicBool::new(false);
+        let stuck = AtomicBool::new(false);
+        // A pump that ignores the end of the stream never returns, and a
+        // `||` in its loop test would never even poll the reader, so a
+        // watchdog turns that hang into a failure.
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                pump_stream(|buf| Ok(reader.next(buf)), &tx, &shutdown);
+                done.store(true, Ordering::SeqCst);
+            });
+            scope.spawn(|| {
+                let deadline = std::time::Instant::now()
+                    + std::time::Duration::from_secs(5);
+                while !done.load(Ordering::SeqCst)
+                    && std::time::Instant::now() < deadline
+                {
+                    thread::sleep(std::time::Duration::from_millis(10));
+                }
+                if !done.load(Ordering::SeqCst) {
+                    stuck.store(true, Ordering::SeqCst);
+                    shutdown.store(true, Ordering::SeqCst);
+                }
+            });
+        });
+        assert!(
+            !stuck.load(Ordering::SeqCst),
+            "the pump kept running after the stream ended"
+        );
         assert_eq!(console_lines(&rx), ["ok", "next"]);
     }
 
@@ -1219,6 +1246,7 @@ mod tests {
         let bridge = ETSBridge::fake(None).bridge;
         let shutdown = Arc::clone(&bridge.shutdown);
         assert!(!shutdown.load(Ordering::SeqCst));
+        assert!(!bridge.is_shut_down());
         drop(bridge);
         assert!(shutdown.load(Ordering::SeqCst));
     }
