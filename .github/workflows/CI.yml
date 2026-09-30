@@ -16,7 +16,6 @@ on:
       - 'control-rs-tui/**'
       - 'control-rs-ci/**'
       - 'control-rs-compare/**'
-      - 'control-rs-trace-macros/**'
       - 'documentation/**'
       - '.github/workflows/**'
       - '*.toml'
@@ -40,7 +39,6 @@ on:
       - 'control-rs-tui/**'
       - 'control-rs-ci/**'
       - 'control-rs-compare/**'
-      - 'control-rs-trace-macros/**'
       - 'documentation/**'
       - '.github/workflows/**'
       - '*.toml'
@@ -58,7 +56,7 @@ concurrency:
 jobs:
   # ============================================================================
   # Stage pre (fetch) and group lint (fmt, clippy, allow-audit, doc, vale,
-  # trace-reqs, trace-marks, trace)
+  # trace-reqs, trace-marks)
   # ============================================================================
   lint:
     name: Lint & Prose
@@ -275,6 +273,103 @@ jobs:
           retention-days: 30
 
   # ============================================================================
+  # Post stage: kani (bounded model checking)
+  # ============================================================================
+  kani:
+    name: Kani Formal Verification
+    runs-on: ubuntu-latest
+    needs: [ build_test ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install cargo-kani
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: cargo binstall -y cargo-kani
+
+      - name: Run Kani Gate
+        run: cargo ci --verbose --only kani
+
+      - name: Upload Kani Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-kani
+          path: target/ci-artifacts/
+          retention-days: 7
+
+  # ============================================================================
+  # Post stage: dynamic (miri dynamic analysis)
+  # ============================================================================
+  dynamic:
+    name: Dynamic Analysis (Miri)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Run Dynamic Group
+        run: cargo ci --verbose --group dynamic
+
+      - name: Upload Dynamic Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-dynamic
+          path: target/ci-artifacts/
+          retention-days: 7
+
+  # ============================================================================
+  # Post stage: trace (requirement traceability check)
+  # Needs lint (reqs.jsonl), build_test (test.log), and kani (kani.log).
+  # ============================================================================
+  trace:
+    name: Requirement Traceability
+    runs-on: ubuntu-latest
+    needs: [ lint, build_test, kani ]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Download lint artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-artifacts-lint
+          path: target/ci-artifacts/
+
+      - name: Download build_test artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-artifacts-build_test
+          path: target/ci-artifacts/
+
+      - name: Download kani artifacts
+        if: needs.kani.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-artifacts-kani
+          path: target/ci-artifacts/
+
+      - name: Run Trace Gate
+        run: cargo ci --verbose --only trace
+
+      - name: Upload Trace Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-trace
+          path: target/ci-artifacts/
+          retention-days: 7
+
+  # ============================================================================
   # Post stage: regression (benchmarks & regression gate)
   # ============================================================================
   regression:
@@ -374,7 +469,7 @@ jobs:
   report:
     name: Aggregate Report
     runs-on: ubuntu-latest
-    needs: [ lint, build_test, target, audit, verify, coverage, regression, mutants ]
+    needs: [ lint, build_test, target, audit, verify, coverage, regression, mutants, kani, dynamic, trace ]
     if: always()
     permissions:
       pull-requests: write
