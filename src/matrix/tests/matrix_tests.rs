@@ -718,6 +718,11 @@ pub mod matrix_test_suite {
         assert_eq!(*sub.get(0, 0).unwrap(), *m.get(1, 1).unwrap());
         assert_eq!(*sub.get(1, 1).unwrap(), *m.get(2, 2).unwrap());
         assert!(m.submatrix::<2, 2>(2, 2).is_none());
+        // Each axis is checked on its own, and an exact fit is accepted.
+        assert!(m.submatrix::<1, 2>(0, 2).is_none());
+        assert!(m.submatrix::<2, 1>(2, 0).is_none());
+        assert!(m.submatrix::<3, 3>(0, 0).is_some());
+        assert!(m.submatrix::<1, 1>(2, 2).is_some());
         let rev = m.reverse_view();
         assert_eq!(*rev.get(0, 0).unwrap(), *m.get(2, 2).unwrap());
         let sl = m.slice();
@@ -853,6 +858,33 @@ pub mod matrix_test_suite {
         let rows_3x2 = [[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]];
         let mat_3x2 = Owned::<f64, 3, 2>::from_row_arrays(rows_3x2);
         assert_eq!(mat_3x2.to_row_arrays(), rows_3x2);
+    }
+
+    #[cfg_attr(test, test)]
+    /// A rotation generator of norm 12 needs scaling and squaring; without it
+    /// the series truncation error is large.
+    fn test_expm_large_norm_needs_scaling() {
+        let theta = 12.0f64;
+        let rot =
+            Owned::<f64, 2, 2>::from_row_arrays([[0.0, -theta], [theta, 0.0]]);
+        let exp_rot = rot.expm();
+        let cos_theta = 0.843_853_958_732_492_1;
+        let sin_theta = -0.536_572_918_000_434_9;
+        assert_almost_eq!(*exp_rot.get(0, 0).unwrap(), cos_theta, 1e-5);
+        assert_almost_eq!(*exp_rot.get(0, 1).unwrap(), -sin_theta, 1e-5);
+        assert_almost_eq!(*exp_rot.get(1, 0).unwrap(), sin_theta, 1e-5);
+        assert_almost_eq!(*exp_rot.get(1, 1).unwrap(), cos_theta, 1e-5);
+    }
+
+    #[cfg_attr(test, test)]
+    /// A pivot of exactly machine epsilon is accepted by the `LDL^T`
+    /// factorization and by its solve; only smaller pivots are singular.
+    fn test_ldlt_pivot_at_epsilon_is_accepted() {
+        let a: Owned<f64, 1, 1> = Matrix::from_fn(|_, _| f64::EPSILON);
+        let ldlt = Symmetric::from_owned(a).unwrap().into_ldlt().unwrap();
+        let mut b: Owned<f64, 1, 1> = Matrix::from_fn(|_, _| 1.0);
+        ldlt.solve_mut(&mut b).unwrap();
+        assert_almost_eq!(*b.get(0, 0).unwrap(), 1.0 / f64::EPSILON, 1.0);
     }
 
     #[cfg_attr(test, test)]

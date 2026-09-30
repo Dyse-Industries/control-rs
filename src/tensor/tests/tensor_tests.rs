@@ -87,6 +87,65 @@ pub mod tensor_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// Interpolation on multi-cell axes with an off-centre fraction: a
+    /// swapped corner weight or a stuck cell index changes the result.
+    fn test_tensor_interpolation_multi_cell_axis() {
+        // Squares, not a line: a wrong cell index changes the answer.
+        let line =
+            ArrayTensor::<f64, 4, 1>::from_raw([[0.0, 10.0, 40.0, 90.0]]);
+        assert_almost_eq!(line.interpolate(&[1.25, 0.0]), 17.5, 1e-12);
+        assert_almost_eq!(line.interpolate(&[2.75, 0.0]), 77.5, 1e-12);
+        assert_almost_eq!(line.interpolate(&[3.0, 0.0]), 90.0, 1e-12);
+        assert_almost_eq!(line.interpolate(&[-2.0, 0.0]), 0.0, 1e-12);
+        assert_almost_eq!(line.interpolate(&[9.0, 0.0]), 90.0, 1e-12);
+
+        // f(x, y) = x + 10 y is reproduced exactly by bilinear interpolation.
+        let plane = ArrayTensor::<f64, 3, 2>::from_raw([
+            [0.0, 1.0, 2.0],
+            [10.0, 11.0, 12.0],
+        ]);
+        assert_almost_eq!(plane.interpolate(&[1.25, 0.75]), 8.75, 1e-12);
+        assert_almost_eq!(plane.interpolate(&[0.25, 0.25]), 2.75, 1e-12);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Shape sizes are the products of their dimensions.
+    fn test_tensor_shape_sizes() {
+        assert_eq!(Shape1D::<5>::SIZE, 5);
+        assert_eq!(Shape2D::<3, 4>::SIZE, 12);
+        assert_eq!(Shape3D::<2, 3, 4>::SIZE, 24);
+        assert_eq!(Shape4D::<2, 3, 4, 5>::SIZE, 120);
+    }
+
+    #[cfg_attr(test, test)]
+    /// The provided `FlatBuffer` methods agree with the slice accessors.
+    fn test_flat_buffer_provided_methods() {
+        struct Buf<const N: usize>([f64; N]);
+        // SAFETY: `as_slice` and `len` describe the same array.
+        unsafe impl<const N: usize> FlatBuffer<f64> for Buf<N> {
+            fn len(&self) -> usize {
+                N
+            }
+            fn as_slice(&self) -> &[f64] {
+                &self.0
+            }
+        }
+        // SAFETY: `as_mut_slice` exposes the array `as_slice` reads.
+        unsafe impl<const N: usize> FlatBufferMut<f64> for Buf<N> {
+            fn as_mut_slice(&mut self) -> &mut [f64] {
+                &mut self.0
+            }
+        }
+        assert!(Buf::<0>([]).is_empty());
+        let mut full = Buf::<3>([1.0, 2.0, 3.0]);
+        assert!(!full.is_empty());
+        assert!(!FlatBuffer::as_ptr(&full).is_null());
+        assert_eq!(FlatBuffer::as_ptr(&full), full.0.as_ptr());
+        let expected = full.0.as_mut_ptr();
+        assert_eq!(FlatBufferMut::as_mut_ptr(&mut full), expected);
+    }
+
+    #[cfg_attr(test, test)]
     fn test_tensor_grid_interpolation() {
         // 2D grid: f(x, y) = [[0, 2], [4, 6]]
         let grid = ArrayTensor::<f32, 2, 2>::from_raw([[0.0, 4.0], [2.0, 6.0]]);
@@ -132,6 +191,18 @@ pub mod tensor_test_suite {
         };
         assert_almost_eq!(table.apply(0.5f32), 0.5f32, 1e-6);
         assert_almost_eq!(table.apply(-0.5f32), -0.5f32, 1e-6);
+
+        // A negative zero is not positive, so ReLU returns the positive zero.
+        assert_eq!(relu.apply(-0.0f32).to_bits(), 0.0f32.to_bits());
+
+        // Segments beyond the first use their own end points.
+        let steps = TableActivation {
+            breakpoints: [0.0f32, 1.0, 2.0, 4.0],
+            values: [0.0f32, 10.0, 20.0, 60.0],
+        };
+        assert_almost_eq!(steps.apply(0.5f32), 5.0f32, 1e-6);
+        assert_almost_eq!(steps.apply(1.5f32), 15.0f32, 1e-6);
+        assert_almost_eq!(steps.apply(3.0f32), 40.0f32, 1e-6);
     }
 
     #[cfg_attr(test, test)]

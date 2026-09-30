@@ -19,6 +19,31 @@ exclude_re = [
     # converged iterate.
     "replace > with >= in Polynomial<T, Const<N>, S>::aberth_(initial_seeds|solver)",
     "replace < with (==|<=) in Polynomial<T, Const<N>, S>::aberth_solver",
+    # The sum over all hypercube corners does not depend on which bit of the
+    # corner mask selects the upper vertex; swapping it permutes the terms.
+    "replace != with == in Tensor<T, L, B>::interpolate",
+    # A strictly larger running maximum or a tie leaves the same value.
+    "replace > with >= in Matrix<T, Const<N>, Const<N>, S>::inf_norm",
+    # Scaling and squaring: a norm exactly at the threshold, extra halvings
+    # (each exact) and a 17th halving past an already-saturated count leave
+    # the result within rounding of the same exponential.
+    "replace > with >= in Owned<T, N, N>::expm",
+    "replace && with \\|\\| in Owned<T, N, N>::expm",
+    "replace < with <= in Owned<T, N, N>::expm",
+    # `COO` buffers reject out-of-range coordinates on `push`, so the
+    # conversions revalidate a state that cannot occur.
+    "replace \\|\\| with && in Array(Csr|Csc)Storage<T, R, C, MAX_NNZ, (R1|C1)>::from_coo",
+    # A zero stride contributes zero to both the lower and the upper bound.
+    "replace > with >= in strided_window_fits",
+    # Equal off-diagonal magnitudes: either pivot is a valid Jacobi choice and
+    # the spectrum is the same.
+    "replace > with >= in ev_max_offdiag",
+    # Interpolation clamps to the grid: past an edge both corners are the
+    # same cell and the two weights sum to one, so `>=` and `==` on the upper
+    # clamp, `<=` on the lower clamp and `<=` on the cell search (which stops
+    # at the last cell either way) return the same value.
+    "replace < with <= in Tensor<T, L, B>::interpolate",
+    "replace > with (==|>=) in Tensor<T, L, B>::interpolate",
     # The loop only skips the matrix update after the last coefficient, which
     # nothing reads; performing it too changes no result.
     "replace < with <= in StateSpace<T, NX, 1, 1>::to_transfer_function",

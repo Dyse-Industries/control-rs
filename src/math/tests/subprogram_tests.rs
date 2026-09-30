@@ -910,6 +910,149 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// `her2k` reads `k` from the columns of a non-transposed operand.
+    fn test_subprograms_her2k_non_square_operand() {
+        // A and B are 2 x 3; C = A B^T + B A^T is 2 x 2.
+        let a = ArrayStorage::<f64, 2, 3>::from_array([
+            [1.0, 4.0],
+            [2.0, 5.0],
+            [3.0, 6.0],
+        ]);
+        let b = ArrayStorage::<f64, 2, 3>::from_array([
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 0.0],
+        ]);
+        let mut c = ArrayStorage::<f64, 2, 2>::from_array([[0.0; 2]; 2]);
+        DefaultBlas::her2k(
+            UpLo::Upper,
+            Trans::NoTrans,
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+        );
+        assert_almost_eq!(*c.get(0, 0).unwrap(), 8.0, 1e-12);
+        assert_almost_eq!(*c.get(0, 1).unwrap(), 12.0, 1e-12);
+        assert_almost_eq!(*c.get(1, 1).unwrap(), 10.0, 1e-12);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Workspace arguments may be larger than required and are rejected only
+    /// when smaller.
+    fn test_subprograms_workspace_size_boundaries() {
+        let mut a =
+            ArrayStorage::<f64, 2, 2>::from_array([[3.0, 4.0], [4.0, 3.0]]);
+        let mut tau = [0.0f64; 2];
+        let mut work = [0.0f64; 4];
+        DefaultBlas::geqrf(&mut a, &mut tau, &mut work).unwrap();
+
+        // `unmqr`: `tau` needs min(rows, cols) entries, `work` needs the
+        // column count of `c` for a left application.
+        let apply = |tau: &[f64], work: &mut [f64]| {
+            let mut c = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 0.0]]);
+            DefaultBlas::unmqr(
+                Side::Left,
+                Trans::NoTrans,
+                &a,
+                tau,
+                &mut c,
+                work,
+            )
+        };
+        assert!(apply(&tau, &mut [0.0; 1]).is_ok());
+        assert!(apply(&[tau[0], tau[1], 0.0], &mut [0.0; 4]).is_ok());
+        assert!(matches!(
+            apply(&tau[..1], &mut [0.0; 4]),
+            Err(LinAlgError::WorkspaceTooSmall)
+        ));
+        assert!(matches!(
+            apply(&tau, &mut [0.0; 0]),
+            Err(LinAlgError::WorkspaceTooSmall)
+        ));
+
+        // `syev`/`heev`: an eigenvalue buffer longer than `n` is fine.
+        let mut s =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 1.0], [1.0, 2.0]]);
+        let mut w = [0.0f64; 3];
+        assert!(
+            DefaultBlas::syev(
+                JobZ::Vectors,
+                UpLo::Upper,
+                &mut s,
+                &mut w,
+                &mut [0.0; 4]
+            )
+            .is_ok()
+        );
+        let mut h = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(2.0, 0.0), Complex64::new(0.0, -1.0)],
+            [Complex64::new(0.0, 1.0), Complex64::new(2.0, 0.0)],
+        ]);
+        let mut wh = [0.0f64; 3];
+        assert!(
+            DefaultBlas::heev(
+                JobZ::Vectors,
+                UpLo::Upper,
+                &mut h,
+                &mut wh,
+                &mut [<Complex64 as Zero>::ZERO; 4]
+            )
+            .is_ok()
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    /// The eigensolver reads only the stored triangle, and a small rotation
+    /// keeps each eigenvalue near the diagonal entry it came from.
+    fn test_subprograms_syev_triangle_and_rotation_branch() {
+        // Stored Lower triangle [[2, .], [1, 2]]; the upper entry is junk.
+        let mut lower =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 1.0], [100.0, 2.0]]);
+        let mut w = [0.0f64; 2];
+        DefaultBlas::syev(
+            JobZ::NoVectors,
+            UpLo::Lower,
+            &mut lower,
+            &mut w,
+            &mut [0.0; 4],
+        )
+        .unwrap();
+        assert_almost_eq!(w[0] + w[1], 4.0, 1e-10);
+        assert_almost_eq!(w[0] * w[1], 3.0, 1e-10);
+
+        // Stored Upper triangle [[2, 1], [., 2]]; the lower entry is junk.
+        let mut upper =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 100.0], [1.0, 2.0]]);
+        DefaultBlas::syev(
+            JobZ::NoVectors,
+            UpLo::Upper,
+            &mut upper,
+            &mut w,
+            &mut [0.0; 4],
+        )
+        .unwrap();
+        assert_almost_eq!(w[0] * w[1], 3.0, 1e-10);
+
+        // [[1, 0.1], [0.1, 3]]: the small rotation leaves 1 near index 0.
+        let mut m =
+            ArrayStorage::<f64, 2, 2>::from_array([[1.0, 0.1], [0.1, 3.0]]);
+        DefaultBlas::syev(
+            JobZ::NoVectors,
+            UpLo::Upper,
+            &mut m,
+            &mut w,
+            &mut [0.0; 4],
+        )
+        .unwrap();
+        // sqrt(1.01): `f64::sqrt` is not available without `std`.
+        let root = 1.004_987_562_112_089;
+        assert_almost_eq!(w[0], 2.0 - root, 1e-9);
+        assert_almost_eq!(w[1], 2.0 + root, 1e-9);
+    }
+
+    #[cfg_attr(test, test)]
     /// Verifies real symmetric Jacobi eigensolver (Syev).
     fn test_subprograms_lapack_syev() {
         let mut a =
