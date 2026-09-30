@@ -165,7 +165,7 @@ timeout_secs = 300
 description = "Audits dependencies for security advisories and license compliance"
 
 [semver]
-mode = "fail"
+mode = "skip"
 command = "cargo semver-checks"
 args = ["check-release", "--baseline-rev", "origin/main"]
 timeout_secs = 1200

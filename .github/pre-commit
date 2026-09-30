@@ -40,7 +40,7 @@ fi
 
 status "Running" "clean, lint and audit in main workspace"
 cargo clean
-cargo gate lint, audit
+cargo gate lint audit
 
 NESTED=(
   "examples/subprograms/aarch64"
