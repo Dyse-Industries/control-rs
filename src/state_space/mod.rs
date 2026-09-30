@@ -51,7 +51,7 @@ pub mod tests;
 
 use crate::math::LinAlgResult;
 use crate::math::num_traits::{Float, Scalar};
-use crate::math::num_types::{Const, Dim};
+use crate::math::num_types::{Const, Dim, DimAdd, DimMul};
 use crate::math::storage::{
     ArrayStorage, DenseStorage, DenseStorageMut, StaticStorageView, Storage,
     StorageView, StorageViewMut,
@@ -87,6 +87,9 @@ impl fmt::Display for StateSpaceError {
 }
 
 impl core::error::Error for StateSpaceError {}
+
+/// Canonical type-level encoding of `Const<N>`.
+type TypeNum<const N: usize> = <Const<N> as Dim>::TypeNum;
 
 /// Result alias for fallible state-space operations.
 pub type StateSpaceResult<T> = Result<T, StateSpaceError>;
@@ -505,6 +508,22 @@ where
     Const<NY>: Dim,
 {
     /// Series (cascade) $G_2 G_1$: output of `self` feeds input of `rhs`.
+    ///
+    /// # Compile-time shape contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::matrix::Owned;
+    /// use control_rs::state_space::ArrayStateSpace;
+    ///
+    /// let g = ArrayStateSpace::continuous(
+    ///     Owned::<f64, 2, 2>::zero(),
+    ///     Owned::<f64, 2, 1>::zero(),
+    ///     Owned::<f64, 1, 2>::zero(),
+    ///     Owned::<f64, 1, 1>::zero(),
+    /// );
+    /// // 2 + 2 states cannot fit in 3.
+    /// let _ = g.series::<2, 1, 3>(&g);
+    /// ```
     #[must_use]
     pub fn series<const NX2: usize, const NZ: usize, const NXOUT: usize>(
         &self,
@@ -513,7 +532,9 @@ where
     where
         Const<NX2>: Dim,
         Const<NZ>: Dim,
-        Const<NXOUT>: Dim,
+        TypeNum<NX1>: DimAdd<TypeNum<NX2>>,
+        Const<NXOUT>:
+            Dim<TypeNum = <TypeNum<NX1> as DimAdd<TypeNum<NX2>>>::Output>,
     {
         let a1 = self.a();
         let b1 = self.b();
@@ -531,13 +552,18 @@ where
         let mut a = Owned::<T, NXOUT, NXOUT>::zero();
         let mut b = Owned::<T, NXOUT, NU>::zero();
         let mut c = Owned::<T, NZ, NXOUT>::zero();
-        a.write_block(0, 0, &a1);
-        a.write_block(NX1, 0, &b2c1);
-        a.write_block(NX1, NX1, &a2);
-        b.write_block(0, 0, &b1);
-        b.write_block(NX1, 0, &b2d1);
-        c.write_block(0, 0, &d2c1);
-        c.write_block(0, NX1, &c2);
+        // SAFETY: blocks fit the result; its dimension is the `DimAdd` sum.
+        unsafe {
+            let (sa, sb, sc) =
+                (a.storage_mut(), b.storage_mut(), c.storage_mut());
+            sa.submatrix_mut_unchecked(0, 0).copy_from(a1.storage());
+            sa.submatrix_mut_unchecked(NX1, 0).copy_from(b2c1.storage());
+            sa.submatrix_mut_unchecked(NX1, NX1).copy_from(a2.storage());
+            sb.submatrix_mut_unchecked(0, 0).copy_from(b1.storage());
+            sb.submatrix_mut_unchecked(NX1, 0).copy_from(b2d1.storage());
+            sc.submatrix_mut_unchecked(0, 0).copy_from(d2c1.storage());
+            sc.submatrix_mut_unchecked(0, NX1).copy_from(c2.storage());
+        }
 
         match (self.sample_time, rhs.sample_time) {
             (Some(dt), Some(_)) => StateSpace::discrete(a, b, c, d2d1, dt),
@@ -546,6 +572,22 @@ where
     }
 
     /// Parallel connection $G_1 + G_2$ (identical $N_u$, $N_y$).
+    ///
+    /// # Compile-time shape contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::matrix::Owned;
+    /// use control_rs::state_space::ArrayStateSpace;
+    ///
+    /// let g = ArrayStateSpace::continuous(
+    ///     Owned::<f64, 2, 2>::zero(),
+    ///     Owned::<f64, 2, 1>::zero(),
+    ///     Owned::<f64, 1, 2>::zero(),
+    ///     Owned::<f64, 1, 1>::zero(),
+    /// );
+    /// // 2 + 2 states cannot fit in 3.
+    /// let _ = g.parallel::<2, 3>(&g);
+    /// ```
     #[must_use]
     pub fn parallel<const NX2: usize, const NXOUT: usize>(
         &self,
@@ -553,7 +595,9 @@ where
     ) -> StateSpace<T, NXOUT, NU, NY>
     where
         Const<NX2>: Dim,
-        Const<NXOUT>: Dim,
+        TypeNum<NX1>: DimAdd<TypeNum<NX2>>,
+        Const<NXOUT>:
+            Dim<TypeNum = <TypeNum<NX1> as DimAdd<TypeNum<NX2>>>::Output>,
     {
         let a1 = self.a();
         let b1 = self.b();
@@ -567,12 +611,17 @@ where
         let mut a = Owned::<T, NXOUT, NXOUT>::zero();
         let mut b = Owned::<T, NXOUT, NU>::zero();
         let mut c = Owned::<T, NY, NXOUT>::zero();
-        a.write_block(0, 0, &a1);
-        a.write_block(NX1, NX1, &a2);
-        b.write_block(0, 0, &b1);
-        b.write_block(NX1, 0, &b2);
-        c.write_block(0, 0, &c1);
-        c.write_block(0, NX1, &c2);
+        // SAFETY: blocks fit the result; its dimension is the `DimAdd` sum.
+        unsafe {
+            let (sa, sb, sc) =
+                (a.storage_mut(), b.storage_mut(), c.storage_mut());
+            sa.submatrix_mut_unchecked(0, 0).copy_from(a1.storage());
+            sa.submatrix_mut_unchecked(NX1, NX1).copy_from(a2.storage());
+            sb.submatrix_mut_unchecked(0, 0).copy_from(b1.storage());
+            sb.submatrix_mut_unchecked(NX1, 0).copy_from(b2.storage());
+            sc.submatrix_mut_unchecked(0, 0).copy_from(c1.storage());
+            sc.submatrix_mut_unchecked(0, NX1).copy_from(c2.storage());
+        }
         let d = d1.saturating_add(&d2);
 
         match (self.sample_time, rhs.sample_time) {
@@ -584,6 +633,22 @@ where
     /// Feedback interconnection. `sign = -1` is negative feedback.
     ///
     /// `rhs` maps plant outputs ($N_y$) to plant inputs ($N_u$).
+    ///
+    /// # Compile-time shape contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::matrix::Owned;
+    /// use control_rs::state_space::ArrayStateSpace;
+    ///
+    /// let g = ArrayStateSpace::continuous(
+    ///     Owned::<f64, 2, 2>::zero(),
+    ///     Owned::<f64, 2, 1>::zero(),
+    ///     Owned::<f64, 1, 2>::zero(),
+    ///     Owned::<f64, 1, 1>::zero(),
+    /// );
+    /// // 2 + 2 states cannot fit in 3.
+    /// let _ = g.feedback::<2, 3>(&g, -1.0);
+    /// ```
     pub fn feedback<const NX2: usize, const NXOUT: usize>(
         &self,
         rhs: &StateSpace<T, NX2, NY, NU>,
@@ -592,7 +657,9 @@ where
     where
         T: Float,
         Const<NX2>: Dim,
-        Const<NXOUT>: Dim,
+        TypeNum<NX1>: DimAdd<TypeNum<NX2>>,
+        Const<NXOUT>:
+            Dim<TypeNum = <TypeNum<NX1> as DimAdd<TypeNum<NX2>>>::Output>,
     {
         let a1 = self.a();
         let b1 = self.b();
@@ -630,31 +697,34 @@ where
         let d2c1 = d2.saturating_mul(&c1);
         let sign_d2c1 = d2c1.saturating_scale(sign);
         let sign_c2 = c2.saturating_scale(sign);
-        let a1_corr = b1e.saturating_mul(&sign_d2c1);
         let a12 = b1e.saturating_mul(&sign_c2);
         let a21_corr = b2d1e.saturating_mul(&sign_d2c1);
-        let a22_corr = b2d1e.saturating_mul(&sign_c2);
-        let b2c1 = b2.saturating_mul(&c1);
 
-        let a11 = a1.saturating_add(&a1_corr);
-        let a21 = b2c1.saturating_add(&a21_corr);
-        let a22 = a2.saturating_add(&a22_corr);
+        let a11 = a1.saturating_add(&b1e.saturating_mul(&sign_d2c1));
+        let a21 = b2.saturating_mul(&c1).saturating_add(&a21_corr);
+        let a22 = a2.saturating_add(&b2d1e.saturating_mul(&sign_c2));
+
+        let c11 = c1.saturating_add(&d1e.saturating_mul(&sign_d2c1));
+        let c12 = d1e.saturating_mul(&sign_c2);
 
         let mut a = Owned::<T, NXOUT, NXOUT>::zero();
         let mut b = Owned::<T, NXOUT, NU>::zero();
         let mut c = Owned::<T, NY, NXOUT>::zero();
-        a.write_block(0, 0, &a11);
-        a.write_block(0, NX1, &a12);
-        a.write_block(NX1, 0, &a21);
-        a.write_block(NX1, NX1, &a22);
-        b.write_block(0, 0, &b1e);
-        b.write_block(NX1, 0, &b2d1e);
-
-        let d1e_d2c1 = d1e.saturating_mul(&sign_d2c1);
-        let c11 = c1.saturating_add(&d1e_d2c1);
-        let c12 = d1e.saturating_mul(&sign_c2);
-        c.write_block(0, 0, &c11);
-        c.write_block(0, NX1, &c12);
+        // SAFETY: blocks fit the result; its dimension is the `DimAdd` sum.
+        unsafe {
+            let (sa, sb, sc) =
+                (a.storage_mut(), b.storage_mut(), c.storage_mut());
+            sa.submatrix_mut_unchecked(0, 0).copy_from(a11.storage());
+            sa.submatrix_mut_unchecked(0, NX1).copy_from(a12.storage());
+            sa.submatrix_mut_unchecked(NX1, 0).copy_from(a21.storage());
+            sa.submatrix_mut_unchecked(NX1, NX1)
+                .copy_from(a22.storage());
+            sb.submatrix_mut_unchecked(0, 0).copy_from(b1e.storage());
+            sb.submatrix_mut_unchecked(NX1, 0)
+                .copy_from(b2d1e.storage());
+            sc.submatrix_mut_unchecked(0, 0).copy_from(c11.storage());
+            sc.submatrix_mut_unchecked(0, NX1).copy_from(c12.storage());
+        }
 
         let sys = match (self.sample_time, rhs.sample_time) {
             (Some(dt), Some(_)) => StateSpace::discrete(a, b, c, d1e, dt),
@@ -796,32 +866,76 @@ where
     Const<NY>: Dim,
 {
     /// Controllability matrix $[B, AB, \dots, A^{n-1}B]$.
+    ///
+    /// # Compile-time shape contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::matrix::Owned;
+    /// use control_rs::state_space::ArrayStateSpace;
+    ///
+    /// let g = ArrayStateSpace::continuous(
+    ///     Owned::<f64, 2, 2>::zero(),
+    ///     Owned::<f64, 2, 1>::zero(),
+    ///     Owned::<f64, 1, 2>::zero(),
+    ///     Owned::<f64, 1, 1>::zero(),
+    /// );
+    /// // 2 states and 1 input give 2 columns, not 3.
+    /// let _ = g.controllability_matrix::<3>();
+    /// ```
     #[must_use]
     pub fn controllability_matrix<const NC: usize>(&self) -> Owned<T, NX, NC>
     where
-        Const<NC>: Dim,
+        TypeNum<NX>: DimMul<TypeNum<NU>>,
+        Const<NC>: Dim<TypeNum = <TypeNum<NX> as DimMul<TypeNum<NU>>>::Output>,
     {
         let a = self.a();
         let mut block = self.b();
         let mut ctrb = Owned::<T, NX, NC>::zero();
         for k in 0..NX {
-            ctrb.write_block(0, k.saturating_mul(NU), &block);
+            // SAFETY: `k < NX` and `NC = NX * NU` (`DimMul` bound).
+            unsafe {
+                ctrb.storage_mut()
+                    .submatrix_mut_unchecked(0, k.saturating_mul(NU))
+                    .copy_from(block.storage());
+            }
             block = a.saturating_mul(&block);
         }
         ctrb
     }
 
     /// Observability matrix $[C; CA; \dots; CA^{n-1}]$.
+    ///
+    /// # Compile-time shape contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::matrix::Owned;
+    /// use control_rs::state_space::ArrayStateSpace;
+    ///
+    /// let g = ArrayStateSpace::continuous(
+    ///     Owned::<f64, 2, 2>::zero(),
+    ///     Owned::<f64, 2, 1>::zero(),
+    ///     Owned::<f64, 1, 2>::zero(),
+    ///     Owned::<f64, 1, 1>::zero(),
+    /// );
+    /// // 2 states and 1 output give 2 rows, not 3.
+    /// let _ = g.observability_matrix::<3>();
+    /// ```
     #[must_use]
     pub fn observability_matrix<const NR: usize>(&self) -> Owned<T, NR, NX>
     where
-        Const<NR>: Dim,
+        TypeNum<NX>: DimMul<TypeNum<NY>>,
+        Const<NR>: Dim<TypeNum = <TypeNum<NX> as DimMul<TypeNum<NY>>>::Output>,
     {
         let a = self.a();
         let mut block = self.c();
         let mut obsv = Owned::<T, NR, NX>::zero();
         for k in 0..NX {
-            obsv.write_block(k.saturating_mul(NY), 0, &block);
+            // SAFETY: `k < NX` and `NR = NX * NY` (`DimMul` bound).
+            unsafe {
+                obsv.storage_mut()
+                    .submatrix_mut_unchecked(k.saturating_mul(NY), 0)
+                    .copy_from(block.storage());
+            }
             block = block.saturating_mul(&a);
         }
         obsv
@@ -833,12 +947,29 @@ where
     Const<NX>: Dim,
 {
     /// SISO $H(s) = C(sI-A)^{-1}B + D$ via Faddeev–LeVerrier.
+    ///
+    /// # Compile-time shape contract
+    ///
+    /// ```compile_fail,E0271
+    /// use control_rs::matrix::Owned;
+    /// use control_rs::state_space::ArrayStateSpace;
+    ///
+    /// let g = ArrayStateSpace::continuous(
+    ///     Owned::<f64, 2, 2>::zero(),
+    ///     Owned::<f64, 2, 1>::zero(),
+    ///     Owned::<f64, 1, 2>::zero(),
+    ///     Owned::<f64, 1, 1>::zero(),
+    /// );
+    /// // A 2-state model has 3 coefficients, not 4.
+    /// let _ = g.to_transfer_function::<4>();
+    /// ```
     #[must_use]
     pub fn to_transfer_function<const NP: usize>(
         &self,
     ) -> ArrayTransferFunction<T, NP, NP>
     where
-        Const<NP>: Dim,
+        TypeNum<NX>: DimAdd<Const<1>>,
+        Const<NP>: Dim<TypeNum = <TypeNum<NX> as DimAdd<Const<1>>>::Output>,
     {
         let a = self.a();
         let mut char_c = [T::ZERO; NX];

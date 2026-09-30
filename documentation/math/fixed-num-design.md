@@ -516,23 +516,23 @@ of method-level traits. This design inherits that decision.
 
 #### 6.1 Verification
 
-| Condition | Requirement | Method     | Criterion                                                                                                           |
-|:----------|:------------|:-----------|:--------------------------------------------------------------------------------------------------------------------|
-| VC-1.1    | FR-1        | `test`     | `SHIFT` scale parameter is validated at compile time via `DimMax` dimension bounds                                  |
-| VC-2.1    | FR-2        | `test`     | Fixed values equal $\text{raw} \cdot 2^{-\text{SHIFT}}$ with quantization step $\Delta = 2^{-\text{SHIFT}}$         |
-| VC-3.1    | FR-3        | `test`     | Saturating arithmetic operators (`Add`, `Sub`, `Neg`, `Mul`, `Div`) saturate to min/max without panicking or wrapping |
-| VC-3.2    | FR-3        | `proof`    | Bounded model checking proves `Fixed::saturating_div` produces bounded representation without panic                 |
-| VC-3.3    | FR-3        | `test`     | Fallible operations (`TryAdd`, `TrySub`, `TryMul`, `TryDiv`, `TryNeg`) return explicit error variants on overflow   |
-| VC-4.1    | FR-4        | `test`     | Widening multiplication forms exact double-width product with round-ties-to-even rescale                            |
-| VC-5.1    | FR-5        | `test`     | Scale conversion (`rescale`) shifts left or right and saturates destination overflow                                |
-| VC-6.1    | FR-6        | `test`     | Type implements `Zero`, `One`, `Conjugate`, `Scalar`, and `SaturatingInteger` and excludes `Float`/`Trig`           |
-| VC-7.1    | FR-7        | `test`     | Numeric traits are gated and withheld when unity or two cannot be represented in the fractional span                |
-| VC-8.1    | NFR-1       | `test`     | Size and alignment of `Fixed<Repr, SHIFT>` equal those of `Repr` with zero storage overhead for `SHIFT`              |
-| VC-9.1    | NFR-2       | `review`   | Arithmetic compiles to direct integer instructions without runtime scale bookkeeping or trampolines                 |
-| VC-10.1   | C-1         | `review`   | Implementation uses `core` only without heap allocation or `std` dependencies                                       |
-| VC-11.1   | C-2         | `review`   | Module introduces zero new external crate dependencies                                                              |
-| VC-12.1   | C-3         | `test`     | Scale parameter is bounded within `0..=BITS` via compile-time dimension assertions                                   |
-| VC-13.1   | C-4         | `review`   | Implementation performs no bare un-checked or un-saturating primitive arithmetic operations                         |
+| Condition | Requirement | Method | Target | Criterion |
+|:----------|:------------|:-------|:-------|:----------|
+| VC-1.1 | FR-1 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_gate_separation_boundary_pin` | `SHIFT` scale parameter is validated at compile time via `DimMax` dimension bounds |
+| VC-2.1 | FR-2 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_constants_and_constructors` | Fixed values equal $\text{raw} \cdot 2^{-\text{SHIFT}}$ with quantization step $\Delta = 2^{-\text{SHIFT}}$ |
+| VC-3.1 | FR-3 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_addition_subtraction_negation_saturating`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_division_saturating_and_fallible`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_unsigned_division_saturating` | Saturating arithmetic operators (`Add`, `Sub`, `Neg`, `Mul`, `Div`) saturate to min/max without panicking or wrapping |
+| VC-3.2 | FR-3 | `kani` | `control_rs::math::fixed_num::proofs::prove_fixed_saturating_div` | Bounded model checking proves `Fixed::saturating_div` produces bounded representation without panic |
+| VC-3.3 | FR-3 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_fallible_try_operations` | Fallible operations (`TryAdd`, `TrySub`, `TryMul`, `TryDiv`, `TryNeg`) return explicit error variants on overflow |
+| VC-4.1 | FR-4 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_widening_multiplication`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_signed_product_tie_rounds_to_even` | Widening multiplication forms exact double-width product with round-ties-to-even rescale |
+| VC-5.1 | FR-5 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_scale_rescaling`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_fixed_display_assign_and_rescale` | Scale conversion (`rescale`) shifts left or right and saturates destination overflow |
+| VC-6.1 | FR-6 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_numeric_trait_hierarchy`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_unsigned_fixed_point` | Type implements `Zero`, `One`, `Conjugate`, `Scalar`, and `SaturatingInteger` and excludes `Float`/`Trig` |
+| VC-7.1 | FR-7 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_gate_separation_boundary_pin` | Numeric traits are gated and withheld when unity or two cannot be represented in the fractional span |
+| VC-8.1 | NFR-1 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_memory_footprint_and_alignment` | Size and alignment of `Fixed<Repr, SHIFT>` equal those of `Repr` with zero storage overhead for `SHIFT` |
+| VC-9.1 | NFR-2 | `review` | — | Arithmetic compiles to direct integer instructions without runtime scale bookkeeping or trampolines |
+| VC-10.1 | C-1 | `review` | — | Implementation uses `core` only without heap allocation or `std` dependencies |
+| VC-11.1 | C-2 | `review` | — | Module introduces zero new external crate dependencies |
+| VC-12.1 | C-3 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_constants_and_constructors` | Scale parameter is bounded within `0..=BITS` via compile-time dimension assertions |
+| VC-13.1 | C-4 | `review` | — | Implementation performs no bare un-checked or un-saturating primitive arithmetic operations |
 
 1. **Constant and Range Unit Tests** (`fixed_num_tests.rs`): `DELTA`
    equals `from_bits(1)` and its `f64` value equals `2^(−SHIFT)`; `MIN` and

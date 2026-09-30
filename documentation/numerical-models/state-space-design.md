@@ -375,6 +375,13 @@ domain-mismatch caveat in reverse.
 
 #### 4.7 System Interconnections
 
+Each interconnection and derived-matrix method binds its caller-named output
+dimension to the type-level result of the dimension operators:
+$N_{x,\text{out}} = N_{x1} + N_{x2}$ (`DimAdd`) for series, parallel and
+feedback; $N_x N_u$ and $N_x N_y$ (`DimMul`) for the controllability and
+observability matrices; $N_x + 1$ (`DimAdd`) for the SISO transfer-function
+coefficient count. A mismatch is a type error (`E0271`).
+
 ##### Series (Cascade) Connection
 
 Connecting output of System 1 ($N_{x1}, N_u, N_y$) to input of System
@@ -718,3 +725,4 @@ is made independently by `transfer-function-design.md` §5 for
 | 1.11      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` (SciPy oracle) and listed the cases not yet cross-validated. |
 | 1.12      | September 23, 2026 | @MitchellDScott | Field bounds use `T: Scalar + SaturatingDiv` (`num-traits-design.md` FR-6). |
 | 1.13      | September 24, 2026 | @MitchellDScott | §4.6 `step` matches shipped code (`T: Scalar + Copy`, saturating products). §4.4 error enum without `thiserror`. §7 bounds recomputed per axis. `ArrayStorage` alias, view constructors, TF §5 reference and §6.7 coverage claim corrected. |
+| 1.14      | September 30, 2026 | @MitchellDScott | §4.7 output dimensions constrained by `DimAdd`/`DimMul` on the canonical `TypeNum`; FR-3 verification adds `compile_fail` doctests. |

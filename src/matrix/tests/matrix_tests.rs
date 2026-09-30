@@ -31,6 +31,7 @@ pub mod matrix_test_suite {
     use crate::assert_almost_eq;
     use crate::math::LinAlgError;
     use crate::math::num_types::{Const, Dim};
+    use crate::math::storage::DenseStorageMut;
     use crate::matrix::specialized::{
         solve_lower_triangular, solve_upper_triangular,
     };
@@ -781,7 +782,7 @@ pub mod matrix_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    fn test_scalar_mul_trace_expm_write_block() {
+    fn test_scalar_mul_trace_expm_block_write() {
         let ident = Owned::<f64, 2, 2>::identity();
         let scaled = &ident * 3.0;
         assert_almost_eq!(*scaled.get(0, 0).unwrap(), 3.0);
@@ -799,7 +800,12 @@ pub mod matrix_test_suite {
 
         let mut dest = Owned::<f64, 3, 3>::zero();
         let src = Owned::<f64, 2, 2>::identity();
-        dest.write_block(1, 1, &src);
+        // SAFETY: the 2x2 block at (1, 1) lies inside the 3x3 destination.
+        unsafe {
+            dest.storage_mut()
+                .submatrix_mut_unchecked(1, 1)
+                .copy_from(src.storage());
+        }
         assert_almost_eq!(*dest.get(1, 1).unwrap(), 1.0);
         assert_almost_eq!(*dest.get(2, 2).unwrap(), 1.0);
         assert_almost_eq!(*dest.get(0, 0).unwrap(), 0.0);

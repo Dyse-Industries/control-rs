@@ -251,6 +251,52 @@ pub unsafe trait DenseStorageMut<T>: DenseStorage<T> {
         unsafe { self.get_mut_unchecked(r, c) }
     }
 
+    /// Returns a mutable `R2 x C2` window starting at `(row, col)` without
+    /// bounds checking.
+    ///
+    /// # Safety
+    /// `row + R2::USIZE <= self.rows()` and `col + C2::USIZE <= self.cols()`
+    /// must hold.
+    unsafe fn submatrix_mut_unchecked<'a, R2: Dim + 'a, C2: Dim + 'a>(
+        &'a mut self,
+        row: usize,
+        col: usize,
+    ) -> impl DenseStorageMut<T, R = R2, C = C2> + 'a
+    where
+        T: 'a,
+    {
+        let off = self.offset(row, col);
+        let (rs, cs) = (self.r_stride(), self.c_stride());
+        // SAFETY: the caller guarantees the window lies inside `self`, so
+        // `off` and the strides address only elements of this storage, which
+        // the exclusive borrow keeps exclusive for the view's lifetime.
+        unsafe {
+            StorageViewMut::new_with_strides_unchecked(
+                self.as_mut_ptr().offset(off),
+                rs,
+                cs,
+            )
+        }
+    }
+
+    /// Copies `src` into this storage; both have the same static shape.
+    fn copy_from<S: DenseStorage<T, R = Self::R, C = Self::C>>(
+        &mut self,
+        src: &S,
+    ) where
+        T: Copy,
+    {
+        for i in 0..self.rows() {
+            for j in 0..self.cols() {
+                // SAFETY: `i < self.rows()` and `j < self.cols()`, the shape
+                // of both operands.
+                unsafe {
+                    *self.get_mut_unchecked(i, j) = *src.get_unchecked(i, j);
+                }
+            }
+        }
+    }
+
     /// Returns a mutable reference to the element at `(r, c)` or `None` if out of bounds.
     fn get_mut(&mut self, r: usize, c: usize) -> Option<&mut T> {
         if r < self.rows() && c < self.cols() {

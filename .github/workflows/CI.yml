@@ -16,7 +16,6 @@ on:
       - 'control-rs-tui/**'
       - 'control-rs-ci/**'
       - 'control-rs-compare/**'
-      - 'control-rs-trace-macros/**'
       - 'documentation/**'
       - '.github/workflows/**'
       - '*.toml'
@@ -40,7 +39,6 @@ on:
       - 'control-rs-tui/**'
       - 'control-rs-ci/**'
       - 'control-rs-compare/**'
-      - 'control-rs-trace-macros/**'
       - 'documentation/**'
       - '.github/workflows/**'
       - '*.toml'
@@ -58,7 +56,7 @@ concurrency:
 jobs:
   # ============================================================================
   # Stage pre (fetch) and group lint (fmt, clippy, allow-audit, doc, vale,
-  # trace-reqs, trace-marks, trace)
+  # trace-reqs)
   # ============================================================================
   lint:
     name: Lint & Prose
@@ -146,7 +144,7 @@ jobs:
           retention-days: 30
 
   # ============================================================================
-  # Group: audit (deny, semver, valgrind, geiger)
+  # Groups: audit & valgrind (deny, semver, geiger, valgrind)
   # ============================================================================
   audit:
     name: Security & Memory Safety Audit
@@ -167,8 +165,8 @@ jobs:
       - name: Install Valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
 
-      - name: Run Audit Group
-        run: cargo ci --verbose --group audit
+      - name: Run Audit and Valgrind Groups
+        run: cargo ci --verbose --group audit,valgrind
 
       - name: Upload Audit Artifacts
         if: always()
@@ -275,6 +273,102 @@ jobs:
           retention-days: 30
 
   # ============================================================================
+  # Post stage: kani (bounded model checking)
+  # ============================================================================
+  kani:
+    name: Kani Formal Verification
+    runs-on: ubuntu-latest
+    needs: [ build_test ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install Kani
+        run: |
+          cargo install --locked kani-verifier --version 0.68.0
+          cargo kani setup
+
+      - name: Run Kani Gate
+        run: cargo ci --verbose --only kani
+
+      - name: Upload Kani Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-kani
+          path: target/ci-artifacts/
+          retention-days: 7
+
+  # ============================================================================
+  # Group: miri (undefined behavior analysis)
+  # ============================================================================
+  miri:
+    name: Undefined Behavior Analysis (Miri)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Run Miri Group
+        run: cargo ci --verbose --group miri
+
+      - name: Upload Miri Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-miri
+          path: target/ci-artifacts/
+          retention-days: 7
+
+  # ============================================================================
+  # Post stage: trace (requirement traceability check)
+  # Needs lint (reqs.jsonl), build_test (test.log), and kani (kani.log).
+  # ============================================================================
+  trace:
+    name: Requirement Traceability
+    runs-on: ubuntu-latest
+    needs: [ lint, build_test, kani ]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Download lint artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-artifacts-lint
+          path: target/ci-artifacts/
+
+      - name: Download build_test artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-artifacts-build_test
+          path: target/ci-artifacts/
+
+      - name: Download kani artifacts
+        if: needs.kani.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-artifacts-kani
+          path: target/ci-artifacts/
+
+      - name: Run Trace Gate
+        run: cargo ci --verbose --only trace
+
+      - name: Upload Trace Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-trace
+          path: target/ci-artifacts/
+          retention-days: 7
+
+  # ============================================================================
   # Post stage: regression (benchmarks & regression gate)
   # ============================================================================
   regression:
@@ -282,29 +376,44 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Restore Criterion Baseline
-        uses: ./.github/actions/restore-baseline
-        with:
-          name: baseline-regression
-          path: target/criterion
+      # Criterion compares against target/criterion/<id>/base, so the baseline
+      # is benchmarked on this runner before the gate runs: timings from a
+      # different machine shift every benchmark by more than the noise
+      # threshold. A missing or failing baseline run leaves the gate without
+      # one, which is not a failure.
+      - name: Benchmark Baseline
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            base=$(git merge-base "origin/$BASE_REF" HEAD)
+          else
+            base="$BEFORE"
+          fi
+          if [ -z "$base" ] || [ "$base" = "$(git rev-parse HEAD)" ] \
+            || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "::notice::No baseline revision; benchmarks run without one."
+            exit 0
+          fi
+          git worktree add ../baseline "$base"
+          if (cd ../baseline && cargo bench); then
+            mkdir -p target
+            cp -R ../baseline/target/criterion target/criterion
+          else
+            echo "::notice::Baseline benchmarks failed at $base; no baseline."
+          fi
 
       - name: Run Regression Gate
         run: cargo ci --verbose --only regression
-
-      - name: Upload Criterion Baseline
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: baseline-regression
-          path: target/criterion/
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Upload Regression Artifacts
         if: always()
@@ -374,7 +483,7 @@ jobs:
   report:
     name: Aggregate Report
     runs-on: ubuntu-latest
-    needs: [ lint, build_test, target, audit, verify, coverage, regression, mutants ]
+    needs: [ lint, build_test, target, audit, verify, coverage, regression, mutants, kani, miri, trace ]
     if: always()
     permissions:
       pull-requests: write

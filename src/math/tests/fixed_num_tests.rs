@@ -17,16 +17,6 @@ pub mod fixed_num_test_suite {
     };
     use core::mem::{align_of, size_of};
 
-    #[cfg(test)]
-    use control_rs_trace_macros::req;
-
-    #[cfg(not(test))]
-    macro_rules! req {
-        ($($t:tt)*) => {};
-    }
-    #[cfg(not(test))]
-    use req;
-
     struct StackBuf {
         buf: [u8; 64],
         len: usize,
@@ -45,7 +35,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-8.1")]
     /// Verifies single-word memory footprint and alignment across all supported primitives (NFR-1).
     fn test_memory_footprint_and_alignment() {
         assert_eq!(size_of::<Q7>(), size_of::<i8>());
@@ -74,7 +63,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-2.1", "fixed-num#VC-12.1")]
     /// Verifies associated constants and bit-level constructors (FR-1, FR-2).
     fn test_constants_and_constructors() {
         type Q14 = Fixed<i16, 14>;
@@ -100,7 +88,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-3.1")]
     /// Verifies basic addition, subtraction, and negation with saturation (FR-3).
     fn test_addition_subtraction_negation_saturating() {
         type Q14 = Fixed<i16, 14>;
@@ -133,7 +120,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-4.1")]
     /// Verifies widening multiplication with exact intermediate and convergent rounding (FR-4).
     fn test_widening_multiplication() {
         type Q14 = Fixed<i16, 14>;
@@ -155,7 +141,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-5.1")]
     /// Verifies explicit scale conversion and rescaling round-trips (FR-5).
     fn test_scale_rescaling() {
         type Q14 = Fixed<i16, 14>;
@@ -175,7 +160,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-3.3")]
     /// Verifies fallible arithmetic operations return overflow error at bounds.
     fn test_fallible_try_operations() {
         type Q14 = Fixed<i16, 14>;
@@ -211,7 +195,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-6.1")]
     /// Verifies numeric trait participation (Zero, One, Conjugate, Scalar, Signed, `AdditiveGroup`, `SaturatingInteger`).
     fn test_numeric_trait_hierarchy() {
         type Q13 = Fixed<i16, 13>;
@@ -244,7 +227,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-6.1")]
     /// Verifies unsigned fixed-point representations.
     fn test_unsigned_fixed_point() {
         use crate::math::num_traits::Unsigned;
@@ -285,7 +267,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-4.1")]
     /// Signed product tie (raw product −3, `SHIFT = 1`) rounds to −2
     /// (ties-to-even), not −1 (§6.1 item 5 of `fixed-num-design.md`).
     fn test_signed_product_tie_rounds_to_even() {
@@ -296,7 +277,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-3.1")]
     /// Verifies $Q$-scale division: exact quotients, the ties-to-even rounding
     /// shared with `Mul` (FR-4), saturation at division by zero and overflow
     /// (FR-3) and the `TryDiv` error split.
@@ -353,7 +333,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-3.1")]
     /// Verifies unsigned $Q$-scale division saturates to `MAX` on division by
     /// zero and overflow, and that `0 / 0 = 0` (FR-3).
     fn test_unsigned_division_saturating() {
@@ -374,7 +353,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-1.1", "fixed-num#VC-7.1")]
     /// Verifies gate separation between `OneRepresentable` and `TwoRepresentable` markers (§6.1.5).
     fn test_gate_separation_boundary_pin() {
         type Q14 = Fixed<i16, 14>;
@@ -401,7 +379,6 @@ pub mod fixed_num_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    #[req("fixed-num#VC-5.1")]
     fn test_fixed_display_assign_and_rescale() {
         use core::fmt::Write;
         type Q1 = Fixed<i16, 1>;

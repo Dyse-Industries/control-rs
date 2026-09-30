@@ -13,7 +13,6 @@ type TestResult = Result<(), Box<dyn Error>>;
 #[derive(Debug, Clone, Copy)]
 enum NegativeScenario {
     Reqs,
-    Marks,
     Check,
 }
 
@@ -33,22 +32,7 @@ fn setup_scenario_reqs(fixture_workspace: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(&docs_dir)?;
     fs::write(
         docs_dir.join("widget-design.md"),
-        "# Widget (widget)\n\n- **FR-1**: Size\n- **FR-1**: Size duplicate\n\n| VC-1 | FR-1 | `test` | OK |\n",
-    )
-}
-
-fn setup_scenario_marks(fixture_workspace: &std::path::Path) -> io::Result<()> {
-    let src_dir = fixture_workspace.join("src");
-    fs::create_dir_all(&src_dir)?;
-    fs::write(
-        src_dir.join("lib.rs"),
-        format!("#[{}(FR-999)]\nfn dummy() {{}}\n", "req"), // Unqualified ID
-    )?;
-    let docs_dir = fixture_workspace.join("docs");
-    fs::create_dir_all(&docs_dir)?;
-    fs::write(
-        docs_dir.join("widget-design.md"),
-        "# Widget (widget)\n\n- **FR-1**: Size\n\n| VC-1 | FR-1 | `test` | OK |\n",
+        "# Widget (widget)\n\n- **FR-1**: Size\n- **FR-1**: Size duplicate\n\n| VC-1 | FR-1 | `libtest` | `a::t` | OK |\n",
     )
 }
 
@@ -57,7 +41,7 @@ fn setup_scenario_check(fixture_workspace: &std::path::Path) -> io::Result<()> {
     fs::create_dir_all(&docs_dir)?;
     fs::write(
         docs_dir.join("widget-design.md"),
-        "# Widget (widget)\n\n- **FR-1**: Size\n\n| VC-1 | FR-1 | `test` | OK |\n",
+        "# Widget (widget)\n\n- **FR-1**: Size\n\n| VC-1 | FR-1 | `libtest` | `a::t` | OK |\n",
     )?;
 
     fs::create_dir_all(fixture_workspace.join("target/ci-artifacts"))?;
@@ -77,8 +61,8 @@ fn setup_scenario_check(fixture_workspace: &std::path::Path) -> io::Result<()> {
     );
 
     fs::write(
-        fixture_workspace.join("target/ci-artifacts/marks.jsonl"),
-        "",
+        fixture_workspace.join("target/ci-artifacts/test.log"),
+        "running 0 tests\n",
     )
 }
 
@@ -103,15 +87,11 @@ fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
     fs::create_dir_all(&trace_dir)?;
     fs::write(
         trace_dir.join("trace.toml"),
-        format!(
-            "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_id = '^#\\s+.*\\((?P<doc>[a-z]+)\\)'\ndefinition = '^- \\*\\*FR-'\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\nmethods = [\"test\", \"review\"]\nmarked_methods = [\"test\"]\nretired = []\n[markers]\nfiles = [\"src\"]\nsuffixes = [\".rs\"]\nmarker = \"#[{}(\"\n",
-            "req"
-        ),
+        "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_id = '^#\\s+.*\\((?P<doc>[a-z]+)\\)'\ndefinition = '^- \\*\\*FR-'\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\nmethods = [\"libtest\", \"review\"]\nautomated_methods = [\"libtest\"]\nretired = []\n[method.libtest]\nresult_artifact = \"target/ci-artifacts/test.log\"\n",
     )?;
 
     match scenario {
         NegativeScenario::Reqs => setup_scenario_reqs(&fixture_workspace)?,
-        NegativeScenario::Marks => setup_scenario_marks(&fixture_workspace)?,
         NegativeScenario::Check => setup_scenario_check(&fixture_workspace)?,
     }
 
@@ -169,8 +149,6 @@ fn test_negative_trace_check_gate_fails_on_uncovered_condition() -> TestResult {
             ".cargo/trace/trace.toml".to_string(),
             "--reqs".to_string(),
             "target/ci-artifacts/reqs.jsonl".to_string(),
-            "--marks".to_string(),
-            "target/ci-artifacts/marks.jsonl".to_string(),
             "--out".to_string(),
             "target/ci-artifacts/trace-report.json".to_string(),
         ],
@@ -185,34 +163,10 @@ fn test_negative_trace_check_gate_fails_on_uncovered_condition() -> TestResult {
     assert!(log_file.exists());
     let log = fs::read_to_string(&log_file).unwrap_or_default();
     assert!(
-        log.contains("widget#VC-1 has no marked test"),
+        log.contains("widget#VC-1 target 'a::t' not found in test.log"),
         "Log didn't report the uncovered condition:
 {log}"
     );
 
-    Ok(())
-}
-
-#[test]
-fn test_negative_trace_marks_gate_fails_on_dangling_marker() -> TestResult {
-    let temp = create_temp_context(NegativeScenario::Marks)?;
-    let gate = Gate::new(
-        "trace-marks",
-        env!("CARGO_BIN_EXE_trace-marks"),
-        vec![
-            "--config".to_string(),
-            ".cargo/trace/trace.toml".to_string(),
-            "--out".to_string(),
-            "marks.jsonl".to_string(),
-        ],
-    )
-    .with_description("Checks markers");
-
-    let outcome = gate.execute(&temp.ctx)?;
-    assert_eq!(outcome.verdict, Verdict::Fail);
-    assert_ne!(outcome.exit_code, Some(0));
-
-    let log_file = temp.ctx.out_dir.join("trace-marks.log");
-    assert!(log_file.exists());
     Ok(())
 }

@@ -8,22 +8,26 @@ files = [
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
-methods = ["test", "proof", "analysis", "inspection", "review"]
-marked_methods = ["test", "proof"]
+methods = ["libtest", "kani", "pytest", "gtest", "analysis", "inspection", "review"]
+automated_methods = ["libtest", "kani", "pytest", "gtest"]
 retired = [
     "requirement-traceability#FR-5",
     "requirement-traceability#VC-5.1",
+    "requirement-traceability#FR-7",
+    "requirement-traceability#VC-7.1",
+    "requirement-traceability#VC-7.2",
+    "requirement-traceability#NFR-2",
+    "requirement-traceability#VC-12.1",
 ]
 
-[method.test]
-item_rule = "#\\[test\\]|#\\[tokio::test\\]|#\\[cfg_attr\\(test,\\s*test\\)\\]"
+[method.libtest]
 result_artifact = "target/ci-artifacts/test.log"
 
-[method.proof]
-item_rule = "#\\[kani::(?:proof|proof_for_contract)\\]"
+[method.kani]
 result_artifact = "target/ci-artifacts/kani.log"
 
-[markers]
-files = ["src", "benches", "control-rs-trace-macros/tests", "control-rs-ci/src", "control-rs-ci/tests"]
-suffixes = [".rs"]
-marker = "#[req("
+[method.pytest]
+result_artifact = "target/ci-artifacts/pytest.log"
+
+[method.gtest]
+result_artifact = "target/ci-artifacts/gtest.log"

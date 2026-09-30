@@ -143,35 +143,42 @@ The plan for showing this component is correct and meets its requirements.
 How each requirement is verified. Each requirement is a decision: decompose it
 into verification conditions (`VC-x.y`), one row each, and state in the first
 condition's `Criterion` how the conditions combine into the requirement.
-`Method` is one of `test`, `analysis`, `inspection` or `review`. A `test`
-condition needs at least one test that names it with a marker
-(`#[req("doc#VC-x.y")]` in Rust, `// req: doc#VC-x.y` in other languages);
-other methods are listed for review sign-off. `Criterion` is one sentence
-stating the pass condition, including any bound, and names no other condition
-ID or method.
+`Method` names the verification framework or discipline: `libtest`, `kani`,
+`pytest`, `gtest`, `analysis`, `inspection` or `review`. A condition with an
+automated method (`libtest`, `kani`, `pytest`, `gtest`) lists in `Target` the
+fully qualified test or harness that discharges it, and passes only when every
+listed target passed in the result log of that method. Other methods put `—` in
+`Target` and are listed for review sign-off. `Criterion` is one sentence stating
+the pass condition, including any bound, and names no other condition ID or
+method.
 
-| Condition | Requirement | Method     | Criterion                                  |
-|:----------|:------------|:-----------|:-------------------------------------------|
-| VC-1.1    | FR-1        | `test`     | [...]; FR-1 holds iff all conditions hold  |
-| VC-1.2    | FR-1        | `test`     | [...]                                      |
-| VC-1.3    | FR-1        | `proof`    | [...]                                      |
-| VC-2.1    | NFR-1       | `analysis` | [...]                                      |
-| VC-3.1    | C-1         | `review`   | [...]                                      |
+| Condition | Requirement | Method      | Target                                   | Criterion                                 |
+|:----------|:------------|:------------|:-----------------------------------------|:------------------------------------------|
+| VC-1.1    | FR-1        | `libtest`   | `crate::module::tests::test_name`        | [...]; FR-1 holds iff all conditions hold |
+| VC-1.2    | FR-1        | `libtest`   | `crate::module::tests::test_name`        | [...]                                     |
+| VC-1.3    | FR-1        | `kani`      | `crate::module::proofs::harness_name`    | [...]                                     |
+| VC-2.1    | NFR-1       | `analysis`  | —                                        | [...]                                     |
+| VC-3.1    | C-1         | `review`    | —                                        | [...]                                     |
 
 Coverage: [target]% line coverage of [crate or module], measured with `cargo coverage`. Excluded: [item and reason].
 
 <!--
 The requirement tracer (`vv/requirement-traceability-design.md`) parses this table.
 - One row per condition. Decompose every FR, NFR and C into at least one VC row.
-- Method is one of `test`, `proof`, `analysis`, `inspection`, or `review`.
-  - `test`: covered by a test marker `#[req("doc#VC-x.y")]` on `#[test]`.
-  - `proof`: covered by a proof marker `#[req("doc#VC-x.y")]` on `#[kani::proof]`
-    or `#[kani::proof_for_contract]`. Bounded model checking evaluates all input
-    combinations within the assumed domain.
+- Method is one of `libtest`, `kani`, `pytest`, `gtest`, `analysis`, `inspection`, or `review`.
+  - `libtest`: `Target` is the test path as `test.log` prints it, with the crate
+    name first (`crate::module::tests::test_name`).
+  - `kani`: `Target` is the harness path as `kani.log` prints it
+    (`crate::module::proofs::harness_name`). Bounded model checking evaluates all
+    input combinations within the assumed domain.
+  - `pytest`: `Target` is `path/to/test_file.py::test_name`.
+  - `gtest`: `Target` is `TestSuite.TestCase`.
+  - Conditions may share a target; one condition may name multiple
+    targets, each in its own code span.
   - `analysis`: verified through mathematical analysis or manual calculation.
   - `inspection`: verified by visual code inspection or artifact audit.
   - `review`: verified by engineering or safety review sign-off.
-- Author obligations for `proof` conditions:
+- Author obligations for `kani` conditions:
   - O-1 (Assertion encodes Criterion): The Criterion decision is asserted as
     `assert!(decision == f(c_1, ..., c_n))` or encoded in `#[kani::ensures]`.
   - O-2 (Domain stated): Assumptions (`kani::assume` or `#[kani::requires]`)
@@ -183,7 +190,7 @@ The requirement tracer (`vv/requirement-traceability-design.md`) parses this tab
 - Where MC/DC applies: A verification condition is a property to discharge
   (always true in a correct implementation; has no independence pair of its own).
   MC/DC is evaluated over the input premise predicates in a condition's definition.
-  For `test`, tagged tests exercise premise combinations; for `proof`, `cover!`
+  For `libtest`, the named tests exercise premise combinations; for `kani`, `cover!`
   witnesses establish satisfaction of each premise combination and independence pair.
 - Criterion is a single declarative sentence with the exact pass bound.
 - The `coverage` gate measures line coverage but enforces no threshold, so a

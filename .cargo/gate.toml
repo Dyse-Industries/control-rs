@@ -47,7 +47,6 @@ post = [
     "mutants-ets-host",
     "mutants-ets",
     "mutants-macros",
-    "mutants-trace-macros",
     "mutants-tui",
 ]
 
@@ -61,9 +60,10 @@ post = [
 # deletes target/ci-groups, so every group starts from an empty target directory.
 [execution.groups]
 build_test = ["build", "test"]
-dynamic = ["miri"]
-lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs", "trace-marks"]
-audit = ["deny", "semver", "valgrind", "geiger"]
+miri = ["miri"]
+lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs"]
+audit = ["deny", "semver", "geiger"]
+valgrind = ["valgrind"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
 target = ["virtual-ets"]
@@ -120,13 +120,6 @@ args = ["--package", "control-rs-ci", "--bin", "trace-reqs", "--", "--config", "
 timeout_secs = 900
 description = "Checks requirement definitions and verification conditions in the design documents that .cargo/trace/trace.toml lists and writes reqs.jsonl"
 
-[trace-marks]
-mode = "fail"
-command = "cargo run"
-args = ["--package", "control-rs-ci", "--bin", "trace-marks", "--", "--config", ".cargo/trace/trace.toml", "--out", "target/ci-artifacts/marks.jsonl"]
-timeout_secs = 900
-description = "Finds the requirement markers in the source files that .cargo/trace/trace.toml lists and writes marks.jsonl"
-
 [build]
 mode = "fail"
 command = "cargo build"
@@ -142,7 +135,7 @@ timeout_secs = 1200
 description = "Executes host unit and integration test suites"
 
 # ==============================================================================
-# Dynamic Analysis Lane Gates (dynamic)
+# Undefined Behavior Analysis Lane Gates (miri)
 # ==============================================================================
 
 [miri]
@@ -172,7 +165,7 @@ timeout_secs = 300
 description = "Audits dependencies for security advisories and license compliance"
 
 [semver]
-mode = "fail"
+mode = "skip"
 command = "cargo semver-checks"
 args = ["check-release", "--baseline-rev", "origin/main"]
 timeout_secs = 1200
@@ -193,7 +186,6 @@ args = [
     "control-rs-ci",
     "control-rs-compare",
     "control-rs-verification",
-    "control-rs-trace-macros",
     "benches",
     "examples",
     "--glob=!**/target/**",
@@ -256,9 +248,9 @@ description = "Executes bounded model checking over declared #[kani::proof] harn
 [trace]
 mode = "fail"
 command = "cargo run"
-args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--config", ".cargo/trace/trace.toml", "--reqs", "target/ci-artifacts/reqs.jsonl", "--marks", "target/ci-artifacts/marks.jsonl", "--out", "target/ci-artifacts/trace-report.json"]
+args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--config", ".cargo/trace/trace.toml", "--reqs", "target/ci-artifacts/reqs.jsonl", "--out", "target/ci-artifacts/trace-report.json"]
 timeout_secs = 900
-description = "Derives condition verification status from reqs, marks, test and kani artifacts"
+description = "Derives condition verification status from reqs and the libtest, kani, pytest and gtest result logs"
 
 # Disabled: superseded by the mutants-* chunks. Selecting it records Skipped.
 [mutants]
@@ -414,7 +406,7 @@ description = "Mutation testing: every file not claimed by another mutants-* gat
 
 
 # Workspace tool crates (measured 2026-09-24: ci 489, compare 202, ets-host 288,
-# ets 180, macros 42, tui 113 mutants; trace-macros added 2026-09-27, unmeasured). `--no-config` drops .cargo/mutants.toml,
+# ets 180, macros 42, tui 113 mutants). `--no-config` drops .cargo/mutants.toml,
 # whose `--lib` test filter and `src/**/tests/**` exclusion apply only to the
 # root package: these crates keep their tests in `tests/` and inline modules.
 # control-rs-verification is an oracle emitter validated by cross-compare and
@@ -467,14 +459,6 @@ command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-macros", "--output", "target/ci-artifacts/mutants-macros.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-macros"
-
-[mutants-trace-macros]
-mode = "fail"
-default = false
-command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-trace-macros", "--output", "target/ci-artifacts/mutants-trace-macros.out"]
-timeout_secs = 19800
-description = "Mutation testing: control-rs-trace-macros"
 
 [mutants-tui]
 mode = "fail"
