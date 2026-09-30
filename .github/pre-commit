@@ -38,9 +38,9 @@ if [ -n "$staged_rust_files" ]; then
   done
 fi
 
-status "Running" "clean, build, check, lint in main workspace"
+status "Running" "clean, lint an audit in main workspace"
 cargo clean
-cargo lint
+cargo ci --only lint, audit
 
 NESTED=(
   "examples/subprograms/aarch64"
