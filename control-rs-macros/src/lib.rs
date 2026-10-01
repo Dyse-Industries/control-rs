@@ -84,7 +84,7 @@ fn process_static_setting(item_static: &mut ItemStatic) -> Option<syn::Ident> {
     // 1. Search phase: Delegate to the helper function
     let atomic_type_str_option = get_atomic_wrapper_name(&item_static.ty);
 
-    // 2. Mutation phase: If matched, clone what we need and overwrite
+    // 2. Mutation phase: If matched, clone required fields and overwrite
     if let Some(atomic_type_str) = atomic_type_str_option {
         let vis = item_static.vis.clone();
         let name_ident = item_static.ident.clone();

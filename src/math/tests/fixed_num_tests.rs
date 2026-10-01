@@ -70,6 +70,8 @@ pub mod fixed_num_test_suite {
         let zero = Q14::ZERO;
         assert_eq!(zero.to_bits(), 0);
         assert!(zero.is_zero());
+        assert!(!Q14::ONE.is_zero());
+        assert!(!zero.is_one());
 
         let delta = Q14::DELTA;
         assert_eq!(delta.to_bits(), 1);
@@ -431,6 +433,29 @@ pub mod fixed_num_test_suite {
             Err(ArithmeticError::Overflow)
         );
         assert_eq!(u_max.try_mul(&u_max), Err(ArithmeticError::Overflow));
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_scale_to_f64_factor_boundary_shifts() {
+        type Q62 = Fixed<i64, 62>;
+        type Q63 = Fixed<i64, 63>;
+        type UQ64 = Fixed<u64, 64>;
+
+        // The raw bits pin the scale factor; a round trip through the same
+        // factor would hide a wrong one.
+        let q62 = Q62::from_num(0.5);
+        assert_eq!(q62.to_bits(), 1 << 61);
+        assert!((q62.to_num() - 0.5).abs() < 1e-15);
+
+        let q63 = Q63::from_num(0.5);
+        assert_eq!(q63.to_bits(), 1 << 62);
+        assert!((q63.to_num() - 0.5).abs() < 1e-15);
+
+        let uq64 = UQ64::from_num(0.25);
+        assert_eq!(uq64.to_bits(), 1 << 62);
+        assert!((uq64.to_num() - 0.25).abs() < 1e-15);
+
+        assert!(Q62::from_num(1.0).is_one());
     }
 }
 

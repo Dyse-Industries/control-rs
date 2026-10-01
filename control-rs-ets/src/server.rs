@@ -294,7 +294,7 @@ impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
         F: FnOnce(),
     {
         let sp = self.cpu_utils.get_sp();
-        // SAFETY: We retrieve the active stack pointer `sp` immediately before painting.
+        // SAFETY: The active stack pointer `sp` is retrieved immediately before painting.
         // The implementation of `paint_stack` handles bounds calculations and enforces a safety
         // margin to protect active call frames.
         unsafe {
@@ -314,7 +314,7 @@ impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
             end_cycles = self.cpu_utils.get_cycles();
         });
 
-        // SAFETY: We query the peak stack usage relative to the same stack pointer `sp` used
+        // SAFETY: The peak stack usage is queried relative to the same stack pointer `sp` used
         // to paint the stack. The stack was painted with sentinel bytes and reading occurs within
         // the valid boundaries calculated during the painting phase.
         let elapsed_stack = unsafe { self.cpu_utils.read_stack_peak(sp) };
@@ -701,6 +701,10 @@ mod tests {
     use std::vec::Vec;
 
     // --- Statics ---
+    /// Held by the tests that read or write `TEST_U8_SETTING`, which every
+    /// test over `SUITES` shares.
+    static SETTING_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     static SUITES: &[&SuiteDescriptor] = &[&SUITE_DESC];
 
     static SUITE_DESC: SuiteDescriptor = SuiteDescriptor {
@@ -733,10 +737,22 @@ mod tests {
         payloads: RawPayloads,
     }
 
+    /// A profiler whose clocks replay fixed readings.
+    struct ClockProfiler {
+        cycles: [u64; 2],
+        nanos: [u64; 2],
+        cycle_reads: std::cell::Cell<usize>,
+        nano_reads: std::cell::Cell<usize>,
+    }
+
     type RawPayloads = Vec<Vec<u8>>;
     /// Borrowed run of encoded telemetry frames.
     type Frames<'a> = &'a [Vec<u8>];
     type SettingsSlice = &'static [&'static dyn Setting];
+    /// A server over the mock link.
+    type MockServer = Server<'static, MockComms, HostCPUProfiler>;
+    /// Outcome of a bounded server run: the loop result and the server.
+    type RunOutcome = (ServerResult<&'static str>, MockServer);
 
     impl CPUProfiler for HostCPUProfiler {
         fn exit(&self) -> ! {
@@ -806,9 +822,66 @@ mod tests {
         }
     }
 
+    impl ClockProfiler {
+        const fn new(cycles: [u64; 2], nanos: [u64; 2]) -> Self {
+            Self {
+                cycles,
+                nanos,
+                cycle_reads: std::cell::Cell::new(0),
+                nano_reads: std::cell::Cell::new(0),
+            }
+        }
+
+        fn next(reads: &std::cell::Cell<usize>, values: [u64; 2]) -> u64 {
+            let n = reads.get();
+            reads.set(n.saturating_add(1));
+            values.get(n).copied().unwrap_or_else(|| values[1])
+        }
+    }
+
+    impl CPUProfiler for ClockProfiler {
+        fn get_cycles(&self) -> u64 {
+            Self::next(&self.cycle_reads, self.cycles)
+        }
+
+        fn get_nanos(&self) -> u64 {
+            Self::next(&self.nano_reads, self.nanos)
+        }
+
+        fn get_sp(&self) -> usize {
+            0
+        }
+
+        fn get_stack_end(&self) -> usize {
+            0
+        }
+    }
+
     // --- Helper Functions ---
     fn dummy_test_fn() {
         TEST_CALLED.store(true, Ordering::SeqCst);
+    }
+
+    /// Runs `server` until its loop fails, then hands it back with the result.
+    ///
+    /// The loop only ends when the link errors, so a server that stops
+    /// polling would spin forever; the run is bounded to fail the test
+    /// instead.
+    fn lock_setting() -> std::sync::MutexGuard<'static, ()> {
+        SETTING_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn run_bounded(server: MockServer) -> RunOutcome {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut server = server;
+            let result = server.run();
+            let _ = tx.send((result, server));
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the server loop did not terminate")
     }
 
     // --- Tests ---
@@ -1048,6 +1121,7 @@ mod tests {
 
     #[test]
     fn test_server_discovery() {
+        let _guard = lock_setting();
         let _ = TEST_U8_SETTING.set(SettingValue::U8(42));
         let comms = MockComms {
             commands: std::vec![Command::ListSuites],
@@ -1056,8 +1130,7 @@ mod tests {
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
-        let mut server = Server::new(context, SUITES);
-        let res = server.run();
+        let (res, server) = run_bounded(Server::new(context, SUITES));
         assert_eq!(res, Err("Exit loop"));
 
         // TargetInfo leads every discovery stream.
@@ -1113,8 +1186,7 @@ mod tests {
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
-        let mut server = Server::new(context, SUITES);
-        let res = server.run();
+        let (res, server) = run_bounded(Server::new(context, SUITES));
         assert_eq!(res, Err("Exit loop"));
         assert_eq!(server.context.comms.payloads, Vec::<Vec<u8>>::new());
     }
@@ -1147,8 +1219,7 @@ mod tests {
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
-        let mut server = Server::new(context, SUITES);
-        let res = server.run();
+        let (res, server) = run_bounded(Server::new(context, SUITES));
         assert_eq!(res, Err("Exit loop"));
 
         let p = &server.context.comms.payloads;
@@ -1168,8 +1239,7 @@ mod tests {
             fail_on_poll: true,
         };
         let context = Context::new(comms, HostCPUProfiler);
-        let mut server = Server::new(context, SUITES);
-        let res = server.run();
+        let (res, _server) = run_bounded(Server::new(context, SUITES));
         assert_eq!(res, Err("Poll failed"));
     }
 
@@ -1186,8 +1256,7 @@ mod tests {
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
-        let mut server = Server::new(context, SUITES);
-        let res = server.run();
+        let (res, server) = run_bounded(Server::new(context, SUITES));
         assert_eq!(res, Err("Exit loop"));
 
         assert!(TEST_CALLED.load(Ordering::SeqCst));
@@ -1231,6 +1300,7 @@ mod tests {
 
     #[test]
     fn test_server_set_setting() {
+        let _guard = lock_setting();
         let comms = MockComms {
             commands: std::vec![Command::SetSetting {
                 suite_id: 0,
@@ -1242,8 +1312,7 @@ mod tests {
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
-        let mut server = Server::new(context, SUITES);
-        let res = server.run();
+        let (res, server) = run_bounded(Server::new(context, SUITES));
         assert_eq!(res, Err("Exit loop"));
 
         let p = &server.context.comms.payloads;
@@ -1264,6 +1333,7 @@ mod tests {
 
     #[test]
     fn test_server_set_setting_type_mismatch() {
+        let _guard = lock_setting();
         let comms = MockComms {
             commands: std::vec![Command::SetSetting {
                 suite_id: 0,
@@ -1275,8 +1345,7 @@ mod tests {
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
-        let mut server = Server::new(context, SUITES);
-        let res = server.run();
+        let (res, server) = run_bounded(Server::new(context, SUITES));
         assert_eq!(res, Err("Exit loop"));
 
         let p = &server.context.comms.payloads;
@@ -1292,5 +1361,66 @@ mod tests {
         } else {
             panic!("Expected SettingInfo");
         }
+    }
+
+    fn quiet_comms() -> MockComms {
+        MockComms {
+            commands: Vec::new(),
+            payloads: Vec::new(),
+            flush_count: 0,
+            fail_on_poll: false,
+        }
+    }
+
+    #[test]
+    fn an_unlocked_flush_reaches_the_link() {
+        let mut context = Context::new(quiet_comms(), HostCPUProfiler);
+        assert_eq!(context.flush_locked(), Ok(true));
+        assert_eq!(context.comms.flush_count, 1);
+        assert!(context.comms_lock.try_lock(), "the lock was released");
+    }
+
+    #[test]
+    fn profiling_reports_elapsed_cycles_and_microseconds() {
+        let context = Context::new(
+            quiet_comms(),
+            ClockProfiler::new([100, 350], [2_000, 7_500]),
+        );
+        let metrics = context.profile_test(|| {});
+        assert_eq!(metrics.cycles, 250);
+        assert_eq!(metrics.time_us, 5, "5500 ns is 5 whole microseconds");
+    }
+
+    #[test]
+    fn log_timestamps_are_in_microseconds() {
+        let mut context = Context::new(
+            quiet_comms(),
+            ClockProfiler::new([0, 0], [4_321_000, 4_321_000]),
+        );
+        context.report_error_log(1, 2, "boom").unwrap();
+        context
+            .report_setting_error(3, "gain", "out of range")
+            .unwrap();
+        let stamps: Vec<u64> = context
+            .comms
+            .payloads
+            .iter()
+            .map(|payload| {
+                match postcard::from_bytes::<Telemetry<'_>>(payload).unwrap() {
+                    Telemetry::Log(log) => log.timestamp_us,
+                    other => panic!("expected a log, got {other:?}"),
+                }
+            })
+            .collect();
+        assert_eq!(stamps, [4_321, 4_321]);
+    }
+
+    #[test]
+    fn the_index_indicator_holds_zero() {
+        let indicator = TestIndexIndicator::new();
+        indicator.set_active(0);
+        assert_eq!(indicator.get(), Some(0));
+        indicator.set_active(7);
+        assert_eq!(indicator.get(), Some(7));
     }
 }

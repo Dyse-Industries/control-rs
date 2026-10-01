@@ -668,4 +668,47 @@ state_space_scaling/zoh_dim/128
         assert_eq!(cli(&["stray"]).err().unwrap(), "Unknown option: stray");
         assert!(cli(&["--bench"]).is_err());
     }
+
+    #[test]
+    fn verdict_labels_are_distinct_and_readable() {
+        assert_eq!(Verdict::Regressed.label(), "regressed");
+        assert_eq!(Verdict::Improved.label(), "improved");
+        assert_eq!(Verdict::NoChange.label(), "no change");
+        assert_eq!(Verdict::WithinNoise.label(), "within noise");
+    }
+
+    #[test]
+    fn parses_nanosecond_durations() {
+        assert_eq!(parse_duration_ns("12 ns"), Some(12.0));
+        assert_eq!(parse_duration_ns("0.5ns"), Some(0.5));
+    }
+
+    #[test]
+    fn duration_units_switch_exactly_at_powers_of_a_thousand() {
+        assert_eq!(format_duration(500.0), "500.00 ns");
+        assert_eq!(format_duration(999.0), "999.00 ns");
+        assert_eq!(format_duration(1_000.0), "1.00 µs");
+        assert_eq!(format_duration(2_500.0), "2.50 µs");
+        assert_eq!(format_duration(1_000_000.0), "1.00 ms");
+        assert_eq!(format_duration(2_500_000.0), "2.50 ms");
+        assert_eq!(format_duration(1_000_000_000.0), "1.00 s");
+    }
+
+    #[test]
+    fn a_latency_equal_to_its_budget_passes() {
+        let b = Budgets::parse("[budgets]\n\"a\" = \"10 us\"\n").unwrap();
+        let at_budget = super::BenchmarkResult {
+            id: "a".to_string(),
+            time_ns: 10e3,
+            change_pct: None,
+            verdict: None,
+        };
+        let got = failures(&at_budget, &b);
+        assert!(got.is_empty(), "{got:?}");
+        let over = super::BenchmarkResult {
+            time_ns: 10e3 + 1.0,
+            ..at_budget
+        };
+        assert_eq!(failures(&over, &b).len(), 1);
+    }
 }

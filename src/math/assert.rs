@@ -132,8 +132,9 @@ where
     let abs_b = T::abs(b.clone());
     a.try_sub(b).map(|diff| {
         let abs_diff = T::abs(diff);
-        let largest = if abs_a > abs_b { abs_a } else { abs_b };
-        abs_diff <= epsilon.try_mul(&largest).unwrap_or(T::ZERO)
+        let scaled = |m: &T| epsilon.try_mul(m).unwrap_or(T::ZERO);
+        abs_diff <= scaled(&abs_a)
+            || abs_diff <= scaled(&abs_b)
             || abs_diff < epsilon.clone()
     })
 }
@@ -144,6 +145,24 @@ where
 mod tests {
     #[allow(unused_imports)]
     use crate::assert_almost_eq;
+
+    #[test]
+    fn test_within_epsilon_relative_scaling_uses_either_magnitude() {
+        use crate::math::assert::almost_eq_eps as within_epsilon;
+        // diff is within epsilon times the larger magnitude but outside epsilon times the smaller.
+        assert!(within_epsilon(&20.0_f64, &10.0, &0.5).unwrap());
+        assert!(within_epsilon(&10.0_f64, &20.0, &0.5).unwrap());
+        // diff exactly equals epsilon times one magnitude (inclusive bound).
+        assert!(within_epsilon(&2.0_f64, &1.0, &0.5).unwrap());
+        assert!(within_epsilon(&1.0_f64, &2.0, &0.5).unwrap());
+    }
+
+    #[test]
+    fn test_within_epsilon_absolute_bound_is_exclusive() {
+        use crate::math::assert::almost_eq_eps as within_epsilon;
+        // the difference equals epsilon and epsilon times the magnitude is smaller, so neither bound admits it.
+        assert!(!within_epsilon(&0.0_f64, &0.5, &0.5).unwrap());
+    }
 
     #[test]
     fn test_assert_almost_eq_f32() {

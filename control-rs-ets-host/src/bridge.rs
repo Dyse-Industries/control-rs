@@ -46,6 +46,10 @@ use control_rs_ets::settings::SettingValue;
 use crate::error::HostError;
 use crate::target::{SubprocessTarget, Target};
 
+/// Bytes written to an in-memory test link, shared with the test.
+#[cfg(all(any(test, feature = "fake-link"), unix))]
+pub type SharedBytes = Arc<std::sync::Mutex<Vec<u8>>>;
+
 type WaitResult = Result<Option<std::process::ExitStatus>, std::io::Error>;
 
 /// Join handles for the threads that read target output.
@@ -75,6 +79,31 @@ enum BridgeInner {
         /// Serial port interface.
         port: serial2::SerialPort,
     },
+    /// In-memory link recording written frames (tests only).
+    #[cfg(all(any(test, feature = "fake-link"), unix))]
+    Fake(FakeLink),
+}
+
+/// An [`ETSBridge`] over an in-memory link with its test handles.
+#[cfg(all(any(test, feature = "fake-link"), unix))]
+pub struct FakeBridge {
+    /// The bridge under test.
+    pub bridge: ETSBridge,
+    /// Feeds messages to the bridge as if the target sent them.
+    pub tx: Sender<BridgeMessage>,
+    /// Bytes the bridge has written to the target.
+    pub written: SharedBytes,
+}
+
+/// State of the in-memory test link.
+#[cfg(all(any(test, feature = "fake-link"), unix))]
+pub(crate) struct FakeLink {
+    /// Every byte written to the link.
+    pub(crate) written: SharedBytes,
+    /// Polls of `try_wait` before the fake target reports an exit (`None` never).
+    pub(crate) exit_after_polls: Option<usize>,
+    /// Polls of `try_wait` so far.
+    pub(crate) polls: usize,
 }
 
 /// Host-owned telemetry. String fields are copied out of the decode buffer
@@ -309,6 +338,14 @@ impl BridgeInner {
             Self::Serial { port } => {
                 port.write_all(frame).and_then(|()| port.flush())
             }
+            #[cfg(all(any(test, feature = "fake-link"), unix))]
+            Self::Fake(link) => {
+                link.written
+                    .lock()
+                    .map_err(|_| std::io::Error::other("poisoned"))?
+                    .extend_from_slice(frame);
+                Ok(())
+            }
         }
     }
 }
@@ -329,6 +366,8 @@ impl ETSBridge {
                 let _ = child.kill();
             }
             BridgeInner::Serial { .. } => {}
+            #[cfg(all(any(test, feature = "fake-link"), unix))]
+            BridgeInner::Fake(_) => {}
         }
         for handle in self.readers.drain(..) {
             let _ = handle.join();
@@ -515,7 +554,49 @@ impl ETSBridge {
         match &mut self.inner {
             BridgeInner::Qemu { child, .. } => child.try_wait(),
             BridgeInner::Serial { .. } => Ok(None),
+            #[cfg(all(any(test, feature = "fake-link"), unix))]
+            BridgeInner::Fake(link) => {
+                use std::os::unix::process::ExitStatusExt;
+                link.polls = link.polls.saturating_add(1);
+                Ok(link
+                    .exit_after_polls
+                    .filter(|limit| link.polls >= *limit)
+                    .map(|_| std::process::ExitStatus::from_raw(0)))
+            }
         }
+    }
+
+    /// A bridge over an in-memory link, with the sender that feeds it messages
+    /// and the frames written to it (tests only).
+    #[cfg(all(any(test, feature = "fake-link"), unix))]
+    #[must_use]
+    pub fn fake(exit_after_polls: Option<usize>) -> FakeBridge {
+        let (tx, rx) = channel();
+        let written = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let bridge = Self {
+            inner: BridgeInner::Fake(FakeLink {
+                written: Arc::clone(&written),
+                exit_after_polls,
+                polls: 0,
+            }),
+            link_info: "fake".to_string(),
+            rx_from_target: rx,
+            target_info: "fake".to_string(),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            readers: Vec::new(),
+        };
+        FakeBridge {
+            bridge,
+            tx,
+            written,
+        }
+    }
+
+    /// Whether the shutdown flag is set (tests only).
+    #[cfg(all(any(test, feature = "fake-link"), unix))]
+    #[must_use]
+    pub fn is_shut_down(&self) -> bool {
+        self.shutdown.load(Ordering::SeqCst)
     }
 }
 
@@ -581,18 +662,26 @@ fn spawn_serial_reader(
     tx: Sender<BridgeMessage>,
     shutdown: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
-    thread::spawn(move || {
-        let mut reader = FrameReader::new();
-        let mut raw_line_buf = Vec::new();
-        let mut byte_buf = [0u8; 1];
+    thread::spawn(move || pump_serial(|buf| port.read(buf), &tx, &shutdown))
+}
 
-        while !shutdown.load(Ordering::Relaxed) {
-            if matches!(port.read(&mut byte_buf), Ok(1)) {
-                let [b] = byte_buf;
-                process_incoming_byte(b, &mut reader, &mut raw_line_buf, &tx);
-            }
+/// Forwards bytes from `read` until `shutdown` is set. A read that yields
+/// nothing (a timeout) is retried.
+fn pump_serial(
+    mut read: impl FnMut(&mut [u8]) -> std::io::Result<usize>,
+    tx: &Sender<BridgeMessage>,
+    shutdown: &AtomicBool,
+) {
+    let mut reader = FrameReader::new();
+    let mut raw_line_buf = Vec::new();
+    let mut byte_buf = [0u8; 1];
+
+    while !shutdown.load(Ordering::Relaxed) {
+        if matches!(read(&mut byte_buf), Ok(1)) {
+            let [b] = byte_buf;
+            process_incoming_byte(b, &mut reader, &mut raw_line_buf, tx);
         }
-    })
+    }
 }
 
 /// Forwards each stderr line of the `cargo run` child as raw console output.
@@ -602,19 +691,28 @@ fn spawn_stderr_reader(
     shutdown: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
-        let mut reader = std::io::BufReader::new(stderr);
-        let mut line = String::new();
-        while !shutdown.load(Ordering::Relaxed) {
-            match std::io::BufRead::read_line(&mut reader, &mut line) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    let trimmed = line.trim_end().to_string();
-                    let _ = tx.send(BridgeMessage::RawConsole(trimmed));
-                    line.clear();
-                }
+        pump_lines(std::io::BufReader::new(stderr), &tx, &shutdown);
+    })
+}
+
+/// Forwards each line of `reader` as raw console output until it ends or
+/// `shutdown` is set.
+fn pump_lines(
+    mut reader: impl std::io::BufRead,
+    tx: &Sender<BridgeMessage>,
+    shutdown: &AtomicBool,
+) {
+    let mut line = String::new();
+    while !shutdown.load(Ordering::Relaxed) {
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                let trimmed = line.trim_end().to_string();
+                let _ = tx.send(BridgeMessage::RawConsole(trimmed));
+                line.clear();
             }
         }
-    })
+    }
 }
 
 /// Reads QEMU `cargo run` stdout and forwards framed telemetry plus raw lines.
@@ -624,22 +722,26 @@ fn spawn_qemu_stdout_reader(
     shutdown: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
-        let mut reader = FrameReader::new();
-        let mut raw_line_buf = Vec::new();
-        let mut byte_buf = [0u8; 1];
-
-        while !shutdown.load(Ordering::Relaxed)
-            && matches!(stdout.read(&mut byte_buf), Ok(1))
-        {
-            let [b] = byte_buf;
-            process_incoming_byte(
-                b,
-                &mut reader,
-                &mut raw_line_buf,
-                &tx_stdout,
-            );
-        }
+        pump_stream(|buf| stdout.read(buf), &tx_stdout, &shutdown);
     })
+}
+
+/// Forwards bytes from `read` until it stops yielding one or `shutdown` is set.
+fn pump_stream(
+    mut read: impl FnMut(&mut [u8]) -> std::io::Result<usize>,
+    tx: &Sender<BridgeMessage>,
+    shutdown: &AtomicBool,
+) {
+    let mut reader = FrameReader::new();
+    let mut raw_line_buf = Vec::new();
+    let mut byte_buf = [0u8; 1];
+
+    while !shutdown.load(Ordering::Relaxed)
+        && matches!(read(&mut byte_buf), Ok(1))
+    {
+        let [b] = byte_buf;
+        process_incoming_byte(b, &mut reader, &mut raw_line_buf, tx);
+    }
 }
 
 /// Processes a single byte received from the target device.
@@ -684,6 +786,58 @@ pub fn process_incoming_byte(
 mod tests {
     use super::*;
     use control_rs_ets::comms::LogMessage;
+
+    /// One scripted read: a byte, or nothing (a timeout).
+    type Step = Option<u8>;
+
+    /// A reader over `steps` that sets `shutdown` when the script ends (or
+    /// reports end of stream when `eof`) and fails the test if
+    /// it is polled far beyond that.
+    struct Script<'a> {
+        steps: &'a [Step],
+        calls: usize,
+        shutdown: &'a AtomicBool,
+        eof: bool,
+    }
+
+    impl<'a> Script<'a> {
+        const fn new(
+            steps: &'a [Step],
+            shutdown: &'a AtomicBool,
+            eof: bool,
+        ) -> Self {
+            Self {
+                steps,
+                calls: 0,
+                shutdown,
+                eof,
+            }
+        }
+
+        fn next(&mut self, buf: &mut [u8]) -> usize {
+            assert!(
+                self.calls < self.steps.len().saturating_add(8),
+                "reader polled after its end"
+            );
+            let step = self.steps.get(self.calls).copied();
+            self.calls = self.calls.saturating_add(1);
+            match step {
+                Some(Some(b)) => {
+                    if let Some(slot) = buf.first_mut() {
+                        *slot = b;
+                    }
+                    1
+                }
+                Some(None) => 0,
+                None => {
+                    if !self.eof {
+                        self.shutdown.store(true, Ordering::SeqCst);
+                    }
+                    0
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_owned_telemetry_metadata() {
@@ -917,5 +1071,183 @@ mod tests {
         } else {
             panic!("expected raw console line");
         }
+    }
+
+    fn console_lines(rx: &Receiver<BridgeMessage>) -> Vec<String> {
+        let mut lines = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            match msg {
+                BridgeMessage::RawConsole(line) => lines.push(line),
+                BridgeMessage::Telemetry(_) => panic!("unexpected telemetry"),
+            }
+        }
+        lines
+    }
+
+    #[test]
+    fn stray_control_bytes_and_carriage_returns_stay_out_of_console_lines() {
+        let (tx, rx) = channel();
+        let mut reader = FrameReader::new();
+        let mut raw = Vec::new();
+        for &b in b"a b\x01c\r\td\n" {
+            process_incoming_byte(b, &mut reader, &mut raw, &tx);
+        }
+        assert_eq!(console_lines(&rx), ["a bc\td"]);
+    }
+
+    #[test]
+    fn cargo_run_commands_run_in_the_crate_directory_only_when_it_differs() {
+        let dir = |path: &str| {
+            cargo_run_command(&SubprocessTarget::new(path))
+                .get_current_dir()
+                .map(std::path::Path::to_path_buf)
+        };
+        assert_eq!(
+            dir("examples/qemu"),
+            Some(std::path::PathBuf::from("examples/qemu"))
+        );
+        assert_eq!(dir("."), None);
+        assert_eq!(dir(""), None);
+
+        let sub = SubprocessTarget::new(".")
+            .with_bin("b")
+            .with_target("t")
+            .with_arg("--release");
+        let cmd = cargo_run_command(&sub);
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, ["run", "--bin", "b", "--target", "t", "--release"]);
+    }
+
+    #[test]
+    fn link_info_names_the_subprocess_path() {
+        assert_eq!(
+            subprocess_link_info(&SubprocessTarget::new(".")),
+            "Subprocess (cargo run)"
+        );
+        assert_eq!(
+            subprocess_link_info(&SubprocessTarget::new("")),
+            "Subprocess (cargo run)"
+        );
+        assert_eq!(
+            subprocess_link_info(&SubprocessTarget::new("crates/x")),
+            "Subprocess (crates/x)"
+        );
+    }
+
+    #[test]
+    fn opening_a_missing_serial_port_gives_up_after_five_attempts() {
+        let Err(err) =
+            open_serial_with_retry("/dev/control-rs-no-such-port", 115_200)
+        else {
+            panic!("the port cannot exist");
+        };
+        assert!(
+            matches!(err, HostError::SerialOpen { attempts: 5, .. }),
+            "{err}"
+        );
+    }
+
+    fn steps(text: &str) -> Vec<Step> {
+        text.bytes().map(Some).collect()
+    }
+
+    #[test]
+    fn serial_bytes_become_console_lines_and_timeouts_are_retried() {
+        let (tx, rx) = channel();
+        let shutdown = AtomicBool::new(false);
+        let mut script = steps("h");
+        script.push(None);
+        script.extend(steps("i\n"));
+        let mut reader = Script::new(&script, &shutdown, false);
+        pump_serial(|buf| Ok(reader.next(buf)), &tx, &shutdown);
+        assert_eq!(console_lines(&rx), ["hi"]);
+    }
+
+    #[test]
+    fn a_serial_reader_that_is_already_shut_down_reads_nothing() {
+        let (tx, rx) = channel();
+        let shutdown = AtomicBool::new(true);
+        pump_serial(
+            |_: &mut [u8]| panic!("read after shutdown"),
+            &tx,
+            &shutdown,
+        );
+        assert_eq!(console_lines(&rx), Vec::<String>::new());
+    }
+
+    #[test]
+    fn stream_bytes_become_console_lines_until_the_stream_ends() {
+        let (tx, rx) = channel();
+        let shutdown = AtomicBool::new(false);
+        let script = steps("ok\nnext\n");
+        let mut reader = Script::new(&script, &shutdown, true);
+        let done = AtomicBool::new(false);
+        let stuck = AtomicBool::new(false);
+        // A pump that ignores the end of the stream never returns, and a
+        // `||` in its loop test would never even poll the reader, so a
+        // watchdog turns that hang into a failure.
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                pump_stream(|buf| Ok(reader.next(buf)), &tx, &shutdown);
+                done.store(true, Ordering::SeqCst);
+            });
+            scope.spawn(|| {
+                let deadline = std::time::Instant::now()
+                    + std::time::Duration::from_secs(5);
+                while !done.load(Ordering::SeqCst)
+                    && std::time::Instant::now() < deadline
+                {
+                    thread::sleep(std::time::Duration::from_millis(10));
+                }
+                if !done.load(Ordering::SeqCst) {
+                    stuck.store(true, Ordering::SeqCst);
+                    shutdown.store(true, Ordering::SeqCst);
+                }
+            });
+        });
+        assert!(
+            !stuck.load(Ordering::SeqCst),
+            "the pump kept running after the stream ended"
+        );
+        assert_eq!(console_lines(&rx), ["ok", "next"]);
+    }
+
+    #[test]
+    fn a_stream_reader_that_is_already_shut_down_reads_nothing() {
+        let (tx, rx) = channel();
+        let shutdown = AtomicBool::new(true);
+        pump_stream(
+            |_: &mut [u8]| panic!("read after shutdown"),
+            &tx,
+            &shutdown,
+        );
+        assert_eq!(console_lines(&rx), Vec::<String>::new());
+    }
+
+    #[test]
+    fn stderr_lines_are_forwarded_trimmed_until_shutdown() {
+        let (tx, rx) = channel();
+        let shutdown = AtomicBool::new(false);
+        pump_lines(std::io::Cursor::new("a\nb  \n"), &tx, &shutdown);
+        assert_eq!(console_lines(&rx), ["a", "b"]);
+
+        let (tx, rx) = channel();
+        let shutdown = AtomicBool::new(true);
+        pump_lines(std::io::Cursor::new("ignored\n"), &tx, &shutdown);
+        assert_eq!(console_lines(&rx), Vec::<String>::new());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_a_bridge_stops_its_readers() {
+        let bridge = ETSBridge::fake(None).bridge;
+        let shutdown = Arc::clone(&bridge.shutdown);
+        assert!(!shutdown.load(Ordering::SeqCst));
+        assert!(!bridge.is_shut_down());
+        drop(bridge);
+        assert!(shutdown.load(Ordering::SeqCst));
     }
 }

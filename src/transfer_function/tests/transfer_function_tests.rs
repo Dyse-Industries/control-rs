@@ -84,6 +84,30 @@ pub mod transfer_function_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// A leading denominator coefficient exactly at machine epsilon is
+    /// accepted by the constructor and the canonical form; zero is rejected
+    /// by both.
+    fn test_leading_denominator_epsilon_threshold() {
+        let eps = f64::EPSILON;
+        assert!(
+            ArrayTransferFunction::<f64, 1, 2>::try_continuous(
+                [1.0],
+                [1.0, eps]
+            )
+            .is_ok()
+        );
+        let at_eps =
+            ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, eps]);
+        assert!(at_eps.to_controllable_canonical_form::<1>().is_ok());
+        let zero =
+            ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 0.0]);
+        assert_eq!(
+            zero.to_controllable_canonical_form::<1>().err(),
+            Some(TransferFunctionError::ZeroLeadingDenominatorCoefficient)
+        );
+    }
+
+    #[cfg_attr(test, test)]
     #[allow(clippy::too_many_lines)]
     fn test_try_from_coefficients() {
         assert_eq!(
@@ -100,6 +124,14 @@ pub mod transfer_function_test_suite {
             ),
             Err(TransferFunctionError::ImproperSystem)
         );
+        let proper = ArrayTransferFunction::<f64, 2, 2>::try_continuous(
+            [1.0, 2.0],
+            [1.0, 2.0],
+        )
+        .unwrap();
+        assert!(proper.is_continuous());
+        assert!(!proper.is_discrete());
+
         let ok = ArrayTransferFunction::<f64, 1, 2>::try_discrete(
             [1.0],
             [1.0, 1.0],

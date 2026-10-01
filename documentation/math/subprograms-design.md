@@ -651,7 +651,7 @@ Direct LAPACK routines operate in-place with stack-allocated workspace buffers
   or
   $A = L L^H$ (complex HPD). Evaluates positive definiteness by
   verifying $L_{k,k} > 0$
-  prior to square-root division; returns `Err(LinAlgError::NotPositiveDefinite)`
+  before square-root division; returns `Err(LinAlgError::NotPositiveDefinite)`
   if
   a non-positive pivot occurs (Anderson et al., 1999; Reference LAPACK, 2026b).
   `Pptrf` writes the physical triangle selected by `uplo`. `set` of an

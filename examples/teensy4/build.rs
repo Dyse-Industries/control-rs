@@ -16,7 +16,7 @@ use std::path::PathBuf;
 fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // Generate the linker script containing our ETS test suites custom section.
+    // Generate the linker script containing the ETS test suites custom section.
     // This allows the ETS test runner to dynamically iterate over all registered
     // tests at boot-up by scanning between `__ets_test_suites_start` and `__ets_test_suites_end`.
     let mut ets_file = File::create(out.join("ets_suites.x")).unwrap();

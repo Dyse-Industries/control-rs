@@ -531,18 +531,12 @@ pub fn target_elf_path(target: &SubprocessTarget) -> String {
     }
 }
 
-/// Helper function to build the target binary before running ETS or virtual ETS.
-///
-/// # Errors
-///
-/// Returns `HostError::Build` if `cargo build` fails or returns a non-zero exit code.
-pub fn build_target_elf(
-    target: &SubprocessTarget,
-) -> Result<String, HostError> {
+/// The `cargo build` invocation for `target`, run in `crate_dir` unless that
+/// is the current directory.
+fn cargo_build_command(target: &SubprocessTarget, crate_dir: &Path) -> Command {
     let mut cmd = Command::new("cargo");
-    let crate_dir = target.crate_dir();
     if !crate_dir.as_os_str().is_empty() && crate_dir != Path::new(".") {
-        cmd.current_dir(&crate_dir);
+        cmd.current_dir(crate_dir);
     }
     cmd.arg("build");
     if let Some(bin) = &target.bin {
@@ -554,15 +548,29 @@ pub fn build_target_elf(
     for arg in &target.args {
         cmd.arg(arg);
     }
+    cmd
+}
 
-    let status = cmd.status().map_err(|e| HostError::Build {
-        target: target.display_name(),
-        source: format!(
-            "Failed to spawn cargo build in '{}': {e}",
-            crate_dir.display()
-        )
-        .into(),
-    })?;
+/// Helper function to build the target binary before running ETS or virtual ETS.
+///
+/// # Errors
+///
+/// Returns `HostError::Build` if `cargo build` fails or returns a non-zero exit code.
+pub fn build_target_elf(
+    target: &SubprocessTarget,
+) -> Result<String, HostError> {
+    let crate_dir = target.crate_dir();
+    let status =
+        cargo_build_command(target, &crate_dir)
+            .status()
+            .map_err(|e| HostError::Build {
+                target: target.display_name(),
+                source: format!(
+                    "Failed to spawn cargo build in '{}': {e}",
+                    crate_dir.display()
+                )
+                .into(),
+            })?;
 
     if !status.success() {
         return Err(HostError::Build {
@@ -785,5 +793,295 @@ mod tests {
         } else {
             panic!("Expected Target::Serial");
         }
+    }
+
+    fn words(list: &[&str]) -> Vec<String> {
+        list.iter().map(ToString::to_string).collect()
+    }
+
+    fn sole_subprocess(args: &[&str]) -> SubprocessTarget {
+        let mut targets = parse_targets(&words(args)).unwrap();
+        assert_eq!(targets.len(), 1, "{args:?}");
+        match targets.pop() {
+            Some(Target::Subprocess(sub)) => sub,
+            other => panic!("expected a subprocess target, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn manifest_file_resolves_directories_and_manifests() {
+        assert_eq!(
+            SubprocessTarget::new("examples/qemu").manifest_file(),
+            Path::new("examples/qemu/Cargo.toml")
+        );
+        assert_eq!(
+            SubprocessTarget::new("examples/qemu/Cargo.toml").manifest_file(),
+            Path::new("examples/qemu/Cargo.toml")
+        );
+        // Any existing file is taken as the manifest itself.
+        let file = std::env::temp_dir().join(format!(
+            "control_rs_ets_host_manifest_{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(&file, "").unwrap();
+        let sub = SubprocessTarget::new(file.to_string_lossy());
+        assert_eq!(sub.manifest_file(), file);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn display_names_describe_the_target() {
+        assert_eq!(
+            SubprocessTarget::new(".").display_name(),
+            "Subprocess (cargo run)"
+        );
+        assert_eq!(
+            SubprocessTarget::new("").display_name(),
+            "Subprocess (cargo run)"
+        );
+        assert_eq!(
+            SubprocessTarget::new("crates/x").display_name(),
+            "Subprocess (crates/x)"
+        );
+        assert_eq!(
+            SubprocessTarget::new(".").with_bin("b").display_name(),
+            "b"
+        );
+        assert_eq!(
+            SubprocessTarget::new(".").with_target("t").display_name(),
+            "t"
+        );
+        assert_eq!(
+            SubprocessTarget::new(".")
+                .with_bin("b")
+                .with_target("t")
+                .display_name(),
+            "b (t)"
+        );
+        assert_eq!(
+            SubprocessTarget::new(".")
+                .with_bin("b")
+                .with_name("Pretty")
+                .display_name(),
+            "Pretty"
+        );
+        let serial = Target::Serial {
+            port: "/dev/ttyACM0".to_string(),
+            baud: 9600,
+        };
+        assert_eq!(serial.display_name(), "Serial (/dev/ttyACM0)");
+        let sub = Target::Subprocess(SubprocessTarget::new(".").with_bin("b"));
+        assert_eq!(sub.display_name(), "b");
+    }
+
+    #[test]
+    fn parse_uses_the_default_arch_only_when_no_target_is_named() {
+        assert!(
+            Target::parse(&words(&["bin"]), "all", "/dev/x")
+                .unwrap()
+                .is_none()
+        );
+        let default = Target::parse(&words(&["bin"]), "riscv32", "/dev/x")
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            default,
+            Target::Subprocess(SubprocessTarget { target: Some(ref t), .. })
+                if t == "riscv32imac-unknown-none-elf"
+        ));
+        // A request naming more than one target is left to the caller.
+        assert!(
+            Target::parse(&words(&["bin", "arm", "riscv32"]), "arm", "/dev/x")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            Target::parse(&words(&["bin", "arm"]), "arm", "/dev/x")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn the_default_teensy_port_replaces_only_the_placeholder() {
+        let port = |args: &[&str], default: &str| match Target::parse(
+            &words(args),
+            "arm",
+            default,
+        )
+        .unwrap()
+        .unwrap()
+        {
+            Target::Serial { port, .. } => port,
+            other @ Target::Subprocess(_) => {
+                panic!("expected a serial target, got {other:?}")
+            }
+        };
+        assert_eq!(port(&["bin", "teensy"], "/dev/ttyACM0"), "/dev/ttyACM0");
+        assert_eq!(port(&["bin", "teensy"], "/dev/teensy"), "/dev/teensy");
+        assert_eq!(
+            port(&["bin", "teensy", "/dev/ttyUSB1"], "/dev/ttyACM0"),
+            "/dev/ttyUSB1"
+        );
+    }
+
+    #[test]
+    fn release_is_forwarded_once() {
+        let sub = sole_subprocess(&[
+            "tui",
+            "--target",
+            "t",
+            "--release",
+            "--release",
+        ]);
+        assert_eq!(sub.args, ["--release"]);
+        let sub = sole_subprocess(&[
+            "tui",
+            "--target",
+            "t",
+            "--args",
+            "-v",
+            "--release",
+        ]);
+        assert_eq!(sub.args, ["-v", "--release"]);
+    }
+
+    #[test]
+    fn extra_arguments_reach_every_target_once() {
+        let mut targets = parse_targets(&words(&[
+            "tui", "arm", "riscv32", "--args", "-v", "--", "--flag",
+        ]))
+        .unwrap();
+        assert_eq!(targets.len(), 2);
+        while let Some(Target::Subprocess(sub)) = targets.pop() {
+            assert_eq!(sub.args, ["-v", "--flag"]);
+        }
+    }
+
+    #[test]
+    fn unknown_words_are_rejected_and_baud_needs_serial() {
+        assert_eq!(
+            parse_targets(&words(&["tui", "teensy", "bogus"])).unwrap_err(),
+            "Unknown argument: bogus"
+        );
+        assert_eq!(
+            parse_targets(&words(&["tui", "9600"])).unwrap_err(),
+            "Unknown argument: 9600"
+        );
+        let mut targets =
+            parse_targets(&words(&["tui", "teensy", "9600"])).unwrap();
+        assert!(matches!(
+            targets.pop(),
+            Some(Target::Serial { baud: 9600, .. })
+        ));
+    }
+
+    #[test]
+    fn every_shorthand_alias_names_its_triple() {
+        let cases = [
+            ("arm", "thumbv7em-none-eabihf"),
+            ("arm-hf", "thumbv7em-none-eabihf"),
+            ("thumbv7em-none-eabihf", "thumbv7em-none-eabihf"),
+            ("arm-sf", "thumbv7em-none-eabi"),
+            ("arm-soft", "thumbv7em-none-eabi"),
+            ("thumbv7em-none-eabi", "thumbv7em-none-eabi"),
+            ("riscv", "riscv32imac-unknown-none-elf"),
+            ("riscv32", "riscv32imac-unknown-none-elf"),
+            ("risc-v", "riscv32imac-unknown-none-elf"),
+            (
+                "riscv32imac-unknown-none-elf",
+                "riscv32imac-unknown-none-elf",
+            ),
+            ("riscv64", "riscv64gc-unknown-none-elf"),
+            ("risc-v64", "riscv64gc-unknown-none-elf"),
+            ("riscv64gc-unknown-none-elf", "riscv64gc-unknown-none-elf"),
+        ];
+        for (alias, triple) in cases {
+            assert_eq!(
+                map_shorthand(alias).map(|s| s.triple),
+                Some(triple),
+                "{alias}"
+            );
+        }
+        assert!(map_shorthand("mips").is_none());
+    }
+
+    #[test]
+    fn elf_paths_omit_a_current_or_empty_crate_directory() {
+        for path in [".", ""] {
+            let with_triple =
+                SubprocessTarget::new(path).with_target("t").with_bin("b");
+            assert_eq!(
+                target_elf_path(&with_triple),
+                "target/t/debug/b",
+                "{path:?}"
+            );
+            let without = SubprocessTarget::new(path).with_bin("b");
+            assert_eq!(target_elf_path(&without), "target/debug/b", "{path:?}");
+        }
+        let nested = SubprocessTarget::new("crates/x/")
+            .with_bin("b")
+            .with_arg("--release");
+        assert_eq!(target_elf_path(&nested), "crates/x/target/release/b");
+        assert_eq!(target_elf_path(&SubprocessTarget::new(".")), "");
+    }
+
+    #[test]
+    fn build_commands_run_in_the_crate_directory_only_when_it_differs() {
+        let dir = |path: &str| {
+            let sub = SubprocessTarget::new(path);
+            cargo_build_command(&sub, &sub.crate_dir())
+                .get_current_dir()
+                .map(Path::to_path_buf)
+        };
+        assert_eq!(dir("examples/qemu"), Some(PathBuf::from("examples/qemu")));
+        assert_eq!(dir("."), None);
+        assert_eq!(dir(""), None);
+
+        let sub = SubprocessTarget::new(".")
+            .with_bin("b")
+            .with_target("t")
+            .with_arg("--release");
+        let cmd = cargo_build_command(&sub, &sub.crate_dir());
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, ["build", "--bin", "b", "--target", "t", "--release"]);
+    }
+
+    #[test]
+    fn building_reports_spawn_and_exit_failures_and_returns_the_elf_path() {
+        let root = std::env::temp_dir()
+            .join(format!("control_rs_ets_host_build_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        // A directory that does not exist cannot host the build.
+        let missing =
+            SubprocessTarget::new(root.join("absent").to_string_lossy());
+        let err = build_target_elf(&missing).unwrap_err().to_string();
+        assert!(err.contains("Failed to spawn cargo build"), "{err}");
+
+        // A directory without a manifest makes cargo exit non-zero.
+        std::fs::create_dir_all(root.join("empty")).unwrap();
+        let empty = SubprocessTarget::new(root.join("empty").to_string_lossy());
+        let err = build_target_elf(&empty).unwrap_err().to_string();
+        assert!(err.contains("cargo build exited with status"), "{err}");
+
+        // A valid crate builds and yields its expected ELF path.
+        let krate = root.join("tiny");
+        std::fs::create_dir_all(krate.join("src")).unwrap();
+        std::fs::write(
+            krate.join("Cargo.toml"),
+            "[package]\nname = \"tiny\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[workspace]\n",
+        )
+        .unwrap();
+        std::fs::write(krate.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let sub = SubprocessTarget::new(krate.to_string_lossy())
+            .with_bin("tiny")
+            .with_arg("--offline");
+        let elf = build_target_elf(&sub).unwrap();
+        assert!(elf.ends_with("/target/debug/tiny"), "{elf}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -991,11 +991,9 @@ where
         }
 
         let mut den = [T::ZERO; NP];
-        if NP > NX {
-            den[NX] = T::ONE;
-            for i in 0..NX {
-                den[i] = char_c[NX.saturating_sub(1).saturating_sub(i)];
-            }
+        den[NX] = T::ONE;
+        for i in 0..NX {
+            den[i] = char_c[NX.saturating_sub(1).saturating_sub(i)];
         }
 
         let mut bk = Owned::<T, NX, NX>::identity();
@@ -1006,20 +1004,15 @@ where
         for k in 0..NX {
             let cb = c.saturating_mul(&bk.saturating_mul(&b));
             let scale = cb.get(0, 0).copied().unwrap_or(T::ZERO);
-            if NX.saturating_sub(1).saturating_sub(k) < NP {
-                num[NX.saturating_sub(1).saturating_sub(k)] = (num
-                    [NX.saturating_sub(1).saturating_sub(k)])
-                .saturating_add(&scale);
-            }
+            let at = NX.saturating_sub(1).saturating_sub(k);
+            num[at] = num[at].saturating_add(&scale);
             if k.saturating_add(1) < NX {
                 bk = a.saturating_mul(&bk);
                 add_identity_scaled(&mut bk, char_c[k]);
             }
         }
         for i in 0..NP {
-            if i < NX.saturating_add(1) {
-                num[i] = num[i].saturating_add(&d.saturating_mul(&den[i]));
-            }
+            num[i] = num[i].saturating_add(&d.saturating_mul(&den[i]));
         }
 
         self.sample_time.map_or_else(

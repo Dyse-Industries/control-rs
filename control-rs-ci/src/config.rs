@@ -115,6 +115,11 @@ pub struct GateDefinition {
     /// when named by `--only`, `--group` or `--all`, under its `mode`.
     #[serde(default = "default_true")]
     pub default: bool,
+    /// Whether `cargo report` requires a result for this gate when its policy
+    /// is `fail`. A `false` gate that CI never runs does not fail the report
+    /// for its missing result; a recorded `Fail` still does.
+    #[serde(default = "default_true")]
+    pub required: bool,
     /// Working directory, relative to the workspace root.
     #[serde(default)]
     pub cwd: Option<PathBuf>,
@@ -258,6 +263,7 @@ impl GateDefinition {
             env: HashMap::new(),
             mode: None,
             default: true,
+            required: true,
             cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),
@@ -524,5 +530,55 @@ mod tests {
         ] {
             assert!(parse(text).is_err(), "{text}");
         }
+    }
+
+    #[test]
+    fn runner_defaults_apply_when_the_table_is_absent_or_empty() {
+        for text in [
+            "[x]\ncommand = \"true\"\n",
+            "[runner]\n[x]\ncommand = \"true\"\n",
+        ] {
+            let runner = parse(text).unwrap().runner;
+            assert_eq!(runner.title, "control-rs");
+            assert_eq!(runner.out_dir, Path::new("target/ci-artifacts"));
+            assert_eq!(runner.timeout_secs, DEFAULT_TIMEOUT_SECS);
+        }
+        let default = RunnerConfig::default();
+        assert_eq!(default.title, "control-rs");
+        assert_eq!(default.out_dir, Path::new("target/ci-artifacts"));
+        assert_eq!(default.timeout_secs, DEFAULT_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn groups_report_their_size() {
+        let empty = parse("[x]\ncommand = \"true\"\n").unwrap();
+        assert_eq!(empty.execution.groups.len(), 0);
+        assert!(empty.execution.groups.is_empty());
+
+        let two = parse(
+            "[execution.groups]\na = [\"x\"]\nb = [\"y\"]\n\
+             [x]\ncommand = \"true\"\n[y]\ncommand = \"true\"\n",
+        )
+        .unwrap();
+        assert_eq!(two.execution.groups.len(), 2);
+        assert!(!two.execution.groups.is_empty());
+    }
+
+    #[test]
+    fn exclusive_stages_are_addressable_by_name() {
+        let config = parse(
+            "[execution.exclusive]\npre = [\"fetch\"]\npost = [\"bench\"]\n\
+             [fetch]\ncommand = \"true\"\n[bench]\ncommand = \"true\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.group_members("pre"),
+            Some(vec!["fetch".to_string()])
+        );
+        assert_eq!(
+            config.group_members("post"),
+            Some(vec!["bench".to_string()])
+        );
+        assert_eq!(config.group_members("missing"), None);
     }
 }

@@ -135,14 +135,38 @@ pub mod state_space_test_suite {
         let g = ArrayStateSpace::continuous(a, b, c, d);
         let h = ArrayStateSpace::continuous(a, b, c, d);
 
+        assert!(g.is_continuous());
+        assert!(!g.is_discrete());
+
         let ser = g.series::<1, 1, 2>(&h);
         assert_eq!(ser.a().rows(), 2);
+        assert!(ser.is_continuous());
 
         let par = g.parallel::<1, 2>(&h);
         assert_almost_eq!(par.d().get(0, 0).copied().unwrap(), 0.0, 1e-12);
+        assert!(par.is_continuous());
 
         let cl = g.feedback::<1, 2>(&h, -1.0).unwrap();
         assert_eq!(cl.a().rows(), 2);
+        assert!(cl.is_continuous());
+
+        // Discrete systems interconnection
+        let g_d = ArrayStateSpace::discrete(a, b, c, d, 0.05);
+        let h_d = ArrayStateSpace::discrete(a, b, c, d, 0.05);
+        assert!(!g_d.is_continuous());
+        assert!(g_d.is_discrete());
+
+        let ser_d = g_d.series::<1, 1, 2>(&h_d);
+        assert_eq!(ser_d.sample_time, Some(0.05));
+        assert!(ser_d.is_discrete());
+
+        let par_d = g_d.parallel::<1, 2>(&h_d);
+        assert_eq!(par_d.sample_time, Some(0.05));
+        assert!(par_d.is_discrete());
+
+        let cl_d = g_d.feedback::<1, 2>(&h_d, -1.0).unwrap();
+        assert_eq!(cl_d.sample_time, Some(0.05));
+        assert!(cl_d.is_discrete());
 
         let ident_fb = ArrayStateSpace::continuous(
             Owned::<f64, 1, 1>::zero(),
@@ -166,6 +190,27 @@ pub mod state_space_test_suite {
             g.feedback::<1, 2>(&h, 1.0),
             Err(StateSpaceError::SingularLoopMatrix)
         );
+    }
+
+    #[cfg_attr(test, test)]
+    /// A third-order controllable canonical model converts to its transfer
+    /// function: every Faddeev-LeVerrier step and numerator term matters.
+    fn test_to_transfer_function_third_order() {
+        // H(s) = (3 s^2 + 2 s + 1) / (s^3 + 6 s^2 + 11 s + 6) + 2
+        let a = Owned::<f64, 3, 3>::from_fn(|i, j| {
+            [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [-6.0, -11.0, -6.0]][i][j]
+        });
+        let b = Owned::<f64, 3, 1>::from_fn(|i, _| [0.0, 0.0, 1.0][i]);
+        let c = Owned::<f64, 1, 3>::from_fn(|_, j| [1.0, 2.0, 3.0][j]);
+        let d = Owned::<f64, 1, 1>::from_fn(|_, _| 2.0);
+        let tf =
+            ArrayStateSpace::continuous(a, b, c, d).to_transfer_function::<4>();
+        let den = [6.0, 11.0, 6.0, 1.0];
+        let num = [13.0, 24.0, 15.0, 2.0];
+        for i in 0..4 {
+            assert_almost_eq!(tf.den_slice()[i], den[i], 1e-9);
+            assert_almost_eq!(tf.num_slice()[i], num[i], 1e-9);
+        }
     }
 
     #[cfg_attr(test, test)]

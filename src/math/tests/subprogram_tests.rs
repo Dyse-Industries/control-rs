@@ -305,6 +305,14 @@ pub mod subprogram_test_suite {
         let z = ArrayStorage::<f32, 3, 1>::from_array([[1.0, -2.0, 3.0]]);
         assert_almost_eq!(DefaultBlas::asum(&z), 6.0);
 
+        let cz = ArrayStorage::<Complex32, 3, 1>::from_array([[
+            Complex32::new(-1.0, 2.0),
+            Complex32::new(3.0, -4.0),
+            Complex32::new(-5.0, -6.0),
+        ]]);
+        assert_almost_eq!(DefaultBlas::asum(&cz), 21.0);
+        assert_eq!(DefaultBlas::iamax(&cz), 2);
+
         let mut a = ArrayStorage::<f32, 2, 1>::from_array([[1.0, 2.0]]);
         let mut b = ArrayStorage::<f32, 2, 1>::from_array([[3.0, 4.0]]);
         DefaultBlas::swap(&mut a, &mut b);
@@ -899,6 +907,178 @@ pub mod subprogram_test_suite {
         let mut short_tau = [0.0f64; 0];
         let err = DefaultBlas::geqrf(&mut a, &mut short_tau, &mut work);
         assert!(matches!(err, Err(LinAlgError::WorkspaceTooSmall)));
+    }
+
+    #[cfg_attr(test, test)]
+    /// `her2k` reads `k` from the columns of a non-transposed operand.
+    fn test_subprograms_her2k_non_square_operand() {
+        // A and B are 2 x 3; C = A B^T + B A^T is 2 x 2.
+        let a = ArrayStorage::<f64, 2, 3>::from_array([
+            [1.0, 4.0],
+            [2.0, 5.0],
+            [3.0, 6.0],
+        ]);
+        let b = ArrayStorage::<f64, 2, 3>::from_array([
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 0.0],
+        ]);
+        let mut c = ArrayStorage::<f64, 2, 2>::from_array([[0.0; 2]; 2]);
+        DefaultBlas::her2k(
+            UpLo::Upper,
+            Trans::NoTrans,
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+        );
+        assert_almost_eq!(*c.get(0, 0).unwrap(), 8.0, 1e-12);
+        assert_almost_eq!(*c.get(0, 1).unwrap(), 12.0, 1e-12);
+        assert_almost_eq!(*c.get(1, 1).unwrap(), 10.0, 1e-12);
+    }
+
+    #[cfg_attr(test, test)]
+    /// `syr2k` reads `k` from the columns of a non-transposed operand.
+    fn test_subprograms_syr2k_non_square_operand() {
+        // A and B are 2 x 3; C = A B^T + B A^T is 2 x 2.
+        let a = ArrayStorage::<f64, 2, 3>::from_array([
+            [1.0, 4.0],
+            [2.0, 5.0],
+            [3.0, 6.0],
+        ]);
+        let b = ArrayStorage::<f64, 2, 3>::from_array([
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 0.0],
+        ]);
+        let mut c = ArrayStorage::<f64, 2, 2>::from_array([[0.0; 2]; 2]);
+        DefaultBlas::syr2k(
+            UpLo::Upper,
+            Trans::NoTrans,
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+        );
+        assert_almost_eq!(*c.get(0, 0).unwrap(), 8.0, 1e-12);
+        assert_almost_eq!(*c.get(0, 1).unwrap(), 12.0, 1e-12);
+        assert_almost_eq!(*c.get(1, 1).unwrap(), 10.0, 1e-12);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Workspace arguments may be larger than required and are rejected only
+    /// when smaller.
+    fn test_subprograms_workspace_size_boundaries() {
+        let mut a =
+            ArrayStorage::<f64, 2, 2>::from_array([[3.0, 4.0], [4.0, 3.0]]);
+        let mut tau = [0.0f64; 2];
+        let mut work = [0.0f64; 4];
+        DefaultBlas::geqrf(&mut a, &mut tau, &mut work).unwrap();
+
+        // `unmqr`: `tau` needs min(rows, cols) entries, `work` needs the
+        // column count of `c` for a left application.
+        let apply = |tau: &[f64], work: &mut [f64]| {
+            let mut c = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 0.0]]);
+            DefaultBlas::unmqr(
+                Side::Left,
+                Trans::NoTrans,
+                &a,
+                tau,
+                &mut c,
+                work,
+            )
+        };
+        assert!(apply(&tau, &mut [0.0; 1]).is_ok());
+        assert!(apply(&[tau[0], tau[1], 0.0], &mut [0.0; 4]).is_ok());
+        assert!(matches!(
+            apply(&tau[..1], &mut [0.0; 4]),
+            Err(LinAlgError::WorkspaceTooSmall)
+        ));
+        assert!(matches!(
+            apply(&tau, &mut [0.0; 0]),
+            Err(LinAlgError::WorkspaceTooSmall)
+        ));
+
+        // `syev`/`heev`: an eigenvalue buffer longer than `n` is fine.
+        let mut s =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 1.0], [1.0, 2.0]]);
+        let mut w = [0.0f64; 3];
+        assert!(
+            DefaultBlas::syev(
+                JobZ::Vectors,
+                UpLo::Upper,
+                &mut s,
+                &mut w,
+                &mut [0.0; 4]
+            )
+            .is_ok()
+        );
+        let mut h = ArrayStorage::<Complex64, 2, 2>::from_array([
+            [Complex64::new(2.0, 0.0), Complex64::new(0.0, -1.0)],
+            [Complex64::new(0.0, 1.0), Complex64::new(2.0, 0.0)],
+        ]);
+        let mut wh = [0.0f64; 3];
+        assert!(
+            DefaultBlas::heev(
+                JobZ::Vectors,
+                UpLo::Upper,
+                &mut h,
+                &mut wh,
+                &mut [<Complex64 as Zero>::ZERO; 4]
+            )
+            .is_ok()
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    /// The eigensolver reads only the stored triangle, and a small rotation
+    /// keeps each eigenvalue near the diagonal entry it came from.
+    fn test_subprograms_syev_triangle_and_rotation_branch() {
+        // Stored Lower triangle [[2, .], [1, 2]]; the upper entry is junk.
+        let mut lower =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 1.0], [100.0, 2.0]]);
+        let mut w = [0.0f64; 2];
+        DefaultBlas::syev(
+            JobZ::NoVectors,
+            UpLo::Lower,
+            &mut lower,
+            &mut w,
+            &mut [0.0; 4],
+        )
+        .unwrap();
+        assert_almost_eq!(w[0] + w[1], 4.0, 1e-10);
+        assert_almost_eq!(w[0] * w[1], 3.0, 1e-10);
+
+        // Stored Upper triangle [[2, 1], [., 2]]; the lower entry is junk.
+        let mut upper =
+            ArrayStorage::<f64, 2, 2>::from_array([[2.0, 100.0], [1.0, 2.0]]);
+        DefaultBlas::syev(
+            JobZ::NoVectors,
+            UpLo::Upper,
+            &mut upper,
+            &mut w,
+            &mut [0.0; 4],
+        )
+        .unwrap();
+        assert_almost_eq!(w[0] * w[1], 3.0, 1e-10);
+
+        // [[1, 0.1], [0.1, 3]]: the small rotation leaves 1 near index 0.
+        let mut m =
+            ArrayStorage::<f64, 2, 2>::from_array([[1.0, 0.1], [0.1, 3.0]]);
+        DefaultBlas::syev(
+            JobZ::NoVectors,
+            UpLo::Upper,
+            &mut m,
+            &mut w,
+            &mut [0.0; 4],
+        )
+        .unwrap();
+        // sqrt(1.01): `f64::sqrt` is not available without `std`.
+        let root = 1.004_987_562_112_089;
+        assert_almost_eq!(w[0], 2.0 - root, 1e-9);
+        assert_almost_eq!(w[1], 2.0 + root, 1e-9);
     }
 
     #[cfg_attr(test, test)]
@@ -2770,16 +2950,44 @@ pub mod subprogram_test_suite {
         let x_sp = ArrayStorage::<f64, 1, 2>::from_row([1.0, 1.0]);
         let mut y_sp2 = ArrayStorage::<f64, 1, 2>::from_row([1.0, 1.0]);
         DefaultBlas::csrmv(1.0, &csr, &x_sp, 0.5, &mut y_sp2);
-        DefaultBlas::cscmv(1.0, &csc, &x_sp, 2.0, &mut y_sp2);
+        assert_almost_eq!(unsafe { *y_sp2.get_unchecked(0, 0) }, 1.5);
+        assert_almost_eq!(unsafe { *y_sp2.get_unchecked(0, 1) }, 2.5);
+
+        let mut y_csc = ArrayStorage::<f64, 1, 2>::from_row([2.0, 3.0]);
+        DefaultBlas::cscmv(1.0, &csc, &x_sp, 2.0, &mut y_csc);
+        assert_almost_eq!(unsafe { *y_csc.get_unchecked(0, 0) }, 5.0);
+        assert_almost_eq!(unsafe { *y_csc.get_unchecked(0, 1) }, 8.0);
+
+        // Column vectors for csrmv and cscmv to exercise y.rows() >= y.cols()
+        let x_col = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 1.0]]);
+        let mut y_col = ArrayStorage::<f64, 2, 1>::from_array([[1.0, 1.0]]);
+        DefaultBlas::csrmv(1.0, &csr, &x_col, 0.5, &mut y_col);
+        assert_almost_eq!(unsafe { *y_col.get_unchecked(0, 0) }, 1.5);
+        assert_almost_eq!(unsafe { *y_col.get_unchecked(1, 0) }, 2.5);
+
+        let mut y_col_csc = ArrayStorage::<f64, 2, 1>::from_array([[2.0, 3.0]]);
+        DefaultBlas::cscmv(1.0, &csc, &x_col, 2.0, &mut y_col_csc);
+        assert_almost_eq!(unsafe { *y_col_csc.get_unchecked(0, 0) }, 5.0);
+        assert_almost_eq!(unsafe { *y_col_csc.get_unchecked(1, 0) }, 8.0);
+
         let mut cm = ArrayStorage::<f64, 2, 2>::identity();
         DefaultBlas::csrmm(1.0, &csr, &b_id, 0.5, &mut cm);
+        assert_almost_eq!(unsafe { *cm.get_unchecked(0, 0) }, 1.5);
+        assert_almost_eq!(unsafe { *cm.get_unchecked(0, 1) }, 0.0);
+        assert_almost_eq!(unsafe { *cm.get_unchecked(1, 0) }, 0.0);
+        assert_almost_eq!(unsafe { *cm.get_unchecked(1, 1) }, 2.5);
+
         let mut svec = ArraySparseVector::<f64, 2, 2>::new();
         svec.push(0, 1.0).unwrap();
         let y_row_f = ArrayStorage::<f64, 1, 2>::from_row([3.0, 4.0]);
-        let _ = DefaultBlas::sp_dotu(&svec, &y_row_f);
-        let _ = DefaultBlas::sp_dotc(&svec, &y_row_f);
+        let dotu = DefaultBlas::sp_dotu(&svec, &y_row_f);
+        assert_almost_eq!(dotu, 3.0);
+        let dotc = DefaultBlas::sp_dotc(&svec, &y_row_f);
+        assert_almost_eq!(dotc, 3.0);
         let mut y_ax = y_row_f;
         DefaultBlas::sp_axpy(1.0, &svec, &mut y_ax);
+        assert_almost_eq!(unsafe { *y_ax.get_unchecked(0, 0) }, 4.0);
+        assert_almost_eq!(unsafe { *y_ax.get_unchecked(0, 1) }, 4.0);
 
         let mut chol =
             ArrayStorage::<f64, 2, 2>::from_array([[4.0, 1.0], [1.0, 3.0]]);

@@ -372,6 +372,8 @@ aborting, and that the dependency closure stays free of presentation crates.
 | Resource usage evaluation | Process and thread accounting after a killed session |
 | On-target execution | The QEMU virtual ETS matrix and one physical serial session |
 | Verdict evaluation | The `ets` CI gate judges every QEMU target's `RunRecord` (`ci-design.md` FR-19) |
+| Requirements-based test | Reader-thread bodies run as plain functions over a scripted byte source, so shutdown, timeout and end-of-stream handling are asserted without a device or child process |
+| Requirements-based test | An in-memory `ETSBridge` link (`ETSBridge::fake`) drives `HeadlessRun` through discovery, timeout, rediscovery and panic-restart paths |
 | Coverage measurement | `cargo coverage` |
 
 The golden vectors are the mechanism that makes C-2 testable. They live beside
@@ -380,6 +382,10 @@ discriminant fails there first, rather than in a board session.
 
 Target: 85% line coverage of `control-rs-ets-host`, measured with
 `cargo coverage`.
+
+The in-memory link is compiled for this crate's own tests and, for downstream
+crates that test against `ETSBridge`, behind the `fake-link` cargo feature. It
+is not part of the production API and is unavailable on non-Unix hosts.
 
 Excluded: the serial transport, whose open path requires a physical device and
 is exercised by validation rather than unit tests; reader-thread teardown
@@ -487,6 +493,7 @@ established by `../ets/cpu-profiler-design.md`, not here.
 | 1.6      | September 18, 2026 | @MitchellDScott | FR-8 marked outstanding (no `PROTOCOL_VERSION` / `TargetInfo` on the wire); `terminate` teardown; send and reconnect keep partial `RunRecord`s; host `crc` dropped. |
 | 1.7      | September 24, 2026 | @MitchellDScott | Phase 4 consumer cutover completed for `control-rs-ci`: the `ets` gate drives `run_headless_ets_with_options` and writes `ets-results.json` (per-target entries, §4.6); the §6.1 QEMU matrix step runs in CI instead of against the removed `control-rs-xtask`; §1, §6.1 back-to-back row, §6.2 outcome row and §8 Renode note no longer cite the removed crate or a Renode CI use. |
 | 1.8      | September 24, 2026 | @MitchellDScott | FR-8 implemented: `TargetInfo` first in discovery, `SessionState::target_info` / `protocol_mismatch`, runner returns `ProtocolMismatch`; §4.3, error table, §6.2 row and §8 updated. |
+| 1.9      | September 28, 2026 | @MitchellDScott | Testability seams without behavior change: reader loops and the `cargo build` command are free functions, and a Unix in-memory `ETSBridge` link (`fake-link` feature) backs runner tests; §6.1 rows added. |
 
 ---
 

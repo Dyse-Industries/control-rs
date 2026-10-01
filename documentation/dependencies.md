@@ -2,7 +2,8 @@
 
 Every external tool the `control-rs` workspace uses, in one place. Each row
 names the tool, the version CI uses, what needs it and how to install it.
-Crate dependencies resolve through Cargo and are not listed.
+Crate dependencies resolve through Cargo and are not listed; the resolution is
+pinned by the committed `Cargo.lock`, which developers update by hand.
 [Workspace](../README.md) · [Development Guide](development-guide.md)
 
 ---

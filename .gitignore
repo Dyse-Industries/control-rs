@@ -4,6 +4,8 @@
 **/debug
 **/target
 **/Cargo.lock
+# The workspace lockfile is committed; developers update it by hand (CONTRIBUTING.md).
+!/Cargo.lock
 
 # MacOS cachefile
 **/.DS_Store
@@ -56,6 +58,7 @@
 # Vale styles downloaded packages (preserve project vocabularies)
 .vale/styles/*
 !.vale/styles/config/
+!.vale/styles/ControlRs/
 
 documentation/TODO/
 documentation/**/research/*

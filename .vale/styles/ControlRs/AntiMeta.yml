@@ -1,0 +1,14 @@
+extends: existence
+message: "Avoid meta-narrative, commit commentary, or draft backstory ('%s'). State architecture and requirements directly."
+link: documentation/doc-standards.md
+level: error
+ignorecase: true
+tokens:
+  - '\b(?:in\s+)?this\s+(?:PR|pull\s+request)\b'
+  - '\bpast\s+author(?:''s)?\b'
+  - '\bdraft\s+revision\b'
+  - '\bwe\s+(?:decided|chose|agreed|opted)\b'
+  - '\bas\s+(?:previously\s+)?discussed\b'
+  - '\bpipeline\s+artifact\b'
+  - '\bphase[- ]gate\b'
+  - '\bProposal\s+\(not in evidence\)\b'

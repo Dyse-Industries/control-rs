@@ -96,6 +96,8 @@ minimal-parsing design principle**:
   (`control-rs-ci report`) must derive overall pipeline success strictly from
   gate policies applied to `GateOutcome` verdicts. Any missing, corrupt, or
   failing fail-closed gate must fail the aggregator with a non-zero exit code.
+  A `fail` gate declared `required = false` may have no result, because no CI
+  job runs it, but a recorded `Fail` still fails the aggregator.
 - **FR-11 — Artifact Relocation & Cleanup**: All CI outputs must be written
   exclusively to `target/ci-artifacts/`. The runner and CLI tools must provide
   clean operations (`cargo ci clean`, `cargo gate clean`,
@@ -176,8 +178,8 @@ minimal-parsing design principle**:
   `continue-on-error` must match gates configured as `warn`. A fail-closed gate
   (`fail`) must not be bypassed.
 - **C-4 — Gate Opacity**: The runner depends only on a gate's declared
-  `command`, `args`, `env`, `cwd`, `timeout_secs`, `mode`, `default` and
-  `skip_exit_codes`, and on its exit status and produced artifacts. The runner
+  `command`, `args`, `env`, `cwd`, `timeout_secs`, `mode`, `default`,
+  `required` and `skip_exit_codes`, and on its exit status and produced artifacts. The runner
   must not inject, parse or rewrite gate
   arguments or environment to control a gate's internal behavior (for example
   worker counts, shard selection or output format).
@@ -330,6 +332,9 @@ pub struct GateDefinition {
     /// Whether an unfiltered `cargo ci` selects this gate (FR-15).
     #[serde(default = "default_true")]
     pub default: bool,
+    /// Whether `cargo report` requires a result for this gate (FR-10).
+    #[serde(default = "default_true")]
+    pub required: bool,
     /// Working directory relative to the workspace root.
     #[serde(default)]
     pub cwd: Option<PathBuf>,
@@ -437,7 +442,7 @@ post = [
 build_test = ["build", "test"]
 miri = ["miri"]
 lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs"]
-audit = ["deny", "semver", "geiger"]
+audit = ["deny", "deny-duplicates", "semver", "geiger"]
 valgrind = ["valgrind"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
@@ -446,8 +451,9 @@ target = ["virtual-ets"]
 [fetch]
 mode = "fail"
 command = "cargo fetch"
+args = ["--locked"]
 timeout_secs = 600
-description = "Downloads workspace dependencies into the Cargo cache before the groups start"
+description = "Downloads workspace dependencies into the Cargo cache before the groups start; fails if Cargo.lock is missing or out of date"
 
 [clippy]
 mode = "fail"
@@ -482,9 +488,12 @@ args = ["--workspace"]
 timeout_secs = 600
 description = "Executes bounded model checking over declared #[kani::proof] harnesses"
 
-# Disabled: superseded by the mutants-* chunks.
+# Monolithic mutation testing for local runs (`cargo gate mutants`). CI runs the
+# mutants-* chunks instead, so the report does not require this result.
 [mutants]
-mode = "skip"
+mode = "fail"
+default = false
+required = false
 command = "cargo mutants"
 args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
 
@@ -531,6 +540,11 @@ are rejected as unknown keys.
 `--all` selects every gate whose `mode` is not `skip`, including
 `default = false` gates. `cwd` is resolved against the workspace root.
 
+`required` (default `true`) says whether `cargo report` needs a result from a
+`fail` gate. A gate that no CI job runs, such as the monolithic `mutants` gate
+that the `mutants-*` chunks replace in CI, sets `required = false`: its missing
+result is not a failure, but a recorded `Fail` is.
+
 Mutation testing covers the root package in `mutants-<file>-<k>` chunks and
 each workspace tool crate in its own gate: `mutants-ci-0`/`-1` (sharded),
 `mutants-compare`, `mutants-ets-host`, `mutants-ets`, `mutants-macros` and `mutants-tui`. The root `.cargo/mutants.toml`
@@ -540,13 +554,21 @@ for the root package only, so the workspace gates pass `--no-config`.
 `cross-compare` validates. The CI matrix runs one job per gate whose name
 starts with `mutants-`.
 
+A mutant that no test can distinguish from the original (for example `>=`
+for `>` on values that cannot tie, or code compiled only for another target)
+is excluded with `exclude_re` in `.cargo/mutants.toml` or with `--exclude-re`
+in the gate's `args`, next to a comment stating why. Exclusions are reviewed
+like code; the shards of one file carry identical exclusions so `--shard`
+partitions one list.
+
 #### 4.4 Concurrency Topology & Scheduling
 
 Selected gates run in three stages, in this order (FR-8, FR-9, FR-13):
 
 1. **`pre` (`[execution.exclusive] pre`)**: gates that must finish before any
-   group starts, such as `fetch` (`cargo fetch`, which fills the Cargo package
-   cache so concurrent groups do not contend for it). They run one at a time on
+   group starts, such as `fetch` (`cargo fetch --locked`, which fills the Cargo package
+   cache so concurrent groups do not contend for it, and fails if `Cargo.lock`
+   is missing or out of date). They run one at a time on
    the calling thread, tagged `[pre]`, in the shared target directory. If a
    `pre` gate records `Verdict::Fail`, the runner prints `Aborted` and starts no
    group and no `post` gate; their results are absent, so the report fails them
@@ -587,7 +609,7 @@ tag followed by the gate name, so interleaved output from concurrent groups
 remains attributable:
 
 ```text
-     Running [pre] `cargo fetch`
+     Running [pre] `cargo fetch --locked`
       Passed [pre] fetch in 3.10s
      Running [lint] `cargo clippy --workspace --all-targets -- -D warnings`
      Running [verify] `cargo run --package control-rs-compare --bin compare -- --config .cargo/compare.toml`
@@ -624,7 +646,8 @@ different gates interleave but are never split.
 4. **Policy Evaluation**: Evaluates all gate verdicts against declared policies
    in `gate.toml`. Any failed or omitted fail-closed gate causes the aggregator
    to exit non-zero (FR-10). `cargo report` requires every `fail` gate,
-   `default = false` gates included. `cargo ci` with a selection requires every
+   `default = false` gates included, except gates declared `required = false`.
+   `cargo ci` with a selection requires every
    selected `fail` gate to have a non-failing result (FR-15).
 5. **Decoupled Metric Reporting**: Gates provide arbitrary concise outcome
    summaries through their `GateOutcome.summary` field, rendered directly in the
@@ -827,6 +850,7 @@ The `lint` job checks out full history for `--base-ref`.
 | **Passthrough on `cargo ci`**                           | A single argument list has no unambiguous target across a multi-gate pipeline; per-gate passthrough syntax would duplicate `gate.toml`.                                                                                                                                                                                                                                                                                                          |           |
 | **Separate Process Group per Gate**                     | `setpgid` makes timeout termination a single `kill -<pgid>`, but moves the gate out of the terminal's foreground group, so an interactive interrupt stops the runner and orphans every running gate. Tree termination (§4.2) keeps interrupts working.                                                                                                                                                                                           |           |
 | **`default = false` Expressed as `mode = "skip"`**      | Overloads one field with two meanings, "not selected by default" and "never fails"; a selected skip gate could not fail its job, which violated C-3 for the mutation and regression jobs before revision 1.26.                                                                                                                                                                                                                                   |           |
+| **Treat Every `default = false` Gate as Optional in the Report** | Lets the monolithic `mutants` gate have no result, but also lets a `mutants-*` chunk job that never ran or never uploaded pass unnoticed. A per-gate `required = false` exempts only the gate that has no CI job. |           |
 | **Shell Script Orchestration**                          | Hand-rolled shell scripts drift across local and CI environments, lack structured artifact generation, and cannot provide compile-time shape verification or robust timeout isolation.                                                                                                                                                                                                                                                           |           |
 
 ---
@@ -847,7 +871,7 @@ The `lint` job checks out full history for `--base-ref`.
 | `test` | Artifact Cleanup Tests                | Verifies `clean_artifacts` removes `target/ci-artifacts/` and scrubs legacy workspace root files.                                                                                                                                                                                             |
 | `test` | Report Aggregation Tests              | Verifies `ci-report.md` generation, fail-closed policy enforcement, `**MISSING**` rows, rejected records of another schema (NFR-2), and the size budget ($\le 64\,\text{KiB}$) with multi-byte log tails.                                                                                     |
 | `test` | Tool Degradation Tests                | Verifies uninstalled tools log diagnostics and emit `Verdict::Warn` when policy is `warn`.                                                                                                                                                                                                    |
-| `test` | Selection & Policy Tests              | Verifies `default = false` gates are left out of an unfiltered run and `--all` includes them, a selected `default = false` gate fails its invocation on `Fail`, a selected `skip` gate records `Skipped` without executing, and a missing selected `fail` result fails (FR-15).               |
+| `test` | Selection & Policy Tests              | Verifies `default = false` gates are left out of an unfiltered run and `--all` includes them, a selected `default = false` gate fails its invocation on `Fail`, a selected `skip` gate records `Skipped` without executing, a missing selected `fail` result fails (FR-15), and a `fail` gate declared `required = false` may have no result while a recorded `Fail` still fails the report (FR-10).               |
 | `test` | Process-Tree Termination Tests        | Verifies a timed-out gate leaves no live descendant: a probe gate records the id of a background grandchild, which must be gone after the timeout (FR-16).                                                                                                                                    |
 | `test` | ETS Verdict Tests                     | Verifies the `ets` verdict rule against drained, aborted, pending, empty and failed-case `RunRecord`s (FR-19).                                                                                                                                                                                |
 | `test` | Verbose Echo Tests                    | Verifies `-v`/`--verbose` parsing, and that an echoed gate still records both streams in `<gate>.log` with the correct exit code and verdict (FR-5, FR-12).                                                                                                                                   |
@@ -986,6 +1010,10 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.35     | September 28, 2026 | @MitchellDScott | Un-deferred FR-20 (`kani`) and FR-21 (`miri`) for PR3-6. Specified `kani` in `post` exclusive stage and `miri` in dedicated `dynamic` execution group; moved `trace` to `post` after `kani` (§4.3). Added Miri and Kani references.                                                                                                                                                                                                                                                                                                     |
 | 1.36     | September 28, 2026 | @MitchellDScott | Removed the `trace-marks` gate and `mutants-trace-macros`; `trace` reads `reqs.jsonl` and the result logs only. |
 | 1.37     | September 29, 2026 | @MitchellDScott | Renamed `dynamic` group to `miri` (§4.3). Extracted `valgrind` from `audit` into a dedicated `valgrind` group so `audit` runs cleanly in pre-commit without requiring host Valgrind support. |
+| 1.38     | September 30, 2026 | @MitchellDScott | §4.7 `regression` runs the baseline benchmarks (merge base with `main`, or the previous `main` tip) in the same job on the same runner, so no `baseline-regression` artifact is uploaded or restored; `restore-baseline` stays for the coverage and mutation baselines. |
+| 1.39     | September 30, 2026 | @MitchellDScott | Added `required` to the gate definition (FR-10): a `fail` gate with `required = false` may have no result in `cargo report`, while a recorded `Fail` still fails it. The monolithic `mutants` gate is `fail`, `default = false`, `required = false`: executable locally, not required in CI. |
+| 1.40     | October 1, 2026 | @MitchellDScott | Added the `deny-duplicates` gate to the `audit` group: `cargo deny` bans over the crates that ship, excluding the unpublished tooling crates and development dependencies, with `multiple-versions = "deny"` and reasoned skips in `.cargo/deny.toml`. `deny` checks advisories, licenses and sources. Clippy's `multiple_crate_versions` is allowed workspace-wide and `allowed-duplicate-crates` is removed. The workspace `Cargo.lock` is committed and updated by hand. |
+| 1.41     | October 1, 2026 | @MitchellDScott | The `fetch` gate runs `cargo fetch --locked`, the CI lint job (which runs the `pre` stage) builds the runner with `cargo --locked ci`, and the CI publish job runs `cargo publish --locked`, so the committed `Cargo.lock` must be current. The runner build comes first, so without its `--locked` Cargo would repair a stale lock before `fetch` ran. |
 
 ---
 
@@ -1002,4 +1030,3 @@ Available: https://github.com/rust-lang/miri. Accessed: Sep. 28, 2026.
 [3] Kani Rust Verifier Contributors, "The Kani Rust Verifier Documentation and
 Source," *model-checking/kani GitHub repository*. [Online]. Available:
 https://github.com/model-checking/kani. Accessed: Sep. 28, 2026.
-| 1.38     | September 30, 2026 | @MitchellDScott | §4.7 `regression` runs the baseline benchmarks (merge base with `main`, or the previous `main` tip) in the same job on the same runner, so no `baseline-regression` artifact is uploaded or restored; `restore-baseline` stays for the coverage and mutation baselines. |

@@ -85,6 +85,7 @@ mod runner {
                 env: HashMap::new(),
                 mode: None,
                 default: true,
+                required: true,
                 cwd: None,
                 timeout_secs: None,
                 skip_exit_codes: Vec::new(),
@@ -99,6 +100,7 @@ mod runner {
                 env: HashMap::new(),
                 mode: Some(GatePolicy::Skip),
                 default: true,
+                required: true,
                 cwd: None,
                 timeout_secs: None,
                 skip_exit_codes: Vec::new(),
@@ -514,14 +516,14 @@ mod runner {
         let clean_args = vec!["cargo-ci".to_string(), "clean".to_string()];
         let opts = parse_args(&clean_args, "cargo ci");
         assert!(opts.clean);
-        assert!(opts.only_gates.is_empty());
+        assert!(opts.only_gates.is_empty(), "{:?}", opts.only_gates);
         assert!(!opts.run_all);
 
         // Flag --clean
         let flag_args = vec!["cargo-ci".to_string(), "--clean".to_string()];
         let opts = parse_args(&flag_args, "cargo ci");
         assert!(opts.clean);
-        assert!(opts.only_gates.is_empty());
+        assert!(opts.only_gates.is_empty(), "{:?}", opts.only_gates);
         assert!(!opts.run_all);
 
         // Short flag -X
@@ -625,6 +627,7 @@ mod runner {
                 env: HashMap::new(),
                 mode: None,
                 default: true,
+                required: true,
                 cwd: None,
                 timeout_secs: None,
                 skip_exit_codes: Vec::new(),
@@ -641,6 +644,7 @@ mod runner {
                 env: HashMap::new(),
                 mode: None,
                 default: true,
+                required: true,
                 cwd: None,
                 timeout_secs: None,
                 skip_exit_codes: Vec::new(),
@@ -857,6 +861,47 @@ mod runner {
     }
 
     #[test]
+    fn test_required_defaults_true_and_can_be_declared_false() {
+        let config = parse_config(
+            "[fmt]\ncommand = \"cargo fmt\"\n\
+             [mutants]\ncommand = \"cargo mutants\"\ndefault = false\nrequired = false\n",
+        );
+        assert!(config.gate_def("fmt").is_some_and(|g| g.required));
+        assert!(config.gate_def("mutants").is_some_and(|g| !g.required));
+    }
+
+    #[test]
+    fn test_a_gate_declared_not_required_may_have_no_result() {
+        let tmp_dir = temp_workspace("report_not_required");
+        let artifacts_dir = tmp_dir.join("artifacts");
+        fs::create_dir_all(&artifacts_dir).unwrap();
+        outcome("fmt", Verdict::Pass, "clean")
+            .save_to_dir(&artifacts_dir)
+            .unwrap();
+        let config = parse_config(
+            "[fmt]\ncommand = \"cargo fmt\"\n\
+             [mutants]\ncommand = \"cargo mutants\"\ndefault = false\nrequired = false\n",
+        );
+        let aggregator =
+            ReportAggregator::new(artifacts_dir.clone(), tmp_dir.clone());
+
+        // No result for the gate CI never runs: the report passes, with no row.
+        let report = aggregator.write_report(&config, None).unwrap();
+        assert!(report.pass);
+        let content = fs::read_to_string(&report.path).unwrap();
+        assert!(!content.contains("`mutants`"), "{content}");
+
+        // A recorded failure still fails the report.
+        outcome("mutants", Verdict::Fail, "missed mutants")
+            .save_to_dir(&artifacts_dir)
+            .unwrap();
+        let report = aggregator.write_report(&config, None).unwrap();
+        assert!(!report.pass);
+
+        let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
     fn test_rejected_and_missing_results_fail_the_report() {
         let tmp_dir = temp_workspace("report_rejected");
         let artifacts_dir = tmp_dir.join("artifacts");
@@ -882,5 +927,46 @@ mod runner {
         assert!(content.contains("Rejected Result Records"));
 
         let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_workspace_gate_toml_mutation_gates_are_executable() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_gate_toml =
+            manifest_dir.parent().unwrap().join(".cargo/gate.toml");
+        let config = GateConfig::load_from_path(&workspace_gate_toml).unwrap();
+
+        let mut chunks: Vec<&str> = config
+            .gate_definitions
+            .keys()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("mutants-"))
+            .collect();
+        chunks.sort_unstable();
+        assert!(!chunks.is_empty(), "no mutation chunk gates are defined");
+        for name in chunks {
+            assert_eq!(
+                config.policy_for(name),
+                GatePolicy::Fail,
+                "{name} must be executable (not mode = skip)"
+            );
+            assert!(
+                config
+                    .gate_definitions
+                    .get(name)
+                    .is_some_and(|gate| !gate.default),
+                "{name} must not run by default in unfiltered CI"
+            );
+        }
+
+        // The monolithic gate is executable for local runs, but CI runs only
+        // the chunks, so the report must not require its result.
+        assert_eq!(config.policy_for("mutants"), GatePolicy::Fail);
+        let monolith = config.gate_definitions.get("mutants").unwrap();
+        assert!(!monolith.default, "mutants must not run by default");
+        assert!(
+            !monolith.required,
+            "mutants has no CI job; requiring its result would fail the report"
+        );
     }
 }

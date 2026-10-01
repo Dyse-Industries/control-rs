@@ -818,8 +818,72 @@ automated_methods = []
     }
 
     #[test]
+    fn the_default_doc_id_pattern_reads_a_heading_suffix() {
+        let keys: String = KEYS
+            .lines()
+            .filter(|l| !l.starts_with("doc_id"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config: TraceConfig =
+            toml::from_str(&format!("{keys}\nretired = []")).unwrap();
+        let rules = config.rules(Path::new("trace.toml")).unwrap();
+        assert_eq!(
+            scan(CLEAN, &rules).first(),
+            Some(&expect(DEFINITION, "widget#FR-1", 3))
+        );
+    }
+
+    #[test]
+    fn a_different_second_document_id_is_reported_and_a_repeat_is_not() {
+        let rows = "\n- **FR-1 — Size**: It shall.\n";
+        let different = format!("# Widget (widget)\n# Other (other){rows}");
+        let (_, defects) = scan_markdown(FILE, &different, &rules());
+        assert!(defects.iter().any(|d| {
+            d.message == "duplicate document ID declaration `other`"
+        }));
+        let same = format!("# Widget (widget)\n# Again (widget){rows}");
+        let (_, defects) = scan_markdown(FILE, &same, &rules());
+        assert!(
+            !defects
+                .iter()
+                .any(|d| d.message.contains("duplicate document ID"))
+        );
+    }
+
+    #[test]
+    fn targets_come_from_the_fourth_of_at_least_five_cells() {
+        assert_eq!(
+            targets("| VC-1.1 | FR-1 | `libtest` | `a::b` | note |"),
+            ["a::b"]
+        );
+        let got = targets("| VC-1.1 | FR-1 | `libtest` | `a::b` |");
+        assert!(got.is_empty(), "{got:?}");
+    }
+
+    #[test]
+    fn only_definitions_make_a_document_id_shared_between_files() {
+        let (defined, _) = scan_markdown(
+            "docs/a.md",
+            "# Doc A (widget)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n",
+            &rules(),
+        );
+        let (only_conditions, _) = scan_markdown(
+            "docs/b.md",
+            "# Doc B (widget)\n\n| VC-2.1 | FR-1 | `test` | C |\n",
+            &rules(),
+        );
+        let rows = [defined, only_conditions].concat();
+        assert!(
+            !check(&rows, &rules())
+                .iter()
+                .any(|d| d.message.contains("defined in multiple files"))
+        );
+    }
+
+    #[test]
     fn clean_document_has_no_defects() {
-        assert!(messages(CLEAN, &rules()).is_empty());
+        let got = messages(CLEAN, &rules());
+        assert!(got.is_empty(), "{got:?}");
     }
 
     #[test]
@@ -869,10 +933,8 @@ automated_methods = []
             defects.iter().filter(|m| m.ends_with("is retired")).count(),
             2
         );
-        assert!(
-            messages(CLEAN, &rules_with("retired = [\"widget#FR-2\"]"))
-                .is_empty()
-        );
+        let got = messages(CLEAN, &rules_with("retired = [\"widget#FR-2\"]"));
+        assert!(got.is_empty(), "{got:?}");
     }
 
     #[test]
@@ -1060,7 +1122,7 @@ automated_methods = []
         let (rows, defects) = scan_markdown(FILE, good, &rules());
         assert_eq!(rows.len(), 2);
         assert_eq!(rows.get(1).map(|r| r.id.as_str()), Some("widget#VC-1.1"));
-        assert!(defects.is_empty());
+        assert!(defects.is_empty(), "{defects:?}");
     }
 
     #[test]

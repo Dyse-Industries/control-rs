@@ -180,6 +180,18 @@ pub mod dsp_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// An empty operand returns early and leaves a non-empty output untouched.
+    fn test_dsp_convolution_empty_operand_leaves_output() {
+        let mut out_a = [9.0_f64; 3];
+        DefaultDsp::convolve_input(&[1.0, 2.0, 3.0], &[], &mut out_a).unwrap();
+        assert!(out_a.iter().all(|v| (*v - 9.0).abs() < f64::EPSILON));
+
+        let mut out_b = [9.0_f64; 3];
+        DefaultDsp::convolve_input(&[], &[1.0, 2.0, 3.0], &mut out_b).unwrap();
+        assert!(out_b.iter().all(|v| (*v - 9.0).abs() < f64::EPSILON));
+    }
+
+    #[cfg_attr(test, test)]
     /// Leaves `output[expected_len..]` unchanged when the buffer is longer
     /// than `input_len + kernel_len - 1`.
     fn test_dsp_convolution_leftover_output_tail() {
@@ -253,6 +265,27 @@ pub mod dsp_test_suite {
             _assert_close(val.re, 0.0, tol);
             _assert_close(val.im, 0.0, tol);
         }
+    }
+
+    #[cfg_attr(test, test)]
+    fn test_dsp_fft_asymmetric_ramp() {
+        // Analytical 4-point DFT of [1.0, 2.0, 3.0, 4.0]:
+        // X[0] = 1 + 2 + 3 + 4 = 10
+        // X[1] = 1 - 2j - 3 + 4j = -2 + 2j
+        // X[2] = 1 - 2 + 3 - 4 = -2
+        // X[3] = 1 + 2j - 3 - 4j = -2 - 2j
+        let input = [1.0f64, 2.0, 3.0, 4.0];
+        let mut output = [Complex::default(); 4];
+        DefaultDsp::fft(&input, &mut output);
+        let tol = 1e-12;
+        _assert_close(output[0].re, 10.0, tol);
+        _assert_close(output[0].im, 0.0, tol);
+        _assert_close(output[1].re, -2.0, tol);
+        _assert_close(output[1].im, 2.0, tol);
+        _assert_close(output[2].re, -2.0, tol);
+        _assert_close(output[2].im, 0.0, tol);
+        _assert_close(output[3].re, -2.0, tol);
+        _assert_close(output[3].im, -2.0, tol);
     }
 
     #[cfg_attr(test, test)]

@@ -323,7 +323,7 @@ pub unsafe fn handle_exception<
     msg: &str,
     comms_ok: bool,
 ) -> ! {
-    // SAFETY: We propagate the safety context to `handle_failure` using the current exception information.
+    // SAFETY: Propagates the safety context to `handle_failure` using the current exception information.
     unsafe {
         handle_failure(context, msg, "exception_handler", 0, comms_ok);
     }
@@ -524,5 +524,29 @@ mod tests {
                 handle_exception(&mut context, "fault msg", false);
             }));
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn the_buffer_writer_fills_its_buffer_exactly_and_refuses_more() {
+        use core::fmt::Write;
+
+        let mut buf = [0u8; 5];
+        let mut writer = FailureBufWriter {
+            buf: &mut buf,
+            pos: 0,
+        };
+        assert!(writer.write_str("Hello").is_ok());
+        assert_eq!(writer.pos, 5);
+        assert!(writer.write_str("!").is_err());
+        assert_eq!(writer.pos, 5, "a refused write leaves the position alone");
+        assert_eq!(&buf, b"Hello");
+
+        let mut small = [0u8; 3];
+        let mut writer = FailureBufWriter {
+            buf: &mut small,
+            pos: 0,
+        };
+        assert!(writer.write_str("Hello").is_err());
+        assert_eq!(writer.pos, 0);
     }
 }

@@ -1258,4 +1258,163 @@ mod tests {
             Some(600_000_000)
         );
     }
+
+    fn outcome(suite_id: u16, test_id: u16, state: TestState) -> TestOutcome {
+        TestOutcome {
+            suite_id,
+            test_id,
+            suite_name: String::new(),
+            test_name: String::new(),
+            state,
+            cycles: None,
+            time_us: None,
+            stack_peak: None,
+        }
+    }
+
+    fn feed(state: &mut SessionState, frames: Vec<OwnedTelemetry>) {
+        for frame in frames {
+            let _ = state.handle_message(BridgeMessage::Telemetry(frame));
+        }
+    }
+
+    #[test]
+    fn reset_discovery_clears_masks_and_items() {
+        let mut state = matched();
+        feed(&mut state, make_test_suite_telemetry(0, "S", 2, 2));
+        let suite = state.suites.first_mut().unwrap();
+        assert_eq!(suite.ready_mask, SUITE_READY_MASK);
+        assert!(suite.test_slots_mask != 0 && suite.setting_slots_mask != 0);
+        suite.reset_discovery();
+        assert_eq!(suite.ready_mask, 0);
+        assert_eq!(suite.test_slots_mask, 0);
+        assert_eq!(suite.setting_slots_mask, 0);
+        assert!(suite.tests.is_empty() && suite.settings.is_empty());
+    }
+
+    #[test]
+    fn tests_are_found_by_suite_and_test_id() {
+        let mut state = matched();
+        feed(&mut state, make_test_suite_telemetry(0, "A", 3, 0));
+        feed(&mut state, make_test_suite_telemetry(1, "B", 2, 0));
+        let found = state.test_mut(1, 1).map(|t| (t.suite_id, t.test_id));
+        assert_eq!(found, Some((1, 1)));
+        let found = state.test_mut(0, 2).map(|t| (t.suite_id, t.test_id));
+        assert_eq!(found, Some((0, 2)));
+        assert!(state.test_mut(1, 2).is_none());
+        assert!(state.test_mut(5, 0).is_none());
+    }
+
+    #[test]
+    fn outcomes_are_keyed_by_suite_and_test() {
+        let mut state = SessionState::new();
+        state.record_outcome(outcome(0, 0, TestState::Passed));
+        state.record_outcome(outcome(0, 1, TestState::Failed));
+        state.record_outcome(outcome(1, 0, TestState::Passed));
+        assert_eq!(state.results.len(), 3);
+        assert_eq!(
+            state.find_outcome_mut(0, 1).map(|o| o.state),
+            Some(TestState::Failed)
+        );
+        assert_eq!(
+            state
+                .find_outcome_mut(1, 0)
+                .map(|o| (o.suite_id, o.test_id)),
+            Some((1, 0))
+        );
+        assert!(state.find_outcome_mut(1, 1).is_none());
+
+        // Recording an existing key replaces it in place.
+        state.record_outcome(outcome(0, 1, TestState::Passed));
+        assert_eq!(state.results.len(), 3);
+        assert_eq!(
+            state.find_outcome(0, 1).map(|o| o.state),
+            Some(TestState::Passed)
+        );
+    }
+
+    #[test]
+    fn enqueue_all_only_acts_while_running() {
+        let mut state = matched();
+        feed(&mut state, make_test_suite_telemetry(0, "S", 2, 0));
+        state.run_queue = vec![(9, 9)];
+        assert!(state.enqueue_all().is_none());
+        assert_eq!(state.run_queue, vec![(9, 9)], "the queue was rebuilt");
+
+        state.phase = SessionPhase::Running;
+        let action = state.enqueue_all();
+        assert!(matches!(
+            action,
+            Some(SessionAction::Send(CommCommand::RunExecutable {
+                suite_id: 0,
+                test_id: 0
+            }))
+        ));
+        assert_eq!(state.run_queue, vec![(0, 1)]);
+        assert_eq!(state.current_running, Some((0, 0)));
+    }
+
+    #[test]
+    fn suites_without_tests_or_settings_are_ready_after_their_info() {
+        let mut state = matched();
+        feed(&mut state, make_test_suite_telemetry(0, "NoTests", 0, 2));
+        let suite = state.suites.first().unwrap();
+        assert_eq!(suite.ready_mask & TESTS_READY, TESTS_READY);
+        assert_eq!(suite.ready_mask & SETTINGS_READY, SETTINGS_READY);
+
+        let mut state = matched();
+        feed(&mut state, make_test_suite_telemetry(0, "Bare", 0, 0));
+        assert!(state.suites.first().unwrap().is_ready());
+    }
+
+    #[test]
+    fn a_setting_seen_twice_is_updated_in_place() {
+        let mut state = matched();
+        let setting = |id: u16, value: u8| OwnedTelemetry::SettingInfo {
+            suite_id: 0,
+            setting_id: id,
+            name: format!("s{id}"),
+            description: String::new(),
+            value: SettingValue::U8(value),
+        };
+        feed(
+            &mut state,
+            vec![
+                OwnedTelemetry::SuiteInfo {
+                    suite_id: 0,
+                    name: "S".to_string(),
+                    description: String::new(),
+                    test_count: 0,
+                    setting_count: 2,
+                },
+                setting(0, 1),
+                setting(0, 5),
+                setting(1, 7),
+            ],
+        );
+        let suite = state.suites.first().unwrap();
+        assert_eq!(suite.settings.len(), 2);
+        let first = suite.settings.iter().find(|s| s.setting_id == 0).unwrap();
+        assert!(matches!(first.value, SettingValue::U8(5)));
+        assert!(suite.is_ready());
+    }
+
+    #[test]
+    fn slot_completeness_needs_every_expected_bit() {
+        assert!(
+            !slots_complete(0, 0, 0),
+            "an empty set has nothing to complete"
+        );
+        assert!(!slots_complete(2, 3, 0b111), "count and length differ");
+        assert!(slots_complete(2, 2, 0b11));
+        assert!(slots_complete(2, 2, 0b111), "extra bits do not matter");
+        assert!(!slots_complete(2, 2, 0b101), "slot 1 never arrived");
+        assert!(slots_complete(1, 1, 0b1));
+        assert!(!slots_complete(1, 1, 0b0));
+        assert!(slots_complete(64, 64, u64::MAX));
+        assert!(!slots_complete(64, 64, u64::MAX >> 1));
+        assert!(!slots_complete(64, 64, 0));
+        // Larger sets complete on length alone.
+        assert!(slots_complete(65, 65, 0));
+    }
 }

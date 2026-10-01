@@ -163,7 +163,8 @@ mod cli {
             "{:?}",
             stdout_lines(&output)
         );
-        assert!(stdout_lines(&output).is_empty());
+        let got = stdout_lines(&output);
+        assert!(got.is_empty(), "{got:?}");
         let rows = rows(&dir.join("out/reqs.jsonl"));
         let kinds: Vec<_> = rows
             .iter()
@@ -243,7 +244,7 @@ mod cli {
         assert!(trace_check(&dir).status.success());
         let schema = Some(u64::from(SCHEMA));
         let reqs = rows(&dir.join("out/reqs.jsonl"));
-        assert!(!reqs.is_empty());
+        assert!(!reqs.is_empty(), "no rows were written");
         for row in &reqs {
             assert_eq!(row.pointer("/schema").and_then(Value::as_u64), schema);
         }

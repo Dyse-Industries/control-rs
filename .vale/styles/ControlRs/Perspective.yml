@@ -1,0 +1,15 @@
+extends: existence
+message: "Avoid first-person perspective ('%s'). Use objective third-person for concepts or second-person imperative for procedural steps."
+link: documentation/doc-standards.md
+level: error
+ignorecase: false
+tokens:
+  - '\b[Ww]e\b'
+  - '\b[Ww]e''(?:ve|re|ll)\b'
+  - '\b[Oo]urs?\b'
+  - '\b[Ll]et''s\b'
+  - '\b[Mm]y\b'
+  - '\b[Mm]ine\b'
+  - '\bme\b'
+  - '\bI''(?:d|ll|m|ve)\b'
+  - '(?<=^|[\s"''\(\[])I\s+(?:am|was|will|would|have|had|could|should|do|did|can|cannot|think|believe|feel|propose|evaluated?|implemented?|added|created|wrote|made|found|chose|decided|tested|measured)\b'

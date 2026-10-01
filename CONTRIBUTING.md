@@ -169,7 +169,8 @@ cargo ci -v               # stream gate output, tagged [group] gate
 ```
 
 The gates are declared in [`.cargo/gate.toml`](.cargo/gate.toml): `fmt`, `clippy`,
-`doc`, `vale`, `build`, `test`, `coverage`, `deny`, `semver`, `geiger`,
+`doc`, `vale`, `build`, `test`, `coverage`, `deny`, `deny-duplicates`, `semver`,
+`geiger`,
 `valgrind`, `cross-compare`, `regression` and `mutants`. GitHub Actions
 runs `mutants` as the `mutants-*` chunk gates, one job each, and
 runs the other gates on every PR, across the supported toolchains from the
@@ -195,7 +196,15 @@ git config core.hooksPath .github/
 - The PR description links the design doc and lists the requirements the
   change implements or modifies.
 - PRs are squash-merged into `main`.
-- `Cargo.lock` is not committed (library convention).
+- The workspace `Cargo.lock` is committed and CI builds against it. Developers
+  update it by hand: run `cargo update` in a dedicated PR, run the gates, and
+  commit the result. Nothing refreshes it automatically, so dependency
+  upgrades appear only in those PRs. CI's lint job builds the runner with
+  `cargo --locked ci`, its `fetch` gate runs `cargo fetch --locked`, and the
+  publish job runs `cargo publish --locked`, so a PR that changes
+  dependencies must include the updated `Cargo.lock`.
+  The example crates under `examples/` are separate workspaces whose lock
+  files stay ignored.
 - Generated reports (`ci-report.md`, `trace-report.*`, `tarpaulin-report.*`)
   are ignored and not committed.
 
