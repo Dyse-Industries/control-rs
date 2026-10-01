@@ -30,7 +30,18 @@ allow = [
 ]
 
 [bans]
-multiple-versions = "warn"
+# Only the crates that ship are held to one version per dependency; see the
+# `deny-duplicates` gate, which excludes the unpublished tooling crates. The
+# entries below are the duplicates those crates cannot avoid.
+multiple-versions = "deny"
+skip = [
+    # cortex-m 0.7.9 depends on embedded-hal 0.2 and 1.0, and riscv 0.10 on 0.2.
+    { name = "embedded-hal", version = "<1", reason = "embedded-hal 0.2 and 1.0 coexist in the cortex-m and riscv crates" },
+    # Procedural macros run on the host at build time and are not linked into
+    # a shipped binary: control-rs-macros and cortex-m-macros use syn 2,
+    # serde_derive uses syn 3.
+    { name = "syn", version = "<3", reason = "build-time proc-macro dependency, not linked into binaries" },
+]
 wildcards = "deny"
 # Path dependencies without a version are allowed: cargo strips versionless
 # path dev-dependencies on publish, and `control-rs-ci` is `publish = false`.

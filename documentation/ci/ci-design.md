@@ -442,7 +442,7 @@ post = [
 build_test = ["build", "test"]
 miri = ["miri"]
 lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs"]
-audit = ["deny", "semver", "geiger"]
+audit = ["deny", "deny-duplicates", "semver", "geiger"]
 valgrind = ["valgrind"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
@@ -451,8 +451,9 @@ target = ["virtual-ets"]
 [fetch]
 mode = "fail"
 command = "cargo fetch"
+args = ["--locked"]
 timeout_secs = 600
-description = "Downloads workspace dependencies into the Cargo cache before the groups start"
+description = "Downloads workspace dependencies into the Cargo cache before the groups start; fails if Cargo.lock is missing or out of date"
 
 [clippy]
 mode = "fail"
@@ -565,8 +566,9 @@ partitions one list.
 Selected gates run in three stages, in this order (FR-8, FR-9, FR-13):
 
 1. **`pre` (`[execution.exclusive] pre`)**: gates that must finish before any
-   group starts, such as `fetch` (`cargo fetch`, which fills the Cargo package
-   cache so concurrent groups do not contend for it). They run one at a time on
+   group starts, such as `fetch` (`cargo fetch --locked`, which fills the Cargo package
+   cache so concurrent groups do not contend for it, and fails if `Cargo.lock`
+   is missing or out of date). They run one at a time on
    the calling thread, tagged `[pre]`, in the shared target directory. If a
    `pre` gate records `Verdict::Fail`, the runner prints `Aborted` and starts no
    group and no `post` gate; their results are absent, so the report fails them
@@ -607,7 +609,7 @@ tag followed by the gate name, so interleaved output from concurrent groups
 remains attributable:
 
 ```text
-     Running [pre] `cargo fetch`
+     Running [pre] `cargo fetch --locked`
       Passed [pre] fetch in 3.10s
      Running [lint] `cargo clippy --workspace --all-targets -- -D warnings`
      Running [verify] `cargo run --package control-rs-compare --bin compare -- --config .cargo/compare.toml`
@@ -1010,6 +1012,8 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.37     | September 29, 2026 | @MitchellDScott | Renamed `dynamic` group to `miri` (§4.3). Extracted `valgrind` from `audit` into a dedicated `valgrind` group so `audit` runs cleanly in pre-commit without requiring host Valgrind support. |
 | 1.38     | September 30, 2026 | @MitchellDScott | §4.7 `regression` runs the baseline benchmarks (merge base with `main`, or the previous `main` tip) in the same job on the same runner, so no `baseline-regression` artifact is uploaded or restored; `restore-baseline` stays for the coverage and mutation baselines. |
 | 1.39     | September 30, 2026 | @MitchellDScott | Added `required` to the gate definition (FR-10): a `fail` gate with `required = false` may have no result in `cargo report`, while a recorded `Fail` still fails it. The monolithic `mutants` gate is `fail`, `default = false`, `required = false`: executable locally, not required in CI. |
+| 1.40     | October 1, 2026 | @MitchellDScott | Added the `deny-duplicates` gate to the `audit` group: `cargo deny` bans over the crates that ship, excluding the unpublished tooling crates and development dependencies, with `multiple-versions = "deny"` and reasoned skips in `.cargo/deny.toml`. `deny` checks advisories, licenses and sources. Clippy's `multiple_crate_versions` is allowed workspace-wide and `allowed-duplicate-crates` is removed. The workspace `Cargo.lock` is committed and updated by hand. |
+| 1.41     | October 1, 2026 | @MitchellDScott | The `fetch` gate runs `cargo fetch --locked`, the CI lint job (which runs the `pre` stage) builds the runner with `cargo --locked ci`, and the CI publish job runs `cargo publish --locked`, so the committed `Cargo.lock` must be current. The runner build comes first, so without its `--locked` Cargo would repair a stale lock before `fetch` ran. |
 
 ---
 

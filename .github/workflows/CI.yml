@@ -78,7 +78,7 @@ jobs:
 
       # `pre` runs the `fetch` gate first; the full report requires its result.
       - name: Run Lint Group
-        run: cargo ci --verbose --group pre,lint
+        run: cargo --locked ci --verbose --group pre,lint
 
       - name: Upload Lint Artifacts
         if: always()
@@ -557,5 +557,5 @@ jobs:
               echo "::notice::$pkg $version is already published; skipping."
               continue
             fi
-            cargo publish --package "$pkg"
+            cargo publish --locked --package "$pkg"
           done

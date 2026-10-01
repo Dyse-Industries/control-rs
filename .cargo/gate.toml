@@ -62,7 +62,7 @@ post = [
 build_test = ["build", "test"]
 miri = ["miri"]
 lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs"]
-audit = ["deny", "semver", "geiger"]
+audit = ["deny", "deny-duplicates", "semver", "geiger"]
 valgrind = ["valgrind"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
@@ -77,8 +77,9 @@ target = ["virtual-ets"]
 [fetch]
 mode = "fail"
 command = "cargo fetch"
+args = ["--locked"]
 timeout_secs = 600
-description = "Downloads workspace dependencies into the Cargo cache before the groups start"
+description = "Downloads workspace dependencies into the Cargo cache before the groups start; fails if Cargo.lock is missing or out of date"
 
 # ==============================================================================
 # Cargo Lane Gates
@@ -160,9 +161,29 @@ description = "Measures workspace line coverage using cargo-tarpaulin"
 [deny]
 mode = "fail"
 command = "cargo deny"
-args = ["check"]
+args = ["check", "advisories", "licenses", "sources"]
 timeout_secs = 300
-description = "Audits dependencies for security advisories and license compliance"
+description = "Audits dependencies for security advisories, licenses and sources"
+
+# Duplicate versions are held to one only for the crates that ship (the ones
+# the publish job releases). The unpublished tooling crates and dev
+# dependencies are left out.
+[deny-duplicates]
+mode = "fail"
+command = "cargo deny"
+args = [
+    "--workspace",
+    "--exclude", "control-rs-tui",
+    "--exclude", "control-rs-ci",
+    "--exclude", "control-rs-compare",
+    "--exclude", "control-rs-ets-host",
+    "--exclude", "control-rs-verification",
+    "--exclude-dev",
+    "--all-features",
+    "check", "bans",
+]
+timeout_secs = 300
+description = "Holds the crates that ship to one version per dependency"
 
 [semver]
 mode = "skip"

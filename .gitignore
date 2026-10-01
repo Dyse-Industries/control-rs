@@ -4,6 +4,8 @@
 **/debug
 **/target
 **/Cargo.lock
+# The workspace lockfile is committed; developers update it by hand (CONTRIBUTING.md).
+!/Cargo.lock
 
 # MacOS cachefile
 **/.DS_Store
