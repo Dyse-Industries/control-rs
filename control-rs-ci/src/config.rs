@@ -115,6 +115,11 @@ pub struct GateDefinition {
     /// when named by `--only`, `--group` or `--all`, under its `mode`.
     #[serde(default = "default_true")]
     pub default: bool,
+    /// Whether `cargo report` requires a result for this gate when its policy
+    /// is `fail`. A `false` gate that CI never runs does not fail the report
+    /// for its missing result; a recorded `Fail` still does.
+    #[serde(default = "default_true")]
+    pub required: bool,
     /// Working directory, relative to the workspace root.
     #[serde(default)]
     pub cwd: Option<PathBuf>,
@@ -258,6 +263,7 @@ impl GateDefinition {
             env: HashMap::new(),
             mode: None,
             default: true,
+            required: true,
             cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),

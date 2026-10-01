@@ -112,9 +112,11 @@ impl ReportAggregator {
     }
 
     /// Evaluates fail-closed gate policy across ingested outcomes.
-    /// Without `subset`, every `fail` gate must have a non-failing result.
-    /// With `subset`, only the `fail` gates in the subset are required.
-    /// Returns true if all required `fail`-policy gates passed.
+    /// Without `subset`, every required `fail` gate must have a non-failing
+    /// result; with `subset`, only the required `fail` gates in the subset.
+    /// A `fail` gate declared `required = false` may have no result, but a
+    /// recorded `Fail` still fails the report.
+    /// Returns true if all `fail`-policy gates passed.
     #[must_use]
     pub fn is_passing(
         &self,
@@ -126,6 +128,10 @@ impl ReportAggregator {
             outcomes
                 .get(*name)
                 .is_some_and(|o| o.verdict != Verdict::Fail)
+        }) && fail_gates(config, subset).iter().all(|name| {
+            outcomes
+                .get(*name)
+                .is_none_or(|o| o.verdict != Verdict::Fail)
         })
     }
 
@@ -247,9 +253,8 @@ impl ReportAggregator {
     }
 }
 
-/// Gates that must have a non-failing result: every `fail` gate, or with
-/// `subset` the `fail` gates in it (FR-10, FR-15).
-fn required_gates<'a>(
+/// Every `fail` gate, or with `subset` the `fail` gates in it.
+fn fail_gates<'a>(
     config: &'a GateConfig,
     subset: GateFilter<'a>,
 ) -> Vec<&'a str> {
@@ -265,6 +270,18 @@ fn required_gates<'a>(
         },
         |names| names.iter().map(String::as_str).filter(is_fail).collect(),
     )
+}
+
+/// Gates that must have a non-failing result: every `fail` gate not declared
+/// `required = false`, or with `subset` those in it (FR-10, FR-15).
+fn required_gates<'a>(
+    config: &'a GateConfig,
+    subset: GateFilter<'a>,
+) -> Vec<&'a str> {
+    fail_gates(config, subset)
+        .into_iter()
+        .filter(|name| config.gate_def(name).is_none_or(|g| g.required))
+        .collect()
 }
 
 /// Gate names in report order: [`GateConfig::pipeline_order`], then any other
