@@ -9,6 +9,12 @@ set -e
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
+# Nothing staged (message-only amend, empty commit): there is nothing to check.
+if git diff --cached --quiet; then
+  echo "pre-commit: no staged changes; skipping checks." >&2
+  exit 0
+fi
+
 status() {
   local verb="$1"
   shift

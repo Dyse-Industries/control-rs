@@ -440,14 +440,14 @@ description = "Mutation testing: every file not claimed by another mutants-* gat
 # `>=` where equality of two instants or byte counts cannot occur or changes
 # nothing, `match guard ... with true` where the guarded arm is a no-op for
 # other inputs, and the `cfg(not(unix))` `terminate_tree`, which is not
-# compiled on the CI platform (excluded by its line, `gate.rs:605`; update it if the file shifts). The same list is on both shards so `--shard`
-# partitions one mutant list.
+# compiled on the CI platform (`terminate_child_only`). The same list is on
+# both shards so `--shard` partitions one mutant list.
 
 [mutants-ci-0]
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "gate\\.rs:605:5: replace terminate_tree with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
+args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 1 of 2"
 
@@ -455,7 +455,7 @@ description = "Mutation testing: control-rs-ci, chunk 1 of 2"
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "gate\\.rs:605:5: replace terminate_tree with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
+args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 2 of 2"
 

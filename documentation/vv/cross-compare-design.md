@@ -42,8 +42,8 @@ numerical tolerance bounds.
   unified `compare.toml` configuration schema at all directory levels, supporting both
   `suites = [...]` references and inlined `[[suite]]` definitions.
 - **FR-5 — Typed Numerical Comparison Engine**: Evaluates datasets using standard
-  numerical methods: `abs`, `rel`, `rms`, `interval`, `matrix_norm`, `envelope`,
-  and `exact_match`.
+  numerical methods: `abs`, `rel`, `rms`, `matrix_norm` and `exact_match`. A method outside this
+  set fails the comparison.
 - **FR-6 — Composite Evaluation Policies**: Allows declaring multiple comparison methods
   per dataset with configurable satisfaction policies (`policy = "all_of"` or `"any_of"`).
 - **FR-7 — CI Custom Gate Integration**: Adheres to the custom quality gate protocol
@@ -150,8 +150,8 @@ flowchart TD
     subgraph Comparison["Multi-Method Comparison Engine (compare)"]
         direction TB
         subgraph Evaluators["Extensible Evaluator Pipeline"]
-            NumEval["<b>Numeric</b><br/><code>abs</code>, <code>rel</code>, <code>rms</code>, <code>interval</code>, <code>matrix_norm</code>"]
-            TextEval["<b>Text & Exact</b><br/><code>exact_match</code>, <code>string_diff</code>"]
+            NumEval["<b>Numeric</b><br/><code>abs</code>, <code>rel</code>, <code>rms</code>, <code>matrix_norm</code>"]
+            TextEval["<b>Text & Exact</b><br/><code>exact_match</code>"]
             TolDiscovery["<b>Tolerance Discovery</b><br/>TOML Table &rarr; HDF5 Attributes &rarr; Fallback"]
         end
         CompareEngine["Comparator CLI: <code>compare --config .cargo/compare.toml</code>"]
@@ -236,9 +236,7 @@ pub struct MethodResult {
 | **`abs`** | $\|D_{\text{oracle}} - D_{\text{peer}}\|_\infty = \max_i |D_{\text{oracle}}[i] - D_{\text{peer}}[i]|$ | $\text{score} \le \text{bound}$ |
 | **`rel`** | $\max_i \frac{|D_{\text{oracle}}[i] - D_{\text{peer}}[i]|}{|D_{\text{oracle}}[i]| + \epsilon_{\text{mach}}}$ | $\text{score} \le \text{bound}$ |
 | **`rms`** | $\sqrt{\frac{1}{N}\sum_{i=1}^N (D_{\text{oracle}}[i] - D_{\text{peer}}[i])^2}$ | $\text{score} \le \text{bound}$ |
-| **`interval`** | Range check: $D_{\text{peer}}[i] \in [\min, \max]$ for all $i$ | All elements in interval |
 | **`matrix_norm`** | Matrix Frobenius norm: $\|A - B\|_F = \sqrt{\sum_{i,j} (a_{ij} - b_{ij})^2}$ | $\|A - B\|_F \le \text{bound}$ |
-| **`envelope`** | Dynamic envelope check: $y_{\min}[k] \le y_{\text{peer}}[k] \le y_{\max}[k]$ | Trajectory inside bounds |
 | **`exact_match`** | Exact string or token identity: $\text{peer} == \text{oracle}$ | Equality match |
 
 #### 4.4 Composite Multi-Method Evaluation Policies
@@ -258,7 +256,6 @@ policy = "all_of"
 methods = [
     { type = "abs", bound = 1e-3 },
     { type = "rms", bound = 5e-4 },
-    { type = "envelope", lower = "transient/v_min", upper = "transient/v_max" },
 ]
 ```
 
@@ -609,8 +606,7 @@ ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
           "verdict": "pass",
           "methods": [
             {
-              "type": "regex_match",
-              "pattern": "converged in \\d+ iterations",
+              "type": "exact_match",
               "verdict": "pass"
             }
           ]
@@ -637,8 +633,8 @@ ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
 | Suite | Status | Duration | Comparisons | Methods Evaluated |
 | :--- | :--- | :--- | :--- | :--- |
 | `matrix` | Pass | 1.12s | 14 signal(s) | `abs`, `rel`, `matrix_norm` |
-| `state_space` | Pass | 1.45s | 18 signal(s) | `abs`, `rms`, `spectral_radius` |
-| `buck_converter` | Pass | 2.10s | 12 signal(s) | `abs`, `rms`, `regex_match`, `envelope` |
+| `state_space` | Pass | 1.45s | 18 signal(s) | `abs`, `rms` |
+| `buck_converter` | Pass | 2.10s | 12 signal(s) | `abs`, `rms`, `exact_match` |
 ```
 
 ---
@@ -647,7 +643,7 @@ ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
 
 | Alternative | Technical Tradeoffs & Reason for Rejection | Reference |
 |:---|:---|:---|
-| **Hardcoded Float-Only Evaluators** | Restricts comparison strictly to double-precision numbers; fails to support text logs, regular expression status checks, JSON AST equivalence, or semantic contextual embeddings. | [7], [8] |
+| **Hardcoded Float-Only Evaluators** | Restricts comparison strictly to double-precision numbers; fails to support text logs and exact-match status checks. | [7], [8] |
 | **Separate Incompatible Config Schemas for Root vs Suites** | Forces runner to implement multiple parser paths; unified modular schema allows identical data structures to parse root configs, suite configs, or inlined experiments. | [6] |
 | **Unpublished In-Tree Harness / xtask** | Prevents other control projects and external users from adopting `control-rs-compare` as a reusable numerical verification tool for their own Rust and C control algorithms. Publishing establishes a standardized ecosystem tool. | [6], [9] |
 | **Examples Depending on Harness as a Rust Library** | Couples simple pedagogical examples to heavy host-only I/O dependencies (`hdf5`, `serde_json`, `toml`); violates the principle that examples should remain minimal, clean, and focused purely on toolbox API demonstration. | [9] |
@@ -663,14 +659,14 @@ ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
 
 | Kind | Step | Establishes |
 |:---|:---|:---|
-| `test` | Extensible Evaluator Unit Tests | Validates `abs`, `rel`, `rms`, `interval`, and `matrix_norm` across clean and breach inputs. |
+| `test` | Extensible Evaluator Unit Tests | Validates `abs`, `rel`, `rms` and `matrix_norm` across clean and breach inputs, and that an unsupported method fails. |
 | `test` | Composite Policy Evaluation Tests | Asserts correct resolution of `all_of` and `any_of` policies across multi-method datasets. |
 | `test` | Dynamic Recursive Dataset Discovery Tests | Parameterized validation of recursive `ls`-style group hierarchy traversal across complex synthetic HDF5 trees. |
 | `test` | Multi-Tier Tolerance Discovery Tests | Asserts correct resolution order: external TOML table &rarr; HDF5 dataset attributes &rarr; fallback defaults. |
 | `test` | Parallel Chunked Evaluation Equivalence Tests | Verifies mathematical identity between sequential and chunked parallel evaluations across varying thread counts and array sizes. |
 | `test` | Unified configuration schema parser tests | Verifies loading child `suites`, inlined `[[suite]]` definitions, path normalizations, and overrides. |
 | `test` | Multi-Modal HDF5 container tests | Verifies reading and writing numeric arrays, UTF-8 string datasets, and JSON attributes. |
-| `test` | Fail-closed discrepancy tests | Asserts that missing datasets, shape mismatches, NaNs, and stale timestamps trigger non-zero exit. |
+| `test` | Fail-closed discrepancy tests | Asserts that missing datasets, shape mismatches and NaNs trigger non-zero exit. |
 | `cross-check` | Custom gate integration test in `control-rs-ci` | Executes `cargo ci` with the `cross-compare` gate registered, confirming end-to-end report generation. |
 
 #### 6.2 Acceptance
@@ -678,17 +674,14 @@ ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
 | Claim | Oracle | Measure | Bound |
 |:---|:---|:---|:---|
 | **Multi-Method Detection** | Synthetic injected error fixtures | Exact method detection | Any method failure triggers non-zero exit under `all_of` |
-| **Text Pattern Matching** | String fixtures | Regex engine | Exact regex match / mismatch detection |
 | **Unified Config Parsing** | Single/multi-suite TOML fixtures | AST validation | Identical parsing across root and suite files |
 | **Missing Key Rejection** | Synthetic partial HDF5 container | Error accumulator | Flags missing dataset with non-zero exit |
 | **Deterministic Evaluation** | Repeated host execution | Binary reproducibility | Exactly identical floating-point residuals |
 | **Parallel Equivalence** | Single vs Multi-Thread Execution | Max residual difference | $\|R_{\text{seq}} - R_{\text{par}}\| \le \epsilon_{\text{mach}}$ |
-| **Freshness Enforcement** | Pre-dated container fixture | `mtime` / timestamp check | Flags stale container with non-zero exit |
 
 #### 6.3 Limits
 
 - Verification operates on host developer workstations and CI runners (`x86_64`, `aarch64`); target embedded MCU architectures (`thumbv7em`, `riscv32`) are validated through ETS rather than HDF5 oracle harnesses.
-- Semantic embedding evaluation requires external embedding provider or offline local ONNX model runtime when activated.
 - Requires Python 3.12 with required scientific libraries (`numpy`, `scipy`, `matplotlib`) for external oracle generation and diagnostic visualization.
 
 ---
@@ -701,7 +694,7 @@ ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
   parallel evaluation scales near-linearly across available host CPU cores, reducing
   gating latency from seconds to milliseconds on multi-million element trajectories.
 - **Zero Embedded Footprint**: All HDF5 and comparison dependencies (`hdf5`,
-  `serde_json`, `toml`, `regex`, `strsim`) are quarantined to the published host tool
+  `serde_json`, `toml`) are quarantined to the published host tool
   crates, ensuring zero impact on the embedded `control-rs` library footprint (`#![no_std]`).
 - **Rapid Gating Latency**: `compare` executes in under 200 ms for complete model
   suites when reading pre-generated containers.
@@ -714,9 +707,6 @@ ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
   libraries (for example, SciPy eigenvalue algorithm updates) can shift machine-precision
   residuals. Documenting exact reference versions in the provenance headers of
   the C-2 tolerance tables mitigates this risk.
-- **Embedding Model Weight Distribution**: For `semantic_similarity` evaluations,
-  relying on lightweight local token models ensures offline
-  reproducibility in CI without requiring live API keys or cloud connections.
 - **HDF5 C Library Dependency on crates.io**: `control-rs-compare` relies on
   pure-Rust `hdf5-pure` reader and writer crates to eliminate C-library header
   and shared object dependencies across host targets.
@@ -754,6 +744,7 @@ ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
 | 1.11 | September 23, 2026 | @MitchellDScott | Added FR-17 baseline margin drift warnings against the previous `cross-val-report.json` (§4.8). |
 | 1.12      | September 24, 2026 | @MitchellDScott | Gate is the `.cargo/gate.toml` `[cross-compare]` table, not parsed by the runner. Containers live in `<out_dir>` (`target/verification/`); root and per-suite examples match the shipped files. FR-17 and FR-11 marked unimplemented; Phase 5 complete, Phase 6 added. Crates are `publish = false` until PR10. |
 | 1.13      | September 27, 2026 | @MitchellDScott | Demoted FR-11 (diagnostic plotting is non-Rust companion tooling per C-3); reaffirmed FR-17 planned status under Phase 6. |
+| 1.14      | October 1, 2026 | @MitchellDScott | FR-5 lists the implemented methods; an unsupported method fails the comparison. Removed the unimplemented `interval`, `envelope`, `regex_match`, semantic-similarity and freshness claims and the `regex` and `strsim` dependencies. |
 
 ---
 

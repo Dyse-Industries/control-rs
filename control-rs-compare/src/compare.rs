@@ -687,12 +687,16 @@ pub fn reduce_and_evaluate(
             tol.bound,
             "Frobenius norm",
         ),
-        // Default: abs
-        _ => bounded_finding(
+        "abs" => bounded_finding(
             "abs",
             max_abs,
             tol.bound,
             "Max absolute difference",
+        ),
+        other => failed_method(
+            other,
+            tol.bound,
+            format!("Unsupported comparison method '{other}'"),
         ),
     }
 }

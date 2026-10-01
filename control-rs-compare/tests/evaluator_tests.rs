@@ -97,6 +97,23 @@ fn test_abs_comparison() {
 }
 
 #[test]
+fn test_unsupported_method_fails_closed() {
+    let o = vec![1.0, 2.0];
+    let tol = ToleranceSpec {
+        method: "interval".to_string(),
+        bound: 1e-3,
+    };
+
+    let res = compare_float_arrays(&o, &o, &tol);
+    assert_eq!(res.verdict, "fail");
+    assert_eq!(res.r#type, "interval");
+    assert!(
+        res.details
+            .is_some_and(|d| d.contains("Unsupported comparison method"))
+    );
+}
+
+#[test]
 fn test_rel_comparison() {
     let o = vec![100.0, 200.0];
     let p_pass = vec![100.5, 199.0];
