@@ -506,8 +506,11 @@ mod tests {
         #[test]
         fn drive_processes_messages_until_the_session_drains() {
             let target = serial_target();
+            // Every message is queued up front, so a healthy run ends within
+            // milliseconds. A short limit keeps a broken session failing
+            // quickly instead of waiting out a long one.
             let (mut run, tx, written) =
-                fake_run(&target, Duration::from_secs(30), None);
+                fake_run(&target, Duration::from_secs(5), None);
             discover_empty(&tx);
             assert!(run.drive().is_ok());
             assert!(run.state.discovery_complete);
