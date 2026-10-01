@@ -856,7 +856,8 @@ automated_methods = []
             targets("| VC-1.1 | FR-1 | `libtest` | `a::b` | note |"),
             ["a::b"]
         );
-        assert!(targets("| VC-1.1 | FR-1 | `libtest` | `a::b` |").is_empty());
+        let got = targets("| VC-1.1 | FR-1 | `libtest` | `a::b` |");
+        assert!(got.is_empty(), "{got:?}");
     }
 
     #[test]
@@ -881,7 +882,8 @@ automated_methods = []
 
     #[test]
     fn clean_document_has_no_defects() {
-        assert!(messages(CLEAN, &rules()).is_empty());
+        let got = messages(CLEAN, &rules());
+        assert!(got.is_empty(), "{got:?}");
     }
 
     #[test]
@@ -931,10 +933,8 @@ automated_methods = []
             defects.iter().filter(|m| m.ends_with("is retired")).count(),
             2
         );
-        assert!(
-            messages(CLEAN, &rules_with("retired = [\"widget#FR-2\"]"))
-                .is_empty()
-        );
+        let got = messages(CLEAN, &rules_with("retired = [\"widget#FR-2\"]"));
+        assert!(got.is_empty(), "{got:?}");
     }
 
     #[test]
@@ -1122,7 +1122,7 @@ automated_methods = []
         let (rows, defects) = scan_markdown(FILE, good, &rules());
         assert_eq!(rows.len(), 2);
         assert_eq!(rows.get(1).map(|r| r.id.as_str()), Some("widget#VC-1.1"));
-        assert!(defects.is_empty());
+        assert!(defects.is_empty(), "{defects:?}");
     }
 
     #[test]

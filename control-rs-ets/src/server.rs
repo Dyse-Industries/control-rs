@@ -701,6 +701,10 @@ mod tests {
     use std::vec::Vec;
 
     // --- Statics ---
+    /// Held by the tests that read or write `TEST_U8_SETTING`, which every
+    /// test over `SUITES` shares.
+    static SETTING_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     static SUITES: &[&SuiteDescriptor] = &[&SUITE_DESC];
 
     static SUITE_DESC: SuiteDescriptor = SuiteDescriptor {
@@ -863,6 +867,12 @@ mod tests {
     /// The loop only ends when the link errors, so a server that stops
     /// polling would spin forever; the run is bounded to fail the test
     /// instead.
+    fn lock_setting() -> std::sync::MutexGuard<'static, ()> {
+        SETTING_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn run_bounded(server: MockServer) -> RunOutcome {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
@@ -1111,6 +1121,7 @@ mod tests {
 
     #[test]
     fn test_server_discovery() {
+        let _guard = lock_setting();
         let _ = TEST_U8_SETTING.set(SettingValue::U8(42));
         let comms = MockComms {
             commands: std::vec![Command::ListSuites],
@@ -1289,6 +1300,7 @@ mod tests {
 
     #[test]
     fn test_server_set_setting() {
+        let _guard = lock_setting();
         let comms = MockComms {
             commands: std::vec![Command::SetSetting {
                 suite_id: 0,
@@ -1321,6 +1333,7 @@ mod tests {
 
     #[test]
     fn test_server_set_setting_type_mismatch() {
+        let _guard = lock_setting();
         let comms = MockComms {
             commands: std::vec![Command::SetSetting {
                 suite_id: 0,

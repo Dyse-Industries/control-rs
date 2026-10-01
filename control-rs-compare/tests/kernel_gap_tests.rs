@@ -246,7 +246,7 @@ mod kernel_gaps {
         write(&dir, "s.rust.h5", &bytes);
         let report = compare(&dir);
         let suite = report.suites.first().unwrap();
-        assert!(suite.comparisons.is_empty());
+        assert!(suite.comparisons.is_empty(), "{:?}", suite.comparisons);
         assert_eq!(suite.status, "Pass");
         let _ = fs::remove_dir_all(&dir);
     }

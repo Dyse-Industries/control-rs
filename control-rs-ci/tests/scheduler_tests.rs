@@ -73,8 +73,16 @@ mod scheduling {
     #[test]
     fn test_execution_config_defaults() {
         let config = ExecutionConfig::default();
-        assert!(config.exclusive.pre.is_empty());
-        assert!(config.exclusive.post.is_empty());
+        assert!(
+            config.exclusive.pre.is_empty(),
+            "{:?}",
+            config.exclusive.pre
+        );
+        assert!(
+            config.exclusive.post.is_empty(),
+            "{:?}",
+            config.exclusive.post
+        );
         assert!(config.groups.is_empty());
         assert_eq!(config.max_jobs, None);
     }

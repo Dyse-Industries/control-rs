@@ -939,6 +939,35 @@ pub mod subprogram_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// `syr2k` reads `k` from the columns of a non-transposed operand.
+    fn test_subprograms_syr2k_non_square_operand() {
+        // A and B are 2 x 3; C = A B^T + B A^T is 2 x 2.
+        let a = ArrayStorage::<f64, 2, 3>::from_array([
+            [1.0, 4.0],
+            [2.0, 5.0],
+            [3.0, 6.0],
+        ]);
+        let b = ArrayStorage::<f64, 2, 3>::from_array([
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 0.0],
+        ]);
+        let mut c = ArrayStorage::<f64, 2, 2>::from_array([[0.0; 2]; 2]);
+        DefaultBlas::syr2k(
+            UpLo::Upper,
+            Trans::NoTrans,
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+        );
+        assert_almost_eq!(*c.get(0, 0).unwrap(), 8.0, 1e-12);
+        assert_almost_eq!(*c.get(0, 1).unwrap(), 12.0, 1e-12);
+        assert_almost_eq!(*c.get(1, 1).unwrap(), 10.0, 1e-12);
+    }
+
+    #[cfg_attr(test, test)]
     /// Workspace arguments may be larger than required and are rejected only
     /// when smaller.
     fn test_subprograms_workspace_size_boundaries() {

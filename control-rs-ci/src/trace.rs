@@ -370,11 +370,10 @@ mod tests {
             code_spans(text).iter().map(|s| s.content).collect();
         assert_eq!(contents, ["b", "c ` d"]);
 
-        assert!(code_spans("").is_empty());
-        assert!(code_spans("plain text").is_empty());
-        assert!(code_spans("`").is_empty());
-        assert!(code_spans("``").is_empty());
-        assert!(code_spans("```").is_empty());
+        for text in ["", "plain text", "`", "``", "```"] {
+            let got = code_spans(text);
+            assert!(got.is_empty(), "{text:?}: {got:?}");
+        }
 
         let mixed = "`open ``other`";
         let mixed_contents: Vec<_> =

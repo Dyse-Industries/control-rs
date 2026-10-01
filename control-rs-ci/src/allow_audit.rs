@@ -402,7 +402,8 @@ mod tests {
             diff(&found, &baseline).added,
             ["a.rs clippy::panic: 2 vs 1"]
         );
-        assert!(diff(&baseline, &baseline).stale.is_empty());
+        let got = diff(&baseline, &baseline).stale;
+        assert!(got.is_empty(), "{got:?}");
         assert_eq!(
             diff(&baseline, &found).stale,
             ["a.rs clippy::panic: 2 vs 1"]
@@ -424,7 +425,8 @@ mod tests {
         let base = sup(&[("a.rs clippy::x", 2)]);
         let current = sup(&[("a.rs clippy::x", 2), ("b.rs clippy::y", 1)]);
         assert_eq!(growth(&current, &base), ["b.rs clippy::y: 1 vs 0"]);
-        assert!(growth(&base, &base).is_empty());
+        let got = growth(&base, &base);
+        assert!(got.is_empty(), "{got:?}");
     }
 
     fn lints_of(src: &str) -> Vec<String> {
@@ -483,10 +485,8 @@ mod tests {
 
     #[test]
     fn cfg_attr_without_a_suppression_is_ignored() {
-        assert!(
-            lints_of("#[cfg_attr(test, deny(clippy::panic))]\nfn f() {}")
-                .is_empty()
-        );
+        let got = lints_of("#[cfg_attr(test, deny(clippy::panic))]\nfn f() {}");
+        assert!(got.is_empty(), "{got:?}");
     }
 
     #[test]

@@ -703,7 +703,8 @@ state_space_scaling/zoh_dim/128
             change_pct: None,
             verdict: None,
         };
-        assert!(failures(&at_budget, &b).is_empty());
+        let got = failures(&at_budget, &b);
+        assert!(got.is_empty(), "{got:?}");
         let over = super::BenchmarkResult {
             time_ns: 10e3 + 1.0,
             ..at_budget

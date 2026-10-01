@@ -827,7 +827,7 @@ mod tests {
                 run("libtest_ok", log, condition("libtest", &[target]));
             assert_eq!(status(&derived), Some(Status::Pass), "{target}");
             assert!(derived.0.passes());
-            assert!(derived.1.is_empty());
+            assert!(derived.1.is_empty(), "{:?}", derived.1);
         }
     }
 
@@ -934,7 +934,7 @@ mod tests {
         );
         assert_eq!(status(&derived), Some(Status::Review));
         assert!(derived.0.passes());
-        assert!(derived.1.is_empty());
+        assert!(derived.1.is_empty(), "{:?}", derived.1);
         assert_eq!(derived.0.review.len(), 1);
     }
 
@@ -948,7 +948,7 @@ mod tests {
             &default_config(),
             &dir,
         );
-        assert!(defects.is_empty());
+        assert!(defects.is_empty(), "{defects:?}");
         assert_eq!(
             report.warnings.first().map(|w| w.code.as_str()),
             Some("W-2")

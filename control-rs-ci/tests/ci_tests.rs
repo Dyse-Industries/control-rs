@@ -516,14 +516,14 @@ mod runner {
         let clean_args = vec!["cargo-ci".to_string(), "clean".to_string()];
         let opts = parse_args(&clean_args, "cargo ci");
         assert!(opts.clean);
-        assert!(opts.only_gates.is_empty());
+        assert!(opts.only_gates.is_empty(), "{:?}", opts.only_gates);
         assert!(!opts.run_all);
 
         // Flag --clean
         let flag_args = vec!["cargo-ci".to_string(), "--clean".to_string()];
         let opts = parse_args(&flag_args, "cargo ci");
         assert!(opts.clean);
-        assert!(opts.only_gates.is_empty());
+        assert!(opts.only_gates.is_empty(), "{:?}", opts.only_gates);
         assert!(!opts.run_all);
 
         // Short flag -X

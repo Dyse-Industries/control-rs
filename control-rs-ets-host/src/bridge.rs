@@ -1175,7 +1175,7 @@ mod tests {
             &tx,
             &shutdown,
         );
-        assert!(console_lines(&rx).is_empty());
+        assert_eq!(console_lines(&rx), Vec::<String>::new());
     }
 
     #[test]
@@ -1224,7 +1224,7 @@ mod tests {
             &tx,
             &shutdown,
         );
-        assert!(console_lines(&rx).is_empty());
+        assert_eq!(console_lines(&rx), Vec::<String>::new());
     }
 
     #[test]
@@ -1237,7 +1237,7 @@ mod tests {
         let (tx, rx) = channel();
         let shutdown = AtomicBool::new(true);
         pump_lines(std::io::Cursor::new("ignored\n"), &tx, &shutdown);
-        assert!(console_lines(&rx).is_empty());
+        assert_eq!(console_lines(&rx), Vec::<String>::new());
     }
 
     #[cfg(unix)]

@@ -1687,7 +1687,10 @@ mod tests {
         let by_test = suite_rows(0, &suite, "two", false);
         assert_eq!(row_names(&by_test), ["Alpha", "Two", "gain", "gain"]);
 
-        assert!(suite_rows(0, &suite, "zzz", false).is_empty());
+        assert_eq!(
+            suite_rows(0, &suite, "zzz", false),
+            Vec::<TableItem>::new()
+        );
 
         let collapsed = suite_rows(0, &suite, "", true);
         assert_eq!(row_names(&collapsed), ["Alpha"]);
@@ -1717,7 +1720,10 @@ mod tests {
         );
         let suite = state.session.suites.first().unwrap().clone();
         assert_eq!(row_names(&suite_rows(0, &suite, "", false)), ["Empty"]);
-        assert!(suite_rows(0, &suite, "zzz", false).is_empty());
+        assert_eq!(
+            suite_rows(0, &suite, "zzz", false),
+            Vec::<TableItem>::new()
+        );
     }
 
     #[test]
