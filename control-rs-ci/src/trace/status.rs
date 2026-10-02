@@ -777,6 +777,7 @@ mod tests {
                 .to_vec(),
             method,
             retired: vec![],
+            decisions: None,
         }
     }
 

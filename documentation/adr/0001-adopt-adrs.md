@@ -1,14 +1,15 @@
 # ADR-0001: Adopt ADRs for workspace decisions
 
 ![Date Badge](https://img.shields.io/badge/Date-October_2,_2026-blue)
-![Status Badge](https://img.shields.io/badge/ADR%20Status-Proposed-orange)
+![Status Badge](https://img.shields.io/badge/ADR%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@mxscott-blueviolet)
 
 ---
 
 ## Context
 
-`control-rs` is developed design-first ([`CONTRIBUTING.md`](../../CONTRIBUTING.md)
+`control-rs` is developed design-first ([
+`CONTRIBUTING.md`](../../CONTRIBUTING.md)
 §1). Each component's design document states its requirements, architecture
 and verification conditions, and the `trace-reqs` and `trace-check` gates in
 `control-rs-ci` check that every requirement is discharged by a passing test
@@ -67,10 +68,16 @@ design documents cite it by number.
 
 ## References
 
-[1] `control-rs`, "Requirement Traceability Infrastructure," `documentation/vv/requirement-traceability-design.md`, rev. 1.16, Sept. 2026.
+[1] `control-rs`, "Requirement Traceability Infrastructure,"
+`documentation/vv/requirement-traceability-design.md`, rev. 1.16, Sept. 2026.
 
-[2] M. Nygard, "Documenting Architecture Decisions," *Cognitect Blog*, Nov. 2011. [Online]. Available: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions. Accessed: Oct. 1, 2026.
+[2] M. Nygard, "Documenting Architecture Decisions," *Cognitect Blog*, Nov.
+2011. [Online].
+Available: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions.
+Accessed: Oct. 1, 2026.
 
-[3] Fission-AI, "OpenSpec Documentation," *openspec.dev*. [Online]. Available: https://openspec.dev/docs/overview. Accessed: Oct. 1, 2026.
+[3] Fission-AI, "OpenSpec Documentation," *openspec.dev*. [Online].
+Available: https://openspec.dev/docs/overview. Accessed: Oct. 1, 2026.
 
-[4] MADR project, "Markdown Any Decision Records," *adr.github.io*. [Online]. Available: https://adr.github.io/madr/. Accessed: Oct. 1, 2026.
+[4] MADR project, "Markdown Any Decision Records," *adr.github.io*. [Online].
+Available: https://adr.github.io/madr/. Accessed: Oct. 1, 2026.

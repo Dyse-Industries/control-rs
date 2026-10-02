@@ -14,6 +14,7 @@ type TestResult = Result<(), Box<dyn Error>>;
 enum NegativeScenario {
     Reqs,
     Check,
+    Decisions,
 }
 
 struct TempContext {
@@ -66,6 +67,29 @@ fn setup_scenario_check(fixture_workspace: &std::path::Path) -> io::Result<()> {
     )
 }
 
+fn setup_scenario_decisions(
+    fixture_workspace: &std::path::Path,
+) -> io::Result<()> {
+    let docs_dir = fixture_workspace.join("docs");
+    fs::create_dir_all(&docs_dir)?;
+    fs::write(
+        docs_dir.join("widget-design.md"),
+        "# Widget (widget)\n\n![Status](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)\n\n- **FR-1**: Size, per ADR-0001 and ADR-0002\n\n| VC-1 | FR-1 | `review` | — | OK |\n",
+    )?;
+    let adr_dir = fixture_workspace.join("adr");
+    fs::create_dir_all(&adr_dir)?;
+    fs::write(
+        adr_dir.join("0001-size.md"),
+        "# ADR-0001: Size\n\n![Status](https://img.shields.io/badge/ADR%20Status-Proposed-orange)\n",
+    )?;
+    let mut config =
+        fs::read_to_string(fixture_workspace.join(".cargo/trace/trace.toml"))?;
+    config.push_str(
+        "[decisions]\nfiles = [\"adr\"]\nid = 'ADR-[0-9]{4}'\ndefinition = '^#\\s+ADR-[0-9]{4}:'\nstatus = 'ADR%20Status-(?P<status>[A-Za-z]+)-'\ndoc_status = 'Doc%20Status-(?P<status>[A-Za-z]+)-'\ngated = [\"Approved\"]\naccepted = [\"Accepted\"]\n",
+    );
+    fs::write(fixture_workspace.join(".cargo/trace/trace.toml"), config)
+}
+
 fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
     let out_dir = std::env::temp_dir().join(format!(
         "control_rs_ci_trace_neg_{:?}_{}",
@@ -93,6 +117,9 @@ fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
     match scenario {
         NegativeScenario::Reqs => setup_scenario_reqs(&fixture_workspace)?,
         NegativeScenario::Check => setup_scenario_check(&fixture_workspace)?,
+        NegativeScenario::Decisions => {
+            setup_scenario_decisions(&fixture_workspace)?;
+        }
     }
 
     let logs_dir = out_dir.join("logs");
@@ -167,6 +194,39 @@ fn test_negative_trace_check_gate_fails_on_uncovered_condition() -> TestResult {
         "Log didn't report the uncovered condition:
 {log}"
     );
+
+    Ok(())
+}
+
+#[test]
+fn test_negative_trace_reqs_gate_fails_on_unaccepted_and_missing_decisions()
+-> TestResult {
+    let temp = create_temp_context(NegativeScenario::Decisions)?;
+    let gate = Gate::new(
+        "trace-reqs",
+        env!("CARGO_BIN_EXE_trace-reqs"),
+        vec![
+            "--config".to_string(),
+            ".cargo/trace/trace.toml".to_string(),
+            "--out".to_string(),
+            "reqs.jsonl".to_string(),
+        ],
+    )
+    .with_description("Checks requirement definitions and decision citations");
+
+    let outcome = gate.execute(&temp.ctx)?;
+    assert_eq!(outcome.verdict, Verdict::Fail);
+    assert_ne!(outcome.exit_code, Some(0));
+
+    let log = fs::read_to_string(temp.ctx.out_dir.join("trace-reqs.log"))
+        .unwrap_or_default();
+    for expected in [
+        "docs/widget-design.md:5: Approved document cites decision ADR-0001 with status Proposed",
+        "docs/widget-design.md:5: decision ADR-0002 is cited but has no decision record",
+    ] {
+        assert!(log.contains(expected), "missing `{expected}` in:\n{log}");
+    }
+    assert!(log.contains("2 requirement defects"), "{log}");
 
     Ok(())
 }

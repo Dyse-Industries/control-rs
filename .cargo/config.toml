@@ -12,6 +12,7 @@ ets = ["run", "--package", "control-rs-ci", "--bin", "ets", "--"]
 # Requirement traceability
 trace-reqs = ["run", "--package", "control-rs-ci", "--bin", "trace-reqs", "--", "--config", ".cargo/trace/trace.toml", "--out", "target/ci-artifacts/reqs.jsonl"]
 trace-check = ["run", "--package", "control-rs-ci", "--bin", "trace-check", "--", "--config", ".cargo/trace/trace.toml", "--reqs", "target/ci-artifacts/reqs.jsonl", "--out", "target/ci-artifacts/trace-report.json"]
+trace = ["run", "--package", "control-rs-ci", "--bin", "gate", "--", "trace-reqs,trace"]
 
 # Interactive TUI
 tui = ["run", "--package", "control-rs-tui", "--"]
