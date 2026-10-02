@@ -3,6 +3,12 @@
 These rules establish a rigorous and consistent documentation standard for a
 Rust native control systems toolbox intended for safety-critical applications.
 
+§1 to §5 govern rustdoc and ETS documentation in source. §6 governs
+Architecture Decision Records (ADRs), the record of decisions at the
+workspace, crate or project level. The process that produces an ADR is in
+[`CONTRIBUTING.md`](../CONTRIBUTING.md); the design-document format is in
+[`design-template.md`](design-template.md).
+
 # 1. General Etiquette
 
 To maintain a clean, readable and highly maintainable codebase, all
@@ -219,6 +225,82 @@ pub mod teensy_pid_suite {
   expect() or panic!() unless demonstrating
   a panic condition.
 
+# 6. Architecture Decision Records
+
+An Architecture Decision Record (ADR) records one decision at the workspace,
+crate or project level: a dependency or toolchain policy, a workspace
+convention, the default scalar type, a crate boundary, a format or protocol
+shared by more than one crate. A choice that stays inside one component is
+recorded in that component's design document: §5 Alternatives holds the
+tradeoff and §10 Revision History holds the change.
+
+An ADR is not a stage of the design process. It is written when a
+workspace-level decision arises, and design documents cite it by number once
+it is accepted. The decision to adopt ADRs is itself recorded in
+[ADR-0001](adr/0001-adopt-adrs.md).
+
+## 6.1. Location and Naming
+
+* ADRs live in [`documentation/adr/`](adr/README.md), one file per decision,
+  named `NNNN-<slug>.md`: a four-digit sequence number and a lowercase,
+  hyphenated slug (`0001-adopt-adrs.md`).
+* Numbers are assigned in order and never reused. A superseded ADR keeps its
+  number and its file.
+* The title line is `# ADR-NNNN: <Title>`. The title names the decision in
+  the imperative or as a noun phrase: "Adopt ADRs for workspace decisions",
+  "`f64` as the default continuous-state scalar".
+* [`documentation/adr/README.md`](adr/README.md) lists every ADR with its
+  status. Add a row when creating an ADR and update the row on each status
+  change.
+
+## 6.2. Structure
+
+Copy [`adr-template.md`](adr-template.md). It follows the Nygard layout and
+carries these sections in this order:
+
+* **Badges**: date, status and author, in the same form as a design document.
+* **Context**: the forces at play as facts about the workspace, ending in the
+  question the ADR answers. One or two paragraphs.
+* **Decision**: the chosen option in one or two sentences, justified against
+  the forces in Context.
+* **Consequences**: `Good`, `Bad` and `Follow-up` bullets. Each follow-up
+  names the document, gate or roadmap entry that owns it.
+* **Rejected Options**: one line per serious alternative with the reason it
+  lost. Omit when only one option was serious.
+* **References**: IEEE style, as in a design document.
+
+## 6.3. Status and Lifecycle
+
+| Status       | Badge markdown                                                                    | Set by                                 |
+|:-------------|:----------------------------------------------------------------------------------|:---------------------------------------|
+| `Proposed`   | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Proposed-orange)`       | Author, on creation                    |
+| `Accepted`   | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Accepted-brightgreen)`  | Maintainer, after review               |
+| `Deprecated` | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Deprecated-lightgrey)`  | Maintainer, when the decision no longer applies |
+| `Superseded` | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Superseded-red)`        | Maintainer, when a newer ADR replaces it |
+
+* A `Proposed` ADR is edited in place through review.
+* An `Accepted` ADR is immutable apart from its status badge and one line
+  under the badges, `Superseded by [ADR-NNNN](NNNN-<slug>.md).` To change the
+  decision, write a new ADR that names the one it supersedes in its Context.
+* Tooling and automation never set `Accepted`, `Deprecated` or `Superseded`.
+
+## 6.4. Writing Rules
+
+* One decision per ADR. A proposal that makes two independent choices is two
+  ADRs.
+* Keep the record to one page. Detail that belongs to one component goes in
+  that component's design document.
+* Write in the present tense and record the current decision only. The pull
+  request holds the history of the draft.
+* Design documents link to ADRs; ADRs do not list the documents that cite
+  them. A design document cites `ADR-NNNN` in §5 Alternatives and in the
+  Revision History row that starts following it, and a search for the number
+  finds every citing document.
+* An ADR records a decision; it asserts nothing. Any requirement the decision
+  creates is written into the design document it constrains, where the
+  `trace-reqs` gate checks it has a verification condition
+  ([`requirement-traceability-design.md`](vv/requirement-traceability-design.md)).
+
 # Resources
 
 * [Meet safe and unsafe](https://doc.rust-lang.org/nomicon/meet-safe-and-unsafe.html)
@@ -226,3 +308,5 @@ pub mod teensy_pid_suite {
 * [Unsafe Rust](https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html)
 * [Awesome safety critical](https://awesome-safety-critical.readthedocs.io/en/latest/)
 * [Rustdoc book](https://doc.rust-lang.org/rustdoc/how-to-write-documentation.html)
+* [Documenting Architecture Decisions (Nygard)](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions)
+* [MADR: Markdown Any Decision Records](https://adr.github.io/madr/)

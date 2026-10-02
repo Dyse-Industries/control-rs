@@ -3,7 +3,10 @@
 `control-rs` is developed design-first. Every capability in the library and
 its infrastructure crates is specified in a design document before it is
 implemented, and the design document is the reference that reviewers,
-tests and CI check the code against.
+tests and CI check the code against. A decision at the workspace, crate or
+project level is written as an Architecture Decision Record (ADR), so that
+design documents can cite it instead of arguing it again
+([ADR-0001](documentation/adr/0001-adopt-adrs.md)).
 
 This guide describes that process. Tool installation is in the
 [dependency registry](documentation/dependencies.md); cargo aliases and the
@@ -23,6 +26,7 @@ flowchart LR
     I --> Q["Verification<br/>(cargo ci)"]
     Q --> M["Pull request<br/>& merge"]
     I -. "design gap or error" .-> D
+    X["ADR<br/>Accepted"] -. "cited in §5" .-> D
 ```
 
 | Stage          | Output                                     | Exit condition                                    |
@@ -35,18 +39,27 @@ flowchart LR
 | Verification   | Passing quality gates                      | `cargo ci` passes locally and in GitHub Actions   |
 | Merge          | Squash-merged PR on `main`                 | Review approval                                   |
 
-Implementation does not start until the design doc is `Approved`.
+Implementation does not start until the design doc is `Approved` and every
+ADR it cites is `Accepted`. ADRs sit outside this sequence: one is written
+when a workspace-level decision arises (§3.2).
 
 ### When a design doc is required
 
-| Change                                                          | Design doc                        |
-|:----------------------------------------------------------------|:----------------------------------|
-| New module, numerical model, algorithm or infrastructure crate  | New doc                           |
-| Change to a public API, data layout, wire protocol or CI gate   | Revise the owning doc             |
-| New third-party dependency                                      | Revise the owning doc             |
-| Change that contradicts an `Approved` doc                       | Revise the doc first              |
-| Bug fix, test addition, refactor within an approved design      | None                              |
-| Typos, formatting, comments                                     | None                              |
+| Change                                                         | Design doc                         |
+|:---------------------------------------------------------------|:-----------------------------------|
+| New module, numerical model, algorithm or infrastructure crate | New doc                            |
+| Change to a public API, data layout, wire protocol or CI gate  | Revise the owning doc              |
+| New third-party dependency                                     | Revise the owning doc              |
+| Workspace, crate or project-level decision                     | ADR (§3.2); revise each citing doc |
+| Change that contradicts an `Approved` doc                      | Revise the doc first               |
+| Bug fix, test addition, refactor within an approved design     | None                               |
+| Typos, formatting, comments                                    | None                               |
+
+A decision is workspace-level when it binds more than one crate or sets a
+rule for the whole workspace: a dependency or toolchain policy, a workspace
+convention, a format shared between crates. A choice inside one crate or
+component belongs in that component's design doc: §5 Alternatives for the
+tradeoff and §10 Revision History for the change.
 
 ---
 
@@ -63,7 +76,9 @@ design prose.
 
 ---
 
-## 3. Design
+## 3. Design and decisions
+
+### 3.1 Design document
 
 1. Pick the project directory under `documentation/` (`math`,
    `numerical-models`, `ets`, `ets-host`, `ci`, `tui`, `macros`, `vv`, ...)
@@ -85,7 +100,8 @@ design prose.
 - **§4 Architecture**: types, traits, memory layout and algorithms, broad
   to specific. Diagrams in Mermaid.
 - **§5 Alternatives**: rejected options framed as technical tradeoffs, not
-  as a history of drafts.
+  as a history of drafts. A choice that an ADR already records is cited by
+  ADR number, not argued again.
 - **§6 Verification & Validation**: the plan (`test`, `bench`, `example`,
   `cross-check`), quantitative acceptance bounds with their oracle, and
   the limits of what the plan establishes. This section is the contract
@@ -101,6 +117,27 @@ Write in the present tense, state the current design only and follow
 to other sections and documents with `§` references and code-format
 identifiers (`FR-3`, `Storage`, `§4.2`). Vale checks prose under
 `documentation/` and `src/` in CI.
+
+### 3.2 Architecture Decision Record
+
+When a workspace, crate or project-level decision arises (§1), during design
+or at any other time:
+
+1. Take the next unused number from
+   [`documentation/adr/README.md`](documentation/adr/README.md). The file is
+   `documentation/adr/NNNN-<slug>.md`.
+2. Copy [`documentation/adr-template.md`](documentation/adr-template.md) and
+   fill every section. Follow
+   [`documentation/doc-standards.md`](documentation/doc-standards.md) §6:
+   one decision per record, one page.
+3. Set the status badge to `Proposed`, the date badge to today and the
+   author badge to your GitHub handle. Add the record's row to the index.
+4. Open a PR containing the ADR alone, or together with the design doc
+   revisions that cite it. An ADR is `Accepted` before any implementation
+   that depends on it merges.
+
+Design docs cite the ADR by number in §5 Alternatives and in the Revision
+History row that starts following it.
 
 ---
 
@@ -119,6 +156,12 @@ Review checks that requirements are testable, that §4 satisfies §2, that
 the References support the cited claims. `Reviewed` and `Approved` are
 always set by a maintainer. Tooling and automation never set them.
 
+An ADR carries its own status badge (`Proposed`, `Accepted`, `Deprecated`,
+`Superseded`; `doc-standards.md` §6.3). Review checks that the decision is at
+the workspace, crate or project level, that each rejected option is a real
+alternative and that every follow-up names its owner. A maintainer sets
+`Accepted`.
+
 ---
 
 ## 5. Implementation
@@ -129,7 +172,8 @@ doc leaves open, and do not add capability the doc does not specify.
 **When the design is silent or wrong**, stop and revise the doc: fix the
 section, add a Revision History row and return it to review. A change to
 requirements, public API or architecture needs re-approval before the code
-that depends on it lands.
+that depends on it lands. A workspace, crate or project-level decision made
+during implementation becomes an ADR before that code lands.
 
 **Code conventions** (enforced by the workspace lint policy in
 `Cargo.toml` and `.cargo/clippy.toml`):
@@ -191,10 +235,10 @@ git config core.hooksPath .github/
 - Branch from `main` as `<handle>/<topic>`. Roadmap work uses the roadmap
   ID in the topic (`<handle>/pr3-2-benchmarking`); see
   [`documentation/roadmap.md`](documentation/roadmap.md).
-- Keep one concern per PR: a design doc, or the implementation of one
-  approved doc.
-- The PR description links the design doc and lists the requirements the
-  change implements or modifies.
+- Keep one concern per PR: an ADR, a design doc, or the implementation of
+  one approved doc.
+- The PR description links the design doc and any ADR, and lists the
+  requirements the change implements or modifies.
 - PRs are squash-merged into `main`.
 - The workspace `Cargo.lock` is committed and CI builds against it. Developers
   update it by hand: run `cargo update` in a dedicated PR, run the gates, and
@@ -216,8 +260,8 @@ Contributors may use AI assistants. Assistant instruction files
 (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`) and agent tooling directories are
 local and ignored by git; they encode this same process for automated
 tools. The process does not change: assistants follow the same gates,
-never set `Reviewed` or `Approved`, and the contributor is accountable for
-every line submitted.
+never set `Reviewed`, `Approved` or `Accepted`, and the contributor is
+accountable for every line submitted.
 
 ---
 
