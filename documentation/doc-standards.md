@@ -3,6 +3,12 @@
 These rules establish a rigorous and consistent documentation standard for a
 Rust native control systems toolbox intended for safety-critical applications.
 
+§1 to §5 govern rustdoc and ETS documentation in source. §6 and §7 govern the
+design-decision records that accompany a change: Architecture Decision
+Records (ADRs) and OpenSpec change artifacts. The process that produces those
+records is in [`CONTRIBUTING.md`](../CONTRIBUTING.md); the design-document
+format is in [`design-template.md`](design-template.md).
+
 # 1. General Etiquette
 
 To maintain a clean, readable and highly maintainable codebase, all
@@ -219,6 +225,151 @@ pub mod teensy_pid_suite {
   expect() or panic!() unless demonstrating
   a panic condition.
 
+# 6. Architecture Decision Records
+
+An Architecture Decision Record (ADR) captures one decision whose reach is
+wider than a single component: a dependency policy, a toolchain bound, a
+numeric default, a wire-format convention, a process rule. Design documents
+describe how a component works; an ADR records why a choice between
+alternatives came out as it did. The two cite each other. The decision to
+adopt ADRs is itself recorded in
+[ADR-0001](adr/0001-adopt-adrs-and-openspec.md).
+
+## 6.1. Location and Naming
+
+* ADRs live in [`documentation/adr/`](adr/README.md), one file per decision,
+  named `NNNN-<slug>.md`: a four-digit sequence number and a lowercase,
+  hyphenated slug (`0001-adopt-adrs-and-openspec.md`).
+* Numbers are assigned in order and never reused. A superseded ADR keeps its
+  number and its file.
+* The title line is `# ADR-NNNN: <Title>`. The title names the decision in
+  the imperative or as a noun phrase: "Adopt ADRs and OpenSpec for design
+  decisions", "`f64` as the default continuous-state scalar".
+* [`documentation/adr/README.md`](adr/README.md) lists every ADR with its
+  status. Add a row when creating an ADR and update the row on each status
+  change.
+
+## 6.2. Structure
+
+Copy [`adr-template.md`](adr-template.md). It follows the MADR layout
+(Markdown Any Decision Records) and carries these sections in this order:
+
+* **Badges**: date, status and author, in the same form as a design document.
+* **Context and Problem Statement**: the forces at play and the question the
+  ADR answers, in two to four paragraphs. State facts about the workspace,
+  not opinions about the options.
+* **Decision Drivers**: a bulleted list of the requirements, constraints and
+  qualities that decide between the options. Cite design-document
+  requirements by ID (`storage-design.md` C-1) when they apply.
+* **Considered Options**: a bulleted list, one line per option.
+* **Decision Outcome**: begins `Chosen option: "<option>", because ...` and
+  justifies the choice against the drivers. **Consequences** follows, as
+  `Good` and `Bad` bullets, and names the follow-up work the decision
+  creates together with the document, gate or roadmap entry that owns it.
+* **Pros and Cons of the Options**: one subsection per option with `Good`,
+  `Neutral` and `Bad` bullets. Omit for a decision with one serious option.
+* **References**: IEEE style, as in a design document. Published works and
+  the workspace documents the ADR relies on.
+
+## 6.3. Status and Lifecycle
+
+| Status       | Badge markdown                                                                    | Set by                                 |
+|:-------------|:----------------------------------------------------------------------------------|:---------------------------------------|
+| `Proposed`   | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Proposed-orange)`       | Author, on creation                    |
+| `Accepted`   | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Accepted-brightgreen)`  | Maintainer, after review               |
+| `Deprecated` | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Deprecated-lightgrey)`  | Maintainer, when the decision no longer applies |
+| `Superseded` | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Superseded-red)`        | Maintainer, when a newer ADR replaces it |
+
+* A `Proposed` ADR is edited in place through review.
+* An `Accepted` ADR is immutable apart from its status badge and one line
+  under the badges, `Superseded by [ADR-NNNN](NNNN-<slug>.md).` To change the
+  decision, write a new ADR that names the one it supersedes in its Context
+  and Problem Statement.
+* Tooling and automation never set `Accepted`, `Deprecated` or `Superseded`.
+
+## 6.4. Writing Rules
+
+* One decision per ADR. A proposal that makes two independent choices is two
+  ADRs.
+* Write in the present tense and record the current decision only. The pull
+  request holds the history of the draft.
+* Keep the record to one or two pages. Detail that belongs to one component
+  goes in that component's design document, which the ADR links.
+* Refer to design documents by slug and section (`ci-design.md` §4.7), to
+  requirements by ID (`FR-3`) and to OpenSpec changes by name
+  (`add-lqr-synthesis`), in code format.
+
+# 7. OpenSpec Change Artifacts
+
+[OpenSpec](https://openspec.dev/docs/overview) is the change-planning
+workflow for the workspace. The current behavior of the system lives in
+`openspec/specs/<capability>/spec.md`. A unit of work is a change: the
+directory `openspec/changes/<change>/`, holding `proposal.md`, delta specs
+under `specs/`, `design.md` and `tasks.md`. When the work merges, the change
+is archived: its deltas fold into `openspec/specs/` and the directory moves to
+`openspec/changes/archive/YYYY-MM-DD-<change>/`.
+
+`openspec validate` checks the structure of these files. The rules below cover
+what it does not check: naming, wording and how the artifacts relate to design
+documents and ADRs.
+
+## 7.1. Naming
+
+* A change name is lowercase and hyphenated and starts with a verb that names
+  its effect on the specs: `add-`, `update-`, `remove-` or `refactor-`
+  (`add-lqr-synthesis`, `update-ets-frame-header`). Roadmap work appends the
+  roadmap ID (`repair-trace-gate-pr3-7`).
+* A capability directory under `specs/` takes its name from the workspace
+  vocabulary: the crate or module for library behavior (`matrix`,
+  `state-space`, `ets-host`) and the gate or subsystem for infrastructure
+  (`ci-gates`, `cross-compare`).
+
+## 7.2. Artifact Content
+
+* **`proposal.md`** carries `Why`, `What Changes`, `Capabilities` and
+  `Impact`. `Why` states the problem in terms a user of the library
+  recognizes. `Impact` lists the crates, design documents and ADRs the change
+  touches.
+* **Delta specs** (`specs/<capability>/spec.md`) carry `## ADDED
+  Requirements`, `## MODIFIED Requirements`, `## REMOVED Requirements` and
+  `## RENAMED Requirements` sections as needed. Each requirement is a
+  `### Requirement: <name>` heading, a description of one behavior that uses
+  `SHALL` or `MUST`, and one or more `#### Scenario: <name>` blocks with
+  `**WHEN**` and `**THEN**` bullets. A `MODIFIED` block carries the whole
+  requirement, not the changed lines. A `REMOVED` block carries `**Reason**`
+  and `**Migration**`.
+* **`design.md`** carries `Context`, `Goals / Non-Goals`, `Decisions`,
+  `Risks / Trade-offs`, `Migration Plan` and `Open Questions`. For a component
+  that has a design document, `design.md` links the document and does not
+  repeat it. A decision under `Decisions` whose reach is wider than the change
+  becomes an ADR (§6); `design.md` then cites the ADR instead of restating
+  the choice.
+* **`tasks.md`** carries numbered task groups of `- [ ] X.Y` checkboxes. Each
+  task states what it delivers and how that is verified. The last group runs
+  `cargo ci` and updates the documentation the change affects.
+
+## 7.3. Relation to Design Documents
+
+Design documents remain the normative requirement and verification record:
+`trace-reqs` parses their `FR-n`, `NFR-n` and `C-n` definitions and their
+`VC-x.y` tables
+([`requirement-traceability-design.md`](vv/requirement-traceability-design.md)).
+A delta-spec requirement that adds or modifies behavior ends its description
+with the design-document ID it corresponds to, in the form
+``Traces to `matrix-design.md` FR-3.`` A delta-spec requirement with no
+design-document counterpart means the design document needs a revision; make
+that revision in the same pull request (`CONTRIBUTING.md` §5).
+
+The design document's `Development Plan` (§9) states the phases of a
+component; `tasks.md` states the tasks of one change. The two do not repeat
+each other.
+
+## 7.4. Prose
+
+Proposals, delta specs and designs follow §1: present tense, the imperative
+for procedural steps and no marketing language. Refer to design documents,
+requirements and ADRs as §6.4 describes.
+
 # Resources
 
 * [Meet safe and unsafe](https://doc.rust-lang.org/nomicon/meet-safe-and-unsafe.html)
@@ -226,3 +377,7 @@ pub mod teensy_pid_suite {
 * [Unsafe Rust](https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html)
 * [Awesome safety critical](https://awesome-safety-critical.readthedocs.io/en/latest/)
 * [Rustdoc book](https://doc.rust-lang.org/rustdoc/how-to-write-documentation.html)
+* [Documenting Architecture Decisions (Nygard)](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions)
+* [MADR: Markdown Any Decision Records](https://adr.github.io/madr/)
+* [OpenSpec documentation](https://openspec.dev/docs/overview)
+* [OpenSpec `spec-driven` schema](https://openspec.dev/docs/schemas/spec-driven)

@@ -1,3 +1,4 @@
+ADRs
 APIs
 AVX
 A_d
@@ -51,6 +52,7 @@ Clippy
 Cmp
 Cobertura
 Codegen
+Cognitect
 Codomain
 Comms
 Comput
@@ -228,6 +230,7 @@ Nmsis
 Num
 Numer
 Numerica
+Nygard
 Nyquist
 O'Reilly
 ODE
@@ -363,6 +366,7 @@ _res
 a_n
 aberth
 accessor
+adr
 accessors
 acos
 angular_velocity
