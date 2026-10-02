@@ -13,86 +13,57 @@ Vale skips them. Delete each note once its section is written.
 2. Set the date badge to today (`October_1,_2026`: day not zero-padded) and
    the author badge to your GitHub handle.
 3. Leave the status at `Proposed`. Only a maintainer sets `Accepted`,
-   `Deprecated` or `Superseded` (CONTRIBUTING.md §4).
+   `Deprecated` or `Superseded` (doc-standards.md §6.3).
 4. Add a row for this ADR to `documentation/adr/README.md`.
-5. One decision per ADR. Keep the whole record to one or two pages
-   (doc-standards.md §6).
+5. One decision per ADR, at the workspace, crate or project level
+   (doc-standards.md §6). A choice inside one component belongs in that
+   component's design doc, §5 Alternatives. Keep the record to one page.
 -->
 
 ---
 
-## Context and Problem Statement
+## Context
 
-[Two to four paragraphs. State the forces at play as facts about the
-workspace: what exists today, what it costs, which requirement or constraint
-it strains. End with the question this record answers.]
+[One or two paragraphs. State the forces as facts about the workspace: what
+exists today, what it costs, which requirement or constraint it strains. End
+with the question this record answers.]
 
 <!--
-If this ADR replaces an earlier one, name it here:
+If this ADR supersedes an earlier one, name it here:
 "This record supersedes [ADR-0003](0003-slug.md), which ...".
 -->
 
 ---
 
-## Decision Drivers
+## Decision
 
-- [Requirement, constraint or quality that decides between the options.]
-- [Cite design-document requirements by ID when they apply: `storage-design.md` C-1.]
-
----
-
-## Considered Options
-
-- [Option 1]
-- [Option 2]
-- [Option 3]
+[The decision in one or two sentences, in the present tense, justified
+against the forces in Context.]
 
 ---
 
-## Decision Outcome
-
-Chosen option: "[Option n]", because [justification stated against the
-decision drivers, in one or two sentences].
-
-### Consequences
+## Consequences
 
 - Good: [What becomes possible or cheaper.]
-- Good: [...]
-- Bad: [What becomes harder, and the follow-up work the decision creates.]
-- Bad: [...]
-
-<!--
-Name every follow-up task the decision creates, with the document, gate or
-roadmap entry that owns it. A consequence with no owner is an open question.
--->
+- Bad: [What becomes harder.]
+- Follow-up: [Task], owned by [document, gate or roadmap entry].
 
 ---
 
-## Pros and Cons of the Options
+## Rejected Options
+
+- [Option]: [Reason, in one line.]
 
 <!--
-One subsection per option, in the order of Considered Options. Omit this
-whole section for a decision with one serious option.
+One line per serious alternative. Omit the section when only one option was
+serious.
 -->
-
-### [Option 1]
-
-- Good: [...]
-- Neutral: [...]
-- Bad: [...]
-
-### [Option 2]
-
-- Good: [...]
-- Bad: [...]
 
 ---
 
 ## References
 
 [1] A. Author, "Title," *Publication/Venue*, vol. n, no. n, pp. n–n, Year.
-
-[2] Organization, "Page Title," *Site Name*. [Online]. Available: https://example.com. Accessed: Mon. D, YYYY.
 
 <!--
 IEEE style, numbered in order of first citation, cited inline as [n].

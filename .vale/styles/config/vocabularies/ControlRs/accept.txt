@@ -366,9 +366,9 @@ _res
 a_n
 aberth
 accessor
-adr
 accessors
 acos
+adr
 angular_velocity
 anstream
 anstream's

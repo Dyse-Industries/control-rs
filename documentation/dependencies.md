@@ -36,9 +36,6 @@ curl -fsSL https://github.com/vale-cli/vale/releases/download/v3.22.0/vale_3.22.
     | tar -xz -C ~/.cargo/bin vale
 vale --config=.vale.ini sync
 
-# OpenSpec CLI (needs Node.js 20 or later)
-npm install -g @fission-ai/openspec@latest
-
 # Python oracles
 python3.12 -m venv .venv
 source .venv/bin/activate
@@ -66,10 +63,6 @@ brew install qemu llvm teensy_loader_cli python@3.12
 curl -fsSL https://github.com/vale-cli/vale/releases/download/v3.22.0/vale_3.22.0_macOS_arm64.tar.gz \
     | tar -xz -C ~/.cargo/bin vale
 vale --config=.vale.ini sync
-
-# OpenSpec CLI (needs Node.js 20 or later)
-brew install node
-npm install -g @fission-ai/openspec@latest
 
 # Python oracles
 python3.12 -m venv .venv
@@ -135,16 +128,6 @@ Rust stand-ins.
 |:-------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------|:-----------------------------------------------|:------------------------------------------------------------------|
 | Python                                                                                                 | `3.12`, virtual environment at `.venv`                                                | `cross-compare` gate, `cargo compare`          | `python3.12 -m venv .venv`                                        |
 | Oracle packages (`h5py`, `numpy`, `scipy`, `jax`, `python-flint`, `tensorflow`, `onnx`, `onnxruntime`) | minimums in [`requirements.txt`](../control-rs-verification/python3/requirements.txt) | Reference oracles in `control-rs-verification` | `pip install -r control-rs-verification/python3/requirements.txt` |
-
-### Design workflow
-
-| Dependency | Version          | Needed for                                                                                  | Install                                         |
-|:-----------|:-----------------|:--------------------------------------------------------------------------------------------|:------------------------------------------------|
-| Node.js    | `20` or later    | The OpenSpec CLI                                                                            | distribution package or `brew install node`     |
-| `openspec` | latest           | OpenSpec changes: `openspec new`, `openspec validate`, `openspec archive` (CONTRIBUTING.md §3) | `npm install -g @fission-ai/openspec@latest`  |
-
-No gate runs `openspec`; the artifacts it manages are Markdown and are read
-and written without it. The CLI validates and archives them.
 
 ---
 
