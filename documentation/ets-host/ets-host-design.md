@@ -452,7 +452,7 @@ established by `../ets/cpu-profiler-design.md`, not here.
 * **Release versioning**: FR-8 rejects wire skew at session open, but the
   crate depends on `control-rs-ets` `0.1.0` (Cargo caret). How crate versions
   move together at release time is undecided. `TargetInfo` has not been
-  exercised on a physical target (PR9).
+  exercised on a physical target (PR10).
 * **Serial enumeration**: Port paths are supplied by the caller. Automatic
   device discovery, as offered by board-aware harnesses (pytest-embedded,
   2026), is unspecified.

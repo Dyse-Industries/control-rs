@@ -387,10 +387,8 @@ dependencies = [
  "chrono",
  "criterion",
  "hdf5-pure",
- "regex",
  "serde",
  "serde_json",
- "strsim",
  "thiserror 2.0.21",
  "toml",
 ]

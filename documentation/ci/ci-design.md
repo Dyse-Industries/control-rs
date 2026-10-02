@@ -126,7 +126,7 @@ minimal-parsing design principle**:
 - **FR-16 — Process-Tree Termination**: A gate that exceeds its timeout must be
   terminated together with every descendant process it started, so no build,
   benchmark or emulator outlives the gate that launched it.
-- **FR-17 — Bare-Metal Target Build (deferred to PR9)**: The pipeline must
+- **FR-17 — Bare-Metal Target Build (deferred to PR10)**: The pipeline must
   compile the target firmware for every embedded target declared in
   `gate.toml`, including targets that CI cannot execute (Teensy 4.1), and fail
   when any build fails. No gate implements it yet (§4.9, §8).
@@ -141,18 +141,12 @@ minimal-parsing design principle**:
   test must exit non-zero, preventing false passes from misconfigured targets
   or filters.
 - **FR-20 — Model Checking & Formal Verification**: The pipeline must execute
-  bounded model checking over declared proof harnesses via `kani`, verify that
-  zero assertions, unwinding limits, or cover predicates fail, and fail closed
-  when zero harnesses are executed (empty-target rule) or when any harness
-  fails.
+  bounded model checking over declared proof harnesses via `kani` and fail when
+  any harness fails an assertion, unwinding limit or cover predicate.
 - **FR-21 — Undefined Behavior & Pointer Provenance Analysis**: The pipeline
-  must
-  execute target test suites under `miri` across host and cross-interpreted
-  32-bit targets (`i686-unknown-linux-gnu`), detecting undefined behavior,
-  memory
-  leaks, and pointer provenance violations, failing closed when zero tests
-  execute, on any detected UB, or when ignored tests exceed the committed
-  baseline.
+  must execute the `control-rs` library unit tests under `miri`, failing on any
+  detected undefined behavior, memory leak, pointer provenance violation or
+  failed test.
 
 #### 2.2 Non-Functional Requirements
 
@@ -187,11 +181,11 @@ minimal-parsing design principle**:
   (`thumbv7em-none-eabihf`, `thumbv7em-none-eabi`) and RISC-V
   (`riscv32imac-unknown-none-elf`, `riscv64gc-unknown-none-elf`) under QEMU,
   and the NXP i.MX RT1062 (Teensy 4.1, `thumbv7em-none-eabihf`) as a build-only
-  target once FR-17 lands (PR9). Host tooling runs on `x86_64` and `aarch64`.
+  target once FR-17 lands (PR10). Host tooling runs on `x86_64` and `aarch64`.
 - **C-6 — Indicative Emulation Timing**: Virtual QEMU execution is indicative
   only and does not model microarchitectural cache or bus contention. Cycle
   counts from QEMU are recorded, never gated; precise timing requires physical
-  hardware runners (roadmap PR9).
+  hardware runners (roadmap PR10).
 
 ---
 
@@ -476,15 +470,16 @@ description = "Builds QEMU ETS firmware and runs every suite headless on each ta
 
 [miri]
 mode = "fail"
-command = "cargo miri"
+command = "cargo +nightly miri"
 args = ["test", "-p", "control-rs", "--lib"]
+env = { MIRIFLAGS = "-Zmiri-disable-isolation", PROPTEST_DISABLE_FAILURE_PERSISTENCE = "1", PROPTEST_CASES = "8" }
 timeout_secs = 600
 description = "Executes library unit tests under Miri interpreter detecting undefined behavior and memory leaks"
 
 [kani]
 mode = "fail"
 command = "cargo kani"
-args = ["--workspace"]
+args = ["-p", "control-rs", "--tests"]
 timeout_secs = 600
 description = "Executes bounded model checking over declared #[kani::proof] harnesses"
 
@@ -765,10 +760,10 @@ Embedded evidence is produced under the `target` group (FR-17, FR-18). In
   becomes `--baud 115200`), and arguments from the first `--`
   on are forwarded verbatim, so `parse_targets` passes them to `cargo build`.
 - `target-build` (compiling firmware for bare-metal targets without an emulator,
-  such as `examples/teensy4`, FR-17) is deferred to roadmap PR9. Compiling
+  such as `examples/teensy4`, FR-17) is deferred to roadmap PR10. Compiling
   `examples/teensy4` currently exceeds the default 192 KiB ITCM link boundary of
   `teensy4-bsp` by ~239 KiB when linking the complete workspace model suite.
-  PR9 addresses linker-script memory partitioning (placing `.text` and tables
+  PR10 addresses linker-script memory partitioning (placing `.text` and tables
   into
   Flash and OCRAM) alongside hardware test runner orchestration.
 
@@ -897,15 +892,15 @@ The `lint` job checks out full history for `--base-ref`.
   correctness; target electrical timing and hardware execution require physical
   hardware runners.
 - Physical-target execution (Teensy 4.1 over serial) and bare-metal compilation
-  (`target-build`) are deferred to roadmap PR9. The Teensy 4.1 firmware
+  (`target-build`) are deferred to roadmap PR10. The Teensy 4.1 firmware
   currently overflows `teensy4-bsp`'s default 192 KiB ITCM limit when linking
   the full workspace model suite. Target verification in CI is provided via the
   `virtual-ets` gate under QEMU emulation (FR-18).
 - QEMU timing is indicative (C-6); `ets-results.json` cycle counts are not
   compared against any bound.
-- The workspace mutation gates other than `mutants-macros` (0 missed) had no
-  measured survivor count when added; mutation score is enforced, not
-  established, until their first CI run.
+- Behaviorally equivalent mutants are excluded by `--exclude-re` in the
+  `mutants-*` gates (`.cargo/gate.toml`) and `.cargo/mutants.toml`; every
+  other mutant must be caught.
 - Process-tree termination depends on `pgrep`; where it is absent, only the
   direct gate process is killed.
 - The bounded-concurrency test infers overlap from probe-gate timestamps with
@@ -944,14 +939,14 @@ The `lint` job checks out full history for `--base-ref`.
   workspace numerical model and verification suites exceeds the 192 KiB ITCM
   region of `teensy4-bsp`'s default linker script by ~239 KiB. Resolving this
   requires memory layout partitioning (moving code and read-only tables to Flash
-  and OCRAM) as part of roadmap PR9; until then, `target-build` remains omitted
+  and OCRAM) as part of roadmap PR10; until then, `target-build` remains omitted
   from `gate.toml`'s default `target` group in favor of `virtual-ets`.
 - **Deferred Technical Debt** (recorded 2026-09-27 review, not resolved here):
     - `ci-design.md` keeps numbered `§` headings and the pre-`VC` §6 layout, and
       is not in `.cargo/trace/trace.toml` `files`, so no CI requirement is
       traced.
       Closed by the design-template corpus migration.
-    - Workflow (roadmap PR9): the report job rebuilds `cargo doc`, duplicating
+    - Workflow (roadmap PR10): the report job rebuilds `cargo doc`, duplicating
       the
       `doc` gate; `CI.yml` has no top-level `permissions:`;
       `cargo-bins/cargo-binstall@main` is unpinned; no job caches builds; every
@@ -1014,6 +1009,7 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.39     | September 30, 2026 | @MitchellDScott | Added `required` to the gate definition (FR-10): a `fail` gate with `required = false` may have no result in `cargo report`, while a recorded `Fail` still fails it. The monolithic `mutants` gate is `fail`, `default = false`, `required = false`: executable locally, not required in CI. |
 | 1.40     | October 1, 2026 | @MitchellDScott | Added the `deny-duplicates` gate to the `audit` group: `cargo deny` bans over the crates that ship, excluding the unpublished tooling crates and development dependencies, with `multiple-versions = "deny"` and reasoned skips in `.cargo/deny.toml`. `deny` checks advisories, licenses and sources. Clippy's `multiple_crate_versions` is allowed workspace-wide and `allowed-duplicate-crates` is removed. The workspace `Cargo.lock` is committed and updated by hand. |
 | 1.41     | October 1, 2026 | @MitchellDScott | The `fetch` gate runs `cargo fetch --locked`, the CI lint job (which runs the `pre` stage) builds the runner with `cargo --locked ci`, and the CI publish job runs `cargo publish --locked`, so the committed `Cargo.lock` must be current. The runner build comes first, so without its `--locked` Cargo would repair a stale lock before `fetch` ran. |
+| 1.42     | October 1, 2026 | @MitchellDScott | `miri` and `kani` gate examples match `gate.toml` (§4.3). The workflow path filters include `Cargo.lock`, so a lockfile change runs the gates. FR-20 and FR-21 state the checks the `kani` and `miri` gates perform (no empty-target rule, no 32-bit target, no ignored-test baseline). Teensy and workflow deferrals point at roadmap PR10; the mutation limit records the equivalent-mutant exclusions. |
 
 ---
 

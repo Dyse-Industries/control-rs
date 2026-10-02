@@ -27,13 +27,13 @@
           report, fail-closed `valgrind`, retired schema and dead code removed
     - [x] **PR3-6**: Formal Verification & Dynamic Analysis Gates (`kani`, `miri`)
       ([#69](https://github.com/Dyse-Industries/control-rs/pull/69); gates failing at merge; repaired in PR3-7)
-    - [ ] **PR3-7**: Main Repair — Patch Failing Gates
+    - [x] **PR3-7**: Main Repair — Patch Failing Gates
         - Reproduce each failing gate on `main` with `cargo ci` and patch it
           minimally, with no redesign
-    - [ ] **PR3-8**: Requirement Traceability Redesign (`trace`)
+    - [x] **PR3-8**: Requirement Traceability Redesign (`trace`)
         - `Target`-cell traceability replaces the `#[req]` macro; remove
           `control-rs-trace-macros`, `trace-marks` and `trace/marks.rs`
-    - [ ] **PR3-9**: Workspace Audit & Cleanup
+    - [x] **PR3-9**: Workspace Audit & Cleanup
         - Review PR3 against its design docs, reconcile docs, gate config and
           tests, and remove stray additions
 - [ ] **PR4**: Design Hardening, Trace Wiring and Test Updates

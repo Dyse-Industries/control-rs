@@ -601,10 +601,13 @@ fn signal(pid: u32, sig: &str) {
 }
 
 #[cfg(not(unix))]
-fn terminate_tree(child: &mut std::process::Child, _pid: u32) {
+fn terminate_child_only(child: &mut std::process::Child, _pid: u32) {
     let _ = child.kill();
     let _ = child.wait();
 }
+
+#[cfg(not(unix))]
+use terminate_child_only as terminate_tree;
 
 /// Instantiates every configured gate in [`GateConfig::pipeline_order`].
 #[must_use]
