@@ -1464,7 +1464,10 @@ automated_methods = []
         let records =
             [("docs/adr/0002.md", decision("ADR-0002", Some("Superseded")))];
         let documents = [(FILE, document("the size rule"))];
-        assert!(decision_messages(&records, &documents, &rules).is_empty());
+        assert_eq!(
+            decision_messages(&records, &documents, &rules),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -1492,7 +1495,10 @@ automated_methods = []
     fn absent_decisions_table_disables_decision_checks() {
         let rules = rules();
         let documents = [(FILE, document("ADR-0009"))];
-        assert!(decision_messages(&[], &documents, &rules).is_empty());
+        assert_eq!(
+            decision_messages(&[], &documents, &rules),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
