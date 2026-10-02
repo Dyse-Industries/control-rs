@@ -97,11 +97,7 @@ pub struct DecisionConfig {
     pub definition: String,
     /// Pattern whose `status` capture is a decision record's status.
     pub status: String,
-    /// Pattern whose `status` capture is a selected document's status.
-    pub doc_status: String,
-    /// Document statuses whose citations must name accepted decisions.
-    pub gated: Vec<String>,
-    /// Decision statuses a gated document may cite.
+    /// Decision statuses a requirement may cite.
     pub accepted: Vec<String>,
 }
 
@@ -145,11 +141,7 @@ pub struct DecisionRules {
     definition: Regex,
     /// A decision record's status, in its `status` capture.
     status: Regex,
-    /// A document's status, in its `status` capture.
-    doc_status: Regex,
-    /// Document statuses whose citations must name accepted decisions.
-    gated: BTreeSet<String>,
-    /// Decision statuses a gated document may cite.
+    /// Decision statuses a requirement may cite.
     accepted: BTreeSet<String>,
 }
 
@@ -271,8 +263,6 @@ impl DecisionConfig {
             id: compile("id", &format!(r"\b(?:{})\b", self.id), false)?,
             definition: compile("definition", &self.definition, false)?,
             status: compile("status", &self.status, true)?,
-            doc_status: compile("doc_status", &self.doc_status, true)?,
-            gated: self.gated.iter().cloned().collect(),
             accepted: self.accepted.iter().cloned().collect(),
         })
     }
@@ -658,14 +648,14 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
     defects
 }
 
-/// The decision defects of the decision `records` and the selected
-/// `documents`, sorted by file, then line. Without `[decisions]` there are
-/// none.
+/// The decision defects of the decision `records` and of the requirement
+/// definitions in `rows`, sorted by file, then line. Without `[decisions]`
+/// there are none.
 #[must_use]
 pub fn check_decisions(
     rules: &Rules,
     records: &[Source<'_>],
-    documents: &[Source<'_>],
+    rows: &[Row],
 ) -> Vec<Defect> {
     let Some(decision_rules) = rules.decisions.as_ref() else {
         return Vec::new();
@@ -696,8 +686,8 @@ pub fn check_decisions(
             by_id.insert(decision.id.as_str(), decision);
         }
     }
-    for &document in documents {
-        check_citations(document, decision_rules, &by_id, &mut defects);
+    for row in rows.iter().filter(|r| r.kind == DEFINITION) {
+        check_citations(row, decision_rules, &by_id, &mut defects);
     }
     defects.sort_by(|a, b| {
         (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))
@@ -705,45 +695,36 @@ pub fn check_decisions(
     defects
 }
 
-/// Reports each citation in `document` of a decision with no record, and,
-/// when the document's status is gated, of a decision that is not accepted.
+/// Reports each decision that the text of the requirement `row` cites and
+/// that has no record, or whose status is not accepted.
 fn check_citations(
-    document: Source<'_>,
+    row: &Row,
     rules: &DecisionRules,
     by_id: &Decisions<'_>,
     defects: &mut Vec<Defect>,
 ) {
-    let (file, source) = document;
-    let (lines, _) = visible_lines(source);
-    let doc_status = captured_status(&lines, &rules.doc_status);
-    let gated = doc_status.as_ref().filter(|s| rules.gated.contains(*s));
-    for &(number, line) in &lines {
-        for cited in rules.id.find_iter(line).map(|m| m.as_str()) {
-            let message = match (by_id.get(cited), gated) {
-                (None, _) => Some(format!(
-                    "decision {cited} is cited but has no decision record"
-                )),
-                (Some(decision), Some(status)) => {
-                    let accepted = decision
-                        .status
-                        .as_ref()
-                        .is_some_and(|s| rules.accepted.contains(s));
-                    (!accepted).then(|| {
-                        format!(
-                            "{status} document cites decision {cited} with status {}; it may cite only accepted decisions",
-                            decision.status.as_deref().unwrap_or("none")
-                        )
-                    })
-                }
-                (Some(_), None) => None,
-            };
-            if let Some(message) = message {
-                defects.push(Defect {
-                    file: file.to_string(),
-                    line: number,
-                    message,
-                });
-            }
+    let cited: BTreeSet<&str> =
+        rules.id.find_iter(&row.text).map(|m| m.as_str()).collect();
+    for id in cited {
+        let Some(decision) = by_id.get(id) else {
+            defects.push(Defect::at(
+                row,
+                format!(
+                    "requirement {} cites decision {id}, which has no decision record",
+                    row.id
+                ),
+            ));
+            continue;
+        };
+        let status = decision.status.as_deref().unwrap_or("none");
+        if !rules.accepted.contains(status) {
+            defects.push(Defect::at(
+                row,
+                format!(
+                    "requirement {} cites decision {id} with status {status}; requirements cite only accepted decisions",
+                    row.id
+                ),
+            ));
         }
     }
 }
@@ -875,8 +856,6 @@ files = ["docs/adr"]
 id = 'ADR-[0-9]{4}'
 definition = '^#\s+ADR-[0-9]{4}:'
 status = 'ADR%20Status-(?P<status>[A-Za-z]+)-'
-doc_status = 'Doc%20Status-(?P<status>[A-Za-z]+)-'
-gated = ["Approved"]
 accepted = ["Accepted"]
 "#;
 
@@ -1405,9 +1384,9 @@ automated_methods = []
         format!("# {id}: Title\n\n{badge}\n## Context\n")
     }
 
-    fn document(status: &str, cites: &str) -> String {
+    fn document(cites: &str) -> String {
         format!(
-            "# Widget (widget)\n\n![Status](https://img.shields.io/badge/Doc%20Status-{status}-orange)\n\nFollows {cites}.\n"
+            "# Widget (widget)\n\n- **FR-1 — Size**: The widget shall follow\n  {cites}.\n\nSee also ADR-0002 and ADR-0009.\n"
         )
     }
 
@@ -1418,9 +1397,11 @@ automated_methods = []
     ) -> Vec<String> {
         let records: Vec<Source<'_>> =
             records.iter().map(|(f, s)| (*f, s.as_str())).collect();
-        let documents: Vec<Source<'_>> =
-            documents.iter().map(|(f, s)| (*f, s.as_str())).collect();
-        check_decisions(rules, &records, &documents)
+        let rows: Vec<Row> = documents
+            .iter()
+            .flat_map(|(f, s)| scan_markdown(f, s, rules).0)
+            .collect();
+        check_decisions(rules, &records, &rows)
             .iter()
             .map(ToString::to_string)
             .collect()
@@ -1431,12 +1412,11 @@ automated_methods = []
         let rules = rules_with(DECISIONS);
         let records =
             [("docs/adr/0001.md", decision("ADR-0001", Some("Accepted")))];
-        let documents =
-            [(FILE, document("Draft", "`ADR-0001` and `ADR-0002`"))];
+        let documents = [(FILE, document("ADR-0001 and ADR-0003"))];
         assert_eq!(
             decision_messages(&records, &documents, &rules),
             [format!(
-                "{FILE}:5: decision ADR-0002 is cited but has no decision record"
+                "{FILE}:3: requirement widget#FR-1 cites decision ADR-0003, which has no decision record"
             )]
         );
     }
@@ -1457,28 +1437,34 @@ automated_methods = []
     }
 
     #[test]
-    fn gated_document_citing_unaccepted_decision_is_reported() {
+    fn requirement_citing_unaccepted_decision_is_reported() {
         let rules = rules_with(DECISIONS);
         let records = [
             ("docs/adr/0001.md", decision("ADR-0001", Some("Proposed"))),
             ("docs/adr/0002.md", decision("ADR-0002", Some("Superseded"))),
             ("docs/adr/0003.md", decision("ADR-0003", Some("Accepted"))),
         ];
-        let cites = "ADR-0001, ADR-0002 and ADR-0003";
-        let approved = [(FILE, document("Approved", cites))];
+        let documents = [(FILE, document("ADR-0001, ADR-0002 and ADR-0003"))];
         assert_eq!(
-            decision_messages(&records, &approved, &rules),
+            decision_messages(&records, &documents, &rules),
             [
                 format!(
-                    "{FILE}:5: Approved document cites decision ADR-0001 with status Proposed; it may cite only accepted decisions"
+                    "{FILE}:3: requirement widget#FR-1 cites decision ADR-0001 with status Proposed; requirements cite only accepted decisions"
                 ),
                 format!(
-                    "{FILE}:5: Approved document cites decision ADR-0002 with status Superseded; it may cite only accepted decisions"
+                    "{FILE}:3: requirement widget#FR-1 cites decision ADR-0002 with status Superseded; requirements cite only accepted decisions"
                 ),
             ]
         );
-        let draft = [(FILE, document("Draft", cites))];
-        assert!(decision_messages(&records, &draft, &rules).is_empty());
+    }
+
+    #[test]
+    fn citations_outside_requirement_text_are_ignored() {
+        let rules = rules_with(DECISIONS);
+        let records =
+            [("docs/adr/0002.md", decision("ADR-0002", Some("Superseded")))];
+        let documents = [(FILE, document("the size rule"))];
+        assert!(decision_messages(&records, &documents, &rules).is_empty());
     }
 
     #[test]
@@ -1489,14 +1475,14 @@ automated_methods = []
             decision_messages(&records, &[], &rules),
             ["docs/adr/0001.md:1: decision ADR-0001 has no status"]
         );
-        let approved = [(FILE, document("Approved", "ADR-0001"))];
+        let documents = [(FILE, document("ADR-0001"))];
         assert_eq!(
-            decision_messages(&records, &approved, &rules),
+            decision_messages(&records, &documents, &rules),
             [
                 "docs/adr/0001.md:1: decision ADR-0001 has no status"
                     .to_string(),
                 format!(
-                    "{FILE}:5: Approved document cites decision ADR-0001 with status none; it may cite only accepted decisions"
+                    "{FILE}:3: requirement widget#FR-1 cites decision ADR-0001 with status none; requirements cite only accepted decisions"
                 ),
             ]
         );
@@ -1505,7 +1491,7 @@ automated_methods = []
     #[test]
     fn absent_decisions_table_disables_decision_checks() {
         let rules = rules();
-        let documents = [(FILE, document("Approved", "ADR-0009"))];
+        let documents = [(FILE, document("ADR-0009"))];
         assert!(decision_messages(&[], &documents, &rules).is_empty());
     }
 

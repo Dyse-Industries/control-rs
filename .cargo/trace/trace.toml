@@ -37,6 +37,4 @@ files = ["documentation/adr"]
 id = 'ADR-[0-9]{4}'
 definition = '^#\s+ADR-[0-9]{4}:'
 status = 'ADR%20Status-(?P<status>[A-Za-z]+)-'
-doc_status = 'Doc%20Status-(?P<status>[A-Za-z]+)-'
-gated = ["Approved"]
 accepted = ["Accepted"]

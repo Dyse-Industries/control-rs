@@ -1,7 +1,7 @@
 # ADR-0001: Adopt ADRs for workspace decisions
 
 ![Date Badge](https://img.shields.io/badge/Date-October_2,_2026-blue)
-![Status Badge](https://img.shields.io/badge/ADR%20Status-Approved-green)
+![Status Badge](https://img.shields.io/badge/ADR%20Status-Accepted-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@mxscott-blueviolet)
 
 ---
@@ -72,9 +72,10 @@ design documents cite it by number.
 `documentation/vv/requirement-traceability-design.md`, rev. 1.16, Sept. 2026.
 
 [2] M. Nygard, "Documenting Architecture Decisions," *Cognitect Blog*, Nov.
+
 2011. [Online].
-Available: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions.
-Accessed: Oct. 1, 2026.
+      Available: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions.
+      Accessed: Oct. 1, 2026.
 
 [3] Fission-AI, "OpenSpec Documentation," *openspec.dev*. [Online].
 Available: https://openspec.dev/docs/overview. Accessed: Oct. 1, 2026.

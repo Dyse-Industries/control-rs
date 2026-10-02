@@ -12,7 +12,8 @@ use control_rs_ci::trace::reqs::{
 };
 use control_rs_ci::trace::select::select;
 use control_rs_ci::trace::{
-    Defects, USAGE_ERROR, cli_args, finish, read_text, sort_rows, write_rows,
+    Defects, Row, USAGE_ERROR, cli_args, finish, read_text, sort_rows,
+    write_rows,
 };
 use control_rs_ci::ui;
 
@@ -53,15 +54,13 @@ fn run(config_path: &Path, out: &Path) -> GateResult<Defects> {
     }
     let mut rows = Vec::new();
     let mut defects = Vec::new();
-    let mut sources = Vec::new();
     for file in &files {
         let source = read_text(Path::new(file))?;
         let (file_rows, file_defects) = scan_markdown(file, &source, &rules);
         rows.extend(file_rows);
         defects.extend(file_defects);
-        sources.push((file.clone(), source));
     }
-    defects.extend(decision_defects(&config, &rules, &sources)?);
+    defects.extend(decision_defects(&config, &rules, &rows)?);
     sort_rows(&mut rows);
     write_rows(out, &rows)?;
     ui::status(
@@ -80,12 +79,12 @@ fn run(config_path: &Path, out: &Path) -> GateResult<Defects> {
     Ok(defects)
 }
 
-/// The decision defects of the documents in `sources`, each a file and its
-/// text; none when the configuration has no `[decisions]` table.
+/// The decision defects of the decision records and of the requirement
+/// `rows`; none when the configuration has no `[decisions]` table.
 fn decision_defects(
     config: &TraceConfig,
     rules: &Rules,
-    sources: &[OwnedSource],
+    rows: &[Row],
 ) -> GateResult<Defects> {
     let Some(decisions) = &config.decisions else {
         return Ok(Defects::new());
@@ -97,7 +96,7 @@ fn decision_defects(
         let source = read_text(Path::new(&file))?;
         records.push((file, source));
     }
-    Ok(check_decisions(rules, &pairs(&records), &pairs(sources)))
+    Ok(check_decisions(rules, &pairs(&records), rows))
 }
 
 /// Borrowed file and text pairs of `list`.

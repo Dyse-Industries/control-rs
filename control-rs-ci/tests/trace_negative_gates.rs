@@ -74,7 +74,7 @@ fn setup_scenario_decisions(
     fs::create_dir_all(&docs_dir)?;
     fs::write(
         docs_dir.join("widget-design.md"),
-        "# Widget (widget)\n\n![Status](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)\n\n- **FR-1**: Size, per ADR-0001 and ADR-0002\n\n| VC-1 | FR-1 | `review` | — | OK |\n",
+        "# Widget (widget)\n\n![Status](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)\n\n- **FR-1**: Size, per ADR-0001 and ADR-0002\n\nSee also ADR-0003.\n\n| VC-1 | FR-1 | `review` | — | OK |\n",
     )?;
     let adr_dir = fixture_workspace.join("adr");
     fs::create_dir_all(&adr_dir)?;
@@ -85,7 +85,7 @@ fn setup_scenario_decisions(
     let mut config =
         fs::read_to_string(fixture_workspace.join(".cargo/trace/trace.toml"))?;
     config.push_str(
-        "[decisions]\nfiles = [\"adr\"]\nid = 'ADR-[0-9]{4}'\ndefinition = '^#\\s+ADR-[0-9]{4}:'\nstatus = 'ADR%20Status-(?P<status>[A-Za-z]+)-'\ndoc_status = 'Doc%20Status-(?P<status>[A-Za-z]+)-'\ngated = [\"Approved\"]\naccepted = [\"Accepted\"]\n",
+        "[decisions]\nfiles = [\"adr\"]\nid = 'ADR-[0-9]{4}'\ndefinition = '^#\\s+ADR-[0-9]{4}:'\nstatus = 'ADR%20Status-(?P<status>[A-Za-z]+)-'\naccepted = [\"Accepted\"]\n",
     );
     fs::write(fixture_workspace.join(".cargo/trace/trace.toml"), config)
 }
@@ -221,8 +221,8 @@ fn test_negative_trace_reqs_gate_fails_on_unaccepted_and_missing_decisions()
     let log = fs::read_to_string(temp.ctx.out_dir.join("trace-reqs.log"))
         .unwrap_or_default();
     for expected in [
-        "docs/widget-design.md:5: Approved document cites decision ADR-0001 with status Proposed",
-        "docs/widget-design.md:5: decision ADR-0002 is cited but has no decision record",
+        "docs/widget-design.md:5: requirement widget#FR-1 cites decision ADR-0001 with status Proposed",
+        "docs/widget-design.md:5: requirement widget#FR-1 cites decision ADR-0002, which has no decision record",
     ] {
         assert!(log.contains(expected), "missing `{expected}` in:\n{log}");
     }

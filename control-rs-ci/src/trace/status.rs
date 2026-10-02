@@ -10,7 +10,7 @@
 //! A requirement takes the worst status among its conditions in order:
 //! `Fail` > `Unrun` > `Uncovered` > `Review` > `Pass`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::path::Path;
 
@@ -130,7 +130,7 @@ pub struct ReviewCondition {
 /// Interpreter warning emitted during test analysis.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InterpreterWarning {
-    /// Warning code (`W-2`).
+    /// Warning code (`W-2` or `W-3`).
     pub code: String,
     /// Path of the defining document.
     pub file: String,
@@ -546,6 +546,50 @@ fn load_method_artifacts(config: &TraceConfig, base: &Path) -> MethodResultMap {
     result_cache
 }
 
+/// Warns (W-3) for each result log of an automated method that is older than
+/// the most recently modified document `reqs` names: a document edited after
+/// the run may name targets the log never ran.
+fn check_staleness(
+    reqs: &[Row],
+    config: &TraceConfig,
+    base: &Path,
+    warnings: &mut Vec<InterpreterWarning>,
+) {
+    let modified = |rel: &str| {
+        std::fs::metadata(base.join(rel))
+            .and_then(|m| m.modified())
+            .ok()
+    };
+    let files: BTreeSet<&str> = reqs.iter().map(|r| r.file.as_str()).collect();
+    let newest = files
+        .into_iter()
+        .filter_map(|file| modified(file).map(|time| (time, file)))
+        .max();
+    let Some((doc_time, doc)) = newest else {
+        return;
+    };
+    for method in &config.automated_methods {
+        let Some(artifact) = config
+            .method
+            .get(method)
+            .and_then(|m| m.result_artifact.as_deref())
+        else {
+            continue;
+        };
+        if modified(artifact).is_some_and(|log_time| log_time < doc_time) {
+            warnings.push(InterpreterWarning {
+                code: "W-3".to_string(),
+                file: doc.to_string(),
+                line: 1,
+                item: artifact.to_string(),
+                message: format!(
+                    "{method} result log predates the last edit to this document and may be stale; rerun the gate that writes it"
+                ),
+            });
+        }
+    }
+}
+
 fn load_miri_log(base: &Path) -> Option<TestResultMap> {
     let miri_path = base.join("target/ci-artifacts/miri.log");
     if miri_path.exists() {
@@ -635,6 +679,7 @@ pub fn derive_with_base(
         evaluate_all_conditions(&cond_idx, &mut ctx, &mut counts);
 
     let requirements = requirement_statuses(&order, &evaluated);
+    check_staleness(reqs, config, base, &mut warnings);
 
     defects.sort_by(|a, b| {
         (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))
@@ -954,5 +999,44 @@ mod tests {
             report.warnings.first().map(|w| w.code.as_str()),
             Some("W-2")
         );
+    }
+
+    /// Sets the modification time of `path` to `secs` after the epoch.
+    fn touch(path: &Path, secs: u64) {
+        let time = std::time::UNIX_EPOCH
+            .checked_add(std::time::Duration::from_secs(secs))
+            .unwrap();
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+    }
+
+    #[test]
+    fn result_log_older_than_a_traced_document_warns_stale() {
+        let dir = test_dir("stale");
+        fs::create_dir_all(dir.join("docs")).unwrap();
+        let doc = dir.join("docs/w-design.md");
+        let log = dir.join("target/ci-artifacts/libtest.log");
+        fs::write(&doc, "# W (w)\n").unwrap();
+        fs::write(&log, "test a::t ... ok\n").unwrap();
+        let rows = [definition(), condition("libtest", &["a::t"])];
+
+        touch(&log, 1_000);
+        touch(&doc, 2_000);
+        let (report, _) = derive_with_base(&rows, &default_config(), &dir);
+        let stale: Vec<_> =
+            report.warnings.iter().filter(|w| w.code == "W-3").collect();
+        assert_eq!(stale.len(), 1, "{:?}", report.warnings);
+        assert_eq!(
+            stale.first().map(|w| (w.file.as_str(), w.item.as_str())),
+            Some(("docs/w-design.md", "target/ci-artifacts/libtest.log"))
+        );
+
+        touch(&log, 3_000);
+        let (fresh, _) = derive_with_base(&rows, &default_config(), &dir);
+        assert!(fresh.warnings.iter().all(|w| w.code != "W-3"));
     }
 }

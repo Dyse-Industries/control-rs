@@ -46,17 +46,19 @@ the rules are in the
   method, the fully qualified test or proof harness in the `Target` cell.
   `trace` fails a condition whose target is absent from, or failed in, its
   result log, so run the tests (`cargo gate test,kani`) before tracing.
-- **Decisions.** With a `[decisions]` table, every `ADR-NNNN` cited in a
-  traced document must have a record under `documentation/adr/`, and an
-  `Approved` document may cite only `Accepted` decisions.
+  Warning W-3 flags a result log older than the last edit to a traced
+  document.
+- **Decisions.** With a `[decisions]` table, an `ADR-NNNN` cited in the text
+  of a requirement must have a record under `documentation/adr/` with a
+  status in `accepted`. Mentions elsewhere in a document are not checked.
 - **Adopting a document.** Add condition rows to its Verification table,
   then add its path to `files`.
 
 Each defect prints as `path:line: message`:
 
 ```text
-documentation/math/fixed-num-design.md:739: decision ADR-0009 is cited but has no decision record
-documentation/math/fixed-num-design.md:739: Approved document cites decision ADR-0001 with status Proposed; it may cite only accepted decisions
+documentation/vv/requirement-traceability-design.md:121: requirement requirement-traceability#FR-12 cites decision ADR-0001 with status Proposed; requirements cite only accepted decisions
+documentation/math/fixed-num-design.md:88: requirement fixed-num#C-2 cites decision ADR-0009, which has no decision record
 ```
 
 ## License
