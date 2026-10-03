@@ -8,7 +8,7 @@ files = [
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
-methods = ["libtest", "kani", "pytest", "gtest", "analysis", "inspection", "review"]
+methods = ["libtest", "kani", "pytest", "gtest", "analysis", "inspection", "review", "deferred"]
 automated_methods = ["libtest", "kani", "pytest", "gtest"]
 retired = [
     "requirement-traceability#FR-5",
@@ -22,6 +22,7 @@ retired = [
 
 [method.libtest]
 result_artifact = "target/ci-artifacts/test.log"
+interpreter_artifact = "target/ci-artifacts/miri.log"
 
 [method.kani]
 result_artifact = "target/ci-artifacts/kani.log"

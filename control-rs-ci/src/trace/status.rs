@@ -6,9 +6,10 @@
 //! - `Unrun`: method in `automated_methods`, any target absent from its result log (fails gate).
 //! - `Uncovered`: method in `automated_methods` and no target named (fails gate).
 //! - `Review`: method outside `automated_methods`; awaits sign-off.
+//! - `Deferred`: method `deferred`; verification is planned for a later phase.
 //!
 //! A requirement takes the worst status among its conditions in order:
-//! `Fail` > `Unrun` > `Uncovered` > `Review` > `Pass`.
+//! `Fail` > `Unrun` > `Uncovered` > `Deferred` > `Review` > `Pass`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -21,6 +22,9 @@ use super::{
     CONDITION, DEFINITION, Defect, Defects, Row, SCHEMA, read_text, write_file,
 };
 use crate::error::GateResult;
+
+/// The method whose conditions are planned but not yet verifiable.
+const DEFERRED: &str = "deferred";
 
 /// A report and its defects.
 pub type Derived = (TraceReport, Defects);
@@ -41,10 +45,23 @@ type CoverSummary = (usize, usize);
 type TestResultMap = HashMap<String, bool>;
 
 /// Map from method name to its parsed result log.
-type MethodResultMap = HashMap<String, TestResultMap>;
+type MethodResultMap = HashMap<String, ResultLog>;
 
-/// Evaluated conditions and pending reviews.
-type ConditionEvalResult = (Vec<ConditionStatus>, Vec<ReviewCondition>);
+/// Evaluated conditions, pending reviews and deferred conditions.
+type ConditionEvalResult = (
+    Vec<ConditionStatus>,
+    Vec<ReviewCondition>,
+    Vec<ReviewCondition>,
+);
+
+/// What a result log says about one target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lookup {
+    Passed,
+    Failed,
+    Ambiguous,
+    Absent,
+}
 
 /// Status of one requirement or condition.
 #[derive(
@@ -64,6 +81,8 @@ pub enum Status {
     Pass,
     /// Method outside `automated_methods`; awaits sign-off.
     Review,
+    /// Method `deferred`; verification is planned for a later phase.
+    Deferred,
     /// Automated method and no target named; fails the gate.
     Uncovered,
     /// Automated method and a target has no recorded result; fails the gate.
@@ -112,7 +131,7 @@ pub struct RequirementStatus {
     pub conditions: Vec<ConditionStatus>,
 }
 
-/// A review condition awaiting sign-off.
+/// A review condition awaiting sign-off, or a deferred condition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewCondition {
     /// Qualified condition ID.
@@ -142,11 +161,23 @@ pub struct InterpreterWarning {
     pub message: String,
 }
 
+/// A parsed result log.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResultLog {
+    /// Outcome per identifier.
+    outcomes: TestResultMap,
+    /// Identifiers the log records more than once with different outcomes, or
+    /// that name two doctests.
+    ambiguous: BTreeSet<String>,
+    /// Test binaries the log names in `Running` and `Doc-tests` headers.
+    binaries: BTreeSet<String>,
+}
+
 /// Context for condition status derivation across a trace run.
 struct StatusCtx<'a> {
     config: &'a TraceConfig,
     result_cache: &'a MethodResultMap,
-    miri_results: Option<&'a TestResultMap>,
+    interpreter_results: Option<&'a ResultLog>,
     defects: &'a mut Defects,
     warnings: &'a mut Vec<InterpreterWarning>,
 }
@@ -163,9 +194,38 @@ pub struct TraceReport {
     /// Review conditions awaiting sign-off.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub review: Vec<ReviewCondition>,
+    /// Conditions whose verification is deferred.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deferred: Vec<ReviewCondition>,
     /// Non-fatal interpreter warnings.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<InterpreterWarning>,
+}
+
+impl From<TestResultMap> for ResultLog {
+    fn from(outcomes: TestResultMap) -> Self {
+        Self {
+            outcomes,
+            ..Self::default()
+        }
+    }
+}
+
+impl ResultLog {
+    /// Records `passed` for `key`. A repeat is ambiguous when `unique`
+    /// forbids repeats or the outcomes differ, and then takes the worse
+    /// outcome.
+    fn record(&mut self, key: String, passed: bool, unique: bool) {
+        match self.outcomes.get(&key).copied() {
+            Some(prev) if unique || prev != passed => {
+                self.ambiguous.insert(key.clone());
+                self.outcomes.insert(key, prev && passed);
+            }
+            _ => {
+                self.outcomes.insert(key, passed);
+            }
+        }
+    }
 }
 
 impl fmt::Display for InterpreterWarning {
@@ -203,26 +263,96 @@ impl TraceReport {
     }
 }
 
+/// The test binary a libtest `Running` header names: the file stem of the
+/// parenthesized path without its `-<hash>` suffix.
+fn binary_name(header: &str) -> String {
+    let path = header
+        .rsplit_once('(')
+        .and_then(|(_, path)| path.strip_suffix(')'))
+        .unwrap_or(header);
+    let stem = Path::new(path.trim())
+        .file_stem()
+        .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+    match stem.rsplit_once('-') {
+        Some((name, hash))
+            if !hash.is_empty()
+                && hash.bytes().all(|b| b.is_ascii_hexdigit()) =>
+        {
+            name.to_string()
+        }
+        _ => stem,
+    }
+}
+
+/// `name` without the ` (line N)` that libtest appends to a doctest.
+fn without_doctest_line(name: &str) -> String {
+    let Some(start) = name.find(" (line ") else {
+        return name.to_string();
+    };
+    let tail = name.get(start..).unwrap_or_default();
+    tail.find(')').map_or_else(
+        || name.to_string(),
+        |end| {
+            format!(
+                "{}{}",
+                name.get(..start).unwrap_or_default(),
+                tail.get(end.saturating_add(1)..).unwrap_or_default()
+            )
+        },
+    )
+}
+
 /// Parses standard libtest line-oriented output (`test <path> ... ok|FAILED`).
+///
+/// A result is keyed by `<binary>::<path>`, the binary taken from the
+/// preceding `Running` or `Doc-tests` header. Lines before any header are
+/// keyed by the bare path. A doctest is keyed by its file and item without
+/// the line number.
 #[must_use]
-pub fn parse_libtest_results(text: &str) -> TestResultMap {
-    let mut results = HashMap::new();
+pub fn parse_libtest_results(text: &str) -> ResultLog {
+    let mut log = ResultLog::default();
+    let mut binary: Option<String> = None;
+    let mut doctests = false;
     for line in text.lines() {
         let trimmed = line.trim();
+        if let Some(header) = trimmed.strip_prefix("Running ") {
+            let name = binary_name(header);
+            log.binaries.insert(name.clone());
+            binary = Some(name);
+            doctests = false;
+            continue;
+        }
+        if let Some(krate) = trimmed.strip_prefix("Doc-tests ") {
+            let name = krate.trim().replace('-', "_");
+            log.binaries.insert(name.clone());
+            binary = Some(name);
+            doctests = true;
+            continue;
+        }
         let Some(rest) = trimmed.strip_prefix("test ") else {
             continue;
         };
         let Some((name, outcome_part)) = rest.split_once(" ... ") else {
             continue;
         };
-        let test_name = name.trim().to_string();
-        if outcome_part.starts_with("ok") {
-            results.insert(test_name, true);
+        let passed = if outcome_part.starts_with("ok") {
+            true
         } else if outcome_part.starts_with("FAILED") {
-            results.insert(test_name, false);
-        }
+            false
+        } else {
+            continue;
+        };
+        let name = if doctests {
+            without_doctest_line(name.trim())
+        } else {
+            name.trim().to_string()
+        };
+        let key = binary
+            .as_deref()
+            .map_or_else(|| name.clone(), |b| format!("{b}::{name}"));
+        log.record(key, passed, doctests);
     }
-    results
+    log
 }
 
 /// Parses Kani bounded model checking output.
@@ -328,13 +458,32 @@ pub fn parse_gtest_results(text: &str) -> TestResultMap {
     results
 }
 
-/// The outcome recorded for `target`: an exact identifier, or the identifier
-/// without its leading crate segment.
-fn lookup(results: &TestResultMap, target: &str) -> Option<bool> {
-    results.get(target).copied().or_else(|| {
-        let (_, rest) = target.split_once("::")?;
-        results.get(rest).copied()
-    })
+/// What `log` records for `target`: an exact identifier, or the identifier
+/// without its leading crate segment, which only a log without binary
+/// headers records.
+fn lookup(log: &ResultLog, target: &str) -> Lookup {
+    let key = if log.outcomes.contains_key(target) {
+        target
+    } else {
+        match target.split_once("::") {
+            Some((_, rest)) if log.outcomes.contains_key(rest) => rest,
+            _ => return Lookup::Absent,
+        }
+    };
+    if log.ambiguous.contains(key) {
+        Lookup::Ambiguous
+    } else if log.outcomes.get(key).copied().unwrap_or(false) {
+        Lookup::Passed
+    } else {
+        Lookup::Failed
+    }
+}
+
+/// The file name of `path`.
+fn file_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
 }
 
 /// The file name of the result artifact of `method`.
@@ -343,15 +492,7 @@ fn artifact_name(config: &TraceConfig, method: &str) -> String {
         .method
         .get(method)
         .and_then(|m| m.result_artifact.as_deref())
-        .map_or_else(
-            || method.to_string(),
-            |path| {
-                Path::new(path).file_name().map_or_else(
-                    || path.to_string(),
-                    |n| n.to_string_lossy().into_owned(),
-                )
-            },
-        )
+        .map_or_else(|| method.to_string(), file_name)
 }
 
 /// The first row of each ID among `rows` of `kind`, and the IDs in order of
@@ -368,27 +509,39 @@ fn first_by_id<'a>(rows: &'a [Row], kind: &str) -> Indexed<'a> {
     (by_id, order)
 }
 
-fn check_miri_log_coverage(
+/// Warns (W-2) when the interpreter log covers the crate of a passing
+/// `libtest` target but does not record the target. Doctests are not run by
+/// the interpreter.
+fn check_interpreter_coverage(
     row: &Row,
     method: &str,
     target: &str,
     ctx: &mut StatusCtx<'_>,
 ) {
-    if method != "libtest" {
+    if method != "libtest" || target.contains(" - ") {
         return;
     }
-    let Some(miri_map) = ctx.miri_results else {
+    let Some(log) = ctx.interpreter_results else {
         return;
     };
-    if lookup(miri_map, target).is_none() {
+    let covered = target
+        .split_once("::")
+        .is_some_and(|(krate, _)| log.binaries.contains(krate));
+    if covered && lookup(log, target) == Lookup::Absent {
+        let artifact = ctx
+            .config
+            .method
+            .get(method)
+            .and_then(|m| m.interpreter_artifact.as_deref())
+            .map_or_else(String::new, file_name);
         ctx.warnings.push(InterpreterWarning {
             code: "W-2".to_string(),
             file: row.file.clone(),
             line: row.line,
             item: target.to_string(),
-            message:
-                "target was executed under test.log but is absent from miri.log"
-                    .to_string(),
+            message: format!(
+                "target was executed under test.log but is absent from {artifact}"
+            ),
         });
     }
 }
@@ -416,11 +569,21 @@ fn evaluate_target(
         return outcome(false, Some("result log missing".to_string()));
     };
     match lookup(results, target) {
-        Some(true) => {
-            check_miri_log_coverage(row, method, target, ctx);
+        Lookup::Passed => {
+            check_interpreter_coverage(row, method, target, ctx);
             outcome(true, None)
         }
-        Some(false) => {
+        Lookup::Ambiguous => {
+            ctx.defects.push(Defect::at(
+                row,
+                format!(
+                    "condition {} target '{target}' is ambiguous in {artifact}: it is recorded more than once with different outcomes or names two doctests",
+                    row.id
+                ),
+            ));
+            outcome(false, Some("ambiguous result in result log".to_string()))
+        }
+        Lookup::Failed => {
             ctx.defects.push(Defect::at(
                 row,
                 format!(
@@ -433,7 +596,7 @@ fn evaluate_target(
                 Some("verification failed in result log".to_string()),
             )
         }
-        None => {
+        Lookup::Absent => {
             ctx.defects.push(Defect::at(
                 row,
                 format!(
@@ -455,6 +618,9 @@ fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
         status,
         items,
     };
+    if method == DEFERRED {
+        return status(Status::Deferred, Vec::new());
+    }
     if !ctx.config.automated_methods.contains(&method) {
         return status(Status::Review, Vec::new());
     }
@@ -516,12 +682,12 @@ fn requirement_statuses(
         .collect()
 }
 
-fn parse_artifact(method: &str, text: &str) -> Option<TestResultMap> {
+fn parse_artifact(method: &str, text: &str) -> Option<ResultLog> {
     match method {
         "libtest" => Some(parse_libtest_results(text)),
-        "kani" => Some(parse_kani_results(text)),
-        "pytest" => Some(parse_pytest_results(text)),
-        "gtest" => Some(parse_gtest_results(text)),
+        "kani" => Some(parse_kani_results(text).into()),
+        "pytest" => Some(parse_pytest_results(text).into()),
+        "gtest" => Some(parse_gtest_results(text).into()),
         _ => None,
     }
 }
@@ -590,21 +756,25 @@ fn check_staleness(
     }
 }
 
-fn load_miri_log(base: &Path) -> Option<TestResultMap> {
-    let miri_path = base.join("target/ci-artifacts/miri.log");
-    if miri_path.exists() {
-        read_text(&miri_path)
-            .ok()
-            .map(|t| parse_libtest_results(&t))
-    } else {
-        None
-    }
+/// The interpreter log (`interpreter_artifact`) of the `libtest` method.
+fn load_interpreter_log(
+    config: &TraceConfig,
+    base: &Path,
+) -> Option<ResultLog> {
+    let path = config
+        .method
+        .get("libtest")
+        .and_then(|m| m.interpreter_artifact.as_deref())?;
+    read_text(&base.join(path))
+        .ok()
+        .map(|t| parse_libtest_results(&t))
 }
 
 fn initial_status_counts() -> StatusCounts {
     [
         Status::Pass,
         Status::Review,
+        Status::Deferred,
         Status::Uncovered,
         Status::Unrun,
         Status::Fail,
@@ -622,6 +792,7 @@ fn evaluate_all_conditions(
     let (conditions, condition_order) = cond_idx;
     let mut evaluated = Vec::new();
     let mut review = Vec::new();
+    let mut deferred = Vec::new();
 
     for row in condition_order.iter().filter_map(|id| conditions.get(id)) {
         let status = condition_status(row, ctx);
@@ -629,8 +800,13 @@ fn evaluate_all_conditions(
         if let Some(count) = counts.get_mut(&status.status) {
             *count = count.saturating_add(1);
         }
-        if status.status == Status::Review {
-            review.push(ReviewCondition {
+        let pending = match status.status {
+            Status::Review => Some(&mut review),
+            Status::Deferred => Some(&mut deferred),
+            _ => None,
+        };
+        if let Some(pending) = pending {
+            pending.push(ReviewCondition {
                 id: row.id.clone(),
                 parents: row.parents.clone(),
                 method: status.method.clone(),
@@ -641,7 +817,7 @@ fn evaluate_all_conditions(
         evaluated.push(status);
     }
 
-    (evaluated, review)
+    (evaluated, review, deferred)
 }
 
 /// Derives condition and requirement status from the rows of `trace-reqs`,
@@ -664,18 +840,18 @@ pub fn derive_with_base(
     let mut defects = Vec::new();
     let mut warnings = Vec::new();
     let result_cache = load_method_artifacts(config, base);
-    let miri_results = load_miri_log(base);
+    let interpreter_results = load_interpreter_log(config, base);
     let mut counts = initial_status_counts();
 
     let mut ctx = StatusCtx {
         config,
         result_cache: &result_cache,
-        miri_results: miri_results.as_ref(),
+        interpreter_results: interpreter_results.as_ref(),
         defects: &mut defects,
         warnings: &mut warnings,
     };
 
-    let (evaluated, review) =
+    let (evaluated, review, deferred) =
         evaluate_all_conditions(&cond_idx, &mut ctx, &mut counts);
 
     let requirements = requirement_statuses(&order, &evaluated);
@@ -693,6 +869,7 @@ pub fn derive_with_base(
         counts,
         requirements,
         review,
+        deferred,
         warnings,
     };
 
@@ -738,6 +915,7 @@ mod tests {
                 })
                 .collect(),
             review: Vec::new(),
+            deferred: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -781,10 +959,10 @@ mod tests {
     #[test]
     fn each_result_format_has_a_parser() {
         let py = parse_artifact("pytest", "tests/a.py::t PASSED\n").unwrap();
-        assert_eq!(py.get("tests/a.py::t"), Some(&true));
+        assert_eq!(py.outcomes.get("tests/a.py::t"), Some(&true));
         let gt = parse_artifact("gtest", "[       OK ] Suite.Case (1 ms)\n")
             .unwrap();
-        assert_eq!(gt.get("Suite.Case"), Some(&true));
+        assert_eq!(gt.outcomes.get("Suite.Case"), Some(&true));
         assert!(parse_artifact("unknown", "").is_none());
     }
 
@@ -802,6 +980,9 @@ mod tests {
                         result_artifact: Some(format!(
                             "target/ci-artifacts/{m}.log"
                         )),
+                        interpreter_artifact: (m == "libtest").then(|| {
+                            "target/ci-artifacts/miri.log".to_string()
+                        }),
                     },
                 )
             })
@@ -814,9 +995,11 @@ mod tests {
             doc_id: r"^#\s+.*\((?P<doc>[a-z0-9-]+)\)".to_string(),
             definition: r"^- \*\*(?:FR|NFR|C)-".to_string(),
             verification: r"^\| *(?:[a-z0-9-]+#)?VC-".to_string(),
-            methods: ["libtest", "kani", "pytest", "gtest", "review"]
-                .map(String::from)
-                .to_vec(),
+            methods: [
+                "libtest", "kani", "pytest", "gtest", "review", "deferred",
+            ]
+            .map(String::from)
+            .to_vec(),
             automated_methods: ["libtest", "kani", "pytest", "gtest"]
                 .map(String::from)
                 .to_vec(),
@@ -987,8 +1170,16 @@ mod tests {
     #[test]
     fn target_missing_from_miri_log_warns() {
         let dir = test_dir("miri_warn");
-        write_log(&dir, "libtest.log", "test a::t ... ok\n");
-        write_log(&dir, "miri.log", "running 0 tests\n");
+        write_log(
+            &dir,
+            "miri.log",
+            "Running unittests src/lib.rs (target/debug/deps/a-0f1e)\nrunning 0 tests\n",
+        );
+        write_log(
+            &dir,
+            "libtest.log",
+            "Running unittests src/lib.rs (target/debug/deps/a-9c8d)\ntest t ... ok\n",
+        );
         let (report, defects) = derive_with_base(
             &[definition(), condition("libtest", &["a::t"])],
             &default_config(),
@@ -999,6 +1190,169 @@ mod tests {
             report.warnings.first().map(|w| w.code.as_str()),
             Some("W-2")
         );
+    }
+
+    /// Statuses of `targets` of `libtest` conditions against `log`.
+    fn libtest_statuses(
+        name: &str,
+        log: &str,
+        targets: &[&str],
+    ) -> Vec<Status> {
+        targets
+            .iter()
+            .map(|t| {
+                status(&run(name, log, condition("libtest", &[t]))).unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn libtest_results_are_keyed_by_binary() {
+        let log = "Running unittests src/lib.rs (target/debug/deps/a-1f2e3d)\n\
+                   test tests::t ... FAILED\n\
+                   Running tests/b.rs (target/debug/deps/b-9a8b7c)\n\
+                   test tests::t ... ok\n";
+        assert_eq!(
+            libtest_statuses(
+                "by_binary",
+                log,
+                &["a::tests::t", "b::tests::t", "c::tests::t", "tests::t"]
+            ),
+            [Status::Fail, Status::Pass, Status::Unrun, Status::Unrun]
+        );
+    }
+
+    #[test]
+    fn a_path_recorded_with_different_outcomes_is_ambiguous() {
+        let log = "Running unittests src/lib.rs (target/debug/deps/a-1f2e3d)\n\
+                   test t ... ok\ntest t ... FAILED\ntest u ... ok\ntest u ... ok\n";
+        let t = run("ambiguous", log, condition("libtest", &["a::t"]));
+        assert_eq!(status(&t), Some(Status::Fail));
+        assert!(
+            t.1.first()
+                .is_some_and(|d| d.message.contains("is ambiguous in")),
+            "{:?}",
+            t.1
+        );
+        let u = run("repeat_ok", log, condition("libtest", &["a::u"]));
+        assert_eq!(status(&u), Some(Status::Pass));
+    }
+
+    #[test]
+    fn doctests_match_on_file_and_item_without_the_line() {
+        let log = "Doc-tests control-rs\n\
+                   test src/a.rs - a::Foo (line 10) ... ok\n\
+                   test src/a.rs - a::Bar (line 20) - compile fail ... ok\n\
+                   test src/a.rs - a::Dup (line 30) ... ok\n\
+                   test src/a.rs - a::Dup (line 40) ... ok\n";
+        assert_eq!(
+            libtest_statuses(
+                "doctests",
+                log,
+                &[
+                    "control_rs::src/a.rs - a::Foo",
+                    "control_rs::src/a.rs - a::Bar - compile fail",
+                    "control_rs::src/a.rs - a::Dup",
+                    "control_rs::src/a.rs - a::Foo (line 10)",
+                ]
+            ),
+            [Status::Pass, Status::Pass, Status::Fail, Status::Unrun]
+        );
+    }
+
+    #[test]
+    fn binary_names_drop_the_extension_and_hash() {
+        for (header, name) in [
+            (
+                "unittests src/lib.rs (target/debug/deps/control_rs-1a2b3c)",
+                "control_rs",
+            ),
+            (
+                "tests/x.rs (target/debug/deps/trace_tests-0f.exe)",
+                "trace_tests",
+            ),
+            ("target/debug/deps/plain", "plain"),
+            ("unittests (target/debug/deps/no-hash-here)", "no-hash-here"),
+        ] {
+            assert_eq!(binary_name(header), name, "{header}");
+        }
+        assert_eq!(without_doctest_line("f - i (line 3"), "f - i (line 3");
+    }
+
+    #[test]
+    fn interpreter_warnings_cover_only_the_crates_the_log_runs() {
+        let dir = test_dir("miri_scope");
+        write_log(
+            &dir,
+            "libtest.log",
+            "Running unittests (target/d/a-1)\ntest t ... ok\ntest u ... ok\n\
+             Running unittests (target/d/b-2)\ntest t ... ok\n\
+             Doc-tests a\ntest src/a.rs - i (line 1) ... ok\n",
+        );
+        write_log(
+            &dir,
+            "miri.log",
+            "Running unittests (target/m/a-3)\ntest t ... ok\n",
+        );
+        let (report, defects) = derive_with_base(
+            &[
+                definition(),
+                condition(
+                    "libtest",
+                    &["a::t", "a::u", "b::t", "a::src/a.rs - i"],
+                ),
+            ],
+            &default_config(),
+            &dir,
+        );
+        assert!(defects.is_empty(), "{defects:?}");
+        let items: Vec<_> =
+            report.warnings.iter().map(|w| w.item.as_str()).collect();
+        assert_eq!(items, ["a::u"]);
+        assert!(
+            report
+                .warnings
+                .iter()
+                .all(|w| w.message.ends_with("miri.log")),
+            "{:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn no_interpreter_artifact_means_no_w2() {
+        let dir = test_dir("no_interpreter");
+        write_log(
+            &dir,
+            "libtest.log",
+            "Running unittests (target/d/a-1)\ntest t ... ok\n",
+        );
+        write_log(&dir, "miri.log", "Running unittests (target/m/a-3)\n");
+        let mut config = default_config();
+        if let Some(m) = config.method.get_mut("libtest") {
+            m.interpreter_artifact = None;
+        }
+        let (report, _) = derive_with_base(
+            &[definition(), condition("libtest", &["a::t"])],
+            &config,
+            &dir,
+        );
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    }
+
+    #[test]
+    fn deferred_condition_is_listed_and_does_not_fail() {
+        let derived = derive(
+            &[definition(), condition("deferred", &[])],
+            &default_config(),
+        );
+        assert_eq!(status(&derived), Some(Status::Deferred));
+        assert!(derived.0.passes());
+        assert!(derived.1.is_empty(), "{:?}", derived.1);
+        assert_eq!(derived.0.deferred.len(), 1);
+        assert!(derived.0.review.is_empty());
+        assert_eq!(derived.0.counts.get(&Status::Deferred), Some(&1));
+        assert_eq!(derived.0.counts.get(&Status::Review), Some(&0));
     }
 
     /// Sets the modification time of `path` to `secs` after the epoch.
