@@ -1038,5 +1038,9 @@ mod tests {
         touch(&log, 3_000);
         let (fresh, _) = derive_with_base(&rows, &default_config(), &dir);
         assert!(fresh.warnings.iter().all(|w| w.code != "W-3"));
+
+        touch(&log, 2_000);
+        let (equal, _) = derive_with_base(&rows, &default_config(), &dir);
+        assert!(equal.warnings.iter().all(|w| w.code != "W-3"));
     }
 }
