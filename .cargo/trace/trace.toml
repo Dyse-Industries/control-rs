@@ -31,3 +31,10 @@ result_artifact = "target/ci-artifacts/pytest.log"
 
 [method.gtest]
 result_artifact = "target/ci-artifacts/gtest.log"
+
+[decisions]
+files = ["documentation/adr"]
+id = 'ADR-[0-9]{4}'
+definition = '^#\s+ADR-[0-9]{4}:'
+status = 'ADR%20Status-(?P<status>[A-Za-z]+)-'
+accepted = ["Accepted"]

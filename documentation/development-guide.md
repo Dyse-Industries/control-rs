@@ -105,6 +105,7 @@ to simplify development, testing, formatting, linting and coverage reporting:
 |                                        | `cargo ets`         | `run --package control-rs-ci --bin ets --`                     | Builds ETS firmware and runs its suites headless (`cargo ets qemu all --release`). |
 |                                        | `cargo trace-reqs`  | `run --package control-rs-ci --bin trace-reqs -- …`            | Checks requirements in the design documents; writes `reqs.jsonl`.   |
 |                                        | `cargo trace-check` | `run --package control-rs-ci --bin trace-check -- …`           | Derives condition status from `reqs.jsonl` and result logs.        |
+|                                        | `cargo trace`       | `run --package control-rs-ci --bin gate -- trace-reqs,trace`   | Runs `trace-reqs` then `trace` as gates, so the check always reads fresh `reqs.jsonl`. |
 | **Interactive TUI**                    | `cargo tui`         | `run --package control-rs-tui --`                              | Launches the interactive TUI console dashboard.                     |
 | **Target Execution (Interactive TUI)** | `cargo qemu`        | `cargo tui qemu`                                               | TUI → virtual ETS (QEMU ARM Cortex-M7).                             |
 |                                        | `cargo teensy`      | `cargo tui teensy`                                             | TUI → ETS (Teensy 4.0/4.1 over serial).                             |

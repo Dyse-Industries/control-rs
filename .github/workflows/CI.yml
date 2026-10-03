@@ -55,6 +55,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Plain-text gate logs and ci-report.md: control-rs-ci passes this choice to
+# every gate, and dtolnay/rust-toolchain keeps a value that is already set.
+env:
+  CARGO_TERM_COLOR: never
+
 jobs:
   # ============================================================================
   # Stage pre (fetch) and group lint (fmt, clippy, allow-audit, doc, vale,
