@@ -216,12 +216,23 @@ mod tests {
         fs::write(dir.join("a/src/l.rs"), "fn f() {}\n").unwrap();
         fs::write(dir.join("a/n.txt"), "ignored\n").unwrap();
         fs::write(dir.join("README.md"), "# R\n").unwrap();
+        fs::write(dir.join("a/bad.rs"), [0xff, 0xfe]).unwrap();
+        fs::write(dir.join("a/t.py"), "# c\nx = 1\n").unwrap();
+        fs::write(dir.join("a/Cargo.toml"), "[p]\n").unwrap();
         fs::write(dir.join("target/x/t.rs"), "fn t() {}\n").unwrap();
         fs::write(dir.join(".hid/h.rs"), "fn h() {}\n").unwrap();
         let m = measure(&dir).unwrap();
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(m.areas.keys().collect::<Vec<_>>(), [".", "a"]);
         assert_eq!(m.total.get("Rust").map(|c| c.files), Some(1));
+        assert_eq!(
+            m.total.get("Python").map(|c| (c.files, c.comment)),
+            Some((1, 1))
+        );
+        assert_eq!(
+            m.total.get("TOML").map(|c| (c.files, c.code)),
+            Some((1, 1))
+        );
         assert_eq!(m.total.get("Markdown").map(|c| c.doc), Some(1));
         let table = m.render();
         assert!(

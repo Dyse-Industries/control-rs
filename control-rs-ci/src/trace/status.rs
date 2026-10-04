@@ -213,13 +213,11 @@ impl From<TestResultMap> for ResultLog {
 
 impl ResultLog {
     /// Records `passed` for `key`. A repeat is ambiguous when `unique`
-    /// forbids repeats or the outcomes differ, and then takes the worse
-    /// outcome.
+    /// forbids repeats or the outcomes differ.
     fn record(&mut self, key: String, passed: bool, unique: bool) {
         match self.outcomes.get(&key).copied() {
             Some(prev) if unique || prev != passed => {
-                self.ambiguous.insert(key.clone());
-                self.outcomes.insert(key, prev && passed);
+                self.ambiguous.insert(key);
             }
             _ => {
                 self.outcomes.insert(key, passed);
@@ -1261,6 +1259,16 @@ mod tests {
     }
 
     #[test]
+    fn libtest_lines_that_are_not_results_are_skipped() {
+        let log = parse_libtest_results(
+            "running 3 tests\ntest a ... ignored\ntest b\ntest c ... ok\n",
+        );
+        assert_eq!(log.outcomes.len(), 1);
+        assert_eq!(log.outcomes.get("c"), Some(&true));
+        assert_eq!(without_doctest_line("f - i"), "f - i");
+    }
+
+    #[test]
     fn binary_names_drop_the_extension_and_hash() {
         for (header, name) in [
             (
@@ -1350,7 +1358,7 @@ mod tests {
         assert!(derived.0.passes());
         assert!(derived.1.is_empty(), "{:?}", derived.1);
         assert_eq!(derived.0.deferred.len(), 1);
-        assert!(derived.0.review.is_empty());
+        assert!(derived.0.review.is_empty(), "{:?}", derived.0.review);
         assert_eq!(derived.0.counts.get(&Status::Deferred), Some(&1));
         assert_eq!(derived.0.counts.get(&Status::Review), Some(&0));
     }

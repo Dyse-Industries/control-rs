@@ -55,12 +55,18 @@ mod gate_process {
     #[test]
     fn echoed_output_is_fully_logged_before_the_gate_returns() {
         let (root, ctx) = context("drain_all");
-        let gate = shell("flood", "seq 1 30000");
+        // 4000 lines of 33 bytes exceed a 64 KiB pipe buffer, so the gate
+        // blocks until the pump drains it, without a flood of echo lines.
+        let gate = shell(
+            "flood",
+            "yes 0123456789abcdef0123456789abcdef | head -n 3999; echo last",
+        );
         let outcome =
             gate.execute_with_echo(&ctx, Some("[t] flood | ")).unwrap();
         assert_eq!(outcome.verdict, Verdict::Pass);
         let log = fs::read_to_string(ctx.out_dir.join("flood.log")).unwrap();
-        assert!(log.ends_with("29999\n30000\n"), "log was cut short");
+        assert_eq!(log.lines().count(), 4000, "log was cut short");
+        assert!(log.ends_with("abcdef\nlast\n"), "log was cut short");
         let _ = fs::remove_dir_all(&root);
     }
 
