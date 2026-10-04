@@ -1,6 +1,6 @@
 # Requirement Traceability Infrastructure (requirement-traceability)
 
-![Date Badge](https://img.shields.io/badge/Date-October_2,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_3,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Review-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -191,12 +191,14 @@ editing tools; and any systems-engineering view.
    | Method       | Target format                         | Result log (`target/ci-artifacts/`)              |
                   |:-------------|:--------------------------------------|:-------------------------------------------------|
    | `libtest`    | `crate::module::tests::test_name`     | `test.log` (`test <path> ... ok`)                |
+   | `libtest` doctest | `crate::<file> - <item>`         | `test.log` (`test <file> - <item> (line N) ... ok`) |
    | `kani`       | `crate::module::proofs::harness_name` | `kani.log` (`Checking harness <path>...`)        |
    | `pytest`     | `path/to/test_file.py::test_name`     | `pytest.log` (`<file>::<test> PASSED`)           |
    | `gtest`      | `TestSuite.TestCase`                  | `gtest.log` (`[       OK ] TestSuite.TestCase`)  |
    | `analysis`   | `—`                                   | none; signed off in review                       |
    | `inspection` | `—`                                   | none; signed off in review                       |
    | `review`     | `—`                                   | none; signed off in review                       |
+   | `deferred`   | `—`                                   | none; verification planned for a later phase     |
 
 4. **Run `cargo trace-reqs` and `cargo trace-check`.** Each problem prints as
    `path:line: message`, which the editor turns into a clickable link:
@@ -296,7 +298,7 @@ files = ["documentation/vv/requirement-traceability-design.md"]
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
-methods = ["libtest", "kani", "pytest", "gtest", "analysis", "inspection", "review"]
+methods = ["libtest", "kani", "pytest", "gtest", "analysis", "inspection", "review", "deferred"]
 automated_methods = ["libtest", "kani", "pytest", "gtest"]
 retired = [
     "requirement-traceability#FR-5",
@@ -310,6 +312,7 @@ retired = [
 
 [method.libtest]
 result_artifact = "target/ci-artifacts/test.log"
+interpreter_artifact = "target/ci-artifacts/miri.log"
 
 [method.kani]
 result_artifact = "target/ci-artifacts/kani.log"
@@ -340,6 +343,7 @@ accepted = ["Accepted"]
 | `methods`              | Verification methods a condition may name                                                                                       |
 | `automated_methods`    | The subset of `methods` whose conditions name targets that a result log must record as passed                                   |
 | `method.<m>`           | Result artifact path for automated method `<m>`; required for every automated method                                            |
+| `method.libtest.interpreter_artifact` | Log of the same tests run under an interpreter; optional, and absent it disables W-2                                  |
 | `retired`              | Qualified IDs that must not be defined or referenced again                                                                      |
 | `decisions.files`      | Roots of decision records, selected per [File Selection](#file-selection); the table is optional and its absence disables FR-12 |
 | `decisions.id`         | Regex for one decision ID                                                                                                       |
@@ -411,13 +415,20 @@ logs in `target/ci-artifacts/`:
 | Method in `automated_methods`, any target absent from its log  | `Unrun`     | yes        |
 | Method in `automated_methods`, no target named                 | `Uncovered` | yes        |
 | Method outside `automated_methods`                             | `Review`    | no         |
+| Method `deferred`                                              | `Deferred`  | no         |
 
 `trace-check` reads per-target results using deterministic framework-specific
-rules. A target matches a logged identifier exactly, or after its leading crate
-segment is dropped:
+rules. A target matches a logged identifier exactly:
 
 - **`libtest` (`test.log`)**: A line `test <path> ... ok` maps to a passing
-  target; `test <path> ... FAILED` maps to a failed target.
+  target; `test <path> ... FAILED` maps to a failed target. The identifier is
+  `<binary>::<path>`, the binary taken from the preceding `Running` or
+  `Doc-tests` header, so the first segment of a target is the test binary
+  (`control_rs`, `trace_tests`). A log without headers records bare paths,
+  which a target also matches after its first segment is dropped. A doctest
+  is identified by its file and item, without the `(line N)` that changes on
+  every edit. A path recorded with different outcomes, or two doctests
+  on one item, is ambiguous: the target is a `Fail` defect.
 - **`kani` (`kani.log`)**: A harness `Checking harness <path>...` maps to a
   passing target iff Kani reports `VERIFICATION:- SUCCESSFUL` and all evaluated
   cover properties are `SATISFIED`. An assertion failure, unwinding failure, or
@@ -430,7 +441,8 @@ segment is dropped:
 **Interpreter warning.** Miri serves as a secondary interpreter for test
 execution rather than a distinct verification method. `trace-check` emits the
 non-fatal warning **W-2 (Unexecuted under Miri)** when a `libtest` target
-recorded in `test.log` is absent from `miri.log`.
+passed in `test.log` is absent from the `interpreter_artifact` log, provided
+that log ran the target's test binary. Doctest targets are exempt.
 
 **Staleness warning.** `trace-check` emits the non-fatal warning **W-3 (Stale
 result log)** when the result log of an automated method is older than the
@@ -439,14 +451,14 @@ after the run may name targets the log never ran. The warning points at that
 document and names the log.
 
 A requirement takes the worst status of its conditions, in the order
-`Fail`, `Unrun`, `Uncovered`, `Review`, `Pass`. Each defect prints at the
+`Fail`, `Unrun`, `Uncovered`, `Deferred`, `Review`, `Pass`. Each defect prints at the
 condition row, as `condition <id> target '<target>' not found in <log>` or
 `... failed in <log>`.
 
 `trace-report.json` holds `schema` (4), summary counts per status, one entry
 per requirement (ID, status, and child conditions with method, status and
-target outcomes), the `Review` conditions awaiting sign-off, and interpreter
-warnings.
+target outcomes), the `Review` conditions awaiting sign-off, the `Deferred`
+conditions, and interpreter warnings.
 
 ### Artifacts
 
@@ -557,6 +569,7 @@ Four choices keep the stronger levels additive:
 | VC-4.1    | FR-4                                   | `libtest` | `control_rs_ci::trace::reqs::tests::row_and_method_defects_are_reported`, `control_rs_ci::trace::reqs::tests::duplicate_definition_is_reported_once_at_the_second`, `control_rs_ci::trace::reqs::tests::reference_to_an_undefined_id_is_unresolved`, `control_rs_ci::trace::reqs::tests::definition_without_a_kind_of_reference_is_missing_it`, `control_rs_ci::trace::reqs::tests::retired_ids_are_reported_where_they_appear`, `control_rs_ci::trace::reqs::tests::missing_doc_id_declaration_is_reported_as_defect`, `control_rs_ci::trace::reqs::tests::duplicate_doc_id_across_files_is_reported`, `control_rs_ci::trace::reqs::tests::condition_without_parents_is_an_orphan` | One fixture per defect kind of the Checks table yields exactly that defect                                                                                                          |
 | VC-6.1    | FR-6                                   | `libtest` | `trace_tests::cli::rows_have_the_schema_fields_and_reruns_are_identical`, `trace_tests::cli::a_clean_document_passes_and_writes_its_rows`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Rows carry the schema fields and two runs on an unchanged corpus produce byte-identical `reqs.jsonl`                                                                                |
 | VC-8.1    | FR-8                                   | `libtest` | `trace_tests::cli::passed_unrun_and_review_conditions_take_their_status`, `trace_tests::cli::every_automated_target_passed_passes_and_review_does_not_fail`, `control_rs_ci::trace::status::tests::automated_condition_without_targets_is_uncovered`, `control_rs_ci::trace::status::tests::review_condition_takes_review_status`, `control_rs_ci::trace::status::tests::missing_log_is_unrun`                                                                                                                                                                                                                                                                                      | A fixture of passed, unexecuted, uncovered and review conditions gives the specified statuses and exit code                                                                         |
+| VC-8.2    | FR-8                                   | `libtest` | `control_rs_ci::trace::status::tests::deferred_condition_is_listed_and_does_not_fail`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | A condition of the deferred method takes status Deferred, is listed in the report and does not fail the gate                                                                                         |
 | VC-9.1    | FR-9                                   | `libtest` | `trace_tests::cli::defects_print_as_path_line_message_and_fail_the_run`, `trace_tests::cli::usage_and_configuration_errors_exit_with_code_two`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Every diagnostic line matches `^[^:]+:[0-9]+: .+$`; any defect gives a non-zero exit                                                                                                |
 | VC-10.1   | FR-10                                  | `libtest` | `trace_tests::cli::roots_select_suffixed_files_below_directories_and_named_files`, `trace_tests::cli::a_missing_root_is_a_configuration_error`, `trace_tests::cli::symbolic_links_are_never_followed`                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Selection fixtures: file root, suffix filter, symbolic link and missing root                                                                                                        |
 | VC-11.1   | NFR-1                                  | `review`  | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Median of 5 runs under 1.0 s per binary on the workspace                                                                                                                            |
@@ -565,6 +578,8 @@ Four choices keep the stronger levels additive:
 | VC-15.1   | C-1, C-2, C-3, C-4, C-5, C-6, C-7, C-8 | `review`  | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | The diff adds no violation of any constraint                                                                                                                                        |
 | VC-16.1   | C-4, C-8                               | `kani`    | `control_rs::math::fixed_num::proofs::prove_fixed_saturating_div`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Bounded model checking verifies that the linked proof harnesses satisfy safety and non-vacuity contracts without panic                                                              |
 | VC-17.1   | FR-11                                  | `libtest` | `control_rs_ci::trace::reqs::tests::targets_are_the_code_spans_of_the_fourth_cell`, `control_rs_ci::trace::status::tests::libtest_target_passes_with_crate_qualified_or_bare_name`, `control_rs_ci::trace::status::tests::libtest_target_fails_when_the_log_reports_failed`, `control_rs_ci::trace::status::tests::target_absent_from_the_log_is_unrun`, `control_rs_ci::trace::status::tests::every_listed_target_must_pass`, `control_rs_ci::trace::status::tests::kani_target_passes_and_unsatisfied_cover_fails`, `control_rs_ci::trace::status::tests::pytest_and_gtest_logs_are_parsed`, `trace_tests::cli::a_failed_target_fails_the_trace_with_a_located_defect`            | Targets are recorded per condition; a target that passed, failed or is absent from its log yields `Pass`, `Fail` or `Unrun`, and every listed target must pass                      |
+| VC-17.2   | FR-11                                  | `libtest` | `control_rs_ci::trace::status::tests::libtest_results_are_keyed_by_binary`, `control_rs_ci::trace::status::tests::a_path_recorded_with_different_outcomes_is_ambiguous`, `control_rs_ci::trace::status::tests::doctests_match_on_file_and_item_without_the_line`, `control_rs_ci::trace::status::tests::binary_names_drop_the_extension_and_hash`                                                                                                                                                                                                                                                                                                                                   | The same path in two test binaries keeps its own outcome, a wrong crate segment is `Unrun`, conflicting records and shared doctest items are ambiguous, and a doctest matches without its line number |
+| VC-17.3   | FR-11                                  | `libtest` | `control_rs_ci::trace::status::tests::target_missing_from_miri_log_warns`, `control_rs_ci::trace::status::tests::interpreter_warnings_cover_only_the_crates_the_log_runs`, `control_rs_ci::trace::status::tests::no_interpreter_artifact_means_no_w2`                                                                                                                                                                                                                                                                                                                                                                                                                               | W-2 follows `interpreter_artifact`, covers only the crates its log ran and is absent without the key                                                                                |
 | VC-18.1   | FR-12                                  | `libtest` | `control_rs_ci::trace::reqs::tests::cited_decision_without_record_is_reported`, `control_rs_ci::trace::reqs::tests::decision_defined_twice_is_a_duplicate`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | A citation with no decision record and a decision ID defined twice are each reported once at the citing or second defining line; FR-12 holds iff all four conditions hold           |
 | VC-18.2   | FR-12                                  | `libtest` | `control_rs_ci::trace::reqs::tests::requirement_citing_unaccepted_decision_is_reported`, `control_rs_ci::trace::reqs::tests::citations_outside_requirement_text_are_ignored`, `control_rs_ci::trace::reqs::tests::decision_record_without_status_is_reported`                                                                                                                                                                                                                                                                                                                                                                                                                       | A requirement citing a Proposed and a Superseded decision gives two defects; decision IDs outside requirement text give none; a record with no status gives one                     |
 | VC-18.3   | FR-12                                  | `libtest` | `control_rs_ci::trace::reqs::tests::absent_decisions_table_disables_decision_checks`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | With no `[decisions]` table, a corpus citing undefined decision IDs gives no decision defect                                                                                        |
@@ -579,6 +594,8 @@ Four choices keep the stronger levels additive:
 - A target's claim is not checked against what the test or proof harness does.
 - A target that is compiled out or ignored is absent from its log and reports
   `Unrun`.
+- A condition has no link to the code that implements it, so a surviving
+  mutant cannot be attributed to a requirement.
 - Every requirement ID on a verification row is a parent, including one
   mentioned in the Criterion, and a second condition ID or a second method
   code span is a defect. Criteria therefore name neither.
@@ -657,6 +674,7 @@ Four choices keep the stronger levels additive:
 | 1.15     | September 28, 2026 | @MitchellDScott | Converted markers to comment-based `trace(...)` syntax; retired `#[req]` proc macro and `control-rs-trace-macros` crate to eliminate compiler and target friction across `no_std`, ETS bare-metal targets, Kani, and docs; added strict marker argument and near-miss validation in `trace-marks`.                                                                                                                                                                                                     |
 | 1.16     | September 28, 2026 | @MitchellDScott | Replaced source markers with fully qualified `Target` cells in the Verification table: framework-qualified methods `libtest`, `kani`, `pytest` and `gtest`; `targets` on condition rows; `trace-check` resolves targets against the result logs; removed `trace-marks`, `marks.jsonl`, `item_rule`, `[markers]`, W-1, and requirements FR-7 and NFR-2; added FR-11; schema 4.                                                                                                                          |
 | 2.0      | October 2, 2026    | @MitchellDScott | Added FR-12 Decision References: optional `[decisions]` table, Matching Rule 6, checks `decision` and `decision_status`, decision IDs in `duplicate`; Scope lists decision references. Citations count only in requirement text. Added VC-18.1 to VC-18.4, a decision Limit, three Alternatives and Phase 7. Staleness warning W-3. Row and report schema unchanged. Starts following ADR-0001.                                                                                                        |
+| 2.1      | October 3, 2026    | @MitchellDScott | Tracer gap closures: libtest results keyed by test binary with ambiguity defects; doctest targets; configurable `interpreter_artifact` and scoped W-2; `deferred` method and status; Limit for missing implementation links. |
 
 ---
 

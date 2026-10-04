@@ -29,6 +29,8 @@ pub mod ets;
 
 pub mod gate;
 
+pub mod metrics;
+
 pub mod report;
 
 pub mod trace;

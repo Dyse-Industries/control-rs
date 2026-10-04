@@ -10,6 +10,7 @@ use crate::GateFilter;
 use crate::config::{GateConfig, GatePolicy};
 use crate::error::GateResult;
 use crate::gate::{GateOutcome, OUTCOME_SCHEMA, RESULT_SUFFIX, Verdict};
+use crate::metrics::measure;
 
 /// Lines of each flagged gate's log embedded in the report.
 const LOG_TAIL_LINES: usize = 30;
@@ -165,6 +166,10 @@ impl ReportAggregator {
             .collect();
         push_summary_matrix(&mut md, &rows, outcomes, &required);
         push_rejected(&mut md, &loaded.rejected);
+        if let Ok(metrics) = measure(&self.workspace_root) {
+            md.push_str("\n### Project Size\n\n");
+            md.push_str(&metrics.render());
+        }
         self.push_diagnostics(&mut md, &ordered_names, outcomes);
 
         if md.len() > MAX_REPORT_BYTES {

@@ -108,6 +108,11 @@ pub struct MethodConfig {
     /// Relative path to the verification result log artifact (for example, `target/ci-artifacts/test.log`).
     #[serde(default)]
     pub result_artifact: Option<String>,
+    /// Relative path to the log of a secondary interpreter run of the same
+    /// tests (for example, `target/ci-artifacts/miri.log`); a passing target
+    /// of a crate the log covers but does not record is a W-2 warning.
+    #[serde(default)]
+    pub interpreter_artifact: Option<String>,
 }
 
 /// The compiled patterns of a [`TraceConfig`].
