@@ -89,7 +89,7 @@ evaluates its behavior to discover misbehavior [1], and a recovery function
 that generates bounded output to keep the system safe [1]. The Simplex
 decision module switches from the advanced to the baseline controller if
 the advanced one could cause a violation in the near future, and cannot
-simply check that the next state is safe, because inertia can make that too
+check only that the next state is safe, because inertia can make that too
 late [2]. Safety validation by simulation treats the system as a black box
 [3], and falsification searches for environment disturbances that cause
 failure [3].
