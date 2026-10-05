@@ -248,9 +248,9 @@ representations.
 Same-scale values operate directly on underlying integers, saturating at
 representation bounds (FR-3):
 
-- $\text{Add}(a, b) = \text{saturating\_add}(a_{\text{raw}}, b_{\text{raw}})$
-- $\text{Sub}(a, b) = \text{saturating\_sub}(a_{\text{raw}}, b_{\text{raw}})$
-- $\text{Neg}(a) = \text{saturating\_neg}(a_{\text{raw}})$
+- `Add(a, b) = saturating_add(a.raw, b.raw)`
+- `Sub(a, b) = saturating_sub(a.raw, b.raw)`
+- `Neg(a) = saturating_neg(a.raw)`
 
 Because operands share identical scaling factors, no rescaling is required (ARM,
 1996).
@@ -281,13 +281,15 @@ precision before convergent rounding and saturating narrowing._
 Dividing two values of scale $2^{-\text{SHIFT}}$ cancels the scale, so the
 numerator is pre-shifted to keep $\text{SHIFT}$ fractional bits:
 
-$$q_{\text{raw}} = \operatorname{round}\left(\frac{a_{\text{raw}} \cdot 2^{\text{SHIFT}}}{b_{\text{raw}}}\right)$$
+```math
+q_{\text{raw}} = \operatorname{round}\left(\frac{a_{\text{raw}} \cdot 2^{\text{SHIFT}}}{b_{\text{raw}}}\right)
+```
 
 The magnitudes are formed in `u128`: $|a_{\text{raw}}| < 2^{64}$ and
 $\text{SHIFT} \le 64$, so the shifted numerator is exact at every width.
 The quotient rounds ties to even, the same convergent rounding as `Mul`
-(§4.3, next subsection), then takes the sign $\operatorname{sgn}(a) \cdot
-\operatorname{sgn}(b)$ and narrows. `SaturatingDiv` (and `Div`) clamp an
+(§4.3, next subsection), then takes the sign
+$\operatorname{sgn}(a) \cdot \operatorname{sgn}(b)$ and narrows. `SaturatingDiv` (and `Div`) clamp an
 out-of-range quotient to the bound of its sign, including
 $\text{MIN} / (-1)$, and map $b = 0$ to `MAX`, `MIN` or zero by the sign of
 $a$ (FR-3). `TryDiv` returns `DivisionByZero` for $b = 0$ and `Overflow`
@@ -312,9 +314,11 @@ to ensure zero branching penalty in release MCU builds.
 `FixedRepr` gains an accumulator type `Acc`. A chain holds exact products
 at scale $2\,\text{SHIFT}$ and narrows once:
 
-$$\text{acc} \leftarrow \text{sat}_{\text{Acc}}(\text{acc} + a_{\text{raw}} b_{\text{raw}}),
+```math
+\text{acc} \leftarrow \text{sat}_{\text{Acc}}(\text{acc} + a_{\text{raw}} b_{\text{raw}}),
 \qquad
-r = \text{narrow\_saturating}(\text{round}_{\text{te}}(\text{acc} \gg \text{SHIFT})),$$
+r = \operatorname{narrow}(\operatorname{round}_{\mathrm{te}}(\text{acc} \gg \text{SHIFT})),
+```
 
 with `to_acc(c)` = $c_{\text{raw}} \cdot 2^{\text{SHIFT}}$, saturating.
 
@@ -346,7 +350,10 @@ coefficient magnitudes below the integer range or accepts saturation
 
 For a signed integer `Repr` of bit width $n$ and scale exponent $\text{SHIFT}$,
 representable values span:
-$$\text{MIN} = -\frac{2^{n-1}}{2^{\text{SHIFT}}}, \quad \text{MAX} = \frac{2^{n-1} - 1}{2^{\text{SHIFT}}}$$
+
+```math
+\text{MIN} = -\frac{2^{n-1}}{2^{\text{SHIFT}}}, \quad \text{MAX} = \frac{2^{n-1} - 1}{2^{\text{SHIFT}}}
+```
 
 Associated constants and trait bounds are gated as follows:
 

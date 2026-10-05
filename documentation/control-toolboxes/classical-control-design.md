@@ -57,7 +57,7 @@ Primary usage scenarios:
 #### 2.1 Functional Requirements
 
 - **FR-1 — Root locus**: For an open-loop `TransferFunction`
-  $L(s) = N(s)/D(s)$ and a caller-supplied gain set $\{k_i\}$, returns for
+  $L(s) = N(s)/D(s)$ and a caller-supplied gain set $\lbrace k_i \rbrace$, returns for
   each $k_i$ the roots of $D(s) + k_i N(s)$.
 - **FR-2 — Routh-Hurwitz count**: For a real characteristic polynomial,
   returns the number of roots in the open right half plane and whether roots
@@ -358,13 +358,17 @@ $H(z) = \frac{b_0 + b_1 z^{-1} + \dots + b_n z^{-n}}{1 + a_1 z^{-1} + \dots + a_
 and the Transposed Direct Form II recurrence that SciPy `lfilter`
 implements [15]:
 
-$$y[k] = b_0 u[k] + d_1[k-1], \qquad
-d_i[k] = b_i u[k] - a_i y[k] + d_{i+1}[k-1], \quad d_{n+1} \equiv 0.$$
+```math
+y[k] = b_0 u[k] + d_1[k-1], \qquad
+d_i[k] = b_i u[k] - a_i y[k] + d_{i+1}[k-1], \quad d_{n+1} \equiv 0.
+```
 
 Direct Form I (FR-17) computes the same section from past inputs and
 outputs:
 
-$$y[k] = b_0 u[k] + b_1 u[k-1] + b_2 u[k-2] - a_1 y[k-1] - a_2 y[k-2].$$
+```math
+y[k] = b_0 u[k] + b_1 u[k-1] + b_2 u[k-2] - a_1 y[k-1] - a_2 y[k-2].
+```
 
 The two structures trade state for robustness. TDF-II places the zeros
 ahead of the poles in series order, so the large pole gain at some
@@ -397,15 +401,19 @@ scheduled sections.
 **Accumulation.** Each output is one `MulAcc` chain that narrows once
 (C-8). Sections store $-a_1, -a_2$, the CMSIS-DSP convention [17], so
 every chain is multiply-accumulates only; `set_coefficients` takes the
-§4.9 convention and negates once. `Df1` evaluates
-$y = \text{from\_acc}(\text{mac}^5(\ldots))$ over its four states and the
-input, the five-product, single-narrowing scheme of the CMSIS DF1 kernels
+§4.9 convention and negates once. `Df1` computes $y$ as one `from_acc`
+of five `mac` steps over its four states and the input, the five-product, single-narrowing scheme of the CMSIS DF1 kernels
 [18]. `Df2t` and `DirectForm2T` keep their states in `T::Acc`, so the
 wide dynamic range TDF-II states need [17] is the accumulator's, and
 only the output narrows:
-$y = \text{from\_acc}(\text{mac}(d_1, b_0, u))$,
-$d_1 \leftarrow \text{mac}(\text{mac}(d_2, b_1, u), -a_1, y)$,
-$d_2 \leftarrow \text{mac}(\text{mac}(0, b_2, u), -a_2, y)$. For `f32` and `f64` the accumulator is the type itself and `mac` is
+
+```text
+y  = from_acc(mac(d1, b0, u))
+d1 = mac(mac(d2, b1, u), -a1, y)
+d2 = mac(mac(0,  b2, u), -a2, y)
+```
+
+For `f32` and `f64` the accumulator is the type itself and `mac` is
 the unfused multiply and add (`num-traits-design.md` FR-7); for `Fixed` it
 is the wide integer of `fixed-num-design.md` FR-8. One generic `update`
 serves every type, rounds once per output for `Fixed`, and never panics or
@@ -474,8 +482,10 @@ $a_d = T_f/(T_f + h)$ in $[0, 1]$ for all parameters [13, Sec. 6.7]. The
 filtered measurement derivative is stored without $K_d$ so a gain change
 does not rescale history:
 
-$$\delta_k = a_d \delta_{k-1} - \frac{y_k - y_{k-1}}{T_f + h}, \qquad
-D_k = K_d \delta_k.$$
+```math
+\delta_k = a_d \delta_{k-1} - \frac{y_k - y_{k-1}}{T_f + h}, \qquad
+D_k = K_d \delta_k.
+```
 
 The integral uses forward Euler, suited to sample times short relative to
 the controller bandwidth [25]. One `step(r, y) -> u`:
