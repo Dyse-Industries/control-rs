@@ -24,7 +24,7 @@ Primary usage scenarios:
 - **Frequency-response fitting**: A user fits a rational model to measured
   frequency samples. Failure is a fit that diverges or never terminates.
 - **Modal estimation**: A user extracts frequencies and damping from a free
-  decay. Failure is a pole set whose count exceeds the data's rank.
+  decay. Failure is a pole set whose count exceeds the rank of the data.
 - **On-target re-identification**: Firmware re-estimates a low-order model
   from a fixed buffer. Failure is an allocation or data-dependent run time.
 
