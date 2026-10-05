@@ -10,6 +10,7 @@ files = [
     "documentation/control-toolboxes/robust-control-design.md",
     "documentation/control-toolboxes/nonlinear-control-design.md",
     "documentation/control-toolboxes/sysid-design.md",
+    "documentation/vv/validation-tools-design.md",
 ]
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
