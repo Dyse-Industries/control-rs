@@ -4,6 +4,7 @@ doc = '[a-z0-9-]+'
 files = [
     "documentation/vv/requirement-traceability-design.md",
     "documentation/math/fixed-num-design.md",
+    "documentation/control-toolboxes/classical-control-design.md",
 ]
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
