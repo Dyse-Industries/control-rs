@@ -14,6 +14,9 @@
 //! - **FR-3** (unified `Scalar`): `test_num_trait_scalar_properties` and
 //!   `test_num_trait_scalar_markers`; also exercised transitively via
 //!   `Complex<T>: Scalar` in `complex_num_tests.rs`.
+//! - **FR-7** (`MulAcc`): `test_mul_acc_float_unfused`,
+//!   `test_mul_acc_integer_exact_chain`, `test_mul_acc_complex_formula` and
+//!   `test_mul_acc_open_trait`.
 //!
 //! `CartesianQuadrant2D`, hyperbolic functions and the custom-`atan2`
 //! fallback tests exercise implementation details of FR-1's `Trig`/`Float`
@@ -25,8 +28,8 @@ pub mod num_trait_test_suite {
     use crate::math::CartesianQuadrant2D;
     use crate::math::complex_num::Complex;
     use crate::math::num_traits::{
-        AdditiveGroup, Conjugate, Exponential, Float, Integer, One, Radical,
-        SaturatingInteger, Scalar, Signed, Trig, Unsigned, Zero,
+        AdditiveGroup, Conjugate, Exponential, Float, Integer, MulAcc, One,
+        Radical, SaturatingInteger, Scalar, Signed, Trig, Unsigned, Zero,
     };
     use crate::math::ops::{
         SaturatingAdd, SaturatingDiv, SaturatingMul, SaturatingNeg,
@@ -332,6 +335,23 @@ pub mod num_trait_test_suite {
     }
 
     // --- Test Executables ---
+
+    /// External accelerated type: `mac` rounds once (fused).
+    impl MulAcc for TestFloat {
+        type Acc = Self;
+
+        fn to_acc(self) -> Self {
+            self
+        }
+
+        fn mac(acc: Self, a: Self, b: Self) -> Self {
+            Self(libm::fmaf(a.0, b.0, acc.0))
+        }
+
+        fn from_acc(acc: Self) -> Self {
+            acc
+        }
+    }
 
     #[cfg_attr(test, test)]
     /// `Scalar::clamp` bounds a value; equality returns the value unchanged.
@@ -766,5 +786,70 @@ pub mod num_trait_test_suite {
 
         let quot = c1.try_div(&c2).unwrap();
         assert_eq!(quot, Complex::new(2.0, 0.0));
+    }
+
+    /// Five-term dot product through a generic `MulAcc` consumer.
+    fn mac_dot<T: Scalar + MulAcc>(a: [T; 5], b: [T; 5], c: T) -> T {
+        T::from_acc(
+            a.into_iter()
+                .zip(b)
+                .fold(c.to_acc(), |acc, (x, y)| T::mac(acc, x, y)),
+        )
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies the float `MulAcc` is the unfused multiply and add, bit for
+    /// bit (`num-traits-design.md` FR-7).
+    fn test_mul_acc_float_unfused() {
+        let (lhs, rhs, acc) = (0.1f64, 0.3f64, -0.03f64);
+        let got = f64::from_acc(f64::mac(acc.to_acc(), lhs, rhs));
+        assert_eq!(got.to_bits(), (lhs * rhs + acc).to_bits());
+        let (lhs32, rhs32, acc32) = (1.1f32, 2.3f32, 0.7f32);
+        let got32 = f32::from_acc(f32::mac(acc32.to_acc(), lhs32, rhs32));
+        assert_eq!(got32.to_bits(), (lhs32 * rhs32 + acc32).to_bits());
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies integer chains keep an intermediate sum outside `[MIN, MAX]`
+    /// exactly and clamp once (`num-traits-design.md` FR-7).
+    fn test_mul_acc_integer_exact_chain() {
+        assert_eq!(mac_dot([100i8, -100, 0, 0, 0], [2, 2, 0, 0, 0], 0), 0);
+        let saturating = 100i8
+            .saturating_mul(2)
+            .saturating_add((-100i8).saturating_mul(2));
+        assert_eq!(saturating, -1);
+        assert_eq!(
+            mac_dot([i16::MAX, i16::MAX, 0, 0, 0], [2, -2, 0, 0, 0], 7),
+            7
+        );
+        assert_eq!(mac_dot([200u8, 0, 0, 0, 0], [2, 0, 0, 0, 0], 0), u8::MAX);
+        assert_eq!(
+            mac_dot([i32::MIN, 0, 0, 0, 0], [2, 0, 0, 0, 0], 0),
+            i32::MIN
+        );
+        assert_eq!(
+            mac_dot([i64::MAX, i64::MAX, 0, 0, 0], [3, -3, 0, 0, 0], 1),
+            1
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies `Complex<T>` components equal the four-term formula exactly
+    /// (`num-traits-design.md` FR-7).
+    fn test_mul_acc_complex_formula() {
+        let acc = Complex::new(5i32, -3);
+        let (a, b) = (Complex::new(2i32, 3), Complex::new(-4i32, 7));
+        let got =
+            Complex::<i32>::from_acc(Complex::<i32>::mac(acc.to_acc(), a, b));
+        assert_eq!(got, Complex::new(5 + 2 * -4 - 3 * 7, -3 + 2 * 7 + 3 * -4));
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies an external type implementing `MulAcc` compiles against a
+    /// generic `T: Scalar + MulAcc` consumer (`num-traits-design.md` FR-7).
+    fn test_mul_acc_open_trait() {
+        let one = TestFloat(1.0);
+        let got = mac_dot([one; 5], [TestFloat(0.5); 5], TestFloat(0.25));
+        assert_eq!(got.0.to_bits(), 2.75f32.to_bits());
     }
 }

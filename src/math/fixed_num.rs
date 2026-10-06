@@ -105,8 +105,8 @@
 use crate::math::{
     ArithmeticError, ArithmeticResult,
     num_traits::{
-        AdditiveGroup, Conjugate, One, SaturatingInteger, Scalar, Signed,
-        Unsigned, Zero,
+        AdditiveGroup, Conjugate, MulAcc, One, SaturatingInteger, Scalar,
+        Signed, Unsigned, Zero,
     },
     num_types::{
         Const, Dim, DimMax, U5, U6, U7, U8, U13, U14, U15, U16, U29, U30, U31,
@@ -184,6 +184,10 @@ pub trait FixedRepr:
     /// Doubled-width intermediate integer type for exact products and rescaling.
     type Wide: Copy + Eq + Ord + Sized + 'static;
 
+    /// Multiply accumulate integer holding exact products at scale
+    /// $2\,\text{SHIFT}$ (`fixed-num-design.md` FR-8).
+    type Acc: Copy + Eq + Ord + Sized + 'static;
+
     /// Widen this value into doubled-width intermediate format.
     fn widen(self) -> Self::Wide;
 
@@ -249,6 +253,17 @@ pub trait FixedRepr:
 
     /// Convert to `f64` at the specified scale.
     fn to_f64(self, shift: usize) -> f64;
+
+    /// Lifts `self` at scale `shift` into the accumulator at scale
+    /// `2 * shift`, saturating.
+    fn to_acc_repr(self, shift: usize) -> Self::Acc;
+
+    /// Adds the exact product `a * b` to `acc`, saturating in `Acc`.
+    fn mac_repr(acc: Self::Acc, a: Self, b: Self) -> Self::Acc;
+
+    /// Rescales `acc` from scale `2 * shift` to `shift` with ties to even
+    /// and narrows to `Self`, saturating.
+    fn from_acc_repr(acc: Self::Acc, shift: usize) -> Self;
 }
 
 /// Rounds `num / den` to the nearest integer with ties to even, the rounding
@@ -273,8 +288,39 @@ fn fixed_div_magnitude(num: u128, den: u128, shift: usize) -> Option<u128> {
     div_round_ties_even(shifted, den)
 }
 
+/// Rounds `x / 2^shift` to the nearest integer with ties to even.
+#[inline]
+fn round_shift_unsigned(x: u128, shift: usize) -> u128 {
+    let Ok(sh) = u32::try_from(shift) else {
+        return 0;
+    };
+    if sh == 0 {
+        return x;
+    }
+    let truncated = x.checked_shr(sh).unwrap_or(0);
+    let mask = 1u128
+        .checked_shl(sh)
+        .map_or(u128::MAX, |m| m.wrapping_sub(1));
+    let rem = x & mask;
+    let half = 1u128.checked_shl(sh.wrapping_sub(1)).unwrap_or(0);
+    if rem > half || (rem == half && truncated & 1 == 1) {
+        truncated.saturating_add(1)
+    } else {
+        truncated
+    }
+}
+
+/// Rounds `x / 2^shift` to the nearest integer with ties to even,
+/// symmetric about zero.
+#[inline]
+fn round_shift_signed(x: i128, shift: usize) -> i128 {
+    let mag = round_shift_unsigned(x.unsigned_abs(), shift);
+    let mag = i128::try_from(mag).unwrap_or(i128::MAX);
+    if x < 0 { mag.saturating_neg() } else { mag }
+}
+
 macro_rules! impl_signed_repr {
-    ($t:ident, $w:ident, $bits:expr, $bits_dim:ident, $one_max:ident, $two_max:ident) => {
+    ($t:ident, $w:ident, $acc:ident, $bits:expr, $bits_dim:ident, $one_max:ident, $two_max:ident) => {
         impl<const SHIFT: usize> private::FixedShiftVal<SHIFT> for $t {
             const ONE_RAW: Self = if SHIFT < $bits {
                 (1 as $t).wrapping_shl(SHIFT as u32)
@@ -295,6 +341,30 @@ macro_rules! impl_signed_repr {
             type OneMaxShift = $one_max;
             type TwoMaxShift = $two_max;
             type Wide = $w;
+            type Acc = $acc;
+
+            #[inline]
+            fn to_acc_repr(self, shift: usize) -> $acc {
+                let scale = (2 as $acc).saturating_pow(shift as u32);
+                (self as $acc).saturating_mul(scale)
+            }
+
+            #[inline]
+            fn mac_repr(acc: $acc, a: Self, b: Self) -> $acc {
+                acc.saturating_add((a as $acc).saturating_mul(b as $acc))
+            }
+
+            #[inline]
+            fn from_acc_repr(acc: $acc, shift: usize) -> Self {
+                let rounded = round_shift_signed(acc as i128, shift);
+                if rounded > $t::MAX as i128 {
+                    $t::MAX
+                } else if rounded < $t::MIN as i128 {
+                    $t::MIN
+                } else {
+                    rounded as $t
+                }
+            }
 
             #[inline(always)]
             fn widen(self) -> Self::Wide {
@@ -572,13 +642,13 @@ macro_rules! impl_signed_repr {
     };
 }
 
-impl_signed_repr!(i8, i16, 8, U8, U6, U5);
-impl_signed_repr!(i16, i32, 16, U16, U14, U13);
-impl_signed_repr!(i32, i64, 32, U32, U30, U29);
-impl_signed_repr!(i64, i128, 64, U64, U62, U61);
+impl_signed_repr!(i8, i16, i32, 8, U8, U6, U5);
+impl_signed_repr!(i16, i32, i64, 16, U16, U14, U13);
+impl_signed_repr!(i32, i64, i64, 32, U32, U30, U29);
+impl_signed_repr!(i64, i128, i128, 64, U64, U62, U61);
 
 macro_rules! impl_unsigned_repr {
-    ($t:ident, $w:ident, $bits:expr, $bits_dim:ident, $one_max:ident, $two_max:ident) => {
+    ($t:ident, $w:ident, $acc:ident, $bits:expr, $bits_dim:ident, $one_max:ident, $two_max:ident) => {
         impl<const SHIFT: usize> private::FixedShiftVal<SHIFT> for $t {
             const ONE_RAW: Self = if SHIFT < $bits {
                 (1 as $t).wrapping_shl(SHIFT as u32)
@@ -599,6 +669,28 @@ macro_rules! impl_unsigned_repr {
             type OneMaxShift = $one_max;
             type TwoMaxShift = $two_max;
             type Wide = $w;
+            type Acc = $acc;
+
+            #[inline]
+            fn to_acc_repr(self, shift: usize) -> $acc {
+                let scale = (2 as $acc).saturating_pow(shift as u32);
+                (self as $acc).saturating_mul(scale)
+            }
+
+            #[inline]
+            fn mac_repr(acc: $acc, a: Self, b: Self) -> $acc {
+                acc.saturating_add((a as $acc).saturating_mul(b as $acc))
+            }
+
+            #[inline]
+            fn from_acc_repr(acc: $acc, shift: usize) -> Self {
+                let rounded = round_shift_unsigned(acc as u128, shift);
+                if rounded > $t::MAX as u128 {
+                    $t::MAX
+                } else {
+                    rounded as $t
+                }
+            }
 
             #[inline(always)]
             fn widen(self) -> Self::Wide {
@@ -802,10 +894,10 @@ macro_rules! impl_unsigned_repr {
     };
 }
 
-impl_unsigned_repr!(u8, u16, 8, U8, U7, U6);
-impl_unsigned_repr!(u16, u32, 16, U16, U15, U14);
-impl_unsigned_repr!(u32, u64, 32, U32, U31, U30);
-impl_unsigned_repr!(u64, u128, 64, U64, U63, U62);
+impl_unsigned_repr!(u8, u16, u32, 8, U8, U7, U6);
+impl_unsigned_repr!(u16, u32, u64, 16, U16, U15, U14);
+impl_unsigned_repr!(u32, u64, u64, 32, U32, U31, U30);
+impl_unsigned_repr!(u64, u128, u128, 64, U64, U63, U62);
 
 /// Fixed-point scalar type in Q-format representation.
 ///
@@ -1205,6 +1297,30 @@ where
     }
 }
 
+impl<Repr: FixedRepr, const SHIFT: usize> MulAcc for Fixed<Repr, SHIFT>
+where
+    Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
+{
+    type Acc = Repr::Acc;
+
+    #[inline]
+    fn to_acc(self) -> Repr::Acc {
+        self.raw.to_acc_repr(SHIFT)
+    }
+
+    #[inline]
+    fn mac(acc: Repr::Acc, a: Self, b: Self) -> Repr::Acc {
+        Repr::mac_repr(acc, a.raw, b.raw)
+    }
+
+    #[inline]
+    fn from_acc(acc: Repr::Acc) -> Self {
+        Self {
+            raw: Repr::from_acc_repr(acc, SHIFT),
+        }
+    }
+}
+
 impl<Repr: FixedRepr, const SHIFT: usize> SaturatingNeg for Fixed<Repr, SHIFT>
 where
     Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
@@ -1356,6 +1472,45 @@ pub type UQ63 = Fixed<u64, 63>;
 #[cfg(kani)]
 mod proofs {
     use super::*;
+
+    /// Two-term chain `c + a1 b1 + a2 b2` through `MulAcc` against the
+    /// saturated, once-rounded exact result computed in `i128`.
+    fn check_two_term<const S: usize>(raws: [i16; 5])
+    where
+        Const<S>: Dim + DimMax<U16, Output = U16>,
+    {
+        let [c, a1, b1, a2, b2] = raws.map(Fixed::<i16, S>::from_bits);
+        let acc = Fixed::<i16, S>::mac(
+            Fixed::<i16, S>::mac(c.to_acc(), a1, b1),
+            a2,
+            b2,
+        );
+        let got = Fixed::<i16, S>::from_acc(acc).to_bits();
+        let [c, a1, b1, a2, b2] = raws.map(i128::from);
+        let shift = S as u32;
+        let exact = (c << shift) + a1 * b1 + a2 * b2;
+        let den = 1i128 << shift;
+        let q = exact.div_euclid(den);
+        let twice_rem = 2 * exact.rem_euclid(den);
+        let rounded =
+            if twice_rem > den || (twice_rem == den && q.rem_euclid(2) == 1) {
+                q + 1
+            } else {
+                q
+            };
+        let expected =
+            Ord::clamp(rounded, i128::from(i16::MIN), i128::from(i16::MAX));
+        assert!(i128::from(got) == expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(6)]
+    pub fn prove_fixed_mac_total() {
+        let raws: [i16; 5] = kani::any();
+        check_two_term::<0>(raws);
+        check_two_term::<8>(raws);
+        check_two_term::<14>(raws);
+    }
 
     #[kani::proof]
     #[kani::unwind(2)]

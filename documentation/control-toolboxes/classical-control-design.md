@@ -1,7 +1,7 @@
 # Classical Control Toolbox (classical-control)
 
-![Date Badge](https://img.shields.io/badge/Date-October_5,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Date Badge](https://img.shields.io/badge/Date-October_6,_2026-blue)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
 ---
@@ -234,9 +234,12 @@ src/classical_control/
 ├── step.rs         # step_info, StepInfo
 ├── compensator.rs  # pid, lead, lag
 ├── realization.rs  # DirectForm2T, Df1, Df2t, BiquadCascade, to_sections, quantize
-├── pid.rs          # Pid, AntiWindup
-└── tests/          # one test file per submodule
+└── pid.rs          # Pid, AntiWindup
 ```
+
+Each submodule holds its own inline `tests` module, so test paths are
+`classical_control::<submodule>::tests::<name>`; `ets_suite` expands only
+an inline module (C-6).
 
 `src/lib.rs` declares `pub mod classical_control;` in place of
 `pub mod classical_tools;`. Buffer lengths are const generics: a locus over
@@ -290,7 +293,8 @@ total winding angle of $1 + L$ divided by $2\pi$, accumulated over a
 caller-sized contour buffer. Open-loop poles come from
 `TransferFunction::poles`. The routine reports the count and the number of
 open-loop right-half-plane poles; it does not infer closed-loop stability
-on the caller's behalf.
+on the caller's behalf. A discrete system returns
+`ClassicalError::NotContinuous`.
 
 #### 4.6 Stability and Delay Margins
 
@@ -435,8 +439,8 @@ $b_2 = a_2 = 0$, following SciPy `zpk2sos` [22]. The pairing minimizes
 the peak gain of each section [22]. The overall gain is placed in the
 first section; section scaling beyond that is an assumption to review (§8).
 
-**Fixed point.** `quantize` (FR-19) converts `Df1<f64>` or `Df2t<f64>`
-sections to `Fixed<Repr, SHIFT>` with round-to-nearest and refuses, with
+**Fixed point.** `quantize` (FR-19) converts `f64` section coefficients,
+the input of `Df1` and `Df2t`, to `Fixed<Repr, SHIFT>` with round-to-nearest and refuses, with
 `ClassicalError::CoefficientRange { section }`, any coefficient outside the
 type's range. Stable second-order sections have $|a_1| < 2$, so the scale
 must leave integer bits; C-9 already requires
@@ -542,6 +546,8 @@ pub enum ClassicalError {
     Improper,
     /// A realization was requested from a continuous system (FR-8, FR-10).
     NotDiscrete,
+    /// A Nyquist count was requested for a discrete system (FR-4).
+    NotContinuous,
     /// The section count does not match the factored order (FR-10).
     SectionCount,
     /// A coefficient of this section is outside the fixed-point range
@@ -654,7 +660,7 @@ Coverage: 90% line coverage of `src/classical_control`, measured with
 | Routh count (FR-2)                   | Closed-form: polynomials constructed from known roots                                                 | Exact equality                                                                            | Equal                                                                                     |
 | Locus roots (FR-1)                   | Invariant: residual of $D + k N$ at each root                                                         | $\lvert D(p) + kN(p) \rvert / \sum_j \lvert c_j \rvert \lvert p \rvert^j$                 | $\le 10 n u$                                                                              |
 | Frequency response (FR-3)            | Closed-form first-order and second-order responses                                                    | Relative error of magnitude; absolute error of phase                                      | $\le 10 u$; $\le 10^{-9}$ deg                                                             |
-| Margins (FR-5)                       | Closed form for $4/(s+1)^3$: $\omega_{pc} = \sqrt{3}$, $K_g = 2$, $\omega_{gc} = \sqrt{16^{1/3} - 1}$ | Relative error of each crossover and margin                                               | $\le \Delta_\omega / (2^B \omega) + 10 u$, with $\Delta_\omega$ the bracketing grid step  |
+| Margins (FR-5)                       | Closed form for $4/(s+1)^3$: $\omega_{pc} = \sqrt{3}$, $K_g = 2$, $\omega_{gc} = \sqrt{16^{1/3} - 1}$ | Relative error of each crossover and margin                                               | $\le \Delta_\omega / (2^B \omega) + 10 u$, with $\Delta_\omega$ the bracketing grid step; phase margin adds $10 u \cdot 180^\circ / \phi_m$ |
 | Margins (FR-5)                       | Independent reference implementation (`cross-check`)                                                  | Relative error of each margin and crossover                                               | Tolerance entries `classical-control/<case>/<margin>`                                     |
 | Delay margin (FR-16)                 | Closed form $\phi_m/\omega_{gc}$ from the FR-5 closed form                                            | Relative error                                                                            | Sum of the FR-5 relative bounds on $\phi_m$ and $\omega_{gc}$                             |
 | DF2T and cascade output (FR-8, FR-9) | Independent reference implementation (`cross-check`): SciPy `lfilter` and `sosfilt`                   | Maximum absolute output error over the sequence, relative to $\max_k \lvert y_k \rvert$   | Tolerance entries `classical-control/<case>/output`                                       |
@@ -674,7 +680,9 @@ standard backward-error scaling for polynomial roots; the bound assumes the
 `Polynomial::roots` accuracy of `polynomial-design.md`. The step-metric
 overshoot bound is the Taylor bound on a smooth peak sampled within $h/2$
 of its true time. The back-calculation fixed point follows from setting the
-§4.10 update to zero with $u = u_{lim}$.
+§4.10 update to zero with $u = u_{lim}$. The phase margin
+$180^\circ + \angle L$ cancels, so a phase rounding of $10 u \cdot 180^\circ$
+is $180^\circ / \phi_m$ times larger relative to $\phi_m$.
 
 #### 6.3 Limits
 
@@ -764,11 +772,11 @@ target (C-6).
 
 | Phase                             | Delivers                                                                                                                                                                                 | Requirements                                                                             | Effort | Status  |
 |:----------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------|:-------|:--------|
-| 1. Module, Routh and compensators | `src/classical_control` (stub renamed), `ClassicalError`, `routh`, `compensator`                                                                                                         | FR-2, FR-6, FR-7, C-1, C-3, C-4, C-7                                                     | 3 days | Planned |
-| 2. Frequency domain               | `response`, `nyquist`, `margins` with bisection refinement and delay margin, cross-check tolerances                                                                                      | FR-3, FR-4, FR-5, FR-16, NFR-1, NFR-2, NFR-3                                             | 4 days | Planned |
-| 3. Locus and step metrics         | `locus`, `step`                                                                                                                                                                          | FR-1, FR-15, C-2                                                                         | 2 days | Planned |
-| 4. Floating-point execution       | `realization` (`DirectForm2T`, `Df2t`, `Df1`, cascade, `to_sections`, `set_coefficients`, `is_stable`), `pid`, ETS suites, SciPy cross-check cases; needs `num-traits-design.md` Phase 6 | FR-8, FR-9, FR-10, FR-11, FR-12, FR-13, FR-14, FR-17, FR-18, FR-20, NFR-4, C-5, C-6, C-8 | 5 days | Planned |
-| 5. Fixed-point execution          | `quantize`, `Fixed` instantiations, fixed-point tolerance entries, VC-28.3 proof; needs `fixed-num-design.md` Phase 6                                                                    | FR-19, C-9                                                                               | 3 days | Planned |
+| 1. Module, Routh and compensators | `src/classical_control` (stub renamed), `ClassicalError`, `routh`, `compensator`                                                                                                         | FR-2, FR-6, FR-7, C-1, C-3, C-4, C-7                                                     | 3 days | Complete |
+| 2. Frequency domain               | `response`, `nyquist`, `margins` with bisection refinement and delay margin, cross-check tolerances                                                                                      | FR-3, FR-4, FR-5, FR-16, NFR-1, NFR-2, NFR-3                                             | 4 days | Complete |
+| 3. Locus and step metrics         | `locus`, `step`                                                                                                                                                                          | FR-1, FR-15, C-2                                                                         | 2 days | Complete |
+| 4. Floating-point execution       | `realization` (`DirectForm2T`, `Df2t`, `Df1`, cascade, `to_sections`, `set_coefficients`, `is_stable`), `pid`, ETS suites, SciPy cross-check cases; needs `num-traits-design.md` Phase 6 | FR-8, FR-9, FR-10, FR-11, FR-12, FR-13, FR-14, FR-17, FR-18, FR-20, NFR-4, C-5, C-6, C-8 | 5 days | Complete |
+| 5. Fixed-point execution          | `quantize`, `Fixed` instantiations, fixed-point tolerance entries, VC-28.3 proof; needs `fixed-num-design.md` Phase 6                                                                    | FR-19, C-9                                                                               | 3 days | Complete |
 
 Phase 4 starts from the prior `classical_tools` realization and PID code (commit
 `9996a73`), reworked to §4.9 and §4.10.
@@ -781,6 +789,7 @@ Phase 4 starts from the prior `classical_tools` realization and PID code (commit
 |:---------|:----------------|:----------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 1.0      | October 4, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-7, NFR-1 to NFR-3, C-1 to C-5.                                                                                                                                                                                                                                                                                       |
 | 2.0      | October 5, 2026 | @MitchellDScott | Adds firmware execution and analysis extensions: FR-8 to FR-20, NFR-4, C-6 to C-9. DF1 and DF2T sections over `T: Scalar + MulAcc` with one narrowing per output, fixed-point quantization, coefficient update and section stability for gain schedules. Changes NFR-3 (margin refinement) and C-5 (run-time PID and fixed-point realizations in scope). |
+| 2.1      | October 6, 2026 | @MitchellDScott | Implementation: inline test module per submodule (§4.1), `quantize` takes section coefficients (§4.9), `ClassicalError::NotContinuous` for discrete Nyquist input (§4.5, §4.11), phase-margin bound scaled by $180^\circ / \phi_m$ (§6.2); phases 1 to 5 complete. |
 
 ---
 
@@ -907,6 +916,7 @@ Accessed: Oct. 5, 2026.
 
 [26] JuliaControl, "README.md," in *JuliaControl/DiscretePIDs.jl*. [Online].
 Available: https://github.com/JuliaControl/DiscretePIDs.jl. Accessed: Oct. 5,
+
 2026.
 
 [27] QUARTIQ, *idsp* (Version 0.22.1). [Online].

@@ -166,21 +166,23 @@ Architecture-specific subprogram crates under [
 
 ## Workspace
 
-| Crate | Role | Design |
-|:--|:--|:--|
-| `control-rs` (this crate) | Math core and numerical models | [math](documentation/README.md#math), [numerical-models](documentation/README.md#numerical-models) |
-| [`control-rs-ets`](control-rs-ets/README.md) | Target-side Embedded Test Server | [ets](documentation/README.md#ets) |
-| [`control-rs-macros`](control-rs-macros/README.md) | ETS suite and entrypoint macros | [macros-design](documentation/macros/macros-design.md) |
-| [`control-rs-ets-host`](control-rs-ets-host/README.md) | Host transport, framing and headless runner | [ets-host-design](documentation/ets-host/ets-host-design.md) |
-| [`control-rs-tui`](control-rs-tui/README.md) | Interactive ETS terminal console | [tui-design](documentation/tui/tui-design.md) |
-| [`control-rs-ci`](control-rs-ci/README.md) | Quality gate runner and report aggregator | [ci-design](documentation/ci/ci-design.md) |
-| [`control-rs-compare`](control-rs-compare/README.md) | HDF5 cross-comparison engine | [cross-compare-design](documentation/vv/cross-compare-design.md) |
-| [`control-rs-verification`](control-rs-verification/README.md) | Rust emitters and Python oracles for cross-validation | [cross-compare-design](documentation/vv/cross-compare-design.md) |
-| [`examples/`](examples/README.md) | Domain examples, subprogram backends, ETS firmware | |
+| Crate                                                          | Role                                                  | Design                                                                                             |
+|:---------------------------------------------------------------|:------------------------------------------------------|:---------------------------------------------------------------------------------------------------|
+| `control-rs` (this crate)                                      | Math core and numerical models                        | [math](documentation/README.md#math), [numerical-models](documentation/README.md#numerical-models) |
+| [`control-rs-ets`](control-rs-ets/README.md)                   | Target-side Embedded Test Server                      | [ets](documentation/README.md#ets)                                                                 |
+| [`control-rs-macros`](control-rs-macros/README.md)             | ETS suite and entrypoint macros                       | [macros-design](documentation/macros/macros-design.md)                                             |
+| [`control-rs-ets-host`](control-rs-ets-host/README.md)         | Host transport, framing and headless runner           | [ets-host-design](documentation/ets-host/ets-host-design.md)                                       |
+| [`control-rs-tui`](control-rs-tui/README.md)                   | Interactive ETS terminal console                      | [tui-design](documentation/tui/tui-design.md)                                                      |
+| [`control-rs-ci`](control-rs-ci/README.md)                     | Quality gate runner and report aggregator             | [ci-design](documentation/ci/ci-design.md)                                                         |
+| [`control-rs-compare`](control-rs-compare/README.md)           | HDF5 cross-comparison engine                          | [cross-compare-design](documentation/vv/cross-compare-design.md)                                   |
+| [`control-rs-verification`](control-rs-verification/README.md) | Rust emitters and Python oracles for cross-validation | [cross-compare-design](documentation/vv/cross-compare-design.md)                                   |
+| [`examples/`](examples/README.md)                              | Domain examples, subprogram backends, ETS firmware    |                                                                                                    |
 
-- [Documentation index](documentation/README.md): design docs, standards, roadmap
+- [Documentation index](documentation/README.md): design docs, standards,
+  roadmap
 - [Contributing](CONTRIBUTING.md): design-doc to implementation process
-- [Dependency registry](documentation/dependencies.md): every tool and how to install it
+- [Dependency registry](documentation/dependencies.md): every tool and how to
+  install it
 - [Development Guide](documentation/development-guide.md): cargo aliases, CI
 
 ## Installation

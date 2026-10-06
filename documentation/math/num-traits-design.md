@@ -602,7 +602,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | **Phase 3: `Complex<T>` retraction**      | `Complex<T>: Scalar` (`Real = T`) + `Conjugate` + `AdditiveGroup` + `Div`; remove `Float`/`Signed`/`Radical`/`Trig`/`Exponential`.                                                | Complete         |
 | **Phase 4: Call-site migration**          | Re-bound `subprograms.rs`, `dsp.rs`, `assert.rs`, and matrix decompositions that used `T: Float` as a complex stand-in.                                                           | Complete         |
 | **Phase 5: Verification**                 | Marker tests and `compile_fail` doctests for FR-3–FR-5; `#[ets_suite]` wrap/saturate suite verified. `Quantized` / `Fixed` negative oracles live in `fixed-num-design.md` §6.1.5. | Complete         |
-| **Phase 6: Multiply accumulate**          | `MulAcc` (FR-7) for integers, floats, `Complex<T>` and `Quantized` (`fixed-num-design.md` FR-8); §6.1.3 tests.                                                                       | Planned          |
+| **Phase 6: Multiply accumulate**          | `MulAcc` (FR-7) for integers, floats, `Complex<T>` and `Quantized` (`fixed-num-design.md` FR-8); §6.1.3 tests.                                                                       | Complete         |
 | **Phase 7: Accelerated example type**     | Fused-`mac` `f32` newtype and a CMSIS-style `q31` accumulator type beside `CmsisDspBlas` in `examples/subprograms/thumbv7em/`, run under QEMU MPS2-AN500.                          | Planned          |
 
 ---
