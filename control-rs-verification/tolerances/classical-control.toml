@@ -1,0 +1,131 @@
+# Cross-check tolerance table of `classical-control-design.md` §6.2.
+# Keys are `<case>/<signal>` datasets of `classical_control.{rust,scipy}.h5`.
+#
+# output   : 1e-12 of the peak |y| of the SciPy sequence (lfilter, sosfilt).
+# sections : 1e-9 of the peak source response; both sides are normalized
+#            by that peak, so the bound is absolute.
+# margins  : relative 1e-9 against brentq on L(jw).
+# fixed    : the noise gain 0.5 * sum_s ||g_s||_1 = 4.54 quantization steps
+#            (g_s: impulse response from the output rounding of section s to
+#            the cascade output) against float64 sosfilt of the same
+#            quantized coefficients, rounded up.
+
+[tolerances."df2t_order1/output"]
+method = "abs"
+bound = 2.9e-12
+
+[tolerances."df2t_order2/output"]
+method = "abs"
+bound = 1.2e-11
+
+[tolerances."df2t_order3/output"]
+method = "abs"
+bound = 2.2e-12
+
+[tolerances."df2t_order4/output"]
+method = "abs"
+bound = 2.7e-11
+
+[tolerances."cascade_df1/output"]
+method = "abs"
+bound = 7.4e-13
+
+[tolerances."cascade_df2t/output"]
+method = "abs"
+bound = 7.4e-13
+
+[tolerances."margins_third_order/gain_margin"]
+method = "rel"
+bound = 1e-9
+
+[tolerances."margins_third_order/w_pc"]
+method = "rel"
+bound = 1e-9
+
+[tolerances."margins_third_order/phase_margin"]
+method = "rel"
+bound = 1e-9
+
+[tolerances."margins_third_order/w_gc"]
+method = "rel"
+bound = 1e-9
+
+[tolerances."margins_integrator/phase_margin"]
+method = "rel"
+bound = 1e-9
+
+[tolerances."margins_integrator/w_gc"]
+method = "rel"
+bound = 1e-9
+
+[tolerances."df1_q13/fixed"]
+method = "abs"
+bound = 5.6e-4
+
+[tolerances."df1_q29/fixed"]
+method = "abs"
+bound = 8.5e-9
+
+[tolerances."sections_order1/re"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order1/im"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order2/re"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order2/im"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order3/re"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order3/im"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order4/re"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order4/im"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order5/re"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order5/im"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order6/re"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order6/im"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order7/re"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order7/im"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order8/re"]
+method = "abs"
+bound = 1e-9
+
+[tolerances."sections_order8/im"]
+method = "abs"
+bound = 1e-9

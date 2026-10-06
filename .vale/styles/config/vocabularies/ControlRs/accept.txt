@@ -347,6 +347,7 @@ Weiser
 Whalen
 Wray
 Wycheproof
+xorshift
 YAML
 Yeo
 Yiu
