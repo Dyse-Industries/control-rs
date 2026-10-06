@@ -36,19 +36,22 @@
     - [x] **PR3-9**: Workspace Audit & Cleanup
         - Review PR3 against its design docs, reconcile docs, gate config and
           tests, and remove stray additions
-- [ ] **PR4**: Design Hardening, Trace Wiring and Test Updates
-- [ ] **PR5**: Classical Control Synthesis & Math Core (`src/classical_tools`)
-- [ ] **PR6**: Modern Control Toolbox & State Observers (`src/modern_control`)
-- [ ] **PR7**: System Identification (SysID) & Frequency Estimation
+- [ ] **PR4**: Classical Control Synthesis & Math Core (`src/classical_control`)
+- [ ] **PR5**: Modern Control Toolbox (`src/modern_control`)
+- [ ] **PR6**: Robust Control Analysis (`src/robust_control`)
+- [ ] **PR7**: Nonlinear Control Synthesis & Estimators (`src/nonlinear_control`)
+- [ ] **PR8**: System Identification (SysID) & Frequency Estimation
   (`src/sysid`)
-- [ ] **PR8**: Safety Validation & Run-Time Assurance (`src/validation`)
-- [ ] **PR9**: Hardware Acceleration & Architecture Subprograms (traits in
+- [ ] **PR9**: Safety Validation & Run-Time Assurance (`src/validation`)
+- [ ] **PR10**: Design Hardening, Trace Wiring and Test Updates
+    - Follows PR4 to PR9 so hardening covers every identified feature
+- [ ] **PR11**: Hardware Acceleration & Architecture Subprograms (traits in
   `src/math/subprograms`; accelerated backends as examples in
   `examples/subprograms`) ([subprograms](math/subprograms-design.md))
-- [ ] **PR10**: CI Workflow Hardening & Physical-Target ETS Runners (Teensy 4.1)
+- [ ] **PR12**: CI Workflow Hardening & Physical-Target ETS Runners (Teensy 4.1)
     - Teensy 4.1 `target-build` gate (`ci-design.md` FR-17; ITCM layout)
     - Workflow: build cache, pinned actions and tools, top-level
       `permissions:`, no duplicate `cargo doc` in the report job
-- [ ] **PR11**: Automated Git Release System & Release Pipeline
-- [ ] **PR12**: Flight Examples, Documentation Consolidation & Initial Release
+- [ ] **PR13**: Automated Git Release System & Release Pipeline
+- [ ] **PR14**: Flight Examples, Documentation Consolidation & Initial Release
   (`v0.1.0`)

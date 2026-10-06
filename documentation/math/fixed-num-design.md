@@ -1,6 +1,6 @@
 # Fixed-Point Scalar Type (fixed-num)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_5,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -46,6 +46,10 @@ fixed quantization step $\Delta = 2^{-\text{SHIFT}}$ (ARM, 1996; Spiteri,
 - **FR-7 — Representable-Constant Gating**: A trait is implemented only when
   its properties hold. Do not implement `One` when `1` is not representable:
   then `1 * n ≠ n`. `SaturatingInteger` also requires `2`.
+- **FR-8 — Wide Accumulation**: `Fixed` implements `num-traits-design.md`
+  FR-7 `MulAcc` with an integer accumulator at scale $2\,\text{SHIFT}$:
+  `mac` adds each exact product with saturation in the accumulator, and
+  `from_acc` rescales once with the FR-4 rounding and saturates to `Repr`.
 
 #### 2.2 Non-Functional Requirements
 
@@ -244,9 +248,9 @@ representations.
 Same-scale values operate directly on underlying integers, saturating at
 representation bounds (FR-3):
 
-- $\text{Add}(a, b) = \text{saturating\_add}(a_{\text{raw}}, b_{\text{raw}})$
-- $\text{Sub}(a, b) = \text{saturating\_sub}(a_{\text{raw}}, b_{\text{raw}})$
-- $\text{Neg}(a) = \text{saturating\_neg}(a_{\text{raw}})$
+- `Add(a, b) = saturating_add(a.raw, b.raw)`
+- `Sub(a, b) = saturating_sub(a.raw, b.raw)`
+- `Neg(a) = saturating_neg(a.raw)`
 
 Because operands share identical scaling factors, no rescaling is required (ARM,
 1996).
@@ -277,13 +281,15 @@ precision before convergent rounding and saturating narrowing._
 Dividing two values of scale $2^{-\text{SHIFT}}$ cancels the scale, so the
 numerator is pre-shifted to keep $\text{SHIFT}$ fractional bits:
 
-$$q_{\text{raw}} = \operatorname{round}\left(\frac{a_{\text{raw}} \cdot 2^{\text{SHIFT}}}{b_{\text{raw}}}\right)$$
+```math
+q_{\text{raw}} = \operatorname{round}\left(\frac{a_{\text{raw}} \cdot 2^{\text{SHIFT}}}{b_{\text{raw}}}\right)
+```
 
 The magnitudes are formed in `u128`: $|a_{\text{raw}}| < 2^{64}$ and
 $\text{SHIFT} \le 64$, so the shifted numerator is exact at every width.
 The quotient rounds ties to even, the same convergent rounding as `Mul`
-(§4.3, next subsection), then takes the sign $\operatorname{sgn}(a) \cdot
-\operatorname{sgn}(b)$ and narrows. `SaturatingDiv` (and `Div`) clamp an
+(§4.3, next subsection), then takes the sign
+$\operatorname{sgn}(a) \cdot \operatorname{sgn}(b)$ and narrows. `SaturatingDiv` (and `Div`) clamp an
 out-of-range quotient to the bound of its sign, including
 $\text{MIN} / (-1)$, and map $b = 0$ to `MAX`, `MIN` or zero by the sign of
 $a$ (FR-3). `TryDiv` returns `DivisionByZero` for $b = 0$ and `Overflow`
@@ -303,11 +309,51 @@ destination width. Internal algorithm invariants are verified with
 `debug_assert!`
 to ensure zero branching penalty in release MCU builds.
 
+##### Wide Accumulation (FR-8)
+
+`FixedRepr` gains an accumulator type `Acc`. A chain holds exact products
+at scale $2\,\text{SHIFT}$ and narrows once:
+
+```math
+\text{acc} \leftarrow \text{sat}_{\text{Acc}}(\text{acc} + a_{\text{raw}} b_{\text{raw}}),
+\qquad
+r = \operatorname{narrow}(\operatorname{round}_{\mathrm{te}}(\text{acc} \gg \text{SHIFT})),
+```
+
+with `to_acc(c)` = $c_{\text{raw}} \cdot 2^{\text{SHIFT}}$, saturating.
+
+| `Repr` | `Acc` | Guard bits, signed | Guard bits, unsigned |
+|:--|:--|:--|:--|
+| `i8`, `u8` | `i32`, `u32` | 17 | 16 |
+| `i16`, `u16` | `i64`, `u64` | 33 | 32 |
+| `i32`, `u32` | `i64`, `u64` | 1 | 0 |
+| `i64`, `u64` | `i128`, `u128` | 1 | 0 |
+
+Guard bits are the `Acc` width less the product width: $2\,\text{BITS} - 1$
+for signed operands (the single product $\text{MIN} \cdot \text{MIN}$
+needs one more) and $2\,\text{BITS}$ for unsigned operands.
+
+The `i16` row is the CMSIS-DSP Q15 DF1 scheme: products accumulate in a
+64-bit accumulator with no risk of internal overflow and full precision of
+the intermediate products (CMSIS-DSP, 2026). The `i32` row matches the
+CMSIS Q31 accumulator, which keeps full product precision but has a single
+guard bit (CMSIS-DSP, 2026). There the CMSIS accumulator wraps rather than
+clips and truncates on narrowing (CMSIS-DSP, 2026); `Fixed` saturates in
+`Acc` and rounds ties to even (FR-3, FR-4). A $k$-term chain therefore
+rounds once instead of $k$ times. `Acc` is chosen so a five-term
+second-order section never saturates internally for `i8` and `i16`; for
+`i32`, `i64` and unsigned 32-bit and 64-bit `Repr` the caller keeps
+coefficient magnitudes below the integer range or accepts saturation
+(§8.9).
+
 #### 4.4 Representability Gating (FR-7)
 
 For a signed integer `Repr` of bit width $n$ and scale exponent $\text{SHIFT}$,
 representable values span:
-$$\text{MIN} = -\frac{2^{n-1}}{2^{\text{SHIFT}}}, \quad \text{MAX} = \frac{2^{n-1} - 1}{2^{\text{SHIFT}}}$$
+
+```math
+\text{MIN} = -\frac{2^{n-1}}{2^{\text{SHIFT}}}, \quad \text{MAX} = \frac{2^{n-1} - 1}{2^{\text{SHIFT}}}
+```
 
 Associated constants and trait bounds are gated as follows:
 
@@ -533,6 +579,8 @@ of method-level traits. This design inherits that decision.
 | VC-11.1 | C-2 | `review` | — | Module introduces zero new external crate dependencies |
 | VC-12.1 | C-3 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_constants_and_constructors` | Scale parameter is bounded within `0..=BITS` via compile-time dimension assertions |
 | VC-13.1 | C-4 | `review` | — | Implementation performs no bare un-checked or un-saturating primitive arithmetic operations |
+| VC-14.1 | FR-8 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_mac_chain_single_rounding` | For random five-term chains, `from_acc` equals the exact integer sum rounded once to the grid with ties to even, and saturates where the exact sum leaves the range; FR-8 holds iff all conditions hold |
+| VC-14.2 | FR-8 | `kani` | `control_rs::math::fixed_num::proofs::prove_fixed_mac_total` | For all `i16` raw inputs to a two-term chain at `SHIFT` in `{0, 8, 14}`, `mac` and `from_acc` return without panic and equal the saturated, once-rounded exact result computed in `i128` |
 
 1. **Constant and Range Unit Tests** (`fixed_num_tests.rs`): `DELTA`
    equals `from_bits(1)` and its `f64` value equals `2^(−SHIFT)`; `MIN` and
@@ -661,8 +709,12 @@ sequence an integer core would otherwise run (ARM, 1996).
    public `Scalar` impl can still be written.
 8. **Proposals (Not in Evidence)**:
     - Sign-aware convergent rounding on signed `Wide` products (§4.3).
-    - Accumulator narrowing rules in hardware DSP extensions (ARM CMSIS-DSP,
-      RISC-V NMSIS).
+    - Accumulator narrowing rules in RISC-V NMSIS.
+9. **`i32` and `i64` Guard Bits (FR-8)**: These accumulators hold one
+   full-range product with at most one guard bit, as the CMSIS Q31
+   accumulator does (CMSIS-DSP, 2026). Two extreme products saturate the
+   chain. A wider `Acc` (`i128` for `i32`) removes that at the cost of
+   software 128-bit adds on 32-bit cores; the current choice follows CMSIS.
 
 ---
 
@@ -675,6 +727,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | **Phase 3: Numeric Trait Integration**   | Implement sealed `OneRepresentable` / `TwoRepresentable` markers and their macro enumeration (§4.4), then `Zero`, `One`, `Conjugate`, `Scalar`, `Signed`, and `SaturatingInteger` gated on those markers. |      Medium      |
 | **Phase 4: Verification Suite**          | Implement unit tests, proptest oracles, `compile_fail` doctests, memory footprint assertions, and `#[ets_suite]` verification.                                                                            |      Medium      |
 | **Phase 5: Downstream Model Validation** | Validate generic instantiation in matrix and tensor kernels across control toolboxes.                                                                                                                     |      Small       |
+| **Phase 6: Wide Accumulation**           | Add `FixedRepr::Acc` and implement `MulAcc` (FR-8, §4.3) for every `FixedRepr`, with the VC-14.1 proptest oracle, the VC-14.2 proof and an `#[ets_suite]` case.                                           |      Small       |
 
 ---
 
@@ -688,6 +741,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | 1.3      | August 31, 2026 | @MitchellDScott | Dim trait bound integration: formalize type-level `DimMax` bounds, streamline `FixedRepr`, and unify compile-time scale gating.           |
 | 1.4      | September 23, 2026 | @MitchellDScott | Division: `Div`, `DivAssign`, `SaturatingDiv` and `TryDiv` with a pre-shifted `u128` quotient and ties-to-even rounding (FR-3, §4.3). |
 | 1.5      | September 24, 2026 | @MitchellDScott | §8 rescale note: `i8` computation scales are `SHIFT <= 6` (`Scalar`) and `<= 5` (`SaturatingInteger`). |
+| 2.0      | October 5, 2026 | @MitchellDScott | Adds FR-8 wide accumulation through `MulAcc` (§4.3 `FixedRepr::Acc`, VC-14.1, VC-14.2, Phase 6) for `num-traits-design.md` FR-7; §8.8 and §8.9 updated with CMSIS-DSP accumulator evidence. |
 
 ---
 
@@ -735,3 +789,8 @@ Available: https://en.wikipedia.org/wiki/Q_(number_format). Accessed: Aug.
 1.31.0). [Online]. Available:
 https://docs.rs/fixed/latest/fixed/types/extra/index.html. Accessed: Aug.
 12, 2026.
+
+[10] Arm Limited, "Biquad Cascade IIR Filters Using Direct Form I
+Structure," *CMSIS-DSP Documentation*. [Online]. Available:
+https://arm-software.github.io/CMSIS-DSP/latest/group__BiquadCascadeDF1.html.
+Accessed: Oct. 5, 2026.
