@@ -23,6 +23,8 @@
 //! - `Scalar`: The unified target for control-loop arithmetic
 //!   (`Zero + One + Sub + Mul`), implemented by every integer and float
 //!   primitive, deliberately excluding `Div` (integer division is not total).
+//! - `MulAcc`: Multiply accumulate chains that narrow once, separate from
+//!   `Scalar` so external `Scalar` implementors do not break.
 //!
 //! # Compile-Time Marker Boundary
 //!
@@ -568,6 +570,36 @@ pub trait Scalar:
     }
 }
 
+/// Multiply accumulate with a single narrowing.
+///
+/// A chain `from_acc(mac(mac(to_acc(c), a1, b1), a2, b2))` holds every term
+/// in `Acc` and rounds and saturates once in `from_acc`, however many terms
+/// it holds. Floats accumulate in `Self` with an unfused multiply and add;
+/// integers accumulate exact products in a doubled-width integer; `Fixed`
+/// accumulates at scale `2 * SHIFT`; `Complex<T>` accumulates in
+/// `Complex<T::Acc>`. The trait is open: a type outside the crate may
+/// implement it with target-specific (for example fused) arithmetic.
+///
+/// # Example
+/// ```
+/// use control_rs::math::num_traits::MulAcc;
+///
+/// // 100 * 2 + (-100) * 2 leaves `i8` in the middle of the chain but not
+/// // at its end, so the result is exact.
+/// let acc = i8::mac(i8::mac(0i8.to_acc(), 100, 2), -100, 2);
+/// assert_eq!(i8::from_acc(acc), 0);
+/// ```
+pub trait MulAcc: Copy {
+    /// Accumulator holding a chain of products.
+    type Acc: Copy;
+    /// Lifts `self` into the accumulator.
+    fn to_acc(self) -> Self::Acc;
+    /// Returns `acc + a * b` in the accumulator.
+    fn mac(acc: Self::Acc, a: Self, b: Self) -> Self::Acc;
+    /// Narrows the accumulator to `Self`, rounding and saturating once.
+    fn from_acc(acc: Self::Acc) -> Self;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Macro Code Generation
 ////////////////////////////////////////////////////////////////////////////////
@@ -796,6 +828,64 @@ macro_rules! impl_float {
     };
 }
 
+/// Implements `MulAcc` for a float with `Acc = Self` and an unfused
+/// multiply and add.
+macro_rules! impl_mul_acc_float {
+    ($type:ty) => {
+        impl MulAcc for $type {
+            type Acc = Self;
+
+            #[inline]
+            fn to_acc(self) -> Self {
+                self
+            }
+
+            #[inline]
+            fn mac(acc: Self, a: Self, b: Self) -> Self {
+                acc.saturating_add(&a.saturating_mul(&b))
+            }
+
+            #[inline]
+            fn from_acc(acc: Self) -> Self {
+                acc
+            }
+        }
+    };
+}
+
+/// Implements `MulAcc` for an integer with a doubled-width accumulator:
+/// exact products, saturating accumulation and one clamp to `[MIN, MAX]`.
+macro_rules! impl_mul_acc_int {
+    ($type:ty, $acc:ty) => {
+        impl MulAcc for $type {
+            type Acc = $acc;
+
+            #[inline]
+            fn to_acc(self) -> $acc {
+                <$acc>::from(self)
+            }
+
+            #[inline]
+            fn mac(acc: $acc, a: Self, b: Self) -> $acc {
+                acc.saturating_add(
+                    <$acc>::from(a).saturating_mul(<$acc>::from(b)),
+                )
+            }
+
+            #[inline]
+            fn from_acc(acc: $acc) -> Self {
+                <$type>::try_from(acc).unwrap_or(
+                    if acc < <$acc>::from(<$type>::MIN) {
+                        <$type>::MIN
+                    } else {
+                        <$type>::MAX
+                    },
+                )
+            }
+        }
+    };
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Cartesian Quadrant Helper
 ////////////////////////////////////////////////////////////////////////////////
@@ -1004,3 +1094,18 @@ impl Unsigned for u128 {}
 impl_int!(usize, 1, 0, usize::MAX, usize::MIN, 1);
 impl_scalar!(usize);
 impl Unsigned for usize {}
+
+////////////////////////////////////////////////////////////////////////////////
+// Multiply Accumulate
+////////////////////////////////////////////////////////////////////////////////
+
+impl_mul_acc_float!(f32);
+impl_mul_acc_float!(f64);
+impl_mul_acc_int!(i8, i16);
+impl_mul_acc_int!(i16, i32);
+impl_mul_acc_int!(i32, i64);
+impl_mul_acc_int!(i64, i128);
+impl_mul_acc_int!(u8, u16);
+impl_mul_acc_int!(u16, u32);
+impl_mul_acc_int!(u32, u64);
+impl_mul_acc_int!(u64, u128);

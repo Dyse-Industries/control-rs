@@ -5,7 +5,7 @@
 
 use crate::math::{
     ArithmeticResult,
-    num_traits::{AdditiveGroup, Conjugate, Float, One, Scalar, Zero},
+    num_traits::{AdditiveGroup, Conjugate, Float, MulAcc, One, Scalar, Zero},
     ops::{
         Add, Div, Mul, Neg, SaturatingAdd, SaturatingDiv, SaturatingMul,
         SaturatingNeg, SaturatingSub, Sub, TryAdd, TryDiv, TryMul, TrySub,
@@ -398,6 +398,30 @@ impl<T: Zero + SaturatingAdd> Zero for Complex<T> {
 impl<T: AdditiveGroup + SaturatingAdd + SaturatingSub + SaturatingNeg>
     AdditiveGroup for Complex<T>
 {
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl<T: MulAcc + SaturatingNeg> MulAcc for Complex<T> {
+    type Acc = Complex<T::Acc>;
+
+    #[inline]
+    fn to_acc(self) -> Self::Acc {
+        Complex::new(self.re.to_acc(), self.im.to_acc())
+    }
+
+    #[inline]
+    fn mac(acc: Self::Acc, a: Self, b: Self) -> Self::Acc {
+        let re =
+            T::mac(T::mac(acc.re, a.re, b.re), a.im.saturating_neg(), b.im);
+        let im = T::mac(T::mac(acc.im, a.re, b.im), a.im, b.re);
+        Complex::new(re, im)
+    }
+
+    #[inline]
+    fn from_acc(acc: Self::Acc) -> Self {
+        Self::new(T::from_acc(acc.re), T::from_acc(acc.im))
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
