@@ -778,7 +778,7 @@ pub mod tests {
     /// `quantize` accepts exactly the values that round into the
     /// representable range: `[MIN - delta/2, MAX + delta/2)` (FR-19).
     fn quantize_range_edges() {
-        let delta = 2f64.powi(-13);
+        let delta: f64 = Q13::DELTA.to_num();
         let (min, max) = (-4.0, 4.0 - delta);
         assert!(quantize::<i16, 13, 1>(&with_b0(min)).is_ok());
         assert!(quantize::<i16, 13, 1>(&with_b0(max)).is_ok());
