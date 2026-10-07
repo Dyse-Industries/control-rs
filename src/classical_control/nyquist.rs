@@ -168,6 +168,9 @@ fn crossing<T: Float + Copy>(ar: T, ai: T, br: T, bi: T) -> i32 {
 mod tests {
     use super::*;
 
+    /// Contour samples; fewer under Miri, where the interpreter dominates.
+    const SAMPLES: usize = if cfg!(miri) { 201 } else { 1001 };
+
     fn count<const N: usize, const D: usize>(
         sys: &ArrayTransferFunction<f64, N, D>,
     ) -> Result<NyquistCount, ClassicalError>
@@ -175,7 +178,7 @@ mod tests {
         Const<N>: Dim,
         Const<D>: Dim,
     {
-        let mut contour = [Complex::new(0.0, 0.0); 1001];
+        let mut contour = [Complex::new(0.0, 0.0); SAMPLES];
         nyquist_encirclements(sys, 100.0, 1e-3, &mut contour)
     }
 

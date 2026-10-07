@@ -536,7 +536,7 @@ pub mod fixed_num_test_suite {
     /// saturate only at the output (`fixed-num-design.md` FR-8, VC-14.1).
     fn test_mac_chain_single_rounding() {
         let mut state = 0x9E37_79B9_7F4A_7C15_u64;
-        for _ in 0..2_000 {
+        for _ in 0..(if cfg!(miri) { 200 } else { 2_000 }) {
             let raws = draw_raws(&mut state);
             check_i16_chain::<0>(raws);
             check_i16_chain::<8>(raws);
