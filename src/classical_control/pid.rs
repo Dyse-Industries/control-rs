@@ -177,6 +177,59 @@ pub mod tests {
         };
         assert_eq!(got, pid::<f64, 3, 3>(form, Some(p.tf)).unwrap());
     }
+
+    #[cfg_attr(test, test)]
+    /// A zero derivative filter with `K_d = 0` yields the unfiltered PI model
+    /// (FR-14).
+    fn analysis_model_without_filter() {
+        let p = PidParams {
+            kd: 0.0,
+            tf: 0.0,
+            ..params(AntiWindup::Clamping, 1.0)
+        };
+        let c = Pid::new(p).unwrap();
+        let got = c.to_transfer_function::<2, 2>().unwrap();
+        assert_eq!(got.num_slice(), [p.ki, p.kp]);
+        assert_eq!(got.den_slice(), [0.0, 1.0]);
+    }
+
+    #[cfg_attr(test, test)]
+    /// `reset` returns the controller to its constructed state (FR-11).
+    fn reset_restores_constructed_state() {
+        let p = params(AntiWindup::Clamping, 1.0);
+        let fresh = Pid::new(p).unwrap();
+        let mut c = fresh;
+        for k in 0..20u8 {
+            c.step(1.0, 0.1 * Trig::sin(f64::from(k)));
+        }
+        assert_ne!(c, fresh);
+        c.reset();
+        assert_eq!(c, fresh);
+    }
+
+    #[cfg_attr(test, test)]
+    /// `Clamping` holds the integrator at the lower limit while the error is
+    /// negative, and unwinds it while the error is negative but the output
+    /// is pushed above the upper limit (FR-12).
+    fn clamping_negative_error() {
+        let p = PidParams::<f64> {
+            kp: 1.0,
+            ki: 1.0,
+            kd: 1.0,
+            tf: 0.0,
+            h: 0.01,
+            u_min: -1.0,
+            u_max: 1.0,
+            anti_windup: AntiWindup::Clamping,
+        };
+        let mut c = Pid::new(p).unwrap();
+        // e = -11, v = -11 < u_min: held.
+        c.step(-1.0, 10.0);
+        assert_eq!(c.integral.to_bits(), 0.0f64.to_bits());
+        // e = -6, derivative term +500 pushes v above u_max: integrates.
+        c.step(-1.0, 5.0);
+        assert!(c.integral < 0.0);
+    }
 }
 
 /// Integrator update under output saturation (FR-12).
