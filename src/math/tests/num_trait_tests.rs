@@ -845,6 +845,33 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// Verifies `Complex` integer `MulAcc` keeps the exact `Acc` product when
+    /// an imaginary part is `T::MIN` (`num-traits-design.md` FR-7).
+    fn test_mul_acc_complex_min_imag() {
+        // (0 + MIN i)(0 + i) contributes +|MIN| to the real accumulator.
+        // Negating MIN before `mac` would lose one ulp and yield 0 here.
+        let a1 = Complex::new(0i16, i16::MIN);
+        let b1 = Complex::new(0i16, 1);
+        let a2 = Complex::new(0i16, i16::MAX);
+        let b2 = Complex::new(0i16, 1);
+        let zero = Complex::<i16>::new(0, 0);
+        let acc = Complex::<i16>::mac(
+            Complex::<i16>::mac(zero.to_acc(), a1, b1),
+            a2,
+            b2,
+        );
+        assert_eq!(Complex::<i16>::from_acc(acc), Complex::new(1, 0));
+        // Prior real -10000 plus exact |MIN| stays inside i16 and must not
+        // lose the one ulp that `saturating_neg(MIN)` would drop.
+        let got = Complex::<i16>::from_acc(Complex::<i16>::mac(
+            Complex::<i16>::new(-10_000, 0).to_acc(),
+            a1,
+            b1,
+        ));
+        assert_eq!(got, Complex::new(22_768, 0));
+    }
+
+    #[cfg_attr(test, test)]
     /// Verifies an external type implementing `MulAcc` compiles against a
     /// generic `T: Scalar + MulAcc` consumer (`num-traits-design.md` FR-7).
     fn test_mul_acc_open_trait() {
