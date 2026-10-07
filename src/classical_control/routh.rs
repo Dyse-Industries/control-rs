@@ -259,4 +259,40 @@ mod tests {
             Err(ClassicalError::ZeroLeadingCoefficient)
         );
     }
+
+    #[test]
+    fn negative_leading_coefficient() {
+        // -(s + 1)(s + 2): no right-half-plane roots.
+        let poly =
+            ArrayPolynomial::<f64, 3>::from_coefficients([-2.0, -3.0, -1.0]);
+        let got = routh_count(&poly, 1e-12).unwrap();
+        assert_eq!(got.rhp, 0);
+    }
+
+    #[test]
+    fn term_minus_dominant_order() {
+        let term = |coeff, power| Term { coeff, power };
+        let tol = 1e-12;
+        let a = term(2.0, 1).minus(Term::zero(), tol);
+        assert_eq!((a.coeff, a.power), (2.0, 1));
+        let b = term(2.0, 1).minus(term(3.0, 2), tol);
+        assert_eq!((b.coeff, b.power), (2.0, 1));
+        let c = term(2.0, 2).minus(term(3.0, 1), tol);
+        assert_eq!((c.coeff, c.power), (-3.0, 1));
+    }
+
+    #[test]
+    fn term_mul_by_zero() {
+        let zero_times = Term::zero().mul(Term {
+            coeff: 2.0,
+            power: 3,
+        });
+        let times_zero = Term {
+            coeff: 2.0,
+            power: 3,
+        }
+        .mul(Term::zero());
+        assert_eq!((zero_times.coeff, zero_times.power), (0.0, 0));
+        assert_eq!((times_zero.coeff, times_zero.power), (0.0, 0));
+    }
 }

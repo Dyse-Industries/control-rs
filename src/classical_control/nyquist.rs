@@ -225,4 +225,53 @@ mod tests {
             Err(ClassicalError::ContourThroughCriticalPoint)
         );
     }
+
+    #[test]
+    fn parameter_bounds() {
+        let sys = ArrayTransferFunction::<f64, 1, 3>::continuous(
+            [2.0],
+            [1.0, 3.0, 3.0],
+        );
+        let bad = Err(ClassicalError::InvalidParameter);
+        let mut c5 = [Complex::new(0.0, 0.0); 5];
+        assert_eq!(nyquist_encirclements(&sys, 0.0, 1e-3, &mut c5), bad);
+        assert_eq!(nyquist_encirclements(&sys, 10.0, 0.0, &mut c5), bad);
+        assert_eq!(nyquist_encirclements(&sys, -1.0, 1e-3, &mut c5), bad);
+        let mut c2 = [Complex::new(0.0, 0.0); 2];
+        assert_eq!(nyquist_encirclements(&sys, 10.0, 1e-3, &mut c2), bad);
+        let mut c3 = [Complex::new(0.0, 0.0); 3];
+        assert!(nyquist_encirclements(&sys, 10.0, 1e-3, &mut c3).is_ok());
+    }
+
+    #[test]
+    fn pole_on_indent_radius_is_not_right_half() {
+        let r = 1e-3;
+        let sys =
+            ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [-r, 1.0]);
+        let got = count(&sys).unwrap();
+        assert_eq!(got.open_loop_rhp, 0);
+    }
+
+    #[test]
+    fn contour_indents_around_axis_pole() {
+        let r = 1e-3;
+        let sys = ArrayTransferFunction::<f64, 1, 3>::continuous(
+            [1.0],
+            [0.0, 1.0, 1.0],
+        );
+        let mut contour = [Complex::new(0.0, 0.0); 3];
+        nyquist_encirclements(&sys, 100.0, r, &mut contour).unwrap();
+        // Middle sample w = 0 moves to s = r: L = 1 / (r (r + 1)).
+        let expected = 1.0 / (r * (r + 1.0));
+        assert!(((contour[1].re - expected) / expected).abs() < 1e-9);
+        assert!(contour[1].im.abs() < 1e-9 * expected);
+    }
+
+    #[test]
+    fn crossing_through_critical_point_is_not_counted() {
+        // The segment passes exactly through the origin of `1 + L`.
+        assert_eq!(crossing(-1.0, 1.0, 1.0, -1.0), 0);
+        assert_eq!(crossing(-2.0, 1.0, 0.0, -1.0), 1);
+        assert_eq!(crossing(-2.0, -1.0, 0.0, 1.0), -1);
+    }
 }

@@ -258,4 +258,33 @@ mod tests {
             Err(ClassicalError::InvalidParameter)
         );
     }
+
+    #[test]
+    fn threshold_bounds() {
+        let t = [0.0, 1.0, 2.0];
+        let y = [0.0, 0.5, 1.0];
+        let with = |threshold| StepOptions {
+            threshold,
+            ..StepOptions::default()
+        };
+        assert!(step_info(&t, &y, &with(0.0)).is_ok());
+        assert_eq!(
+            step_info(&t, &y, &with(-0.1)),
+            Err(ClassicalError::InvalidParameter)
+        );
+    }
+
+    #[test]
+    fn sample_on_band_edge_is_inside() {
+        // |1.5 - 1.0| equals the band exactly.
+        let got = settling(&[0.0, 1.0, 2.0], &[1.5, 1.0, 1.0], 1.0, 0.5);
+        assert_eq!(got, Some(0.0));
+    }
+
+    #[test]
+    fn equal_deviation_keeps_first_peak_time() {
+        let (peak, time, max_norm) =
+            peak_of(&[0.0, 1.0, 2.0], &[0.0, 1.0, 1.0], 0.0, |v| v);
+        assert_eq!((peak, time, max_norm), (1.0, 1.0, 1.0));
+    }
 }

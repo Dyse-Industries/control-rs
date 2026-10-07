@@ -194,4 +194,17 @@ mod tests {
         let last = pts.last().unwrap().phase_deg;
         assert!(last < -300.0);
     }
+
+    #[test]
+    fn unwrap_threshold() {
+        let mut up = PhaseUnwrap::<f64>::new();
+        up.next(0.0);
+        assert!((up.next(180.0) - 180.0).abs() < 1e-12);
+        let mut down = PhaseUnwrap::<f64>::new();
+        down.next(0.0);
+        assert!((down.next(-180.0) + 180.0).abs() < 1e-12);
+        let mut wrap = PhaseUnwrap::<f64>::new();
+        wrap.next(100.0);
+        assert!((wrap.next(-100.0) - 260.0).abs() < 1e-12);
+    }
 }

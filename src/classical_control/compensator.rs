@@ -256,5 +256,40 @@ mod tests {
         assert_eq!(lead(gain, corner, -1.0), bad);
         assert_eq!(lag(0.0, lag_corner), bad);
         assert_eq!(lag(lag_gain, -lag_corner), bad);
+        assert_eq!(lead(gain, corner, 0.0), bad);
+        assert_eq!(lag(lag_gain, 0.0), bad);
+    }
+
+    #[test]
+    fn pid_time_bounds() {
+        let bad = Err(ClassicalError::InvalidParameter);
+        let std = |ti, td| PidForm::Standard { kp: 1.0, ti, td };
+        assert_eq!(pid::<f64, 3, 3>(std(0.0, 0.25), Some(0.1)), bad);
+        assert_eq!(pid::<f64, 3, 3>(std(0.5, -0.25), Some(0.1)), bad);
+        let ser = PidForm::Series {
+            kc: 1.0,
+            tau_i: 0.0,
+            tau_d: 0.1,
+        };
+        assert_eq!(pid::<f64, 3, 3>(ser, Some(0.1)), bad);
+    }
+
+    #[test]
+    fn pid_fit_conditions() {
+        let form = PidForm::Parallel {
+            kp: 1.0,
+            ki: 1.0,
+            kd: 1.0,
+        };
+        let improper = ClassicalError::Improper;
+        assert_eq!(pid::<f64, 3, 4>(form, Some(0.1)).unwrap_err(), improper);
+        assert_eq!(pid::<f64, 2, 3>(form, Some(0.1)).unwrap_err(), improper);
+        assert_eq!(pid::<f64, 4, 3>(form, Some(0.1)).unwrap_err(), improper);
+        let low = PidForm::Parallel {
+            kp: 0.0,
+            ki: 1.0,
+            kd: 0.0,
+        };
+        assert!(pid::<f64, 3, 3>(low, Some(0.1)).is_ok());
     }
 }
