@@ -72,7 +72,9 @@ pub struct Margins<T, const C: usize> {
 ///
 /// `C` bounds the crossings reported per kind; later crossings are
 /// dropped. `B` is the number of bisection steps per crossing. The cost is
-/// `M` evaluations of `L` plus `B` per crossing (NFR-3).
+/// `M` evaluations of `L` plus `B` per crossing (NFR-3). Non-finite
+/// samples (for example an integrator at `w = 0`) are skipped and break
+/// brackets so they neither seed `stability_margin` nor invent crossings.
 ///
 /// # Example
 /// ```
@@ -109,12 +111,23 @@ where
     };
     let (mut n_phase, mut n_gain) = (0usize, 0usize);
     let mut prev = None;
+    let mut seen_finite = false;
     for &w in omegas {
         let l = sys.eval_frequency(w);
+        // Non-finite `L` (e.g. an integrator at `w = 0`) must not seed
+        // `stability_margin` or invent a gain-crossing bracket: NaN never
+        // compares less than a prior distance, and `above(NaN)` is false.
+        if l.re.partial_cmp(&l.re).is_none()
+            || l.im.partial_cmp(&l.im).is_none()
+        {
+            prev = None;
+            continue;
+        }
         let dist = l.saturating_add(&one).magnitude();
-        if prev.is_none() || dist < out.stability_margin {
+        if !seen_finite || dist < out.stability_margin {
             out.stability_margin = dist;
         }
+        seen_finite = true;
         if let Some((wa, la)) = prev {
             if let Some(pc) =
                 phase_crossing::<T, N, D, B>(sys, (wa, la), (w, l))
@@ -352,5 +365,25 @@ mod tests {
         let dgc = dm_d.gain_crossings[0].unwrap();
         let expected = dgc.phase_margin_deg.to_radians() / dgc.omega / ts;
         assert!(((dgc.delay_margin - expected) / expected).abs() <= 1e-12);
+    }
+
+    #[test]
+    fn integrator_at_zero_frequency_skips_nan() {
+        // L = 1 / (s (s + 1)): L(j0) is NaN. A linear grid that starts at
+        // zero must still recover the finite gain crossover.
+        let sys = ArrayTransferFunction::<f64, 1, 3>::continuous(
+            [1.0],
+            [0.0, 1.0, 1.0],
+        );
+        let w: [f64; 201] =
+            core::array::from_fn(|k| 0.1 * f64::from(u8::try_from(k).unwrap()));
+        let m = stability_margins::<_, 1, 3, 201, 1, 40>(&sys, &w);
+        let gc = m.gain_crossings[0].unwrap();
+        // |L| = 1 at w^4 + w^2 - 1 = 0 => w = sqrt((-1 + sqrt(5)) / 2).
+        let w_gain = f64::midpoint(-1.0, 5f64.sqrt()).sqrt();
+        assert!(((gc.omega - w_gain) / w_gain).abs() <= 1e-9);
+        let pm = 90.0 - w_gain.atan().to_degrees();
+        assert!(((gc.phase_margin_deg - pm) / pm).abs() <= 1e-9);
+        assert!(m.stability_margin.is_finite() && m.stability_margin > 0.0);
     }
 }

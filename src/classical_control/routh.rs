@@ -162,14 +162,18 @@ where
     Ok(out)
 }
 
-/// Row of coefficients of `s^top, s^(top-2), ...`.
+/// Row of coefficients of `s^highest, s^(highest-2), ...`.
 fn first_row<T: Float + Copy, const N: usize>(
     coeffs: &[T],
-    top: usize,
+    highest: usize,
     tol: T,
 ) -> Row<T, N> {
     let mut row = [Term::zero(); N];
-    let picks = coeffs.iter().take(top.saturating_add(1)).rev().step_by(2);
+    let picks = coeffs
+        .iter()
+        .take(highest.saturating_add(1))
+        .rev()
+        .step_by(2);
     for (dst, &c) in row.iter_mut().zip(picks) {
         *dst = Term::chop(c, 0, tol);
     }
