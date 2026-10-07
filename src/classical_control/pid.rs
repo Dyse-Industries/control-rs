@@ -208,6 +208,37 @@ pub mod tests {
     }
 
     #[cfg_attr(test, test)]
+    /// Reverse-acting `Clamping` holds when `K_i e` drives further into
+    /// saturation, matching direct-acting hold behavior (FR-12).
+    fn clamping_reverse_acting_holds() {
+        let p = PidParams::<f64> {
+            kp: -1.0,
+            ki: -1.0,
+            kd: 0.0,
+            tf: 0.0,
+            h: 0.1,
+            u_min: -1.0,
+            u_max: 1.0,
+            anti_windup: AntiWindup::Clamping,
+        };
+        let mut rev = Pid::new(p).unwrap();
+        let mut fwd = Pid::new(PidParams {
+            kp: 1.0,
+            ki: 1.0,
+            ..p
+        })
+        .unwrap();
+        for _ in 0..50 {
+            assert_eq!(rev.step(10.0, 0.0).to_bits(), (-1.0f64).to_bits());
+            assert_eq!(fwd.step(10.0, 0.0).to_bits(), 1.0f64.to_bits());
+        }
+        assert_eq!(fwd.integral.to_bits(), 0.0f64.to_bits());
+        assert_eq!(rev.integral.to_bits(), 0.0f64.to_bits());
+        assert_eq!(fwd.step(0.0, 0.0).to_bits(), 0.0f64.to_bits());
+        assert_eq!(rev.step(0.0, 0.0).to_bits(), 0.0f64.to_bits());
+    }
+
+    #[cfg_attr(test, test)]
     /// `Clamping` holds the integrator at the lower limit while the error is
     /// negative, and unwinds it while the error is negative but the output
     /// is pushed above the upper limit (FR-12).
@@ -236,7 +267,8 @@ pub mod tests {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AntiWindup<T> {
     /// Conditional integration: the integrator holds while the output is
-    /// saturated and the error has the sign of `v - u`.
+    /// saturated and the integrator increment `K_i h e` has the sign of
+    /// `v - u`.
     Clamping,
     /// Back-calculation `I <- I + h (K_i e + (u - v) / T_t)`.
     ///
@@ -411,11 +443,16 @@ impl<T: Float + Copy> Pid<T> {
 
     /// Integrator increment for error `e`, unsaturated output `v` and
     /// output `u`.
+    ///
+    /// # Clamping
+    /// Holds when `u != v` and `K_i h e` has the sign of `v - u`, so
+    /// reverse-acting gains (`K_i < 0`) stop integrating into the rail.
     fn integrator_step(&self, e: T, v: T, u: T) -> T {
         let euler = self.kih.saturating_mul(&e);
         match self.params.anti_windup {
             AntiWindup::Clamping => {
-                let pushing = (e > T::ZERO && v > u) || (e < T::ZERO && v < u);
+                let pushing =
+                    (euler > T::ZERO && v > u) || (euler < T::ZERO && v < u);
                 if pushing { T::ZERO } else { euler }
             }
             AntiWindup::BackCalculation { .. } => euler.saturating_add(
