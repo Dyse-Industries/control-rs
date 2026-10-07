@@ -481,6 +481,18 @@ pub mod fixed_num_test_suite {
         *state
     }
 
+    /// Rounds `k * 0.5` through a `Fixed<i8, 1>` `MulAcc` from a zero accumulator.
+    fn mac_i8_q1(k: i8) -> i8 {
+        let half = Fixed::<i8, 1>::from_bits(1);
+        let zero = Fixed::<i8, 1>::from_bits(0);
+        Fixed::<i8, 1>::from_acc(Fixed::<i8, 1>::mac(
+            zero.to_acc(),
+            Fixed::<i8, 1>::from_bits(k),
+            half,
+        ))
+        .to_bits()
+    }
+
     /// Checks one five-term chain of `Fixed<i16, S>` against the oracle.
     fn check_i16_chain<const S: usize>(raws: [i16; 11])
     where
@@ -530,29 +542,13 @@ pub mod fixed_num_test_suite {
             check_i16_chain::<8>(raws);
             check_i16_chain::<14>(raws);
         }
-        // Ties: 3 * 2^-2 at SHIFT 1 (1.5 -> 2) and 5 * 2^-2 (2.5 -> 2).
-        let half = Fixed::<i8, 1>::from_bits(1);
-        let three = Fixed::<i8, 1>::from_bits(3);
-        let five = Fixed::<i8, 1>::from_bits(5);
-        let zero = Fixed::<i8, 1>::from_bits(0);
-        assert_eq!(
-            Fixed::<i8, 1>::from_acc(Fixed::<i8, 1>::mac(
-                zero.to_acc(),
-                three,
-                half
-            ))
-            .to_bits(),
-            2
-        );
-        assert_eq!(
-            Fixed::<i8, 1>::from_acc(Fixed::<i8, 1>::mac(
-                zero.to_acc(),
-                five,
-                half
-            ))
-            .to_bits(),
-            2
-        );
+        // Ties at SHIFT 1: raw k * 1 / 2 rounds to even.
+        assert_eq!(mac_i8_q1(1), 0);
+        assert_eq!(mac_i8_q1(3), 2);
+        assert_eq!(mac_i8_q1(5), 2);
+        assert_eq!(mac_i8_q1(7), 4);
+        assert_eq!(mac_i8_q1(-1), 0);
+        assert_eq!(mac_i8_q1(-7), -4);
         // Intermediate sum leaves Q7 range; final sum returns inside it.
         let big = Fixed::<i8, 7>::from_bits(i8::MAX);
         let neg = Fixed::<i8, 7>::from_bits(i8::MIN);

@@ -47,7 +47,10 @@ exclude_re = [
     # The loop only skips the matrix update after the last coefficient, which
     # nothing reads; performing it too changes no result.
     "replace < with <= in StateSpace<T, NX, 1, 1>::to_transfer_function",
-    # Kani harnesses compile only under `cfg(kani)`; the `kani` gate checks
-    # them, and no unit test can reach them.
-    "proofs::prove_",
+    # Kani harnesses and their helpers compile only under `cfg(kani)`; the
+    # `kani` gate checks them, and no unit test can reach them.
+    "proofs::",
+    # Sign restoration after magnitude rounding: `x <= 0` negates a zero
+    # magnitude, which is still zero.
+    "replace < with <= in round_shift_signed",
 ]
