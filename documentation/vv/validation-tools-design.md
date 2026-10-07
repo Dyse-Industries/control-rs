@@ -48,8 +48,8 @@ Primary usage scenarios:
 - **FR-4 — Monitor formulas**: Evaluates formulas built from predicates
   $g(x) \ge c$, negation, conjunction, disjunction, and past-time
   $\square_{[0,W]}$ (always) and $\lozenge_{[0,W]}$ (eventually) over the
-  last $W$ samples, and returns the quantitative robustness value at each
-  sample.
+  closed index set $\{t-W,\ldots,t\}$ ($W+1$ samples), and returns the
+  quantitative robustness value at each sample.
 - **FR-5 — Online monitor update**: Updates the robustness of a formula from
   one new sample with memory fixed by the formula's windows.
 - **FR-6 — Falsification search**: Given a simulator of the closed loop
@@ -159,29 +159,30 @@ quantitative semantics, a numerical margin by which a trace satisfies or
 violates a property [4]: $\rho(g \ge c) = g(x_t) - c$,
 $\rho(\neg\varphi) = -\rho(\varphi)$, $\wedge$ and $\vee$ take min and max,
 and $\square_{[0,W]}$ and $\lozenge_{[0,W]}$ take min and max of the
-subformula's robustness over the last $W$ samples. A positive value
-satisfies the property with that margin.
+subformula's robustness over the closed index set $\{t-W,\ldots,t\}$
+($W+1$ samples). A positive value satisfies the property with that margin.
 
 Online monitoring evaluates a property as samples arrive rather than over a
 complete trace [5], [6]. Restricting temporal operators to past windows
 makes each sample's robustness final when it arrives, so no robust
 satisfaction interval is carried. Each windowed operator keeps a ring buffer
-of $W$ subformula values and a monotone wedge for its running min or max,
-so an update is amortized $O(1)$ per operator and the memory is $W$ values
-per operator (FR-5, NFR-2). Before $W$ samples exist, the window covers the
-samples seen.
+of $W+1$ subformula values and a monotone wedge for its running min or max,
+so an update is amortized $O(1)$ per operator and the memory is $W+1$ values
+per operator (FR-5, NFR-2). Before $W+1$ samples exist, the window covers
+the samples seen.
 
 #### 4.4 Falsification
 
 `search` treats the closed loop as a black box [3]. Each evaluation draws a
 disturbance parameter uniformly in the box from a seeded SplitMix64
 generator, runs the caller's simulator into a fixed trace buffer, runs a
-monitor over it, and keeps the minimum final robustness. The search stops at
-the budget or at the first negative robustness when the caller asks for
-early exit. Random sampling is the Monte Carlo search S-TaLiRo uses to look
-for minimal-robustness trajectories [7]. The result carries the seed and
-evaluation index of the minimizer so a violation can be replayed exactly
-(FR-7).
+monitor over it, and keeps the minimum over the trace of per-sample
+robustness $\min_t \rho(\varphi, t)$ (not only $\rho$ at the final index).
+The search stops at the budget or when that running minimum goes negative
+when the caller asks for early exit. Random sampling is the Monte Carlo
+search S-TaLiRo uses to look for minimal-robustness trajectories [7]. The
+result carries the seed and evaluation index of the minimizer so a
+violation can be replayed exactly (FR-7).
 
 #### 4.5 Error Handling
 
@@ -265,9 +266,9 @@ values, so equality is exact in floating point.
 ### 7. Performance & Resource Considerations
 
 **Allocation.** `Simplex` stores one state, counters and limits; the rollout
-reuses one state buffer. A monitor stores $W$ values per windowed operator
-plus its wedge. Falsification stores one trace buffer and the best result
-(NFR-2).
+reuses one state buffer. A monitor stores $W+1$ values per windowed
+operator plus its wedge. Falsification stores one trace buffer and the best
+result (NFR-2).
 
 **Execution time.** FR-1 costs $H + 1$ model and baseline evaluations and
 $H + 1$ safe-set checks per step, so $H$ is chosen against the control
