@@ -402,7 +402,10 @@ impl<T: AdditiveGroup + SaturatingAdd + SaturatingSub + SaturatingNeg>
 
 ////////////////////////////////////////////////////////////////////////////////
 
-impl<T: MulAcc + SaturatingNeg> MulAcc for Complex<T> {
+impl<T: MulAcc + Zero> MulAcc for Complex<T>
+where
+    T::Acc: SaturatingSub,
+{
     type Acc = Complex<T::Acc>;
 
     #[inline]
@@ -412,8 +415,14 @@ impl<T: MulAcc + SaturatingNeg> MulAcc for Complex<T> {
 
     #[inline]
     fn mac(acc: Self::Acc, a: Self, b: Self) -> Self::Acc {
-        let re =
-            T::mac(T::mac(acc.re, a.re, b.re), a.im.saturating_neg(), b.im);
+        // `ac - bd` subtracts the exact `bd` product in `Acc`. Negating a
+        // component before `mac` saturates at `T::MIN` and breaks the
+        // doubled-width contract for integer and fixed-point `T`.
+        let re = T::mac(acc.re, a.re, b.re).saturating_sub(&T::mac(
+            T::ZERO.to_acc(),
+            a.im,
+            b.im,
+        ));
         let im = T::mac(T::mac(acc.im, a.re, b.im), a.im, b.re);
         Complex::new(re, im)
     }
