@@ -599,22 +599,30 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies absolute value behavior of standard integers (including
-    /// wrapping boundary checks) (FR-1 of `num-traits-design.md`, `Signed`).
+    /// Verifies absolute value behavior of standard integers, including
+    /// saturating `|MIN| -> MAX` (FR-1 of `num-traits-design.md`, `Signed`).
     fn test_num_trait_integer_absolute_value() {
-        assert_eq!((i8::MIN + 1_i8).abs(), i8::MAX);
-        assert_eq!((i16::MIN + 1_i16).abs(), i16::MAX);
-        assert_eq!((i32::MIN + 1_i32).abs(), i32::MAX);
-        assert_eq!((i64::MIN + 1_i64).abs(), i64::MAX);
-        assert_eq!((i128::MIN + 1_i128).abs(), i128::MAX);
-        assert_eq!((isize::MIN + 1).abs(), isize::MAX);
+        // UFCS: inherent `iN::abs` still panics on `MIN`; the trait must not.
+        assert_eq!(Signed::abs(i8::MIN), i8::MAX);
+        assert_eq!(Signed::abs(i16::MIN), i16::MAX);
+        assert_eq!(Signed::abs(i32::MIN), i32::MAX);
+        assert_eq!(Signed::abs(i64::MIN), i64::MAX);
+        assert_eq!(Signed::abs(i128::MIN), i128::MAX);
+        assert_eq!(Signed::abs(isize::MIN), isize::MAX);
 
-        assert_eq!((-1i8).abs(), 1i8);
-        assert_eq!((-1i16).abs(), 1i16);
-        assert_eq!((-1i32).abs(), 1i32);
-        assert_eq!((-1i64).abs(), 1i64);
-        assert_eq!((-1i128).abs(), 1i128);
-        assert_eq!((-1isize).abs(), 1isize);
+        assert_eq!(Signed::abs(i8::MIN + 1_i8), i8::MAX);
+        assert_eq!(Signed::abs(i16::MIN + 1_i16), i16::MAX);
+        assert_eq!(Signed::abs(i32::MIN + 1_i32), i32::MAX);
+        assert_eq!(Signed::abs(i64::MIN + 1_i64), i64::MAX);
+        assert_eq!(Signed::abs(i128::MIN + 1_i128), i128::MAX);
+        assert_eq!(Signed::abs(isize::MIN + 1), isize::MAX);
+
+        assert_eq!(Signed::abs(-1i8), 1i8);
+        assert_eq!(Signed::abs(-1i16), 1i16);
+        assert_eq!(Signed::abs(-1i32), 1i32);
+        assert_eq!(Signed::abs(-1i64), 1i64);
+        assert_eq!(Signed::abs(-1i128), 1i128);
+        assert_eq!(Signed::abs(-1isize), 1isize);
     }
 
     #[cfg_attr(test, test)]
