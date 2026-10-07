@@ -55,12 +55,15 @@ pub mod tests {
     use crate::tensor::ArrayTensor;
 
     /// Samples per output sequence.
-    const K: usize = 256;
+    const K: usize = if cfg!(miri) { 64 } else { 256 };
     /// Cross-check tolerance `<case>/output`, relative to the peak output.
     const OUTPUT_REL: f64 = 1e-12;
     /// Cross-check tolerance `<case>/sections`, relative to the peak
     /// response.
     const SECTIONS_REL: f64 = 1e-9;
+    /// Frequency count and spacing of the response cross-check sweep.
+    const SWEEP: usize = if cfg!(miri) { 16 } else { 64 };
+    const SWEEP_STEP: f64 = if cfg!(miri) { 0.196 } else { 0.049 };
     /// Unit roundoff of `f64`.
     const U: f64 = f64::EPSILON / 2.0;
 
@@ -376,8 +379,8 @@ pub mod tests {
             1.0,
         );
         let c = to_sections::<f64, D, D, L>(&tf)?;
-        let w: [f64; 64] = core::array::from_fn(|k| {
-            0.049 * f64::from(u8::try_from(k).unwrap_or(0)) + 0.01
+        let w: [f64; SWEEP] = core::array::from_fn(|k| {
+            SWEEP_STEP * f64::from(u8::try_from(k).unwrap_or(0)) + 0.01
         });
         let peak = w
             .iter()
@@ -471,7 +474,7 @@ pub mod tests {
     /// Peak of `sum_j |h_j|` over the impulse response of a `Df1` cascade.
     fn l1_gain(c: &[Coeffs; 3]) -> f64 {
         let mut s = BiquadCascade::<Df1<f64>, 3>::from_coefficients(c);
-        (0..4096u16)
+        (0..(if cfg!(miri) { 1024u16 } else { 4096 }))
             .map(|k| s.update(if k == 0 { 1.0 } else { 0.0 }).abs())
             .sum()
     }
@@ -577,7 +580,7 @@ pub mod tests {
         let [c] = c;
         let mut s = Df1::from(c);
         let mut state = 0x2545_F491_4F6C_DD1D_u64;
-        for _ in 0..2_000 {
+        for _ in 0..(if cfg!(miri) { 200 } else { 2_000 }) {
             let u = Q13::from_num(0.5 * uniform(&mut state));
             let raw = [s.b0, s.b1, s.b2, s.na1, s.na2]
                 .map(|v| i64::from(v.to_bits()));
@@ -747,7 +750,7 @@ pub mod tests {
                 .and_then(|row| row.get(i.get(1).copied().unwrap_or(0)))
                 .map_or(0.0, |v| v.1)
         });
-        for _ in 0..1_000 {
+        for _ in 0..(if cfg!(miri) { 100 } else { 1_000 }) {
             let x = [
                 1.5 * (uniform(&mut state) + 1.0),
                 2.0 * (uniform(&mut state) + 1.0),

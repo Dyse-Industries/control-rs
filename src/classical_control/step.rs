@@ -156,17 +156,20 @@ fn peak_of<T: Float + Copy>(
 mod tests {
     use super::*;
 
-    const H: f64 = 0.001;
+    /// Sample period; coarser under Miri, where the interpreter dominates.
+    const H: f64 = if cfg!(miri) { 0.004 } else { 0.001 };
+    /// Samples over `[0, 8]`.
+    const LEN: usize = if cfg!(miri) { 2001 } else { 8001 };
     const WN: f64 = 2.0;
     const ZETA: f64 = 0.3;
 
     /// Sample times and values.
-    type Trace = ([f64; 8001], [f64; 8001]);
+    type Trace = ([f64; LEN], [f64; LEN]);
 
     fn response() -> Trace {
         let wd = WN * (1.0 - ZETA * ZETA).sqrt();
         let phi = (1.0 - ZETA * ZETA).sqrt().atan2(ZETA);
-        let t: [f64; 8001] =
+        let t: [f64; LEN] =
             core::array::from_fn(|k| H * f64::from(u16::try_from(k).unwrap()));
         let y = t.map(|tk| {
             1.0 - (-ZETA * WN * tk).exp() * (wd * tk + phi).sin()
