@@ -357,7 +357,7 @@ pub trait MulAcc: Copy {
 | `f32`, `f64` | `Self` | `saturating_mul` then `saturating_add` (two IEEE roundings) | identity |
 | Signed and unsigned integers | doubled width (`i8` to `i16`, ..., `i64` to `i128`) | exact product, saturating add in `Acc` | clamp to `[MIN, MAX]` once |
 | `Quantized` | `FixedRepr::Acc` at scale $2\,\text{SHIFT}$ | `fixed-num-design.md` FR-8 | one ties-to-even rescale, saturating narrow |
-| `Complex<T>` (`T: SaturatingNeg`) | `Complex<T::Acc>` | $\text{acc}_r + a_r b_r - a_i b_i$, $\text{acc}_i + a_r b_i + a_i b_r$ as four `T::mac` | component-wise `T::from_acc` |
+| `Complex<T>` (`T: Zero`, `T::Acc: SaturatingSub`) | `Complex<T::Acc>` | $\text{acc}_r + a_r b_r - a_i b_i$ via `T::mac` then `Acc` subtract of the exact $a_i b_i$ product; $\text{acc}_i + a_r b_i + a_i b_r$ as two `T::mac` | component-wise `T::from_acc` |
 
 The float implementation is the unfused operator pair. It adds no
 dependency and runs at the cost of a multiply and an add on every target.
