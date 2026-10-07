@@ -4,22 +4,21 @@
 //!
 //! ## Functional Requirement Coverage (`num-traits-design.md`)
 //!
-//! - **FR-1** (granular trait hierarchy: `Zero`/`One`/`AdditiveGroup`/
-//!   `Signed`/`Unsigned`/`Radical`/`Exponential`/`Trig`): per-trait axiom
-//!   and identity checks, plus the `Unsigned`/`Integer`/`SaturatingInteger`
-//!   marker test.
-//! - **FR-2** (functional containers `Integer`/`SaturatingInteger`/`Float`):
-//!   `test_num_trait_integer_axioms`, `test_num_trait_float_axioms` and
-//!   (in `op_tests.rs`) the saturating add/sub/mul suites.
-//! - **FR-3** (unified `Scalar`): `test_num_trait_scalar_properties` and
-//!   `test_num_trait_scalar_markers`; also exercised transitively via
-//!   `Complex<T>: Scalar` in `complex_num_tests.rs`.
+//! - **FR-1** (overflow modes): the wrapping and saturating add, subtract and
+//!   multiply suites in `op_tests.rs`.
+//! - **FR-2** (unsigned ring bound): `test_num_trait_unsigned_integer_markers`.
+//! - **FR-3**, **FR-4** (conjugation, real projection):
+//!   `test_num_trait_conjugate_and_scalar_projections` and
+//!   `test_num_trait_scalar_properties`.
+//! - **FR-5** (implementor partition): `test_num_trait_scalar_markers`.
+//! - **FR-6** (total arithmetic): the saturating suites in `op_tests.rs`.
 //! - **FR-7** (`MulAcc`): `test_mul_acc_float_unfused`,
-//!   `test_mul_acc_integer_exact_chain`, `test_mul_acc_complex_formula` and
-//!   `test_mul_acc_open_trait`.
+//!   `test_mul_acc_integer_exact_chain`, `test_mul_acc_complex_formula`,
+//!   `test_mul_acc_complex_min_imag`,
+//!   `test_mul_acc_complex_fixed_full_scale` and `test_mul_acc_open_trait`.
 //!
 //! `CartesianQuadrant2D`, hyperbolic functions and the custom-`atan2`
-//! fallback tests exercise implementation details of FR-1's `Trig`/`Float`
+//! fallback tests exercise implementation details of the `Trig`/`Float`
 //! traits rather than a separately numbered requirement.
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
@@ -849,7 +848,7 @@ pub mod num_trait_test_suite {
     /// an imaginary part is `T::MIN` (`num-traits-design.md` FR-7).
     fn test_mul_acc_complex_min_imag() {
         // (0 + MIN i)(0 + i) contributes +|MIN| to the real accumulator.
-        // Negating MIN before `mac` would lose one ulp and yield 0 here.
+        // Negating MIN before `mac` would lose one unit and yield 0 here.
         let a1 = Complex::new(0i16, i16::MIN);
         let b1 = Complex::new(0i16, 1);
         let a2 = Complex::new(0i16, i16::MAX);
@@ -862,13 +861,29 @@ pub mod num_trait_test_suite {
         );
         assert_eq!(Complex::<i16>::from_acc(acc), Complex::new(1, 0));
         // Prior real -10000 plus exact |MIN| stays inside i16 and must not
-        // lose the one ulp that `saturating_neg(MIN)` would drop.
+        // lose the one unit that `saturating_neg(MIN)` would drop.
         let got = Complex::<i16>::from_acc(Complex::<i16>::mac(
             Complex::<i16>::new(-10_000, 0).to_acc(),
             a1,
             b1,
         ));
         assert_eq!(got, Complex::new(22_768, 0));
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies `Complex<Fixed>` `MulAcc` keeps the exact `Acc` product when
+    /// an imaginary part is `MIN` and `MAX` (`num-traits-design.md` FR-7).
+    fn test_mul_acc_complex_fixed_full_scale() {
+        type Q = crate::math::fixed_num::Fixed<i16, 13>;
+        let one = Q::from_bits(1 << 13);
+        let a1 = Complex::new(Q::from_bits(0), Q::from_bits(i16::MIN));
+        let a2 = Complex::new(Q::from_bits(0), Q::from_bits(i16::MAX));
+        let b = Complex::new(Q::from_bits(0), one);
+        let zero = Complex::new(Q::from_bits(0), Q::from_bits(0));
+        // |MIN| - MAX = one raw unit of the real part.
+        let acc =
+            Complex::<Q>::mac(Complex::<Q>::mac(zero.to_acc(), a1, b), a2, b);
+        assert_eq!(Complex::<Q>::from_acc(acc).re.to_bits(), 1);
     }
 
     #[cfg_attr(test, test)]
