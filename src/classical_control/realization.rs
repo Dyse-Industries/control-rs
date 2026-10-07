@@ -762,6 +762,81 @@ pub mod tests {
             assert!(is_stable(&s));
         }
     }
+
+    /// One section with `b0` set and the other coefficients zero.
+    const fn with_b0(b0: f64) -> [Coeffs; 1] {
+        [Coeffs {
+            b0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+        }]
+    }
+
+    #[cfg_attr(test, test)]
+    /// `quantize` accepts exactly the values that round into the
+    /// representable range: `[MIN - delta/2, MAX + delta/2)` (FR-19).
+    fn quantize_range_edges() {
+        let delta = 2f64.powi(-13);
+        let (min, max) = (-4.0, 4.0 - delta);
+        assert!(quantize::<i16, 13, 1>(&with_b0(min)).is_ok());
+        assert!(quantize::<i16, 13, 1>(&with_b0(max)).is_ok());
+        let bad = Err(ClassicalError::CoefficientRange { section: 0 });
+        assert_eq!(quantize::<i16, 13, 1>(&with_b0(min - delta)), bad);
+        assert_eq!(quantize::<i16, 13, 1>(&with_b0(max + delta / 2.0)), bad);
+    }
+
+    #[cfg_attr(test, test)]
+    /// The imaginary tolerance of `is_real` scales with `max(1, |z|)`.
+    fn real_tolerance_scales_with_magnitude() {
+        assert!(is_real(Complex::new(1000.0, 1e-6)));
+        assert!(!is_real(Complex::new(1000.0, 1e-3)));
+        assert!(!is_real(Complex::new(0.5, 1e-6)));
+        assert!(is_real(Complex::new(0.5, 1e-9)));
+    }
+
+    #[cfg_attr(test, test)]
+    /// Equal scores select the earliest remaining pole and zero.
+    fn ties_select_earliest() {
+        let (a, b) = (Complex::new(0.5, 0.5), Complex::new(0.5, -0.5));
+        let mut poles = [Some(a), Some(b)];
+        let got = take_pole(&mut poles, |_| true, |_| 1.0);
+        assert_eq!(got, Some(a));
+        assert_eq!(poles, [None, Some(b)]);
+        let mut zeros = [Zero::At(a), Zero::At(b)];
+        let target = Complex::new(0.5, 0.0);
+        let got = take_zero(&mut zeros, |_| true, target);
+        assert_eq!(got, Zero::At(a));
+        assert_eq!(zeros, [Zero::Used, Zero::At(b)]);
+    }
+
+    #[cfg_attr(test, test)]
+    /// A lone real pole is paired with a single real zero even when more
+    /// real zeros remain (FR-10).
+    fn lone_real_pole_takes_one_zero() {
+        let c = check_sections::<4, 2>(
+            &poly(&[-0.5, 0.3, 0.6], &[]),
+            &poly(&[0.97], &[(0.8, 1.0)]),
+        )
+        .unwrap();
+        let first_order = c
+            .iter()
+            .filter(|s| s.a2.to_bits() == 0 && s.b2.to_bits() == 0)
+            .count();
+        assert_eq!(first_order, 1);
+    }
+
+    #[cfg_attr(test, test)]
+    /// A complex pole takes a complex zero pair when only one real zero
+    /// remains, leaving the real zero for the real pole (FR-10).
+    fn complex_pole_preserves_last_real_zero() {
+        check_sections::<4, 2>(
+            &poly(&[0.9], &[(1.0, 2.5)]),
+            &poly(&[0.7], &[(0.95, 0.3)]),
+        )
+        .unwrap();
+    }
 }
 
 /// `L` section coefficient sets, first section first.

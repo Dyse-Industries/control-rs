@@ -273,6 +273,40 @@ mod tests {
         assert!(m.stability_margin > 0.0 && m.stability_margin < 1.0);
     }
 
+    /// `L(s) = (c0 + c1 s + c2 s^2 + c3 s^3) / 1`.
+    fn cubic(c: [f64; 4]) -> ArrayTransferFunction<f64, 4, 4> {
+        ArrayTransferFunction::continuous(c, [1.0, 0.0, 0.0, 0.0])
+    }
+
+    #[test]
+    fn sample_on_real_axis_is_not_negative_half() {
+        // Im L(1) = 0 exactly: the bracket lies on the side where Im L < 0.
+        let sys = cubic([-2.0, 1.0, 0.0, 1.0]);
+        let m = stability_margins::<_, 4, 4, 3, 1, 40>(&sys, &[0.5, 1.0, 1.5]);
+        let pc = m.phase_crossings[0].unwrap();
+        assert!(pc.omega > 1.0);
+    }
+
+    #[test]
+    fn sample_on_imaginary_axis_is_not_bracketed() {
+        // Re L(1) = 0 exactly at one end of the pair, Im L changes sign.
+        let sys = cubic([1.0, 1.44, 1.0, 1.0]);
+        let fwd = stability_margins::<_, 4, 4, 2, 1, 40>(&sys, &[1.0, 1.5]);
+        assert!(fwd.phase_crossings[0].is_none());
+        let rev = stability_margins::<_, 4, 4, 2, 1, 40>(&sys, &[1.5, 1.0]);
+        assert!(rev.phase_crossings[0].is_none());
+    }
+
+    #[test]
+    fn unit_gain_sample_is_not_above() {
+        // |1 / (j w)| = 1 exactly at w = 1.
+        let sys =
+            ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [0.0, 1.0]);
+        let m = stability_margins::<_, 1, 2, 3, 1, 40>(&sys, &[0.5, 1.0, 2.0]);
+        let gc = m.gain_crossings[0].unwrap();
+        assert!(gc.omega < 1.0);
+    }
+
     #[test]
     fn absent_crossover() {
         let sys =
