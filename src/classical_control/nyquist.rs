@@ -89,8 +89,15 @@ where
             omega_max.saturating_mul(&u.saturating_mul(&u).saturating_mul(&u));
         let s = indent(omega, poles.get(..order).unwrap_or(&[]), indent_radius);
         let l = sys.evaluate_complex(s);
-        if l.saturating_add(&one).magnitude()
-            <= tol.saturating_mul(&T::ONE.saturating_add(&l.magnitude()))
+        // Require a strict finite margin above the relative floor. A NaN
+        // sample from a pole on the contour (`Complex` division by zero
+        // yields 0/0) has no ordering against the threshold, so
+        // `partial_cmp` returns `None` and the contour is rejected —
+        // unlike the previous `<=` check, which treated NaN as a pass.
+        let margin = l.saturating_add(&one).magnitude();
+        let threshold =
+            tol.saturating_mul(&T::ONE.saturating_add(&l.magnitude()));
+        if margin.partial_cmp(&threshold) != Some(core::cmp::Ordering::Greater)
         {
             return Err(ClassicalError::ContourThroughCriticalPoint);
         }
@@ -245,11 +252,27 @@ mod tests {
 
     #[test]
     fn pole_on_indent_radius_is_not_right_half() {
+        // Pole at Re = r. Even M omits w = 0 so the indent never lands on
+        // the pole; P still excludes Re == r (strict `Re > r`).
         let r = 1e-3;
         let sys =
             ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [-r, 1.0]);
-        let got = count(&sys).unwrap();
+        let mut contour = [Complex::new(0.0, 0.0); 4];
+        let got = nyquist_encirclements(&sys, 100.0, r, &mut contour).unwrap();
         assert_eq!(got.open_loop_rhp, 0);
+    }
+
+    #[test]
+    fn pole_on_indent_contour_is_rejected() {
+        // Pole at s = r: the w = 0 indent sample lands on the pole,
+        // Complex division yields NaN, and the contour must error.
+        let r = 1e-3;
+        let sys =
+            ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [-r, 1.0]);
+        assert_eq!(
+            count(&sys),
+            Err(ClassicalError::ContourThroughCriticalPoint)
+        );
     }
 
     #[test]

@@ -248,6 +248,22 @@ pub mod tests {
     }
 
     #[cfg_attr(test, test)]
+    /// A zero leading denominator coefficient returns
+    /// `ZeroLeadingCoefficient` instead of a NaN-scaled filter (FR-8).
+    fn df2t_zero_leading_denominator() {
+        // Ascending den `[a0, a1] = [1, 0]` → descending lead `a1 = 0`.
+        let tf = ArrayTransferFunction::<f64, 2, 2>::discrete(
+            [1.0, 0.5],
+            [1.0, 0.0],
+            0.01,
+        );
+        assert!(matches!(
+            DirectForm2T::<f64, 1>::from_transfer_function(&tf),
+            Err(ClassicalError::ZeroLeadingCoefficient)
+        ));
+    }
+
+    #[cfg_attr(test, test)]
     /// `DirectForm2T<Fixed<i32, 29>, 2>` driven at full scale saturates
     /// without panic or wrap (FR-8).
     fn df2t_fixed_total() {
@@ -1124,7 +1140,10 @@ impl<T: Float + Copy + MulAcc, const ORDER: usize> DirectForm2T<T, ORDER> {
     /// `ORDER` is the denominator degree `D - 1` and `N <= D`.
     ///
     /// # Errors
-    /// [`ClassicalError::NotDiscrete`] when `tf` is continuous.
+    /// - [`ClassicalError::NotDiscrete`]: `tf` is continuous.
+    /// - [`ClassicalError::ZeroLeadingCoefficient`]: the leading
+    ///   denominator coefficient is zero after conversion to descending
+    ///   powers of `z`.
     pub fn from_transfer_function<const N: usize, const D: usize>(
         tf: &ArrayTransferFunction<T, N, D>,
     ) -> Result<Self, ClassicalError>
@@ -1140,6 +1159,9 @@ impl<T: Float + Copy + MulAcc, const ORDER: usize> DirectForm2T<T, ORDER> {
         }
         let (num, den) = descending::<T, N, D>(tf);
         let lead = den.first().copied().unwrap_or(T::ONE);
+        if lead.is_zero() {
+            return Err(ClassicalError::ZeroLeadingCoefficient);
+        }
         let scale = |v: &T| v.saturating_div(&lead);
         let mut b = [T::ZERO; ORDER];
         let mut a = [T::ZERO; ORDER];
