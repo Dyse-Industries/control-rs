@@ -49,7 +49,8 @@ type ComplexSlice<T> = [Complex<T>];
 ///   or `M < 3`.
 /// - [`ClassicalError::Root`]: the open-loop poles cannot be computed.
 /// - [`ClassicalError::ContourThroughCriticalPoint`]: a sample satisfies
-///   `|1 + L| <= sqrt(eps) (1 + |L|)`.
+///   `|1 + L| <= sqrt(eps) (1 + |L|)`, or `L` is non-finite (an open-loop
+///   pole lies on the indented contour).
 pub fn nyquist_encirclements<
     T: Float + Copy,
     const N: usize,
@@ -89,10 +90,13 @@ where
             omega_max.saturating_mul(&u.saturating_mul(&u).saturating_mul(&u));
         let s = indent(omega, poles.get(..order).unwrap_or(&[]), indent_radius);
         let l = sys.evaluate_complex(s);
-        if l.saturating_add(&one).magnitude()
-            <= tol.saturating_mul(&T::ONE.saturating_add(&l.magnitude()))
-        {
-            return Err(ClassicalError::ContourThroughCriticalPoint);
+        // `partial_cmp` rejects non-finite `L` (NaN from a pole on the
+        // indent) as well as samples within the critical-point tolerance.
+        let dist = l.saturating_add(&one).magnitude();
+        let bound = tol.saturating_mul(&T::ONE.saturating_add(&l.magnitude()));
+        match dist.partial_cmp(&bound) {
+            Some(core::cmp::Ordering::Greater) => {}
+            _ => return Err(ClassicalError::ContourThroughCriticalPoint),
         }
         *dst = l;
     }
@@ -244,12 +248,16 @@ mod tests {
     }
 
     #[test]
-    fn pole_on_indent_radius_is_not_right_half() {
+    fn pole_on_indent_radius_is_contour_error() {
+        // Pole at `s = r` lies on the rightmost indent sample `s = r`, so
+        // `L` is NaN and the contour is rejected (FR-4).
         let r = 1e-3;
         let sys =
             ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [-r, 1.0]);
-        let got = count(&sys).unwrap();
-        assert_eq!(got.open_loop_rhp, 0);
+        assert_eq!(
+            count(&sys),
+            Err(ClassicalError::ContourThroughCriticalPoint)
+        );
     }
 
     #[test]
