@@ -535,7 +535,8 @@ advertise no derivative kick [27].
 pub enum ClassicalError {
     /// Root finding failed for a locus gain or a factorization (FR-1, FR-10).
     Root(RootError),
-    /// The Routh leading coefficient is zero (FR-2).
+    /// A leading polynomial coefficient required for scaling is zero
+    /// (FR-2, FR-8).
     ZeroLeadingCoefficient,
     /// The Nyquist contour passes through -1 (FR-4).
     ContourThroughCriticalPoint,

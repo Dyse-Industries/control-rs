@@ -39,7 +39,7 @@ type ComplexSlice<T> = [Complex<T>];
 /// Nyquist data. Samples lie at `w_k = w_max u_k^3` with `u_k`
 /// uniform in `[-1, 1]`, dense near `w = 0`; an odd `M` places one
 /// sample at `w = 0`. Near an open-loop pole `p` with
-/// `|Re p| <= r`, a sample `s = jw` moves to
+/// `|Re p| < r`, a sample `s = jw` moves to
 /// `jw + sqrt(r^2 - (w - Im p)^2)`. The routine
 /// reports the count and `P`; it does not infer closed-loop stability.
 ///
@@ -49,7 +49,8 @@ type ComplexSlice<T> = [Complex<T>];
 ///   or `M < 3`.
 /// - [`ClassicalError::Root`]: the open-loop poles cannot be computed.
 /// - [`ClassicalError::ContourThroughCriticalPoint`]: a sample satisfies
-///   `|1 + L| <= sqrt(eps) (1 + |L|)`.
+///   `|1 + L| <= sqrt(eps) (1 + |L|)`, or `L` is non-finite (contour
+///   through an open-loop pole).
 pub fn nyquist_encirclements<
     T: Float + Copy,
     const N: usize,
@@ -89,10 +90,15 @@ where
             omega_max.saturating_mul(&u.saturating_mul(&u).saturating_mul(&u));
         let s = indent(omega, poles.get(..order).unwrap_or(&[]), indent_radius);
         let l = sys.evaluate_complex(s);
-        if l.saturating_add(&one).magnitude()
-            <= tol.saturating_mul(&T::ONE.saturating_add(&l.magnitude()))
-        {
-            return Err(ClassicalError::ContourThroughCriticalPoint);
+        let residual = l.saturating_add(&one).magnitude();
+        let bound = tol.saturating_mul(&T::ONE.saturating_add(&l.magnitude()));
+        // Non-finite `L` (contour through an open-loop pole) yields `None`
+        // from `partial_cmp` and would otherwise bypass a `<=` check.
+        match residual.partial_cmp(&bound) {
+            Some(core::cmp::Ordering::Greater) => {}
+            _ => {
+                return Err(ClassicalError::ContourThroughCriticalPoint);
+            }
         }
         *dst = l;
     }
@@ -113,7 +119,9 @@ fn indent<T: Float + Copy>(
     let r2 = r.saturating_mul(&r);
     let shift = poles
         .iter()
-        .filter(|p| p.re.abs() <= r)
+        // Strict `<`: a pole with `|Re| == r` lies on the indent arc.
+        // Including it would place a sample on the pole (`L` non-finite).
+        .filter(|p| p.re.abs() < r)
         .map(|p| {
             let d = omega.saturating_sub(&p.im);
             r2.saturating_sub(&d.saturating_mul(&d))
@@ -250,6 +258,22 @@ mod tests {
             ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [-r, 1.0]);
         let got = count(&sys).unwrap();
         assert_eq!(got.open_loop_rhp, 0);
+    }
+
+    #[test]
+    fn pole_on_indent_radius_does_not_emit_nan_contour() {
+        // Pole at `Re = r`: indent must not land on the pole and return a
+        // false `(N, P) = (0, 0)` built from NaN samples.
+        let r = 1e-3;
+        let sys =
+            ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [-r, 1.0]);
+        let mut contour = [Complex::new(0.0, 0.0); 5];
+        let res = nyquist_encirclements(&sys, 100.0, r, &mut contour);
+        assert!(res.is_ok(), "{res:?}");
+        assert!(
+            contour.iter().all(|z| z.re.is_finite() && z.im.is_finite()),
+            "contour={contour:?}"
+        );
     }
 
     #[test]
