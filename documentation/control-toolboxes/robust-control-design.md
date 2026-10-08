@@ -140,11 +140,15 @@ src/robust_control/
 #### 4.2 Interconnection
 
 For output multiplicative uncertainty $P = (I + W\Delta) P_0$ under feedback
-$K$, the block sees $M = -(I + P_0 K)^{-1} P_0 K W$, the weighted
+$K$, the block sees $M = -W P_0 K (I + P_0 K)^{-1}$, the weighted output
 complementary sensitivity [1]. For additive uncertainty $P = P_0 + W\Delta$,
-$M = -K (I + P_0 K)^{-1} W$. Both are built from `StateSpace::series` and
-`StateSpace::feedback`; the result is a `StateSpace` whose state dimension
-is the sum of the three, bounded by `state-space-design.md` C-2.
+$M = -W K (I + P_0 K)^{-1}$. Both place $W$ on the left of the loop map so
+the weight matches the stated $W\Delta$ factor order in MIMO. The input
+multiplicative form $P = P_0 (I + W\Delta)$ with
+$M = -(I + P_0 K)^{-1} P_0 K W$ is outside FR-1. Both interconnections
+are built from `StateSpace::series` and `StateSpace::feedback`; the result
+is a `StateSpace` whose state dimension is the sum of the three, bounded by
+`state-space-design.md` C-2.
 
 #### 4.3 Small-Gain Test
 
@@ -235,8 +239,8 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 
 | Condition | Requirement | Method | Target | Criterion |
 |:--|:--|:--|:--|:--|
-| VC-1.1 | FR-1 | `libtest` | `control_rs::robust_control::interconnect::tests::multiplicative_matches_formula` | $M(j\omega)$ equals $-(I + P_0K)^{-1}P_0KW$ evaluated directly at 10 frequencies within §6.2; FR-1 holds iff all conditions hold |
-| VC-1.2 | FR-1 | `libtest` | `control_rs::robust_control::interconnect::tests::additive_matches_formula` | $M(j\omega)$ equals $-K(I + P_0K)^{-1}W$ at 10 frequencies within §6.2 |
+| VC-1.1 | FR-1 | `libtest` | `control_rs::robust_control::interconnect::tests::multiplicative_matches_formula` | $M(j\omega)$ equals $-WP_0K(I + P_0K)^{-1}$ evaluated directly at 10 frequencies within §6.2; FR-1 holds iff all conditions hold |
+| VC-1.2 | FR-1 | `libtest` | `control_rs::robust_control::interconnect::tests::additive_matches_formula` | $M(j\omega)$ equals $-WK(I + P_0K)^{-1}$ at 10 frequencies within §6.2 |
 | VC-2.1 | FR-2 | `libtest` | `control_rs::robust_control::robstab::tests::small_gain_verdicts` | Loops with $\lVert M \rVert_\infty$ of 0.5 and 2 return robust and not robust; FR-2 holds iff all conditions hold |
 | VC-2.2 | FR-2 | `libtest` | `control_rs::robust_control::robstab::tests::destabilizing_delta_exists` | For the non-robust loop, the constant $\Delta$ built at the peak frequency destabilizes the closed loop |
 | VC-2.3 | FR-2 | `libtest` | `control_rs::robust_control::robstab::tests::unstable_nominal` | An unstable $M$ returns `UnstableNominal` |
@@ -321,6 +325,7 @@ quantity and `f64` is the default.
 | Revision | Date | Author | Description |
 |:--|:--|:--|:--|
 | 1.0 | October 4, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-5, NFR-1 to NFR-2, C-1 to C-5. |
+| 1.1 | October 7, 2026 | @MitchellDScott | Correct §4.2 / VC-1 $M$ formulas to output-multiplicative and left-weighted additive forms. |
 
 ---
 
