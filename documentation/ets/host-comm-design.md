@@ -1,6 +1,6 @@
 # HostComms (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_7,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -38,6 +38,9 @@ session management, and decoding are owned by `control-rs-ets-host::ETSBridge`
   hardware identity and environment metadata—including board identifier, core
   clock frequency, FPU status, and link configuration—enabling the host to
   interpret timing and platform capabilities without local out-of-band assumptions.
+- **FR-6 — Lossless Command Reception**: A target driver must deliver every
+  complete, CRC-valid command frame it receives exactly once and in arrival
+  order, however many bytes one transport read returns.
 
 #### 2.2 Non-Functional Requirements
 
@@ -145,8 +148,9 @@ pub trait HostComms {
 
     /// Read incoming bytes and try to parse a Command.
     ///
-    /// This should be non-blocking.
-    fn poll_command(&mut self) -> PollResult<Self::Error>;
+    /// Must not wait for input. The returned command may borrow the
+    /// implementor's frame buffer until the next call.
+    fn poll_command(&mut self) -> PollResult<'_, Self::Error>;
 
     /// Send a telemetry message to the host.
     fn send_telemetry(
@@ -160,6 +164,13 @@ The associated type `Error` allows concrete drivers to bubble up
 hardware-specific failures (for example, framing errors, overflow flags, socket
 disconnects) to the calling Server loop.
 
+`PollResult<'a, E>` is `Result<Option<Command<'a>>, E>`. The lifetime lets
+`Command::LoopInput` borrow its payload from the frame reader instead of
+copying it (`loop-suite-design.md` §4.2). Loops poll once per step
+boundary, so a poll that waits for input stalls a free-running run. The QEMU
+semihosting drivers wait in `READC`, so QEMU runs loops in lockstep
+only, where the run waits for host input anyway (`loop-suite-design.md` C-8).
+
 #### 4.2. Command Schema & Binary Serialization
 
 Commands originating from the host are defined by a strict, shared Rust schema
@@ -167,7 +178,7 @@ to ensure structural alignment:
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Command {
+pub enum Command<'a> {
     /// Request the target to stream the list of all suites, tests and settings.
     ListSuites,
     /// Request execution of a specific test.
@@ -188,6 +199,11 @@ pub enum Command {
     },
     /// Request the target to reset.
     TryReset,
+    // Revision 2, appended: loops (`loop-suite-design.md` §4.2).
+    StartLoop { suite_id: u16, test_id: u16, max_steps: u64, lockstep: bool },
+    StopNow { suite_id: u16, test_id: u16 },
+    Heartbeat,
+    LoopInput { suite_id: u16, test_id: u16, seq: u64, payload: &'a [u8] },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,8 +223,18 @@ pub enum Telemetry<'a> {
         core_clock_hz: u32,
         fpu_flags: u8,
     },
+    // Revision 2, appended: loops (`loop-suite-design.md` §4.2).
+    SuiteLoops { /* suite_id, loop_count: 0 or 1 */ },
+    LoopInfo { /* suite_id, test_id, name, description, input_type, output_type */ },
+    LoopState { /* suite_id, test_id, state: LoopRunState, message */ },
+    LoopSample { /* suite_id, test_id, seq, payload */ },
+    TeardownReport { /* suite_id, test_id, ok, message */ },
+    LoopStats { /* suite_id, test_id, steps, time_us */ },
 }
 ```
+
+`loop-suite-design.md` §4.2 is the field-level source for the revision 2
+variants and for the appended fieldless enum `LoopRunState`.
 
 To minimize parsing overhead and memory usage in a `#![no_std]` environment, the
 architecture uses the **`postcard`** crate.
@@ -264,6 +290,13 @@ Two rules keep the constant honest:
   removing, or reordering fields requires defining a new variant or incrementing
   `PROTOCOL_VERSION`.
 
+Revision 2 (`PROTOCOL_VERSION = 2`) appends four `Command` and six
+`Telemetry` variants for loops. Every revision 1 variant keeps its
+discriminant and payload, so its bytes are unchanged; a revision 1 host still
+refuses a revision 2 target under FR-4, because a revision 1 decoder cannot
+read the appended variants. Giving `Command` a lifetime changes the Rust type,
+not the encoding.
+
 #### 4.3 Log Payload Representation
 
 Standard string formatting on a microcontroller is computationally and space-expensive,
@@ -311,6 +344,72 @@ integrity validation:
 
 Users are responsible for implementing the `HostComms` trait for their target
 board.
+
+##### Chunked Reads and `BufferedFrameReader` (FR-6)
+
+A transport that returns multiple bytes per read, such as a 64-byte USB CDC
+packet or a UART DMA block, can hold more than one frame. A poll returns at
+most one command, so the bytes after the end of the first complete frame
+must survive until the next poll. Discarding them loses commands silently:
+the frames pass CRC and no error is raised. The shipped Teensy driver had
+this defect; a `StopNow` arriving in the same USB packet as a `Heartbeat` was
+lost.
+
+`control-rs-ets::comms` provides the retention once, so drivers do not
+reimplement it:
+
+```rust
+pub struct BufferedFrameReader<const N: usize> {
+    reader: FrameReader,
+    buf: [u8; N],
+    pos: usize, // next unprocessed byte
+    len: usize, // bytes held from the last read
+}
+
+impl<const N: usize> BufferedFrameReader<N> {
+    /// Feed held bytes first, stopping after the byte that completes a
+    /// frame. Call `read` only when no bytes are held, at most once per
+    /// poll. Returns `Ok(None)` when the held bytes and that read complete
+    /// no frame.
+    pub fn poll<E>(
+        &mut self,
+        read: impl FnOnce(&mut [u8]) -> Result<usize, E>,
+    ) -> PollResult<'_, E>;
+}
+```
+
+Rules:
+
+- A poll processes at most `N` bytes, so its cost is bounded
+  (`loop-suite-design.md` NFR-2).
+- `read` is not called while bytes are held, so the transport's own buffer
+  applies back-pressure instead of the driver overwriting held bytes.
+- A CRC-valid frame that does not decode as `Command` is dropped and the
+  next poll continues after it, as `FrameReader` does today.
+- Because the returned `Command<'_>` borrows the reader's payload buffer,
+  the implementation locates the completing byte inside the loop and decodes
+  after it, so the conditional borrow does not cross loop iterations.
+
+A driver that reads one byte per poll, such as the QEMU semihosting drivers,
+cannot hold surplus bytes and may keep using `FrameReader` directly. The
+Teensy driver becomes:
+
+```rust
+fn poll_command(&mut self) -> PollResult<'_, ()> {
+    self.service_usb();
+    if !self.configured {
+        return Ok(None);
+    }
+    let class = &mut self.usb_class;
+    self.rx.poll(|buf| match class.read(buf) {
+        Ok(n) => Ok(n),
+        Err(usb_device::UsbError::WouldBlock) => Ok(0),
+        Err(_) => Err(()),
+    })
+}
+```
+
+with `rx: BufferedFrameReader<64>` in place of `reader: FrameReader`.
 
 ```rust
 // Example skeleton for a target UART implementation
@@ -390,6 +489,7 @@ and that the target transmits a diagnosable record of its own crash.
 | Metamorphic relation | `#[test]` flipping one payload byte and asserting the frame is rejected, not delivered |
 | Requirements-based test | `#[test]` asserting a discovery response carrying a foreign `PROTOCOL_VERSION` is refused before any payload is acted on |
 | Requirements-based test | `#[test]` asserting `Telemetry::TargetInfo` packet contains valid protocol version, board ID, clock frequency, and FPU flags |
+| Requirements-based test | `#[test]` driving `BufferedFrameReader` with a scripted `read` that returns multiple frames per chunk, frames split across chunks and noise between frames (FR-6) |
 | Resource usage evaluation | Stack-depth measurement across the serialization path; `no_alloc` review |
 | On-target execution | ETS timing regression measuring jitter introduced by telemetry |
 | On-target execution | Fault injection: panic, hard fault and brownout on a physical target |
@@ -425,6 +525,10 @@ reachable only from a real fault and is covered by fault injection.
 | Serialization stack cost | Stack painting across the encode path | Peak bytes | Within the per-target budget of `cpu-profiler-design.md` |
 | Telemetry jitter | Control-loop period with and without telemetry enabled | Added jitter | $\le 10\ \mu\text{s}$ (NFR-1) |
 | Allocation freedom | Disassembly and source inspection | Allocator symbols on the transport path | 0 |
+| Multi-frame chunk | One `read` returning 2 and 3 frames, then empty reads | Commands returned over successive polls, and `read` calls | Every frame, in order; one `read` until the held bytes are consumed |
+| Split frame | One frame divided across 2 and 3 reads at every byte offset | Commands returned | Exactly 1, on the poll that supplies its last byte |
+| Noise between frames | Non-start bytes and a CRC-invalid frame between two valid frames | Commands returned | The 2 valid frames, in order |
+| Teensy reception | Host sends `Heartbeat` and `StopNow` back to back to a Teensy 4.1 | Commands the target acts on | Both, every trial of 100 |
 
 The `CRC_16_IBM_SDLC` parameterization is taken from the `crc` crate's
 well-known algorithm set, whose documented check value for the standard input
@@ -492,6 +596,8 @@ reproduce that value.
 | **Step 3: Target Crash Handlers**                    | The panic handler is the one `control-rs-macros` generates (`macros-design.md` FR-5), routing the black box through `HostComms`. Persisting it to a RAM region across reset is an optional extension. | 1 week           |
 | **Step 4: TargetInfo Wire Dispatch** — *Shipped*     | `Telemetry::TargetInfo` (last variant) carries `PROTOCOL_VERSION` = 1, board ID, core clock and FPU flags; sent first in discovery. Golden vector `test_golden_wire_vector_target_info`; host protocol-mismatch tests. Physical-target check is PR9. | Complete         |
 | **Step 5: Target Hardware Integration**              | Verify framed transmission and crash capture across Teensy 4.1 hardware and QEMU ARM Cortex-M emulation.                                   | 2 weeks          |
+| **Step 6: Revision 2 Loop Variants**            | Append the loop `Command` and `Telemetry` variants and `LoopRunState`, set `PROTOCOL_VERSION` = 2, change `poll_command` to `PollResult<'_, E>` in every implementor, and extend the golden vectors (`loop-suite-design.md` Phase 1). | 1 day |
+| **Step 7: Lossless Chunked Reception**                | Add `BufferedFrameReader` with its tests and move the Teensy driver to it (FR-6). Independent of loops; prerequisite of `loop-suite-design.md` Phase 1. | 0.5 days |
 
 ---
 
@@ -509,6 +615,10 @@ reproduce that value.
 | 1.7      | September 16, 2026 | @MitchellDScott | Step 4 marked outstanding repair: `TargetInfo` / `PROTOCOL_VERSION` still absent on the wire; blocks host FR-8 and TUI FR-1. |
 | 1.8      | September 24, 2026 | @MitchellDScott | FR-4/FR-5 stated as unmet until `PROTOCOL_VERSION` and `TargetInfo` ship; `defmt` deferred, not chosen; §4.5 skeleton takes `&Telemetry<'_>`; §4.6 drops `probe-rs` RTT as a host transport; Step 2 driver model undecided; Step 3 uses the `control-rs-macros` panic handler. |
 | 1.9      | September 24, 2026 | @MitchellDScott | Step 4 shipped: `PROTOCOL_VERSION` = 1 and `Telemetry::TargetInfo` in `control-rs-ets::comms`, sent first in discovery; FR-4/FR-5 met. |
+| 1.10     | October 7, 2026 | @MitchellDScott | FR-4 revision 2 for loop suites (`loop-suite-design.md` 1.2): appended `Command` and `Telemetry` variants, `Command<'a>` and `PollResult<'_, E>` for the borrowed `LoopInput` payload, `poll_command` must not wait; §9 Step 6. |
+| 1.11     | October 7, 2026 | @MitchellDScott | FR-6 lossless command reception: §4.5 `BufferedFrameReader` retains bytes after the first complete frame of a chunked read, Teensy driver moved to it; §6 test and four acceptance rows; §9 Step 7. |
+| 1.12     | October 7, 2026 | @MitchellDScott | §4.1: QEMU semihosting drivers support lockstep loop-suite runs only (`loop-suite-design.md` C-8). |
+| 1.13     | October 7, 2026 | @MitchellDScott | Revision 2 variants address a loop by `(suite_id, test_id)` and add `SuiteLoops` (`loop-suite-design.md` 1.7). |
 
 ---
 

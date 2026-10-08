@@ -27,6 +27,15 @@ SECTIONS
     . = ALIGN(4);
     PROVIDE_HIDDEN (__ets_test_suites_end = .);
   } > FLASH
+
+  .ets_loops :
+  {
+    . = ALIGN(4);
+    PROVIDE_HIDDEN (__ets_loops_start = .);
+    KEEP (*(.ets_loops));
+    . = ALIGN(4);
+    PROVIDE_HIDDEN (__ets_loops_end = .);
+  } > FLASH
 }
 
 /* Calculate the absolute RAM address of the stack start */

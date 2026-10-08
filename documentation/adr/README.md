@@ -14,4 +14,4 @@ row and names its replacement.
 | ADR | Title | Status | Superseded by |
 |:--|:--|:--|:--|
 | [ADR-0001](0001-adopt-adrs.md) | Adopt ADRs for workspace decisions | Proposed | — |
-| [ADR-0002](0002-separate-verification-and-runtime-servers.md) | Separate the verification server from the runtime server | Proposed | — |
+| [ADR-0002](0002-extend-ets-with-lifecycle-suites.md) | Extend the Embedded Test Server with lifecycle suites | Proposed | — |

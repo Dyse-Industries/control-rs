@@ -9,7 +9,10 @@ use control_rs_ets::comms::{
 
 use crate::bridge::ETSBridge;
 use crate::error::HostError;
-use crate::session::{SessionAction, SessionState, TestIndex};
+use crate::session::{
+    LoopRunRecord, LoopStart, SessionAction, SessionState, TestIndex,
+};
+use crate::sim::BoxedSim;
 use crate::target::Target;
 
 /// Execution options controlling timeout and retry parameters for headless runs.
@@ -21,6 +24,9 @@ pub struct RunOptions {
     pub timeout: Duration,
     /// Maximum allowed target resets or reconnection attempts before aborting.
     pub max_resets: u32,
+    /// Time to wait for the final loop state after `StopNow` before the
+    /// session sends `TryReset` and closes the link.
+    pub stop_timeout: Duration,
 }
 
 /// The result and performance telemetry of an individual test case.
@@ -59,6 +65,8 @@ pub struct RunRecord {
     pub elapsed: Duration,
     /// Captured console and log output from the target.
     pub console: String,
+    /// Loop runs the caller selected, in start order. Empty by default.
+    pub loops: Vec<LoopRunRecord>,
 }
 
 /// Terminal outcome condition of an ETS run.
@@ -78,6 +86,8 @@ pub enum Completion {
     ReconnectFailed,
     /// Target process exited before all queued tests finished.
     TargetExited,
+    /// A loop did not acknowledge `StopNow` within the stop timeout.
+    StopUnacknowledged,
 }
 
 /// Next step after `PanicRestart` terminates the current bridge.
@@ -116,6 +126,7 @@ impl Default for RunOptions {
         Self {
             timeout: Duration::from_secs(30),
             max_resets: 3,
+            stop_timeout: crate::session::DEFAULT_STOP_TIMEOUT,
         }
     }
 }
@@ -137,11 +148,14 @@ impl<'t> HeadlessRun<'t> {
         target: &'t Target,
         options: RunOptions,
     ) -> Result<Self, HostError> {
+        let mut state = SessionState::new();
+        state.stop_timeout = options.stop_timeout;
+        state.subprocess_link = matches!(target, Target::Subprocess(_));
         Ok(Self {
             bridge: ETSBridge::new(target.clone(), true)?,
             target,
             options,
-            state: SessionState::new(),
+            state,
             resets: 0,
             start_time: Instant::now(),
             last_send: Instant::now(),
@@ -163,6 +177,8 @@ impl<'t> HeadlessRun<'t> {
                 let actions = self.state.handle_message(msg);
                 self.apply_actions(actions)?;
             }
+            let ticks = self.state.tick(Instant::now());
+            self.apply_actions(ticks)?;
             if self.check_target_exit()? {
                 break;
             }
@@ -198,6 +214,26 @@ impl<'t> HeadlessRun<'t> {
                     self.bridge
                         .send_command(&cmd)
                         .map_err(|e| RunEnd::send_failed(&e))?;
+                }
+                SessionAction::SendInput {
+                    suite_id,
+                    test_id,
+                    seq,
+                    payload,
+                } => {
+                    self.bridge
+                        .send_command(&CommCommand::LoopInput {
+                            suite_id,
+                            test_id,
+                            seq,
+                            payload: &payload,
+                        })
+                        .map_err(|e| RunEnd::send_failed(&e))?;
+                }
+                SessionAction::CloseLink => {
+                    return Err(RunEnd::aborted(
+                        Completion::StopUnacknowledged,
+                    ));
                 }
                 SessionAction::PanicRestart => {
                     if self.restart_after_panic()? == AfterPanicRestart::Drained
@@ -262,8 +298,9 @@ impl<'t> HeadlessRun<'t> {
         }
         if is_unexpected_target_exit(
             self.state.discovery_complete,
-            self.state.current_running.is_some(),
-            self.state.run_queue.is_empty(),
+            self.state.current_running.is_some() || self.state.loop_active(),
+            self.state.run_queue.is_empty()
+                && self.state.pending_loops.is_empty(),
         ) {
             return Err(RunEnd::aborted_with(
                 Completion::TargetExited,
@@ -356,7 +393,7 @@ pub fn run_headless_ets(
         target,
         RunOptions {
             timeout,
-            max_resets: 3,
+            ..RunOptions::default()
         },
     )
 }
@@ -371,7 +408,32 @@ pub fn run_headless_ets_with_options(
     target: &Target,
     options: RunOptions,
 ) -> Result<RunRecord, HostError> {
+    run_headless_ets_with_loops(target, options, Vec::new(), None)
+}
+
+/// Headless execution loop that also runs the loops the caller selects.
+///
+/// The loops start one after another once the cases drain. A loop starts with
+/// `max_steps = 1` unless its [`LoopStart`] gives another bound. `sim` feeds
+/// the input of every loop. No loop runs when `loops` is empty.
+///
+/// # Errors
+///
+/// Returns `HostError` if the target cannot be spawned or unexpectedly disconnects
+/// before any session record can be produced.
+pub fn run_headless_ets_with_loops(
+    target: &Target,
+    options: RunOptions,
+    loops: Vec<LoopStart>,
+    sim: Option<BoxedSim>,
+) -> Result<RunRecord, HostError> {
     let mut run = HeadlessRun::start(target, options)?;
+    let lockstep_allowed = sim.is_some();
+    run.state.set_sim(sim);
+    run.state.queue_loops(loops.into_iter().map(|mut start| {
+        start.lockstep &= lockstep_allowed;
+        start
+    }));
     let end = match run.drive() {
         Ok(()) => RunEnd::drained(),
         Err(end) => end,
@@ -415,6 +477,7 @@ fn finish_record(
     }
     let pending = state.pending_cases();
     RunRecord {
+        loops: state.loop_history,
         results: state.results,
         pending,
         resets,
@@ -440,19 +503,20 @@ mod tests {
         use super::*;
         use crate::bridge::FakeBridge;
 
-        type Written = Arc<Mutex<Vec<u8>>>;
+        pub(super) type Written = Arc<Mutex<Vec<u8>>>;
 
         /// A run over a fake link with the handles that drive it.
-        type FakeRun<'t> = (HeadlessRun<'t>, Sender<BridgeMessage>, Written);
+        pub(super) type FakeRun<'t> =
+            (HeadlessRun<'t>, Sender<BridgeMessage>, Written);
 
-        fn serial_target() -> Target {
+        pub(super) fn serial_target() -> Target {
             Target::Serial {
                 port: "/dev/none".to_string(),
                 baud: 1,
             }
         }
 
-        fn fake_run(
+        pub(super) fn fake_run(
             target: &Target,
             timeout: Duration,
             exit_after_polls: Option<usize>,
@@ -468,6 +532,7 @@ mod tests {
                 options: RunOptions {
                     timeout,
                     max_resets: 3,
+                    ..RunOptions::default()
                 },
                 state: SessionState::new(),
                 resets: 0,
@@ -477,7 +542,7 @@ mod tests {
             (run, tx, written)
         }
 
-        fn written_len(written: &Written) -> usize {
+        pub(super) fn written_len(written: &Written) -> usize {
             written.lock().map_or(usize::MAX, |w| w.len())
         }
 
@@ -587,6 +652,166 @@ mod tests {
             assert!(run.apply_actions(actions).is_ok());
             assert!(written_len(&written) > 0);
         }
+    }
+
+    /// Commands the target received, decoded from the bytes written to the link.
+    #[cfg(unix)]
+    fn written_commands(written: &headless::Written) -> Vec<String> {
+        use control_rs_ets::comms::FrameReader;
+        let bytes = written.lock().unwrap().clone();
+        let mut reader = FrameReader::new();
+        let mut out = Vec::new();
+        for b in bytes {
+            if let Some(payload) = reader.handle_byte(b)
+                && let Ok(cmd) =
+                    postcard::from_bytes::<CommCommand<'_>>(payload)
+            {
+                out.push(format!("{cmd:?}"));
+            }
+        }
+        out
+    }
+
+    /// Frames that discover one suite with one loop.
+    #[cfg(unix)]
+    fn discover_loop(tx: &std::sync::mpsc::Sender<BridgeMessage>) {
+        for tel in [
+            Telemetry::TargetInfo {
+                protocol_version: PROTOCOL_VERSION,
+                board_id: 0,
+                core_clock_hz: 0,
+                fpu_flags: 0,
+            },
+            Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "s",
+                description: "",
+                test_count: 0,
+                setting_count: 0,
+            },
+            Telemetry::LifecycleSuite {
+                suite_id: 0,
+                loop_count: 1,
+            },
+            Telemetry::LoopInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "l",
+                description: "",
+                input_type: "()",
+                output_type: "()",
+            },
+            Telemetry::DiscoveryComplete,
+        ] {
+            tx.send(BridgeMessage::telemetry(&tel)).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    fn loop_state(
+        tx: &std::sync::mpsc::Sender<BridgeMessage>,
+        state: control_rs_ets::comms::LoopRunState,
+    ) {
+        tx.send(BridgeMessage::telemetry(&Telemetry::LoopState {
+            suite_id: 0,
+            test_id: 0,
+            state,
+            message: None,
+        }))
+        .unwrap();
+    }
+
+    /// Drives a headless run that discovers one loop and selects `start`;
+    /// the target answers with `states` up front.
+    #[cfg(unix)]
+    fn drive_with_loop<'t>(
+        target: &'t Target,
+        start: Option<crate::session::LoopStart>,
+        states: &[control_rs_ets::comms::LoopRunState],
+    ) -> (HeadlessRun<'t>, headless::Written) {
+        let (mut run, tx, written) =
+            headless::fake_run(target, Duration::from_secs(5), None);
+        run.state.queue_loops(start);
+        discover_loop(&tx);
+        for state in states {
+            loop_state(&tx, *state);
+        }
+        assert!(run.drive().is_ok());
+        (run, written)
+    }
+
+    /// Like [`drive_with_loop`], but the target answers `Aborted` once
+    /// `StopNow` arrives.
+    #[cfg(unix)]
+    fn drive_until_stopped(
+        target: &Target,
+        start: crate::session::LoopStart,
+    ) -> HeadlessRun<'_> {
+        let (mut run, tx, written) =
+            headless::fake_run(target, Duration::from_secs(5), None);
+        run.state.queue_loops([start]);
+        discover_loop(&tx);
+        loop_state(&tx, control_rs_ets::comms::LoopRunState::Running);
+        let answer = thread::spawn(move || {
+            for _ in 0..400 {
+                if written_commands(&written)
+                    .iter()
+                    .any(|c| c.contains("StopNow"))
+                {
+                    loop_state(
+                        &tx,
+                        control_rs_ets::comms::LoopRunState::Aborted,
+                    );
+                    return;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+        });
+        assert!(run.drive().is_ok());
+        answer.join().unwrap();
+        run
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn headless_loop_bounded() {
+        use crate::session::LoopStart;
+        use control_rs_ets::comms::LoopRunState;
+        let target = headless::serial_target();
+        let last_state = |run: &HeadlessRun<'_>| {
+            run.state
+                .loop_history
+                .first()
+                .and_then(|r| r.states.last().map(|s| s.0))
+        };
+
+        // By default no loop starts.
+        let (_, written) = drive_with_loop(&target, None, &[]);
+        let sent = written_commands(&written);
+        assert!(!sent.iter().any(|c| c.contains("StartLoop")), "{sent:?}");
+
+        // A selected loop runs a single step by default.
+        let single = Some(LoopStart::single_step(0));
+        let states = [LoopRunState::Running, LoopRunState::Bounded];
+        let (run, written) = drive_with_loop(&target, single, &states);
+        let sent = written_commands(&written);
+        assert!(
+            sent.iter().any(|c| c.contains("StartLoop")
+                && c.contains("max_steps: 1")
+                && c.contains("lockstep: false")),
+            "{sent:?}"
+        );
+        assert_eq!(last_state(&run), Some(LoopRunState::Bounded));
+
+        // A duration bound sends StopNow when it elapses.
+        let timed = LoopStart {
+            suite_id: 0,
+            max_steps: 0,
+            lockstep: false,
+            duration: Some(Duration::from_millis(40)),
+        };
+        let run = drive_until_stopped(&target, timed);
+        assert_eq!(last_state(&run), Some(LoopRunState::Aborted));
     }
 
     /// A session that already received a matching `TargetInfo` (FR-8).

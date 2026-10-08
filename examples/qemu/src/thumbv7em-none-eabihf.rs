@@ -4,7 +4,7 @@
 extern crate control_rs;
 
 use control_rs_ets::comms::{
-    Command, FrameReader, HostComms, Telemetry, frame_telemetry,
+    Command, FrameReader, HostComms, MAX_FRAME_SIZE, Telemetry, frame_telemetry,
 };
 use control_rs_ets::server::Context;
 use control_rs_macros::ets_setup;
@@ -22,7 +22,7 @@ impl HostComms for SemihostingComms {
     type Error = ();
 
     #[allow(clippy::collapsible_if)]
-    fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+    fn poll_command(&mut self) -> Result<Option<Command<'_>>, Self::Error> {
         let c = unsafe {
             cortex_m_semihosting::syscall1(cortex_m_semihosting::nr::READC, 0)
         } as u8;
@@ -39,7 +39,7 @@ impl HostComms for SemihostingComms {
         &mut self,
         telemetry: &Telemetry<'_>,
     ) -> Result<(), Self::Error> {
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; MAX_FRAME_SIZE];
         if let Ok(len) = frame_telemetry(telemetry, &mut buf) {
             for &b in &buf[..len] {
                 unsafe {
@@ -65,6 +65,8 @@ impl HostComms for SemihostingComms {
         Ok(())
     }
 }
+
+mod lifecycle_lockstep;
 
 // Force linking of the math test suites by referencing them
 #[allow(unused_imports)]

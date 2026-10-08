@@ -66,6 +66,7 @@ Crozet's
 Cscmv
 Csrmm
 Csrmv
+Dev
 DSLs
 D_d
 Dabbelt
@@ -104,6 +105,7 @@ Enum
 Equispaced
 Esc
 Espressif
+fieldless
 FPUs
 Faddeev
 Faddeeva
@@ -156,6 +158,9 @@ Hpr
 Hwang
 ICs
 IDEs
+input_seq
+input_type
+io
 ISRs
 Igual
 Implementability
@@ -183,6 +188,7 @@ Koo
 Krogh
 Krylov
 LAPACK's
+link_timeout_ms
 LLVM's
 LQR
 LaTeX
@@ -238,6 +244,8 @@ Ogata
 Oppenheim
 Ormqr
 Ostrouchov
+output_len
+output_type
 PID
 PNGs
 PRs
@@ -280,7 +288,9 @@ Rierson
 Ronacher
 Runciman
 Runge
+rustc
 Rustdoc
+rx
 SIMD
 SLICOT's
 SSGs
@@ -327,6 +337,7 @@ UKF
 UMLs
 Unary
 Unconjugated
+Undecodable
 Unmqr
 Unnormalized
 Unversioned
@@ -337,6 +348,7 @@ Validators
 Vandebril
 Vandermonde
 Varints
+VCs
 Veerhusen
 Vendoring
 Vin

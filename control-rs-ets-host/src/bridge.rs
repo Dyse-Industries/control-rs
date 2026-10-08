@@ -202,6 +202,72 @@ pub enum OwnedTelemetry {
         /// FPU bits: 0 single, 1 double precision.
         fpu_flags: u8,
     },
+    /// A suite provides a loop; its `LoopInfo` follows.
+    LifecycleSuite {
+        /// Suite id.
+        suite_id: u16,
+        /// Loop count (always `1`).
+        loop_count: u8,
+    },
+    /// Discovered loop metadata.
+    LoopInfo {
+        /// Parent suite id.
+        suite_id: u16,
+        /// Loop identifier within the suite.
+        test_id: u16,
+        /// Loop name.
+        name: String,
+        /// Doc comment.
+        description: String,
+        /// Input packet type name.
+        input_type: String,
+        /// Output packet type name.
+        output_type: String,
+    },
+    /// Loop run state transition.
+    LoopState {
+        /// Parent suite id.
+        suite_id: u16,
+        /// Loop identifier within the suite.
+        test_id: u16,
+        /// New run state.
+        state: control_rs_ets::comms::LoopRunState,
+        /// Optional message.
+        message: Option<String>,
+    },
+    /// Output packet of one loop step.
+    LoopSample {
+        /// Parent suite id.
+        suite_id: u16,
+        /// Loop identifier within the suite.
+        test_id: u16,
+        /// Step that produced the output.
+        seq: u64,
+        /// Encoded output packet.
+        payload: Vec<u8>,
+    },
+    /// Teardown outcome of a loop run.
+    TeardownReport {
+        /// Parent suite id.
+        suite_id: u16,
+        /// Loop identifier within the suite.
+        test_id: u16,
+        /// Whether teardown succeeded.
+        ok: bool,
+        /// Optional message.
+        message: Option<String>,
+    },
+    /// Statistics of a finished loop run.
+    LoopStats {
+        /// Parent suite id.
+        suite_id: u16,
+        /// Loop identifier within the suite.
+        test_id: u16,
+        /// Steps called.
+        steps: u64,
+        /// Elapsed microseconds from setup to teardown entry.
+        time_us: u64,
+    },
 }
 
 /// Message type sent from the background reader thread to the host controller or UI.
@@ -269,6 +335,96 @@ impl OwnedTelemetry {
             Telemetry::SettingInfo { .. }
             | Telemetry::SuiteInfo { .. }
             | Telemetry::TestInfo { .. } => Self::from_catalog_entry(tel),
+            Telemetry::LifecycleSuite { .. }
+            | Telemetry::LoopInfo { .. }
+            | Telemetry::LoopState { .. }
+            | Telemetry::LoopSample { .. }
+            | Telemetry::TeardownReport { .. }
+            | Telemetry::LoopStats { .. } => Self::from_loop_frame(tel),
+        }
+    }
+
+    /// Copies a loop frame. [`Self::from_telemetry`] routes exactly the six
+    /// loop variants here; any other variant is handed back to it.
+    fn from_loop_frame(tel: &Telemetry<'_>) -> Self {
+        match *tel {
+            Telemetry::LifecycleSuite { .. } | Telemetry::LoopInfo { .. } => {
+                Self::from_loop_catalog(tel)
+            }
+            Telemetry::LoopState {
+                suite_id,
+                test_id,
+                state,
+                message,
+            } => Self::LoopState {
+                suite_id,
+                test_id,
+                state,
+                message: message.map(str::to_string),
+            },
+            Telemetry::LoopSample {
+                suite_id,
+                test_id,
+                seq,
+                payload,
+            } => Self::LoopSample {
+                suite_id,
+                test_id,
+                seq,
+                payload: payload.to_vec(),
+            },
+            Telemetry::TeardownReport {
+                suite_id,
+                test_id,
+                ok,
+                message,
+            } => Self::TeardownReport {
+                suite_id,
+                test_id,
+                ok,
+                message: message.map(str::to_string),
+            },
+            Telemetry::LoopStats {
+                suite_id,
+                test_id,
+                steps,
+                time_us,
+            } => Self::LoopStats {
+                suite_id,
+                test_id,
+                steps,
+                time_us,
+            },
+            ref other => Self::from_telemetry(other),
+        }
+    }
+
+    /// Copies the loop announcement of a suite: its marker and its metadata.
+    fn from_loop_catalog(tel: &Telemetry<'_>) -> Self {
+        match *tel {
+            Telemetry::LifecycleSuite {
+                suite_id,
+                loop_count,
+            } => Self::LifecycleSuite {
+                suite_id,
+                loop_count,
+            },
+            Telemetry::LoopInfo {
+                suite_id,
+                test_id,
+                name,
+                description,
+                input_type,
+                output_type,
+            } => Self::LoopInfo {
+                suite_id,
+                test_id,
+                name: name.to_string(),
+                description: description.to_string(),
+                input_type: input_type.to_string(),
+                output_type: output_type.to_string(),
+            },
+            ref other => Self::from_telemetry(other),
         }
     }
 
@@ -518,7 +674,7 @@ impl ETSBridge {
     /// # Errors
     ///
     /// Returns `HostError::Transport` if serializing or writing to the target stream fails.
-    pub fn send_command(&mut self, cmd: &Command) -> Result<(), HostError> {
+    pub fn send_command(&mut self, cmd: &Command<'_>) -> Result<(), HostError> {
         let mut buf = [0u8; MAX_FRAME_SIZE];
         let len = FrameEncoder::frame_command(cmd, &mut buf).map_err(|e| {
             HostError::Transport {
@@ -1249,5 +1405,97 @@ mod tests {
         assert!(!bridge.is_shut_down());
         drop(bridge);
         assert!(shutdown.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn revision_mismatch_refused() {
+        use crate::session::SessionState;
+        let mut state = SessionState::new();
+        let old = Telemetry::TargetInfo {
+            protocol_version: 1,
+            board_id: 0,
+            core_clock_hz: 0,
+            fpu_flags: 0,
+        };
+        let _ = state.handle_message(BridgeMessage::telemetry(&old));
+        assert_eq!(state.protocol_mismatch, Some(1));
+        assert!(state.exit_loop, "a revision-1 target ends the session");
+        assert_eq!(control_rs_ets::comms::PROTOCOL_VERSION, 2);
+    }
+
+    #[test]
+    fn loop_frames_convert_to_owned_telemetry() {
+        let info = Telemetry::LoopInfo {
+            suite_id: 1,
+            test_id: 2,
+            name: "n",
+            description: "d",
+            input_type: "f32",
+            output_type: "u8",
+        };
+        assert!(matches!(
+            OwnedTelemetry::from_telemetry(&info),
+            OwnedTelemetry::LoopInfo { input_type, .. } if input_type == "f32"
+        ));
+        let sample = Telemetry::LoopSample {
+            suite_id: 1,
+            test_id: 2,
+            seq: 9,
+            payload: &[1, 2, 3],
+        };
+        assert!(matches!(
+            OwnedTelemetry::from_telemetry(&sample),
+            OwnedTelemetry::LoopSample { seq: 9, payload, .. } if payload == [1, 2, 3]
+        ));
+    }
+
+    #[test]
+    fn run_frames_convert_to_owned_telemetry() {
+        let report = Telemetry::TeardownReport {
+            suite_id: 1,
+            test_id: 2,
+            ok: false,
+            message: None,
+        };
+        assert!(matches!(
+            OwnedTelemetry::from_telemetry(&report),
+            OwnedTelemetry::TeardownReport {
+                ok: false,
+                message: None,
+                ..
+            }
+        ));
+        let stats = Telemetry::LoopStats {
+            suite_id: 1,
+            test_id: 2,
+            steps: 4,
+            time_us: 5,
+        };
+        assert!(matches!(
+            OwnedTelemetry::from_telemetry(&stats),
+            OwnedTelemetry::LoopStats {
+                steps: 4,
+                time_us: 5,
+                ..
+            }
+        ));
+        let bounded = Telemetry::LoopState {
+            suite_id: 1,
+            test_id: 2,
+            state: control_rs_ets::comms::LoopRunState::Bounded,
+            message: Some("m"),
+        };
+        assert!(matches!(
+            OwnedTelemetry::from_telemetry(&bounded),
+            OwnedTelemetry::LoopState { message: Some(m), .. } if m == "m"
+        ));
+        let suite = Telemetry::LifecycleSuite {
+            suite_id: 1,
+            loop_count: 1,
+        };
+        assert!(matches!(
+            OwnedTelemetry::from_telemetry(&suite),
+            OwnedTelemetry::LifecycleSuite { loop_count: 1, .. }
+        ));
     }
 }

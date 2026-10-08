@@ -1,12 +1,22 @@
 //! Discovery, run queue and session state machine for host-side ETS.
 
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
 use control_rs_ets::comms::{
-    Command as CommCommand, PROTOCOL_VERSION, TestState,
+    Command as CommCommand, LoopRunState, PROTOCOL_VERSION, TestState,
 };
 use control_rs_ets::settings::SettingValue;
 
 use crate::bridge::{BridgeMessage, OwnedTelemetry};
 use crate::runner::TestOutcome;
+use crate::sim::BoxedSim;
+
+/// Default time to wait for the final `LoopState` after `StopNow` before the
+/// session sends `TryReset` and closes the link.
+pub const DEFAULT_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+/// Period of the `Heartbeat` the session sends while a loop runs.
+pub const HEARTBEAT_PERIOD: Duration = Duration::from_millis(100);
 
 /// Flag indicating that all `SettingInfo` items (`0..setting_count-1`) have been received.
 pub const SETTINGS_READY: u8 = 0b0000_0100; // 0x04
@@ -17,8 +27,26 @@ pub const SUITE_READY_MASK: u8 = 0b0000_0111; // 0x07
 /// Flag indicating that all `TestInfo` items (`0..test_count-1`) have been received.
 pub const TESTS_READY: u8 = 0b0000_0010; // 0x02
 
+/// Output or input packets of a loop run as `(step, bytes)`.
+pub type PacketLog = Vec<(u64, Vec<u8>)>;
+
+/// A loop run state and the message that came with it.
+pub type StateLog = (LoopRunState, Option<String>);
+
+/// A teardown outcome: success flag and message.
+pub type TeardownLog = (bool, Option<String>);
+
 /// Pair of `(suite_id, test_id)` identifying a test case.
 pub type TestIndex = (u16, u16);
+
+/// How a loop run ends the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopMode {
+    /// A loop run started from a console does not end the session.
+    Console,
+    /// The headless runner ends the session after its last loop.
+    Headless,
+}
 
 /// Lifecycle phases of a host-side ETS testing session.
 #[derive(
@@ -92,6 +120,90 @@ pub struct SuiteItem {
     pub test_slots_mask: u64,
     /// Bitmask tracking individual setting indices (bit s is set when setting s arrives).
     pub setting_slots_mask: u64,
+    /// Whether the target announced a loop for this suite (`LifecycleSuite`).
+    pub loop_expected: bool,
+    /// The suite's loop, once its `LoopInfo` arrived.
+    pub loop_item: Option<LoopItem>,
+}
+
+/// The loop of a lifecycle suite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopItem {
+    /// Identifier of the loop within its suite (the suite's case count).
+    pub test_id: u16,
+    /// Name of the loop.
+    pub name: String,
+    /// Doc-comment description of the loop.
+    pub description: String,
+    /// Input packet type name as the target's macro wrote it.
+    pub input_type: String,
+    /// Output packet type name as the target's macro wrote it.
+    pub output_type: String,
+}
+
+/// Parameters of one loop run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoopStart {
+    /// Suite that owns the loop.
+    pub suite_id: u16,
+    /// Stop after this many steps (`0` is unbounded).
+    pub max_steps: u64,
+    /// Call step `k` only after input `k` arrived.
+    pub lockstep: bool,
+    /// Send `StopNow` after this duration.
+    pub duration: Option<Duration>,
+}
+
+/// What the host recorded of one loop run.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LoopRunRecord {
+    /// Suite that owns the loop.
+    pub suite_id: u16,
+    /// Identifier of the loop within the suite.
+    pub test_id: u16,
+    /// Name of the loop.
+    pub name: String,
+    /// Every `LoopState` received, with its message.
+    pub states: Vec<StateLog>,
+    /// The teardown outcome: success flag and message.
+    pub teardown: Option<TeardownLog>,
+    /// Output packets received as `(seq, bytes)`.
+    pub outputs: PacketLog,
+    /// Input packets sent as `(seq, bytes)`.
+    pub inputs: PacketLog,
+    /// Steps called, from `LoopStats`.
+    pub steps: Option<u64>,
+    /// Elapsed microseconds from `LoopStats`.
+    pub time_us: Option<u64>,
+    /// Whether the final state arrived.
+    pub ended: bool,
+}
+
+/// Why the session refused to start a loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum LoopStartError {
+    /// Discovery has not completed.
+    #[error("a lifecycle case cannot start before discovery completes")]
+    NotReady,
+    /// The suite has no discovered loop.
+    #[error("suite {0} has no lifecycle case")]
+    UnknownLoop(u16),
+    /// A loop run is already active.
+    #[error("a lifecycle run is already active")]
+    RunActive,
+    /// Free-running loops are refused on emulated (subprocess) targets.
+    #[error(
+        "free-running lifecycle runs are refused on emulated targets; use lockstep"
+    )]
+    FreeRunningOnSubprocess,
+}
+
+/// Deadlines of the active loop run.
+#[derive(Debug, Clone, Copy, Default)]
+struct LoopTimers {
+    duration_deadline: Option<Instant>,
+    heartbeat_at: Option<Instant>,
+    stop_sent: Option<Instant>,
 }
 
 /// Host-side ETS session state (discovery, run queue, results).
@@ -118,6 +230,19 @@ pub struct SessionState {
     /// `PROTOCOL_VERSION` (`0` when discovery completed without `TargetInfo`).
     /// Once set, every further message is ignored.
     pub protocol_mismatch: Option<u8>,
+    /// The active or last loop run.
+    pub loop_run: Option<LoopRunRecord>,
+    /// Loop runs that ended.
+    pub loop_history: Vec<LoopRunRecord>,
+    /// Loops the headless runner will start after the cases drain.
+    pub pending_loops: VecDeque<LoopStart>,
+    /// Time to wait for the final state after `StopNow`.
+    pub stop_timeout: Duration,
+    /// Whether the link is an emulated (subprocess) target.
+    pub subprocess_link: bool,
+    sim: Option<BoxedSim>,
+    timers: LoopTimers,
+    loop_mode: LoopMode,
 }
 
 /// Target metadata from `Telemetry::TargetInfo`.
@@ -139,7 +264,20 @@ pub enum SessionAction {
     /// Request target restart and bridge reconnection.
     PanicRestart,
     /// Send a command packet to the target.
-    Send(CommCommand),
+    Send(CommCommand<'static>),
+    /// Send a loop input packet to the target.
+    SendInput {
+        /// Suite that owns the loop.
+        suite_id: u16,
+        /// Identifier of the loop within the suite.
+        test_id: u16,
+        /// Step the input is for.
+        seq: u64,
+        /// Encoded input packet.
+        payload: Vec<u8>,
+    },
+    /// Close the link after an unacknowledged stop.
+    CloseLink,
 }
 
 impl SuiteItem {
@@ -157,17 +295,23 @@ impl SuiteItem {
             ready_mask: 0,
             test_slots_mask: 0,
             setting_slots_mask: 0,
+            loop_expected: false,
+            loop_item: None,
         }
     }
 
-    /// Returns true if this suite has received all info, test, and setting frames.
+    /// Returns true if this suite has received all info, test, and setting frames,
+    /// and its loop when the target announced one.
     #[must_use]
     pub const fn is_ready(&self) -> bool {
         (self.ready_mask & SUITE_READY_MASK) == SUITE_READY_MASK
+            && (!self.loop_expected || self.loop_item.is_some())
     }
 
     /// Resets all readiness masks and clears transient items for re-discovery.
     pub fn reset_discovery(&mut self) {
+        self.loop_expected = false;
+        self.loop_item = None;
         self.ready_mask = 0;
         self.test_slots_mask = 0;
         self.setting_slots_mask = 0;
@@ -193,6 +337,19 @@ impl TestItem {
     }
 }
 
+impl LoopStart {
+    /// A free-running run of a single step, the headless default.
+    #[must_use]
+    pub const fn single_step(suite_id: u16) -> Self {
+        Self {
+            suite_id,
+            max_steps: 1,
+            lockstep: false,
+            duration: None,
+        }
+    }
+}
+
 impl Default for SessionState {
     fn default() -> Self {
         Self::new()
@@ -214,6 +371,18 @@ impl SessionState {
             suites: Vec::new(),
             target_info: None,
             protocol_mismatch: None,
+            loop_run: None,
+            loop_history: Vec::new(),
+            pending_loops: VecDeque::new(),
+            stop_timeout: DEFAULT_STOP_TIMEOUT,
+            subprocess_link: false,
+            sim: None,
+            timers: LoopTimers {
+                duration_deadline: None,
+                heartbeat_at: None,
+                stop_sent: None,
+            },
+            loop_mode: LoopMode::Console,
         }
     }
 
@@ -297,6 +466,270 @@ impl SessionState {
         }
     }
 
+    /// Whether a loop run has started and its final state has not arrived.
+    #[must_use]
+    pub fn loop_active(&self) -> bool {
+        self.loop_run.as_ref().is_some_and(|run| !run.ended)
+    }
+
+    /// The loop of suite `suite_id`, if discovered.
+    #[must_use]
+    pub fn loop_item(&self, suite_id: u16) -> Option<&LoopItem> {
+        self.suites.get(usize::from(suite_id))?.loop_item.as_ref()
+    }
+
+    /// Attaches the simulation that feeds loop input, or detaches it.
+    pub fn set_sim(&mut self, sim: Option<BoxedSim>) {
+        self.sim = sim;
+    }
+
+    /// Queues loops for the headless runner to start once the cases drain.
+    pub fn queue_loops(&mut self, starts: impl IntoIterator<Item = LoopStart>) {
+        self.loop_mode = LoopMode::Headless;
+        self.pending_loops.extend(starts);
+    }
+
+    /// Starts a loop run.
+    ///
+    /// The returned command starts the run. With a simulation attached, input
+    /// `0` follows when the target reports the run's first state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoopStartError`] when discovery is incomplete, the suite has
+    /// no loop, a run is active, or free-running is requested on an emulated
+    /// target. No frame is produced in those cases.
+    pub fn start_loop(
+        &mut self,
+        start: LoopStart,
+        now: Instant,
+    ) -> Result<SessionAction, LoopStartError> {
+        if self.phase != SessionPhase::Running {
+            return Err(LoopStartError::NotReady);
+        }
+        if self.loop_active() {
+            return Err(LoopStartError::RunActive);
+        }
+        let item = self
+            .loop_item(start.suite_id)
+            .cloned()
+            .ok_or(LoopStartError::UnknownLoop(start.suite_id))?;
+        if !start.lockstep && self.subprocess_link {
+            return Err(LoopStartError::FreeRunningOnSubprocess);
+        }
+        self.warn_on_type_mismatch(&item);
+
+        self.loop_run = Some(LoopRunRecord {
+            suite_id: start.suite_id,
+            test_id: item.test_id,
+            name: item.name,
+            states: Vec::new(),
+            teardown: None,
+            outputs: Vec::new(),
+            inputs: Vec::new(),
+            steps: None,
+            time_us: None,
+            ended: false,
+        });
+        self.timers = LoopTimers {
+            duration_deadline: start.duration.and_then(|d| now.checked_add(d)),
+            heartbeat_at: now.checked_add(HEARTBEAT_PERIOD),
+            stop_sent: None,
+        };
+        Ok(SessionAction::Send(CommCommand::StartLoop {
+            suite_id: start.suite_id,
+            test_id: item.test_id,
+            max_steps: start.max_steps,
+            lockstep: start.lockstep,
+        }))
+    }
+
+    /// Requests the active run to stop at its next step boundary.
+    pub fn stop_loop(&mut self, now: Instant) -> Vec<SessionAction> {
+        let Some(run) = self.loop_run.as_ref().filter(|r| !r.ended) else {
+            return Vec::new();
+        };
+        let stop = CommCommand::StopNow {
+            suite_id: run.suite_id,
+            test_id: run.test_id,
+        };
+        self.timers.stop_sent.get_or_insert(now);
+        vec![SessionAction::Send(stop)]
+    }
+
+    /// Time-driven actions: the heartbeat, the duration bound and the stop
+    /// escalation.
+    pub fn tick(&mut self, now: Instant) -> Vec<SessionAction> {
+        if !self.loop_active() {
+            return Vec::new();
+        }
+        let mut actions = Vec::new();
+        if self.timers.heartbeat_at.is_some_and(|at| now >= at) {
+            actions.push(SessionAction::Send(CommCommand::Heartbeat));
+            self.timers.heartbeat_at = now.checked_add(HEARTBEAT_PERIOD);
+        }
+        if self.timers.stop_sent.is_none()
+            && self.timers.duration_deadline.is_some_and(|at| now >= at)
+        {
+            actions.extend(self.stop_loop(now));
+        }
+        if let Some(sent) = self.timers.stop_sent
+            && now.saturating_duration_since(sent) >= self.stop_timeout
+        {
+            self.log("StopNow was not acknowledged; resetting the target.\n");
+            self.timers = LoopTimers::default();
+            if let Some(run) = self.loop_run.as_mut() {
+                run.ended = true;
+            }
+            self.pending_loops.clear();
+            self.exit_loop = true;
+            actions.push(SessionAction::Send(CommCommand::TryReset));
+            actions.push(SessionAction::CloseLink);
+        }
+        actions
+    }
+
+    /// Logs a warning when the simulation's packet types differ from the
+    /// loop's, ignoring whitespace.
+    fn warn_on_type_mismatch(&mut self, item: &LoopItem) {
+        let Some(sim) = self.sim.as_ref() else {
+            return;
+        };
+        let strip = |s: &str| s.split_whitespace().collect::<String>();
+        let input = strip(sim.input_type()) != strip(&item.input_type);
+        let output = strip(sim.output_type()) != strip(&item.output_type);
+        if input || output {
+            let msg = format!(
+                "Warning: simulation packet types ({}, {}) differ from loop '{}' ({}, {}).\n",
+                sim.input_type(),
+                sim.output_type(),
+                item.name,
+                item.input_type,
+                item.output_type,
+            );
+            self.log(&msg);
+        }
+    }
+
+    /// The active record when it belongs to `(suite_id, test_id)`.
+    fn record_for(&mut self, id: TestIndex) -> Option<&mut LoopRunRecord> {
+        self.loop_run
+            .as_mut()
+            .filter(|r| !r.ended && (r.suite_id, r.test_id) == id)
+    }
+
+    /// Records a loop state; the first sends input `0`, a final one ends the run.
+    fn on_loop_state(
+        &mut self,
+        id: TestIndex,
+        state: LoopRunState,
+        message: Option<String>,
+    ) -> Vec<SessionAction> {
+        let Some(run) = self.record_for(id) else {
+            return Vec::new();
+        };
+        let first = run.states.is_empty();
+        run.states.push((state, message));
+        if !matches!(state, LoopRunState::Running | LoopRunState::Warn) {
+            return self.end_loop();
+        }
+        if first {
+            return self.send_initial_input(id);
+        }
+        Vec::new()
+    }
+
+    /// Encodes the simulation's input `0` for the active run.
+    fn send_initial_input(
+        &mut self,
+        (suite_id, test_id): TestIndex,
+    ) -> Vec<SessionAction> {
+        let Some(sim) = self.sim.as_mut() else {
+            return Vec::new();
+        };
+        match sim.initial_bytes() {
+            Ok(payload) => self.input_action((suite_id, test_id), 0, payload),
+            Err(e) => self.sim_failed(&e.to_string()),
+        }
+    }
+
+    /// Records an input packet and builds its send action.
+    fn input_action(
+        &mut self,
+        (suite_id, test_id): TestIndex,
+        seq: u64,
+        payload: Vec<u8>,
+    ) -> Vec<SessionAction> {
+        if let Some(run) = self.record_for((suite_id, test_id)) {
+            run.inputs.push((seq, payload.clone()));
+        }
+        vec![SessionAction::SendInput {
+            suite_id,
+            test_id,
+            seq,
+            payload,
+        }]
+    }
+
+    /// Stops the run after a simulation failure.
+    fn sim_failed(&mut self, why: &str) -> Vec<SessionAction> {
+        self.log(&format!("Simulation failed: {why}. Stopping the loop.\n"));
+        self.stop_loop(Instant::now())
+    }
+
+    /// Records an output packet and feeds it to the simulation.
+    fn on_loop_sample(
+        &mut self,
+        id: TestIndex,
+        seq: u64,
+        payload: &[u8],
+    ) -> Vec<SessionAction> {
+        let stopping = self.timers.stop_sent.is_some();
+        let Some(run) = self.record_for(id) else {
+            return Vec::new();
+        };
+        run.outputs.push((seq, payload.to_vec()));
+        let Some(sim) = self.sim.as_mut().filter(|_| !stopping) else {
+            return Vec::new();
+        };
+        match sim.advance_bytes(seq, payload) {
+            Ok(next) => self.input_action(id, seq.saturating_add(1), next),
+            Err(e) => self.sim_failed(&e.to_string()),
+        }
+    }
+
+    /// Moves the active record to the history and starts the next queued loop.
+    fn end_loop(&mut self) -> Vec<SessionAction> {
+        self.timers = LoopTimers::default();
+        if let Some(run) = self.loop_run.as_mut() {
+            run.ended = true;
+            self.loop_history.push(run.clone());
+        }
+        if let Some(action) = self.start_next_pending_loop() {
+            return vec![action];
+        }
+        if self.loop_mode == LoopMode::Headless {
+            self.exit_loop = true;
+        }
+        Vec::new()
+    }
+
+    /// Starts the next queued loop that can start; refusals are logged.
+    fn start_next_pending_loop(&mut self) -> Option<SessionAction> {
+        while let Some(start) = self.pending_loops.pop_front() {
+            match self.start_loop(start, Instant::now()) {
+                Ok(action) => return Some(action),
+                Err(e) => {
+                    self.log(&format!(
+                        "Lifecycle case of suite {} not started: {e}\n",
+                        start.suite_id
+                    ));
+                }
+            }
+        }
+        None
+    }
+
     /// Enqueues all discovered tests across all suites for execution.
     ///
     /// When a case is already in flight (`current_running`), that case is
@@ -375,7 +808,10 @@ impl SessionState {
     pub fn start_next_or_exit(&mut self) -> Option<SessionAction> {
         self.current_running = None;
         if self.run_queue.is_empty() {
-            self.exit_loop = true;
+            if let Some(action) = self.start_next_pending_loop() {
+                return Some(action);
+            }
+            self.exit_loop = !self.loop_active();
             None
         } else {
             let (next_s, next_t) = self.run_queue.remove(0);
@@ -440,6 +876,12 @@ impl SessionState {
                 line,
             } => self.on_target_panic(&message, &file, line),
             OwnedTelemetry::Log { .. } => Vec::new(),
+            run_frame @ (OwnedTelemetry::LoopState { .. }
+            | OwnedTelemetry::LoopSample { .. }
+            | OwnedTelemetry::TeardownReport { .. }
+            | OwnedTelemetry::LoopStats { .. }) => {
+                self.handle_loop_run_frame(run_frame)
+            }
             OwnedTelemetry::TargetInfo {
                 protocol_version,
                 board_id,
@@ -455,6 +897,81 @@ impl SessionState {
                 Vec::new()
             }
             catalog => self.handle_catalog(catalog),
+        }
+    }
+
+    /// Records a frame of the active loop run; a final state ends the run.
+    fn handle_loop_run_frame(
+        &mut self,
+        telemetry: OwnedTelemetry,
+    ) -> Vec<SessionAction> {
+        match telemetry {
+            OwnedTelemetry::LoopState {
+                suite_id,
+                test_id,
+                state,
+                message,
+            } => self.on_loop_state((suite_id, test_id), state, message),
+            OwnedTelemetry::LoopSample {
+                suite_id,
+                test_id,
+                seq,
+                payload,
+            } => self.on_loop_sample((suite_id, test_id), seq, &payload),
+            OwnedTelemetry::TeardownReport {
+                suite_id,
+                test_id,
+                ok,
+                message,
+            } => {
+                if let Some(run) = self.record_for((suite_id, test_id)) {
+                    run.teardown = Some((ok, message));
+                }
+                Vec::new()
+            }
+            OwnedTelemetry::LoopStats {
+                suite_id,
+                test_id,
+                steps,
+                time_us,
+            } => {
+                if let Some(run) = self.record_for((suite_id, test_id)) {
+                    run.steps = Some(steps);
+                    run.time_us = Some(time_us);
+                }
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Records the loop announced for a suite during discovery.
+    fn handle_loop_catalog(&mut self, telemetry: OwnedTelemetry) {
+        match telemetry {
+            OwnedTelemetry::LifecycleSuite { suite_id, .. } => {
+                if let Some(suite) = self.ensure_suite_slot(suite_id) {
+                    suite.loop_expected = true;
+                }
+            }
+            OwnedTelemetry::LoopInfo {
+                suite_id,
+                test_id,
+                name,
+                description,
+                input_type,
+                output_type,
+            } => {
+                if let Some(suite) = self.ensure_suite_slot(suite_id) {
+                    suite.loop_item = Some(LoopItem {
+                        test_id,
+                        name,
+                        description,
+                        input_type,
+                        output_type,
+                    });
+                }
+            }
+            _ => {}
         }
     }
 
@@ -501,6 +1018,10 @@ impl SessionState {
                     value,
                 },
             ),
+            loop_frame @ (OwnedTelemetry::LifecycleSuite { .. }
+            | OwnedTelemetry::LoopInfo { .. }) => {
+                self.handle_loop_catalog(loop_frame);
+            }
             OwnedTelemetry::DiscoveryComplete => {
                 return self.on_discovery_complete();
             }
@@ -508,6 +1029,10 @@ impl SessionState {
             | OwnedTelemetry::MetricReport { .. }
             | OwnedTelemetry::TargetPanic { .. }
             | OwnedTelemetry::TargetInfo { .. }
+            | OwnedTelemetry::LoopState { .. }
+            | OwnedTelemetry::LoopSample { .. }
+            | OwnedTelemetry::TeardownReport { .. }
+            | OwnedTelemetry::LoopStats { .. }
             | OwnedTelemetry::Log { .. } => {}
         }
         Vec::new()
@@ -716,17 +1241,18 @@ impl SessionState {
             }
         }
 
-        let remaining_to_run = match self.phase {
-            SessionPhase::Discovering => true,
-            SessionPhase::Running | SessionPhase::Recovering => {
-                self.suites.iter().any(|suite| {
-                    suite.tests.iter().any(|test| {
-                        self.find_outcome(suite.suite_id, test.test_id)
-                            .is_none()
+        let remaining_to_run = !self.pending_loops.is_empty()
+            || match self.phase {
+                SessionPhase::Discovering => true,
+                SessionPhase::Running | SessionPhase::Recovering => {
+                    self.suites.iter().any(|suite| {
+                        suite.tests.iter().any(|test| {
+                            self.find_outcome(suite.suite_id, test.test_id)
+                                .is_none()
+                        })
                     })
-                })
-            }
-        };
+                }
+            };
 
         self.current_running = None;
         for s in &mut self.suites {
@@ -790,6 +1316,44 @@ fn slots_complete(have: usize, count: u16, mask: u64) -> bool {
         _ => return true,
     };
     mask & expected == expected
+}
+
+/// A session over a target whose only suite has one loop, discovered and
+/// validated.
+#[cfg(test)]
+pub(crate) fn lifecycle_session() -> SessionState {
+    let mut s = SessionState::new();
+    for tel in [
+        OwnedTelemetry::TargetInfo {
+            protocol_version: PROTOCOL_VERSION,
+            board_id: 0,
+            core_clock_hz: 0,
+            fpu_flags: 0,
+        },
+        OwnedTelemetry::SuiteInfo {
+            suite_id: 0,
+            name: "motor".into(),
+            description: String::new(),
+            test_count: 0,
+            setting_count: 0,
+        },
+        OwnedTelemetry::LifecycleSuite {
+            suite_id: 0,
+            loop_count: 1,
+        },
+        OwnedTelemetry::LoopInfo {
+            suite_id: 0,
+            test_id: 0,
+            name: "speed".into(),
+            description: String::new(),
+            input_type: "f32".into(),
+            output_type: "f32".into(),
+        },
+        OwnedTelemetry::DiscoveryComplete,
+    ] {
+        let _ = s.handle_message(BridgeMessage::Telemetry(tel));
+    }
+    s
 }
 
 #[cfg(test)]
@@ -1416,5 +1980,173 @@ mod tests {
         assert!(!slots_complete(64, 64, 0));
         // Larger sets complete on length alone.
         assert!(slots_complete(65, 65, 0));
+    }
+
+    fn state_frame(
+        state: LoopRunState,
+        message: Option<&str>,
+    ) -> BridgeMessage {
+        BridgeMessage::Telemetry(OwnedTelemetry::LoopState {
+            suite_id: 0,
+            test_id: 0,
+            state,
+            message: message.map(str::to_string),
+        })
+    }
+
+    fn start_free() -> LoopStart {
+        LoopStart {
+            suite_id: 0,
+            max_steps: 0,
+            lockstep: false,
+            duration: None,
+        }
+    }
+
+    #[test]
+    fn heartbeat_sent_while_supervised_run_active() {
+        let mut s = lifecycle_session();
+        assert!(s.loop_item(0).is_some(), "the loop is discovered");
+        let t0 = Instant::now();
+        assert!(s.tick(t0 + Duration::from_secs(5)).is_empty(), "idle");
+
+        let action = s.start_loop(start_free(), t0).unwrap();
+        assert!(matches!(
+            action,
+            SessionAction::Send(CommCommand::StartLoop {
+                suite_id: 0,
+                test_id: 0,
+                max_steps: 0,
+                lockstep: false
+            })
+        ));
+        let beats = |s: &mut SessionState, ms: u64| {
+            s.tick(t0 + Duration::from_millis(ms))
+                .iter()
+                .filter(|a| {
+                    matches!(a, SessionAction::Send(CommCommand::Heartbeat))
+                })
+                .count()
+        };
+        assert_eq!(beats(&mut s, 50), 0);
+        assert_eq!(beats(&mut s, 100), 1);
+        assert_eq!(beats(&mut s, 150), 0);
+        assert_eq!(beats(&mut s, 200), 1);
+
+        let _ = s.handle_message(state_frame(LoopRunState::Running, None));
+        let _ = s.handle_message(state_frame(LoopRunState::Pass, None));
+        assert_eq!(beats(&mut s, 400), 0, "no heartbeat after the run ends");
+    }
+
+    #[test]
+    fn loop_run_record_complete() {
+        let mut s = lifecycle_session();
+        let _ = s.start_loop(start_free(), Instant::now()).unwrap();
+        let frames = [
+            state_frame(LoopRunState::Running, None),
+            BridgeMessage::Telemetry(OwnedTelemetry::LoopSample {
+                suite_id: 0,
+                test_id: 0,
+                seq: 0,
+                payload: vec![1, 2],
+            }),
+            state_frame(LoopRunState::Warn, Some("careful")),
+            BridgeMessage::Telemetry(OwnedTelemetry::TeardownReport {
+                suite_id: 0,
+                test_id: 0,
+                ok: false,
+                message: Some("t".into()),
+            }),
+            BridgeMessage::Telemetry(OwnedTelemetry::LoopStats {
+                suite_id: 0,
+                test_id: 0,
+                steps: 7,
+                time_us: 900,
+            }),
+            state_frame(LoopRunState::Pass, None),
+        ];
+        for f in frames {
+            let _ = s.handle_message(f);
+        }
+        assert!(!s.loop_active());
+        let run = s.loop_history.first().unwrap();
+        assert_eq!(
+            run.states,
+            [
+                (LoopRunState::Running, None),
+                (LoopRunState::Warn, Some("careful".into())),
+                (LoopRunState::Pass, None),
+            ]
+        );
+        assert_eq!(run.outputs, [(0, vec![1, 2])]);
+        assert_eq!(run.teardown, Some((false, Some("t".into()))));
+        assert_eq!((run.steps, run.time_us), (Some(7), Some(900)));
+        assert!(run.ended);
+    }
+
+    #[test]
+    fn unacknowledged_stop_escalates_reset() {
+        let mut s = lifecycle_session();
+        let t0 = Instant::now();
+        let _ = s.start_loop(start_free(), t0).unwrap();
+        let stop = s.stop_loop(t0);
+        assert!(matches!(
+            stop.as_slice(),
+            [SessionAction::Send(CommCommand::StopNow {
+                suite_id: 0,
+                test_id: 0
+            })]
+        ));
+        let early = s.tick(t0 + Duration::from_millis(1900));
+        assert!(!early.iter().any(|a| matches!(a, SessionAction::CloseLink)));
+
+        let late = s.tick(t0 + DEFAULT_STOP_TIMEOUT);
+        assert!(
+            late.iter().any(|a| matches!(
+                a,
+                SessionAction::Send(CommCommand::TryReset)
+            ))
+        );
+        assert!(late.iter().any(|a| matches!(a, SessionAction::CloseLink)));
+        assert!(s.exit_loop);
+    }
+
+    #[test]
+    fn free_running_refused_on_subprocess() {
+        let mut s = lifecycle_session();
+        s.subprocess_link = true;
+        let refused = s.start_loop(start_free(), Instant::now());
+        assert_eq!(
+            refused.unwrap_err(),
+            LoopStartError::FreeRunningOnSubprocess
+        );
+        assert!(s.loop_run.is_none(), "no run record, so no frame");
+
+        let lockstep = LoopStart {
+            lockstep: true,
+            ..start_free()
+        };
+        assert!(s.start_loop(lockstep, Instant::now()).is_ok());
+    }
+
+    #[test]
+    fn a_second_run_and_an_unknown_loop_are_refused() {
+        let mut s = lifecycle_session();
+        let now = Instant::now();
+        let _ = s.start_loop(start_free(), now).unwrap();
+        assert_eq!(
+            s.start_loop(start_free(), now).unwrap_err(),
+            LoopStartError::RunActive
+        );
+        let other = LoopStart {
+            suite_id: 9,
+            ..start_free()
+        };
+        let _ = s.handle_message(state_frame(LoopRunState::Running, None));
+        let _ = s.handle_message(state_frame(LoopRunState::Pass, None));
+        assert_eq!(
+            s.start_loop(other, now).unwrap_err(),
+            LoopStartError::UnknownLoop(9)
+        );
     }
 }

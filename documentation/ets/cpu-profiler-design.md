@@ -1,6 +1,6 @@
 # CPUProfiler Design Document
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_7,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -26,7 +26,8 @@ hooks to the end-user or silicon vendor.
 - **FR-4 — High-Watermark Stack Profiling**: Paint the stack with a sentinel pattern
   and scan for the peak-usage high-water mark.
 - **FR-5 — Atomic Section Profiling**: Run a closure with interrupts disabled and
-  disable interrupts permanently.
+  disable interrupts permanently. Scope: atomic test cases and the panic path;
+  loop runs do not use the closure form (`loop-suite-design.md` C-4).
 - **FR-6 — Fallback Platform Provision**: Provide defaults for targets that do not
   support these features.
 
@@ -136,6 +137,13 @@ direct register read: a target without DWT supplies its own implementation.
 Interrupt control (FR-5) is expressed through the portable critical-section
 abstraction, which exists because there is otherwise no universal API across
 targets [2].
+
+**Loop scope.** Loop runs keep interrupts enabled
+(`loop-suite-design.md` NFR-1). They call neither the FR-5 closure nor FR-4
+stack painting, because painting the free stack while interrupts are live
+overwrites interrupt frames. Their statistics use `get_nanos` (FR-2) at setup
+entry, at teardown entry and for the link deadline. Only the panic path masks
+interrupts permanently, as it already does.
 
 Stack measurement (FR-4) uses painting, "a runtime technique for estimating the
 maximum stack depth a task has reached" [3]. The approach is "very
@@ -399,6 +407,7 @@ same reason the overhead itself is bounded.
 | 1.6      | September 24, 2026 | @MitchellDScott | §6.3 cites `ci-design.md` C-6 (indicative emulation timing), renumbered from C-2 in its revision 1.26. Crash reset calls `CPUProfiler::reset` after `TryReset`; static-analyzer references removed with that design; C-2 scope and `HostCPUProfiler` defaults clarified. |
 | 1.7      | September 24, 2026 | @MitchellDScott | Provided methods `board_id`, `core_clock_hz` and `fpu_flags` supply `Telemetry::TargetInfo`. |
 | 1.8      | September 28, 2026 | @MitchellDScott | The `fpu_flags` default computes its bits in a private pure function of the target properties so each combination is testable on a host. |
+| 1.9      | October 7, 2026 | @MitchellDScott | FR-5 scope note: loop-suite runs (`loop-suite-design.md` 1.2) use neither the closure form nor FR-4 stack painting and time runs with FR-2 `get_nanos`. |
 
 ---
 

@@ -10,3 +10,8 @@ runner = [
 rustflags = [
     "-C", "link-arg=-Tt4link.x",
 ]
+
+# The workspace clippy.toml sets thresholds for the libraries; the example
+# crate lints with the defaults.
+[env]
+CLIPPY_CONF_DIR = { value = ".", relative = true }

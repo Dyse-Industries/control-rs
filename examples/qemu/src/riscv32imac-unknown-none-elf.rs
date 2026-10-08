@@ -5,7 +5,7 @@ extern crate control_rs;
 
 use control_rs_ets::RiscvProfiler;
 use control_rs_ets::comms::{
-    Command, FrameReader, HostComms, Telemetry, frame_telemetry,
+    Command, FrameReader, HostComms, MAX_FRAME_SIZE, Telemetry, frame_telemetry,
 };
 use control_rs_ets::server::Context;
 use control_rs_macros::ets_setup;
@@ -20,7 +20,7 @@ struct RiscvSemihostingComms {
 impl HostComms for RiscvSemihostingComms {
     type Error = ();
 
-    fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+    fn poll_command(&mut self) -> Result<Option<Command<'_>>, Self::Error> {
         let c = unsafe {
             riscv_semihosting::syscall1(riscv_semihosting::nr::READC, 0)
         } as u8;
@@ -36,7 +36,7 @@ impl HostComms for RiscvSemihostingComms {
         &mut self,
         telemetry: &Telemetry<'_>,
     ) -> Result<(), Self::Error> {
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; MAX_FRAME_SIZE];
         if let Ok(len) = frame_telemetry(telemetry, &mut buf) {
             if let Ok(mut stdout) = semihosting::io::stdout() {
                 let _ = stdout.write_all(&buf[..len]);
@@ -59,6 +59,8 @@ impl HostComms for RiscvSemihostingComms {
         Ok(())
     }
 }
+
+mod lifecycle_lockstep;
 
 // Force linking of the math test suites by referencing them
 #[allow(unused_imports)]
