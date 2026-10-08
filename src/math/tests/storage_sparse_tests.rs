@@ -67,33 +67,33 @@ fn csc_columns_are_sorted_by_row_and_duplicates_are_summed() {
 
 #[test]
 fn sparse_writes_report_missing_entries_and_bounds_distinctly() {
-    let mut csr =
+    let mut rows =
         ArrayCsrStorage::<f64, 3, 3, 9, 4>::from_coo(&unsorted_coo()).unwrap();
-    let mut csc =
+    let mut cols =
         ArrayCscStorage::<f64, 3, 3, 9, 4>::from_coo(&unsorted_coo()).unwrap();
 
-    assert!(csr.set(0, 1, 9.0).is_ok());
-    assert_eq!(csr.get(0, 1), Some(9.0));
+    assert!(rows.set(0, 1, 9.0).is_ok());
+    assert_eq!(rows.get(0, 1), Some(9.0));
     assert_eq!(
-        csr.set(1, 1, 9.0),
+        rows.set(1, 1, 9.0),
         Err(StorageError::InvalidStructuralInvariant)
     );
-    assert_eq!(csr.set(3, 0, 9.0), Err(StorageError::OutOfBounds));
-    assert_eq!(csr.set(0, 3, 9.0), Err(StorageError::OutOfBounds));
-    assert!(csr.get(0, 3).is_none());
-    assert!(csr.get(3, 0).is_none());
+    assert_eq!(rows.set(3, 0, 9.0), Err(StorageError::OutOfBounds));
+    assert_eq!(rows.set(0, 3, 9.0), Err(StorageError::OutOfBounds));
+    assert!(rows.get(0, 3).is_none());
+    assert!(rows.get(3, 0).is_none());
 
-    assert!(csc.set(0, 1, 9.0).is_ok());
-    assert_eq!(csc.get(0, 1), Some(9.0));
+    assert!(cols.set(0, 1, 9.0).is_ok());
+    assert_eq!(cols.get(0, 1), Some(9.0));
     assert_eq!(
-        csc.set(1, 1, 9.0),
+        cols.set(1, 1, 9.0),
         Err(StorageError::InvalidStructuralInvariant)
     );
-    assert_eq!(csc.set(3, 0, 9.0), Err(StorageError::OutOfBounds));
-    assert_eq!(csc.set(0, 3, 9.0), Err(StorageError::OutOfBounds));
-    assert!(csc.get_mut(0, 3).is_none());
-    assert!(csc.get_mut(3, 0).is_none());
-    assert!(csc.get(0, 3).is_none());
+    assert_eq!(cols.set(3, 0, 9.0), Err(StorageError::OutOfBounds));
+    assert_eq!(cols.set(0, 3, 9.0), Err(StorageError::OutOfBounds));
+    assert!(cols.get_mut(0, 3).is_none());
+    assert!(cols.get_mut(3, 0).is_none());
+    assert!(cols.get(0, 3).is_none());
 }
 
 #[test]
@@ -133,14 +133,14 @@ fn order_sensitive_coo() -> ArrayCooStorage<f64, 3, 3, 9> {
 #[test]
 fn duplicates_are_summed_in_insertion_order() {
     // (1 + 1e16) - 1e16 is 0; the reverse order gives 1.
-    let csr =
+    let rows =
         ArrayCsrStorage::<f64, 3, 3, 9, 4>::from_coo(&order_sensitive_coo())
             .unwrap();
-    assert_eq!(csr.get(1, 1).map(f64::to_bits), Some(0.0_f64.to_bits()));
-    let csc =
+    assert_eq!(rows.get(1, 1).map(f64::to_bits), Some(0.0_f64.to_bits()));
+    let cols =
         ArrayCscStorage::<f64, 3, 3, 9, 4>::from_coo(&order_sensitive_coo())
             .unwrap();
-    assert_eq!(csc.get(1, 1).map(f64::to_bits), Some(0.0_f64.to_bits()));
+    assert_eq!(cols.get(1, 1).map(f64::to_bits), Some(0.0_f64.to_bits()));
 }
 
 #[test]

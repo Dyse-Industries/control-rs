@@ -251,6 +251,43 @@ pub mod tests {
     }
 
     #[cfg_attr(test, test)]
+    /// A pure-gain discrete model yields one section whose `b0` is the gain
+    /// and rejects `L = 0`, which would cascade as the identity (FR-10).
+    fn pure_gain_to_sections() {
+        let tf =
+            ArrayTransferFunction::<f64, 1, 1>::discrete([3.0], [1.0], 1.0);
+        assert_eq!(
+            to_sections::<f64, 1, 1, 0>(&tf),
+            Err(ClassicalError::SectionCount)
+        );
+        let c = to_sections::<f64, 1, 1, 1>(&tf).unwrap();
+        assert_eq!(
+            c[0],
+            SectionCoefficients {
+                b0: 3.0,
+                b1: 0.0,
+                b2: 0.0,
+                a1: 0.0,
+                a2: 0.0,
+            }
+        );
+        let mut cascade = BiquadCascade::<Df1<f64>, 1>::from_coefficients(&c);
+        assert_eq!(cascade.update(1.0).to_bits(), 3.0_f64.to_bits());
+        assert_eq!(
+            to_sections::<f64, 1, 1, 1>(
+                &ArrayTransferFunction::<f64, 1, 1>::discrete(
+                    [0.0],
+                    [1.0],
+                    1.0
+                )
+            ),
+            Err(ClassicalError::Root(
+                crate::polynomial::RootError::ZeroLeadingCoefficient
+            ))
+        );
+    }
+
+    #[cfg_attr(test, test)]
     /// `DirectForm2T<Fixed<i32, 29>, 2>` driven at full scale saturates
     /// without panic or wrap (FR-8).
     fn df2t_fixed_total() {
@@ -1284,7 +1321,9 @@ where
 /// first-order section (`b_2 = a_2 = 0`) with its nearest real zero. The
 /// overall gain goes into the first section. Zeros at infinity (numerator
 /// degree below denominator degree) become pure delays in their section.
-/// `L` must be `ceil((D - 1) / 2)`.
+/// A pure-gain model (`D = 1`) yields one section with `b_0` equal to that
+/// gain and the other coefficients zero. `L` must be `1` when `D = 1` and
+/// `ceil((D - 1) / 2)` otherwise.
 ///
 /// # Errors
 /// - [`ClassicalError::NotDiscrete`]: `tf` is continuous.
@@ -1308,8 +1347,38 @@ where
         return Err(ClassicalError::NotDiscrete);
     }
     let order = D.saturating_sub(1);
-    if order.div_ceil(2) != L {
+    // Pure-gain models need one section to hold `b0`; `ceil(0/2) = 0` would
+    // leave nowhere for the static gain and cascade to the identity.
+    let expected_l = if order == 0 { 1 } else { order.div_ceil(2) };
+    if expected_l != L {
         return Err(ClassicalError::SectionCount);
+    }
+    let lead_num = tf
+        .num_slice()
+        .iter()
+        .rev()
+        .find(|v| **v != T::ZERO)
+        .copied()
+        .unwrap_or(T::ZERO);
+    let lead_den = tf.den_slice().last().copied().unwrap_or(T::ONE);
+    if lead_num == T::ZERO {
+        return Err(ClassicalError::Root(
+            crate::polynomial::RootError::ZeroLeadingCoefficient,
+        ));
+    }
+    if order == 0 {
+        let g = lead_num.saturating_div(&lead_den);
+        let mut out = [SectionCoefficients {
+            b0: T::ZERO,
+            b1: T::ZERO,
+            b2: T::ZERO,
+            a1: T::ZERO,
+            a2: T::ZERO,
+        }; L];
+        if let Some(first) = out.first_mut() {
+            first.b0 = g;
+        }
+        return Ok(out);
     }
     let mut num = [T::ZERO; D];
     num.iter_mut()
@@ -1321,13 +1390,6 @@ where
         *dst = Some(p);
     }
     let mut zeros = finite_zeros(&num, order)?;
-    let lead_num = num
-        .iter()
-        .rev()
-        .find(|v| **v != T::ZERO)
-        .copied()
-        .unwrap_or(T::ZERO);
-    let lead_den = tf.den_slice().last().copied().unwrap_or(T::ONE);
     let mut out = pair_sections::<T, D, L>(&mut poles, &mut zeros);
     if let Some(first) = out.first_mut() {
         let g = lead_num.saturating_div(&lead_den);

@@ -45,6 +45,8 @@ type ComplexSlice<T> = [Complex<T>];
 ///
 /// # Errors
 /// - [`ClassicalError::NotContinuous`]: `sys` is discrete.
+/// - [`ClassicalError::Improper`]: `N > D`, so `|L|` grows on the arc at
+///   infinity and the finite-sample chord omits that contribution.
 /// - [`ClassicalError::InvalidParameter`]: `w_max <= 0`, `r <= 0`
 ///   or `M < 3`.
 /// - [`ClassicalError::Root`]: the open-loop poles cannot be computed.
@@ -67,6 +69,12 @@ where
 {
     if sys.is_discrete() {
         return Err(ClassicalError::NotContinuous);
+    }
+    // The closing chord joins the last finite-frequency sample to the first.
+    // That models a proper `L` (constant on `|s| → ∞`); an improper `L`
+    // contributes unsampled encirclements on the infinite arc.
+    if N > D {
+        return Err(ClassicalError::Improper);
     }
     if !(omega_max > T::ZERO && indent_radius > T::ZERO) || M < 3 {
         return Err(ClassicalError::InvalidParameter);
@@ -244,6 +252,17 @@ mod tests {
         assert_eq!(nyquist_encirclements(&sys, 10.0, 1e-3, &mut c2), bad);
         let mut c3 = [Complex::new(0.0, 0.0); 3];
         assert!(nyquist_encirclements(&sys, 10.0, 1e-3, &mut c3).is_ok());
+    }
+
+    #[test]
+    fn improper_loop_is_rejected() {
+        // L = s^3: the infinite arc contributes encirclements that the
+        // finite-sample chord omits; N>D must not return a false (0, 0).
+        let improper = ArrayTransferFunction::<f64, 4, 1>::continuous(
+            [0.0, 0.0, 0.0, 1.0],
+            [1.0],
+        );
+        assert_eq!(count(&improper), Err(ClassicalError::Improper));
     }
 
     #[test]
