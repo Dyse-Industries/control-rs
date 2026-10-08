@@ -1,6 +1,6 @@
-//! Host simulation hook for lifecycle loops.
+//! Host simulation hook for lifecycle tasks.
 //!
-//! A [`LoopSim`] produces the input packet of step `0` and maps the output
+//! A [`TaskSim`] produces the input packet of step `0` and maps the output
 //! packet of step `k` to the input packet of step `k + 1`. The session stores
 //! the byte-level [`ErasedSim`] form so one session type serves every packet
 //! type.
@@ -8,11 +8,11 @@
 //! # Example
 //!
 //! ```
-//! use control_rs_ets_host::sim::{LoopSim, erase};
+//! use control_rs_ets_host::sim::{TaskSim, erase};
 //!
 //! /// Integrator over `f32` packets.
 //! struct Integrator(f32);
-//! impl LoopSim for Integrator {
+//! impl TaskSim for Integrator {
 //!     type Input = f32;
 //!     type Output = f32;
 //!     fn initial(&mut self) -> f32 { self.0 }
@@ -49,8 +49,8 @@ pub enum SimError {
     Encode(String),
 }
 
-/// A host-side plant simulation driven by a loop's output packets.
-pub trait LoopSim {
+/// A host-side plant simulation driven by a task's output packets.
+pub trait TaskSim {
     /// The packet the simulation sends to the target.
     type Input: serde::Serialize;
     /// The packet the target sends to the simulation.
@@ -63,7 +63,7 @@ pub trait LoopSim {
     fn advance(&mut self, k: u64, output: Self::Output) -> Self::Input;
 }
 
-/// Byte-level form of a [`LoopSim`].
+/// Byte-level form of a [`TaskSim`].
 pub trait ErasedSim: Send {
     /// The input of step `k + 1` as encoded bytes, given the encoded output
     /// of step `k`.
@@ -88,12 +88,12 @@ pub trait ErasedSim: Send {
     fn output_type(&self) -> &'static str;
 }
 
-/// Adapter from a typed [`LoopSim`] to [`ErasedSim`].
+/// Adapter from a typed [`TaskSim`] to [`ErasedSim`].
 struct Erased<S>(S);
 
 impl<S> ErasedSim for Erased<S>
 where
-    S: LoopSim + Send,
+    S: TaskSim + Send,
     S::Input: 'static,
     S::Output: 'static,
 {
@@ -120,7 +120,7 @@ where
 #[must_use]
 pub fn erase<S>(sim: S) -> BoxedSim
 where
-    S: LoopSim + Send + 'static,
+    S: TaskSim + Send + 'static,
     S::Input: 'static,
     S::Output: 'static,
 {
@@ -140,9 +140,9 @@ mod tests {
     use super::*;
     use crate::bridge::{BridgeMessage, OwnedTelemetry};
     use crate::session::{
-        LoopStart, SessionAction, SessionState, lifecycle_session,
+        SessionAction, SessionState, TaskStart, lifecycle_session,
     };
-    use control_rs_ets::comms::LoopRunState;
+    use control_rs_ets::comms::TaskRunState;
     use std::time::Instant;
 
     /// An input packet and the step it is for.
@@ -157,7 +157,7 @@ mod tests {
     /// A simulation whose packet types are `u8`.
     struct Bytes;
 
-    impl LoopSim for Integrator {
+    impl TaskSim for Integrator {
         type Input = f32;
         type Output = f32;
 
@@ -172,7 +172,7 @@ mod tests {
         }
     }
 
-    impl LoopSim for Bytes {
+    impl TaskSim for Bytes {
         type Input = u8;
         type Output = u8;
 
@@ -196,8 +196,8 @@ mod tests {
         encode(&v).unwrap()
     }
 
-    fn lockstep() -> LoopStart {
-        LoopStart {
+    fn lockstep() -> TaskStart {
+        TaskStart {
             suite_id: 0,
             max_steps: 100,
             lockstep: true,
@@ -206,16 +206,16 @@ mod tests {
     }
 
     fn running() -> BridgeMessage {
-        BridgeMessage::Telemetry(OwnedTelemetry::LoopState {
+        BridgeMessage::Telemetry(OwnedTelemetry::TaskState {
             suite_id: 0,
             test_id: 0,
-            state: LoopRunState::Running,
+            state: TaskRunState::Running,
             message: None,
         })
     }
 
     fn sample(seq: u64, v: f32) -> BridgeMessage {
-        BridgeMessage::Telemetry(OwnedTelemetry::LoopSample {
+        BridgeMessage::Telemetry(OwnedTelemetry::TaskSample {
             suite_id: 0,
             test_id: 0,
             seq,
@@ -259,9 +259,9 @@ mod tests {
     }
 
     #[test]
-    fn loop_sim_drives_lockstep() {
+    fn task_sim_drives_lockstep() {
         let mut s = session_with(integrator(1.0));
-        let start = s.start_loop(lockstep(), Instant::now()).unwrap();
+        let start = s.start_task(lockstep(), Instant::now()).unwrap();
         assert!(matches!(start, SessionAction::Send(_)));
 
         // Input 0 follows the run's first state.
@@ -274,7 +274,7 @@ mod tests {
         let b = s.handle_message(sample(1, -0.25));
         assert_eq!(sent_input(&b), Some((2, pkt(0.25))));
 
-        let run = s.loop_run.as_ref().unwrap();
+        let run = s.task_run.as_ref().unwrap();
         assert_eq!(
             run.inputs,
             [(0, pkt(1.0)), (1, pkt(0.5)), (2, pkt(0.25))],
@@ -283,9 +283,9 @@ mod tests {
     }
 
     #[test]
-    fn loop_sim_type_mismatch_warns() {
+    fn task_sim_type_mismatch_warns() {
         let mut s = session_with(erase(Bytes));
-        assert!(s.start_loop(lockstep(), Instant::now()).is_ok());
+        assert!(s.start_task(lockstep(), Instant::now()).is_ok());
         assert_eq!(
             s.logs.matches("Warning: simulation packet types").count(),
             1,
@@ -293,7 +293,7 @@ mod tests {
         );
 
         let mut ok = session_with(integrator(0.0));
-        assert!(ok.start_loop(lockstep(), Instant::now()).is_ok());
+        assert!(ok.start_task(lockstep(), Instant::now()).is_ok());
         assert!(!ok.logs.contains("Warning"), "matching types are silent");
     }
 }

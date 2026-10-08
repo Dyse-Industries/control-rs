@@ -27,7 +27,7 @@ registry, requiring zero boilerplate and little runtime overhead.
 
 - **FR-1 — Distributed Suite Discovery**: Test suites and cases must be
   discoverable across modules and crates at runtime without central registration
-  tables. Loops (`loop-suite-design.md`) are declared inside a suite module
+  tables. Tasks (`lifecycle-suite-design.md`) are declared inside a suite module
   beside its cases and discovered with their suite from a second section.
 - **FR-2 — Dynamic Parameter Configuration**: Settings on the target must be
   adjustable from the host (`control-rs-tui`) via typed
@@ -131,19 +131,19 @@ the server reads as a `&'static [&'static SuiteDescriptor]`
 (`control-rs-ets::util`). The descriptors themselves stay in ordinary
 read-only data.
 
-**Second section for loops.** A suite may provide one loop: one function each
+**Second section for tasks.** A suite may provide one task: one function each
 marked `#[setup]`, `#[step]`, `#[reset]` and `#[teardown]` in the suite
-module, beside its settings and any number of cases. `#[ets_suite]` emits a `&'static LoopDescriptor`
-pointer per loop in `.ets_loops` (`__DATA,__ets_loops` on Apple hosts), which
-`ets_suites.x` bounds with `__ets_loops_start` and `__ets_loops_end` under
-the same `KEEP` directive; the server reads it with `util::get_loops`. Each
-`LoopDescriptor` points at its suite's `SuiteDescriptor`, so `SuiteDescriptor`,
+module, beside its settings and any number of cases. `#[ets_suite]` emits a `&'static TaskDescriptor`
+pointer per task in `.ets_tasks` (`__DATA,__ets_tasks` on Apple hosts), which
+`ets_suites.x` bounds with `__ets_tasks_start` and `__ets_tasks_end` under
+the same `KEEP` directive; the server reads it with `util::get_tasks`. Each
+`TaskDescriptor` points at its suite's `SuiteDescriptor`, so `SuiteDescriptor`,
 the `.ets_test_suites` slice and every suite and case index are unchanged. A
-suite holds at most one loop, addressed like a case by `(suite_id, test_id)`
+suite holds at most one task, addressed like a case by `(suite_id, test_id)`
 with `test_id` equal to the suite's case count, and uses the suite's settings through the existing
-`SettingInfo` and `SetSetting`. Discovery sends `SuiteLoops` and `LoopInfo`
-after each suite's existing records. An image without loops links an empty
-section (`loop-suite-design.md` §4.1).
+`SettingInfo` and `SetSetting`. Discovery sends `LifecycleSuite` and `TaskInfo`
+after the existing records of each suite that provides a task. An image without tasks links an empty
+section (`lifecycle-suite-design.md` §4.1).
 
 
 The mechanism this section specifies exists because cross-crate linker-section
@@ -487,7 +487,7 @@ descriptor statics, which are data.
 | **Step 2: Linker Script & Injection**       | Develop the `build.rs` script to generate the custom `ets_suites.x` script fragment containing `KEEP` directives. | 0.5 days         |
 | **Step 3: Target Server State Machine**     | Implement the on-target Server's state machine, timestamp-based lifecycle tracking and panic handlers.            | 0.5 days         |
 | **Step 4: Host-Side Wire Discovery** — *Shipped* | Discovery-mode session in `control-rs-ets-host` (`TryReset` + `ListSuites`, `SuiteInfo`/`TestInfo` replies); no ELF parsing. | Complete         |
-| **Step 5: Loop Section**              | Emit `.ets_loops` in the three `ets_suites.x` generators, add `util::get_loops` and stream `SuiteLoops` and `LoopInfo` per suite (`loop-suite-design.md` Phase 1). | 0.5 days         |
+| **Step 5: Task Section**              | Emit `.ets_tasks` in the three `ets_suites.x` generators, add `util::get_tasks` and stream `LifecycleSuite` and `TaskInfo` per suite (`lifecycle-suite-design.md` Phase 1). | 0.5 days         |
 
 ---
 
@@ -506,9 +506,9 @@ descriptor statics, which are data.
 | 1.8      | September 18, 2026 | @MitchellDScott | Serial/QEMU isolation: bridge connects to already-running firmware; `TryReset` is cooperative, not a power cycle. |
 | 1.9      | September 24, 2026 | @MitchellDScott | FR-2 names `control-rs-tui` as the settings editor; the `control-rs-ci` `ets` gate runs suites headless and edits no settings. Discovery is over the wire (no host ELF parsing, Step 4 shipped); the section holds `&'static SuiteDescriptor` pointers; unused `--gc-keep-exported` / `-u` retention dropped; `linkme` row restated. |
 | 1.10     | September 24, 2026 | @MitchellDScott | Discovery replies begin with `TargetInfo` (host-comm Step 4). |
-| 1.11     | October 7, 2026 | @MitchellDScott | FR-1 extended to loop suites (`loop-suite-design.md` 1.2): second section `.ets_loop_suites` with its own bounds, shared identifier space after existing suites, §9 Step 5. |
-| 1.12     | October 7, 2026 | @MitchellDScott | QEMU images may carry lockstep loop suites (`loop-suite-design.md` C-8); the section is not always empty there. |
-| 1.13     | October 7, 2026 | @MitchellDScott | Loops are nested in suite modules, point at their `SuiteDescriptor` and take `test_id`s after the suite's cases; discovery adds `SuiteLoops` and `LoopInfo` per suite (`loop-suite-design.md` 1.7) ; at most one loop per suite; loop markers sit directly in the suite module |
+| 1.11     | October 7, 2026 | @MitchellDScott | FR-1 extended to lifecycle suites (`lifecycle-suite-design.md` 1.2): second section `.ets_suites` with its own bounds, shared identifier space after existing suites, §9 Step 5. |
+| 1.12     | October 7, 2026 | @MitchellDScott | QEMU images may carry lockstep lifecycle suites (`lifecycle-suite-design.md` C-8); the section is not always empty there. |
+| 1.13     | October 7, 2026 | @MitchellDScott | Tasks are nested in suite modules, point at their `SuiteDescriptor` and take `test_id`s after the suite's cases; discovery adds `LifecycleSuite` and `TaskInfo` per suite with a task (`lifecycle-suite-design.md` 1.7) ; at most one task per suite; task markers sit directly in the suite module |
 
 ---
 

@@ -18,13 +18,13 @@
 use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicPtr, Ordering};
 
 use crate::comms::{
-    Command, CommsLock, HostComms, LoopRunState, MAX_MESSAGE_SIZE,
-    PROTOCOL_VERSION, Telemetry, TestState,
+    Command, CommsLock, HostComms, MAX_MESSAGE_SIZE, PROTOCOL_VERSION,
+    TaskRunState, Telemetry, TestState,
 };
 use crate::settings::SettingValue;
-use crate::{LoopDescriptor, LoopIo, MAX_PACKET_SIZE, SuiteDescriptor};
+use crate::{MAX_PACKET_SIZE, SuiteDescriptor, TaskDescriptor, TaskIo};
 
-/// Serializes the tests that run a loop or read the run indicators.
+/// Serializes the tests that run a task or read the run indicators.
 #[cfg(test)]
 pub(crate) mod test_lock {
     extern crate std;
@@ -41,14 +41,14 @@ pub(crate) mod test_lock {
 
 // --- Static variables ---
 
-/// The loop run in progress, or null when no loop runs.
+/// The task run in progress, or null when no task runs.
 ///
-/// Used by the panic handler to run the loop's teardown.
+/// Used by the panic handler to run the task's teardown.
 ///
 /// # Safety
-/// The pointer is stored from a `&'static LoopDescriptor` and is only
+/// The pointer is stored from a `&'static TaskDescriptor` and is only
 /// dereferenced as one.
-pub static ACTIVE_LOOP: AtomicPtr<LoopDescriptor> =
+pub static ACTIVE_TASK: AtomicPtr<TaskDescriptor> =
     AtomicPtr::new(core::ptr::null_mut());
 
 /// Global tracker for the currently executing suite ID.
@@ -65,7 +65,7 @@ pub static CURRENT_SUITE: TestIndexIndicator = TestIndexIndicator::new();
 /// Accessing or updating this indicator is thread-safe and atomic.
 pub static CURRENT_TEST: TestIndexIndicator = TestIndexIndicator::new();
 
-/// Set once the active loop's teardown has started, so that it is never
+/// Set once the active task's teardown has started, so that it is never
 /// entered twice.
 pub static TEARDOWN_STARTED: AtomicBool = AtomicBool::new(false);
 
@@ -159,17 +159,17 @@ pub struct Context<C, P> {
 pub struct Server<'a, C, P> {
     /// The global context containing comms, `cpu_utils` and the comms lock.
     pub context: Context<C, P>,
-    /// The registered loops, one per lifecycle suite.
-    pub loops: &'a [&'static LoopDescriptor],
+    /// The registered tasks, one per lifecycle suite.
+    pub tasks: &'a [&'static TaskDescriptor],
     /// The registered test suites.
     pub suites: &'a [&'static SuiteDescriptor],
 }
 
-/// The end state of a loop run and its optional message.
-type Verdict = (LoopRunState, Option<&'static str>);
+/// The end state of a task run and its optional message.
+type Verdict = (TaskRunState, Option<&'static str>);
 
-/// Mutable state of one loop run, held on the run loop's stack frame.
-struct LoopRun {
+/// Mutable state of one task run, held on the run task's stack frame.
+struct TaskRun {
     deadline_ns: u64,
     input: [u8; MAX_PACKET_SIZE],
     input_len: usize,
@@ -185,7 +185,7 @@ struct LoopRun {
     verdict: Option<Verdict>,
 }
 
-/// The parameters of a `StartLoop` command.
+/// The parameters of a `StartTask` command.
 #[derive(Clone, Copy)]
 struct StartRequest {
     lockstep: bool,
@@ -496,24 +496,24 @@ where
     ) -> Self {
         Self {
             context,
-            loops: &[],
+            tasks: &[],
             suites,
         }
     }
 
-    /// Registers the loops of the image, replacing the empty default.
+    /// Registers the tasks of the image, replacing the empty default.
     ///
     /// # Arguments
-    /// * `loops` - Slice of static loop descriptor references.
+    /// * `tasks` - Slice of static task descriptor references.
     ///
     /// # Returns
-    /// * `Self` - Server instance holding `loops`.
+    /// * `Self` - Server instance holding `tasks`.
     #[must_use]
-    pub const fn with_loops(
+    pub const fn with_tasks(
         mut self,
-        loops: &'a [&'static LoopDescriptor],
+        tasks: &'a [&'static TaskDescriptor],
     ) -> Self {
-        self.loops = loops;
+        self.tasks = tasks;
         self
     }
 
@@ -547,13 +547,13 @@ where
                     } => {
                         self.set_setting(suite_id, setting_id, value)?;
                     }
-                    Command::StartLoop {
+                    Command::StartTask {
                         suite_id,
                         test_id,
                         max_steps,
                         lockstep,
                     } => {
-                        self.start_loop(StartRequest {
+                        self.start_task(StartRequest {
                             lockstep,
                             max_steps,
                             suite_id,
@@ -563,7 +563,7 @@ where
                     Command::TryReset
                     | Command::StopNow { .. }
                     | Command::Heartbeat
-                    | Command::LoopInput { .. } => {}
+                    | Command::TaskInput { .. } => {}
                 }
             }
 
@@ -746,9 +746,9 @@ where
                 )?;
             }
 
-            self.stream_suite_loops(suite_id, suite)?;
+            self.stream_suite_tasks(suite_id, suite)?;
         }
-        self.report_orphan_loops()?;
+        self.report_orphan_tasks()?;
 
         let _ = self
             .context
@@ -757,16 +757,16 @@ where
         Ok(())
     }
 
-    /// Sends `LifecycleSuite` and the `LoopInfo` of the loop of `suite`, if any.
+    /// Sends `LifecycleSuite` and the `TaskInfo` of the task of `suite`, if any.
     ///
-    /// Loops beyond the first for one suite are skipped with an error log.
-    fn stream_suite_loops(
+    /// Tasks beyond the first for one suite are skipped with an error log.
+    fn stream_suite_tasks(
         &mut self,
         suite_id: u16,
         suite: &'static SuiteDescriptor,
     ) -> ServerResult<C::Error> {
-        let loops = self.loops;
-        let mut matching = loops
+        let tasks = self.tasks;
+        let mut matching = tasks
             .iter()
             .copied()
             .filter(|l| core::ptr::eq(l.suite, suite));
@@ -777,11 +777,11 @@ where
             let _ = self.context.send_telemetry_locked(
                 &Telemetry::LifecycleSuite {
                     suite_id,
-                    loop_count: 1,
+                    task_count: 1,
                 },
             )?;
             let _ =
-                self.context.send_telemetry_locked(&Telemetry::LoopInfo {
+                self.context.send_telemetry_locked(&Telemetry::TaskInfo {
                     suite_id,
                     test_id: u16::try_from(suite.executables.len())
                         .unwrap_or(u16::MAX),
@@ -795,40 +795,40 @@ where
             self.context.report_error_log(
                 suite_id,
                 0,
-                "Error: second lifecycle case for suite skipped",
+                "Error: second lifecycle task for suite skipped",
             )?;
         }
         Ok(())
     }
 
-    /// Logs each loop whose suite is not registered.
-    fn report_orphan_loops(&mut self) -> ServerResult<C::Error> {
-        let (suites, loops) = (self.suites, self.loops);
-        for desc in loops {
+    /// Logs each task whose suite is not registered.
+    fn report_orphan_tasks(&mut self) -> ServerResult<C::Error> {
+        let (suites, tasks) = (self.suites, self.tasks);
+        for desc in tasks {
             if !suites.iter().any(|s| core::ptr::eq(*s, desc.suite)) {
                 self.context.report_error_log(
                     0,
                     0,
-                    "Error: lifecycle case's suite not registered, skipped",
+                    "Error: lifecycle task's suite not registered, skipped",
                 )?;
             }
         }
         Ok(())
     }
 
-    /// Resolves the loop addressed by `StartLoop` and runs it.
-    fn start_loop(&mut self, req: StartRequest) -> ServerResult<C::Error> {
+    /// Resolves the task addressed by `StartTask` and runs it.
+    fn start_task(&mut self, req: StartRequest) -> ServerResult<C::Error> {
         let (suite_id, test_id) = (req.suite_id, req.test_id);
         let Some(&suite) = self.suites.get(usize::from(suite_id)) else {
             self.context.report_error_log(
                 suite_id,
                 test_id,
-                "Error: StartLoop suite_id out of range",
+                "Error: StartLifecycle suite_id out of range",
             )?;
             return Ok(());
         };
-        let loops = self.loops;
-        let found = loops
+        let tasks = self.tasks;
+        let found = tasks
             .iter()
             .copied()
             .find(|l| core::ptr::eq(l.suite, suite))
@@ -837,49 +837,49 @@ where
             self.context.report_error_log(
                 suite_id,
                 test_id,
-                "Error: StartLoop does not address a lifecycle case",
+                "Error: StartTask does not address a lifecycle task",
             )?;
             return Ok(());
         };
-        self.run_loop(desc, req)
+        self.run_task(desc, req)
     }
 
-    /// Runs setup, the steps and teardown of a loop until the run ends.
-    fn run_loop(
+    /// Runs setup, the steps and teardown of a task until the run ends.
+    fn run_task(
         &mut self,
-        desc: &'static LoopDescriptor,
+        desc: &'static TaskDescriptor,
         req: StartRequest,
     ) -> ServerResult<C::Error> {
         let started_ns = self.context.cpu_utils.get_nanos();
-        let mut run = LoopRun::new(req, started_ns, desc.link_timeout_ms);
+        let mut run = TaskRun::new(req, started_ns, desc.link_timeout_ms);
 
         CURRENT_SUITE.set_active(usize::from(req.suite_id));
         CURRENT_TEST.set_active(usize::from(req.test_id));
         TEARDOWN_STARTED.store(false, Ordering::Release);
-        ACTIVE_LOOP
+        ACTIVE_TASK
             .store(core::ptr::from_ref(desc).cast_mut(), Ordering::Release);
 
         let _ = self.context.send_telemetry_and_flush_locked(
-            &Telemetry::LoopState {
+            &Telemetry::TaskState {
                 suite_id: req.suite_id,
                 test_id: req.test_id,
-                state: LoopRunState::Running,
+                state: TaskRunState::Running,
                 message: None,
             },
         )?;
         if let Err(msg) = (desc.setup)() {
-            run.verdict = Some((LoopRunState::Error, Some(msg)));
+            run.verdict = Some((TaskRunState::Error, Some(msg)));
         }
 
         self.run_steps(desc, &mut run, req.max_steps)?;
         self.finish_run(desc, &run)
     }
 
-    /// Calls the loop's steps until a verdict is set.
+    /// Calls the task's steps until a verdict is set.
     fn run_steps(
         &mut self,
-        desc: &'static LoopDescriptor,
-        run: &mut LoopRun,
+        desc: &'static TaskDescriptor,
+        run: &mut TaskRun,
         max_steps: u64,
     ) -> ServerResult<C::Error> {
         let mut output = [0u8; MAX_PACKET_SIZE];
@@ -888,13 +888,13 @@ where
                 && run.verdict.is_none()
                 && run.input_seq != Some(run.k)
             {
-                self.loop_boundary(desc, run)?;
+                self.task_boundary(desc, run)?;
             }
             if run.verdict.is_some() {
                 break;
             }
 
-            let mut io = LoopIo {
+            let mut io = TaskIo {
                 input: run
                     .input_seq
                     .and_then(|_| run.input.get(..run.input_len)),
@@ -913,12 +913,12 @@ where
 
             if run.verdict.is_none() && max_steps != 0 && run.steps >= max_steps
             {
-                run.verdict = Some((LoopRunState::Bounded, None));
+                run.verdict = Some((TaskRunState::Bounded, None));
             }
             if run.verdict.is_some() {
                 break;
             }
-            self.loop_boundary(desc, run)?;
+            self.task_boundary(desc, run)?;
         }
         Ok(())
     }
@@ -926,12 +926,12 @@ where
     /// Calls teardown and sends the run's closing reports.
     fn finish_run(
         &mut self,
-        desc: &'static LoopDescriptor,
-        run: &LoopRun,
+        desc: &'static TaskDescriptor,
+        run: &TaskRun,
     ) -> ServerResult<C::Error> {
         let (suite_id, test_id) = (run.suite_id, run.test_id);
         let (state, message) = run.verdict.unwrap_or((
-            LoopRunState::Error,
+            TaskRunState::Error,
             Some("run ended without verdict"),
         ));
         TEARDOWN_STARTED.store(true, Ordering::Release);
@@ -946,14 +946,14 @@ where
                     ok: teardown.is_ok(),
                     message: teardown.err().map(truncate_message),
                 })?;
-        let _ = self.context.send_telemetry_locked(&Telemetry::LoopStats {
+        let _ = self.context.send_telemetry_locked(&Telemetry::TaskStats {
             suite_id,
             test_id,
             steps: run.steps,
             time_us: ended_ns.saturating_sub(run.started_ns) / 1000,
         })?;
         let _ = self.context.send_telemetry_and_flush_locked(
-            &Telemetry::LoopState {
+            &Telemetry::TaskState {
                 suite_id,
                 test_id,
                 state,
@@ -961,7 +961,7 @@ where
             },
         )?;
 
-        ACTIVE_LOOP.store(core::ptr::null_mut(), Ordering::Release);
+        ACTIVE_TASK.store(core::ptr::null_mut(), Ordering::Release);
         CURRENT_SUITE.set_idle();
         CURRENT_TEST.set_idle();
         Ok(())
@@ -971,15 +971,15 @@ where
     /// records its terminal verdict.
     fn report_step(
         &mut self,
-        run: &mut LoopRun,
-        outcome: crate::LoopOutcome,
+        run: &mut TaskRun,
+        outcome: crate::TaskOutcome,
         packet: &[u8],
     ) -> ServerResult<C::Error> {
         match outcome.status {
-            LoopRunState::Running | LoopRunState::Warn => {
+            TaskRunState::Running | TaskRunState::Warn => {
                 if run.lockstep || !packet.is_empty() {
                     let _ = self.context.send_telemetry_locked(
-                        &Telemetry::LoopSample {
+                        &Telemetry::TaskSample {
                             suite_id: run.suite_id,
                             test_id: run.test_id,
                             seq: run.k,
@@ -990,7 +990,7 @@ where
                 let sent = (outcome.status, outcome.message);
                 if sent != run.last_sent {
                     let _ = self.context.send_telemetry_locked(
-                        &Telemetry::LoopState {
+                        &Telemetry::TaskState {
                             suite_id: run.suite_id,
                             test_id: run.test_id,
                             state: outcome.status,
@@ -1007,10 +1007,10 @@ where
 
     /// The server's work between two steps: poll one command, act on it,
     /// supervise the host link and flush.
-    fn loop_boundary(
+    fn task_boundary(
         &mut self,
-        desc: &'static LoopDescriptor,
-        run: &mut LoopRun,
+        desc: &'static TaskDescriptor,
+        run: &mut TaskRun,
     ) -> ServerResult<C::Error> {
         let (frame_seen, action) = self
             .context
@@ -1033,7 +1033,7 @@ where
                     && run.verdict.is_none()
                     && let Err(msg) = (desc.reset)()
                 {
-                    run.verdict = Some((LoopRunState::Error, Some(msg)));
+                    run.verdict = Some((TaskRunState::Error, Some(msg)));
                 }
             }
         }
@@ -1043,7 +1043,7 @@ where
             if frame_seen {
                 run.deadline_ns = now.saturating_add(run.timeout_ns);
             } else if run.verdict.is_none() && now > run.deadline_ns {
-                run.verdict = Some((LoopRunState::TimedOut, None));
+                run.verdict = Some((TaskRunState::TimedOut, None));
             }
         }
 
@@ -1052,7 +1052,7 @@ where
     }
 }
 
-impl LoopRun {
+impl TaskRun {
     /// A fresh run for `req` that started at `started_ns`.
     const fn new(
         req: StartRequest,
@@ -1066,7 +1066,7 @@ impl LoopRun {
             input_len: 0,
             input_seq: None,
             k: 0,
-            last_sent: (LoopRunState::Running, None),
+            last_sent: (TaskRunState::Running, None),
             lockstep: req.lockstep,
             started_ns,
             steps: 0,
@@ -1085,14 +1085,14 @@ impl LoopRun {
                 if self.is_active(suite_id, test_id) =>
             {
                 if self.verdict.is_none() {
-                    self.verdict = Some((LoopRunState::Aborted, None));
+                    self.verdict = Some((TaskRunState::Aborted, None));
                 }
                 Boundary::Nothing
             }
             Command::StopNow { .. } => {
-                Boundary::Log("Error: StopNow addresses another lifecycle case")
+                Boundary::Log("Error: StopNow addresses another lifecycle task")
             }
-            Command::LoopInput {
+            Command::TaskInput {
                 suite_id,
                 test_id,
                 seq,
@@ -1100,8 +1100,8 @@ impl LoopRun {
             } if self.is_active(suite_id, test_id) => {
                 self.store_input(seq, payload)
             }
-            Command::LoopInput { .. } => Boundary::Log(
-                "Error: LoopInput addresses another lifecycle case",
+            Command::TaskInput { .. } => Boundary::Log(
+                "Error: TaskInput addresses another lifecycle task",
             ),
             Command::SetSetting {
                 suite_id,
@@ -1116,7 +1116,7 @@ impl LoopRun {
             Command::Heartbeat | Command::TryReset => Boundary::Nothing,
             Command::ListSuites
             | Command::RunExecutable { .. }
-            | Command::StartLoop { .. } => {
+            | Command::StartTask { .. } => {
                 Boundary::Log("Error: command rejected during a lifecycle run")
             }
         }
@@ -1129,19 +1129,19 @@ impl LoopRun {
     /// Stores an input packet when its index is current.
     fn store_input(&mut self, seq: u64, payload: &[u8]) -> Boundary {
         let Some(dst) = self.input.get_mut(..payload.len()) else {
-            return Boundary::Log("Error: LoopInput payload too large");
+            return Boundary::Log("Error: TaskInput payload too large");
         };
         if self.lockstep {
             if seq > self.k {
                 self.verdict =
-                    Some((LoopRunState::Error, Some("input sequence gap")));
+                    Some((TaskRunState::Error, Some("input sequence gap")));
                 return Boundary::Nothing;
             }
             if seq < self.k {
-                return Boundary::Log("Error: stale LoopInput ignored");
+                return Boundary::Log("Error: stale TaskInput ignored");
             }
         } else if self.input_seq.is_some_and(|stored| seq < stored) {
-            return Boundary::Log("Error: stale LoopInput ignored");
+            return Boundary::Log("Error: stale TaskInput ignored");
         }
         dst.copy_from_slice(payload);
         self.input_len = payload.len();
@@ -1218,7 +1218,7 @@ mod tests {
     extern crate std;
     use super::*;
     use crate::comms::{
-        Command, HostComms, LoopRunState, Telemetry, TestState,
+        Command, HostComms, TaskRunState, Telemetry, TestState,
     };
     use crate::profiler::CPUProfiler;
     use crate::settings::{
@@ -1226,9 +1226,9 @@ mod tests {
     };
     use crate::{ExecDescriptor, SuiteDescriptor};
     use lifecycle_support::{
-        Config, Counts, Event, LOOPS_PLAIN, LOOPS_TIMEOUT, LOOPS_TWINS, RUN,
-        Run, begin, count_events, count_frames, counts, final_state, input,
-        log_count, run_loops, samples, seen_inputs, sent, set_u8, start,
+        Config, Counts, Event, RUN, Run, TASKS_PLAIN, TASKS_TIMEOUT,
+        TASKS_TWINS, begin, count_events, count_frames, counts, final_state,
+        input, log_count, run_tasks, samples, seen_inputs, sent, set_u8, start,
         states, stop,
     };
     use std::string::ToString;

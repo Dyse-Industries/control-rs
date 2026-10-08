@@ -4,13 +4,13 @@
 //! `x`, so a host simulation of the integrator `x + u` that starts at 1
 //! halves its state every step, exactly in `f32`.
 
-use control_rs_ets::{LoopContext, LoopStatus};
+use control_rs_ets::{TaskContext, TaskStatus};
 use control_rs_macros::ets_suite;
 
 #[ets_suite]
 /// Lockstep integrator over host input.
 pub mod lockstep {
-    use super::{LoopContext, LoopStatus};
+    use super::{TaskContext, TaskStatus};
 
     #[setup]
     fn setup() -> Result<(), &'static str> {
@@ -19,9 +19,9 @@ pub mod lockstep {
 
     /// Returns half the negated input.
     #[step]
-    fn integrator(ctx: &LoopContext<'_, f32>) -> LoopStatus<f32> {
+    fn integrator(ctx: &TaskContext<'_, f32>) -> TaskStatus<f32> {
         let x = ctx.input().copied().unwrap_or(0.0);
-        LoopStatus::Running(-0.5 * x)
+        TaskStatus::Running(-0.5 * x)
     }
 
     #[reset]

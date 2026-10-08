@@ -53,7 +53,7 @@ use crate::settings::SettingValue;
 pub const FRAME_OVERHEAD: usize = 6;
 /// Maximum encoded frame size (`MAX_PAYLOAD_SIZE` + `FRAME_OVERHEAD`).
 pub const MAX_FRAME_SIZE: usize = 518;
-/// Maximum bytes of a [`Telemetry::LoopState`] or [`Telemetry::TeardownReport`]
+/// Maximum bytes of a [`Telemetry::TaskState`] or [`Telemetry::TeardownReport`]
 /// message; longer messages are truncated at a `char` boundary.
 pub const MAX_MESSAGE_SIZE: usize = 256;
 /// Maximum postcard payload bytes in one frame.
@@ -185,35 +185,35 @@ pub enum Command<'a> {
     },
     /// Request the target to reset.
     TryReset,
-    /// Start the loop of a suite.
-    StartLoop {
-        /// The ID of the suite containing the loop.
+    /// Start the task of a suite.
+    StartTask {
+        /// The ID of the suite containing the task.
         suite_id: u16,
-        /// The loop's identifier within the suite.
+        /// The task's identifier within the suite.
         test_id: u16,
-        /// Stop with [`LoopRunState::Bounded`] after this many steps (`0` is unbounded).
+        /// Stop with [`TaskRunState::Bounded`] after this many steps (`0` is unbounded).
         max_steps: u64,
         /// Call step `k` only after input `k` has arrived.
         lockstep: bool,
     },
-    /// Stop the running loop at the next step boundary.
+    /// Stop the running task at the next step boundary.
     StopNow {
-        /// The ID of the suite containing the loop.
+        /// The ID of the suite containing the task.
         suite_id: u16,
-        /// The loop's identifier within the suite.
+        /// The task's identifier within the suite.
         test_id: u16,
     },
     /// Refresh the target's host link deadline.
     Heartbeat,
-    /// An input packet for a running loop.
-    LoopInput {
-        /// The ID of the suite containing the loop.
+    /// An input packet for a running task.
+    TaskInput {
+        /// The ID of the suite containing the task.
         suite_id: u16,
-        /// The loop's identifier within the suite.
+        /// The task's identifier within the suite.
         test_id: u16,
         /// The step index the input is for.
         seq: u64,
-        /// The `postcard` encoding of the loop's input type.
+        /// The `postcard` encoding of the task's input type.
         payload: &'a [u8],
     },
 }
@@ -320,66 +320,66 @@ pub enum Telemetry<'a> {
         fpu_flags: u8,
     },
     /// Marks a suite as a lifecycle suite, sent after the suite's records
-    /// and before its [`Telemetry::LoopInfo`]. Suites without a loop send none.
+    /// and before its [`Telemetry::TaskInfo`]. Suites without a task send none.
     LifecycleSuite {
         /// The ID of the suite.
         suite_id: u16,
-        /// The suite's loop count (always `1`).
-        loop_count: u8,
+        /// The suite's task count (always `1`).
+        task_count: u8,
     },
-    /// Metadata about the loop of a suite.
-    LoopInfo {
-        /// The ID of the suite containing the loop.
+    /// Metadata about the task of a suite.
+    TaskInfo {
+        /// The ID of the suite containing the task.
         suite_id: u16,
-        /// The loop's identifier within the suite.
+        /// The task's identifier within the suite.
         test_id: u16,
-        /// The name of the loop.
+        /// The name of the task.
         name: &'a str,
-        /// The doc comment description of the loop.
+        /// The doc comment description of the task.
         description: &'a str,
-        /// The type name of the loop's input packet.
+        /// The type name of the task's input packet.
         input_type: &'a str,
-        /// The type name of the loop's output packet.
+        /// The type name of the task's output packet.
         output_type: &'a str,
     },
-    /// Notification of a loop run state transition.
-    LoopState {
-        /// The ID of the suite containing the loop.
+    /// Notification of a task run state transition.
+    TaskState {
+        /// The ID of the suite containing the task.
         suite_id: u16,
-        /// The loop's identifier within the suite.
+        /// The task's identifier within the suite.
         test_id: u16,
         /// The new state of the run.
-        state: LoopRunState,
+        state: TaskRunState,
         /// An optional message accompanying the state.
         message: Option<&'a str>,
     },
-    /// The output packet of one loop step.
-    LoopSample {
-        /// The ID of the suite containing the loop.
+    /// The output packet of one task step.
+    TaskSample {
+        /// The ID of the suite containing the task.
         suite_id: u16,
-        /// The loop's identifier within the suite.
+        /// The task's identifier within the suite.
         test_id: u16,
         /// The step that produced the output.
         seq: u64,
-        /// The `postcard` encoding of the loop's output type.
+        /// The `postcard` encoding of the task's output type.
         payload: &'a [u8],
     },
-    /// The outcome of a loop's teardown, independent of the run verdict.
+    /// The outcome of a task's teardown, independent of the run verdict.
     TeardownReport {
-        /// The ID of the suite containing the loop.
+        /// The ID of the suite containing the task.
         suite_id: u16,
-        /// The loop's identifier within the suite.
+        /// The task's identifier within the suite.
         test_id: u16,
         /// Whether teardown succeeded.
         ok: bool,
         /// An optional message accompanying the result.
         message: Option<&'a str>,
     },
-    /// Statistics of a finished loop run.
-    LoopStats {
-        /// The ID of the suite containing the loop.
+    /// Statistics of a finished task run.
+    TaskStats {
+        /// The ID of the suite containing the task.
         suite_id: u16,
-        /// The loop's identifier within the suite.
+        /// The task's identifier within the suite.
         test_id: u16,
         /// The number of steps called.
         steps: u64,
@@ -388,11 +388,11 @@ pub enum Telemetry<'a> {
     },
 }
 
-/// The state of a loop run. The order is append-only.
+/// The state of a task run. The order is append-only.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
 )]
-pub enum LoopRunState {
+pub enum TaskRunState {
     /// The run is active, or the last step returned `Running`.
     Running,
     /// The last step returned `Warn`.
@@ -1494,7 +1494,7 @@ mod tests {
             assert_eq!(postcard::to_slice(&t, &mut buf).unwrap(), expected);
         }
 
-        // Loop variants are appended after the last pre-existing one.
+        // Task variants are appended after the last pre-existing one.
         for (cmd, tag) in appended_command_tags() {
             let bytes = postcard::to_slice(&cmd, &mut buf).unwrap();
             assert_eq!(bytes.first(), Some(&tag));
@@ -1504,7 +1504,7 @@ mod tests {
             assert_eq!(bytes.first(), Some(&tag));
         }
 
-        // `LoopRunState` encodes as its declared-order discriminant.
+        // `TaskRunState` encodes as its declared-order discriminant.
         for (i, state) in run_states().iter().enumerate() {
             let bytes = postcard::to_slice(state, &mut buf).unwrap();
             assert_eq!(bytes, [u8::try_from(i).unwrap()]);
@@ -1625,7 +1625,7 @@ mod tests {
     fn appended_command_tags() -> [TaggedCommand; 4] {
         [
             (
-                Command::StartLoop {
+                Command::StartTask {
                     suite_id: 0,
                     test_id: 0,
                     max_steps: 0,
@@ -1642,7 +1642,7 @@ mod tests {
             ),
             (Command::Heartbeat, 6),
             (
-                Command::LoopInput {
+                Command::TaskInput {
                     suite_id: 0,
                     test_id: 0,
                     seq: 0,
@@ -1659,12 +1659,12 @@ mod tests {
             (
                 Telemetry::LifecycleSuite {
                     suite_id,
-                    loop_count: 1,
+                    task_count: 1,
                 },
                 9,
             ),
             (
-                Telemetry::LoopInfo {
+                Telemetry::TaskInfo {
                     suite_id,
                     test_id,
                     name: "",
@@ -1675,16 +1675,16 @@ mod tests {
                 10,
             ),
             (
-                Telemetry::LoopState {
+                Telemetry::TaskState {
                     suite_id,
                     test_id,
-                    state: LoopRunState::Running,
+                    state: TaskRunState::Running,
                     message: None,
                 },
                 11,
             ),
             (
-                Telemetry::LoopSample {
+                Telemetry::TaskSample {
                     suite_id,
                     test_id,
                     seq: 0,
@@ -1702,7 +1702,7 @@ mod tests {
                 13,
             ),
             (
-                Telemetry::LoopStats {
+                Telemetry::TaskStats {
                     suite_id,
                     test_id,
                     steps: 0,
@@ -1713,34 +1713,34 @@ mod tests {
         ]
     }
 
-    fn run_states() -> [LoopRunState; 8] {
+    fn run_states() -> [TaskRunState; 8] {
         [
-            LoopRunState::Running,
-            LoopRunState::Warn,
-            LoopRunState::Pass,
-            LoopRunState::Fail,
-            LoopRunState::Error,
-            LoopRunState::Aborted,
-            LoopRunState::TimedOut,
-            LoopRunState::Bounded,
+            TaskRunState::Running,
+            TaskRunState::Warn,
+            TaskRunState::Pass,
+            TaskRunState::Fail,
+            TaskRunState::Error,
+            TaskRunState::Aborted,
+            TaskRunState::TimedOut,
+            TaskRunState::Bounded,
         ]
     }
 
     #[test]
-    fn loop_frames_fit_one_payload() {
+    fn task_frames_fit_one_payload() {
         let packet = [0xA5_u8; crate::MAX_PACKET_SIZE];
         let text = "m".repeat(MAX_MESSAGE_SIZE);
         let ids = (u16::MAX, u16::MAX);
-        let sample = Telemetry::LoopSample {
+        let sample = Telemetry::TaskSample {
             suite_id: ids.0,
             test_id: ids.1,
             seq: u64::MAX,
             payload: &packet,
         };
-        let state = Telemetry::LoopState {
+        let state = Telemetry::TaskState {
             suite_id: ids.0,
             test_id: ids.1,
-            state: LoopRunState::Bounded,
+            state: TaskRunState::Bounded,
             message: Some(&text),
         };
         let report = Telemetry::TeardownReport {
@@ -1761,7 +1761,7 @@ mod tests {
             exact, MAX_PAYLOAD_SIZE,
             "MAX_PACKET_SIZE is the exact bound"
         );
-        let input = Command::LoopInput {
+        let input = Command::TaskInput {
             suite_id: ids.0,
             test_id: ids.1,
             seq: u64::MAX,
@@ -1772,9 +1772,9 @@ mod tests {
     }
 
     #[test]
-    fn a_loop_input_decodes_borrowing_its_payload() {
+    fn a_task_input_decodes_borrowing_its_payload() {
         let packet = [0xA5_u8; crate::MAX_PACKET_SIZE];
-        let input = Command::LoopInput {
+        let input = Command::TaskInput {
             suite_id: u16::MAX,
             test_id: u16::MAX,
             seq: u64::MAX,
@@ -1794,7 +1794,7 @@ mod tests {
                 .ok()
         });
         match decoded {
-            Some(Command::LoopInput { seq, payload, .. }) => {
+            Some(Command::TaskInput { seq, payload, .. }) => {
                 assert_eq!(seq, u64::MAX);
                 assert_eq!(payload, &packet[..]);
             }

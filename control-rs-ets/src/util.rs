@@ -15,7 +15,7 @@
 //! - **Divergent Error Handlers**: `handle_failure` and `handle_exception` isolate and report terminal target
 //!   crashes over the communication link before hard-resetting the CPU.
 
-use crate::{LoopDescriptor, SuiteDescriptor};
+use crate::{SuiteDescriptor, TaskDescriptor};
 use core::fmt::Write;
 use core::str;
 
@@ -132,52 +132,52 @@ pub unsafe fn get_suites(
     unsafe { ::core::slice::from_raw_parts(start, len) }
 }
 
-/// Retrieves the registered loops from the `.ets_loops` section bounds.
+/// Retrieves the registered tasks from the `.ets_tasks` section bounds.
 ///
 /// # Arguments
-/// * `start` - A raw pointer to the beginning of the loop descriptor list.
-/// * `end` - A raw pointer to the end of the loop descriptor list.
+/// * `start` - A raw pointer to the beginning of the task descriptor list.
+/// * `end` - A raw pointer to the end of the task descriptor list.
 ///
 /// # Returns
-/// * `&'static [&'static LoopDescriptor]` - A static slice of references to all discovered loops.
+/// * `&'static [&'static TaskDescriptor]` - A static slice of references to all discovered tasks.
 ///
 /// # Safety
 ///
 /// This function is unsafe because it constructs a static slice from raw pointers.
 /// The caller MUST ensure the same conditions as [`get_suites`], for references to
-/// [`LoopDescriptor`] located in the `.ets_loops` section.
+/// [`TaskDescriptor`] located in the `.ets_tasks` section.
 ///
 /// # Panics
 /// This function does not panic.
 ///
 /// # Example
 /// ```
-/// use control_rs_ets::util::get_loops;
-/// use control_rs_ets::LoopDescriptor;
+/// use control_rs_ets::util::get_tasks;
+/// use control_rs_ets::TaskDescriptor;
 ///
-/// static LOOPS: &[&LoopDescriptor] = &[];
-/// let start = LOOPS.as_ptr();
-/// let loops = unsafe { get_loops(start, start) };
-/// assert!(loops.is_empty());
+/// static TASKS: &[&TaskDescriptor] = &[];
+/// let start = TASKS.as_ptr();
+/// let tasks = unsafe { get_tasks(start, start) };
+/// assert!(tasks.is_empty());
 /// ```
 #[must_use]
-pub unsafe fn get_loops(
-    start: *const &'static LoopDescriptor,
-    end: *const &'static LoopDescriptor,
-) -> &'static [&'static LoopDescriptor] {
+pub unsafe fn get_tasks(
+    start: *const &'static TaskDescriptor,
+    end: *const &'static TaskDescriptor,
+) -> &'static [&'static TaskDescriptor] {
     let len = (end as usize)
         .saturating_sub(start as usize)
-        .checked_div(::core::mem::size_of::<&LoopDescriptor>())
+        .checked_div(::core::mem::size_of::<&TaskDescriptor>())
         .unwrap_or(0);
     // SAFETY: The safety invariants of the function guarantee that `start` and `end` enclose a valid,
-    // contiguous, initialized array of references to `LoopDescriptor` instances in static memory.
+    // contiguous, initialized array of references to `TaskDescriptor` instances in static memory.
     unsafe { ::core::slice::from_raw_parts(start, len) }
 }
 
-/// Runs the active loop's teardown on the panic path and reports it.
+/// Runs the active task's teardown on the panic path and reports it.
 ///
-/// If a loop run is active, calls its teardown unless teardown already started,
-/// then sends `TeardownReport` and `LoopState(Fail)` carrying the panic location.
+/// If a task run is active, calls its teardown unless teardown already started,
+/// then sends `TeardownReport` and `TaskState(Fail)` carrying the panic location.
 /// A teardown that already started is the one that panicked, so it is reported
 /// as failed and not re-entered.
 ///
@@ -187,19 +187,19 @@ pub unsafe fn get_loops(
 /// * `line` - The line where the panic was triggered.
 ///
 /// # Returns
-/// * `bool` - `true` if a loop run was active.
-pub fn report_loop_panic<C: crate::comms::HostComms>(
+/// * `bool` - `true` if a task run was active.
+pub fn report_task_panic<C: crate::comms::HostComms>(
     comms: &mut C,
     file: &str,
     line: u32,
 ) -> bool {
-    use crate::comms::{LoopRunState, Telemetry};
+    use crate::comms::{TaskRunState, Telemetry};
     use crate::server::{
-        ACTIVE_LOOP, CURRENT_SUITE, CURRENT_TEST, TEARDOWN_STARTED,
+        ACTIVE_TASK, CURRENT_SUITE, CURRENT_TEST, TEARDOWN_STARTED,
     };
     use core::sync::atomic::Ordering;
 
-    let desc_ptr = ACTIVE_LOOP.load(Ordering::Acquire);
+    let desc_ptr = ACTIVE_TASK.load(Ordering::Acquire);
     if desc_ptr.is_null() {
         return false;
     }
@@ -213,7 +213,7 @@ pub fn report_loop_panic<C: crate::comms::HostComms>(
     let teardown = if TEARDOWN_STARTED.swap(true, Ordering::AcqRel) {
         Err("teardown panicked")
     } else {
-        // SAFETY: `ACTIVE_LOOP` is only stored from a `&'static LoopDescriptor`.
+        // SAFETY: `ACTIVE_TASK` is only stored from a `&'static TaskDescriptor`.
         let desc = unsafe { &*desc_ptr };
         (desc.teardown)()
     };
@@ -234,10 +234,10 @@ pub fn report_loop_panic<C: crate::comms::HostComms>(
         writer.pos
     };
     let location = buf.get(..pos).and_then(|b| str::from_utf8(b).ok());
-    let _ = comms.send_telemetry(&Telemetry::LoopState {
+    let _ = comms.send_telemetry(&Telemetry::TaskState {
         suite_id,
         test_id,
-        state: LoopRunState::Fail,
+        state: TaskRunState::Fail,
         message: location.filter(|l| !l.is_empty()),
     });
     true
@@ -319,12 +319,12 @@ pub unsafe fn handle_failure<
     context.cpu_utils.disable_interrupts_permanently();
 
     if comms_ok {
-        let loop_run = report_loop_panic(&mut context.comms, file, line);
+        let task_run = report_task_panic(&mut context.comms, file, line);
         let suite = crate::server::CURRENT_SUITE.get();
         let test = crate::server::CURRENT_TEST.get();
 
         if let (false, Some(suite_id), Some(test_id)) = (
-            loop_run,
+            task_run,
             suite.and_then(|s| u16::try_from(s).ok()),
             test.and_then(|t| u16::try_from(t).ok()),
         ) {
@@ -448,10 +448,17 @@ mod tests {
     use super::*;
     use crate::comms::{Command, HostComms, Telemetry, TestState};
     use crate::profiler::CPUProfiler;
-    use crate::server::{ACTIVE_LOOP, TEARDOWN_STARTED};
+    use crate::server::{ACTIVE_TASK, TEARDOWN_STARTED};
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    static PANIC_LOOP: LoopDescriptor = LoopDescriptor {
+    static PANIC_SUITE: SuiteDescriptor = SuiteDescriptor {
+        name: "s",
+        description: "",
+        executables: &[],
+        settings: &[],
+    };
+
+    static PANIC_TASK: TaskDescriptor = TaskDescriptor {
         suite: &PANIC_SUITE,
         name: "l",
         description: "",
@@ -462,13 +469,6 @@ mod tests {
         reset: ok_hook,
         teardown: count_teardown,
         link_timeout_ms: 0,
-    };
-
-    static PANIC_SUITE: SuiteDescriptor = SuiteDescriptor {
-        name: "s",
-        description: "",
-        executables: &[],
-        settings: &[],
     };
 
     static PANIC_TEARDOWNS: AtomicUsize = AtomicUsize::new(0);
@@ -665,10 +665,10 @@ mod tests {
         std::vec![1].first().map_or(Err("unreachable"), |_| Ok(()))
     }
 
-    fn pass_step(_: &mut crate::LoopIo<'_>) -> crate::LoopOutcome {
-        crate::LoopOutcome {
+    fn pass_step(_: &mut crate::TaskIo<'_>) -> crate::TaskOutcome {
+        crate::TaskOutcome {
             message: None,
-            status: crate::comms::LoopRunState::Pass,
+            status: crate::comms::TaskRunState::Pass,
         }
     }
 
@@ -706,29 +706,29 @@ mod tests {
 
         // No active run: nothing is reported.
         let mut comms = fresh_comms();
-        assert!(!report_loop_panic(&mut comms, "f.rs", 7));
+        assert!(!report_task_panic(&mut comms, "f.rs", 7));
         assert_eq!(comms.payloads.len(), 0);
 
         // An active run: teardown runs once, then the report and the state.
         crate::server::CURRENT_SUITE.set_active(0);
         crate::server::CURRENT_TEST.set_active(1);
         TEARDOWN_STARTED.store(false, Ordering::SeqCst);
-        ACTIVE_LOOP.store(
-            core::ptr::from_ref(&PANIC_LOOP).cast_mut(),
+        ACTIVE_TASK.store(
+            core::ptr::from_ref(&PANIC_TASK).cast_mut(),
             Ordering::SeqCst,
         );
         PANIC_TEARDOWNS.store(0, Ordering::SeqCst);
 
         let mut comms = fresh_comms();
-        assert!(report_loop_panic(&mut comms, "f.rs", 7));
+        assert!(report_task_panic(&mut comms, "f.rs", 7));
         assert_eq!(PANIC_TEARDOWNS.load(Ordering::SeqCst), 1);
         let frames = frames_of(&comms);
         assert!(frame_has(&frames, 0, &["TeardownReport", "ok: true"]));
-        assert!(frame_has(&frames, 1, &["LoopState", "Fail", "f.rs:7"]));
+        assert!(frame_has(&frames, 1, &["TaskState", "Fail", "f.rs:7"]));
 
         // A second panic, raised inside teardown, never re-enters it.
         let mut comms = fresh_comms();
-        assert!(report_loop_panic(&mut comms, "g.rs", 9));
+        assert!(report_task_panic(&mut comms, "g.rs", 9));
         assert_eq!(PANIC_TEARDOWNS.load(Ordering::SeqCst), 1);
         assert!(frame_has(&frames_of(&comms), 0, &["ok: false"]));
 
@@ -745,11 +745,11 @@ mod tests {
         let frames = frames_of(&context.comms);
         assert_eq!(frames.len(), 3);
         assert!(frame_has(&frames, 0, &["TeardownReport"]));
-        assert!(frame_has(&frames, 1, &["LoopState"]));
+        assert!(frame_has(&frames, 1, &["TaskState"]));
         assert!(frame_has(&frames, 2, &["TargetPanic"]));
         assert_eq!(PANIC_TEARDOWNS.load(Ordering::SeqCst), 2);
 
-        ACTIVE_LOOP.store(core::ptr::null_mut(), Ordering::SeqCst);
+        ACTIVE_TASK.store(core::ptr::null_mut(), Ordering::SeqCst);
         crate::server::CURRENT_SUITE.set_idle();
         crate::server::CURRENT_TEST.set_idle();
     }

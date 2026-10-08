@@ -202,20 +202,20 @@ pub enum OwnedTelemetry {
         /// FPU bits: 0 single, 1 double precision.
         fpu_flags: u8,
     },
-    /// A suite provides a loop; its `LoopInfo` follows.
+    /// A suite provides a task; its `TaskInfo` follows.
     LifecycleSuite {
         /// Suite id.
         suite_id: u16,
-        /// Loop count (always `1`).
-        loop_count: u8,
+        /// Task count (always `1`).
+        task_count: u8,
     },
-    /// Discovered loop metadata.
-    LoopInfo {
+    /// Discovered task metadata.
+    TaskInfo {
         /// Parent suite id.
         suite_id: u16,
-        /// Loop identifier within the suite.
+        /// Task identifier within the suite.
         test_id: u16,
-        /// Loop name.
+        /// Task name.
         name: String,
         /// Doc comment.
         description: String,
@@ -224,44 +224,44 @@ pub enum OwnedTelemetry {
         /// Output packet type name.
         output_type: String,
     },
-    /// Loop run state transition.
-    LoopState {
+    /// Task run state transition.
+    TaskState {
         /// Parent suite id.
         suite_id: u16,
-        /// Loop identifier within the suite.
+        /// Task identifier within the suite.
         test_id: u16,
         /// New run state.
-        state: control_rs_ets::comms::LoopRunState,
+        state: control_rs_ets::comms::TaskRunState,
         /// Optional message.
         message: Option<String>,
     },
-    /// Output packet of one loop step.
-    LoopSample {
+    /// Output packet of one task step.
+    TaskSample {
         /// Parent suite id.
         suite_id: u16,
-        /// Loop identifier within the suite.
+        /// Task identifier within the suite.
         test_id: u16,
         /// Step that produced the output.
         seq: u64,
         /// Encoded output packet.
         payload: Vec<u8>,
     },
-    /// Teardown outcome of a loop run.
+    /// Teardown outcome of a task run.
     TeardownReport {
         /// Parent suite id.
         suite_id: u16,
-        /// Loop identifier within the suite.
+        /// Task identifier within the suite.
         test_id: u16,
         /// Whether teardown succeeded.
         ok: bool,
         /// Optional message.
         message: Option<String>,
     },
-    /// Statistics of a finished loop run.
-    LoopStats {
+    /// Statistics of a finished task run.
+    TaskStats {
         /// Parent suite id.
         suite_id: u16,
-        /// Loop identifier within the suite.
+        /// Task identifier within the suite.
         test_id: u16,
         /// Steps called.
         steps: u64,
@@ -336,38 +336,38 @@ impl OwnedTelemetry {
             | Telemetry::SuiteInfo { .. }
             | Telemetry::TestInfo { .. } => Self::from_catalog_entry(tel),
             Telemetry::LifecycleSuite { .. }
-            | Telemetry::LoopInfo { .. }
-            | Telemetry::LoopState { .. }
-            | Telemetry::LoopSample { .. }
+            | Telemetry::TaskInfo { .. }
+            | Telemetry::TaskState { .. }
+            | Telemetry::TaskSample { .. }
             | Telemetry::TeardownReport { .. }
-            | Telemetry::LoopStats { .. } => Self::from_loop_frame(tel),
+            | Telemetry::TaskStats { .. } => Self::from_task_frame(tel),
         }
     }
 
-    /// Copies a loop frame. [`Self::from_telemetry`] routes exactly the six
-    /// loop variants here; any other variant is handed back to it.
-    fn from_loop_frame(tel: &Telemetry<'_>) -> Self {
+    /// Copies a task frame. [`Self::from_telemetry`] routes exactly the six
+    /// task variants here; any other variant is handed back to it.
+    fn from_task_frame(tel: &Telemetry<'_>) -> Self {
         match *tel {
-            Telemetry::LifecycleSuite { .. } | Telemetry::LoopInfo { .. } => {
-                Self::from_loop_catalog(tel)
+            Telemetry::LifecycleSuite { .. } | Telemetry::TaskInfo { .. } => {
+                Self::from_task_catalog(tel)
             }
-            Telemetry::LoopState {
+            Telemetry::TaskState {
                 suite_id,
                 test_id,
                 state,
                 message,
-            } => Self::LoopState {
+            } => Self::TaskState {
                 suite_id,
                 test_id,
                 state,
                 message: message.map(str::to_string),
             },
-            Telemetry::LoopSample {
+            Telemetry::TaskSample {
                 suite_id,
                 test_id,
                 seq,
                 payload,
-            } => Self::LoopSample {
+            } => Self::TaskSample {
                 suite_id,
                 test_id,
                 seq,
@@ -384,12 +384,12 @@ impl OwnedTelemetry {
                 ok,
                 message: message.map(str::to_string),
             },
-            Telemetry::LoopStats {
+            Telemetry::TaskStats {
                 suite_id,
                 test_id,
                 steps,
                 time_us,
-            } => Self::LoopStats {
+            } => Self::TaskStats {
                 suite_id,
                 test_id,
                 steps,
@@ -399,24 +399,24 @@ impl OwnedTelemetry {
         }
     }
 
-    /// Copies the loop announcement of a suite: its marker and its metadata.
-    fn from_loop_catalog(tel: &Telemetry<'_>) -> Self {
+    /// Copies the task announcement of a suite: its marker and its metadata.
+    fn from_task_catalog(tel: &Telemetry<'_>) -> Self {
         match *tel {
             Telemetry::LifecycleSuite {
                 suite_id,
-                loop_count,
+                task_count,
             } => Self::LifecycleSuite {
                 suite_id,
-                loop_count,
+                task_count,
             },
-            Telemetry::LoopInfo {
+            Telemetry::TaskInfo {
                 suite_id,
                 test_id,
                 name,
                 description,
                 input_type,
                 output_type,
-            } => Self::LoopInfo {
+            } => Self::TaskInfo {
                 suite_id,
                 test_id,
                 name: name.to_string(),
@@ -1424,8 +1424,8 @@ mod tests {
     }
 
     #[test]
-    fn loop_frames_convert_to_owned_telemetry() {
-        let info = Telemetry::LoopInfo {
+    fn task_frames_convert_to_owned_telemetry() {
+        let info = Telemetry::TaskInfo {
             suite_id: 1,
             test_id: 2,
             name: "n",
@@ -1435,9 +1435,9 @@ mod tests {
         };
         assert!(matches!(
             OwnedTelemetry::from_telemetry(&info),
-            OwnedTelemetry::LoopInfo { input_type, .. } if input_type == "f32"
+            OwnedTelemetry::TaskInfo { input_type, .. } if input_type == "f32"
         ));
-        let sample = Telemetry::LoopSample {
+        let sample = Telemetry::TaskSample {
             suite_id: 1,
             test_id: 2,
             seq: 9,
@@ -1445,7 +1445,7 @@ mod tests {
         };
         assert!(matches!(
             OwnedTelemetry::from_telemetry(&sample),
-            OwnedTelemetry::LoopSample { seq: 9, payload, .. } if payload == [1, 2, 3]
+            OwnedTelemetry::TaskSample { seq: 9, payload, .. } if payload == [1, 2, 3]
         ));
     }
 
@@ -1465,7 +1465,7 @@ mod tests {
                 ..
             }
         ));
-        let stats = Telemetry::LoopStats {
+        let stats = Telemetry::TaskStats {
             suite_id: 1,
             test_id: 2,
             steps: 4,
@@ -1473,29 +1473,29 @@ mod tests {
         };
         assert!(matches!(
             OwnedTelemetry::from_telemetry(&stats),
-            OwnedTelemetry::LoopStats {
+            OwnedTelemetry::TaskStats {
                 steps: 4,
                 time_us: 5,
                 ..
             }
         ));
-        let bounded = Telemetry::LoopState {
+        let bounded = Telemetry::TaskState {
             suite_id: 1,
             test_id: 2,
-            state: control_rs_ets::comms::LoopRunState::Bounded,
+            state: control_rs_ets::comms::TaskRunState::Bounded,
             message: Some("m"),
         };
         assert!(matches!(
             OwnedTelemetry::from_telemetry(&bounded),
-            OwnedTelemetry::LoopState { message: Some(m), .. } if m == "m"
+            OwnedTelemetry::TaskState { message: Some(m), .. } if m == "m"
         ));
         let suite = Telemetry::LifecycleSuite {
             suite_id: 1,
-            loop_count: 1,
+            task_count: 1,
         };
         assert!(matches!(
             OwnedTelemetry::from_telemetry(&suite),
-            OwnedTelemetry::LifecycleSuite { loop_count: 1, .. }
+            OwnedTelemetry::LifecycleSuite { task_count: 1, .. }
         ));
     }
 }

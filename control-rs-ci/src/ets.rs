@@ -137,7 +137,7 @@ mod tests {
             abort: None,
             elapsed: Duration::from_secs(1),
             console: String::new(),
-            loops: Vec::new(),
+            tasks: Vec::new(),
         }
     }
 

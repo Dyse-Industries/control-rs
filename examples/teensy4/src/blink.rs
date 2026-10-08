@@ -4,7 +4,7 @@
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use control_rs_ets::{LoopContext, LoopStatus};
+use control_rs_ets::{TaskContext, TaskStatus};
 use control_rs_macros::ets_suite;
 use cortex_m::interrupt::Mutex;
 use teensy4_bsp::board;
@@ -62,7 +62,7 @@ fn tick(blink_hz: u32) {
 #[ets_suite]
 /// Blinks the built-in LED at a frequency set from the host.
 pub mod led_blink {
-    use super::{LoopContext, LoopStatus};
+    use super::{TaskContext, TaskStatus};
     use control_rs_ets::settings::{Setting, SettingValue};
 
     /// Blink frequency in hertz. Zero holds the LED off.
@@ -76,13 +76,13 @@ pub mod led_blink {
 
     /// Toggles the LED every half period of the blink frequency.
     #[step(link_timeout_ms = 1000)]
-    fn blink(_: &LoopContext<'_, ()>) -> LoopStatus<()> {
+    fn blink(_: &TaskContext<'_, ()>) -> TaskStatus<()> {
         let hz = match BLINK_HZ.get() {
             SettingValue::U32(v) => v,
             _ => 0,
         };
         super::tick(hz);
-        LoopStatus::Running(())
+        TaskStatus::Running(())
     }
 
     #[reset]

@@ -26,8 +26,8 @@ facilitating rapid on-target iteration.
   consuming `Telemetry::TargetInfo` from the host bridge.
 - **FR-2 — Hierarchical Test Tree**: The interface must present test suites
   and their cases in a tree layout mapping the Rust module namespace. A
-  suite's loops are rows of that suite beside its cases, in the same table
-  and selection, so cases and loops read as one list; a loop row shows its
+  suite's tasks are rows of that suite beside its cases, in the same table
+  and selection, so cases and tasks read as one list; a task row shows its
   run state, message, teardown outcome, statistics and input and output
   rates.
 - **FR-3 — Hierarchical Telemetry Table**: For each test, the TUI must display
@@ -36,8 +36,8 @@ facilitating rapid on-target iteration.
   real-time debug and system logs streaming from the target.
 - **FR-5 — Keystroke Controls**: Users must control target execution via
   single-key shortcuts (`f` filter, `r` run all, `s` stop, `q` quit). `r`
-  runs every case and never starts a lifecycle case. On a
-  loop row, `Enter` starts a free-running run and `s` stops the active
+  runs every case and never starts a lifecycle task. On a
+  task row, `Enter` starts a free-running run and `s` stops the active
   run.
 
 - **FR-6 — Session liveness**: The dashboard retries discovery until the host
@@ -151,23 +151,23 @@ developer situational awareness:
    bytes.
 3. **Logs Panel**: A live log terminal streaming output from the target.
 
-   A suite's lifecycle case (`../ets/loop-suite-design.md`: its setup, step,
+   A suite's lifecycle task (`../ets/lifecycle-suite-design.md`: its setup, step,
    reset and teardown) appears as a row of that suite, after its cases, in
    the same table and selection: an operator moves from a case to the
-   lifecycle case with the same keys, sees them as one list and triggers it
+   lifecycle task with the same keys, sees them as one list and triggers it
    with `Enter`, the key that runs a selected case. The row is marked `LIFECYCLE`
    in its name column. In
    place of cycles and stack, the row shows the run
    state (`Running`, `Warn`, `Pass`, `Fail`, `Error`, `Aborted`, `TimedOut`,
    `Bounded`), the latest message, the teardown outcome, `steps`, `time_us` and
-   the input and output packet rates. `Enter` sends `StartLoop` with
+   the input and output packet rates. `Enter` sends `StartTask` with
    `max_steps = 0` and `lockstep = false`; `s` sends `StopNow`. `r` (run all)
-   does not start loops, because a loop run is unbounded. Lockstep runs
-   need a `LoopSim` and are started from `control-rs-ets-host`, not the
+   does not start tasks, because a task run is unbounded. Lockstep runs
+   need a `TaskSim` and are started from `control-rs-ets-host`, not the
    console. On a QEMU session `Enter` is refused by the host session
-   (`../ets/loop-suite-design.md` C-8) and the refusal is shown in the logs
-   panel. A loop uses its suite's settings through the FR-7 path; an edit
-   during a run calls the loop's `reset`.
+   (`../ets/lifecycle-suite-design.md` C-8) and the refusal is shown in the logs
+   panel. A task uses its suite's settings through the FR-7 path; an edit
+   during a run calls the task's `reset`.
 4. **Footer Action Bar**: Displays available key shortcuts.
 
 #### 4.2. Host-Target ETSBridge Integration
@@ -281,11 +281,11 @@ real terminal.
 | Discovery retry | First `ListSuites` dropped | Suites eventually rendered | Discovery completes |
 | Target process exit | Spawned QEMU exits | Dashboard state | Exit surfaced; session not left looking connected |
 | Setting description | Key bound to description | Setting text shown | Matches the suite registry |
-| Loop keys | `Enter` and `s` on a loop row | Command emitted | `StartLoop { max_steps: 0, lockstep: false }` and `StopNow` for that identifier |
-| Loop row | Scripted `LoopState`, `TeardownReport` and `LoopStats` frames | State, message, teardown outcome and statistics rendered | Exact match |
-| Run all scope | `r` with loops discovered | `StartLoop` emitted | 0 |
-| Side by side | Scripted discovery of a suite with 2 cases and 1 loop | Rows under the suite and selection order | 3 rows in one table, loop after the cases, reachable with the same navigation keys |
-| QEMU refusal | `Enter` on a loop row in a QEMU session | Frames written and logs panel | 0 frames; refusal logged |
+| Task keys | `Enter` and `s` on a task row | Command emitted | `StartTask { max_steps: 0, lockstep: false }` and `StopNow` for that identifier |
+| Task row | Scripted `TaskState`, `TeardownReport` and `TaskStats` frames | State, message, teardown outcome and statistics rendered | Exact match |
+| Run all scope | `r` with tasks discovered | `StartTask` emitted | 0 |
+| Side by side | Scripted discovery of a suite with 2 cases and 1 task | Rows under the suite and selection order | 3 rows in one table, task after the cases, reachable with the same navigation keys |
+| QEMU refusal | `Enter` on a task row in a QEMU session | Frames written and logs panel | 0 frames; refusal logged |
 
 No frame-rate bound is asserted. See §6.3.
 
@@ -334,7 +334,7 @@ No frame-rate bound is asserted. See §6.3.
 | **Step 2: ETSBridge Connection**       | Integrate `ETSBridge` polling channels (QEMU stdio / `serial2`) into the TUI event loop.    | 1.0 day          |
 | **Step 3: Bidirectional Controls**     | Implement keystroke handlers and write command packets to the target down-buffer.           | 0.5 day          |
 | **Step 4: Session liveness and settings** | Repair: retry `ListSuites` on the same interval as the headless runner; observe process exit; wait the host reset delay before re-open; restore setting description and `SetSetting`. Tests: 6.2 discovery-retry, process-exit, and setting-description rows. | 1.0 day          |
-| **Step 5: Loops**                | Loop rows beside cases, `Enter` and `s` bindings (FR-2, FR-5; `../ets/loop-suite-design.md` Phase 4). | 1.0 day          |
+| **Step 5: Tasks**                | Task rows beside cases, `Enter` and `s` bindings (FR-2, FR-5; `../ets/lifecycle-suite-design.md` Phase 4). | 1.0 day          |
 
 ---
 
@@ -355,9 +355,9 @@ No frame-rate bound is asserted. See §6.3.
 | 1.10      | September 24, 2026 | @MitchellDScott | Duration column shows the target-reported `time_us`; §6.3 reference corrected. |
 | 1.11     | September 24, 2026 | @MitchellDScott | FR-1 header shows `TargetInfo` protocol, board, clock and FPU, or the protocol mismatch. |
 | 1.12     | September 28, 2026 | @MitchellDScott | The event loop takes its input from an injected event source (the terminal is the production source) and the discovery retry decision is a pure function, so the loop is testable without a terminal. |
-| 1.13     | October 7, 2026 | @MitchellDScott | FR-2 and FR-5 extended for loop suites (`../ets/loop-suite-design.md` 1.2): `LOOP` tree nodes with run state and rates, `Enter` and `s` bindings, `r` excludes loop suites, three §6.2 rows, Step 5. |
-| 1.14     | October 7, 2026 | @MitchellDScott | QEMU sessions refuse console-started (free-running) loop runs and log the refusal (`../ets/loop-suite-design.md` C-8); one §6.2 row. |
-| 1.15     | October 7, 2026 | @MitchellDScott | FR-2: loops are rows of their suite beside its cases in one table and selection; FR-5 keys act on loop rows; side-by-side §6.2 row (`../ets/loop-suite-design.md` 1.7); the row is the suite's lifecycle case, triggered with `Enter` like a case; marker `LIFECYCLE` |
+| 1.13     | October 7, 2026 | @MitchellDScott | FR-2 and FR-5 extended for lifecycle suites (`../ets/lifecycle-suite-design.md` 1.2): `TASK` tree nodes with run state and rates, `Enter` and `s` bindings, `r` excludes lifecycle suites, three §6.2 rows, Step 5. |
+| 1.14     | October 7, 2026 | @MitchellDScott | QEMU sessions refuse console-started (free-running) task runs and log the refusal (`../ets/lifecycle-suite-design.md` C-8); one §6.2 row. |
+| 1.15     | October 7, 2026 | @MitchellDScott | FR-2: tasks are rows of their suite beside its cases in one table and selection; FR-5 keys act on task rows; side-by-side §6.2 row (`../ets/lifecycle-suite-design.md` 1.7); the row is the suite's lifecycle task, triggered with `Enter` like a case; marker `LIFECYCLE` |
 
 ---
 

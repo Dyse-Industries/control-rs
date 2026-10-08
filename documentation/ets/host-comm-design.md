@@ -165,11 +165,11 @@ hardware-specific failures (for example, framing errors, overflow flags, socket
 disconnects) to the calling Server loop.
 
 `PollResult<'a, E>` is `Result<Option<Command<'a>>, E>`. The lifetime lets
-`Command::LoopInput` borrow its payload from the frame reader instead of
-copying it (`loop-suite-design.md` §4.2). Loops poll once per step
+`Command::TaskInput` borrow its payload from the frame reader instead of
+copying it (`lifecycle-suite-design.md` §4.2). Tasks poll once per step
 boundary, so a poll that waits for input stalls a free-running run. The QEMU
-semihosting drivers wait in `READC`, so QEMU runs loops in lockstep
-only, where the run waits for host input anyway (`loop-suite-design.md` C-8).
+semihosting drivers wait in `READC`, so QEMU runs tasks in lockstep
+only, where the run waits for host input anyway (`lifecycle-suite-design.md` C-8).
 
 #### 4.2. Command Schema & Binary Serialization
 
@@ -199,11 +199,11 @@ pub enum Command<'a> {
     },
     /// Request the target to reset.
     TryReset,
-    // Revision 2, appended: loops (`loop-suite-design.md` §4.2).
-    StartLoop { suite_id: u16, test_id: u16, max_steps: u64, lockstep: bool },
+    // Revision 2, appended: tasks (`lifecycle-suite-design.md` §4.2).
+    StartTask { suite_id: u16, test_id: u16, max_steps: u64, lockstep: bool },
     StopNow { suite_id: u16, test_id: u16 },
     Heartbeat,
-    LoopInput { suite_id: u16, test_id: u16, seq: u64, payload: &'a [u8] },
+    TaskInput { suite_id: u16, test_id: u16, seq: u64, payload: &'a [u8] },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,18 +223,18 @@ pub enum Telemetry<'a> {
         core_clock_hz: u32,
         fpu_flags: u8,
     },
-    // Revision 2, appended: loops (`loop-suite-design.md` §4.2).
-    SuiteLoops { /* suite_id, loop_count: 0 or 1 */ },
-    LoopInfo { /* suite_id, test_id, name, description, input_type, output_type */ },
-    LoopState { /* suite_id, test_id, state: LoopRunState, message */ },
-    LoopSample { /* suite_id, test_id, seq, payload */ },
+    // Revision 2, appended: tasks (`lifecycle-suite-design.md` §4.2).
+    LifecycleSuite { /* suite_id, task_count: always 1 */ },
+    TaskInfo { /* suite_id, test_id, name, description, input_type, output_type */ },
+    TaskState { /* suite_id, test_id, state: TaskRunState, message */ },
+    TaskSample { /* suite_id, test_id, seq, payload */ },
     TeardownReport { /* suite_id, test_id, ok, message */ },
-    LoopStats { /* suite_id, test_id, steps, time_us */ },
+    TaskStats { /* suite_id, test_id, steps, time_us */ },
 }
 ```
 
-`loop-suite-design.md` §4.2 is the field-level source for the revision 2
-variants and for the appended fieldless enum `LoopRunState`.
+`lifecycle-suite-design.md` §4.2 is the field-level source for the revision 2
+variants and for the appended fieldless enum `TaskRunState`.
 
 To minimize parsing overhead and memory usage in a `#![no_std]` environment, the
 architecture uses the **`postcard`** crate.
@@ -291,7 +291,7 @@ Two rules keep the constant honest:
   `PROTOCOL_VERSION`.
 
 Revision 2 (`PROTOCOL_VERSION = 2`) appends four `Command` and six
-`Telemetry` variants for loops. Every revision 1 variant keeps its
+`Telemetry` variants for tasks. Every revision 1 variant keeps its
 discriminant and payload, so its bytes are unchanged; a revision 1 host still
 refuses a revision 2 target under FR-4, because a revision 1 decoder cannot
 read the appended variants. Giving `Command` a lifetime changes the Rust type,
@@ -381,14 +381,14 @@ impl<const N: usize> BufferedFrameReader<N> {
 Rules:
 
 - A poll processes at most `N` bytes, so its cost is bounded
-  (`loop-suite-design.md` NFR-2).
+  (`lifecycle-suite-design.md` NFR-2).
 - `read` is not called while bytes are held, so the transport's own buffer
   applies back-pressure instead of the driver overwriting held bytes.
 - A CRC-valid frame that does not decode as `Command` is dropped and the
   next poll continues after it, as `FrameReader` does today.
 - Because the returned `Command<'_>` borrows the reader's payload buffer,
-  the implementation locates the completing byte inside the loop and decodes
-  after it, so the conditional borrow does not cross loop iterations.
+  the implementation locates the completing byte inside the task and decodes
+  after it, so the conditional borrow does not cross task iterations.
 
 A driver that reads one byte per poll, such as the QEMU semihosting drivers,
 cannot hold surplus bytes and may keep using `FrameReader` directly. The
@@ -596,8 +596,8 @@ reproduce that value.
 | **Step 3: Target Crash Handlers**                    | The panic handler is the one `control-rs-macros` generates (`macros-design.md` FR-5), routing the black box through `HostComms`. Persisting it to a RAM region across reset is an optional extension. | 1 week           |
 | **Step 4: TargetInfo Wire Dispatch** — *Shipped*     | `Telemetry::TargetInfo` (last variant) carries `PROTOCOL_VERSION` = 1, board ID, core clock and FPU flags; sent first in discovery. Golden vector `test_golden_wire_vector_target_info`; host protocol-mismatch tests. Physical-target check is PR9. | Complete         |
 | **Step 5: Target Hardware Integration**              | Verify framed transmission and crash capture across Teensy 4.1 hardware and QEMU ARM Cortex-M emulation.                                   | 2 weeks          |
-| **Step 6: Revision 2 Loop Variants**            | Append the loop `Command` and `Telemetry` variants and `LoopRunState`, set `PROTOCOL_VERSION` = 2, change `poll_command` to `PollResult<'_, E>` in every implementor, and extend the golden vectors (`loop-suite-design.md` Phase 1). | 1 day |
-| **Step 7: Lossless Chunked Reception**                | Add `BufferedFrameReader` with its tests and move the Teensy driver to it (FR-6). Independent of loops; prerequisite of `loop-suite-design.md` Phase 1. | 0.5 days |
+| **Step 6: Revision 2 Task Variants**            | Append the task `Command` and `Telemetry` variants and `TaskRunState`, set `PROTOCOL_VERSION` = 2, change `poll_command` to `PollResult<'_, E>` in every implementor, and extend the golden vectors (`lifecycle-suite-design.md` Phase 1). | 1 day |
+| **Step 7: Lossless Chunked Reception**                | Add `BufferedFrameReader` with its tests and move the Teensy driver to it (FR-6). Independent of tasks; prerequisite of `lifecycle-suite-design.md` Phase 1. | 0.5 days |
 
 ---
 
@@ -615,10 +615,10 @@ reproduce that value.
 | 1.7      | September 16, 2026 | @MitchellDScott | Step 4 marked outstanding repair: `TargetInfo` / `PROTOCOL_VERSION` still absent on the wire; blocks host FR-8 and TUI FR-1. |
 | 1.8      | September 24, 2026 | @MitchellDScott | FR-4/FR-5 stated as unmet until `PROTOCOL_VERSION` and `TargetInfo` ship; `defmt` deferred, not chosen; §4.5 skeleton takes `&Telemetry<'_>`; §4.6 drops `probe-rs` RTT as a host transport; Step 2 driver model undecided; Step 3 uses the `control-rs-macros` panic handler. |
 | 1.9      | September 24, 2026 | @MitchellDScott | Step 4 shipped: `PROTOCOL_VERSION` = 1 and `Telemetry::TargetInfo` in `control-rs-ets::comms`, sent first in discovery; FR-4/FR-5 met. |
-| 1.10     | October 7, 2026 | @MitchellDScott | FR-4 revision 2 for loop suites (`loop-suite-design.md` 1.2): appended `Command` and `Telemetry` variants, `Command<'a>` and `PollResult<'_, E>` for the borrowed `LoopInput` payload, `poll_command` must not wait; §9 Step 6. |
+| 1.10     | October 7, 2026 | @MitchellDScott | FR-4 revision 2 for lifecycle suites (`lifecycle-suite-design.md` 1.2): appended `Command` and `Telemetry` variants, `Command<'a>` and `PollResult<'_, E>` for the borrowed `TaskInput` payload, `poll_command` must not wait; §9 Step 6. |
 | 1.11     | October 7, 2026 | @MitchellDScott | FR-6 lossless command reception: §4.5 `BufferedFrameReader` retains bytes after the first complete frame of a chunked read, Teensy driver moved to it; §6 test and four acceptance rows; §9 Step 7. |
-| 1.12     | October 7, 2026 | @MitchellDScott | §4.1: QEMU semihosting drivers support lockstep loop-suite runs only (`loop-suite-design.md` C-8). |
-| 1.13     | October 7, 2026 | @MitchellDScott | Revision 2 variants address a loop by `(suite_id, test_id)` and add `SuiteLoops` (`loop-suite-design.md` 1.7). |
+| 1.12     | October 7, 2026 | @MitchellDScott | §4.1: QEMU semihosting drivers support lockstep lifecycle-suite runs only (`lifecycle-suite-design.md` C-8). |
+| 1.13     | October 7, 2026 | @MitchellDScott | Revision 2 variants address a task by `(suite_id, test_id)` and add `LifecycleSuite` (`lifecycle-suite-design.md` 1.7). |
 
 ---
 

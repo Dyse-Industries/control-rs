@@ -28,13 +28,13 @@ SECTIONS
     PROVIDE_HIDDEN (__ets_test_suites_end = .);
   } > FLASH
 
-  .ets_loops :
+  .ets_tasks :
   {
     . = ALIGN(4);
-    PROVIDE_HIDDEN (__ets_loops_start = .);
-    KEEP (*(.ets_loops));
+    PROVIDE_HIDDEN (__ets_tasks_start = .);
+    KEEP (*(.ets_tasks));
     . = ALIGN(4);
-    PROVIDE_HIDDEN (__ets_loops_end = .);
+    PROVIDE_HIDDEN (__ets_tasks_end = .);
   } > FLASH
 }
 

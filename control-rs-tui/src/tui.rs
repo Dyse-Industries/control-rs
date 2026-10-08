@@ -25,11 +25,11 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
 
-use control_rs_ets::comms::{Command, LoopRunState, TestState};
+use control_rs_ets::comms::{Command, TaskRunState, TestState};
 use control_rs_ets::settings::SettingValue;
 use control_rs_ets_host::{
-    BridgeMessage, ETSBridge, HostError, LoopRunRecord, LoopStart,
-    OwnedTelemetry, SessionAction, SessionState, SuiteItem, Target, TestIndex,
+    BridgeMessage, ETSBridge, HostError, OwnedTelemetry, SessionAction,
+    SessionState, SuiteItem, Target, TaskRunRecord, TaskStart, TestIndex,
 };
 
 /// How long the session may stay undiscovered before discovery is re-sent.
@@ -75,16 +75,16 @@ pub enum TableItem {
         /// Peak stack usage in bytes if completed.
         stack_peak: Option<u32>,
     },
-    /// The loop of a lifecycle suite, listed beside the suite's cases.
-    Loop {
+    /// The task of a lifecycle suite, listed beside the suite's cases.
+    Task {
         /// Index of the suite in session state.
         suite_idx: usize,
-        /// Name of the loop.
+        /// Name of the task.
         name: String,
         /// Whether this is the last row in the suite.
         is_last: bool,
         /// Latest run state, if a run was started.
-        state: Option<LoopRunState>,
+        state: Option<TaskRunState>,
         /// Message of the latest state.
         message: Option<String>,
         /// Teardown outcome of the run, if reported.
@@ -113,12 +113,12 @@ pub enum TableItem {
     },
 }
 
-/// One suite's rows: where it sits, how to filter it and its latest loop run.
+/// One suite's rows: where it sits, how to filter it and its latest task run.
 struct SuiteRows<'a> {
     collapsed: bool,
     elapsed: Option<Duration>,
     query: &'a str,
-    run: Option<&'a LoopRunRecord>,
+    run: Option<&'a TaskRunRecord>,
     s_idx: usize,
     suite: &'a SuiteItem,
 }
@@ -151,8 +151,8 @@ pub struct AppState {
     pub setting_edit: String,
     /// Target process exit status, if observed.
     pub process_exit: Option<String>,
-    /// When the active or last loop run was started from this console.
-    pub loop_started: Option<Instant>,
+    /// When the active or last task run was started from this console.
+    pub task_started: Option<Instant>,
 }
 
 impl AppState {
@@ -173,7 +173,7 @@ impl AppState {
             is_editing_setting: false,
             setting_edit: String::new(),
             process_exit: None,
-            loop_started: None,
+            task_started: None,
         };
         state.table_state.select(Some(0));
         state
@@ -182,8 +182,8 @@ impl AppState {
     /// Rebuilds the flattened list of visible rows based on suite collapse and search filters.
     pub fn rebuild_visible_items(&mut self) {
         let query = self.filter_query.to_lowercase();
-        let elapsed = self.loop_started.map(|t| t.elapsed());
-        let run = self.session.loop_run.as_ref();
+        let elapsed = self.task_started.map(|t| t.elapsed());
+        let run = self.session.task_run.as_ref();
         self.visible_items = self
             .session
             .suites
@@ -274,8 +274,8 @@ impl AppState {
                 }
                 self.rebuild_visible_items();
             }
-            TableItem::Loop { suite_idx, .. } => {
-                self.start_selected_loop(suite_idx, bridge);
+            TableItem::Task { suite_idx, .. } => {
+                self.start_selected_task(suite_idx, bridge);
             }
             TableItem::Setting { value, .. } => {
                 self.is_editing_setting = true;
@@ -284,9 +284,9 @@ impl AppState {
         }
     }
 
-    /// Starts the loop of suite `suite_idx`. On an emulated target the run
+    /// Starts the task of suite `suite_idx`. On an emulated target the run
     /// is lockstep, because free-running is refused there.
-    fn start_selected_loop(
+    fn start_selected_task(
         &mut self,
         suite_idx: usize,
         bridge: Option<&mut ETSBridge>,
@@ -297,15 +297,15 @@ impl AppState {
             ));
             return;
         };
-        let start = LoopStart {
+        let start = TaskStart {
             suite_id,
             max_steps: 0,
             lockstep: self.session.subprocess_link,
             duration: None,
         };
-        match self.session.start_loop(start, Instant::now()) {
+        match self.session.start_task(start, Instant::now()) {
             Ok(action) => {
-                self.loop_started = Some(Instant::now());
+                self.task_started = Some(Instant::now());
                 self.execute_logged(action, bridge);
             }
             Err(e) => self.logs.push(format!("> [HOST] {e}")),
@@ -313,9 +313,9 @@ impl AppState {
         self.rebuild_visible_items();
     }
 
-    /// Requests the active loop run to stop.
-    fn stop_active_loop(&mut self, mut bridge: Option<&mut ETSBridge>) {
-        for action in self.session.stop_loop(Instant::now()) {
+    /// Requests the active task run to stop.
+    fn stop_active_task(&mut self, mut bridge: Option<&mut ETSBridge>) {
+        for action in self.session.stop_task(Instant::now()) {
             self.execute_logged(action, bridge.as_deref_mut());
         }
         self.rebuild_visible_items();
@@ -323,9 +323,9 @@ impl AppState {
 
     /// Sends the session's time-driven actions: heartbeat, duration bound
     /// and stop escalation.
-    fn tick_loop(&mut self, mut bridge: Option<&mut ETSBridge>) {
+    fn tick_task(&mut self, mut bridge: Option<&mut ETSBridge>) {
         let actions = self.session.tick(Instant::now());
-        if actions.is_empty() && !self.session.loop_active() {
+        if actions.is_empty() && !self.session.task_active() {
             return;
         }
         for action in actions {
@@ -357,7 +357,7 @@ impl AppState {
                 payload,
             } => {
                 if let Some(b) = bridge {
-                    b.send_command(&Command::LoopInput {
+                    b.send_command(&Command::TaskInput {
                         suite_id,
                         test_id,
                         seq,
@@ -485,7 +485,7 @@ impl AppState {
                 {
                     self.logs.push(format!("> [{suite_id}] {payload}"));
                 }
-                if let Some(line) = loop_log_line(&t) {
+                if let Some(line) = task_log_line(&t) {
                     self.logs.push(line);
                 }
                 let actions =
@@ -636,7 +636,7 @@ impl AppState {
                 }
                 self.rebuild_visible_items();
             }
-            KeyCode::Char('x') => self.stop_active_loop(bridge),
+            KeyCode::Char('x') => self.stop_active_task(bridge),
             KeyCode::Char('c') => {
                 self.collapsed_suites.extend(0..self.session.suites.len());
                 self.rebuild_visible_items();
@@ -682,7 +682,7 @@ fn suite_rows(
     })
 }
 
-/// Visible rows of one suite, with its latest loop run and the run's elapsed time.
+/// Visible rows of one suite, with its latest task run and the run's elapsed time.
 fn suite_rows_with_run(rows: &SuiteRows<'_>) -> Vec<TableItem> {
     let (suite, query) = (rows.suite, rows.query);
     let suite_matches = suite.name.to_lowercase().contains(query);
@@ -695,11 +695,11 @@ fn suite_rows_with_run(rows: &SuiteRows<'_>) -> Vec<TableItem> {
         .enumerate()
         .filter(|(_, t)| matches(&t.name))
         .collect();
-    let loop_item = suite.loop_item.as_ref().filter(|l| matches(&l.name));
+    let task_item = suite.task_item.as_ref().filter(|l| matches(&l.name));
     if !query.is_empty()
         && !suite_matches
         && matching_tests.is_empty()
-        && loop_item.is_none()
+        && task_item.is_none()
     {
         return Vec::new();
     }
@@ -722,15 +722,15 @@ fn suite_rows_with_run(rows: &SuiteRows<'_>) -> Vec<TableItem> {
             name: test.name.clone(),
             is_last: Some(i) == last_test
                 && setting_count == 0
-                && loop_item.is_none(),
+                && task_item.is_none(),
             state: test.state,
             cycles: test.cycles,
             time_us: test.time_us,
             stack_peak: test.stack_peak,
         });
     }
-    if let Some(item) = loop_item {
-        out.push(loop_row(rows, item.name.clone(), setting_count == 0));
+    if let Some(item) = task_item {
+        out.push(task_row(rows, item.name.clone(), setting_count == 0));
     }
     out.extend(setting_rows(rows.s_idx, suite));
     out
@@ -754,8 +754,8 @@ fn setting_rows(s_idx: usize, suite: &SuiteItem) -> Vec<TableItem> {
         .collect()
 }
 
-/// The table row of a suite's loop, from its latest run record.
-fn loop_row(rows: &SuiteRows<'_>, name: String, is_last: bool) -> TableItem {
+/// The table row of a suite's task, from its latest run record.
+fn task_row(rows: &SuiteRows<'_>, name: String, is_last: bool) -> TableItem {
     let per_s = |count: usize| {
         let secs = rows.elapsed.map_or(0, |e| e.as_secs()).max(1);
         u64::try_from(count)
@@ -765,7 +765,7 @@ fn loop_row(rows: &SuiteRows<'_>, name: String, is_last: bool) -> TableItem {
     };
     let run = rows.run;
     let last = run.and_then(|r| r.states.last());
-    TableItem::Loop {
+    TableItem::Task {
         suite_idx: rows.s_idx,
         name,
         is_last,
@@ -778,10 +778,10 @@ fn loop_row(rows: &SuiteRows<'_>, name: String, is_last: bool) -> TableItem {
     }
 }
 
-/// A console line for a loop state, teardown report or statistics frame.
-fn loop_log_line(t: &OwnedTelemetry) -> Option<String> {
+/// A console line for a task state, teardown report or statistics frame.
+fn task_log_line(t: &OwnedTelemetry) -> Option<String> {
     match t {
-        OwnedTelemetry::LoopState { state, message, .. } => {
+        OwnedTelemetry::TaskState { state, message, .. } => {
             Some(message.as_ref().map_or_else(
                 || format!("> [LIFECYCLE] {state:?}"),
                 |m| format!("> [LIFECYCLE] {state:?}: {m}"),
@@ -793,7 +793,7 @@ fn loop_log_line(t: &OwnedTelemetry) -> Option<String> {
                 |m| format!("> [LIFECYCLE] teardown ok={ok}: {m}"),
             ))
         }
-        OwnedTelemetry::LoopStats { steps, time_us, .. } => Some(format!(
+        OwnedTelemetry::TaskStats { steps, time_us, .. } => Some(format!(
             "> [LIFECYCLE] {steps} steps in {}",
             format_duration(*time_us)
         )),
@@ -994,9 +994,9 @@ fn table_row(item: &TableItem) -> Row<'_> {
             let name_cell = Cell::from(format!("  {branch} {name}"));
             Row::new(vec![name_cell, cycles_cell, time_cell, stack_cell])
         }
-        TableItem::Loop { name, is_last, .. } => {
+        TableItem::Task { name, is_last, .. } => {
             let branch = if *is_last { "└─" } else { "├─" };
-            let [state_cell, rate_cell, teardown_cell] = loop_cells(item);
+            let [state_cell, rate_cell, teardown_cell] = task_cells(item);
             Row::new(vec![
                 Cell::from(format!("  {branch} LIFECYCLE {name}"))
                     .style(Style::default().fg(Color::Blue)),
@@ -1023,9 +1023,9 @@ fn table_row(item: &TableItem) -> Row<'_> {
     }
 }
 
-/// State, packet-rate and teardown cells for a loop row.
-fn loop_cells(item: &TableItem) -> [Cell<'static>; 3] {
-    let TableItem::Loop {
+/// State, packet-rate and teardown cells for a task row.
+fn task_cells(item: &TableItem) -> [Cell<'static>; 3] {
+    let TableItem::Task {
         state,
         message,
         teardown_ok,
@@ -1041,9 +1041,9 @@ fn loop_cells(item: &TableItem) -> [Cell<'static>; 3] {
         || Cell::from("IDLE").style(Style::default().fg(Color::DarkGray)),
         |s| {
             let color = match s {
-                LoopRunState::Running => Color::Cyan,
-                LoopRunState::Warn => Color::Yellow,
-                LoopRunState::Pass | LoopRunState::Bounded => Color::Green,
+                TaskRunState::Running => Color::Cyan,
+                TaskRunState::Warn => Color::Yellow,
+                TaskRunState::Pass | TaskRunState::Bounded => Color::Green,
                 _ => Color::Red,
             };
             let text = message
@@ -1323,7 +1323,7 @@ where
         terminal.draw(|f| draw_ui(f, state))?;
 
         let need_restart = state.drain_bridge(bridge);
-        state.tick_loop(Some(bridge));
+        state.tick_task(Some(bridge));
 
         if discovery_due(
             state.session.discovery_complete,
@@ -1874,7 +1874,7 @@ mod tests {
             .map(|row| match row {
                 TableItem::Suite { name, .. }
                 | TableItem::Test { name, .. }
-                | TableItem::Loop { name, .. }
+                | TableItem::Task { name, .. }
                 | TableItem::Setting { name, .. } => name.clone(),
             })
             .collect()
@@ -1884,7 +1884,7 @@ mod tests {
         rows.iter()
             .filter_map(|row| match row {
                 TableItem::Test { is_last, .. }
-                | TableItem::Loop { is_last, .. }
+                | TableItem::Task { is_last, .. }
                 | TableItem::Setting { is_last, .. } => Some(*is_last),
                 TableItem::Suite { .. } => None,
             })
@@ -2129,7 +2129,7 @@ mod tests {
         assert!(text.contains("TARGET: Board | LINK: Link"), "{text}");
     }
 
-    /// Feeds the frames that discover one suite with a case and a loop.
+    /// Feeds the frames that discover one suite with a case and a task.
     fn discover_lifecycle(state: &mut AppState) {
         feed(
             state,
@@ -2154,12 +2154,12 @@ mod tests {
             state,
             &Telemetry::LifecycleSuite {
                 suite_id: 0,
-                loop_count: 1,
+                task_count: 1,
             },
         );
         feed(
             state,
-            &Telemetry::LoopInfo {
+            &Telemetry::TaskInfo {
                 suite_id: 0,
                 test_id: 1,
                 name: "speed",
@@ -2189,9 +2189,9 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn loop_start_stop_keys() {
+    fn task_start_stop_keys() {
         use control_rs_ets_host::FakeBridge;
-        // Postcard tags of `Command`: `RunExecutable` 1, `StartLoop` 4, `StopNow` 5.
+        // Postcard tags of `Command`: `RunExecutable` 1, `StartTask` 4, `StopNow` 5.
         let tag = |p: &Vec<u8>| p.first().copied();
         let FakeBridge {
             mut bridge,
@@ -2204,16 +2204,16 @@ mod tests {
         assert_eq!(
             row_names(&state.visible_items),
             ["motor", "case_a", "speed"],
-            "the loop is a row of its suite beside the case"
+            "the task is a row of its suite beside the case"
         );
 
-        // Run all sends no StartLoop.
+        // Run all sends no StartTask.
         let _ = state
             .handle_key(make_test_event(KeyCode::Char('r')), Some(&mut bridge));
         let sent = sent_payloads(&written);
         assert!(!sent.iter().any(|p| tag(p) == Some(4)), "{sent:?}");
 
-        // Enter on the loop row sends StartLoop for (suite 0, loop id 1).
+        // Enter on the task row sends StartTask for (suite 0, task id 1).
         state.table_state.select(Some(2));
         let _ = state
             .handle_key(make_test_event(KeyCode::Enter), Some(&mut bridge));
@@ -2224,13 +2224,13 @@ mod tests {
             "{sent:?}"
         );
 
-        // `x` sends StopNow for the same loop.
+        // `x` sends StopNow for the same task.
         feed(
             &mut state,
-            &Telemetry::LoopState {
+            &Telemetry::TaskState {
                 suite_id: 0,
                 test_id: 1,
-                state: LoopRunState::Running,
+                state: TaskRunState::Running,
                 message: None,
             },
         );
@@ -2245,13 +2245,13 @@ mod tests {
     }
 
     #[test]
-    fn a_loop_row_shows_state_teardown_and_statistics() {
+    fn a_task_row_shows_state_teardown_and_statistics() {
         let mut state = AppState::new("T".to_string(), "L".to_string());
         discover_lifecycle(&mut state);
         let _ = state
             .session
-            .start_loop(
-                LoopStart {
+            .start_task(
+                TaskStart {
                     suite_id: 0,
                     max_steps: 0,
                     lockstep: false,
@@ -2261,10 +2261,10 @@ mod tests {
             )
             .unwrap();
         for tel in [
-            Telemetry::LoopState {
+            Telemetry::TaskState {
                 suite_id: 0,
                 test_id: 1,
-                state: LoopRunState::Running,
+                state: TaskRunState::Running,
                 message: None,
             },
             Telemetry::TeardownReport {
@@ -2273,16 +2273,16 @@ mod tests {
                 ok: true,
                 message: None,
             },
-            Telemetry::LoopStats {
+            Telemetry::TaskStats {
                 suite_id: 0,
                 test_id: 1,
                 steps: 12,
                 time_us: 3,
             },
-            Telemetry::LoopState {
+            Telemetry::TaskState {
                 suite_id: 0,
                 test_id: 1,
-                state: LoopRunState::Warn,
+                state: TaskRunState::Warn,
                 message: Some("careful"),
             },
         ] {
@@ -2293,12 +2293,12 @@ mod tests {
         let row = state
             .visible_items
             .iter()
-            .find(|r| matches!(r, TableItem::Loop { .. }))
+            .find(|r| matches!(r, TableItem::Task { .. }))
             .unwrap();
         assert!(matches!(
             row,
-            TableItem::Loop {
-                state: Some(LoopRunState::Warn),
+            TableItem::Task {
+                state: Some(TaskRunState::Warn),
                 teardown_ok: Some(true),
                 steps: Some(12),
                 message: Some(m),

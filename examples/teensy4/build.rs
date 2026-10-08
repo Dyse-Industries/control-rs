@@ -6,7 +6,7 @@
 //!    uses to determine the bottom boundary of stack space.
 //! 2. **ETS Test Suite Registry**: It inserts a custom `.ets_test_suites` section into the
 //!    flash region to collect all ETS test suites defined with the `#[ets_suite]` macro, and a
-//!    `.ets_loops` section for the loops of lifecycle suites.
+//!    `.ets_tasks` section for the tasks of lifecycle suites.
 //! 3. **Linker Directives**: It tells rustc/cargo to load this generated script during linking.
 
 use std::env;
@@ -37,13 +37,13 @@ SECTIONS
     PROVIDE_HIDDEN (__ets_test_suites_end = .);
   } > FLASH
 
-  .ets_loops :
+  .ets_tasks :
   {
     . = ALIGN(4);
-    PROVIDE_HIDDEN (__ets_loops_start = .);
-    KEEP (*(.ets_loops));
+    PROVIDE_HIDDEN (__ets_tasks_start = .);
+    KEEP (*(.ets_tasks));
     . = ALIGN(4);
-    PROVIDE_HIDDEN (__ets_loops_end = .);
+    PROVIDE_HIDDEN (__ets_tasks_end = .);
   } > FLASH
 }
 ",

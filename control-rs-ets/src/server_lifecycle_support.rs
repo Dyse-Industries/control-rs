@@ -1,8 +1,8 @@
-// Support for the loop-run tests: a scripted loop, a recording link and a
+// Support for the task-run tests: a scripted task, a recording link and a
 // profiler with a ticking clock. Included into `server::tests`.
 
-use crate::comms::LoopRunState;
-use crate::{LoopDescriptor, LoopIo, LoopOutcome};
+use crate::comms::TaskRunState;
+use crate::{TaskDescriptor, TaskIo, TaskOutcome};
 use std::borrow::ToOwned;
 use std::collections::VecDeque;
 use std::string::String;
@@ -13,20 +13,23 @@ use super::*;
 
 static FIXTURE: Mutex<Fixture> = Mutex::new(Fixture::new());
 
-/// The loops of an image with one loop without a timeout.
-pub static LOOPS_PLAIN: &[&LoopDescriptor] = &[&LOOP_PLAIN];
+/// The running state, which scripts repeat.
+pub const RUN: TaskRunState = TaskRunState::Running;
 
-/// The loops of an image with one loop with a timeout.
-pub static LOOPS_TIMEOUT: &[&LoopDescriptor] = &[&LOOP_TIMEOUT];
+/// The tasks of an image with one task without a timeout.
+pub static TASKS_PLAIN: &[&TaskDescriptor] = &[&TASK_PLAIN];
 
-/// Two loops for one suite.
-pub static LOOPS_TWINS: &[&LoopDescriptor] = &[&LOOP_PLAIN, &LOOP_TWIN];
+/// The tasks of an image with one task with a timeout.
+pub static TASKS_TIMEOUT: &[&TaskDescriptor] = &[&TASK_TIMEOUT];
 
-/// A loop without a link timeout.
-pub static LOOP_PLAIN: LoopDescriptor = LoopDescriptor {
+/// Two tasks for one suite.
+pub static TASKS_TWINS: &[&TaskDescriptor] = &[&TASK_PLAIN, &TASK_TWIN];
+
+/// A task without a link timeout.
+pub static TASK_PLAIN: TaskDescriptor = TaskDescriptor {
     suite: &SUITE_DESC,
     name: "scripted",
-    description: "scripted loop",
+    description: "scripted task",
     input_type: "()",
     output_type: "()",
     setup,
@@ -36,11 +39,11 @@ pub static LOOP_PLAIN: LoopDescriptor = LoopDescriptor {
     link_timeout_ms: 0,
 };
 
-/// The loop whose link timeout is 500 ms.
-pub static LOOP_TIMEOUT: LoopDescriptor = LoopDescriptor {
+/// The task whose link timeout is 500 ms.
+pub static TASK_TIMEOUT: TaskDescriptor = TaskDescriptor {
     suite: &SUITE_DESC,
     name: "scripted",
-    description: "scripted loop",
+    description: "scripted task",
     input_type: "()",
     output_type: "()",
     setup,
@@ -50,11 +53,11 @@ pub static LOOP_TIMEOUT: LoopDescriptor = LoopDescriptor {
     link_timeout_ms: 500,
 };
 
-/// A second loop for the same suite, whose setup is counted apart.
-pub static LOOP_TWIN: LoopDescriptor = LoopDescriptor {
+/// A second task for the same suite, whose setup is counted apart.
+pub static TASK_TWIN: TaskDescriptor = TaskDescriptor {
     suite: &SUITE_DESC,
     name: "twin",
-    description: "second loop",
+    description: "second task",
     input_type: "()",
     output_type: "()",
     setup: twin_setup,
@@ -64,17 +67,14 @@ pub static LOOP_TWIN: LoopDescriptor = LoopDescriptor {
     link_timeout_ms: 0,
 };
 
-/// The running state, which scripts repeat.
-pub const RUN: LoopRunState = LoopRunState::Running;
-
-/// The result of a loop's setup, reset or teardown.
+/// The result of a task's setup, reset or teardown.
 pub type HookResult = Result<(), &'static str>;
 
 /// The state of a run and its message.
-pub type StateLog = (LoopRunState, Option<String>);
+pub type StateLog = (TaskRunState, Option<String>);
 
 /// The result of a bounded server run and the server.
-pub type Outcome = (ServerResult<&'static str>, LoopServer);
+pub type Outcome = (ServerResult<&'static str>, TaskServer);
 
 /// Telemetry frames as sent.
 pub type Frames = Vec<Vec<u8>>;
@@ -86,7 +86,7 @@ pub type Sample = (u64, Vec<u8>);
 pub type EventPick = fn(&Event) -> bool;
 
 /// One scripted step: status, message and the output packet bytes.
-pub type Scripted = (LoopRunState, Option<&'static str>, &'static [u8]);
+pub type Scripted = (TaskRunState, Option<&'static str>, &'static [u8]);
 
 /// Input bytes and index a step saw.
 pub type SeenInput = (Option<Vec<u8>>, Option<u64>);
@@ -97,11 +97,11 @@ pub enum Event {
     Flush,
     Poll,
     Sample(u64),
-    State(LoopRunState),
+    State(TaskRunState),
 }
 
 /// A link that replays commands, then idles, then fails to end the run.
-pub struct LoopComms {
+pub struct TaskComms {
     commands: VecDeque<Command<'static>>,
     pub events: Vec<Event>,
     idle_polls_left: usize,
@@ -116,17 +116,17 @@ pub struct TickProfiler {
     tick: u64,
 }
 
-/// A server over the loop link.
-pub type LoopServer = Server<'static, LoopComms, TickProfiler>;
+/// A server over the task link.
+pub type TaskServer = Server<'static, TaskComms, TickProfiler>;
 
-/// Settings of one loop-test run.
+/// Settings of one task-test run.
 pub struct Run {
     pub commands: Vec<Command<'static>>,
     pub idle_polls: usize,
     pub tick_ns: u64,
 }
 
-/// How the scripted loop behaves.
+/// How the scripted task behaves.
 #[derive(Clone, Copy)]
 pub struct Config {
     pub reset_err: Option<&'static str>,
@@ -135,7 +135,7 @@ pub struct Config {
     pub teardown_err: Option<&'static str>,
 }
 
-/// How often the scripted loop's functions ran.
+/// How often the scripted task's functions ran.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Counts {
     pub reset: usize,
@@ -147,7 +147,7 @@ pub struct Counts {
     pub twin_setup: usize,
 }
 
-/// Shared state of the scripted loop.
+/// Shared state of the scripted task.
 struct Fixture {
     config: Config,
     counts: Counts,
@@ -193,7 +193,7 @@ impl Fixture {
     }
 }
 
-impl HostComms for LoopComms {
+impl HostComms for TaskComms {
     type Error = &'static str;
 
     fn flush(&mut self) -> Result<(), Self::Error> {
@@ -216,10 +216,10 @@ impl HostComms for LoopComms {
         telemetry: &Telemetry<'_>,
     ) -> Result<(), Self::Error> {
         match telemetry {
-            Telemetry::LoopSample { seq, .. } => {
+            Telemetry::TaskSample { seq, .. } => {
                 self.events.push(Event::Sample(*seq));
             }
-            Telemetry::LoopState { state, .. } => {
+            Telemetry::TaskState { state, .. } => {
                 self.events.push(Event::State(*state));
             }
             _ => {}
@@ -280,7 +280,7 @@ fn twin_setup() -> HookResult {
     err.map_or(Ok(()), Err)
 }
 
-fn step(io: &mut LoopIo<'_>) -> LoopOutcome {
+fn step(io: &mut TaskIo<'_>) -> TaskOutcome {
     let (status, message, bytes) = {
         let mut fx = fixture();
         if fx.counts.steps == 0 {
@@ -291,7 +291,7 @@ fn step(io: &mut LoopIo<'_>) -> LoopOutcome {
         let last = fx.config.script.len().saturating_sub(1);
         let index = usize::try_from(io.step).unwrap_or(usize::MAX).min(last);
         fx.config.script.get(index).copied().unwrap_or((
-            LoopRunState::Error,
+            TaskRunState::Error,
             Some("empty script"),
             &[],
         ))
@@ -300,7 +300,7 @@ fn step(io: &mut LoopIo<'_>) -> LoopOutcome {
         dst.copy_from_slice(bytes);
     }
     io.output_len = bytes.len();
-    LoopOutcome { message, status }
+    TaskOutcome { message, status }
 }
 
 fn reset() -> HookResult {
@@ -324,7 +324,7 @@ fn teardown() -> HookResult {
     err.map_or(Ok(()), Err)
 }
 
-/// Resets the scripted loop to `config` and holds the run-state lock.
+/// Resets the scripted task to `config` and holds the run-state lock.
 pub fn begin(config: Config) -> MutexGuard<'static, ()> {
     let guard = crate::server::test_lock::hold();
     let mut fx = fixture();
@@ -335,7 +335,7 @@ pub fn begin(config: Config) -> MutexGuard<'static, ()> {
     guard
 }
 
-/// How often the scripted loop's functions ran.
+/// How often the scripted task's functions ran.
 pub fn counts() -> Counts {
     fixture().counts
 }
@@ -345,13 +345,13 @@ pub fn seen_inputs() -> Vec<SeenInput> {
     fixture().inputs.clone()
 }
 
-/// Runs a server over `loops` until the link ends, returning the result and
+/// Runs a server over `tasks` until the link ends, returning the result and
 /// the server.
-pub fn run_loops(
-    loops: &'static [&'static LoopDescriptor],
+pub fn run_tasks(
+    tasks: &'static [&'static TaskDescriptor],
     run: Run,
 ) -> Outcome {
-    let comms = LoopComms {
+    let comms = TaskComms {
         commands: run.commands.into(),
         events: Vec::new(),
         idle_polls_left: run.idle_polls,
@@ -363,7 +363,7 @@ pub fn run_loops(
         tick: run.tick_ns,
     };
     let mut server =
-        Server::new(Context::new(comms, profiler), SUITES).with_loops(loops);
+        Server::new(Context::new(comms, profiler), SUITES).with_tasks(tasks);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let result = server.run();
@@ -374,7 +374,7 @@ pub fn run_loops(
 }
 
 /// Decodes every telemetry frame the server sent.
-pub fn sent(server: &LoopServer) -> Vec<Telemetry<'_>> {
+pub fn sent(server: &TaskServer) -> Vec<Telemetry<'_>> {
     server
         .context
         .comms
@@ -385,7 +385,7 @@ pub fn sent(server: &LoopServer) -> Vec<Telemetry<'_>> {
 }
 
 pub fn start(max_steps: u64, lockstep: bool) -> Command<'static> {
-    Command::StartLoop {
+    Command::StartTask {
         suite_id: 0,
         test_id: 1,
         max_steps,
@@ -394,7 +394,7 @@ pub fn start(max_steps: u64, lockstep: bool) -> Command<'static> {
 }
 
 pub fn input(seq: u64, payload: &'static [u8]) -> Command<'static> {
-    Command::LoopInput {
+    Command::TaskInput {
         suite_id: 0,
         test_id: 1,
         seq,
@@ -417,12 +417,12 @@ pub fn set_u8(v: u8) -> Command<'static> {
     }
 }
 
-/// `LoopState` frames in order, with owned messages.
-pub fn states(server: &LoopServer) -> Vec<StateLog> {
+/// `TaskState` frames in order, with owned messages.
+pub fn states(server: &TaskServer) -> Vec<StateLog> {
     sent(server)
         .into_iter()
         .filter_map(|t| match t {
-            Telemetry::LoopState { state, message, .. } => {
+            Telemetry::TaskState { state, message, .. } => {
                 Some((state, message.map(str::to_owned)))
             }
             _ => None,
@@ -430,13 +430,13 @@ pub fn states(server: &LoopServer) -> Vec<StateLog> {
         .collect()
 }
 
-/// The final `LoopState` of the run.
-pub fn final_state(server: &LoopServer) -> Option<StateLog> {
+/// The final `TaskState` of the run.
+pub fn final_state(server: &TaskServer) -> Option<StateLog> {
     states(server).pop()
 }
 
 /// Number of `Log` frames.
-pub fn log_count(server: &LoopServer) -> usize {
+pub fn log_count(server: &TaskServer) -> usize {
     sent(server)
         .iter()
         .filter(|t| matches!(t, Telemetry::Log(_)))
@@ -445,18 +445,18 @@ pub fn log_count(server: &LoopServer) -> usize {
 
 /// Number of frames for which `pick` holds.
 pub fn count_frames(
-    server: &LoopServer,
+    server: &TaskServer,
     pick: impl Fn(&Telemetry<'_>) -> bool,
 ) -> usize {
     sent(server).iter().filter(|t| pick(t)).count()
 }
 
 /// Output packets the server sent, in order.
-pub fn samples(server: &LoopServer) -> Vec<Sample> {
+pub fn samples(server: &TaskServer) -> Vec<Sample> {
     sent(server)
         .into_iter()
         .filter_map(|t| match t {
-            Telemetry::LoopSample { seq, payload, .. } => {
+            Telemetry::TaskSample { seq, payload, .. } => {
                 Some((seq, payload.to_vec()))
             }
             _ => None,

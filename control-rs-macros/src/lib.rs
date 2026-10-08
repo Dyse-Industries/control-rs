@@ -2,7 +2,7 @@
 //!
 //! | Macro | Generates |
 //! |:--|:--|
-//! | `#[ets_suite]` | Suite descriptor and case registration in `.ets_test_suites`; a `#[setup]`, `#[step]`, `#[reset]`, `#[teardown]` lifecycle case in `.ets_loops` |
+//! | `#[ets_suite]` | Suite descriptor and case registration in `.ets_test_suites`; a `#[setup]`, `#[step]`, `#[reset]`, `#[teardown]` lifecycle task in `.ets_tasks` |
 //! | `#[ets_setup]` | Target `main` that runs the server with the returned `Context` |
 //! | `ets_entrypoint!` | Target `main` for a given setup function |
 //! | `ets_panic!` | Panic handler that reports the failure to the host and resets |
@@ -18,12 +18,12 @@ use quote::{format_ident, quote};
 use syn::{Item, ItemFn, ItemMod, ItemStatic, parse_quote};
 
 /// Names of the lifecycle markers, in declaration order.
-const LOOP_MARKERS: [&str; 4] = ["setup", "step", "reset", "teardown"];
+const TASK_MARKERS: [&str; 4] = ["setup", "step", "reset", "teardown"];
 
-/// The three items generated for a loop: step wrapper, descriptor, section pointer.
-type LoopItems = [Item; 3];
+/// The three items generated for a task: step wrapper, descriptor, section pointer.
+type TaskItems = [Item; 3];
 
-/// The function identifier of each marker, in `LOOP_MARKERS` order.
+/// The function identifier of each marker, in `TASK_MARKERS` order.
 type MarkerSlots = [Option<syn::Ident>; 4];
 
 /// Input and output packet types of a typed step.
@@ -35,12 +35,12 @@ type TestFnInfo = (syn::Ident, String);
 /// A lifecycle marker removed from a function: its slot and the attribute.
 type TakenMarker = (usize, syn::Attribute);
 
-/// The functions marked as the lifecycle case of a suite.
+/// The functions marked as the lifecycle task of a suite.
 #[derive(Default)]
-struct LoopFns {
-    /// Slots in `LOOP_MARKERS` order.
+struct TaskFns {
+    /// Slots in `TASK_MARKERS` order.
     idents: MarkerSlots,
-    /// Description of the loop: the step function's doc comment.
+    /// Description of the task: the step function's doc comment.
     doc: String,
     /// Host link timeout from `#[step(link_timeout_ms = N)]`.
     link_timeout_ms: u32,
@@ -51,7 +51,7 @@ struct LoopFns {
 /// What `#[ets_suite]` collects from the items of a suite module.
 struct SuiteParts {
     errors: Option<syn::Error>,
-    loop_fns: LoopFns,
+    task_fns: TaskFns,
     settings: Vec<syn::Ident>,
     tests: Vec<TestFnInfo>,
 }
@@ -161,11 +161,11 @@ fn process_test_fn(item_fn: &ItemFn) -> Option<TestFnInfo> {
 }
 
 /// Removes the lifecycle marker from `item_fn` and returns its slot in
-/// `LOOP_MARKERS` with the attribute.
-fn take_loop_marker(item_fn: &mut ItemFn) -> Option<TakenMarker> {
+/// `TASK_MARKERS` with the attribute.
+fn take_task_marker(item_fn: &mut ItemFn) -> Option<TakenMarker> {
     let (slot, pos) =
         item_fn.attrs.iter().enumerate().find_map(|(pos, a)| {
-            LOOP_MARKERS
+            TASK_MARKERS
                 .iter()
                 .position(|m| a.path().is_ident(m))
                 .map(|slot| (slot, pos))
@@ -220,12 +220,12 @@ fn last_type_arg(ty: &syn::Type, name: &str) -> Option<syn::Type> {
     })
 }
 
-/// Checks `fn(&LoopContext<'_, I>) -> LoopStatus<O>` and returns `(I, O)`.
+/// Checks `fn(&TaskContext<'_, I>) -> TaskStatus<O>` and returns `(I, O)`.
 fn check_step_signature(item_fn: &ItemFn) -> syn::Result<PacketTypes> {
     let error = || {
         syn::Error::new_spanned(
             &item_fn.sig,
-            "expected `fn(&LoopContext<'_, I>) -> LoopStatus<O>`",
+            "expected `fn(&TaskContext<'_, I>) -> TaskStatus<O>`",
         )
     };
     let mut inputs = item_fn.sig.inputs.iter();
@@ -237,11 +237,11 @@ fn check_step_signature(item_fn: &ItemFn) -> syn::Result<PacketTypes> {
         return Err(error());
     };
     let input =
-        last_type_arg(&reference.elem, "LoopContext").ok_or_else(error)?;
+        last_type_arg(&reference.elem, "TaskContext").ok_or_else(error)?;
     let syn::ReturnType::Type(_, ret) = &item_fn.sig.output else {
         return Err(error());
     };
-    let output = last_type_arg(ret, "LoopStatus").ok_or_else(error)?;
+    let output = last_type_arg(ret, "TaskStatus").ok_or_else(error)?;
     Ok((input, output))
 }
 
@@ -274,17 +274,17 @@ fn parse_step_args(attr: &syn::Attribute) -> syn::Result<u32> {
     Ok(value)
 }
 
-/// Records a marked function in `loop_fns`, or fails on a repeat or a
+/// Records a marked function in `task_fns`, or fails on a repeat or a
 /// malformed signature.
-fn record_loop_fn(
-    loop_fns: &mut LoopFns,
+fn record_task_fn(
+    task_fns: &mut TaskFns,
     suite_name: &str,
     (slot, attr): &TakenMarker,
     item_fn: &ItemFn,
 ) -> syn::Result<()> {
     let slot = *slot;
-    let marker = LOOP_MARKERS.get(slot).copied().unwrap_or("");
-    if let Some(first) = loop_fns.idents.get(slot).and_then(Option::as_ref) {
+    let marker = TASK_MARKERS.get(slot).copied().unwrap_or("");
+    if let Some(first) = task_fns.idents.get(slot).and_then(Option::as_ref) {
         return Err(syn::Error::new_spanned(
             &item_fn.sig.ident,
             format!(
@@ -293,56 +293,56 @@ fn record_loop_fn(
         ));
     }
     if marker == "step" {
-        loop_fns.packets = Some(check_step_signature(item_fn)?);
-        loop_fns.link_timeout_ms = parse_step_args(attr)?;
-        loop_fns.doc = extract_doc_string(&item_fn.attrs);
+        task_fns.packets = Some(check_step_signature(item_fn)?);
+        task_fns.link_timeout_ms = parse_step_args(attr)?;
+        task_fns.doc = extract_doc_string(&item_fn.attrs);
     } else {
         check_result_signature(item_fn)?;
     }
-    if let Some(entry) = loop_fns.idents.get_mut(slot) {
+    if let Some(entry) = task_fns.idents.get_mut(slot) {
         *entry = Some(item_fn.sig.ident.clone());
     }
     Ok(())
 }
 
-/// Generates the loop step wrapper, descriptor and section pointer.
-fn generate_loop_descriptors(loop_fns: &LoopFns) -> Option<LoopItems> {
+/// Generates the task step wrapper, descriptor and section pointer.
+fn generate_task_descriptors(task_fns: &TaskFns) -> Option<TaskItems> {
     let [Some(setup), Some(step), Some(reset), Some(teardown)] =
-        &loop_fns.idents
+        &task_fns.idents
     else {
         return None;
     };
-    let (input, output) = loop_fns.packets.as_ref()?;
-    let doc = &loop_fns.doc;
-    let timeout = loop_fns.link_timeout_ms;
+    let (input, output) = task_fns.packets.as_ref()?;
+    let doc = &task_fns.doc;
+    let timeout = task_fns.link_timeout_ms;
     Some([
         parse_quote! {
-            fn __ets_loop_step(
-                io: &mut ::control_rs_ets::LoopIo<'_>,
-            ) -> ::control_rs_ets::LoopOutcome {
-                ::control_rs_ets::loop_step::<#input, #output>(io, #step)
+            fn __ets_task_step(
+                io: &mut ::control_rs_ets::TaskIo<'_>,
+            ) -> ::control_rs_ets::TaskOutcome {
+                ::control_rs_ets::task_step::<#input, #output>(io, #step)
             }
         },
         parse_quote! {
-            static LOOP_DESCRIPTOR: ::control_rs_ets::LoopDescriptor = ::control_rs_ets::LoopDescriptor {
+            static TASK_DESCRIPTOR: ::control_rs_ets::TaskDescriptor = ::control_rs_ets::TaskDescriptor {
                 suite: &SUITE_DESCRIPTOR,
                 name: stringify!(#step),
                 description: #doc,
                 input_type: stringify!(#input),
                 output_type: stringify!(#output),
                 setup: #setup,
-                step: __ets_loop_step,
+                step: __ets_task_step,
                 reset: #reset,
                 teardown: #teardown,
                 link_timeout_ms: #timeout,
             };
         },
         parse_quote! {
-            /// Pointer to the loop descriptor, linked into the ETS loops section.
-            #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__ets_loops"))]
-            #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".ets_loops"))]
+            /// Pointer to the task descriptor, linked into the lifecycle task section.
+            #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__ets_tasks"))]
+            #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".ets_tasks"))]
             #[used]
-            pub static LOOP_DESCRIPTOR_PTR: &::control_rs_ets::LoopDescriptor = &LOOP_DESCRIPTOR;
+            pub static TASK_DESCRIPTOR_PTR: &::control_rs_ets::TaskDescriptor = &TASK_DESCRIPTOR;
         },
     ])
 }
@@ -403,7 +403,7 @@ fn generate_suite_descriptors(
 fn collect_parts(suite_name: &str, items: &mut [Item]) -> SuiteParts {
     let mut parts = SuiteParts {
         errors: None,
-        loop_fns: LoopFns::default(),
+        task_fns: TaskFns::default(),
         settings: Vec::new(),
         tests: Vec::new(),
     };
@@ -415,9 +415,9 @@ fn collect_parts(suite_name: &str, items: &mut [Item]) -> SuiteParts {
                 }
             }
             Item::Fn(item_fn) => {
-                if let Some(marker) = take_loop_marker(item_fn) {
-                    if let Err(e) = record_loop_fn(
-                        &mut parts.loop_fns,
+                if let Some(marker) = take_task_marker(item_fn) {
+                    if let Err(e) = record_task_fn(
+                        &mut parts.task_fns,
                         suite_name,
                         &marker,
                         item_fn,
@@ -434,23 +434,23 @@ fn collect_parts(suite_name: &str, items: &mut [Item]) -> SuiteParts {
     parts
 }
 
-/// The error for a lifecycle case that lacks some of its four markers.
+/// The error for a lifecycle task that lacks some of its four markers.
 fn missing_marker_error(
     suite_name: &str,
-    loop_fns: &LoopFns,
+    task_fns: &TaskFns,
 ) -> Option<syn::Error> {
-    let missing: Vec<String> = LOOP_MARKERS
+    let missing: Vec<String> = TASK_MARKERS
         .iter()
-        .zip(&loop_fns.idents)
+        .zip(&task_fns.idents)
         .filter(|(_, ident)| ident.is_none())
         .map(|(m, _)| format!("`#[{m}]`"))
         .collect();
-    let any_marked = loop_fns.idents.iter().any(Option::is_some);
+    let any_marked = task_fns.idents.iter().any(Option::is_some);
     (any_marked && !missing.is_empty()).then(|| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
             format!(
-                "suite `{suite_name}` defines a lifecycle case but is missing {}",
+                "suite `{suite_name}` defines a lifecycle task but is missing {}",
                 missing.join(", ")
             ),
         )
@@ -458,7 +458,7 @@ fn missing_marker_error(
 }
 
 /// Appends the descriptors to the items of a suite module; returns the
-/// diagnostics for a malformed lifecycle case.
+/// diagnostics for a malformed lifecycle task.
 fn expand_items(
     suite_name: &str,
     suite_doc: &str,
@@ -466,7 +466,7 @@ fn expand_items(
 ) -> Option<syn::Error> {
     let mut parts = collect_parts(suite_name, items);
     if parts.errors.is_none()
-        && let Some(e) = missing_marker_error(suite_name, &parts.loop_fns)
+        && let Some(e) = missing_marker_error(suite_name, &parts.task_fns)
     {
         push_error(&mut parts.errors, e);
     }
@@ -478,9 +478,9 @@ fn expand_items(
         &parts.settings,
     ));
     if parts.errors.is_none()
-        && let Some(loop_code) = generate_loop_descriptors(&parts.loop_fns)
+        && let Some(task_code) = generate_task_descriptors(&parts.task_fns)
     {
-        items.extend(loop_code);
+        items.extend(task_code);
     }
     parts.errors
 }
@@ -603,8 +603,8 @@ fn ets_entrypoint_impl(
         unsafe extern "Rust" {
             static __ets_test_suites_start: u8;
             static __ets_test_suites_end: u8;
-            static __ets_loops_start: u8;
-            static __ets_loops_end: u8;
+            static __ets_tasks_start: u8;
+            static __ets_tasks_end: u8;
         }
 
         // ==================== Unified Entry Point ====================
@@ -621,16 +621,16 @@ fn ets_entrypoint_impl(
 
             let suites = unsafe { ::control_rs_ets::util::get_suites(start, end) };
 
-            let loops_start = unsafe {
-                &__ets_loops_start as *const u8 as *const &::control_rs_ets::LoopDescriptor
+            let tasks_start = unsafe {
+                &__ets_tasks_start as *const u8 as *const &::control_rs_ets::TaskDescriptor
             };
-            let loops_end = unsafe {
-                &__ets_loops_end as *const u8 as *const &::control_rs_ets::LoopDescriptor
+            let tasks_end = unsafe {
+                &__ets_tasks_end as *const u8 as *const &::control_rs_ets::TaskDescriptor
             };
-            let loops = unsafe { ::control_rs_ets::util::get_loops(loops_start, loops_end) };
+            let tasks = unsafe { ::control_rs_ets::util::get_tasks(tasks_start, tasks_end) };
 
             let context = #setup_name();
-            let mut server = ::control_rs_ets::Server::new(context, suites).with_loops(loops);
+            let mut server = ::control_rs_ets::Server::new(context, suites).with_tasks(tasks);
             ETS_SERVER.store(&mut server as *mut _, ::core::sync::atomic::Ordering::Release);
 
             let _ = server.run();
@@ -998,7 +998,7 @@ mod tests {
     }
 
     #[test]
-    fn loop_expands_descriptor() {
+    fn task_expands_descriptor() {
         let out = expand(quote::quote! {
             /// Motor suite.
             mod motor {
@@ -1007,9 +1007,9 @@ mod tests {
                 fn case_b() {}
                 #[setup]
                 fn setup() -> Result<(), &'static str> { Ok(()) }
-                /// Speed loop.
+                /// Speed task.
                 #[step(link_timeout_ms = 1000)]
-                fn speed_loop(ctx: &LoopContext<'_, f32>) -> LoopStatus<u8> { todo!() }
+                fn speed_task(ctx: &TaskContext<'_, f32>) -> TaskStatus<u8> { todo!() }
                 #[reset]
                 fn reset() -> Result<(), &'static str> { Ok(()) }
                 #[teardown]
@@ -1017,42 +1017,42 @@ mod tests {
             }
         });
         assert_eq!(out.matches("ExecDescriptor{").count(), 2);
-        assert!(out.contains("LoopDescriptor{suite:&SUITE_DESCRIPTOR"));
-        assert!(out.contains("name:stringify!(speed_loop)"));
-        assert!(out.contains("description:\"Speedloop.\""));
+        assert!(out.contains("TaskDescriptor{suite:&SUITE_DESCRIPTOR"));
+        assert!(out.contains("name:stringify!(speed_task)"));
+        assert!(out.contains("description:\"Speedtask.\""));
         assert!(out.contains("input_type:stringify!(f32)"));
         assert!(out.contains("output_type:stringify!(u8)"));
         assert!(out.contains(
-            "setup:setup,step:__ets_loop_step,reset:reset,teardown:teardown"
+            "setup:setup,step:__ets_task_step,reset:reset,teardown:teardown"
         ));
         assert!(out.contains("link_timeout_ms:1000u32"));
-        assert!(out.contains("loop_step::<f32,u8>(io,speed_loop)"));
-        assert!(out.contains("link_section=\".ets_loops\""));
+        assert!(out.contains("task_step::<f32,u8>(io,speed_task)"));
+        assert!(out.contains("link_section=\".ets_tasks\""));
         assert!(!out.contains("compile_error"));
 
         let entry = ets_entrypoint_impl(quote::quote!(setup))
             .to_string()
             .replace(' ', "");
-        assert!(entry.contains(".with_loops(loops)"));
+        assert!(entry.contains(".with_tasks(tasks)"));
 
         let suite_only = expand(quote::quote! {
             mod plain { fn case_a() {} }
         });
-        assert!(!suite_only.contains("LoopDescriptor"));
+        assert!(!suite_only.contains("TaskDescriptor"));
     }
 
     #[test]
-    fn loop_diagnostics_name_the_defect() {
+    fn task_diagnostics_name_the_defect() {
         let missing = expand(quote::quote! {
             mod motor {
                 #[setup]
                 fn setup() -> Result<(), &'static str> { Ok(()) }
                 #[step]
-                fn s(ctx: &LoopContext<'_, ()>) -> LoopStatus<()> { todo!() }
+                fn s(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> { todo!() }
             }
         });
         assert!(missing.contains(
-            "suite`motor`definesalifecyclecasebutismissing`#[reset]`,`#[teardown]`"
+            "suite`motor`definesalifecycletaskbutismissing`#[reset]`,`#[teardown]`"
         ));
 
         let bad_setup = expand(quote::quote! {
@@ -1060,7 +1060,7 @@ mod tests {
                 #[setup]
                 fn setup() -> u8 { 0 }
                 #[step]
-                fn s(ctx: &LoopContext<'_, ()>) -> LoopStatus<()> { todo!() }
+                fn s(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> { todo!() }
                 #[reset]
                 fn reset() -> Result<(), &'static str> { Ok(()) }
                 #[teardown]
@@ -1083,7 +1083,7 @@ mod tests {
         });
         assert!(
             bad_step
-                .contains("expected`fn(&LoopContext<'_,I>)->LoopStatus<O>`")
+                .contains("expected`fn(&TaskContext<'_,I>)->TaskStatus<O>`")
         );
 
         let bad_timeout = expand(quote::quote! {
@@ -1091,7 +1091,7 @@ mod tests {
                 #[setup]
                 fn setup() -> Result<(), &'static str> { Ok(()) }
                 #[step(link_timeout_ms = 499)]
-                fn s(ctx: &LoopContext<'_, ()>) -> LoopStatus<()> { todo!() }
+                fn s(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> { todo!() }
                 #[reset]
                 fn reset() -> Result<(), &'static str> { Ok(()) }
                 #[teardown]
@@ -1102,18 +1102,18 @@ mod tests {
     }
 
     #[test]
-    fn second_loop_in_suite_rejected() {
+    fn second_task_in_suite_rejected() {
         for marker in ["setup", "step", "reset", "teardown"] {
             let marker = quote::format_ident!("{}", marker);
             let (sig_a, sig_b) = if marker == "step" {
                 (
                     quote::quote!(
-                        fn first(ctx: &LoopContext<'_, ()>) -> LoopStatus<()> {
+                        fn first(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> {
                             todo!()
                         }
                     ),
                     quote::quote!(
-                        fn second(ctx: &LoopContext<'_, ()>) -> LoopStatus<()> {
+                        fn second(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> {
                             todo!()
                         }
                     ),
@@ -1148,52 +1148,52 @@ mod tests {
     }
 
     #[test]
-    fn loop_step_wrapper_output_overflow() {
-        use control_rs_ets::{LoopContext, LoopIo, LoopRunState, LoopStatus};
-        fn big(_: &LoopContext<'_, ()>) -> LoopStatus<u64> {
-            LoopStatus::Running(u64::MAX)
+    fn task_step_wrapper_output_overflow() {
+        use control_rs_ets::{TaskContext, TaskIo, TaskRunState, TaskStatus};
+        fn big(_: &TaskContext<'_, ()>) -> TaskStatus<u64> {
+            TaskStatus::Running(u64::MAX)
         }
         let mut out = [0u8; 4];
-        let mut io = LoopIo {
+        let mut io = TaskIo {
             input: None,
             input_seq: None,
             output: &mut out,
             output_len: 0,
             step: 0,
         };
-        let outcome = control_rs_ets::loop_step::<(), u64>(&mut io, big);
-        assert_eq!(outcome.status, LoopRunState::Error);
+        let outcome = control_rs_ets::task_step::<(), u64>(&mut io, big);
+        assert_eq!(outcome.status, TaskRunState::Error);
         assert_eq!(outcome.message, Some("output overflow"));
         assert!(expand(quote::quote! {
             mod m {
                 #[setup] fn a() -> Result<(), &'static str> { Ok(()) }
-                #[step] fn s(ctx: &LoopContext<'_, ()>) -> LoopStatus<u64> { todo!() }
+                #[step] fn s(ctx: &TaskContext<'_, ()>) -> TaskStatus<u64> { todo!() }
                 #[reset] fn b() -> Result<(), &'static str> { Ok(()) }
                 #[teardown] fn c() -> Result<(), &'static str> { Ok(()) }
             }
         })
-        .contains("loop_step::<(),u64>(io,s)"));
+        .contains("task_step::<(),u64>(io,s)"));
     }
 
     #[test]
-    fn loop_step_wrapper_input_decode() {
-        use control_rs_ets::{LoopContext, LoopIo, LoopRunState, LoopStatus};
+    fn task_step_wrapper_input_decode() {
+        use control_rs_ets::{TaskContext, TaskIo, TaskRunState, TaskStatus};
         use core::sync::atomic::{AtomicBool, Ordering};
         static CALLED: AtomicBool = AtomicBool::new(false);
-        fn spy(_: &LoopContext<'_, f32>) -> LoopStatus<()> {
+        fn spy(_: &TaskContext<'_, f32>) -> TaskStatus<()> {
             CALLED.store(true, Ordering::SeqCst);
-            LoopStatus::Running(())
+            TaskStatus::Running(())
         }
         let mut out = [0u8; 4];
-        let mut io = LoopIo {
+        let mut io = TaskIo {
             input: Some(&[]),
             input_seq: Some(0),
             output: &mut out,
             output_len: 0,
             step: 0,
         };
-        let outcome = control_rs_ets::loop_step::<f32, ()>(&mut io, spy);
-        assert_eq!(outcome.status, LoopRunState::Error);
+        let outcome = control_rs_ets::task_step::<f32, ()>(&mut io, spy);
+        assert_eq!(outcome.status, TaskRunState::Error);
         assert_eq!(outcome.message, Some("input decode"));
         assert!(!CALLED.load(Ordering::SeqCst));
     }

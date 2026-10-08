@@ -6,7 +6,7 @@
 //! 2. **ETS Test Suite Registry**: It generates a custom linker script `ets_suites.x` containing
 //!    the `.ets_test_suites` section. Test suites registered via `#[ets_suite]` place their
 //!    `SuiteDescriptor` pointers in this section, enabling the server to discover and execute them at runtime.
-//!    The `.ets_loops` section beside it collects the `LoopDescriptor` pointers of lifecycle suites.
+//!    The `.ets_tasks` section beside it collects the `TaskDescriptor` pointers of lifecycle suites.
 //! 3. **Linker Configuration**: It registers the search directory for these generated scripts
 //!    and instructs cargo/rustc to pass them to the linker.
 
@@ -87,13 +87,13 @@ SECTIONS
     PROVIDE_HIDDEN (__ets_test_suites_end = .);
   } > FLASH
 
-  .ets_loops :
+  .ets_tasks :
   {
     . = ALIGN(4);
-    PROVIDE_HIDDEN (__ets_loops_start = .);
-    KEEP (*(.ets_loops));
+    PROVIDE_HIDDEN (__ets_tasks_start = .);
+    KEEP (*(.ets_tasks));
     . = ALIGN(4);
-    PROVIDE_HIDDEN (__ets_loops_end = .);
+    PROVIDE_HIDDEN (__ets_tasks_end = .);
   } > FLASH
 }
 

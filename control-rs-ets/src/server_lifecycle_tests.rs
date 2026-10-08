@@ -1,5 +1,5 @@
-// Loop-run tests, included into `server::tests` so their paths are
-// `server::tests::test_loop_*`.
+// Task-run tests, included into `server::tests` so their paths are
+// `server::tests::test_task_*`.
 
 /// Counts of a run: setup, steps, reset and teardown calls.
 fn calls() -> [usize; 4] {
@@ -8,32 +8,32 @@ fn calls() -> [usize; 4] {
 }
 
 #[test]
-fn test_loop_setup_once_then_steps() {
+fn test_task_setup_once_then_steps() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[
         (RUN, None, &[1]),
         (RUN, None, &[2]),
         (RUN, None, &[3]),
-        (LoopRunState::Pass, None, &[]),
+        (TaskRunState::Pass, None, &[]),
     ];
     let _guard = begin(Config::new(SCRIPT));
     let (res, server) =
-        run_loops(LOOPS_PLAIN, Run::new(std::vec![start(0, false)]));
+        run_tasks(TASKS_PLAIN, Run::new(std::vec![start(0, false)]));
     assert_eq!(res, Err("Exit loop"));
     assert_eq!(calls(), [1, 4, 0, 1], "setup, steps, reset, teardown");
     assert_eq!(counts().setup_before_first_step, 1);
-    assert_eq!(final_state(&server), Some((LoopRunState::Pass, None)));
+    assert_eq!(final_state(&server), Some((TaskRunState::Pass, None)));
 }
 
 #[test]
-fn test_loop_status_continues_or_ends() {
+fn test_task_status_continues_or_ends() {
     const WARNS: &[lifecycle_support::Scripted] = &[
-        (LoopRunState::Warn, Some("careful"), &[4]),
-        (LoopRunState::Pass, None, &[]),
+        (TaskRunState::Warn, Some("careful"), &[4]),
+        (TaskRunState::Pass, None, &[]),
     ];
     for terminal in [
-        LoopRunState::Pass,
-        LoopRunState::Fail,
-        LoopRunState::Error,
+        TaskRunState::Pass,
+        TaskRunState::Fail,
+        TaskRunState::Error,
     ] {
         let script: &'static [lifecycle_support::Scripted] = std::boxed::Box::leak(
             std::vec![
@@ -45,7 +45,7 @@ fn test_loop_status_continues_or_ends() {
         );
         let _guard = begin(Config::new(script));
         let (_, server) =
-            run_loops(LOOPS_PLAIN, Run::new(std::vec![start(0, false)]));
+            run_tasks(TASKS_PLAIN, Run::new(std::vec![start(0, false)]));
         let c = counts();
         assert_eq!(c.steps, 2, "{terminal:?}: no step after a terminal status");
         assert_eq!(c.teardown, 1);
@@ -58,10 +58,10 @@ fn test_loop_status_continues_or_ends() {
     // `Warn` continues and carries its packet.
     let _guard = begin(Config::new(WARNS));
     let (_, server) =
-        run_loops(LOOPS_PLAIN, Run::new(std::vec![start(0, false)]));
+        run_tasks(TASKS_PLAIN, Run::new(std::vec![start(0, false)]));
     assert_eq!(counts().steps, 2);
     let sample = sent(&server).into_iter().find_map(|t| match t {
-        Telemetry::LoopSample { seq, payload, .. } => {
+        Telemetry::TaskSample { seq, payload, .. } => {
             Some((seq, payload.to_vec()))
         }
         _ => None,
@@ -69,54 +69,54 @@ fn test_loop_status_continues_or_ends() {
     assert_eq!(sample, Some((0, std::vec![4])));
     assert!(
         states(&server)
-            .contains(&(LoopRunState::Warn, Some("careful".to_string())))
+            .contains(&(TaskRunState::Warn, Some("careful".to_string())))
     );
 }
 
 #[test]
-fn test_loop_state_sent_on_change() {
+fn test_task_state_sent_on_change() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[
         (RUN, None, &[1]),
         (RUN, None, &[2]),
-        (LoopRunState::Warn, Some("w"), &[3]),
-        (LoopRunState::Warn, Some("w"), &[4]),
-        (LoopRunState::Warn, Some("x"), &[5]),
+        (TaskRunState::Warn, Some("w"), &[3]),
+        (TaskRunState::Warn, Some("w"), &[4]),
+        (TaskRunState::Warn, Some("x"), &[5]),
         (RUN, None, &[6]),
-        (LoopRunState::Pass, None, &[]),
+        (TaskRunState::Pass, None, &[]),
     ];
     let _guard = begin(Config::new(SCRIPT));
     let (_, server) =
-        run_loops(LOOPS_PLAIN, Run::new(std::vec![start(0, false)]));
+        run_tasks(TASKS_PLAIN, Run::new(std::vec![start(0, false)]));
     assert_eq!(
         states(&server),
         [
-            (LoopRunState::Running, None),
-            (LoopRunState::Warn, Some("w".to_string())),
-            (LoopRunState::Warn, Some("x".to_string())),
-            (LoopRunState::Running, None),
-            (LoopRunState::Pass, None),
+            (TaskRunState::Running, None),
+            (TaskRunState::Warn, Some("w".to_string())),
+            (TaskRunState::Warn, Some("x".to_string())),
+            (TaskRunState::Running, None),
+            (TaskRunState::Pass, None),
         ],
         "a changed packet alone sends no state frame"
     );
 }
 
 #[test]
-fn test_loop_stop_now_at_boundary() {
+fn test_task_stop_now_at_boundary() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
     let _guard = begin(Config::new(SCRIPT));
     let cmds = std::vec![start(0, false), Command::Heartbeat, stop()];
-    let (_, server) = run_loops(LOOPS_PLAIN, Run::new(cmds));
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
     let c = counts();
     assert_eq!(c.steps, 2, "no step after the boundary that polled StopNow");
     assert_eq!(c.teardown, 1);
-    assert_eq!(final_state(&server), Some((LoopRunState::Aborted, None)));
+    assert_eq!(final_state(&server), Some((TaskRunState::Aborted, None)));
 }
 
 #[test]
-fn test_loop_teardown_once_per_end_path() {
+fn test_task_teardown_once_per_end_path() {
     const FOREVER: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
     const PASS: &[lifecycle_support::Scripted] =
-        &[(LoopRunState::Pass, None, &[])];
+        &[(TaskRunState::Pass, None, &[])];
     let slow = |commands| Run {
         tick_ns: 200_000_000,
         ..Run::new(commands)
@@ -125,23 +125,23 @@ fn test_loop_teardown_once_per_end_path() {
         (
             "terminal status",
             Config::new(PASS),
-            LOOPS_PLAIN,
+            TASKS_PLAIN,
             Run::new(std::vec![start(0, false)]),
-            LoopRunState::Pass,
+            TaskRunState::Pass,
         ),
         (
             "stop",
             Config::new(FOREVER),
-            LOOPS_PLAIN,
+            TASKS_PLAIN,
             Run::new(std::vec![start(0, false), stop()]),
-            LoopRunState::Aborted,
+            TaskRunState::Aborted,
         ),
         (
             "step bound",
             Config::new(FOREVER),
-            LOOPS_PLAIN,
+            TASKS_PLAIN,
             Run::new(std::vec![start(2, false)]),
-            LoopRunState::Bounded,
+            TaskRunState::Bounded,
         ),
         (
             "setup error",
@@ -149,21 +149,21 @@ fn test_loop_teardown_once_per_end_path() {
                 setup_err: Some("no setup"),
                 ..Config::new(FOREVER)
             },
-            LOOPS_PLAIN,
+            TASKS_PLAIN,
             Run::new(std::vec![start(0, false)]),
-            LoopRunState::Error,
+            TaskRunState::Error,
         ),
         (
             "link timeout",
             Config::new(FOREVER),
-            LOOPS_TIMEOUT,
+            TASKS_TIMEOUT,
             slow(std::vec![start(0, false)]),
-            LoopRunState::TimedOut,
+            TaskRunState::TimedOut,
         ),
     ];
-    for (path, config, loops, run, expect) in paths {
+    for (path, config, tasks, run, expect) in paths {
         let _guard = begin(config);
-        let (_, server) = run_loops(loops, run);
+        let (_, server) = run_tasks(tasks, run);
         assert_eq!(counts().teardown, 1, "{path}: teardown called once");
         assert_eq!(final_state(&server).map(|s| s.0), Some(expect), "{path}");
         let reports = count_frames(&server, |t| {
@@ -179,13 +179,13 @@ fn test_loop_teardown_once_per_end_path() {
 #[test]
 fn test_teardown_report_independent_of_verdict() {
     const PASS: &[lifecycle_support::Scripted] =
-        &[(LoopRunState::Pass, None, &[])];
+        &[(TaskRunState::Pass, None, &[])];
     let _guard = begin(Config {
         teardown_err: Some("teardown failed"),
         ..Config::new(PASS)
     });
     let (_, server) =
-        run_loops(LOOPS_PLAIN, Run::new(std::vec![start(0, false)]));
+        run_tasks(TASKS_PLAIN, Run::new(std::vec![start(0, false)]));
     let report = sent(&server).into_iter().find_map(|t| match t {
         Telemetry::TeardownReport { ok, message, .. } => {
             Some((ok, message.map(str::to_string)))
@@ -193,17 +193,17 @@ fn test_teardown_report_independent_of_verdict() {
         _ => None,
     });
     assert_eq!(report, Some((false, Some("teardown failed".to_string()))));
-    assert_eq!(final_state(&server), Some((LoopRunState::Pass, None)));
+    assert_eq!(final_state(&server), Some((TaskRunState::Pass, None)));
 }
 
 #[test]
-fn test_loop_set_setting_between_steps() {
+fn test_task_set_setting_between_steps() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
     let _setting = lock_setting();
     let _ = TEST_U8_SETTING.set(SettingValue::U8(42));
     let guard = begin(Config::new(SCRIPT));
     let cmds = std::vec![start(0, false), set_u8(7), stop()];
-    let (_, server) = run_loops(LOOPS_PLAIN, Run::new(cmds));
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
     assert_eq!(counts().reset, 1, "reset is called once");
     assert_eq!(counts().reset_saw_setting, 7, "reset sees the new value");
     let confirmed = count_frames(&server, |t| {
@@ -224,26 +224,26 @@ fn test_loop_set_setting_between_steps() {
         ..Config::new(SCRIPT)
     });
     let cmds = std::vec![start(0, false), set_u8(8)];
-    let (_, server) = run_loops(LOOPS_PLAIN, Run::new(cmds));
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
     assert_eq!(
         final_state(&server),
-        Some((LoopRunState::Error, Some("reset failed".to_string())))
+        Some((TaskRunState::Error, Some("reset failed".to_string())))
     );
     assert_eq!(counts().teardown, 1);
     let _ = TEST_U8_SETTING.set(SettingValue::U8(42));
 }
 
 #[test]
-fn test_loop_output_per_step() {
+fn test_task_output_per_step() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[
         (RUN, None, &[10]),
         (RUN, None, &[]),
         (RUN, None, &[12]),
-        (LoopRunState::Pass, None, &[]),
+        (TaskRunState::Pass, None, &[]),
     ];
     let _guard = begin(Config::new(SCRIPT));
     let (_, server) =
-        run_loops(LOOPS_PLAIN, Run::new(std::vec![start(0, false)]));
+        run_tasks(TASKS_PLAIN, Run::new(std::vec![start(0, false)]));
     let samples = samples(&server);
     assert_eq!(
         samples,
@@ -253,39 +253,39 @@ fn test_loop_output_per_step() {
 }
 
 #[test]
-fn test_loop_link_timeout_tears_down() {
+fn test_task_link_timeout_tears_down() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
     let slow = || Run {
         tick_ns: 200_000_000,
         ..Run::new(std::vec![start(0, false)])
     };
     let guard = begin(Config::new(SCRIPT));
-    let (_, server) = run_loops(LOOPS_TIMEOUT, slow());
-    assert_eq!(final_state(&server), Some((LoopRunState::TimedOut, None)));
+    let (_, server) = run_tasks(TASKS_TIMEOUT, slow());
+    assert_eq!(final_state(&server), Some((TaskRunState::TimedOut, None)));
     assert_eq!(counts().teardown, 1);
     drop(guard);
 
     // Without a declared timeout the run keeps going until the link ends.
     let _guard = begin(Config::new(SCRIPT));
-    let (res, server) = run_loops(LOOPS_PLAIN, slow());
+    let (res, server) = run_tasks(TASKS_PLAIN, slow());
     assert_eq!(res, Err("Exit loop"));
-    assert_eq!(final_state(&server), Some((LoopRunState::Running, None)));
+    assert_eq!(final_state(&server), Some((TaskRunState::Running, None)));
     assert!(counts().steps > 10);
 }
 
 #[test]
-fn test_loop_stats_reported() {
+fn test_task_stats_reported() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[
         (RUN, None, &[1]),
         (RUN, None, &[2]),
         (RUN, None, &[3]),
-        (LoopRunState::Pass, None, &[]),
+        (TaskRunState::Pass, None, &[]),
     ];
     let _guard = begin(Config::new(SCRIPT));
     let (_, server) =
-        run_loops(LOOPS_PLAIN, Run::new(std::vec![start(0, false)]));
+        run_tasks(TASKS_PLAIN, Run::new(std::vec![start(0, false)]));
     let reported = sent(&server).into_iter().find_map(|t| match t {
-        Telemetry::LoopStats { steps, time_us, .. } => Some((steps, time_us)),
+        Telemetry::TaskStats { steps, time_us, .. } => Some((steps, time_us)),
         _ => None,
     });
     assert_eq!(counts().steps, 4);
@@ -294,7 +294,7 @@ fn test_loop_stats_reported() {
 }
 
 #[test]
-fn test_loop_max_steps_bounds_run() {
+fn test_task_max_steps_bounds_run() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
     let _guard = begin(Config::new(SCRIPT));
     let cmds = std::vec![
@@ -304,18 +304,18 @@ fn test_loop_max_steps_bounds_run() {
         Command::Heartbeat,
         Command::Heartbeat,
     ];
-    let (_, server) = run_loops(LOOPS_PLAIN, Run::new(cmds));
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
     assert_eq!(counts().steps, 3, "exactly n steps");
-    assert_eq!(final_state(&server), Some((LoopRunState::Bounded, None)));
+    assert_eq!(final_state(&server), Some((TaskRunState::Bounded, None)));
 
     let events = &server.context.comms.events;
     let first = events
         .iter()
-        .position(|e| *e == Event::State(LoopRunState::Running))
+        .position(|e| *e == Event::State(TaskRunState::Running))
         .unwrap();
     let last = events
         .iter()
-        .rposition(|e| *e == Event::State(LoopRunState::Bounded))
+        .rposition(|e| *e == Event::State(TaskRunState::Bounded))
         .unwrap();
     let polls = events
         .get(first..last)
@@ -327,13 +327,13 @@ fn test_loop_max_steps_bounds_run() {
 }
 
 #[test]
-fn test_loop_input_newest_wins() {
+fn test_task_input_newest_wins() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[
         (RUN, None, &[]),
         (RUN, None, &[]),
         (RUN, None, &[]),
         (RUN, None, &[]),
-        (LoopRunState::Pass, None, &[]),
+        (TaskRunState::Pass, None, &[]),
     ];
     let _guard = begin(Config::new(SCRIPT));
     let cmds = std::vec![
@@ -342,7 +342,7 @@ fn test_loop_input_newest_wins() {
         input(3, &[9]),
         input(5, &[2]),
     ];
-    let (_, server) = run_loops(LOOPS_PLAIN, Run::new(cmds));
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
     let seen = seen_inputs();
     assert_eq!(seen.first(), Some(&(None, None)), "no input before the first");
     assert_eq!(seen.get(1), Some(&(Some(std::vec![1]), Some(5))));
@@ -356,7 +356,7 @@ fn test_loop_input_newest_wins() {
 }
 
 #[test]
-fn test_loop_lockstep_waits_for_input() {
+fn test_task_lockstep_waits_for_input() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[(RUN, None, &[])];
     let guard = begin(Config::new(SCRIPT));
     let cmds = std::vec![
@@ -365,7 +365,7 @@ fn test_loop_lockstep_waits_for_input() {
         input(1, &[11]),
         input(2, &[12]),
     ];
-    let (_, server) = run_loops(LOOPS_PLAIN, Run::new(cmds));
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
     assert_eq!(
         seen_inputs(),
         [
@@ -388,24 +388,24 @@ fn test_loop_lockstep_waits_for_input() {
     // An input above the awaited index ends the run.
     let _guard = begin(Config::new(SCRIPT));
     let cmds = std::vec![start(0, true), input(2, &[1])];
-    let (_, server) = run_loops(LOOPS_PLAIN, Run::new(cmds));
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
     assert_eq!(counts().steps, 0);
     assert_eq!(
         final_state(&server),
         Some((
-            LoopRunState::Error,
+            TaskRunState::Error,
             Some("input sequence gap".to_string())
         ))
     );
 }
 
 #[test]
-fn test_loop_lockstep_wait_ends() {
+fn test_task_lockstep_wait_ends() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[(RUN, None, &[])];
     let guard = begin(Config::new(SCRIPT));
     let cmds = std::vec![start(0, true), stop()];
-    let (_, server) = run_loops(LOOPS_PLAIN, Run::new(cmds));
-    assert_eq!(final_state(&server), Some((LoopRunState::Aborted, None)));
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
+    assert_eq!(final_state(&server), Some((TaskRunState::Aborted, None)));
     assert_eq!(calls(), [1, 0, 0, 1]);
     drop(guard);
 
@@ -414,19 +414,19 @@ fn test_loop_lockstep_wait_ends() {
         tick_ns: 200_000_000,
         ..Run::new(std::vec![start(0, true)])
     };
-    let (_, server) = run_loops(LOOPS_TIMEOUT, run);
-    assert_eq!(final_state(&server), Some((LoopRunState::TimedOut, None)));
+    let (_, server) = run_tasks(TASKS_TIMEOUT, run);
+    assert_eq!(final_state(&server), Some((TaskRunState::TimedOut, None)));
     assert_eq!(calls(), [1, 0, 0, 1]);
 }
 
 #[test]
-fn test_loop_never_masks_interrupts() {
+fn test_task_never_masks_interrupts() {
     const SCRIPT: &[lifecycle_support::Scripted] =
-        &[(RUN, None, &[1]), (LoopRunState::Pass, None, &[])];
+        &[(RUN, None, &[1]), (TaskRunState::Pass, None, &[])];
     let _setting = lock_setting();
     let _guard = begin(Config::new(SCRIPT));
     let cmds = std::vec![start(0, false), Command::Heartbeat, set_u8(1)];
-    let (_, server) = run_loops(LOOPS_TIMEOUT, Run::new(cmds));
+    let (_, server) = run_tasks(TASKS_TIMEOUT, Run::new(cmds));
     assert_eq!(
         server
             .context
@@ -439,16 +439,16 @@ fn test_loop_never_masks_interrupts() {
 }
 
 #[test]
-fn test_loop_boundary_work_bounded() {
+fn test_task_boundary_work_bounded() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[
         (RUN, None, &[1]),
         (RUN, None, &[2]),
         (RUN, None, &[3]),
-        (LoopRunState::Pass, None, &[]),
+        (TaskRunState::Pass, None, &[]),
     ];
     let _guard = begin(Config::new(SCRIPT));
     let (_, server) =
-        run_loops(LOOPS_PLAIN, Run::new(std::vec![start(0, false)]));
+        run_tasks(TASKS_PLAIN, Run::new(std::vec![start(0, false)]));
     let events = &server.context.comms.events;
     let sample_at: std::vec::Vec<usize> = events
         .iter()
@@ -468,7 +468,7 @@ fn test_loop_boundary_work_bounded() {
 }
 
 #[test]
-fn test_loop_rejects_commands_during_run() {
+fn test_task_rejects_commands_during_run() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
     let guard = begin(Config::new(SCRIPT));
     let cmds = std::vec![
@@ -486,41 +486,41 @@ fn test_loop_rejects_commands_during_run() {
         },
         stop(),
     ];
-    let (_, server) = run_loops(LOOPS_PLAIN, Run::new(cmds));
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
     assert_eq!(log_count(&server), 4, "four rejections are logged");
-    assert_eq!(counts().setup, 1, "the second StartLoop did not start");
+    assert_eq!(counts().setup, 1, "the second StartTask did not start");
     let case_states = count_frames(&server, |t| {
         matches!(t, Telemetry::TestStateChange { .. })
     });
     assert_eq!(case_states, 0, "RunExecutable did not run a case");
-    assert_eq!(final_state(&server), Some((LoopRunState::Aborted, None)));
+    assert_eq!(final_state(&server), Some((TaskRunState::Aborted, None)));
     drop(guard);
 
-    // Outside a run, addressing a loop as a case and a case as a loop is logged.
+    // Outside a run, addressing a task as a case and a case as a task is logged.
     let _guard = begin(Config::new(SCRIPT));
     let cmds = std::vec![
         Command::RunExecutable {
             suite_id: 0,
             test_id: 1,
         },
-        Command::StartLoop {
+        Command::StartTask {
             suite_id: 0,
             test_id: 0,
             max_steps: 0,
             lockstep: false,
         },
     ];
-    let (_, server) = run_loops(LOOPS_PLAIN, Run::new(cmds));
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
     assert_eq!(log_count(&server), 2);
     assert_eq!(states(&server), []);
 }
 
 #[test]
-fn test_loop_discovery() {
+fn test_task_discovery() {
     const SCRIPT: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
     let guard = begin(Config::new(SCRIPT));
     let (_, server) =
-        run_loops(LOOPS_PLAIN, Run::new(std::vec![Command::ListSuites]));
+        run_tasks(TASKS_PLAIN, Run::new(std::vec![Command::ListSuites]));
     let frames = sent(&server);
     let after_info: std::vec::Vec<&Telemetry<'_>> = frames
         .iter()
@@ -539,12 +539,12 @@ fn test_loop_discovery() {
         after_info.get(3),
         Some(Telemetry::LifecycleSuite {
             suite_id: 0,
-            loop_count: 1
+            task_count: 1
         })
     ));
     assert!(matches!(
         after_info.get(4),
-        Some(Telemetry::LoopInfo {
+        Some(Telemetry::TaskInfo {
             suite_id: 0,
             test_id: 1,
             name: "scripted",
@@ -557,31 +557,31 @@ fn test_loop_discovery() {
     ));
     drop(guard);
 
-    // A suite without a loop sends no extra frame.
+    // A suite without a task sends no extra frame.
     let _guard = begin(Config::new(SCRIPT));
-    let (_, server) = run_loops(&[], Run::new(std::vec![Command::ListSuites]));
-    let loop_frames = count_frames(&server, |t| {
+    let (_, server) = run_tasks(&[], Run::new(std::vec![Command::ListSuites]));
+    let task_frames = count_frames(&server, |t| {
         matches!(
             t,
-            Telemetry::LifecycleSuite { .. } | Telemetry::LoopInfo { .. }
+            Telemetry::LifecycleSuite { .. } | Telemetry::TaskInfo { .. }
         )
     });
-    assert_eq!(loop_frames, 0);
+    assert_eq!(task_frames, 0);
 }
 
 #[test]
-fn test_second_loop_for_suite_skipped() {
+fn test_second_task_for_suite_skipped() {
     const SCRIPT: &[lifecycle_support::Scripted] =
-        &[(LoopRunState::Pass, None, &[])];
+        &[(TaskRunState::Pass, None, &[])];
     let _guard = begin(Config::new(SCRIPT));
     let cmds = std::vec![Command::ListSuites, start(0, false)];
-    let (_, server) = run_loops(LOOPS_TWINS, Run::new(cmds));
+    let (_, server) = run_tasks(TASKS_TWINS, Run::new(cmds));
     let lifecycle = count_frames(&server, |t| {
         matches!(t, Telemetry::LifecycleSuite { .. })
     });
     assert_eq!(lifecycle, 1, "one lifecycle record per suite");
-    assert_eq!(log_count(&server), 1, "the second loop is logged once");
+    assert_eq!(log_count(&server), 1, "the second task is logged once");
     let c: Counts = counts();
-    assert_eq!(c.setup, 1, "the first loop runs");
-    assert_eq!(c.twin_setup, 0, "the second loop never runs");
+    assert_eq!(c.setup, 1, "the first task runs");
+    assert_eq!(c.twin_setup, 0, "the second task never runs");
 }
