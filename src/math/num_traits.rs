@@ -236,7 +236,26 @@ pub trait Unsigned: Sized {}
 pub trait Signed:
     AdditiveGroup + Neg<Output = Self> + SaturatingNeg + PartialOrd
 {
-    /// Returns the absolute value.
+    /// Returns the absolute value of `self`.
+    ///
+    /// For signed integers and fixed-point types, `|MIN|` saturates to
+    /// `MAX`, matching [`SaturatingNeg`]. Floating-point types follow
+    /// IEEE-754 absolute value.
+    ///
+    /// # Returns
+    /// The non-negative magnitude of `self`, or `MAX` when `self` is the
+    /// most-negative representable integer or fixed-point value.
+    ///
+    /// # Panics
+    /// Never.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::math::num_traits::Signed;
+    ///
+    /// assert_eq!(Signed::abs(-3i32), 3);
+    /// assert_eq!(Signed::abs(i8::MIN), i8::MAX);
+    /// ```
     #[must_use]
     fn abs(self) -> Self;
     /// Check if self is less than zero.
@@ -620,7 +639,10 @@ macro_rules! impl_int {
 ///
 /// # Arguments
 /// - `$type`: The numeric type.
-/// - `$abs`: Path to the type's `abs` function (for example, `i32::abs`, `libm::fabsf`).
+/// - `$abs`: Path to a total absolute-value function (for example,
+///   `i32::saturating_abs`, `libm::fabsf`). Must not panic for any
+///   representable input; for signed integers use `saturating_abs` so
+///   `|MIN|` becomes `MAX`.
 #[macro_export]
 macro_rules! impl_additive_group {
     ($type:ty, $abs:path) => {
@@ -914,7 +936,7 @@ impl_scalar!(f64);
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(i8, 1, 0, i8::MAX, i8::MIN, 1);
-impl_additive_group!(i8, i8::abs);
+impl_additive_group!(i8, i8::saturating_abs);
 impl_scalar!(i8);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -922,7 +944,7 @@ impl_scalar!(i8);
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(i16, 1, 0, i16::MAX, i16::MIN, 1);
-impl_additive_group!(i16, i16::abs);
+impl_additive_group!(i16, i16::saturating_abs);
 impl_scalar!(i16);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -930,7 +952,7 @@ impl_scalar!(i16);
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(i32, 1, 0, i32::MAX, i32::MIN, 1);
-impl_additive_group!(i32, i32::abs);
+impl_additive_group!(i32, i32::saturating_abs);
 impl_scalar!(i32);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -938,7 +960,7 @@ impl_scalar!(i32);
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(i64, 1, 0, i64::MAX, i64::MIN, 1);
-impl_additive_group!(i64, i64::abs);
+impl_additive_group!(i64, i64::saturating_abs);
 impl_scalar!(i64);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -946,7 +968,7 @@ impl_scalar!(i64);
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(i128, 1, 0, i128::MAX, i128::MIN, 1);
-impl_additive_group!(i128, i128::abs);
+impl_additive_group!(i128, i128::saturating_abs);
 impl_scalar!(i128);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -954,7 +976,7 @@ impl_scalar!(i128);
 ////////////////////////////////////////////////////////////////////////////////
 
 impl_int!(isize, 1, 0, isize::MAX, isize::MIN, 1);
-impl_additive_group!(isize, isize::abs);
+impl_additive_group!(isize, isize::saturating_abs);
 impl_scalar!(isize);
 
 ////////////////////////////////////////////////////////////////////////////////
