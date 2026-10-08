@@ -509,12 +509,9 @@ pub mod tests {
                             a2: 0.0,
                         };
                     } else if i == s {
-                        *sec = SectionCoefficients {
-                            b0: 1.0,
-                            b1: 0.0,
-                            b2: 0.0,
-                            ..*sec
-                        };
+                        sec.b0 = 1.0;
+                        sec.b1 = 0.0;
+                        sec.b2 = 0.0;
                     }
                 }
                 l1_gain(&chain)
@@ -626,11 +623,9 @@ pub mod tests {
             y2: sa.y2,
             ..Df1::from(new)
         };
-        let mut rb = Df2t {
-            d1: sb.d1,
-            d2: sb.d2,
-            ..Df2t::from(new)
-        };
+        let mut rb = Df2t::from(new);
+        rb.d1 = sb.d1;
+        rb.d2 = sb.d2;
         assert_eq!(a.update(0.7).to_bits(), ra.update(0.7).to_bits());
         assert_eq!(b.update(0.7).to_bits(), rb.update(0.7).to_bits());
         let mut f = DirectForm2T::<f64, 2>::new(1.0, [0.5, 0.25], [-0.5, 0.1]);
@@ -728,11 +723,10 @@ pub mod tests {
                 let theta =
                     core::f64::consts::PI * (0.5 * uniform(&mut state) + 0.5);
                 let s = if (r + c) % 3 == 0 {
-                    SectionCoefficients {
-                        a1: -(rho + 0.3 * rho),
-                        a2: 0.3 * rho * rho,
-                        ..biquad(rho, theta, 1.0, 1.0)
-                    }
+                    let mut sec = biquad(rho, theta, 1.0, 1.0);
+                    sec.a1 = -(rho + 0.3 * rho);
+                    sec.a2 = 0.3 * rho * rho;
+                    sec
                 } else {
                     biquad(rho, theta, 1.0, 1.0)
                 };
