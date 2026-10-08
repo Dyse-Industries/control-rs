@@ -47,6 +47,8 @@ type ComplexSlice<T> = [Complex<T>];
 /// - [`ClassicalError::NotContinuous`]: `sys` is discrete.
 /// - [`ClassicalError::InvalidParameter`]: `w_max <= 0`, `r <= 0`
 ///   or `M < 3`.
+/// - [`ClassicalError::Improper`]: `deg(num) > deg(den)`; the ∞ arc is
+///   not modeled, so an improper `L` would under-count encirclements.
 /// - [`ClassicalError::Root`]: the open-loop poles cannot be computed.
 /// - [`ClassicalError::ContourThroughCriticalPoint`]: a sample satisfies
 ///   `|1 + L| <= sqrt(eps) (1 + |L|)`.
@@ -70,6 +72,13 @@ where
     }
     if !(omega_max > T::ZERO && indent_radius > T::ZERO) || M < 3 {
         return Err(ClassicalError::InvalidParameter);
+    }
+    let num_deg = sys.num_slice().iter().rposition(|v| *v != T::ZERO);
+    let den_deg = sys.den_slice().iter().rposition(|v| *v != T::ZERO);
+    match (num_deg, den_deg) {
+        (_, None) => return Err(ClassicalError::Improper),
+        (Some(n), Some(d)) if n > d => return Err(ClassicalError::Improper),
+        _ => {}
     }
     let poles = sys.poles()?;
     let order = D.saturating_sub(1);
@@ -216,6 +225,23 @@ mod tests {
             0.1,
         );
         assert_eq!(count(&discrete), Err(ClassicalError::NotContinuous));
+    }
+
+    #[test]
+    fn improper_open_loop_is_rejected() {
+        // L = s^3: closed-loop 1 + s^3 has two RHP roots, but the jω-only
+        // contour would report (N, P) = (0, 0) without the ∞ arc.
+        let improper = ArrayTransferFunction::<f64, 4, 1>::continuous(
+            [0.0, 0.0, 0.0, 1.0],
+            [1.0],
+        );
+        assert_eq!(count(&improper), Err(ClassicalError::Improper));
+        let proper_relative_zero =
+            ArrayTransferFunction::<f64, 2, 2>::continuous(
+                [1.0, 2.0],
+                [3.0, 4.0],
+            );
+        assert!(count(&proper_relative_zero).is_ok());
     }
 
     #[test]

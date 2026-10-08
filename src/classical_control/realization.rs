@@ -471,6 +471,26 @@ pub mod tests {
         ));
     }
 
+    #[cfg_attr(test, test)]
+    /// A constant discrete TF keeps its gain in a single section (FR-10).
+    fn constant_tf_section_holds_gain() {
+        let tf =
+            ArrayTransferFunction::<f64, 1, 1>::discrete([3.0], [2.0], 0.1);
+        assert!(matches!(
+            to_sections::<f64, 1, 1, 0>(&tf),
+            Err(ClassicalError::SectionCount)
+        ));
+        let c = to_sections::<f64, 1, 1, 1>(&tf).unwrap();
+        assert_eq!(c.len(), 1);
+        assert!((c[0].b0 - 1.5).abs() < 1e-15);
+        assert_eq!(c[0].b1.to_bits(), 0);
+        assert_eq!(c[0].b2.to_bits(), 0);
+        assert_eq!(c[0].a1.to_bits(), 0);
+        assert_eq!(c[0].a2.to_bits(), 0);
+        let mut cascade = BiquadCascade::<Df1<f64>, 1>::from_coefficients(&c);
+        assert!((cascade.update(1.0) - 1.5).abs() < 1e-15);
+    }
+
     /// Peak of `sum_j |h_j|` over the impulse response of a `Df1` cascade.
     fn l1_gain(c: &[Coeffs; 3]) -> f64 {
         let mut s = BiquadCascade::<Df1<f64>, 3>::from_coefficients(c);
@@ -1284,7 +1304,8 @@ where
 /// first-order section (`b_2 = a_2 = 0`) with its nearest real zero. The
 /// overall gain goes into the first section. Zeros at infinity (numerator
 /// degree below denominator degree) become pure delays in their section.
-/// `L` must be `ceil((D - 1) / 2)`.
+/// `L` must be `max(1, ceil((D - 1) / 2))` so a constant (`D = 1`) still
+/// has one section to hold the overall gain.
 ///
 /// # Errors
 /// - [`ClassicalError::NotDiscrete`]: `tf` is continuous.
@@ -1308,7 +1329,8 @@ where
         return Err(ClassicalError::NotDiscrete);
     }
     let order = D.saturating_sub(1);
-    if order.div_ceil(2) != L {
+    let needed = if order == 0 { 1 } else { order.div_ceil(2) };
+    if needed != L {
         return Err(ClassicalError::SectionCount);
     }
     let mut num = [T::ZERO; D];
