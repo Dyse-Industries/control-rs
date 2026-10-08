@@ -166,15 +166,28 @@ if the Hamiltonian
 
 $$H(\gamma) = \begin{bmatrix} A + B R^{-1} D^T C & B R^{-1} B^T \\ -C^T (I + D R^{-1} D^T) C & -(A + B R^{-1} D^T C)^T \end{bmatrix}, \quad R = \gamma^2 I - D^T D,$$
 
-has an eigenvalue on the imaginary axis. Each step forms $H(\gamma)$,
+has an eigenvalue on the imaginary axis. Each step forms $H(\gamma)$ at a
+candidate $\gamma > \bar{\sigma}(D)$ (so $R$ stays positive definite),
 computes its eigenvalues with the Schur layer (C-4), and halves the bracket
-$[\gamma_l, \gamma_u]$ until $\gamma_u - \gamma_l \le \text{tol} \cdot
-\gamma_l$. The initial lower bound is the largest of $\bar{\sigma}(D)$ and
-$\bar{\sigma}(G(j\omega))$ at $\omega = 0$ and at the imaginary part of the
-poles; the upper bound doubles from it until the test fails. An eigenvalue
-counts as imaginary when its real part is below a tolerance scaled by
-$\lVert H \rVert$. SLICOT's AB13DD bounds its iteration count at 30 [5];
-NFR-1 takes the same form, with the count derived from the tolerance.
+$[\gamma_l, \gamma_u]$ until
+$\gamma_u - \gamma_l \le \text{tol} \cdot \gamma_u$. The relative gap uses
+$\gamma_u$ so a zero lower bound cannot freeze the exit test.
+
+The initial lower bound $\gamma_l$ is the largest of $\bar{\sigma}(D)$ and
+$\bar{\sigma}(G(j\omega))$ at $\omega = 0$, at the imaginary parts of the
+poles, and at one high-frequency probe $\omega = 1 + \lVert A \rVert_F$
+(so systems with $G(0) = D = 0$, e.g. $s/(s+1)$, still obtain a positive
+sample). If that maximum is zero, the norm is zero when $B = 0$ or
+$C = 0$; otherwise the upper search starts at $1$. When $\gamma_l > 0$,
+the first upper-bound candidate is $2\gamma_l$ (never $\gamma_l$ itself),
+so every Hamiltonian evaluation stays in $\gamma > \bar{\sigma}(D)$ with
+$R$ positive definite; that candidate doubles until the test reports no
+imaginary eigenvalue. An eigenvalue counts as imaginary when its real part
+is below a tolerance scaled by $\lVert H \rVert$. The frequency reported
+with the norm (FR-3) is the imaginary part of the Hamiltonian eigenvalue
+nearest the axis at the final $\gamma_u$. SLICOT's AB13DD bounds its
+iteration count at 30 [5]; NFR-1 takes the same form, with the count
+derived from the tolerance.
 
 #### 4.5 Singular-Value Response
 
@@ -242,6 +255,7 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | VC-2.3 | FR-2 | `libtest` | `control_rs::robust_control::robstab::tests::unstable_nominal` | An unstable $M$ returns `UnstableNominal` |
 | VC-3.1 | FR-3 | `libtest` | `control_rs::robust_control::hinf::tests::first_second_order_closed_form` | Norms of first-order and lightly damped second-order systems meet §6.2; FR-3 holds iff all conditions hold |
 | VC-3.2 | FR-3 | `libtest` | `control_rs::robust_control::hinf::tests::mimo_cross_check` | A 4-state, 2-input, 2-output system matches the cross-check tolerance |
+| VC-3.3 | FR-3 | `libtest` | `control_rs::robust_control::hinf::tests::strictly_proper_zero_dc` | $s/(s+1)$ ($D = 0$, $G(0) = 0$, norm 1) meets §6.2 and does not return `NotConverged` |
 | VC-4.1 | FR-4 | `libtest` | `control_rs::robust_control::sigma::tests::sigma_equals_two_norm` | $\bar{\sigma}$ equals the matrix 2-norm of $G(j\omega)$ computed independently within §6.2; FR-4 holds iff all conditions hold |
 | VC-5.1 | FR-5 | `libtest` | `control_rs::robust_control::uncertain::tests::bounds_and_coordinates` | $x(-1)$, $x(0)$ and $x(1)$ equal $x_0 - d_l$, $x_0$ and $x_0 + d_u$ exactly and negative deviations return `InvalidBounds`; FR-5 holds iff all conditions hold |
 | VC-6.1 | NFR-1 | `libtest` | `control_rs::robust_control::hinf::tests::budget_exhausted` | A one-iteration budget returns `NotConverged` |
@@ -259,7 +273,7 @@ Coverage: 90% line coverage of `src/robust_control`, measured with
 
 | Claim | Oracle | Measure | Bound |
 |:--|:--|:--|:--|
-| $H_\infty$ norm (FR-3) | Closed form: $1/(\tau s + 1)$ has norm 1; $\omega_n^2/(s^2 + 2\zeta\omega_n s + \omega_n^2)$ has norm $1/(2\zeta\sqrt{1-\zeta^2})$ for $\zeta < 1/\sqrt{2}$ | Relative error | $\le$ caller tolerance $+ 10 N u$ |
+| $H_\infty$ norm (FR-3) | Closed form: $1/(\tau s + 1)$ has norm 1; $s/(s+1)$ has norm 1; $\omega_n^2/(s^2 + 2\zeta\omega_n s + \omega_n^2)$ has norm $1/(2\zeta\sqrt{1-\zeta^2})$ for $\zeta < 1/\sqrt{2}$ | Relative error | $\le$ caller tolerance $+ 10 N u$ |
 | $H_\infty$ norm, MIMO (FR-3) | Independent reference implementation (`cross-check`) | Relative error | Tolerance entry `robust-control/<case>/hinf` |
 | Interconnection (FR-1) | Direct evaluation of the closed-form $M(j\omega)$ | Relative error, Frobenius norm | $\le 10^2 N u \kappa(I + P_0K)$ |
 | Singular values (FR-4) | Independent 2-norm of the evaluated matrix | Relative error | $\le 10 N u$ |
@@ -273,6 +287,9 @@ bound follows from its guaranteed bracket [2].
 - Discrete-time norms are not covered (§8).
 - The imaginary-axis eigenvalue test uses a tolerance; systems with poles
   near the axis are checked only through the cross-check cases.
+- The high-frequency probe for $\gamma_l$ is a single point; a notch between
+  the pole imaginaries and that probe can leave $\gamma_l$ far below the
+  true norm, which only lengthens the doubling phase (NFR-1 still bounds it).
 - On-target execution through ETS suites is not exercised.
 
 ---
@@ -321,6 +338,7 @@ quantity and `f64` is the default.
 | Revision | Date | Author | Description |
 |:--|:--|:--|:--|
 | 1.0 | October 4, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-5, NFR-1 to NFR-2, C-1 to C-5. |
+| 1.1 | October 8, 2026 | @MitchellDScott | §4.4: positive $H_\infty$ bracket when $\gamma_l = 0$; exit gap relative to $\gamma_u$; peak frequency from $H(\gamma_u)$; VC-3.3. |
 
 ---
 
