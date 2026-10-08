@@ -177,6 +177,25 @@ fn test_task_teardown_once_per_end_path() {
 }
 
 #[test]
+fn test_task_link_loss_tears_down() {
+    const FOREVER: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
+    let _guard = begin(Config::new(FOREVER));
+    let (res, server) = run_tasks(
+        TASKS_PLAIN,
+        Run {
+            tick_ns: 200_000_000,
+            ..Run::new(std::vec![start(0, false)])
+        },
+    );
+    assert_eq!(res, Err("Exit loop"));
+    assert_eq!(counts().teardown, 1);
+    assert_eq!(
+        final_state(&server),
+        Some((TaskRunState::Error, Some("link lost".to_string())))
+    );
+}
+
+#[test]
 fn test_teardown_report_independent_of_verdict() {
     const PASS: &[lifecycle_support::Scripted] =
         &[(TaskRunState::Pass, None, &[])];
@@ -265,11 +284,16 @@ fn test_task_link_timeout_tears_down() {
     assert_eq!(counts().teardown, 1);
     drop(guard);
 
-    // Without a declared timeout the run keeps going until the link ends.
+    // Without a declared timeout the run keeps going until the link ends;
+    // FR-5 still requires teardown once setup has run.
     let _guard = begin(Config::new(SCRIPT));
     let (res, server) = run_tasks(TASKS_PLAIN, slow());
     assert_eq!(res, Err("Exit loop"));
-    assert_eq!(final_state(&server), Some((TaskRunState::Running, None)));
+    assert_eq!(
+        final_state(&server),
+        Some((TaskRunState::Error, Some("link lost".to_string())))
+    );
+    assert_eq!(counts().teardown, 1);
     assert!(counts().steps > 10);
 }
 

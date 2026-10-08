@@ -629,8 +629,15 @@ impl SessionState {
             return Vec::new();
         };
         let first = run.states.is_empty();
+        // Normal ends send `TaskStats` before the final `TaskState`. The panic
+        // path sends `TaskState(Fail)` without stats, then `TargetPanic`.
+        let had_stats = run.steps.is_some();
         run.states.push((state, message));
         if !matches!(state, TaskRunState::Running | TaskRunState::Warn) {
+            if state == TaskRunState::Fail && !had_stats {
+                // Do not `StartTask` the next queued run into a dying target.
+                return self.end_task_awaiting_panic();
+            }
             return self.end_task();
         }
         if first {
@@ -710,6 +717,20 @@ impl SessionState {
         }
         if self.task_mode == TaskMode::Headless {
             self.exit_loop = true;
+        }
+        Vec::new()
+    }
+
+    /// Ends the active run without starting the next queued task.
+    ///
+    /// Used when `TaskState(Fail)` arrives without `TaskStats`, which is the
+    /// panic wire order; `TargetPanic` clears the queue and decides whether
+    /// the headless session may exit.
+    fn end_task_awaiting_panic(&mut self) -> Vec<SessionAction> {
+        self.timers = TaskTimers::default();
+        if let Some(run) = self.task_run.as_mut() {
+            run.ended = true;
+            self.task_history.push(run.clone());
         }
         Vec::new()
     }
@@ -1241,18 +1262,25 @@ impl SessionState {
             }
         }
 
-        let remaining_to_run = !self.pending_tasks.is_empty()
-            || match self.phase {
-                SessionPhase::Discovering => true,
-                SessionPhase::Running | SessionPhase::Recovering => {
-                    self.suites.iter().any(|suite| {
-                        suite.tests.iter().any(|test| {
-                            self.find_outcome(suite.suite_id, test.test_id)
-                                .is_none()
-                        })
+        // A panic resets the target; queued `StartTask`s must not fire into
+        // the dying image, and any run still marked active is abandoned.
+        self.pending_tasks.clear();
+        if self.task_active() {
+            self.timers = TaskTimers::default();
+            self.task_run = None;
+        }
+
+        let remaining_to_run = match self.phase {
+            SessionPhase::Discovering => true,
+            SessionPhase::Running | SessionPhase::Recovering => {
+                self.suites.iter().any(|suite| {
+                    suite.tests.iter().any(|test| {
+                        self.find_outcome(suite.suite_id, test.test_id)
+                            .is_none()
                     })
-                }
-            };
+                })
+            }
+        };
 
         self.current_running = None;
         for s in &mut self.suites {
@@ -2147,6 +2175,64 @@ mod tests {
         assert_eq!(
             s.start_task(other, now).unwrap_err(),
             TaskStartError::UnknownTask(9)
+        );
+    }
+
+    #[test]
+    fn panic_fail_does_not_start_queued_task_or_false_drain() {
+        let mut s = lifecycle_session();
+        s.queue_tasks([start_free(), start_free()]);
+        let first = s.start_next_pending_task().expect("queued StartTask");
+        assert!(matches!(
+            first,
+            SessionAction::Send(CommCommand::StartTask { .. })
+        ));
+        assert_eq!(s.pending_tasks.len(), 1);
+        // Discovery with zero cases may have set `exit_loop`; a live run keeps
+        // the session open until panic handling decides otherwise.
+        s.exit_loop = false;
+
+        let _ = s.handle_message(state_frame(TaskRunState::Running, None));
+        // Panic wire order: TeardownReport, TaskState(Fail) without TaskStats.
+        let _ = s.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::TeardownReport {
+                suite_id: 0,
+                test_id: 0,
+                ok: true,
+                message: None,
+            },
+        ));
+        let after_fail = s
+            .handle_message(state_frame(TaskRunState::Fail, Some("task.rs:1")));
+        assert!(
+            after_fail.is_empty(),
+            "must not StartTask the next run into a dying target"
+        );
+        assert_eq!(s.pending_tasks.len(), 1);
+        assert!(!s.task_active());
+        assert!(!s.exit_loop, "TargetPanic decides whether to drain");
+
+        let panic_actions = s.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::TargetPanic {
+                message: "assertion failed".into(),
+                file: "task.rs".into(),
+                line: 1,
+            },
+        ));
+        assert!(matches!(
+            panic_actions.as_slice(),
+            [
+                SessionAction::Send(CommCommand::TryReset),
+                SessionAction::PanicRestart
+            ]
+        ));
+        assert!(s.pending_tasks.is_empty());
+        assert!(!s.task_active());
+        assert!(s.exit_loop, "no cases remain; headless may drain");
+        assert_eq!(s.task_history.len(), 1);
+        assert_eq!(
+            s.task_history.first().map(|r| r.states.last().map(|s| s.0)),
+            Some(Some(TaskRunState::Fail))
         );
     }
 }
