@@ -251,6 +251,26 @@ pub mod tests {
     }
 
     #[cfg_attr(test, test)]
+    /// A constant discrete TF factors as one gain-only section; `L = 0` is
+    /// rejected so the gain cannot be dropped (FR-10).
+    fn sections_constant_gain() {
+        let tf =
+            ArrayTransferFunction::<f64, 1, 1>::discrete([3.0], [2.0], 0.01);
+        assert!(matches!(
+            to_sections::<f64, 1, 1, 0>(&tf),
+            Err(ClassicalError::SectionCount)
+        ));
+        let [s] = to_sections::<f64, 1, 1, 1>(&tf).unwrap();
+        assert_eq!(s.b0.to_bits(), 1.5f64.to_bits());
+        assert_eq!(s.b1.to_bits(), 0.0f64.to_bits());
+        assert_eq!(s.b2.to_bits(), 0.0f64.to_bits());
+        assert_eq!(s.a1.to_bits(), 0.0f64.to_bits());
+        assert_eq!(s.a2.to_bits(), 0.0f64.to_bits());
+        let mut cascade = BiquadCascade::<Df1<f64>, 1>::from_coefficients(&[s]);
+        assert_eq!(cascade.update(1.0).to_bits(), 1.5f64.to_bits());
+    }
+
+    #[cfg_attr(test, test)]
     /// `DirectForm2T<Fixed<i32, 29>, 2>` driven at full scale saturates
     /// without panic or wrap (FR-8).
     fn df2t_fixed_total() {
@@ -1284,7 +1304,8 @@ where
 /// first-order section (`b_2 = a_2 = 0`) with its nearest real zero. The
 /// overall gain goes into the first section. Zeros at infinity (numerator
 /// degree below denominator degree) become pure delays in their section.
-/// `L` must be `ceil((D - 1) / 2)`.
+/// `L` must be `ceil((D - 1) / 2)`, except a constant discrete TF
+/// (`D = 1`) requires `L = 1` so the overall gain has a section to occupy.
 ///
 /// # Errors
 /// - [`ClassicalError::NotDiscrete`]: `tf` is continuous.
@@ -1308,7 +1329,10 @@ where
         return Err(ClassicalError::NotDiscrete);
     }
     let order = D.saturating_sub(1);
-    if order.div_ceil(2) != L {
+    // Order 0 has no poles to pair; `L = 1` holds a gain-only section.
+    // `L = 0` would return an empty product (gain 1) and drop `b0`.
+    let required = if order == 0 { 1 } else { order.div_ceil(2) };
+    if required != L {
         return Err(ClassicalError::SectionCount);
     }
     let mut num = [T::ZERO; D];
