@@ -6,6 +6,7 @@ files = [
     "documentation/math/fixed-num-design.md",
     "documentation/math/num-traits-design.md",
     "documentation/control-toolboxes/classical-control-design.md",
+    "documentation/control-toolboxes/modern-control-design.md",
 ]
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
