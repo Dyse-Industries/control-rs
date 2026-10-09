@@ -265,6 +265,17 @@ pub mod complex_num_test_suite {
         let z = Complex64::new(3.0, 4.0).conj();
         assert_almost_eq!(z.re, 3.0);
         assert_almost_eq!(z.im, -4.0);
+
+        // Inherent `conj` must saturate at `im = MIN` (FR-6); overflowing
+        // `Neg` would panic in debug or leave `im` unchanged in release.
+        assert_eq!(
+            Complex::new(0i16, i16::MIN).conj(),
+            Complex::new(0i16, i16::MAX)
+        );
+        assert_eq!(
+            Complex::new(i8::MIN, i8::MIN).conj(),
+            Complex::new(i8::MIN, i8::MAX)
+        );
     }
 
     #[cfg_attr(test, test)]
