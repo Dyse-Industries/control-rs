@@ -9,11 +9,12 @@ use std::process::ExitCode;
 
 use control_rs_verification::numeric::KernelResult;
 use control_rs_verification::{
-    matrix, polynomial, results_dir, state_space, tensor, transfer_function,
+    classical_control, matrix, polynomial, results_dir, state_space, tensor,
+    transfer_function,
 };
 
 /// Every domain in emission order.
-const DOMAINS: [Domain; 5] = [
+const DOMAINS: [Domain; 6] = [
     Domain::new("matrix", "Matrix", matrix::emit_container),
     Domain::new("polynomial", "Polynomial", polynomial::emit_container),
     Domain::new("state_space", "State space", state_space::emit_container),
@@ -23,6 +24,11 @@ const DOMAINS: [Domain; 5] = [
         transfer_function::emit_container,
     ),
     Domain::new("tensor", "Tensor", tensor::emit_container),
+    Domain::new(
+        "classical_control",
+        "Classical control",
+        classical_control::emit_container,
+    ),
 ];
 
 /// Writes one domain's container to the given path.
@@ -58,7 +64,7 @@ fn main() -> ExitCode {
     };
     if selected.is_empty() {
         eprintln!(
-            "Unknown domain '{}'. Choose from: matrix, polynomial, state_space, transfer_function, tensor, all",
+            "Unknown domain '{}'. Choose from: matrix, polynomial, state_space, transfer_function, tensor, classical_control, all",
             target.unwrap_or_default()
         );
         return ExitCode::FAILURE;

@@ -1,4 +1,4 @@
-# Numeric Trait Hierarchy (Design Document)
+# Numeric Trait Hierarchy (num-traits)
 
 ![Date Badge](https://img.shields.io/badge/Date-October_5,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
@@ -357,7 +357,7 @@ pub trait MulAcc: Copy {
 | `f32`, `f64` | `Self` | `saturating_mul` then `saturating_add` (two IEEE roundings) | identity |
 | Signed and unsigned integers | doubled width (`i8` to `i16`, ..., `i64` to `i128`) | exact product, saturating add in `Acc` | clamp to `[MIN, MAX]` once |
 | `Quantized` | `FixedRepr::Acc` at scale $2\,\text{SHIFT}$ | `fixed-num-design.md` FR-8 | one ties-to-even rescale, saturating narrow |
-| `Complex<T>` (`T: SaturatingNeg`) | `Complex<T::Acc>` | $\text{acc}_r + a_r b_r - a_i b_i$, $\text{acc}_i + a_r b_i + a_i b_r$ as four `T::mac` | component-wise `T::from_acc` |
+| `Complex<T>` (`T: Zero`, `T::Acc: SaturatingSub`) | `Complex<T::Acc>` | $\text{acc}_r + a_r b_r - a_i b_i$ via `T::mac` then `Acc` subtract of the exact $a_i b_i$ product; $\text{acc}_i + a_r b_i + a_i b_r$ as two `T::mac` | component-wise `T::from_acc` |
 
 The float implementation is the unfused operator pair. It adds no
 dependency and runs at the cost of a multiply and an add on every target.
@@ -460,6 +460,27 @@ implementors outside the crate do not break; consumers bound
 ### 6. Verification & Validation
 
 #### 6.1 Verification
+
+Each condition below is discharged by the named targets; the numbered
+list after the table describes the checks in prose.
+
+| Condition | Requirement | Method | Target | Criterion |
+|:----------|:------------|:-------|:-------|:----------|
+| VC-1.1 | FR-1 | `libtest` | `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_add_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_add_unsigned_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_wrapping_add_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_wrapping_add_unsigned_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_sub_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_sub_unsigned_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_wrapping_sub_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_wrapping_sub_unsigned_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_mul_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_mul_unsigned_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_wrapping_mul_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_wrapping_mul_unsigned_integers` | Integer primitives expose wrapping and saturating addition, subtraction and multiplication as separate methods, each correct at `MIN` and `MAX` |
+| VC-2.1 | FR-2 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_num_trait_unsigned_integer_markers` | Unsigned primitives implement `Zero`, `One`, `Unsigned`, `Integer` and `SaturatingInteger` and withhold `AdditiveGroup` |
+| VC-3.1 | FR-3 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_num_trait_conjugate_and_scalar_projections` | `conj` is the identity on real scalars and negates the imaginary part of `Complex<T>` |
+| VC-4.1 | FR-4 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_num_trait_conjugate_and_scalar_projections`, `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_num_trait_scalar_properties` | `re`, `im`, `from_real` and `abs2` agree with the component definitions for real scalars and `Complex<T>` |
+| VC-5.1 | FR-5 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_num_trait_scalar_markers`, `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_num_trait_unsigned_integer_markers` | `Scalar` holds for every integer and float primitive and the partition marker bounds compile |
+| VC-5.2 | FR-5 | `inspection` | — | Negative bounds (`Complex<f64>: Float`, `Complex<u8>: Scalar`, unsigned `AdditiveGroup`) are `compile_fail` doctests on the `num_traits` module docs |
+| VC-6.1 | FR-6 | `libtest` | `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_add_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_add_unsigned_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_sub_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_sub_unsigned_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_mul_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_mul_unsigned_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_div_neg_signed_integers` | Saturating add, subtract, multiply, divide and negate clamp to `[MIN, MAX]` without panicking or wrapping |
+| VC-6.2 | FR-6 | `review` | — | `clippy::arithmetic_side_effects` is `deny` and library arithmetic on a generic `T` calls the saturating methods, not `core::ops` operators |
+| VC-7.1 | FR-7 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_float_unfused` | Float `mac` equals the unfused `a * b + c` bit for bit |
+| VC-7.2 | FR-7 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_integer_exact_chain` | An integer chain whose intermediate sum leaves `[MIN, MAX]` and returns inside it yields the exact final sum, clamped once |
+| VC-7.3 | FR-7 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_complex_formula` | `Complex<T>` components equal the four-term formula exactly |
+| VC-7.4 | FR-7 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_complex_min_imag`, `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_complex_fixed_full_scale` | `Complex<T>` `mac` keeps the exact doubled-width product when an imaginary operand is `MIN` or `MAX`, for integer and `Fixed` components |
+| VC-7.5 | FR-7 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_open_trait` | An external type implementing `MulAcc` compiles against a generic `T: Scalar + MulAcc` consumer |
+| VC-8.1 | NFR-1 | `review` | — | Trait calls and constants compile to direct primitive instructions without trampolines |
+| VC-9.1 | C-1 | `review` | — | `num_traits` uses `core` only, without heap allocation or `std` |
 
 Verification ensures structural correctness and trait compliance across all
 target environments:
@@ -602,7 +623,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | **Phase 3: `Complex<T>` retraction**      | `Complex<T>: Scalar` (`Real = T`) + `Conjugate` + `AdditiveGroup` + `Div`; remove `Float`/`Signed`/`Radical`/`Trig`/`Exponential`.                                                | Complete         |
 | **Phase 4: Call-site migration**          | Re-bound `subprograms.rs`, `dsp.rs`, `assert.rs`, and matrix decompositions that used `T: Float` as a complex stand-in.                                                           | Complete         |
 | **Phase 5: Verification**                 | Marker tests and `compile_fail` doctests for FR-3–FR-5; `#[ets_suite]` wrap/saturate suite verified. `Quantized` / `Fixed` negative oracles live in `fixed-num-design.md` §6.1.5. | Complete         |
-| **Phase 6: Multiply accumulate**          | `MulAcc` (FR-7) for integers, floats, `Complex<T>` and `Quantized` (`fixed-num-design.md` FR-8); §6.1.3 tests.                                                                       | Planned          |
+| **Phase 6: Multiply accumulate**          | `MulAcc` (FR-7) for integers, floats, `Complex<T>` and `Quantized` (`fixed-num-design.md` FR-8); §6.1.3 tests.                                                                       | Complete         |
 | **Phase 7: Accelerated example type**     | Fused-`mac` `f32` newtype and a CMSIS-style `q31` accumulator type beside `CmsisDspBlas` in `examples/subprograms/thumbv7em/`, run under QEMU MPS2-AN500.                          | Planned          |
 
 ---

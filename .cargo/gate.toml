@@ -20,7 +20,6 @@ timeout_secs = 90
 [execution.exclusive]
 pre = ["fetch"]
 post = [
-    "kani",
     "trace",
     "regression",
     "mutants",
@@ -67,6 +66,7 @@ valgrind = ["valgrind"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
 target = ["virtual-ets"]
+kani = ["kani"]
 
 # ==============================================================================
 # Pre Stage Gates

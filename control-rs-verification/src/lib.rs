@@ -5,6 +5,7 @@
 
 pub use h5_writer::{H5Writer, results_dir};
 
+pub mod classical_control;
 pub mod h5_writer;
 pub mod matrix;
 pub mod numeric;

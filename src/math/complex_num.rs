@@ -5,7 +5,7 @@
 
 use crate::math::{
     ArithmeticResult,
-    num_traits::{AdditiveGroup, Conjugate, Float, One, Scalar, Zero},
+    num_traits::{AdditiveGroup, Conjugate, Float, MulAcc, One, Scalar, Zero},
     ops::{
         Add, Div, Mul, Neg, SaturatingAdd, SaturatingDiv, SaturatingMul,
         SaturatingNeg, SaturatingSub, Sub, TryAdd, TryDiv, TryMul, TrySub,
@@ -31,15 +31,42 @@ pub struct Complex<T> {
 ////////////////////////////////////////////////////////////////////////////////
 
 impl<T> Complex<T> {
-    /// Returns the conjugate of the complex number.
+    /// Returns the complex conjugate of `self`.
     ///
-    /// The conjugate of `a + bi` is `a - bi`.
+    /// Maps `a + bi` to `a - bi`. Imaginary negation uses
+    /// [`SaturatingNeg`], so integer and fixed-point `im = MIN` saturates to
+    /// `MAX` instead of panicking (debug) or wrapping (release). This matches
+    /// [`Neg`] for [`Complex`] and the [`Conjugate`] impl. Method resolution
+    /// prefers this inherent method over [`Conjugate::conj`].
+    ///
+    /// # Generic Arguments
+    /// * `T` - Real/imaginary component type; must implement [`SaturatingNeg`].
+    ///
+    /// # Returns
+    /// `Complex { re, im: saturating_neg(im) }`.
+    ///
+    /// # Panics
+    /// Never.
+    ///
+    /// # Safety
+    /// This function does not use `unsafe` code.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::math::complex_num::Complex;
+    ///
+    /// assert_eq!(Complex::new(3i16, 4).conj(), Complex::new(3, -4));
+    /// assert_eq!(
+    ///     Complex::new(0i16, i16::MIN).conj(),
+    ///     Complex::new(0, i16::MAX)
+    /// );
+    /// ```
     #[must_use]
     pub fn conj(self) -> Self
     where
-        T: Neg<Output = T>,
+        T: SaturatingNeg,
     {
-        Self::new(self.re, self.im.neg())
+        Self::new(self.re, self.im.saturating_neg())
     }
 
     /// Creates a new complex number from real and imaginary parts.
@@ -398,6 +425,39 @@ impl<T: Zero + SaturatingAdd> Zero for Complex<T> {
 impl<T: AdditiveGroup + SaturatingAdd + SaturatingSub + SaturatingNeg>
     AdditiveGroup for Complex<T>
 {
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+impl<T: MulAcc + Zero> MulAcc for Complex<T>
+where
+    T::Acc: SaturatingSub,
+{
+    type Acc = Complex<T::Acc>;
+
+    #[inline]
+    fn to_acc(self) -> Self::Acc {
+        Complex::new(self.re.to_acc(), self.im.to_acc())
+    }
+
+    #[inline]
+    fn mac(acc: Self::Acc, a: Self, b: Self) -> Self::Acc {
+        // `ac - bd` subtracts the exact `bd` product in `Acc`. Negating a
+        // component before `mac` saturates at `T::MIN` and breaks the
+        // doubled-width contract for integer and fixed-point `T`.
+        let re = T::mac(acc.re, a.re, b.re).saturating_sub(&T::mac(
+            T::ZERO.to_acc(),
+            a.im,
+            b.im,
+        ));
+        let im = T::mac(T::mac(acc.im, a.re, b.im), a.im, b.re);
+        Complex::new(re, im)
+    }
+
+    #[inline]
+    fn from_acc(acc: Self::Acc) -> Self {
+        Self::new(T::from_acc(acc.re), T::from_acc(acc.im))
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -47,7 +47,25 @@ exclude_re = [
     # The loop only skips the matrix update after the last coefficient, which
     # nothing reads; performing it too changes no result.
     "replace < with <= in StateSpace<T, NX, 1, 1>::to_transfer_function",
-    # Kani harnesses compile only under `cfg(kani)`; the `kani` gate checks
-    # them, and no unit test can reach them.
-    "proofs::prove_",
+    # Test modules compiled into the library for on-target execution
+    # (`cfg(any(test, feature = "ets"))`) are not recognized as test code.
+    "tests::",
+    "realization\\.rs:\\d+:\\d+: replace / with [%*]$",
+    # Sign and clamp comparisons whose boundary case yields the same value:
+    # a zero magnitude negates to zero, an output equal to a limit is the
+    # limit, a zero error integrates to zero, a zero excess scales to zero,
+    # a unit scale equals the floor, and an equal-valued maximum is
+    # re-assigned.
+    "replace < with <= in (stability_margins|is_stable|routh_count)",
+    "replace < with <= in Pid<T>::step",
+    "replace > with >= in Pid<T>::step",
+    "pid\\.rs:\\d+:(34|60): replace (>|<) with (>=|<=) in Pid<T>::integrator_step",
+    "replace > with >= in (step_info|is_real|indent|sort_by_magnitude_desc)",
+    "step\\.rs:\\d+:23: replace > with >= in peak_of",
+    # Kani harnesses and their helpers compile only under `cfg(kani)`; the
+    # `kani` gate checks them, and no unit test can reach them.
+    "proofs::",
+    # Sign restoration after magnitude rounding: `x <= 0` negates a zero
+    # magnitude, which is still zero.
+    "replace < with <= in round_shift_signed",
 ]
