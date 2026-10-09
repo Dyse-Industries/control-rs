@@ -3,10 +3,15 @@ name = "teensy4"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Links the control-rs math and matrix suites. They do not fit in ITCM beside
+# the other suites, so the default image carries only the board suites.
+math-suites = ["dep:control-rs"]
+
 [dependencies]
 rtic = { version = "2", features = ["thumbv7-backend"] }
 rtic-monotonics = { version = "1", default-features = false, features = ["cortex-m-systick"] }
-control-rs = { path = "../..", default-features = false, features = ["ets"] }
+control-rs = { path = "../..", default-features = false, features = ["ets"], optional = true }
 control-rs-ets = { path = "../../control-rs-ets" }
 control-rs-macros = { path = "../../control-rs-macros" }
 cortex-m = "0.7"

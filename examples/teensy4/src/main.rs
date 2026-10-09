@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+#[cfg(feature = "math-suites")]
 extern crate control_rs;
 
 use bsp::board;
@@ -8,7 +9,8 @@ use bsp::hal::usbd::{BusAdapter, EndpointMemory, EndpointState, Speed};
 use teensy4_bsp as bsp;
 
 use control_rs_ets::comms::{
-    frame_telemetry, Command, FrameReader, HostComms, Telemetry,
+    frame_telemetry, BufferedFrameReader, HostComms, PollResult, Telemetry,
+    MAX_FRAME_SIZE,
 };
 use control_rs_ets::server::Context;
 use control_rs_ets::CortexMProfiler;
@@ -47,8 +49,9 @@ struct TeensyComms {
     usb_class: SerialPort<'static, BusAdapter>,
     /// USB device manager driving the overall USB descriptor and state.
     usb_device: UsbDevice<'static, BusAdapter>,
-    /// State machine to decode incoming byte stream into Commands.
-    reader: FrameReader,
+    /// Decodes the incoming byte stream into Commands, keeping the bytes of a
+    /// USB packet that follow the first complete frame.
+    rx: BufferedFrameReader<64>,
     /// Flag indicating whether the host has configured the USB connection.
     configured: bool,
 }
@@ -56,7 +59,7 @@ struct TeensyComms {
 impl HostComms for TeensyComms {
     type Error = ();
 
-    fn poll_command(&mut self) -> Result<Option<Command>, ()> {
+    fn poll_command(&mut self) -> PollResult<'_, ()> {
         // 1. Poll the USB device stack to process CDC events
         if self.usb_device.poll(&mut [&mut self.usb_class]) {
             if self.usb_device.state() == UsbDeviceState::Configured {
@@ -68,28 +71,21 @@ impl HostComms for TeensyComms {
                 self.configured = false;
             }
         }
+        if !self.configured {
+            return Ok(None);
+        }
 
         // 2. Read bytes from the CDC virtual serial port
-        if self.configured {
-            let mut buf = [0u8; 64];
-            match self.usb_class.read(&mut buf) {
-                Ok(count) if count > 0 => {
-                    for &byte in &buf[..count] {
-                        if let Some(payload) = self.reader.handle_byte(byte) {
-                            if let Ok(cmd) = postcard::from_bytes(payload) {
-                                return Ok(Some(cmd));
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        Ok(None)
+        let class = &mut self.usb_class;
+        self.rx.poll(|buf| match class.read(buf) {
+            Ok(n) => Ok(n),
+            Err(usb_device::UsbError::WouldBlock) => Ok(0),
+            Err(_) => Err(()),
+        })
     }
 
     fn send_telemetry(&mut self, telemetry: &Telemetry<'_>) -> Result<(), ()> {
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; MAX_FRAME_SIZE];
         if let Ok(len) = frame_telemetry(telemetry, &mut buf) {
             if self.configured {
                 let mut data = &buf[..len];
@@ -126,10 +122,15 @@ impl HostComms for TeensyComms {
     }
 }
 
+mod blink;
+mod end_paths;
+
 // Force linking of the math test suites by referencing them
+#[cfg(feature = "math-suites")]
 #[allow(unused_imports)]
 pub use control_rs::math::tests::suites::*;
 // Force linking of the matrix test suites by referencing them
+#[cfg(feature = "math-suites")]
 #[allow(unused_imports)]
 pub use control_rs::matrix::tests::suites::*;
 
@@ -221,6 +222,8 @@ fn setup() -> Context<TeensyComms, CortexMProfiler> {
     let mut gpio2 = gpio2;
     let led = board::led(&mut gpio2, pins.p13);
     led.set();
+    // The `led_blink` lifecycle suite drives the LED; hand the pin over to it.
+    blink::hand_over(led);
 
     // 3. Set up the USB device stack statically
     static mut EP_MEMORY: EndpointMemory<1024> = EndpointMemory::new();
@@ -259,7 +262,7 @@ fn setup() -> Context<TeensyComms, CortexMProfiler> {
     let comms = TeensyComms {
         usb_class,
         usb_device,
-        reader: FrameReader::new(),
+        rx: BufferedFrameReader::new(),
         configured: false,
     };
     let cpu_utils = CortexMProfiler::new(board::ARM_FREQUENCY, &MILLISECONDS);

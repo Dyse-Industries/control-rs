@@ -15,7 +15,7 @@
 //! - **Divergent Error Handlers**: `handle_failure` and `handle_exception` isolate and report terminal target
 //!   crashes over the communication link before hard-resetting the CPU.
 
-use crate::SuiteDescriptor;
+use crate::{SuiteDescriptor, TaskDescriptor};
 use core::fmt::Write;
 use core::str;
 
@@ -132,6 +132,117 @@ pub unsafe fn get_suites(
     unsafe { ::core::slice::from_raw_parts(start, len) }
 }
 
+/// Retrieves the registered tasks from the `.ets_tasks` section bounds.
+///
+/// # Arguments
+/// * `start` - A raw pointer to the beginning of the task descriptor list.
+/// * `end` - A raw pointer to the end of the task descriptor list.
+///
+/// # Returns
+/// * `&'static [&'static TaskDescriptor]` - A static slice of references to all discovered tasks.
+///
+/// # Safety
+///
+/// This function is unsafe because it constructs a static slice from raw pointers.
+/// The caller MUST ensure the same conditions as [`get_suites`], for references to
+/// [`TaskDescriptor`] located in the `.ets_tasks` section.
+///
+/// # Panics
+/// This function does not panic.
+///
+/// # Example
+/// ```
+/// use control_rs_ets::util::get_tasks;
+/// use control_rs_ets::TaskDescriptor;
+///
+/// static TASKS: &[&TaskDescriptor] = &[];
+/// let start = TASKS.as_ptr();
+/// let tasks = unsafe { get_tasks(start, start) };
+/// assert!(tasks.is_empty());
+/// ```
+#[must_use]
+pub unsafe fn get_tasks(
+    start: *const &'static TaskDescriptor,
+    end: *const &'static TaskDescriptor,
+) -> &'static [&'static TaskDescriptor] {
+    let len = (end as usize)
+        .saturating_sub(start as usize)
+        .checked_div(::core::mem::size_of::<&TaskDescriptor>())
+        .unwrap_or(0);
+    // SAFETY: The safety invariants of the function guarantee that `start` and `end` enclose a valid,
+    // contiguous, initialized array of references to `TaskDescriptor` instances in static memory.
+    unsafe { ::core::slice::from_raw_parts(start, len) }
+}
+
+/// Runs the active task's teardown on the panic path and reports it.
+///
+/// If a task run is active, calls its teardown unless teardown already started,
+/// then sends `TeardownReport` and `TaskState(Fail)` carrying the panic location.
+/// A teardown that already started is the one that panicked, so it is reported
+/// as failed and not re-entered.
+///
+/// # Arguments
+/// * `comms` - The host link.
+/// * `file` - The file where the panic was triggered.
+/// * `line` - The line where the panic was triggered.
+///
+/// # Returns
+/// * `bool` - `true` if a task run was active.
+pub fn report_task_panic<C: crate::comms::HostComms>(
+    comms: &mut C,
+    file: &str,
+    line: u32,
+) -> bool {
+    use crate::comms::{TaskRunState, Telemetry};
+    use crate::server::{
+        ACTIVE_TASK, CURRENT_SUITE, CURRENT_TEST, TEARDOWN_STARTED,
+    };
+    use core::sync::atomic::Ordering;
+
+    let desc_ptr = ACTIVE_TASK.load(Ordering::Acquire);
+    if desc_ptr.is_null() {
+        return false;
+    }
+    let (Some(suite_id), Some(test_id)) = (
+        CURRENT_SUITE.get().and_then(|s| u16::try_from(s).ok()),
+        CURRENT_TEST.get().and_then(|t| u16::try_from(t).ok()),
+    ) else {
+        return false;
+    };
+
+    let teardown = if TEARDOWN_STARTED.swap(true, Ordering::AcqRel) {
+        Err("teardown panicked")
+    } else {
+        // SAFETY: `ACTIVE_TASK` is only stored from a `&'static TaskDescriptor`.
+        let desc = unsafe { &*desc_ptr };
+        (desc.teardown)()
+    };
+    let _ = comms.send_telemetry(&Telemetry::TeardownReport {
+        suite_id,
+        test_id,
+        ok: teardown.is_ok(),
+        message: teardown.err(),
+    });
+
+    let mut buf = [0u8; 128];
+    let pos = {
+        let mut writer = FailureBufWriter {
+            buf: &mut buf,
+            pos: 0,
+        };
+        let _ = write!(writer, "{file}:{line}");
+        writer.pos
+    };
+    let location = buf.get(..pos).and_then(|b| str::from_utf8(b).ok());
+    let _ = comms.send_telemetry(&Telemetry::TaskState {
+        suite_id,
+        test_id,
+        state: TaskRunState::Fail,
+        message: location.filter(|l| !l.is_empty()),
+    });
+    true
+}
+
 /// Target-agnostic logic for handling server failure or panics.
 ///
 /// Disables interrupts, broadcasts target panic and failure telemetry, polls for host reset permission,
@@ -174,7 +285,7 @@ pub unsafe fn get_suites(
 /// # impl HostComms for MockComms {
 /// #     type Error = &'static str;
 /// #     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
-/// #     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
+/// #     fn poll_command(&mut self) -> PollResult<'_, Self::Error> { Ok(None) }
 /// #     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
 /// # }
 /// # struct MockProfiler;
@@ -208,10 +319,12 @@ pub unsafe fn handle_failure<
     context.cpu_utils.disable_interrupts_permanently();
 
     if comms_ok {
+        let task_run = report_task_panic(&mut context.comms, file, line);
         let suite = crate::server::CURRENT_SUITE.get();
         let test = crate::server::CURRENT_TEST.get();
 
-        if let (Some(suite_id), Some(test_id)) = (
+        if let (false, Some(suite_id), Some(test_id)) = (
+            task_run,
             suite.and_then(|s| u16::try_from(s).ok()),
             test.and_then(|t| u16::try_from(t).ok()),
         ) {
@@ -294,7 +407,7 @@ pub unsafe fn handle_failure<
 /// # impl HostComms for MockComms {
 /// #     type Error = &'static str;
 /// #     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
-/// #     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
+/// #     fn poll_command(&mut self) -> PollResult<'_, Self::Error> { Ok(None) }
 /// #     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
 /// # }
 /// # struct MockProfiler;
@@ -335,13 +448,39 @@ mod tests {
     use super::*;
     use crate::comms::{Command, HostComms, Telemetry, TestState};
     use crate::profiler::CPUProfiler;
+    use crate::server::{ACTIVE_TASK, TEARDOWN_STARTED};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static PANIC_SUITE: SuiteDescriptor = SuiteDescriptor {
+        name: "s",
+        description: "",
+        executables: &[],
+        settings: &[],
+    };
+
+    static PANIC_TASK: TaskDescriptor = TaskDescriptor {
+        suite: &PANIC_SUITE,
+        name: "l",
+        description: "",
+        input_type: "()",
+        output_type: "()",
+        setup: ok_hook,
+        step: pass_step,
+        reset: ok_hook,
+        teardown: count_teardown,
+        link_timeout_ms: 0,
+    };
+
+    static PANIC_TEARDOWNS: AtomicUsize = AtomicUsize::new(0);
+
+    type HookResult = Result<(), &'static str>;
 
     type PayloadsList = std::vec::Vec<std::vec::Vec<u8>>;
 
     pub struct HostCPUProfiler;
 
     struct MockComms {
-        commands: std::vec::Vec<Command>,
+        commands: std::vec::Vec<Command<'static>>,
         payloads: PayloadsList,
     }
 
@@ -371,7 +510,9 @@ mod tests {
         fn flush(&mut self) -> Result<(), Self::Error> {
             Ok(())
         }
-        fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+        fn poll_command(
+            &mut self,
+        ) -> Result<Option<Command<'static>>, Self::Error> {
             if self.commands.is_empty() {
                 Ok(None)
             } else {
@@ -428,6 +569,7 @@ mod tests {
 
     #[test]
     fn test_handle_failure_comms_disabled() {
+        let _guard = crate::server::test_lock::hold();
         let comms = MockComms {
             commands: std::vec![],
             payloads: std::vec![],
@@ -443,6 +585,7 @@ mod tests {
     #[test]
     fn test_handle_failure_comms_idle() {
         use crate::server::{CURRENT_SUITE, CURRENT_TEST};
+        let _guard = crate::server::test_lock::hold();
 
         CURRENT_SUITE.set_idle();
         CURRENT_TEST.set_idle();
@@ -474,6 +617,7 @@ mod tests {
     #[test]
     fn test_handle_failure_comms_active() {
         use crate::server::{CURRENT_SUITE, CURRENT_TEST};
+        let _guard = crate::server::test_lock::hold();
 
         CURRENT_SUITE.set_active(1);
         CURRENT_TEST.set_active(2);
@@ -510,6 +654,104 @@ mod tests {
                 line: 42
             }
         ));
+    }
+
+    fn count_teardown() -> HookResult {
+        PANIC_TEARDOWNS.fetch_add(1, Ordering::SeqCst);
+        std::vec![1].first().map_or(Err("unreachable"), |_| Ok(()))
+    }
+
+    fn ok_hook() -> HookResult {
+        std::vec![1].first().map_or(Err("unreachable"), |_| Ok(()))
+    }
+
+    fn pass_step(_: &mut crate::TaskIo<'_>) -> crate::TaskOutcome {
+        crate::TaskOutcome {
+            message: None,
+            status: crate::comms::TaskRunState::Pass,
+        }
+    }
+
+    fn fresh_comms() -> MockComms {
+        MockComms {
+            commands: std::vec![Command::TryReset],
+            payloads: std::vec![],
+        }
+    }
+
+    /// The telemetry frames `comms` received, as debug text.
+    fn frames_of(comms: &MockComms) -> std::vec::Vec<std::string::String> {
+        comms
+            .payloads
+            .iter()
+            .map(|p| postcard::from_bytes::<Telemetry<'_>>(p).unwrap())
+            .map(|t| std::format!("{t:?}"))
+            .collect()
+    }
+
+    /// Whether the frame at `index` contains every word in `words`.
+    fn frame_has(
+        frames: &[std::string::String],
+        index: usize,
+        words: &[&str],
+    ) -> bool {
+        frames
+            .get(index)
+            .is_some_and(|f| words.iter().all(|w| f.contains(w)))
+    }
+
+    #[test]
+    fn test_panic_teardown_runs_once() {
+        let _guard = crate::server::test_lock::hold();
+
+        // No active run: nothing is reported.
+        let mut comms = fresh_comms();
+        assert!(!report_task_panic(&mut comms, "f.rs", 7));
+        assert_eq!(comms.payloads.len(), 0);
+
+        // An active run: teardown runs once, then the report and the state.
+        crate::server::CURRENT_SUITE.set_active(0);
+        crate::server::CURRENT_TEST.set_active(1);
+        TEARDOWN_STARTED.store(false, Ordering::SeqCst);
+        ACTIVE_TASK.store(
+            core::ptr::from_ref(&PANIC_TASK).cast_mut(),
+            Ordering::SeqCst,
+        );
+        PANIC_TEARDOWNS.store(0, Ordering::SeqCst);
+
+        let mut comms = fresh_comms();
+        assert!(report_task_panic(&mut comms, "f.rs", 7));
+        assert_eq!(PANIC_TEARDOWNS.load(Ordering::SeqCst), 1);
+        let frames = frames_of(&comms);
+        assert!(frame_has(&frames, 0, &["TeardownReport", "ok: true"]));
+        assert!(frame_has(&frames, 1, &["TaskState", "Fail", "f.rs:7"]));
+
+        // A second panic, raised inside teardown, never re-enters it.
+        let mut comms = fresh_comms();
+        assert!(report_task_panic(&mut comms, "g.rs", 9));
+        assert_eq!(PANIC_TEARDOWNS.load(Ordering::SeqCst), 1);
+        assert!(frame_has(&frames_of(&comms), 0, &["ok: false"]));
+
+        // The full handler orders the reports before `TargetPanic` and sends
+        // no case state change.
+        TEARDOWN_STARTED.store(false, Ordering::SeqCst);
+        let mut context =
+            crate::server::Context::new(fresh_comms(), HostCPUProfiler);
+        let res =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                handle_failure(&mut context, "boom", "h.rs", 3, true);
+            }));
+        assert!(res.is_err());
+        let frames = frames_of(&context.comms);
+        assert_eq!(frames.len(), 3);
+        assert!(frame_has(&frames, 0, &["TeardownReport"]));
+        assert!(frame_has(&frames, 1, &["TaskState"]));
+        assert!(frame_has(&frames, 2, &["TargetPanic"]));
+        assert_eq!(PANIC_TEARDOWNS.load(Ordering::SeqCst), 2);
+
+        ACTIVE_TASK.store(core::ptr::null_mut(), Ordering::SeqCst);
+        crate::server::CURRENT_SUITE.set_idle();
+        crate::server::CURRENT_TEST.set_idle();
     }
 
     #[test]

@@ -14,12 +14,13 @@ pub use bridge::{BridgeMessage, ETSBridge, OwnedTelemetry};
 pub use error::HostError;
 pub use runner::{
     Completion, RunOptions, RunRecord, TestOutcome, run_headless_ets,
-    run_headless_ets_with_options,
+    run_headless_ets_with_options, run_headless_ets_with_tasks,
 };
 pub use session::{
-    SETTINGS_READY, SUITE_INFO_READY, SUITE_READY_MASK, SessionAction,
-    SessionPhase, SessionState, SettingItem, SuiteItem, TESTS_READY,
-    TargetInfo, TestIndex, TestItem,
+    DEFAULT_STOP_TIMEOUT, HEARTBEAT_PERIOD, SETTINGS_READY, SUITE_INFO_READY,
+    SUITE_READY_MASK, SessionAction, SessionPhase, SessionState, SettingItem,
+    SuiteItem, TESTS_READY, TargetInfo, TaskItem, TaskRunRecord, TaskStart,
+    TaskStartError, TestIndex, TestItem,
 };
 pub use target::{
     QemuArch, QemuTargetDetails, SubprocessTarget, Target, build_target_elf,
@@ -30,4 +31,5 @@ pub mod bridge;
 pub mod error;
 pub mod runner;
 pub mod session;
+pub mod sim;
 pub mod target;

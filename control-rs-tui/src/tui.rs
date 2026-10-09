@@ -25,11 +25,11 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
 
-use control_rs_ets::comms::{Command, TestState};
+use control_rs_ets::comms::{Command, TaskRunState, TestState};
 use control_rs_ets::settings::SettingValue;
 use control_rs_ets_host::{
     BridgeMessage, ETSBridge, HostError, OwnedTelemetry, SessionAction,
-    SessionState, SuiteItem, Target, TestIndex,
+    SessionState, SuiteItem, Target, TaskRunRecord, TaskStart, TestIndex,
 };
 
 /// How long the session may stay undiscovered before discovery is re-sent.
@@ -75,6 +75,27 @@ pub enum TableItem {
         /// Peak stack usage in bytes if completed.
         stack_peak: Option<u32>,
     },
+    /// The task of a lifecycle suite, listed beside the suite's cases.
+    Task {
+        /// Index of the suite in session state.
+        suite_idx: usize,
+        /// Name of the task.
+        name: String,
+        /// Whether this is the last row in the suite.
+        is_last: bool,
+        /// Latest run state, if a run was started.
+        state: Option<TaskRunState>,
+        /// Message of the latest state.
+        message: Option<String>,
+        /// Teardown outcome of the run, if reported.
+        teardown_ok: Option<bool>,
+        /// Steps called, once the run ended.
+        steps: Option<u64>,
+        /// Output packets per second since the run started.
+        out_per_s: u64,
+        /// Input packets per second since the run started.
+        in_per_s: u64,
+    },
     /// Suite setting row.
     Setting {
         /// Index of the suite in session state.
@@ -90,6 +111,16 @@ pub enum TableItem {
         /// Whether this is the last row in the suite.
         is_last: bool,
     },
+}
+
+/// One suite's rows: where it sits, how to filter it and its latest task run.
+struct SuiteRows<'a> {
+    collapsed: bool,
+    elapsed: Option<Duration>,
+    query: &'a str,
+    run: Option<&'a TaskRunRecord>,
+    s_idx: usize,
+    suite: &'a SuiteItem,
 }
 
 /// Presentation application state for the TUI dashboard.
@@ -120,6 +151,8 @@ pub struct AppState {
     pub setting_edit: String,
     /// Target process exit status, if observed.
     pub process_exit: Option<String>,
+    /// When the active or last task run was started from this console.
+    pub task_started: Option<Instant>,
 }
 
 impl AppState {
@@ -140,6 +173,7 @@ impl AppState {
             is_editing_setting: false,
             setting_edit: String::new(),
             process_exit: None,
+            task_started: None,
         };
         state.table_state.select(Some(0));
         state
@@ -148,6 +182,8 @@ impl AppState {
     /// Rebuilds the flattened list of visible rows based on suite collapse and search filters.
     pub fn rebuild_visible_items(&mut self) {
         let query = self.filter_query.to_lowercase();
+        let elapsed = self.task_started.map(|t| t.elapsed());
+        let run = self.session.task_run.as_ref();
         self.visible_items = self
             .session
             .suites
@@ -155,7 +191,15 @@ impl AppState {
             .enumerate()
             .flat_map(|(s_idx, suite)| {
                 let collapsed = self.collapsed_suites.contains(&s_idx);
-                suite_rows(s_idx, suite, &query, collapsed)
+                let run = run.filter(|r| usize::from(r.suite_id) == s_idx);
+                suite_rows_with_run(&SuiteRows {
+                    collapsed,
+                    elapsed,
+                    query: &query,
+                    run,
+                    s_idx,
+                    suite,
+                })
             })
             .collect();
 
@@ -230,11 +274,64 @@ impl AppState {
                 }
                 self.rebuild_visible_items();
             }
+            TableItem::Task { suite_idx, .. } => {
+                self.start_selected_task(suite_idx, bridge);
+            }
             TableItem::Setting { value, .. } => {
                 self.is_editing_setting = true;
                 self.setting_edit.clone_from(&value);
             }
         }
+    }
+
+    /// Starts the task of suite `suite_idx`. On an emulated target the run
+    /// is lockstep, because free-running is refused there.
+    fn start_selected_task(
+        &mut self,
+        suite_idx: usize,
+        bridge: Option<&mut ETSBridge>,
+    ) {
+        let Ok(suite_id) = u16::try_from(suite_idx) else {
+            self.logs.push(format!(
+                "> [HOST] suite {suite_idx} is outside the u16 id range"
+            ));
+            return;
+        };
+        let start = TaskStart {
+            suite_id,
+            max_steps: 0,
+            lockstep: self.session.subprocess_link,
+            duration: None,
+        };
+        match self.session.start_task(start, Instant::now()) {
+            Ok(action) => {
+                self.task_started = Some(Instant::now());
+                self.execute_logged(action, bridge);
+            }
+            Err(e) => self.logs.push(format!("> [HOST] {e}")),
+        }
+        self.rebuild_visible_items();
+    }
+
+    /// Requests the active task run to stop.
+    fn stop_active_task(&mut self, mut bridge: Option<&mut ETSBridge>) {
+        for action in self.session.stop_task(Instant::now()) {
+            self.execute_logged(action, bridge.as_deref_mut());
+        }
+        self.rebuild_visible_items();
+    }
+
+    /// Sends the session's time-driven actions: heartbeat, duration bound
+    /// and stop escalation.
+    fn tick_task(&mut self, mut bridge: Option<&mut ETSBridge>) {
+        let actions = self.session.tick(Instant::now());
+        if actions.is_empty() && !self.session.task_active() {
+            return;
+        }
+        for action in actions {
+            self.execute_logged(action, bridge.as_deref_mut());
+        }
+        self.rebuild_visible_items();
     }
 
     /// Executes a [`SessionAction`] returned by the session state machine.
@@ -250,6 +347,28 @@ impl AppState {
             SessionAction::Send(cmd) => {
                 if let Some(b) = bridge {
                     b.send_command(&cmd)?;
+                }
+                Ok(())
+            }
+            SessionAction::SendInput {
+                suite_id,
+                test_id,
+                seq,
+                payload,
+            } => {
+                if let Some(b) = bridge {
+                    b.send_command(&Command::TaskInput {
+                        suite_id,
+                        test_id,
+                        seq,
+                        payload: &payload,
+                    })?;
+                }
+                Ok(())
+            }
+            SessionAction::CloseLink => {
+                if let Some(b) = bridge {
+                    b.terminate();
                 }
                 Ok(())
             }
@@ -269,7 +388,7 @@ impl AppState {
     }
 
     /// Sends `cmd`, logging a transport failure to the log panel.
-    fn send_logged(&mut self, bridge: &mut ETSBridge, cmd: &Command) {
+    fn send_logged(&mut self, bridge: &mut ETSBridge, cmd: &Command<'_>) {
         if let Err(e) = bridge.send_command(cmd) {
             self.logs.push(format!("> [HOST] send failed: {e}"));
         }
@@ -365,6 +484,9 @@ impl AppState {
                 } = &t
                 {
                     self.logs.push(format!("> [{suite_id}] {payload}"));
+                }
+                if let Some(line) = task_log_line(&t) {
+                    self.logs.push(line);
                 }
                 let actions =
                     self.session.handle_message(BridgeMessage::Telemetry(t));
@@ -514,6 +636,7 @@ impl AppState {
                 }
                 self.rebuild_visible_items();
             }
+            KeyCode::Char('x') => self.stop_active_task(bridge),
             KeyCode::Char('c') => {
                 self.collapsed_suites.extend(0..self.session.suites.len());
                 self.rebuild_visible_items();
@@ -542,63 +665,140 @@ fn case_ids(suite_idx: usize, item_idx: usize) -> Option<TestIndex> {
 
 /// Visible rows for one suite: its header, then (unless collapsed) the
 /// tests matching `query` and every setting.
+#[cfg(test)]
 fn suite_rows(
     s_idx: usize,
     suite: &SuiteItem,
     query: &str,
     collapsed: bool,
 ) -> Vec<TableItem> {
+    suite_rows_with_run(&SuiteRows {
+        s_idx,
+        suite,
+        query,
+        collapsed,
+        run: None,
+        elapsed: None,
+    })
+}
+
+/// Visible rows of one suite, with its latest task run and the run's elapsed time.
+fn suite_rows_with_run(rows: &SuiteRows<'_>) -> Vec<TableItem> {
+    let (suite, query) = (rows.suite, rows.query);
     let suite_matches = suite.name.to_lowercase().contains(query);
+    let matches = |name: &str| {
+        query.is_empty() || suite_matches || name.to_lowercase().contains(query)
+    };
     let matching_tests: Vec<_> = suite
         .tests
         .iter()
         .enumerate()
-        .filter(|(_, t)| {
-            query.is_empty()
-                || suite_matches
-                || t.name.to_lowercase().contains(query)
-        })
+        .filter(|(_, t)| matches(&t.name))
         .collect();
-
-    if !query.is_empty() && !suite_matches && matching_tests.is_empty() {
+    let task_item = suite.task_item.as_ref().filter(|l| matches(&l.name));
+    if !query.is_empty()
+        && !suite_matches
+        && matching_tests.is_empty()
+        && task_item.is_none()
+    {
         return Vec::new();
     }
 
-    let mut rows = vec![TableItem::Suite {
-        suite_idx: s_idx,
+    let mut out = vec![TableItem::Suite {
+        suite_idx: rows.s_idx,
         name: suite.name.clone(),
-        collapsed,
+        collapsed: rows.collapsed,
     }];
-    if collapsed {
-        return rows;
+    if rows.collapsed {
+        return out;
     }
 
     let setting_count = suite.settings.len();
     let last_test = matching_tests.len().checked_sub(1);
     for (i, &(t_idx, test)) in matching_tests.iter().enumerate() {
-        rows.push(TableItem::Test {
-            suite_idx: s_idx,
+        out.push(TableItem::Test {
+            suite_idx: rows.s_idx,
             test_idx: t_idx,
             name: test.name.clone(),
-            is_last: Some(i) == last_test && setting_count == 0,
+            is_last: Some(i) == last_test
+                && setting_count == 0
+                && task_item.is_none(),
             state: test.state,
             cycles: test.cycles,
             time_us: test.time_us,
             stack_peak: test.stack_peak,
         });
     }
-    let last_setting = setting_count.checked_sub(1);
-    for (i, setting) in suite.settings.iter().enumerate() {
-        rows.push(TableItem::Setting {
+    if let Some(item) = task_item {
+        out.push(task_row(rows, item.name.clone(), setting_count == 0));
+    }
+    out.extend(setting_rows(rows.s_idx, suite));
+    out
+}
+
+/// The setting rows of a suite.
+fn setting_rows(s_idx: usize, suite: &SuiteItem) -> Vec<TableItem> {
+    let last_setting = suite.settings.len().checked_sub(1);
+    suite
+        .settings
+        .iter()
+        .enumerate()
+        .map(|(i, setting)| TableItem::Setting {
             suite_idx: s_idx,
             setting_idx: i,
             name: setting.name.clone(),
             description: setting.description.clone(),
             value: format_setting_value(setting.value),
             is_last: Some(i) == last_setting,
-        });
+        })
+        .collect()
+}
+
+/// The table row of a suite's task, from its latest run record.
+fn task_row(rows: &SuiteRows<'_>, name: String, is_last: bool) -> TableItem {
+    let per_s = |count: usize| {
+        let secs = rows.elapsed.map_or(0, |e| e.as_secs()).max(1);
+        u64::try_from(count)
+            .unwrap_or(u64::MAX)
+            .checked_div(secs)
+            .unwrap_or(0)
+    };
+    let run = rows.run;
+    let last = run.and_then(|r| r.states.last());
+    TableItem::Task {
+        suite_idx: rows.s_idx,
+        name,
+        is_last,
+        state: last.map(|s| s.0),
+        message: last.and_then(|s| s.1.clone()),
+        teardown_ok: run.and_then(|r| r.teardown.as_ref().map(|t| t.0)),
+        steps: run.and_then(|r| r.steps),
+        out_per_s: run.map_or(0, |r| per_s(r.outputs.len())),
+        in_per_s: run.map_or(0, |r| per_s(r.inputs.len())),
     }
-    rows
+}
+
+/// A console line for a task state, teardown report or statistics frame.
+fn task_log_line(t: &OwnedTelemetry) -> Option<String> {
+    match t {
+        OwnedTelemetry::TaskState { state, message, .. } => {
+            Some(message.as_ref().map_or_else(
+                || format!("> [LIFECYCLE] {state:?}"),
+                |m| format!("> [LIFECYCLE] {state:?}: {m}"),
+            ))
+        }
+        OwnedTelemetry::TeardownReport { ok, message, .. } => {
+            Some(message.as_ref().map_or_else(
+                || format!("> [LIFECYCLE] teardown ok={ok}"),
+                |m| format!("> [LIFECYCLE] teardown ok={ok}: {m}"),
+            ))
+        }
+        OwnedTelemetry::TaskStats { steps, time_us, .. } => Some(format!(
+            "> [LIFECYCLE] {steps} steps in {}",
+            format_duration(*time_us)
+        )),
+        _ => None,
+    }
 }
 
 /// Formats a large integer with comma thousand separators (for example, `1,204`).
@@ -794,6 +994,17 @@ fn table_row(item: &TableItem) -> Row<'_> {
             let name_cell = Cell::from(format!("  {branch} {name}"));
             Row::new(vec![name_cell, cycles_cell, time_cell, stack_cell])
         }
+        TableItem::Task { name, is_last, .. } => {
+            let branch = if *is_last { "└─" } else { "├─" };
+            let [state_cell, rate_cell, teardown_cell] = task_cells(item);
+            Row::new(vec![
+                Cell::from(format!("  {branch} LIFECYCLE {name}"))
+                    .style(Style::default().fg(Color::Blue)),
+                state_cell,
+                rate_cell,
+                teardown_cell,
+            ])
+        }
         TableItem::Setting {
             name,
             value,
@@ -810,6 +1021,53 @@ fn table_row(item: &TableItem) -> Row<'_> {
             ])
         }
     }
+}
+
+/// State, packet-rate and teardown cells for a task row.
+fn task_cells(item: &TableItem) -> [Cell<'static>; 3] {
+    let TableItem::Task {
+        state,
+        message,
+        teardown_ok,
+        steps,
+        out_per_s,
+        in_per_s,
+        ..
+    } = item
+    else {
+        return [Cell::from(""), Cell::from(""), Cell::from("")];
+    };
+    let state_cell = state.map_or_else(
+        || Cell::from("IDLE").style(Style::default().fg(Color::DarkGray)),
+        |s| {
+            let color = match s {
+                TaskRunState::Running => Color::Cyan,
+                TaskRunState::Warn => Color::Yellow,
+                TaskRunState::Pass | TaskRunState::Bounded => Color::Green,
+                _ => Color::Red,
+            };
+            let text = message
+                .as_ref()
+                .map_or_else(|| format!("{s:?}"), |m| format!("{s:?}: {m}"));
+            Cell::from(text).style(bold(color))
+        },
+    );
+    let rate_cell = match (steps, state) {
+        (Some(n), _) => Cell::from(format!("{n} steps")),
+        (None, Some(_)) => Cell::from(format!("o{out_per_s}/s i{in_per_s}/s")),
+        (None, None) => Cell::from(""),
+    };
+    let teardown_cell = teardown_ok.map_or_else(
+        || Cell::from(""),
+        |ok| {
+            if ok {
+                Cell::from("td ok").style(Style::default().fg(Color::Green))
+            } else {
+                Cell::from("td FAIL").style(bold(Color::Red))
+            }
+        },
+    );
+    [state_cell, rate_cell, teardown_cell]
 }
 
 /// Cycles, time and stack cells for a test row; empty for other rows.
@@ -910,6 +1168,8 @@ fn footer_line(state: &AppState) -> Line<'_> {
             Span::raw("top | "),
             Span::styled("(d)", bold(Color::Cyan)),
             Span::raw("escription | "),
+            Span::styled("(x)", bold(Color::Cyan)),
+            Span::raw(" stop lifecycle | "),
             Span::styled("(q)", bold(Color::Cyan)),
             Span::raw("uit"),
         ])
@@ -1003,6 +1263,7 @@ pub fn run_tui(mut bridge: ETSBridge, target: &Target) -> TuiResult {
         bridge.target_info().to_string(),
         bridge.link_info().to_string(),
     );
+    state.session.subprocess_link = matches!(target, Target::Subprocess(_));
     let run_res = event_loop(&mut terminal, &mut bridge, target, &mut state);
 
     bridge.terminate();
@@ -1062,6 +1323,7 @@ where
         terminal.draw(|f| draw_ui(f, state))?;
 
         let need_restart = state.drain_bridge(bridge);
+        state.tick_task(Some(bridge));
 
         if discovery_due(
             state.session.discovery_complete,
@@ -1094,6 +1356,7 @@ mod tests {
     use super::*;
     use control_rs_ets::comms::Telemetry;
     use control_rs_ets::settings::SettingValue;
+    use control_rs_ets_host::{SettingItem, TaskItem};
     use crossterm::event::KeyModifiers;
 
     #[cfg(unix)]
@@ -1212,6 +1475,14 @@ mod tests {
         core_clock_hz: 0,
         fpu_flags: 0,
     };
+
+    /// The bytes the target received through the fake link.
+    #[cfg(unix)]
+    type SharedBytes = std::sync::Mutex<Vec<u8>>;
+
+    /// The payload of one command frame.
+    #[cfg(unix)]
+    type Payload = Vec<u8>;
 
     fn make_test_event(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -1604,6 +1875,7 @@ mod tests {
             .map(|row| match row {
                 TableItem::Suite { name, .. }
                 | TableItem::Test { name, .. }
+                | TableItem::Task { name, .. }
                 | TableItem::Setting { name, .. } => name.clone(),
             })
             .collect()
@@ -1613,6 +1885,7 @@ mod tests {
         rows.iter()
             .filter_map(|row| match row {
                 TableItem::Test { is_last, .. }
+                | TableItem::Task { is_last, .. }
                 | TableItem::Setting { is_last, .. } => Some(*is_last),
                 TableItem::Suite { .. } => None,
             })
@@ -1855,5 +2128,333 @@ mod tests {
         let text = screen(&terminal);
         assert!(text.contains("Tests: 3 | Passed: 1 | Failed: 2"), "{text}");
         assert!(text.contains("TARGET: Board | LINK: Link"), "{text}");
+    }
+
+    /// Feeds the frames that discover one suite with a case and a task.
+    fn discover_lifecycle(state: &mut AppState) {
+        feed(
+            state,
+            &Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "motor",
+                description: "",
+                test_count: 1,
+                setting_count: 0,
+            },
+        );
+        feed(
+            state,
+            &Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "case_a",
+                description: "",
+            },
+        );
+        feed(
+            state,
+            &Telemetry::LifecycleSuite {
+                suite_id: 0,
+                task_count: 1,
+            },
+        );
+        feed(
+            state,
+            &Telemetry::TaskInfo {
+                suite_id: 0,
+                test_id: 1,
+                name: "speed",
+                description: "",
+                input_type: "f32",
+                output_type: "f32",
+            },
+        );
+        feed(state, &TARGET_INFO);
+        feed(state, &Telemetry::DiscoveryComplete);
+    }
+
+    /// Payloads of the command frames the target received through the fake link.
+    #[cfg(unix)]
+    fn sent_payloads(written: &SharedBytes) -> Vec<Payload> {
+        use control_rs_ets::comms::FrameReader;
+        let bytes = written.lock().unwrap().clone();
+        let mut reader = FrameReader::new();
+        let mut out = Vec::new();
+        for b in bytes {
+            if let Some(payload) = reader.handle_byte(b) {
+                out.push(payload.to_vec());
+            }
+        }
+        out
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn task_start_stop_keys() {
+        use control_rs_ets_host::FakeBridge;
+        // Postcard tags of `Command`: `RunExecutable` 1, `StartTask` 4, `StopNow` 5.
+        let tag = |p: &Vec<u8>| p.first().copied();
+        let FakeBridge {
+            mut bridge,
+            written,
+            ..
+        } = ETSBridge::fake(None);
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        discover_lifecycle(&mut state);
+        state.rebuild_visible_items();
+        assert_eq!(
+            row_names(&state.visible_items),
+            ["motor", "case_a", "speed"],
+            "the task is a row of its suite beside the case"
+        );
+
+        // Run all sends no StartTask.
+        let _ = state
+            .handle_key(make_test_event(KeyCode::Char('r')), Some(&mut bridge));
+        let sent = sent_payloads(&written);
+        assert!(!sent.iter().any(|p| tag(p) == Some(4)), "{sent:?}");
+
+        // Enter on the task row sends StartTask for (suite 0, task id 1).
+        state.table_state.select(Some(2));
+        let _ = state
+            .handle_key(make_test_event(KeyCode::Enter), Some(&mut bridge));
+        let sent = sent_payloads(&written);
+        assert!(
+            sent.iter()
+                .any(|p| tag(p) == Some(4) && p.get(1..3) == Some(&[0, 1][..])),
+            "{sent:?}"
+        );
+
+        // `x` sends StopNow for the same task.
+        feed(
+            &mut state,
+            &Telemetry::TaskState {
+                suite_id: 0,
+                test_id: 1,
+                state: TaskRunState::Running,
+                message: None,
+            },
+        );
+        let _ = state
+            .handle_key(make_test_event(KeyCode::Char('x')), Some(&mut bridge));
+        let sent = sent_payloads(&written);
+        assert!(
+            sent.iter()
+                .any(|p| tag(p) == Some(5) && p.get(1..3) == Some(&[0, 1][..])),
+            "{sent:?}"
+        );
+    }
+
+    #[test]
+    fn a_task_row_shows_state_teardown_and_statistics() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        discover_lifecycle(&mut state);
+        let _ = state
+            .session
+            .start_task(
+                TaskStart {
+                    suite_id: 0,
+                    max_steps: 0,
+                    lockstep: false,
+                    duration: None,
+                },
+                Instant::now(),
+            )
+            .unwrap();
+        for tel in [
+            Telemetry::TaskState {
+                suite_id: 0,
+                test_id: 1,
+                state: TaskRunState::Running,
+                message: None,
+            },
+            Telemetry::TeardownReport {
+                suite_id: 0,
+                test_id: 1,
+                ok: true,
+                message: None,
+            },
+            Telemetry::TaskStats {
+                suite_id: 0,
+                test_id: 1,
+                steps: 12,
+                time_us: 3,
+            },
+            Telemetry::TaskState {
+                suite_id: 0,
+                test_id: 1,
+                state: TaskRunState::Warn,
+                message: Some("careful"),
+            },
+        ] {
+            let _ = state
+                .handle_bridge_message(BridgeMessage::telemetry(&tel), None);
+        }
+        state.rebuild_visible_items();
+        let row = state
+            .visible_items
+            .iter()
+            .find(|r| matches!(r, TableItem::Task { .. }))
+            .unwrap();
+        assert!(matches!(
+            row,
+            TableItem::Task {
+                state: Some(TaskRunState::Warn),
+                teardown_ok: Some(true),
+                steps: Some(12),
+                message: Some(m),
+                ..
+            } if m == "careful"
+        ));
+        assert!(state.logs.iter().any(|l| l.contains("12 steps")));
+    }
+
+    /// The foreground color of `needle` in the screen row of the task.
+    fn task_text_color(
+        terminal: &Terminal<ratatui::backend::TestBackend>,
+        needle: &str,
+    ) -> Option<Color> {
+        let buffer = terminal.backend().buffer();
+        let want: Vec<String> = needle.chars().map(String::from).collect();
+        (0..buffer.area.height).find_map(|y| {
+            let cells: Vec<_> = (0..buffer.area.width)
+                .filter_map(|x| buffer.cell((x, y)))
+                .collect();
+            let row: String = cells.iter().map(|c| c.symbol()).collect();
+            if !row.contains("LIFECYCLE") {
+                return None;
+            }
+            cells
+                .windows(want.len())
+                .find(|w| w.iter().zip(&want).all(|(c, s)| c.symbol() == s))
+                .and_then(|w| w.first().map(|c| c.fg))
+        })
+    }
+
+    /// Draws the task row after the run reached `state`.
+    fn color_of_state(state: TaskRunState) -> Option<Color> {
+        let mut app = AppState::new("T".to_string(), "L".to_string());
+        discover_lifecycle(&mut app);
+        let start = TaskStart::single_step(0);
+        let _ = app.session.start_task(start, Instant::now()).unwrap();
+        for step in [TaskRunState::Running, state] {
+            feed(
+                &mut app,
+                &Telemetry::TaskState {
+                    suite_id: 0,
+                    test_id: 1,
+                    state: step,
+                    message: None,
+                },
+            );
+        }
+        app.rebuild_visible_items();
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(140, 30)).unwrap();
+        terminal.draw(|f| draw_ui(f, &mut app)).unwrap();
+        task_text_color(&terminal, &format!("{state:?}"))
+    }
+
+    #[test]
+    fn a_task_row_colors_its_state() {
+        let colors = [
+            (TaskRunState::Running, Color::Cyan),
+            (TaskRunState::Warn, Color::Yellow),
+            (TaskRunState::Pass, Color::Green),
+            (TaskRunState::Bounded, Color::Green),
+            (TaskRunState::Fail, Color::Red),
+        ];
+        for (state, color) in colors {
+            assert_eq!(color_of_state(state), Some(color), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn task_log_lines_report_state_and_teardown() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        let frames = [
+            Telemetry::TaskState {
+                suite_id: 0,
+                test_id: 1,
+                state: TaskRunState::Running,
+                message: None,
+            },
+            Telemetry::TaskState {
+                suite_id: 0,
+                test_id: 1,
+                state: TaskRunState::Warn,
+                message: Some("careful"),
+            },
+            Telemetry::TeardownReport {
+                suite_id: 0,
+                test_id: 1,
+                ok: true,
+                message: None,
+            },
+            Telemetry::TeardownReport {
+                suite_id: 0,
+                test_id: 1,
+                ok: false,
+                message: Some("boom"),
+            },
+        ];
+        for frame in &frames {
+            let _ = state
+                .handle_bridge_message(BridgeMessage::telemetry(frame), None);
+        }
+        assert_eq!(
+            state.logs,
+            [
+                "> [LIFECYCLE] Running",
+                "> [LIFECYCLE] Warn: careful",
+                "> [LIFECYCLE] teardown ok=true",
+                "> [LIFECYCLE] teardown ok=false: boom",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_task_row_closes_the_branch_only_without_settings() {
+        let mut suite = SuiteItem::new(0);
+        suite.name = "motor".to_string();
+        suite.task_item = Some(TaskItem {
+            test_id: 0,
+            name: "speed".to_string(),
+            description: String::new(),
+            input_type: "f32".to_string(),
+            output_type: "f32".to_string(),
+        });
+        assert_eq!(last_flags(&suite_rows(0, &suite, "", false)), [true]);
+
+        suite.settings.push(SettingItem {
+            setting_id: 0,
+            name: "gain".to_string(),
+            description: String::new(),
+            value: SettingValue::U8(1),
+        });
+        assert_eq!(
+            last_flags(&suite_rows(0, &suite, "", false)),
+            [false, true],
+            "the task row is not last when a setting follows"
+        );
+    }
+
+    #[test]
+    fn an_idle_tick_leaves_the_rows_alone_and_an_active_one_refreshes_them() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        discover_lifecycle(&mut state);
+        state.rebuild_visible_items();
+        assert_ne!(state.visible_items.len(), 0);
+
+        // No task runs and no action is due: nothing is rebuilt.
+        state.visible_items.clear();
+        state.tick_task(None);
+        assert_eq!(state.visible_items.len(), 0, "an idle tick rebuilds");
+
+        // A running task refreshes its rate on every tick.
+        let start = TaskStart::single_step(0);
+        let _ = state.session.start_task(start, Instant::now()).unwrap();
+        state.tick_task(None);
+        assert_ne!(state.visible_items.len(), 0, "an active tick refreshes");
     }
 }

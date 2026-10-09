@@ -1,6 +1,6 @@
 # Embedded Test Server (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_7,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -24,7 +24,9 @@ waiting for commands.
 
 - **FR-1 — Interactive Server Execution**: The target Server must run
   persistently as an idle loop, listening for host commands and executing tests
-  on command without restarting the device between test cases.
+  on command without restarting the device between test cases. A task
+  run (`lifecycle-suite-design.md`) is a second command-driven mode of the same
+  task.
 - **FR-2 — Distributed Test Discovery**: The system must automatically collect
   and register test cases across multiple modules via linker metadata without a
   centralized runtime registry.
@@ -33,7 +35,8 @@ waiting for commands.
   active transport interface.
 - **FR-4 — Crash Recovery**: On a test panic or hardware exception, the Server
   must capture diagnostic details (a "Firmware Black Box") and transmit them
-  before initiating system recovery.
+  before initiating system recovery. During a task run it first runs
+  that suite's teardown once (§4.4).
 - **FR-5 — Cooperative lockup recovery**: If a test stops responding, the target
   services a cooperative reset request from the host. Hardware watchdog
   recovery is out of scope (§6.3).
@@ -166,6 +169,19 @@ The Server's runner executes test suites in a non-preemptive executive loop.
 Once a test function is invoked, it retains total program control until
 finished.
 
+##### Task Runs
+
+`Command::StartTask` addresses a task by `(suite_id, test_id)`, like
+`RunExecutable` addresses a case, and hands control to a task run, which
+owns it until the run ends and then returns to the command task
+(`lifecycle-suite-design.md` §4.3). The run calls the task's setup once and its
+step repeatedly with interrupts enabled; the server regains control only at
+step boundaries, where it sends output, polls one command and checks the
+step bound and link deadline. Atomic cases keep their critical section and
+profiling unchanged. While a run is active the server rejects
+`RunExecutable`, `ListSuites`, a second `StartTask` and a `SetSetting` for
+another suite.
+
 ##### Vulnerability to Lockups
 
 If a test enters an infinite loop or blocks waiting for an interrupt that never
@@ -200,6 +216,15 @@ Before rebooting, the panic handler constructs a diagnostic payload:
 - Hardware interlock states.
 - System Handler Control and State Register to capture fault details.
 
+##### Task Teardown
+
+`handle_failure` checks the active-run indicator after masking interrupts. If
+a task run is active and its teardown has not started, it marks
+teardown as started, calls it and sends `TeardownReport`, then
+`TaskState(Fail)` and `TargetPanic`, and continues on the reset path below. A
+panic inside teardown is reported as `TeardownReport { ok: false }` without
+re-entry (`lifecycle-suite-design.md` §4.4).
+
 ##### Reset Path
 
 After sending the black box, the handler disables interrupts, polls for
@@ -220,6 +245,9 @@ stateDiagram-v2
     [*] --> Init: Power On / Reset
     Init --> Idle: Init Peripherals
     Idle --> Executing: Command (IRQs disabled)
+    Idle --> TaskRun: StartTask (IRQs enabled)
+    TaskRun --> Idle: teardown, TaskStats
+    TaskRun --> PanicHandler: Panic / Fault (teardown once)
     Executing --> Idle: Test Success
     Executing --> PanicHandler: Panic / Fault
     Executing --> [*]: Hang → host session timeout
@@ -419,6 +447,8 @@ statics, which are data.
 | 1.7      | September 9, 2026 | @MitchellDScott | Hardening pass: demoted status badge to Draft, rebuilt §6.4 traceability table (mapped FR-4/FR-5, eliminated phantom NFR-3), deferred watchdog to §6.7, removed TUI console from §9 Step 5, and standardized References. |
 | 1.8      | September 15, 2026 | @MitchellDScott | Locator-only §6.4; FR-5 is cooperative reset; NFR-1 and C-2 listed in 6.7 until measured. |
 | 1.9      | September 24, 2026 | @MitchellDScott | §6.3 cites `ci-design.md` C-6 (indicative emulation timing), renumbered from C-2 in its revision 1.26. No watchdog in diagrams or §4.4/§4.5 (reset is `SCB::sys_reset` after `TryReset`); §5.3 `linkme` decided (`no_std`, not adopted); Step 5 shipped as the `ets` gate; tooling crates `publish = false`; static-analyzer and `budget:` references removed. |
+| 1.10     | October 7, 2026 | @MitchellDScott | FR-1 and FR-4 extended for lifecycle suites (`lifecycle-suite-design.md` 1.2): §4.3 lifecycle-suite run mode and command rejection during a run, §4.4 panic-path teardown, §4.5 diagram. |
+| 1.11     | October 7, 2026 | @MitchellDScott | §4.3: tasks are addressed by `(suite_id, test_id)` like cases; a run also rejects `SetSetting` for another suite (`lifecycle-suite-design.md` 1.7). |
 
 ---
 

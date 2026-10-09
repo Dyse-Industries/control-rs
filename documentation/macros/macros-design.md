@@ -1,6 +1,6 @@
 # Procedural Macros for Distributed Test Discovery (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_7,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -35,11 +35,19 @@ automated discovery without a centralized registry.
   the `#[ets_suite]` module must be translated into a thread-safe atomic setting
   structure.
 - **FR-4 — Entrypoint & Setup Generation**: The `#[ets_setup]` macro must
-  generate the `main()` entrypoint, call the user's hardware init code and
-  instantiate the execution context.
+  generate the `main()` entrypoint, call the user's hardware init code,
+  instantiate the execution context and hand the server both the suite and
+  the task slices.
 - **FR-5 — Custom Panic Redirection**: The macro-generated entrypoint must
   register a custom panic handler that routes test panics through the host
   communications layer.
+- **FR-6 — Lifecycle Task Annotation**: Developers must declare a suite's
+  lifecycle task by marking one function each `#[setup]`, `#[step]`,
+  `#[reset]` and `#[teardown]` directly in the `#[ets_suite]` module, and the
+  macro must reject a partial or repeated set with an error naming the
+  missing or repeated markers; the macro registers
+  them as one untyped descriptor tied to the suite, wraps the typed step and
+  never registers them as cases (`../ets/lifecycle-suite-design.md` FR-1, C-9).
 
 #### 2.2 Non-Functional Requirements
 
@@ -210,7 +218,63 @@ function. It replaces the function with the primary entrypoint:
     }
     ```
    This prevents the target from locking up silently and ensures the host TUI
-   displays the failure.
+   displays the failure. `handle_failure` also runs an active task's
+   teardown once before the reset path (`../ets/lifecycle-suite-design.md` §4.4).
+4. **Suite Slices**: `ets_entrypoint!` declares `__ets_test_suites_start` and
+   `__ets_test_suites_end` and `__ets_tasks_start` and
+   `__ets_tasks_end`, converts them with `util::get_suites` and
+   `util::get_tasks`, and constructs the server as
+   `Server::new(context, suites).with_tasks(tasks)`.
+   `Server::new` keeps its signature (FR-4).
+
+#### 4.4. Task Markers in `#[ets_suite]`
+
+A suite provides one set of static settings, any number of cases and at most
+one task. The task is four functions marked `#[setup]`, `#[step]`, `#[reset]`
+and `#[teardown]` directly in the suite module; these markers do not collide
+with the crate-level `#[ets_setup]`. While walking the module's top-level
+items (§4.1), `#[ets_suite]`:
+
+1. Skips a marked function when registering cases and strips its marker.
+2. When any marker is present, requires all four exactly once, since
+   together they form the suite's single lifecycle task
+   (`../ets/lifecycle-suite-design.md` C-9). Violations are spanned `syn::Error`s,
+   never panics:
+
+   | Condition | Span | Message |
+   |:--|:--|:--|
+   | Some but not all of the four markers | The `#[ets_suite]` module name | ``suite `motor` defines a lifecycle task but is missing `#[reset]`, `#[teardown]` `` (every missing marker named) |
+   | A marker repeated | The second marked function | ``suite `motor` already has a `#[step]` function: `speed_task` `` |
+   | `#[setup]`, `#[reset]` or `#[teardown]` not `fn() -> Result<(), &'static str>` | The function signature | Expected signature, as text |
+   | `#[step]` not `fn(&TaskContext<'_, I>) -> TaskStatus<O>` | The function signature | Expected signature, as text |
+   | `link_timeout_ms` in `1..=499` | The argument | ``link_timeout_ms must be 0 or at least 500`` |
+
+3. Parses the optional `link_timeout_ms = N` argument of `#[step]`.
+4. Generates the step wrapper below.
+5. Emits a `TaskDescriptor` whose `suite` field is `&SUITE_DESCRIPTOR`, named
+   after the step function and described by its doc comment, and a
+   `&'static TaskDescriptor` pointer in `.ets_tasks` (`__DATA,__ets_tasks`
+   on Apple hosts) with `#[used]`, retained as in §4.2.
+
+Settings are the suite's statics (FR-3), shared by its cases and its task. A
+marker outside an `#[ets_suite]` module is an unknown attribute to rustc and
+fails to compile.
+
+The user step is typed:
+
+```rust
+#[step]
+fn step(ctx: &TaskContext<'_, I>) -> TaskStatus<O>
+```
+
+The macro reads `I` and `O` from the signature and emits a non-generic
+wrapper `fn(&mut TaskIo<'_>) -> TaskOutcome` that decodes the input with
+`postcard::from_bytes`, calls the user step, encodes the `O` of `Running` or
+`Warn` with `postcard::to_slice` and maps decode and overflow failures to
+`Error` with `input decode` and `output overflow`. It fills `input_type` and
+`output_type` with `core::any::type_name::<I>()` and `::<O>()`. The optional
+argument `link_timeout_ms = N` defaults to `0`; values in `1..=499` are a
+spanned compile error (`../ets/lifecycle-suite-design.md` §4.1, §4.5).
 
 ---
 
@@ -296,6 +360,10 @@ than by coverage of the generator; and `trybuild` fixtures, which are inputs.
 | Allocation freedom | Disassembly of a target build | Allocator symbols reachable from generated code | 0 |
 | Panic redirection | A deliberate panic on target | Path taken | The `#[ets_setup]` handler, not the default |
 | Settings translation | A suite declaring each supported setting type | Runtime type of each registered setting | Matches the declared Rust type |
+| Task descriptor | A suite with settings, two cases and each task marker once with typed `I`, `O` | Expanded items | Two cases registered; one descriptor in `.ets_tasks` pointing at the suite descriptor, named after the step, with the four functions and both type names |
+| Lifecycle task diagnostics | Each row of the §4.4 table, plus a marker outside `#[ets_suite]` | Compiler stderr | Spanned at the listed location; missing-marker errors name every missing marker; no panic text |
+| Step wrapper | Undecodable input and an oversize output | Wrapper result | `Error` with `input decode` and `output overflow` |
+| Entrypoint hand-off | Expanded `ets_entrypoint!` | Task-section symbols and server construction | Both symbol pairs declared; `with_tasks` called |
 
 #### 6.3 Limits
 
@@ -368,6 +436,7 @@ Steps 1–4 are implemented in `control-rs-macros/src/lib.rs`; discovery via
 | **Step 3: Linker Integration**                 | Write the `build.rs` layout injection code and build the `ets_suites.x` linker script file.                                      | Shipped         |
 | **Step 4: Panic Handler Codegen**              | Implement code generation for the custom bare-metal panic handler in `#[ets_setup]`.                                             | Shipped         |
 | **Step 5: Diagnostics & Ergonomics Hardening** | Migrate `#[ets_setup]` panics to spanned `syn::Error`s, audit the `extra-traits` feature, evaluate a per-test opt-out attribute. | 1.0 day         |
+| **Step 6: Tasks**                        | Task markers in `#[ets_suite]`, the typed step wrapper and the entrypoint hand-off (FR-4, FR-6; `../ets/lifecycle-suite-design.md` Phase 1).    | 1.5 days        |
 
 ---
 
@@ -384,6 +453,8 @@ Steps 1–4 are implemented in `control-rs-macros/src/lib.rs`; discovery via
 | 1.6      | September 9, 2026 | @MitchellDScott | Structural hardening: numbered §2 subsections 2.1-2.3, fixed cross-reference to ../ets/embedded-test-server-design.md, recorded #[analysis_budget] deferral in §6.7, standardized reference ordering. |
 | 1.7      | September 9, 2026 | @MitchellDScott | Dropped the author-year / `[n]` mapping table. |
 | 1.8      | September 24, 2026 | @MitchellDScott | `linkme` rejection rests on ownership and dependency cost: 0.3.37 is `no_std` and supports `target_os = "none"`; re-evaluation closed. `#[analysis_budget]` dropped with the withdrawn static-analyzer. |
+| 1.9      | October 7, 2026 | @MitchellDScott | Lifecycle suites (`../ets/lifecycle-suite-design.md` 1.2): FR-4 hands the server the lifecycle-suite slice, FR-6 `#[ets_suite]`; §4.3 item 4, §4.4 typed step wrapper, four §6.2 rows, Step 6. |
+| 1.10     | October 7, 2026 | @MitchellDScott | FR-6 and §4.4: tasks are declared inside `#[ets_suite]` modules, tied to the suite descriptor and using suite settings; a task marker outside `#[ets_suite]` is a compile error (`../ets/lifecycle-suite-design.md` 1.7); at most one task per suite; task markers sit directly in the suite module; FR-6 lifecycle task with a diagnostics table naming missing markers |
 
 ---
 

@@ -2,7 +2,7 @@
 //!
 //! | Macro | Generates |
 //! |:--|:--|
-//! | `#[ets_suite]` | Suite descriptor and case registration in `.ets_test_suites` |
+//! | `#[ets_suite]` | Suite descriptor and case registration in `.ets_test_suites`; a `#[setup]`, `#[step]`, `#[reset]`, `#[teardown]` lifecycle task in `.ets_tasks` |
 //! | `#[ets_setup]` | Target `main` that runs the server with the returned `Context` |
 //! | `ets_entrypoint!` | Target `main` for a given setup function |
 //! | `ets_panic!` | Panic handler that reports the failure to the host and resets |
@@ -17,8 +17,44 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Item, ItemFn, ItemMod, ItemStatic, parse_quote};
 
+/// Names of the lifecycle markers, in declaration order.
+const TASK_MARKERS: [&str; 4] = ["setup", "step", "reset", "teardown"];
+
+/// The three items generated for a task: step wrapper, descriptor, section pointer.
+type TaskItems = [Item; 3];
+
+/// The function identifier of each marker, in `TASK_MARKERS` order.
+type MarkerSlots = [Option<syn::Ident>; 4];
+
+/// Input and output packet types of a typed step.
+type PacketTypes = (syn::Type, syn::Type);
+
 /// Type alias for a test function's identifier and its description.
 type TestFnInfo = (syn::Ident, String);
+
+/// A lifecycle marker removed from a function: its slot and the attribute.
+type TakenMarker = (usize, syn::Attribute);
+
+/// The functions marked as the lifecycle task of a suite.
+#[derive(Default)]
+struct TaskFns {
+    /// Slots in `TASK_MARKERS` order.
+    idents: MarkerSlots,
+    /// Description of the task: the step function's doc comment.
+    doc: String,
+    /// Host link timeout from `#[step(link_timeout_ms = N)]`.
+    link_timeout_ms: u32,
+    /// Input and output packet types of the typed step.
+    packets: Option<PacketTypes>,
+}
+
+/// What `#[ets_suite]` collects from the items of a suite module.
+struct SuiteParts {
+    errors: Option<syn::Error>,
+    task_fns: TaskFns,
+    settings: Vec<syn::Ident>,
+    tests: Vec<TestFnInfo>,
+}
 
 /// Helper to extract doc comments from syn attributes, strip compiler-injected leading space,
 /// and truncate to a maximum of 160 characters (appending `...` if truncated).
@@ -124,6 +160,193 @@ fn process_test_fn(item_fn: &ItemFn) -> Option<TestFnInfo> {
     }
 }
 
+/// Removes the lifecycle marker from `item_fn` and returns its slot in
+/// `TASK_MARKERS` with the attribute.
+fn take_task_marker(item_fn: &mut ItemFn) -> Option<TakenMarker> {
+    let (slot, pos) =
+        item_fn.attrs.iter().enumerate().find_map(|(pos, a)| {
+            TASK_MARKERS
+                .iter()
+                .position(|m| a.path().is_ident(m))
+                .map(|slot| (slot, pos))
+        })?;
+    Some((slot, item_fn.attrs.remove(pos)))
+}
+
+/// Adds `error` to the combined diagnostics.
+fn push_error(errors: &mut Option<syn::Error>, error: syn::Error) {
+    match errors.as_mut() {
+        Some(all) => all.combine(error),
+        None => *errors = Some(error),
+    }
+}
+
+/// Normalizes a token stream for signature comparison.
+fn squash(tokens: &impl quote::ToTokens) -> String {
+    quote!(#tokens).to_string().replace(' ', "")
+}
+
+/// Checks `fn() -> Result<(), &'static str>`.
+fn check_result_signature(item_fn: &ItemFn) -> syn::Result<()> {
+    let ret = match &item_fn.sig.output {
+        syn::ReturnType::Type(_, ty) => squash(ty),
+        syn::ReturnType::Default => String::new(),
+    };
+    if item_fn.sig.inputs.is_empty() && ret == "Result<(),&'staticstr>" {
+        Ok(())
+    } else {
+        Err(syn::Error::new_spanned(
+            &item_fn.sig,
+            "expected `fn() -> Result<(), &'static str>`",
+        ))
+    }
+}
+
+/// The last type argument of the last path segment named `name`.
+fn last_type_arg(ty: &syn::Type, name: &str) -> Option<syn::Type> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if segment.ident != name {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    args.args.iter().rev().find_map(|a| match a {
+        syn::GenericArgument::Type(t) => Some(t.clone()),
+        _ => None,
+    })
+}
+
+/// Checks `fn(&TaskContext<'_, I>) -> TaskStatus<O>` and returns `(I, O)`.
+fn check_step_signature(item_fn: &ItemFn) -> syn::Result<PacketTypes> {
+    let error = || {
+        syn::Error::new_spanned(
+            &item_fn.sig,
+            "expected `fn(&TaskContext<'_, I>) -> TaskStatus<O>`",
+        )
+    };
+    let mut inputs = item_fn.sig.inputs.iter();
+    let (Some(syn::FnArg::Typed(arg)), None) = (inputs.next(), inputs.next())
+    else {
+        return Err(error());
+    };
+    let syn::Type::Reference(reference) = arg.ty.as_ref() else {
+        return Err(error());
+    };
+    let input =
+        last_type_arg(&reference.elem, "TaskContext").ok_or_else(error)?;
+    let syn::ReturnType::Type(_, ret) = &item_fn.sig.output else {
+        return Err(error());
+    };
+    let output = last_type_arg(ret, "TaskStatus").ok_or_else(error)?;
+    Ok((input, output))
+}
+
+/// Parses the arguments of `#[step]`: only `link_timeout_ms = N`, with `N`
+/// zero or at least 500.
+fn parse_step_args(attr: &syn::Attribute) -> syn::Result<u32> {
+    let syn::Meta::List(list) = &attr.meta else {
+        return Ok(0);
+    };
+    let assign: syn::MetaNameValue = list.parse_args()?;
+    let literal = match &assign.value {
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(int),
+            ..
+        }) if assign.path.is_ident("link_timeout_ms") => int,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                &assign,
+                "expected `link_timeout_ms = N`",
+            ));
+        }
+    };
+    let value: u32 = literal.base10_parse()?;
+    if (1..500).contains(&value) {
+        return Err(syn::Error::new_spanned(
+            literal,
+            "link_timeout_ms must be 0 or at least 500",
+        ));
+    }
+    Ok(value)
+}
+
+/// Records a marked function in `task_fns`, or fails on a repeat or a
+/// malformed signature.
+fn record_task_fn(
+    task_fns: &mut TaskFns,
+    suite_name: &str,
+    (slot, attr): &TakenMarker,
+    item_fn: &ItemFn,
+) -> syn::Result<()> {
+    let slot = *slot;
+    let marker = TASK_MARKERS.get(slot).copied().unwrap_or("");
+    if let Some(first) = task_fns.idents.get(slot).and_then(Option::as_ref) {
+        return Err(syn::Error::new_spanned(
+            &item_fn.sig.ident,
+            format!(
+                "suite `{suite_name}` already has a `#[{marker}]` function: `{first}`"
+            ),
+        ));
+    }
+    if marker == "step" {
+        task_fns.packets = Some(check_step_signature(item_fn)?);
+        task_fns.link_timeout_ms = parse_step_args(attr)?;
+        task_fns.doc = extract_doc_string(&item_fn.attrs);
+    } else {
+        check_result_signature(item_fn)?;
+    }
+    if let Some(entry) = task_fns.idents.get_mut(slot) {
+        *entry = Some(item_fn.sig.ident.clone());
+    }
+    Ok(())
+}
+
+/// Generates the task step wrapper, descriptor and section pointer.
+fn generate_task_descriptors(task_fns: &TaskFns) -> Option<TaskItems> {
+    let [Some(setup), Some(step), Some(reset), Some(teardown)] =
+        &task_fns.idents
+    else {
+        return None;
+    };
+    let (input, output) = task_fns.packets.as_ref()?;
+    let doc = &task_fns.doc;
+    let timeout = task_fns.link_timeout_ms;
+    Some([
+        parse_quote! {
+            fn __ets_task_step(
+                io: &mut ::control_rs_ets::TaskIo<'_>,
+            ) -> ::control_rs_ets::TaskOutcome {
+                ::control_rs_ets::task_step::<#input, #output>(io, #step)
+            }
+        },
+        parse_quote! {
+            static TASK_DESCRIPTOR: ::control_rs_ets::TaskDescriptor = ::control_rs_ets::TaskDescriptor {
+                suite: &SUITE_DESCRIPTOR,
+                name: stringify!(#step),
+                description: #doc,
+                input_type: stringify!(#input),
+                output_type: stringify!(#output),
+                setup: #setup,
+                step: __ets_task_step,
+                reset: #reset,
+                teardown: #teardown,
+                link_timeout_ms: #timeout,
+            };
+        },
+        parse_quote! {
+            /// Pointer to the task descriptor, linked into the lifecycle task section.
+            #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__ets_tasks"))]
+            #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".ets_tasks"))]
+            #[used]
+            pub static TASK_DESCRIPTOR_PTR: &::control_rs_ets::TaskDescriptor = &TASK_DESCRIPTOR;
+        },
+    ])
+}
+
 /// Generates the static descriptor items to append to the module.
 fn generate_suite_descriptors(
     suite_name: &str,
@@ -176,6 +399,92 @@ fn generate_suite_descriptors(
     ]
 }
 
+/// Walks the module items: settings, cases and the lifecycle markers.
+fn collect_parts(suite_name: &str, items: &mut [Item]) -> SuiteParts {
+    let mut parts = SuiteParts {
+        errors: None,
+        task_fns: TaskFns::default(),
+        settings: Vec::new(),
+        tests: Vec::new(),
+    };
+    for inner_item in items {
+        match inner_item {
+            Item::Static(item_static) => {
+                if let Some(setting) = process_static_setting(item_static) {
+                    parts.settings.push(setting);
+                }
+            }
+            Item::Fn(item_fn) => {
+                if let Some(marker) = take_task_marker(item_fn) {
+                    if let Err(e) = record_task_fn(
+                        &mut parts.task_fns,
+                        suite_name,
+                        &marker,
+                        item_fn,
+                    ) {
+                        push_error(&mut parts.errors, e);
+                    }
+                } else if let Some(test) = process_test_fn(item_fn) {
+                    parts.tests.push(test);
+                }
+            }
+            _ => {}
+        }
+    }
+    parts
+}
+
+/// The error for a lifecycle task that lacks some of its four markers.
+fn missing_marker_error(
+    suite_name: &str,
+    task_fns: &TaskFns,
+) -> Option<syn::Error> {
+    let missing: Vec<String> = TASK_MARKERS
+        .iter()
+        .zip(&task_fns.idents)
+        .filter(|(_, ident)| ident.is_none())
+        .map(|(m, _)| format!("`#[{m}]`"))
+        .collect();
+    let any_marked = task_fns.idents.iter().any(Option::is_some);
+    (any_marked && !missing.is_empty()).then(|| {
+        syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!(
+                "suite `{suite_name}` defines a lifecycle task but is missing {}",
+                missing.join(", ")
+            ),
+        )
+    })
+}
+
+/// Appends the descriptors to the items of a suite module; returns the
+/// diagnostics for a malformed lifecycle task.
+fn expand_items(
+    suite_name: &str,
+    suite_doc: &str,
+    items: &mut Vec<Item>,
+) -> Option<syn::Error> {
+    let mut parts = collect_parts(suite_name, items);
+    if parts.errors.is_none()
+        && let Some(e) = missing_marker_error(suite_name, &parts.task_fns)
+    {
+        push_error(&mut parts.errors, e);
+    }
+
+    items.extend(generate_suite_descriptors(
+        suite_name,
+        suite_doc,
+        &parts.tests,
+        &parts.settings,
+    ));
+    if parts.errors.is_none()
+        && let Some(task_code) = generate_task_descriptors(&parts.task_fns)
+    {
+        items.extend(task_code);
+    }
+    parts.errors
+}
+
 /// Expand `#[ets_suite]` for an inline module.
 fn ets_suite_impl(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     let mut item_mod: ItemMod = match syn::parse2(item) {
@@ -192,37 +501,15 @@ fn ets_suite_impl(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     let suite_name = item_mod.ident.to_string();
     let suite_doc = extract_doc_string(&item_mod.attrs);
 
-    let mut tests = Vec::new();
-    let mut settings = Vec::new();
+    let errors = item_mod
+        .content
+        .as_mut()
+        .and_then(|(_, items)| expand_items(&suite_name, &suite_doc, items));
 
-    if let Some((_, ref mut items)) = item_mod.content {
-        for inner_item in items.iter_mut() {
-            match inner_item {
-                Item::Static(item_static) => {
-                    if let Some(setting) = process_static_setting(item_static) {
-                        settings.push(setting);
-                    }
-                }
-                Item::Fn(item_fn) => {
-                    if let Some(test) = process_test_fn(item_fn) {
-                        tests.push(test);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let suite_desc_code = generate_suite_descriptors(
-            &suite_name,
-            &suite_doc,
-            &tests,
-            &settings,
-        );
-        items.extend(suite_desc_code);
-    }
-
+    let compile_errors = errors.map(|e| e.to_compile_error());
     quote! {
         #item_mod
+        #compile_errors
     }
 }
 
@@ -316,6 +603,8 @@ fn ets_entrypoint_impl(
         unsafe extern "Rust" {
             static __ets_test_suites_start: u8;
             static __ets_test_suites_end: u8;
+            static __ets_tasks_start: u8;
+            static __ets_tasks_end: u8;
         }
 
         // ==================== Unified Entry Point ====================
@@ -332,8 +621,16 @@ fn ets_entrypoint_impl(
 
             let suites = unsafe { ::control_rs_ets::util::get_suites(start, end) };
 
+            let tasks_start = unsafe {
+                &__ets_tasks_start as *const u8 as *const &::control_rs_ets::TaskDescriptor
+            };
+            let tasks_end = unsafe {
+                &__ets_tasks_end as *const u8 as *const &::control_rs_ets::TaskDescriptor
+            };
+            let tasks = unsafe { ::control_rs_ets::util::get_tasks(tasks_start, tasks_end) };
+
             let context = #setup_name();
-            let mut server = ::control_rs_ets::Server::new(context, suites);
+            let mut server = ::control_rs_ets::Server::new(context, suites).with_tasks(tasks);
             ETS_SERVER.store(&mut server as *mut _, ::core::sync::atomic::Ordering::Release);
 
             let _ = server.run();
@@ -693,5 +990,228 @@ mod tests {
             fn setup() {}
         });
         assert!(no_ret.to_string().contains("compile_error"));
+    }
+
+    /// The expansion of `suite` as a whitespace-free string.
+    fn expand(suite: proc_macro2::TokenStream) -> String {
+        ets_suite_impl(suite).to_string().replace(' ', "")
+    }
+
+    #[test]
+    fn task_expands_descriptor() {
+        let out = expand(quote::quote! {
+            /// Motor suite.
+            mod motor {
+                static KP: u32 = 5;
+                fn case_a() {}
+                fn case_b() {}
+                #[setup]
+                fn setup() -> Result<(), &'static str> { Ok(()) }
+                /// Speed task.
+                #[step(link_timeout_ms = 1000)]
+                fn speed_task(ctx: &TaskContext<'_, f32>) -> TaskStatus<u8> { todo!() }
+                #[reset]
+                fn reset() -> Result<(), &'static str> { Ok(()) }
+                #[teardown]
+                fn teardown() -> Result<(), &'static str> { Ok(()) }
+            }
+        });
+        assert_eq!(out.matches("ExecDescriptor{").count(), 2);
+        assert!(out.contains("TaskDescriptor{suite:&SUITE_DESCRIPTOR"));
+        assert!(out.contains("name:stringify!(speed_task)"));
+        assert!(out.contains("description:\"Speedtask.\""));
+        assert!(out.contains("input_type:stringify!(f32)"));
+        assert!(out.contains("output_type:stringify!(u8)"));
+        assert!(out.contains(
+            "setup:setup,step:__ets_task_step,reset:reset,teardown:teardown"
+        ));
+        assert!(out.contains("link_timeout_ms:1000u32"));
+        assert!(out.contains("task_step::<f32,u8>(io,speed_task)"));
+        assert!(out.contains("link_section=\".ets_tasks\""));
+        assert!(!out.contains("compile_error"));
+
+        let entry = ets_entrypoint_impl(quote::quote!(setup))
+            .to_string()
+            .replace(' ', "");
+        assert!(entry.contains(".with_tasks(tasks)"));
+
+        let suite_only = expand(quote::quote! {
+            mod plain { fn case_a() {} }
+        });
+        assert!(!suite_only.contains("TaskDescriptor"));
+    }
+
+    #[test]
+    fn task_diagnostics_name_the_defect() {
+        let missing = expand(quote::quote! {
+            mod motor {
+                #[setup]
+                fn setup() -> Result<(), &'static str> { Ok(()) }
+                #[step]
+                fn s(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> { todo!() }
+            }
+        });
+        assert!(missing.contains(
+            "suite`motor`definesalifecycletaskbutismissing`#[reset]`,`#[teardown]`"
+        ));
+
+        let bad_setup = expand(quote::quote! {
+            mod motor {
+                #[setup]
+                fn setup() -> u8 { 0 }
+                #[step]
+                fn s(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> { todo!() }
+                #[reset]
+                fn reset() -> Result<(), &'static str> { Ok(()) }
+                #[teardown]
+                fn teardown() -> Result<(), &'static str> { Ok(()) }
+            }
+        });
+        assert!(bad_setup.contains("expected`fn()->Result<(),&'staticstr>`"));
+
+        let bad_step = expand(quote::quote! {
+            mod motor {
+                #[setup]
+                fn setup() -> Result<(), &'static str> { Ok(()) }
+                #[step]
+                fn s() {}
+                #[reset]
+                fn reset() -> Result<(), &'static str> { Ok(()) }
+                #[teardown]
+                fn teardown() -> Result<(), &'static str> { Ok(()) }
+            }
+        });
+        assert!(
+            bad_step
+                .contains("expected`fn(&TaskContext<'_,I>)->TaskStatus<O>`")
+        );
+
+        let bad_timeout = expand(quote::quote! {
+            mod motor {
+                #[setup]
+                fn setup() -> Result<(), &'static str> { Ok(()) }
+                #[step(link_timeout_ms = 499)]
+                fn s(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> { todo!() }
+                #[reset]
+                fn reset() -> Result<(), &'static str> { Ok(()) }
+                #[teardown]
+                fn teardown() -> Result<(), &'static str> { Ok(()) }
+            }
+        });
+        assert!(bad_timeout.contains("link_timeout_msmustbe0oratleast500"));
+    }
+
+    #[test]
+    fn task_diagnostics_unknown_arg() {
+        let unknown_arg = expand(quote::quote! {
+            mod motor {
+                #[setup]
+                fn setup() -> Result<(), &'static str> { Ok(()) }
+                #[step(timeout = 600)]
+                fn s(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> { todo!() }
+                #[reset]
+                fn reset() -> Result<(), &'static str> { Ok(()) }
+                #[teardown]
+                fn teardown() -> Result<(), &'static str> { Ok(()) }
+            }
+        });
+        assert!(unknown_arg.contains("expected`link_timeout_ms=N`"));
+    }
+
+    #[test]
+    fn second_task_in_suite_rejected() {
+        for marker in ["setup", "step", "reset", "teardown"] {
+            let marker = quote::format_ident!("{}", marker);
+            let (sig_a, sig_b) = if marker == "step" {
+                (
+                    quote::quote!(
+                        fn first(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> {
+                            todo!()
+                        }
+                    ),
+                    quote::quote!(
+                        fn second(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> {
+                            todo!()
+                        }
+                    ),
+                )
+            } else {
+                (
+                    quote::quote!(
+                        fn first() -> Result<(), &'static str> {
+                            Ok(())
+                        }
+                    ),
+                    quote::quote!(
+                        fn second() -> Result<(), &'static str> {
+                            Ok(())
+                        }
+                    ),
+                )
+            };
+            let out = expand(quote::quote! {
+                mod motor {
+                    #[#marker] #sig_a
+                    #[#marker] #sig_b
+                }
+            });
+            assert!(
+                out.contains(&format!(
+                    "suite`motor`alreadyhasa`#[{marker}]`function:`first`"
+                )),
+                "{marker}: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn task_step_wrapper_output_overflow() {
+        use control_rs_ets::{TaskContext, TaskIo, TaskRunState, TaskStatus};
+        fn big(_: &TaskContext<'_, ()>) -> TaskStatus<u64> {
+            TaskStatus::Running(u64::MAX)
+        }
+        let mut out = [0u8; 4];
+        let mut io = TaskIo {
+            input: None,
+            input_seq: None,
+            output: &mut out,
+            output_len: 0,
+            step: 0,
+        };
+        let outcome = control_rs_ets::task_step::<(), u64>(&mut io, big);
+        assert_eq!(outcome.status, TaskRunState::Error);
+        assert_eq!(outcome.message, Some("output overflow"));
+        assert!(expand(quote::quote! {
+            mod m {
+                #[setup] fn a() -> Result<(), &'static str> { Ok(()) }
+                #[step] fn s(ctx: &TaskContext<'_, ()>) -> TaskStatus<u64> { todo!() }
+                #[reset] fn b() -> Result<(), &'static str> { Ok(()) }
+                #[teardown] fn c() -> Result<(), &'static str> { Ok(()) }
+            }
+        })
+        .contains("task_step::<(),u64>(io,s)"));
+    }
+
+    #[test]
+    fn task_step_wrapper_input_decode() {
+        use control_rs_ets::{TaskContext, TaskIo, TaskRunState, TaskStatus};
+        use core::sync::atomic::{AtomicBool, Ordering};
+        static CALLED: AtomicBool = AtomicBool::new(false);
+        fn spy(_: &TaskContext<'_, f32>) -> TaskStatus<()> {
+            CALLED.store(true, Ordering::SeqCst);
+            TaskStatus::Running(())
+        }
+        let mut out = [0u8; 4];
+        let mut io = TaskIo {
+            input: Some(&[]),
+            input_seq: Some(0),
+            output: &mut out,
+            output_len: 0,
+            step: 0,
+        };
+        let outcome = control_rs_ets::task_step::<f32, ()>(&mut io, spy);
+        assert_eq!(outcome.status, TaskRunState::Error);
+        assert_eq!(outcome.message, Some("input decode"));
+        assert!(!CALLED.load(Ordering::SeqCst));
     }
 }

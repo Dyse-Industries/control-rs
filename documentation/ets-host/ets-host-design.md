@@ -1,6 +1,6 @@
 # Host ETS Library (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_7,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -49,9 +49,9 @@ without vendoring this repository.
   telemetry across a sync-header, length-prefixed, CRC-checked frame, rejecting
   frames that fail integrity checks rather than surfacing partial payloads.
 
-- **FR-4 — Suite discovery and run queue**: Enumerate the suites and cases a
-  target registers, and drive a queue of run requests through to per-case
-  results.
+- **FR-4 — Suite discovery and run queue**: Enumerate the suites, cases and
+  tasks a target registers, and drive a queue of run requests through
+  to per-case results.
 
 - **FR-5 — Panic recovery**: Detect a target panic, tear down the link, reset
   the target, and re-establish discovery without losing already-collected
@@ -60,7 +60,9 @@ without vendoring this repository.
 - **FR-6 — Bounded headless run**: Expose a single entrypoint that runs a
   target to completion under a caller-supplied wall-clock timeout and returns a
   structured result. A run that exceeds the bound terminates the target and
-  reports the timeout.
+  reports the timeout. Tasks run only when the caller selects them,
+  for one step by default or for a caller-given step count or duration
+  (`../ets/lifecycle-suite-design.md` FR-12).
 
 - **FR-7 — Target ELF construction**: Build a target binary for a given triple
   and binary name so that a caller can go from source tree to running session
@@ -75,6 +77,16 @@ without vendoring this repository.
   name (arm, risc-v, …) builds and runs the QEMU example firmware, not a
   workspace-root `cargo run` for that triple. A documented shorthand that
   starts from `.` with no binary is not a session.
+
+- **FR-10 — Task run control**: Start and stop a task run, send
+  `Heartbeat` while it is active, escalate a stop that receives no final state
+  to `TryReset` and link teardown, and record the run's states, messages,
+  teardown outcome, packets and statistics
+  (`../ets/lifecycle-suite-design.md` FR-11).
+
+- **FR-11 — Task simulation hook**: Drive a task run from a host
+  simulation that produces input `0` and maps each output `k` to input
+  `k + 1` (`../ets/lifecycle-suite-design.md` FR-16).
 
 #### 2.2. Non-Functional Requirements
 
@@ -149,7 +161,8 @@ flowchart LR
 |:----------|:---------------------------------------------------------------------------------------------------------------------|
 | `target`  | `Target`, `SubprocessTarget`, `SerialTarget`, QEMU architecture descriptors, ELF path resolution, `build_target_elf` |
 | `bridge`  | `ETSBridge` construction, reader threads, `BridgeMessage` stream, `send_command`, `try_wait`, `terminate`            |
-| `session` | Discovery and run-queue state machine, panic detection, reset and reconnect sequence                                 |
+| `session` | Discovery and run-queue state machine, task run control, panic detection, reset and reconnect sequence         |
+| `sim`     | `TaskSim` trait, its byte-level erased form and input pacing (FR-11)                                                 |
 | `runner`  | `run_headless_ets(target, timeout) -> Result<RunRecord, HostError>`                                                  |
 
 `target`, `bridge`, and `session` are extracted from the existing
@@ -227,6 +240,28 @@ evidence of variant agreement only after this check passes.
 Discovery re-sends `ListSuites` every 500 ms until the target answers, so a
 target that boots slower than the host connects is not deadlocked.
 
+**Task runs (FR-10, FR-11).** Discovery records each suite's tasks as items
+of that suite, after its cases, keyed by `(suite_id, test_id)`. `LifecycleSuite`
+marks the suite as expecting a task, and the suite stays incomplete until its
+`TaskInfo` has arrived, so a lost frame triggers the same retry as a lost
+`TestInfo`. A run is one `StartTask` (`max_steps`,
+`lockstep`) and ends at the target's final `TaskState`. While it is active the
+session sends `Heartbeat` every `HEARTBEAT_PERIOD = 100 ms`. A `StopNow` with
+no final state within `stop_timeout` (default 2 s) is followed by `TryReset`
+and link teardown, then the reset path of steps 3 and 4. With a `TaskSim`
+attached, the session sends `TaskInput { seq: 0 }` from `initial()` after
+`StartTask` and `TaskInput { seq: k + 1 }` from `advance(k, output)` for each
+`TaskSample { seq: k }`; it warns once when the simulation's type names differ
+from `TaskInfo.input_type` or `output_type`. Without a simulation it
+sends no input. The headless runner starts no task unless the caller
+selects it (`RunOptions.tasks`, empty by default), so the `control-rs-ci`
+`ets` gate runs none, and it starts lockstep runs only with a simulation. On
+a subprocess (QEMU) target the session refuses `StartTask` with
+`lockstep = false` with `HostError::FreeRunningOnEmulator` and writes no
+frame (`../ets/lifecycle-suite-design.md` C-8). The session is the single writer
+of command frames, so `Heartbeat`, `TaskInput` and control commands never
+interleave bytes on the link.
+
 Resets are bounded via `RunOptions.max_resets` (defaulting to 3). Exhausting the
 budget ends the session at step 5 with the results collected so far. Without a bound,
 a target that panics on every case reproduces the panic until the wall clock expires.
@@ -245,6 +280,7 @@ points the existing implementation already surfaces as strings:
 | `Spawn { source }` | The subprocess transport cannot be spawned, or its pipes cannot be taken |
 | `Transport { source }` | A read or write on an established link fails |
 | `ProtocolMismatch { host, target }` | `TargetInfo.protocol_version` differs from the host's `PROTOCOL_VERSION`, or discovery completes without `TargetInfo` (`target = 0`) |
+| `FreeRunningOnEmulator { suite_id, test_id }` | `StartTask` with `lockstep = false` is requested on a subprocess (QEMU) target (`../ets/lifecycle-suite-design.md` C-8) |
 | `Discovery` | Reserved; a session that never completes discovery currently returns `Ok` with `abort: Some(Completion::TimedOut)` |
 
 Serial opening retries 5 times at 1 s intervals before returning
@@ -291,6 +327,11 @@ exit returns `Ok` with `abort: Some(Completion::SendFailed)`,
 results collected so far. `Err(HostError)` is reserved for failures that prevent
 a session from producing results at all (build, spawn, serial open).
 
+`RunRecord` gains `tasks: Vec<TaskRunRecord>`, one per task run, with
+the suite and task names, final `TaskRunState`, every state message, the teardown
+`ok` and message, input and output counts, `steps` and `time_us`. This is an
+additive change to public API under the rule above.
+
 `RunRecord` carries no pass/fail verdict. Whether a run with failures, a
 timeout, or an exhausted reset budget constitutes a CI failure is a policy
 decision belonging to the consumer, not to the transport library.
@@ -319,6 +360,8 @@ prevent a session from producing results at all, per §4.5.
 | `control-rs-ets-host/src/bridge.rs`  | Moved      | From `control-rs-xtask/src/bridge.rs`; positional argument grammar dropped   |
 | `control-rs-ets-host/src/session.rs` | New        | Discovery and run loop, from `tasks.rs`                                      |
 | `control-rs-ets-host/src/runner.rs`  | New        | `run_headless_ets` with parameterized timeout                                |
+| `control-rs-ets-host/src/session.rs` | Changed    | Task discovery, run control, heartbeat and stop escalation (FR-10)     |
+| `control-rs-ets-host/src/sim.rs`     | New        | `TaskSim` and input pacing (FR-11)                                           |
 | `control-rs-xtask`                   | Removed    | Superseded by this crate plus `control-rs-tui` and `control-rs-ci`           |
 
 ---
@@ -416,6 +459,13 @@ races, which are not deterministically reachable from a test; and the
 | Send failure | Broken transport on `ListSuites` | `RunRecord.abort` | `Some(Completion::SendFailed)`, results retained |
 | Dependency floor | `cargo tree` output | Terminal-rendering or terminal-event crates present | 0 |
 | Outcome completeness | `ets` gate over every declared QEMU target | Cases passed, pending, aborted | $\ge 1$ passed, 0 pending, no abort, per target |
+| Task heartbeat | Fake link during an active and an idle task run | `Heartbeat` frames per 100 ms | 1 while active, 0 while idle |
+| Stop escalation | Fake link that never sends a final `TaskState` after `StopNow` | Time to `TryReset` | `stop_timeout` plus at most one poll interval |
+| Task record | Fake link driving a run through every final state | Fields recorded in `TaskRunRecord` | Every state, message, teardown outcome, count and statistic sent |
+| Task discovery | Scripted discovery with a suite holding 2 cases and 1 task, then the same with the `TaskInfo` dropped | Items recorded and readiness | 3 items, the task at `test_id` 2; the dropped frame leaves the suite not ready and triggers a retry |
+| Task selection default | `run_headless_ets_with_options` with default `RunOptions` against a target with tasks | `StartTask` frames sent | 0 |
+| Emulator lockstep only | `StartTask` with `lockstep = false` on a subprocess target | Result and frames written | `HostError::FreeRunningOnEmulator`, 0 frames |
+| Simulation pacing | Test `TaskSim` over a fake lockstep link | `TaskInput.seq` sent after `TaskSample.seq = k` | Exactly `k + 1`; input `0` follows `StartTask` |
 
 Cycle, duration and stack-peak telemetry are passed through unmodified from the
 target, so this plan states no numeric bound on them; their accuracy is
@@ -477,6 +527,7 @@ established by `../ets/cpu-profiler-design.md`, not here.
 | **Phase 3: Headless entrypoint**          | Promote the headless loop to `run_headless_ets` with a caller-supplied timeout and structured result.         | 3                       |
 | **Phase 4: Consumer cutover**             | Point `control-rs-tui` and `control-rs-ci` at this crate; confirm the QEMU matrix reproduces current results. | 3                       |
 | **Phase 5: Shorthand, protocol, and send errors** | Repair: default QEMU shorthand to the example crate and its bins (FR-9); implement `PROTOCOL_VERSION` / `TargetInfo` (done, FR-8); surface send failures; always write ETS JSON; share command framing with the target; same default serial port for interactive and CI aliases; restore QEMU wall-clock headroom. Tests: 6.2 shorthand and protocol-mismatch rows; send-failure row. | 4 |
+| **Phase 6: Tasks**                   | Task discovery, run control, heartbeat, stop escalation, `TaskRunRecord` and `TaskSim` (FR-10, FR-11; `../ets/lifecycle-suite-design.md` Phase 3). | 4                       |
 
 ---
 
@@ -494,6 +545,9 @@ established by `../ets/cpu-profiler-design.md`, not here.
 | 1.7      | September 24, 2026 | @MitchellDScott | Phase 4 consumer cutover completed for `control-rs-ci`: the `ets` gate drives `run_headless_ets_with_options` and writes `ets-results.json` (per-target entries, §4.6); the §6.1 QEMU matrix step runs in CI instead of against the removed `control-rs-xtask`; §1, §6.1 back-to-back row, §6.2 outcome row and §8 Renode note no longer cite the removed crate or a Renode CI use. |
 | 1.8      | September 24, 2026 | @MitchellDScott | FR-8 implemented: `TargetInfo` first in discovery, `SessionState::target_info` / `protocol_mismatch`, runner returns `ProtocolMismatch`; §4.3, error table, §6.2 row and §8 updated. |
 | 1.9      | September 28, 2026 | @MitchellDScott | Testability seams without behavior change: reader loops and the `cargo build` command are free functions, and a Unix in-memory `ETSBridge` link (`fake-link` feature) backs runner tests; §6.1 rows added. |
+| 1.10     | October 7, 2026 | @MitchellDScott | Lifecycle suites (`../ets/lifecycle-suite-design.md` 1.2): FR-4 and FR-6 extended, FR-10 run control and FR-11 simulation hook added; `sim` module, §4.4 lifecycle-suite runs, `RunRecord.tasks`, four §6.2 rows, Phase 6. |
+| 1.11     | October 7, 2026 | @MitchellDScott | FR-6: lifecycle suites run only when selected (`RunOptions.tasks`, empty by default); §4.4 refuses free-running runs on subprocess targets (`HostError::FreeRunningOnEmulator`) and states the single command writer; two §6.2 rows (`../ets/lifecycle-suite-design.md` C-8). |
+| 1.12     | October 7, 2026 | @MitchellDScott | Tasks are items of their suite keyed by `(suite_id, test_id)`; `LifecycleSuite` holds the suite incomplete until its `TaskInfo` arrives; `FreeRunningOnEmulator` and `TaskRunRecord` carry the task identity; one §6.2 row (`../ets/lifecycle-suite-design.md` 1.7); one task per suite |
 
 ---
 

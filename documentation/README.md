@@ -44,6 +44,7 @@ Design documents, standards and planning for the `control-rs` workspace.
 | [`HostComms`](ets/host-comm-design.md) | Approved | `control-rs-ets/src/comms.rs` |
 | [`CPUProfiler`](ets/cpu-profiler-design.md) | Approved | `control-rs-ets/src/profiler.rs` |
 | [Exportable Test Suites](ets/test-suite-design.md) | Approved | `src/**/tests/` (`ets` feature) |
+| [Lifecycle Suites](ets/lifecycle-suite-design.md) | Draft | `control-rs-ets/src/server.rs` (planned) |
 
 ## macros
 
