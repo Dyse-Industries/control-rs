@@ -52,6 +52,9 @@ pub struct FailureBufWriter<'a> {
     pub pos: usize,
 }
 
+/// Panic-path teardown outcome: `(suite_id, test_id, ok, message)`.
+type PanicTeardown = (u16, u16, bool, Option<&'static str>);
+
 impl Write for FailureBufWriter<'_> {
     fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
         let bytes = s.as_bytes();
@@ -174,6 +177,43 @@ pub unsafe fn get_tasks(
     unsafe { ::core::slice::from_raw_parts(start, len) }
 }
 
+/// Runs the active task's teardown once on the panic path.
+///
+/// If a task run is active and teardown has not started, marks teardown as
+/// started and calls it. If teardown already started, that call is the one that
+/// panicked, so it is not re-entered and the outcome is reported as failed.
+/// Hardware safe-state work does not depend on the host link (FR-5).
+///
+/// # Returns
+/// * `Some((suite_id, test_id, ok, message))` when a lifecycle run was active.
+/// * `None` when no task run was active.
+fn panic_teardown_once() -> Option<PanicTeardown> {
+    use crate::server::{
+        ACTIVE_TASK, CURRENT_SUITE, CURRENT_TEST, TEARDOWN_STARTED,
+    };
+    use core::sync::atomic::Ordering;
+
+    let desc_ptr = ACTIVE_TASK.load(Ordering::Acquire);
+    if desc_ptr.is_null() {
+        return None;
+    }
+    let (Some(suite_id), Some(test_id)) = (
+        CURRENT_SUITE.get().and_then(|s| u16::try_from(s).ok()),
+        CURRENT_TEST.get().and_then(|t| u16::try_from(t).ok()),
+    ) else {
+        return None;
+    };
+
+    let teardown = if TEARDOWN_STARTED.swap(true, Ordering::AcqRel) {
+        Err("teardown panicked")
+    } else {
+        // SAFETY: `ACTIVE_TASK` is only stored from a `&'static TaskDescriptor`.
+        let desc = unsafe { &*desc_ptr };
+        (desc.teardown)()
+    };
+    Some((suite_id, test_id, teardown.is_ok(), teardown.err()))
+}
+
 /// Runs the active task's teardown on the panic path and reports it.
 ///
 /// If a task run is active, calls its teardown unless teardown already started,
@@ -194,34 +234,15 @@ pub fn report_task_panic<C: crate::comms::HostComms>(
     line: u32,
 ) -> bool {
     use crate::comms::{TaskRunState, Telemetry};
-    use crate::server::{
-        ACTIVE_TASK, CURRENT_SUITE, CURRENT_TEST, TEARDOWN_STARTED,
-    };
-    use core::sync::atomic::Ordering;
 
-    let desc_ptr = ACTIVE_TASK.load(Ordering::Acquire);
-    if desc_ptr.is_null() {
+    let Some((suite_id, test_id, ok, message)) = panic_teardown_once() else {
         return false;
-    }
-    let (Some(suite_id), Some(test_id)) = (
-        CURRENT_SUITE.get().and_then(|s| u16::try_from(s).ok()),
-        CURRENT_TEST.get().and_then(|t| u16::try_from(t).ok()),
-    ) else {
-        return false;
-    };
-
-    let teardown = if TEARDOWN_STARTED.swap(true, Ordering::AcqRel) {
-        Err("teardown panicked")
-    } else {
-        // SAFETY: `ACTIVE_TASK` is only stored from a `&'static TaskDescriptor`.
-        let desc = unsafe { &*desc_ptr };
-        (desc.teardown)()
     };
     let _ = comms.send_telemetry(&Telemetry::TeardownReport {
         suite_id,
         test_id,
-        ok: teardown.is_ok(),
-        message: teardown.err(),
+        ok,
+        message,
     });
 
     let mut buf = [0u8; 128];
@@ -245,8 +266,12 @@ pub fn report_task_panic<C: crate::comms::HostComms>(
 
 /// Target-agnostic logic for handling server failure or panics.
 ///
-/// Disables interrupts, broadcasts target panic and failure telemetry, polls for host reset permission,
-/// and executes target reset.
+/// Disables interrupts, runs the active lifecycle task's teardown once when a
+/// run is active (FR-5), then — when the host link is usable — broadcasts
+/// target panic and failure telemetry, polls for host reset permission, and
+/// executes target reset. Teardown always runs before the reset path, even
+/// when `comms_ok` is `false` (for example, `CommsLock` held by the faulting
+/// context), so actuators return to a safe state without depending on UART.
 ///
 /// # Generic Arguments
 /// * `C` - Host communication channel type implementing [`HostComms`](crate::comms::HostComms).
@@ -257,7 +282,8 @@ pub fn report_task_panic<C: crate::comms::HostComms>(
 /// * `msg` - The panic description or error message string.
 /// * `file` - Static filename where the failure occurred.
 /// * `line` - Source line number.
-/// * `comms_ok` - A boolean flag indicating if the communication link is functional.
+/// * `comms_ok` - Whether the host link may be used. When `false`, telemetry
+///   and the `TryReset` wait are skipped, but active-task teardown still runs.
 ///
 /// # Safety
 ///
@@ -269,6 +295,9 @@ pub fn report_task_panic<C: crate::comms::HostComms>(
 /// * A target reset is performed at the end of the function (diverging control flow).
 /// * The system's hardware configurations required to send telemetry (for example, UART clock) must remain stable until telemetry is sent.
 /// * The Host TUI is listening and capable of receiving the panic telemetry and responding to/sending the `TryReset` command if `comms_ok` is `true`.
+/// * When `comms_ok` is `false`, the caller must not have left hardware that
+///   teardown cannot safe-state without the link; teardown itself must not
+///   depend on interrupts or on `HostComms`.
 ///
 /// # Panics
 /// This function does not return, resetting the hardware CPU.
@@ -318,6 +347,9 @@ pub unsafe fn handle_failure<
 ) -> ! {
     context.cpu_utils.disable_interrupts_permanently();
 
+    // FR-5: safe-state teardown must not depend on acquiring the host link.
+    // When `comms_ok` is false (lock held or UART unusable), still run teardown
+    // before reset; only the telemetry and TryReset wait are skipped.
     if comms_ok {
         let task_run = report_task_panic(&mut context.comms, file, line);
         let suite = crate::server::CURRENT_SUITE.get();
@@ -363,6 +395,8 @@ pub unsafe fn handle_failure<
         }
 
         context.comms.close_on_failure();
+    } else {
+        let _ = panic_teardown_once();
     }
 
     context.cpu_utils.reset();
@@ -580,6 +614,50 @@ mod tests {
                 handle_failure(&mut context, "panic msg", "file.rs", 42, false);
             }));
         assert!(res.is_err());
+        assert!(
+            context.comms.payloads.is_empty(),
+            "comms_ok=false must not touch the host link"
+        );
+    }
+
+    #[test]
+    fn test_handle_failure_teardown_without_comms() {
+        let _guard = crate::server::test_lock::hold();
+
+        crate::server::CURRENT_SUITE.set_active(0);
+        crate::server::CURRENT_TEST.set_active(1);
+        TEARDOWN_STARTED.store(false, Ordering::SeqCst);
+        ACTIVE_TASK.store(
+            core::ptr::from_ref(&PANIC_TASK).cast_mut(),
+            Ordering::SeqCst,
+        );
+        PANIC_TEARDOWNS.store(0, Ordering::SeqCst);
+
+        let mut context =
+            crate::server::Context::new(fresh_comms(), HostCPUProfiler);
+        let res =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                handle_failure(&mut context, "boom", "task.rs", 9, false);
+            }));
+        assert!(res.is_err());
+        assert_eq!(
+            PANIC_TEARDOWNS.load(Ordering::SeqCst),
+            1,
+            "FR-5: active-task teardown must run when the link is unusable"
+        );
+        assert!(
+            context.comms.payloads.is_empty(),
+            "unusable link must skip telemetry"
+        );
+        assert!(
+            TEARDOWN_STARTED.load(Ordering::SeqCst),
+            "teardown-started must stay set so a later panic does not re-enter"
+        );
+
+        ACTIVE_TASK.store(core::ptr::null_mut(), Ordering::SeqCst);
+        crate::server::CURRENT_SUITE.set_idle();
+        crate::server::CURRENT_TEST.set_idle();
+        TEARDOWN_STARTED.store(false, Ordering::SeqCst);
     }
 
     #[test]
