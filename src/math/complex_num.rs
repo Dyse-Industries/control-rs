@@ -5,7 +5,9 @@
 
 use crate::math::{
     ArithmeticResult,
-    num_traits::{AdditiveGroup, Conjugate, Float, MulAcc, One, Scalar, Zero},
+    num_traits::{
+        AdditiveGroup, Conjugate, Float, MulAcc, One, Scalar, Signed, Zero,
+    },
     ops::{
         Add, Div, Mul, Neg, SaturatingAdd, SaturatingDiv, SaturatingMul,
         SaturatingNeg, SaturatingSub, Sub, TryAdd, TryDiv, TryMul, TrySub,
@@ -431,7 +433,10 @@ impl<T: AdditiveGroup + SaturatingAdd + SaturatingSub + SaturatingNeg>
 
 impl<T: MulAcc + Zero> MulAcc for Complex<T>
 where
-    T::Acc: SaturatingSub,
+    // `ac - bd` needs a signed accumulator: unsigned `Acc` saturates the
+    // subtract at zero and corrupts any chain whose real part dips below
+    // zero before a later term restores it.
+    T::Acc: SaturatingSub + Signed,
 {
     type Acc = Complex<T::Acc>;
 

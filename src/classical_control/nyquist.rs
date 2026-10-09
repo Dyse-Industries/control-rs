@@ -51,9 +51,11 @@ type ComplexSlice<T> = [Complex<T>];
 ///   denominator is zero. The contour closes last-to-first, which counts
 ///   the arc at infinity only for a proper `L`.
 /// - [`ClassicalError::Root`]: the open-loop poles cannot be computed.
-/// - [`ClassicalError::ContourThroughCriticalPoint`]: a sample satisfies
-///   `|1 + L| <= sqrt(eps) (1 + |L|)`, or `L` is non-finite (an open-loop
-///   pole lies on the indented contour).
+/// - [`ClassicalError::ContourThroughCriticalPoint`]: a sample or a segment
+///   between consecutive samples (including the last-to-first close)
+///   satisfies `|1 + L| <= sqrt(eps) (1 + |L|)` at the nearest point on that
+///   piece, or `L` is non-finite (an open-loop pole lies on the indented
+///   contour).
 pub fn nyquist_encirclements<
     T: Float + Copy,
     const N: usize,
@@ -112,6 +114,22 @@ where
             _ => return Err(ClassicalError::ContourThroughCriticalPoint),
         }
         *dst = l;
+    }
+    // Sample checks miss a plot that passes through `-1` between samples
+    // (for example `L = 1/s^2` on the negative real axis). Reject those
+    // segments with the same relative tolerance.
+    let first = contour.first().copied();
+    let closing = contour.last().copied().zip(first);
+    let hits = contour
+        .windows(2)
+        .filter_map(|w| match w {
+            [a, b] => Some((*a, *b)),
+            _ => None,
+        })
+        .chain(closing)
+        .any(|(a, b)| segment_near_critical(a, b, tol));
+    if hits {
+        return Err(ClassicalError::ContourThroughCriticalPoint);
     }
     let ccw = winding(contour);
     Ok(NyquistCount {
@@ -179,6 +197,54 @@ fn crossing<T: Float + Copy>(ar: T, ai: T, br: T, bi: T) -> i32 {
         (true, false) => -1,
         _ => 0,
     }
+}
+
+/// Whether the chord `a -> b` of `L` comes within the critical-point
+/// tolerance of `-1` (equivalently, whether `1 + L` comes that near the
+/// origin).
+fn segment_near_critical<T: Float + Copy>(
+    a: Complex<T>,
+    b: Complex<T>,
+    tol: T,
+) -> bool {
+    let ar = a.re.saturating_add(&T::ONE);
+    let ai = a.im;
+    let br = b.re.saturating_add(&T::ONE);
+    let bi = b.im;
+    let ab_r = br.saturating_sub(&ar);
+    let ab_i = bi.saturating_sub(&ai);
+    let ab2 = ab_r
+        .saturating_mul(&ab_r)
+        .saturating_add(&ab_i.saturating_mul(&ab_i));
+    let scale_a = T::ONE.saturating_add(&a.magnitude());
+    let scale_b = T::ONE.saturating_add(&b.magnitude());
+    let scale = if scale_b > scale_a { scale_b } else { scale_a };
+    let bound = tol.saturating_mul(&scale);
+    // Degenerate chord: distance is the endpoint magnitude (already checked
+    // at samples; keep the test so a zero-length NaN chord still rejects).
+    let (pr, pi) = if ab2 <= T::ZERO {
+        (ar, ai)
+    } else {
+        // `t = clamp(dot(-a, ab) / |ab|^2, 0, 1)` in `1 + L` coordinates.
+        let t_num = ar
+            .saturating_neg()
+            .saturating_mul(&ab_r)
+            .saturating_add(&ai.saturating_neg().saturating_mul(&ab_i));
+        let t = t_num.saturating_div(&ab2);
+        let t = if t < T::ZERO {
+            T::ZERO
+        } else if t > T::ONE {
+            T::ONE
+        } else {
+            t
+        };
+        (
+            ar.saturating_add(&ab_r.saturating_mul(&t)),
+            ai.saturating_add(&ab_i.saturating_mul(&t)),
+        )
+    };
+    let dist = Complex::new(pr, pi).magnitude();
+    !matches!(dist.partial_cmp(&bound), Some(core::cmp::Ordering::Greater))
 }
 
 #[cfg(test)]
@@ -305,6 +371,21 @@ mod tests {
         let expected = 1.0 / (r * (r + 1.0));
         assert!(((contour[1].re - expected) / expected).abs() < 1e-9);
         assert!(contour[1].im.abs() < 1e-9 * expected);
+    }
+
+    #[test]
+    fn contour_through_minus_one_between_samples() {
+        // L = 1/s^2 travels the negative real axis through -1 between the
+        // ω samples; sample-only checks would accept a wrong N = 1.
+        let sys = ArrayTransferFunction::<f64, 1, 3>::continuous(
+            [1.0],
+            [0.0, 0.0, 1.0],
+        );
+        let mut contour = [Complex::new(0.0, 0.0); SAMPLES];
+        assert_eq!(
+            nyquist_encirclements(&sys, 100.0, 1e-3, &mut contour),
+            Err(ClassicalError::ContourThroughCriticalPoint)
+        );
     }
 
     #[test]

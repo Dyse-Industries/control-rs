@@ -489,4 +489,24 @@ pub mod complex_num_test_suite {
         let abs_res = z1.abs();
         assert_almost_eq!(abs_res, 5.0);
     }
+
+    #[cfg_attr(test, test)]
+    /// Signed `Complex` `MulAcc` keeps a negative real intermediate
+    /// (`num-traits-design.md` FR-7). Unsigned component `Acc` types no
+    /// longer implement `MulAcc` for `Complex` (saturating subtract would
+    /// floor that intermediate at zero).
+    fn test_mul_acc_complex_negative_real_intermediate() {
+        use crate::math::num_traits::MulAcc;
+        // (50+0i) + (0+10i)*(0+10i) + (10+0i)*(10+0i) = 50 - 100 + 100 = 50
+        let z0 = Complex::<i16>::new(50, 0);
+        let j10 = Complex::<i16>::new(0, 10);
+        let ten = Complex::<i16>::new(10, 0);
+        let acc = Complex::<i16>::mac(
+            Complex::<i16>::mac(Complex::<i16>::to_acc(z0), j10, j10),
+            ten,
+            ten,
+        );
+        let got = Complex::<i16>::from_acc(acc);
+        assert_eq!(got, Complex::new(50, 0));
+    }
 }
