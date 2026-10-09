@@ -850,6 +850,21 @@ pub mod tests {
     }
 
     #[cfg_attr(test, test)]
+    /// A real pole with other real poles remaining takes a complex zero
+    /// pair when only one real zero is left, so the cascade matches the
+    /// source (FR-10).
+    fn real_pole_preserves_complex_zero_pair() {
+        // num = (z - 0.85)(z^2 - z + 0.5), den = (z - 0.9)(z - 0.5)(z - 0.2).
+        // Without the complex-zero preference the first real pole claimed
+        // 0.85 and left z2 unused, dropping 0.5 +/- 0.5j.
+        check_sections::<4, 2>(
+            &poly(&[0.85], &[(0.5f64.sqrt(), core::f64::consts::FRAC_PI_4)]),
+            &poly(&[0.9, 0.5, 0.2], &[]),
+        )
+        .unwrap();
+    }
+
+    #[cfg_attr(test, test)]
     /// A constant discrete TF keeps its gain in a single section (FR-10).
     fn constant_tf_section_holds_gain() {
         let tf =
@@ -1615,8 +1630,13 @@ fn pair_one<T: Float + Copy, const D: usize>(
         let z1 = take_zero(zeros, zero_is_real, p1);
         return ([z1, Zero::Used], [Some(p1), None]);
     }
+    // With exactly one real zero left (finite or at infinity), prefer a
+    // complex zero so a later real pole can claim that real zero. Applies
+    // for both complex and real `p1`: a real `p1` with other real poles
+    // remaining would otherwise take the last real zero and leave `z2`
+    // empty, silently dropping the complex zero pair.
     let real_zeros = zeros.iter().filter(|z| zero_is_real(**z)).count();
-    let z1 = if !is_real(p1) && real_zeros == 1 {
+    let z1 = if real_zeros == 1 {
         take_zero(zeros, |z| matches!(z, Zero::At(c) if !is_real(c)), p1)
     } else {
         take_zero(zeros, |_| true, p1)
