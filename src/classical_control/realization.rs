@@ -799,6 +799,20 @@ pub mod tests {
     }
 
     #[cfg_attr(test, test)]
+    /// `Fixed<i64, _>` endpoints remain in range when `delta/2` is below
+    /// `ulp(MAX.to_num())` so `MAX + delta/2` collapses in `f64` (FR-19).
+    fn quantize_i64_accepts_max() {
+        type Q = Fixed<i64, 30>;
+        let q = quantize::<i64, 30, 1>(&with_b0(Q::MAX.to_num())).unwrap();
+        assert_eq!(q[0].b0, Q::MAX);
+        let hi = f64::from_bits(Q::MAX.to_num().to_bits().saturating_add(1));
+        assert_eq!(
+            quantize::<i64, 30, 1>(&with_b0(hi)),
+            Err(ClassicalError::CoefficientRange { section: 0 })
+        );
+    }
+
+    #[cfg_attr(test, test)]
     /// The imaginary tolerance of `is_real` scales with `max(1, |z|)`.
     fn real_tolerance_scales_with_magnitude() {
         assert!(is_real(Complex::new(1000.0, 1e-6)));
@@ -1302,6 +1316,11 @@ pub fn all_stable<T: Scalar + SaturatingNeg + PartialOrd + Copy>(
 /// Quantizes floating-point section coefficients to `Fixed<Repr, SHIFT>`
 /// with round-to-nearest (FR-19).
 ///
+/// The accepted basin is `[MIN - Δ/2, MAX + Δ/2)`. When `Δ/2` is smaller
+/// than one `f64` ulp at `MAX` (every `Fixed<i64, _>` scale), the upper
+/// bound collapses and the endpoint `MAX` is accepted with a closed check
+/// so representable maxima are not rejected.
+///
 /// # Errors
 /// [`ClassicalError::CoefficientRange`] naming the first section with a
 /// coefficient that does not round into the representable range; no
@@ -1314,8 +1333,15 @@ where
     Fixed<Repr, SHIFT>: Scalar,
 {
     let half = Fixed::<Repr, SHIFT>::DELTA.to_num() / 2.0;
-    let lo = Fixed::<Repr, SHIFT>::MIN.to_num() - half;
-    let hi = Fixed::<Repr, SHIFT>::MAX.to_num() + half;
+    let min_f = Fixed::<Repr, SHIFT>::MIN.to_num();
+    let max_f = Fixed::<Repr, SHIFT>::MAX.to_num();
+    let lo = min_f - half;
+    let hi = max_f + half;
+    // When `half` is smaller than `ulp(max_f)` (every `Fixed<i64, _>`),
+    // `hi` collapses to `max_f` and an open upper bound would reject
+    // `MAX.to_num()`. Close the upper bound in that case so the endpoint
+    // stays representable (FR-19).
+    let upper_open = hi > max_f;
     let mut out = [SectionCoefficients {
         b0: Fixed::ZERO,
         b1: Fixed::ZERO,
@@ -1325,7 +1351,9 @@ where
     }; L];
     for ((dst, src), section) in out.iter_mut().zip(sections).zip(0usize..) {
         let all = [src.b0, src.b1, src.b2, src.a1, src.a2];
-        if !all.iter().all(|v| *v >= lo && *v < hi) {
+        let in_range =
+            |v: f64| v >= lo && if upper_open { v < hi } else { v <= max_f };
+        if !all.iter().copied().all(in_range) {
             return Err(ClassicalError::CoefficientRange { section });
         }
         let [b0, b1, b2, a1, a2] = all.map(Fixed::from_num);
