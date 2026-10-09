@@ -63,7 +63,7 @@ pub type TfResult<T, const N: usize, const D: usize> =
 pub enum ClassicalError {
     /// Root finding failed for a locus gain or a factorization (FR-1, FR-10).
     Root(RootError),
-    /// The Routh leading coefficient is zero (FR-2).
+    /// A required leading coefficient is zero (FR-2, FR-8).
     ZeroLeadingCoefficient,
     /// The Nyquist contour passes through -1 (FR-4).
     ContourThroughCriticalPoint,
@@ -91,7 +91,7 @@ impl fmt::Display for ClassicalError {
         match self {
             Self::Root(e) => write!(f, "root finding failed: {e}"),
             Self::ZeroLeadingCoefficient => {
-                write!(f, "Routh leading coefficient is zero")
+                write!(f, "leading coefficient is zero")
             }
             Self::ContourThroughCriticalPoint => {
                 write!(f, "Nyquist contour passes through -1")
