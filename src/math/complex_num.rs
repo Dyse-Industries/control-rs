@@ -31,15 +31,42 @@ pub struct Complex<T> {
 ////////////////////////////////////////////////////////////////////////////////
 
 impl<T> Complex<T> {
-    /// Returns the conjugate of the complex number.
+    /// Returns the complex conjugate of `self`.
     ///
-    /// The conjugate of `a + bi` is `a - bi`.
+    /// Maps `a + bi` to `a - bi`. Imaginary negation uses
+    /// [`SaturatingNeg`], so integer and fixed-point `im = MIN` saturates to
+    /// `MAX` instead of panicking (debug) or wrapping (release). This matches
+    /// [`Neg`] for [`Complex`] and the [`Conjugate`] impl. Method resolution
+    /// prefers this inherent method over [`Conjugate::conj`].
+    ///
+    /// # Generic Arguments
+    /// * `T` - Real/imaginary component type; must implement [`SaturatingNeg`].
+    ///
+    /// # Returns
+    /// `Complex { re, im: saturating_neg(im) }`.
+    ///
+    /// # Panics
+    /// Never.
+    ///
+    /// # Safety
+    /// This function does not use `unsafe` code.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::math::complex_num::Complex;
+    ///
+    /// assert_eq!(Complex::new(3i16, 4).conj(), Complex::new(3, -4));
+    /// assert_eq!(
+    ///     Complex::new(0i16, i16::MIN).conj(),
+    ///     Complex::new(0, i16::MAX)
+    /// );
+    /// ```
     #[must_use]
     pub fn conj(self) -> Self
     where
-        T: Neg<Output = T>,
+        T: SaturatingNeg,
     {
-        Self::new(self.re, self.im.neg())
+        Self::new(self.re, self.im.saturating_neg())
     }
 
     /// Creates a new complex number from real and imaginary parts.
