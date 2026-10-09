@@ -166,6 +166,11 @@ where
     }
     let omega = bisect::<T, N, D, B>(sys, a.0, b.0, im_sign);
     let l = sys.eval_frequency(omega);
+    // Both endpoints can lie in `Re L < 0` while the refined Im-zero root
+    // sits in `Re L >= 0`. FR-5 requires `Re L < 0` at that root.
+    if l.re.partial_cmp(&T::ZERO) != Some(core::cmp::Ordering::Less) {
+        return None;
+    }
     Some(PhaseCrossing {
         omega,
         gain_margin: T::ONE.saturating_div(&l.magnitude()),
@@ -352,5 +357,17 @@ mod tests {
         let dgc = dm_d.gain_crossings[0].unwrap();
         let expected = dgc.phase_margin_deg.to_radians() / dgc.omega / ts;
         assert!(((dgc.delay_margin - expected) / expected).abs() <= 1e-12);
+    }
+
+    #[test]
+    fn positive_real_im_crossing_is_not_phase_crossover() {
+        // Endpoints have `Re L < 0` and opposite `Im`. The refined Im-zero
+        // root is `L(j1) = 0.5`, on the positive real axis.
+        let sys = ArrayTransferFunction::<f64, 5, 5>::continuous(
+            [-1.0, 1.0, -2.5, 1.0, -1.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+        );
+        let m = stability_margins::<_, 5, 5, 2, 1, 40>(&sys, &[0.5, 1.5]);
+        assert!(m.phase_crossings[0].is_none());
     }
 }
