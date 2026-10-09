@@ -154,6 +154,12 @@ mod tests {
         advanced: Vec<u64>,
     }
 
+    /// A simulation whose input matches an `f32` task but whose output does not.
+    struct WrongOutput;
+
+    /// A simulation whose output matches an `f32` task but whose input does not.
+    struct WrongInput;
+
     /// A simulation whose packet types are `u8`.
     struct Bytes;
 
@@ -169,6 +175,32 @@ mod tests {
             self.advanced.push(k);
             self.x += u;
             self.x
+        }
+    }
+
+    impl TaskSim for WrongOutput {
+        type Input = f32;
+        type Output = u8;
+
+        fn initial(&mut self) -> f32 {
+            0.0
+        }
+
+        fn advance(&mut self, _: u64, o: u8) -> f32 {
+            f32::from(o)
+        }
+    }
+
+    impl TaskSim for WrongInput {
+        type Input = u8;
+        type Output = f32;
+
+        fn initial(&mut self) -> u8 {
+            0
+        }
+
+        fn advance(&mut self, _: u64, _: f32) -> u8 {
+            0
         }
     }
 
@@ -280,6 +312,18 @@ mod tests {
             [(0, pkt(1.0)), (1, pkt(0.5)), (2, pkt(0.25))],
             "inputs are recorded in send order"
         );
+    }
+
+    #[test]
+    fn a_mismatch_in_either_packet_type_warns() {
+        for sim in [erase(WrongOutput), erase(WrongInput)] {
+            let mut s = session_with(sim);
+            assert!(s.start_task(lockstep(), Instant::now()).is_ok());
+            assert_eq!(
+                s.logs.matches("Warning: simulation packet types").count(),
+                1
+            );
+        }
     }
 
     #[test]

@@ -1880,6 +1880,32 @@ mod tests {
     }
 
     #[test]
+    fn buffered_reader_keeps_a_frame_split_across_short_reads() {
+        let (wire, len) = wire_of(&[Command::StopNow {
+            suite_id: 1,
+            test_id: 2,
+        }]);
+        let half = len.checked_div(2).unwrap();
+        let head = wire.get(..half).unwrap();
+        let tail = wire.get(half..len).unwrap();
+        let mut chunks = [head, tail].into_iter();
+        let mut rx = BufferedFrameReader::<64>::new();
+        let mut next_chunk = |buf: &mut [u8]| {
+            let chunk = chunks.next().unwrap_or(&[]);
+            buf.get_mut(..chunk.len()).unwrap().copy_from_slice(chunk);
+            Ok::<_, ()>(chunk.len())
+        };
+        assert!(matches!(rx.poll(&mut next_chunk), Ok(None)));
+        assert!(matches!(
+            rx.poll(&mut next_chunk),
+            Ok(Some(Command::StopNow {
+                suite_id: 1,
+                test_id: 2
+            }))
+        ));
+    }
+
+    #[test]
     fn buffered_reader_drops_an_undecodable_frame_and_continues() {
         let mut wire = [0u8; 64];
         let bad =

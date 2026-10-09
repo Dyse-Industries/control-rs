@@ -845,6 +845,9 @@ where
     }
 
     /// Runs setup, the steps and teardown of a task until the run ends.
+    ///
+    /// After setup has been invoked, teardown always runs (FR-5), including
+    /// when a later transport error aborts the step loop.
     fn run_task(
         &mut self,
         desc: &'static TaskDescriptor,
@@ -859,20 +862,39 @@ where
         ACTIVE_TASK
             .store(core::ptr::from_ref(desc).cast_mut(), Ordering::Release);
 
-        let _ = self.context.send_telemetry_and_flush_locked(
+        if let Err(e) = self.context.send_telemetry_and_flush_locked(
             &Telemetry::TaskState {
                 suite_id: req.suite_id,
                 test_id: req.test_id,
                 state: TaskRunState::Running,
                 message: None,
             },
-        )?;
+        ) {
+            // Setup was not invoked; clear the active-run indicator and exit.
+            Self::clear_active_run();
+            return Err(e);
+        }
         if let Err(msg) = (desc.setup)() {
             run.verdict = Some((TaskRunState::Error, Some(msg)));
         }
 
-        self.run_steps(desc, &mut run, req.max_steps)?;
-        self.finish_run(desc, &run)
+        let steps = self.run_steps(desc, &mut run, req.max_steps);
+        if steps.is_err() && run.verdict.is_none() {
+            run.verdict = Some((TaskRunState::Error, Some("link lost")));
+        }
+        // Teardown after setup even when the link is already dead (FR-5).
+        let finished = self.finish_run(desc, &run);
+        match steps {
+            Err(e) => Err(e),
+            Ok(()) => finished,
+        }
+    }
+
+    /// Clears the active lifecycle-run indicators without calling teardown.
+    fn clear_active_run() {
+        ACTIVE_TASK.store(core::ptr::null_mut(), Ordering::Release);
+        CURRENT_SUITE.set_idle();
+        CURRENT_TEST.set_idle();
     }
 
     /// Calls the task's steps until a verdict is set.
@@ -924,6 +946,9 @@ where
     }
 
     /// Calls teardown and sends the run's closing reports.
+    ///
+    /// Teardown always runs and the active-run indicator is always cleared,
+    /// even when a closing telemetry send fails on a dead link.
     fn finish_run(
         &mut self,
         desc: &'static TaskDescriptor,
@@ -938,32 +963,34 @@ where
         let ended_ns = self.context.cpu_utils.get_nanos();
         let teardown = (desc.teardown)();
 
-        let _ =
+        let teardown_send =
             self.context
                 .send_telemetry_locked(&Telemetry::TeardownReport {
                     suite_id,
                     test_id,
                     ok: teardown.is_ok(),
                     message: teardown.err().map(truncate_message),
-                })?;
-        let _ = self.context.send_telemetry_locked(&Telemetry::TaskStats {
-            suite_id,
-            test_id,
-            steps: run.steps,
-            time_us: ended_ns.saturating_sub(run.started_ns) / 1000,
-        })?;
-        let _ = self.context.send_telemetry_and_flush_locked(
+                });
+        let stats_send =
+            self.context.send_telemetry_locked(&Telemetry::TaskStats {
+                suite_id,
+                test_id,
+                steps: run.steps,
+                time_us: ended_ns.saturating_sub(run.started_ns) / 1000,
+            });
+        let verdict_send = self.context.send_telemetry_and_flush_locked(
             &Telemetry::TaskState {
                 suite_id,
                 test_id,
                 state,
                 message: message.map(truncate_message),
             },
-        )?;
+        );
 
-        ACTIVE_TASK.store(core::ptr::null_mut(), Ordering::Release);
-        CURRENT_SUITE.set_idle();
-        CURRENT_TEST.set_idle();
+        Self::clear_active_run();
+        teardown_send?;
+        stats_send?;
+        verdict_send?;
         Ok(())
     }
 
@@ -1229,7 +1256,7 @@ mod tests {
         Config, Counts, Event, RUN, Run, TASKS_PLAIN, TASKS_TIMEOUT,
         TASKS_TWINS, begin, count_events, count_frames, counts, final_state,
         input, log_count, run_tasks, samples, seen_inputs, sent, set_u8, start,
-        states, stop,
+        states, stop, within_deadline,
     };
     use std::string::ToString;
     use std::sync::atomic::{AtomicBool, Ordering};

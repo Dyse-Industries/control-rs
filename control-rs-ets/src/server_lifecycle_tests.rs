@@ -177,6 +177,43 @@ fn test_task_teardown_once_per_end_path() {
 }
 
 #[test]
+fn test_task_stop_keeps_verdict_when_flush_fails() {
+    const FOREVER: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
+    let _guard = begin(Config::new(FOREVER));
+    // StopNow records `Aborted`, then the same boundary flushes. A dead link
+    // there must not replace that verdict with `link lost`.
+    let (res, server) = run_tasks(
+        TASKS_PLAIN,
+        Run {
+            fail_flush_when_drained: true,
+            ..Run::new(std::vec![start(0, false), stop()])
+        },
+    );
+    assert_eq!(res, Err("flush failed"));
+    assert_eq!(counts().teardown, 1);
+    assert_eq!(final_state(&server), Some((TaskRunState::Aborted, None)));
+}
+
+#[test]
+fn test_task_link_loss_tears_down() {
+    const FOREVER: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
+    let _guard = begin(Config::new(FOREVER));
+    let (res, server) = run_tasks(
+        TASKS_PLAIN,
+        Run {
+            tick_ns: 200_000_000,
+            ..Run::new(std::vec![start(0, false)])
+        },
+    );
+    assert_eq!(res, Err("Exit loop"));
+    assert_eq!(counts().teardown, 1);
+    assert_eq!(
+        final_state(&server),
+        Some((TaskRunState::Error, Some("link lost".to_string())))
+    );
+}
+
+#[test]
 fn test_teardown_report_independent_of_verdict() {
     const PASS: &[lifecycle_support::Scripted] =
         &[(TaskRunState::Pass, None, &[])];
@@ -265,11 +302,16 @@ fn test_task_link_timeout_tears_down() {
     assert_eq!(counts().teardown, 1);
     drop(guard);
 
-    // Without a declared timeout the run keeps going until the link ends.
+    // Without a declared timeout the run keeps going until the link ends;
+    // FR-5 still requires teardown once setup has run.
     let _guard = begin(Config::new(SCRIPT));
     let (res, server) = run_tasks(TASKS_PLAIN, slow());
     assert_eq!(res, Err("Exit loop"));
-    assert_eq!(final_state(&server), Some((TaskRunState::Running, None)));
+    assert_eq!(
+        final_state(&server),
+        Some((TaskRunState::Error, Some("link lost".to_string())))
+    );
+    assert_eq!(counts().teardown, 1);
     assert!(counts().steps > 10);
 }
 
@@ -584,4 +626,76 @@ fn test_second_task_for_suite_skipped() {
     let c: Counts = counts();
     assert_eq!(c.setup, 1, "the first task runs");
     assert_eq!(c.twin_setup, 0, "the second task never runs");
+}
+
+#[test]
+fn test_task_link_deadline_is_strict() {
+    const SCRIPT: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
+    let _guard = begin(Config::new(SCRIPT));
+    // Clock reads at start, then at each boundary: 0, 250, 500, 750 ms with a
+    // 500 ms timeout. The deadline itself is still within the timeout.
+    let run = Run {
+        tick_ns: 250_000_000,
+        ..Run::new(std::vec![start(0, false)])
+    };
+    let (_, server) = run_tasks(TASKS_TIMEOUT, run);
+    assert_eq!(final_state(&server), Some((TaskRunState::TimedOut, None)));
+    assert_eq!(counts().steps, 3, "timed out after, not at, the deadline");
+}
+
+#[test]
+fn test_task_stop_rejects_other_ids() {
+    const SCRIPT: &[lifecycle_support::Scripted] = &[(RUN, None, &[1])];
+    let _guard = begin(Config::new(SCRIPT));
+    let wrong_test = Command::StopNow {
+        suite_id: 0,
+        test_id: 9,
+    };
+    let wrong_suite = Command::StopNow {
+        suite_id: 5,
+        test_id: 1,
+    };
+    let cmds = std::vec![start(0, false), wrong_test, wrong_suite, stop()];
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
+    assert_eq!(counts().steps, 3, "only the matching StopNow stops the run");
+    assert_eq!(log_count(&server), 2, "both mismatches are logged");
+    assert_eq!(final_state(&server), Some((TaskRunState::Aborted, None)));
+}
+
+#[test]
+fn test_task_lockstep_ignores_stale_input() {
+    const SCRIPT: &[lifecycle_support::Scripted] = &[(RUN, None, &[])];
+    let _guard = begin(Config::new(SCRIPT));
+    let cmds = std::vec![
+        start(3, true),
+        input(0, &[10]),
+        input(0, &[99]),
+        input(1, &[11]),
+        input(2, &[12]),
+    ];
+    let (_, server) = run_tasks(TASKS_PLAIN, Run::new(cmds));
+    assert_eq!(
+        seen_inputs(),
+        [
+            (Some(std::vec![10]), Some(0)),
+            (Some(std::vec![11]), Some(1)),
+            (Some(std::vec![12]), Some(2)),
+        ],
+        "the stale input never reaches a step"
+    );
+    assert_eq!(log_count(&server), 1, "the stale input is logged");
+}
+
+#[test]
+fn test_task_message_truncates_at_a_char_boundary() {
+    let ascii = "a".repeat(300);
+    let wide = std::format!("a{}", "é".repeat(200));
+    let lengths = within_deadline(move || {
+        [
+            truncate_message(&ascii).len(),
+            truncate_message(&wide).len(),
+            truncate_message("short").len(),
+        ]
+    });
+    assert_eq!(lengths, [MAX_MESSAGE_SIZE, 255, 5]);
 }

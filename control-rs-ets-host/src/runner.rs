@@ -430,10 +430,11 @@ pub fn run_headless_ets_with_tasks(
     let mut run = HeadlessRun::start(target, options)?;
     let lockstep_allowed = sim.is_some();
     run.state.set_sim(sim);
-    run.state.queue_tasks(tasks.into_iter().map(|mut start| {
-        start.lockstep &= lockstep_allowed;
-        start
-    }));
+    run.state.queue_tasks(
+        tasks
+            .into_iter()
+            .map(|start| effective_start(start, lockstep_allowed)),
+    );
     let end = match run.drive() {
         Ok(()) => RunEnd::drained(),
         Err(end) => end,
@@ -448,6 +449,15 @@ pub fn run_headless_ets_with_tasks(
         });
     }
     Ok(run.finish(end))
+}
+
+/// Lockstep needs a simulation to supply the inputs, so a selection asks for it
+/// only when one is attached.
+const fn effective_start(start: TaskStart, has_sim: bool) -> TaskStart {
+    TaskStart {
+        lockstep: start.lockstep && has_sim,
+        ..start
+    }
 }
 
 /// Sends cooperative reset then suite discovery.
@@ -812,6 +822,62 @@ mod tests {
         };
         let run = drive_until_stopped(&target, timed);
         assert_eq!(last_state(&run), Some(TaskRunState::Aborted));
+    }
+
+    #[test]
+    fn lockstep_is_kept_only_with_a_simulation() {
+        let free = TaskStart::single_step(0);
+        let lock = TaskStart {
+            lockstep: true,
+            ..free
+        };
+        assert!(!effective_start(free, true).lockstep);
+        assert!(!effective_start(free, false).lockstep);
+        assert!(!effective_start(lock, false).lockstep);
+        assert!(effective_start(lock, true).lockstep);
+    }
+
+    /// A run over a fake link whose target exits on the first check, with
+    /// discovery complete.
+    #[cfg(unix)]
+    fn run_whose_target_exits(target: &Target) -> HeadlessRun<'_> {
+        let (mut run, _tx, _written) =
+            headless::fake_run(target, Duration::from_secs(5), Some(1));
+        run.state.discovery_complete = true;
+        run
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_target_exit_during_a_task_or_with_tasks_pending_is_unexpected() {
+        let target = headless::serial_target();
+
+        // A task is running, no case is.
+        let mut run = run_whose_target_exits(&target);
+        run.state.task_run = Some(TaskRunRecord {
+            suite_id: 0,
+            test_id: 0,
+            name: String::new(),
+            states: Vec::new(),
+            teardown: None,
+            outputs: Vec::new(),
+            inputs: Vec::new(),
+            steps: None,
+            time_us: None,
+            ended: false,
+        });
+        let end = run.check_target_exit().unwrap_err();
+        assert_eq!(end.abort, Some(Completion::TargetExited));
+
+        // A task is queued, nothing runs.
+        let mut run = run_whose_target_exits(&target);
+        run.state.pending_tasks.push_back(TaskStart::single_step(0));
+        let end = run.check_target_exit().unwrap_err();
+        assert_eq!(end.abort, Some(Completion::TargetExited));
+
+        // Nothing is left to run: the exit is expected.
+        let mut run = run_whose_target_exits(&target);
+        assert_eq!(run.check_target_exit().ok(), Some(false));
     }
 
     /// A session that already received a matching `TargetInfo` (FR-8).

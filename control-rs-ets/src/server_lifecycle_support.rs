@@ -6,7 +6,7 @@ use crate::{TaskDescriptor, TaskIo, TaskOutcome};
 use std::borrow::ToOwned;
 use std::collections::VecDeque;
 use std::string::String;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::vec::Vec;
 use super::*;
@@ -15,6 +15,10 @@ static FIXTURE: Mutex<Fixture> = Mutex::new(Fixture::new());
 
 /// The running state, which scripts repeat.
 pub const RUN: TaskRunState = TaskRunState::Running;
+
+/// Set once a run did not terminate, so later runs fail at once instead of
+/// each waiting out the deadline.
+static STUCK: AtomicBool = AtomicBool::new(false);
 
 /// The tasks of an image with one task without a timeout.
 pub static TASKS_PLAIN: &[&TaskDescriptor] = &[&TASK_PLAIN];
@@ -104,6 +108,8 @@ pub enum Event {
 pub struct TaskComms {
     commands: VecDeque<Command<'static>>,
     pub events: Vec<Event>,
+    /// When set, `flush` fails once every queued command has been taken.
+    fail_flush_when_drained: bool,
     idle_polls_left: usize,
     payloads: Frames,
 }
@@ -122,6 +128,8 @@ pub type TaskServer = Server<'static, TaskComms, TickProfiler>;
 /// Settings of one task-test run.
 pub struct Run {
     pub commands: Vec<Command<'static>>,
+    /// `flush` returns an error once `commands` is empty.
+    pub fail_flush_when_drained: bool,
     pub idle_polls: usize,
     pub tick_ns: u64,
 }
@@ -158,6 +166,7 @@ impl Run {
     pub fn new(commands: Vec<Command<'static>>) -> Self {
         Self {
             commands,
+            fail_flush_when_drained: false,
             idle_polls: 50,
             tick_ns: 1_000_000,
         }
@@ -198,6 +207,9 @@ impl HostComms for TaskComms {
 
     fn flush(&mut self) -> Result<(), Self::Error> {
         self.events.push(Event::Flush);
+        if self.fail_flush_when_drained && self.commands.is_empty() {
+            return Err("flush failed");
+        }
         Ok(())
     }
 
@@ -354,6 +366,7 @@ pub fn run_tasks(
     let comms = TaskComms {
         commands: run.commands.into(),
         events: Vec::new(),
+        fail_flush_when_drained: run.fail_flush_when_drained,
         idle_polls_left: run.idle_polls,
         payloads: Vec::new(),
     };
@@ -364,13 +377,30 @@ pub fn run_tasks(
     };
     let mut server =
         Server::new(Context::new(comms, profiler), SUITES).with_tasks(tasks);
+    assert!(
+        !STUCK.load(Ordering::SeqCst),
+        "an earlier run did not terminate"
+    );
+    within_deadline(move || {
+        let result = server.run();
+        (result, server)
+    })
+}
+
+/// Runs `work` on its own thread and fails the test, and every later run,
+/// if it does not finish within the deadline.
+pub fn within_deadline<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> T {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let result = server.run();
-        let _ = tx.send((result, server));
+        let _ = tx.send(work());
     });
-    rx.recv_timeout(std::time::Duration::from_secs(5))
-        .expect("the server loop did not terminate")
+    rx.recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap_or_else(|_| {
+            STUCK.store(true, Ordering::SeqCst);
+            panic!("the work did not terminate")
+        })
 }
 
 /// Decodes every telemetry frame the server sent.

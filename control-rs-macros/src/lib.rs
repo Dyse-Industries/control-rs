@@ -1102,6 +1102,23 @@ mod tests {
     }
 
     #[test]
+    fn task_diagnostics_unknown_arg() {
+        let unknown_arg = expand(quote::quote! {
+            mod motor {
+                #[setup]
+                fn setup() -> Result<(), &'static str> { Ok(()) }
+                #[step(timeout = 600)]
+                fn s(ctx: &TaskContext<'_, ()>) -> TaskStatus<()> { todo!() }
+                #[reset]
+                fn reset() -> Result<(), &'static str> { Ok(()) }
+                #[teardown]
+                fn teardown() -> Result<(), &'static str> { Ok(()) }
+            }
+        });
+        assert!(unknown_arg.contains("expected`link_timeout_ms=N`"));
+    }
+
+    #[test]
     fn second_task_in_suite_rejected() {
         for marker in ["setup", "step", "reset", "teardown"] {
             let marker = quote::format_ident!("{}", marker);

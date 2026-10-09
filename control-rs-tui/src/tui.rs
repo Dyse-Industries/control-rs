@@ -1356,6 +1356,7 @@ mod tests {
     use super::*;
     use control_rs_ets::comms::Telemetry;
     use control_rs_ets::settings::SettingValue;
+    use control_rs_ets_host::{SettingItem, TaskItem};
     use crossterm::event::KeyModifiers;
 
     #[cfg(unix)]
@@ -2306,5 +2307,154 @@ mod tests {
             } if m == "careful"
         ));
         assert!(state.logs.iter().any(|l| l.contains("12 steps")));
+    }
+
+    /// The foreground color of `needle` in the screen row of the task.
+    fn task_text_color(
+        terminal: &Terminal<ratatui::backend::TestBackend>,
+        needle: &str,
+    ) -> Option<Color> {
+        let buffer = terminal.backend().buffer();
+        let want: Vec<String> = needle.chars().map(String::from).collect();
+        (0..buffer.area.height).find_map(|y| {
+            let cells: Vec<_> = (0..buffer.area.width)
+                .filter_map(|x| buffer.cell((x, y)))
+                .collect();
+            let row: String = cells.iter().map(|c| c.symbol()).collect();
+            if !row.contains("LIFECYCLE") {
+                return None;
+            }
+            cells
+                .windows(want.len())
+                .find(|w| w.iter().zip(&want).all(|(c, s)| c.symbol() == s))
+                .and_then(|w| w.first().map(|c| c.fg))
+        })
+    }
+
+    /// Draws the task row after the run reached `state`.
+    fn color_of_state(state: TaskRunState) -> Option<Color> {
+        let mut app = AppState::new("T".to_string(), "L".to_string());
+        discover_lifecycle(&mut app);
+        let start = TaskStart::single_step(0);
+        let _ = app.session.start_task(start, Instant::now()).unwrap();
+        for step in [TaskRunState::Running, state] {
+            feed(
+                &mut app,
+                &Telemetry::TaskState {
+                    suite_id: 0,
+                    test_id: 1,
+                    state: step,
+                    message: None,
+                },
+            );
+        }
+        app.rebuild_visible_items();
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(140, 30)).unwrap();
+        terminal.draw(|f| draw_ui(f, &mut app)).unwrap();
+        task_text_color(&terminal, &format!("{state:?}"))
+    }
+
+    #[test]
+    fn a_task_row_colors_its_state() {
+        let colors = [
+            (TaskRunState::Running, Color::Cyan),
+            (TaskRunState::Warn, Color::Yellow),
+            (TaskRunState::Pass, Color::Green),
+            (TaskRunState::Bounded, Color::Green),
+            (TaskRunState::Fail, Color::Red),
+        ];
+        for (state, color) in colors {
+            assert_eq!(color_of_state(state), Some(color), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn task_log_lines_report_state_and_teardown() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        let frames = [
+            Telemetry::TaskState {
+                suite_id: 0,
+                test_id: 1,
+                state: TaskRunState::Running,
+                message: None,
+            },
+            Telemetry::TaskState {
+                suite_id: 0,
+                test_id: 1,
+                state: TaskRunState::Warn,
+                message: Some("careful"),
+            },
+            Telemetry::TeardownReport {
+                suite_id: 0,
+                test_id: 1,
+                ok: true,
+                message: None,
+            },
+            Telemetry::TeardownReport {
+                suite_id: 0,
+                test_id: 1,
+                ok: false,
+                message: Some("boom"),
+            },
+        ];
+        for frame in &frames {
+            let _ = state
+                .handle_bridge_message(BridgeMessage::telemetry(frame), None);
+        }
+        assert_eq!(
+            state.logs,
+            [
+                "> [LIFECYCLE] Running",
+                "> [LIFECYCLE] Warn: careful",
+                "> [LIFECYCLE] teardown ok=true",
+                "> [LIFECYCLE] teardown ok=false: boom",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_task_row_closes_the_branch_only_without_settings() {
+        let mut suite = SuiteItem::new(0);
+        suite.name = "motor".to_string();
+        suite.task_item = Some(TaskItem {
+            test_id: 0,
+            name: "speed".to_string(),
+            description: String::new(),
+            input_type: "f32".to_string(),
+            output_type: "f32".to_string(),
+        });
+        assert_eq!(last_flags(&suite_rows(0, &suite, "", false)), [true]);
+
+        suite.settings.push(SettingItem {
+            setting_id: 0,
+            name: "gain".to_string(),
+            description: String::new(),
+            value: SettingValue::U8(1),
+        });
+        assert_eq!(
+            last_flags(&suite_rows(0, &suite, "", false)),
+            [false, true],
+            "the task row is not last when a setting follows"
+        );
+    }
+
+    #[test]
+    fn an_idle_tick_leaves_the_rows_alone_and_an_active_one_refreshes_them() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        discover_lifecycle(&mut state);
+        state.rebuild_visible_items();
+        assert_ne!(state.visible_items.len(), 0);
+
+        // No task runs and no action is due: nothing is rebuilt.
+        state.visible_items.clear();
+        state.tick_task(None);
+        assert_eq!(state.visible_items.len(), 0, "an idle tick rebuilds");
+
+        // A running task refreshes its rate on every tick.
+        let start = TaskStart::single_step(0);
+        let _ = state.session.start_task(start, Instant::now()).unwrap();
+        state.tick_task(None);
+        assert_ne!(state.visible_items.len(), 0, "an active tick refreshes");
     }
 }
