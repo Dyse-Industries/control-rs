@@ -218,12 +218,10 @@ Before rebooting, the panic handler constructs a diagnostic payload:
 
 ##### Task Teardown
 
-`handle_failure` checks the active-run indicator after masking interrupts. If
-a task run is active and its teardown has not started, it marks
-teardown as started, calls it and sends `TeardownReport`, then
-`TaskState(Fail)` and `TargetPanic`, and continues on the reset path below. A
-panic inside teardown is reported as `TeardownReport { ok: false }` without
-re-entry (`lifecycle-suite-design.md` §4.4).
+After masking interrupts, `handle_failure` settles an active task run from
+its phase, whether or not the communication lock is free, and reports the
+result only when it is (`lifecycle-suite-design.md` §4.4). It then continues
+on the reset path below.
 
 ##### Reset Path
 
@@ -449,6 +447,7 @@ statics, which are data.
 | 1.9      | September 24, 2026 | @MitchellDScott | §6.3 cites `ci-design.md` C-6 (indicative emulation timing), renumbered from C-2 in its revision 1.26. No watchdog in diagrams or §4.4/§4.5 (reset is `SCB::sys_reset` after `TryReset`); §5.3 `linkme` decided (`no_std`, not adopted); Step 5 shipped as the `ets` gate; tooling crates `publish = false`; static-analyzer and `budget:` references removed. |
 | 1.10     | October 7, 2026 | @MitchellDScott | FR-1 and FR-4 extended for lifecycle suites (`lifecycle-suite-design.md` 1.2): §4.3 lifecycle-suite run mode and command rejection during a run, §4.4 panic-path teardown, §4.5 diagram. |
 | 1.11     | October 7, 2026 | @MitchellDScott | §4.3: tasks are addressed by `(suite_id, test_id)` like cases; a run also rejects `SetSetting` for another suite (`lifecycle-suite-design.md` 1.7). |
+| 1.12     | October 11, 2026 | @MitchellDScott | §4.4 Task Teardown: settles run from its phase independent of communication lock, reports when free (`lifecycle-suite-design.md` 1.8). |
 
 ---
 

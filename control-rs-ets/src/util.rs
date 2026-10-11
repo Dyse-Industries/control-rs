@@ -19,6 +19,9 @@ use crate::{SuiteDescriptor, TaskDescriptor};
 use core::fmt::Write;
 use core::str;
 
+/// Result returned by task teardown hooks.
+pub type TeardownResult = Result<(), &'static str>;
+
 /// Buffer writer that implements `core::fmt::Write` to format failure and panic messages into a static buffer.
 ///
 /// To prevent unsafe operations like buffer overflows during formatting of panic telemetry, this helper
@@ -174,35 +177,88 @@ pub unsafe fn get_tasks(
     unsafe { ::core::slice::from_raw_parts(start, len) }
 }
 
-/// Runs the active task's teardown on the panic path and reports it.
+/// Stage 1 of fault handling: settles the active task run according to its phase.
 ///
-/// If a task run is active, calls its teardown unless teardown already started,
-/// then sends `TeardownReport` and `TaskState(Fail)` carrying the panic location.
-/// A teardown that already started is the one that panicked, so it is reported
-/// as failed and not re-entered.
+/// - If `Armed`, transitions to `TearingDown`, executes teardown once, and transitions to `Done`.
+/// - If `TearingDown`, teardown itself was the faulting code; records `Err("teardown panicked")`
+///   and transitions to `Done` without re-entering teardown.
+/// - If `Idle` or `Done`, calls nothing.
 ///
-/// # Arguments
-/// * `comms` - The host link.
-/// * `file` - The file where the panic was triggered.
-/// * `line` - The line where the panic was triggered.
+/// This stage reads only the run phase and task descriptor, operating independently
+/// of communication lock state or host connectivity.
 ///
 /// # Returns
-/// * `bool` - `true` if a task run was active.
-pub fn report_task_panic<C: crate::comms::HostComms>(
+/// * `Option<TeardownResult>` - `Some(result)` if teardown was invoked
+///   or settled on this fault; `None` if the phase was `Idle` or `Done`.
+pub fn settle_task_fault() -> Option<TeardownResult> {
+    use crate::server::{ACTIVE_TASK, TASK_PHASE, TaskRunPhase};
+    use core::sync::atomic::Ordering;
+
+    let phase = TASK_PHASE.get();
+    match phase {
+        TaskRunPhase::Armed => {
+            if TASK_PHASE
+                .compare_exchange(
+                    TaskRunPhase::Armed,
+                    TaskRunPhase::TearingDown,
+                )
+                .is_ok()
+            {
+                #[allow(deprecated)]
+                crate::server::TEARDOWN_STARTED.store(true, Ordering::Release);
+                let desc_ptr = ACTIVE_TASK.load(Ordering::Acquire);
+                let res = if desc_ptr.is_null() {
+                    Err("missing task descriptor")
+                } else {
+                    // SAFETY: `ACTIVE_TASK` is only stored from a `&'static TaskDescriptor`.
+                    let desc = unsafe { &*desc_ptr };
+                    (desc.teardown)()
+                };
+                TASK_PHASE.set(TaskRunPhase::Done);
+                Some(res)
+            } else if TASK_PHASE.get() == TaskRunPhase::TearingDown {
+                TASK_PHASE.set(TaskRunPhase::Done);
+                Some(Err("teardown panicked"))
+            } else {
+                None
+            }
+        }
+        TaskRunPhase::TearingDown => {
+            TASK_PHASE.set(TaskRunPhase::Done);
+            Some(Err("teardown panicked"))
+        }
+        TaskRunPhase::Idle | TaskRunPhase::Done => None,
+    }
+}
+
+/// Stage 2 of fault handling: reports task teardown and failure telemetry to the host.
+///
+/// When `teardown_result` is `Some`, sends `TeardownReport` followed by `TaskState(Fail)`
+/// carrying the source location of the fault.
+///
+/// # Arguments
+/// * `comms` - The host communication link.
+/// * `teardown_result` - The result from Stage 1 (`settle_task_fault`).
+/// * `file` - Source file where the failure occurred.
+/// * `line` - Source line number.
+///
+/// # Returns
+/// * `bool` - `true` if task fault telemetry was emitted.
+pub fn report_task_fault<C: crate::comms::HostComms>(
     comms: &mut C,
+    teardown_result: Option<TeardownResult>,
     file: &str,
     line: u32,
 ) -> bool {
     use crate::comms::{TaskRunState, Telemetry};
-    use crate::server::{
-        ACTIVE_TASK, CURRENT_SUITE, CURRENT_TEST, TEARDOWN_STARTED,
-    };
-    use core::sync::atomic::Ordering;
+    use crate::server::{CURRENT_SUITE, CURRENT_TEST};
+    use core::fmt::Write;
+    use core::str;
 
-    let desc_ptr = ACTIVE_TASK.load(Ordering::Acquire);
-    if desc_ptr.is_null() {
+    let Some(teardown) = teardown_result else {
         return false;
-    }
+    };
+
     let (Some(suite_id), Some(test_id)) = (
         CURRENT_SUITE.get().and_then(|s| u16::try_from(s).ok()),
         CURRENT_TEST.get().and_then(|t| u16::try_from(t).ok()),
@@ -210,13 +266,6 @@ pub fn report_task_panic<C: crate::comms::HostComms>(
         return false;
     };
 
-    let teardown = if TEARDOWN_STARTED.swap(true, Ordering::AcqRel) {
-        Err("teardown panicked")
-    } else {
-        // SAFETY: `ACTIVE_TASK` is only stored from a `&'static TaskDescriptor`.
-        let desc = unsafe { &*desc_ptr };
-        (desc.teardown)()
-    };
     let _ = comms.send_telemetry(&Telemetry::TeardownReport {
         suite_id,
         test_id,
@@ -241,6 +290,26 @@ pub fn report_task_panic<C: crate::comms::HostComms>(
         message: location.filter(|l| !l.is_empty()),
     });
     true
+}
+
+/// Settles and reports a task panic on the host link.
+///
+/// Convenience wrapper executing both Stage 1 (settle) and Stage 2 (report).
+///
+/// # Arguments
+/// * `comms` - The host link.
+/// * `file` - The file where the panic was triggered.
+/// * `line` - The line where the panic was triggered.
+///
+/// # Returns
+/// * `bool` - `true` if a task run was active and reported.
+pub fn report_task_panic<C: crate::comms::HostComms>(
+    comms: &mut C,
+    file: &str,
+    line: u32,
+) -> bool {
+    let teardown_result = settle_task_fault();
+    report_task_fault(comms, teardown_result, file, line)
 }
 
 /// Target-agnostic logic for handling server failure or panics.
@@ -318,16 +387,24 @@ pub unsafe fn handle_failure<
 ) -> ! {
     context.cpu_utils.disable_interrupts_permanently();
 
+    // Stage 1: Settle the run by phase alone, independent of `comms_ok`.
+    let teardown_result = settle_task_fault();
+
+    // Stage 2: Report when the communication lock is free.
     if comms_ok {
-        let task_run = report_task_panic(&mut context.comms, file, line);
+        let task_reported =
+            report_task_fault(&mut context.comms, teardown_result, file, line);
         let suite = crate::server::CURRENT_SUITE.get();
         let test = crate::server::CURRENT_TEST.get();
 
         if let (false, Some(suite_id), Some(test_id)) = (
-            task_run,
+            task_reported,
             suite.and_then(|s| u16::try_from(s).ok()),
             test.and_then(|t| u16::try_from(t).ok()),
-        ) {
+        ) && crate::server::ACTIVE_TASK
+            .load(core::sync::atomic::Ordering::Acquire)
+            .is_null()
+        {
             let _ = context.comms.send_telemetry(
                 &crate::comms::Telemetry::TestStateChange {
                     suite_id,
@@ -448,7 +525,9 @@ mod tests {
     use super::*;
     use crate::comms::{Command, HostComms, Telemetry, TestState};
     use crate::profiler::CPUProfiler;
-    use crate::server::{ACTIVE_TASK, TEARDOWN_STARTED};
+    use crate::server::{
+        ACTIVE_TASK, CURRENT_SUITE, CURRENT_TEST, TASK_PHASE, TaskRunPhase,
+    };
     use core::sync::atomic::{AtomicUsize, Ordering};
 
     static PANIC_SUITE: SuiteDescriptor = SuiteDescriptor {
@@ -712,7 +791,7 @@ mod tests {
         // An active run: teardown runs once, then the report and the state.
         crate::server::CURRENT_SUITE.set_active(0);
         crate::server::CURRENT_TEST.set_active(1);
-        TEARDOWN_STARTED.store(false, Ordering::SeqCst);
+        TASK_PHASE.set(TaskRunPhase::Armed);
         ACTIVE_TASK.store(
             core::ptr::from_ref(&PANIC_TASK).cast_mut(),
             Ordering::SeqCst,
@@ -727,6 +806,7 @@ mod tests {
         assert!(frame_has(&frames, 1, &["TaskState", "Fail", "f.rs:7"]));
 
         // A second panic, raised inside teardown, never re-enters it.
+        TASK_PHASE.set(TaskRunPhase::TearingDown);
         let mut comms = fresh_comms();
         assert!(report_task_panic(&mut comms, "g.rs", 9));
         assert_eq!(PANIC_TEARDOWNS.load(Ordering::SeqCst), 1);
@@ -734,7 +814,7 @@ mod tests {
 
         // The full handler orders the reports before `TargetPanic` and sends
         // no case state change.
-        TEARDOWN_STARTED.store(false, Ordering::SeqCst);
+        TASK_PHASE.set(TaskRunPhase::Armed);
         let mut context =
             crate::server::Context::new(fresh_comms(), HostCPUProfiler);
         let res =
@@ -752,6 +832,154 @@ mod tests {
         ACTIVE_TASK.store(core::ptr::null_mut(), Ordering::SeqCst);
         crate::server::CURRENT_SUITE.set_idle();
         crate::server::CURRENT_TEST.set_idle();
+        TASK_PHASE.set(TaskRunPhase::Idle);
+    }
+
+    fn verify_fault_frames(
+        phase: TaskRunPhase,
+        frames: &[std::string::String],
+    ) {
+        match phase {
+            TaskRunPhase::Armed => {
+                assert_eq!(frames.len(), 3);
+                assert!(frame_has(frames, 0, &["TeardownReport", "ok: true"]));
+                assert!(frame_has(
+                    frames,
+                    1,
+                    &["TaskState", "Fail", "test.rs:100"]
+                ));
+                assert!(frame_has(frames, 2, &["TargetPanic", "fault msg"]));
+            }
+            TaskRunPhase::TearingDown => {
+                assert_eq!(frames.len(), 3);
+                assert!(frame_has(
+                    frames,
+                    0,
+                    &["TeardownReport", "ok: false", "teardown panicked"]
+                ));
+                assert!(frame_has(
+                    frames,
+                    1,
+                    &["TaskState", "Fail", "test.rs:100"]
+                ));
+                assert!(frame_has(frames, 2, &["TargetPanic", "fault msg"]));
+            }
+            TaskRunPhase::Idle | TaskRunPhase::Done => {
+                assert_eq!(frames.len(), 1);
+                assert!(frame_has(frames, 0, &["TargetPanic", "fault msg"]));
+            }
+        }
+    }
+
+    fn check_phase_fault(phase: TaskRunPhase, comms_ok: bool) {
+        CURRENT_SUITE.set_active(0);
+        CURRENT_TEST.set_active(1);
+        ACTIVE_TASK.store(
+            core::ptr::from_ref(&PANIC_TASK).cast_mut(),
+            Ordering::SeqCst,
+        );
+        TASK_PHASE.set(phase);
+        PANIC_TEARDOWNS.store(0, Ordering::SeqCst);
+
+        let mut context =
+            crate::server::Context::new(fresh_comms(), HostCPUProfiler);
+        let res =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                handle_failure(
+                    &mut context,
+                    "fault msg",
+                    "test.rs",
+                    100,
+                    comms_ok,
+                );
+            }));
+        assert!(res.is_err());
+
+        let teardowns = PANIC_TEARDOWNS.load(Ordering::SeqCst);
+        let frames = frames_of(&context.comms);
+
+        if phase == TaskRunPhase::Armed {
+            assert_eq!(
+                teardowns, 1,
+                "Armed must execute teardown exactly once (comms_ok={comms_ok})"
+            );
+            assert_eq!(
+                TASK_PHASE.get(),
+                TaskRunPhase::Done,
+                "Armed must transition to Done"
+            );
+        } else {
+            assert_eq!(
+                teardowns, 0,
+                "Phase {phase:?} must not execute teardown (comms_ok={comms_ok})"
+            );
+        }
+
+        if comms_ok {
+            verify_fault_frames(phase, &frames);
+        } else {
+            assert_eq!(
+                frames.len(),
+                0,
+                "No frames must be sent when comms_ok is false"
+            );
+        }
+    }
+
+    fn check_pre_setup_send_fault() {
+        CURRENT_SUITE.set_active(0);
+        CURRENT_TEST.set_active(1);
+        ACTIVE_TASK.store(
+            core::ptr::from_ref(&PANIC_TASK).cast_mut(),
+            Ordering::SeqCst,
+        );
+        TASK_PHASE.set(TaskRunPhase::Idle);
+        PANIC_TEARDOWNS.store(0, Ordering::SeqCst);
+
+        let mut context =
+            crate::server::Context::new(fresh_comms(), HostCPUProfiler);
+        let res =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                handle_failure(
+                    &mut context,
+                    "send failed",
+                    "server.rs",
+                    968,
+                    false,
+                );
+            }));
+        assert!(res.is_err());
+        assert_eq!(
+            PANIC_TEARDOWNS.load(Ordering::SeqCst),
+            0,
+            "Pre-setup fault must not invoke teardown"
+        );
+        assert_eq!(context.comms.payloads.len(), 0);
+    }
+
+    #[test]
+    fn test_fault_settles_by_phase() {
+        let _guard = crate::server::test_lock::hold();
+
+        let phases = [
+            TaskRunPhase::Idle,
+            TaskRunPhase::Armed,
+            TaskRunPhase::TearingDown,
+            TaskRunPhase::Done,
+        ];
+
+        for phase in phases {
+            for comms_ok in [false, true] {
+                check_phase_fault(phase, comms_ok);
+            }
+        }
+
+        check_pre_setup_send_fault();
+
+        ACTIVE_TASK.store(core::ptr::null_mut(), Ordering::SeqCst);
+        CURRENT_SUITE.set_idle();
+        CURRENT_TEST.set_idle();
+        TASK_PHASE.set(TaskRunPhase::Idle);
     }
 
     #[test]

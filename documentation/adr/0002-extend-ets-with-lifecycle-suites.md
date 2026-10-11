@@ -43,6 +43,8 @@ indices and profiling are unchanged.
   reused rather than duplicated.
 - Good: the command task regains control after every run, so no run outlives
   its teardown.
+- Good: a panic or fault settles an active run from its phase alone; the
+  host link decides only whether the outcome is reported.
 - Bad: the wire protocol moves to revision 2, and `Command` gains a lifetime,
   which changes the `poll_command` signature of every `HostComms`
   implementor.
@@ -78,4 +80,4 @@ indices and profiling are unchanged.
 `documentation/ets/embedded-test-server-design.md`, Oct. 2026.
 
 [2] `control-rs`, "Lifecycle Suites," `documentation/ets/lifecycle-suite-design.md`,
-rev. 1.7, Oct. 2026.
+rev. 1.8, Oct. 2026.

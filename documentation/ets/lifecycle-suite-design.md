@@ -11,7 +11,7 @@
 An ETS case is a `fn()` that the server runs once inside a critical section
 and reports as passed when it returns. Hardware-in-the-loop work needs the
 opposite: code that runs continuously with its interrupt handlers live, that
-the host can tune and stop, and that always returns the hardware to a safe
+the host can tune and stop and that always returns the hardware to a safe
 state. A task provides that as a second executable kind of the existing
 `control-rs-ets` server, with an execution environment equivalent to a
 sketch: setup once, step repeatedly [1], [2], [3], plus a guaranteed
@@ -31,17 +31,17 @@ Primary usage scenarios:
 - **Closed-loop hardware run**: A developer runs a motor-control task on a
   board with its PWM and ADC interrupts active, adjusts gains from the host
   and stops the run. Failure: interrupts are masked, the task is starved by
-  the server, or a setting change is not applied until the run ends.
+  the server or a setting change is not applied until the run ends.
 - **Self-terminating test**: A task judges its own progress and ends the run
   with a verdict, or keeps running while reporting a warning. Failure: the
   verdict or message is lost or attributed to the wrong task.
 - **Fault containment**: The host stops the run, the host link drops, setup
   fails or the task panics while hardware is energized. Failure: teardown
-  does not run, runs twice, or its own failure is not visible to the host.
+  does not run, runs twice or its own failure is not visible to the host.
 - **Simulation in the loop**: A host-side plant simulation exchanges one
   input packet and one output packet per step with the controller on the
   target, in lockstep or free-running. Failure: an output is paired with the
-  wrong input, a lockstep step runs without its input, or host and target
+  wrong input, a lockstep step runs without its input or host and target
   disagree on the packet types.
 - **Emulator scope**: Emulator runs verify what code computes, not how
   firmware behaves over time against live peripherals and interrupts. QEMU
@@ -49,10 +49,10 @@ Primary usage scenarios:
   input, and runs them only in lockstep against a host simulation, started
   manually through `control-rs-ets-host`. No CI gate runs tasks.
   Failure: a QEMU run depends on emulated timing or peripherals, runs
-  free-running, or a CI job runs a task.
+  free-running or a CI job runs a task.
 - **Coexistence**: A suite holds atomic cases and tasks side by side.
   Failure: existing case indexing, wire encoding or profiling changes, a
-  task does not see its suite's settings, or the console separates a task
+  task does not see its suite's settings or the console separates a task
   from the cases of its suite.
 
 ---
@@ -78,8 +78,9 @@ Primary usage scenarios:
   step boundary and returns control to the server.
 - **FR-5 — Guaranteed teardown**: Teardown runs exactly once for every run
   whose setup was invoked, whether the run ends by status, stop request, step
-  bound, setup
-  failure, link loss or panic.
+  bound, setup failure, link loss or fault. A fault is a panic or a processor
+  exception taken through `ets_exception!`, raised by suite or server code,
+  whether or not the host link can report it.
 - **FR-6 — Teardown outcome**: Teardown reports success or failure with an
   optional message, and the host receives it separately from the run verdict.
 - **FR-7 — Live settings**: A setting update for the running task's suite
@@ -165,7 +166,7 @@ builds on `embedded-test-server-design.md` (server loop, panic path),
 (registration, settings), `ets-host-design.md` and `tui-design.md`.
 
 The shape follows established suite lifecycles: run-once setup, a repeated
-body, and teardown hooks [4], [5]. Teardown is guaranteed once setup has been
+body and teardown hooks [4], [5]. Teardown is guaranteed once setup has been
 entered, and an abort still runs it [6], [7]. The step return value decides
 whether execution continues, as in repeated-execution test contexts [8] and
 phase results [9].
@@ -183,7 +184,7 @@ stateDiagram-v2
     Reset: USER · reset()
     Teardown: USER · teardown()
     Report: ETS · report run end
-    Panic: ETS · panic handler, masks interrupts, calls teardown() once
+    Panic: ETS · fault path, masks interrupts, settles the run by phase
     [*] --> Idle
     Idle --> Setup: StartTask
     Setup --> AwaitInput: Ok, lockstep
@@ -204,7 +205,8 @@ stateDiagram-v2
     Step --> Panic: panic
     Reset --> Panic: panic
     Teardown --> Panic: panic, no re-entry
-    Panic --> [*]: TeardownReport, TargetPanic, await TryReset
+    Report --> Panic: panic, teardown done
+    Panic --> [*]: reports if the link is free, then reset
     class Idle, AwaitInput, Boundary, Report ets
     class Setup, Step, Reset, Teardown user
     class Panic fault
@@ -216,7 +218,7 @@ Control ownership:
 |:------------------|:-------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------|
 | `ETS` (dark blue) | command task, await input, step boundary, report | The server holds control: it polls, sends telemetry and decides the next state. User interrupt handlers stay live (NFR-1).                         |
 | `USER` (brown)    | `setup`, `step`, `reset`, `teardown`             | The server has yielded by calling the suite's function. It regains control only when the function returns or panics; it cannot preempt it (§4.3).  |
-| Fault (dark red)  | panic handler                                    | The server reclaims control through `ets_panic!` with interrupts masked, runs teardown once if it has not started and waits for `TryReset` (§4.4). |
+| Fault (dark red)  | fault path                                       | The server reclaims control through `ets_panic!` or `ets_exception!` with interrupts masked, settles the run from its phase, reports when the link is free and resets (§4.4). |
 
 `SetSetting` is also accepted while awaiting input; after `reset` returns
 `Ok`, the run resumes the wait. Teardown entered from the panic handler runs
@@ -300,7 +302,7 @@ message. The author writes the typed step
 
 ```rust
 #[step]
-fn step(ctx: &TaskContext<'_, I>) -> TaskStatus<O>
+fn step(ctx: &TaskContext<'_, I>) -> TaskStatus<O> {}
 ```
 
 with `I: serde::Deserialize<'de>` and `O: serde::Serialize`, and the macro
@@ -406,10 +408,10 @@ detected rather than hiding the task.
 `Server::run` dispatches `StartTask` to a run task that owns control until the
 run ends:
 
-1. Record the active run in an atomic indicator (as `CURRENT_SUITE`), set
-   `k = 0`, clear the input buffer, send `TaskState(Running)` and call
-   `setup`. An `Err` sets the verdict to `Error` with its message and skips
-   to step 5.
+1. Record the run's identifiers (as `CURRENT_SUITE`), set `k = 0`, clear the
+   input buffer and send `TaskState(Running)`. Set the run phase to `Armed`
+   (§4.4) and call `setup`. An `Err` sets the verdict to `Error` with its
+   message and skips to step 5.
 2. In lockstep, repeat step 3's poll until input `k` is stored, a verdict is
    set or the link deadline passes; the last two go to step 5. Call `step`
    with `k`, the newest input and the output buffer. On `Running` or `Warn`
@@ -430,8 +432,9 @@ run ends:
    for another suite are rejected with an error log (C-7).
 4. If a verdict was set in step 3 or the link deadline, read from
    `get_nanos`, passed (`TimedOut`), go to step 5. Otherwise go to step 2.
-5. Call `teardown` and send `TeardownReport`, then `TaskStats` and the final
-   `TaskState`. Clear the active run and return to the command task.
+5. Set the phase to `TearingDown`, call `teardown` and set `Done`. Send
+   `TeardownReport`, then `TaskStats` and the final `TaskState`. Set `Idle`
+   and return to the command task.
 
 The run task relies on the existing `HostComms::poll_command` contract that a
 poll does not wait. The QEMU semihosting transports do not meet it: `READC`
@@ -464,21 +467,32 @@ Teardown runs once per run whose setup was invoked, including a failed setup,
 because setup may have partially configured hardware.
 
 User setup, step, reset and teardown code is expected to panic occasionally
-(fewer
-than 0.1% of runs). The panic path is a supported run end with a defined
+(fewer than 0.1% of runs). The panic path is a supported run end with a defined
 report sequence, not a server fault. Its `Result` is
 reported as `TeardownReport`, independent of the verdict, in the way hardware
 test executors log a failing teardown without changing the test outcome [7].
 
-The panic handler generated by `ets_panic!` (`util::handle_failure`) checks the
-active-run indicator after masking interrupts. If a run is active and its
-teardown has not started, it marks teardown as started, calls it and sends
-`TeardownReport`, then `TaskState(Fail)` with the panic location and the
-existing `TargetPanic`, and waits for `TryReset` as today. A panic raised
-inside teardown is reported as
-`TeardownReport { ok: false }` and teardown is not re-entered. On this path
-teardown runs with interrupts masked, so it must
-not depend on interrupts.
+A run carries one atomic phase: `Idle`, `Armed`, `TearingDown` or `Done`.
+The run task advances it as in §4.3; `Armed` is set only after the last
+send that precedes setup, so no fault outside a run's setup-to-teardown span
+can reach teardown.
+
+Every fault enters `util::handle_failure`, which masks interrupts and then
+works in two independent stages:
+
+1. **Settle.** `Armed` swaps to `TearingDown`, calls teardown and keeps its
+   result. `TearingDown` means teardown is the faulting code; the result is
+   `Err("teardown panicked")` and teardown is not re-entered. `Idle` and
+   `Done` call nothing. This stage reads only the phase and the descriptor.
+   Where the fault arose, the communication lock and the run identifiers do
+   not affect it.
+2. **Report.** When the communication lock is free, send `TeardownReport` if
+   stage 1 produced a result, then `TaskState(Fail)` with the fault location
+   and `TargetPanic`, and wait for `TryReset`. When the lock is held, the
+   fault arose inside a transport call and nothing is sent.
+
+The handler then resets. On this path teardown runs with interrupts masked,
+so it must not depend on interrupts.
 
 #### 4.5 Packets and Statistics
 
@@ -568,8 +582,8 @@ waits at step `0` until stopped or timed out.
 |:------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------|
 | `control-rs-ets/src/lib.rs`                           | Task descriptor, `TaskStatus<O>`, `TaskContext<I>`, `TaskIo`, `TaskOutcome`, `MAX_PACKET_SIZE`                          |
 | `control-rs-ets/src/comms.rs`                         | Appended variants, `Command<'a>`, `PollResult<'_, E>`, `TaskRunState`, `MAX_MESSAGE_SIZE`, `PROTOCOL_VERSION = 2`       |
-| `control-rs-ets/src/server.rs`                        | `with_tasks`, discovery, run task                                                                                       |
-| `control-rs-ets/src/util.rs`                          | `get_tasks`, panic-path teardown, test `HostComms` signature                                                            |
+| `control-rs-ets/src/server.rs`                        | `with_tasks`, discovery, run task, run phase                                                                            |
+| `control-rs-ets/src/util.rs`                          | `get_tasks`, fault-path settle and report stages, test `HostComms` signature                                            |
 | `control-rs-ets/build.rs`                             | `.ets_tasks` section and symbols                                                                                        |
 | `control-rs-macros/src/lib.rs`                        | Task markers in `#[ets_suite]`, typed step wrapper, entrypoint hand-off (§4.1)                                          |
 | `control-rs-ets-host/src/{bridge,session,runner}.rs`  | Owned telemetry, run control, heartbeat, stop escalation, bounded run                                                   |
@@ -653,6 +667,9 @@ manual; no `control-rs-ci` gate starts it (C-8).
 | Tasks in the `control-rs-ci` `ets` gate                            | Out of scope by decision; the gate keeps verifying atomic suites, and a task run needs a per-suite selection and simulation the gate does not hold      | §1, C-8                       |
 | A separate task server or firmware                                 | Duplicates discovery, settings, framing, panic handling and host tooling, and both suite kinds could not share one image or one TUI                     | ADR-0002                      |
 | Lifecycle and goal semantics in ETS                                | Production runtime concerns; violates C-6                                                                                                               | ADR-0002                      |
+| Fault-path teardown inside the reporting branch                    | A fault raised while the communication lock is held skips teardown; violates FR-5                                                                      | §4.4                          |
+| Separate active-run and teardown-started flags                     | Cannot tell a run before setup from an armed run, or teardown in progress from teardown done; a fault after teardown is misreported as a teardown failure | §4.4                          |
+| Teardown in a `Drop` guard on the run frame                        | A `no_std` panic does not unwind, so the guard never runs on a fault                                                                                   | [12]                          |
 
 ---
 
@@ -663,13 +680,13 @@ manual; no `control-rs-ci` gate starts it (C-8).
 | Condition | Requirement | Method       | Target                                                                                                       | Criterion                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 |:----------|:------------|:-------------|:-------------------------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | VC-1.1    | FR-1        | `libtest`    | `control_rs_macros::tests::task_expands_descriptor`                                                          | `#[ets_suite]` with settings, two cases and the four task markers registers exactly the two cases and emits one `TaskDescriptor` whose `suite` points at that suite's descriptor, named after the step function, holding the marked setup, reset and teardown functions, an untyped step wrapper around the typed step and the `type_name` of `I` and `O`; every row of the §4.1 diagnostics table is a compile error with that span, and the missing-marker error names each missing marker; `ets_entrypoint!` passes the task slice through `with_tasks`; FR-1 holds iff all conditions hold |
-| VC-1.2    | FR-1        | `libtest`    | `control_rs_ets::server::tests::test_task_discovery`                                                         | After each suite's existing records, discovery sends `LifecycleSuite` and the suite's `TaskInfo`, with `test_id` equal to the suite's case count, for each suite that provides a task and nothing for a suite without one; case identifiers are unchanged                                                                                                                                                                                                                                                                                                                                                             |
+| VC-1.2    | FR-1        | `libtest`    | `control_rs_ets::server::tests::test_task_discovery`                                                         | After each suite's existing records, discovery sends `LifecycleSuite` and the suite's `TaskInfo`, with `test_id` equal to the suite's case count, for each suite that provides a task and nothing for a suite without one; case identifiers are unchanged                                                                                                                                                                                                                                                                                                                                      |
 | VC-2.1    | FR-2        | `libtest`    | `control_rs_ets::server::tests::test_task_setup_once_then_steps`                                             | Setup is called exactly once and before the first step, and steps repeat while the status is `Running`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | VC-3.1    | FR-3        | `libtest`    | `control_rs_ets::server::tests::test_task_status_continues_or_ends`                                          | `Running(o)` and `Warn(o, m)` lead to another step carrying `o`, and `Pass`, `Fail` and `Error` lead to teardown with no further step; FR-3 holds iff all conditions hold                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | VC-3.2    | FR-3        | `libtest`    | `control_rs_ets::server::tests::test_task_state_sent_on_change`                                              | A `TaskState` frame carrying the status and message is sent exactly when the status variant or message changes, and a changed packet alone sends none                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | VC-4.1    | FR-4        | `libtest`    | `control_rs_ets::server::tests::test_task_stop_now_at_boundary`                                              | After `StopNow` is polled no further step is called, teardown runs and the final state is `Aborted`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | VC-5.1    | FR-5        | `libtest`    | `control_rs_ets::server::tests::test_task_teardown_once_per_end_path`                                        | For each end path (terminal status, stop, step bound, setup error, link timeout) teardown is called exactly once; FR-5 holds iff all conditions hold                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| VC-5.2    | FR-5        | `libtest`    | `control_rs_ets::util::tests::test_panic_teardown_runs_once`                                                 | The panic-path teardown helper calls an active run's teardown once and never re-enters it when the panic arises in teardown, and a panic in reset takes the same path                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| VC-5.2    | FR-5        | `libtest`    | `control_rs_ets::util::tests::test_fault_settles_by_phase`                                                   | For each phase and each lock state, the settle stage calls teardown exactly once from `Armed` and never from `Idle`, `TearingDown` or `Done`; its call count is the same with the lock free or held; the report stage sends frames iff the lock is free; a fault during the pre-setup `Running` send calls no teardown; FR-5 holds iff all conditions hold                                                                                                                                                                                                                                |
 | VC-5.3    | FR-5        | `inspection` | —                                                                                                            | The Teensy 4.1 example log for modes 9 and 10 (§4.9) shows exactly one `TeardownReport` before `TargetPanic`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | VC-6.1    | FR-6        | `libtest`    | `control_rs_ets::server::tests::test_teardown_report_independent_of_verdict`                                 | A failing teardown yields `TeardownReport { ok: false }` with its message while the final state keeps the step verdict                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | VC-7.1    | FR-7        | `libtest`    | `control_rs_ets::server::tests::test_task_set_setting_between_steps`                                         | A `SetSetting` for the running task's suite polled during a run stores the value and calls reset once before the next step, the new value is visible to reset and that step and confirmed by `SettingInfo`, and a reset `Err` ends the run `Error` with teardown                                                                                                                                                                                                                                                                                                                               |
@@ -798,6 +815,9 @@ lowers the step rate, which `TaskStats` shows. No numeric types are involved.
   lifecycle node, for example in `control-rs-esc`, are tasks whose
   setup, step and teardown drive that node. The node's lifecycle and goal
   semantics and its production link are outside this document.
+- **Unreported fault-path teardown (FR-6)**: a fault inside a transport call
+  runs teardown but sends no `TeardownReport`, so the host records the run
+  without a teardown outcome. The outcome is not recoverable after the reset.
 
 ---
 
@@ -814,16 +834,17 @@ lowers the step rate, which `TaskStats` shows. No numeric types are involved.
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-|:---------|:----------------|:----------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | October 7, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-13, NFR-1 to NFR-3, C-1 to C-7.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 1.1      | October 7, 2026 | @MitchellDScott | Wire field types and `TaskRunState`, heartbeat period and stop timeout, `emit_sample` results, entrypoint hand-off, hardware example suite (§4.9), bound check before poll, lifecycle suites excluded from QEMU firmware; badge alt text.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 1.2      | October 7, 2026 | @MitchellDScott | Host simulation data path: typed `TaskContext<I>` and `TaskStatus<O>` with `Running(packet)` and `Warn(packet, message)`, `TaskInput`, lockstep mode, `TaskSim`; FR-14 to FR-16; `emit_sample` removed; VC-14 to VC-23 renumbered VC-17 to VC-26.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 1.3      | October 7, 2026 | @MitchellDScott | Sibling revisions applied (§8) and ADR-0002 updated; status badge in the `design-template.md` form.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 1.4      | October 7, 2026 | @MitchellDScott | Teensy command-loss risk resolved by `host-comm-design.md` FR-6 (`BufferedFrameReader`), made a Phase 1 prerequisite.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 1.5      | October 7, 2026 | @MitchellDScott | Lockstep lifecycle suites allowed on QEMU, free-running refused by the host; new C-8 (emulator lockstep only, no `control-rs-ci` gate runs lifecycle suites); FR-12 runs lifecycle suites only when selected; QEMU lockstep example (§4.9); VC-27.1, VC-27.2; §8 `Command<'a>` resolved.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| 1.6      | October 7, 2026 | @MitchellDScott | ADR-0002 rewritten as the decision to extend the existing server with lifecycle suites (`0002-extend-ets-with-lifecycle-suites.md`); §1 states both suite kinds share one image and TUI; §5 separate-server row.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+|:---------|:----------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | October 7, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-13, NFR-1 to NFR-3, C-1 to C-7.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.1      | October 7, 2026 | @MitchellDScott | Wire field types and `TaskRunState`, heartbeat period and stop timeout, `emit_sample` results, entrypoint hand-off, hardware example suite (§4.9), bound check before poll, lifecycle suites excluded from QEMU firmware; badge alt text.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 1.2      | October 7, 2026 | @MitchellDScott | Host simulation data path: typed `TaskContext<I>` and `TaskStatus<O>` with `Running(packet)` and `Warn(packet, message)`, `TaskInput`, lockstep mode, `TaskSim`; FR-14 to FR-16; `emit_sample` removed; VC-14 to VC-23 renumbered VC-17 to VC-26.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.3      | October 7, 2026 | @MitchellDScott | Sibling revisions applied (§8) and ADR-0002 updated; status badge in the `design-template.md` form.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.4      | October 7, 2026 | @MitchellDScott | Teensy command-loss risk resolved by `host-comm-design.md` FR-6 (`BufferedFrameReader`), made a Phase 1 prerequisite.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 1.5      | October 7, 2026 | @MitchellDScott | Lockstep lifecycle suites allowed on QEMU, free-running refused by the host; new C-8 (emulator lockstep only, no `control-rs-ci` gate runs lifecycle suites); FR-12 runs lifecycle suites only when selected; QEMU lockstep example (§4.9); VC-27.1, VC-27.2; §8 `Command<'a>` resolved.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.6      | October 7, 2026 | @MitchellDScott | ADR-0002 rewritten as the decision to extend the existing server with lifecycle suites (`0002-extend-ets-with-lifecycle-suites.md`); §1 states both suite kinds share one image and TUI; §5 separate-server row.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | 1.7      | October 7, 2026 | @MitchellDScott | Tasks are declared inside `#[ets_suite]` modules and use the suite's settings; `TaskDescriptor` points at its suite; tasks addressed by `(suite_id, test_id)` after the suite's cases; `LifecycleSuite` discovery marker; `MAX_PACKET_SIZE` 493; terminology "task"; FR-1, FR-7, FR-13, C-4, C-7, §4.1, §4.2, §4.9 and VCs updated; at most one task per suite (C-9, VC-28.1, VC-28.2), `LifecycleSuite.task_count: u8`; task markers sit directly in the suite module (one setup, step, reset and teardown per suite, any number of cases), no nested `#[ets_task]` module; the four functions are presented as the suite's lifecycle task, §4.1 diagnostics table, C-6 wording; title and user-facing name "lifecycle suite" |
+| 1.8      | October 11, 2026 | @MitchellDScott | Fault path settles the run from an atomic phase (`Idle`, `Armed`, `TearingDown`, `Done`) independent of the host link, then reports when the communication lock is free; FR-5 names faults; §3 diagram and Fault row, §4.3 steps 1 and 5, §4.4, §4.7, §5 rows, VC-5.2, §8 unreported-teardown risk. |
 
 ---
 

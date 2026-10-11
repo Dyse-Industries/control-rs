@@ -15,7 +15,9 @@
 //! - **Test Index Indicator**: Thread-safe atomic indicator (`TestIndexIndicator`) tracking the active suite
 //!   and test indexes to let exception/panic handlers report where a crash happened.
 
-use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicPtr, Ordering};
+use core::sync::atomic::{
+    AtomicBool, AtomicIsize, AtomicPtr, AtomicU8, Ordering,
+};
 
 use crate::comms::{
     Command, CommsLock, HostComms, MAX_MESSAGE_SIZE, PROTOCOL_VERSION,
@@ -65,8 +67,17 @@ pub static CURRENT_SUITE: TestIndexIndicator = TestIndexIndicator::new();
 /// Accessing or updating this indicator is thread-safe and atomic.
 pub static CURRENT_TEST: TestIndexIndicator = TestIndexIndicator::new();
 
+/// Global tracker for the current lifecycle task phase.
+///
+/// Used by the fault handler to determine whether teardown must run.
+///
+/// # Safety
+/// Accessing or updating this indicator is thread-safe and atomic.
+pub static TASK_PHASE: TaskPhaseIndicator = TaskPhaseIndicator::new();
+
 /// Set once the active task's teardown has started, so that it is never
 /// entered twice.
+#[deprecated(note = "superseded by TASK_PHASE in lifecycle rev 1.8")]
 pub static TEARDOWN_STARTED: AtomicBool = AtomicBool::new(false);
 
 // --- Type definitions ---
@@ -243,6 +254,34 @@ pub struct TestMetrics {
 pub struct TestIndexIndicator {
     /// Holds the active test index (>= 0) or `IDLE_STATE` (< 0).
     state: AtomicIsize,
+}
+
+/// Lifecycle run phase tracking active task execution and fault teardown.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum TaskRunPhase {
+    /// No lifecycle task is executing, or run has cleared.
+    Idle = 0,
+    /// Setup is about to run or is running, stepping is active.
+    /// A fault while Armed triggers teardown.
+    Armed = 1,
+    /// Teardown is currently executing. A fault while `TearingDown` does not re-enter teardown.
+    TearingDown = 2,
+    /// Teardown has completed; closing reports are sending or run is ending.
+    Done = 3,
+}
+
+/// Thread-safe atomic indicator tracking the lifecycle task run phase.
+///
+/// Coordinates fault handling and teardown execution across server tasks and exceptions.
+///
+/// # Safety
+/// This struct does not use `unsafe` code.
+///
+/// # Panics
+/// Operations do not panic.
+pub struct TaskPhaseIndicator {
+    state: AtomicU8,
 }
 
 #[allow(clippy::type_complexity)]
@@ -858,6 +897,8 @@ where
 
         CURRENT_SUITE.set_active(usize::from(req.suite_id));
         CURRENT_TEST.set_active(usize::from(req.test_id));
+        TASK_PHASE.set(TaskRunPhase::Idle);
+        #[allow(deprecated)]
         TEARDOWN_STARTED.store(false, Ordering::Release);
         ACTIVE_TASK
             .store(core::ptr::from_ref(desc).cast_mut(), Ordering::Release);
@@ -874,6 +915,7 @@ where
             Self::clear_active_run();
             return Err(e);
         }
+        TASK_PHASE.set(TaskRunPhase::Armed);
         if let Err(msg) = (desc.setup)() {
             run.verdict = Some((TaskRunState::Error, Some(msg)));
         }
@@ -892,6 +934,7 @@ where
 
     /// Clears the active lifecycle-run indicators without calling teardown.
     fn clear_active_run() {
+        TASK_PHASE.set(TaskRunPhase::Idle);
         ACTIVE_TASK.store(core::ptr::null_mut(), Ordering::Release);
         CURRENT_SUITE.set_idle();
         CURRENT_TEST.set_idle();
@@ -959,9 +1002,12 @@ where
             TaskRunState::Error,
             Some("run ended without verdict"),
         ));
+        TASK_PHASE.set(TaskRunPhase::TearingDown);
+        #[allow(deprecated)]
         TEARDOWN_STARTED.store(true, Ordering::Release);
         let ended_ns = self.context.cpu_utils.get_nanos();
         let teardown = (desc.teardown)();
+        TASK_PHASE.set(TaskRunPhase::Done);
 
         let teardown_send =
             self.context
@@ -1228,6 +1274,72 @@ impl TestIndexIndicator {
     /// Sets the indicator back to Idle.
     pub fn set_idle(&self) {
         self.state.store(Self::IDLE_STATE, Ordering::Release);
+    }
+}
+
+impl TaskRunPhase {
+    #[must_use]
+    const fn from_u8(val: u8) -> Self {
+        match val {
+            1 => Self::Armed,
+            2 => Self::TearingDown,
+            3 => Self::Done,
+            _ => Self::Idle,
+        }
+    }
+}
+
+impl Default for TaskPhaseIndicator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TaskPhaseIndicator {
+    /// Creates a new indicator in the `Idle` phase.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            state: AtomicU8::new(TaskRunPhase::Idle as u8),
+        }
+    }
+
+    /// Retrieves the current task run phase.
+    #[must_use]
+    pub fn get(&self) -> TaskRunPhase {
+        TaskRunPhase::from_u8(self.state.load(Ordering::Acquire))
+    }
+
+    /// Sets the indicator to a specific task run phase.
+    pub fn set(&self, phase: TaskRunPhase) {
+        self.state.store(phase as u8, Ordering::Release);
+    }
+
+    /// Atomically transitions from `current` to `new_phase`.
+    ///
+    /// # Errors
+    /// Returns `Err(actual)` if the current phase did not match `current`.
+    pub fn compare_exchange(
+        &self,
+        current: TaskRunPhase,
+        new_phase: TaskRunPhase,
+    ) -> Result<TaskRunPhase, TaskRunPhase> {
+        self.state
+            .compare_exchange(
+                current as u8,
+                new_phase as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .map(TaskRunPhase::from_u8)
+            .map_err(TaskRunPhase::from_u8)
+    }
+
+    /// Atomically swaps the phase, returning the previous phase.
+    pub fn swap(&self, new_phase: TaskRunPhase) -> TaskRunPhase {
+        TaskRunPhase::from_u8(
+            self.state.swap(new_phase as u8, Ordering::AcqRel),
+        )
     }
 }
 
