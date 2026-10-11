@@ -18,9 +18,9 @@ pub use runner::{
 };
 pub use session::{
     DEFAULT_STOP_TIMEOUT, HEARTBEAT_PERIOD, SETTINGS_READY, SUITE_INFO_READY,
-    SUITE_READY_MASK, SessionAction, SessionPhase, SessionState, SettingItem,
-    SuiteItem, TESTS_READY, TargetInfo, TaskItem, TaskRunRecord, TaskStart,
-    TaskStartError, TestIndex, TestItem,
+    SUITE_READY_MASK, SessionAction, SessionMode, SessionPhase, SessionState,
+    SettingItem, SuiteItem, TESTS_READY, TargetInfo, TaskItem, TaskRunRecord,
+    TaskStart, TaskStartError, TestIndex, TestItem,
 };
 pub use target::{
     QemuArch, QemuTargetDetails, SubprocessTarget, Target, build_target_elf,

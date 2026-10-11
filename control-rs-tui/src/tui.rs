@@ -19,17 +19,20 @@ use crossterm::{
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
+    widgets::{
+        Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap,
+    },
 };
 
 use control_rs_ets::comms::{Command, TaskRunState, TestState};
 use control_rs_ets::settings::SettingValue;
 use control_rs_ets_host::{
     BridgeMessage, ETSBridge, HostError, OwnedTelemetry, SessionAction,
-    SessionState, SuiteItem, Target, TaskRunRecord, TaskStart, TestIndex,
+    SessionMode, SessionState, SuiteItem, Target, TaskRunRecord, TaskStart,
+    TestIndex,
 };
 
 /// How long the session may stay undiscovered before discovery is re-sent.
@@ -123,6 +126,17 @@ struct SuiteRows<'a> {
     suite: &'a SuiteItem,
 }
 
+/// Formatted documentation modal popup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocModal {
+    /// Index in visible items this modal describes.
+    pub item_index: usize,
+    /// Title displayed in the modal border.
+    pub title: String,
+    /// Lines of formatted documentation and properties.
+    pub lines: Vec<String>,
+}
+
 /// Presentation application state for the TUI dashboard.
 pub struct AppState {
     /// Session state machine managing discovery, run queue, and results.
@@ -153,14 +167,22 @@ pub struct AppState {
     pub process_exit: Option<String>,
     /// When the active or last task run was started from this console.
     pub task_started: Option<Instant>,
+    /// Active documentation modal dialog, if open.
+    pub doc_modal: Option<DocModal>,
+    /// Manual log scroll offset when autoscroll is paused.
+    pub log_scroll_offset: usize,
+    /// Height in rows allocated to the target log panel.
+    pub log_height: u16,
 }
 
 impl AppState {
     /// Creates a new, empty dashboard presentation state.
     #[must_use]
     pub fn new(target_info: String, link_info: String) -> Self {
+        let mut session = SessionState::new();
+        session.mode = SessionMode::Console;
         let mut state = Self {
-            session: SessionState::new(),
+            session,
             target_info,
             link_info,
             collapsed_suites: HashSet::new(),
@@ -174,6 +196,9 @@ impl AppState {
             setting_edit: String::new(),
             process_exit: None,
             task_started: None,
+            doc_modal: None,
+            log_scroll_offset: 0,
+            log_height: 8,
         };
         state.table_state.select(Some(0));
         state
@@ -403,13 +428,202 @@ impl AppState {
         self.send_logged(bridge, &Command::ListSuites);
     }
 
-    fn show_selected_setting(&mut self) {
-        if let Some(selected) = self.table_state.selected()
-            && let Some(TableItem::Setting {
-                name, description, ..
-            }) = self.visible_items.get(selected)
-        {
-            self.logs.push(format!("> [SETTING] {name}: {description}"));
+    fn suite_doc_modal(
+        &self,
+        selected: usize,
+        suite_idx: usize,
+        name: &str,
+    ) -> DocModal {
+        let desc = self
+            .session
+            .suites
+            .get(suite_idx)
+            .map(|s| s.description.as_str())
+            .filter(|d| !d.is_empty())
+            .unwrap_or("No documentation provided.");
+        DocModal {
+            item_index: selected,
+            title: name.parse().unwrap(),
+            lines: desc.lines().map(String::from).collect(),
+        }
+    }
+
+    fn test_doc_modal(&self, selected: usize, item: &TableItem) -> DocModal {
+        let TableItem::Test {
+            suite_idx,
+            test_idx,
+            name,
+            ..
+        } = item
+        else {
+            return DocModal {
+                item_index: selected,
+                title: String::new(),
+                lines: Vec::new(),
+            };
+        };
+        let suite = self.session.suites.get(*suite_idx);
+        let suite_name = suite.map_or("unknown", |s| s.name.as_str());
+        let desc = suite
+            .and_then(|s| s.tests.get(*test_idx))
+            .map(|t| t.description.as_str())
+            .filter(|d| !d.is_empty())
+            .unwrap_or("No documentation provided.");
+        DocModal {
+            item_index: selected,
+            title: format!("{suite_name}::{name}()"),
+            lines: desc.lines().map(String::from).collect(),
+        }
+    }
+
+    fn task_doc_modal(&self, selected: usize, item: &TableItem) -> DocModal {
+        let TableItem::Task {
+            suite_idx, name, ..
+        } = item
+        else {
+            return DocModal {
+                item_index: selected,
+                title: String::new(),
+                lines: Vec::new(),
+            };
+        };
+        let suite = self.session.suites.get(*suite_idx);
+        let suite_name = suite.map_or("unknown", |s| s.name.as_str());
+        let task = suite.and_then(|s| s.task_item.as_ref());
+        let desc = task
+            .map(|t| t.description.as_str())
+            .filter(|d| !d.is_empty())
+            .unwrap_or("No documentation provided.");
+        let in_type = task.map_or("()", |t| t.input_type.as_str());
+        let out_type = task.map_or("()", |t| t.output_type.as_str());
+        let mut lines =
+            vec![format!("fn step({in_type}) -> {out_type}"), String::new()];
+        lines.extend(desc.lines().map(String::from));
+        DocModal {
+            item_index: selected,
+            title: format!("{suite_name}::{name}"),
+            lines,
+        }
+    }
+
+    fn setting_doc_modal(&self, selected: usize, item: &TableItem) -> DocModal {
+        let TableItem::Setting {
+            suite_idx,
+            name,
+            description,
+            value,
+            ..
+        } = item
+        else {
+            return DocModal {
+                item_index: selected,
+                title: String::new(),
+                lines: Vec::new(),
+            };
+        };
+        let suite_name = self
+            .session
+            .suites
+            .get(*suite_idx)
+            .map_or("unknown", |s| s.name.as_str());
+        let desc = if description.is_empty() {
+            "No documentation provided."
+        } else {
+            description.as_str()
+        };
+        let mut lines = vec![format!("Current Value: {value}"), String::new()];
+        lines.extend(desc.lines().map(String::from));
+        DocModal {
+            item_index: selected,
+            title: format!("{suite_name}::{name}"),
+            lines,
+        }
+    }
+
+    /// Opens the documentation modal for the currently selected item.
+    pub fn open_doc_modal(&mut self) {
+        let Some(selected) = self.table_state.selected() else {
+            return;
+        };
+        let Some(item) = self.visible_items.get(selected) else {
+            return;
+        };
+        let modal = match item {
+            TableItem::Suite {
+                suite_idx, name, ..
+            } => self.suite_doc_modal(selected, *suite_idx, name),
+            TableItem::Test { .. } => self.test_doc_modal(selected, item),
+            TableItem::Task { .. } => self.task_doc_modal(selected, item),
+            TableItem::Setting { .. } => self.setting_doc_modal(selected, item),
+        };
+        self.doc_modal = Some(modal);
+    }
+
+    /// Returns the inner line capacity of the log panel (excluding title and bottom border).
+    #[must_use]
+    pub const fn inner_log_height(&self) -> usize {
+        self.log_height.saturating_sub(2) as usize
+    }
+
+    /// Maximum scroll index (top visible line when scrolled to the tail).
+    #[must_use]
+    pub const fn max_log_scroll(&self) -> usize {
+        self.logs.len().saturating_sub(self.inner_log_height())
+    }
+
+    /// Toggles scroll lock (pausing or resuming autoscroll).
+    pub const fn toggle_scroll_lock(&mut self) {
+        self.autoscroll = !self.autoscroll;
+        self.log_scroll_offset = self.max_log_scroll();
+    }
+
+    /// Scrolls the log panel up by `delta` lines, pausing autoscroll.
+    pub const fn scroll_logs_up(&mut self, delta: usize) {
+        if self.logs.is_empty() {
+            return;
+        }
+        let max_scroll = self.max_log_scroll();
+        if self.autoscroll {
+            self.autoscroll = false;
+            self.log_scroll_offset = max_scroll;
+        } else if self.log_scroll_offset > max_scroll {
+            self.log_scroll_offset = max_scroll;
+        }
+        self.log_scroll_offset = self.log_scroll_offset.saturating_sub(delta);
+    }
+
+    /// Scrolls the log panel down by `delta` lines. If already at the bottom,
+    /// re-enables autoscroll.
+    pub const fn scroll_logs_down(&mut self, delta: usize) {
+        if self.logs.is_empty() || self.autoscroll {
+            return;
+        }
+        let max_scroll = self.max_log_scroll();
+        if self.log_scroll_offset >= max_scroll {
+            self.autoscroll = true;
+            return;
+        }
+        let next = self.log_scroll_offset.saturating_add(delta);
+        if next >= max_scroll {
+            self.log_scroll_offset = max_scroll;
+        } else {
+            self.log_scroll_offset = next;
+        }
+    }
+
+    /// Increases target log panel height by 1 line (up to 30 lines).
+    pub const fn increase_log_height(&mut self) {
+        let next = self.log_height.saturating_add(1);
+        if next <= 30 {
+            self.log_height = next;
+        }
+    }
+
+    /// Decreases target log panel height by 1 line (down to 3 lines).
+    pub const fn decrease_log_height(&mut self) {
+        let next = self.log_height.saturating_sub(1);
+        if next >= 3 {
+            self.log_height = next;
         }
     }
 
@@ -555,6 +769,41 @@ impl AppState {
         key: KeyEvent,
         bridge: Option<&mut ETSBridge>,
     ) -> bool {
+        if self.doc_modal.is_some() {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.doc_modal = None;
+                    return false;
+                }
+                KeyCode::Char('d' | 'D') => {
+                    if let Some(modal) = &self.doc_modal
+                        && let Some(selected) = self.table_state.selected()
+                        && modal.item_index == selected
+                    {
+                        self.doc_modal = None;
+                        return false;
+                    }
+                    self.open_doc_modal();
+                    return false;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.previous_row();
+                    self.open_doc_modal();
+                    return false;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.next_row();
+                    self.open_doc_modal();
+                    return false;
+                }
+                KeyCode::Enter => {
+                    self.doc_modal = None;
+                    self.toggle_or_run_selected(bridge);
+                    return false;
+                }
+                _ => return false,
+            }
+        }
         if self.is_filtering {
             self.handle_filter_key(key.code);
             return false;
@@ -622,7 +871,20 @@ impl AppState {
         match code {
             KeyCode::Char('q') => return true,
             KeyCode::Char('f') => self.is_filtering = true,
-            KeyCode::Char('d') => self.show_selected_setting(),
+            KeyCode::Char('d' | 'D') => self.open_doc_modal(),
+            KeyCode::Char('+' | '=') => self.increase_log_height(),
+            KeyCode::Char('-' | '_') => self.decrease_log_height(),
+            KeyCode::Char('l' | 'L') | KeyCode::ScrollLock => {
+                self.toggle_scroll_lock();
+            }
+            KeyCode::PageUp => {
+                let delta = self.inner_log_height().saturating_sub(1).max(1);
+                self.scroll_logs_up(delta);
+            }
+            KeyCode::PageDown => {
+                let delta = self.inner_log_height().saturating_sub(1).max(1);
+                self.scroll_logs_down(delta);
+            }
             KeyCode::Char('r') => {
                 if let Some(action) = self.session.enqueue_all() {
                     self.execute_logged(action, bridge);
@@ -631,12 +893,15 @@ impl AppState {
             }
             KeyCode::Char('s') => {
                 self.session.stop();
-                if let Some(b) = bridge {
-                    self.send_logged(b, &Command::TryReset);
+                if self.session.task_active() {
+                    self.stop_active_task(bridge);
+                } else {
+                    if let Some(b) = bridge {
+                        self.send_logged(b, &Command::TryReset);
+                    }
+                    self.rebuild_visible_items();
                 }
-                self.rebuild_visible_items();
             }
-            KeyCode::Char('x') => self.stop_active_task(bridge),
             KeyCode::Char('c') => {
                 self.collapsed_suites.extend(0..self.session.suites.len());
                 self.rebuild_visible_items();
@@ -846,7 +1111,7 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
         .constraints([
             Constraint::Length(4),
             Constraint::Min(8),
-            Constraint::Length(8),
+            Constraint::Length(state.log_height),
             Constraint::Length(1),
         ])
         .areas(frame.area());
@@ -857,8 +1122,64 @@ pub fn draw_ui(frame: &mut ratatui::Frame<'_>, state: &mut AppState) {
         table_area,
         &mut state.table_state,
     );
-    frame.render_widget(log_widget(state, log_area.height), log_area);
+    frame.render_widget(log_widget(state, log_area), log_area);
     frame.render_widget(Paragraph::new(footer_line(state)), footer_area);
+
+    if let Some(modal) = &state.doc_modal {
+        render_doc_modal(frame, modal);
+    }
+}
+
+/// Renders a centered modal popup displaying formatted documentation.
+fn render_doc_modal(frame: &mut ratatui::Frame<'_>, modal: &DocModal) {
+    let area = centered_rect(70, 60, frame.area());
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(Span::styled(
+            format!(" {} ", modal.title),
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::Yellow),
+        ));
+    let mut text: Vec<Line<'static>> = Vec::new();
+    for line in &modal.lines {
+        text.push(Line::from(line.clone()));
+    }
+    text.push(Line::from(""));
+    text.push(Line::styled(
+        " [Esc/Enter/d] Close ",
+        Style::default().fg(Color::DarkGray),
+    ));
+    let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, area);
+}
+
+/// Computes a centered rectangle with percentages of width and height.
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let vert_margin = 100_u16.saturating_sub(percent_y) / 2;
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(vert_margin),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage(vert_margin),
+        ])
+        .split(r);
+
+    let center_vert = popup_layout.get(1).copied().unwrap_or(r);
+    let horiz_margin = 100_u16.saturating_sub(percent_x) / 2;
+    let horiz_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(horiz_margin),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage(horiz_margin),
+        ])
+        .split(center_vert);
+
+    horiz_layout.get(1).copied().unwrap_or(center_vert)
 }
 
 /// Header panel: target, link, run status and pass/fail totals.
@@ -929,11 +1250,12 @@ fn status_line(session: &SessionState) -> Line<'static> {
                 .map_or("unknown", |t| t.name.as_str());
             (" [ RUNNING ] ", Color::Cyan, format!("{s_name}::{t_name}"))
         } else if session.discovery_complete {
-            (
-                " [ IDLE ] ",
-                Color::Green,
-                "All tests completed or stopped".to_string(),
-            )
+            let detail = if session.results.is_empty() {
+                "Ready. Press (r) to run all tests.".to_string()
+            } else {
+                "All tests completed or stopped".to_string()
+            };
+            (" [ IDLE ] ", Color::Green, detail)
         } else {
             (
                 " [ DISCOVERING ] ",
@@ -1117,20 +1439,26 @@ fn test_metric_cells(item: &TableItem) -> [Cell<'static>; 3] {
 }
 
 /// Target log panel, scrolled to the tail when autoscroll is on.
-fn log_widget(state: &AppState, area_height: u16) -> Paragraph<'_> {
+fn log_widget(state: &AppState, area: Rect) -> Paragraph<'_> {
+    let scroll_tag = if state.autoscroll {
+        "Autoscroll: ON"
+    } else {
+        "Scroll Lock: ON [PgUp/PgDn]"
+    };
     let log_block = Block::default()
         .borders(Borders::BOTTOM)
         .border_style(Style::default().fg(Color::DarkGray))
         .title(Span::styled(
-            " [ TARGET LOGS ] (Autoscroll: ON) ",
+            format!(" [ TARGET LOGS ] ({scroll_tag}) "),
             Style::default().add_modifier(Modifier::BOLD),
         ));
 
-    let inner_height = usize::from(area_height.saturating_sub(1));
+    let inner_height = usize::from(log_block.inner(area).height);
+    let max_scroll = state.logs.len().saturating_sub(inner_height);
     let scroll_y = if state.autoscroll {
-        state.logs.len().saturating_sub(inner_height)
+        max_scroll
     } else {
-        0
+        state.log_scroll_offset.min(max_scroll)
     };
     let visible_logs: Vec<Line<'_>> = state
         .logs
@@ -1144,7 +1472,12 @@ fn log_widget(state: &AppState, area_height: u16) -> Paragraph<'_> {
 
 /// Footer: the active prompt, or the key legend.
 fn footer_line(state: &AppState) -> Line<'_> {
-    if state.is_filtering {
+    if state.doc_modal.is_some() {
+        Line::from(vec![
+            Span::styled(" [Esc/Enter/d]", bold(Color::Cyan)),
+            Span::raw(" close documentation modal"),
+        ])
+    } else if state.is_filtering {
         prompt_line(
             " Filter: ",
             Color::Yellow,
@@ -1167,9 +1500,13 @@ fn footer_line(state: &AppState) -> Line<'_> {
             Span::styled("(s)", bold(Color::Cyan)),
             Span::raw("top | "),
             Span::styled("(d)", bold(Color::Cyan)),
-            Span::raw("escription | "),
-            Span::styled("(x)", bold(Color::Cyan)),
-            Span::raw(" stop lifecycle | "),
+            Span::raw("ocs | "),
+            Span::styled("(+/-)", bold(Color::Cyan)),
+            Span::raw(" height | "),
+            Span::styled("(l)", bold(Color::Cyan)),
+            Span::raw("ock scroll | "),
+            Span::styled("(PgUp/PgDn)", bold(Color::Cyan)),
+            Span::raw(" scroll | "),
             Span::styled("(q)", bold(Color::Cyan)),
             Span::raw("uit"),
         ])
@@ -1792,18 +2129,12 @@ mod tests {
         feed(&mut state, &TARGET_INFO);
         feed(&mut state, &Telemetry::DiscoveryComplete);
         state.rebuild_visible_items();
-        assert!(matches!(
-            state.visible_items.get(1).unwrap(),
-            TableItem::Setting { name, description, .. }
-                if name == "cycle_limit"
-                    && description == "Maximum cycles before test timeout"
-        ));
         state.table_state.select(Some(1));
         assert!(!state.handle_key(make_test_event(KeyCode::Char('d')), None));
-        assert_eq!(
-            state.logs.last().map(String::as_str),
-            Some("> [SETTING] cycle_limit: Maximum cycles before test timeout")
-        );
+        let modal = state.doc_modal.as_ref().expect("modal for setting");
+        assert!(modal.lines.iter().any(|l| l.contains("Maximum cycles")));
+        assert!(state.logs.is_empty(), "docs should not print to logs");
+
         assert!(!state.handle_key(make_test_event(KeyCode::Enter), None));
         assert!(state.is_editing_setting);
         for _ in 0..3 {
@@ -1816,18 +2147,13 @@ mod tests {
         }
         assert!(!state.handle_key(make_test_event(KeyCode::Enter), None));
         assert!(!state.is_editing_setting);
-        assert_eq!(
-            state
-                .session
-                .suites
-                .first()
-                .unwrap()
-                .settings
-                .first()
-                .unwrap()
-                .value,
-            SettingValue::U32(200)
-        );
+        let actual = state
+            .session
+            .suites
+            .first()
+            .and_then(|s| s.settings.first())
+            .map(|s| s.value);
+        assert_eq!(actual, Some(SettingValue::U32(200)));
     }
 
     /// Discovers suite 0 named `alpha` with tests `one`, `two` and `settings`
@@ -1939,6 +2265,20 @@ mod tests {
         assert!(state.session.current_running.is_none());
         state.handle_key(make_test_event(KeyCode::Char('r')), None);
         assert!(state.session.current_running.is_some());
+    }
+
+    #[test]
+    fn discovery_does_not_auto_run_all() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        discover_alpha(&mut state, 0);
+        assert!(state.session.discovery_complete);
+        assert!(state.session.current_running.is_none());
+        assert_eq!(state.session.run_queue, []);
+        let line = status_line(&state.session);
+        assert!(
+            line.to_string()
+                .contains("Ready. Press (r) to run all tests.")
+        );
     }
 
     #[test]
@@ -2225,7 +2565,7 @@ mod tests {
             "{sent:?}"
         );
 
-        // `x` sends StopNow for the same task.
+        // `s` sends StopNow for the same task.
         feed(
             &mut state,
             &Telemetry::TaskState {
@@ -2236,12 +2576,16 @@ mod tests {
             },
         );
         let _ = state
-            .handle_key(make_test_event(KeyCode::Char('x')), Some(&mut bridge));
+            .handle_key(make_test_event(KeyCode::Char('s')), Some(&mut bridge));
         let sent = sent_payloads(&written);
         assert!(
             sent.iter()
                 .any(|p| tag(p) == Some(5) && p.get(1..3) == Some(&[0, 1][..])),
             "{sent:?}"
+        );
+        assert!(
+            !sent.iter().any(|p| tag(p) == Some(3)),
+            "s should send StopNow, not TryReset, when a task is active: {sent:?}"
         );
     }
 
@@ -2456,5 +2800,213 @@ mod tests {
         let _ = state.session.start_task(start, Instant::now()).unwrap();
         state.tick_task(None);
         assert_ne!(state.visible_items.len(), 0, "an active tick refreshes");
+    }
+
+    fn setup_described_suite() -> AppState {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        feed(
+            &mut state,
+            &Telemetry::SuiteInfo {
+                suite_id: 0,
+                name: "motor",
+                description: "motor suite",
+                test_count: 1,
+                setting_count: 1,
+            },
+        );
+        feed(
+            &mut state,
+            &Telemetry::TestInfo {
+                suite_id: 0,
+                test_id: 0,
+                name: "case_a",
+                description: "test case a",
+            },
+        );
+        feed(
+            &mut state,
+            &Telemetry::LifecycleSuite {
+                suite_id: 0,
+                task_count: 1,
+            },
+        );
+        feed(
+            &mut state,
+            &Telemetry::TaskInfo {
+                suite_id: 0,
+                test_id: 1,
+                name: "speed",
+                description: "task speed",
+                input_type: "f32",
+                output_type: "f32",
+            },
+        );
+        feed(
+            &mut state,
+            &Telemetry::SettingInfo {
+                suite_id: 0,
+                setting_id: 0,
+                name: "gain",
+                description: "gain setting",
+                value: SettingValue::U8(1),
+            },
+        );
+        feed(&mut state, &TARGET_INFO);
+        feed(&mut state, &Telemetry::DiscoveryComplete);
+        state.rebuild_visible_items();
+        state
+    }
+
+    #[test]
+    fn description_shows_for_suite_test_task_and_setting() {
+        let mut state = setup_described_suite();
+
+        state.table_state.select(Some(0));
+        state.handle_key(make_test_event(KeyCode::Char('d')), None);
+        let modal = state.doc_modal.as_ref().expect("modal for suite");
+        assert!(modal.lines.iter().any(|l| l.contains("motor suite")));
+        assert!(state.logs.is_empty(), "docs should not print to logs");
+
+        state.table_state.select(Some(1));
+        state.handle_key(make_test_event(KeyCode::Char('d')), None);
+        let modal = state.doc_modal.as_ref().expect("modal for test");
+        assert!(modal.lines.iter().any(|l| l.contains("test case a")));
+        assert!(state.logs.is_empty(), "docs should not print to logs");
+
+        state.table_state.select(Some(2));
+        state.handle_key(make_test_event(KeyCode::Char('d')), None);
+        let modal = state.doc_modal.as_ref().expect("modal for task");
+        assert!(modal.lines.iter().any(|l| l.contains("task speed")));
+        assert!(state.logs.is_empty(), "docs should not print to logs");
+
+        state.table_state.select(Some(3));
+        state.handle_key(make_test_event(KeyCode::Char('d')), None);
+        let modal = state.doc_modal.as_ref().expect("modal for setting");
+        assert!(modal.lines.iter().any(|l| l.contains("gain setting")));
+        assert!(state.logs.is_empty(), "docs should not print to logs");
+    }
+
+    #[test]
+    fn log_widget_inner_height_and_newest_entry_visible() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        for i in 0..10 {
+            state.logs.push(format!("entry {i}"));
+        }
+        let area = Rect::new(0, 0, 80, 8);
+        let block = Block::default()
+            .borders(Borders::BOTTOM)
+            .title(" [ TARGET LOGS ] (Autoscroll: ON) ");
+        assert_eq!(block.inner(area).height, 6);
+        let _ = log_widget(&state, area);
+    }
+
+    #[test]
+    fn log_scrollback_navigation() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        for i in 0..20 {
+            state.logs.push(format!("entry {i}"));
+        }
+        assert!(state.autoscroll);
+        assert_eq!(state.max_log_scroll(), 14);
+
+        // PageUp scrolls up into the middle and engages scroll lock
+        state.handle_key(make_test_event(KeyCode::PageUp), None);
+        assert!(!state.autoscroll);
+        assert_eq!(state.log_scroll_offset, 9);
+
+        // Further PageUp scrolls further up towards top
+        state.handle_key(make_test_event(KeyCode::PageUp), None);
+        assert_eq!(state.log_scroll_offset, 4);
+
+        // PageDown scrolls back down through the middle
+        state.handle_key(make_test_event(KeyCode::PageDown), None);
+        assert_eq!(state.log_scroll_offset, 9);
+
+        // PageDown clamps at bottom and remains locked
+        state.handle_key(make_test_event(KeyCode::PageDown), None);
+        assert_eq!(state.log_scroll_offset, 14);
+        assert!(!state.autoscroll);
+
+        // Pressing PageDown again at the bottom resumes autoscroll
+        state.handle_key(make_test_event(KeyCode::PageDown), None);
+        assert!(state.autoscroll);
+
+        // Pressing 'l' toggles scroll lock on and off
+        state.handle_key(make_test_event(KeyCode::Char('l')), None);
+        assert!(!state.autoscroll);
+        assert_eq!(state.log_scroll_offset, 14);
+        state.handle_key(make_test_event(KeyCode::Char('l')), None);
+        assert!(state.autoscroll);
+    }
+
+    #[test]
+    fn modal_docs_popup_display_and_dismiss() {
+        let mut state = setup_described_suite();
+
+        // Row 0 is suite 'motor'
+        state.table_state.select(Some(0));
+        state.handle_key(make_test_event(KeyCode::Char('d')), None);
+        let modal = state.doc_modal.as_ref().expect("modal opened for suite");
+        assert_eq!(modal.title, "motor");
+        assert!(modal.lines.iter().any(|l| l.contains("motor suite")));
+
+        // Dismiss with Esc
+        state.handle_key(make_test_event(KeyCode::Esc), None);
+        assert!(state.doc_modal.is_none());
+
+        // Row 1 is test case `case_a`
+        state.table_state.select(Some(1));
+        state.handle_key(make_test_event(KeyCode::Char('d')), None);
+        let modal = state.doc_modal.as_ref().expect("modal opened for test");
+        assert_eq!(modal.title, "motor::case_a()");
+        assert!(modal.lines.iter().any(|l| l.contains("test case a")));
+
+        // Dismiss with Enter
+        state.handle_key(make_test_event(KeyCode::Enter), None);
+        assert!(state.doc_modal.is_none());
+
+        // Row 2 is task `speed`
+        state.table_state.select(Some(2));
+        state.handle_key(make_test_event(KeyCode::Char('d')), None);
+        let modal = state.doc_modal.as_ref().expect("modal opened for task");
+        assert_eq!(modal.title, "motor::speed");
+        assert!(modal.lines.iter().any(|l| l.contains("task speed")));
+
+        // Dismiss with 'd'
+        state.handle_key(make_test_event(KeyCode::Char('d')), None);
+        assert!(state.doc_modal.is_none());
+
+        // Row 3 is setting `gain`
+        state.table_state.select(Some(3));
+        state.handle_key(make_test_event(KeyCode::Char('d')), None);
+        let modal = state.doc_modal.as_ref().expect("modal opened for setting");
+        assert_eq!(modal.title, "motor::gain");
+        assert!(modal.lines.iter().any(|l| l.contains("gain setting")));
+
+        // Dismiss with 'q' without exiting application
+        assert!(!state.handle_key(make_test_event(KeyCode::Char('q')), None));
+        assert!(state.doc_modal.is_none());
+    }
+
+    #[test]
+    fn adjustable_log_window_height() {
+        let mut state = AppState::new("T".to_string(), "L".to_string());
+        assert_eq!(state.log_height, 8);
+
+        // Increase with '+'
+        state.handle_key(make_test_event(KeyCode::Char('+')), None);
+        assert_eq!(state.log_height, 9);
+
+        // Increase with '='
+        state.handle_key(make_test_event(KeyCode::Char('=')), None);
+        assert_eq!(state.log_height, 10);
+
+        // Decrease with '-'
+        state.handle_key(make_test_event(KeyCode::Char('-')), None);
+        assert_eq!(state.log_height, 9);
+
+        // Decrease with '_'
+        state.handle_key(make_test_event(KeyCode::Char('_')), None);
+        assert_eq!(state.log_height, 8);
     }
 }

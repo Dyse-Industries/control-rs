@@ -39,13 +39,14 @@ pub type TeardownLog = (bool, Option<String>);
 /// Pair of `(suite_id, test_id)` identifying a test case.
 pub type TestIndex = (u16, u16);
 
-/// How a task run ends the session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TaskMode {
-    /// A task run started from a console does not end the session.
-    Console,
-    /// The headless runner ends the session after its last task.
+/// Execution mode of the session: headless runner or interactive console.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionMode {
+    /// The headless runner automatically executes cases and ends the session.
+    #[default]
     Headless,
+    /// An interactive console (TUI) awaits operator commands and does not automatically run cases on connect.
+    Console,
 }
 
 /// Lifecycle phases of a host-side ETS testing session.
@@ -240,9 +241,10 @@ pub struct SessionState {
     pub stop_timeout: Duration,
     /// Whether the link is an emulated (subprocess) target.
     pub subprocess_link: bool,
+    /// Execution mode (headless runner or interactive console).
+    pub mode: SessionMode,
     sim: Option<BoxedSim>,
     timers: TaskTimers,
-    task_mode: TaskMode,
 }
 
 /// Target metadata from `Telemetry::TargetInfo`.
@@ -376,13 +378,13 @@ impl SessionState {
             pending_tasks: VecDeque::new(),
             stop_timeout: DEFAULT_STOP_TIMEOUT,
             subprocess_link: false,
+            mode: SessionMode::Headless,
             sim: None,
             timers: TaskTimers {
                 duration_deadline: None,
                 heartbeat_at: None,
                 stop_sent: None,
             },
-            task_mode: TaskMode::Console,
         }
     }
 
@@ -485,7 +487,7 @@ impl SessionState {
 
     /// Queues tasks for the headless runner to start once the cases drain.
     pub fn queue_tasks(&mut self, starts: impl IntoIterator<Item = TaskStart>) {
-        self.task_mode = TaskMode::Headless;
+        self.mode = SessionMode::Headless;
         self.pending_tasks.extend(starts);
     }
 
@@ -715,7 +717,7 @@ impl SessionState {
         if let Some(action) = self.start_next_pending_task() {
             return vec![action];
         }
-        if self.task_mode == TaskMode::Headless {
+        if self.mode == SessionMode::Headless {
             self.exit_loop = true;
         }
         Vec::new()
@@ -1181,6 +1183,13 @@ impl SessionState {
             return Vec::new();
         }
 
+        self.phase = SessionPhase::Running;
+        self.discovery_complete = true;
+
+        if self.mode == SessionMode::Console {
+            return Vec::new();
+        }
+
         self.run_queue.clear();
         for suite in &self.suites {
             for test in &suite.tests {
@@ -1189,9 +1198,6 @@ impl SessionState {
                 }
             }
         }
-
-        self.phase = SessionPhase::Running;
-        self.discovery_complete = true;
 
         self.start_next_or_exit().into_iter().collect()
     }
@@ -2329,5 +2335,19 @@ mod tests {
         }
         assert!(s.discovery_complete);
         assert!(s.task_item(0).is_some());
+    }
+
+    #[test]
+    fn console_mode_leaves_session_idle_on_discovery_complete() {
+        let mut s = matched();
+        s.mode = SessionMode::Console;
+        let mut actions = Vec::new();
+        for frame in discovery_frames(true) {
+            actions.extend(s.handle_message(BridgeMessage::Telemetry(frame)));
+        }
+        assert!(s.discovery_complete);
+        assert!(s.current_running.is_none());
+        assert_eq!(s.run_queue, []);
+        assert_eq!(actions.len(), 0);
     }
 }

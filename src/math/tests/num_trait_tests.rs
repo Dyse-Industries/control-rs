@@ -20,6 +20,7 @@
 //! traits rather than a separately numbered requirement.
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
+/// Numeric trait hierarchy and scalar properties test suite.
 pub mod num_trait_test_suite {
     use crate::assert_almost_eq;
     use crate::math::CartesianQuadrant2D;

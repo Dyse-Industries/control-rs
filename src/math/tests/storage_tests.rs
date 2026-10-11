@@ -29,6 +29,7 @@
 )]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
+/// Static array and view storage backends test suite.
 pub mod storage_test_suite {
     use crate::assert_almost_eq;
     use crate::math::ConversionError;

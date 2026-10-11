@@ -9,6 +9,7 @@
 #![allow(clippy::arbitrary_source_item_ordering)]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
+/// Fallible, wrapping, and saturating operators test suite.
 pub mod op_test_suite {
     use crate::math::{
         ArithmeticError,

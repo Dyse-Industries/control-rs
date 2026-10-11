@@ -27,6 +27,7 @@
 )]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
+/// Matrix algebra, decompositions, and solvers test suite.
 pub mod matrix_test_suite {
     use crate::assert_almost_eq;
     use crate::math::LinAlgError;

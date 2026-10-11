@@ -10,6 +10,7 @@
 )]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
+/// Multi-dimensional tensor storage and operations test suite.
 pub mod tensor_test_suite {
     use crate::assert_almost_eq;
     use crate::tensor::{

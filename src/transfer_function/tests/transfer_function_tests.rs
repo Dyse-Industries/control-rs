@@ -10,6 +10,7 @@
 )]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
+/// Rational transfer functions and frequency response test suite.
 pub mod transfer_function_test_suite {
     use crate::assert_almost_eq;
     use crate::math::num_traits::Radical;

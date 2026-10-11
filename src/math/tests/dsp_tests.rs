@@ -19,6 +19,7 @@ mod dsp_debug_contract_tests {
 }
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
+/// Digital signal processing (DSP) unit and ETS test suite.
 pub mod dsp_test_suite {
     #![allow(clippy::indexing_slicing)]
 

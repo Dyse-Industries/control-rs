@@ -1,6 +1,6 @@
-# Terminal User Interface (Design Document)
+# Terminal User Interface (tui)
 
-![Date Badge](https://img.shields.io/badge/Date-October_7,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_11,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -32,21 +32,31 @@ facilitating rapid on-target iteration.
   rates.
 - **FR-3 — Hierarchical Telemetry Table**: For each test, the TUI must display
   cycle count (CYCCNT), duration (µs) and peak stack memory usage.
-- **FR-4 — Persistent Log Terminal**: An integrated console window must display
-  real-time debug and system logs streaming from the target.
+- **FR-4 — Persistent Log Terminal and History**: An integrated console window
+  must display real-time debug and system logs streaming from the target. When
+  autoscroll is enabled, newly arrived lines scroll to the tail and keep the
+  newest entry visible without viewport clipping. Operators can scroll back and
+  forward through log history using scroll keys (`PageUp`/`PageDown`), pausing
+  autoscroll until scrolled back to the bottom. Operators can toggle scroll lock
+  (`l`) to freeze autoscroll and inspect any portion of the log history.
+  Operators can adjust the log panel height dynamically (`+`/`-`).
 - **FR-5 — Keystroke Controls**: Users must control target execution via
-  single-key shortcuts (`f` filter, `r` run all, `s` stop, `q` quit). `r`
-  runs every case and never starts a lifecycle task. On a
-  task row, `Enter` starts a free-running run and `s` stops the active
-  run.
-
+  single-key shortcuts (`f` filter, `r` run all, `s` stop, `d` doc modal, `l`
+  scroll lock, `+`/`-` log height, `q` quit). On connect and discovery, the
+  dashboard remains idle awaiting operator command (`r` or case execution)
+  rather than automatically executing all cases. `r` runs every case and never starts a
+  lifecycle task. On a task row, `Enter` starts a free-running run. The single `s`
+  key stops target execution uniformly: stopping an active lifecycle task if one
+  is running, or stopping run-all and clearing queued cases otherwise.
 - **FR-6 — Session liveness**: The dashboard retries discovery until the host
   session reports it complete, and it surfaces target process exit. A QEMU
   boot race or a dead subprocess must not look like an idle empty tree.
-
-- **FR-7 — Suite setting inspection and edit**: The operator can read a
-  setting's description and write a live `SetSetting` without leaving the
-  dashboard. Discovery without that path is not a complete interactive session.
+- **FR-7 — Item Description and Setting Inspection/Edit**: The operator can inspect
+  descriptions of selected suites, test cases, tasks, and settings, and edit live
+  settings (`SetSetting`) without leaving the dashboard.
+- **FR-8 — Modal Documentation Viewer**: Pressing `d` on a selected item displays
+  its formatted documentation in an overlaid modal mini-window,
+  dismissed with `Esc`, `Enter`, or `d`.
 
 #### 2.2 Non-Functional Requirements
 
@@ -150,6 +160,12 @@ developer situational awareness:
    passed through unmodified by `control-rs-ets-host`) and peak stack memory usage in
    bytes.
 3. **Logs Panel**: A live log terminal streaming output from the target.
+   The viewport reserves inner height accounting for the title and bottom
+   border so the latest log entry is visible without clipping. When autoscroll
+   is on, new entries scroll to the bottom. Operators can scroll back and
+   forward through log history using `PageUp`/`PageDown` (FR-4) or toggle scroll
+   lock with `l` to pause autoscroll, allowing inspection of the middle or top
+   of the log stream.
 
    A suite's lifecycle task (`../ets/lifecycle-suite-design.md`: its setup, step,
    reset and teardown) appears as a row of that suite, after its cases, in
@@ -169,6 +185,10 @@ developer situational awareness:
    panel. A task uses its suite's settings through the FR-7 path; an edit
    during a run calls the task's `reset`.
 4. **Footer Action Bar**: Displays available key shortcuts.
+5. **Modal Documentation Overlay**: Pressing `d` on a selected row opens a
+   centered modal mini-window displaying formatted documentation for the
+   selected item (FR-8). The overlay renders on top of the table and log
+   panels, and dismisses on `Esc`, `Enter`, or `d`.
 
 #### 4.2. Host-Target ETSBridge Integration
 
@@ -238,23 +258,27 @@ processing queue.
 
 ### 6. Verification & Validation
 
-#### 6.1 Approach
+#### 6.1 Verification
 
-The implementation must produce evidence that the dashboard renders the target
-state it is given, that keystrokes map to the intended commands, that the view
-survives a target reset without losing history, and that the binary carries no
-transport logic of its own.
-
-| Method | Mechanism |
-|:-------|:----------|
-| Requirements-based test | `#[test]` feeding a scripted `BridgeMessage` stream into the application state and asserting the resulting tree, telemetry table and log buffer |
-| Requirements-based test | `#[test]` mapping each bound key to the command it emits |
-| Metamorphic relation | `#[test]` asserting that a reset followed by re-discovery leaves cached per-case metrics unchanged |
-| Requirements-based test | `#[test]` running the event loop over an injected event source and an in-memory `ETSBridge` link (`control-rs-ets-host` `fake-link`, a dev-dependency only) to assert re-discovery timing and panic re-attachment |
-| Static analysis | `cargo tree -p control-rs-tui -e normal`; source inspection for framing or serial code in this crate |
-| Inspection | Layout review against §4.1 on the smallest supported terminal size; structural buffer diffing inspection |
-| On-target execution | Interactive session against a QEMU target and a physical board |
-| Coverage measurement | `cargo coverage` |
+| Condition | Requirement | Method       | Target                                                                                                       | Criterion                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+|:----------|:------------|:-------------|:-------------------------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| VC-1.1    | FR-1        | `libtest`    | `control_rs_tui::tui::tests::fr1_fr2_fr3_fr4_scripted_discovery_and_metrics` `control_rs_tui::tui::tests::target_details_report_the_fpu_and_the_mismatch` `control_rs_tui::tui::tests::the_header_counts_passed_and_failed_tests` | Header displays target board details, core clock frequency, FPU status, protocol revision and link parameters |
+| VC-2.1    | FR-2        | `libtest`    | `control_rs_tui::tui::tests::fr1_fr2_fr3_fr4_scripted_discovery_and_metrics` `control_rs_tui::tui::tests::test_navigation_and_collapse` `control_rs_tui::tui::tests::rows_follow_the_filter_query_and_collapse_state` `control_rs_tui::tui::tests::the_last_test_closes_the_branch_only_without_settings` `control_rs_tui::tui::tests::a_suite_without_tests_still_shows_its_header` | Interface presents test suites and cases in tree layout mapping the Rust module namespace |
+| VC-2.2    | FR-2        | `libtest`    | `control_rs_tui::tui::tests::task_start_stop_keys` `control_rs_tui::tui::tests::a_task_row_shows_state_teardown_and_statistics` `control_rs_tui::tui::tests::a_task_row_colors_its_state` `control_rs_tui::tui::tests::the_task_row_closes_the_branch_only_without_settings` `control_rs_tui::tui::tests::an_idle_tick_leaves_the_rows_alone_and_an_active_one_refreshes_them` | Suite tasks are rows of that suite beside its cases displaying state, message, teardown outcome, statistics and rates |
+| VC-3.1    | FR-3        | `libtest`    | `control_rs_tui::tui::tests::fr1_fr2_fr3_fr4_scripted_discovery_and_metrics` `control_rs_tui::tui::tests::durations_change_unit_exactly_at_a_thousand` | Displays cycle count, temporal duration and peak stack memory usage for each test |
+| VC-4.1    | FR-4        | `libtest`    | `control_rs_tui::tui::tests::fr1_fr2_fr3_fr4_scripted_discovery_and_metrics` `control_rs_tui::tui::tests::log_widget_inner_height_and_newest_entry_visible` | Displays target logs in real-time, scrolling to tail when autoscroll is enabled without clipping bottom entry |
+| VC-4.2    | FR-4        | `libtest`    | `control_rs_tui::tui::tests::log_scrollback_navigation` `control_rs_tui::tui::tests::adjustable_log_window_height` | Operator can scroll through log history with PageUp/PageDown, pause/resume autoscroll with scroll lock (l), and adjust log height with +/- |
+| VC-5.1    | FR-5        | `libtest`    | `control_rs_tui::tui::tests::fr5_key_dispatch_and_navigation` `control_rs_tui::tui::tests::the_filter_prompt_applies_edits_and_closes` `control_rs_tui::tui::tests::r_runs_every_test_again_after_a_stop` `control_rs_tui::tui::tests::discovery_does_not_auto_run_all` | Single-key shortcuts control target execution (f filter, r run all, s stop, d doc modal, l scroll lock, q quit), remaining idle on discovery |
+| VC-5.2    | FR-5        | `libtest`    | `control_rs_tui::tui::tests::task_start_stop_keys` | Enter starts task execution; s key uniformly stops active tasks or stops queued cases |
+| VC-6.1    | FR-6        | `libtest`    | `control_rs_tui::tui::tests::discovery_is_repeated_only_while_incomplete_and_after_half_a_second` `control_rs_tui::tui::tests::test_process_exit_is_surfaced` `control_rs_tui::tui::tests::event_loop::a_target_panic_triggers_a_reattach_attempt` `control_rs_tui::tui::tests::event_loop::a_target_that_exits_is_reported_in_the_log` `control_rs_tui::tui::tests::event_loop::quitting_ends_the_loop_without_reattaching` | Retries discovery until complete and surfaces target process exit or panic |
+| VC-7.1    | FR-7        | `libtest`    | `control_rs_tui::tui::tests::test_setting_description_and_edit` `control_rs_tui::tui::tests::escape_cancels_a_setting_edit` `control_rs_tui::tui::tests::boolean_settings_accept_words_and_digits` `control_rs_tui::tui::tests::description_shows_for_suite_test_task_and_setting` | Operator can inspect descriptions of selected suites, tests, tasks and settings, and edit live settings |
+| VC-8.1    | FR-8        | `libtest`    | `control_rs_tui::tui::tests::modal_docs_popup_display_and_dismiss` | Modal mini-window renders formatted documentation for the selected item and dismisses with Esc, Enter, or d |
+| VC-9.1    | NFR-1       | `review`     | —                                                                                                            | Unchanged frame writes nothing to the terminal via Ratatui buffer diffing |
+| VC-10.1   | NFR-2       | `libtest`    | `control_rs_tui::tui::tests::nfr2_cache_survives_target_reset`                                              | Test suite results are stored on the host across target restarts or reconnections |
+| VC-11.1   | NFR-3       | `review`     | —                                                                                                            | Target telemetry polled asynchronously without halting target CPU |
+| VC-12.1   | C-1         | `review`     | —                                                                                                            | TUI is strictly a presentation frontend delegating transport, framing and CRC to ETSBridge |
+| VC-13.1   | C-2         | `review`     | —                                                                                                            | Binary manages exactly one active ETSBridge session |
+| VC-14.1   | C-3         | `review`     | —                                                                                                            | Operates under standard terminal I/O in std |
 
 Target: 70% line coverage of `control-rs-tui`, measured with `cargo coverage`.
 
@@ -358,6 +382,7 @@ No frame-rate bound is asserted. See §6.3.
 | 1.13     | October 7, 2026 | @MitchellDScott | FR-2 and FR-5 extended for lifecycle suites (`../ets/lifecycle-suite-design.md` 1.2): `TASK` tree nodes with run state and rates, `Enter` and `s` bindings, `r` excludes lifecycle suites, three §6.2 rows, Step 5. |
 | 1.14     | October 7, 2026 | @MitchellDScott | QEMU sessions refuse console-started (free-running) task runs and log the refusal (`../ets/lifecycle-suite-design.md` C-8); one §6.2 row. |
 | 1.15     | October 7, 2026 | @MitchellDScott | FR-2: tasks are rows of their suite beside its cases in one table and selection; FR-5 keys act on task rows; side-by-side §6.2 row (`../ets/lifecycle-suite-design.md` 1.7); the row is the suite's lifecycle task, triggered with `Enter` like a case; marker `LIFECYCLE` |
+| 1.16     | October 11, 2026 | @MitchellDScott | Unified (s) stop key across run-all and tasks, 1-line log viewport autoscroll fix, item description inspection (FR-7), FR-4 log history navigation, FR-8 modal documentation viewer, formal verification matrix (VC-1.1..VC-14.1), and requirement traceability wiring. |
 
 ---
 

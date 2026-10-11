@@ -27,6 +27,7 @@
 //!
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
+/// Type-level numbers and dimension arithmetic test suite.
 pub mod num_type_test_suite {
     use crate::math::num_types::{
         B0, B1, Const, Dim, DimAdd, DimBitAnd, DimBitOr, DimBitXor, DimMax,

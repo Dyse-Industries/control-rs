@@ -7,6 +7,7 @@
 #![allow(clippy::similar_names)]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
+/// BLAS-style matrix and vector subprograms test suite.
 pub mod subprogram_test_suite {
     use crate::assert_almost_eq;
     use crate::math::LinAlgError;

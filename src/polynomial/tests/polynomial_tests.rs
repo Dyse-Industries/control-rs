@@ -10,6 +10,7 @@
 )]
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
+/// Polynomial arithmetic, roots, and evaluation test suite.
 pub mod polynomial_test_suite {
     use crate::assert_almost_eq;
     use crate::math::complex_num::Complex;
