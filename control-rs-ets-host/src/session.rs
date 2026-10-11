@@ -1268,9 +1268,13 @@ impl SessionState {
             }
         }
 
-        // A panic resets the target; queued `StartTask`s must not fire into
-        // the dying image, and any run still marked active is abandoned.
+        // A panic resets the target; queued case runs and `StartTask`s must
+        // not fire into the dying image, and any run still marked active is
+        // abandoned. Headless rediscovery rebuilds `run_queue` from unfinished
+        // outcomes; Console must not retain a pre-panic queue that a later
+        // `MetricReport` would drain into unexpected `RunExecutable`s.
         self.pending_tasks.clear();
+        self.run_queue.clear();
         if self.task_active() {
             self.timers = TaskTimers::default();
             self.task_run = None;
@@ -2349,5 +2353,70 @@ mod tests {
         assert!(s.current_running.is_none());
         assert_eq!(s.run_queue, []);
         assert_eq!(actions.len(), 0);
+    }
+
+    /// Feeds catalog frames then `DiscoveryComplete`.
+    fn discover_console(state: &mut SessionState, cases: u16) {
+        for f in make_test_suite_telemetry(0, "S0", cases, 0) {
+            let _ = state.handle_message(BridgeMessage::Telemetry(f));
+        }
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::DiscoveryComplete,
+        ));
+    }
+
+    #[test]
+    fn console_panic_clears_run_queue_so_later_pass_does_not_auto_start() {
+        let mut state = matched();
+        state.mode = SessionMode::Console;
+        discover_console(&mut state, 3);
+        assert!(state.current_running.is_none());
+        assert_eq!(state.run_queue, []);
+
+        let start = state.enqueue_all();
+        assert!(matches!(
+            start,
+            Some(SessionAction::Send(CommCommand::RunExecutable {
+                suite_id: 0,
+                test_id: 0
+            }))
+        ));
+        assert_eq!(state.run_queue, [(0, 1), (0, 2)]);
+
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::TargetPanic {
+                message: "boom".into(),
+                file: "t.rs".into(),
+                line: 1,
+            },
+        ));
+        assert!(state.run_queue.is_empty());
+        assert_eq!(state.phase, SessionPhase::Recovering);
+
+        discover_console(&mut state, 3);
+        assert!(state.run_queue.is_empty());
+        assert_eq!(state.phase, SessionPhase::Running);
+
+        assert!(matches!(
+            state.enqueue_test(0, 2),
+            Some(SessionAction::Send(CommCommand::RunExecutable {
+                suite_id: 0,
+                test_id: 2
+            }))
+        ));
+        let follow_on = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::MetricReport {
+                suite_id: 0,
+                test_id: 2,
+                cycles: 1,
+                time_us: 1,
+                stack_peak: 1,
+            },
+        ));
+        assert!(
+            follow_on.is_empty(),
+            "a post-panic Console pass must not drain a stale run_queue: {follow_on:?}"
+        );
+        assert!(state.run_queue.is_empty());
     }
 }
