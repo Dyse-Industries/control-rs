@@ -1,8 +1,9 @@
 # Modern Control Toolbox (modern-control)
 
-![Date Badge](https://img.shields.io/badge/Date-October_4,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
@@ -473,6 +474,7 @@ Phase 1 starts after the C-2 kernels are Approved and implemented.
 | 1.0 | October 4, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-9, NFR-1 to NFR-3, C-1 to C-7. |
 | 1.1 | October 4, 2026 | @MitchellDScott | C-3 changed from a workspace crate to a root-crate module; §3, §4.1, §5, §6.1, §8 and §9 updated. |
 | 1.2 | October 4, 2026 | @MitchellDScott | Module renamed `src/modern_control` (C-3) to match the `*_control` toolbox naming; roadmap references renumbered. |
+| 1.3 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending review. |
 
 ---
 
