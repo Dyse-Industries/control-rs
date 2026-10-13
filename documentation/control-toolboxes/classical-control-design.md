@@ -19,7 +19,7 @@ fixed point, second-order-section cascades with coefficient update for gain
 schedules, and a discrete PID controller with anti-windup, so a compensator
 designed on the host runs unchanged on the target and is tested there
 through ETS. Every routine writes into caller-owned, statically sized buffers;
-no routine plots.
+no dependence on GUIs or plots.
 The module replaces the stub `src/classical_tools`.
 
 Primary usage scenarios:
