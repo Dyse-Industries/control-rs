@@ -51,17 +51,25 @@ exclude_re = [
     # (`cfg(any(test, feature = "ets"))`) are not recognized as test code.
     "tests::",
     "realization\\.rs:\\d+:\\d+: replace / with [%*]$",
-    # Sign and clamp comparisons whose boundary case yields the same value:
-    # a zero magnitude negates to zero, an output equal to a limit is the
-    # limit, a zero error integrates to zero, a zero excess scales to zero,
-    # a unit scale equals the floor, and an equal-valued maximum is
-    # re-assigned.
-    "replace < with <= in (stability_margins|is_stable|routh_count)",
-    "replace < with <= in Pid<T>::step",
-    "replace > with >= in Pid<T>::step",
-    "pid\\.rs:\\d+:(34|60): replace (>|<) with (>=|<=) in Pid<T>::integrator_step",
-    "replace > with >= in (step_info|is_real|indent|sort_by_magnitude_desc)",
+    # Boundary cases whose result is identical, pinned by column so a new
+    # comparison on the same line or function is not hidden:
+    # - A tie in the running minimum or maximum re-assigns the same value.
+    "margins\\.rs:\\d+:33: replace < with <= in stability_margins",
     "step\\.rs:\\d+:23: replace > with >= in peak_of",
+    "nyquist\\.rs:\\d+:(18|24): replace > with >= in indent",
+    # - A zero excess scales to zero, and a unit magnitude equals the floor.
+    "step\\.rs:\\d+:30: replace > with >= in step_info",
+    "realization\\.rs:\\d+:24: replace > with >= in is_real",
+    # - Output equal to a limit is the limit.
+    "pid\\.rs:\\d+:(26|23): replace [<>] with [<>]= in Pid<T>::step",
+    # - A zero error integrates to zero either way.
+    "pid\\.rs:\\d+:(28|58): replace (>|<) with (>=|<=) in Pid<T>::integrator_step",
+    # - Negating a zero magnitude yields zero.
+    "realization\\.rs:\\d+:27: replace < with <= in is_stable",
+    "math/fixed_num\\.rs:\\d+:10: replace < with <= in round_shift_signed",
+    # - The Routh leading coefficient is nonzero past the `tol` guard, and the
+    #   first element of a row is replaced when zero.
+    "routh\\.rs:\\d+:(37|62): replace < with <= in routh_count",
     # Kani harnesses and their helpers compile only under `cfg(kani)`; the
     # `kani` gate checks them, and no unit test can reach them.
     "proofs::",
