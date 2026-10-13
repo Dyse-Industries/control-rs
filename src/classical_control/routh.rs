@@ -166,12 +166,12 @@ where
 fn first_row<T: Float + Copy, const N: usize>(
     coeffs: &[T],
     top: usize,
-    tol: T,
+    chop_tol: T,
 ) -> Row<T, N> {
     let mut row = [Term::zero(); N];
     let picks = coeffs.iter().take(top.saturating_add(1)).rev().step_by(2);
     for (dst, &c) in row.iter_mut().zip(picks) {
-        *dst = Term::chop(c, 0, tol);
+        *dst = Term::chop(c, 0, chop_tol);
     }
     row
 }

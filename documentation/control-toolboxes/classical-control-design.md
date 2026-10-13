@@ -297,15 +297,23 @@ $Z = N + P$, because the routine does not interpret the count. It first
 rejects a discrete system, an improper $L$ and non-positive $\omega_{max}$
 or indentation radius $r$. The contour closes from the last point back to
 the first, which stands in for the arc at infinity and is valid only when
-$L$ is proper. Poles come from `TransferFunction::poles`, and $P$ counts
-those with real part above $r$.
+$L$ is proper. Poles come from `TransferFunction::poles`. A pole is on-axis
+when $|\operatorname{Re} p| \le \min (r, \sqrt{\epsilon})$; $P$ counts poles
+with positive real part outside that band.
 
 The points lie at $\omega_k = \omega_{max} u_k^3$ with $u_k$ uniform on
-$[-1, 1]$, which places samples densely near $\omega = 0$. Each point
-$j\omega_k$ is moved right by the
+$[-1, 1]$, which places samples densely near $\omega = 0$. On-axis poles are
+indented: for each distinct $\operatorname{Im} p$, seven unreserved grid
+samples move into $(\operatorname{Im} p - r, \operatorname{Im} p + r)$ (and
+the abscissae are re-sorted) so the indent semicircle is sampled even when
+the cubic spacing exceeds $r$; an indented pole outside
+$[-\omega_{max}, \omega_{max}]$, or a sample budget that cannot cover every
+such pole, is `InvalidParameter`. Lightly unstable poles with
+$\sqrt{\epsilon} < \operatorname{Re} p \le r$ stay in $P$ on the plain
+$j\omega$ axis. Each indented point $j\omega_k$ is moved right by the
 largest $\sqrt{r^2 - (\omega_k - \operatorname{Im} p)^2}$
-over the poles with $|\operatorname{Re} p| \le r$, so the contour follows a
-small semicircle around any near-axis pole [6]. A point within a relative
+over those poles, so the contour follows a
+small semicircle around any indented pole [6]. A point within a relative
 $\sqrt{\epsilon}$ of $-1$, or with non-finite $L$, ends the call with
 `ContourThroughCriticalPoint`. The count is the signed number of crossings
 of the negative real axis by $1 + L$ over consecutive points and the
