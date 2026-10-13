@@ -62,16 +62,19 @@
 #![no_std]
 #![allow(clippy::multiple_crate_versions)]
 
+pub use context::{Context, TestMetrics};
 pub use profiler::CPUProfiler;
 #[cfg(target_arch = "arm")]
 pub use profiler::CortexMProfiler;
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub use profiler::RiscvProfiler;
-pub use server::{Context, Server};
+pub use server::Server;
 pub use settings::Setting;
 
 pub mod comms;
+pub mod context;
 pub mod profiler;
+pub mod run;
 pub mod server;
 pub mod settings;
 pub mod util;
