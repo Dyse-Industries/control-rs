@@ -5,7 +5,9 @@
 //! `Im L` while `Re L < 0`, which avoids the
 //! `+/- 180 deg` branch cut. Each bracket is refined by `B` bisection
 //! steps on `L`, so the crossover error is the bracket width divided by
-//! `2^B`. Only crossings inside the sweep are found.
+//! `2^B`. Only crossings inside the sweep are found. A bracket that
+//! straddles a `jω`-axis pole is dropped: bisection would otherwise
+//! converge to the pole and report a spurious margin.
 
 use super::response::degrees;
 use crate::math::complex_num::Complex;
@@ -75,6 +77,8 @@ pub struct Margins<T, const C: usize> {
 /// `M` evaluations of `L` plus `B` per crossing (NFR-3). Non-finite
 /// samples (for example an integrator at `w = 0`) are skipped and break
 /// brackets so they neither seed `stability_margin` nor invent crossings.
+/// Refinement that encounters a non-finite `L`, or a gain-crossover root
+/// whose `|L|` is not near one (a pole approach), drops that crossing.
 ///
 /// # Example
 /// ```
@@ -117,9 +121,7 @@ where
         // Non-finite `L` (for example an integrator at `w = 0`) must not seed
         // `stability_margin` or invent a gain-crossing bracket: NaN never
         // compares less than a prior distance, and `above(NaN)` is false.
-        if l.re.partial_cmp(&l.re).is_none()
-            || l.im.partial_cmp(&l.im).is_none()
-        {
+        if !is_finite(l) {
             prev = None;
             continue;
         }
@@ -156,6 +158,11 @@ fn store<V, const C: usize>(
     }
 }
 
+/// Whether both components of `z` compare equal to themselves (finite).
+fn is_finite<T: Float + Copy>(z: Complex<T>) -> bool {
+    z.re.partial_cmp(&z.re).is_some() && z.im.partial_cmp(&z.im).is_some()
+}
+
 /// Refines a phase crossover bracketed by `a` and `b`.
 fn phase_crossing<
     T: Float + Copy,
@@ -177,11 +184,14 @@ where
     if !brackets {
         return None;
     }
-    let omega = bisect::<T, N, D, B>(sys, a.0, b.0, im_sign);
+    let omega = bisect::<T, N, D, B>(sys, a.0, b.0, im_sign)?;
     let l = sys.eval_frequency(omega);
     // Both endpoints can lie in `Re L < 0` while the refined Im-zero root
-    // sits in `Re L >= 0`. FR-5 requires `Re L < 0` at that root.
-    if l.re.partial_cmp(&T::ZERO) != Some(core::cmp::Ordering::Less) {
+    // sits in `Re L >= 0`. FR-5 requires `Re L < 0` at that root. A
+    // non-finite root means the bracket straddled a `jω` pole.
+    if !is_finite(l)
+        || l.re.partial_cmp(&T::ZERO) != Some(core::cmp::Ordering::Less)
+    {
         return None;
     }
     Some(PhaseCrossing {
@@ -209,8 +219,18 @@ where
     if above(a.1) == above(b.1) {
         return None;
     }
-    let omega = bisect::<T, N, D, B>(sys, a.0, b.0, above);
+    let omega = bisect::<T, N, D, B>(sys, a.0, b.0, above)?;
     let l = sys.eval_frequency(omega);
+    if !is_finite(l) {
+        return None;
+    }
+    // FR-5 requires `|L| = 1`. A bracket that straddles a `jω` pole can
+    // converge beside the pole with `|L| ≫ 1` while every sample stays
+    // finite; reject roots whose magnitude is not near one.
+    let mag = l.magnitude();
+    if (mag.saturating_sub(&T::ONE)).abs() > T::ONE {
+        return None;
+    }
     let neg = Complex::new(
         T::ZERO.saturating_sub(&l.re),
         T::ZERO.saturating_sub(&l.im),
@@ -227,14 +247,16 @@ where
     })
 }
 
-/// `B` bisection steps on `[lo, hi]` for a change of `side(L(w))`; returns
-/// the final midpoint.
+/// `B` bisection steps on `[lo, hi]` for a change of `side(L(w))`.
+///
+/// Returns `None` when a midpoint lands on a non-finite `L` (open-loop
+/// pole on the `jω` axis inside the bracket).
 fn bisect<T, const N: usize, const D: usize, const B: usize>(
     sys: &ArrayTransferFunction<T, N, D>,
     lo: T,
     hi: T,
     side: impl Fn(Complex<T>) -> bool,
-) -> T
+) -> Option<T>
 where
     T: Float + Copy,
     Const<N>: Dim,
@@ -245,13 +267,17 @@ where
     let (mut lo, mut hi) = (lo, hi);
     for _ in 0..B {
         let mid = lo.saturating_add(&hi).saturating_div(&two);
-        if side(sys.eval_frequency(mid)) == lo_side {
+        let l_mid = sys.eval_frequency(mid);
+        if !is_finite(l_mid) {
+            return None;
+        }
+        if side(l_mid) == lo_side {
             lo = mid;
         } else {
             hi = mid;
         }
     }
-    lo.saturating_add(&hi).saturating_div(&two)
+    Some(lo.saturating_add(&hi).saturating_div(&two))
 }
 
 #[cfg(test)]
@@ -402,5 +428,25 @@ mod tests {
         let pm = 90.0 - w_gain.atan().to_degrees();
         assert!(((gc.phase_margin_deg - pm) / pm).abs() <= 1e-9);
         assert!(m.stability_margin.is_finite() && m.stability_margin > 0.0);
+    }
+
+    #[test]
+    fn bracket_straddling_jw_pole_is_dropped() {
+        // L = 1 / (s^2 + 1): pole at w = 1 lies between 0.5 and 1.5.
+        // |L(0.5)| > 1 and |L(1.5)| < 1, so a naive gain-crossover
+        // bisection walks onto the pole and reports PM = 180 deg.
+        let sys = ArrayTransferFunction::<f64, 1, 3>::continuous(
+            [1.0],
+            [1.0, 0.0, 1.0],
+        );
+        let bad = stability_margins::<_, 1, 3, 2, 1, 40>(&sys, &[0.5, 1.5]);
+        assert!(bad.gain_crossings[0].is_none());
+        // A bracket on the far side of the pole recovers |L| = 1 at
+        // w = sqrt(2), where L = -1 and the phase margin is zero.
+        let ok = stability_margins::<_, 1, 3, 2, 1, 40>(&sys, &[1.2, 1.5]);
+        let gc = ok.gain_crossings[0].unwrap();
+        let w_gain = 2f64.sqrt();
+        assert!(((gc.omega - w_gain) / w_gain).abs() <= 1e-9);
+        assert!(gc.phase_margin_deg.abs() <= 1e-9);
     }
 }
