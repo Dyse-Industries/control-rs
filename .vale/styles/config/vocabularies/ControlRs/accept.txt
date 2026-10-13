@@ -281,6 +281,7 @@ Ronacher
 Runciman
 Runge
 Rustdoc
+Seeed
 SIMD
 SLICOT's
 SSGs
@@ -329,6 +330,7 @@ Unary
 Unconjugated
 Unmqr
 Unnormalized
+Uno
 Unversioned
 Upscaling
 Valgrind
