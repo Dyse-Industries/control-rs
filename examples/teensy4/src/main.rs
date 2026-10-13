@@ -22,6 +22,8 @@ use usb_device::device::{
 use usbd_serial::SerialPort;
 
 type UsbBus = UsbBusAllocator<BusAdapter>;
+/// ETS link: `StreamLink` framing over the USB CDC port.
+type UsbLink = StreamLink<TeensyUsb>;
 
 // --- Millisecond Counter & SysTick Interrupt Handler ---
 
@@ -168,7 +170,7 @@ fn enable_dwt_cycle_counter() {
 
 #[ets_setup]
 #[allow(dead_code)]
-fn setup() -> Context<StreamLink<TeensyUsb>, CortexMProfiler> {
+fn setup() -> Context<UsbLink, CortexMProfiler> {
     let p = cortex_m::Peripherals::take().unwrap();
     let d = board::instances();
 
