@@ -56,7 +56,7 @@ work follows both tracks.
       ([#94](https://github.com/Dyse-Industries/control-rs/pull/94))
         - `Approval` phases and `Doc Status` badges on every design document
 
-## Track A: control toolboxes (priority)
+## Track A: Control toolboxes (priority)
 
 Stack order is PR4, PR5, PR6, PR7, PR8, PR9. Each design is a Draft until it is
 signed off. No stack branch merges until its design is approved, implemented

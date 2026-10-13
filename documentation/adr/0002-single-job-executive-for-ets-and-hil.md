@@ -31,7 +31,7 @@ of the link (`ets-executive-design.md`):
    owns the only execution loop. A plain case is a one-step `Atomic` executable.
    Lifecycle tasks run `Lockstep`, `FreeRunning`, `Periodic` or `Triggered`.
 2. **Modes are types.** Per-run variants are type parameters or associated
-   constants, not flags inside a loop. There are no trait objects on the target;
+   constants, not flags inside a loop. The target has no trait objects;
    the linker-section function pointer is the only indirection.
 3. **Data-only descriptors.** Descriptors in flash name no server, transport or
    profiler type. Typed user contracts (`LifecycleTask`, `Packet`) are erased

@@ -212,7 +212,7 @@ flowchart TD
   used for data transport (see §5). Shorthand architecture names resolve that
   crate path and the matching binary name (FR-9).
 * **Serial**: Open a USB CDC port at a configured baud rate, defaulting to
-  115200 (or higher, e.g. 921600 or native USB CDC line rate), through `serial2`.
+  115200 (or higher, for example, 921600 or native USB CDC line rate), through `serial2`.
 
 * **USB bulk** (feature `usb`): A vendor bulk interface, one message per transfer
   ended by a short or zero-length packet (`ets-link-design.md` §4.4).
@@ -227,7 +227,7 @@ transport-agnostic.
 The serial and subprocess links use the stream link frame of `ets-link-design.md` §4.3: sync
 header `0xAA 0x55`, big-endian payload length (at most 512 B), a Postcard
 `Command` or `Telemetry` payload (postcard, 2026) and a big-endian CRC-16 (`CRC_16_IBM_SDLC`).
-There are no channels. Task payloads are opaque bytes tagged with a step index
+The wire has no channels. Task payloads are opaque bytes tagged with a step index
 whose encoding was declared at discovery.
 
 Protocol version compatibility (`FR-8`) is verified upon session start: the

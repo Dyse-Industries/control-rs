@@ -41,13 +41,13 @@ Primary usage scenarios:
 - **FR-6 — Lifecycle Task Execution**: The target supports continuous execution of `LifecycleTask` implementations with setup, reset, teardown and a fault-path safe state, at line rate, synchronized to input arrival, on a fixed period or released by a board event.
 - **FR-7 — Online Setting Reflection**: The target exposes named primitive settings, discoverable with type, value and bounds, readable by name or index and writable by name while idle and between steps of an active task.
 - **FR-8 — Multi-Layer Fixture Compatibility**: The execution interface decouples data exchange from transport mechanics, allowing execution against an internal firmware server over USB, UART or Ethernet (Layers 1 and 1/2).
-- **FR-9 — Concurrent Out-of-Band Monitoring**: The ETS transport and host architecture support running an independent target monitor (e.g. bootloader logs, panic traces, or hardware UART monitor) in a separate terminal concurrently with the interactive TUI or headless runner, either over separate physical/virtual interfaces (such as dual USB/UART on ESP32-C6) or via detached host log streams, without communication interference or port contention.
+- **FR-9 — Concurrent Out-of-Band Monitoring**: The ETS transport and host architecture support running an independent target monitor (for example, bootloader logs, panic traces, or hardware UART monitor) in a separate terminal concurrently with the interactive TUI or headless runner, either over separate physical/virtual interfaces (such as dual USB/UART on ESP32-C6) or via detached host log streams, without communication interference or port contention.
 
 #### 2.2 Non-Functional Requirements
 
 - **NFR-1 — Real-Time Determinism**: Telemetry and control operations keep microsecond-level timing budgets so they do not induce jitter in the test under execution.
 - **NFR-2 — Timing-Critical Logging**: The logging system formats without blocking the CPU or performing expensive on-target string formatting during tests.
-- **NFR-3 — Task Step Overhead**: In lifecycle task execution, round-trip processing and dispatch overhead on the target does not exceed $2.1\ \text{ms}$ per step on USB Full-Speed (12 Mbps) or serial links ($\le 2\times$ the USB 1 ms frame period); on High-Speed USB 2.0 (480 Mbps) links, dispatch overhead is $\le 250\ \mu\text{s}$ per step; on CAN / CAN-FD links, transport framing conforms to bus bitrates (e.g. 500 kbps to 5 Mbps).
+- **NFR-3 — Task Step Overhead**: In lifecycle task execution, round-trip processing and dispatch overhead on the target does not exceed $2.1\ \text{ms}$ per step on USB Full-Speed (12 Mbps) or serial links ($\le 2\times$ the USB 1 ms frame period); on High-Speed USB 2.0 (480 Mbps) links, dispatch overhead is $\le 250\ \mu\text{s}$ per step; on CAN / CAN-FD links, transport framing conforms to bus bitrates (for example, 500 kbps to 5 Mbps).
 
 #### 2.3 Constraints
 
@@ -147,11 +147,11 @@ The ETS architecture enforces strict component modularity, allowing any subsyste
 1. **Custom Transports (`Link` & `ByteStream`)**:
    The `Link` trait (`ets-link-design.md`) encapsulates all packetizing, framing, and transport buffering. A user with a custom telemetry radio, shared-memory buffer, multi-drop RS-485 bus, or proprietary CAN stack implements `Link` directly without modifying `Server`, `Runner`, or the test discovery macro.
 2. **Custom Profiling (`CPUProfiler`)**:
-   Silicon timing and stack watermarking hook into the `CPUProfiler` trait (`cpu-profiler-design.md`). Targets lacking DWT/CSRs or utilizing proprietary hardware trace buffers (e.g. ETM, CoreSight, external logic analyzer GPIO toggles) substitute a custom profiler or use the zeroed `HostCPUProfiler`.
+   Silicon timing and stack watermarking hook into the `CPUProfiler` trait (`cpu-profiler-design.md`). Targets lacking DWT/CSRs or utilizing proprietary hardware trace buffers (for example, ETM, CoreSight, external logic analyzer GPIO toggles) substitute a custom profiler or use the zeroed `HostCPUProfiler`.
 3. **Custom Board Bindings (`BoardBinding`)**:
-   Watchdog servicing, low-power sleep hooks (`wfi`), and hardware release events (e.g. ADC completion or timer ISRs) interface via `BoardBinding` (`ets-executive-design.md`). A user can substitute a proprietary hardware watchdog or event scheduler while retaining the standard ETS executive.
+   Watchdog servicing, low-power sleep hooks (`wfi`), and hardware release events (for example, ADC completion or timer ISRs) interface via `BoardBinding` (`ets-executive-design.md`). A user can substitute a proprietary hardware watchdog or event scheduler while retaining the standard ETS executive.
 4. **Standalone Task Execution ("Franken-Prototypes")**:
-   `LifecycleTask` implementations are pure `#![no_std]` algorithms decoupled from `Server`. A user can extract and execute an ETS lifecycle task directly inside an external RTOS thread (e.g. FreeRTOS, Zephyr, RTIC) or a bare-metal custom cyclic loop without linking `Server` or `control-rs-ets-host`.
+   `LifecycleTask` implementations are pure `#![no_std]` algorithms decoupled from `Server`. A user can extract and execute an ETS lifecycle task directly inside an external RTOS thread (for example, FreeRTOS, Zephyr, RTIC) or a bare-metal custom cyclic loop without linking `Server` or `control-rs-ets-host`.
 
 #### 4.5 Board Example Layout (Multi-Bin Verification Strategy)
 
@@ -162,7 +162,7 @@ To verify ETS as a complete, bomb-proof product across the hardware fleet, each 
 - **Hardware Lifecycle Bin (`src/bin/lifecycle.rs`)**:
   Demonstrates continuous `LifecycleTask` execution integrated with real target peripherals: high-rate streaming over native USB/UART/CAN, hardware timer pacing, and step-synchronized HIL simulation.
 - **Franken Prototype Bin (`src/bin/franken_*.rs`)**:
-  Validates component substitutability by deliberately replacing standard ETS pieces with custom tooling (e.g. custom ring-buffer link, standalone RTOS task wrapper, or external event-driven step releases).
+  Validates component substitutability by deliberately replacing standard ETS pieces with custom tooling (for example, custom ring-buffer link, standalone RTOS task wrapper, or external event-driven step releases).
 
 ---
 

@@ -267,7 +267,7 @@ static KP_PITCH: SettingCell<f32> = SettingCell::new(1.0);
 another type or a value outside the bounds before storing it. Discovery sends
 the name, value, bounds and description of each setting
 (`ets-link-design.md` §4.8), so the host renders and edits a setting from its
-type. A group of related gains is several settings, and each write changes one
+type. A group of related gains is a set of settings, and each write changes one
 (`ets-executive-design.md` §4.4).
 
 #### 4.6 Monomorphic Wrappers

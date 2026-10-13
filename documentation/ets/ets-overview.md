@@ -126,7 +126,7 @@ The target server requires the user to initialize a hardware-agnostic platform c
 The server exchanges whole messages; each link frames them natively (sync,
 length and CRC-16 on serial streams, packets on USB bulk, segments on CAN). Each
 executable declares its packet encoding once at discovery (Postcard or raw bytes);
-payloads stay opaque bytes with a step index. There are no channels.
+payloads stay opaque bytes with a step index. The wire has no channels.
 
 #### 4.3 End-User Integration Model
 

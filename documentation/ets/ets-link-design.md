@@ -149,7 +149,7 @@ Partial transfers are standard: `read` returns available bytes up to the buffer 
 
 `UsbBulkLink` uses a dedicated vendor bulk interface pair (one IN endpoint, one OUT endpoint) with zero ETS framing bytes (FR-3). Messages are written in packets up to the endpoint maximum packet size ($W_{\text{MaxPacketSize}}$). Transfers complete upon receiving a short packet ($< W_{\text{MaxPacketSize}}$); messages whose length is an exact integer multiple of the packet size are terminated with a zero-length packet (ZLP), matching the framing convention in postcard-rpc's USB transport (postcard-rpc, 2026b). The USB 2.0 specification ends a bulk transfer on a short packet or a ZLP and permits a short packet as an in-band end-of-data delimiter (Compaq et al., 2000); Windows and illumos host drivers report that completion (Microsoft, 2026a; illumos, 2026).
 
-Full-speed USB bulk endpoints support up to 64 bytes and high-speed endpoints support up to 512 bytes (Compaq et al., 2000). Under high-speed USB (e.g. NXP i.MX RT1062 on Teensy 4.0/4.1), a 512-byte message occupies one 512-byte data packet followed by a ZLP. Because USB data packets carry a 16-bit CRC and bulk transactions are retried on bus errors with data-toggle sequencing (Compaq et al., 2000), `UsbBulkLink` adds no software checksum or sequence fields.
+Full-speed USB bulk endpoints support up to 64 bytes and high-speed endpoints support up to 512 bytes (Compaq et al., 2000). Under high-speed USB (for example, NXP i.MX RT1062 on Teensy 4.0/4.1), a 512-byte message occupies one 512-byte data packet followed by a ZLP. Because USB data packets carry a 16-bit CRC and bulk transactions are retried on bus errors with data-toggle sequencing (Compaq et al., 2000), `UsbBulkLink` adds no software checksum or sequence fields.
 
 CDC-ACM and USB-to-serial ports (such as the native USB-C Serial/JTAG controller on the ESP32-C6 DevKitC-1, the USBD CDC peripheral on the Seeed Studio XIAO nRF52840, and the SCI2 UART/USB bridge on the Arduino Uno R4 Minima) cannot use `UsbBulkLink` directly because host OS serial drivers decouple packet boundaries from tty reads (Linux kernel, 2026a; Linux man-pages project, 2026; Microsoft, 2026b). These USB-C and UART targets use `StreamLink` with its 6-byte sync/length/CRC framing instead.
 
@@ -178,7 +178,7 @@ A link driver may receive bytes or frames inside a hardware interrupt service ro
 
 #### 4.7.1 Independent Diagnostic Monitor Channel
 
-Targets frequently expose independent physical or virtual ports for diagnostic serial output (e.g. bootloader logs, panic prints, or hardware UART monitor) alongside the primary ETS transport (e.g. native USB-C Serial/JTAG on ESP32-C6 DevKitC-1, secondary CDC endpoint on USB-enabled MCUs, or ARM SWD/RTT). The ETS link architecture guarantees strict protocol isolation: raw UTF-8 text and bootloader frames on the diagnostic monitor never pollute Postcard frames on the ETS link, enabling operators to keep a continuous serial monitor running in one terminal while driving interactive tests in the TUI or CI runner in another.
+Targets frequently expose independent physical or virtual ports for diagnostic serial output (for example, bootloader logs, panic prints, or hardware UART monitor) alongside the primary ETS transport (for example, native USB-C Serial/JTAG on ESP32-C6 DevKitC-1, secondary CDC endpoint on USB-enabled MCUs, or ARM SWD/RTT). The ETS link architecture guarantees strict protocol isolation: raw UTF-8 text and bootloader frames on the diagnostic monitor never pollute Postcard frames on the ETS link, enabling operators to keep a continuous serial monitor running in one terminal while driving interactive tests in the TUI or CI runner in another.
 
 #### 4.8 Command and Telemetry Schema (Revision 2)
 
@@ -431,7 +431,7 @@ Transport errors (`Link::Error`) log a warning if communication remains operatio
 | VC-7.1 | FR-7 | `libtest` | `control_rs_ets_host::link::tests::host_target_pairs_interoperate` | Each host link implementation exchanges messages bidirectionally with its target counterpart over in-memory buffers |
 | VC-7.2 | FR-7 | `analysis` | Hardware bench execution | Host SocketCAN and USB bulk (`nusb`) links successfully complete discovery with physical hardware targets |
 | VC-8.1 | FR-8 | `libtest` | `control_rs_ets::wire::tests::command_and_telemetry_round_trip` | Every `Command` and `Telemetry` variant survives encoding, link transport and decoding |
-| VC-9.1 | FR-9 | `libtest` | `control_rs_ets_host::session::tests::version_mismatch_refused` | Host rejects a target reporting `protocol_version != 2` prior to decoding any other payload |
+| VC-9.1 | FR-9 | `libtest` | `control_rs_ets_host::session::tests::version_mismatch_refused` | Host rejects a target reporting `protocol_version != 2` before decoding any other payload |
 | VC-9.2 | FR-9 | `libtest` | `control_rs_ets::server::tests::target_info_sent_at_boot` | `TargetInfo` is the first message transmitted upon startup and reset |
 | VC-10.1 | FR-10 | `libtest` | `control_rs_ets::wire::tests::golden_vectors` | Each message variant encodes to its canonical byte sequence and `PacketInfo` round-trips correctly |
 | VC-10.2 | FR-10 | `libtest` | `control_rs_ets::run::tests::output_seq_equals_step` | Every `TaskSample` carries a `seq` counter equal to its execution step index |
@@ -455,10 +455,10 @@ Coverage: 90% line coverage of `control-rs-ets` `link` and `wire` modules, measu
 #### 6.2 Acceptance
 
 - **USB bulk session**: A Teensy 4.1 target runs a lockstep task over `UsbBulkLink` at line rate without message drops or frame desynchronization.
-- **CAN session**: A target attached via CAN (e.g. ESP32-C6 TWAI or Arduino Uno R4 Minima CAN) executes discovery and lockstep tasks through the host SocketCAN interface.
+- **CAN session**: A target attached via CAN (for example, ESP32-C6 TWAI or Arduino Uno R4 Minima CAN) executes discovery and lockstep tasks through the host SocketCAN interface.
 - **Serial regression**: QEMU semihosting, ESP32-C6 USB-JTAG, XIAO nRF52840 USBD, Uno R4 UART, and Teensy CDC-ACM examples pass test gates through `StreamLink`.
 - **Version mismatch refusal**: A host cleanly rejects targets transmitting non-matching protocol versions before processing further commands.
-- **Panic delivery**: A target encountering an intentional panic delivers `TargetPanic` telemetry prior to system reboot.
+- **Panic delivery**: A target encountering an intentional panic delivers `TargetPanic` telemetry before system reboot.
 
 #### 6.3 Limits
 

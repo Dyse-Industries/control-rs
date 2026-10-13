@@ -198,7 +198,7 @@ impl CPUProfiler for HostCPUProfiler {
 
 ##### 4.3.1 CortexMProfiler (ARM Cortex-M)
 
-Applicable to Cortex-M3/M4/M7 targets (e.g. Teensy 4.0/4.1 Cortex-M7, Seeed XIAO nRF52840 Cortex-M4F, Arduino Uno R4 Minima RA4M1 Cortex-M4):
+Applicable to Cortex-M3/M4/M7 targets (for example, Teensy 4.0/4.1 Cortex-M7, Seeed XIAO nRF52840 Cortex-M4F, Arduino Uno R4 Minima RA4M1 Cortex-M4):
 
 ```rust
 pub struct CortexMProfiler {
@@ -254,7 +254,7 @@ impl CPUProfiler for CortexMProfiler {
 
 ##### 4.3.2 RiscvProfiler (RISC-V Architecture)
 
-Applicable to 32-bit and 64-bit RISC-V targets (e.g. ESP32-C6 DevKitC-1 RV32IMAC @ 160 MHz):
+Applicable to 32-bit and 64-bit RISC-V targets (for example, ESP32-C6 DevKitC-1 RV32IMAC @ 160 MHz):
 
 ```rust
 pub struct RiscvProfiler {
