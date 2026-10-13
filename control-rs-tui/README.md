@@ -3,7 +3,7 @@
 Interactive terminal console for driving
 [`control-rs-ets`](../control-rs-ets) targets over
 [`control-rs-ets-host`](../control-rs-ets-host).
-[Design](../documentation/tui/tui-design.md) · [Workspace](../README.md)
+[Design](../documentation/ets/tui-design.md) · [Workspace](../README.md)
 
 The dashboard shows target metadata, a hierarchical suite and case tree, per-case
 cycle, duration and peak-stack telemetry, and a live target log. Execution is

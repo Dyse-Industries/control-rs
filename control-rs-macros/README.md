@@ -8,7 +8,7 @@ Procedural macros for ETS firmware images.
 | `#[ets_setup]` | Target `main` that runs the server with the returned `Context` |
 | `ets_entrypoint!`, `ets_panic!`, `ets_exception!` | Entrypoint, panic handler and exception handler |
 
-[Design](../documentation/macros/macros-design.md) · [Workspace](../README.md)
+[Design](../documentation/ets/macros-design.md) · [Workspace](../README.md)
 
 ## End-User Example
 
