@@ -1,8 +1,9 @@
 # Cross-Compare Harness & HDF5 Comparison System (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
@@ -745,6 +746,7 @@ ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
 | 1.12      | September 24, 2026 | @MitchellDScott | Gate is the `.cargo/gate.toml` `[cross-compare]` table, not parsed by the runner. Containers live in `<out_dir>` (`target/verification/`); root and per-suite examples match the shipped files. FR-17 and FR-11 marked unimplemented; Phase 5 complete, Phase 6 added. Crates are `publish = false` until PR10. |
 | 1.13      | September 27, 2026 | @MitchellDScott | Demoted FR-11 (diagnostic plotting is non-Rust companion tooling per C-3); reaffirmed FR-17 planned status under Phase 6. |
 | 1.14      | October 1, 2026 | @MitchellDScott | FR-5 lists the implemented methods; an unsupported method fails the comparison. Removed the unimplemented `interval`, `envelope`, `regex_match`, semantic-similarity and freshness claims and the `regex` and `strsim` dependencies. |
+| 1.15 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
 
 ---
 

@@ -1,8 +1,9 @@
 # Crate-Wide Error Module (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
@@ -441,6 +442,7 @@ add no allocation.
 | 1.3      | August 22, 2026 | @MitchellDScott | Enum canonicalization: standardized error variants across `StorageError` and `LinAlgError` without cross-enum duplication.                                 |
 | 1.4      | August 26, 2026 | @MitchellDScott | Storage retarget: updated error semantics for inherent structured projection constructors (`from_dense_diagonal`, `from_dense_triangle`).                  |
 | 1.5      | September 24, 2026 | @MitchellDScott | NFR-1 convention is plain derive plus hand-written `Display` / `core::error::Error` (no `thiserror`). §4.2, §6 and §8 describe the shipped conversion surface: companion `Polynomial → Matrix` only, no tensor `From`. Cholesky mapping resolved (`NotPositiveDefinite`). `StorageError` producers and Step 6 recorded as shipped. |
+| 1.6 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
 
 ---
 

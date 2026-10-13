@@ -1,8 +1,9 @@
 # Numeric Trait Hierarchy (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
@@ -551,6 +552,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | 1.4      | August 24, 2026 | @MitchellDScott | Full implementation and verification of numeric traits and complex number primitives.                                                     |
 | 1.5      | September 23, 2026 | @MitchellDScott | FR-6 total arithmetic contract: `Scalar` requires the saturating traits, added `SaturatingDiv`/`SaturatingNeg`, §4.4, Alternative 8. `Quantized` implements `SaturatingDiv` (`fixed-num-design.md` §4.3). |
 | 1.6      | September 24, 2026 | @MitchellDScott | §4.2 and §4.3: `Quantized` is `Scalar` only where `1` is representable (`fixed-num-design.md` FR-7); `Q7`/`Q15`/`Q31`/`Q63` are not. |
+| 1.7 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
 
 ---
 

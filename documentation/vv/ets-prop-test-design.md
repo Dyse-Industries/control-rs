@@ -1,8 +1,9 @@
 # Range-Valued On-Target Property Tests (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Deferred-lightgrey)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
@@ -341,6 +342,7 @@ Cortex-M target is a measurement that has not been taken.
 | 1.2      | September 15, 2026 | @MitchellDScott | Locator-only §6.4; unimplemented range type listed in 6.7; citations removed from FR bodies. |
 | 1.3      | September 24, 2026 | @MitchellDScott | Deferred: removed from the roadmap. Suite authors write range-valued property tests manually in ETS suites; the crate ships no range type. C-4 and §6.1 cite `cross-compare-design.md` (renamed from `oracle-harness-design.md`). |
 | 1.4      | September 27, 2026 | @MitchellDScott | Added saturating arithmetic contract specification (§4.4) for Scalar trait adherence. |
+| 1.5 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
 
 ---
 

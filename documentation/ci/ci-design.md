@@ -1,8 +1,9 @@
 # Continuous Integration & Quality Gate Infrastructure (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_28,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
@@ -1010,6 +1011,7 @@ The `lint` job checks out full history for `--base-ref`.
 | 1.40     | October 1, 2026 | @MitchellDScott | Added the `deny-duplicates` gate to the `audit` group: `cargo deny` bans over the crates that ship, excluding the unpublished tooling crates and development dependencies, with `multiple-versions = "deny"` and reasoned skips in `.cargo/deny.toml`. `deny` checks advisories, licenses and sources. Clippy's `multiple_crate_versions` is allowed workspace-wide and `allowed-duplicate-crates` is removed. The workspace `Cargo.lock` is committed and updated by hand. |
 | 1.41     | October 1, 2026 | @MitchellDScott | The `fetch` gate runs `cargo fetch --locked`, the CI lint job (which runs the `pre` stage) builds the runner with `cargo --locked ci`, and the CI publish job runs `cargo publish --locked`, so the committed `Cargo.lock` must be current. The runner build comes first, so without its `--locked` Cargo would repair a stale lock before `fetch` ran. |
 | 1.42     | October 1, 2026 | @MitchellDScott | `miri` and `kani` gate examples match `gate.toml` (§4.3). The workflow path filters include `Cargo.lock`, so a lockfile change runs the gates. FR-20 and FR-21 state the checks the `kani` and `miri` gates perform (no empty-target rule, no 32-bit target, no ignored-test baseline). Teensy and workflow deferrals point at roadmap PR10; the mutation limit records the equivalent-mutant exclusions. |
+| 1.43 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
 
 ---
 
