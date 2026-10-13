@@ -1,8 +1,9 @@
 # Tensor Type & Low-Cost Inference (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
@@ -560,7 +561,27 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 
 ---
 
-### 10. References
+### 10. Revision History
+
+| Revision | Date            | Author          | Description                                                                                                                    |
+|:---------|:----------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 26, 2026   | @MitchellDScott | Initial draft: N-dimensional storage layouts, indexing arithmetic, and zero-allocation views.                                  |
+| 1.1      | August 2, 2026  | @MitchellDScott | Grid interpolation & quantization: added multilinear lookup tables, `Activation` trait, and fixed-point quantized execution.   |
+| 1.2      | August 24, 2026 | @MitchellDScott | Rank-neutral buffer projection: integrated `FlatBuffer`/`FlatBufferMut` projection over `ContiguousStorage` backends.          |
+| 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with multilinear interpolation tolerances and fixed-point quantization error bounds. |
+| 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView` and `DenseStorage` traits.                                          |
+| 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                   |
+| 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: large-grid interpolation; umbrella Instant timing. NFR-1 cap unchanged.                                        |
+| 1.7      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); MCU element cap unchanged.                                              |
+| 1.8      | August 28, 2026 | @MitchellDScott | Example crate: $16\times 16$ curved-grid interpolation and non-dyadic Q7. NFR-1 cap unchanged.                                 |
+| 1.9      | August 31, 2026 | @MitchellDScott | Updated numerical-models validation crate and script paths to `examples/numerical-models-validation/`.                         |
+| 1.10      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |
+| 1.11      | September 24, 2026 | @MitchellDScott | FR-4: contraction requires `Scalar`, which excludes `Q7`/`Q15`. §4.10: shipped surface is the `slice_matrix()` view; no `From` conversion. NFR-1 restated as a compile-time footprint with a 1,024-element MCU budget. `interpolate` takes `&[T]`. |
+| 1.12 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+
+---
+
+## References
 
 1. **Kolda, T. G., & Bader, B. W. (2009).** Tensor Decompositions and
    Applications. _SIAM Review_, 51(3), 455–500. — Tensor contraction and
@@ -598,22 +619,3 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 11. **Hennessy, J. L., & Patterson, D. A. (2017).** _Computer Architecture: A
     Quantitative Approach_ (6th ed.). Morgan Kaufmann. — Cache and
     memory-hierarchy modeling for stride-based N-D indexing.
-
----
-
-### 11. Revision History
-
-| Revision | Date            | Author          | Description                                                                                                                    |
-|:---------|:----------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 26, 2026   | @MitchellDScott | Initial draft: N-dimensional storage layouts, indexing arithmetic, and zero-allocation views.                                  |
-| 1.1      | August 2, 2026  | @MitchellDScott | Grid interpolation & quantization: added multilinear lookup tables, `Activation` trait, and fixed-point quantized execution.   |
-| 1.2      | August 24, 2026 | @MitchellDScott | Rank-neutral buffer projection: integrated `FlatBuffer`/`FlatBufferMut` projection over `ContiguousStorage` backends.          |
-| 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with multilinear interpolation tolerances and fixed-point quantization error bounds. |
-| 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView` and `DenseStorage` traits.                                          |
-| 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                   |
-| 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: large-grid interpolation; umbrella Instant timing. NFR-1 cap unchanged.                                        |
-| 1.7      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); MCU element cap unchanged.                                              |
-| 1.8      | August 28, 2026 | @MitchellDScott | Example crate: $16\times 16$ curved-grid interpolation and non-dyadic Q7. NFR-1 cap unchanged.                                 |
-| 1.9      | August 31, 2026 | @MitchellDScott | Updated numerical-models validation crate and script paths to `examples/numerical-models-validation/`.                         |
-| 1.10      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |
-| 1.11      | September 24, 2026 | @MitchellDScott | FR-4: contraction requires `Scalar`, which excludes `Q7`/`Q15`. §4.10: shipped surface is the `slice_matrix()` view; no `From` conversion. NFR-1 restated as a compile-time footprint with a 1,024-element MCU budget. `interpolate` takes `&[T]`. |

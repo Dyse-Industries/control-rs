@@ -1,8 +1,9 @@
 # Polynomial Type (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
@@ -684,7 +685,32 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 
 ---
 
-### 10. References
+### 10. Revision History
+
+| Revision | Date            | Author          | Description                                                                                                                           |
+|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | July 12, 2026   | @MitchellDScott | Initial draft with static array layout and basic polynomial arithmetic.                                                               |
+| 1.1      | August 16, 2026 | @MitchellDScott | Storage hierarchy integration: bound polynomial storage to decoupled `DenseStorage` and enabled zero-copy view leaves.                |
+| 1.2      | August 19, 2026 | @MitchellDScott | Algorithms & operands: specified Horner evaluation, convolution multiplication, and companion matrix state-space realization.         |
+| 1.3      | August 24, 2026 | @MitchellDScott | Generic scalar bounds: generalized arithmetic to `T: Scalar` with complex coefficient support.                                        |
+| 1.4      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with backward error bounds ($\gamma_{2n}$).                                                 |
+| 1.5      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<1>` dimensions.                                |
+| 1.6      | August 26, 2026 | @MitchellDScott | Trimmed companion/Faddeev–LeVerrier comparison; de-duplicated Bini/Aurentz reference blurbs.                                          |
+| 1.7      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-root Horner ($N>50$); umbrella $\tau\kappa\varepsilon$ and Instant timing. Caps unchanged.                 |
+| 1.8      | August 28, 2026 | @MitchellDScott | Example crate: clustered-root Horner degree 16 (128-point sweep) and Instant timings. Caps unchanged.                                |
+| 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-2 includes `test_horner_backward_error`; companion eigenvalues vs known roots in `test_companion_matrix`.                 |
+| 1.10     | August 31, 2026 | @MitchellDScott | Added python-flint 256-bit arb ball arithmetic multi-precision oracle and updated validation crate paths.                             |
+| 1.11     | September 1, 2026 | @MitchellDScott | Added FR-7: Closed-form cancellation-stable quadratic root solver `roots_quadratic()` for degree-2 polynomials.                       |
+| 1.12     | September 1, 2026 | @MitchellDScott | Expanded FR-7 into generic multi-tier `roots()` solver with `line_intercept`, `quadratic_roots`, `companion_roots`, and unified `RootError`. |
+| 1.13     | September 1, 2026 | @MitchellDScott | Updated root-finding methods (`roots()`, `companion_roots()`) to return worst-case buffer `[Complex<T>; N]` directly from type bounds without generic parameters. |
+| 1.14     | September 1, 2026 | @MitchellDScott | Extracted `aberth_solver` helper and renamed `companion_roots` to `aberth_roots` (`durand_kerner_roots`). |
+| 1.15      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |
+| 1.16      | September 24, 2026 | @MitchellDScott | Root finding is Durand–Kerner from Aberth seeds, 80-sweep cap (FR-7, §4.6); §5.1 rejects companion QR instead of Aberth; `ConvergenceFailure` and output truncation recorded in §8. §4.7.2: no tensor conversion ships. C-1 capacity recomputed. §4.8.3 convolution returns `Err`. §5.3 bounds match code. View constructors and FR-9 reference corrected. |
+| 1.17 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+
+---
+
+## References
 
 1. **Rust `polynomial` crate contributors. (2023).** _polynomial_: a no-std
    library for manipulating polynomials (Version 0.2.6). [Online].
@@ -741,25 +767,3 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 13. **Goldberg, D. (1991).** What Every Computer Scientist Should Know About
     Floating-Point Arithmetic. _ACM Computing Surveys_, 23(1), 5–48. — Numerically
     stable quadratic root formula eliminating catastrophic subtractive cancellation.
-
-### 11. Revision History
-
-| Revision | Date            | Author          | Description                                                                                                                           |
-|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026   | @MitchellDScott | Initial draft with static array layout and basic polynomial arithmetic.                                                               |
-| 1.1      | August 16, 2026 | @MitchellDScott | Storage hierarchy integration: bound polynomial storage to decoupled `DenseStorage` and enabled zero-copy view leaves.                |
-| 1.2      | August 19, 2026 | @MitchellDScott | Algorithms & operands: specified Horner evaluation, convolution multiplication, and companion matrix state-space realization.         |
-| 1.3      | August 24, 2026 | @MitchellDScott | Generic scalar bounds: generalized arithmetic to `T: Scalar` with complex coefficient support.                                        |
-| 1.4      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with backward error bounds ($\gamma_{2n}$).                                                 |
-| 1.5      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<1>` dimensions.                                |
-| 1.6      | August 26, 2026 | @MitchellDScott | Trimmed companion/Faddeev–LeVerrier comparison; de-duplicated Bini/Aurentz reference blurbs.                                          |
-| 1.7      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-root Horner ($N>50$); umbrella $\tau\kappa\varepsilon$ and Instant timing. Caps unchanged.                 |
-| 1.8      | August 28, 2026 | @MitchellDScott | Example crate: clustered-root Horner degree 16 (128-point sweep) and Instant timings. Caps unchanged.                                |
-| 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-2 includes `test_horner_backward_error`; companion eigenvalues vs known roots in `test_companion_matrix`.                 |
-| 1.10     | August 31, 2026 | @MitchellDScott | Added python-flint 256-bit arb ball arithmetic multi-precision oracle and updated validation crate paths.                             |
-| 1.11     | September 1, 2026 | @MitchellDScott | Added FR-7: Closed-form cancellation-stable quadratic root solver `roots_quadratic()` for degree-2 polynomials.                       |
-| 1.12     | September 1, 2026 | @MitchellDScott | Expanded FR-7 into generic multi-tier `roots()` solver with `line_intercept`, `quadratic_roots`, `companion_roots`, and unified `RootError`. |
-| 1.13     | September 1, 2026 | @MitchellDScott | Updated root-finding methods (`roots()`, `companion_roots()`) to return worst-case buffer `[Complex<T>; N]` directly from type bounds without generic parameters. |
-| 1.14     | September 1, 2026 | @MitchellDScott | Extracted `aberth_solver` helper and renamed `companion_roots` to `aberth_roots` (`durand_kerner_roots`). |
-| 1.15      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |
-| 1.16      | September 24, 2026 | @MitchellDScott | Root finding is Durand–Kerner from Aberth seeds, 80-sweep cap (FR-7, §4.6); §5.1 rejects companion QR instead of Aberth; `ConvergenceFailure` and output truncation recorded in §8. §4.7.2: no tensor conversion ships. C-1 capacity recomputed. §4.8.3 convolution returns `Err`. §5.3 bounds match code. View constructors and FR-9 reference corrected. |

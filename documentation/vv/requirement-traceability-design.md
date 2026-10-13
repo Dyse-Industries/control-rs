@@ -1,8 +1,9 @@
 # Requirement Traceability Infrastructure (requirement-traceability)
 
 ![Date Badge](https://img.shields.io/badge/Date-October_3,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Review-yellow)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 

@@ -1,8 +1,9 @@
 # Linear Algebra Subprograms (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
@@ -1170,6 +1171,7 @@ Disassembly under `opt-level=3` (LLVM 22.1.6) on `x86_64-apple-darwin`,
 | 1.3      | August 26, 2026 | @MitchellDScott | Backend scope: C-4 excludes external libraries from `src/`; §4.5 recast as an extension point served by example implementors.   |
 | 1.4      | September 23, 2026 | @MitchellDScott | Field kernels bound `T: Scalar + SaturatingDiv`; kernel arithmetic follows the saturating contract (`num-traits-design.md` FR-6). |
 | 1.5      | September 24, 2026 | @MitchellDScott | §5: const-generic strides and the `transpose_view` rejection corrected to the runtime-stride model; dangling §4.2.x / §5.x / §4.6 references retargeted; runtime-dispatch row states call-site backend choice. §8 ETS targets match `ci-design.md` C-5. |
+| 1.6 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
 
 ---
 

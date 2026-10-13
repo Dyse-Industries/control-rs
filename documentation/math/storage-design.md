@@ -1,8 +1,9 @@
 # Storage Backends & Data Layouts (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-green)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
@@ -1307,8 +1308,9 @@ Accessed: Aug. 18, 2026.
 | 1.0      | August 21, 2026 | @MitchellDScott | Extracted storage backend designs into dedicated modular specification.                                                                               |
 | 1.1      | August 21, 2026 | @MitchellDScott | Backend expansions: added strided views, complex/Hermitian storage (`HermitianPackedStorage`), and sparse backends (COO/CSR/CSC).                    |
 | 1.2      | August 22, 2026 | @MitchellDScott | Dimension parameterization: bound storage traits to type-level dimensions (`R: Dim, C: Dim`).                                                         |
-| 1.3      | September 24, 2026 | @MitchellDScott | §8 consumer note resolved (model docs use `DenseStorage` / `Storage`); C-5 citations attributed to this document. |
 | 2.0      | August 24, 2026 | @MitchellDScott | Decoupled storage subsystems: established distinct `DenseStorage`, `PackedStorage`, and `SparseStorage` architectures without cross-subsystem inheritance. |
 | 2.1      | August 24, 2026 | @MitchellDScott | Strided view refinement: separated runtime strided views (`StorageView` / `StorageViewMut`) from compile-time marker views (`StaticStorageView`).    |
 | 2.2      | August 25, 2026 | @MitchellDScott | Inherent structured projections: replaced `FromDenseStorage` with inherent projection constructors (`from_dense_diagonal`, `from_dense_triangle`).    |
-| 2.3      | September 30, 2026 | @MitchellDScott | `DenseStorageMut` gains `unsafe submatrix_mut_unchecked` (mutable strided window; caller proves the window fits) and safe same-shape `copy_from`; block placement in numerical models goes through them. |
+| 2.3      | September 24, 2026 | @MitchellDScott | §8 consumer note resolved (model docs use `DenseStorage` / `Storage`); C-5 citations attributed to this document. |
+| 2.4      | September 30, 2026 | @MitchellDScott | `DenseStorageMut` gains `unsafe submatrix_mut_unchecked` (mutable strided window; caller proves the window fits) and safe same-shape `copy_from`; block placement in numerical models goes through them. |
+| 2.5 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
