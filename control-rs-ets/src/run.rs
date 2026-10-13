@@ -17,17 +17,16 @@
 use core::marker::PhantomData;
 
 use crate::ExecDescriptor;
-use crate::comms::{HostComms, Telemetry, TestState};
-use crate::context::{Context, TestMetrics};
+use crate::comms::{Telemetry, TestState};
+use crate::context::{Context, ContextMut, TestMetrics};
+use crate::link::Link;
 use crate::profiler::CPUProfiler;
 use crate::server::{CURRENT_SUITE, CURRENT_TEST};
 
 /// Outcome of a run: success or the transport error of `C`.
-pub type RunResult<C> = Result<(), <C as HostComms>::Error>;
+pub type RunResult<L> = Result<(), <L as Link>::Error>;
 /// Shared borrow of the context.
-type Ctx<'a, C, P> = &'a Context<C, P>;
-/// Exclusive borrow of the context.
-type CtxMut<'a, C, P> = &'a mut Context<C, P>;
+type Ctx<'a, L, P> = &'a Context<L, P>;
 
 /// How a runner executes and measures an executable.
 ///
@@ -38,8 +37,8 @@ type CtxMut<'a, C, P> = &'a mut Context<C, P>;
 /// Implementations do not panic.
 pub trait Mode {
     /// Executes `exec` once under this mode and returns what was measured.
-    fn execute<C: HostComms, P: CPUProfiler>(
-        context: Ctx<'_, C, P>,
+    fn execute<L: Link, P: CPUProfiler>(
+        context: Ctx<'_, L, P>,
         exec: &ExecDescriptor,
     ) -> TestMetrics;
 }
@@ -61,14 +60,13 @@ pub struct Atomic;
 /// use control_rs_ets::ExecDescriptor;
 /// use control_rs_ets::run::{Atomic, Runner};
 /// # use control_rs_ets::server::Context;
-/// # use control_rs_ets::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// # use control_rs_ets::link::{Link, RecvOf, SendOf};
 /// # use control_rs_ets::profiler::CPUProfiler;
-/// # struct MockComms;
-/// # impl HostComms for MockComms {
+/// # struct MockLink;
+/// # impl Link for MockLink {
 /// #     type Error = &'static str;
-/// #     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
-/// #     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
-/// #     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
+/// #     fn recv(&mut self, _: &mut [u8]) -> RecvOf<Self> { Ok(None) }
+/// #     fn send(&mut self, _: &[u8]) -> SendOf<Self> { Ok(true) }
 /// # }
 /// # struct MockProfiler;
 /// # impl CPUProfiler for MockProfiler {
@@ -79,11 +77,11 @@ pub struct Atomic;
 /// # }
 /// fn case() {}
 /// let exec = ExecDescriptor { description: "case", name: "case", test_fn: case };
-/// let mut context = Context::new(MockComms, MockProfiler);
+/// let mut context = Context::new(MockLink, MockProfiler);
 /// assert!(Runner::<_, _, Atomic>::new(&mut context, 0, 0, &exec).run().is_ok());
 /// ```
-pub struct Runner<'a, C, P, M> {
-    context: CtxMut<'a, C, P>,
+pub struct Runner<'a, L, P, M> {
+    context: ContextMut<'a, L, P>,
     exec: &'a ExecDescriptor,
     mode: PhantomData<M>,
     suite_id: u16,
@@ -91,18 +89,18 @@ pub struct Runner<'a, C, P, M> {
 }
 
 impl Mode for Atomic {
-    fn execute<C: HostComms, P: CPUProfiler>(
-        context: Ctx<'_, C, P>,
+    fn execute<L: Link, P: CPUProfiler>(
+        context: Ctx<'_, L, P>,
         exec: &ExecDescriptor,
     ) -> TestMetrics {
         context.profile_test(exec.test_fn)
     }
 }
 
-impl<'a, C, P, M> Runner<'a, C, P, M> {
+impl<'a, L, P, M> Runner<'a, L, P, M> {
     /// Creates a runner for the executable at `suite_id` and `test_id`.
     pub const fn new(
-        context: CtxMut<'a, C, P>,
+        context: ContextMut<'a, L, P>,
         suite_id: u16,
         test_id: u16,
         exec: &'a ExecDescriptor,
@@ -117,13 +115,13 @@ impl<'a, C, P, M> Runner<'a, C, P, M> {
     }
 }
 
-impl<C: HostComms, P: CPUProfiler, M: Mode> Runner<'_, C, P, M> {
+impl<L: Link, P: CPUProfiler, M: Mode> Runner<'_, L, P, M> {
     /// Executes the executable, publishing the active item and reporting `Running`, `Passed`
     /// and the metric report.
     ///
     /// # Errors
     /// Returns a transport error if reporting fails.
-    pub fn run(self) -> RunResult<C> {
+    pub fn run(self) -> RunResult<L> {
         let Self {
             context,
             exec,
@@ -132,13 +130,11 @@ impl<C: HostComms, P: CPUProfiler, M: Mode> Runner<'_, C, P, M> {
             ..
         } = self;
 
-        let _ = context.send_telemetry_and_flush_locked(
-            &Telemetry::TestStateChange {
-                suite_id,
-                test_id,
-                state: TestState::Running,
-            },
-        )?;
+        let _ = context.send_telemetry_locked(&Telemetry::TestStateChange {
+            suite_id,
+            test_id,
+            state: TestState::Running,
+        })?;
 
         // Track globally in case of panic during execution.
         CURRENT_SUITE.set_active(suite_id as usize);
@@ -155,15 +151,13 @@ impl<C: HostComms, P: CPUProfiler, M: Mode> Runner<'_, C, P, M> {
             state: TestState::Passed,
         })?;
 
-        let _ = context.send_telemetry_and_flush_locked(
-            &Telemetry::MetricReport {
-                suite_id,
-                test_id,
-                cycles: metrics.cycles,
-                time_us: metrics.time_us,
-                stack_peak: metrics.stack_peak,
-            },
-        )?;
+        let _ = context.send_telemetry_locked(&Telemetry::MetricReport {
+            suite_id,
+            test_id,
+            cycles: metrics.cycles,
+            time_us: metrics.time_us,
+            stack_peak: metrics.stack_peak,
+        })?;
 
         Ok(())
     }

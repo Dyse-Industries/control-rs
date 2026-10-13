@@ -1,64 +1,54 @@
 # `control-rs-ets`
 
-Target-side `no_std` Embedded Test Server (ETS): transport and profiler
-traits, framed command and telemetry protocol, and the server event loop.
+Target-side `no_std` Embedded Test Server (ETS): message link and profiler
+traits, command and telemetry schema, and the server event loop.
 [Design](../documentation/ets/embedded-test-server-design.md) · [Overview](../documentation/ets/ets-overview.md) · [Workspace](../README.md)
 
 | Module | Contents | Design |
 |:--|:--|:--|
-| `comms` | `HostComms`, frame reader, telemetry framing (CRC-16) | [host-comm-design](../documentation/ets/host-comm-design.md) |
+| `comms` | `Command` and `Telemetry` schema, frame reader and encoder (CRC-16) | [ets-link-design](../documentation/ets/ets-link-design.md) |
+| `link` | `Link`, `ByteStream`, `StreamLink` | [ets-link-design](../documentation/ets/ets-link-design.md) |
 | `profiler` | `CPUProfiler` cycle and stack measurement | [cpu-profiler-design](../documentation/ets/cpu-profiler-design.md) |
 | `settings` | Host-adjustable atomic test settings | [test-suite-design](../documentation/ets/test-suite-design.md) |
-| `server` | `Context` and the event loop | [embedded-test-server-design](../documentation/ets/embedded-test-server-design.md) |
+| `context`, `run`, `server` | `Context`, `Runner` and `Mode`, the dispatcher | [ets-executive-design](../documentation/ets/ets-executive-design.md) |
 
 ## End-User Example
 
-Implement `HostComms` for the target transport and `CPUProfiler` for its
-timer, then pass both to `Context`:
+Implement `ByteStream` for the target transport (or `Link` for a packet
+transport) and `CPUProfiler` for its timer, then pass both to `Context`:
 
 ```rust
 #![no_std]
 #![no_main]
 
-use control_rs_ets::comms::{Command, FrameReader, HostComms, Telemetry, frame_telemetry};
+use control_rs_ets::link::{ByteStream, CountOf, StreamLink};
 use control_rs_ets::server::Context;
 use control_rs_ets::CPUProfiler;
 use control_rs_macros::{ets_setup, ets_suite};
 
-// 1. Define target-side communication channel (e.g., UART or Semihosting)
-struct UartComms {
-    reader: FrameReader,
-}
+// 1. Define the target-side byte stream (e.g., UART or Semihosting). Reads and
+// writes never block: 0 bytes read means nothing is ready and a short write is
+// back-pressure. `StreamLink` adds the sync, length and CRC-16 frame.
+struct Uart;
 
-impl HostComms for UartComms {
+impl ByteStream for Uart {
     type Error = ();
 
-    fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
-        // Retrieve byte from hardware peripheral non-blockingly
-        if let Some(byte) = read_uart_byte() {
-            if let Some(payload) = self.reader.handle_byte(byte) {
-                if let Ok(cmd) = postcard::from_bytes(payload) {
-                    return Ok(Some(cmd));
-                }
+    fn read(&mut self, buf: &mut [u8]) -> CountOf<Self> {
+        match (buf.first_mut(), read_uart_byte()) {
+            (Some(slot), Some(byte)) => {
+                *slot = byte;
+                Ok(1)
             }
-        }
-        Ok(None)
-    }
-
-    fn send_telemetry(&mut self, telemetry: &Telemetry<'_>) -> Result<(), Self::Error> {
-        let mut buf = [0u8; 512];
-        if let Ok(len) = frame_telemetry(telemetry, &mut buf) {
-            for &byte in &buf[..len] {
-                write_uart_byte(byte);
-            }
-            Ok(())
-        } else {
-            Err(())
+            _ => Ok(0),
         }
     }
 
-    fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+    fn write(&mut self, buf: &[u8]) -> CountOf<Self> {
+        for &byte in buf {
+            write_uart_byte(byte);
+        }
+        Ok(buf.len())
     }
 }
 
@@ -108,11 +98,8 @@ pub mod pid_control_suite {
 
 // 4. Initialize ETS
 #[ets_setup]
-fn setup() -> Context<UartComms, SystemCPUUtils> {
-    Context::new(
-        UartComms { reader: FrameReader::new() },
-        SystemCPUUtils,
-    )
+fn setup() -> Context<StreamLink<Uart>, SystemCPUUtils> {
+    Context::new(StreamLink::new(Uart), SystemCPUUtils)
 }
 ```
 

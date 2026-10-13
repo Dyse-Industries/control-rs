@@ -138,7 +138,7 @@ pub unsafe fn get_suites(
 /// and executes target reset.
 ///
 /// # Generic Arguments
-/// * `C` - Host communication channel type implementing [`HostComms`](crate::comms::HostComms).
+/// * `L` - Message link type implementing [`Link`](crate::link::Link).
 /// * `P` - CPU Profiler type implementing [`CPUProfiler`](crate::profiler::CPUProfiler).
 ///
 /// # Arguments
@@ -168,14 +168,13 @@ pub unsafe fn get_suites(
 /// use control_rs_ets::util::handle_failure;
 /// use control_rs_ets::server::Context;
 /// # use control_rs_ets::profiler::CPUProfiler;
-/// # use control_rs_ets::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// # use control_rs_ets::link::{Link, RecvOf, SendOf};
 ///
-/// # struct MockComms;
-/// # impl HostComms for MockComms {
+/// # struct MockLink;
+/// # impl Link for MockLink {
 /// #     type Error = &'static str;
-/// #     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
-/// #     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
-/// #     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
+/// #     fn recv(&mut self, _: &mut [u8]) -> RecvOf<Self> { Ok(None) }
+/// #     fn send(&mut self, _: &[u8]) -> SendOf<Self> { Ok(true) }
 /// # }
 /// # struct MockProfiler;
 /// # impl CPUProfiler for MockProfiler {
@@ -187,19 +186,19 @@ pub unsafe fn get_suites(
 /// #     fn disable_interrupts_permanently(&self) {}
 /// # }
 ///
-/// let mut ctx = Context::new(MockComms, MockProfiler);
+/// let mut ctx = Context::new(MockLink, MockProfiler);
 /// // This triggers a panic in the mock profiler reset implementation
 /// unsafe {
 ///     handle_failure(&mut ctx, "Failure message", "main.rs", 10, false);
 /// }
 /// # }
 /// ```
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 pub unsafe fn handle_failure<
-    C: crate::comms::HostComms,
+    L: crate::link::Link,
     P: crate::profiler::CPUProfiler,
 >(
-    context: &mut crate::server::Context<C, P>,
+    context: crate::context::ContextMut<'_, L, P>,
     msg: &str,
     file: &str,
     line: u32,
@@ -215,7 +214,7 @@ pub unsafe fn handle_failure<
             suite.and_then(|s| u16::try_from(s).ok()),
             test.and_then(|t| u16::try_from(t).ok()),
         ) {
-            let _ = context.comms.send_telemetry(
+            let _ = context.try_send_telemetry(
                 &crate::comms::Telemetry::TestStateChange {
                     suite_id,
                     test_id,
@@ -224,24 +223,20 @@ pub unsafe fn handle_failure<
             );
         }
 
-        let _ = context.comms.send_telemetry(
-            &crate::comms::Telemetry::TargetPanic {
+        let _ =
+            context.try_send_telemetry(&crate::comms::Telemetry::TargetPanic {
                 message: msg,
                 file,
                 line,
-            },
-        );
-        let _ = context.comms.flush();
+            });
 
         // Wait for TryReset command from host
         loop {
-            let command = context.comms.poll_command().ok().flatten();
+            let command = context.poll_command().ok().flatten();
 
             if matches!(command, Some(crate::comms::Command::TryReset)) {
                 break;
             }
-
-            let _ = context.comms.flush();
 
             // Small delay to prevent pegging the CPU too hard
             for _ in 0..1000 {
@@ -249,7 +244,7 @@ pub unsafe fn handle_failure<
             }
         }
 
-        context.comms.close_on_failure();
+        context.link.close_on_failure();
     }
 
     context.cpu_utils.reset();
@@ -260,7 +255,7 @@ pub unsafe fn handle_failure<
 /// Formats exception information and delegates to `handle_failure`.
 ///
 /// # Generic Arguments
-/// * `C` - Host communication channel type implementing [`HostComms`](crate::comms::HostComms).
+/// * `L` - Message link type implementing [`Link`](crate::link::Link).
 /// * `P` - CPU Profiler type implementing [`CPUProfiler`](crate::profiler::CPUProfiler).
 ///
 /// # Arguments
@@ -288,14 +283,13 @@ pub unsafe fn handle_failure<
 /// use control_rs_ets::util::handle_exception;
 /// use control_rs_ets::server::Context;
 /// # use control_rs_ets::profiler::CPUProfiler;
-/// # use control_rs_ets::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// # use control_rs_ets::link::{Link, RecvOf, SendOf};
 ///
-/// # struct MockComms;
-/// # impl HostComms for MockComms {
+/// # struct MockLink;
+/// # impl Link for MockLink {
 /// #     type Error = &'static str;
-/// #     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
-/// #     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
-/// #     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
+/// #     fn recv(&mut self, _: &mut [u8]) -> RecvOf<Self> { Ok(None) }
+/// #     fn send(&mut self, _: &[u8]) -> SendOf<Self> { Ok(true) }
 /// # }
 /// # struct MockProfiler;
 /// # impl CPUProfiler for MockProfiler {
@@ -307,19 +301,18 @@ pub unsafe fn handle_failure<
 /// #     fn disable_interrupts_permanently(&self) {}
 /// # }
 ///
-/// let mut ctx = Context::new(MockComms, MockProfiler);
+/// let mut ctx = Context::new(MockLink, MockProfiler);
 /// // This triggers a panic in the mock profiler reset implementation
 /// unsafe {
 ///     handle_exception(&mut ctx, "HardFault Exception", false);
 /// }
 /// # }
 /// ```
-#[allow(clippy::type_complexity)]
 pub unsafe fn handle_exception<
-    C: crate::comms::HostComms,
+    L: crate::link::Link,
     P: crate::profiler::CPUProfiler,
 >(
-    context: &mut crate::server::Context<C, P>,
+    context: crate::context::ContextMut<'_, L, P>,
     msg: &str,
     comms_ok: bool,
 ) -> ! {
@@ -333,7 +326,8 @@ pub unsafe fn handle_exception<
 mod tests {
     extern crate std;
     use super::*;
-    use crate::comms::{Command, HostComms, Telemetry, TestState};
+    use crate::comms::{Command, Telemetry, TestState};
+    use crate::link::{Link, RecvOf, SendOf};
     use crate::profiler::CPUProfiler;
 
     type PayloadsList = std::vec::Vec<std::vec::Vec<u8>>;
@@ -366,26 +360,21 @@ mod tests {
         }
     }
 
-    impl HostComms for MockComms {
+    impl Link for MockComms {
         type Error = &'static str;
-        fn flush(&mut self) -> Result<(), Self::Error> {
-            Ok(())
-        }
-        fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+        fn recv(&mut self, buf: &mut [u8]) -> RecvOf<Self> {
             if self.commands.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(self.commands.remove(0)))
+                return Ok(None);
             }
+            let cmd = self.commands.remove(0);
+            let len = postcard::to_slice(&cmd, buf)
+                .map_err(|_| "Failed to serialize")?
+                .len();
+            Ok(Some(len))
         }
-        fn send_telemetry(
-            &mut self,
-            telemetry: &Telemetry<'_>,
-        ) -> Result<(), Self::Error> {
-            let payload = postcard::to_allocvec(telemetry)
-                .map_err(|_| "Failed to serialize")?;
-            self.payloads.push(payload);
-            Ok(())
+        fn send(&mut self, msg: &[u8]) -> SendOf<Self> {
+            self.payloads.push(msg.to_vec());
+            Ok(true)
         }
     }
 
@@ -457,7 +446,7 @@ mod tests {
             }));
         assert!(res.is_err());
 
-        let payloads = &context.comms.payloads;
+        let payloads = &context.link.payloads;
         assert_eq!(payloads.len(), 1);
         let t: Telemetry<'_> =
             postcard::from_bytes(payloads.first().unwrap()).unwrap();
@@ -488,7 +477,7 @@ mod tests {
             }));
         assert!(res.is_err());
 
-        let payloads = &context.comms.payloads;
+        let payloads = &context.link.payloads;
         assert_eq!(payloads.len(), 2);
         let t0: Telemetry<'_> =
             postcard::from_bytes(payloads.first().unwrap()).unwrap();

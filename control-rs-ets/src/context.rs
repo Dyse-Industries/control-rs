@@ -2,24 +2,24 @@
 //!
 //! # Description
 //!
-//! `Context` owns the host link, the CPU profiler and the communications lock. The server
-//! constructs one context and lends it to the runner of each run, so the dispatcher and the
-//! runners share a single writer for the link.
+//! `Context` owns the message [`Link`], the CPU profiler and the communications lock. It encodes
+//! telemetry and decodes commands (Postcard), so the link carries whole messages and the server
+//! holds no framing code. The server constructs one context and lends it to the runner of each
+//! run, so the dispatcher and the runners share a single writer for the link.
 
-use crate::comms::{Command, CommsLock, HostComms, Telemetry};
-use crate::server::ServerResult;
+use crate::comms::{Command, CommsLock, MAX_PAYLOAD_SIZE, Telemetry};
+use crate::link::{Link, SendOf, UnitOf};
 
-/// Context object that encapsulates communication, CPU profiling utilities and the communication lock.
+/// Context object that encapsulates the link, CPU profiling utilities and the communication lock.
 ///
 /// This type coordinates accesses to low-level target hardware. To ensure thread safety and avoid race
 /// conditions (for example, between the main event loop and interrupt/exception/panic handlers that
-/// also need to send telemetry), the `Context` holds a `CommsLock`. All public telemetry and poll methods
-/// are run via `_locked` helper methods, ensuring mutual exclusion without requiring blocking mutexes
-/// that could cause deadlocks in interrupt-disabled contexts.
+/// also need to send telemetry), the `Context` holds a `CommsLock`. The `_locked` methods take the lock
+/// and return `Ok(false)` without touching the link when it is held, so they never block on it.
 ///
 /// # Safety
-/// Access to the underlying communication interface is protected by the internal `CommsLock`.
-/// This struct does not use `unsafe` code directly.
+/// Access to the link is protected by the internal `CommsLock`. This struct does not use `unsafe` code
+/// directly.
 ///
 /// # Panics
 /// Context operations do not panic.
@@ -27,15 +27,15 @@ use crate::server::ServerResult;
 /// # Example
 /// ```
 /// use control_rs_ets::server::Context;
-/// # use control_rs_ets::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// # use control_rs_ets::link::{Link, RecvOf, SendOf};
+/// # use control_rs_ets::comms::Telemetry;
 /// # use control_rs_ets::profiler::CPUProfiler;
 ///
-/// # struct MockComms;
-/// # impl HostComms for MockComms {
+/// # struct MockLink;
+/// # impl Link for MockLink {
 /// #     type Error = &'static str;
-/// #     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
-/// #     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
-/// #     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
+/// #     fn recv(&mut self, _: &mut [u8]) -> RecvOf<Self> { Ok(None) }
+/// #     fn send(&mut self, _: &[u8]) -> SendOf<Self> { Ok(true) }
 /// # }
 /// # struct MockProfiler;
 /// # impl CPUProfiler for MockProfiler {
@@ -45,17 +45,40 @@ use crate::server::ServerResult;
 /// #     fn get_stack_end(&self) -> usize { 0 }
 /// # }
 ///
-/// let mut ctx = Context::new(MockComms, MockProfiler);
-/// assert!(ctx.flush_locked().is_ok());
+/// let mut ctx = Context::new(MockLink, MockProfiler);
+/// assert_eq!(ctx.send_telemetry_locked(&Telemetry::DiscoveryComplete), Ok(true));
 /// ```
-pub struct Context<C, P> {
-    /// Host communication channel.
-    pub comms: C,
-    /// Thread-safe communications lock to protect comms.
+pub struct Context<L, P> {
+    /// Message link to the host.
+    pub link: L,
+    /// Thread-safe communications lock to protect the link.
     pub comms_lock: CommsLock,
     /// CPU profiling and execution utilities.
     pub cpu_utils: P,
+    rx: [u8; MAX_PAYLOAD_SIZE],
+    tx: [u8; MAX_PAYLOAD_SIZE],
 }
+
+/// Exclusive borrow of a [`Context`].
+pub type ContextMut<'a, L, P> = &'a mut Context<L, P>;
+
+/// What happened to one send attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendOutcome {
+    /// The link accepted the whole message.
+    Sent,
+    /// The link is busy; nothing was transmitted.
+    Busy,
+    /// The message does not encode within the maximum message size and was not transmitted.
+    Dropped,
+}
+
+/// Result of one unlocked send attempt on link `L`.
+pub type TrySendOf<L> = Result<SendOutcome, <L as Link>::Error>;
+
+/// Result of a poll on link `L`: a decoded command, nothing ready, or a transport error.
+pub type PollOf<L> = Result<Option<Command>, <L as Link>::Error>;
+
 /// Performance metrics measured during a test execution.
 pub struct TestMetrics {
     /// Number of elapsed CPU cycles.
@@ -66,56 +89,51 @@ pub struct TestMetrics {
     pub time_us: u64,
 }
 
-#[allow(clippy::type_complexity)]
-impl<C: HostComms, P> Context<C, P> {
-    /// Flushes comms safely by acquiring the comms lock first.
-    ///
-    /// If the lock is already held (for example, by a panic handler or an interrupt), this method returns `Ok(false)`
-    /// immediately to avoid reentrancy deadlock or state corruption.
-    ///
-    /// # Returns
-    /// * `Result<bool, C::Error>` - Success flag (true if locked and flushed, false if lock was busy) or transport error status.
-    ///
-    /// # Errors
-    /// Returns a transport error if flushing fails.
-    pub fn flush_locked(&mut self) -> Result<bool, C::Error> {
-        if self.comms_lock.try_lock() {
-            let res = self.comms.flush();
-            self.comms_lock.unlock();
-            res.map(|()| true)
-        } else {
-            Ok(false)
-        }
-    }
-
+impl<L: Link, P> Context<L, P> {
     /// Creates a new `Context`.
     ///
     /// # Arguments
-    /// * `comms` - Communication peripheral channel.
+    /// * `link` - Message link to the host.
     /// * `cpu_utils` - CPU execution/profiler.
     ///
     /// # Returns
     /// * `Self` - Context instance.
-    pub const fn new(comms: C, cpu_utils: P) -> Self {
+    pub const fn new(link: L, cpu_utils: P) -> Self {
         Self {
-            comms,
+            link,
             comms_lock: CommsLock::new(),
             cpu_utils,
+            rx: [0; MAX_PAYLOAD_SIZE],
+            tx: [0; MAX_PAYLOAD_SIZE],
         }
+    }
+
+    /// Receives and decodes one command without taking the lock.
+    ///
+    /// A message that does not decode as a [`Command`] is discarded. The caller must hold the
+    /// communications lock; the fault path uses this after it took the lock itself.
+    ///
+    /// # Errors
+    /// Returns a transport error if the link fails.
+    pub fn poll_command(&mut self) -> PollOf<L> {
+        let Some(len) = self.link.recv(&mut self.rx)? else {
+            return Ok(None);
+        };
+        Ok(self
+            .rx
+            .get(..len)
+            .and_then(|msg| postcard::from_bytes(msg).ok()))
     }
 
     /// Polls a command safely by acquiring the comms lock first.
     ///
     /// If the lock is already held, this returns `Ok(None)` immediately to prevent nested/concurrent polls.
     ///
-    /// # Returns
-    /// * `PollResult<C::Error>` - Success (optionally wrapped command) or transport error status.
-    ///
     /// # Errors
     /// Returns a transport error if polling fails.
-    pub fn poll_command_locked(&mut self) -> Result<Option<Command>, C::Error> {
+    pub fn poll_command_locked(&mut self) -> PollOf<L> {
         if self.comms_lock.try_lock() {
-            let res = self.comms.poll_command();
+            let res = self.poll_command();
             self.comms_lock.unlock();
             res
         } else {
@@ -123,63 +141,61 @@ impl<C: HostComms, P> Context<C, P> {
         }
     }
 
-    /// Sends telemetry and flushes safely by acquiring the comms lock first.
+    /// Encodes `telemetry` and offers it to the link once, without taking the lock.
     ///
-    /// If the lock is already held, this returns `Ok(false)` immediately. This is the primary safe interface
-    /// for regular telemetry logs.
-    ///
-    /// # Arguments
-    /// * `telemetry` - Reference to the telemetry data structure.
-    ///
-    /// # Returns
-    /// * `Result<bool, C::Error>` - Success flag (true if locked and sent, false if lock was busy) or transport error status.
+    /// The caller must hold the communications lock. The fault path uses this so a busy link
+    /// drops the report instead of waiting.
     ///
     /// # Errors
-    /// Returns a transport error if writing or flushing fails.
-    pub fn send_telemetry_and_flush_locked(
+    /// Returns a transport error if the link fails.
+    pub fn try_send_telemetry(
         &mut self,
         telemetry: &Telemetry<'_>,
-    ) -> Result<bool, C::Error> {
-        if self.comms_lock.try_lock() {
-            let res = self
-                .comms
-                .send_telemetry(telemetry)
-                .and_then(|()| self.comms.flush());
-            self.comms_lock.unlock();
-            res.map(|()| true)
+    ) -> TrySendOf<L> {
+        let Ok(encoded) = postcard::to_slice(telemetry, &mut self.tx) else {
+            return Ok(SendOutcome::Dropped);
+        };
+        if self.link.send(encoded)? {
+            Ok(SendOutcome::Sent)
         } else {
-            Ok(false)
+            Ok(SendOutcome::Busy)
         }
     }
 
-    /// Sends telemetry safely by acquiring the comms lock first.
+    /// Sends telemetry safely by acquiring the comms lock first, retrying while the link is busy.
     ///
-    /// If the lock is already held, this returns `Ok(false)` immediately.
+    /// If the lock is already held, this returns `Ok(false)` immediately. This is the primary safe
+    /// interface for regular telemetry.
     ///
     /// # Arguments
     /// * `telemetry` - Reference to the telemetry data structure.
     ///
     /// # Returns
-    /// * `Result<bool, C::Error>` - Success flag (true if locked and sent, false if lock was busy) or transport error status.
+    /// * `SendOf<L>` - `true` if the link accepted the message; `false` if the lock was
+    ///   busy or the message did not encode within the maximum message size.
     ///
     /// # Errors
     /// Returns a transport error if writing fails.
     pub fn send_telemetry_locked(
         &mut self,
         telemetry: &Telemetry<'_>,
-    ) -> Result<bool, C::Error> {
-        if self.comms_lock.try_lock() {
-            let res = self.comms.send_telemetry(telemetry);
-            self.comms_lock.unlock();
-            res.map(|()| true)
-        } else {
-            Ok(false)
+    ) -> SendOf<L> {
+        if !self.comms_lock.try_lock() {
+            return Ok(false);
         }
+        let res = loop {
+            match self.try_send_telemetry(telemetry) {
+                Ok(SendOutcome::Busy) => core::hint::spin_loop(),
+                Ok(outcome) => break Ok(outcome == SendOutcome::Sent),
+                Err(err) => break Err(err),
+            }
+        };
+        self.comms_lock.unlock();
+        res
     }
 }
 
-#[allow(clippy::type_complexity)]
-impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
+impl<L: Link, P: crate::profiler::CPUProfiler> Context<L, P> {
     /// Profile the execution of a test function, measuring cycles, stack and time.
     pub fn profile_test<F>(&self, test_fn: F) -> TestMetrics
     where
@@ -223,15 +239,15 @@ impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
     /// Reports an error message via Log telemetry.
     ///
     /// # Errors
-    /// Returns a transport error if writing or flushing fails.
+    /// Returns a transport error if writing fails.
     pub fn report_error_log(
         &mut self,
         suite_id: u16,
         test_id: u16,
         msg: &'static str,
-    ) -> ServerResult<C::Error> {
+    ) -> UnitOf<L> {
         let timestamp_us = self.cpu_utils.get_nanos() / 1000;
-        let _ = self.send_telemetry_and_flush_locked(&Telemetry::Log(
+        let _ = self.send_telemetry_locked(&Telemetry::Log(
             crate::comms::LogMessage {
                 payload: msg,
                 suite_id,
@@ -251,7 +267,7 @@ impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
         suite_id: u16,
         setting_name: &str,
         err: &'static str,
-    ) -> ServerResult<C::Error> {
+    ) -> UnitOf<L> {
         let timestamp_us = self.cpu_utils.get_nanos() / 1000;
         let mut err_buf = [0u8; 128];
         let pos = {

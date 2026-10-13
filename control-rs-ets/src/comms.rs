@@ -1,14 +1,15 @@
-//! Target-to-Host communication protocol and traits.
+//! Target-to-Host communication protocol.
 //!
 //! # Description
 //!
 //! This module defines the framing reader, serialization utilities and target-to-host messaging traits
 //! used to exchange ETS test suite information, run tests, report performance metrics and handle telemetry logs.
-//! The transport layer uses a robust packet framing scheme with CRC-16-IBM-SDLC checksum protection.
+//! The stream framing scheme uses a sync header, length and CRC-16-IBM-SDLC checksum protection; the
+//! target server reaches it through [`StreamLink`](crate::link::StreamLink).
 //!
 //! # Core Concepts
 //!
-//! - **`HostComms` Trait**: Target-agnostic interface that serial-comms or USB-comms handlers implement.
+//! - **Message schemas**: `Command` and `Telemetry` travel as whole Postcard messages over a [`Link`](crate::link::Link).
 //! - **Framed Reader**: `FrameReader` parses incoming stream bytes statefully into verified frame slices.
 //! - **Command/Telemetry Enums**: Defines the protocol message schemas for control instructions and test reporting.
 //! - **`CommsLock`**: An atomic flag lock preventing multiple execution paths from concurrently writing telemetry frames.
@@ -69,93 +70,6 @@ const START_BYTE_2: u8 = 0x55;
 ///
 /// Refers to the decoded raw byte slice inside the reader's internal buffer.
 pub type DecodedFrame<'a> = &'a [u8];
-
-/// Result of polling a command from the host.
-///
-/// Returns a command if successfully decoded or transport error `E`.
-pub type PollResult<E> = Result<Option<Command>, E>;
-
-/// Result of sending telemetry or flushing.
-///
-/// Returns `Ok(())` or transport error `E`.
-pub type SendResult<E> = Result<(), E>;
-
-/// A trait for executing frame-based communication between target and host.
-///
-/// Handlers of this trait bridge the parsed commands and telemetry messages
-/// onto concrete hardware peripherals (like UART, USB or RTT).
-///
-/// # Safety
-/// Implementations must guarantee safe register/hardware access during transfer and framing.
-/// This trait does not use `unsafe` code.
-///
-/// # Panics
-/// Trait operations do not panic.
-///
-/// # Example
-/// ```
-/// use control_rs_ets::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
-///
-/// struct MyComms;
-/// impl HostComms for MyComms {
-///     type Error = &'static str;
-///     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
-///     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
-///     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
-/// }
-///
-/// let mut comms = MyComms;
-/// assert!(comms.flush().is_ok());
-/// ```
-#[allow(clippy::type_complexity)]
-pub trait HostComms {
-    /// The error type associated with transport failures.
-    type Error;
-
-    /// Closes the communication interface (for example, signaling semihosting exit).
-    fn close(&mut self) {}
-
-    /// Closes the communication interface with a failure/error status.
-    fn close_on_failure(&mut self) {}
-
-    /// Flush any pending buffered data out to the physical interface.
-    ///
-    /// # Returns
-    /// * `SendResult<Self::Error>` - Success or transport error status.
-    ///
-    /// # Errors
-    /// Returns a transport error if flushing the buffer to the physical interface fails.
-    fn flush(&mut self) -> SendResult<Self::Error>;
-
-    /// Read incoming bytes and try to parse a Command.
-    ///
-    /// This should be non-blocking.
-    ///
-    /// # Returns
-    /// * `PollResult<Self::Error>`
-    ///     * `Ok(Some(Command))` when a full valid command frame is parsed.
-    ///     * `Ok(None)` if no command is ready yet.
-    ///     * `Err(Error)` on serial port or protocol errors.
-    ///
-    /// # Errors
-    /// Returns a serial port or protocol error if reading or de-framing fails.
-    fn poll_command(&mut self) -> PollResult<Self::Error>;
-
-    /// Send a telemetry message to the host.
-    ///
-    /// # Arguments
-    /// * `telemetry` - Reference to the telemetry variant schema.
-    ///
-    /// # Returns
-    /// * `SendResult<Self::Error>` - Success or transport error status.
-    ///
-    /// # Errors
-    /// Returns a transport error if serialization or writing to the physical interface fails.
-    fn send_telemetry(
-        &mut self,
-        telemetry: &Telemetry<'_>,
-    ) -> SendResult<Self::Error>;
-}
 
 /// Commands sent from the Host TUI to the Target MCU.
 ///
@@ -848,29 +762,6 @@ mod tests {
     fn test_comms_lock_default() {
         let lock = CommsLock::default();
         assert!(lock.try_lock());
-    }
-
-    #[test]
-    fn test_host_comms_defaults() {
-        struct TestComms;
-        impl HostComms for TestComms {
-            type Error = ();
-            fn flush(&mut self) -> Result<(), Self::Error> {
-                Ok(())
-            }
-            fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
-                Ok(None)
-            }
-            fn send_telemetry(
-                &mut self,
-                _telemetry: &Telemetry<'_>,
-            ) -> Result<(), Self::Error> {
-                Ok(())
-            }
-        }
-        let mut comms = TestComms;
-        comms.close();
-        comms.close_on_failure();
     }
 
     /// Byte-level layout of a framed telemetry packet:

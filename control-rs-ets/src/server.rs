@@ -18,8 +18,9 @@
 use core::sync::atomic::{AtomicIsize, Ordering};
 
 use crate::SuiteDescriptor;
-use crate::comms::{Command, HostComms, PROTOCOL_VERSION, Telemetry};
+use crate::comms::{Command, PROTOCOL_VERSION, Telemetry};
 pub use crate::context::{Context, TestMetrics};
+use crate::link::{Link, UnitOf};
 use crate::run::{Atomic, Runner};
 use crate::settings::SettingValue;
 
@@ -56,15 +57,14 @@ pub static CURRENT_TEST: TestIndexIndicator = TestIndexIndicator::new();
 /// # Example
 /// ```
 /// use control_rs_ets::server::{Server, Context};
-/// # use control_rs_ets::comms::{HostComms, Telemetry, Command, SendResult, PollResult};
+/// # use control_rs_ets::link::{Link, RecvOf, SendOf};
 /// # use control_rs_ets::profiler::CPUProfiler;
 ///
-/// # struct MockComms;
-/// # impl HostComms for MockComms {
+/// # struct MockLink;
+/// # impl Link for MockLink {
 /// #     type Error = &'static str;
-/// #     fn flush(&mut self) -> SendResult<Self::Error> { Ok(()) }
-/// #     fn poll_command(&mut self) -> PollResult<Self::Error> { Ok(None) }
-/// #     fn send_telemetry(&mut self, _: &Telemetry<'_>) -> SendResult<Self::Error> { Ok(()) }
+/// #     fn recv(&mut self, _: &mut [u8]) -> RecvOf<Self> { Ok(None) }
+/// #     fn send(&mut self, _: &[u8]) -> SendOf<Self> { Ok(true) }
 /// # }
 /// # struct MockProfiler;
 /// # impl CPUProfiler for MockProfiler {
@@ -74,13 +74,13 @@ pub static CURRENT_TEST: TestIndexIndicator = TestIndexIndicator::new();
 /// #     fn get_stack_end(&self) -> usize { 0 }
 /// # }
 ///
-/// let ctx = Context::new(MockComms, MockProfiler);
+/// let ctx = Context::new(MockLink, MockProfiler);
 /// let server = Server::new(ctx, &[]);
 /// assert_eq!(server.suites.len(), 0);
 /// ```
-pub struct Server<'a, C, P> {
+pub struct Server<'a, L, P> {
     /// The global context containing comms, `cpu_utils` and the comms lock.
-    pub context: Context<C, P>,
+    pub context: Context<L, P>,
     /// The registered test suites.
     pub suites: &'a [&'static SuiteDescriptor],
 }
@@ -116,10 +116,9 @@ pub struct TestIndexIndicator {
     state: AtomicIsize,
 }
 
-#[allow(clippy::type_complexity)]
-impl<'a, C, P> Server<'a, C, P>
+impl<'a, L, P> Server<'a, L, P>
 where
-    C: HostComms,
+    L: Link,
     P: crate::profiler::CPUProfiler,
 {
     /// Exits the server, using target-specific exit mechanisms.
@@ -130,10 +129,10 @@ where
     /// * `!` - This function never returns.
     pub fn exit(&mut self) -> ! {
         if self.context.comms_lock.try_lock() {
-            self.context.comms.close();
+            self.context.link.close();
             self.context.comms_lock.unlock();
         } else {
-            self.context.comms.close();
+            self.context.link.close();
         }
         self.context.cpu_utils.exit()
     }
@@ -147,7 +146,7 @@ where
     /// # Returns
     /// * `Self` - Server instance.
     pub const fn new(
-        context: Context<C, P>,
+        context: Context<L, P>,
         suites: &'a [&'static SuiteDescriptor],
     ) -> Self {
         Self { context, suites }
@@ -159,12 +158,12 @@ where
     /// and streams telemetry and metrics back to the host.
     ///
     /// # Returns
-    /// * `ServerResult<C::Error>` - Success or transport error status.
+    /// * `UnitOf<L>` - Success or transport error status.
     ///
     /// # Errors
-    /// Returns a transport error `C::Error` propagated from the underlying communication interface if polling,
-    /// transmitting telemetry or flushing fails.
-    pub fn run(&mut self) -> ServerResult<C::Error> {
+    /// Returns a transport error `L::Error` propagated from the underlying communication interface if polling,
+    /// or transmitting telemetry fails.
+    pub fn run(&mut self) -> UnitOf<L> {
         loop {
             let cmd = self.context.poll_command_locked()?;
 
@@ -186,16 +185,10 @@ where
                     Command::TryReset => {}
                 }
             }
-
-            let _ = self.context.flush_locked()?;
         }
     }
 
-    fn run_test(
-        &mut self,
-        suite_id: u16,
-        test_id: u16,
-    ) -> ServerResult<C::Error> {
+    fn run_test(&mut self, suite_id: u16, test_id: u16) -> UnitOf<L> {
         let suite_idx = suite_id as usize;
         let test_idx = test_id as usize;
 
@@ -216,7 +209,7 @@ where
             return Ok(());
         };
 
-        Runner::<C, P, Atomic>::new(&mut self.context, suite_id, test_id, exec)
+        Runner::<L, P, Atomic>::new(&mut self.context, suite_id, test_id, exec)
             .run()
     }
 
@@ -225,7 +218,7 @@ where
         suite_id: u16,
         setting_id: u16,
         value: SettingValue,
-    ) -> ServerResult<C::Error> {
+    ) -> UnitOf<L> {
         let suite_idx = suite_id as usize;
         let setting_idx = setting_id as usize;
 
@@ -252,20 +245,20 @@ where
         }
 
         // Stream back the updated value to confirm
-        let _ = self.context.send_telemetry_and_flush_locked(
-            &Telemetry::SettingInfo {
-                suite_id,
-                setting_id,
-                name: setting.name(),
-                description: setting.description(),
-                value: setting.get(),
-            },
-        )?;
+        let _ =
+            self.context
+                .send_telemetry_locked(&Telemetry::SettingInfo {
+                    suite_id,
+                    setting_id,
+                    name: setting.name(),
+                    description: setting.description(),
+                    value: setting.get(),
+                })?;
 
         Ok(())
     }
 
-    fn stream_discovery(&mut self) -> ServerResult<C::Error> {
+    fn stream_discovery(&mut self) -> UnitOf<L> {
         let cpu = &self.context.cpu_utils;
         let info = Telemetry::TargetInfo {
             protocol_version: PROTOCOL_VERSION,
@@ -318,7 +311,7 @@ where
 
         let _ = self
             .context
-            .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)?;
+            .send_telemetry_locked(&Telemetry::DiscoveryComplete)?;
 
         Ok(())
     }
@@ -382,7 +375,8 @@ impl TestIndexIndicator {
 mod tests {
     extern crate std;
     use super::*;
-    use crate::comms::{Command, HostComms, Telemetry, TestState};
+    use crate::comms::{Command, Telemetry, TestState};
+    use crate::link::{Link, RecvOf, SendOf};
     use crate::profiler::CPUProfiler;
     use crate::settings::{
         AtomicU8Setting, AtomicU32Setting, Setting, SettingValue,
@@ -424,8 +418,14 @@ mod tests {
     struct MockComms {
         commands: Vec<Command>,
         fail_on_poll: bool,
-        flush_count: usize,
         payloads: RawPayloads,
+    }
+
+    /// A link that reports busy for the first `busy` sends.
+    struct BusyLink {
+        busy: usize,
+        offered: usize,
+        sent: usize,
     }
 
     /// A profiler whose clocks replay fixed readings.
@@ -471,15 +471,10 @@ mod tests {
         }
     }
 
-    impl HostComms for MockComms {
+    impl Link for MockComms {
         type Error = &'static str;
 
-        fn flush(&mut self) -> Result<(), Self::Error> {
-            self.flush_count = self.flush_count.saturating_add(1);
-            Ok(())
-        }
-
-        fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+        fn recv(&mut self, buf: &mut [u8]) -> RecvOf<Self> {
             if self.fail_on_poll {
                 return Err("Poll failed");
             }
@@ -487,29 +482,33 @@ mod tests {
                 // Return an error to break the infinite runner loop
                 return Err("Exit loop");
             }
-            Ok(Some(self.commands.remove(0)))
+            let cmd = self.commands.remove(0);
+            let len = postcard::to_slice(&cmd, buf)
+                .map_err(|_| "Failed to encode command")?
+                .len();
+            Ok(Some(len))
         }
 
-        fn send_telemetry(
-            &mut self,
-            telemetry: &Telemetry<'_>,
-        ) -> Result<(), Self::Error> {
-            let mut buf = [0u8; 512];
-            let size = crate::comms::frame_telemetry(telemetry, &mut buf)
-                .map_err(|_| "Failed to frame telemetry")?;
+        fn send(&mut self, msg: &[u8]) -> SendOf<Self> {
+            self.payloads.push(msg.to_vec());
+            Ok(true)
+        }
+    }
 
-            let mut reader = crate::comms::FrameReader::new();
-            let mut payload = None;
-            for &b in buf.get(..size).ok_or("Buffer slice out of bounds")? {
-                if let Some(p) = reader.handle_byte(b) {
-                    payload = Some(p.to_vec());
-                    break;
-                }
+    impl Link for BusyLink {
+        type Error = &'static str;
+
+        fn recv(&mut self, _buf: &mut [u8]) -> RecvOf<Self> {
+            Ok(None)
+        }
+
+        fn send(&mut self, _msg: &[u8]) -> SendOf<Self> {
+            self.offered = self.offered.saturating_add(1);
+            if self.offered <= self.busy {
+                return Ok(false);
             }
-
-            let payload = payload.ok_or("No payload decoded")?;
-            self.payloads.push(payload);
-            Ok(())
+            self.sent = self.sent.saturating_add(1);
+            Ok(true)
         }
     }
 
@@ -697,36 +696,27 @@ mod tests {
         let comms = MockComms {
             commands: Vec::new(),
             payloads: Vec::new(),
-            flush_count: 0,
             fail_on_poll: false,
         };
         let mut context = Context::new(comms, HostCPUProfiler);
         assert!(context.comms_lock.try_lock());
 
-        assert!(!context.flush_locked().unwrap());
         assert!(context.poll_command_locked().unwrap().is_none());
-        assert!(
-            !context
-                .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)
-                .unwrap()
-        );
         assert!(
             !context
                 .send_telemetry_locked(&Telemetry::DiscoveryComplete)
                 .unwrap()
         );
 
-        assert_eq!(context.comms.payloads, Vec::<Vec<u8>>::new());
-        assert_eq!(context.comms.flush_count, 0);
+        assert_eq!(context.link.payloads, Vec::<Vec<u8>>::new());
 
         context.comms_lock.unlock();
         assert!(
             context
-                .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)
+                .send_telemetry_locked(&Telemetry::DiscoveryComplete)
                 .unwrap()
         );
-        assert_eq!(context.comms.payloads.len(), 1);
-        assert_eq!(context.comms.flush_count, 1);
+        assert_eq!(context.link.payloads.len(), 1);
     }
 
     #[test]
@@ -738,7 +728,6 @@ mod tests {
                         MockComms {
                             commands: Vec::new(),
                             payloads: Vec::new(),
-                            flush_count: 0,
                             fail_on_poll: false,
                         },
                         HostCPUProfiler,
@@ -756,7 +745,6 @@ mod tests {
                         MockComms {
                             commands: Vec::new(),
                             payloads: Vec::new(),
-                            flush_count: 0,
                             fail_on_poll: false,
                         },
                         HostCPUProfiler,
@@ -817,7 +805,6 @@ mod tests {
         let comms = MockComms {
             commands: std::vec![Command::ListSuites],
             payloads: Vec::new(),
-            flush_count: 0,
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
@@ -825,7 +812,7 @@ mod tests {
         assert_eq!(res, Err("Exit loop"));
 
         // TargetInfo leads every discovery stream.
-        let p = after_target_info(&server.context.comms.payloads);
+        let p = after_target_info(&server.context.link.payloads);
 
         let t0: Telemetry<'_> =
             postcard::from_bytes(p.first().unwrap()).unwrap();
@@ -873,13 +860,12 @@ mod tests {
         let comms = MockComms {
             commands: std::vec![Command::TryReset],
             payloads: Vec::new(),
-            flush_count: 0,
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
         let (res, server) = run_bounded(Server::new(context, SUITES));
         assert_eq!(res, Err("Exit loop"));
-        assert_eq!(server.context.comms.payloads, Vec::<Vec<u8>>::new());
+        assert_eq!(server.context.link.payloads, Vec::<Vec<u8>>::new());
     }
 
     #[test]
@@ -906,14 +892,13 @@ mod tests {
                 },
             ],
             payloads: Vec::new(),
-            flush_count: 0,
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
         let (res, server) = run_bounded(Server::new(context, SUITES));
         assert_eq!(res, Err("Exit loop"));
 
-        let p = &server.context.comms.payloads;
+        let p = &server.context.link.payloads;
         assert_eq!(p.len(), 4);
         for item in p {
             let t: Telemetry<'_> = postcard::from_bytes(item).unwrap();
@@ -926,7 +911,6 @@ mod tests {
         let comms = MockComms {
             commands: Vec::new(),
             payloads: Vec::new(),
-            flush_count: 0,
             fail_on_poll: true,
         };
         let context = Context::new(comms, HostCPUProfiler);
@@ -943,7 +927,6 @@ mod tests {
                 test_id: 0
             }],
             payloads: Vec::new(),
-            flush_count: 0,
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
@@ -952,7 +935,7 @@ mod tests {
 
         assert!(TEST_CALLED.load(Ordering::SeqCst));
 
-        let p = &server.context.comms.payloads;
+        let p = &server.context.link.payloads;
         assert_eq!(p.len(), 3);
 
         let t0: Telemetry<'_> =
@@ -999,14 +982,13 @@ mod tests {
                 value: SettingValue::U8(100)
             }],
             payloads: Vec::new(),
-            flush_count: 0,
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
         let (res, server) = run_bounded(Server::new(context, SUITES));
         assert_eq!(res, Err("Exit loop"));
 
-        let p = &server.context.comms.payloads;
+        let p = &server.context.link.payloads;
         assert_eq!(p.len(), 1);
         let t0: Telemetry<'_> =
             postcard::from_bytes(p.first().unwrap()).unwrap();
@@ -1032,14 +1014,13 @@ mod tests {
                 value: SettingValue::U32(999)
             }],
             payloads: Vec::new(),
-            flush_count: 0,
             fail_on_poll: false,
         };
         let context = Context::new(comms, HostCPUProfiler);
         let (res, server) = run_bounded(Server::new(context, SUITES));
         assert_eq!(res, Err("Exit loop"));
 
-        let p = &server.context.comms.payloads;
+        let p = &server.context.link.payloads;
         assert_eq!(p.len(), 2);
         let t0: Telemetry<'_> =
             postcard::from_bytes(p.first().unwrap()).unwrap();
@@ -1058,17 +1039,85 @@ mod tests {
         MockComms {
             commands: Vec::new(),
             payloads: Vec::new(),
-            flush_count: 0,
             fail_on_poll: false,
         }
     }
 
     #[test]
-    fn an_unlocked_flush_reaches_the_link() {
+    fn an_unlocked_send_reaches_the_link_and_releases_the_lock() {
         let mut context = Context::new(quiet_comms(), HostCPUProfiler);
-        assert_eq!(context.flush_locked(), Ok(true));
-        assert_eq!(context.comms.flush_count, 1);
+        assert_eq!(
+            context.send_telemetry_locked(&Telemetry::DiscoveryComplete),
+            Ok(true)
+        );
+        assert_eq!(context.link.payloads.len(), 1);
         assert!(context.comms_lock.try_lock(), "the lock was released");
+    }
+
+    #[test]
+    fn a_busy_link_is_retried_until_it_accepts_the_whole_message() {
+        let link = BusyLink {
+            busy: 5,
+            offered: 0,
+            sent: 0,
+        };
+        let mut context = Context::new(link, HostCPUProfiler);
+        assert_eq!(
+            context.send_telemetry_locked(&Telemetry::DiscoveryComplete),
+            Ok(true)
+        );
+        assert_eq!(context.link.offered, 6);
+        assert_eq!(context.link.sent, 1);
+    }
+
+    #[test]
+    fn the_unlocked_send_offers_once_and_reports_busy() {
+        let link = BusyLink {
+            busy: 1,
+            offered: 0,
+            sent: 0,
+        };
+        let mut context = Context::new(link, HostCPUProfiler);
+        assert_eq!(
+            context.try_send_telemetry(&Telemetry::DiscoveryComplete),
+            Ok(crate::context::SendOutcome::Busy)
+        );
+        assert_eq!(context.link.offered, 1);
+        assert_eq!(context.link.sent, 0);
+    }
+
+    #[test]
+    fn a_message_over_the_size_limit_is_dropped_not_sent() {
+        let long = "x".repeat(600);
+        let mut context = Context::new(quiet_comms(), HostCPUProfiler);
+        assert_eq!(
+            context.try_send_telemetry(&Telemetry::TargetPanic {
+                message: &long,
+                file: "f.rs",
+                line: 1,
+            }),
+            Ok(crate::context::SendOutcome::Dropped)
+        );
+        assert!(context.link.payloads.is_empty());
+    }
+
+    #[test]
+    fn an_undecodable_message_is_discarded() {
+        struct GarbageLink;
+        impl Link for GarbageLink {
+            type Error = &'static str;
+            fn recv(&mut self, buf: &mut [u8]) -> RecvOf<Self> {
+                for (dst, src) in buf.iter_mut().zip([0xFF_u8, 0xFF]) {
+                    *dst = src;
+                }
+                Ok(Some(2))
+            }
+            fn send(&mut self, _msg: &[u8]) -> SendOf<Self> {
+                Ok(true)
+            }
+        }
+        let mut context = Context::new(GarbageLink, HostCPUProfiler);
+        assert!(context.poll_command_locked().unwrap().is_none());
     }
 
     #[test]
@@ -1093,7 +1142,7 @@ mod tests {
             .report_setting_error(3, "gain", "out of range")
             .unwrap();
         let stamps: Vec<u64> = context
-            .comms
+            .link
             .payloads
             .iter()
             .map(|payload| {
