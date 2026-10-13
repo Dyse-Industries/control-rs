@@ -27,6 +27,7 @@ use ratatui::{
 
 use control_rs_ets::comms::{Command, TestState};
 use control_rs_ets::settings::SettingValue;
+use control_rs_ets_host::link::discover;
 use control_rs_ets_host::{
     BridgeMessage, ETSBridge, HostError, OwnedTelemetry, SessionAction,
     SessionState, SuiteItem, Target, TestIndex,
@@ -280,8 +281,9 @@ impl AppState {
     /// Pairing them lets a serial target still waiting in `handle_failure`
     /// exit after a lost reset frame.
     fn request_discovery(&mut self, bridge: &mut ETSBridge) {
-        self.send_logged(bridge, &Command::TryReset);
-        self.send_logged(bridge, &Command::ListSuites);
+        if let Err(e) = discover(bridge) {
+            self.logs.push(format!("> [HOST] send failed: {e}"));
+        }
     }
 
     fn show_selected_setting(&mut self) {
