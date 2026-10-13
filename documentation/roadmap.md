@@ -11,7 +11,7 @@ work follows both tracks.
 
 - [x] **PR1**: Workspace Foundations & Strict Lint Baseline
 - [x] **PR2**: ETS Host Extraction & Terminal Dashboard
-  ([#55](https://github.com/Dyse-Industries/control-rs/pull/55); [ets-host](ets-host/ets-host-design.md), [tui](tui/tui-design.md))
+  ([#55](https://github.com/Dyse-Industries/control-rs/pull/55); [ets-host](ets/ets-host-design.md), [tui](ets/tui-design.md))
 - [x] **PR3**: CI Quality Gate Infrastructure (`control-rs-ci`)
   ([#58](https://github.com/Dyse-Industries/control-rs/pull/58); [ci](ci/ci-design.md))
     - [x] **PR3-1**: Multi-Oracle Differential Test Harness

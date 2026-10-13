@@ -40,28 +40,14 @@ Design documents, standards and planning for the `control-rs` workspace.
 
 | Design | Status | Implementation |
 |:--|:--|:--|
-| [Embedded Test Server](ets/embedded-test-server-design.md) | Approved | `control-rs-ets/src/server.rs` |
-| [`HostComms`](ets/host-comm-design.md) | Approved | `control-rs-ets/src/comms.rs` |
-| [`CPUProfiler`](ets/cpu-profiler-design.md) | Approved | `control-rs-ets/src/profiler.rs` |
-| [Exportable Test Suites](ets/test-suite-design.md) | Approved | `src/**/tests/` (`ets` feature) |
-
-## macros
-
-| Design | Status | Implementation |
-|:--|:--|:--|
-| [Procedural Macros for Distributed Test Discovery](macros/macros-design.md) | Approved | `control-rs-macros/` |
-
-## ets-host
-
-| Design | Status | Implementation |
-|:--|:--|:--|
-| [Host ETS Library](ets-host/ets-host-design.md) | Approved | `control-rs-ets-host/` |
-
-## tui
-
-| Design | Status | Implementation |
-|:--|:--|:--|
-| [Terminal User Interface](tui/tui-design.md) | Approved | `control-rs-tui/` |
+| [Embedded Test Server](ets/embedded-test-server-design.md) | Draft | `control-rs-ets/` |
+| [ETS Executive](ets/ets-executive-design.md) | Draft | `control-rs-ets/src/server.rs` |
+| [ETS Link](ets/ets-link-design.md) | Draft | `control-rs-ets/src/link/`, `control-rs-ets/src/wire.rs` |
+| [`CPUProfiler`](ets/cpu-profiler-design.md) | Draft | `control-rs-ets/src/profiler.rs` |
+| [Exportable Test Suites](ets/test-suite-design.md) | Draft | `src/**/tests/` (`ets` feature) |
+| [Procedural Macros for Distributed Test Discovery](ets/macros-design.md) | Draft | `control-rs-macros/` |
+| [Host ETS Library](ets/ets-host-design.md) | Draft | `control-rs-ets-host/` |
+| [Terminal User Interface](ets/tui-design.md) | Draft | `control-rs-tui/` |
 
 ## ci
 

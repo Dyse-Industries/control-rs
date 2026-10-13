@@ -14,3 +14,4 @@ row and names its replacement.
 | ADR | Title | Status | Superseded by |
 |:--|:--|:--|:--|
 | [ADR-0001](0001-adopt-adrs.md) | Adopt ADRs for workspace decisions | Proposed | — |
+| [ADR-0002](0002-single-job-executive-for-ets-and-hil.md) | Single-Job Executive for ETS and HIL | Proposed | — |
