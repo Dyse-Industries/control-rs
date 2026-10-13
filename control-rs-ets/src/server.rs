@@ -1098,7 +1098,7 @@ mod tests {
             }),
             Ok(crate::context::SendOutcome::Dropped)
         );
-        assert!(context.link.payloads.is_empty());
+        assert_eq!(context.link.payloads, Vec::<Vec<u8>>::new());
     }
 
     #[test]

@@ -48,30 +48,30 @@ pub type StreamUnitOf<S> = Result<(), <S as ByteStream>::Error>;
 /// ```
 /// use control_rs_ets::link::{Link, RecvOf, SendOf};
 ///
-/// struct Loopback { held: Option<[u8; 4]> }
-/// impl Link for Loopback {
+/// struct Echo { held: Option<[u8; 4]> }
+/// impl Link for Echo {
 ///     type Error = ();
 ///     fn recv(&mut self, buf: &mut [u8]) -> RecvOf<Self> {
 ///         match self.held.take() {
-///             Some(msg) => {
-///                 buf[..4].copy_from_slice(&msg);
+///             Some(message) => {
+///                 buf[..4].copy_from_slice(&message);
 ///                 Ok(Some(4))
 ///             }
 ///             None => Ok(None),
 ///         }
 ///     }
-///     fn send(&mut self, msg: &[u8]) -> SendOf<Self> {
-///         if self.held.is_some() || msg.len() != 4 {
+///     fn send(&mut self, message: &[u8]) -> SendOf<Self> {
+///         if self.held.is_some() || message.len() != 4 {
 ///             return Ok(false);
 ///         }
 ///         let mut held = [0u8; 4];
-///         held.copy_from_slice(msg);
+///         held.copy_from_slice(message);
 ///         self.held = Some(held);
 ///         Ok(true)
 ///     }
 /// }
 ///
-/// let mut link = Loopback { held: None };
+/// let mut link = Echo { held: None };
 /// assert_eq!(link.send(&[1, 2, 3, 4]), Ok(true));
 /// let mut buf = [0u8; 8];
 /// assert_eq!(link.recv(&mut buf), Ok(Some(4)));
@@ -88,7 +88,7 @@ pub trait Link {
     /// Returns a transport error if reading fails.
     fn recv(&mut self, buf: &mut [u8]) -> RecvOf<Self>;
 
-    /// Accepts all of `msg` or nothing. `Ok(false)` reports back-pressure and transmits nothing.
+    /// Accepts all of `message` or nothing. `Ok(false)` reports back-pressure and transmits nothing.
     ///
     /// # Errors
     /// Returns a transport error if writing fails.
@@ -117,11 +117,11 @@ pub trait Link {
 /// struct Empty;
 /// impl ByteStream for Empty {
 ///     type Error = ();
-///     fn read(&mut self, _buf: &mut [u8]) -> CountOf<Self> { Ok(0) }
+///     fn read(&mut self, buf: &mut [u8]) -> CountOf<Self> { Ok(0) }
 ///     fn write(&mut self, buf: &[u8]) -> CountOf<Self> { Ok(buf.len()) }
 /// }
 ///
-/// let _link = StreamLink::new(Empty);
+/// let link = StreamLink::new(Empty);
 /// ```
 pub trait ByteStream {
     /// The error type associated with transport failures.
@@ -395,7 +395,7 @@ mod tests {
     fn an_oversized_message_is_refused() {
         let mut link = StreamLink::new(ScriptedStream::new(Vec::new(), 512));
         assert_eq!(link.send(&[0u8; 513]), Ok(false));
-        assert!(link.stream().written.is_empty());
+        assert_eq!(link.stream().written, Vec::<u8>::new());
     }
 
     #[test]
