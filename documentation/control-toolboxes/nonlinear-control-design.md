@@ -1,8 +1,9 @@
 # Nonlinear Control Toolbox (nonlinear-control)
 
-![Date Badge](https://img.shields.io/badge/Date-October_4,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
@@ -361,6 +362,7 @@ symmetrization preserve positive definiteness in the tested cases.
 | Revision | Date | Author | Description |
 |:--|:--|:--|:--|
 | 1.0 | October 4, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-6, NFR-1 to NFR-3, C-1 to C-6. |
+| 1.1 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending review. |
 
 ---
 
