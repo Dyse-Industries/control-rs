@@ -274,17 +274,28 @@ Cholesky and states the consequence in §6.3.
 |:--|:--|:--|
 | `lqr` (continuous) | `care(A, B, Q, R)` | $K = R^{-1} B^T X$ |
 | `lqr` (discrete) | `dare(A, B, Q, R)` | $K = (R + B^T X B)^{-1} B^T X A$ |
-| `lqi` | `lqr` on $A_a = \begin{bmatrix} A & 0 \\ -C & 0 \end{bmatrix}$, $B_a = \begin{bmatrix} B \\ -D \end{bmatrix}$ | $K = [K_x \; K_i]$ |
+| `lqi` (continuous) | `lqr` on $A_a = \begin{bmatrix} A & 0 \\ -C & 0 \end{bmatrix}$, $B_a = \begin{bmatrix} B \\ -D \end{bmatrix}$ | $K = [K_x \; K_i]$ |
+| `lqi` (discrete) | `lqr` on $A_a = \begin{bmatrix} A & 0 \\ -C & I \end{bmatrix}$, $B_a = \begin{bmatrix} B \\ -D \end{bmatrix}$ | $K = [K_x \; K_i]$ |
 | `lqe` (continuous) | `care(A^T, C^T, G Q_n G^T, R_n)` | $L = P C^T R_n^{-1}$ |
 | `lqe` (discrete) | `dare(A^T, C^T, G Q_n G^T, R_n)` | $L = A P C^T (C P C^T + R_n)^{-1}$ |
 
 `lqi` adds one integrator per output, the integral action that python-control
-offers as an `lqr` option [9]; its augmented dimension $N_x + N_y$ is a
-`DimAdd` const parameter and falls under C-5. `lqe` uses the regulator and
-estimator duality: the estimator Riccati equation is the regulator equation of
-$(A^T, C^T)$, as the python-control `lqe` and `dlqe` problem statements show
-[15], [16]. The LQR cost and its algebraic Riccati equation follow the
-standard infinite-horizon formulation [17].
+offers as an `lqr` option [9]. Continuous plants use $\dot{x}_i = -y$
+(zero block on $x_i$); discrete plants use $x_i[k+1] = x_i[k] - y[k]$
+(identity block on $x_i$). Using the continuous augmentation on a discrete
+plant drops the discrete integrator and cannot reject a constant reference
+offset. The augmented dimension $N_x + N_y$ is a `DimAdd` const parameter and
+falls under C-5. `lqe` uses the regulator and estimator duality for the
+Riccati equation: the estimator ARE is the regulator ARE of $(A^T, C^T)$, as
+the python-control `lqe` and `dlqe` problem statements show [15], [16]. Gain
+extraction is not a plain transpose of the dual `lqr` gain in discrete time:
+dual `lqr` returns $K = (R_n + C P C^T)^{-1} C P A$, so
+$K^T = A^T P C^T (C P C^T + R_n)^{-1}$, while the predictor Kalman gain is
+$L = A P C^T (C P C^T + R_n)^{-1}$. Implementing `lqe` as
+`lqr(dual).K.transpose()` therefore places $A^T$ where $A$ belongs whenever
+$A$ is non-symmetric. Continuous time keeps $L = K_{\mathrm{dual}}^T$. The
+LQR cost and its algebraic Riccati equation follow the standard
+infinite-horizon formulation [17].
 
 #### 4.6 Eigenvalue Assignment
 
@@ -362,8 +373,8 @@ generic bounds of §4.1 exclude it (`error-design.md` FR-2).
 | VC-5.3 | FR-5 | `libtest` | `control_rs::modern_control::riccati::tests::dare_undetectable` | A pair with an unobservable mode on the unit circle returns `NoStabilizingSolution` |
 | VC-6.1 | FR-6 | `libtest` | `control_rs::modern_control::synthesis::tests::lqr_continuous_discrete` | For a continuous and a discrete plant the gain equals the §4.5 formula on the returned $X$ within §6.2; FR-6 holds iff all conditions hold |
 | VC-6.2 | FR-6 | `libtest` | `control_rs::modern_control::synthesis::tests::lqr_scalar_closed_form` | The scalar plant's gain matches the closed-form root of the scalar CARE within §6.2 |
-| VC-7.1 | FR-7 | `libtest` | `control_rs::modern_control::synthesis::tests::lqi_zero_steady_error` | Simulating the augmented closed loop with a step reference drives the output error below $10^{-6}$; FR-7 holds iff all conditions hold |
-| VC-8.1 | FR-8 | `libtest` | `control_rs::modern_control::synthesis::tests::lqe_duality` | The `lqe` gain equals the transposed `lqr` gain of the dual system exactly; FR-8 holds iff all conditions hold |
+| VC-7.1 | FR-7 | `libtest` | `control_rs::modern_control::synthesis::tests::lqi_zero_steady_error` | For a continuous and a discrete plant, simulating the augmented closed loop with a step reference drives the output error below $10^{-6}$; FR-7 holds iff all conditions hold |
+| VC-8.1 | FR-8 | `libtest` | `control_rs::modern_control::synthesis::tests::lqe_duality` | Continuous: $L$ equals the transposed dual `lqr` gain exactly. Discrete: on a non-symmetric $A$, $L$ equals $A P C^T (C P C^T + R_n)^{-1}$ from the returned $P$ and does not equal the transposed dual `lqr` gain; FR-8 holds iff all conditions hold |
 | VC-8.2 | FR-8 | `libtest` | `control_rs::modern_control::synthesis::tests::lqe_stable_error` | Every eigenvalue of $A - LC$ is stable for a continuous and a discrete plant |
 | VC-9.1 | FR-9 | `libtest` | `control_rs::modern_control::place::tests::place_real_complex` | For real, complex-pair and repeated requests with $m \in \{1, 2\}$, $\operatorname{eig}(A - BK)$ matches the request within §6.2; FR-9 holds iff all conditions hold |
 | VC-9.2 | FR-9 | `libtest` | `control_rs::modern_control::place::tests::place_invalid_set` | A request with an unpaired complex eigenvalue returns `InvalidPoleSet` |
@@ -475,6 +486,7 @@ Phase 1 starts after the C-2 kernels are Approved and implemented.
 | 1.1 | October 4, 2026 | @MitchellDScott | C-3 changed from a workspace crate to a root-crate module; §3, §4.1, §5, §6.1, §8 and §9 updated. |
 | 1.2 | October 4, 2026 | @MitchellDScott | Module renamed `src/modern_control` (C-3) to match the `*_control` toolbox naming; roadmap references renumbered. |
 | 1.3 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending review. |
+| 1.4 | October 13, 2026 | @MitchellDScott | Discrete `lqi` uses $I$ on the integrator state; VC-7.1 covers both time bases. Discrete `lqe` gain duality distinguished from $K_{\mathrm{dual}}^T$ (§4.5, VC-8.1). |
 
 ---
 
